@@ -7,6 +7,10 @@
 
 import React from 'react';
 import StatusChip from './StatusChip';
+import {
+  parsePositionsNeeded,
+  computeRemaining,
+} from '../../utils/staffingRoles';
 
 // Returns the parsed `positions_needed` array. Tolerates both array-shaped
 // (already parsed) and string-shaped (JSON-encoded TEXT) inputs. Empty array
@@ -66,6 +70,45 @@ export function approvedCount(s) {
   return Number(s?.approved_count || s?.assignments_count || 0);
 }
 
+// Parses the `approved_by_role` aggregate ({ [role]: count }) that the staff/
+// admin feeds project (L4). Tolerates an already-parsed object, a JSON string,
+// or a missing value. Counts are coerced to numbers; non-numeric entries drop.
+export function parseApprovedByRole(raw) {
+  let obj = raw;
+  if (typeof raw === 'string') {
+    try {
+      obj = JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+  const out = {};
+  for (const [role, count] of Object.entries(obj)) {
+    const n = Number(count);
+    if (Number.isFinite(n)) out[role] = n;
+  }
+  return out;
+}
+
+// Returns the per-role remaining (needed - approved-active) map for a shift,
+// e.g. { Bartender: 0, 'Banquet Server': 1 }. Prefers the `approved_by_role`
+// aggregate from the feed; for a legacy row that only carries the flat
+// `approved_count`, it attributes that count to the first role in the roster
+// (historically always Bartender), so single-role events stay accurate.
+export function remainingByRole(s) {
+  const roster = parsePositionsNeeded(s?.positions_needed);
+  let approvedByRole = parseApprovedByRole(s?.approved_by_role);
+  if (Object.keys(approvedByRole).length === 0) {
+    const flat = approvedCount(s);
+    if (flat > 0) {
+      const firstRole = roster[0] || 'Bartender';
+      approvedByRole = { [firstRole]: flat };
+    }
+  }
+  return computeRemaining(roster, approvedByRole);
+}
+
 // Returns the count of pending (requested-but-not-yet-approved) bartenders.
 export function pendingCount(s) {
   const needed = parsePositionsCount(s);
@@ -73,17 +116,44 @@ export function pendingCount(s) {
   return Math.min(Math.max(0, needed - filled), Number(s?.request_count || 0));
 }
 
-// Builds the positions[] array StaffPills consumes — one entry per slot,
-// labelled approved → pending → open in display order.
+// Builds the positions[] array StaffPills consumes — one entry per slot, with
+// the real role label per slot (from `positions_needed`), labelled approved →
+// pending → open within each role. Approved counts come from the
+// `approved_by_role` aggregate when present; pending is filled best-effort into
+// the remaining open slots (the aggregate carries no per-role pending breakdown).
 export function shiftPositions(s) {
-  const needed = parsePositionsCount(s);
-  const filled = approvedCount(s);
-  const pending = pendingCount(s);
-  return Array.from({ length: needed }, (_, i) => {
-    if (i < filled) return { role: 'Bartender', name: 'Filled', status: 'approved' };
-    if (i < filled + pending) return { role: 'Bartender', name: null, status: 'pending' };
-    return { role: 'Bartender', name: null, status: null };
+  const roster = parsePositionsNeeded(s?.positions_needed);
+  // Legacy/manual rows with no canonical roster fall back to a single open slot.
+  const slots = roster.length ? roster : ['Bartender'];
+
+  let approvedByRole = parseApprovedByRole(s?.approved_by_role);
+  if (Object.keys(approvedByRole).length === 0) {
+    const flat = approvedCount(s);
+    if (flat > 0) approvedByRole = { [slots[0]]: flat };
+  }
+  // Per-role approved budget we still need to "spend" onto slots in order.
+  const approvedLeft = { ...approvedByRole };
+
+  // First pass: mark approved slots role-by-role.
+  const marked = slots.map((role) => {
+    if ((approvedLeft[role] || 0) > 0) {
+      approvedLeft[role] -= 1;
+      return { role, name: 'Filled', status: 'approved' };
+    }
+    return { role, name: null, status: null };
   });
+
+  // Second pass: distribute pending requests into the remaining open slots in
+  // display order (no per-role pending breakdown exists in the aggregate).
+  let pendingLeft = pendingCount(s);
+  for (const slot of marked) {
+    if (pendingLeft <= 0) break;
+    if (slot.status === null) {
+      slot.status = 'pending';
+      pendingLeft -= 1;
+    }
+  }
+  return marked;
 }
 
 // Shared event-status chip — used on Dashboard, EventsDashboard, drawers, and

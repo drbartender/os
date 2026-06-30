@@ -53,7 +53,8 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
         COALESCE(c.phone, s.client_phone) AS client_phone,
         COALESCE(c.email, s.client_email) AS client_email,
         rc.request_count,
-        rc.approved_count
+        rc.approved_count,
+        abr.approved_by_role
       FROM shifts s
       LEFT JOIN users u ON u.id = s.created_by
       LEFT JOIN proposals p ON p.id = s.proposal_id
@@ -63,6 +64,13 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
                COUNT(*) FILTER (WHERE sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
         FROM shift_requests sr WHERE sr.shift_id = s.id
       ) rc ON true
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(jsonb_object_agg(position, c), '{}'::jsonb) AS approved_by_role
+        FROM (SELECT position, COUNT(*) c FROM shift_requests
+              WHERE shift_id = s.id AND status = 'approved' AND dropped_at IS NULL
+                AND position IS NOT NULL
+              GROUP BY position) g
+      ) abr ON true
       ORDER BY s.event_date ASC
       LIMIT 500
     `);
@@ -211,13 +219,21 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
          FROM shift_requests sr
          JOIN users u ON u.id = sr.user_id
          LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
-        WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_staff
+        WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_staff,
+      abr.approved_by_role
     FROM shifts s
     LEFT JOIN LATERAL (
       SELECT COUNT(*) FILTER (WHERE sr.status != 'denied') AS request_count,
              COUNT(*) FILTER (WHERE sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
       FROM shift_requests sr WHERE sr.shift_id = s.id
     ) rc ON true
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(jsonb_object_agg(position, c), '{}'::jsonb) AS approved_by_role
+      FROM (SELECT position, COUNT(*) c FROM shift_requests
+            WHERE shift_id = s.id AND status = 'approved' AND dropped_at IS NULL
+              AND position IS NOT NULL
+            GROUP BY position) g
+    ) abr ON true
     WHERE s.proposal_id = $1
     ORDER BY s.event_date ASC, s.start_time ASC, s.id ASC
     LIMIT 100
@@ -252,7 +268,8 @@ router.get('/detail/:id', auth, requireStaffing, asyncHandler(async (req, res) =
       SELECT sr.*,
         COALESCE(cp.preferred_name, u.email) AS staff_name,
         u.email AS staff_email,
-        cp.city AS staff_city
+        cp.city AS staff_city,
+        cp.reliable_transportation AS staff_reliable_transportation
       FROM shift_requests sr
       JOIN users u ON u.id = sr.user_id
       LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id

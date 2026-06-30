@@ -18,7 +18,8 @@ import useDrawerParam from '../../hooks/useDrawerParam';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
 import { fmt$, fmtDate, relDay, dayDiff } from '../../components/adminos/format';
-import { shiftPositions, parsePositionsCount, approvedCount, eventStatusChip, SHIFT_EQUIPMENT_OPTIONS, parseEquipmentArray } from '../../components/adminos/shifts';
+import { shiftPositions, parsePositionsCount, approvedCount, eventStatusChip, remainingByRole, SHIFT_EQUIPMENT_OPTIONS, parseEquipmentArray } from '../../components/adminos/shifts';
+import { ROLES } from '../../utils/staffingRoles';
 import AddressLink from '../../components/adminos/AddressLink';
 
 const TIME_SLOTS = [];
@@ -31,14 +32,33 @@ for (let h = 6; h < 24; h++) {
   }
 }
 
+// Per-role roster counts on the create form. The positions_needed array sent to
+// the server is built from these (NOT a flat Array(n).fill('Bartender')), so a
+// manual event can request banquet servers and barbacks too. Order here is the
+// display + slot-build order (bartenders first, then servers, then barbacks).
+const ROSTER_ROLES = [ROLES.BARTENDER, ROLES.BANQUET_SERVER, ROLES.BARBACK];
+
 const EMPTY_FORM = {
   client_name: '', client_email: '', client_phone: '',
   event_date: '', start_time: '', end_time: '', event_duration_hours: '',
-  location: '', guest_count: '', positions_needed: 1,
+  location: '', guest_count: '',
+  // Per-role headcount. Defaults to one bartender (the common manual event).
+  roster: { [ROLES.BARTENDER]: 1, [ROLES.BANQUET_SERVER]: 0, [ROLES.BARBACK]: 0 },
   // Token array consumed by the auto-assign equipment scorer. Defaults empty
   // (= no gear requirement, scorer awards full equipment credit to everyone).
   equipment_required: [],
 };
+
+// Builds the positions_needed array (one canonical label per slot) from the
+// per-role roster counts, in display order.
+function buildPositionsFromRoster(roster) {
+  const out = [];
+  for (const role of ROSTER_ROLES) {
+    const n = Math.max(0, parseInt(roster?.[role], 10) || 0);
+    for (let i = 0; i < n; i++) out.push(role);
+  }
+  return out;
+}
 
 export default function EventsDashboard() {
   const navigate = useNavigate();
@@ -82,6 +102,18 @@ export default function EventsDashboard() {
     }
   };
 
+  // Update a single role's headcount in the roster.
+  const setRosterCount = (role, value) => {
+    setForm(f => ({ ...f, roster: { ...f.roster, [role]: value } }));
+    if (fieldErrors.positions_needed) {
+      setFieldErrors(fe => {
+        const next = { ...fe };
+        delete next.positions_needed;
+        return next;
+      });
+    }
+  };
+
   // Add/remove an equipment token from form.equipment_required. parseEquipmentArray
   // keeps this correct whether the field holds the array default or a JSON-string
   // seed (edit-existing case).
@@ -103,10 +135,13 @@ export default function EventsDashboard() {
       setFieldErrors({ event_date: 'Event date is required.' });
       return;
     }
+    const positions = buildPositionsFromRoster(form.roster);
+    if (positions.length === 0) {
+      setFieldErrors({ positions_needed: 'Add at least one staff position.' });
+      return;
+    }
     setCreating(true);
     try {
-      const posCount = parseInt(form.positions_needed, 10) || 1;
-      const positions = Array.from({ length: posCount }, () => 'Bartender');
       const res = await api.post('/shifts', {
         client_name: form.client_name,
         client_email: form.client_email,
@@ -284,9 +319,23 @@ export default function EventsDashboard() {
                 <input className="input" type="number" min="1" value={form.guest_count} onChange={e => handleField('guest_count', e.target.value)} />
                 <FieldError error={fieldErrors?.guest_count} />
               </div>
-              <div>
-                <div className="meta-k" style={{ marginBottom: 4 }}>Positions needed</div>
-                <input className="input" type="number" min="1" value={form.positions_needed} onChange={e => handleField('positions_needed', e.target.value)} />
+              <div style={{ gridColumn: '1 / -1' }}>
+                <div className="meta-k" style={{ marginBottom: 4 }}>Staffing roster</div>
+                <div className="hstack" style={{ flexWrap: 'wrap', gap: 16 }}>
+                  {ROSTER_ROLES.map(role => (
+                    <label key={role} className="hstack" style={{ gap: 6, fontSize: 13 }}>
+                      <span style={{ minWidth: 110 }}>{role}</span>
+                      <input
+                        className="input"
+                        style={{ width: 72 }}
+                        type="number"
+                        min="0"
+                        value={form.roster[role]}
+                        onChange={e => setRosterCount(role, e.target.value)}
+                      />
+                    </label>
+                  ))}
+                </div>
                 <FieldError error={fieldErrors?.positions_needed} />
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
@@ -424,6 +473,18 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
   const guestCount = e.guest_count || e.proposal_guest_count;
   const fullyPaid = total > 0 && paid >= total;
 
+  // Pending requests beyond the open slots are effectively a waitlist. The admin
+  // /shifts feed carries request_count + approved_count (not a per-role waitlist),
+  // so this is the count of requests that cannot fill an open slot.
+  const remaining = remainingByRole(e);
+  const openSlots = Object.values(remaining).reduce((sum, n) => sum + Math.max(0, n), 0);
+  // A roster-less legacy row yields remaining {} (openSlots 0), which would count
+  // every normal pending request as waitlisted. Without a roster we cannot classify
+  // a waitlist, so report none rather than over-report.
+  const waitlistCount = Object.keys(remaining).length === 0
+    ? 0
+    : Math.max(0, Number(e.request_count || 0) - approvedCount(e) - openSlots);
+
   const kebabItems = useMemo(() => [
     {
       label: 'Assign Staff',
@@ -458,7 +519,14 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
       </td>
       <td className="muted"><AddressLink address={e.location} /></td>
       <td className="num">{guestCount || '—'}</td>
-      <td><StaffPills positions={shiftPositions(e)} /></td>
+      <td>
+        <div className="vstack" style={{ gap: 4, alignItems: 'flex-start' }}>
+          <StaffPills positions={shiftPositions(e)} />
+          {waitlistCount > 0 && (
+            <StatusChip kind="neutral">{waitlistCount} on waitlist</StatusChip>
+          )}
+        </div>
+      </td>
       <td>{e.proposal_id ? eventStatusChip(e) : <StatusChip kind="neutral">Manual</StatusChip>}</td>
       <td className="num">{total > 0 ? <strong>{fmt$(total)}</strong> : '—'}</td>
       <td className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : 'var(--ink-3)' }}>

@@ -16,7 +16,8 @@ import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import { fmtDate, fmtDateFull, relDay } from '../../components/adminos/format';
-import { parsePositionsCount, approvedCount } from '../../components/adminos/shifts';
+import { parsePositionsCount, approvedCount, remainingByRole } from '../../components/adminos/shifts';
+import { parsePositionsNeeded, rosterCounts, isEventFullyStaffed } from '../../utils/staffingRoles';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import EventEditForm from './EventEditForm';
 import BackButton from '../../components/adminos/BackButton';
@@ -286,6 +287,28 @@ export default function EventDetailPage() {
                     const filled = approvedCount(s);
                     const requestCount = Number(s.request_count || 0);
                     const staff = Array.isArray(s.approved_staff) ? s.approved_staff : [];
+                    // Per-role fill: "Bartender 2/2 · Banquet Server 0/1".
+                    const roster = parsePositionsNeeded(s.positions_needed);
+                    const neededByRole = rosterCounts(roster);
+                    const remaining = remainingByRole(s);
+                    const roleSummary = Object.keys(neededByRole).map(role => {
+                      const need = neededByRole[role];
+                      const have = need - Math.max(0, remaining[role] || 0);
+                      return `${role} ${have}/${need}`;
+                    });
+                    const fullyStaffed = roster.length > 0 && isEventFullyStaffed(remaining);
+                    const openSlots = Object.values(remaining).reduce((sum, n) => sum + Math.max(0, n), 0);
+                    // Per-role-capped coverage: a mixed-roster over-fill (a full role
+                    // masking an empty one) must never read "fully staffed". needed
+                    // minus open slots is the true filled-role count. Legacy rows with
+                    // no roster fall back to the flat approved/needed counts.
+                    const displayFilled = roster.length > 0 ? needed - openSlots : filled;
+                    const chipOk = roster.length > 0 ? fullyStaffed : filled >= needed;
+                    // Pending requests beyond the open slots are effectively a waitlist;
+                    // unknown on a roster-less legacy row, so do not over-report it.
+                    const waitlistCount = roster.length > 0
+                      ? Math.max(0, requestCount - filled - openSlots)
+                      : 0;
                     const openShift = () => drawer.open('shift', s.id);
                     return (
                       <div
@@ -298,13 +321,16 @@ export default function EventDetailPage() {
                         style={{ marginBottom: 10, cursor: 'pointer', padding: '8px 10px', margin: '0 -10px 4px', borderRadius: 4 }}
                         title="Manage shift"
                       >
-                        <div className="hstack" style={{ marginBottom: 6 }}>
+                        <div className="hstack" style={{ marginBottom: roleSummary.length > 1 ? 4 : 6, flexWrap: 'wrap' }}>
                           <strong>{s.event_date ? fmtDate(String(s.event_date).slice(0, 10)) : '—'}</strong>
                           <span className="tiny muted">{s.start_time || ''}{s.end_time ? ` – ${s.end_time}` : ''}</span>
                           <div className="spacer" />
-                          <StatusChip kind={filled >= needed ? 'ok' : filled > 0 ? 'warn' : 'danger'}>
-                            {filled}/{needed} staffed
+                          <StatusChip kind={chipOk ? 'ok' : displayFilled > 0 ? 'warn' : 'danger'}>
+                            {displayFilled}/{needed} staffed
                           </StatusChip>
+                          {waitlistCount > 0 && (
+                            <StatusChip kind="neutral">{waitlistCount} on waitlist</StatusChip>
+                          )}
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
@@ -313,6 +339,11 @@ export default function EventDetailPage() {
                             <Icon name="userplus" size={11} />Manage
                           </button>
                         </div>
+                        {roleSummary.length > 1 && (
+                          <div className="tiny muted" style={{ marginBottom: 6 }}>
+                            {roleSummary.join(' · ')}
+                          </div>
+                        )}
                         {staff.length > 0 ? (
                           <ul className="tiny" style={{ margin: 0, paddingLeft: 16, marginBottom: requestCount > 0 ? 4 : 0 }}>
                             {staff.map((member, idx) => {
@@ -335,7 +366,7 @@ export default function EventDetailPage() {
                           </ul>
                         ) : (
                           <div className="tiny muted" style={{ marginBottom: requestCount > 0 ? 4 : 0 }}>
-                            No bartenders assigned yet.
+                            No staff assigned yet.
                           </div>
                         )}
                         {requestCount > 0 && (
