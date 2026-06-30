@@ -8,6 +8,7 @@ const { pool } = require('../db');
 const { sendSMS, normalizePhone } = require('./sms');
 const { getEventTypeLabel } = require('./eventTypes');
 const { subtractMinutesFromTime } = require('./setupTime');
+const { parsePositionsNeeded, rosterCounts } = require('./positionsNeeded');
 const { scheduleStaffShiftMessages } = require('./staffShiftHandlers');
 const { confirmStaffingIfFullyStaffed } = require('./lastMinuteStaffingConfirmation');
 
@@ -135,24 +136,30 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
   }
   const shift = shiftResult.rows[0];
 
-  const positionsNeeded = JSON.parse(shift.positions_needed || '[]');
+  // Auto-assign fills BARTENDER slots only (servers/barbacks are admin-manual).
+  const positionsNeeded = parsePositionsNeeded(shift.positions_needed);
+  const bartenderSlots = rosterCounts(positionsNeeded).Bartender || 0;
   const equipmentRequired = JSON.parse(shift.equipment_required || '[]');
 
-  // Count already approved
+  // Count already-approved BARTENDERS (position is canonical; match case-insensitively).
   const approvedResult = await pool.query(
-    `SELECT COUNT(*) AS cnt FROM shift_requests WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL`,
+    `SELECT COUNT(*) AS cnt FROM shift_requests
+      WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL
+        AND LOWER(position) = 'bartender'`,
     [shiftId]
   );
   const alreadyApproved = parseInt(approvedResult.rows[0].cnt, 10);
-  const slotsRemaining = positionsNeeded.length - alreadyApproved;
+  const slotsRemaining = bartenderSlots - alreadyApproved;
 
   if (slotsRemaining <= 0) {
     return { approved: [], scores: [], message: 'All positions already filled.' };
   }
 
-  // 2. Fetch pending requests with contractor profiles
-  const pendingResult = await pool.query(`
-    SELECT sr.id AS request_id, sr.user_id, sr.position, sr.notes,
+  // 2. Fetch pending requests with contractor profiles, then keep only those
+  // eligible for a bartender slot: ranked Bartender, or left requested_positions
+  // empty (legacy / "any role"). Servers/barbacks are filled by admin.
+  const pendingRaw = await pool.query(`
+    SELECT sr.id AS request_id, sr.user_id, sr.position, sr.requested_positions, sr.notes,
            cp.preferred_name, cp.phone, cp.lat, cp.lng,
            cp.travel_distance, cp.equipment_portable_bar,
            cp.equipment_cooler, cp.equipment_table_with_spandex,
@@ -163,9 +170,15 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
     JOIN contractor_profiles cp ON cp.user_id = sr.user_id
     WHERE sr.shift_id = $1 AND sr.status = 'pending'
   `, [shiftId]);
+  const pendingResult = {
+    rows: pendingRaw.rows.filter((r) => {
+      const ranked = parsePositionsNeeded(r.requested_positions);
+      return ranked.length === 0 || ranked.includes('Bartender');
+    }),
+  };
 
   if (pendingResult.rows.length === 0) {
-    return { approved: [], scores: [], message: 'No pending requests to evaluate.' };
+    return { approved: [], scores: [], message: 'No pending bartender requests to evaluate.' };
   }
 
   // 3. Fetch events-worked count per candidate (completed events only)
@@ -307,7 +320,7 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
   const approved = [];
   if (selected.length) {
     await pool.query(
-      `UPDATE shift_requests SET status = 'approved', beo_acknowledged_at = NULL WHERE id = ANY($1)`,
+      `UPDATE shift_requests SET status = 'approved', position = 'Bartender', beo_acknowledged_at = NULL WHERE id = ANY($1)`,
       [selected.map(c => c.request_id)]
     );
   }

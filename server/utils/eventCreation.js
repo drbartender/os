@@ -3,6 +3,8 @@ const { pool } = require('../db');
 const { composeVenueLocation } = require('./venueAddress');
 const { effectiveSetupMinutes } = require('./setupTime');
 const { scheduleDrinkPlanNudge } = require('./drinkPlanNudge');
+const { parsePositionsNeeded, rosterCounts } = require('./positionsNeeded');
+const { canonicalizeRole } = require('./staffingRoles');
 
 /**
  * Convert a 24-hour time string (e.g. "17:00") and add hours to produce a new time string.
@@ -28,6 +30,111 @@ function formatTime12(timeStr) {
   const hour12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
   const ampm = h >= 12 ? 'PM' : 'AM';
   return `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+// === Staffing roster derivation (spec Section 1) ===========================
+
+// Recover headcount for a staffing add-on from its stored hours-quantity. The
+// divisor is per-slug: additional-bartender stores durationHours x headcount
+// (no minimum); banquet-server / barback store max(durationHours,4) x headcount
+// (4-hour minimum). A single uniform divisor mis-counts sub-4-hour events.
+function addonHeadcount(addons, slug, durationHours) {
+  const divisor = slug === 'additional-bartender'
+    ? Math.max(1, Number(durationHours) || 1)
+    : Math.max(Number(durationHours) || 0, 4);
+  return (addons || [])
+    .filter((a) => a.slug === slug)
+    .reduce((sum, a) => sum + Math.max(0, Math.round((Number(a.quantity) || 0) / divisor)), 0);
+}
+
+// Ordered roster of canonical role labels the client paid for: bartenders
+// (num_bartenders + additional-bartender add-on, the two additive channels),
+// then banquet servers, then barbacks. Pure; never throws.
+function deriveStaffingRoster(proposal, addons) {
+  const dur = Number(proposal && proposal.event_duration_hours) || 0;
+  const bartenders = (Number(proposal && proposal.num_bartenders) || 1)
+    + addonHeadcount(addons, 'additional-bartender', dur);
+  const servers = addonHeadcount(addons, 'banquet-server', dur);
+  const barbacks = addonHeadcount(addons, 'barback', dur);
+  const out = [];
+  for (let i = 0; i < bartenders; i++) out.push('Bartender');
+  for (let i = 0; i < servers; i++) out.push('Banquet Server');
+  for (let i = 0; i < barbacks; i++) out.push('Barback');
+  return out;
+}
+
+// Legacy proposal_addons rows whose addon_id went NULL on a service_addons
+// delete keep only addon_name; map the staffing ones back to a slug.
+const STAFFING_NAME_TO_SLUG = {
+  'additional bartender': 'additional-bartender',
+  'banquet server': 'banquet-server',
+  barback: 'barback',
+};
+
+// Load the proposal's staffing add-ons as [{slug, quantity(hours)}]. Snapshot
+// first (it carries slug + the hours-quantity); fall back to the proposal_addons
+// join when the snapshot has no addons[] (older / imported proposals). Never
+// throws on a malformed snapshot.
+async function loadStaffingAddons(proposal, db) {
+  try {
+    const snap = typeof proposal.pricing_snapshot === 'string'
+      ? JSON.parse(proposal.pricing_snapshot)
+      : proposal.pricing_snapshot;
+    if (snap && Array.isArray(snap.addons) && snap.addons.length) {
+      return snap.addons
+        .map((a) => ({ slug: a.slug, quantity: Number(a.quantity) || 0 }))
+        .filter((a) => a.slug);
+    }
+  } catch { /* fall through to the join */ }
+  const { rows } = await db.query(
+    `SELECT sa.slug, pa.quantity, pa.addon_name
+       FROM proposal_addons pa
+       LEFT JOIN service_addons sa ON sa.id = pa.addon_id
+      WHERE pa.proposal_id = $1`,
+    [proposal.id],
+  );
+  return rows
+    .map((r) => ({
+      slug: r.slug
+        || STAFFING_NAME_TO_SLUG[String(r.addon_name || '').trim().toLowerCase()]
+        || null,
+      quantity: Number(r.quantity) || 0,
+    }))
+    .filter((a) => a.slug);
+}
+
+// Whether the proposal is a hosted (per_guest) package. Snapshot first, else the
+// package row (package_id can be NULL after a package delete).
+async function isHostedProposal(proposal, db) {
+  try {
+    const snap = typeof proposal.pricing_snapshot === 'string'
+      ? JSON.parse(proposal.pricing_snapshot)
+      : proposal.pricing_snapshot;
+    if (snap && snap.package && snap.package.pricing_type) {
+      return snap.package.pricing_type === 'per_guest';
+    }
+  } catch { /* fall through */ }
+  if (!proposal.package_id) return false;
+  const { rows } = await db.query(
+    'SELECT pricing_type FROM service_packages WHERE id = $1',
+    [proposal.package_id],
+  );
+  return rows[0] ? rows[0].pricing_type === 'per_guest' : false;
+}
+
+// Supply-run default: a hosted event (DRB provides everything) OR any add-on
+// flagged requires_provisioning needs a Pilsen pickup and/or a shopping run.
+function computeSupplyRunDefault(isHosted, addons, provisioningSlugs) {
+  if (isHosted) return true;
+  return (addons || []).some((a) => provisioningSlugs.has(a.slug));
+}
+
+// Set of addon slugs flagged requires_provisioning.
+async function provisioningSlugSet(db) {
+  const { rows } = await db.query(
+    'SELECT slug FROM service_addons WHERE requires_provisioning = true',
+  );
+  return new Set(rows.map((r) => r.slug));
 }
 
 /**
@@ -123,17 +230,22 @@ async function createEventShifts(proposalId) {
     }
   }
 
-  // Build positions_needed as array of strings (matches existing pattern)
-  const numBartenders = proposal.num_bartenders || 1;
-  const positions = Array(numBartenders).fill('Bartender');
+  // Build positions_needed from the FULL paid roster: bartenders (num_bartenders
+  // plus the additional-bartender add-on), banquet servers, and barbacks.
+  const addons = await loadStaffingAddons(proposal, pool);
+  const positions = deriveStaffingRoster(proposal, addons);
+  // Supply-run default (hosted OR any provisioning add-on).
+  const provSlugs = await provisioningSlugSet(pool);
+  const isHosted = await isHostedProposal(proposal, pool);
+  const supplyRunRequired = computeSupplyRunDefault(isHosted, addons, provSlugs);
 
   // Insert the shift. setup_minutes_before mirrors the proposal's effective
   // value (explicit override, else 90 hosted / 60 — derived from pricing_snapshot
   // which is in hand via SELECT p.*). Informational only — start_time stays equal
   // to service start; this never shifts the billable/pay window.
   const shiftResult = await pool.query(`
-    INSERT INTO shifts (event_type, event_type_custom, client_name, event_date, start_time, end_time, location, setup_minutes_before, positions_needed, notes, status, proposal_id, created_by, client_email, client_phone, guest_count, event_duration_hours)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11, $12, $13, $14, $15, $16)
+    INSERT INTO shifts (event_type, event_type_custom, client_name, event_date, start_time, end_time, location, setup_minutes_before, positions_needed, notes, status, proposal_id, created_by, client_email, client_phone, guest_count, event_duration_hours, supply_run_required)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11, $12, $13, $14, $15, $16, $17)
     RETURNING *
   `, [
     proposal.event_type || null,
@@ -155,7 +267,8 @@ async function createEventShifts(proposalId) {
     proposal.client_email || null,
     proposal.client_phone || null,
     proposal.guest_count ?? null,
-    proposal.event_duration_hours ?? null
+    proposal.event_duration_hours ?? null,
+    supplyRunRequired
   ]);
 
   // Auto-create the linked drink plan (non-blocking). No client email here —
@@ -216,23 +329,46 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
   // Reconcile staffing slots to the proposal's bartender count (spec 6.1). Grow
   // freely; on shrink never drop below already-approved (non-dropped) assignments,
   // capping there and logging staffing_shrink_capped so admin resolves by hand.
-  const desiredSlots = Math.max(1, Number(proposal.num_bartenders) || 1);
+  // Reconcile slots to the FULL paid roster, per role. Grow freely; on shrink
+  // never drop a role below its already-approved (non-dropped) assignments,
+  // capping there and logging staffing_shrink_capped per role.
+  const addons = await loadStaffingAddons(proposal, db);
+  const desired = rosterCounts(deriveStaffingRoster(proposal, addons));
   const approvedRes = await db.query(
-    `SELECT COUNT(*)::int AS n FROM shift_requests
+    `SELECT position, COUNT(*)::int AS n FROM shift_requests
        WHERE shift_id = (SELECT id FROM shifts WHERE proposal_id = $1 LIMIT 1)
-         AND status = 'approved' AND dropped_at IS NULL`,
+         AND status = 'approved' AND dropped_at IS NULL
+       GROUP BY position`,
     [proposalId]
   );
-  const approvedCount = approvedRes.rows[0].n;
-  const slots = Math.max(desiredSlots, approvedCount);
-  if (approvedCount > desiredSlots) {
-    await db.query(
-      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
-       VALUES ($1, 'staffing_shrink_capped', 'system', $2)`,
-      [proposalId, JSON.stringify({ desired: desiredSlots, approved: approvedCount, kept: slots })]
-    );
+  const approvedByRole = {};
+  for (const r of approvedRes.rows) {
+    // A NULL / non-canonical approved position counts as Bartender (the legacy
+    // default, and what the migration normalized existing rows to), so the
+    // per-role shrink cap can never silently drop a real assignment.
+    const role = canonicalizeRole(r.position) || 'Bartender';
+    approvedByRole[role] = (approvedByRole[role] || 0) + r.n;
   }
-  const positionsNeeded = JSON.stringify(Array(slots).fill('Bartender'));
+  const finalPositions = [];
+  for (const role of ['Bartender', 'Banquet Server', 'Barback']) {
+    const want = desired[role] || 0;
+    const have = approvedByRole[role] || 0;
+    const slots = Math.max(want, have);
+    if (have > want) {
+      await db.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
+         VALUES ($1, 'staffing_shrink_capped', 'system', $2)`,
+        [proposalId, JSON.stringify({ role, desired: want, approved: have, kept: slots })]
+      );
+    }
+    for (let i = 0; i < slots; i++) finalPositions.push(role);
+  }
+  if (finalPositions.length === 0) finalPositions.push('Bartender');
+  const positionsNeeded = JSON.stringify(finalPositions);
+  // Supply-run default, applied only when an admin has not overridden it.
+  const provSlugs = await provisioningSlugSet(db);
+  const isHosted = await isHostedProposal(proposal, db);
+  const supplyRunDefault = computeSupplyRunDefault(isHosted, addons, provSlugs);
   // setup_minutes_before re-derives from the proposal each sync (same rule as
   // createEventShifts). Multi-shift events are skipped by the count !== 1 guard
   // above (by design — the admin manages those per shift via PUT /shifts/:id).
@@ -249,6 +385,7 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
       event_type_custom = $7,
       setup_minutes_before = $9,
       positions_needed = $10,
+      supply_run_required = CASE WHEN supply_run_overridden THEN supply_run_required ELSE $15 END,
       client_email = $11,
       client_phone = $12,
       guest_count = $13,
@@ -272,8 +409,15 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
     proposal.client_phone || null,
     proposal.guest_count ?? null,
     proposal.event_duration_hours ?? null,
+    supplyRunDefault,
   ]);
   return upd.rows[0] || null;
 }
 
-module.exports = { createEventShifts, createDrinkPlan, syncShiftsFromProposal };
+module.exports = {
+  createEventShifts,
+  createDrinkPlan,
+  syncShiftsFromProposal,
+  deriveStaffingRoster,
+  loadStaffingAddons,
+};
