@@ -181,6 +181,7 @@ dr-bartender/
 │   │   │   └── changeRequests.js # Admin change-request endpoints (queue, per-proposal list, decline)
 │   │   ├── shifts.js           # Shift scheduling
 │   │   ├── shifts.queries.js   # Extracted SQL projections/queries for shifts.js
+│   │   ├── shifts.approval.js  # Request/assign/approve handlers + position-resolution money seam (extracted from shifts.js)
 │   │   ├── staffShiftActions.js # Drop / Cover shift marketplace (drop, request-cover, claim-cover, emergency-drop, withdraw) under /api/shifts
 │   │   ├── adminCoverSwaps.js  # Admin cover-swap approval endpoints (mounted under /api/admin)
 │   │   ├── sms.js              # Twilio inbound-SMS webhook + admin thread API
@@ -327,7 +328,7 @@ dr-bartender/
 │   │   │                       # admin/SourceBadge (small "Thumbtack" origin badge next to a proposal's client name when source='thumbtack'),
 │   │   │                       # StaffShell + StaffShellWithThemeWiring (staff portal v2 layout shell — bottom tab bar + user pill, outlet for routed pages),
 │   │   │                       # StaffUserPillMenu (account-pill dropdown rendered by StaffShell)
-│   │   │   ├── staff/          # Staff portal redesign shared components (Placeholder; ShiftCard; TeamRosterCard; DropCoverModal; BeoSections; PayoutEventRow)
+│   │   │   ├── staff/          # Staff portal redesign shared components (Placeholder; ShiftCard; TeamRosterCard; DropCoverModal; BeoSections; PayoutEventRow; LogisticsTag; RoleRankPicker; RequestSheet)
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
 │   │   │   │                   # StatusChip, StaffPills, AreaChart, Sparkline, Toolbar, Icon, KebabMenu, AddressLink,
 │   │   │   │                   # InterviewScheduleModal, PackageIncludesModal, MetricsFilterBar,
@@ -503,7 +504,9 @@ Imports legacy proposals, events, payments, refunds, payouts, leads, and invoice
 - Reschedule, cancellation, denial, and re-assignment all cascade into the nudge queue: pending rows are reanchored, suppressed, or recreated as needed, with a NOT EXISTS guard so a staffer covered on multiple shifts keeps their nudge.
 
 ### Shifts & Profile
-- View available shifts and request assignments
+- View available shifts and request assignments. Each shift derives a per-role roster (bartenders + banquet servers + barbacks) from the paid proposal; the staff feed shows per-role fill ("Bartender 2/2 · Banquet Server 0/1") with an "Available" vs "All" tab split.
+- Ranked role requests: a staffer picks and orders the roles they can work; the canonical role is resolved and written at admin approval (never silently defaulted to Bartender). A request whose ranked roles are all full is a computed waitlist (self-serve "Leave waitlist"), with a low-key waitlist-join email sent once on the transition in.
+- Logistics gating: each shift shows a green "Bar Kit Only" tag or an equipment/supply warning; a transport-required shift (gear haul or supply run) makes the staffer acknowledge the requirement before requesting, and admins edit equipment + supply-run per shift.
 - Profile and notification management
 
 ## Deployment

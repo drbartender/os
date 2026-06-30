@@ -701,6 +701,7 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `rate`, `extra_hour_rate`
 - `applies_to`: byob | hosted | all | class
 - `linked_package_id` FK → service_packages (nullable, ON DELETE SET NULL) — ties supply add-ons to a specific class package; NULL addons are universal (e.g., class equipment kits)
+- `requires_provisioning` (BOOLEAN, default false) — true for every consumable/gear add-on (mixers, glassware, kits, specialty spirits, etc.); false for staffing/fee add-ons. Drives the shift `supply_run_required` default: a non-hosted event carrying any provisioning add-on needs a supply run. Seeded in `schema.sql`.
 
 **proposals** — Generated service proposals
 - `token` UUID (public access), `client_id` FK → clients
@@ -829,15 +830,19 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 **shifts** — Event shifts
 - `event_type`, `event_type_custom`, `client_name`, `event_date`, `start_time`, `end_time`, `location`
 - `setup_minutes_before` (INTEGER DEFAULT 60) — informational crew setup lead time. `start_time` is **always** equal to service start; setup is NOT a change to the billable/pay window. Editable directly via `PUT /shifts/:id` (COALESCE — omitting it preserves the row). Auto-synced from the proposal's effective value by `createEventShifts` / `syncShiftsFromProposal`, but **only for single-shift events** (the `count !== 1` guard skips hand-built multi-shift events by design — the admin sets those per shift). Staff surfaces always read the shift's own value, so multi-shift events stay consistent. Back-of-house only — never sent to clients.
-- `positions_needed` (JSON text array, e.g. `["Bartender","Bartender"]`), `status`, `created_by`
+- `positions_needed` (JSON text array of canonical role labels — the FULL paid roster: bartenders + banquet servers + barbacks, e.g. `["Bartender","Bartender","Banquet Server"]`), `status`, `created_by`. Derived by `deriveStaffingRoster` (`server/utils/eventCreation.js`) from `num_bartenders` + the staffing add-ons; re-derivable by `scripts/backfill-positions-needed.js`. Always parse via `parsePositionsNeeded` (handles both the flat-array and legacy `[{position,count}]` shapes).
 - `proposal_id` FK (nullable) — links to the proposal that created this shift (auto-created on deposit payment)
 - `lat`, `lng` — Geocoded event coordinates
-- `equipment_required` (JSON text array, e.g. `["portable_bar","cooler"]`)
+- `equipment_required` (JSON text array of tokens `portable_bar` / `cooler` / `table_with_spandex`, e.g. `["portable_bar","cooler"]`). Together with `supply_run_required` it gates the staff transport acknowledgment on a shift request.
+- `supply_run_required` (BOOLEAN, default false) — the shift needs a Pilsen pickup / shopping run (hosted event OR any `requires_provisioning` add-on). Surfaced to staff as a logistics tag ("Bar Kit Only" vs warning).
+- `supply_run_overridden` (BOOLEAN, default false) — set true when an admin manually toggles `supply_run` via `PUT /shifts/:id`; while true, `syncShiftsFromProposal` stops recomputing the default so the manual decision sticks.
 - `auto_assign_days_before` — Schedule auto-assign N days before event; `auto_assigned_at` — timestamp of last auto-assign run
 
 **shift_requests** — Staff applying for shifts
 - `shift_id` FK, `user_id` FK (unique together)
-- `position`, `status` (pending/approved/rejected), `notes`
+- `position`, `status` (pending/approved/rejected), `notes`. `position` is the resolved canonical role and the only money-sensitive field here (payroll's tip split keys on `LOWER(position)='bartender'`). It is NULL on a fresh request and written at approval from the staffer's `requested_positions` (or an admin override). The request / assign / approve handlers and the position-resolution logic live in `server/routes/shifts.approval.js` (extracted from `shifts.js`); a `shift_requests_position_canonical` CHECK enforces canonical values.
+- `requested_positions` (TEXT, default `'[]'`) — the staffer's RANKED role preferences (JSON array of canonical labels). Drives the computed waitlist (`server/utils/staffingClassification.js`): a pending request whose ranked roles are all full is treated as waitlisted (no stored "waitlisted" status). Empty = "any open role" (legacy / back-filled rows).
+- `transport_acknowledged_at` (TIMESTAMP) — set when the staffer acknowledges the equipment/supply transport requirement when requesting a transport-required shift; cleared when the event is no longer transport-required, and re-required on each submit if the logistics escalate.
 - `acknowledged_at` TIMESTAMPTZ — set when the assigned staff member texts CONFIRM for the shift (Comms Phase 2 two-way SMS). Lives on the per-(shift, staff) row, not on `shifts`. Index `idx_shift_requests_user_id` on `user_id` supports the inbound-SMS nearest-approved-shift lookup.
 - `beo_acknowledged_at` TIMESTAMPTZ — BEO read-receipt stamp set by `POST /api/beo/:proposalId/acknowledge`. Independent from `acknowledged_at` (shift CONFIRM); a staffer who has CONFIRMed the shift still must open the BEO to acknowledge it. Cleared on Unfinalize, on re-assign (`POST /:id/assign`), on approve-after-deny re-request, on `PUT /requests/:requestId` deny/approve, and on auto-assign promotion — so a stale ack from a prior cycle never carries forward.
 
