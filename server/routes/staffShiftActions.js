@@ -35,6 +35,8 @@ const {
 const { hoursToEvent } = require('../utils/shiftTime');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { getEventTypeLabel } = require('../utils/eventTypes');
+const { parsePositionsNeeded } = require('../utils/positionsNeeded');
+const { canonicalizeRole } = require('../utils/staffingRoles');
 const { ADMIN_URL } = require('../utils/urls');
 const { sendEmail } = require('../utils/email');
 const { broadcastCoverRequest } = require('../utils/coverBroadcast');
@@ -550,20 +552,13 @@ router.post('/requests/:shiftId/claim-cover', asyncHandler(async (req, res) => {
     if (!claimerPosition) {
       throw new PermissionError('Your contractor profile is missing a position.');
     }
-    // Parse positions_needed tolerantly (see coverBroadcast.parsePositionsNeeded).
-    let positionsNeededList = [];
-    try {
-      const raw = orig.positions_needed;
-      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      if (Array.isArray(parsed)) {
-        positionsNeededList = parsed.map((p) => (typeof p === 'string' ? p : p?.position)).filter(Boolean);
-      } else if (typeof parsed === 'string') {
-        positionsNeededList = [parsed];
-      }
-    } catch {
-      positionsNeededList = ['bartender'];
-    }
-    if (positionsNeededList.length > 0 && !positionsNeededList.includes(claimerPosition)) {
+    // Canonical, case-insensitive eligibility: the claimer's role must be one
+    // the shift needs. parsePositionsNeeded + canonicalizeRole normalize both
+    // sides so a legacy 'server' / lowercase profile still matches.
+    const positionsNeededList = parsePositionsNeeded(orig.positions_needed);
+    const claimerCanon = canonicalizeRole(claimerPosition);
+    if (positionsNeededList.length > 0
+        && (!claimerCanon || !positionsNeededList.includes(claimerCanon))) {
       throw new PermissionError(`Position '${claimerPosition}' is not eligible for this shift.`);
     }
 
@@ -583,7 +578,7 @@ router.post('/requests/:shiftId/claim-cover', asyncHandler(async (req, res) => {
              cover_requested_at = NULL
          WHERE shift_requests.status <> 'approved'
        RETURNING id`,
-      [shiftId, req.user.id, claimerPosition, orig.original_request_id]
+      [shiftId, req.user.id, claimerCanon, orig.original_request_id]
     );
     if (upsertRows.length === 0) {
       // The conflict path's WHERE filtered us out — claimer already approved.
@@ -619,7 +614,7 @@ router.post('/requests/:shiftId/claim-cover', asyncHandler(async (req, res) => {
         event_date_long: formatEventDateLong(orig.event_date),
         start_time: orig.start_time,
         client_name: orig.client_name,
-        position: claimerPosition,
+        position: claimerCanon,
       },
     };
   } catch (err) {

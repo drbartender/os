@@ -30,6 +30,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { enqueueCategorizedMessage } = require('./messageScheduling');
 const { STAFF_URL } = require('./urls');
+const { canonicalizeRole } = require('./staffingRoles');
 
 const MAX_TARGETS = 500;
 const PROBE_LIMIT = MAX_TARGETS + 1; // SELECT one extra so we can detect truncation
@@ -126,6 +127,12 @@ async function broadcastCoverRequest(shiftId, requestingUserId) {
   }
   const shift = shiftRows[0];
   const positionsNeeded = parsePositionsNeeded(shift.positions_needed);
+  // Canonical, lowercased role set for the eligibility match. The SQL CASE
+  // canonicalizes cp.position to the same shape, so a legacy 'server' /
+  // lowercase contractor profile still matches a canonical roster.
+  const matchRoles = [...new Set(
+    positionsNeeded.map((r) => canonicalizeRole(r)).filter(Boolean).map((r) => r.toLowerCase()),
+  )];
 
   // Defensive: a shift with no positions yields no broadcast.
   if (positionsNeeded.length === 0) {
@@ -145,7 +152,12 @@ async function broadcastCoverRequest(shiftId, requestingUserId) {
       WHERE u.role IN ('staff', 'manager')
         AND u.onboarding_status = 'approved'
         AND u.id <> $1
-        AND cp.position = ANY($2::text[])
+        AND CASE
+              WHEN LOWER(cp.position) IN ('banquet server', 'server') THEN 'banquet server'
+              WHEN LOWER(cp.position) = 'barback' THEN 'barback'
+              WHEN LOWER(cp.position) = 'bartender' THEN 'bartender'
+              ELSE LOWER(cp.position)
+            END = ANY($2::text[])
         AND (
           u.staff_notification_preferences IS NULL
           OR (u.staff_notification_preferences->'channels'->'cover_needed') IS NULL
@@ -162,7 +174,7 @@ async function broadcastCoverRequest(shiftId, requestingUserId) {
         )
       ORDER BY u.id ASC
       LIMIT ${PROBE_LIMIT}`,
-    [requestingUserId, positionsNeeded, shift.event_date]
+    [requestingUserId, matchRoles, shift.event_date]
   );
 
   const truncated = teammates.length > MAX_TARGETS;
