@@ -11,16 +11,29 @@
 // cover (any active cover-requesting shift_request on this shift + the
 // requester's first initial). Cover LATERAL returns NULL columns when no
 // teammate has flipped cover on the shift.
+// Columns are projected explicitly (not s.*) to keep client_email / client_phone
+// OFF the staff feed: staff never need the client's contact info. equipment_required
+// + supply_run_required ride along for the logistics tag. approved_by_role is the
+// per-role approved-active aggregate the staff card needs to compute per-role fill
+// (the staff feed does not return the full requests list, so it cannot count
+// client-side the way the admin drawer does).
 const STAFF_OPEN_SHIFTS_SQL = `
-  SELECT s.*,
+  SELECT
+    s.id, s.event_date, s.start_time, s.end_time, s.location, s.positions_needed,
+    s.notes, s.status, s.created_by, s.created_at, s.updated_at, s.proposal_id,
+    s.lat, s.lng, s.equipment_required, s.auto_assign_days_before, s.auto_assigned_at,
+    s.setup_minutes_before, s.client_name, s.guest_count, s.event_duration_hours,
+    s.event_type, s.event_type_custom, s.supply_run_required, s.supply_run_overridden,
     sr.id   AS my_request_id,
     sr.status AS my_request_status,
     sr.position AS my_request_position,
+    sr.requested_positions AS my_requested_positions,
     sr.beo_acknowledged_at AS my_beo_acknowledged_at,
     dp.finalized_at AS drink_plan_finalized_at,
     dp.status AS drink_plan_status,
     cov.cover_requested_at,
-    cov.cover_for_first_initial
+    cov.cover_for_first_initial,
+    abr.approved_by_role
   FROM shifts s
   LEFT JOIN shift_requests sr ON sr.shift_id = s.id AND sr.user_id = $1
   LEFT JOIN drink_plans dp ON dp.proposal_id = s.proposal_id
@@ -33,6 +46,15 @@ const STAFF_OPEN_SHIFTS_SQL = `
        AND csr.status = 'approved' AND csr.dropped_at IS NULL
      ORDER BY csr.cover_requested_at ASC LIMIT 1
   ) cov ON true
+  LEFT JOIN LATERAL (
+    SELECT COALESCE(jsonb_object_agg(position, c), '{}'::jsonb) AS approved_by_role
+      FROM (
+        SELECT position, COUNT(*) c FROM shift_requests
+         WHERE shift_id = s.id AND status = 'approved' AND dropped_at IS NULL
+           AND position IS NOT NULL
+         GROUP BY position
+      ) g
+  ) abr ON true
   WHERE s.status = 'open' AND s.event_date >= CURRENT_DATE
   ORDER BY s.event_date ASC LIMIT 500
 `;
