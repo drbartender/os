@@ -3278,3 +3278,42 @@ CREATE TABLE IF NOT EXISTS message_log (
 -- the same created_at (back-to-back sends on one connection), so newest-first is stable.
 CREATE INDEX IF NOT EXISTS idx_message_log_proposal
   ON message_log (proposal_id, created_at DESC, id DESC);
+
+-- ===========================================================================
+-- Staffing roster + waitlist + logistics
+-- (spec docs/superpowers/specs/2026-06-30-staffing-roster-and-waitlist-design.md)
+-- ===========================================================================
+-- The staffer's ranked, willing roles at request time (ordered JSON array of
+-- canonical labels). The resolved single role goes in shift_requests.position
+-- at approval; this is the ranked preference list.
+ALTER TABLE shift_requests ADD COLUMN IF NOT EXISTS requested_positions TEXT DEFAULT '[]';
+-- Set when a staffer acknowledges they can transport equipment/supplies on a
+-- transport-required event. NULL on Bar Kit Only events.
+ALTER TABLE shift_requests ADD COLUMN IF NOT EXISTS transport_acknowledged_at TIMESTAMP;
+-- Effective "this event needs a supply run" flag the UI reads. Computed default
+-- (hosted OR any requires_provisioning add-on) unless an admin overrode it.
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS supply_run_required BOOLEAN DEFAULT false;
+-- When true, syncShiftsFromProposal does NOT recompute supply_run_required
+-- (an admin set it by hand).
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS supply_run_overridden BOOLEAN DEFAULT false;
+-- True for consumable/gear add-ons that require staff to acquire/transport
+-- something (drives the supply-run default). False for staffing + fee add-ons.
+ALTER TABLE service_addons ADD COLUMN IF NOT EXISTS requires_provisioning BOOLEAN DEFAULT false;
+
+-- NOTE: the case-insensitive CHECK on shift_requests.position is added by
+-- scripts/migrate-staffing-roles.js AFTER it normalizes legacy values. An inline
+-- CHECK here would fail to apply against existing 'Server'/lowercase rows.
+
+-- Seed requires_provisioning. Every consumable/gear add-on is true; staffing
+-- (additional-bartender, barback, banquet-server) and pure-fee add-ons are
+-- false. Re-verify against the live catalog (SELECT slug,name,category FROM
+-- service_addons ORDER BY slug) before any future add-on lands.
+UPDATE service_addons SET requires_provisioning = true WHERE slug IN (
+  'ice-delivery-only','bottled-water-only','signature-mixers-only','full-mixers-only',
+  'garnish-package-only','cups-disposables-only','soft-drink-addon','zero-proof-spirits',
+  'non-alcoholic-beer','champagne-toast','pre-batched-mocktail','mocktail-bar',
+  'house-made-ginger-beer','carbonated-cocktails','flavor-blaster-rental','handcrafted-syrups',
+  'handcrafted-syrups-3pack','real-glassware','champagne-coupe-upgrade','smoked-cocktail-kit',
+  'specialty-mezcal','specialty-bitter-aperitifs','specialty-vermouths','specialty-niche-liqueurs',
+  'specialty-cognac','class-tool-kit-rental','class-tool-kit-purchase'
+);
