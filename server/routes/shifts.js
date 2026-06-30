@@ -2,23 +2,18 @@ const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
-const { sendSMS, normalizePhone } = require('../utils/sms');
 const { geocodeAddress } = require('../utils/geocode');
 const { autoAssignShift } = require('../utils/autoAssign');
-const { sendEmail } = require('../utils/email');
-const emailTemplates = require('../utils/emailTemplates');
-const { notifyAdminCategory } = require('../utils/adminNotifications');
-const { getEventTypeLabel } = require('../utils/eventTypes');
-const { subtractMinutesFromTime } = require('../utils/setupTime');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError, PermissionError, ConflictError } = require('../utils/errors');
-const { ADMIN_URL } = require('../utils/urls');
 const { findOrCreateClient } = require('../utils/clientDedup');
-const { scheduleStaffShiftMessages, notifyStaffOfCancellation } = require('../utils/staffShiftHandlers');
-const { confirmStaffingIfFullyStaffed } = require('../utils/lastMinuteStaffingConfirmation');
+const { notifyStaffOfCancellation } = require('../utils/staffShiftHandlers');
 const { suppressBeoNudgesForStaffers } = require('../utils/beoHandlers');
-const { approveAndCascade } = require('../utils/coverApprovalCascade');
 const { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL } = require('./shifts.queries');
+// Request -> approval money seam extracted to keep this file under the 1000-line
+// hard cap. shifts.js still owns the route table + shared middleware; the bulky
+// handler bodies (and position resolution) live in shifts.approval.js.
+const { requestShiftHandler, assignShiftHandler, approveOrDenyRequestHandler, EQUIPMENT_TOKENS } = require('./shifts.approval');
 
 const router = express.Router();
 
@@ -270,61 +265,10 @@ router.get('/detail/:id', auth, requireStaffing, asyncHandler(async (req, res) =
   res.json({ shift: result.rows[0], requests: reqResult.rows });
 }));
 
-/** POST /shifts/:id/request — staff requests to work a shift */
-router.post('/:id/request', auth, requireOnboarded, asyncHandler(async (req, res) => {
-  const { position, notes } = req.body;
-  const shiftRes = await pool.query(
-    "SELECT id FROM shifts WHERE id = $1 AND status = 'open'",
-    [req.params.id]
-  );
-  if (!shiftRes.rows[0]) {
-    throw new NotFoundError('Shift not available.');
-  }
-  // BEO: a staffer re-requesting after a denial counts as a fresh cycle —
-  // clear any stale ack only if prior status was 'denied'. If the existing
-  // row was already pending/approved (rare race), keep its ack flag.
-  const result = await pool.query(`
-    INSERT INTO shift_requests (shift_id, user_id, position, notes)
-    VALUES ($1, $2, $3, $4)
-    ON CONFLICT (shift_id, user_id) DO UPDATE
-      SET position = $3,
-          notes = $4,
-          status = 'pending',
-          beo_acknowledged_at = CASE WHEN shift_requests.status = 'denied' THEN NULL ELSE shift_requests.beo_acknowledged_at END
-    RETURNING *
-  `, [req.params.id, req.user.id, position || null, notes || null]);
-
-  // Notify admins subscribed to urgent_staffing of a new shift request (non-blocking).
-  try {
-    const shiftInfo = await pool.query(`
-      SELECT s.event_type, s.event_type_custom, s.event_date, cp.preferred_name
-      FROM shifts s LEFT JOIN contractor_profiles cp ON cp.user_id = $2
-      WHERE s.id = $1
-    `, [req.params.id, req.user.id]);
-    const si = shiftInfo.rows[0];
-    const staffName = si?.preferred_name || req.user.email || 'A staff member';
-    const eventDate = si?.event_date
-      ? new Date(si.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
-      : 'TBD';
-    const tpl = emailTemplates.shiftRequestAdmin({
-      staffName,
-      eventTypeLabel: getEventTypeLabel({ event_type: si?.event_type, event_type_custom: si?.event_type_custom }),
-      eventDate,
-      position: position || 'Bartender',
-      adminUrl: `${ADMIN_URL}/staffing`,
-    });
-    await notifyAdminCategory({
-      category: 'urgent_staffing',
-      subject: tpl.subject,
-      emailHtml: tpl.html,
-      emailText: tpl.text,
-    });
-  } catch (emailErr) {
-    console.error('Shift request notification failed (non-blocking):', emailErr);
-  }
-
-  res.status(201).json(result.rows[0]);
-}));
+/** POST /shifts/:id/request — staff requests to work a shift (ranked roles +
+ *  transport ack). Position is resolved at approval, not here. See
+ *  shifts.approval.js. */
+router.post('/:id/request', auth, requireOnboarded, asyncHandler(requestShiftHandler));
 
 /** DELETE /shifts/requests/:requestId — staff withdraws their own request
  *  (pending-only); admin/manager can delete any status. */
@@ -440,12 +384,26 @@ router.post('/', auth, requireStaffing, asyncHandler(async (req, res) => {
 router.put('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
   const { event_type, event_type_custom, event_date, start_time, end_time, location, positions_needed, notes, status,
           equipment_required, auto_assign_days_before, setup_minutes_before, lat, lng,
-          client_name, client_email, client_phone, guest_count, event_duration_hours } = req.body;
+          client_name, client_email, client_phone, guest_count, event_duration_hours, supply_run } = req.body;
+  // Equipment tokens are a closed set; reject anything else so the logistics
+  // tag + transport gate never key off an unknown value. Only validated when
+  // the field is present (PATCH semantics keep the prior value otherwise).
+  if (equipment_required !== undefined) {
+    if (!Array.isArray(equipment_required)
+        || equipment_required.some((t) => typeof t !== 'string' || !EQUIPMENT_TOKENS.includes(t))) {
+      throw new ValidationError({ equipment_required: 'Invalid equipment selection.' });
+    }
+  }
+  if (supply_run !== undefined && typeof supply_run !== 'boolean') {
+    throw new ValidationError({ supply_run: 'supply_run must be a boolean.' });
+  }
   // PATCH semantics: missing fields preserve existing values via COALESCE.
   // The previous version sent '[]' for omitted positions_needed /
   // equipment_required, silently wiping staffing + gear when the admin only
   // edited a date or note. Pass null for omitted JSONB fields so COALESCE
-  // keeps the prior row.
+  // keeps the prior row. supply_run is a manual override: when sent it sets
+  // supply_run_required AND flags supply_run_overridden so syncShiftsFromProposal
+  // stops recomputing it; editing equipment_required never touches supply fields.
   const updateSql = `
     UPDATE shifts SET
       event_type = $1, event_type_custom = $2,
@@ -463,6 +421,8 @@ router.put('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
       client_phone = COALESCE($18, client_phone),
       guest_count = COALESCE($19, guest_count),
       event_duration_hours = COALESCE($20, event_duration_hours),
+      supply_run_required = CASE WHEN $21::boolean IS NULL THEN supply_run_required ELSE $21::boolean END,
+      supply_run_overridden = CASE WHEN $21::boolean IS NULL THEN supply_run_overridden ELSE true END,
       updated_at = NOW()
     WHERE id = $14 RETURNING *
   `;
@@ -480,6 +440,7 @@ router.put('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
     client_name || null, client_email || null, client_phone || null,
     guest_count ? parseInt(guest_count, 10) : null,
     event_duration_hours ? parseFloat(event_duration_hours) : null,
+    supply_run === undefined ? null : supply_run,
   ];
 
   // BEO: shift-cancel path wraps UPDATE + suppression in a transaction so
@@ -675,135 +636,9 @@ router.post('/:id/cancel-or-unassign', auth, requireStaffing, asyncHandler(async
   res.json({ success: true, mode, affected_staff: affectedUserIds.length });
 }));
 
-/** POST /shifts/:id/assign — admin manually assigns a staff member */
-router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) => {
-  const { user_id, position } = req.body;
-  if (!user_id) throw new ValidationError({ user_id: 'user_id is required.' });
-
-  // Verify the shift exists
-  const shiftRes = await pool.query('SELECT * FROM shifts WHERE id = $1', [req.params.id]);
-  if (!shiftRes.rows[0]) throw new NotFoundError('Shift not found.');
-
-  // Verify the target is a real, onboarded worker (staff OR manager — managers are a worker
-  // class, same as the messages.js recipient allow-list and the self-request path) before
-  // creating the request. A typo, stale id, or non-worker (admin) would otherwise insert an
-  // orphan shift_request whose downstream SMS/email blocks silently no-op (audit 3c).
-  const eligible = await pool.query(
-    "SELECT id FROM users WHERE id = $1 AND role IN ('staff','manager') AND onboarding_status IN ('submitted','reviewed','approved') LIMIT 1",
-    [user_id]
-  );
-  if (!eligible.rows[0]) throw new NotFoundError('User not eligible for assignment.');
-
-  // Insert or update the shift request as approved.
-  // BEO: clear any stale ack unconditionally — admin re-approving means a
-  // fresh assignment cycle; the prior ack (if any) was for the previous one.
-  const result = await pool.query(`
-    INSERT INTO shift_requests (shift_id, user_id, position, status)
-    VALUES ($1, $2, $3, 'approved')
-    ON CONFLICT (shift_id, user_id) DO UPDATE
-      SET status = 'approved',
-          position = $3,
-          beo_acknowledged_at = NULL,
-          updated_at = NOW()
-    RETURNING *
-  `, [req.params.id, user_id, position || 'Bartender']);
-
-  const request = result.rows[0];
-  const shift = shiftRes.rows[0];
-
-  // Fetch the assignee's email + contractor profile ONCE; both the SMS and
-  // email notification blocks below read from this single row (SMS uses
-  // phone + preferred_name, email uses email + preferred_name). Best-effort:
-  // a fetch failure must not break the (already-created) assignment response,
-  // so swallow it and let both blocks no-op.
-  const recipient = await pool.query(
-    'SELECT u.email, cp.preferred_name, cp.phone FROM users u LEFT JOIN contractor_profiles cp ON cp.user_id = u.id WHERE u.id = $1',
-    [user_id]
-  ).then(r => r.rows[0] || {}).catch((e) => {
-    console.error('Assignment notification fetch failed (non-blocking):', e.message);
-    return {};
-  });
-
-  // Send SMS notification (non-blocking)
-  try {
-    const cp = recipient;
-    if (cp?.phone) {
-      const date = shift.event_date
-        ? new Date(shift.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
-        : 'TBD';
-      const time = shift.start_time && shift.end_time
-        ? `${shift.start_time}–${shift.end_time}`
-        : shift.start_time || 'TBD';
-      const location = shift.location || 'TBD';
-      const name = cp.preferred_name ? `, ${cp.preferred_name}` : '';
-      const label = getEventTypeLabel({ event_type: shift.event_type, event_type_custom: shift.event_type_custom });
-      const ctx = shift.client_name ? `${label} at ${shift.client_name}` : label;
-      // Setup/arrival clock time (start − minutes, default 60). Null when start
-      // time is missing/unparseable → omit the clause so we never send "by null".
-      const setupTime = subtractMinutesFromTime(shift.start_time, shift.setup_minutes_before ?? 60);
-      const setupText = setupTime ? ` Please arrive by ${setupTime} to set up.` : '';
-
-      await sendSMS({
-        to: normalizePhone(cp.phone) || cp.phone,
-        body: `Hey${name}! You've been assigned to the ${ctx} on ${date} at ${time} — ${location}.${setupText} See you there! - Dr. Bartender`,
-      });
-    }
-  } catch (smsErr) {
-    console.error('SMS notification failed (non-blocking):', smsErr.message);
-  }
-
-  // Send email notification (non-blocking)
-  try {
-    const staffEmail = recipient.email;
-    if (staffEmail) {
-      const date = shift.event_date
-        ? new Date(shift.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
-        : 'TBD';
-      // shift comes from SELECT * so setup_minutes_before is in hand. Back-of-
-      // house setup clock time; null start time → template omits the row.
-      const setupTime = subtractMinutesFromTime(shift.start_time, shift.setup_minutes_before ?? 60);
-      const tpl = emailTemplates.shiftRequestApproved({
-        staffName: recipient.preferred_name || 'there',
-        eventTypeLabel: getEventTypeLabel({ event_type: shift.event_type, event_type_custom: shift.event_type_custom }),
-        eventDate: date,
-        startTime: shift.start_time || 'TBD',
-        endTime: shift.end_time || 'TBD',
-        location: shift.location || 'TBD',
-        setupTime,
-      });
-      await sendEmail({ to: staffEmail, ...tpl });
-    }
-  } catch (emailErr) {
-    console.error('Staff assignment email failed (non-blocking):', emailErr.message);
-  }
-
-  // If this assignment fills the shift, clear the proposal's last-minute hold
-  // AND fire Touch 2.2 (client confirmation email + SMS naming the bartender).
-  // Fire-and-forget: the helper has its own outer try/catch + Sentry; awaiting
-  // would block the response on Resend + Twilio round-trips. The .catch is
-  // belt-and-suspenders so a future refactor that lets a rejection escape the
-  // helper still lands a route-tagged Sentry event.
-  confirmStaffingIfFullyStaffed(req.params.id).catch((confErr) => {
-    if (process.env.SENTRY_DSN_SERVER) {
-      Sentry.captureException(confErr, { tags: { route: 'shifts/assign', issue: 'staffing-confirmation' } });
-    }
-    console.error('[shifts] staffing-confirmation hook failed (non-blocking):', confErr.message);
-  });
-
-  // Schedule the day-before reminder + post-event thank-you SMS for everyone
-  // approved on this shift (idempotent). Best-effort: a scheduling failure
-  // must never break the assignment response.
-  try {
-    await scheduleStaffShiftMessages(req.params.id);
-  } catch (schedErr) {
-    if (process.env.SENTRY_DSN_SERVER) {
-      Sentry.captureException(schedErr, { tags: { route: 'shifts/assign', issue: 'staff-sms-schedule' } });
-    }
-    console.error('[shifts] staff SMS scheduling failed (non-blocking):', schedErr.message);
-  }
-
-  res.status(201).json(request);
-}));
+/** POST /shifts/:id/assign — admin manually assigns a staff member.
+ *  Requires an explicit canonical position; see shifts.approval.js. */
+router.post('/:id/assign', auth, requireStaffing, asyncHandler(assignShiftHandler));
 
 /** GET /shifts/:id/requests — get all requests for a shift */
 router.get('/:id/requests', auth, requireStaffing, asyncHandler(async (req, res) => {
@@ -819,158 +654,10 @@ router.get('/:id/requests', auth, requireStaffing, asyncHandler(async (req, res)
   res.json(result.rows);
 }));
 
-/** PUT /shifts/requests/:requestId — approve or deny a request */
-router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (req, res) => {
-  const { status } = req.body;
-  if (!['approved', 'denied', 'pending'].includes(status)) {
-    throw new ValidationError({ status: 'Invalid status.' });
-  }
-
-  // BEO: capture prior state for branching. approved → denied suppresses BEO
-  // (staffer is dropping out of the cycle). approved (re-promote) clears any
-  // stale ack from a prior cycle. Also capture replaced_by_request_id so the
-  // approval branch can run the cover-swap cascade when present (Task 25).
-  const pre = await pool.query(
-    `SELECT sr.status AS prior_status, sr.user_id, sr.replaced_by_request_id,
-            s.proposal_id
-       FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id
-      WHERE sr.id = $1`,
-    [req.params.requestId]
-  );
-  if (!pre.rows[0]) throw new NotFoundError('Request not found.');
-  const { prior_status, user_id: srUserId, proposal_id: srProposalId,
-          replaced_by_request_id: replacedByRequestId } = pre.rows[0];
-
-  let result;
-  if (status === 'approved') {
-    if (replacedByRequestId) {
-      // Cover-swap approval. Cascade extracted to coverApprovalCascade.js;
-      // runs in one transaction so deny+suppress+BEO-nudge land atomically.
-      await approveAndCascade(pool, replacedByRequestId, parseInt(req.params.requestId, 10));
-      result = await pool.query(`SELECT * FROM shift_requests WHERE id = $1`, [req.params.requestId]);
-    } else {
-      result = await pool.query(
-        `UPDATE shift_requests SET status = 'approved', beo_acknowledged_at = NULL
-          WHERE id = $1 RETURNING *`,
-        [req.params.requestId]
-      );
-    }
-  } else if (status === 'denied') {
-    result = await pool.query(
-      `UPDATE shift_requests SET status = 'denied', beo_acknowledged_at = NULL
-        WHERE id = $1 RETURNING *`,
-      [req.params.requestId]
-    );
-    if (prior_status === 'approved' && srProposalId) {
-      await suppressBeoNudgesForStaffers(srProposalId, [srUserId], pool, 'staffer_unassigned: PUT request denied');
-    }
-  } else {
-    result = await pool.query(
-      `UPDATE shift_requests SET status = $1 WHERE id = $2 RETURNING *`,
-      [status, req.params.requestId]
-    );
-  }
-  if (!result.rows[0]) throw new NotFoundError('Request not found.');
-
-  // SMS the staff member when their request is approved
-  if (status === 'approved') {
-    // Fetch the staffer's email + contractor profile + shift fields ONCE; both
-    // the SMS and email blocks below read from this single row (superset of the
-    // columns each needs; email gates on info.email, SMS gates on info.phone).
-    // Best-effort: a fetch failure must not break the (already-committed)
-    // approval response, so swallow it and let both blocks no-op.
-    const info = await pool.query(`
-      SELECT u.email,
-             s.event_type, s.event_type_custom, s.client_name,
-             s.event_date, s.start_time, s.end_time, s.location,
-             s.setup_minutes_before,
-             cp.phone, cp.preferred_name
-      FROM shift_requests sr
-      JOIN shifts s ON s.id = sr.shift_id
-      JOIN users u ON u.id = sr.user_id
-      LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
-      WHERE sr.id = $1
-    `, [req.params.requestId]).then(r => r.rows[0]).catch((e) => {
-      console.error('Shift approval notification fetch failed (non-blocking):', e.message);
-      return undefined;
-    });
-
-    try {
-      if (info?.phone) {
-        const date = info.event_date
-          ? new Date(info.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
-          : 'TBD';
-        const time = info.start_time && info.end_time
-          ? `${info.start_time}–${info.end_time}`
-          : info.start_time || 'TBD';
-        const location = info.location || 'TBD';
-        const name = info.preferred_name ? `, ${info.preferred_name}` : '';
-        const label = getEventTypeLabel({ event_type: info.event_type, event_type_custom: info.event_type_custom });
-        const ctx = info.client_name ? `${label} at ${info.client_name}` : label;
-        // Setup/arrival clock time (start − minutes, default 60). Null when start
-        // time is missing/unparseable → omit the clause so we never send "by null".
-        const setupTime = subtractMinutesFromTime(info.start_time, info.setup_minutes_before ?? 60);
-        const setupText = setupTime ? ` Please arrive by ${setupTime} to set up.` : '';
-
-        await sendSMS({
-          to: normalizePhone(info.phone) || info.phone,
-          body: `Hey${name}! You've been confirmed for the ${ctx} on ${date} at ${time} — ${location}.${setupText} See you there! - Dr. Bartender`,
-        });
-      }
-    } catch (smsErr) {
-      console.error('SMS notification failed (non-blocking):', smsErr.message);
-    }
-
-    // Email the staff member (non-blocking)
-    try {
-      const staffEmail = info?.email;
-      if (staffEmail && info) {
-        const date = info.event_date
-          ? new Date(info.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
-          : 'TBD';
-        // Back-of-house setup clock time (start − minutes, default 60). null when
-        // start time is missing/unparseable → template omits the row entirely.
-        const setupTime = subtractMinutesFromTime(info.start_time, info.setup_minutes_before ?? 60);
-        const tpl = emailTemplates.shiftRequestApproved({
-          staffName: info.preferred_name || 'there',
-          eventTypeLabel: getEventTypeLabel({ event_type: info.event_type, event_type_custom: info.event_type_custom }),
-          eventDate: date,
-          startTime: info.start_time || 'TBD',
-          endTime: info.end_time || 'TBD',
-          location: info.location || 'TBD',
-          setupTime,
-        });
-        await sendEmail({ to: staffEmail, ...tpl });
-      }
-    } catch (emailErr) {
-      console.error('Shift approval email failed (non-blocking):', emailErr);
-    }
-
-    // Approving this request may have fully staffed the shift, so clear the
-    // linked proposal's last-minute hold AND fire Touch 2.2 if so.
-    // result.rows[0] is the updated shift_request, so its shift_id is in hand.
-    // Fire-and-forget with belt-and-suspenders .catch (mirrors the /assign
-    // call site above, see comment there).
-    confirmStaffingIfFullyStaffed(result.rows[0].shift_id).catch((confErr) => {
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(confErr, { tags: { route: 'shifts/approve', issue: 'staffing-confirmation' } });
-      }
-      console.error('[shifts] staffing-confirmation hook failed (non-blocking):', confErr.message);
-    });
-
-    // Schedule staff reminder + thank-you SMS (idempotent, best-effort).
-    try {
-      await scheduleStaffShiftMessages(result.rows[0].shift_id);
-    } catch (schedErr) {
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(schedErr, { tags: { route: 'shifts/approve', issue: 'staff-sms-schedule' } });
-      }
-      console.error('[shifts] staff SMS scheduling failed (non-blocking):', schedErr.message);
-    }
-  }
-
-  res.json(result.rows[0]);
-}));
+/** PUT /shifts/requests/:requestId — approve or deny a request. On approval,
+ *  position is resolved from the staffer's ranked requested_positions or an
+ *  admin override (the money seam); see shifts.approval.js. */
+router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(approveOrDenyRequestHandler));
 
 /** POST /shifts/:id/auto-assign — run auto-assign algorithm on pending requests */
 router.post('/:id/auto-assign', auth, requireStaffing, asyncHandler(async (req, res) => {
