@@ -2,7 +2,7 @@ require('dotenv').config();
 const { test, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
-const { registerDrinkPlanNudgeHandlers, scheduleDrinkPlanNudge } = require('./drinkPlanNudge');
+const { registerDrinkPlanNudgeHandlers, scheduleDrinkPlanNudge, loadNudgeContext } = require('./drinkPlanNudge');
 const { getHandlerMeta, _clearHandlersForTest } = require('./scheduledMessageDispatcher');
 
 let clientId;
@@ -157,6 +157,18 @@ test('drink_plan_nudge handler > is NOT suppressed by a default-empty drink_plan
   // sent (the email send succeeds in dev) — NOT 'suppressed' as no-longer-needed.
   assert.strictEqual(rows[0].status, 'sent');
   __setSmsDeps({ sendSMS: require('./sms')._realSendSMS });
+});
+
+test('loadNudgeContext > returns the drink-plan token so /plan/:token resolves (not the proposal token)', async () => {
+  // The Potion Planner route resolves WHERE dp.token, and proposals.token and
+  // drink_plans.token are independent UUIDs — the nudge link must carry the
+  // drink-plan token, or the client lands on "this drink plan link is no longer valid".
+  await pool.query(`INSERT INTO drink_plans (proposal_id) VALUES ($1)`, [proposalId]);
+  const dp = await pool.query('SELECT token FROM drink_plans WHERE proposal_id = $1', [proposalId]);
+  const p = await pool.query('SELECT token FROM proposals WHERE id = $1', [proposalId]);
+  assert.notStrictEqual(dp.rows[0].token, p.rows[0].token, 'sanity: distinct UUIDs');
+  const ctx = await loadNudgeContext(proposalId);
+  assert.strictEqual(ctx.token, dp.rows[0].token, 'nudge context token must be the drink-plan token');
 });
 
 test('drink_plan_nudge_sms handler > sends an SMS when the drink plan is empty', async () => {

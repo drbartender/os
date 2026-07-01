@@ -37,6 +37,7 @@ export default function DrinkPlanDetail() {
   const [copyMessage, setCopyMessage] = useState('');
   const [consultOpen, setConsultOpen] = useState(false);
   const [sourceSwitching, setSourceSwitching] = useState(false);
+  const [resendingNudge, setResendingNudge] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -131,6 +132,20 @@ export default function DrinkPlanDetail() {
     });
   };
 
+  const resendNudge = async () => {
+    const who = plan.client_name || 'the client';
+    if (!window.confirm(`Resend the Potion Planner link to ${who} by email and text?`)) return;
+    setResendingNudge(true);
+    try {
+      await api.post(`/drink-plans/${id}/resend-nudge`);
+      toast.success('Planner link resent.');
+    } catch (err) {
+      toast.error(err.message || 'Failed to resend planner link.');
+    } finally {
+      setResendingNudge(false);
+    }
+  };
+
   if (loading) return <div className="page"><div className="muted">Loading drink plan…</div></div>;
   if (!plan) {
     return (
@@ -186,6 +201,9 @@ export default function DrinkPlanDetail() {
             </button>
             <button type="button" className="btn btn-secondary" onClick={copyLink}>
               <Icon name={copyMessage ? 'check' : 'copy'} size={12} />{copyMessage || 'Copy link'}
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={resendNudge} disabled={resendingNudge}>
+              <Icon name="send" size={12} />{resendingNudge ? 'Resending…' : 'Resend planner link'}
             </button>
             {plan.status === 'submitted' && (
               <button type="button" className="btn btn-primary" onClick={markReviewed}>

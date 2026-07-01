@@ -198,6 +198,58 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
   res.json(result.rows[0]);
 }));
 
+/**
+ * POST /api/proposals/:id/resend — manually re-send the proposal to the client
+ * (email + SMS), leaving status untouched. The auto-send fires on the →sent
+ * transition; this is the detail-page "Resend" button for when a client says
+ * they never saw it. sendProposalSentEmail is best-effort (never throws) and
+ * gates the SMS half through shouldSendImmediate, so an opted-out client is not
+ * texted. A 'resent' activity row records that it went out again.
+ */
+router.post('/:id/resend', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
+  const pd = await pool.query(`
+    SELECT p.token, p.event_type, p.event_type_custom, p.event_date, p.status,
+           c.id AS client_id, c.name AS client_name, c.email AS client_email,
+           c.phone AS client_phone, c.communication_preferences,
+           c.email_status, c.phone_status
+    FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+    WHERE p.id = $1`, [req.params.id]);
+  const proposal = pd.rows[0];
+  if (!proposal) throw new NotFoundError('Proposal not found');
+  // Only re-send in the active, already-sent-and-not-yet-paid window. Draft is
+  // not sent yet (use "Send to client"); archived is shelved/cancelled; paid,
+  // confirmed, and completed are past the "review and sign" proposal stage, so
+  // the proposalSent copy would be stale/confusing there. The client mirrors this.
+  const RESENDABLE = ['sent', 'viewed', 'modified', 'accepted'];
+  if (!RESENDABLE.includes(proposal.status)) {
+    throw new ValidationError({}, `This proposal can't be resent from its current status (${proposal.status}).`);
+  }
+  if (!proposal.client_email && !proposal.client_phone) {
+    throw new ValidationError({}, 'No client email or phone on file to resend to.');
+  }
+
+  // Best-effort (never throws): resends the proposalSent email + initial-proposal
+  // SMS, the SMS half suppressed for opted-out clients inside sendProposalSentEmail.
+  await _deps.sendProposalSentEmail(
+    { ...proposal, id: Number(req.params.id) },
+    { actorType: 'admin' },
+  );
+
+  // The activity log is secondary to the send that already went out — never let
+  // a logging blip 500 the request (that would prompt a duplicate resend).
+  try {
+    await pool.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+       VALUES ($1, 'resent', 'admin', $2, $3)`,
+      [req.params.id, req.user.id, JSON.stringify({ via: 'admin_resend' })]
+    );
+  } catch (logErr) {
+    console.error('Resend activity-log insert failed (non-blocking) for proposal', req.params.id, logErr.code || logErr.name);
+  }
+
+  res.json({ ok: true });
+}));
+
 module.exports = router;
 // Dependency seam for tests — attached to the router export so the proposals
 // composition router still mounts cleanly (Express ignores extra properties).

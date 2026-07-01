@@ -96,7 +96,10 @@ async function loadNudgeContext(proposalId) {
   // object. A drink_plans row created at conversion has selections = '{}'
   // (JSONB DEFAULT '{}'), which is NOT a submission — see the file header.
   const { rows } = await pool.query(
-    `SELECT p.id, p.token, p.status, p.event_date, p.event_type, p.event_type_custom,
+    // dp.token (NOT p.token): the Potion Planner route resolves WHERE dp.token, and
+    // proposals.token / drink_plans.token are independent UUIDs. Linking with the
+    // proposal token drops the client on "this drink plan link is no longer valid".
+    `SELECT p.id, dp.token, p.status, p.event_date, p.event_type, p.event_type_custom,
             c.id AS client_id, c.name AS client_name, c.email AS client_email,
             c.phone AS client_phone,
             (dp.selections IS NOT NULL AND dp.selections::text <> '{}') AS dp_submitted,

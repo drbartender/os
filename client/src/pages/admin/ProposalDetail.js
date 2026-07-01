@@ -62,6 +62,7 @@ export default function ProposalDetail() {
 
   // Public link copy
   const [linkCopied, setLinkCopied] = useState(false);
+  const [resending, setResending] = useState(false);
 
   // Drink plan — state stays here because autoAddedMap/cocktailNameById on the
   // Pricing card read drinkPlan.selections.addOns. The card itself is extracted
@@ -187,6 +188,20 @@ export default function ProposalDetail() {
     window.open(`${PUBLIC_SITE_URL}/proposal/${proposal.token}`, '_blank', 'noopener,noreferrer');
   };
 
+  const resendProposal = async () => {
+    const who = proposal.client_name || 'the client';
+    if (!window.confirm(`Resend this proposal to ${who} by email and text?`)) return;
+    setResending(true);
+    try {
+      await api.post(`/proposals/${id}/resend`);
+      toast.success('Proposal resent.');
+    } catch (err) {
+      toast.error(err.message || 'Failed to resend proposal.');
+    } finally {
+      setResending(false);
+    }
+  };
+
   const saveNotes = async () => {
     setSavingNotes(true);
     try {
@@ -243,6 +258,9 @@ export default function ProposalDetail() {
   const recentActivity = (proposal.activity || []).slice(0, 5);
   const canSend = ['draft', 'modified'].includes(proposal.status);
   const canMarkAccepted = ['sent', 'viewed', 'modified'].includes(proposal.status);
+  // Resend only in the active, sent-not-yet-paid window (modified uses "Send to
+  // client"); archived and paid/confirmed/completed are excluded here and server-side.
+  const canResend = ['sent', 'viewed', 'accepted'].includes(proposal.status);
 
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
@@ -309,6 +327,11 @@ export default function ProposalDetail() {
             {!editing && canSend && (
               <button type="button" className="btn btn-primary" onClick={() => updateStatus('sent')}>
                 <Icon name="send" size={12} />Send to client
+              </button>
+            )}
+            {!editing && canResend && (
+              <button type="button" className="btn btn-secondary" onClick={resendProposal} disabled={resending}>
+                <Icon name="send" size={12} />{resending ? 'Resending…' : 'Resend'}
               </button>
             )}
             {!editing && canMarkAccepted && (

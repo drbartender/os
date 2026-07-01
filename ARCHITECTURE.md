@@ -213,6 +213,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | PATCH | `/:id/shopping-list-source` | Admin | Flip active source between `planner` and `consult`, regenerate from chosen source (via `drinkPlanConsult.js`) |
 | PATCH | `/:id/notes` | Admin | Update admin notes |
 | PATCH | `/:id/status` | Admin | Update plan status |
+| POST | `/:id/resend-nudge` | Admin | Re-send the Potion Planner invite (email + SMS) to the client. Admin override: sends even if the plan is already filled (skips archived events; SMS gated on opt-out via `shouldSendImmediate`). Links use the drink-plan token. |
 | DELETE | `/:id` | Admin | Delete a plan |
 | GET | `/t/:token` | Public | Fetch questionnaire by token (JOINs proposal for guest_count, num_bartenders, pricing_snapshot). Returns a locked payload `{ locked: true, proposalToken }` when the linked proposal is pre-deposit, so a stale emailed `/plan/:token` link renders a lock screen instead of the wizard (`isDrinkPlanPreBooking` allowlist, fails safe) |
 | PUT | `/t/:token` | Public | Save draft or submit selections (on submit: processes addOns into proposal_addons, recalculates pricing, sends admin email, auto-generates pending_review shopping list) |
@@ -256,6 +257,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/:id` | Admin | Get single proposal with addons + activity log |
 | PATCH | `/:id` | Admin | Update event details, recalculate pricing, and re-sync the linked event shift (date/time/location/client) when the proposal has been converted. A draft→sent transition creates the proposal's invoice in the same DB transaction. Accepts an optional `change_request_id` in the body that links the edit to a pending `proposal_change_requests` row: the request is stamped `approved` in the same transaction as the edit, the standard admin edit email is suppressed (the client gets the change-request decision email instead), and the regular money + status reconciliation runs. |
 | PATCH | `/:id/status` | Admin | Update proposal status. On a →sent transition, creates the invoice in-transaction (idempotent on `proposal_id`) and emails the client via `sendProposalSentEmail`. Rate-limited per admin via `adminWriteLimiter` (10/min). |
+| POST | `/:id/resend` | Admin | Re-send the proposal to the client (email + SMS) without changing status, via `sendProposalSentEmail`. Guards against draft; logs a `resent` activity row. Rate-limited via `adminWriteLimiter`. |
 | PATCH | `/:id/notes` | Admin | Update admin notes |
 | DELETE | `/:id` | Admin | Delete a proposal |
 | GET | `/t/:token` | Public | Fetch proposal by token (tracks views + geolocation). Response includes `client_phone_prefill` (blank when the stored phone matches a known Thumbtack proxy, so the sign form never displays the proxy back to the customer). |

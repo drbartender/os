@@ -3,7 +3,7 @@ const path = require('path');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
-const { publicReadLimiter, drinkPlanWriteLimiter, logoUploadLimiter } = require('../middleware/rateLimiters');
+const { publicReadLimiter, drinkPlanWriteLimiter, logoUploadLimiter, adminWriteLimiter } = require('../middleware/rateLimiters');
 const { requireUuidToken } = require('../utils/tokens');
 
 const { sendEmail } = require('../utils/email');
@@ -17,6 +17,11 @@ const { isDrinkPlanPreBooking } = require('../utils/drinkPlanAccess');
 const { uploadFile, getSignedUrl } = require('../utils/storage');
 const { isValidImageUpload } = require('../utils/fileValidation');
 const { handleSubmit } = require('./drinkPlans/submit');
+const { sendAndLogSms } = require('../utils/sms');
+const smsTemplates = require('../utils/smsTemplates');
+const { drinkPlanNudgeEmail } = require('../utils/drinkPlanNudge');
+const { shouldSendImmediate } = require('../utils/messageSuppression');
+const { formatEventDateForSms } = require('../utils/smsEventDate');
 
 const router = express.Router();
 
@@ -710,6 +715,93 @@ router.delete('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res)
   const result = await pool.query('DELETE FROM drink_plans WHERE id = $1 RETURNING id', [req.params.id]);
   if (!result.rows[0]) throw new NotFoundError('Plan not found.');
   res.json({ success: true });
+}));
+
+/**
+ * POST /api/drink-plans/:id/resend-nudge — manually re-send the Potion Planner
+ * invite ("time to lock in drinks") to the client, email + SMS. This is the
+ * admin "Resend planner link" button. Unlike the scheduled T-21 nudge it does
+ * NOT suppress when the plan is already filled (deliberate admin override), but
+ * it still skips archived events and respects an SMS opt-out via
+ * shouldSendImmediate. Both sends are best-effort. Links use the DRINK-PLAN
+ * token, which is what /plan/:token resolves.
+ */
+router.post('/:id/resend-nudge', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT dp.token AS plan_token, dp.proposal_id,
+            p.status AS proposal_status, p.event_type, p.event_type_custom, p.event_date,
+            c.id AS client_id, c.name AS client_name, c.email AS client_email, c.phone AS client_phone,
+            c.communication_preferences, c.email_status, c.phone_status
+       FROM drink_plans dp
+       LEFT JOIN proposals p ON p.id = dp.proposal_id
+       LEFT JOIN clients c ON c.id = p.client_id
+      WHERE dp.id = $1
+      LIMIT 1`,
+    [req.params.id]
+  );
+  const ctx = rows[0];
+  if (!ctx) throw new NotFoundError('Drink plan not found.');
+  if (ctx.proposal_status === 'archived') {
+    throw new ValidationError({}, 'This event is archived; the planner link was not resent.');
+  }
+  if (!ctx.client_email && !ctx.client_phone) {
+    throw new ValidationError({}, 'No client email or phone on file to resend to.');
+  }
+
+  const eventTypeLabel = getEventTypeLabel({ event_type: ctx.event_type, event_type_custom: ctx.event_type_custom });
+  const plannerUrl = ctx.plan_token ? `${PUBLIC_SITE_URL}/plan/${ctx.plan_token}` : `${PUBLIC_SITE_URL}/plan`;
+  const consultUrl = process.env.CAL_BOOKING_URL || null;
+
+  // Email half (best-effort) — reuses the scheduled nudge's template.
+  if (ctx.client_email) {
+    try {
+      const tpl = drinkPlanNudgeEmail({
+        clientFirstName: (ctx.client_name || '').trim().split(/\s+/)[0] || 'there',
+        eventTypeLabel,
+        eventDateDisplay: formatEventDateForSms(ctx.event_date) || 'your event',
+        plannerUrl,
+        consultUrl,
+        phone: process.env.ADMIN_PHONE || null,
+      });
+      await sendEmail({ to: ctx.client_email, ...tpl, meta: { proposalId: ctx.proposal_id, messageType: 'drink_plan_nudge' } });
+    } catch (e) {
+      console.error('Resend drink-plan nudge email failed (non-blocking):', e.code || e.name || e);
+    }
+  }
+
+  // SMS half (best-effort), gated on opt-out exactly like the immediate proposal send.
+  if (ctx.client_phone) {
+    const sendCheck = await shouldSendImmediate({
+      proposal: { id: ctx.proposal_id, status: ctx.proposal_status },
+      client: {
+        communication_preferences: ctx.communication_preferences,
+        email_status: ctx.email_status,
+        phone_status: ctx.phone_status,
+      },
+      channel: 'sms',
+    });
+    if (sendCheck.ok) {
+      try {
+        const body = smsTemplates.drinkPlanNudgeSms({
+          eventDate: formatEventDateForSms(ctx.event_date),
+          plannerUrl,
+          consultUrl,
+        });
+        await sendAndLogSms({
+          to: ctx.client_phone,
+          body,
+          clientId: ctx.client_id,
+          proposalId: ctx.proposal_id,
+          messageType: 'drink_plan_nudge_sms',
+          recipientName: ctx.client_name || null,
+        });
+      } catch (e) {
+        console.error('Resend drink-plan nudge SMS failed (non-blocking):', e.code || e.name || e);
+      }
+    }
+  }
+
+  res.json({ ok: true });
 }));
 
 module.exports = router;
