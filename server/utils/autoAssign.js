@@ -175,12 +175,13 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
     rows: pendingRaw.rows.filter((r) => {
       const ranked = parsePositionsNeeded(r.requested_positions);
       if (ranked.length > 0) return ranked.includes('Bartender');
-      // Empty requested_positions = "any role", but never override a row that
-      // already carries a committed non-bartender role: a legacy row with
-      // position='Banquet Server' must NOT be auto-seated (and rewritten) into a
-      // bartender slot, or a server lands in the payroll tip split.
-      const committed = canonicalizeRole(r.position);
-      return !committed || committed === 'Bartender';
+      // Empty requested_positions = "any role" ONLY for a row with no committed
+      // position. A row that DOES carry a position is bartender-eligible only if
+      // that position canonicalizes to Bartender; a non-bartender OR a
+      // non-canonical/garbage value is a committed non-bartender role and must
+      // NOT be auto-seated (and rewritten to 'Bartender') into the tip split.
+      if (!r.position || String(r.position).trim() === '') return true;
+      return canonicalizeRole(r.position) === 'Bartender';
     }),
   };
 
