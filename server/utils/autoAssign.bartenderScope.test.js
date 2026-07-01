@@ -20,7 +20,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-let bartenderUser, serverUser, legacyUser;
+let bartenderUser, serverUser, legacyUser, legacyServerUser;
 let shiftId;
 
 async function mkStaff(tag, position) {
@@ -42,6 +42,7 @@ before(async () => {
   bartenderUser = await mkStaff('bar', 'Bartender');
   serverUser = await mkStaff('srv', 'Banquet Server');
   legacyUser = await mkStaff('legacy', 'Bartender');
+  legacyServerUser = await mkStaff('legacysrv', 'Banquet Server');
 
   const sh = await pool.query(
     `INSERT INTO shifts (event_date, start_time, end_time, status, location, positions_needed, equipment_required)
@@ -62,6 +63,12 @@ before(async () => {
     `INSERT INTO shift_requests (shift_id, user_id, status, requested_positions) VALUES ($1, $2, 'pending', $3)`,
     [shiftId, legacyUser, '[]']
   );
+  // Codex-caught edge: empty requested_positions BUT a committed non-bartender
+  // position. "Any role" must not override the committed role -> NOT eligible.
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, requested_positions) VALUES ($1, $2, 'pending', 'Banquet Server', '[]')`,
+    [shiftId, legacyServerUser]
+  );
 });
 
 after(async () => {
@@ -73,7 +80,7 @@ after(async () => {
     await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [shiftId]);
     await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
   }
-  const ids = [bartenderUser, serverUser, legacyUser].filter(Boolean);
+  const ids = [bartenderUser, serverUser, legacyUser, legacyServerUser].filter(Boolean);
   await pool.query('DELETE FROM contractor_profiles WHERE user_id = ANY($1::int[])', [ids]);
   await pool.query('DELETE FROM users WHERE id = ANY($1::int[])', [ids]);
   await pool.end();
@@ -85,6 +92,7 @@ test('dry-run: bartender + legacy-empty are eligible, server-only is excluded', 
   assert.ok(scoredUserIds.includes(bartenderUser), 'a Bartender-ranked requester is a candidate');
   assert.ok(scoredUserIds.includes(legacyUser), 'a legacy empty-requested ("any role") requester is a candidate');
   assert.ok(!scoredUserIds.includes(serverUser), 'a server-only requester is NOT a bartender-slot candidate');
+  assert.ok(!scoredUserIds.includes(legacyServerUser), 'empty requested_positions + committed position=Banquet Server is NOT a bartender candidate');
 });
 
 test('real assign writes position=Bartender and never seats the server-only requester', async () => {
@@ -95,8 +103,10 @@ test('real assign writes position=Bartender and never seats the server-only requ
   );
   const byUser = Object.fromEntries(rows.rows.map((r) => [r.user_id, r]));
 
-  // The server-only requester is never approved by auto-assign.
+  // Neither the ranked-server nor the committed-server-but-empty-ranked requester
+  // is ever approved by auto-assign.
   assert.equal(byUser[serverUser].status, 'pending', 'server-only stays pending');
+  assert.equal(byUser[legacyServerUser].status, 'pending', 'committed-server + empty-ranked stays pending');
 
   // Every auto-approved row carries the canonical Bartender position (the money key).
   const approved = rows.rows.filter((r) => r.status === 'approved');
@@ -104,5 +114,6 @@ test('real assign writes position=Bartender and never seats the server-only requ
   for (const r of approved) {
     assert.equal(r.position, 'Bartender', `approved user ${r.user_id} written as canonical Bartender`);
     assert.notEqual(r.user_id, serverUser, 'the server-only requester was never approved');
+    assert.notEqual(r.user_id, legacyServerUser, 'the committed-server requester was never approved');
   }
 });

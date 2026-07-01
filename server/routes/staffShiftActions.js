@@ -557,8 +557,15 @@ router.post('/requests/:shiftId/claim-cover', asyncHandler(async (req, res) => {
     // sides so a legacy 'server' / lowercase profile still matches.
     const positionsNeededList = parsePositionsNeeded(orig.positions_needed);
     const claimerCanon = canonicalizeRole(claimerPosition);
-    if (positionsNeededList.length > 0
-        && (!claimerCanon || !positionsNeededList.includes(claimerCanon))) {
+    // A claim WRITES claimerCanon as the money-sensitive position; it must be a
+    // recognized canonical role, or an approved cover-claim would carry a NULL
+    // position and drop the claimer from the tip split. Enforce this even when
+    // positions_needed parses empty (a legacy/malformed shift skips the roster
+    // membership check below but must not skip the canonical-role check).
+    if (!claimerCanon) {
+      throw new PermissionError(`Position '${claimerPosition}' is not a recognized role.`);
+    }
+    if (positionsNeededList.length > 0 && !positionsNeededList.includes(claimerCanon)) {
       throw new PermissionError(`Position '${claimerPosition}' is not eligible for this shift.`);
     }
 

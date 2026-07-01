@@ -9,6 +9,7 @@ const { sendSMS, normalizePhone } = require('./sms');
 const { getEventTypeLabel } = require('./eventTypes');
 const { subtractMinutesFromTime } = require('./setupTime');
 const { parsePositionsNeeded, rosterCounts } = require('./positionsNeeded');
+const { canonicalizeRole } = require('./staffingRoles');
 const { scheduleStaffShiftMessages } = require('./staffShiftHandlers');
 const { confirmStaffingIfFullyStaffed } = require('./lastMinuteStaffingConfirmation');
 
@@ -173,7 +174,13 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
   const pendingResult = {
     rows: pendingRaw.rows.filter((r) => {
       const ranked = parsePositionsNeeded(r.requested_positions);
-      return ranked.length === 0 || ranked.includes('Bartender');
+      if (ranked.length > 0) return ranked.includes('Bartender');
+      // Empty requested_positions = "any role", but never override a row that
+      // already carries a committed non-bartender role: a legacy row with
+      // position='Banquet Server' must NOT be auto-seated (and rewritten) into a
+      // bartender slot, or a server lands in the payroll tip split.
+      const committed = canonicalizeRole(r.position);
+      return !committed || committed === 'Bartender';
     }),
   };
 
