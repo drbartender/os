@@ -81,6 +81,10 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
         unpaidCents > 0 ? { overrideUnpaidExtras: true } : {}
       );
       setDrinkPlan(res.data);
+      // Pull the full by-proposal payload so extras_unpaid_cents (absent from the
+      // finalize response) stays on the card — an override finalize deliberately
+      // leaves the extras invoice open, so the badge should persist.
+      await refetch();
       if (reload) await reload(); // refresh the Messages card if a client email fired
       toast.success('BEO finalized. Staff will be nudged 3 days before the event.');
     } catch (err) {

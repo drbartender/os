@@ -307,8 +307,21 @@ router.post('/webhook', asyncHandler(async (req, res) => {
                       'warning'
                     );
                   }
+                } else if (extrasInv && alreadyPaid) {
+                  // Second DISTINCT extras payment (double-submit / two tabs): the
+                  // invoice is already paid+locked so we don't re-link, but
+                  // amount_paid was incremented above — the client over-paid and
+                  // this payment gets no invoice-level breadcrumb. Flag it.
+                  console.warn(
+                    `Webhook: extras invoice ${extrasInv.id} already paid; 2nd distinct extras payment ${intent.id} (proposal ${proposalId}) not linked — client likely over-paid.`
+                  );
+                  if (process.env.SENTRY_DSN_SERVER) {
+                    Sentry.captureMessage(
+                      `Second extras payment unlinked, invoice already paid (proposal ${proposalId}, intent ${intent.id}, cents ${extrasCents})`,
+                      'warning'
+                    );
+                  }
                 }
-                // extrasInv && alreadyPaid → idempotent no-op (already settled).
               }
 
               if (balanceCents > 0) {

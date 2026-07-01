@@ -45,4 +45,38 @@ test('computeExtrasBreakdown: excludes self-provided and already-in-snapshot syr
   assert.equal(bd.totalCents, expectSyrupCents);
 });
 
+test('computeExtrasBreakdown: per_guest + flat add-ons + first bar rental priced correctly', async () => {
+  // Stub the service_addons lookup so the add-on path is deterministic + DB-free.
+  const stubClient = {
+    query: async () => ({ rows: [
+      { slug: 'pg', rate: '5', billing_type: 'per_guest' },
+      { slug: 'fl', rate: '50', billing_type: 'flat' },
+    ] }),
+  };
+  const sel = {
+    addOns: { pg: { enabled: true }, fl: { enabled: true } },
+    logistics: { addBarRental: true },
+  };
+  const bd = await computeExtrasBreakdown(
+    { selections: sel, guestCount: 100,
+      pricingSnapshot: { bar_rental: { first_bar_fee: 50, additional_bar_fee: 100 } }, numBars: 0 },
+    stubClient
+  );
+  // per_guest 5*100 = 500 + flat 50 = 550 -> 55000c; first bar 50 -> 5000c.
+  assert.equal(bd.addonCents, 55000);
+  assert.equal(bd.barRentalCents, 5000);
+  assert.equal(bd.syrupCents, 0);
+  assert.equal(bd.totalCents, 60000);
+});
+
+test('computeExtrasBreakdown: bar rental prices as ADDITIONAL when numBars>=1', async () => {
+  const bd = await computeExtrasBreakdown(
+    { selections: { logistics: { addBarRental: true } }, guestCount: 100,
+      pricingSnapshot: { bar_rental: { first_bar_fee: 50, additional_bar_fee: 100 } }, numBars: 1 },
+    pool
+  );
+  assert.equal(bd.barRentalCents, 10000); // additional_bar_fee
+  assert.equal(bd.totalCents, 10000);
+});
+
 after(async () => { await pool.end(); });

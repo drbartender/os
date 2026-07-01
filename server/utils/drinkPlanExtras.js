@@ -14,8 +14,9 @@
  * dollar components (matching Math.round(extrasAmount * 100) in stripe.js), NOT
  * the sum of the individually-rounded component cents — so it equals the Stripe
  * charge to the cent. The per-component *Cents are individually rounded and are
- * used by the comp/void total_price reconcile (B4), which needs the add-on +
- * bar-rental portion in isolation.
+ * exposed for callers/tests that want a component breakdown; the comp/void
+ * reconcile (B4) does NOT use them — it derives the folded amount from the
+ * persisted invoice line items.
  */
 
 'use strict';

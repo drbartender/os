@@ -654,7 +654,12 @@ async function writeExtrasLineItems(invoiceId, { selections, guestCount, pricing
     if (items.length > 0) {
       const last = items[items.length - 1];
       last.line_total += driftCents;
-      if (last.quantity === 1) last.unit_price = last.line_total;
+      // Keep unit_price consistent with the adjusted line_total (line_total is the
+      // authoritative ledger figure; unit_price is display). For qty>1 a rounded
+      // per-unit is the closest representable value.
+      last.unit_price = last.quantity > 1
+        ? Math.round(last.line_total / last.quantity)
+        : last.line_total;
     } else {
       items.push({
         description: 'Drink Plan Extras',
@@ -674,28 +679,40 @@ async function writeExtrasLineItems(invoiceId, { selections, guestCount, pricing
 /**
  * Create a new "Drink Plan Extras" invoice for a drink-plan payment.
  *
- * Reads drink_plan.selections + proposal.pricing_snapshot/num_bars from the DB
- * and builds line items via writeExtrasLineItems. Caller is responsible for
- * calling linkPaymentToInvoice() to record the payment.
+ * Builds line items via writeExtrasLineItems. `lineItemState` (optional) is the
+ * PRE-mutation { selections, guestCount, pricingSnapshot, numBars } captured by
+ * the submit transaction BEFORE it increments num_bars / overwrites the pricing
+ * snapshot — pass it so the line LABELS match amount_due (e.g. a first bar isn't
+ * mislabeled "Additional Portable Bar"). The webhook / backfill callers run
+ * post-commit and omit it, so the final DB state is read instead. Caller records
+ * the payment via linkPaymentToInvoice().
  *
- * @param {{ proposalId:number, drinkPlanId:number, extrasAmountCents:number }} opts
+ * @param {{ proposalId:number, drinkPlanId:number, extrasAmountCents:number, lineItemState?:object }} opts
  * @param {object} dbClient  — must be a transaction client
  * @returns {Promise<object>} The new invoice row.
  */
-async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmountCents }, dbClient) {
-  const [dpRes, propRes] = await Promise.all([
-    dbClient.query('SELECT selections FROM drink_plans WHERE id = $1', [drinkPlanId]),
-    dbClient.query(
-      'SELECT guest_count, num_bars, pricing_snapshot FROM proposals WHERE id = $1',
-      [proposalId]
-    ),
-  ]);
-
-  if (!dpRes.rows[0]) throw new Error(`Drink plan ${drinkPlanId} not found`);
-  if (!propRes.rows[0]) throw new Error(`Proposal ${proposalId} not found`);
-
-  const selections = dpRes.rows[0].selections || {};
-  const prop = propRes.rows[0];
+async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmountCents, lineItemState }, dbClient) {
+  let selections;
+  let guestCount;
+  let pricingSnapshot;
+  let numBars;
+  if (lineItemState) {
+    ({ selections, guestCount, pricingSnapshot, numBars } = lineItemState);
+  } else {
+    const [dpRes, propRes] = await Promise.all([
+      dbClient.query('SELECT selections FROM drink_plans WHERE id = $1', [drinkPlanId]),
+      dbClient.query(
+        'SELECT guest_count, num_bars, pricing_snapshot FROM proposals WHERE id = $1',
+        [proposalId]
+      ),
+    ]);
+    if (!dpRes.rows[0]) throw new Error(`Drink plan ${drinkPlanId} not found`);
+    if (!propRes.rows[0]) throw new Error(`Proposal ${proposalId} not found`);
+    selections = dpRes.rows[0].selections || {};
+    guestCount = propRes.rows[0].guest_count;
+    pricingSnapshot = propRes.rows[0].pricing_snapshot;
+    numBars = propRes.rows[0].num_bars;
+  }
 
   const invoice = await createInvoice(
     {
@@ -709,13 +726,7 @@ async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmo
   );
   await writeExtrasLineItems(
     invoice.id,
-    {
-      selections,
-      guestCount: prop.guest_count,
-      pricingSnapshot: prop.pricing_snapshot,
-      numBars: prop.num_bars,
-      totalCents: extrasAmountCents,
-    },
+    { selections, guestCount, pricingSnapshot, numBars, totalCents: extrasAmountCents },
     dbClient
   );
   return invoice;
@@ -783,7 +794,14 @@ async function findOrRefreshExtrasInvoice(
     return inv;
   }
   return createDrinkPlanExtrasInvoice(
-    { proposalId, drinkPlanId, extrasAmountCents: breakdown.totalCents },
+    {
+      proposalId,
+      drinkPlanId,
+      extrasAmountCents: breakdown.totalCents,
+      // Pre-mutation state so the fresh invoice's line LABELS match amount_due
+      // (the submit tx already incremented num_bars / recalced the snapshot).
+      lineItemState: { selections, guestCount, pricingSnapshot, numBars },
+    },
     dbClient
   );
 }
