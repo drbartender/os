@@ -97,7 +97,7 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     SELECT p.id, p.token, p.client_id, p.event_type, p.event_type_custom,
            p.event_type_category, p.event_date, p.event_start_time,
            p.event_duration_hours, p.event_location, p.guest_count, p.num_bars,
-           p.num_bartenders, p.package_id, p.status, p.source, p.total_price, p.amount_paid,
+           p.num_bartenders, p.package_id, p.group_id, p.status, p.source, p.total_price, p.amount_paid,
            p.deposit_amount, p.balance_due_date, p.payment_type, p.autopay_enrolled,
            p.sent_at, p.accepted_at, p.client_signed_at, p.last_viewed_at, p.view_count,
            p.created_at, p.updated_at, p.cc_id AS proposal_cc_id,

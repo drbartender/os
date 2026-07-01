@@ -183,7 +183,7 @@ dr-bartender/
 │   │   ├── mocktails.js        # Mocktail menu CRUD
 │   │   ├── payment.js          # Payment method + W-9 upload
 │   │   ├── progress.js         # Onboarding step tracking
-│   │   ├── proposals/          # Service proposals (publicToken/public/metadata/lifecycle/crud/actions/changeRequests sub-routers)
+│   │   ├── proposals/          # Service proposals (publicToken/public/metadata/lifecycle/crud/actions/changeRequests/groups sub-routers)
 │   │   │   ├── index.js        # Composition router
 │   │   │   ├── publicToken.js  # /t/:token view + sign
 │   │   │   ├── public.js       # /public/* — packages, addons, calculate, capture-lead, quote-draft, submit

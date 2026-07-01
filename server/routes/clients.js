@@ -94,7 +94,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
     pool.query(`
       SELECT p.id, p.token, p.client_id, p.event_type, p.event_type_custom,
              p.event_date, p.status, p.total_price, p.amount_paid, p.created_at, p.cc_id,
-             sp.name AS package_name, sp.slug AS package_slug
+             p.group_id, sp.name AS package_name, sp.slug AS package_slug
       FROM proposals p
       LEFT JOIN service_packages sp ON sp.id = p.package_id
       WHERE p.client_id = $1
