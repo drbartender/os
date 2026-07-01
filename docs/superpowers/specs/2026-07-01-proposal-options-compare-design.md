@@ -1,14 +1,14 @@
 # Proposal Options / Compare — Design Spec
 
 **Date:** 2026-07-01
-**Status:** Approved in brainstorm (section-by-section). Ready for `/review-spec` → plan (lane map).
+**Status:** Approved in brainstorm (section-by-section) + design-review folded in (spec-gaps agent + inline grounding/risk pass). Ready for plan (lane map).
 **Author:** Dallas + Claude
 
 ---
 
 ## 1. Problem
 
-When a lead wants to weigh their choices (the canonical case: we sent a **BYOB** proposal and they now want to see **hosted** options, or they want to compare **hosted tiers**), we have no real mechanism. Today an admin builds a second proposal from scratch; the two share only a `client_id`, render as unrelated rows in the dashboard, and the client receives two separate `Your Proposal for your … — Dr. Bartender` emails with two separate "View Proposal" links. There is no side-by-side, no compare, and nothing ties the options together. The client can end up paying for one option without ever seeing the other.
+When a lead wants to weigh their choices (canonical case: we sent a **BYOB** proposal and they now want to see **hosted** options, or they want to compare **hosted tiers**), we have no real mechanism. Today an admin builds a second proposal from scratch; the two share only a `client_id`, render as unrelated dashboard rows, and the client gets two separate `Your Proposal … — Dr. Bartender` emails with two "View Proposal" links. No side-by-side, no compare, nothing tying the options together. The client can pay for one option without ever seeing the other.
 
 ## 2. Goal
 
@@ -16,76 +16,91 @@ Let admin present a client with **two or three proposal "options"** side by side
 
 ## 3. Core architecture decision
 
-**Each option is a real, separate `proposals` row** (its own `token`, its own `pricing_snapshot`, its own sign/pay path). A new lightweight **`proposal_groups`** entity bundles the sibling options and owns the shared client-facing compare link. The chosen option flows through the **exact existing** sign → Stripe intent → webhook → `createEventShifts` path with zero changes; the unchosen options archive.
+**Each option is a real, separate `proposals` row** (own `token`, own `pricing_snapshot`, own sign/pay path). A new lightweight **`proposal_groups`** entity bundles the siblings and owns the shared client-facing compare link. The chosen option flows through the **exact existing** sign → Stripe intent → webhook → `createEventShifts` path with zero changes to that math; the unchosen options archive.
 
-**Rejected alternative:** one proposal row holding multiple package variants inline. That would force a rewrite of the most battle-tested code in the system (Stripe intent, `stripeWebhook.js`, `eventCreation.js`, invoicing all assume exactly one snapshot / one `package_id` / one `total_price` per row) for what is fundamentally a presentation feature. Not worth the money-path risk.
+**Rejected alternative:** one row holding multiple package variants inline — would force a rewrite of the most battle-tested code in the system (Stripe intent, `stripeWebhook.js`, `eventCreation.js`, invoicing all assume one snapshot / one `package_id` / one `total_price` per row). Not worth the money-path risk for a presentation feature.
 
 ## 4. Client experience
 
 ### 4.1 The compare page
-- **Route:** `/compare/:token` (client), backed by `GET /api/proposals/group/:token` (public, UUID-guarded via `requireUuidToken` / `server/utils/tokens.js`, mirroring `publicToken.js`). `:token` is the group's UUID.
-- **Shared header (shown once):** client name, event type, date, service time, guest count, location. These are identical across options and frame the page instead of repeating per column.
-- **Each option, side by side (2 columns; support up to 3):**
-  - Package name + `tagline` (e.g. "Premium inputs. Amplified output.") as the one-line descriptor — reused straight from `client/src/data/packages.js`.
-  - A small derived **BYOB / Hosted badge** off `pricing_type` (`isHostedPackage`), so the who-supplies-the-alcohol axis is unmistakable.
-  - Headline **total** + **deposit to book**.
-  - **What's included** — the package's real `sections[]` (Spirits / Beer & Wine / Mixers & Modifiers / Non-Alcoholic), brand-level, rendered from `getPackageBySlug(option.package_slug)`. Because every package shares those section headings, two tiers naturally align row-band by row-band and the client can compare "this tier's vodka vs that tier's vodka" with no rigid attribute grid.
-  - A **"Choose this one"** button — the only action.
-- **What stays OFF the compare page:** full service agreement, gratuity block, payment terms, card entry. Those live on the click-through proposal. The compare page is pure presentation and touches **zero** money surface.
+- **Route:** `/compare/:token` (client), backed by `GET /api/proposals/group/:token` (public, UUID-guarded via `requireUuidToken` / `server/utils/tokens.js`). `:token` is the group's UUID.
+- **Public visibility gate:** the endpoint returns the group only once **at least one member is in a client-visible status** (`sent`/`viewed`/…); it 404s while every member is still `draft`. Admin gets an authed preview path that ignores this gate.
+- **Per-option payload uses the same public-safe column allowlist as `publicToken.js`** (must be reused verbatim per option) so the endpoint never leaks `admin_notes`, `stripe_customer_id`, signature IP/UA, or any option's private fields.
+- **Shared header (shown once):** client name, event type, date, service time, guest count, location.
+- **Each option, side by side (2 columns; support up to 3):** package name + `tagline`; a derived **BYOB / Hosted badge** off `pricing_type` (`isHostedPackage`); headline **total** + **deposit**; **what's included** — real `sections[]` from `getPackageBySlug(option.package_slug)` (brand-level; shared section headings make tiers align); a **"Choose this one"** button (the only action).
+- **Allowed option package categories:** only packages that expose the standard `sections[]` + a concrete total (the full-bar / beer-wine catalog). Class/tasting and TBD-price packages are **not** valid options for v1 (they have no aligned sections / no fixed headline) — the "Add an alternative" flow must reject or hide them.
+- **UI states:** loading, error + retry, and the degenerate post-race states (0 or 1 visible member) are all defined; a 1-member group renders as (or redirects to) that single proposal, not a broken one-column compare.
+- **What stays OFF this page:** full service agreement, gratuity block, payment terms, card entry — all on the click-through proposal. The compare page touches **zero** money surface.
 
 ### 4.2 Choose flow (lightweight chooser)
-"Choose this one" links to that option's existing sign/pay page: **`/proposal/:optionToken?choose=1`**. The client signs and pays there exactly as today. The `?choose=1` param is the compare→proposal hand-off marker (see redirect rule 4.3).
+"Choose this one" links to that option's existing sign/pay page: **`/proposal/:optionToken?choose=1`**. Client signs and pays there exactly as today. `?choose=1` is the compare→proposal hand-off marker (see 4.3).
 
-### 4.3 Old-link / cold-link redirect
-The BYOB link already sitting in a client's inbox must keep working after we add an alternative.
-- `GET /api/proposals/t/:token` returns the member's `group_id` + the group's compare token + whether the group is **decided** (has a `chosen_proposal_id`).
-- `ProposalView` behavior:
-  - **Undecided group, cold hit (no `?choose`)** → redirect to `/compare/:groupToken`. One canonical landing spot no matter which option's link they clicked.
-  - **`?choose=1` present** → render the proposal's sign/pay page normally (no redirect). This prevents the compare→choose→bounce-back loop.
-  - **Decided group** (someone already paid) → any member token resolves to the **chosen** proposal's view (booked/paid state). The losing link never shows a dead archived page.
+### 4.3 Link resolution & redirect (must not mutate on the redirect branch)
+The existing `GET /api/proposals/t/:token` **bumps `view_count` and flips `sent→viewed`** (`publicToken.js`). The redirect decision must therefore **not** ride on that mutating GET — merely landing on a link that will be bounced must not inflate that option's engagement. Add a **cheap non-mutating resolver** (a small read, or a `?resolve` mode that skips the view/status write) that returns: the member's `group_id`, the group compare token, and whether the group is **decided** (`chosen_proposal_id` set).
+
+Resolution precedence (**decided > choose > cold**):
+1. **Decided group** (a member reached a paid status) → any member token, and `/compare/:groupToken` itself, resolve to the **chosen** proposal's booked/paid view. No dead archived page.
+2. **`?choose=1` present, undecided** → render that proposal's sign/pay page normally (the only place the mutating GET runs). Prevents the compare→choose→bounce loop.
+3. **Undecided, cold hit (no `?choose`)** → redirect to `/compare/:groupToken`.
+
+Ungrouped proposals behave exactly as today.
 
 ## 5. Admin experience
 
 ### 5.1 "Add an alternative" (the one genuinely new primitive)
-- **Endpoint:** `POST /api/proposals/:id/alternative`. Clones the source proposal via the canonical `insertProposalRecord` (copying client, event type, date, time, guest count, location, num_bars — the shared logistics), defaults the new option's package to the source's so it is immediately valid, and ensures both rows share a group:
-  - If the source isn't grouped yet, create a `proposal_groups` row and set `group_id` on both source and new option.
-  - If already grouped, attach the new option to the existing group.
-- Returns the new proposal id; admin opens it in the existing edit flow and swaps the package (BYOB→hosted) / tweaks.
-- **Works before OR after the first send.** Build both up front and send the set once, or send BYOB solo and convert it to a group later when they ask.
-- **Cap:** 3 options per group.
+- **Endpoint:** `POST /api/proposals/:id/alternative`, **admin-only, explicit role guard** (not just route-mount implicit).
+- Clones the source via canonical `insertProposalRecord` (copying client, event type, date, time, guest count, location, num_bars; defaults package to the source's so the clone is immediately valid), then ensures a shared group.
+- **Source-status gate:** only `draft`/`sent`/`viewed`/`modified` sources may spawn or join a group. Reject `deposit_paid`/`balance_paid`/`confirmed`/`completed`/`archived` sources, and reject pulling an **already-paid** (`amount_paid > 0`) solo proposal into a group. You never group a booked event.
+- **Atomic group creation:** creating the `proposal_groups` row + stamping `group_id` on both proposals happens under a row lock (`SELECT … FOR UPDATE` on the source), mirroring the `proposal_change_requests` locked-create, so a double-click can't spawn two clones or two groups around one source.
+- **Server-side cap:** count members in-transaction; reject the 4th (cap = 3). Not a UI-only limit.
+- Returns the new proposal id; admin opens it in the existing edit flow and swaps the package.
+- Works **before or after** the first send.
 
-### 5.2 Managing a group
-`ProposalDetail.js` gains an **"Alternatives" panel**: lists the sibling options (package, total, status), an "Add an alternative" button, and a per-option remove. No separate group page for v1 (reuse the detail surface we already have).
+### 5.2 Managing a group + remove/dissolution
+`ProposalDetail.js` gains an **"Alternatives" panel** (list siblings + package/total/status, "Add an alternative", per-option remove). **Remove must be group-aware — it may not use the blind `DELETE /:id` (`crud.js:968`)**, which hard-deletes with no dissolution and no guard. Remove rules:
+- Removing a member on an **undecided** group is allowed; if it drops the group to **one** member, **dissolve** the group (clear the survivor's `group_id`, delete the group row) so the survivor reverts to a normal solo proposal and stops redirecting to compare.
+- On a **decided** group, members are effectively frozen (the winner is a booked event, losers are archived); no removal that would null a live `chosen_proposal_id`.
 
-### 5.3 Grouped send = one email, one link
-When a proposal belongs to a group, "send" sends the **set**:
-- Transition each member to `sent` (each individually viewable/payable).
-- Send **one** email (new `emailTemplates.proposalOptionsSent`, one "Compare your options" CTA → `/compare/:groupToken`), NOT a per-option `proposalSent`.
-- **Defer invoicing** (see §7.1).
+### 5.3 Grouped send = one email, one link (defined mechanics)
+Sending must be **group-aware and transactional**:
+- A **group-send action** transitions **all** members to `sent` in one transaction (all-or-nothing; partial failure rolls back), rather than the single-row `PATCH /:id/status`. The admin "Send" affordance on a grouped proposal calls this path.
+- **Defer invoicing** for grouped members (see §7.1) — no per-option invoice at send.
+- Send **one** email (`emailTemplates.proposalOptionsSent`, one "Compare your options" CTA → `/compare/:groupToken`). **Suppress the per-option `proposalSent` email AND `initialProposalSms`** for grouped members (both halves fire in the solo path).
+- The compare email runs `checkSuppression` and is **deduped/idempotent** (admin double-click or dispatcher retry must not send twice).
 
 ### 5.4 Dashboard rollup
-The flat proposals list collapses a group into **one row** ("Client · Event · 2 options · status"), expandable / clickable into the group. Ungrouped proposals render as normal rows. Avoids N confusing sibling rows. `ClientDetail.js`'s proposals table gets the same rollup.
+`ProposalsDashboard.js` and `ClientDetail.js` collapse a group into **one row** ("Client · Event · N options · status"), expandable/clickable. **`group_id IS NULL` rows stay solo** — the rollup must not `GROUP BY` a NULL group into one pseudo-group (every existing proposal has `group_id NULL`).
 
-## 6. Acceptance & lifecycle
+## 6. Acceptance & lifecycle (choice-commit)
 
-- **Choice commits at first paid status.** The group stays **undecided** until a member reaches `deposit_paid` / `balance_paid` / `confirmed`. Before that, the client may return to compare and pick a different option freely (signing an option without paying does not lock the group).
-- **On the chosen option's payment success** (inside the existing `stripeWebhook.js` path that already calls `createEventShifts`):
-  1. Set `proposal_groups.chosen_proposal_id`.
-  2. Archive the sibling options: `status='archived'`, `archive_reason='option_not_chosen'` (new CHECK value). Recoverable via the existing `archived → draft` transition.
-  3. Void any invoice attached to a now-archived sibling (only possible in the retroactive-from-solo case, §7.2).
-  4. The chosen option converts to an event **unchanged**.
-- **Group dissolution.** If an admin removes an alternative and only one option remains, dissolve the group (clear the survivor's `group_id`, drop the group row). The survivor reverts to a normal solo proposal and its link stops redirecting to compare.
+- **Choice commits at first paid status.** The group stays undecided until a member reaches `deposit_paid`/`balance_paid`/`confirmed`. Before that the client may return to compare and pick a different option freely (signing without paying does not lock the group).
+- **All three money-in conversion paths must run the choice-commit**, since each already calls `createEventShifts`:
+  1. `stripeWebhook.js` `payment_intent.succeeded`
+  2. `stripeWebhook.js` `checkout.session.completed` (Payment-Link)
+  3. `proposals/actions.js` admin offline **record-payment**
+- **Choice-commit sequence (one transaction, alongside the winner's conversion):**
+  1. **First-writer-wins gate:** `UPDATE proposal_groups SET chosen_proposal_id = $winner WHERE id = $g AND chosen_proposal_id IS NULL` under a `SELECT … FOR UPDATE` on the group row. If the group is **already decided by a different member**, do **not** convert this payment's proposal; leave it flagged for admin refund and Sentry-capture (real money landed on a non-chosen option — see §6 concurrency note).
+  2. **Archive each losing sibling through the real `→archived` reap path** (`cancelMarketingForProposal` + `cancelPendingChangeRequestsForProposal`), never a raw `UPDATE status='archived'`, with `archive_reason='option_not_chosen'`. This stops the loser's drip/SMS from continuing to fire.
+  3. **Void each loser's unpaid invoice** via the new helper (§7.2).
+  4. Convert the winner (`createEventShifts`) — unchanged.
+- **Atomicity / partial-failure:** the commit + archives + voids + conversion are one unit. If any step throws after the winner is converted, do not half-apply; roll back or record a reconcilable Sentry event so we never end with a booked winner + still-live losers.
+- **Concurrency note:** the deposit is real money ($100). First-writer-wins prevents two winners, but a second payment can still *arrive* on a loser. v1 handling: block its conversion, flag for refund, alert admin. (A stricter pre-pay lock is a possible future hardening, out of v1 scope.)
 
-## 7. Money & cross-cutting-consistency seams (the delicate parts — full review fleet)
+### Group dissolution recap
+Covered in §5.2 — dropping to one member dissolves the group.
 
-### 7.1 Deferred invoicing on grouped sends
-Today `PATCH /:id/status → 'sent'` runs `createInvoiceOnSend(id)` in-transaction (`lifecycle.js`). For a comparison, creating an invoice per option at send would leave a dangling invoice on the option the client never picks. **Rule:** `createInvoiceOnSend` runs at send only for **ungrouped** proposals (or a group of one). For grouped options, invoice creation is **deferred to choice** — run it (idempotently) for the **chosen** option when it enters the sign/pay path, so the unpicked options never generate an invoice.
+## 7. Money seams (full review fleet)
 
-### 7.2 Retroactive grouping of an already-sent (already-invoiced) solo proposal
-If BYOB was sent solo first, `createInvoiceOnSend` already ran for it. When it later becomes a group member and loses, archiving it (§6.2) must **void that pre-existing invoice**. New-from-the-start groups never hit this (invoicing was deferred), but the retroactive path must clean up.
+### 7.1 Invoicing: defer per-option, create the winner's before settle
+Today `createInvoiceOnSend` (idempotent on `proposal_id`) runs in-transaction at send (`lifecycle.js:104`, `crud.js:313`) and creates the **Deposit** invoice; the webhook then **links** the incoming payment to an **open** invoice (`status IN ('sent','partially_paid')`) and builds the balance from it. If we merely skip invoice creation for grouped options, the winner reaches settle with **no open invoice** → the payment can't link and the balance computes off a missing base (unlinked deposit / phantom balance). The **sign endpoint currently creates no invoices.**
 
-### 7.3 Existing invariant still applies
-Per CLAUDE.md "Money, auth, and data" — a price change on one option re-evaluates only **that** option's payment status. Grouping does not change this; options are independent rows.
+**Rule:** grouped sends skip per-option invoice creation, but the **chosen option's Deposit/Full invoice is created idempotently and transactionally *before* its payment settles** — at sign time or intent-creation on the `?choose=1` path — so the webhook always finds an open invoice to link. Reuse `createInvoiceOnSend` (idempotent) at that new call site.
+
+### 7.2 Loser invoice void — new helper required
+There is **no reusable void path**: `→archived` voids nothing, `voidExtrasInvoiceWithReconcile` is drink-plan-extras-specific, and the `invoices.js` void is an admin HTTP route the webhook can't call. Build a small **`voidUnpaidProposalInvoice(proposalId, dbClient)`** helper (guarded to `amount_paid = 0`, voids the open Deposit/Full invoice) callable inside the choice-commit transaction. Only relevant to the retroactive case (a solo proposal sent-and-invoiced before being grouped); new-from-start groups never created a loser invoice.
+
+### 7.3 Existing invariant preserved
+A price change on one option re-evaluates only **that** option's `amount_paid` vs total (existing rule). Options are independent rows; grouping does not change this. **Pricing engine is untouched** — each option prices as an ordinary proposal, so the hosted-package 1:100 bartender rule holds even when options swap BYOB↔hosted. (Verified: spec adds no `pricingEngine.js` change.)
 
 ## 8. Data model
 
@@ -104,40 +119,46 @@ ALTER TABLE proposals
   ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES proposal_groups(id) ON DELETE SET NULL;
 ```
 
-- **`archive_reason` CHECK** gains `'option_not_chosen'` (current set: `no_hire | client_cancelled | we_cancelled | event_completed | other`). Note the existing reason column had no live write path; this feature adds the first one, so wire the write explicitly.
-- **Option ordering** on the compare page: by `proposals.created_at` (the order admin added them). No `group_position` column for v1 (YAGNI).
-- All schema via idempotent statements in `schema.sql` per project convention.
+- **`archive_reason` CHECK** (`schema.sql:2348`) gains `'option_not_chosen'` (drop + re-add the constraint). This feature is the **first live writer** of `archive_reason` — wire the write explicitly.
+- `group_id` defaults **NULL** on all existing rows (no backfill needed). Every consumer must treat NULL as "solo."
+- FK `ON DELETE SET NULL` on `chosen_proposal_id` and `group_id` is exactly why remove/dissolution must be group-aware (§5.2): a blind delete would silently un-decide a group.
+- Option ordering on the compare page: by `proposals.created_at`. No `group_position` column (YAGNI).
+- All schema via idempotent statements.
 
-## 9. Reuse map (lean on what exists)
+## 9. Observability
+
+`proposal_activity_log` entries (the pervasive existing convention) for: add-alternative, remove-alternative, grouped-send, choice-commit, and each sibling-archive. Sentry-capture the post-commit failure branch (archive/void throws after the winner converts) so a booked-winner-with-live-losers state is caught and reconcilable.
+
+## 10. Reuse map
 
 | Need | Existing thing |
 |---|---|
-| Clone a proposal | `insertProposalRecord` (`server/utils/proposalInsert.js`) — the one canonical INSERT shape |
-| Public token GET + UUID guard | `server/routes/proposals/publicToken.js`, `server/utils/tokens.js` |
-| Compare column contents | `getPackageBySlug` + `sections`/`tagline` (`client/src/data/packages.js`); section renderer in `ProposalPricingBreakdown.js` |
-| BYOB/Hosted badge | `isHostedPackage` / `isHostedProposal` (`pricingEngine.js` / `eventCreation.js`) |
-| Sign/pay (unchanged) | `SignAndPaySection.js`, `stripeCreateIntent.js`, `stripeWebhook.js` |
-| Event conversion (unchanged) | `createEventShifts` (`server/utils/eventCreation.js`) |
-| Grouped send email | new `emailTemplates.proposalOptionsSent`, sent via `sendProposalSentEmail` sibling path |
-| Related-table pattern (FK + partial-unique + activity log) | `proposal_change_requests` |
+| Clone a proposal | `insertProposalRecord` (`server/utils/proposalInsert.js`) |
+| Locked create (anti double-submit) | `proposal_change_requests` `FOR UPDATE` / partial-unique pattern |
+| Public token GET + UUID guard + **allowlist** | `publicToken.js`, `server/utils/tokens.js` |
+| Compare column contents | `getPackageBySlug` + `sections`/`tagline` (`client/src/data/packages.js`); renderer in `ProposalPricingBreakdown.js` |
+| BYOB/Hosted badge | `isHostedPackage` / `isHostedProposal` |
+| Sign/pay + event conversion (unchanged) | `SignAndPaySection.js`, `stripeCreateIntent.js`, `stripeWebhook.js`, `createEventShifts` |
+| Winner-invoice-before-settle | `createInvoiceOnSend` (idempotent) at a new call site |
+| Archive reaps | `cancelMarketingForProposal`, `cancelPendingChangeRequestsForProposal` (`lifecycle.js`) |
+| Grouped-send suppression | `checkSuppression` (`scheduledMessageDispatcher.js`) |
+| Loser invoice void | **new** `voidUnpaidProposalInvoice` (nothing reusable) |
 
-## 10. Non-goals (v1 YAGNI boundaries)
+## 11. Non-goals (v1 YAGNI)
 
-- **No "Recommended" flag.** Options present as equals; trivial boolean to add later.
-- No inline sign/pay on the compare page (lightweight chooser only).
-- No custom option labels or column reordering.
-- No per-attribute normalized comparison grid (natural section-heading alignment is enough).
-- No automated change-of-mind after deposit (existing manual / change-request handling).
-- No change requests hosted on the compare page (portal per-option flow unchanged).
-- More than 3 options.
+No "Recommended" flag; no inline sign/pay on the compare page; no custom labels or column reorder; no normalized attribute grid; no automated change-of-mind after deposit; no change requests hosted on the compare page; no more than 3 options; no pre-payment cross-member lock beyond first-writer-wins (a stray second payment is refunded + flagged, not prevented).
 
-## 11. Sensitive paths touched → full review fleet on these lanes
+## 12. Sensitive paths → full review fleet
 
-`server/routes/proposals/*` (lifecycle, crud, publicToken), `server/routes/stripeWebhook.js`, invoicing, `schema.sql`, `server/utils/proposalInsert.js`. Triggers the full agent fleet per the review model.
+`server/routes/proposals/*` (lifecycle, crud, publicToken, actions), `server/routes/stripeWebhook.js`, `server/utils/invoiceHelpers.js`, `schema.sql`, `server/utils/proposalInsert.js`, `server/utils/eventCreation.js`.
 
-## 12. Open items to pin in the plan (not blockers)
+## 13. Tests & docs to update
 
-- Exact call-site mechanics of deferring `createInvoiceOnSend` and the idempotent choose-time invoice creation, verified against `lifecycle.js` + `stripeWebhook.js`.
-- Invoice-void mechanism for §7.2 (reuse whatever archive/cancel already does to invoices, if anything).
-- Admin preview of `/compare/:token` before send (public GET should 404 while the group has never been sent; admin gets an authed preview).
-- Drip-marketing interaction: a grouped send should schedule/suppress drip once for the group, not per option.
+- `createInvoiceOnSend` coverage (`crud.test.js` rollback cases) + the `_deps` injection, once send becomes group-conditional.
+- New tests: choice-commit concurrency (two members paying), sibling-archive reaps fire, loser invoice void, group dissolution, redirect precedence, grouped-send suppression.
+- `README.md` (folder tree, new `/compare` page + route file) and `ARCHITECTURE.md` (route table, `proposal_groups` in the schema section) per the Mandatory Documentation Updates table.
+
+## 14. Genuinely open (defer to plan/build, not blockers)
+
+- Exact new call site for the winner-invoice-before-settle (sign endpoint vs intent-creation) — pin against `publicToken.js` + `stripeCreateIntent.js` during build.
+- Admin authed preview route shape for `/compare` before send.
