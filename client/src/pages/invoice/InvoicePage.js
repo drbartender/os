@@ -6,6 +6,9 @@ import api from '../../utils/api';
 import FormBanner from '../../components/FormBanner';
 import { useToast } from '../../context/ToastContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+// Shared brand logo (gold character badge), reused from the shopping-list PDF so
+// the mark renders reliably in the html2pdf "Save as PDF" (base64, no image-load race).
+import { LOGO_BASE64 } from '../../components/ShoppingList/logoBase64';
 
 function formatCurrency(cents) {
   if (cents == null) return '$0.00';
@@ -170,7 +173,7 @@ export default function InvoicePage() {
               <p className="invoice-number">{invoice.invoice_number}</p>
             </div>
             <div className="invoice-brand">
-              <div className="invoice-brand-mark" aria-hidden="true">D</div>
+              <img className="invoice-brand-logo" src={LOGO_BASE64} alt="Dr. Bartender" />
               <p className="invoice-brand-name">Dr. Bartender, LLC</p>
               <p className="invoice-brand-sub">Mobile Bar · Cocktail Lab</p>
               <p className="invoice-brand-line">Chicago, IL · IL · IN · MI</p>
