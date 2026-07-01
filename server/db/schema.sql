@@ -3388,3 +3388,29 @@ CREATE TABLE IF NOT EXISTS telegram_update (
   update_id  BIGINT PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ── Proposal option groups ("compare your options") ──────────────────────────
+-- A group bundles two or three sibling proposal "options" behind one public
+-- /compare/:token link. Each option stays a full proposals row; the group owns
+-- the compare link and records which option the client chose (chosen_proposal_id,
+-- set first-writer-wins on the winning option's first settled payment).
+CREATE TABLE IF NOT EXISTS proposal_groups (
+  id                 SERIAL PRIMARY KEY,
+  token              UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
+  client_id          INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  chosen_proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL,
+  created_by         INTEGER REFERENCES users(id),
+  created_at         TIMESTAMPTZ DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- group_id NULL = a solo proposal (every existing row). Consumers must treat
+-- NULL as "not in a group" (no GROUP BY NULL collapsing in dashboard rollups).
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES proposal_groups(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_proposals_group_id ON proposals(group_id);
+
+-- archive_reason gains 'option_not_chosen' for losing options archived at choice.
+ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_archive_reason_check;
+ALTER TABLE proposals ADD CONSTRAINT proposals_archive_reason_check
+  CHECK (archive_reason IS NULL OR archive_reason IN
+    ('no_hire','client_cancelled','we_cancelled','event_completed','other','option_not_chosen'));
