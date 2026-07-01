@@ -18,11 +18,12 @@
 const { pool } = require('../db');
 const { NotFoundError, ConflictError } = require('./errors');
 const { scheduleBeoNudgesForProposal, suppressBeoNudgesForProposal } = require('./beoHandlers');
+const { findExtrasInvoice } = require('./invoiceHelpers');
 const asyncHandler = require('../middleware/asyncHandler');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { drinkPlanWriteLimiter } = require('../middleware/rateLimiters');
 
-async function finalizeDrinkPlan(planId, actorId) {
+async function finalizeDrinkPlan(planId, actorId, opts = {}) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -60,6 +61,21 @@ async function finalizeDrinkPlan(planId, actorId) {
       throw new ConflictError('Finalize refused.');
     }
     const plan = upd.rows[0];
+
+    // Server-enforced unpaid-extras soft gate. The finalize UPDATE above already
+    // ran; if the proposal has an open, unpaid "Drink Plan Extras" invoice and
+    // the admin has NOT explicitly overridden, throw so the whole transaction
+    // (including the finalize) rolls back. This is the authoritative gate — the
+    // client "finalize anyway" confirm is UX only; a direct / non-UI finalize
+    // cannot skip the warning or the audit entry.
+    const extrasInv = await findExtrasInvoice(plan.proposal_id, client);
+    const unpaidExtrasCents = extrasInv
+      ? Math.max(0, Number(extrasInv.amount_due) - Number(extrasInv.amount_paid))
+      : 0;
+    if (unpaidExtrasCents > 0 && !opts.overrideUnpaidExtras) {
+      throw new ConflictError('Plan has unpaid extras; confirm to finalize anyway.');
+    }
+
     // Pass the transaction client (not pool) so the scheduled_messages INSERTs
     // are atomic with the UPDATE and the activity-log row below.
     const sched = await scheduleBeoNudgesForProposal(plan.proposal_id, client);
@@ -71,6 +87,14 @@ async function finalizeDrinkPlan(planId, actorId) {
         nudge_count: sched.inserted || 0,
       })]
     );
+    // Audit who finalized over the unpaid-extras warning, and how much was unpaid.
+    if (unpaidExtrasCents > 0 && opts.overrideUnpaidExtras) {
+      await client.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+         VALUES ($1, 'finalized_unpaid_extras', 'admin', $2, $3)`,
+        [plan.proposal_id, actorId, JSON.stringify({ amount_cents: unpaidExtrasCents, drink_plan_id: plan.id })]
+      );
+    }
     await client.query('COMMIT');
     console.log(`[beo] finalize plan=${plan.id} proposal=${plan.proposal_id} nudges=${sched.inserted || 0}`);
     return plan;
@@ -86,7 +110,9 @@ function registerFinalizeRoute(router) {
   router.post('/:id/finalize', auth, requireAdminOrManager, drinkPlanWriteLimiter, asyncHandler(async (req, res) => {
     const planId = parseInt(req.params.id, 10);
     if (!Number.isFinite(planId)) throw new NotFoundError('Plan not found.');
-    const plan = await finalizeDrinkPlan(planId, req.user.id);
+    const plan = await finalizeDrinkPlan(planId, req.user.id, {
+      overrideUnpaidExtras: req.body?.overrideUnpaidExtras === true,
+    });
     res.json(plan);
   }));
 }

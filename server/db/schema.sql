@@ -1775,6 +1775,20 @@ DO $$ BEGIN
     CHECK (payment_type IN ('deposit', 'balance', 'full', 'drink_plan_extras', 'drink_plan_with_balance', 'invoice'));
 END $$;
 
+-- The CHECK above allows 'drink_plan_with_balance' (23 chars), but the column was
+-- created VARCHAR(20), so that value overflowed at INSERT and the webhook 500'd
+-- AFTER Stripe captured the money (orphaned payment; 0 such rows exist yet because
+-- no extras+balance payment has succeeded). Widen the column to match the CHECK.
+-- Guarded so the ACCESS EXCLUSIVE ALTER only fires once (never on every initDb
+-- boot), mirroring the guarded migration pattern used elsewhere in this file.
+DO $$ BEGIN
+  IF (SELECT character_maximum_length FROM information_schema.columns
+        WHERE table_name = 'proposal_payments' AND column_name = 'payment_type') < 30
+  THEN
+    ALTER TABLE proposal_payments ALTER COLUMN payment_type TYPE VARCHAR(30);
+  END IF;
+END $$;
+
 -- ─── Invoice System ─────────────────────────────────────────────
 
 CREATE SEQUENCE IF NOT EXISTS invoice_number_seq START 1;

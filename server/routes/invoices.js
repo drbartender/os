@@ -4,7 +4,7 @@ const express = require('express');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager, clientAuth } = require('../middleware/auth');
 const { publicLimiter } = require('../middleware/rateLimiters');
-const { createInvoice, writeLineItems } = require('../utils/invoiceHelpers');
+const { createInvoice, writeLineItems, voidExtrasInvoiceWithReconcile } = require('../utils/invoiceHelpers');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
 
@@ -267,9 +267,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   values.push(id);
   const idParam = `$${values.length}`;
 
-  // Fetch existing invoice for state checks (locked, amount_paid)
+  // Fetch existing invoice for state checks (locked, amount_paid) + label so a
+  // "Drink Plan Extras" void can route through the comp reconcile helper.
   const existing = await pool.query(
-    'SELECT locked, amount_paid FROM invoices WHERE id = $1',
+    'SELECT locked, amount_paid, label, proposal_id FROM invoices WHERE id = $1',
     [id]
   );
   if (!existing.rows[0]) {
@@ -289,6 +290,31 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       'Cannot void an invoice with payments applied. Refund payments first.',
       'INVOICE_HAS_PAYMENTS'
     );
+  }
+
+  // Comp/waive of a "Drink Plan Extras" invoice: void + audit + total_price
+  // reconcile, atomically, via the shared helper (also used by submit's
+  // void-before-refresh so the void/audit/reconcile logic never drifts).
+  if (status === 'void' && existing.rows[0].label === 'Drink Plan Extras') {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await voidExtrasInvoiceWithReconcile(id, req.user.id, client);
+      const voided = await client.query(
+        `SELECT id, token, proposal_id, invoice_number, label,
+                amount_due, amount_paid, status, due_date,
+                locked, locked_at, created_at, updated_at
+           FROM invoices WHERE id = $1`,
+        [id]
+      );
+      await client.query('COMMIT');
+      return res.json({ invoice: voided.rows[0] });
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch { /* swallow rollback noise */ }
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   const result = await pool.query(

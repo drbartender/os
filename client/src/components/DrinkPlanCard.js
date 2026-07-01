@@ -67,12 +67,27 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
   };
 
   const finalize = async () => {
+    // Soft-warn on unpaid drink-plan extras. The server is the real gate (it
+    // re-detects the open extras invoice and requires overrideUnpaidExtras); this
+    // confirm is UX, and we forward the override only after the admin agrees.
+    const unpaidCents = Number(drinkPlan.extras_unpaid_cents) || 0;
+    if (unpaidCents > 0) {
+      const dollars = (unpaidCents / 100).toFixed(2);
+      if (!window.confirm(`This plan has $${dollars} in unpaid extras. Finalize anyway? The extras invoice stays open and can still be collected.`)) return;
+    }
     try {
-      const res = await api.post(`/drink-plans/${drinkPlan.id}/finalize`);
+      const res = await api.post(
+        `/drink-plans/${drinkPlan.id}/finalize`,
+        unpaidCents > 0 ? { overrideUnpaidExtras: true } : {}
+      );
       setDrinkPlan(res.data);
       if (reload) await reload(); // refresh the Messages card if a client email fired
       toast.success('BEO finalized. Staff will be nudged 3 days before the event.');
     } catch (err) {
+      // If the server's authoritative gate rejects (409) — e.g. our badge was
+      // stale and we finalized without the override — refetch so the unpaid-extras
+      // badge appears and the admin can retry through the confirm flow.
+      if (err.response?.status === 409) { await refetch(); }
       toast.error(err.response?.data?.error || err.message || 'Finalize failed.');
     }
   };
@@ -154,6 +169,11 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
                 </>
               )}
             </dl>
+            {Number(drinkPlan.extras_unpaid_cents) > 0 && (
+              <div className="tiny" style={{ marginTop: 10, fontWeight: 600, color: '#c0392b' }}>
+                Extras unpaid: ${(Number(drinkPlan.extras_unpaid_cents) / 100).toFixed(2)}
+              </div>
+            )}
             <div className="vstack" style={{ gap: 6, marginTop: 12 }}>
               <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }}
                 onClick={() => navigate(`/drink-plans/${drinkPlan.id}`)}>

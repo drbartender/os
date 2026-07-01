@@ -9,7 +9,7 @@ const { createEventShifts } = require('../utils/eventCreation');
 const { getBookingWindow } = require('../utils/bookingWindow');
 const { notifyLastMinuteBooking } = require('../utils/lastMinuteAlert');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
-const { createBalanceInvoice, linkPaymentToInvoice, createDrinkPlanExtrasInvoice, findOpenInvoiceForBalance } = require('../utils/invoiceHelpers');
+const { createBalanceInvoice, linkPaymentToInvoice, createDrinkPlanExtrasInvoice, findExtrasInvoice, findOpenInvoiceForBalance } = require('../utils/invoiceHelpers');
 const { notifyClientPaymentFailed } = require('../utils/paymentFailedClientNotify');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ADMIN_URL } = require('../utils/urls');
@@ -278,12 +278,37 @@ router.post('/webhook', asyncHandler(async (req, res) => {
                 }
               }
 
-              if (extrasCents > 0 && drinkPlanId) {
-                const extrasInvoice = await createDrinkPlanExtrasInvoice(
-                  { proposalId, drinkPlanId, extrasAmountCents: extrasCents },
-                  dbClient
-                );
-                await linkPaymentToInvoice(extrasInvoice.id, paymentRowId, extrasCents, dbClient);
+              // Link the submit-created "Drink Plan Extras" invoice (B1) instead
+              // of creating a second one. findExtrasInvoice matches ANY non-void
+              // (incl. paid/locked), so a redelivery or an out-of-order webhook
+              // that already settled it is an idempotent no-op, never a duplicate.
+              // The create-if-missing fallback stays inside this isFirstDelivery
+              // guard for the out-of-order case (webhook before the submit commit).
+              if (extrasCents > 0) {
+                const extrasInv = await findExtrasInvoice(proposalId, dbClient);
+                const alreadyPaid = extrasInv
+                  && (extrasInv.status === 'paid'
+                      || Number(extrasInv.amount_paid) >= Number(extrasInv.amount_due));
+                if (extrasInv && !alreadyPaid) {
+                  await linkPaymentToInvoice(extrasInv.id, paymentRowId, extrasCents, dbClient);
+                } else if (!extrasInv && drinkPlanId) {
+                  const created = await createDrinkPlanExtrasInvoice(
+                    { proposalId, drinkPlanId, extrasAmountCents: extrasCents },
+                    dbClient
+                  );
+                  await linkPaymentToInvoice(created.id, paymentRowId, extrasCents, dbClient);
+                } else if (!extrasInv && !drinkPlanId) {
+                  console.warn(
+                    `Webhook: extras payment ${intent.id} for proposal ${proposalId} has no extras invoice and no drink_plan_id; extras portion ($${(extrasCents / 100).toFixed(2)}) not linked`
+                  );
+                  if (process.env.SENTRY_DSN_SERVER) {
+                    Sentry.captureMessage(
+                      `Unlinked drink-plan extras portion (proposal ${proposalId}, intent ${intent.id}, cents ${extrasCents})`,
+                      'warning'
+                    );
+                  }
+                }
+                // extrasInv && alreadyPaid → idempotent no-op (already settled).
               }
 
               if (balanceCents > 0) {

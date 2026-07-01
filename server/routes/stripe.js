@@ -4,7 +4,7 @@ const { pool } = require('../db');
 const { auth, adminOnly, requireAdminOrManager } = require('../middleware/auth');
 const { publicLimiter, publicReadLimiter } = require('../middleware/rateLimiters');
 const { getBookingWindow } = require('../utils/bookingWindow');
-const { calculateSyrupCost } = require('../utils/pricingEngine');
+const { computeExtrasBreakdown } = require('../utils/drinkPlanExtras');
 const asyncHandler = require('../middleware/asyncHandler');
 const { AppError, ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
 const { PUBLIC_SITE_URL } = require('../utils/urls');
@@ -59,49 +59,16 @@ router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This 
 
   if (!data.proposal_id) throw new ConflictError('No linked proposal for this plan');
 
-  const addOns = selections.addOns || {};
-  const addonSlugs = Object.keys(addOns).filter(slug => addOns[slug]?.enabled);
-  const addBarRental = selections.logistics?.addBarRental === true;
-
-  let addonTotal = 0;
-  if (addonSlugs.length > 0) {
-    const addonRes = await pool.query(
-      'SELECT slug, rate, billing_type FROM service_addons WHERE slug = ANY($1) AND is_active = true',
-      [addonSlugs]
-    );
-    for (const addon of addonRes.rows) {
-      const rate = Number(addon.rate);
-      if (addon.billing_type === 'per_guest') {
-        addonTotal += rate * (data.guest_count || 1);
-      } else {
-        addonTotal += rate;
-      }
-    }
-  }
-
-  let barRentalCost = 0;
-  if (addBarRental) {
-    const snapshot = data.pricing_snapshot || {};
-    const barRental = snapshot.bar_rental || {};
-    if ((data.num_bars || 0) >= 1) {
-      barRentalCost = barRental.additional_bar_fee || 100;
-    } else {
-      barRentalCost = barRental.first_bar_fee || 50;
-    }
-  }
-
-  const rawSyrups = selections.syrupSelections || {};
-  const allSyrupIds = Array.isArray(rawSyrups)
-    ? rawSyrups
-    : [...new Set(Object.values(rawSyrups).flat())];
-  const selfProvided = selections.syrupSelfProvided || [];
-  const proposalSyrups = data.pricing_snapshot?.syrups?.selections || [];
-  const newSyrupIds = allSyrupIds
-    .filter(id => !selfProvided.includes(id))
-    .filter(id => !proposalSyrups.includes(id));
-  const syrupCost = calculateSyrupCost(newSyrupIds, data.guest_count);
-
-  const extrasAmount = addonTotal + barRentalCost + syrupCost.total;
+  // Extras amount via the shared helper — the SAME math the submit handler uses
+  // to build the "Drink Plan Extras" invoice, so the invoice amount_due can
+  // never drift from what Stripe charges. numBars is the client's current count
+  // (the first-vs-additional bar fee is priced pre-submit here, exactly as the
+  // invoice prices it at submit).
+  const bd = await computeExtrasBreakdown(
+    { selections, guestCount: data.guest_count, pricingSnapshot: data.pricing_snapshot, numBars: data.num_bars },
+    pool
+  );
+  const extrasAmount = bd.totalCents / 100;
 
   const now = new Date();
   let balanceDueDate = data.balance_due_date;
@@ -148,7 +115,7 @@ router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This 
   });
 
   const amountCents = Math.round(totalCharge * 100);
-  const extrasCents = Math.round(extrasAmount * 100);
+  const extrasCents = bd.totalCents;
   const balanceCents = Math.round(balancePortion * 100);
   const paymentType = balancePortion > 0 ? 'drink_plan_with_balance' : 'drink_plan_extras';
 

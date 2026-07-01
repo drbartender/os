@@ -176,6 +176,8 @@ dr-bartender/
 │   │   ├── cocktails.js        # Cocktail menu CRUD
 │   │   ├── contractor.js       # Contractor profile + file uploads
 │   │   ├── drinkPlans.js       # Client event planning questionnaire
+│   │   ├── drinkPlans/
+│   │   │   └── submit.js       # PUT /t/:token submit handler (extracted); creates the "Drink Plan Extras" invoice at submit
 │   │   ├── drinkPlanConsult.js # Admin consult-form routes (alternate input source for shopping lists)
 │   │   ├── messages.js         # SMS messaging to staff
 │   │   ├── mocktails.js        # Mocktail menu CRUD
@@ -261,7 +263,8 @@ dr-bartender/
 │   │   ├── geocode.js          # Nominatim geocoding (address → lat/lng)
 │   │   ├── globalSearch.js     # Global record search query engine (clients/proposals/events/staff)
 │   │   ├── googlePlaces.js     # Google Places venue-search proxy
-│   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
+│   │   ├── drinkPlanExtras.js  # Shared pay-now extras amount helper (computeExtrasBreakdown; mirrors create-intent math)
+│   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking; "Drink Plan Extras" find/refresh/void-reconcile helpers
 │   │   ├── lastMinuteAlert.js  # Last-minute (<72h) booking SMS alert dispatch (admin + broad staff blast, idempotent)
 │   │   ├── lastMinuteStaffingConfirmation.js  # Touch 2.2: bartender-list renderer + notify fn + atomic-flip trigger
 │   │   ├── lifecycleEmailTemplates.js # Lifecycle email templates split out of emailTemplates.js
@@ -304,6 +307,7 @@ dr-bartender/
 │   │   ├── webhookEventsPruneScheduler.js # Hourly prune of `webhook_events` to a 30-day window (gated by RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER)
 │   │   └── xmlEscape.js        # Shared TwiML XML escaper (& < >); used by the SMS + voice routes
 │   └── scripts/
+│       ├── backfillExtrasInvoices.js # One-off: create the "Drink Plan Extras" invoice for an abandoned pay-now PI + cancel stale PIs (idempotent, --dry-run)
 │       ├── backfillTipPages.js # One-shot backfill: ensure every active bartender has a tip page row + Stripe link
 │       └── archive/               # One-time migrations (already run, kept for history)
 │           ├── importBlogPosts.js
