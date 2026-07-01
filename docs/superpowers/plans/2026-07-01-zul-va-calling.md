@@ -57,7 +57,7 @@ Copied verbatim from the spec and CLAUDE.md; every task's requirements implicitl
 - **Idempotency is claim-then-call:** `calls.create` is an external HTTP call and cannot sit in a DB transaction. A conditional `UPDATE pending_call SET status='dialing' WHERE …status='awaiting_confirm'… RETURNING` commits first; only the winning row dials; `telegram_update` de-dupes Telegram retries. Never "settle in the same transaction as the call."
 - **Bridge target is pinned server-side** from the `pending_call` row by Twilio `CallSid`, never read from a request param.
 - **Webhook auth:** Telegram `secret_token` header + secret URL path; Twilio voice endpoints copy `isValidTwilioRequest` (prod 403 on bad/missing signature). Privileged actions are never honored on a dev signature-skip path.
-- **Spend caps:** per-call `timeLimit` = `VA_CALL_TIME_LIMIT_SEC` (1800) on both `calls.create` and the bridge `<Dial>`; `VA_CALL_PER_MIN_CAP` (5) and `VA_CALL_DAILY_CAP` (40) enforced by counting `call_audit` rows (DB-backed; in-memory `express-rate-limit` is per-IP and useless here since every trigger shares Telegram's source IP).
+- **Spend caps:** per-call `timeLimit` = `VA_CALL_TIME_LIMIT_SEC` (1800) on both `calls.create` and the bridge `<Dial>`; `VA_CALL_PER_MIN_CAP` (5) and `VA_CALL_DAILY_CAP` (40) enforced by counting `call_audit` rows (DB-backed; in-memory `express-rate-limit` is per-IP and useless here since every trigger shares Telegram's source IP). Two deliberate readings of the spec: the per-minute cap is enforced as placed-calls/minute (the per-IP Telegram limiter covers raw trigger rate), and the webhook heartbeat runs every 6h, intentionally tighter than the spec's daily floor.
 - **Dev safety:** `placeBridgedCall` and `sendTelegramMessage` gate on `notificationsEnabled()` so a dev server never dials/sends against the live account.
 - **Codebase invariants:** raw parameterized SQL (`$1,$2`), throw `AppError` subclasses for client-visible errors, secrets only via `process.env` (and `.env.example`), snake_case DB / camelCase JS, idempotent schema (`IF NOT EXISTS`), redact phone numbers to last-4 in logs.
 - **Copy rule:** no em dashes in any user-facing copy (commas/periods/colons/parentheticals).
@@ -66,6 +66,8 @@ Copied verbatim from the spec and CLAUDE.md; every task's requirements implicitl
 ## Build order (dependency graph)
 
 Single lane `va-calling`, built task-by-task. Topological order: **1, 2, 4 → 3, 5 → 7, 6 → 8 → 9.** Tasks 1/2/4 have no dependencies; 3 and 5 need the schema (2); the routers (6, 7) need the utils; 8 needs schema+util; 9 (docs+runbook) is last.
+
+Build the tasks **sequentially in one pass**, not as parallel agents: Tasks 1/2/3 all edit `ARCHITECTURE.md`/`README.md` and 6/7/8 all edit `server/index.js`, so parallel writers would clobber the same files. After each router mount / scheduler registration in `index.js`, do a manual wiring check (`curl` the mounted path, expect non-404): the router unit tests spin up a standalone express app and will NOT catch a wrong mount path.
 
 | Task | Title | Depends on |
 |---|---|---|
@@ -318,7 +320,7 @@ Then delete the inline definition at `server/routes/sms.js:88`, remove exactly t
   const xmlEscape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 ```
 
-Leave the surrounding comment and the two `xmlEscape(reply)` usages (lines 90) untouched, they now resolve to the imported function. Do not change any other behavior in this file.
+Leave the surrounding comment and the one `xmlEscape(reply)` usage (line 90) untouched, they now resolve to the imported function. Do not change any other behavior in this file.
 
 - [ ] **Step 1.10: Verify the SMS route still works (no regression)**
 
@@ -904,7 +906,7 @@ Expect: `Cannot find module './telegram'`, RED for the right reason.
 
 - [ ] **Step 3.3: Implement `server/utils/telegram.js`**
 
-Mirrors the `sms.js` gate (`server/utils/sms.js:22-26`, `!client || !notificationsEnabled()` → log + skip) and the DI seam (`server/utils/sms.js:57-58`). Log redaction uses the `smsInbound.js` style (`'…' + String(x).slice(-4)`, see `server/utils/smsInbound.js:432` for the `slice(-4)` convention). `verifyTelegramSecret` uses `crypto.timingSafeEqual` over SHA-256 digests so the compare is constant-time **and** length-safe (raw-length `timingSafeEqual` throws on unequal lengths).
+Mirrors the `sms.js` gate (`server/utils/sms.js:22-26`, `!client || !notificationsEnabled()` → log + skip) and the DI seam (`server/utils/sms.js:57-58`). Log redaction uses the `smsInbound.js` style (`'…' + String(x).slice(-4)`, see `server/utils/smsInbound.js:572` for the `slice(-4)` convention). `verifyTelegramSecret` uses `crypto.timingSafeEqual` over SHA-256 digests so the compare is constant-time **and** length-safe (raw-length `timingSafeEqual` throws on unequal lengths).
 
 ```js
 const crypto = require('crypto');
@@ -1691,10 +1693,10 @@ Builds the toll-fraud-guarded Telegram webhook that turns Zul's chat message int
 `server/routes/telegram.js` exports an Express `router` with a test seam:
 - Route `POST /:secret`.
 - `router.__setDeps(partial)`, overrides any of the injected deps (mirrors `server/utils/sms.js:58` `__setSmsDeps`). Injected deps and their upstream sources:
-  - `verifyTelegramSecret(req):boolean`, `isNewUpdate(updateId):Promise<boolean>`, `sendTelegramMessage(chatId, text):Promise`, from `server/utils/telegram.js` (Task 4).
+  - `verifyTelegramSecret(req):boolean`, `isNewUpdate(updateId):Promise<boolean>`, `sendTelegramMessage(chatId, text):Promise`, from `server/utils/telegram.js` (Task 3).
   - `upsertPending({userId,targetE164,ttlSeconds})`, `claimForDial(userId):Promise<{id,targetE164}|null>`, `attachCallSid(id,callSid)`, `countPlacedSince(intervalSql):Promise<number>`, `recordAudit({triggeredBy,targetE164,callSid,status})`, from `server/utils/pendingCall.js` (Task 5).
-  - `placeBridgedCall({to,callerId,url,statusCallback,timeLimit}):Promise<{sid}>`, from `server/utils/sms.js` (Task 3).
-  - `toUsE164(raw):string|null`, from `server/utils/usPhone.js` (Task 3).
+  - `placeBridgedCall({to,callerId,url,statusCallback,timeLimit}):Promise<{sid}>`, from `server/utils/sms.js` (Task 4).
+  - `toUsE164(raw):string|null`, from `server/utils/usPhone.js` (Task 1).
 
 Env read at request time (so redeploy/env-set takes effect and tests can mutate freely): `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_USER_ID`, `VA_CELL`, `VOICE_CALLER_ID`, `VA_CALL_PER_MIN_CAP` (default 5), `VA_CALL_DAILY_CAP` (default 40), `VA_CALL_TIME_LIMIT_SEC` (default 1800), `PENDING_CALL_TTL_SEC` (default 120), and `API_URL || RENDER_EXTERNAL_URL || http://localhost:5000` for the bridge/status callback base.
 
@@ -2129,7 +2131,7 @@ All three copy the `isValidTwilioRequest` signature gate from `server/routes/sms
 - `server/index.js` (edit), mount `app.use('/api/voice', require('./routes/voice'))` next to `/api/sms` (`server/index.js:254`).
 
 **Interfaces (this task provides)**
-- `POST /api/voice/inbound` → `200 text/xml` `<Response><Dial timeout="20" callerId="<escaped client From>"><Number><escaped VA_CELL></Number></Dial></Response>`; prod bad-sig → `403`.
+- `POST /api/voice/inbound` → `200 text/xml` `<Response><Dial timeout="20" callerId="<escaped client From>"><Number><escaped VA_CELL></Number></Dial></Response>`; prod bad-sig → `403`. Behind `inboundForwardLimiter` (per-window flood cap, spec §Inbound); when tripped returns `<Response><Say>All lines are busy. Please try again shortly.</Say><Hangup/></Response>` and does NOT forward (every forwarded leg bills a PH per-minute charge, so an unthrottled public number is a toll-fraud vector).
 - `POST /api/voice/bridge` → `200 text/xml`; known `CallSid` → `<Response><Dial answerOnBridge="true" callerId="<VOICE_CALLER_ID>" timeLimit="<VA_CALL_TIME_LIMIT_SEC>"><Number><escaped target></Number></Dial></Response>`; unknown `CallSid` → `<Response><Say>Sorry, the call could not be completed.</Say><Hangup/></Response>`; prod bad-sig → `403`.
 - `POST /api/voice/status` → `204` empty; on `CallStatus` ∈ {no-answer, busy, failed, canceled} calls `sendTelegramMessage(ALLOWED_USER_ID, ...)` + `recordAudit({..., status})`; prod bad-sig → `403`.
 - `module.exports = router` with `router.__setVoiceDeps` attached for tests.
@@ -2299,6 +2301,25 @@ const router = express.Router();
 const XML_DECL = '<?xml version="1.0" encoding="UTF-8"?>';
 const DEAD_STATUSES = new Set(['no-answer', 'busy', 'failed', 'canceled']);
 
+const rateLimit = require('express-rate-limit');
+
+// Inbound flood cap (spec §Inbound). Every forwarded inbound call bills a PH
+// per-minute leg to VA_CELL, so an unthrottled public 224 is a toll-fraud
+// vector under a robocall storm. Mirrors the SMS inboundLimiter
+// (server/routes/sms.js:19-23). All legitimate inbound also arrives via Twilio's
+// IPs, so a per-window cap here acts as a global forward cap; on trip we return a
+// busy TwiML and never dial. Override with VA_INBOUND_PER_MIN_CAP (register it in
+// Task 9's env docs; default 30/min).
+const inboundForwardLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: parseInt(process.env.VA_INBOUND_PER_MIN_CAP, 10) || 30,
+  handler: (req, res) => {
+    res.set('Content-Type', 'text/xml').send(
+      `${XML_DECL}<Response><Say>All lines are busy. Please try again shortly.</Say><Hangup/></Response>`
+    );
+  },
+});
+
 /**
  * Verify an inbound request is genuinely from Twilio. Copied verbatim from
  * server/routes/sms.js (isValidTwilioRequest, lines 30-42): validateRequest
@@ -2365,7 +2386,7 @@ function timeLimitSec() {
  * VA_CELL is a strict-E.164 env var (never normalized). Both interpolated
  * values are XML-escaped defensively (the client From is external input).
  */
-router.post('/inbound', (req, res) => {
+router.post('/inbound', inboundForwardLimiter, (req, res) => {
   if (!passesSignature(req, res, 'inbound')) return;
   const caller = req.body.From || '';
   const vaCell = process.env.VA_CELL || '';
