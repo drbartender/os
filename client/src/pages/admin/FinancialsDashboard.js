@@ -146,7 +146,14 @@ export default function FinancialsDashboard() {
                       <td><strong>{pp.client_name || '—'}</strong></td>
                       <td>{getEventTypeLabel({ event_type: pp.event_type, event_type_custom: pp.event_type_custom })}</td>
                       <td className="muted" style={{ textTransform: 'capitalize' }}>{pp.payment_type}</td>
-                      <td className="num">{fmt$fromCents(pp.amount)}</td>
+                      <td className="num">
+                        {fmt$fromCents(Number(pp.net_amount))}
+                        {Number(pp.refunded_cents) > 0 && (
+                          <span className="muted" style={{ display: 'block', fontSize: '0.85em' }}>
+                            refunded {fmt$fromCents(Number(pp.refunded_cents))}
+                          </span>
+                        )}
+                      </td>
                       <td className="muted">{fmtDate(pp.created_at && String(pp.created_at).slice(0, 10), { year: 'numeric' })}</td>
                     </ClickableRow>
                   ))}

@@ -137,6 +137,10 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
   const collAmountCol = f.includeCc === 'all' ? 'amount' : 'pp.amount';
   const collDate = metrics.dateClause(collDateCol, f.from, f.to, collParams);
   const collCc = metrics.ccClause('p.', f.includeCc);
+  // Net succeeded refunds out of Collected (cash basis: the refund's own
+  // created_at). Built AFTER collDate so the refund date params follow the
+  // payment date params in `collParams`.
+  const collRefunds = metrics.refundsInWindow(f.from, f.to, collParams, f.includeCc === 'all' ? 'all' : f.includeCc);
 
   const [moneyR, outR, accR, totalR, proposalsR, paymentsR, collectedRow] = await Promise.all([
     pool.query(money.sql, money.params),
@@ -161,18 +165,31 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
       SELECT pp.id, pp.proposal_id, pp.payment_type, pp.amount, pp.status AS payment_status,
              pp.created_at, p.event_type, p.event_type_custom, p.cc_id AS proposal_cc_id,
              c.name AS client_name, c.cc_id AS client_cc_id,
-             ip.invoice_id, i.token AS invoice_token
+             inv.invoice_id, inv.invoice_token,
+             COALESCE(rf.refunded_cents, 0) AS refunded_cents,
+             (pp.amount - COALESCE(rf.refunded_cents, 0)) AS net_amount
       FROM proposal_payments pp
       JOIN proposals p ON p.id = pp.proposal_id
       LEFT JOIN clients c ON c.id = p.client_id
-      LEFT JOIN invoice_payments ip ON ip.payment_id = pp.id
-      LEFT JOIN invoices i ON i.id = ip.invoice_id
+      LEFT JOIN LATERAL (
+        SELECT ip.invoice_id, i.token AS invoice_token
+        FROM invoice_payments ip
+        LEFT JOIN invoices i ON i.id = ip.invoice_id
+        WHERE ip.payment_id = pp.id
+        ORDER BY ip.amount DESC, ip.id
+        LIMIT 1
+      ) inv ON true
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(pr.amount), 0) AS refunded_cents
+        FROM proposal_refunds pr
+        WHERE pr.payment_id = pp.id AND pr.status = 'succeeded'
+      ) rf ON true
       WHERE pp.status = 'succeeded'${payDate}${payCc}
       ORDER BY pp.created_at DESC
       LIMIT 200
     `, payParams),
     pool.query(
-      `SELECT COALESCE(SUM(${collAmountCol}),0)::float8 AS c FROM ${collTable}${collJoin}
+      `SELECT (COALESCE(SUM(${collAmountCol}),0) - ${collRefunds})::float8 AS c FROM ${collTable}${collJoin}
        WHERE ${collStatusCol}='succeeded'${collDate}${collCc}`, collParams),
   ]);
 
@@ -283,7 +300,9 @@ router.get('/dashboard-stats', auth, requireAdminOrManager, asyncHandler(async (
   const outstanding = metrics.toDollars(outR.rows[0].value);
   const outstandingPrior = outPriorR ? metrics.toDollars(outPriorR.rows[0].value) : null;
   const pct = (cur, pre) =>
-    (pre === null || pre === undefined) ? null : pre === 0 ? null : Math.round(((cur - pre) / pre) * 100);
+    // Guard a non-positive prior: refund netting can drive a prior paid value
+    // to <= 0, where a percent delta is nonsensical (or divides by zero).
+    (pre === null || pre === undefined || pre <= 0) ? null : Math.round(((cur - pre) / pre) * 100);
   const sc = wrR.rows[0].sent_cohort;
   const md = ttaR.rows[0].median_days;
 

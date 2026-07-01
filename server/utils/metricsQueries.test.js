@@ -7,6 +7,23 @@ const {
   qPipelineOutstanding, qOutstanding, qPaidCount, qMoney, qRevenue,
 } = require('./metricsQueries');
 
+// ── refund netting (Lane A / A1, A2) ──
+test('qMoney paid all-path nets refunds via scalar subquery, no JOIN', () => {
+  const q = qMoney({ from: null, to: null, basis: 'paid', includeCc: 'all' });
+  assert.match(q.sql, /FROM proposal_payments pp WHERE pp\.status = 'succeeded'/);
+  assert.match(q.sql, /- \(SELECT COALESCE\(SUM\(pr\.amount\),0\) FROM proposal_refunds pr/);
+  assert.doesNotMatch(q.sql, /JOIN proposals/);
+});
+test('qMoney paid cc-filtered nets refunds joined through proposals', () => {
+  const q = qMoney({ from: '2026-06-01', to: '2026-06-30', basis: 'paid', includeCc: 'only' });
+  assert.match(q.sql, /FROM proposal_refunds pr\s+JOIN proposals p2/);
+  assert.match(q.sql, /p2\.cc_id IS NOT NULL/);
+});
+test('qRevenue paid series subtracts monthly refunds', () => {
+  const q = qRevenue({ from: null, to: null, basis: 'paid', includeCc: 'all' });
+  assert.match(q.sql, /FROM proposal_refunds pr[\s\S]*pr\.created_at >= ms[\s\S]*ms \+ INTERVAL '1 month'/);
+});
+
 // ── resolveFilters ──
 test('resolveFilters: defaults basis to booked, no dates = All time', () => {
   assert.deepEqual(resolveFilters({}), { from: null, to: null, basis: 'booked', includeCc: 'all' });

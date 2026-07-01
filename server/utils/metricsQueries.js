@@ -110,6 +110,25 @@ function ccClause(prefix, includeCc) {
 
 const NOT_DEAD = "status <> 'archived'";
 
+/**
+ * Scalar subquery string: succeeded refunds in [from,to) keyed on the refund's
+ * own created_at (cash basis). ccMode 'all' stays join-less; 'only'/'exclude'
+ * joins proposals for the cc filter. Pushes its own date params onto `params`,
+ * so call it AFTER the payment-side dateClause so the $n positions line up.
+ */
+function refundsInWindow(from, to, params, ccMode) {
+  const rc = dateClause('pr.created_at', from, to, params);
+  if (ccMode === 'all') {
+    return `(SELECT COALESCE(SUM(pr.amount),0) FROM proposal_refunds pr
+             WHERE pr.status='succeeded'${rc})`;
+  }
+  const cc = ccMode === 'only' ? ' AND p2.cc_id IS NOT NULL'
+    : ccMode === 'exclude' ? ' AND p2.cc_id IS NULL' : '';
+  return `(SELECT COALESCE(SUM(pr.amount),0) FROM proposal_refunds pr
+           JOIN proposals p2 ON p2.id = pr.proposal_id
+           WHERE pr.status='succeeded'${rc}${cc})`;
+}
+
 function qSent(f) {
   const params = [];
   const c = dateClause('sent_at', f.from, f.to, params);
@@ -187,17 +206,20 @@ function qMoney(f) {
     const c = dateClause('pp.created_at', f.from, f.to, params);
     // Default `all` path keeps the join-less form for performance parity with
     // the pre-filter query. Only join to proposals when filtering by cc_id.
+    // Refunds are netted via a scalar subquery so the `all` path stays join-less.
     if (f.includeCc === 'all') {
+      const refunds = refundsInWindow(f.from, f.to, params, 'all');
       return {
-        sql: `SELECT COALESCE(SUM(pp.amount),0)::float8 AS value
+        sql: `SELECT (COALESCE(SUM(pp.amount),0) - ${refunds})::float8 AS value
               FROM proposal_payments pp WHERE pp.status = 'succeeded'${c}`,
         params,
         cents: true,
       };
     }
     const cc = ccClause('p.', f.includeCc);
+    const refunds = refundsInWindow(f.from, f.to, params, f.includeCc);
     return {
-      sql: `SELECT COALESCE(SUM(pp.amount),0)::float8 AS value
+      sql: `SELECT (COALESCE(SUM(pp.amount),0) - ${refunds})::float8 AS value
             FROM proposal_payments pp
             JOIN proposals p ON p.id = pp.proposal_id
             WHERE pp.status = 'succeeded'${c}${cc}`,
@@ -257,19 +279,31 @@ function qRevenue(f) {
   // path so the existing performance characteristics are preserved. Only when
   // a cc filter is active do we join to proposals.
   const paidValueSub = f.includeCc === 'all'
-    ? `(SELECT COALESCE(SUM(amount),0)::float8/100.0 FROM proposal_payments pp
-        WHERE pp.status='succeeded' AND pp.created_at >= ms AND pp.created_at < ms + INTERVAL '1 month')`
-    : `(SELECT COALESCE(SUM(pp.amount),0)::float8/100.0 FROM proposal_payments pp
+    ? `((SELECT COALESCE(SUM(amount),0)::float8/100.0 FROM proposal_payments pp
+        WHERE pp.status='succeeded' AND pp.created_at >= ms AND pp.created_at < ms + INTERVAL '1 month')
+       - (SELECT COALESCE(SUM(amount),0)::float8/100.0 FROM proposal_refunds pr
+          WHERE pr.status='succeeded' AND pr.created_at >= ms AND pr.created_at < ms + INTERVAL '1 month'))`
+    : `((SELECT COALESCE(SUM(pp.amount),0)::float8/100.0 FROM proposal_payments pp
         JOIN proposals p ON p.id = pp.proposal_id
-        WHERE pp.status='succeeded' AND pp.created_at >= ms AND pp.created_at < ms + INTERVAL '1 month'${ccPrefixed})`;
+        WHERE pp.status='succeeded' AND pp.created_at >= ms AND pp.created_at < ms + INTERVAL '1 month'${ccPrefixed})
+       - (SELECT COALESCE(SUM(pr.amount),0)::float8/100.0 FROM proposal_refunds pr
+          JOIN proposals p ON p.id = pr.proposal_id
+          WHERE pr.status='succeeded' AND pr.created_at >= ms AND pr.created_at < ms + INTERVAL '1 month'${ccPrefixed}))`;
   const paidSiblingSub = f.includeCc === 'all'
-    ? `(SELECT COALESCE(SUM(amount),0)::float8/100.0 FROM proposal_payments pp
+    ? `((SELECT COALESCE(SUM(amount),0)::float8/100.0 FROM proposal_payments pp
         WHERE pp.status='succeeded' AND pp.created_at >= ms
-          AND pp.created_at < ms + INTERVAL '1 month')`
-    : `(SELECT COALESCE(SUM(pp.amount),0)::float8/100.0 FROM proposal_payments pp
+          AND pp.created_at < ms + INTERVAL '1 month')
+       - (SELECT COALESCE(SUM(amount),0)::float8/100.0 FROM proposal_refunds pr
+          WHERE pr.status='succeeded' AND pr.created_at >= ms
+          AND pr.created_at < ms + INTERVAL '1 month'))`
+    : `((SELECT COALESCE(SUM(pp.amount),0)::float8/100.0 FROM proposal_payments pp
         JOIN proposals p ON p.id = pp.proposal_id
         WHERE pp.status='succeeded' AND pp.created_at >= ms
-          AND pp.created_at < ms + INTERVAL '1 month'${ccPrefixed})`;
+          AND pp.created_at < ms + INTERVAL '1 month'${ccPrefixed})
+       - (SELECT COALESCE(SUM(pr.amount),0)::float8/100.0 FROM proposal_refunds pr
+          JOIN proposals p ON p.id = pr.proposal_id
+          WHERE pr.status='succeeded' AND pr.created_at >= ms
+          AND pr.created_at < ms + INTERVAL '1 month'${ccPrefixed}))`;
   const valueSub = f.basis === 'paid'
     ? paidValueSub
     : `(SELECT COALESCE(SUM(total_price),0)::float8 FROM proposals p
@@ -304,4 +338,4 @@ const builders = {
   qPipelineOutstanding, qMoney, qOutstanding, qRevenue, qPaidCount,
 };
 
-module.exports = { resolveFilters, priorPeriod, dateClause, ccClause, toDollars, BASES, INCLUDE_CC_VALUES, ...builders };
+module.exports = { resolveFilters, priorPeriod, dateClause, ccClause, refundsInWindow, toDollars, BASES, INCLUDE_CC_VALUES, ...builders };
