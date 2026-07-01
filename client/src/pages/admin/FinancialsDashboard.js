@@ -42,6 +42,7 @@ export default function FinancialsDashboard() {
   const collected = Number(summary?.collected || 0);
   const outstanding = Number(summary?.outstanding || 0);
   const avgEvent = Number(summary?.avgEvent || 0);
+  const unlinkedRefundsCents = Number(summary?.unlinkedRefundsCents || 0);
 
   return (
     <div className="page">
@@ -128,6 +129,12 @@ export default function FinancialsDashboard() {
 
           <div className="card" style={{ overflow: 'hidden' }}>
             <div className="card-head"><h3>Payments in range</h3><span className="k">{recentPayments?.length || 0}</span></div>
+            {unlinkedRefundsCents > 0 && (
+              <div className="muted" style={{ padding: '0 var(--gap) var(--gap)', fontSize: '0.85em' }}>
+                Collected is net of every refund, including {fmt$fromCents(unlinkedRefundsCents)} not tied to a specific
+                payment here. The rows below net only each payment's own refunds, so they may not add up to Collected.
+              </div>
+            )}
             <div className="tbl-wrap">
               <table className="tbl">
                 <thead>

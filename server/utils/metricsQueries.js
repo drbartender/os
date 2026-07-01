@@ -289,33 +289,23 @@ function qRevenue(f) {
        - (SELECT COALESCE(SUM(pr.amount),0)::float8/100.0 FROM proposal_refunds pr
           JOIN proposals p ON p.id = pr.proposal_id
           WHERE pr.status='succeeded' AND pr.created_at >= ms AND pr.created_at < ms + INTERVAL '1 month'${ccPrefixed}))`;
-  const paidSiblingSub = f.includeCc === 'all'
-    ? `((SELECT COALESCE(SUM(amount),0)::float8/100.0 FROM proposal_payments pp
-        WHERE pp.status='succeeded' AND pp.created_at >= ms
-          AND pp.created_at < ms + INTERVAL '1 month')
-       - (SELECT COALESCE(SUM(amount),0)::float8/100.0 FROM proposal_refunds pr
-          WHERE pr.status='succeeded' AND pr.created_at >= ms
-          AND pr.created_at < ms + INTERVAL '1 month'))`
-    : `((SELECT COALESCE(SUM(pp.amount),0)::float8/100.0 FROM proposal_payments pp
-        JOIN proposals p ON p.id = pp.proposal_id
-        WHERE pp.status='succeeded' AND pp.created_at >= ms
-          AND pp.created_at < ms + INTERVAL '1 month'${ccPrefixed})
-       - (SELECT COALESCE(SUM(pr.amount),0)::float8/100.0 FROM proposal_refunds pr
-          JOIN proposals p ON p.id = pr.proposal_id
-          WHERE pr.status='succeeded' AND pr.created_at >= ms
-          AND pr.created_at < ms + INTERVAL '1 month'${ccPrefixed}))`;
   const valueSub = f.basis === 'paid'
     ? paidValueSub
     : `(SELECT COALESCE(SUM(total_price),0)::float8 FROM proposals p
         WHERE p.accepted_at IS NOT NULL AND p.${NOT_DEAD}
           AND p.${f.basis === 'scheduled' ? 'event_date' : 'accepted_at'} >= ms
           AND p.${f.basis === 'scheduled' ? 'event_date' : 'accepted_at'} < ms + INTERVAL '1 month'${ccPrefixed})`;
+  // The paid monthly value (payments minus refunds) is identical whether it
+  // feeds `value` (paid basis) or the `paid` sibling column, so compute it ONCE
+  // per month in a LATERAL instead of duplicating both subqueries (4 -> 2).
+  const valueExpr = f.basis === 'paid' ? 'pv.paid' : valueSub;
   return {
     sql: `SELECT to_char(ms,'YYYY-MM') AS key,
                  to_char(ms,'Mon')     AS m,
-                 ${valueSub} AS value,
-                 ${paidSiblingSub} AS paid
+                 ${valueExpr} AS value,
+                 pv.paid AS paid
           FROM generate_series(${lo}, ${hi}, INTERVAL '1 month') AS ms
+          CROSS JOIN LATERAL (SELECT ${paidValueSub} AS paid) pv
           ORDER BY ms`,
     params,
   };

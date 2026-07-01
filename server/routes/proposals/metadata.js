@@ -141,8 +141,17 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
   // created_at). Built AFTER collDate so the refund date params follow the
   // payment date params in `collParams`.
   const collRefunds = metrics.refundsInWindow(f.from, f.to, collParams, f.includeCc === 'all' ? 'all' : f.includeCc);
+  // Unlinked refunds (payment_id NULL): netted in Collected but attach to no
+  // payment row, so the ledger rows cannot reflect them. Surface the total (same
+  // refund-date window + cc basis as Collected) so the UI can explain any gap
+  // between the visible rows and Collected.
+  const unlinkedParams = [];
+  const unlinkedDate = metrics.dateClause('pr.created_at', f.from, f.to, unlinkedParams);
+  const unlinkedCcJoin = f.includeCc === 'all' ? '' : ' JOIN proposals p2 ON p2.id = pr.proposal_id';
+  const unlinkedCc = f.includeCc === 'only' ? ' AND p2.cc_id IS NOT NULL'
+    : f.includeCc === 'exclude' ? ' AND p2.cc_id IS NULL' : '';
 
-  const [moneyR, outR, accR, totalR, proposalsR, paymentsR, collectedRow] = await Promise.all([
+  const [moneyR, outR, accR, totalR, proposalsR, paymentsR, collectedRow, unlinkedR] = await Promise.all([
     pool.query(money.sql, money.params),
     pool.query(out.sql, out.params),
     pool.query(acc.sql, acc.params),
@@ -167,7 +176,7 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
              c.name AS client_name, c.cc_id AS client_cc_id,
              inv.invoice_id, inv.invoice_token,
              COALESCE(rf.refunded_cents, 0) AS refunded_cents,
-             (pp.amount - COALESCE(rf.refunded_cents, 0)) AS net_amount
+             GREATEST(pp.amount - COALESCE(rf.refunded_cents, 0), 0) AS net_amount
       FROM proposal_payments pp
       JOIN proposals p ON p.id = pp.proposal_id
       LEFT JOIN clients c ON c.id = p.client_id
@@ -191,6 +200,9 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
     pool.query(
       `SELECT (COALESCE(SUM(${collAmountCol}),0) - ${collRefunds})::float8 AS c FROM ${collTable}${collJoin}
        WHERE ${collStatusCol}='succeeded'${collDate}${collCc}`, collParams),
+    pool.query(
+      `SELECT COALESCE(SUM(pr.amount),0)::int AS c FROM proposal_refunds pr${unlinkedCcJoin}
+        WHERE pr.status='succeeded' AND pr.payment_id IS NULL${unlinkedDate}${unlinkedCc}`, unlinkedParams),
   ]);
 
   const booked = metrics.toDollars(moneyR.rows[0].value, { fromCents: !!money.cents });
@@ -203,6 +215,7 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
       collected: metrics.toDollars(collectedRow.rows[0].c, { fromCents: true }),
       outstanding: metrics.toDollars(outR.rows[0].value),
       avgEvent: acceptedCount > 0 ? Math.round(booked / acceptedCount) : 0,
+      unlinkedRefundsCents: unlinkedR.rows[0].c,
     },
     proposals: proposalsR.rows,
     recentPayments: paymentsR.rows,

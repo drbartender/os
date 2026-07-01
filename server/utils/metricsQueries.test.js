@@ -23,6 +23,23 @@ test('qRevenue paid series subtracts monthly refunds', () => {
   const q = qRevenue({ from: null, to: null, basis: 'paid', includeCc: 'all' });
   assert.match(q.sql, /FROM proposal_refunds pr[\s\S]*pr\.created_at >= ms[\s\S]*ms \+ INTERVAL '1 month'/);
 });
+test('qRevenue paid: value + paid share one LATERAL (no duplicate 4-subquery fan-out)', () => {
+  // Explicit date range so the series bounds use date_trunc($n), NOT a
+  // MIN(created_at) subquery — then the only payments/refunds subqueries are the
+  // single shared LATERAL (the paid fan-out was 2 payments + 2 refunds; now 1+1).
+  const q = qRevenue({ from: '2026-01-01', to: '2026-06-30', basis: 'paid', includeCc: 'all' });
+  assert.match(q.sql, /CROSS JOIN LATERAL \(SELECT[\s\S]*\) pv/);
+  assert.match(q.sql, /pv\.paid AS value/);   // paid basis reuses the lateral for value
+  assert.match(q.sql, /pv\.paid AS paid/);
+  assert.equal((q.sql.match(/FROM proposal_payments/g) || []).length, 1);
+  assert.equal((q.sql.match(/FROM proposal_refunds/g) || []).length, 1);
+});
+test('qRevenue booked (non-paid): value uses total_price, paid still nets via the LATERAL', () => {
+  const q = qRevenue({ from: null, to: null, basis: 'booked', includeCc: 'all' });
+  assert.match(q.sql, /SUM\(total_price\)[\s\S]*AS value/);
+  assert.match(q.sql, /pv\.paid AS paid/);
+  assert.match(q.sql, /CROSS JOIN LATERAL/);
+});
 
 // ── resolveFilters ──
 test('resolveFilters: defaults basis to booked, no dates = All time', () => {
