@@ -99,7 +99,7 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
            p.event_duration_hours, p.event_location, p.guest_count, p.num_bars,
            p.num_bartenders, p.package_id, p.status, p.source, p.total_price, p.amount_paid,
            p.deposit_amount, p.balance_due_date, p.payment_type, p.autopay_enrolled,
-           p.sent_at, p.accepted_at, p.client_signed_at, p.last_viewed_at,
+           p.sent_at, p.accepted_at, p.client_signed_at, p.last_viewed_at, p.view_count,
            p.created_at, p.updated_at, p.cc_id AS proposal_cc_id,
            c.name AS client_name, c.email AS client_email, c.phone AS client_phone,
            c.cc_id AS client_cc_id,

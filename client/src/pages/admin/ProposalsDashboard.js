@@ -178,19 +178,23 @@ export default function ProposalsDashboard() {
                 <th>Package</th>
                 <th>Status</th>
                 <th>Sent</th>
+                <th>Last viewed</th>
                 <th className="num">Total</th>
                 <th />
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={8} className="muted">Loading…</td></tr>
+                <tr><td colSpan={9} className="muted">Loading…</td></tr>
               )}
               {!loading && filtered.length === 0 && (
-                <tr><td colSpan={8} className="muted">No proposals match these filters.</td></tr>
+                <tr><td colSpan={9} className="muted">No proposals match these filters.</td></tr>
               )}
               {!loading && filtered.map(p => {
                 const st = STATUS[p.status] || { label: p.status || '—', kind: 'neutral' };
+                const viewTitle = p.last_viewed_at
+                  ? `Last viewed ${new Date(p.last_viewed_at).toLocaleString()}${p.view_count ? ` · ${p.view_count} view${Number(p.view_count) === 1 ? '' : 's'}` : ''}`
+                  : undefined;
                 return (
                   <ClickableRow key={p.id} to={`/proposals/${p.id}`}>
                     <td>
@@ -211,6 +215,7 @@ export default function ProposalsDashboard() {
                     <td className="muted">{p.package_name || '—'}</td>
                     <td><StatusChip kind={st.kind}>{st.label}</StatusChip></td>
                     <td className="muted">{p.sent_at ? relDay(String(p.sent_at).slice(0, 10)) : '—'}</td>
+                    <td className="muted" title={viewTitle}>{p.last_viewed_at ? relDay(String(p.last_viewed_at).slice(0, 10)) : '—'}</td>
                     <td className="num"><strong>{fmt$(p.total_price)}</strong></td>
                     <td className="shrink">
                       <div className="hstack" onMouseUp={(e) => e.stopPropagation()}>
