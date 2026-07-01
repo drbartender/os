@@ -140,8 +140,8 @@ test('qRevenue paid series subtracts monthly refunds', () => {
 test('financials Collected nets a succeeded refund (exact)', async () => {
   const base = (await authGet('/api/proposals/financials?basis=paid')).body.summary.collected;
   const { proposalId, paymentId } = await seedOnePaidProposalInline({ amountCents: 10000 }); // +100
-  await pool.query(`INSERT INTO proposal_refunds (proposal_id, payment_id, stripe_refund_id, amount, status)
-                    VALUES ($1,$2,$3,4000,'succeeded')`, [proposalId, paymentId, 're_test_'+proposalId]); // -40
+  await pool.query(`INSERT INTO proposal_refunds (proposal_id, payment_id, stripe_refund_id, amount, status, reason, total_price_before, total_price_after)
+                    VALUES ($1,$2,$3,4000,'succeeded','test',0,0)`, [proposalId, paymentId, 're_test_'+proposalId]); // -40
   const after = (await authGet('/api/proposals/financials?basis=paid')).body.summary.collected;
   assert.equal(Math.round((after - base) * 100), 6000); // net +$60
   await cleanupInline(proposalId);
@@ -172,8 +172,8 @@ pool.query(
 ```js
 test('ledger: one row per payment, at net, flagged refunded', async () => {
   const { proposalId, paymentId } = await seedOnePaidProposalInline({ amountCents: 55000, twoInvoiceLines: true });
-  await pool.query(`INSERT INTO proposal_refunds (proposal_id, payment_id, stripe_refund_id, amount, status)
-                    VALUES ($1,$2,$3,20000,'succeeded')`, [proposalId, paymentId, 're_test_'+proposalId]);
+  await pool.query(`INSERT INTO proposal_refunds (proposal_id, payment_id, stripe_refund_id, amount, status, reason, total_price_before, total_price_after)
+                    VALUES ($1,$2,$3,20000,'succeeded','test',0,0)`, [proposalId, paymentId, 're_test_'+proposalId]);
   const rows = (await authGet('/api/proposals/financials?basis=paid')).body.recentPayments.filter(r => r.id === paymentId);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].refunded_cents, 20000);
@@ -234,9 +234,9 @@ router.put('/t/:token',
 
 **Interfaces:**
 - `async computeExtrasBreakdown({ selections, guestCount, pricingSnapshot, numBars }, dbClient) -> { totalCents, addonCents, barRentalCents, syrupCents }` — integer cents. Mirrors the current `stripe.js:62-104` math EXACTLY (add-on rates read from `service_addons` via `dbClient`; bar rental from `pricingSnapshot.bar_rental` branching on `(numBars||0) >= 1` for first-vs-additional; syrups via `calculateSyrupCost(newSyrupIds, guestCount)`, excluding self-provided and already-in-snapshot), converting each component to cents with `Math.round(x * 100)`.
-- `async findOpenExtrasInvoice(proposalId, dbClient) -> row|null` — newest `label='Drink Plan Extras' AND status IN ('sent','partially_paid') AND locked=false`. This is the single canonical "open extras invoice" finder used by B1 and B2 (paid/locked invoices are never returned, so they are never mutated).
-- `async writeExtrasLineItems(invoiceId, { selections, guestCount, pricingSnapshot, numBars }, dbClient)` — the addon/bar/syrup line-item logic, EXTRACTED from `createDrinkPlanExtrasInvoice` so both create and refresh reuse it.
-- `async findOrRefreshExtrasInvoice({ proposalId, drinkPlanId, breakdown, selections, guestCount, pricingSnapshot, numBars }, dbClient) -> invoiceRow` — if `findOpenExtrasInvoice` returns one, UPDATE its `amount_due = breakdown.totalCents` and call `writeExtrasLineItems`; else `createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmountCents: breakdown.totalCents }, dbClient)`.
+- `async findExtrasInvoice(proposalId, dbClient) -> row|null` — newest `label='Drink Plan Extras' AND status <> 'void'` (ANY non-void, INCLUDING paid/locked). This is the DEDUP finder: it guarantees we never create a second extras invoice, even in the out-of-order webhook case where the webhook already created + paid one (which `linkPaymentToInvoice` flips to `status='paid', locked=true`, invoiceHelpers.js:537-544, matching neither 'sent'/'partially_paid' nor unlocked).
+- `async writeExtrasLineItems(invoiceId, { selections, guestCount, pricingSnapshot, numBars, totalCents }, dbClient)` — the addon/bar/syrup line-item logic EXTRACTED from `createDrinkPlanExtrasInvoice`. MUST take `totalCents` and keep the per-line rounding-drift reconcile block (invoiceHelpers.js:650-671) so the lines sum to `amount_due` (else a refreshed invoice shows a 1-2 cent phantom balance).
+- `async findOrRefreshExtrasInvoice({ proposalId, drinkPlanId, breakdown, selections, guestCount, pricingSnapshot, numBars }, dbClient) -> invoiceRow` — `const inv = await findExtrasInvoice(...)`. If `inv` exists AND is OPEN (`status IN ('sent','partially_paid') AND NOT locked`): UPDATE `amount_due = breakdown.totalCents` and `writeExtrasLineItems(..., totalCents: breakdown.totalCents)`. If `inv` exists AND is paid/locked: return it AS-IS (extras already paid; NEVER mutate a paid invoice). If no `inv`: `createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmountCents: breakdown.totalCents }, dbClient)`.
 
 - [ ] **Step 1: Failing unit test for the helper** (assert against the real pricing functions, not a magic number)
 
@@ -274,7 +274,7 @@ test('syrup-only pay-now submit creates an unpaid Drink Plan Extras invoice in a
 ```
 
 - [ ] **Step 6: Run -> FAIL.**
-- [ ] **Step 7: Implement — extract `writeExtrasLineItems`, add `findOpenExtrasInvoice` + `findOrRefreshExtrasInvoice`, wire into submit.** In `submit.js`, the syrup-only fast path (currently a single `pool.query` UPDATE) must:
+- [ ] **Step 7: Implement — extract `writeExtrasLineItems`, add `findExtrasInvoice` + `findOrRefreshExtrasInvoice`, wire into submit.** In `submit.js`, the syrup-only fast path (currently a single `pool.query` UPDATE) must:
   - fetch the proposal's `guest_count`, `pricing_snapshot`, `num_bars` (the current handler SELECT does not load these — extend it or add a fetch),
   - run inside a transaction with `SELECT id FROM proposals WHERE id=$1 FOR UPDATE`,
   - after the drink-plan UPDATE, when `paidSeparately && breakdown.totalCents > 0`, call `findOrRefreshExtrasInvoice(...)`,
@@ -300,8 +300,8 @@ if (paidSeparately && bd.totalCents > 0) {
 
 - [ ] **Step 1: Failing test** — submit a pay-now syrup-only plan (B1 creates the unpaid invoice), deliver `payment_intent.succeeded`; assert exactly ONE non-void extras invoice and it is now `paid`.
 - [ ] **Step 2: Run -> FAIL** (today the webhook creates a second invoice).
-- [ ] **Step 3: Implement** — inside the existing `if (isFirstDelivery)` guard, use the SAME `findOpenExtrasInvoice(proposalId, dbClient)` from B1: if found, `linkPaymentToInvoice(found.id, paymentRowId, extrasCents, dbClient)`; else create then link (create-if-missing fallback, still inside `isFirstDelivery`). The `with_balance` balance-portion routing to `findOpenInvoiceForBalance` is unchanged.
-- [ ] **Step 4: Run -> PASS. Add a test asserting the `with_balance` split still links the balance portion to `findOpenInvoiceForBalance`.**
+- [ ] **Step 3: Implement** — inside the existing `if (isFirstDelivery)` guard, `const inv = await findExtrasInvoice(proposalId, dbClient)` (any non-void). If `inv` and NOT already fully paid, `linkPaymentToInvoice(inv.id, paymentRowId, extrasCents, dbClient)`; if `inv` and already paid, do nothing (idempotent); if none, `createDrinkPlanExtrasInvoice(...)` then link. The `with_balance` balance-portion routing to `findOpenInvoiceForBalance` is unchanged.
+- [ ] **Step 4: Run -> PASS. Add TWO tests: (a) the `with_balance` split still links the balance portion to `findOpenInvoiceForBalance`; (b) OUT-OF-ORDER: deliver the webhook (creates + pays the invoice) BEFORE submit runs `findOrRefreshExtrasInvoice`, then assert exactly ONE non-void extras invoice exists (no duplicate).**
 - [ ] **Step 5: Commit** — `git commit -m "fix(potion): webhook links the submit-created extras invoice, one canonical predicate"`
 
 ## Task B3: admin badge on the card + server-enforced finalize warning
@@ -321,7 +321,7 @@ assert.equal(Number(log.rows[0].amt), 6000);
 
 - [ ] **Step 2: Run -> FAIL.**
 - [ ] **Step 3: Implement**
-  - `finalizeDrinkPlan(planId, actorId, opts = {})`: inside the existing transaction, before COMMIT, query the open extras invoice (`findOpenExtrasInvoice(plan.proposal_id, client)`); if it has `amount_due - amount_paid > 0` and `!opts.overrideUnpaidExtras`, throw `ConflictError('Plan has unpaid extras; confirm to finalize anyway.')`; else if overridden, add a second activity-log row mirroring the `:66-73` pattern: `INSERT ... (proposal_id, action, actor_type, actor_id, details) VALUES ($1,'finalized_unpaid_extras','admin',$2, $3)` with `details = JSON.stringify({ amount_cents, drink_plan_id: plan.id })`.
+  - `finalizeDrinkPlan(planId, actorId, opts = {})`: inside the existing transaction, before COMMIT, `const inv = await findExtrasInvoice(plan.proposal_id, client)`; if `inv` has `amount_due - amount_paid > 0` and `!opts.overrideUnpaidExtras`, throw `ConflictError('Plan has unpaid extras; confirm to finalize anyway.')`; else if overridden, add a second activity-log row mirroring the `:66-73` pattern: `INSERT ... (proposal_id, action, actor_type, actor_id, details) VALUES ($1,'finalized_unpaid_extras','admin',$2, $3)` with `details = JSON.stringify({ amount_cents, drink_plan_id: plan.id })`.
   - `registerFinalizeRoute`: read `req.body.overrideUnpaidExtras` and pass through.
   - Endpoint feeding the card: add `extras_unpaid_cents` (open extras invoice `amount_due - amount_paid`, 0 if none) to the `drinkPlan` payload.
   - `DrinkPlanCard.js`: when `drinkPlan.extras_unpaid_cents > 0`, show "Extras unpaid: $X"; the finalize control, when unpaid, confirms ("Finalize anyway? $X in extras is unpaid") and re-POSTs `{ overrideUnpaidExtras: true }`.
@@ -335,9 +335,9 @@ assert.equal(Number(log.rows[0].amt), 6000);
 - [ ] **Step 1: Failing tests** — voiding a syrup-only extras invoice leaves `total_price` and logs `action='extras_comped'`; voiding an addon extras invoice reduces `total_price` by the addon+bar-rental portion.
 - [ ] **Step 2: Run -> FAIL.**
 - [ ] **Step 3: Implement**
-  - Extend the state SELECT (`invoices.js:271-272`) to also fetch `label, proposal_id`.
-  - In the `status='void'` branch, keep the `amount_paid > 0` guard (comp is unpaid-only). When `label='Drink Plan Extras'`: after voiding, write `proposal_activity_log` `action='extras_comped'` (details = amount). Then recompute the folded portion via `computeExtrasBreakdown(...)` for that proposal's plan and subtract `addonCents + barRentalCents` (NOT syrups) from `proposals.total_price`, re-running the existing price-change payment-status re-evaluation. Syrup-only → `addonCents+barRentalCents = 0`, so `total_price` is untouched.
-  - In `submit.js`, on a re-submit with `paid_separately=false` where a non-void extras invoice exists, void it (with the same reconcile) BEFORE `refreshUnlockedInvoices`.
+  - Extract a shared `async voidExtrasInvoiceWithReconcile(invoiceId, actorId, dbClient)` into `invoiceHelpers.js` (used by BOTH the PATCH route and `submit.js`, so the logic never drifts). It extends the state SELECT to also fetch `label, proposal_id` and the line items; keeps the `amount_paid > 0` guard (comp is unpaid-only); voids; writes `proposal_activity_log` `action='extras_comped'` (amount in `details`).
+  - `total_price` reconcile: derive the folded-into-total portion from the invoice's PERSISTED line items at creation (addon lines `source_type='addon'` PLUS the bar-rental fee line identified by its description; NOT syrups), NOT a fresh price recompute, so a pricing change between submit and comp cannot corrupt the total. `proposals.total_price` is `NUMERIC(10,2)` DOLLARS (schema.sql:545), so subtract `foldedCents / 100` DOLLARS (NOT cents), then re-run `reconcileProposalPaymentStatus({ status, amountPaid, totalPrice })` (`server/utils/proposalStatus.js:18`). Syrup-only → folded = 0, `total_price` untouched.
+  - In `submit.js`, on a re-submit with `paid_separately=false` where a non-void extras invoice exists, call `voidExtrasInvoiceWithReconcile(...)` BEFORE `refreshUnlockedInvoices`.
 - [ ] **Step 4: Run -> PASS.**
 - [ ] **Step 5: Commit** — `git commit -m "feat(potion): comp extras invoice with addon-portion total_price reconcile + void-before-refresh"`
 
@@ -345,7 +345,7 @@ assert.equal(Number(log.rows[0].amt), 6000);
 
 **Files:** Create `scripts/backfill-extras-invoices.js`.
 
-- [ ] **Step 1: Implement** — for a proposal id passed as an argument (Shiralee, 527): read the abandoned `requires_payment_method` extras PaymentIntent via `stripeClient`, use its `amount` (authoritative) as `extrasAmountCents`, call `findOrRefreshExtrasInvoice` to create the unpaid invoice, then cancel the stale PI(s). Idempotent (find-or-refresh). `--dry-run` flag prints intended actions without writing.
+- [ ] **Step 1: Implement** — for a proposal id passed as an argument (Shiralee, 527): read the abandoned `requires_payment_method` extras PaymentIntent via `stripeClient`; guard with `findExtrasInvoice` (skip if a non-void one already exists), else `createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmountCents: pi.amount }, pool)` using the PI `amount` as the authoritative figure; then cancel the stale PI(s). Idempotent. `--dry-run` flag prints intended actions without writing.
 - [ ] **Step 2: Dry-run against dev** — verify the intended invoice + PI cancel with no writes.
 - [ ] **Step 3: Commit** — `git commit -m "chore(potion): one-time backfill script for abandoned pay-now extras"`
 
@@ -358,9 +358,23 @@ Post-deploy: run once for 527. Anna (owner-handled) and Julia (past event) are m
 1. B0 preserves `requireUuidToken(...) + drinkPlanWriteLimiter` (was dropping the UUID guard and referencing a nonexistent `publicLimiter`).
 2. All activity-log writes/reads use `action` + `details` jsonb (no `type`/`amount_cents`/`drink_plan_id` columns exist).
 3. `computeExtrasBreakdown` is async + DB-backed (service_addons), takes `numBars`, returns integer cents; the submit fast path now fetches `guest_count`/`pricing_snapshot`/`num_bars`; unit test asserts against `calculateSyrupCost`, not a magic `6000`.
-4. One canonical `findOpenExtrasInvoice` (open, non-void, unlocked) shared by B1 and B2 — refresh never mutates a paid/locked invoice.
+4. `findExtrasInvoice` (any non-void) dedups for B1 and B2; `findOrRefreshExtrasInvoice` refreshes only when open and unlocked, reusing a paid one as-is (see Round-2 corrections).
 5. B4 subtracts only `addonCents + barRentalCents` (recomputed), never syrups, from `total_price` (syrup lines are `source_type='fee'` too, so `source_type` can't discriminate).
 6. B3 badge rides on the `drinkPlan` prop feeding `DrinkPlanCard` (correct path `client/src/components/DrinkPlanCard.js`, rendered by `ProposalDetail`/`EventDetailPage`), not the list endpoint; finalize gate is server-side in `beoFinalize.js`.
 7. Lane A adds `Dashboard.js` (revenue chart + KPI + Delta negative tolerance) and the server `deltaPct` guard.
 8. Integration tests hand-roll setup (no fictional shared helpers); assertions check exact net; the A1 test regex matches the emitted SQL.
 9. `writeExtrasLineItems` extracted from `createDrinkPlanExtrasInvoice` for reuse; B4 void SELECT extended to `label`/`proposal_id`; per-checkpoint review agents named in the lane map; stale-line-number caveat noted after B0.
+
+## Round-2 corrections (fold-in from the second plan-review + Codex)
+
+- **Finder split (blocker):** `findExtrasInvoice` dedups on any non-void; `findOrRefreshExtrasInvoice` refreshes ONLY when open+unlocked and reuses a paid one as-is (fixes the out-of-order duplicate). B2 uses the same `findExtrasInvoice`.
+- **Refund-seed NOT NULL (blocker):** every `proposal_refunds` test INSERT includes `reason, total_price_before, total_price_after` (all NOT NULL, no defaults; schema.sql:1028-1042).
+- **Cents vs dollars (blocker):** B4 subtracts `foldedCents / 100` DOLLARS from `proposals.total_price` (NUMERIC dollars), never raw cents.
+- **Lane footprints must include the new test files** (`financialsNetting.test.js`, `drinkPlanExtras.test.js`, `submitExtras.test.js`, `stripeWebhook.extrasLink.test.js`, `beoFinalize.extrasWarn.test.js`, `invoices.extrasVoid.test.js`) or the footprint-drift guard aborts the lane on first test write.
+- **Groundings:** B3 badge endpoint = `GET /api/drink-plans/by-proposal/:proposalId` (drinkPlans.js:802, feeds both cards); price-status re-eval = `reconcileProposalPaymentStatus` (proposalStatus.js:18); the deltaPct guard site is the shared `pct` helper (metadata.js:285-286), not the route top.
+- **B4 shared helper:** `voidExtrasInvoiceWithReconcile` in `invoiceHelpers.js`, called by both `invoices.js` PATCH and `submit.js` void-before-refresh.
+- **B5 backfill:** use `createDrinkPlanExtrasInvoice({ ..., extrasAmountCents: pi.amount })` (authoritative PI amount), guarded by `findExtrasInvoice` for idempotency; NOT the `findOrRefreshExtrasInvoice(breakdown)` shape.
+- **`computeExtrasBreakdown.totalCents` = `Math.round((addon+bar+syrup)*100)`** (the rounded SUM, matching `stripe.js:151`); the per-component `*Cents` are individually rounded for B4.
+- **Missing tests to add:** out-of-order webhook (one invoice), negative-window Collected (renders negative, no floor, deltaPct null when prior <= 0), path-switch to add-to-balance (extras invoiced once).
+- **Client behavior verification** (A5/A6/B3): beyond `CI=true` build, manually confirm visible rows foot to Collected, the "refunded $X" annotation renders, the chart/KPI tolerate a negative paid value, and the card badge + finalize-confirm re-POST `{overrideUnpaidExtras:true}`.
+- **B0 baseline caveat:** `drinkPlans.beo.test.js` only exercises the finalized-409 guard, so B0's "identical behavior" is fully proven only once B1 adds `submitExtras.test.js`; a broken import throws at require-time, a subtle logic break would not.
