@@ -350,6 +350,18 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | POST | `/conversations/:clientId/reply` | Admin/Manager | Send an outbound SMS reply to a client |
 | PUT | `/conversations/:clientId/read` | Admin/Manager | Mark a client's unread inbound SMS as read |
 
+### VA Calling — Twilio Voice — `/api/voice`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/inbound` | Twilio signature | Client dials the 224 → returns TwiML `<Dial timeout="20" callerId="<caller>"><Number>VA_CELL</Number></Dial>` forwarding to Zul's cell (caller = `req.body.From`, xml-escaped). Prod: 403 on bad/missing signature. |
+| POST | `/bridge` | Twilio signature | Fetched when Zul answers her leg. Looks up the target by `CallSid` from `pending_call` (never from a request param); returns `<Dial answerOnBridge="true" callerId="+12242220082" timeLimit="…"><Number>+1TARGET</Number></Dial>`, or a `<Say>…</Say><Hangup/>` when no target is found. |
+| POST | `/status` | Twilio signature | Twilio call-status callback. On a failed/unanswered leg (`no-answer`/`busy`/`failed`/`canceled`) messages Zul via Telegram ("That call didn't connect, resend the number to retry.") + records `call_audit`. Always empty 200/204. |
+
+### VA Calling — Telegram Trigger — `/api/telegram`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/:secret` | Secret path + `X-Telegram-Bot-Api-Secret-Token` header + `user_id` allowlist | Zul's outbound-call trigger. Verifies the secret path + header (constant-time; 403 on mismatch), dedupes on `update_id`. Bootstrap (allowlist unset): replies with the sender's id, dials nothing. Non-allowlisted sender: silent 200 no-op. `YES` (`/^y(es)?$/i`): per-min + daily cap check (DB-backed via `call_audit`), `claimForDial`, `placeBridgedCall`, reply "Calling <last4>…". Any other text: `toUsE164`-validate the target (US NANP only, 900/976 rejected), upsert the pending record, reply "Reply YES to call <pretty>". Always 200 to Telegram on a handled outcome; **never dials on a dev signature skip**. |
+
 ### Blog — `/api/blog`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -950,6 +962,12 @@ Phase 4b adds three cross-cutting pieces. Overlap prevention: each handler carri
 - `received_at` TIMESTAMPTZ NOT NULL DEFAULT NOW()
 - PRIMARY KEY (provider, event_id); index on `received_at` for prune
 
+- pending_call / call_audit / telegram_update — Zul VA calling (Telegram-triggered
+  Twilio callback bridge). pending_call = one in-flight confirm/dial per Telegram
+  user (claim-then-call state machine); call_audit = append-only spend/abuse ledger
+  backing the DB-backed daily cap; telegram_update = update_id de-dupe. Pruned by
+  vaCallingScheduler. Spec: docs/superpowers/specs/2026-07-01-zul-va-calling-design.md
+
 ### Bartender Tip Pages
 
 **tips** — Successful tip records (one row per `checkout.session.completed` event tagged `metadata.kind = 'tip'`)
@@ -1337,9 +1355,25 @@ The Check Cherry import landed several skip gates and best-effort hooks across t
 
 ### Twilio (SMS)
 - **Wrapper**: `server/utils/sms.js` (includes `normalizePhone()` for E.164 formatting)
+- **Shared helpers**: `server/utils/xmlEscape.js` (TwiML `& < >` escaper, shared by the SMS and voice TwiML routes) and `server/utils/usPhone.js` (`toUsE164`/`isUsE164`: `normalizePhone` + strict `^\+1[2-9]\d{9}$` NANP gate, rejecting international numbers and 900/976 premium codes — the VA-calling toll-fraud control).
+- **Telegram side-channel** (VA calling): `server/utils/telegram.js` is a raw-`fetch` Bot API wrapper (no new dep, Node 18 global `fetch`): `sendTelegramMessage`/`setTelegramWebhook`/`getTelegramWebhookInfo`, plus `verifyTelegramSecret` (constant-time `secret_token` header check over SHA-256 digests) and `isNewUpdate` (de-dupes Telegram retries via `telegram_update.update_id` `ON CONFLICT DO NOTHING`). Sends gate on `notificationsEnabled()` exactly like `sendSMS`.
 - **Used for**: Admin-initiated SMS to staff (general messages, shift invitations), shift approval notifications
 - **Consent**: Collected during agreement signing (`sms_consent` flag) — only consented staff appear as eligible recipients
 - **Logging**: All inbound + outbound messages logged to `sms_messages` table with delivery status tracking
+
+### Zul VA Calling (Telegram trigger + Twilio Voice bridge)
+
+Lets our Philippines-based VA (Zul) place and receive US calls that work over a poor mobile-data connection. Design: `docs/superpowers/specs/2026-07-01-zul-va-calling-design.md`. Operator runbook: `docs/va-calling-runbook.md`.
+
+- **Core constraint**: real-time voice never rides Zul's internet. It rides her **cellular** network via a Twilio callback bridge — Twilio calls her cell, she answers, Twilio bridges the second leg to the target. Only a tiny few-KB Telegram trigger message uses data.
+- **Outbound flow**: Zul texts a target number to the bot → `POST /api/telegram/<secret>` authenticates (secret path + `secret_token` header + `user_id` allowlist), validates the target US-only (`toUsE164`: `normalizePhone` then `^\+1[2-9]\d{9}$`, 900/976 rejected — the primary toll-fraud control), upserts a short-TTL `pending_call` and replies "Reply YES to call …". On `YES` a conditional `UPDATE … WHERE status='awaiting_confirm' RETURNING` claims the row (claim-then-call: `calls.create` is an external HTTP call, never in a DB txn), then `placeBridgedCall({ to: VA_CELL, callerId: VOICE_CALLER_ID, url: /api/voice/bridge, statusCallback: /api/voice/status, timeLimit })`. When Zul answers, `/bridge` looks up the target by `CallSid` (never a request param) and dials it with `answerOnBridge="true"` showing the 224.
+- **Inbound flow**: client dials the 224 → `POST /api/voice/inbound` returns `<Dial>` forwarding to `VA_CELL` with the client's number as caller ID; unanswered → PH-carrier voicemail (missed-inbound capture deferred to v2).
+- **Status feedback**: `POST /api/voice/status`; a failed/unanswered leg messages Zul via Telegram so she always learns the outcome.
+- **Toll-fraud guards** (this webhook dials billed international calls on an auto-refill account from external input): (1) Telegram `secret_token` header + unguessable secret URL path, (2) numeric `user_id` allowlist layered on top, (3) US-only NANP validation in code, (4) confirm-before-dial with a TTL'd pending record (a new target replaces it), (5) claim-then-call idempotency + `telegram_update` `update_id` dedupe, (6) DB-backed spend caps (5 triggers/min, 40 calls/day counted from `call_audit`) + a 1800s per-call `timeLimit` on both legs, (7) shared `xmlEscape` on every TwiML interpolation, (8) `notificationsEnabled()` gate so a dev server never dials the live account, (9) a daily webhook heartbeat (`getWebhookInfo` → re-`setWebhook` + admin email on failure), (10) last-4 log redaction and a retention purge of the PII-bearing `call_audit`.
+- **Helper modules**: `server/utils/telegram.js` (Bot API, raw fetch, no SDK), `server/utils/pendingCall.js` (claim-then-call DB helpers + audit + prune), `server/utils/usPhone.js` (`toUsE164`/`isUsE164`), `server/utils/xmlEscape.js` (shared TwiML escape), `server/utils/vaCallingScheduler.js` (prune + webhook heartbeat), `server/utils/sms.js#placeBridgedCall` (Twilio `calls.create`, gated identically to `sendSMS`).
+- **Tables**: `pending_call` (confirm-before-dial state, one row per user), `call_audit` (spend/abuse audit + daily-cap source of truth), `telegram_update` (`update_id` retry dedupe). Pruned by the `RUN_VA_CALLING_SCHEDULER` job.
+- **Bootstrap**: deploy with `TELEGRAM_ALLOWED_USER_ID` unset; the webhook echoes each sender's id and dials nothing until the id is set + redeployed.
+- **Account setup (owner, console-only)**: Twilio PH voice geo (low-risk enabled, high-risk off), auto-refill on with headroom, and a low-balance + monthly-spend billing alert (a dry balance takes SMS down with it).
 
 ### Web Push (Staff notifications)
 - **Library**: `web-push` (VAPID). Server keys `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_CONTACT_EMAIL`; the public key is also exposed to the client as `REACT_APP_VAPID_PUBLIC_KEY`.

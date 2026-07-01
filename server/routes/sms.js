@@ -6,6 +6,7 @@ const { pool } = require('../db');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../utils/errors');
 const { sendSMS, normalizePhone } = require('../utils/sms');
+const { xmlEscape } = require('../utils/xmlEscape');
 // Auth: import `auth` and the admin/manager guard exactly as
 // server/routes/emailMarketing.js does.
 const { auth, requireAdminOrManager } = require('../middleware/auth');
@@ -85,7 +86,6 @@ router.post('/inbound', inboundLimiter, async (req, res) => {
 
   // Render the optional reply into TwiML. `reply` is system-generated copy;
   // escape XML metacharacters defensively regardless.
-  const xmlEscape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const twiml = reply
     ? `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${xmlEscape(reply)}</Message></Response>`
     : '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';

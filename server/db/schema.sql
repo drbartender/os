@@ -3317,3 +3317,60 @@ UPDATE service_addons SET requires_provisioning = true WHERE slug IN (
   'specialty-mezcal','specialty-bitter-aperitifs','specialty-vermouths','specialty-niche-liqueurs',
   'specialty-cognac','class-tool-kit-rental','class-tool-kit-purchase'
 );
+
+-- ===========================================================================
+-- Zul VA Calling — Telegram-triggered Twilio callback bridge
+-- (spec docs/superpowers/specs/2026-07-01-zul-va-calling-design.md)
+-- ---------------------------------------------------------------------------
+-- All three tables are idempotent (CREATE TABLE/INDEX IF NOT EXISTS) and hold
+-- transient/audit state only. NOTE: user_id / triggered_by are the Telegram
+-- numeric user id (can exceed 32 bits -> BIGINT) and are deliberately NOT FKs
+-- to users; the calling feature must not require a users row for Zul.
+-- Rows are pruned by vaCallingScheduler (RUN_VA_CALLING_SCHEDULER).
+-- ===========================================================================
+
+-- pending_call: at most one in-flight confirm/dial per Telegram user (user_id
+-- UNIQUE so upsertPending's ON CONFLICT (user_id) has a target). A new target
+-- sent before confirming REPLACES the row (upsert). status flips
+-- 'awaiting_confirm' -> 'dialing' via the conditional claim-then-call UPDATE;
+-- call_sid is attached after calls.create so the bridge webhook can look the
+-- target up by CallSid (never from a request param).
+CREATE TABLE IF NOT EXISTS pending_call (
+  id          BIGSERIAL PRIMARY KEY,
+  user_id     BIGINT NOT NULL UNIQUE,
+  target_e164 TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'awaiting_confirm'
+                CHECK (status IN ('awaiting_confirm','dialing')),
+  call_sid    TEXT,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- lookupTargetByCallSid() resolves the bridge target by Twilio CallSid.
+CREATE INDEX IF NOT EXISTS idx_pending_call_call_sid
+  ON pending_call (call_sid);
+
+-- call_audit: append-only spend/abuse ledger. Backs the DB-backed daily cap
+-- (countPlacedSince counts status='placed' rows in the last 24h; the in-memory
+-- express-rate-limit cannot serve as a daily cap because every Telegram trigger
+-- shares one source IP). status in
+-- ('placed','rejected_cap','rejected_validation','failed', <twilio status>).
+CREATE TABLE IF NOT EXISTS call_audit (
+  id           BIGSERIAL PRIMARY KEY,
+  triggered_by BIGINT,
+  target_e164  TEXT,
+  call_sid     TEXT,
+  status       TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- created_at is the cap-window filter (WHERE created_at > now()-interval) and
+-- the prune key.
+CREATE INDEX IF NOT EXISTS idx_call_audit_created_at
+  ON call_audit (created_at);
+
+-- telegram_update: Telegram update_id de-dupe (retry / at-least-once delivery).
+-- isNewUpdate() does INSERT ... ON CONFLICT DO NOTHING; a fresh insert means the
+-- update has not been processed. Pruned past retention.
+CREATE TABLE IF NOT EXISTS telegram_update (
+  update_id  BIGINT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

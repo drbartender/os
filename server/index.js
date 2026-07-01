@@ -252,6 +252,8 @@ app.use('/api/public/tip', require('./routes/publicTip'));
 app.use('/api/public/feedback', require('./routes/publicFeedback'));
 app.use('/api/thumbtack', require('./routes/thumbtack'));
 app.use('/api/sms', require('./routes/sms'));
+app.use('/api/telegram', require('./routes/telegram'));
+app.use('/api/voice', require('./routes/voice'));
 app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/test-feedback', require('./routes/testFeedback'));
 app.use('/api/qa', require('./routes/labrat'));
@@ -404,6 +406,35 @@ async function start() {
         setInterval(wrapped, 24 * 60 * 60 * 1000);
       } else if (!globalScheduleDisabled) {
         clearHealthRow('pending_email_cleanup');
+      }
+
+      // VA calling maintenance (spec §Components-7 + §Security-9): hourly prune
+      // of expired pending_call + aged-out call_audit/telegram_update rows, plus
+      // a ~6h Telegram webhook heartbeat (re-arms a silently-disabled webhook so
+      // outbound calling is never dead-until-noticed).
+      if (enabled('RUN_VA_CALLING_SCHEDULER')) {
+        const {
+          pruneVaCallingRows,
+          checkTelegramWebhookHealth,
+        } = require('./utils/vaCallingScheduler');
+
+        const wrappedPrune = wrapScheduler('va_calling_prune', 3600, async () => {
+          const n = await pruneVaCallingRows();
+          if (n > 0) console.log(`[va_calling_prune] deleted ${n} expired/old rows`);
+        });
+        setTimeout(wrappedPrune, 210000); // stagger off the other prune jobs
+        setInterval(wrappedPrune, 60 * 60 * 1000);
+
+        const wrappedHealth = wrapScheduler(
+          'va_calling_webhook_health',
+          21600, // 6h expected interval
+          checkTelegramWebhookHealth
+        );
+        setTimeout(wrappedHealth, 240000);
+        setInterval(wrappedHealth, 6 * 60 * 60 * 1000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('va_calling_prune');
+        clearHealthRow('va_calling_webhook_health');
       }
 
       // Pre-event reminder handlers (event_week_reminder, long_lead_t30_recap).

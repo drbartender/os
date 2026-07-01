@@ -61,3 +61,25 @@ services:
       # Thumbtack Integration (shared secret for Basic Auth / x-thumbtack-secret header)
       - key: THUMBTACK_WEBHOOK_SECRET
         sync: false
+      # Zul VA Calling (Telegram-triggered Twilio callback bridge).
+      # Set the secret/allowlist/number values in the Render dashboard — never here.
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: TELEGRAM_ALLOWED_USER_ID
+        sync: false
+      - key: VOICE_CALLER_ID
+        sync: false
+      - key: VA_CELL
+        sync: false
+      - key: RUN_VA_CALLING_SCHEDULER
+        sync: false
+      - key: VA_CALL_DAILY_CAP
+        value: "40"
+      - key: VA_CALL_PER_MIN_CAP
+        value: "5"
+      - key: VA_CALL_TIME_LIMIT_SEC
+        value: "1800"
+      - key: PENDING_CALL_TTL_SEC
+        value: "120"

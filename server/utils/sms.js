@@ -37,6 +37,38 @@ async function sendSMS({ to, body, meta }) {
 }
 
 /**
+ * Place a Twilio callback-bridge call: Twilio dials `to` (Zul's cell, VA_CELL,
+ * strict E.164 — already validated by the caller, NEVER normalized here) and,
+ * when she answers, fetches `url` (the /api/voice/bridge TwiML) to dial the
+ * target with `callerId` (the 224) shown to the far end.
+ *
+ * Gated IDENTICALLY to sendSMS (sms.js:22-26): a dev server or gated env never
+ * dials the live, auto-refill account. This is a billed-international-voice,
+ * toll-fraud-adjacent primitive — the gate is load-bearing.
+ *
+ * @param {Object} opts
+ * @param {string} opts.to             - VA_CELL, strict E.164 (+63…)
+ * @param {string} opts.callerId       - VOICE_CALLER_ID (the 224); Twilio `from`
+ * @param {string} opts.url            - bridge TwiML URL (/api/voice/bridge)
+ * @param {string} opts.statusCallback - status webhook URL (/api/voice/status)
+ * @param {number} opts.timeLimit      - per-call cap in seconds
+ * @returns {Promise<{sid: string}>}   - Twilio call resource, or a dev-skipped stub
+ */
+async function placeBridgedCall({ to, callerId, url, statusCallback, timeLimit }) {
+  if (!to) throw new Error('placeBridgedCall recipient (VA_CELL) is required');
+  const { client: activeClient, notificationsEnabled: notifEnabled } = _deps;
+  if (!activeClient || !notifEnabled()) {
+    const why = !activeClient ? 'Twilio creds not set' : 'notifications gated off';
+    // Redact VA_CELL to last-4 (match smsInbound.js's slice(-4) PII style).
+    console.log(`[DEV] Bridged call skipped (${why}) → ...${String(to).slice(-4)} | url: ${url}`);
+    return { sid: `dev-skipped-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` };
+  }
+  const call = await activeClient.calls.create({ from: callerId, to, url, statusCallback, timeLimit });
+  console.log(`Bridged call placed: ${call.sid} → ...${String(to).slice(-4)}`);
+  return call;
+}
+
+/**
  * Normalize a phone number to E.164 format (+1XXXXXXXXXX)
  * Accepts formats like (312)555-1234, 312-555-1234, 3125551234, +13125551234
  * @param {string} phone
@@ -54,7 +86,7 @@ function normalizePhone(phone) {
 // Dependency seam for tests. `_realSendSMS` lets a test restore the real
 // sender after injecting a stub.
 const _realSendSMS = sendSMS;
-let _deps = { sendSMS };
+let _deps = { sendSMS, client, notificationsEnabled };
 function __setSmsDeps(d) { _deps = { ..._deps, ...d }; }
 
 /**
@@ -115,4 +147,4 @@ async function sendAndLogSms({ to, body, clientId = null, proposalId = null, mes
   return { sid, status: 'sent' };
 }
 
-module.exports = { sendSMS, normalizePhone, sendAndLogSms, __setSmsDeps, _realSendSMS };
+module.exports = { sendSMS, normalizePhone, sendAndLogSms, placeBridgedCall, __setSmsDeps, _realSendSMS };

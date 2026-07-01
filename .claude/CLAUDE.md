@@ -233,6 +233,7 @@ Explicit-only Claude agents for reviewing specs and plans BEFORE any code is wri
 - **Payments**: Stripe (server SDK + React Elements)
 - **Email**: Resend
 - **SMS**: Twilio
+- **VA calling (Zul)**: Telegram Bot API (raw HTTPS to the Bot API, no SDK) as the outbound-call trigger channel + Twilio Programmable Voice (`calls.create`) callback bridge that dials Zul's PH cell and bridges to a US target with the 224 as caller ID
 - **Web Push**: `web-push` (VAPID) for staff-portal browser / PWA notifications
 - **Booking / scheduling**: Cal.com (webhook integration; self-hosted target for V2)
 - **Venue search**: Google Places API (New) for venue-name autocomplete
@@ -291,3 +292,11 @@ See `.env.example` for the full list. Key ones:
 | `VAPID_PRIVATE_KEY` | Web Push (VAPID) private key. Server-only — never commit, never expose to the client. When unset, the push sender fails closed (`vapid_unset`) and the server still boots normally; SMS + email keep covering every notification. |
 | `REACT_APP_VAPID_PUBLIC_KEY` | Client-side copy of `VAPID_PUBLIC_KEY` (identical value), used by the staff portal to subscribe the browser to push. Set on the client side (Vercel). |
 | `VAPID_CONTACT_EMAIL` | Contact email embedded in the VAPID JWT (`mailto:`). Optional — defaults to `contact@drbartender.com`. |
+| `TELEGRAM_BOT_TOKEN` | Telegram Bot API token (@BotFather) for the Zul VA-calling trigger. When unset, `sendTelegramMessage`/`setTelegramWebhook` no-op (log + skip) and outbound calling is dead. |
+| `TELEGRAM_WEBHOOK_SECRET` | Doubles as the secret URL path segment (`/api/telegram/<secret>`) AND the value compared constant-time against the `X-Telegram-Bot-Api-Secret-Token` header. Set the same value at `setWebhook`. Unset → `verifyTelegramSecret` returns false (all updates 403). |
+| `TELEGRAM_ALLOWED_USER_ID` | Numeric Telegram user id of Zul (the only sender allowed to trigger a call). **When UNSET the webhook runs in bootstrap mode**: it replies to any sender with their own id and dials nothing. Set it, redeploy; then all other senders are silent no-ops. |
+| `VOICE_CALLER_ID` | The 224 US voice line in strict E.164 (`+12242220082`). Caller ID on Zul's outbound calls and the number clients dial inbound. |
+| `VA_CELL` | Zul's cell in strict E.164 (`+63…`), the bridge target Twilio calls. **Never run through `normalizePhone`** (US-centric). Lives only here — never on a DB record, never committed. |
+| `RUN_VA_CALLING_SCHEDULER` | Optional. Set to `false` to disable the VA-calling scheduler (hourly prune of `pending_call`/`call_audit`/`telegram_update` + Telegram webhook heartbeat). Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
+| `VA_CALL_DAILY_CAP` / `VA_CALL_PER_MIN_CAP` | Toll-fraud spend caps: max calls placed per rolling 24h (default 40, DB-backed by counting `call_audit`) and max triggers accepted per minute (default 5). On trip the bot tells Zul and no call is placed. |
+| `VA_CALL_TIME_LIMIT_SEC` / `PENDING_CALL_TTL_SEC` | Per-call hard `timeLimit` on both call legs (default 1800 = 30 min) and confirm-before-dial pending-record TTL (default 120s). |
