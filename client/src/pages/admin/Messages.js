@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 
@@ -10,6 +10,7 @@ export default function Messages() {
   const [loading, setLoading] = useState(true);
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
+  const messagesRef = useRef(null);
 
   const fetchThreads = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -25,17 +26,39 @@ export default function Messages() {
 
   useEffect(() => { fetchThreads(); }, [fetchThreads]);
 
-  const selectThread = async (clientId) => {
+  // Open a conversation. markRead is true for an explicit user action (click or
+  // keyboard) and false when we auto-open the newest thread on load, so simply
+  // landing on the page never silently clears an unread badge.
+  const openThread = useCallback(async (clientId, { markRead } = { markRead: true }) => {
     setSelectedClientId(clientId);
     try {
       const res = await api.get(`/sms/conversations/${clientId}`);
       setMessages(res.data);
-      await api.put(`/sms/conversations/${clientId}/read`);
-      fetchThreads(true);
+      if (markRead) {
+        await api.put(`/sms/conversations/${clientId}/read`);
+        fetchThreads(true);
+      }
     } catch (err) {
       toast.error('Failed to load conversation. Try again.');
     }
-  };
+  }, [toast, fetchThreads]);
+
+  const selectThread = (clientId) => openThread(clientId, { markRead: true });
+
+  // Default to the most recent conversation (threads are newest-first) so the
+  // pane opens on the latest message instead of the empty placeholder. View
+  // only: it does not mark the conversation read.
+  useEffect(() => {
+    if (!selectedClientId && threads.length > 0) {
+      openThread(threads[0].client_id, { markRead: false });
+    }
+  }, [threads, selectedClientId, openThread]);
+
+  // Keep the newest message in view whenever a conversation loads or grows.
+  useEffect(() => {
+    const el = messagesRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages]);
 
   const handleReply = async () => {
     if (!replyText.trim() || !selectedClientId) return;
@@ -46,6 +69,10 @@ export default function Messages() {
       toast.success('Reply sent.');
       const res = await api.get(`/sms/conversations/${selectedClientId}`);
       setMessages(res.data);
+      // Replying is engagement, so clear any lingering unread badge (covers the
+      // case where the thread was auto-opened and never explicitly clicked).
+      await api.put(`/sms/conversations/${selectedClientId}/read`);
+      fetchThreads(true);
     } catch (err) {
       toast.error(err.message || 'Failed to send reply.');
       try {
@@ -104,7 +131,7 @@ export default function Messages() {
                   <span className="muted">{selectedThread?.phone}</span>
                 </div>
 
-                <div className="sms-messages">
+                <div className="sms-messages" ref={messagesRef}>
                   {messages.map(msg => (
                     <div key={msg.id} className={`sms-bubble sms-bubble-${msg.direction}`}>
                       <div className="sms-bubble-body">{msg.body || '(no text)'}</div>
