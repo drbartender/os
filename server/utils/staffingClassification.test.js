@@ -44,3 +44,13 @@ test('fully staffed when all <= 0', () => {
   assert.equal(isEventFullyStaffed({ Bartender: 0, 'Banquet Server': 1 }), false);
   assert.equal(isEventFullyStaffed({ Bartender: -1 }), true);
 });
+
+test('empty remaining map is vacuously fully staffed', () => {
+  // Array.prototype.every on an empty list returns true, so an empty remaining
+  // map reports fully staffed. Consumers with a genuinely empty roster must
+  // special-case that BEFORE calling this (an event needing zero staff is not
+  // the same thing as an event with every slot filled).
+  assert.equal(isEventFullyStaffed({}), true);
+  assert.equal(isEventFullyStaffed({ Bartender: 1 }), false);
+  assert.equal(isEventFullyStaffed({ Bartender: 0 }), true);
+});

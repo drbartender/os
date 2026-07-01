@@ -239,6 +239,34 @@ async function assignShiftHandler(req, res) {
   const request = result.rows[0];
   const shift = shiftRes.rows[0];
 
+  // Over-fill audit (advisory, best-effort): the admin UI routes approvals
+  // through /assign, so this is where over-fills are recorded. Log when this
+  // assignment puts `role` over its roster count, EXCLUDING the assignee's own
+  // prior approved row so a plain re-assign is never counted as an over-fill.
+  if (shift.proposal_id) {
+    try {
+      const others = await pool.query(
+        `SELECT position, COUNT(*)::int AS c FROM shift_requests
+          WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL
+            AND position IS NOT NULL AND user_id <> $2
+          GROUP BY position`,
+        [req.params.id, user_id]
+      );
+      const approvedByRole = {};
+      for (const r of others.rows) approvedByRole[r.position] = r.c;
+      const remaining = computeRemaining(parsePositionsNeeded(shift.positions_needed), approvedByRole);
+      if ((remaining[role] || 0) <= 0) {
+        await pool.query(
+          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+           VALUES ($1, 'staffing_overfill', 'admin', $2, $3)`,
+          [shift.proposal_id, req.user.id, JSON.stringify({ role, request_id: request.id, shift_id: shift.id, via: 'assign' })]
+        );
+      }
+    } catch (ofErr) {
+      console.error('[shifts] over-fill audit log failed (non-blocking):', ofErr.message);
+    }
+  }
+
   // Fetch the assignee's email + contractor profile ONCE; both the SMS and
   // email notification blocks below read from this single row (SMS uses
   // phone + preferred_name, email uses email + preferred_name). Best-effort:
@@ -391,21 +419,26 @@ async function approveOrDenyRequestHandler(req, res) {
       if (!resolvedRole) {
         throw new ValidationError({ position: 'Cannot resolve a role for this approval — pick a role or open a slot.' });
       }
-      // Over-fill bookkeeping: an admin override onto a role with no open slot
-      // is allowed but logged for later reconciliation (same activity-log
-      // pattern as eventCreation's staffing_shrink_capped).
-      if ((remaining[resolvedRole] || 0) <= 0 && srProposalId) {
-        await pool.query(
-          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
-           VALUES ($1, 'staffing_overfill', 'admin', $2, $3)`,
-          [srProposalId, req.user.id, JSON.stringify({ role: resolvedRole, request_id: parseInt(req.params.requestId, 10), shift_id: srShiftId })]
-        );
-      }
       result = await pool.query(
         `UPDATE shift_requests SET status = 'approved', position = $2, beo_acknowledged_at = NULL
           WHERE id = $1 RETURNING *`,
         [req.params.requestId, resolvedRole]
       );
+      // Over-fill bookkeeping (advisory, best-effort, AFTER the write so a failed
+      // approval never logs and a failed log never fails the approval): an admin
+      // override onto a role with no open slot is allowed but recorded (same
+      // activity-log pattern as eventCreation's staffing_shrink_capped).
+      if ((remaining[resolvedRole] || 0) <= 0 && srProposalId) {
+        try {
+          await pool.query(
+            `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+             VALUES ($1, 'staffing_overfill', 'admin', $2, $3)`,
+            [srProposalId, req.user.id, JSON.stringify({ role: resolvedRole, request_id: parseInt(req.params.requestId, 10), shift_id: srShiftId })]
+          );
+        } catch (logErr) {
+          console.error('[shifts] over-fill audit log failed (non-blocking):', logErr.message);
+        }
+      }
     }
   } else if (status === 'denied') {
     result = await pool.query(

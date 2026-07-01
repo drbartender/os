@@ -34,14 +34,23 @@ function formatTime12(timeStr) {
 
 // === Staffing roster derivation (spec Section 1) ===========================
 
+// The per-hour minimum used to recover banquet-server / barback headcount from
+// their stored hours-quantity (quantity = headcount x max(durationHours, MIN)).
+// This is a LOAD-BEARING coupling: it MUST equal service_addons.minimum_hours for
+// banquet-server / barback (set to 4 in schema.sql) AND the pricing engine's
+// Math.max(durationHours, addon.minimum_hours) that produced the quantity
+// (server/utils/pricingEngine.js). If that minimum ever changes, change it in all
+// three places together or headcount recovery silently mis-counts.
+const STAFFING_ADDON_MIN_HOURS = 4;
+
 // Recover headcount for a staffing add-on from its stored hours-quantity. The
 // divisor is per-slug: additional-bartender stores durationHours x headcount
-// (no minimum); banquet-server / barback store max(durationHours,4) x headcount
-// (4-hour minimum). A single uniform divisor mis-counts sub-4-hour events.
+// (no minimum); banquet-server / barback store max(durationHours, MIN) x headcount.
+// A single uniform divisor mis-counts sub-minimum events.
 function addonHeadcount(addons, slug, durationHours) {
   const divisor = slug === 'additional-bartender'
     ? Math.max(1, Number(durationHours) || 1)
-    : Math.max(Number(durationHours) || 0, 4);
+    : Math.max(Number(durationHours) || 0, STAFFING_ADDON_MIN_HOURS);
   return (addons || [])
     .filter((a) => a.slug === slug)
     .reduce((sum, a) => sum + Math.max(0, Math.round((Number(a.quantity) || 0) / divisor)), 0);

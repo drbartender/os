@@ -42,7 +42,13 @@ import RoleRankPicker, { fillMaps } from './RoleRankPicker';
  */
 export default function RequestSheet({ open, shift, busy = false, onClose, onSubmitted }) {
   const neededRoles = useMemo(
-    () => parsePositionsNeeded(shift?.positions_needed),
+    () => {
+      const parsed = parsePositionsNeeded(shift?.positions_needed);
+      // A shift with no defined roles (legacy or manually-created rows) still
+      // needs a bartender by default, so it stays requestable as a single
+      // Bartender slot instead of showing "no open roles".
+      return parsed.length > 0 ? parsed : ['Bartender'];
+    },
     [shift?.positions_needed]
   );
   const approvedByRole = useMemo(

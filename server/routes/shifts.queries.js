@@ -59,9 +59,10 @@ const STAFF_OPEN_SHIFTS_SQL = `
   ORDER BY s.event_date ASC LIMIT 500
 `;
 
-// User events history (GET /api/shifts/user/:userId/events). Projects the
-// user's payout_id for each past row via a LATERAL JOIN restricted to the
-// user's own payout (payouts is keyed on contractor_id).
+// User events history (GET /api/shifts/user/:userId/events). Projects, for each
+// past row, the user's payout_id + the per-shift line total (payout_line_total_cents)
+// + the payout status, via a LATERAL JOIN restricted to the user's own payout
+// (payouts is keyed on contractor_id). The staff Past tab renders the line total.
 const USER_EVENTS_SQL = `
   SELECT s.id, s.proposal_id, s.event_date, s.start_time, s.end_time, s.location,
          s.setup_minutes_before,
@@ -74,14 +75,17 @@ const USER_EVENTS_SQL = `
          COALESCE(p.guest_count, s.guest_count) AS guest_count,
          dp.finalized_at AS drink_plan_finalized_at,
          dp.status AS drink_plan_status,
-         pay.payout_id
+         pay.payout_id,
+         pay.line_total_cents AS payout_line_total_cents,
+         pay.payout_status
   FROM shift_requests sr
   JOIN shifts s ON s.id = sr.shift_id
   LEFT JOIN proposals p ON p.id = s.proposal_id
   LEFT JOIN clients c ON c.id = p.client_id
   LEFT JOIN drink_plans dp ON dp.proposal_id = s.proposal_id
   LEFT JOIN LATERAL (
-    SELECT pe.payout_id FROM payout_events pe
+    SELECT pe.payout_id, pe.line_total_cents, po.status AS payout_status
+      FROM payout_events pe
       JOIN payouts po ON po.id = pe.payout_id
      WHERE pe.shift_id = s.id AND po.contractor_id = $1 LIMIT 1
   ) pay ON true

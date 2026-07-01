@@ -364,7 +364,15 @@ router.post('/', auth, requireStaffing, asyncHandler(async (req, res) => {
       event_date,
       start_time || null, end_time || null,
       location || null,
-      positions_needed ? JSON.stringify(positions_needed) : '[]',
+      // A shift always needs at least one bartender. When the caller omits
+      // positions_needed (or passes an empty array), default the roster to a
+      // single Bartender slot so no new empty-roster rows are created — an
+      // empty roster hides the shift from Available and blocks the picker.
+      JSON.stringify(
+        Array.isArray(positions_needed) && positions_needed.length > 0
+          ? positions_needed
+          : ['Bartender']
+      ),
       notes || null,
       equipment_required ? JSON.stringify(equipment_required) : '[]',
       auto_assign_days_before !== null && auto_assign_days_before !== undefined ? auto_assign_days_before : null,

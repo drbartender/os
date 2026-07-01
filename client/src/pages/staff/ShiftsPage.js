@@ -25,8 +25,13 @@ const SUB_TABS = ['available', 'all', 'mine', 'past'];
  * source the same /shifts feed (fully-staffed events stay status='open').
  */
 function isShiftAvailable(row) {
+  const needed = parsePositionsNeeded(row.positions_needed);
+  // An empty/malformed roster (legacy or manually-created rows) still needs a
+  // bartender by default, so treat it as available. isEventFullyStaffed({}) is
+  // vacuously true, which would otherwise drop these rows from Available.
+  if (needed.length === 0) return true;
   const remaining = computeRemaining(
-    parsePositionsNeeded(row.positions_needed),
+    needed,
     row.approved_by_role && typeof row.approved_by_role === 'object' ? row.approved_by_role : {}
   );
   return !isEventFullyStaffed(remaining);

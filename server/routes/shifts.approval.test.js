@@ -144,6 +144,14 @@ before(async () => {
 
 after(async () => {
   if (server) await new Promise((r) => server.close(r));
+  // The cover-swap cascade schedules staff shift messages for the claimer,
+  // keyed on the shift, so clear those before the shifts go.
+  await pool.query(
+    `DELETE FROM scheduled_messages
+      WHERE entity_type = 'shift'
+        AND entity_id IN (SELECT id FROM shifts WHERE proposal_id = $1)`,
+    [proposalId]
+  );
   await pool.query(
     `DELETE FROM shift_requests WHERE shift_id IN (SELECT id FROM shifts WHERE proposal_id = $1)`,
     [proposalId]
@@ -268,6 +276,42 @@ test('deny: still works (no position resolution) and returns denied', async () =
   const r = await req('PUT', `/api/shifts/requests/${reqId}`, { token: adminToken, body: { status: 'denied' } });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(r.body.status, 'denied');
+});
+
+test('approve: cover-swap branch preserves the claimer claim-time position', async () => {
+  // A claim request carries `replaced_by_request_id`, which routes the PUT into
+  // approveAndCascade (coverApprovalCascade.js). That path only flips status to
+  // 'approved' and NEVER re-resolves `position` — the claimer's role was chosen
+  // at claim time and must survive the approval unchanged (not re-resolved to
+  // the first open roster role, e.g. Bartender, and not nulled).
+  const shiftId = await mkShift({ positions: ['Bartender', 'Banquet Server'] });
+
+  // Original approved request (the person being covered), with cover requested.
+  const orig = await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, cover_requested_at)
+     VALUES ($1, $2, 'approved', 'Bartender', NOW()) RETURNING id`,
+    [shiftId, s1Id]
+  );
+  const originalReqId = orig.rows[0].id;
+
+  // The claimer's request: pending, position set at claim time to Banquet
+  // Server, pointing back at the original via replaced_by_request_id.
+  const claim = await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, replaced_by_request_id)
+     VALUES ($1, $2, 'pending', 'Banquet Server', $3) RETURNING id`,
+    [shiftId, s2Id, originalReqId]
+  );
+  const claimReqId = claim.rows[0].id;
+
+  const r = await req('PUT', `/api/shifts/requests/${claimReqId}`, { token: adminToken, body: { status: 'approved' } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.status, 'approved');
+  assert.equal(r.body.position, 'Banquet Server', 'claim-time position is preserved, not re-resolved');
+
+  // Confirm at the DB layer too (the response is a fresh SELECT of the row).
+  const row = await pool.query('SELECT status, position FROM shift_requests WHERE id = $1', [claimReqId]);
+  assert.equal(row.rows[0].status, 'approved');
+  assert.equal(row.rows[0].position, 'Banquet Server', 'position untouched by the cascade');
 });
 
 // ─── POST /:id/assign (explicit position required) ────────────────
