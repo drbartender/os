@@ -19,6 +19,14 @@ server/utils/gratuityLabels.js
 server/utils/eventTypes.js
 server/utils/payroll*.js
 
+# Staffing money seam: shift_requests.position resolution feeds the payroll tip
+# split (LOWER(position)='bartender'). shifts.approval.js resolves + writes it;
+# the cover/drop marketplace (coverBroadcast + staffShiftActions) matches and
+# writes canonical position on a claim.
+server/routes/shifts.approval.js
+server/utils/coverBroadcast.js
+server/routes/staffShiftActions.js
+
 # Schema / DDL (no migrations/ dir exists; schema goes through schema.sql
 # plus the one-off repair scripts under server/scripts/)
 server/db/schema.sql
