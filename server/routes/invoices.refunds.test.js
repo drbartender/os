@@ -120,6 +120,18 @@ before(async () => {
     `INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, 4000)`,
     [invC.rows[0].id, pay3.rows[0].id]
   );
+  // Reconciliation writes NEGATIVE reversal rows on the refund (mirrors
+  // refundHelpers). These drive the NET per-(payment,invoice) sum to 0, so the
+  // display MUST use the gross-positive sum (FILTER WHERE amount > 0) or the
+  // refund vanishes on both invoices. Locks the fix against a net-SUM refactor.
+  await pool.query(
+    `INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, -6000)`,
+    [invB.rows[0].id, pay3.rows[0].id]
+  );
+  await pool.query(
+    `INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, -4000)`,
+    [invC.rows[0].id, pay3.rows[0].id]
+  );
   await pool.query(
     `INSERT INTO proposal_refunds (proposal_id, payment_id, amount, reason, total_price_before, total_price_after, status)
      VALUES ($1, $2, 10000, 'Full refund on a combined payment', 1000.00, 900.00, 'succeeded')`,
