@@ -1,0 +1,292 @@
+# Stripe Payout Tracking in Financials
+
+**Date:** 2026-07-01
+**Status:** Approved (brainstorm section approvals 2026-07-01)
+**Difficulty:** Large. Money-adjacent everywhere: new schema, stripeWebhook.js, Stripe API, reconciliation, UI.
+
+## 1. Goal
+
+Track when money actually lands in the bank: which Stripe payout it rode, and which
+events, invoices, payments, tips, refunds, and disputes make up each payout. Includes
+estimated dates for money still in transit, gross/fee/net visibility, and a
+failed-payout alert. Bank-level reconciliation, the successor to the
+payment-accounting-fixes project.
+
+This subsystem is a **read-side mirror of Stripe**. It never mutates proposals,
+proposal_payments, invoices, tips, or any existing money table. Worst case is a wrong
+report, never wrong money.
+
+## 2. Verified grounding (checked against live systems 2026-07-01)
+
+- Account `acct_1QoT0FAZrfv5tWfN` pays out **daily, automatically, 2-day rolling
+  delay**, standard bank transfers. 43 payouts in the account's life (earliest
+  2025-02-11), all status `paid`, none failed. Balance at check time: $630.55 pending,
+  $0 available.
+- Payout anatomy (verified on po_1Tnpi3AZrfv5tWfNdNwOthXc, $533.45, 6/30): listing
+  balance transactions with `payout=po_...` returns the payout's own negative
+  `type=payout` row plus one row per constituent transaction, each carrying signed
+  amount/fee/net (integer cents), `available_on`, `reporting_category`, a
+  human-readable description ("INV-0091 — Allyson Gietl"), and a source charge whose
+  `payment_intent` is expandable.
+- Estimated dates come straight from Stripe fields: `payout.arrival_date` for created
+  payouts, `balance_transaction.available_on` for pending funds. No heuristic.
+- Prod linkage coverage: 36 `proposal_payments` rows, 32 with a `pi_` id. The 4
+  without (ids 12, 28, 283, 284) are manually recorded non-Stripe payments; they have
+  no Stripe presence and are **excluded** from matching by design, not "unmatched".
+- `tips.stripe_payment_intent_id` is `TEXT UNIQUE NOT NULL`, so gratuity charges
+  reconcile through the same spine. `proposal_refunds` carries `stripe_refund_id`.
+- `stripeWebhook.js` (928 lines) handles 6 event types today, none payout-related.
+  Signature verification, `webhook_events` dedupe (UNIQUE + ON CONFLICT), and the
+  settle-processed-flag-after-side-effects convention all exist in that file.
+- No payout/settlement table, no `payouts.list` or `balance_transactions` call exists
+  anywhere in server/ today.
+
+## 3. Vocabulary and invariants
+
+- **Naming trap:** "payouts" in this codebase means staff payroll (`payouts`,
+  `payout_events` tables; PayoutsTab.js etc.). This subsystem uses the `stripe_`
+  prefix everywhere: `stripe_payouts`, `stripe_payout_lines`,
+  `server/routes/stripePayouts.js`, `server/utils/stripePayoutSync.js`,
+  StripePayoutsTab.js. UI copy says "Stripe Payouts".
+- **Cents-native end to end.** All amounts integer cents (matches Stripe, invoices,
+  payments, refunds). Display formatting converts at the edge. Proposals dollars are
+  never mixed in.
+- **Stripe access only via `server/utils/stripeClient.js`** (never
+  `require('stripe')` directly; honors STRIPE_TEST_MODE_UNTIL, fails closed).
+- **Read-side only.** No writes to any existing table. New tables only.
+- **Idempotent everywhere.** All ingest paths converge on upserts keyed on Stripe ids
+  (`po_`, `txn_`), so webhook, sweep, backfill, and view-refresh can overlap safely.
+
+## 4. Data model
+
+Two new tables in `server/db/schema.sql`, idempotent DDL per file convention
+(CREATE TABLE IF NOT EXISTS; initDb applies on prod boot; apply to the dev DB by hand,
+schema.sql is not auto-applied to dev).
+
+```sql
+CREATE TABLE IF NOT EXISTS stripe_payouts (
+  id SERIAL PRIMARY KEY,
+  stripe_payout_id TEXT UNIQUE NOT NULL,          -- po_...
+  amount_cents INTEGER NOT NULL,                  -- net amount that lands in bank
+  currency TEXT NOT NULL DEFAULT 'usd',
+  status TEXT NOT NULL,                           -- paid | in_transit | pending | canceled | failed
+  created_at_stripe TIMESTAMPTZ NOT NULL,         -- payout creation time at Stripe
+  arrival_date DATE,                              -- Stripe's arrival estimate/actual
+  automatic BOOLEAN NOT NULL DEFAULT true,
+  method TEXT,                                    -- standard | instant
+  description TEXT,
+  failure_code TEXT,
+  failure_message TEXT,
+  alerted_at TIMESTAMPTZ,                         -- failed-payout alert sent (gate: alert fires once)
+  lines_synced_at TIMESTAMPTZ,                    -- NULL until balance txns fetched; sweep heals NULLs
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS stripe_payout_lines (
+  id SERIAL PRIMARY KEY,
+  stripe_balance_txn_id TEXT UNIQUE NOT NULL,     -- txn_...
+  payout_id INTEGER REFERENCES stripe_payouts(id) ON DELETE CASCADE,  -- NULL = pending (in transit)
+  txn_type TEXT NOT NULL,                         -- Stripe balance_transaction.type
+  reporting_category TEXT,
+  amount_cents INTEGER NOT NULL,                  -- signed gross (refunds/disputes negative)
+  fee_cents INTEGER NOT NULL DEFAULT 0,
+  net_cents INTEGER NOT NULL,
+  available_on TIMESTAMPTZ,
+  description TEXT,
+  stripe_charge_id TEXT,
+  stripe_payment_intent_id TEXT,
+  stripe_refund_id TEXT,
+  matched_kind TEXT NOT NULL DEFAULT 'unmatched'
+    CHECK (matched_kind IN ('payment','tip','refund','dispute','adjustment','unmatched')),
+  proposal_payment_id INTEGER REFERENCES proposal_payments(id) ON DELETE SET NULL,
+  tip_id INTEGER REFERENCES tips(id) ON DELETE SET NULL,
+  proposal_refund_id INTEGER REFERENCES proposal_refunds(id) ON DELETE SET NULL,
+  proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL,   -- denormalized for display
+  invoice_id INTEGER REFERENCES invoices(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_stripe_payout_lines_payout ON stripe_payout_lines(payout_id);
+CREATE INDEX IF NOT EXISTS idx_stripe_payout_lines_pi ON stripe_payout_lines(stripe_payment_intent_id);
+```
+
+Design notes:
+
+- **Nullable `payout_id` is the pending bucket.** A settled charge not yet in a payout
+  is a line with `payout_id NULL`. When its payout arrives, the by-payout fetch claims
+  it (upsert on `stripe_balance_txn_id` sets `payout_id`). "In transit" is
+  `WHERE payout_id IS NULL AND txn_type <> 'payout'`. No separate state machine.
+- Gross and total fees per payout are **not stored**: they are SUMs over lines at read
+  time, so nothing drifts. `stripe_payouts.amount_cents` is Stripe's net.
+- The payout's own negative `type=payout` balance transaction is skipped at ingest.
+- `proposal_payments.fee_cents` exists (written by the gratuity flow) but this feature
+  does not depend on it or write it; line fees come from balance transactions.
+
+## 5. Ingestion
+
+One shared module, `server/utils/stripePayoutSync.js`, exposing:
+
+- `syncPayout(payoutOrId)`: upsert the `stripe_payouts` row; list its balance
+  transactions (paginated, `expand[]=data.source`); upsert lines (claiming pending
+  ones); run the matcher on each; set `lines_synced_at` on success.
+- `syncPendingTransactions()`: list balance transactions from the last 30 days
+  (covers status pending and available; ample at this volume given the 2-day delay);
+  upsert any non-payout transaction not yet stored as a line with `payout_id NULL`.
+- `matchLine(line)`: the matcher (section 6).
+- `sweep()`: list payouts since the newest stored one (plus a re-check window);
+  `syncPayout` any new payout or any payout with `lines_synced_at IS NULL`;
+  `syncPendingTransactions()`; re-run the matcher on `matched_kind='unmatched'` lines;
+  alert on any `failed` payout not yet alerted.
+
+Three callers plus a view refresh, all through this module, all idempotent:
+
+1. **Webhook.** Add `payout.paid` and `payout.failed` branches to
+   `server/routes/stripeWebhook.js`, through the existing signature verification and
+   `webhook_events` dedupe, following the file's settle-processed-flag-after-
+   side-effects convention. `payout.paid` calls `syncPayout(event.data.object)`.
+   `payout.failed` upserts status/failure fields and sends the admin alert.
+   Go-live config: add `payout.paid` and `payout.failed` to the webhook endpoint's
+   enabled events in the Stripe dashboard (config step, not code).
+2. **Nightly sweep.** Register `sweep()` in `server/index.js` using the existing
+   schedulerHealth-wrapped `setInterval` pattern (24h interval, same as the existing
+   daily jobs). The sweep is the heal for missed webhooks and the belt-and-braces
+   failed-payout detector.
+3. **Backfill.** One-off `server/scripts/backfillStripePayouts.js`: full account
+   history (43 payouts, one API page), calls `syncPayout` per payout then
+   `syncPendingTransactions()`. Safe to re-run.
+4. **View refresh.** Opening the tab calls `POST /api/stripe-payouts/sync` when the
+   last sync was more than 15 minutes ago (tracked server-side). That endpoint runs
+   `sweep()`, which is cheap at this volume, so both the pending bucket and the
+   payout list are current when viewed. One refresh path, not two.
+
+**Failed-payout alert:** `notifyAdminCategory` in `server/utils/adminNotifications.js`
+with a new category `stripe_payout_failed` added to VALID_CATEGORIES, email-only body
+(no smsBody, per the email-over-SMS cost rule). Fired by the webhook handler and by
+the sweep for any failed payout not yet alerted, gated by
+`stripe_payouts.alerted_at` so the alert fires once.
+
+## 6. Matching (the reconciliation spine)
+
+Per line, in order:
+
+1. `reporting_category='charge'` (or `txn_type='charge'/'payment'`): source charge's
+   `payment_intent` id looked up in `proposal_payments.stripe_payment_intent_id`
+   (sets `matched_kind='payment'`, `proposal_payment_id`, `proposal_id`, and
+   `invoice_id` via `invoice_payments` when the payment is invoice-linked), else in
+   `tips.stripe_payment_intent_id` (sets `matched_kind='tip'`, `tip_id`).
+2. `reporting_category='refund'`: `stripe_refund_id` looked up in
+   `proposal_refunds.stripe_refund_id` (sets `matched_kind='refund'`,
+   `proposal_refund_id`, `proposal_id` via the refund's payment).
+3. `reporting_category='dispute'` (funds withdrawn or reinstated): resolve via the
+   dispute's charge back to the payment/tip, `matched_kind='dispute'`.
+4. Stripe fee adjustments and similar (`txn_type='adjustment'` etc.): resolve via
+   source charge where possible, `matched_kind='adjustment'`.
+5. Anything unresolved stays `matched_kind='unmatched'` and **visible** in the UI.
+   Never silently dropped. The sweep retries unmatched lines nightly (heals webhook
+   ordering races where the payout landed before the payment row).
+
+Manual non-Stripe payments (the 4 prod rows and future ones) never enter this system:
+they have no balance transactions. The tab is Stripe-only, by design. Do not "fix"
+their absence.
+
+## 7. API
+
+New route file `server/routes/stripePayouts.js`, mounted at `/api/stripe-payouts` in
+`server/index.js`. All routes gated `auth, requireAdminOrManager` (same as
+`GET /api/proposals/financials`). Integer `:id` params (no UUID token guard needed).
+
+- `GET /api/stripe-payouts`: payout list (paged if ever needed; 43 rows today), each
+  with computed gross/fee/net (SUM over lines) and line count; the pending bucket
+  (lines with `payout_id NULL`, each with `available_on` as the estimated payout
+  date); summary rollups (in-transit total, Stripe fees MTD and YTD).
+- `GET /api/stripe-payouts/:id`: one payout plus its lines joined to display info
+  (client/event name via proposal, invoice number, tip staff name, type badge data).
+- `POST /api/stripe-payouts/sync`: runs `sweep()`. Backs the manual "Sync now"
+  button and the 15-minute staleness refresh on tab open.
+
+## 8. UI
+
+`StripePayoutsTab` inside `client/src/pages/admin/FinancialsDashboard.js`.
+FinancialsDashboard has no tab structure today (175 lines): introduce a simple
+two-tab toggle (Overview | Stripe Payouts) following the existing admin tab pattern
+(cf. the payroll dashboard's tabs), existing apothecary tokens, no new design system.
+
+- **Summary chips:** In transit now (with nearest estimated landing date), Stripe
+  fees this month, Stripe fees YTD.
+- **Pending section:** settled-but-not-paid-out lines with estimated payout date
+  (`available_on`; note that the daily schedule means landing is typically the same
+  or next business day after it becomes available).
+- **Payout list:** date, arrival date, status chip, gross / fee / net, line count.
+  Expand (or drill in) to lines: description, event/client link, invoice link, type
+  badge (payment / tip / refund / dispute / adjustment / unmatched), signed amounts.
+- **Unmatched flag:** amber flag on unmatched lines; count badge on the tab when any
+  exist. Empty-or-near-empty is the expected healthy state.
+- Failed payouts render with a red status chip and the failure message.
+- Client CI gate applies: verify with `CI=true react-scripts build`.
+
+## 9. Edge handling
+
+- **Partial sync failure:** if the line fetch fails mid-payout, `lines_synced_at`
+  stays NULL and the nightly sweep retries. The webhook handler follows the existing
+  processed-flag convention so a thrown error lets Stripe/sweep heal, and payout
+  events never interfere with the payment-intent branches.
+- **Webhook ordering:** a payout webhook can arrive before the app records a payment
+  row (rare; payments are recorded at charge time, payouts 2+ days later). Lines
+  land `unmatched` and the sweep re-matches nightly.
+- **Pagination:** balance transactions per payout paginated properly
+  (`starting_after`), even though current volumes fit one page.
+- **Instant/manual payouts:** none exist on this account (all automatic standard),
+  but `automatic` and `method` are stored so nothing breaks if one appears.
+- **Test mode:** all calls ride `stripeClient.js` fail-closed behavior. In dev with a
+  test key the tab simply renders empty states.
+- **Currency:** account is USD-only; `currency` stored, no multi-currency logic.
+
+## 10. Explicitly out of scope
+
+- CheckCherry-era charges (different Stripe account DRB does not control).
+- Any write-back to existing tables (including backfilling
+  `proposal_payments.fee_cents` on old rows).
+- CSV export / statement PDFs (easy later bolt-on if the accountant asks).
+- Changing gratuity fee-netting or payrollAccrual in any way. The tab makes Stripe
+  fees visible; the "100% to your staff" framing and fee-netting behavior are
+  accepted and untouched.
+- SMS alerts (email only).
+- Webhook `payout.created`/`payout.updated` handling (the sweep plus `payout.paid`
+  cover reality on a daily-automatic account; add later only if a need appears).
+
+## 11. Testing
+
+node:test suites (run per-suite in isolation per the shared-dev-DB rule, with
+`node -r dotenv/config` where the suite touches env):
+
+- `stripePayoutSync.test.js` with a stubbed stripeClient: upsert idempotency
+  (webhook + sweep double-run yields identical rows), pending-line claim by a later
+  payout, every matcher path (payment, tip, invoice-linked payment, refund, dispute,
+  adjustment, unmatched), skip of the payout's own txn, partial-failure heal
+  (`lines_synced_at` NULL then sweep retry), failed-payout alert fires once
+  (`alerted_at` gate), backfill re-run safety.
+- Webhook branch tests following the existing stripeWebhook test conventions:
+  signature-verified `payout.paid`/`payout.failed` events route to the sync module,
+  dedupe on replay, no interference with payment_intent handlers.
+- Route tests: auth gating, rollup math (gross/fee/net sums, MTD/YTD fees), pending
+  bucket query.
+- Manual verification: run backfill against prod (read-only Stripe calls, writes only
+  to the two new tables), then compare the tab's payout list and totals line-by-line
+  against the Stripe dashboard payouts page.
+
+## 12. Rollout
+
+1. Merge schema + server + client (single lane, full fleet review: money + webhook
+   surfaces at max effort).
+2. Apply the two new tables to the dev DB by hand (schema.sql is not auto-applied to
+   dev); prod gets them on boot via initDb.
+3. Deploy. Run `server/scripts/backfillStripePayouts.js` once against prod.
+4. Stripe dashboard: add `payout.paid` and `payout.failed` to the webhook endpoint's
+   enabled events.
+5. Verify the next daily payout lands via webhook (webhook_events row + new
+   stripe_payouts row) and matches the Stripe dashboard.
+
+**Sequencing:** the build lane must wait until the proposal-options windows finish
+pushing (their client-side commits are merged but unpushed as of this writing;
+stripeWebhook.js lane work has landed). Plan-only until then.
