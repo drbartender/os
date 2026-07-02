@@ -5,10 +5,12 @@
 const express = require('express');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
-const { NotFoundError } = require('../../utils/errors');
+const { pool } = require('../../db');
+const { NotFoundError, ConflictError } = require('../../utils/errors');
 const {
   addAlternative, removeAlternative, getGroupForProposal,
 } = require('../../utils/proposalGroups');
+const { sendGroup } = require('../../utils/groupSend');
 
 const router = express.Router();
 
@@ -43,6 +45,18 @@ router.get('/:id/group', auth, requireAdminOrManager, asyncHandler(async (req, r
   const summary = await getGroupForProposal(id);
   if (!summary) return res.json({ grouped: false });
   return res.json({ grouped: true, ...summary });
+}));
+
+// POST /api/proposals/:id/send-group — send the whole comparison as one email
+// (one compare link), transitioning every draft option to 'sent'. Deferred
+// invoicing + suppressed per-option comms live in sendGroup.
+router.post('/:id/send-group', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const id = parseId(req.params.id);
+  const { rows: [p] } = await pool.query('SELECT group_id FROM proposals WHERE id = $1', [id]);
+  if (!p) throw new NotFoundError('Proposal not found');
+  if (!p.group_id) throw new ConflictError('This proposal is not part of a comparison', 'NOT_GROUPED');
+  const { groupToken, sentCount } = await sendGroup(p.group_id, { actorUserId: req.user.id });
+  res.json({ group_token: groupToken, sent_count: sentCount });
 }));
 
 module.exports = router;

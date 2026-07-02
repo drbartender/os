@@ -68,6 +68,22 @@ function proposalSent({ clientName, eventTypeLabel = 'event', proposalUrl, planU
   };
 }
 
+function proposalOptionsSent({ clientName, eventTypeLabel = 'event', compareUrl }) {
+  const name = clientName || 'there';
+  return {
+    subject: `Compare your options for your ${eventTypeLabel} — Dr. Bartender`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Your Options Are Ready to Compare</h2>
+      <p>Hi ${esc(name)},</p>
+      <p>We've put together a few options for your <strong>${esc(eventTypeLabel)}</strong> so you can compare them side by side and pick the one that fits best.</p>
+      ${ctaButton(compareUrl, 'Compare Your Options')}
+      <p style="font-size:14px;color:${BRAND.secondary};">When you find the one you like, choose it and sign right from that page. If you have any questions, just reply to this email.</p>
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, your options for your ${eventTypeLabel} are ready to compare side by side. View them here: ${compareUrl} — The Dr. Bartender Team`,
+  };
+}
+
 function proposalSignedConfirmation({ clientName, eventTypeLabel = 'event' }) {
   const name = clientName || 'there';
   return {
@@ -909,6 +925,7 @@ module.exports = {
   ctaButton,
   clientOtp,
   proposalSent,
+  proposalOptionsSent,
   proposalSignedConfirmation,
   paymentReceivedClient,
   paymentReminderClient,

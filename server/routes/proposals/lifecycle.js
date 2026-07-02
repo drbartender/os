@@ -3,7 +3,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
-const { ValidationError, NotFoundError } = require('../../utils/errors');
+const { ValidationError, NotFoundError, ConflictError } = require('../../utils/errors');
 const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const { createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
@@ -63,7 +63,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
     await dbClient.query('BEGIN');
 
     const current = await dbClient.query(
-      'SELECT status FROM proposals WHERE id = $1 FOR UPDATE', [req.params.id]
+      'SELECT status, group_id FROM proposals WHERE id = $1 FOR UPDATE', [req.params.id]
     );
     if (!current.rows[0]) throw new NotFoundError('Proposal not found');
     currentStatus = current.rows[0].status;
@@ -75,6 +75,14 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
           status: `Cannot transition from '${currentStatus}' to '${status}'. Allowed: [${allowed.join(', ') || 'none'}]. Admins may use ?force=true.`,
         });
       }
+    }
+
+    // Grouped proposals are sent together via POST /:id/send-group (one compare
+    // email, deferred invoicing). Block the solo send path so a grouped option
+    // never gets its own proposalSent email + eager invoice. Applies even under
+    // force: solo-sending a grouped option is always wrong (dissolve it first).
+    if (status === 'sent' && current.rows[0].group_id) {
+      throw new ConflictError('Grouped proposals are sent together from the comparison. Use Send options.', 'USE_GROUP_SEND');
     }
 
     // $1 is cast to text consistently in every position — `status` is a varchar
