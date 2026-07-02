@@ -123,6 +123,27 @@ export default function ProposalsDashboard() {
     });
   }, [proposals, search]);
 
+  // Option-group rollup: siblings sharing a non-null group_id collapse into one
+  // row (first/newest member represents the set; _optionCount drives the badge).
+  // Rows with group_id null stay individual — never collapse the nulls together.
+  const rows = useMemo(() => {
+    const counts = new Map();
+    filtered.forEach(p => {
+      if (p.group_id != null) counts.set(p.group_id, (counts.get(p.group_id) || 0) + 1);
+    });
+    const seen = new Set();
+    return filtered
+      .filter(p => {
+        if (p.group_id == null) return true;
+        if (seen.has(p.group_id)) return false;
+        seen.add(p.group_id);
+        return true;
+      })
+      .map(p => (p.group_id != null && counts.get(p.group_id) > 1
+        ? { ...p, _optionCount: counts.get(p.group_id) }
+        : p));
+  }, [filtered]);
+
   const tabs = useMemo(() => ([
     { id: 'active',  label: 'Active',   count: counts.active },
     { id: 'draft',   label: 'Draft',    count: counts.draft },
@@ -187,10 +208,10 @@ export default function ProposalsDashboard() {
               {loading && (
                 <tr><td colSpan={9} className="muted">Loading…</td></tr>
               )}
-              {!loading && filtered.length === 0 && (
+              {!loading && rows.length === 0 && (
                 <tr><td colSpan={9} className="muted">No proposals match these filters.</td></tr>
               )}
-              {!loading && filtered.map(p => {
+              {!loading && rows.map(p => {
                 const st = STATUS[p.status] || { label: p.status || '—', kind: 'neutral' };
                 const viewTitle = p.last_viewed_at
                   ? `Last viewed ${new Date(p.last_viewed_at).toLocaleString()}${p.view_count ? ` · ${p.view_count} view${Number(p.view_count) === 1 ? '' : 's'}` : ''}`
@@ -203,7 +224,10 @@ export default function ProposalsDashboard() {
                       <SourceBadge source={p.source} />
                       {p.client_email && <div className="sub">{p.client_email}</div>}
                     </td>
-                    <td>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</td>
+                    <td>
+                      {getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}
+                      {p._optionCount > 1 && <div className="sub">{p._optionCount} options to compare</div>}
+                    </td>
                     <td>
                       {p.event_date ? (
                         <>

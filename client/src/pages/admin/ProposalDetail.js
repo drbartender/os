@@ -14,6 +14,7 @@ import StatusChip from '../../components/adminos/StatusChip';
 import { fmtDateFull } from '../../components/adminos/format';
 import ProposalDetailEditForm from './ProposalDetailEditForm';
 import ProposalChangeRequestCard from './ProposalChangeRequestCard';
+import AlternativesPanel from './AlternativesPanel';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
@@ -98,6 +99,16 @@ export default function ProposalDetail() {
   }, [id, navigate, toast]);
 
   useEffect(() => { loadProposal(); }, [loadProposal]);
+
+  // Option-group state for the Alternatives panel. Falls back to solo on any
+  // error so the normal Send flow is never blocked by group-fetch trouble.
+  const [group, setGroup] = useState(null);
+  const loadGroup = useCallback(() => {
+    api.get(`/proposals/${id}/group`)
+      .then(r => setGroup(r.data))
+      .catch(() => setGroup({ grouped: false }));
+  }, [id]);
+  useEffect(() => { loadGroup(); }, [loadGroup]);
 
   useEffect(() => {
     api.get(`/proposals/${id}/change-requests`)
@@ -324,7 +335,9 @@ export default function ProposalDetail() {
                 <Icon name="pen" size={12} />Edit
               </button>
             )}
-            {!editing && canSend && (
+            {/* Grouped options send together via the Alternatives panel ("Send
+                options" = one compare email); the solo send would 409 USE_GROUP_SEND. */}
+            {!editing && canSend && group && !group.grouped && (
               <button type="button" className="btn btn-primary" onClick={() => updateStatus('sent')}>
                 <Icon name="send" size={12} />Send to client
               </button>
@@ -374,6 +387,12 @@ export default function ProposalDetail() {
                 proposalId={id}
                 onChanged={loadProposal}
                 onApply={(cr) => { setPendingCr(cr); setEditing(true); }}
+              />
+              <AlternativesPanel
+                proposalId={id}
+                proposal={proposal}
+                group={group}
+                onChanged={() => { loadGroup(); loadProposal(); }}
               />
               {/* Client */}
               <div className="card">

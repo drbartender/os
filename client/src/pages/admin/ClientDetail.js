@@ -149,8 +149,24 @@ export default function ClientDetail() {
   if (!client) return null;
 
   const proposals = client.proposals || [];
+  // LTV/booked stay computed over ALL proposals (money truth); only the table
+  // display collapses option-group siblings below.
   const ltv = proposals.reduce((s, p) => s + Number(p.amount_paid || 0), 0);
   const totalBooked = proposals.reduce((s, p) => s + Number(p.total_price || 0), 0);
+
+  // Option-group rollup: siblings sharing a non-null group_id collapse into one
+  // row; group_id null rows stay individual (never collapse the nulls together).
+  const groupCounts = new Map();
+  proposals.forEach(p => {
+    if (p.group_id != null) groupCounts.set(p.group_id, (groupCounts.get(p.group_id) || 0) + 1);
+  });
+  const seenGroups = new Set();
+  const proposalRows = proposals.filter(p => {
+    if (p.group_id == null) return true;
+    if (seenGroups.has(p.group_id)) return false;
+    seenGroups.add(p.group_id);
+    return true;
+  });
   const src = SOURCE[client.source] || { label: client.source || '—', kind: 'neutral' };
 
   return (
@@ -225,10 +241,13 @@ export default function ClientDetail() {
                     </tr>
                   </thead>
                   <tbody>
-                    {proposals.map(p => (
+                    {proposalRows.map(p => (
                       <ClickableRow key={p.id} to={`/proposals/${p.id}`}>
                         <td>
                           <strong>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</strong>
+                          {p.group_id != null && groupCounts.get(p.group_id) > 1 && (
+                            <div className="sub">{groupCounts.get(p.group_id)} options to compare</div>
+                          )}
                         </td>
                         <td>{p.event_date ? fmtDate(String(p.event_date).slice(0, 10), { year: 'numeric' }) : '—'}</td>
                         <td className="muted">{p.package_name || '—'}</td>
