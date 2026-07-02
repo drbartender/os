@@ -269,6 +269,9 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | POST | `/:id/alternative` | Admin/Manager | Clone this proposal into a sibling "option" in the same group (creating the group if needed) for side-by-side compare. Pre-payment source only; 3-option cap. Returns `{ group_token, new_proposal_id }`. |
 | DELETE | `/:id/group-membership` | Admin/Manager | Detach this option from its group; dissolves the group when one option remains. Refuses on a decided group. |
 | GET | `/:id/group` | Admin/Manager | Group summary for the admin Alternatives panel: `{ grouped, group_token, decided, members[] }`. |
+| GET | `/t/:token/resolve` | Public | Non-mutating: whether this proposal is one option in a comparison group + whether the group is decided, so `ProposalView` can redirect to `/compare/:token` without bumping `view_count` or flipping `sent->viewed` (which the full `/t/:token` GET does). |
+| GET | `/group/:token` | Public | Compare-page data for an option group: shared event header + per-option public-safe fields (name/slug/category/pricing_type/total/deposit). 404 while every option is an unsent draft. Positive-allowlist projection (no admin_notes/stripe/signature/PII). |
+| GET | `/group/:token/preview` | Admin/Manager | Same as `/group/:token` but ignores the visibility gate (preview draft options before send). |
 
 ### Client-Portal Change Requests (admin) — `/api/proposals`
 | Method | Path | Auth | Description |

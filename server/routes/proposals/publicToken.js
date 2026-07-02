@@ -31,6 +31,30 @@ function requireUuidToken(req, res, next) {
 
 // ─── Public routes (token-based) ─────────────────────────────────
 
+/** GET /api/proposals/t/:token/resolve — NON-mutating. Tells the client whether
+ *  this proposal is one option in a comparison group, and whether the group is
+ *  already decided, so ProposalView can redirect to /compare/:token WITHOUT
+ *  bumping view_count or flipping sent->viewed (which the full GET below does —
+ *  merely landing on a link that will be bounced must not inflate that option's
+ *  engagement). */
+router.get('/t/:token/resolve', publicLimiter, requireUuidToken, asyncHandler(async (req, res) => {
+  const { rows: [row] } = await pool.query(
+    `SELECT p.group_id, g.token AS group_token, g.chosen_proposal_id, cp.token AS chosen_token
+       FROM proposals p
+       LEFT JOIN proposal_groups g ON g.id = p.group_id
+       LEFT JOIN proposals cp ON cp.id = g.chosen_proposal_id
+      WHERE p.token = $1`,
+    [req.params.token]
+  );
+  if (!row) throw new NotFoundError('This proposal is no longer available');
+  res.json({
+    grouped: row.group_id !== null,
+    group_token: row.group_token || null,
+    decided: row.chosen_proposal_id !== null,
+    chosen_token: row.chosen_token || null,
+  });
+}));
+
 /** GET /api/proposals/t/:token — fetch proposal by token (public) */
 router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
   if (!UUID_RE.test(req.params.token)) {

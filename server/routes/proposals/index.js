@@ -10,6 +10,7 @@ const express = require('express');
 const router = express.Router();
 
 router.use('/', require('./publicToken'));
+router.use('/', require('./compareGroup'));
 router.use('/', require('./public'));
 router.use('/', require('./metadata'));
 router.use('/', require('./lifecycle'));
