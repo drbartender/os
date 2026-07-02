@@ -77,6 +77,18 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
     return () => { alive = false; };
   }, [proposal.id, proposal.amount_paid, proposal.total_price]);
 
+  // Thumbtack acquisition cost (cents) — only fetched for TT-sourced proposals,
+  // null when the linked lead was never charged. Informational line in the dl.
+  const [leadCostCents, setLeadCostCents] = useState(null);
+  useEffect(() => {
+    if (proposal.source !== 'thumbtack') return undefined;
+    let alive = true;
+    api.get(`/proposals/${proposal.id}/lead-cost`)
+      .then(res => { if (alive) setLeadCostCents(res.data?.leadCost?.lead_price_cents ?? null); })
+      .catch(() => { /* non-fatal: acquisition line just won't render */ });
+    return () => { alive = false; };
+  }, [proposal.id, proposal.source]);
+
   const openRefund = () => {
     setRefundKey(
       (window.crypto && window.crypto.randomUUID)
@@ -227,6 +239,14 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
           <dd className="num" style={{ color: balanceDue > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>
             {fmt$2dp(balanceDue)}
           </dd>
+          {leadCostCents != null && (
+            <>
+              <dt>Acquisition</dt>
+              <dd className="num">
+                {fmt$2dp(leadCostCents / 100)} <span className="muted tiny">Thumbtack lead</span>
+              </dd>
+            </>
+          )}
           {proposal.payment_type && (
             <>
               <dt>Type</dt>

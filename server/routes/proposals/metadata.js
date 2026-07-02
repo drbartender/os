@@ -150,8 +150,17 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
   const unlinkedCcJoin = f.includeCc === 'all' ? '' : ' JOIN proposals p2 ON p2.id = pr.proposal_id';
   const unlinkedCc = f.includeCc === 'only' ? ' AND p2.cc_id IS NOT NULL'
     : f.includeCc === 'exclude' ? ' AND p2.cc_id IS NULL' : '';
+  // Thumbtack lead spend (acquisition cost), cash basis by the lead's created_at.
+  // lead_price is a "$18.60"-style VARCHAR from the TT webhook: the regex admits
+  // only clean dollar strings before the numeric cast (junk parses to nothing,
+  // never 500s the dashboard). charge_state='Charged' is real spend; the NULL
+  // rows are pre-chargeState legacy leads that carry real prices ("Pending"
+  // rows carry no price at all). Attribution rides thumbtack_leads.proposal_id,
+  // stamped by the auto-draft. No cc clause: TT leads are all post-cutover native.
+  const leadParams = [];
+  const leadDate = metrics.dateClause('tl.created_at', f.from, f.to, leadParams);
 
-  const [moneyR, outR, accR, totalR, proposalsR, paymentsR, collectedRow, unlinkedR] = await Promise.all([
+  const [moneyR, outR, accR, totalR, proposalsR, paymentsR, collectedRow, unlinkedR, leadSpendR] = await Promise.all([
     pool.query(money.sql, money.params),
     pool.query(out.sql, out.params),
     pool.query(acc.sql, acc.params),
@@ -203,6 +212,18 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
     pool.query(
       `SELECT COALESCE(SUM(pr.amount),0)::int AS c FROM proposal_refunds pr${unlinkedCcJoin}
         WHERE pr.status='succeeded' AND pr.payment_id IS NULL${unlinkedDate}${unlinkedCc}`, unlinkedParams),
+    pool.query(`
+      SELECT COALESCE(SUM(x.cents),0)::int AS total_cents,
+             COALESCE(SUM(x.cents) FILTER (WHERE x.proposal_id IS NOT NULL),0)::int AS attributed_cents,
+             COUNT(*)::int AS charged_leads,
+             COUNT(x.proposal_id)::int AS attributed_leads
+      FROM (
+        SELECT tl.proposal_id,
+               ROUND(REPLACE(tl.lead_price, '$', '')::numeric * 100)::int AS cents
+          FROM thumbtack_leads tl
+         WHERE tl.lead_price ~ '^\\$?[0-9]{1,6}(\\.[0-9]{1,2})?$'
+           AND (tl.charge_state = 'Charged' OR tl.charge_state IS NULL)${leadDate}
+      ) x`, leadParams),
   ]);
 
   const booked = metrics.toDollars(moneyR.rows[0].value, { fromCents: !!money.cents });
@@ -216,11 +237,41 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
       outstanding: metrics.toDollars(outR.rows[0].value),
       avgEvent: acceptedCount > 0 ? Math.round(booked / acceptedCount) : 0,
       unlinkedRefundsCents: unlinkedR.rows[0].c,
+      leadSpend: {
+        totalCents: leadSpendR.rows[0].total_cents,
+        attributedCents: leadSpendR.rows[0].attributed_cents,
+        unattributedCents: leadSpendR.rows[0].total_cents - leadSpendR.rows[0].attributed_cents,
+        chargedLeads: leadSpendR.rows[0].charged_leads,
+        attributedLeads: leadSpendR.rows[0].attributed_leads,
+      },
     },
     proposals: proposalsR.rows,
     recentPayments: paymentsR.rows,
     pagination: { page, limit, total: totalR.rows[0].total },
   });
+}));
+
+/** GET /api/proposals/:id/lead-cost — Thumbtack acquisition cost for one proposal.
+ *  The charged (or legacy NULL-state priced) lead linked via
+ *  thumbtack_leads.proposal_id, stamped by the auto-draft. Informational,
+ *  read-only; drives the "Acquisition" line on the admin payment panel.
+ *  Non-numeric / unlinked ids resolve to { leadCost: null } (never a 500). */
+router.get('/:id/lead-cost', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.json({ leadCost: null });
+  const { rows } = await pool.query(
+    `SELECT tl.lead_price, tl.charge_state,
+            CASE WHEN tl.lead_price ~ '^\\$?[0-9]{1,6}(\\.[0-9]{1,2})?$'
+                  AND (tl.charge_state = 'Charged' OR tl.charge_state IS NULL)
+                 THEN ROUND(REPLACE(tl.lead_price, '$', '')::numeric * 100)::int
+                 ELSE NULL END AS lead_price_cents
+       FROM thumbtack_leads tl
+      WHERE tl.proposal_id = $1
+      ORDER BY tl.id DESC
+      LIMIT 1`,
+    [id]
+  );
+  res.json({ leadCost: rows[0] || null });
 }));
 
 /** GET /api/proposals/dashboard-stats — aggregates that the admin home dashboard renders.

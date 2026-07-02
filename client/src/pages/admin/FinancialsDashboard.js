@@ -43,6 +43,7 @@ export default function FinancialsDashboard() {
   const outstanding = Number(summary?.outstanding || 0);
   const avgEvent = Number(summary?.avgEvent || 0);
   const unlinkedRefundsCents = Number(summary?.unlinkedRefundsCents || 0);
+  const leadSpend = summary?.leadSpend || null;
 
   return (
     <div className="page">
@@ -84,6 +85,15 @@ export default function FinancialsDashboard() {
             <div className="stat">
               <div className="stat-label">Avg event</div>
               <div className="stat-value">{fmt$(avgEvent)}</div>
+            </div>
+            <div className="stat">
+              <div className="stat-label">TT lead spend</div>
+              <div className="stat-value">{fmt$((leadSpend?.totalCents || 0) / 100)}</div>
+              <div className="stat-sub">
+                <span>
+                  {fmt$((leadSpend?.attributedCents || 0) / 100)} tied to events · {leadSpend?.chargedLeads || 0} charged lead{(leadSpend?.chargedLeads || 0) === 1 ? '' : 's'}
+                </span>
+              </div>
             </div>
           </div>
 

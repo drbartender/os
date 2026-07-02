@@ -248,7 +248,8 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/` | Admin | List proposals with filters (status, search). Default excludes paid + archived (those appear in Events / archive) |
-| GET | `/financials` | Admin | Aggregated revenue + payments for FinancialsDashboard. Accepts `?from=&to=&basis=` (booked\|scheduled\|paid) for date-range + lens filtering. |
+| GET | `/financials` | Admin | Aggregated revenue + payments for FinancialsDashboard. Accepts `?from=&to=&basis=` (booked\|scheduled\|paid) for date-range + lens filtering. `summary.leadSpend` reports Thumbtack acquisition cost (charged leads only, cents, attributed-to-proposal vs not, cash basis by lead created_at). |
+| GET | `/:id/lead-cost` | Admin | Thumbtack acquisition cost for one proposal (the charged lead linked via `thumbtack_leads.proposal_id`); `{ leadCost: null }` when unlinked/uncharged. Drives the Acquisition line on the admin payment panel. |
 | GET | `/dashboard-stats` | Admin | Server-side aggregations (booked / collected / outstanding / funnel / pipeline / monthly revenue series) for the admin home. Accepts `?from=&to=&basis=` for date-range + lens filtering; prior-period deltas included. |
 | POST | `/` | Admin | Create proposal (auto-calculates pricing, creates client if needed). Rules are re-validated server-side via `validateProposalRules`. `send_now: true` creates the proposal as `sent`, creates its invoice in-transaction, and emails the client; otherwise it lands as a `draft`. `send_now` is fail-safe: anything but an explicit `true` is a draft. Rate-limited per admin via `adminWriteLimiter` (10/min). |
 | POST | `/calculate` | Admin | Preview pricing without saving |
