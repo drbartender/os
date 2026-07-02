@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 // Logo served as a static, browser-cacheable file (decoded from the shared
 // base64 asset) so the ~82 KB data URI never ships inside this public page's
 // JS bundle. The PDF path keeps the base64 — jsPDF needs the bytes in hand.
@@ -12,6 +13,8 @@ export default function ClientShoppingList() {
   const { token } = useParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [downloading, setDownloading] = useState(false);
+  const [pdfError, setPdfError] = useState('');
   const [error, setError] = useState('');
   const [checked, setChecked] = useState(() => {
     try {
@@ -158,6 +161,40 @@ export default function ClientShoppingList() {
     );
   };
 
+  // PDF download: the SAME jsPDF generator the admin modal uses (one layout,
+  // no drift), lazy-imported at click time so jsPDF + the embedded base64 logo
+  // stay out of this public page's initial bundle. eventTypeLabel is reliably
+  // absent from auto-generated stored lists, so the getEventTypeLabel backfill
+  // is mandatory, not defensive.
+  const handleDownloadPdf = async () => {
+    setDownloading(true);
+    setPdfError('');
+    try {
+      const { generateShoppingListPDF } = await import('../../components/ShoppingList/ShoppingListPDF');
+      const listData = {
+        ...list,
+        clientName: list.clientName || data.client_name || 'Event',
+        eventTypeLabel: list.eventTypeLabel
+          || getEventTypeLabel({ event_type: data.event_type, event_type_custom: data.event_type_custom }),
+        eventDate: list.eventDate || data.event_date,
+      };
+      const blob = await generateShoppingListPDF(listData);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `DRB_ShoppingList_${(listData.clientName || 'Event').replace(/\s+/g, '_')}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('PDF generation failed:', err);
+      setPdfError('PDF failed to generate. Please try again.');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <div style={styles.page}>
       <div style={styles.container}>
@@ -201,8 +238,19 @@ export default function ClientShoppingList() {
           </div>
         )}
 
-        {/* Refresh button */}
+        {/* Actions: PDF download + refresh */}
         <div style={{ textAlign: 'center', padding: '1.5rem 0 2rem' }}>
+          <button
+            onClick={handleDownloadPdf}
+            disabled={downloading}
+            style={{ ...styles.refreshBtn, marginBottom: '0.6rem', opacity: downloading ? 0.6 : 1 }}
+          >
+            {downloading ? 'Generating PDF...' : 'Download PDF'}
+          </button>
+          {pdfError && (
+            <p style={{ color: '#E08A7A', fontSize: '0.8rem', margin: '0 0 0.6rem' }}>{pdfError}</p>
+          )}
+          <br />
           <button
             onClick={() => { setLoading(true); fetchList(); }}
             style={styles.refreshBtn}
