@@ -43,8 +43,12 @@ Per option, the client-side catalog (`getPackageBySlug(package_slug)` from `clie
 - The kicker currently reads "Your Options · For {client_name}" and the headline "Compare your {event type} options." Improve freely within brand voice; keep it client-warm, not salesy.
 - One restrained magical-realism moment maximum (per the brief), if any: a brass pulse or hover lift on "Choose this one" is the natural candidate.
 
-## Verify before finishing
+## Previewing in a design tool (no backend available)
 
-- `cd client && CI=true npx react-scripts build` must pass (this is the Vercel gate; warnings fail it).
+If your environment cannot reach the real API, preview with MOCK data only: hardcode a sample response object matching the data shape above and feed it to the render path locally in your preview. Do NOT rewrite or remove the real `axios` fetch, the effects, or the redirects in the code you deliver; the shipped file must keep them exactly as they are. Deliver the visual changes only.
+
+## Definition of done (verification)
+
+- The Vercel gate is `cd client && CI=true npx react-scripts build` (warnings fail it). If your environment can run it, it must pass; if not, the Claude Code session will run it before merge, so do not commit anything you know only works in preview.
 - Smoke both breakpoints on a 2-option group and a group containing one non-catalog package.
-- Confirm the decided/single-option redirects still fire (open a decided group's compare link; it must land on the booked option).
+- The decided/single-option redirects must still fire (a decided group's compare link lands on the booked option).
