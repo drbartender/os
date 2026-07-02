@@ -176,14 +176,15 @@ Three callers plus a view refresh, all through this module, all idempotent:
    mode (refuses to run while `STRIPE_TEST_MODE_UNTIL` is active), then runs
    `sweep()`, whose empty-table bootstrap fetches full account history (43 payouts,
    one API page). Safe to re-run.
-4. **View refresh.** Opening the tab calls `POST /api/stripe-payouts/sync` when the
-   last sync was more than 15 minutes ago. Staleness and concurrency both live in
-   the sync module as module-level state: a `lastSweepAt` timestamp plus a shared
-   in-flight promise, so concurrent callers (two admins, a double-click) await the
-   same sweep instead of stacking Stripe calls. A process restart just means one
-   extra sweep, which is data-safe. The endpoint runs `sweep()`, cheap at this
-   volume, so both the pending bucket and the payout list are current when viewed.
-   One refresh path, not two.
+4. **View refresh.** Opening the tab always calls `POST /api/stripe-payouts/sync`
+   (no force); the module skips the sweep when the last one finished under 15
+   minutes ago, and the "Sync now" button sends `force: true` to bypass the
+   staleness gate only. Staleness and concurrency both live in the sync module as
+   module-level state: a `lastSweepAt` timestamp plus a shared in-flight promise,
+   so concurrent callers (two admins, a double-click) await the same sweep instead
+   of stacking Stripe calls. A process restart just means one extra sweep, which is
+   data-safe. The sweep is cheap at this volume, so both the pending bucket and the
+   payout list are current when viewed. One refresh path, not two.
 
 **Failed-payout alert:** `notifyAdminCategory` in `server/utils/adminNotifications.js`
 with a new category `stripe_payout_failed` added to VALID_CATEGORIES, email-only body
@@ -242,11 +243,12 @@ New route file `server/routes/stripePayouts.js`, mounted at `/api/stripe-payouts
   Stripe fees MTD and YTD, unmatched count).
 - `GET /api/stripe-payouts/:id`: one payout plus its lines joined to display info
   (client/event name via proposal, invoice number, tip staff name, type badge data).
-- `POST /api/stripe-payouts/sync`: runs `sweep()` through the module's shared
-  in-flight guard, behind `adminWriteLimiter`
+- `POST /api/stripe-payouts/sync`: body `{ force: true }` optional. Runs
+  `sweep({ force })` through the module's shared in-flight guard and 15-minute
+  staleness gate, behind `adminWriteLimiter`
   (`server/middleware/rateLimiters.js`), so a held button or several managers
-  cannot stack Stripe calls. Backs the manual "Sync now" button and the 15-minute
-  staleness refresh on tab open.
+  cannot stack Stripe calls. Backs the tab-open refresh (no force) and the manual
+  "Sync now" button (force).
 
 ## 8. UI
 
