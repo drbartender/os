@@ -45,14 +45,14 @@ function postWebhook(eventObj) {
   });
 }
 
-async function seedGroup() {
+async function seedGroup({ eventDate = null } = {}) {
   const c = await pool.query(
     `INSERT INTO clients (name, email) VALUES ('OG Test', $1) RETURNING id`,
     [`og-${NONCE}-${clientIds.length}@example.com`]);
   clientIds.push(c.rows[0].id);
   const p = await pool.query(
-    `INSERT INTO proposals (client_id, status, total_price, deposit_amount, pricing_snapshot)
-     VALUES ($1, 'sent', 100, 100, '{}'::jsonb) RETURNING id`, [c.rows[0].id]);
+    `INSERT INTO proposals (client_id, status, total_price, deposit_amount, pricing_snapshot, event_date)
+     VALUES ($1, 'sent', 100, 100, '{}'::jsonb, $2) RETURNING id`, [c.rows[0].id, eventDate]);
   proposalIds.push(p.rows[0].id);
   const { groupId, newProposalId } = await addAlternative(p.rows[0].id, null, pool);
   groupIds.push(groupId);
@@ -120,7 +120,10 @@ test('grouped winner payment: loser archived, group decided, winner invoice crea
 });
 
 test('second option paying after the group is decided does NOT convert it', async () => {
-  const { winnerId, loserId, groupId } = await seedGroup();
+  // Event ~tomorrow: inside the <=72h last-minute window, so absent the F1 guard
+  // the conflicting loser payment below would flag last_minute_hold + blast SMS.
+  const tomorrow = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const { winnerId, loserId, groupId } = await seedGroup({ eventDate: tomorrow });
   // Winner settles first.
   await postWebhook({
     id: `evt_${NONCE}_w2`, type: 'payment_intent.succeeded',
@@ -140,4 +143,14 @@ test('second option paying after the group is decided does NOT convert it', asyn
   assert.equal(grp.chosen_proposal_id, winnerId, 'the winner stays the chosen option');
   const shifts = await one('SELECT COUNT(*)::int AS n FROM shifts WHERE proposal_id = $1', [loserId]);
   assert.equal(shifts.n, 0, 'no event shift created for the non-chosen option');
+
+  // F1: the conflicting payment must not flag a last-minute hold on the loser
+  // (event is ~tomorrow, so the window WOULD match absent the conflict guard).
+  const hold = await one('SELECT last_minute_hold FROM proposals WHERE id = $1', [loserId]);
+  assert.equal(hold.last_minute_hold, false, 'F1: no last-minute hold flagged on a non-chosen option');
+
+  // F2: no dangling Balance invoice minted on the archived loser.
+  const loserInv = await one(
+    `SELECT COUNT(*)::int AS n FROM invoices WHERE proposal_id = $1 AND status <> 'void'`, [loserId]);
+  assert.equal(loserInv.n, 0, 'F2: no non-void invoice on a non-chosen option');
 });

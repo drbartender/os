@@ -193,7 +193,9 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           // deposit). balance / drink_plan_* / invoice are post-conversion and
           // must never flip the hold. The post-commit SMS blast is gated on this
           // flag AND isFirstDelivery, so a Stripe retry can't re-flag or re-blast.
-          if (paymentType === 'full' || paymentType === 'deposit') {
+          // !conflict (F1): a payment on a non-chosen option must never flag a
+          // last-minute hold or trigger the post-commit staff SMS blast.
+          if ((paymentType === 'full' || paymentType === 'deposit') && !groupChoice.conflict) {
             const lmRes = await dbClient.query(
               'SELECT event_date, event_start_time FROM proposals WHERE id = $1',
               [proposalId]
@@ -213,8 +215,9 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             }
           }
 
-          // Save payment method ID if autopay was enrolled (card saved via setup_future_usage)
-          if (intent.payment_method && paymentType === 'deposit') {
+          // Save payment method ID if autopay was enrolled (card saved via setup_future_usage).
+          // !conflict: never attach a card ref to an archived non-chosen option.
+          if (intent.payment_method && paymentType === 'deposit' && !groupChoice.conflict) {
             await dbClient.query(`
               UPDATE proposals
               SET stripe_payment_method_id = $1
@@ -377,7 +380,8 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             }
           }
 
-          if (paymentType === 'deposit') {
+          // !conflict (F2): never mint a Balance invoice on an archived non-chosen option.
+          if (paymentType === 'deposit' && !groupChoice.conflict) {
             await createBalanceInvoice(proposalId, dbClient);
           }
         } else {
@@ -420,7 +424,9 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         // when reminders already exist). The pre-event call moved out of the
         // separate block below into this single helper invocation.
         let depositRemindersScheduled = false;
-        if (paymentType === 'deposit' || paymentType === 'full') {
+        // !conflict: no reminder ladder (and, via this flag, no sign+pay marketing
+        // enroll below) for a payment on a non-chosen option.
+        if ((paymentType === 'deposit' || paymentType === 'full') && !groupChoice.conflict) {
           const { scheduleDepositPaidReminders } = require('../utils/depositPaidSchedulers');
           await scheduleDepositPaidReminders(proposalId, { source: 'payment_intent.succeeded' });
           depositRemindersScheduled = true;
@@ -456,7 +462,9 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           }
         }
 
-        sendPaymentNotifications(proposalId, intent.amount, paymentType);
+        // !conflict: no "payment received" receipt/notify for a non-chosen option
+        // (the Sentry flag + manual refund is the admin path for that money).
+        if (!groupChoice.conflict) sendPaymentNotifications(proposalId, intent.amount, paymentType);
 
         // depositRemindersScheduled covers both balance + pre-event scheduling
         // above. This block remains as the deposit-only marketing/drip anchor.
@@ -733,7 +741,8 @@ router.post('/webhook', asyncHandler(async (req, res) => {
               await linkPaymentToInvoice(openInvoice.rows[0].id, paymentRow.rows[0].id, session.amount_total, dbClient);
             }
           }
-          await createBalanceInvoice(proposalId, dbClient);
+          // !conflict (F2): never mint a Balance invoice on an archived non-chosen option.
+          if (!groupChoice.conflict) await createBalanceInvoice(proposalId, dbClient);
         } else {
           console.log(`Webhook: duplicate checkout.session.completed for intent ${session.payment_intent} — skipping`);
         }
@@ -758,7 +767,8 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 
       // Non-blocking post-commit work — only on first delivery.
       if (isFirstDelivery) {
-        sendPaymentNotifications(proposalId, session.amount_total || 0, linkPaymentType);
+        // !conflict: no receipt/notify for a non-chosen option (Sentry + manual refund).
+        if (!groupChoice.conflict) sendPaymentNotifications(proposalId, session.amount_total || 0, linkPaymentType);
         // A conflicting late payment on a non-chosen option must NOT convert.
         if (!groupChoice.conflict) {
           try {
@@ -787,22 +797,25 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         // the payment_intent.succeeded path (which schedules for both deposit and
         // full). A paid-in-full link has no balance, so the balance-reminder
         // rungs self-skip; the pre-event reminders still apply.
-        const { scheduleDepositPaidReminders } = require('../utils/depositPaidSchedulers');
-        await scheduleDepositPaidReminders(Number(proposalId), { source: 'checkout.session.completed' });
+        // !conflict: neither reminders nor sign+pay marketing for a non-chosen option.
+        if (!groupChoice.conflict) {
+          const { scheduleDepositPaidReminders } = require('../utils/depositPaidSchedulers');
+          await scheduleDepositPaidReminders(Number(proposalId), { source: 'checkout.session.completed' });
 
-        // Plan 2d: a Payment-Link deposit is a genuine client sign+pay, so
-        // schedule the long-lead marketing touches and suppress the drip,
-        // same as the payment_intent.succeeded path.
-        try {
-          const { onProposalSignedAndPaid } = require('../utils/marketingHandlers');
-          await onProposalSignedAndPaid(Number(proposalId));
-        } catch (marketingErr) {
-          if (process.env.SENTRY_DSN_SERVER) {
-            Sentry.captureException(marketingErr, {
-              tags: { webhook: 'stripe', route: '/webhook', event: 'checkout.session.completed', step: 'marketing-signpay' },
-            });
+          // Plan 2d: a Payment-Link deposit is a genuine client sign+pay, so
+          // schedule the long-lead marketing touches and suppress the drip,
+          // same as the payment_intent.succeeded path.
+          try {
+            const { onProposalSignedAndPaid } = require('../utils/marketingHandlers');
+            await onProposalSignedAndPaid(Number(proposalId));
+          } catch (marketingErr) {
+            if (process.env.SENTRY_DSN_SERVER) {
+              Sentry.captureException(marketingErr, {
+                tags: { webhook: 'stripe', route: '/webhook', event: 'checkout.session.completed', step: 'marketing-signpay' },
+              });
+            }
+            console.error('Marketing enroll on Payment-Link deposit failed (non-blocking):', marketingErr);
           }
-          console.error('Marketing enroll on Payment-Link deposit failed (non-blocking):', marketingErr);
         }
       }
     }
