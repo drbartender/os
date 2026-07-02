@@ -9,6 +9,7 @@ import useMetricsFilter from '../../hooks/useMetricsFilter';
 import { fmt$, fmt$fromCents, fmtDate } from '../../components/adminos/format';
 import ClickableRow from '../../components/ClickableRow';
 import CcImportBadge from '../../components/admin/CcImportBadge';
+import StripePayoutsTab from './StripePayoutsTab';
 
 const STATUS = {
   draft: 'neutral', sent: 'info', viewed: 'accent', modified: 'violet',
@@ -23,6 +24,8 @@ export default function FinancialsDashboard() {
   const { from, to, basis, includeCc } = filter;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState('overview');
+  const [payoutBadge, setPayoutBadge] = useState(0);
 
   useEffect(() => {
     setLoading(true);
@@ -34,6 +37,12 @@ export default function FinancialsDashboard() {
       .catch((err) => toast.error(err.message || 'Failed to load financial data. Try refreshing.'))
       .finally(() => setLoading(false));
   }, [from, to, basis, includeCc, toast]);
+
+  useEffect(() => {
+    api.get('/stripe-payouts')
+      .then(r => setPayoutBadge(r.data?.summary?.unmatched_count || 0))
+      .catch(() => {}); // badge is best-effort; the tab itself surfaces errors
+  }, []);
 
   const summary = data?.summary;
   const proposals = data?.proposals;
@@ -59,6 +68,19 @@ export default function FinancialsDashboard() {
         </div>
       </div>
 
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: 'var(--gap)' }}>
+        <button className={`btn btn-sm ${tab === 'overview' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setTab('overview')}>Overview</button>
+        <button className={`btn btn-sm ${tab === 'payouts' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setTab('payouts')}>
+          Stripe Payouts{payoutBadge > 0 ? ` (${payoutBadge} unmatched)` : ''}
+        </button>
+      </div>
+
+      {tab === 'payouts' && <StripePayoutsTab />}
+
+      {tab === 'overview' && (
+        <>
       <MetricsFilterBar filter={filter} />
 
       {loading && <div className="muted">Loading…</div>}
@@ -178,6 +200,8 @@ export default function FinancialsDashboard() {
               </table>
             </div>
           </div>
+        </>
+      )}
         </>
       )}
     </div>

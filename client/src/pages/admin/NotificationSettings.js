@@ -48,6 +48,10 @@ const CATEGORY_LABELS = {
     label: 'Finance notices',
     help: 'Routine payment receipts and finance updates.',
   },
+  stripe_payout_failed: {
+    label: 'Stripe payout failures',
+    help: 'A payout to the bank account fails.',
+  },
 };
 
 export default function NotificationSettings() {
