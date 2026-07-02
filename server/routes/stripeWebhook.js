@@ -9,7 +9,10 @@ const { createEventShifts } = require('../utils/eventCreation');
 const { getBookingWindow } = require('../utils/bookingWindow');
 const { notifyLastMinuteBooking } = require('../utils/lastMinuteAlert');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
-const { createBalanceInvoice, linkPaymentToInvoice, createDrinkPlanExtrasInvoice, findExtrasInvoice, findOpenInvoiceForBalance } = require('../utils/invoiceHelpers');
+const { createInvoiceOnSend, createBalanceInvoice, linkPaymentToInvoice, createDrinkPlanExtrasInvoice, findExtrasInvoice, findOpenInvoiceForBalance } = require('../utils/invoiceHelpers');
+const { commitGroupChoice } = require('../utils/proposalGroupCommit');
+const { cancelMarketingForProposal } = require('../utils/marketingHandlers');
+const { cancelPendingChangeRequestsForProposal } = require('../utils/changeRequests');
 const { notifyClientPaymentFailed } = require('../utils/paymentFailedClientNotify');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ADMIN_URL } = require('../utils/urls');
@@ -71,6 +74,9 @@ router.post('/webhook', asyncHandler(async (req, res) => {
       // Set true in-tx for an initial-booking ≤72h-out payment. Gates BOTH the flag
       // UPDATE (in-tx) and post-commit SMS so a Stripe retry never double-flags/blasts.
       let isLastMinuteHold = false;
+      // Option-group choice-commit result (set in-tx below); read post-commit to
+      // gate conversion and run the losing options' best-effort reaps.
+      let groupChoice = { committed: false, conflict: false, archivedLoserIds: [] };
       try {
         await dbClient.query('BEGIN');
 
@@ -87,6 +93,19 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         isFirstDelivery = inserted.rowCount === 1;
 
         if (isFirstDelivery) {
+          // Option-group choice-commit — runs BEFORE the credit. First-writer-wins
+          // marks this option chosen + archives the losers (voiding their unpaid
+          // invoices) in THIS tx. On conflict (a 2nd option paying after another
+          // already won) the amount_paid guards below skip the archived row's credit;
+          // we flag it and skip conversion post-commit.
+          groupChoice = await commitGroupChoice(proposalId, dbClient);
+          if (groupChoice.conflict && process.env.SENTRY_DSN_SERVER) {
+            Sentry.captureMessage(
+              `option_paid_after_decided: payment on a non-chosen option (proposal ${proposalId}, intent ${intent.id}) — refund manually`,
+              'warning'
+            );
+          }
+
           // Determine new status and amount_paid based on payment type
           if (paymentType === 'full') {
             // Additive + DERIVED status, never a flat "= total_price": credit what was actually charged so a mid-flight total change (admin edit / second-tab gratuity) can't mark paid-in-full at an amount the client never paid (DrB would eat the gap). Mirrors the invoice/drink-plan branches.
@@ -218,6 +237,13 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, $2, 'system', $3)`,
             [proposalId, action, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType })]
           );
+
+          // Grouped winner: its Deposit/Full invoice was deferred at send. Create it
+          // now (idempotent on proposal_id, AFTER payment_type is stamped so Deposit
+          // vs Full is picked correctly) so the link step below finds an open invoice.
+          if (groupChoice.committed) {
+            await createInvoiceOnSend(proposalId, dbClient);
+          }
 
           // ── Invoice integration ──────────────────────────────────
           const invoiceId = intent.metadata?.invoice_id;
@@ -403,16 +429,31 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         // Create the shift (and, via createEventShifts, the drink plan) BEFORE
         // sending the orientation email — the orientation payload reads
         // drink_plans.token, which only exists once createEventShifts has run.
-        try {
-          const shift = await createEventShifts(proposalId);
-          if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
-        } catch (shiftErr) {
-          if (process.env.SENTRY_DSN_SERVER) {
-            Sentry.captureException(shiftErr, {
-              tags: { webhook: 'stripe', route: '/webhook' },
-            });
+        // A conflicting late payment on a non-chosen option must NOT convert.
+        if (!groupChoice.conflict) {
+          try {
+            const shift = await createEventShifts(proposalId);
+            if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
+          } catch (shiftErr) {
+            if (process.env.SENTRY_DSN_SERVER) {
+              Sentry.captureException(shiftErr, {
+                tags: { webhook: 'stripe', route: '/webhook' },
+              });
+            }
+            console.error('Shift auto-creation failed (non-blocking):', shiftErr);
           }
-          console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+        }
+
+        // Best-effort post-commit reaps for archived losing options (marketing +
+        // change-request cancels run on their own pool; a failure here never rolls
+        // back the paid winner — matches today's ->archived semantics).
+        for (const loserId of groupChoice.archivedLoserIds) {
+          try {
+            await cancelMarketingForProposal(loserId);
+            await cancelPendingChangeRequestsForProposal(loserId);
+          } catch (reapErr) {
+            if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(reapErr, { tags: { webhook: 'stripe', reap: 'option_loser' } });
+          }
         }
 
         sendPaymentNotifications(proposalId, intent.amount, paymentType);
@@ -607,6 +648,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     if (proposalId) {
       const dbClient = await pool.connect();
       let isFirstDelivery = false;
+      let groupChoice = { committed: false, conflict: false, archivedLoserIds: [] };
       try {
         await dbClient.query('BEGIN');
 
@@ -627,6 +669,17 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         await dbClient.query("UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_link_id = $1 AND proposal_id = $2", [session.payment_link, proposalId]);
 
         if (isFirstDelivery) {
+          // Option-group choice-commit (see payment_intent.succeeded). First-writer-
+          // wins marks this option chosen + archives losers in THIS tx; on conflict we
+          // flag + skip conversion post-commit (the archived guard skips the credit).
+          groupChoice = await commitGroupChoice(proposalId, dbClient);
+          if (groupChoice.conflict && process.env.SENTRY_DSN_SERVER) {
+            Sentry.captureMessage(
+              `option_paid_after_decided: payment-link payment on a non-chosen option (proposal ${proposalId}, session ${session.id}) — refund manually`,
+              'warning'
+            );
+          }
+
           if (linkPaymentType === 'full') {
             // Full payment via link → additive + DERIVED status (mirrors the 'full'
             // branch of payment_intent.succeeded). Credit session.amount_total (what
@@ -659,6 +712,12 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, $2, 'system', $3)`,
             [proposalId, linkPaymentType === 'full' ? 'paid_in_full' : 'deposit_paid', JSON.stringify({ amount: session.amount_total, payment_link: session.payment_link, payment_type: linkPaymentType })]
           );
+
+          // Grouped winner: create the deferred Deposit/Full invoice now (idempotent,
+          // after payment_type is stamped) so the link step below finds it.
+          if (groupChoice.committed) {
+            await createInvoiceOnSend(proposalId, dbClient);
+          }
 
           // ── Invoice integration (parity with payment_intent.succeeded) ──
           const openInvoice = await dbClient.query(
@@ -700,16 +759,28 @@ router.post('/webhook', asyncHandler(async (req, res) => {
       // Non-blocking post-commit work — only on first delivery.
       if (isFirstDelivery) {
         sendPaymentNotifications(proposalId, session.amount_total || 0, linkPaymentType);
-        try {
-          const shift = await createEventShifts(proposalId);
-          if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
-        } catch (shiftErr) {
-          if (process.env.SENTRY_DSN_SERVER) {
-            Sentry.captureException(shiftErr, {
-              tags: { webhook: 'stripe', route: '/webhook' },
-            });
+        // A conflicting late payment on a non-chosen option must NOT convert.
+        if (!groupChoice.conflict) {
+          try {
+            const shift = await createEventShifts(proposalId);
+            if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
+          } catch (shiftErr) {
+            if (process.env.SENTRY_DSN_SERVER) {
+              Sentry.captureException(shiftErr, {
+                tags: { webhook: 'stripe', route: '/webhook' },
+              });
+            }
+            console.error('Shift auto-creation failed (non-blocking):', shiftErr);
           }
-          console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+        }
+        // Best-effort post-commit reaps for archived losing options.
+        for (const loserId of groupChoice.archivedLoserIds) {
+          try {
+            await cancelMarketingForProposal(loserId);
+            await cancelPendingChangeRequestsForProposal(loserId);
+          } catch (reapErr) {
+            if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(reapErr, { tags: { webhook: 'stripe', reap: 'option_loser' } });
+          }
         }
 
         // Schedule the balance-reminder ladder + pre-event reminders, same as

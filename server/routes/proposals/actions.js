@@ -12,7 +12,10 @@ const { createEventShifts } = require('../../utils/eventCreation');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { notifyAdminCategory } = require('../../utils/adminNotifications');
-const { linkPaymentToInvoice } = require('../../utils/invoiceHelpers');
+const { linkPaymentToInvoice, createInvoiceOnSend } = require('../../utils/invoiceHelpers');
+const { commitGroupChoice } = require('../../utils/proposalGroupCommit');
+const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
+const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../../utils/errors');
@@ -176,9 +179,18 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
   // admin-supplied amount, so an over-payment reports the $Y applied, not $X entered.
   const appliedAmount = newAmountPaid - currentPaid;
 
+  let groupChoice = { committed: false, conflict: false, archivedLoserIds: [] };
   const dbClient = await pool.connect();
   try {
     await dbClient.query('BEGIN');
+
+    // Option-group choice-commit — first-writer-wins marks this option chosen +
+    // archives losers in THIS tx. A conflict (recording a payment on an option the
+    // client did not book) aborts the whole handler with a 409 (nothing was captured).
+    groupChoice = await commitGroupChoice(proposal.id, dbClient);
+    if (groupChoice.conflict) {
+      throw new ConflictError('This option was not the one the client booked; it cannot take a payment.', 'OPTION_NOT_CHOSEN');
+    }
 
     // accepted_at: an admin-recorded outside payment is an acceptance source
     // (the client paid), so stamp it — otherwise the financial dashboard
@@ -188,6 +200,13 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
       'UPDATE proposals SET amount_paid = $1, status = $2, accepted_at = COALESCE(accepted_at, NOW()) WHERE id = $3',
       [newAmountPaid, newStatus, proposal.id]
     );
+
+    // Grouped winner: its invoice was deferred at send. Stamp payment_type + create
+    // the Deposit/Full invoice now so the link step below finds it (webhook parity).
+    if (groupChoice.committed) {
+      await dbClient.query('UPDATE proposals SET payment_type = $1 WHERE id = $2', [isFullyPaid ? 'full' : 'deposit', proposal.id]);
+      await createInvoiceOnSend(proposal.id, dbClient);
+    }
 
     // Record in proposal_payments. Use the capped delta (newAmountPaid - currentPaid)
     // so an over-payment request doesn't inflate the ledger beyond the proposal total.
@@ -281,6 +300,16 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
       Sentry.captureException(shiftErr, { tags: { route: 'proposals/payment', issue: 'shift-auto-create' } });
     }
     console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+  }
+
+  // Best-effort reaps for archived losing options (marketing + change-request cancels).
+  for (const loserId of groupChoice.archivedLoserIds) {
+    try {
+      await cancelMarketingForProposal(loserId);
+      await cancelPendingChangeRequestsForProposal(loserId);
+    } catch (reapErr) {
+      if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(reapErr, { tags: { route: 'proposals/payment', reap: 'option_loser' } });
+    }
   }
 
   res.json({ success: true, status: newStatus, amount_paid: newAmountPaid });
