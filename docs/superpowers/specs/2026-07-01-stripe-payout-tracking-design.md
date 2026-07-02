@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS stripe_payout_lines (
 );
 CREATE INDEX IF NOT EXISTS idx_stripe_payout_lines_payout ON stripe_payout_lines(payout_id);
 CREATE INDEX IF NOT EXISTS idx_stripe_payout_lines_pi ON stripe_payout_lines(stripe_payment_intent_id);
+CREATE INDEX IF NOT EXISTS idx_stripe_payout_lines_unmatched ON stripe_payout_lines(matched_kind) WHERE matched_kind = 'unmatched';
 ```
 
 Design notes:
@@ -198,11 +199,14 @@ UPDATE stripe_payouts SET alerted_at = NOW()
 WHERE stripe_payout_id = $1 AND alerted_at IS NULL RETURNING id
 ```
 
-Send only when `rowCount === 1`. Client cross-cutting: the new category also needs
-its entry in CATEGORY_LABELS in `client/src/pages/admin/NotificationSettings.js`
-(the toggle renders unlabeled otherwise); confirm the notification-prefs endpoint
-in `server/routes/me.js` enumerates it. `resolveCategoryRecipients` defaults unset
-prefs to on (COALESCE), so no data migration is needed.
+Send only when `rowCount === 1`. Cross-cutting: the category lands in THREE places
+or the toggle is dead: the `VALID_CATEGORIES` Set in
+`server/utils/adminNotifications.js`, the hardcoded `NOTIFICATION_CATEGORIES`
+mirror array in `server/routes/me.js` (the prefs GET renders toggles from it and
+the PATCH rejects unknown keys; it deliberately does not import the dispatcher),
+and `CATEGORY_LABELS` in `client/src/pages/admin/NotificationSettings.js`.
+`resolveCategoryRecipients` defaults unset prefs to on (COALESCE), so no data
+migration is needed.
 
 ## 6. Matching (the reconciliation spine)
 
@@ -317,6 +321,8 @@ two-tab toggle (Overview | Stripe Payouts) following the existing admin tab patt
 - SMS alerts (email only).
 - Webhook `payout.created`/`payout.updated` handling (the sweep plus `payout.paid`
   cover reality on a daily-automatic account; add later only if a need appears).
+- Navigation links on payout line rows (client/event/invoice labels render as
+  plain text in v1; wrapping them in proposal/invoice links is an easy bolt-on).
 
 ## 11. Testing
 
@@ -343,10 +349,15 @@ node:test suites (run per-suite in isolation per the shared-dev-DB rule, with
 
 ## 12. Rollout
 
-1. Merge schema + server + client (single lane, full fleet review: money + webhook
-   surfaces at max effort). The same change updates docs per the mandatory table:
-   README.md (folder tree, env vars, key features), ARCHITECTURE.md (route table,
-   database schema, integrations), CLAUDE.md + README env tables
+1. Two lanes: `stripe-payouts-server` (schema + sync module + webhook + routes +
+   scheduler + backfill + docs + the me.js category mirror; full fleet review,
+   money + webhook surfaces at max effort) and `stripe-payouts-client` (tab UI +
+   notification label; code review + UI look, read-only display, proportionate
+   per the review-proportionality rule). They build in parallel against the API
+   contract, merge server-first, and PUSH AS ONE BATCH (the tab 404s without the
+   routes). The server lane updates docs per the mandatory table: README.md
+   (folder tree, env vars, key features), ARCHITECTURE.md (route table, database
+   schema, integrations), CLAUDE.md + README env tables
    (`RUN_STRIPE_PAYOUT_SWEEP_SCHEDULER`), and `.env.example`.
 2. Apply the two new tables to the dev DB by hand (schema.sql is not auto-applied to
    dev); prod gets them on boot via initDb.

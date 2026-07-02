@@ -12,6 +12,7 @@ lanes:
       - server/routes/stripeWebhook.js
       - server/routes/stripeWebhook.payout.test.js
       - server/utils/adminNotifications.js
+      - server/routes/me.js
       - server/scripts/backfillStripePayouts.js
       - server/index.js
       - .env.example
@@ -25,7 +26,7 @@ lanes:
       - client/src/pages/admin/StripePayoutsTab.js
       - client/src/pages/admin/FinancialsDashboard.js
       - client/src/pages/admin/NotificationSettings.js
-    blockedBy: []       # builds in parallel against the API contract below; merge after server lane; push together
+    blockedBy: [stripe-payouts-server]   # MERGE/PUSH ordering only — building may start in parallel against the API contract; never merge or push the client lane without the server lane
     review: code-review + ui-ux-review (read-only UI; no money mutation)
 ---
 
@@ -237,7 +238,7 @@ const chargeTxn = (id, over = {}) => ({
 
 after(async () => {
   await pool.query('DELETE FROM stripe_payout_lines WHERE stripe_balance_txn_id LIKE $1', [`txn_test_${N}%`]);
-  await pool.query('DELETE FROM stripe_payouts WHERE stripe_payout_id = $1', [poId]);
+  await pool.query('DELETE FROM stripe_payouts WHERE stripe_payout_id LIKE $1', [`po_test_${N}%`]);
   await pool.end();
 });
 
@@ -415,14 +416,18 @@ async function syncPendingTransactions(opts = {}) {
   }
 }
 
+// Stubs — replaced by Task 3 (matchLine) and Task 4 (sweep, alertFailedPayout).
+// They exist so the module loads and Task 2's tests run as written.
+async function matchLine() {}
+async function sweep() { throw new Error('not implemented (Task 4)'); }
+async function alertFailedPayout() { throw new Error('not implemented (Task 4)'); }
+
 module.exports = {
   syncPayout, syncPendingTransactions, matchLine, sweep, alertFailedPayout,
   getLastSweepAt: () => lastSweepAt,
   _setStripeClientForTests,
 };
 ```
-
-(`matchLine`, `sweep`, `alertFailedPayout` are added in Tasks 3-4; for this step stub `matchLine = async () => {}` and `sweep`/`alertFailedPayout` as `async () => { throw new Error('not implemented'); }` so the module loads and this task's tests pass.)
 
 - [ ] **Step 4: Run the tests**
 
@@ -470,9 +475,14 @@ before(async () => {
   invoiceId = inv.rows[0].id;
   await pool.query(`INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1,$2,45000)`,
     [invoiceId, paymentId]);
+  // proposal_refunds has NO amount_cents column (it is `amount`, cents) and
+  // three NOT NULL columns with no defaults; any values satisfying them are
+  // fine for the matcher test (it reads only id + proposal_id).
   const ref = await pool.query(
-    `INSERT INTO proposal_refunds (proposal_id, payment_id, amount_cents, stripe_refund_id)
-     VALUES ($1,$2,5000,$3) RETURNING id`, [proposalId, paymentId, `re_test_${N}`]);
+    `INSERT INTO proposal_refunds (proposal_id, payment_id, amount, reason,
+       total_price_before, total_price_after, stripe_refund_id)
+     VALUES ($1,$2,5000,'matcher test fixture',45000,40000,$3) RETURNING id`,
+    [proposalId, paymentId, `re_test_${N}`]);
   refundId = ref.rows[0].id;
   const u = await pool.query(
     `INSERT INTO users (email, password_hash, role) VALUES ($1,'x','staff') RETURNING id`,
@@ -483,9 +493,16 @@ before(async () => {
      VALUES (gen_random_uuid(),$1,2000,$2,NOW()) RETURNING id`, [userId, `pi_tip_${N}`]);
   tipId = tip.rows[0].id;
 });
-// Extend after() cleanup with (delete order matters for FKs):
-//   stripe_payout_lines (already), invoice_payments, proposal_refunds, invoices,
-//   proposal_payments, tips, proposals, clients, users — all WHERE keyed on N.
+// Task 3 EXTENDS the Task 2 after() — insert these before pool.end(), in this
+// exact order (FKs):
+//   await pool.query('DELETE FROM invoice_payments WHERE invoice_id = $1', [invoiceId]);
+//   await pool.query('DELETE FROM proposal_refunds WHERE id = $1', [refundId]);
+//   await pool.query('DELETE FROM invoices WHERE id = $1', [invoiceId]);
+//   await pool.query('DELETE FROM tips WHERE id = $1', [tipId]);
+//   await pool.query('DELETE FROM proposal_payments WHERE id = $1', [paymentId]);
+//   await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+//   await pool.query('DELETE FROM clients WHERE name = $1', [`PayoutTest ${N}`]);
+//   await pool.query('DELETE FROM users WHERE id = $1', [userId]);
 
 async function makePendingLine(id, fields) {
   const { rows } = await pool.query(
@@ -553,6 +570,17 @@ test('matcher: unknown PI stays unmatched', async () => {
   await sync.matchLine(id);
   assert.equal((await lineRow(id)).matched_kind, 'unmatched');
 });
+
+test('matcher: adjustment with a resolvable PI stays adjustment, links kept', async () => {
+  const id = await makePendingLine(`txn_test_${N}_m7`, {
+    txn_type: 'adjustment', reporting_category: 'other_adjustment',
+    amount_cents: -500, net_cents: -500, fee_cents: 0,
+    stripe_payment_intent_id: `pi_test_${N}` });
+  await sync.matchLine(id);
+  const r = await lineRow(id);
+  assert.equal(r.matched_kind, 'adjustment'); // never masquerades as revenue
+  assert.equal(r.proposal_payment_id, paymentId);
+});
 ```
 
 NOTE for the implementer: the `clients`/`proposals` INSERT column lists above are the minimal shape; check `schema.sql` for NOT NULL columns on those tables and add any required values (mirror an existing route test's fixture INSERTs, e.g. `stripeWebhook.optionGroup.test.js`).
@@ -567,6 +595,8 @@ Expected: earlier tests PASS, matcher tests FAIL (stub does nothing)
 Replace the stub in `stripePayoutSync.js`:
 
 ```js
+const ADJUSTMENT_CATS = ['adjustment', 'other_adjustment', 'fee', 'payout_failure', 'stripe_fee'];
+
 async function matchLine(lineId) {
   const { rows } = await pool.query('SELECT * FROM stripe_payout_lines WHERE id = $1', [lineId]);
   const line = rows[0];
@@ -580,11 +610,16 @@ async function matchLine(lineId) {
       'SELECT id, proposal_id FROM proposal_refunds WHERE stripe_refund_id = $1', [line.stripe_refund_id]);
     if (r.rows[0]) { kind = 'refund'; refundId = r.rows[0].id; proposalId = r.rows[0].proposal_id; }
   } else if (line.stripe_payment_intent_id) {
+    // The CATEGORY decides the kind; the PI only resolves the links. A fee
+    // adjustment with a resolvable PI must stay 'adjustment', never masquerade
+    // as revenue.
+    const linkedKind = cat === 'dispute' ? 'dispute'
+      : ADJUSTMENT_CATS.includes(cat) ? 'adjustment' : 'payment';
     const p = await pool.query(
       'SELECT id, proposal_id FROM proposal_payments WHERE stripe_payment_intent_id = $1',
       [line.stripe_payment_intent_id]);
     if (p.rows[0]) {
-      kind = cat === 'dispute' ? 'dispute' : 'payment';
+      kind = linkedKind;
       paymentId = p.rows[0].id; proposalId = p.rows[0].proposal_id;
       const inv = await pool.query(
         'SELECT invoice_id FROM invoice_payments WHERE payment_id = $1 ORDER BY id DESC LIMIT 1', [paymentId]);
@@ -592,13 +627,11 @@ async function matchLine(lineId) {
     } else {
       const t = await pool.query('SELECT id FROM tips WHERE stripe_payment_intent_id = $1',
         [line.stripe_payment_intent_id]);
-      if (t.rows[0]) { kind = cat === 'dispute' ? 'dispute' : 'tip'; tipId = t.rows[0].id; }
+      if (t.rows[0]) { kind = linkedKind === 'payment' ? 'tip' : linkedKind; tipId = t.rows[0].id; }
     }
   }
   // Fee-adjustment family: label as adjustment even when unresolvable to a proposal.
-  if (kind === 'unmatched' && ['adjustment', 'other_adjustment', 'fee', 'payout_failure', 'stripe_fee'].includes(cat)) {
-    kind = 'adjustment';
-  }
+  if (kind === 'unmatched' && ADJUSTMENT_CATS.includes(cat)) kind = 'adjustment';
   await pool.query(
     `UPDATE stripe_payout_lines SET matched_kind=$2, proposal_payment_id=$3, tip_id=$4,
        proposal_refund_id=$5, proposal_id=$6, invoice_id=$7, updated_at=NOW() WHERE id=$1`,
@@ -680,6 +713,24 @@ test('sweep without force skips when fresh (15-minute staleness gate)', async ()
   assert.equal(r.fresh, true);
   assert.equal(listCalls, 0);
 });
+
+test('partial-failure heal: failed line fetch leaves lines_synced_at NULL, sweep retries', async () => {
+  const poH = `po_test_${N}_heal`;
+  const failing = {
+    payouts: { list: async () => ({ data: [], has_more: false }) },
+    balanceTransactions: { list: async () => { throw new Error('stripe 500'); } },
+  };
+  await assert.rejects(sync.syncPayout(payoutObj({ id: poH }), { stripe: failing }));
+  let row = (await pool.query('SELECT lines_synced_at FROM stripe_payouts WHERE stripe_payout_id=$1', [poH])).rows[0];
+  assert.equal(row.lines_synced_at, null);
+  const healing = fakeStripe({
+    payouts: [payoutObj({ id: poH })],
+    txnsByPayout: { [poH]: [chargeTxn(`txn_test_${N}_heal`)] },
+  });
+  await sync.sweep({ stripe: healing, notify: async () => {}, force: true });
+  row = (await pool.query('SELECT lines_synced_at FROM stripe_payouts WHERE stripe_payout_id=$1', [poH])).rows[0];
+  assert.ok(row.lines_synced_at, 'sweep did not heal the failed line fetch');
+});
 ```
 
 (Empty-table bootstrap is asserted in the backfill smoke run in Task 7 — the shared dev table is non-empty by this point in the suite. Add cleanup for `poF` to `after()`.)
@@ -757,7 +808,17 @@ async function sweep(opts = {}) {
 }
 ```
 
-In `server/utils/adminNotifications.js`, add `'stripe_payout_failed'` to the `VALID_CATEGORIES` array (email-only body: callers pass no `smsBody`, matching the email-over-SMS rule).
+The category lands in TWO server files in this task (plus the client label in
+Task C2), or the toggle is dead:
+1. `server/utils/adminNotifications.js`: add `'stripe_payout_failed'` to the
+   `VALID_CATEGORIES` **Set literal** (line ~9).
+2. `server/routes/me.js`: add `'stripe_payout_failed'` to the hardcoded
+   `NOTIFICATION_CATEGORIES` **mirror array** (lines ~19-31). This file
+   deliberately does not import the dispatcher; the prefs GET renders toggles
+   from this array and the PATCH rejects unknown keys, so both lists must be
+   edited together.
+
+Email-only body: callers pass no `smsBody`, matching the email-over-SMS rule.
 
 - [ ] **Step 3: Run the suite**
 
@@ -767,8 +828,8 @@ Expected: all PASS
 - [ ] **Step 4: Commit**
 
 ```bash
-git add server/utils/stripePayoutSync.js server/utils/stripePayoutSync.test.js server/utils/adminNotifications.js
-git commit -m "feat(stripe-payouts): sweep with bootstrap + atomic failed-payout alert + stuck-line Sentry pulse"
+git add server/utils/stripePayoutSync.js server/utils/stripePayoutSync.test.js server/utils/adminNotifications.js server/routes/me.js
+git commit -m "feat(stripe-payouts): sweep with bootstrap + atomic failed-payout alert + stuck-line Sentry pulse + notification category"
 ```
 
 ### Task 5: Webhook branches — `payout.paid` / `payout.failed`
@@ -782,7 +843,7 @@ git commit -m "feat(stripe-payouts): sweep with bootstrap + atomic failed-payout
 
 - [ ] **Step 1: Write the failing webhook test**
 
-Create `server/routes/stripeWebhook.payout.test.js` mirroring the harness in `stripeWebhook.optionGroup.test.js` verbatim (env setup, `sign()`, `postWebhook()`, express app with `express.raw` on the webhook path, router required from `./stripe`). Cases:
+Create `server/routes/stripeWebhook.payout.test.js` mirroring the harness in `stripeWebhook.optionGroup.test.js` verbatim (env setup, `sign()`, `postWebhook()`, express app with `express.raw` on the webhook path, router required from `./stripe`). The file also requires the sync module (`const sync = require('../utils/stripePayoutSync')`), copies the `fakeStripe`/`chargeTxn`/`payoutObj` helpers from Task 2's test file, defines `const poId = 'po_test_' + N`, and cleans up `stripe_payouts`/`stripe_payout_lines` rows `LIKE` the nonce patterns in `after()`. Cases:
 
 ```js
 test('payout.failed (live) upserts a failed stripe_payouts row and alerts once', async () => {
@@ -799,6 +860,21 @@ test('payout.failed (live) upserts a failed stripe_payouts row and alerts once',
   assert.equal(rows.length, 1);
   assert.equal(rows[0].status, 'failed');
   assert.ok(rows[0].alerted_at); // claimed exactly once; SEND_NOTIFICATIONS=false no-ops the real send
+});
+
+test('payout.paid (live) upserts a paid payout and syncs its lines through the webhook', async () => {
+  const poP = `po_test_${N}_paid`;
+  sync._setStripeClientForTests(fakeStripe({ txnsByPayout: { [poP]: [chargeTxn(`txn_test_${N}_wh`)] } }));
+  const ev = { id: `evt_${N}_paid`, type: 'payout.paid', livemode: true,
+    data: { object: { id: poP, object: 'payout', amount: 43665, currency: 'usd', status: 'paid',
+      created: Math.floor(Date.now()/1000), arrival_date: Math.floor(Date.now()/1000),
+      automatic: true, livemode: true, method: 'standard' } } };
+  const res = await postWebhook(ev);
+  assert.equal(res.status, 200);
+  const p = (await pool.query('SELECT id, lines_synced_at FROM stripe_payouts WHERE stripe_payout_id=$1', [poP])).rows[0];
+  assert.ok(p && p.lines_synced_at, 'payout row missing or lines not synced');
+  const l = (await pool.query('SELECT payout_id FROM stripe_payout_lines WHERE stripe_balance_txn_id=$1', [`txn_test_${N}_wh`])).rows[0];
+  assert.equal(l.payout_id, p.id);
 });
 
 test('payout.paid with livemode:false is acked and ignored', async () => {
@@ -877,7 +953,7 @@ git commit -m "feat(stripe-payouts): payout.paid/payout.failed webhook branches,
 
 `server/routes/stripePayouts.test.js`, following any existing admin route test's app-bootstrap pattern (e.g. `server/routes/beo.test.js`): seed one payout + two lines (one matched to the Task-3-style fixtures, one pending unmatched), then:
 
-- no token → 401; staff-role token → 403 (mirror `auth.envelope.test.js` expectations)
+- no token → 401; staff-role token → 403 (mirror `server/middleware/auth.envelope.test.js` expectations — note the file lives under middleware/, not routes/)
 - `GET /api/stripe-payouts` → `summary.in_transit_cents` equals the pending line's `net_cents`; `payouts[0].gross_cents`/`fee_cents` equal the SUMs of its lines; `unmatched_count` = 1; response contains NO Stripe call (assert the fake stripe client was never invoked: `sync._setStripeClientForTests({ get payouts() { throw new Error('GET must be DB-only'); } })`)
 - `GET /api/stripe-payouts/:id` → payout + its lines with `client_name`, `invoice_number` joined
 - `GET /api/stripe-payouts/999999` → 404 via `NotFoundError`
@@ -890,7 +966,7 @@ const express = require('express');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { adminWriteLimiter } = require('../middleware/rateLimiters');
-const asyncHandler = require('../utils/asyncHandler');
+const asyncHandler = require('../middleware/asyncHandler'); // cf. beo.js:18 — middleware/, not utils/
 const { NotFoundError } = require('../utils/errors');
 const payoutSync = require('../utils/stripePayoutSync');
 
@@ -915,12 +991,12 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const [summary, pending, payouts] = await Promise.all([
     pool.query(`
       SELECT
-        COALESCE(SUM(net_cents) FILTER (WHERE payout_id IS NULL), 0)::int AS in_transit_cents,
+        COALESCE(SUM(net_cents) FILTER (WHERE payout_id IS NULL AND txn_type <> 'payout'), 0)::int AS in_transit_cents,
         COALESCE(SUM(fee_cents) FILTER (WHERE available_on >= date_trunc('month', NOW())), 0)::int AS fees_mtd_cents,
         COALESCE(SUM(fee_cents) FILTER (WHERE available_on >= date_trunc('year', NOW())), 0)::int AS fees_ytd_cents,
         COUNT(*) FILTER (WHERE matched_kind = 'unmatched')::int AS unmatched_count
       FROM stripe_payout_lines`),
-    pool.query(`${LINE_SELECT} WHERE l.payout_id IS NULL ORDER BY l.available_on ASC NULLS LAST`),
+    pool.query(`${LINE_SELECT} WHERE l.payout_id IS NULL AND l.txn_type <> 'payout' ORDER BY l.available_on ASC NULLS LAST`),
     pool.query(`
       SELECT p.id, p.stripe_payout_id, p.amount_cents, p.status, p.arrival_date,
              p.created_at_stripe, p.failure_code, p.failure_message,
@@ -958,7 +1034,7 @@ router.post('/sync', auth, requireAdminOrManager, adminWriteLimiter, asyncHandle
 module.exports = router;
 ```
 
-(Check `asyncHandler`'s actual export path/name against a neighbor route file before writing; some files destructure it from `../utils/errors`.)
+(The ingest layer never inserts `type='payout'` lines, so the `txn_type <> 'payout'` guards in the two queries above are read-side self-defense, not load-bearing filters.)
 
 - [ ] **Step 3: Mount in `server/index.js`, run the route tests**
 
@@ -1035,6 +1111,12 @@ RUN_STRIPE_PAYOUT_SWEEP_SCHEDULER=
 
 Run: `node server/scripts/backfillStripePayouts.js`
 Expected: `payouts: 43` (and a matched_kind table; on the dev DB most lines will be `unmatched` because dev's proposal_payments differ from prod — that is expected and fine; the REAL matching verification happens at the prod backfill, rollout step 3).
+
+Run it AGAIN immediately (re-run safety proof; note the module's 15-minute
+staleness gate means the second run reports fresh/skip — that IS the pass signal,
+and a third run with the gate patched out or after 15 minutes must produce
+identical counts, no duplicate rows: verify `SELECT COUNT(*) FROM stripe_payout_lines`
+is unchanged).
 
 - [ ] **Step 5: Commit**
 
@@ -1138,6 +1220,7 @@ export default function StripePayoutsTab() {
   if (loading) return <div className="muted">Loading…</div>;
   if (!data) return <div className="chip danger">Couldn't load Stripe payouts. Try refreshing.</div>;
   const s = data.summary || {};
+  const nearestEta = (data.pending || []).map(l => l.available_on).filter(Boolean).sort()[0] || null;
 
   return (
     <>
@@ -1145,7 +1228,10 @@ export default function StripePayoutsTab() {
         <div className="stat">
           <div className="stat-label">In transit</div>
           <div className="stat-value">{fmt$fromCents(s.in_transit_cents || 0)}</div>
-          <div className="stat-sub"><span>{(data.pending || []).length} settled charge{(data.pending || []).length === 1 ? '' : 's'} awaiting payout</span></div>
+          <div className="stat-sub"><span>
+            {(data.pending || []).length} settled charge{(data.pending || []).length === 1 ? '' : 's'} awaiting payout
+            {nearestEta ? ` · next lands ~${fmtDate(String(nearestEta).slice(0, 10), { year: 'numeric' })}` : ''}
+          </span></div>
         </div>
         <div className="stat">
           <div className="stat-label">Stripe fees (month)</div>
@@ -1198,7 +1284,12 @@ export default function StripePayoutsTab() {
             {(data.payouts || []).map(p => (
               <React.Fragment key={p.id}>
                 <tr onClick={() => toggle(p.id)} style={{ cursor: 'pointer' }} title="Show what made up this payout">
-                  <td><strong>{p.arrival_date ? fmtDate(String(p.arrival_date).slice(0, 10), { year: 'numeric' }) : '—'}</strong></td>
+                  <td>
+                    <strong>{p.arrival_date ? fmtDate(String(p.arrival_date).slice(0, 10), { year: 'numeric' }) : '—'}</strong>
+                    <span className="muted" style={{ display: 'block', fontSize: '0.85em' }}>
+                      created {fmtDate(String(p.created_at_stripe).slice(0, 10), { year: 'numeric' })}
+                    </span>
+                  </td>
                   <td>
                     <StatusChip kind={PAYOUT_STATUS[p.status] || 'neutral'}>{p.status.replace('_', ' ')}</StatusChip>
                     {p.failure_message && <span className="muted" style={{ display: 'block', fontSize: '0.85em' }}>{p.failure_message}</span>}
@@ -1228,7 +1319,9 @@ export default function StripePayoutsTab() {
 }
 ```
 
-Style notes for the implementer: reuse existing classes only (`stat-row`, `card`, `tbl`, `chip`, `btn`); no new CSS unless a gap is real, and then in `index.css` per convention. Proposal links: `lineLabel` rows with `l.proposal_id` may wrap in a react-router `Link` to `/proposals/${l.proposal_id}` if it reads cleanly; otherwise leave plain text (v1 does not require navigation).
+Style notes for the implementer: reuse existing classes only (`stat-row`, `card`, `tbl`, `chip`, `btn`); no new CSS unless a gap is real, and then in `index.css` per convention. Line labels render as plain text in v1 (navigation links are an explicit spec §10 deferral).
+
+Checkpoint note: C1 has no standalone checkpoint by design — a tab component wired nowhere is dead code. C1 + C2 form one logical feature and verify together at Task C3.
 
 ### Task C2: FinancialsDashboard tab toggle + NotificationSettings label
 
@@ -1274,7 +1367,11 @@ In `client/src/pages/admin/NotificationSettings.js`, add to `CATEGORY_LABELS`:
 stripe_payout_failed: 'Stripe payout failures',
 ```
 
-Check step: `grep -n "VALID_CATEGORIES\|categories" server/routes/me.js` — if the notification-prefs endpoint enumerates categories from a hardcoded list rather than `adminNotifications.VALID_CATEGORIES`, add the new key there too (server lane owns me.js; coordinate via the lane merge if needed — expected outcome is that it imports VALID_CATEGORIES and no change is needed).
+The server-side halves of this category (the `VALID_CATEGORIES` Set in
+`adminNotifications.js` and the hardcoded `NOTIFICATION_CATEGORIES` mirror array
+in `server/routes/me.js`) belong to the server lane's Task 4; this step is the
+label only. The toggle renders from the server's `categories` list, so it appears
+once both lanes are merged.
 
 - [ ] **Step 3: Commit**
 
@@ -1283,12 +1380,23 @@ git add client/src/pages/admin/StripePayoutsTab.js client/src/pages/admin/Financ
 git commit -m "feat(stripe-payouts): Stripe Payouts tab on Financials — in-transit bucket, fee rollups, payout drill-down"
 ```
 
-### Task C3: CI build gate
+### Task C3: CI build gate + manual UI verification
 
 - [ ] **Step 1: Run the exact Vercel build**
 
 Run: `cd client && CI=true npx react-scripts build`
 Expected: compiles with zero warnings (CI treats warnings as errors). Fix any ESLint findings before the lane is done.
+
+- [ ] **Step 2: Manual verification against the dev server** (the client surface has no automated test runner; this is the lane's behavioral checkpoint)
+
+With both lanes' code running locally (restart the managed backend first — it does not auto-reload):
+1. Log in as admin → Financials. Overview tab renders exactly as before, filter bar present.
+2. Toggle to Stripe Payouts: summary chips render; "Last synced" shows a value or "Syncing…" kicks in automatically.
+3. Expand a payout row: lines load from `/stripe-payouts/:id` with type badges and labels.
+4. Click "Sync now": button disables, then data refreshes; no toast error.
+5. Toggle back to Overview: filter state preserved (same date range/basis as before).
+6. Settings → Notification Settings: a "Stripe payout failures" toggle renders and saving it succeeds (PATCH 200).
+Expected: all six pass; any toast error or missing toggle fails the checkpoint.
 
 ---
 
