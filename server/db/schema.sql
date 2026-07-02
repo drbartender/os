@@ -1862,6 +1862,17 @@ CREATE TABLE IF NOT EXISTS invoice_payments (
 CREATE INDEX IF NOT EXISTS idx_invoice_payments_invoice_id ON invoice_payments(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_invoice_payments_payment_id ON invoice_payments(payment_id);
 
+-- Upgrade: refund attribution on reversal rows. applyRefundReconciliation
+-- stamps each negative reversal row with the proposal_refunds id it belongs
+-- to, so the public invoice page can attribute a refund to the exact
+-- invoice(s) that refund walked onto (combined-payment case, where one
+-- payment funds two invoices). NULL on positive rows and on pre-upgrade
+-- reversals; the display falls back to the gross-applied clamp for those.
+-- ON DELETE SET NULL: deleting a refund row (tests, manual cleanup) degrades
+-- the stamp back to the clamp instead of blocking the delete.
+ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS refund_id INTEGER REFERENCES proposal_refunds(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_invoice_payments_refund_id ON invoice_payments(refund_id) WHERE refund_id IS NOT NULL;
+
 -- Upgrade: invoices.proposal_id FK from CASCADE to RESTRICT (protect paid invoices)
 -- and invoice_line_items.invoice_id to NOT NULL (for existing tables)
 DO $$ BEGIN

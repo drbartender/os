@@ -200,9 +200,13 @@ async function applyRefundReconciliation(
         nonContractCents += take; // extra scope — must not shrink total_price
       }
       // Negative linkage row keeps Σ invoice_payments.amount == amount_paid.
+      // refund_id stamps WHICH refund this reversal belongs to, so the public
+      // invoice display can attribute a refund to the exact invoice(s) it
+      // walked onto (a partial refund on a combined payment shows only where
+      // it actually landed, not on every invoice the payment funded).
       await dbClient.query(
-        'INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1,$2,$3)',
-        [link.invoice_id, paymentId, -take]
+        'INSERT INTO invoice_payments (invoice_id, payment_id, amount, refund_id) VALUES ($1,$2,$3,$4)',
+        [link.invoice_id, paymentId, -take, refundRowId]
       );
       // Drop amount_due AND amount_paid by `take` so a fully-paid invoice
       // stays paid at the corrected figure (no phantom unpaid line).

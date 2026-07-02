@@ -229,3 +229,16 @@ test('idempotent: an already-applied refund id is a no-op (no status write)', as
   assert.equal(r.applied, false);
   assert.equal(statusReconcile(client.calls).found, false);
 });
+
+test('reversal invoice_payments row is stamped with the refund row id (per-invoice attribution)', async () => {
+  const client = makeFakeClient({
+    status: 'balance_paid', totalPrice: 1000, amountPaid: 1000,
+    invoiceLabel: 'Balance', amountCents: 20000,
+  });
+  await applyRefundReconciliation(baseArgs(), client);
+  const rev = client.calls.find(({ s }) => /INSERT INTO invoice_payments/.test(s));
+  assert.ok(rev, 'expected a reversal INSERT');
+  assert.match(rev.s, /refund_id/, 'reversal INSERT carries the refund_id column');
+  // invoice 1, payment 9, -take, refund row id 1 (the fake INSERT..RETURNING id)
+  assert.deepEqual(rev.params, [1, 9, -20000, 1]);
+});

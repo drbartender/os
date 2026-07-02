@@ -824,7 +824,8 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 
 **invoice_payments** — Junction linking invoices to proposal_payments
 - `invoice_id` FK, `payment_id` FK → proposal_payments
-- `amount` (cents)
+- `amount` (cents); negative rows are refund reversals written by reconciliation
+- `refund_id` FK → proposal_refunds (ON DELETE SET NULL) — stamped on reversal rows only, attributes a refund to the exact invoice(s) it walked onto; NULL on positive rows and pre-upgrade reversals (display falls back to the gross-applied clamp)
 
 ### Clients
 

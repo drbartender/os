@@ -65,8 +65,9 @@ before(async () => {
     [invoiceId, pay1.rows[0].id]
   );
   // A negative reversal invoice_payments row (as refundHelpers writes on reconcile)
-  // shares (invoice_id, payment_id) with the positive link, so the refunds JOIN fans
-  // out to 2 rows for PAY1 — this exercises the DISTINCT in the refunds query.
+  // shares (invoice_id, payment_id) with the positive link. Deliberately UNSTAMPED
+  // (no refund_id): this fixture exercises the LEGACY clamp regime, and proves the
+  // aggregate lateral collapses the 2-row fan-out to one output row per refund.
   await pool.query(
     `INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, -5000)`,
     [invoiceId, pay1.rows[0].id]
@@ -174,7 +175,7 @@ test('GET /t/:token returns only succeeded refunds attributable to this invoice'
   assert.equal(refunds[0].reason, undefined, 'reason is admin-only free-text, never exposed on the public invoice');
 });
 
-test('combined-payment refund is clamped to what the payment applied to EACH invoice (F3)', async () => {
+test('combined-payment refund is clamped to what the payment applied to EACH invoice (F3 legacy fallback: reversals not stamped with refund_id)', async () => {
   const rb = await get(`/api/invoices/t/${comboTokenB}`);
   assert.equal(rb.status, 200, `expected 200 for invoice B, got ${rb.status}`);
   assert.equal(rb.body.invoice.refunds.length, 1, 'invoice B shows the refund once');
@@ -192,4 +193,79 @@ test('invoice amount_paid/status are unchanged by refunds (informational only)',
   const r = await get(`/api/invoices/t/${invoiceToken}`);
   assert.equal(Number(r.body.invoice.amount_paid), 50000, 'amount_paid stays the persisted value');
   assert.equal(r.body.invoice.status, 'paid', 'status is not reopened by a refund');
+});
+
+// Runs LAST: drives the REAL applyRefundReconciliation (which mutates this
+// proposal's totals), so it must not precede the assertions above.
+test('attributed partial refund on a combined payment shows ONLY on the invoice it walked onto', async () => {
+  // PAY4 ($100.00) funds invoice D ($60.00, Balance) and invoice E ($40.00,
+  // Drink Plan Extras). A $30.00 partial refund walks greedily onto D alone
+  // (invoice_id ASC). Reconciliation stamps the reversal with refund_id, so
+  // D displays exactly $30.00 and E displays NOTHING. (The legacy clamp used
+  // to phantom the $30.00 onto E as well.)
+  const invD = await pool.query(
+    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status)
+     VALUES ($1, $2, 'Balance', 6000, 6000, 'paid') RETURNING id, token`,
+    [proposalId, `INV${crypto.randomBytes(5).toString('hex')}`]
+  );
+  const invE = await pool.query(
+    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status)
+     VALUES ($1, $2, 'Drink Plan Extras', 4000, 4000, 'paid') RETURNING id, token`,
+    [proposalId, `INV${crypto.randomBytes(5).toString('hex')}`]
+  );
+  const pay4 = await pool.query(
+    `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status) VALUES ($1, 'drink_plan_with_balance', 10000, 'succeeded') RETURNING id`,
+    [proposalId]
+  );
+  await pool.query(
+    `INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, 6000)`,
+    [invD.rows[0].id, pay4.rows[0].id]
+  );
+  await pool.query(
+    `INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, 4000)`,
+    [invE.rows[0].id, pay4.rows[0].id]
+  );
+
+  const { applyRefundReconciliation } = require('../utils/refundHelpers');
+  const db = await pool.connect();
+  try {
+    await db.query('BEGIN');
+    const r = await applyRefundReconciliation({
+      proposalId,
+      stripeRefundId: `re_attr_${NONCE}`,
+      paymentIntentId: `pi_attr_${NONCE}`,
+      paymentId: pay4.rows[0].id,
+      amountCents: 3000,
+      reason: 'partial combined refund (attribution test)',
+      issuedBy: null,
+    }, db);
+    await db.query('COMMIT');
+    assert.equal(r.applied, true, 'reconciliation applied');
+  } catch (e) {
+    await db.query('ROLLBACK');
+    throw e;
+  } finally {
+    db.release();
+  }
+
+  // Write side: exactly one reversal row, on D, stamped with its refund id.
+  const rev = await pool.query(
+    `SELECT ip.invoice_id, ip.amount, ip.refund_id
+       FROM invoice_payments ip
+      WHERE ip.payment_id = $1 AND ip.amount < 0`,
+    [pay4.rows[0].id]
+  );
+  assert.equal(rev.rows.length, 1, 'exactly one reversal row written');
+  assert.equal(rev.rows[0].invoice_id, invD.rows[0].id, 'reversal walked onto invoice D');
+  assert.equal(Number(rev.rows[0].amount), -3000);
+  assert.ok(rev.rows[0].refund_id, 'reversal row is stamped with its refund id');
+
+  // Read side: D shows the exact attributed $30.00; E shows no phantom refund.
+  const rd = await get(`/api/invoices/t/${invD.rows[0].token}`);
+  assert.equal(rd.status, 200, `expected 200 for invoice D, got ${rd.status}`);
+  assert.equal(rd.body.invoice.refunds.length, 1, 'invoice D shows the refund once');
+  assert.equal(Number(rd.body.invoice.refunds[0].amount), 3000, 'invoice D shows the exact attributed $30.00');
+  const re2 = await get(`/api/invoices/t/${invE.rows[0].token}`);
+  assert.equal(re2.status, 200, `expected 200 for invoice E, got ${re2.status}`);
+  assert.equal(re2.body.invoice.refunds.length, 0, 'invoice E shows NO phantom refund');
 });

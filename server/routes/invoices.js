@@ -71,21 +71,36 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
     // pr.reason is deliberately NOT selected: it is admin free-text (often an
     // internal note) and this is a public token route — clients see amount + date only.
     //
-    // Combined-payment clamp (F3): a drink_plan_with_balance payment funds TWO
+    // Combined-payment attribution: a drink_plan_with_balance payment funds TWO
     // invoices, but pr.amount is the refund against the whole payment — displayed
-    // raw it over-states on both. Clamp each refund to what that payment applied
-    // to THIS invoice. "Applied" = the GROSS positive invoice_payments sum:
-    // refund reconciliation writes NEGATIVE reversal rows, so a net sum would
-    // shrink toward 0 and hide the very refund being displayed. The lateral also
-    // replaces the old DISTINCT (one output row per refund by construction).
+    // raw it over-states on both. Two regimes, per refund:
+    //  1. ATTRIBUTED (post-upgrade): reconciliation stamps each negative
+    //     reversal row with its refund_id, so this invoice's exact share is
+    //     -SUM of THIS refund's reversal rows here. A partial refund that
+    //     walked onto the other invoice only shows nothing here (no phantom).
+    //  2. LEGACY fallback (pre-upgrade refunds, no stamped rows anywhere):
+    //     the F3 clamp — LEAST(pr.amount, GROSS positive applied). Gross,
+    //     because the unstamped negative reversals would net toward 0 and
+    //     hide the very refund being displayed.
+    // One output row per refund by construction (aggregate lateral, no fan-out).
+    // COUPLING: the EXISTS regime probe is whole-table by refund_id while the
+    // SUM is scoped by ip.payment_id = pr.payment_id. Reconciliation always
+    // writes reversal rows under the refund's own payment_id, keeping the two
+    // aligned; if a refactor ever lets them diverge, a stamped refund would
+    // hide instead of falling back to the clamp. Do NOT scope the EXISTS to
+    // this invoice (that re-phantoms a refund walked onto the other invoice).
     pool.query(
-      `SELECT pr.id, LEAST(pr.amount, applied.applied_cents)::int AS amount, pr.created_at
+      `SELECT pr.id, d.display_cents AS amount, pr.created_at
          FROM proposal_refunds pr
          JOIN LATERAL (
-           SELECT COALESCE(SUM(ip.amount) FILTER (WHERE ip.amount > 0), 0)::int AS applied_cents
+           SELECT CASE
+                    WHEN EXISTS (SELECT 1 FROM invoice_payments x WHERE x.refund_id = pr.id)
+                    THEN COALESCE(-SUM(ip.amount) FILTER (WHERE ip.refund_id = pr.id), 0)
+                    ELSE LEAST(pr.amount, COALESCE(SUM(ip.amount) FILTER (WHERE ip.amount > 0), 0))
+                  END::int AS display_cents
              FROM invoice_payments ip
             WHERE ip.payment_id = pr.payment_id AND ip.invoice_id = $1
-         ) applied ON applied.applied_cents > 0
+         ) d ON d.display_cents > 0
         WHERE pr.status = 'succeeded'
         ORDER BY pr.created_at`,
       [invoice.id]
