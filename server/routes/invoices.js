@@ -70,11 +70,23 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
     // amount_paid/status are unchanged (a refund is money returned, not re-owed).
     // pr.reason is deliberately NOT selected: it is admin free-text (often an
     // internal note) and this is a public token route — clients see amount + date only.
+    //
+    // Combined-payment clamp (F3): a drink_plan_with_balance payment funds TWO
+    // invoices, but pr.amount is the refund against the whole payment — displayed
+    // raw it over-states on both. Clamp each refund to what that payment applied
+    // to THIS invoice. "Applied" = the GROSS positive invoice_payments sum:
+    // refund reconciliation writes NEGATIVE reversal rows, so a net sum would
+    // shrink toward 0 and hide the very refund being displayed. The lateral also
+    // replaces the old DISTINCT (one output row per refund by construction).
     pool.query(
-      `SELECT DISTINCT pr.id, pr.amount, pr.created_at
+      `SELECT pr.id, LEAST(pr.amount, applied.applied_cents)::int AS amount, pr.created_at
          FROM proposal_refunds pr
-         JOIN invoice_payments ip ON ip.payment_id = pr.payment_id
-        WHERE ip.invoice_id = $1 AND pr.status = 'succeeded'
+         JOIN LATERAL (
+           SELECT COALESCE(SUM(ip.amount) FILTER (WHERE ip.amount > 0), 0)::int AS applied_cents
+             FROM invoice_payments ip
+            WHERE ip.payment_id = pr.payment_id AND ip.invoice_id = $1
+         ) applied ON applied.applied_cents > 0
+        WHERE pr.status = 'succeeded'
         ORDER BY pr.created_at`,
       [invoice.id]
     ),

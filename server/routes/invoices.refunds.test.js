@@ -22,6 +22,7 @@ if (process.env.NODE_ENV === 'production') {
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 let server, baseUrl, clientId, proposalId, invoiceToken;
+let comboTokenB, comboTokenC; // two invoices funded by ONE payment (clamp case)
 
 function get(path) {
   return new Promise((resolve, reject) => {
@@ -92,6 +93,39 @@ before(async () => {
     [proposalId, pay2.rows[0].id]
   );
 
+  // Combined-payment clamp case (F3): ONE payment (PAY3, $100.00) funds TWO
+  // invoices (B gets $60.00, C gets $40.00). A full $100.00 refund on PAY3 must
+  // display as $60.00 on B and $40.00 on C — never the full amount on both.
+  const invB = await pool.query(
+    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status)
+     VALUES ($1, $2, 'Balance', 6000, 6000, 'paid') RETURNING id, token`,
+    [proposalId, `INV${crypto.randomBytes(5).toString('hex')}`]
+  );
+  comboTokenB = invB.rows[0].token;
+  const invC = await pool.query(
+    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status)
+     VALUES ($1, $2, 'Drink Plan Extras', 4000, 4000, 'paid') RETURNING id, token`,
+    [proposalId, `INV${crypto.randomBytes(5).toString('hex')}`]
+  );
+  comboTokenC = invC.rows[0].token;
+  const pay3 = await pool.query(
+    `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status) VALUES ($1, 'drink_plan_with_balance', 10000, 'succeeded') RETURNING id`,
+    [proposalId]
+  );
+  await pool.query(
+    `INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, 6000)`,
+    [invB.rows[0].id, pay3.rows[0].id]
+  );
+  await pool.query(
+    `INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, 4000)`,
+    [invC.rows[0].id, pay3.rows[0].id]
+  );
+  await pool.query(
+    `INSERT INTO proposal_refunds (proposal_id, payment_id, amount, reason, total_price_before, total_price_after, status)
+     VALUES ($1, $2, 10000, 'Full refund on a combined payment', 1000.00, 900.00, 'succeeded')`,
+    [proposalId, pay3.rows[0].id]
+  );
+
   const app = express();
   app.use(express.json());
   app.use('/api/invoices', invoicesRouter);
@@ -126,6 +160,20 @@ test('GET /t/:token returns only succeeded refunds attributable to this invoice'
   assert.equal(refunds.length, 1, `expected exactly 1 refund, got ${JSON.stringify(refunds)}`);
   assert.equal(Number(refunds[0].amount), 5000, 'amount is Stripe-native cents');
   assert.equal(refunds[0].reason, undefined, 'reason is admin-only free-text, never exposed on the public invoice');
+});
+
+test('combined-payment refund is clamped to what the payment applied to EACH invoice (F3)', async () => {
+  const rb = await get(`/api/invoices/t/${comboTokenB}`);
+  assert.equal(rb.status, 200, `expected 200 for invoice B, got ${rb.status}`);
+  assert.equal(rb.body.invoice.refunds.length, 1, 'invoice B shows the refund once');
+  assert.equal(Number(rb.body.invoice.refunds[0].amount), 6000,
+    'invoice B shows only its $60.00 share of the $100.00 refund');
+
+  const rc = await get(`/api/invoices/t/${comboTokenC}`);
+  assert.equal(rc.status, 200, `expected 200 for invoice C, got ${rc.status}`);
+  assert.equal(rc.body.invoice.refunds.length, 1, 'invoice C shows the refund once');
+  assert.equal(Number(rc.body.invoice.refunds[0].amount), 4000,
+    'invoice C shows only its $40.00 share (shares sum to the true refund)');
 });
 
 test('invoice amount_paid/status are unchanged by refunds (informational only)', async () => {
