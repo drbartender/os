@@ -88,6 +88,7 @@ const LabRatMission = lazy(() => import('./pages/labrat/LabRatMission'));
 
 // Lazy-loaded: public token-gated pages (Stripe SDK stays out of main bundle)
 const ProposalView = lazy(() => import('./pages/proposal/proposalView/ProposalView'));
+const ProposalCompare = lazy(() => import('./pages/proposal/compare/ProposalCompare'));
 const InvoicePage = lazy(() => import('./pages/invoice/InvoicePage'));
 const TipPage = lazy(() => import('./pages/public/TipPage'));
 const TipPageThanks = lazy(() => import('./pages/public/TipPageThanks'));
@@ -328,6 +329,7 @@ function PublicWebsiteRoutes() {
         {/* These public token-based routes work on both domains */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
+        <Route path="/compare/:token" element={<ProposalCompare />} />
         <Route path="/invoice/:token" element={<InvoicePage />} />
         <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
         <Route path="/tip/:token" element={<TipPage />} />
@@ -401,6 +403,7 @@ function HiringRoutes() {
         {/* Public token routes still work */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
+        <Route path="/compare/:token" element={<ProposalCompare />} />
         <Route path="/invoice/:token" element={<InvoicePage />} />
         <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
         <Route path="/tip/:token" element={<TipPage />} />
@@ -458,6 +461,7 @@ function StaffSiteRoutes() {
         {/* Public token routes */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
+        <Route path="/compare/:token" element={<ProposalCompare />} />
         <Route path="/invoice/:token" element={<InvoicePage />} />
         <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
         <Route path="/tip/:token" element={<TipPage />} />
@@ -490,6 +494,7 @@ function AppRoutes() {
       {/* Public pages (no auth) */}
       <Route path="/plan/:token" element={<PotionPlanningLab />} />
       <Route path="/proposal/:token" element={<ProposalView />} />
+      <Route path="/compare/:token" element={<ProposalCompare />} />
       <Route path="/invoice/:token" element={<InvoicePage />} />
       <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
       <Route path="/tip/:token" element={<TipPage />} />

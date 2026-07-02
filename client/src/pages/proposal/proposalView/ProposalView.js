@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { loadStripe } from '@stripe/stripe-js';
 import { useToast } from '../../../context/ToastContext';
@@ -17,6 +17,7 @@ import { isGratuityBelowFloor, gratuityFloorMessage } from './gratuityFloor';
 
 export default function ProposalView() {
   const { token } = useParams();
+  const navigate = useNavigate();
   const toast = useToast();
   const [proposal, setProposal] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -89,10 +90,39 @@ export default function ProposalView() {
     ['sent', 'viewed', 'accepted'].includes(proposal.status);
 
   useEffect(() => {
-    axios.get(`${BASE_URL}/proposals/t/${token}`)
-      .then(res => setProposal(res.data))
-      .catch(() => setError('Proposal not found or has expired.'))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    // Option-group resolve runs FIRST via the non-mutating /resolve endpoint, so
+    // a link that only bounces to /compare never bumps view_count or flips
+    // sent->viewed. Precedence: decided group -> the chosen option's page;
+    // grouped + undecided + no ?choose -> the compare page; otherwise the normal
+    // (mutating) load below. ?choose=1 is the compare page's hand-off marker and
+    // must never bounce back (loop guard). A resolver failure falls through to
+    // the normal load so grouping never blocks a plain proposal.
+    const chooseParam = new URLSearchParams(window.location.search).get('choose') === '1';
+    axios.get(`${BASE_URL}/proposals/t/${token}/resolve`)
+      .then((res) => {
+        if (cancelled) return true;
+        const r = res.data || {};
+        if (r.decided && r.chosen_token && r.chosen_token !== token) {
+          navigate(`/proposal/${r.chosen_token}?choose=1`, { replace: true });
+          return true;
+        }
+        if (r.grouped && !r.decided && !chooseParam) {
+          navigate(`/compare/${r.group_token}`, { replace: true });
+          return true;
+        }
+        return false;
+      })
+      .catch(() => false)
+      .then((redirected) => {
+        if (cancelled || redirected) return;
+        axios.get(`${BASE_URL}/proposals/t/${token}`)
+          .then(res => { if (!cancelled) setProposal(res.data); })
+          .catch(() => { if (!cancelled) setError('Proposal not found or has expired.'); })
+          .finally(() => { if (!cancelled) setLoading(false); });
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   // Show a success toast when returning from Stripe redirect (?paid=true)
