@@ -240,6 +240,7 @@ app.use('/api/clients', require('./routes/clients'));
 app.use('/api/venues', require('./routes/venues'));
 app.use('/api/messages', require('./routes/messages'));
 app.use('/api/stripe', require('./routes/stripe'));
+app.use('/api/stripe-payouts', require('./routes/stripePayouts'));
 app.use('/api/calendar', require('./routes/calendar'));
 app.use('/api/blog', require('./routes/blog'));
 app.use('/api/calcom', require('./routes/calcom'));
@@ -406,6 +407,16 @@ async function start() {
         setInterval(wrapped, 24 * 60 * 60 * 1000);
       } else if (!globalScheduleDisabled) {
         clearHealthRow('pending_email_cleanup');
+      }
+
+      // Stripe payout sweep — daily mirror heal (webhook misses, pending bucket, re-match)
+      if (enabled('RUN_STRIPE_PAYOUT_SWEEP_SCHEDULER')) {
+        const { sweep } = require('./utils/stripePayoutSync');
+        const wrapped = wrapScheduler('stripe_payout_sweep', 86400, sweep);
+        setTimeout(wrapped, 240000);
+        setInterval(wrapped, 24 * 60 * 60 * 1000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('stripe_payout_sweep');
       }
 
       // VA calling maintenance (spec §Components-7 + §Security-9): hourly prune

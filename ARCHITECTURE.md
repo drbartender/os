@@ -291,8 +291,16 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | POST | `/charge-balance/:id` | Admin | Manually trigger off-session autopay balance charge |
 | POST | `/refund/:id` | Admin (`auth, adminOnly`) | Issue a partial refund — auto-targets the largest refundable charge; no cross-charge spanning |
 | GET | `/refunds/:id` | Admin/Manager (`auth, requireAdminOrManager`) | Refund history for a proposal |
-| POST | `/webhook` | Stripe | Handle `payment_intent.succeeded`, `checkout.session.completed` — updates payment status, auto-creates event shift |
+| POST | `/webhook` | Stripe | Handle `payment_intent.succeeded`, `checkout.session.completed`, `charge.refunded`, dispute events, and `payout.paid`/`payout.failed` (read-side payout mirror, livemode-gated, catch-and-ack) |
 | POST | `/create-intent-for-invoice/:token` | Public | Create a Stripe PaymentIntent for an open invoice (balance / Additional Services), used by the public token-gated InvoicePage (`server/routes/stripeCreateIntent.js`). |
+
+### Stripe Payouts — `/api/stripe-payouts`
+Read-side mirror of Stripe payouts + balance-transaction lines (`server/routes/stripePayouts.js`). All money in integer cents. No existing table is written.
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/` | Admin/Manager (`auth, requireAdminOrManager`) | DB-only summary (in-transit, fee MTD/YTD, unmatched count, last-synced) + pending (in-transit) lines + payouts list. Never calls Stripe. |
+| GET | `/:id` | Admin/Manager | One payout (`:id` = integer PK) with its reconciled balance-transaction lines (client/invoice/staff joins). 404 via `NotFoundError`. |
+| POST | `/sync` | Admin/Manager (`auth, requireAdminOrManager, adminWriteLimiter`) | Trigger `sweep({ force })` through the module's in-flight guard + 15-min staleness gate. `{ synced: false }` = fresh/skipped. |
 
 ### Clients — `/api/clients`
 | Method | Path | Auth | Description |
@@ -828,6 +836,26 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `amount` (cents); negative rows are refund reversals written by reconciliation
 - `refund_id` FK → proposal_refunds (ON DELETE SET NULL) — stamped on reversal rows only, attributes a refund to the exact invoice(s) it walked onto; NULL on positive rows and pre-upgrade reversals (display falls back to the gross-applied clamp)
 
+### Stripe Payout Mirror (read-side; spec 2026-07-01)
+
+Two new tables mirror Stripe payouts and their balance-transaction lines for a bank-level reconciliation view. Read-side only: no existing table is written. The `stripe_` prefix is load-bearing (plain "payouts" = staff payroll). All money is integer cents. Owned by `server/utils/stripePayoutSync.js`.
+
+**stripe_payouts** — One row per Stripe payout (`po_...`)
+- `stripe_payout_id` UNIQUE (`po_...`), `amount_cents` (net to bank), `currency`, `status` (paid | in_transit | pending | canceled | failed)
+- `created_at_stripe`, `arrival_date`, `automatic`, `method`, `description`
+- `livemode` — ingest skips non-live objects; column is the tripwire
+- `failure_code`, `failure_message`
+- `alerted_at` — atomic-claim gate so a failed-payout email fires exactly once across webhook/sweep/tab-open races
+- `lines_synced_at` — NULL until the payout's balance txns are fetched; the sweep heals NULLs
+
+**stripe_payout_lines** — One row per balance transaction (`txn_...`)
+- `stripe_balance_txn_id` UNIQUE (`txn_...`), `payout_id` FK → stripe_payouts (ON DELETE CASCADE); **NULL = in transit** (settled charge not yet paid out). Only `syncPayout` ever sets `payout_id` (ownership rule); the pending path is insert-only.
+- `txn_type`, `reporting_category`, `amount_cents` (signed gross), `fee_cents`, `net_cents`, `available_on`, `description`
+- `stripe_charge_id`, `stripe_payment_intent_id`, `stripe_refund_id` — Stripe-side keys used by the matcher
+- `matched_kind` CHECK (payment | tip | refund | dispute | adjustment | unmatched) — the reconciliation verdict
+- Link FKs (all ON DELETE SET NULL): `proposal_payment_id`, `tip_id`, `proposal_refund_id`, `proposal_id`, `invoice_id`
+- Indexes: `payout_id`, `stripe_payment_intent_id`, partial index on `matched_kind='unmatched'`
+
 ### Clients
 
 **clients** — Client records
@@ -1357,6 +1385,7 @@ The Check Cherry import landed several skip gates and best-effort hooks across t
 - **Deposit**: $100 (configurable via `STRIPE_DEPOSIT_AMOUNT` in cents)
 - **Tip Payment Links**: Each onboarded bartender has a reusable Stripe Payment Link with `metadata.kind = 'tip'`, `metadata.bartender_user_id`, and `metadata.tip_page_token`, provisioned by `server/utils/tipPaymentLinks.js`. On `checkout.session.completed` the webhook cross-validates the metadata against `payment_profiles.tip_page_token` (DB is source of truth — if metadata's bartender_user_id disagrees, the DB user_id wins) and inserts a row into `tips`. Admin can regenerate the Stripe link via `POST /api/admin/contractors/:userId/tip-page/regenerate-stripe`, or rotate the tip token entirely via `POST /api/admin/contractors/:userId/tip-page/rotate-token` — the emergency break-glass route used when a printed QR card or URL is compromised. Rotation issues a fresh UUID, deactivates the old Stripe Payment Link, creates a new one, and invalidates in-flight checkouts on the old link (the webhook drops sessions whose `metadata.tip_page_token` no longer matches the DB).
 - **Partial refunds**: Admin-issued via `POST /api/stripe/refund/:id`. `planRefund` (in `server/utils/refundHelpers.js`) auto-targets the largest refundable charge (no spanning). `applyRefundReconciliation` (same file) holds a row-lock on the proposals row, applies Approach-A label-conditional `total_price` correction (Deposit/Balance/Full Payment invoices adjust the contract total; extra-scope invoices leave it intact), nets the aggregate invoice reversal, and writes to the activity log. The synchronous route does the Stripe API call then reconciliation; an idempotent `charge.refunded` webhook handler is the backstop that self-heals a failed post-Stripe write AND records out-of-band Stripe-dashboard refunds. The partial unique index on `proposal_refunds.stripe_refund_id` (WHERE NOT NULL) is the shared idempotency anchor.
+- **Payout mirror (read-side)**: `payout.paid`/`payout.failed` webhook branches + a daily sweep (`RUN_STRIPE_PAYOUT_SWEEP_SCHEDULER`) and a one-off backfill (`server/scripts/backfillStripePayouts.js`) all converge on `server/utils/stripePayoutSync.js`, which mirrors payouts + balance-transaction lines into `stripe_payouts` / `stripe_payout_lines` and reconciles each line back to payments/tips/refunds/disputes. Surfaced as the Financials → Stripe Payouts tab. Ingest is livemode-only; a failed payout fires a one-time admin email (`stripe_payout_failed` category). No existing table is written.
 - **Important**: Stripe webhook route (`/api/stripe/webhook`) must receive raw body — registered before `express.json()` in `server/index.js`
 
 ### Resend (Email)

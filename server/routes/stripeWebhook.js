@@ -922,6 +922,27 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     return res.json({ received: true });
   }
 
+  // Stripe payout tracking (read-side mirror; spec 2026-07-01). No event-level
+  // dedupe here by design — idempotency is the syncPayout upsert on stripe_payout_id
+  // plus the atomic alerted_at claim, matching this file's per-branch ON CONFLICT
+  // convention. Test-mode events are skipped so the mirror stays live-only.
+  if (event.type === 'payout.paid' || event.type === 'payout.failed') {
+    if (event.livemode === false) return res.json({ received: true, skipped: 'test_mode' });
+    const payout = event.data.object;
+    try {
+      const payoutSync = require('../utils/stripePayoutSync');
+      await payoutSync.syncPayout(payout);
+      if (event.type === 'payout.failed') {
+        await payoutSync.alertFailedPayout(payout.id);
+      }
+    } catch (err) {
+      // Catch-and-ack (file convention, cf. funds_reinstated): the nightly sweep
+      // heals a failed sync; a 500 here would retry-storm without adding safety.
+      Sentry.captureException(err, { tags: { webhook: 'stripe_payout' } });
+    }
+    return res.json({ received: true });
+  }
+
   res.json({ received: true });
 }));
 

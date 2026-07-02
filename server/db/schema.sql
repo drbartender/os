@@ -3425,3 +3425,55 @@ ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_archive_reason_check;
 ALTER TABLE proposals ADD CONSTRAINT proposals_archive_reason_check
   CHECK (archive_reason IS NULL OR archive_reason IN
     ('no_hire','client_cancelled','we_cancelled','event_completed','other','option_not_chosen'));
+
+-- ============================================================
+-- Stripe payout tracking (read-side mirror; spec 2026-07-01)
+-- "stripe_" prefix is load-bearing: plain "payouts" = staff payroll.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS stripe_payouts (
+  id SERIAL PRIMARY KEY,
+  stripe_payout_id TEXT UNIQUE NOT NULL,          -- po_...
+  amount_cents INTEGER NOT NULL,                  -- net amount that lands in bank
+  currency TEXT NOT NULL DEFAULT 'usd',
+  status TEXT NOT NULL,                           -- paid | in_transit | pending | canceled | failed
+  created_at_stripe TIMESTAMPTZ NOT NULL,
+  arrival_date DATE,
+  automatic BOOLEAN NOT NULL DEFAULT true,
+  livemode BOOLEAN NOT NULL DEFAULT true,         -- ingest skips non-live; column is the tripwire
+  method TEXT,
+  description TEXT,
+  failure_code TEXT,
+  failure_message TEXT,
+  alerted_at TIMESTAMPTZ,                         -- failed-payout alert atomic-claim gate
+  lines_synced_at TIMESTAMPTZ,                    -- NULL until balance txns fetched; sweep heals NULLs
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS stripe_payout_lines (
+  id SERIAL PRIMARY KEY,
+  stripe_balance_txn_id TEXT UNIQUE NOT NULL,     -- txn_...
+  payout_id INTEGER REFERENCES stripe_payouts(id) ON DELETE CASCADE,  -- NULL = in transit
+  txn_type TEXT NOT NULL,
+  reporting_category TEXT,
+  amount_cents INTEGER NOT NULL,                  -- signed gross (refunds/disputes negative)
+  fee_cents INTEGER NOT NULL DEFAULT 0,
+  net_cents INTEGER NOT NULL,
+  available_on TIMESTAMPTZ,
+  description TEXT,
+  stripe_charge_id TEXT,
+  stripe_payment_intent_id TEXT,
+  stripe_refund_id TEXT,
+  matched_kind TEXT NOT NULL DEFAULT 'unmatched'
+    CHECK (matched_kind IN ('payment','tip','refund','dispute','adjustment','unmatched')),
+  proposal_payment_id INTEGER REFERENCES proposal_payments(id) ON DELETE SET NULL,
+  tip_id INTEGER REFERENCES tips(id) ON DELETE SET NULL,
+  proposal_refund_id INTEGER REFERENCES proposal_refunds(id) ON DELETE SET NULL,
+  proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL,
+  invoice_id INTEGER REFERENCES invoices(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_stripe_payout_lines_payout ON stripe_payout_lines(payout_id);
+CREATE INDEX IF NOT EXISTS idx_stripe_payout_lines_pi ON stripe_payout_lines(stripe_payment_intent_id);
+CREATE INDEX IF NOT EXISTS idx_stripe_payout_lines_unmatched ON stripe_payout_lines(matched_kind) WHERE matched_kind = 'unmatched';

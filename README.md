@@ -70,6 +70,7 @@ Copy `.env.example` and fill in values. All variables:
 | `RUN_MESSAGE_DISPATCHER_SCHEDULER` | No | Set to `false` to disable the scheduled-message dispatcher (balance reminders, plus future drip / event-week handlers). Defaults on. Honored only when `RUN_SCHEDULERS` is not `false` (global flag wins). |
 | `RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER` | No | Set to `false` to disable the hourly `webhook_events` 30-day prune. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `RUN_PENDING_EMAIL_CLEANUP_SCHEDULER` | No | Set to `false` to disable the daily `pending_email_changes` 7-day purge. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
+| `RUN_STRIPE_PAYOUT_SWEEP_SCHEDULER` | No | Set to `false` to disable the daily Stripe payout mirror sweep (webhook-miss heal, pending bucket, re-match). Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `CLIENT_URL` | Yes | Admin/staff frontend URL for CORS + admin dashboard links in emails (e.g., `http://localhost:3000` in dev, `https://admin.drbartender.com` in prod) |
 | `PUBLIC_SITE_URL` | Yes | Public marketing site URL used in client-facing token links — proposals, drink plans, invoices, shopping lists (e.g., `http://localhost:3000` in dev, `https://drbartender.com` in prod) |
 | `STAFF_URL` | No | Staff portal origin used in hire-confirmation emails (e.g., `http://localhost:3000` in dev, `https://staff.drbartender.com` in prod). Falls back to the prod URL if unset. |
@@ -201,6 +202,7 @@ dr-bartender/
 │   │   ├── telegram.js         # Zul VA-calling OUTBOUND trigger: POST /api/telegram/:secret (secret path + secret_token header + user_id allowlist), NANP validation, confirm-before-dial (YES), claim-then-call bridge
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
 │   │   ├── stripeCreateIntent.js # POST /api/stripe/create-intent/:token (extracted from stripe.js)
+│   │   ├── stripePayouts.js    # GET/POST /api/stripe-payouts — DB-only payout mirror list/detail + rate-limited sweep trigger (read-side; admin/manager)
 │   │   ├── emailChange.js      # Unauthenticated POST /api/me/confirm-email-change — email-link token proves intent, bumps token_version to invalidate old JWTs (mounted at /api/me before me.js)
 │   │   ├── emailMarketing.js   # Email marketing leads, campaigns, sequences, conversations
 │   │   ├── emailMarketingWebhook.js  # Resend webhook receiver (email tracking events)
@@ -294,6 +296,7 @@ dr-bartender/
 │   │   ├── staffShiftHandlers.js # Staff-shift SMS: day-before reminder, post-event thank-you, schedule-change/cancel notices
 │   │   ├── storage.js          # Cloudflare R2 upload + signed URL helpers
 │   │   ├── stripeClient.js     # Central Stripe client factory (test-mode toggle, fail-closed)
+│   │   ├── stripePayoutSync.js # Read-side Stripe payout mirror sync: idempotent syncPayout/syncPendingTransactions upserts, matchLine reconciliation, sweep (bootstrap + heal + re-match), atomic failed-payout alert (spec 2026-07-01)
 │   │   ├── telegram.js         # Telegram Bot API wrapper (VA calling): sendTelegramMessage/setTelegramWebhook/getTelegramWebhookInfo (raw fetch, no dep), verifyTelegramSecret (constant-time), isNewUpdate (update_id de-dupe)
 │   │   ├── thumbtackProposalDraft.js # Thumbtack auto-draft builder (createDraftProposalFromLead) + pure field mappers (event-type keyword map, ET date/time split, admin-notes block)
 │   │   ├── tipHandleValidation.js # Validates + normalizes venmo/cashapp handles + paypal.me URLs before persist
@@ -308,6 +311,7 @@ dr-bartender/
 │   │   └── xmlEscape.js        # Shared TwiML XML escaper (& < >); used by the SMS + voice routes
 │   └── scripts/
 │       ├── backfillExtrasInvoices.js # One-off: create the "Drink Plan Extras" invoice for an abandoned pay-now PI + cancel stale PIs (idempotent, --dry-run)
+│       ├── backfillStripePayouts.js # One-off: full Stripe payout history into the read-side mirror via sweep() (idempotent; aborts in test mode)
 │       ├── backfillTipPages.js # One-shot backfill: ensure every active bartender has a tip page row + Stripe link
 │       └── archive/               # One-time migrations (already run, kept for history)
 │           ├── importBlogPosts.js
@@ -364,7 +368,7 @@ dr-bartender/
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
 │   │   │   ├── (staff)         # Application, ApplicationStatus, HiringLanding, PreHireOnboarding (open pre-hire URL)
 │   │   │   ├── (admin)         # AdminDashboard (AdminUserDetail moved into admin/userDetail/, AdminApplicationDetail moved into admin/applicationDetail/)
-│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, Messages admin SMS conversation/thread page, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/, NotificationSettings per-user notification-subscription toggles, CcImportWrapUpPage Bucket B wrap-up email worklist, CcImportReviewPage 7-section import-reconciliation triage, ProposalChangeRequestCard client-portal change-request review card on Proposal Detail (diff, preview, apply-in-editor, decline), AlternativesPanel option-group manager on Proposal Detail (add/remove alternatives, Send options, copy compare link), ChangeRequestsDashboard admin pending-requests queue at /change-requests, eventDetail/MessageLogCard newest-first client message log (email + SMS, sent/failed) on EventDetailPage, payroll/DeferredTipsPanel admin list + Retry button for tips/clawbacks that deferred while the open pay period was frozen)
+│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, Messages admin SMS conversation/thread page, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/, NotificationSettings per-user notification-subscription toggles, CcImportWrapUpPage Bucket B wrap-up email worklist, CcImportReviewPage 7-section import-reconciliation triage, ProposalChangeRequestCard client-portal change-request review card on Proposal Detail (diff, preview, apply-in-editor, decline), AlternativesPanel option-group manager on Proposal Detail (add/remove alternatives, Send options, copy compare link), ChangeRequestsDashboard admin pending-requests queue at /change-requests, eventDetail/MessageLogCard newest-first client message log (email + SMS, sent/failed) on EventDetailPage, payroll/DeferredTipsPanel admin list + Retry button for tips/clawbacks that deferred while the open pay period was frozen, StripePayoutsTab Stripe payout reconciliation tab on FinancialsDashboard)
 │   │   │   ├── staff/          # Staff portal — the live v2 portal, mounted at root on staff.drbartender.com (HomePage, ShiftsPage + ShiftDetail, PayPage + PayoutDetail, TipCardPage, EmailVerifyPage email-change confirm) + PrintTipCard printable QR card (PrintTipCard.jsx + PrintTipCard.layouts.jsx + PrintTipCard.css)
 │   │   │   │   └── account/    # AccountPage shell + sub-nav with ProfileSection, PaymentMethodsSection (+ PaymentMethodRows + AddMethodModal), CalendarSyncSection, NotificationsSection (+ IOSCoachmark + PushPermissionBanner), DocumentsSection (+ ReplaceConfirmModal)
 │   │   │   ├── plan/           # PotionPlanningLab, public post-booking event questionnaire (single flow, created only after deposit; with steps/, components/, data/; components/ScopeBanner + components/WelcomeRoadmap + components/MenuPreview + components/LogoUploadField = apothecary-reskin + Standard Menu shared UI; steps/HostedGuestPrefsStep.js = compact hosted-package guest-preferences step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test; data/menuSections.js = Standard Menu section extractor with menuSections.test.js Jest unit suite)
@@ -486,6 +490,7 @@ Imports legacy proposals, events, payments, refunds, payouts, leads, and invoice
 - **Events**: Paid proposals become events; list view shows scannable cards, detail view is a full dashboard with staffing management, equipment config, auto-assign, payment, and drink plan
 - **Messages log**: Every client-facing email and SMS is recorded at the `sendEmail`/`sendSMS` choke points and shown newest-first on the event detail page, with sent/failed status so a silent send failure is visible
 - **Financials / Settings**: Placeholder tabs ready for expansion
+- **Stripe payout tracking**: bank-level reconciliation tab in Financials (read-side mirror of Stripe payouts + balance-transaction lines, in-transit bucket, fee rollups, failed-payout email alert)
 
 ### Client Portal Editing Model
 - Clients request booking changes from the portal (guest count, hours, package, add-ons, event date, venue) via a form with a live price preview powered by `POST /api/client-portal/proposals/:token/calculate`.

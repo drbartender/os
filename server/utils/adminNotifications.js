@@ -4,7 +4,7 @@ const { sendEmail } = require('./email');
 const { normalizePhone } = require('./sms');
 const { QuotaExceededError } = require('./errors');
 
-// The 11 notification categories (spec 8.3). A notification declares its
+// The notification categories (spec 8.3). A notification declares its
 // category; the helper fans it out to every admin/manager subscribed to it.
 const VALID_CATEGORIES = new Set([
   'urgent_booking',
@@ -18,6 +18,7 @@ const VALID_CATEGORIES = new Set([
   'routine_thumbtack',
   'routine_hiring',
   'routine_finance',
+  'stripe_payout_failed',
 ]);
 
 /**

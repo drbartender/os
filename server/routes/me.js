@@ -28,6 +28,7 @@ const NOTIFICATION_CATEGORIES = [
   'routine_thumbtack',
   'routine_hiring',
   'routine_finance',
+  'stripe_payout_failed',
 ];
 const NOTIFICATION_CATEGORY_SET = new Set(NOTIFICATION_CATEGORIES);
 
