@@ -224,7 +224,7 @@ async function addAlternative(sourceProposalId, actorUserId, pool) {
 }
 ```
 
-`buildCloneFieldBag(src, actorUserId)` returns the exact field names `insertProposalRecord` expects (read `proposalInsert.js:24-42`), copying client_id, event_type/category/custom, event_date, event_start_time, event_duration_hours, guest_count, venue_* , num_bars, package_id, pricing_snapshot, total_price, **`payment_type`, `deposit_amount`** (preserve these so the winner mints the correct Deposit-vs-Full invoice later — see Task 11 money-seam note); `status:'draft'`, `created_by:actorUserId`. (No `group_id` key — the column isn't in the INSERT; the clone's `group_id` is set by the explicit UPDATE above.)
+`buildCloneFieldBag(src, actorUserId)` returns the exact field names `insertProposalRecord` expects (read `proposalInsert.js:24-42`), copying client_id, event_type/category/custom, event_date, event_start_time, event_duration_hours, guest_count, venue_* , num_bars, package_id, pricing_snapshot, total_price; `status:'draft'`, `created_by:actorUserId`. NOTE (build-verified): `insertProposalRecord` writes neither `group_id` nor `payment_type`/`deposit_amount`, so the clone's `group_id` is set by the explicit UPDATE above, and preserving `payment_type` on the clone is moot — the winner's **settle-time** `payment_type` governs its invoice, which the money-commit lane stamps (record-payment) or reads (webhook) before creating the invoice.
 
 - [ ] **Step 4:** Run, expect PASS. Commit.
 
