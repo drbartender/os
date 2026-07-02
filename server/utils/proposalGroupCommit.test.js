@@ -5,18 +5,27 @@ const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { pool } = require('../db');
 const { addAlternative } = require('./proposalGroups');
-const { commitGroupChoice } = require('./proposalGroupCommit');
+const { commitGroupChoice, sweepClientAlternatives } = require('./proposalGroupCommit');
 
 const proposalIds = new Set();
 const groupIds = new Set();
 const invoiceIds = new Set();
+const clientIds = new Set();
 let invSeq = 0;
+
+async function insertClient() {
+  const { rows: [c] } = await pool.query(
+    `INSERT INTO clients (name, email) VALUES ('Sweep Test', $1) RETURNING id`,
+    [`sweep-${Date.now()}-${clientIds.size}@example.com`]);
+  clientIds.add(c.id);
+  return c.id;
+}
 
 async function insertProposal(fields = {}) {
   const { rows: [p] } = await pool.query(
-    `INSERT INTO proposals (status, amount_paid, pricing_snapshot, total_price)
-     VALUES ($1, $2, '{}'::jsonb, 1000) RETURNING *`,
-    [fields.status || 'sent', fields.amount_paid || 0]);
+    `INSERT INTO proposals (status, amount_paid, pricing_snapshot, total_price, client_id)
+     VALUES ($1, $2, '{}'::jsonb, 1000, $3) RETURNING *`,
+    [fields.status || 'sent', fields.amount_paid || 0, fields.client_id || null]);
   proposalIds.add(p.id);
   return p;
 }
@@ -63,6 +72,7 @@ after(async () => {
   }
   for (const gid of groupIds) await pool.query('DELETE FROM proposal_groups WHERE id = $1', [gid]);
   if (pids.length) await pool.query('DELETE FROM proposals WHERE id = ANY($1)', [pids]);
+  if (clientIds.size) await pool.query('DELETE FROM clients WHERE id = ANY($1)', [[...clientIds]]);
   await pool.end();
 });
 
@@ -103,4 +113,45 @@ test('idempotent replay of the same winner does not re-commit', async () => {
   await inTx((c) => commitGroupChoice(winnerId, c));
   const res = await inTx((c) => commitGroupChoice(winnerId, c));
   assert.deepStrictEqual(res, { committed: false, conflict: false, archivedLoserIds: [] });
+});
+
+// ── sweepClientAlternatives (ungrouped same-client sweep) ────────────────────
+
+test('sweep archives the same-client open alternative and voids its invoice', async () => {
+  const clientId = await insertClient();
+  const winner = await insertProposal({ status: 'sent', client_id: clientId });
+  const alt = await insertProposal({ status: 'draft', client_id: clientId });
+  await insertInvoice(alt.id, { status: 'sent', amount_paid: 0 });
+
+  const { sweptIds } = await inTx((c) => sweepClientAlternatives(winner.id, c));
+  assert.deepStrictEqual(sweptIds, [alt.id]);
+
+  const { rows: [swept] } = await pool.query('SELECT status, archive_reason FROM proposals WHERE id = $1', [alt.id]);
+  assert.strictEqual(swept.status, 'archived');
+  assert.strictEqual(swept.archive_reason, 'option_not_chosen');
+  const { rows: [inv] } = await pool.query('SELECT status FROM invoices WHERE proposal_id = $1', [alt.id]);
+  assert.strictEqual(inv.status, 'void', "swept alternative's unpaid invoice is voided");
+});
+
+test('sweep never touches other clients, paid siblings, or converted siblings', async () => {
+  const clientId = await insertClient();
+  const otherClientId = await insertClient();
+  const winner = await insertProposal({ status: 'sent', client_id: clientId });
+  const paidSibling = await insertProposal({ status: 'sent', amount_paid: 100, client_id: clientId });
+  const converted = await insertProposal({ status: 'deposit_paid', client_id: clientId });
+  const otherClients = await insertProposal({ status: 'draft', client_id: otherClientId });
+
+  const { sweptIds } = await inTx((c) => sweepClientAlternatives(winner.id, c));
+  assert.deepStrictEqual(sweptIds, [], 'nothing eligible to sweep');
+
+  for (const [id, expected] of [[paidSibling.id, 'sent'], [converted.id, 'deposit_paid'], [otherClients.id, 'draft']]) {
+    const { rows: [p] } = await pool.query('SELECT status FROM proposals WHERE id = $1', [id]);
+    assert.strictEqual(p.status, expected, `proposal ${id} must be untouched`);
+  }
+});
+
+test('sweep is a no-op for a clientless winner', async () => {
+  const winner = await insertProposal({ status: 'sent' });
+  const { sweptIds } = await inTx((c) => sweepClientAlternatives(winner.id, c));
+  assert.deepStrictEqual(sweptIds, []);
 });

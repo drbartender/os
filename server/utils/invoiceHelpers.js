@@ -364,9 +364,12 @@ async function refreshUnlockedInvoices(proposalId, dbClient) {
 async function createInvoiceOnSend(proposalId, dbClient) {
   const client = db(dbClient);
 
-  // Idempotency check
+  // Idempotency check. Void invoices are excluded: an archived proposal's
+  // invoice gets voided (option-group losers, admin archive), and a recovered
+  // (archived -> draft -> sent) proposal must mint a FRESH open invoice on
+  // re-send, or its later payment has nothing to link to.
   const existingResult = await client.query(
-    `SELECT id FROM invoices WHERE proposal_id = $1 LIMIT 1`,
+    `SELECT id FROM invoices WHERE proposal_id = $1 AND status <> 'void' LIMIT 1`,
     [proposalId]
   );
   if (existingResult.rows.length > 0) return null;

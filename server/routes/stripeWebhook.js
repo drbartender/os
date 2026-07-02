@@ -10,7 +10,7 @@ const { getBookingWindow } = require('../utils/bookingWindow');
 const { notifyLastMinuteBooking } = require('../utils/lastMinuteAlert');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { createInvoiceOnSend, createBalanceInvoice, linkPaymentToInvoice, createDrinkPlanExtrasInvoice, findExtrasInvoice, findOpenInvoiceForBalance } = require('../utils/invoiceHelpers');
-const { commitGroupChoice } = require('../utils/proposalGroupCommit');
+const { commitGroupChoice, sweepClientAlternatives } = require('../utils/proposalGroupCommit');
 const { cancelMarketingForProposal } = require('../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../utils/changeRequests');
 const { notifyClientPaymentFailed } = require('../utils/paymentFailedClientNotify');
@@ -77,6 +77,9 @@ router.post('/webhook', asyncHandler(async (req, res) => {
       // Option-group choice-commit result (set in-tx below); read post-commit to
       // gate conversion and run the losing options' best-effort reaps.
       let groupChoice = { committed: false, conflict: false, archivedLoserIds: [] };
+      // Ungrouped same-client alternatives archived by the sweep (in-tx below);
+      // read post-commit for the same best-effort reaps.
+      let sweptAlternativeIds = [];
       try {
         await dbClient.query('BEGIN');
 
@@ -104,6 +107,15 @@ router.post('/webhook', asyncHandler(async (req, res) => {
               `option_paid_after_decided: payment on a non-chosen option (proposal ${proposalId}, intent ${intent.id}) — refund manually`,
               'warning'
             );
+          }
+
+          // Same-client sweep of UNGROUPED alternatives: on an initial-booking
+          // payment (deposit/full only — never balance/extras/invoice, where a
+          // new draft for the client's NEXT event is legitimate), archive the
+          // client's other open, unpaid proposals like formal-group losers.
+          if (!groupChoice.conflict && (paymentType === 'full' || paymentType === 'deposit')) {
+            const sweep = await sweepClientAlternatives(proposalId, dbClient);
+            sweptAlternativeIds = sweep.sweptIds;
           }
 
           // Determine new status and amount_paid based on payment type
@@ -453,7 +465,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         // Best-effort post-commit reaps for archived losing options (marketing +
         // change-request cancels run on their own pool; a failure here never rolls
         // back the paid winner — matches today's ->archived semantics).
-        for (const loserId of groupChoice.archivedLoserIds) {
+        for (const loserId of [...groupChoice.archivedLoserIds, ...sweptAlternativeIds]) {
           try {
             await cancelMarketingForProposal(loserId);
             await cancelPendingChangeRequestsForProposal(loserId);
@@ -657,6 +669,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
       const dbClient = await pool.connect();
       let isFirstDelivery = false;
       let groupChoice = { committed: false, conflict: false, archivedLoserIds: [] };
+      let sweptAlternativeIds = [];
       try {
         await dbClient.query('BEGIN');
 
@@ -686,6 +699,13 @@ router.post('/webhook', asyncHandler(async (req, res) => {
               `option_paid_after_decided: payment-link payment on a non-chosen option (proposal ${proposalId}, session ${session.id}) — refund manually`,
               'warning'
             );
+          }
+
+          // Same-client sweep of ungrouped alternatives (see payment_intent.succeeded).
+          // Both Payment-Link types are initial bookings, so no payment-type gate here.
+          if (!groupChoice.conflict) {
+            const sweep = await sweepClientAlternatives(proposalId, dbClient);
+            sweptAlternativeIds = sweep.sweptIds;
           }
 
           if (linkPaymentType === 'full') {
@@ -784,7 +804,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           }
         }
         // Best-effort post-commit reaps for archived losing options.
-        for (const loserId of groupChoice.archivedLoserIds) {
+        for (const loserId of [...groupChoice.archivedLoserIds, ...sweptAlternativeIds]) {
           try {
             await cancelMarketingForProposal(loserId);
             await cancelPendingChangeRequestsForProposal(loserId);

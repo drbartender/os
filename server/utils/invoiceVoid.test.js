@@ -55,3 +55,21 @@ test('is idempotent (second call voids nothing)', async () => {
   const res = await voidUnpaidProposalInvoice(proposalId, pool);
   assert.strictEqual(res.voided, 0);
 });
+
+test('createInvoiceOnSend mints a FRESH invoice after a void (recovered proposal re-send)', async () => {
+  const { createInvoiceOnSend } = require('./invoiceHelpers');
+  const { proposalId } = await seed({ propAmountPaid: 0, invStatus: 'sent', invAmountPaid: 0 });
+  await voidUnpaidProposalInvoice(proposalId, pool);
+
+  // The proposal's ONLY invoice is now void; a re-send must create a new open
+  // invoice (previously the any-invoice idempotency check returned null here,
+  // leaving a recovered proposal with nothing for its payment to link to).
+  const fresh = await createInvoiceOnSend(proposalId, pool);
+  assert.ok(fresh && fresh.id, 'a fresh invoice is created despite the void one');
+  invoiceIds.add(fresh.id);
+  assert.strictEqual(fresh.status, 'sent');
+
+  // And the check still prevents duplicates while an OPEN invoice exists.
+  const dup = await createInvoiceOnSend(proposalId, pool);
+  assert.strictEqual(dup, null, 'idempotent while a non-void invoice exists');
+});

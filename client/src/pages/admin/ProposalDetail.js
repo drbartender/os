@@ -76,6 +76,13 @@ export default function ProposalDetail() {
   // Activity modal
   const [showActivityPopup, setShowActivityPopup] = useState(false);
 
+  // Archive modal: openSiblings = the client's OTHER open, unpaid proposals
+  // (loose alternatives or formal group members), fetched when the modal opens
+  // so the scope choice can say how many the whole-set option covers.
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [openSiblings, setOpenSiblings] = useState([]);
+
   // Change-request review state. openCr = any pending request (drives the
   // direct-edit warning). pendingCr = the request being applied via the deep-link.
   // appliedCrId is captured ONCE at mount: the cleanup effect below strips
@@ -260,6 +267,46 @@ export default function ProposalDetail() {
     }
   };
 
+  // Archive flow. The scope popup only appears when the client actually has
+  // other open, unpaid proposals; otherwise a plain confirm suffices.
+  const ARCHIVABLE_STATUSES = ['draft', 'sent', 'viewed', 'modified', 'accepted'];
+  const openArchiveModal = async () => {
+    let siblings = [];
+    if (proposal.client_id) {
+      try {
+        const res = await api.get(`/clients/${proposal.client_id}`);
+        siblings = (res.data.proposals || []).filter((p) =>
+          Number(p.id) !== Number(id)
+          && ARCHIVABLE_STATUSES.includes(p.status)
+          && !(Number(p.amount_paid) > 0));
+      } catch {
+        siblings = []; // sibling fetch is best-effort; single-archive still works
+      }
+    }
+    if (siblings.length === 0) {
+      const ok = window.confirm('Archive this proposal? It moves to the Archived shelf and can be recovered later.');
+      if (ok) await doArchive('one');
+      return;
+    }
+    setOpenSiblings(siblings);
+    setShowArchiveModal(true);
+  };
+
+  const doArchive = async (scope) => {
+    setArchiving(true);
+    try {
+      const res = await api.post(`/proposals/${id}/archive`, { scope });
+      const n = (res.data.archived_ids || []).length;
+      toast.success(n > 1 ? `${n} proposals archived.` : 'Proposal archived.');
+      setShowArchiveModal(false);
+      loadProposal();
+    } catch (err) {
+      toast.error(err?.response?.data?.error || err.message || 'Failed to archive.');
+    } finally {
+      setArchiving(false);
+    }
+  };
+
   if (loading) return <div className="page"><div className="muted">Loading proposal…</div></div>;
   if (!proposal) return null;
 
@@ -370,6 +417,11 @@ export default function ProposalDetail() {
             {!editing && canMarkAccepted && (
               <button type="button" className="btn btn-primary" onClick={() => updateStatus('accepted')}>
                 <Icon name="check" size={12} />Mark accepted
+              </button>
+            )}
+            {!editing && ARCHIVABLE_STATUSES.includes(proposal.status) && (
+              <button type="button" className="btn btn-ghost" onClick={openArchiveModal} disabled={archiving}>
+                <Icon name="x" size={12} />{archiving ? 'Archiving…' : 'Archive'}
               </button>
             )}
           </div>
@@ -654,6 +706,45 @@ export default function ProposalDetail() {
           )}
         </div>
       </div>
+
+      {/* Archive scope modal: only shown when the client has other open,
+          unpaid proposals (loose alternatives or a formal comparison). */}
+      {showArchiveModal && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+          }}
+          onClick={() => !archiving && setShowArchiveModal(false)}>
+          <div className="card" style={{ width: '100%', maxWidth: 460 }}
+            onClick={(e) => e.stopPropagation()}>
+            <div className="card-head">
+              <h3>Archive proposal</h3>
+              <button type="button" className="btn btn-ghost btn-sm" disabled={archiving}
+                onClick={() => setShowArchiveModal(false)}>
+                <Icon name="x" size={11} />Cancel
+              </button>
+            </div>
+            <div className="card-body">
+              <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+                {proposal.client_name || 'This client'} has {openSiblings.length} other open
+                {' '}proposal{openSiblings.length === 1 ? '' : 's'}. Archive just this one, or the whole set?
+                Archived proposals move to the Archived shelf and can be recovered later.
+              </div>
+              <div className="vstack" style={{ gap: 8 }}>
+                <button type="button" className="btn btn-secondary" disabled={archiving}
+                  onClick={() => doArchive('one')}>
+                  Just this proposal
+                </button>
+                <button type="button" className="btn btn-primary" disabled={archiving}
+                  onClick={() => doArchive('set')}>
+                  {archiving ? 'Archiving…' : `This one + ${openSiblings.length} other${openSiblings.length === 1 ? '' : 's'} (whole set)`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Full activity log modal */}
       {showActivityPopup && proposal.activity && proposal.activity.length > 0 && (

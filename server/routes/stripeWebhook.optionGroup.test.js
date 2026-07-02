@@ -154,3 +154,52 @@ test('second option paying after the group is decided does NOT convert it', asyn
     `SELECT COUNT(*)::int AS n FROM invoices WHERE proposal_id = $1 AND status <> 'void'`, [loserId]);
   assert.equal(loserInv.n, 0, 'F2: no non-void invoice on a non-chosen option');
 });
+
+// ── Ungrouped same-client sweep (no proposal_groups row involved) ────────────
+
+async function seedUngroupedPair() {
+  const c = await pool.query(
+    `INSERT INTO clients (name, email) VALUES ('OG Sweep', $1) RETURNING id`,
+    [`ogsweep-${NONCE}-${clientIds.length}@example.com`]);
+  clientIds.push(c.rows[0].id);
+  const mk = async (status, amountPaid) => {
+    const p = await pool.query(
+      `INSERT INTO proposals (client_id, status, total_price, deposit_amount, pricing_snapshot, amount_paid)
+       VALUES ($1, $2, 100, 100, '{}'::jsonb, $3) RETURNING id`,
+      [c.rows[0].id, status, amountPaid]);
+    proposalIds.push(p.rows[0].id);
+    return p.rows[0].id;
+  };
+  return { mk };
+}
+
+test('ungrouped same-client alternative is swept when an initial deposit settles', async () => {
+  const { mk } = await seedUngroupedPair();
+  const chosenId = await mk('sent', 0);
+  const altId = await mk('draft', 0);
+
+  const r = await postWebhook({
+    id: `evt_${NONCE}_sw`, type: 'payment_intent.succeeded',
+    data: { object: { id: `pi_${NONCE}_sw`, amount: 10000, metadata: { proposal_id: String(chosenId), payment_type: 'deposit' } } },
+  });
+  assert.equal(r.status, 200, `webhook should 200, got ${r.status} ${r.body}`);
+
+  const alt = await one('SELECT status, archive_reason FROM proposals WHERE id = $1', [altId]);
+  assert.equal(alt.status, 'archived', 'the ungrouped alternative is swept');
+  assert.equal(alt.archive_reason, 'option_not_chosen');
+});
+
+test('a balance payment does NOT sweep the client\'s other open proposals', async () => {
+  const { mk } = await seedUngroupedPair();
+  const bookedId = await mk('deposit_paid', 100); // already booked; balance still owed
+  const nextEventDraftId = await mk('draft', 0);  // a legit new draft for their NEXT event
+
+  const r = await postWebhook({
+    id: `evt_${NONCE}_bal`, type: 'payment_intent.succeeded',
+    data: { object: { id: `pi_${NONCE}_bal`, amount: 5000, metadata: { proposal_id: String(bookedId), payment_type: 'balance' } } },
+  });
+  assert.equal(r.status, 200, `webhook should 200, got ${r.status} ${r.body}`);
+
+  const draft = await one('SELECT status FROM proposals WHERE id = $1', [nextEventDraftId]);
+  assert.equal(draft.status, 'draft', 'a later balance payment never sweeps other proposals');
+});

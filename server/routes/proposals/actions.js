@@ -13,7 +13,8 @@ const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { notifyAdminCategory } = require('../../utils/adminNotifications');
 const { linkPaymentToInvoice, createInvoiceOnSend } = require('../../utils/invoiceHelpers');
-const { commitGroupChoice } = require('../../utils/proposalGroupCommit');
+const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
+const { voidUnpaidProposalInvoice } = require('../../utils/invoiceVoid');
 const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
@@ -180,6 +181,7 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
   const appliedAmount = newAmountPaid - currentPaid;
 
   let groupChoice = { committed: false, conflict: false, archivedLoserIds: [] };
+  let sweptAlternativeIds = [];
   const dbClient = await pool.connect();
   try {
     await dbClient.query('BEGIN');
@@ -190,6 +192,14 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     groupChoice = await commitGroupChoice(proposal.id, dbClient);
     if (groupChoice.conflict) {
       throw new ConflictError('This option was not the one the client booked; it cannot take a payment.', 'OPTION_NOT_CHOSEN');
+    }
+
+    // Same-client sweep of ungrouped alternatives — only on the client's FIRST
+    // recorded payment (currentPaid 0). A later installment must never sweep:
+    // by then a new draft for the client's NEXT event is legitimate.
+    if (currentPaid === 0) {
+      const sweep = await sweepClientAlternatives(proposal.id, dbClient);
+      sweptAlternativeIds = sweep.sweptIds;
     }
 
     // accepted_at: an admin-recorded outside payment is an acceptance source
@@ -303,7 +313,7 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
   }
 
   // Best-effort reaps for archived losing options (marketing + change-request cancels).
-  for (const loserId of groupChoice.archivedLoserIds) {
+  for (const loserId of [...groupChoice.archivedLoserIds, ...sweptAlternativeIds]) {
     try {
       await cancelMarketingForProposal(loserId);
       await cancelPendingChangeRequestsForProposal(loserId);
@@ -313,6 +323,77 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
   }
 
   res.json({ success: true, status: newStatus, amount_paid: newAmountPaid });
+}));
+
+// Statuses an admin may archive from; mirrors the lifecycle state machine's
+// ->archived transitions exactly (paid/completed proposals never archive here).
+const ARCHIVABLE_STATUSES = ['draft', 'sent', 'viewed', 'modified', 'accepted'];
+
+/** POST /api/proposals/:id/archive — archive this proposal, or (scope 'set') this
+ *  plus every other open, unpaid proposal for the same client (covers formal
+ *  option groups and loose multi-proposal sets with one rule). Archives in one
+ *  transaction with unpaid-invoice voids; best-effort marketing/change-request
+ *  reaps run post-commit, matching the ->archived lifecycle semantics. */
+router.post('/:id/archive', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const scope = req.body?.scope === 'set' ? 'set' : 'one';
+
+  let archivedIds = [];
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    const { rows: [target] } = await dbClient.query(
+      'SELECT id, client_id, status FROM proposals WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!target) throw new NotFoundError('Proposal not found');
+    if (!ARCHIVABLE_STATUSES.includes(target.status)) {
+      throw new ConflictError('Only unpaid, unconverted proposals can be archived.', 'NOT_ARCHIVABLE');
+    }
+
+    let targetIds = [target.id];
+    if (scope === 'set' && target.client_id !== null) {
+      // Client-row lock: same serializer the payment-time sweep uses, so an
+      // admin bulk-archive and a settling payment can never deadlock.
+      await dbClient.query('SELECT id FROM clients WHERE id = $1 FOR UPDATE', [target.client_id]);
+      const { rows: siblings } = await dbClient.query(
+        `SELECT id FROM proposals
+          WHERE client_id = $1 AND id <> $2
+            AND status = ANY($3) AND COALESCE(amount_paid, 0) = 0
+          ORDER BY id
+          FOR UPDATE`,
+        [target.client_id, target.id, ARCHIVABLE_STATUSES]);
+      targetIds = targetIds.concat(siblings.map((s) => s.id));
+    }
+
+    for (const pid of targetIds) {
+      await dbClient.query(
+        `UPDATE proposals SET status = 'archived', updated_at = NOW() WHERE id = $1`, [pid]);
+      await voidUnpaidProposalInvoice(pid, dbClient);
+      await dbClient.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+         VALUES ($1, 'archived', 'admin', $2, $3)`,
+        [pid, req.user.id, JSON.stringify({ scope, via: 'archive_endpoint', batch_root: target.id })]);
+    }
+    archivedIds = targetIds;
+
+    await dbClient.query('COMMIT');
+  } catch (txErr) {
+    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    throw txErr;
+  } finally {
+    dbClient.release();
+  }
+
+  // Best-effort reaps, post-commit (a reap failure never rolls back the archive).
+  for (const pid of archivedIds) {
+    try {
+      await cancelMarketingForProposal(pid);
+      await cancelPendingChangeRequestsForProposal(pid);
+    } catch (reapErr) {
+      if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(reapErr, { tags: { route: 'proposals/archive', reap: 'admin_archive' } });
+    }
+  }
+
+  res.json({ archived_ids: archivedIds });
 }));
 
 module.exports = router;

@@ -449,6 +449,7 @@ dr-bartender/
 - Admin-overridable balance due dates
 - Hourly autopay scheduler charges saved payment methods when balance is due
 - Proposal options / compare: admin sends a client 2-3 alternative proposals (say, BYOB next to Hosted) behind ONE `/compare/:token` link with side-by-side package contents; the client chooses and signs/pays on that option's normal page; the first settled payment locks the winner (first-writer-wins), archives the other options, and voids their unpaid invoices. Grouped sends go out as a single "Compare your options" email with per-option comms suppressed and invoicing deferred to the winner's payment.
+- Automatic alternative cleanup: a client's FIRST settled payment also archives their other open, unpaid proposals (loose ungrouped alternatives, not just formal comparisons) as `option_not_chosen`; later balance/extras payments never touch them. Admin can archive manually from Proposal Detail, with a scope popup (just this proposal, or the client's whole open set) when other open proposals exist.
 
 ### Event Planning (Potion Planning Lab)
 - Public questionnaire sent to clients via unique token link
