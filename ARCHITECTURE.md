@@ -461,7 +461,7 @@ Agent + admin-paste surface for filling the customer email Thumbtack never sends
 ### Invoices — `/api/invoices`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/t/:token` | No (token-gated) | Fetch invoice by shareable token — line items, payments, client/event info |
+| GET | `/t/:token` | No (token-gated) | Fetch invoice by shareable token — line items, payments, refunds (succeeded, informational), client/event info |
 | GET | `/proposal/:proposalId` | Admin | List all invoices for a proposal |
 | GET | `/recent` | Admin | Latest 20 invoices for financials dashboard |
 | POST | `/proposal/:proposalId` | Admin | Manually create invoice against a proposal |

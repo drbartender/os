@@ -46,7 +46,7 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
   const invoice = result.rows[0];
 
   // Parallel fetch line items and payments
-  const [lineItemsRes, paymentsRes] = await Promise.all([
+  const [lineItemsRes, paymentsRes, refundsRes] = await Promise.all([
     pool.query(
       `SELECT id, description, quantity::float8 AS quantity, unit_price, line_total, source_type
          FROM invoice_line_items
@@ -63,6 +63,21 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
         ORDER BY ip.created_at`,
       [invoice.id]
     ),
+    // Refunds attributable to THIS invoice: a refund links to a payment
+    // (proposal_refunds.payment_id), and a payment links to an invoice
+    // (invoice_payments.payment_id), so a succeeded refund shows on the invoice
+    // its payment funded. amount is CENTS. Informational only — the invoice's
+    // amount_paid/status are unchanged (a refund is money returned, not re-owed).
+    // pr.reason is deliberately NOT selected: it is admin free-text (often an
+    // internal note) and this is a public token route — clients see amount + date only.
+    pool.query(
+      `SELECT DISTINCT pr.id, pr.amount, pr.created_at
+         FROM proposal_refunds pr
+         JOIN invoice_payments ip ON ip.payment_id = pr.payment_id
+        WHERE ip.invoice_id = $1 AND pr.status = 'succeeded'
+        ORDER BY pr.created_at`,
+      [invoice.id]
+    ),
   ]);
 
   res.json({
@@ -70,6 +85,7 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
       ...invoice,
       line_items: lineItemsRes.rows,
       payments: paymentsRes.rows,
+      refunds: refundsRes.rows,
     },
   });
 }));

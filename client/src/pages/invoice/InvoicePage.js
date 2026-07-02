@@ -267,6 +267,17 @@ export default function InvoicePage() {
             </div>
           )}
 
+          {invoice.refunds && invoice.refunds.length > 0 && (
+            <div className="invoice-payment-details">
+              <p className="invoice-meta-label" style={{ marginBottom: '0.5rem' }}>Refunds</p>
+              {invoice.refunds.map((r) => (
+                <p key={r.id} className="invoice-payment-line">
+                  {formatDate(r.created_at)} — {formatCurrency(r.amount)} refunded
+                </p>
+              ))}
+            </div>
+          )}
+
           <p className="invoice-notes">
             Coverage includes $2 million general &amp; liquor liability insurance.
             Service governed by the standard Dr. Bartender agreement signed with the proposal.
