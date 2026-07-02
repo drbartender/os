@@ -388,3 +388,18 @@ async function addAlternative(sourceProposalId, actorUserId, pool) {
 ## Execution
 
 Lane-by-lane per the wave graph: cut a worktree off `main` (`npm run worktree:new`), build the lane's tasks, run its declared fleet, squash-merge, delete. Nothing ships until a separate explicit push.
+
+---
+
+## Post-merge review findings (2026-07-01) — fix BEFORE the compare-UI lanes go live
+
+The server lanes (schema, group-core, money-commit, refunds-on-invoice, compare-api, grouped-send) were chunk-reviewed with a full coverage manifest and pushed to prod at `afde99e`. All 22 tests green. The feature is **dormant in prod** (no client UI creates a `group_id` yet), so the findings below are on paths that cannot execute until the group-creation UI (Task 14) ships. Fold these fixes into that work.
+
+- [ ] **F1 — conflict-path spurious staff SMS blast.** `server/routes/stripeWebhook.js` last-minute-hold block (~L196-214) sets `last_minute_hold`/`isLastMinuteHold` and the post-commit `notifyLastMinuteBooking` (~L414) fires with NO `!groupChoice.conflict` guard. On a conflicting late payment (2nd option paid after the group decided → loser already archived), this blasts admin + broad-net staff SMS for a non-event (Twilio cost + scramble). Fix: wrap in `if (!groupChoice.conflict)`, mirroring the shift-creation guard at ~L433. Apply to BOTH webhook branches (intent + payment-link ~L651+).
+- [ ] **F2 — conflict-path dangling Balance invoice.** `server/routes/stripeWebhook.js` `createBalanceInvoice(proposalId)` runs unconditionally at ~L381 (intent, deposit) and ~L736 (payment-link). On a conflicting loser deposit it mints a `sent` full-total Balance invoice on an archived proposal (ledger drift / inflates any un-status-filtered AR rollup). Fix: gate both on `!groupChoice.conflict`.
+  - **Root cause for F1+F2:** conflict-path side effects were not comprehensively guarded — only shift-creation got `!groupChoice.conflict`. Audit ALL side effects in both webhook branches; also consider gating the client "payment received" receipt on conflict.
+- [ ] **F3 — refunds combined-payment over-display (reachable today, rare, display-only).** `server/routes/invoices.js:73-80`. On the `drink_plan_with_balance` flow one payment funds two invoices; a refund targets the payment, so the display JOIN renders the full `pr.amount` on BOTH invoices — can show a refund larger than an invoice's own paid amount. Proposal ledger stays correct. Fix option: clamp displayed amount to the net applied to this invoice via that payment (`LEAST(pr.amount, Σ net_applied_on_this_invoice)`), or consciously accept + document.
+
+**Integration caveats (not defects) — verify before sending a real grouped comparison to a client:**
+- The `/compare/:token` email CTA is a **dead link** until the client compare-page route (Task 12/13) ships — nothing in `client/src/App.js` resolves it yet.
+- Winner-invoice creation lives in `commitGroupChoice` (settle-time). Confirm the webhook settle caller actually creates the winner's invoice in prod (the money seam) once the feature is live.
