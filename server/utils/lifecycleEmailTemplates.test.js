@@ -18,6 +18,15 @@ test('portalInvite > first-name greeting, portal URL, one-time-code copy, no em 
   assertNoEmDash(out.subject, 'subject');
   assertNoEmDash(out.text, 'text');
   assertNoEmDash(out.html, 'html');
+  // NEGATIVE token guard: this email's entire security property is that no
+  // token/OTP/UUID rides in it (the portal sits behind the OTP login). Reject
+  // token-ish content outright and anchor the URL so a future edit that
+  // appends ?token=... fails here instead of shipping.
+  for (const body of [out.html, out.text]) {
+    assert.ok(!/token/i.test(body), 'no "token" anywhere in the invite');
+    assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(body), 'no UUID in the invite');
+    assert.ok(!/my-proposals[?#/]/.test(body), 'portal URL has nothing appended after /my-proposals');
+  }
   // Null-name fallback greets generically, never "undefined".
   const fallback = t.portalInvite({ clientName: null, portalUrl: 'https://x/p' });
   assert.match(fallback.text, /Hi there,/);
