@@ -403,3 +403,16 @@ The server lanes (schema, group-core, money-commit, refunds-on-invoice, compare-
 **Integration caveats (not defects) — verify before sending a real grouped comparison to a client:**
 - The `/compare/:token` email CTA is a **dead link** until the client compare-page route (Task 12/13) ships — nothing in `client/src/App.js` resolves it yet.
 - Winner-invoice creation lives in `commitGroupChoice` (settle-time). Confirm the webhook settle caller actually creates the winner's invoice in prod (the money seam) once the feature is live.
+
+---
+
+## Prod money-seam smoke checklist (run at the FIRST real grouped booking)
+
+Verified 2026-07-02: prod has zero `proposal_groups` rows, so there is nothing to smoke yet. When the first real grouped option takes its first settled payment, run these read-only against the prod Neon branch (`br-noisy-frog-ad99sa6l`) and confirm each:
+
+1. `SELECT id, chosen_proposal_id, token FROM proposal_groups ORDER BY id DESC LIMIT 5` — the group is decided (chosen_proposal_id set exactly once).
+2. Losers: `SELECT id, status, archive_reason, amount_paid FROM proposals WHERE group_id = <gid> AND id <> <winner>` — every loser is `archived` / `option_not_chosen` / `amount_paid = 0`.
+3. Loser invoices: `SELECT id, label, status, amount_paid FROM invoices WHERE proposal_id IN (<loser ids>)` — unpaid ones `void`, nothing new minted (no dangling `sent` Balance invoice).
+4. Winner invoice (THE money seam): `SELECT id, label, status, amount_due, amount_paid FROM invoices WHERE proposal_id = <winner> ORDER BY id` — the deferred Deposit/Full invoice exists, matches `payment_type`, and has the settle payment linked (`SELECT * FROM invoice_payments WHERE invoice_id = <that id>`).
+5. Winner conversion: shift + drink plan created; no last-minute hold unless genuinely <=72h.
+6. Loser side effects absent: no balance-reminder rows scheduled for losers, no last-minute SMS fired for a loser (check `proposal_activity_log` for the loser ids).
