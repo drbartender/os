@@ -6,6 +6,24 @@ function assertNoEmDash(str, label) {
   assert.ok(!str.includes('—'), `${label} must not contain an em dash`);
 }
 
+test('portalInvite > first-name greeting, portal URL, one-time-code copy, no em dash', () => {
+  const out = t.portalInvite({ clientName: 'Kim Nguyen', portalUrl: 'https://drbartender.com/my-proposals' });
+  assert.strictEqual(out.subject, 'Your Dr. Bartender client portal');
+  assert.match(out.html, /Hi Kim,/);
+  assert.match(out.html, /https:\/\/drbartender\.com\/my-proposals/);
+  assert.match(out.html, /one-time code/);
+  assert.match(out.text, /Hi Kim,/);
+  assert.match(out.text, /https:\/\/drbartender\.com\/my-proposals/);
+  assert.match(out.text, /one-time code/);
+  assertNoEmDash(out.subject, 'subject');
+  assertNoEmDash(out.text, 'text');
+  assertNoEmDash(out.html, 'html');
+  // Null-name fallback greets generically, never "undefined".
+  const fallback = t.portalInvite({ clientName: null, portalUrl: 'https://x/p' });
+  assert.match(fallback.text, /Hi there,/);
+  assert.ok(!fallback.text.includes('undefined'));
+});
+
 test('lastMinuteStaffingConfirmation > singular subject + body', () => {
   const out = t.lastMinuteStaffingConfirmation({
     eventDate: 'Saturday, May 30, 2026',

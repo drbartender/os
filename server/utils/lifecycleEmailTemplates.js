@@ -473,8 +473,34 @@ function gratuityStaffingChange({ name, newTotal, gratuity }) {
   return { subject, html, text };
 }
 
+/**
+ * Client-portal invite (admin-triggered from the proposal detail page).
+ * Plain invite by design: the portal is behind the OTP login (enter your
+ * email, get a one-time code; the portal redirects unauthenticated arrivals
+ * to the right login path per host), so NO token rides in this email and
+ * there is nothing to expire or leak. Same URL pattern as the change-request
+ * emails.
+ */
+function portalInvite({ clientName, portalUrl }) {
+  const first = (clientName || 'there').trim().split(/\s+/)[0] || 'there';
+  return {
+    subject: 'Your Dr. Bartender client portal',
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Everything for your event, in one place</h2>
+      <p>Hi ${esc(first)},</p>
+      <p>Your client portal has your proposals, payments, receipts, and event details together in one place.</p>
+      ${ctaButton(portalUrl, 'Open my portal')}
+      <p style="font-size:14px;color:${BRAND.secondary};">Logging in is easy: enter the email address this message was sent to and we'll send you a one-time code. No password needed.</p>
+      <p style="font-size:14px;color:${BRAND.secondary};">Questions? Just reply to this email.</p>
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${first}, your Dr. Bartender client portal has your proposals, payments, receipts, and event details together in one place: ${portalUrl}. Logging in is easy: enter the email address this message was sent to and we'll send you a one-time code. No password needed. Questions? Just reply. Cheers, The Dr. Bartender Team`,
+  };
+}
+
 module.exports = {
   signedAndPaidClient,
+  portalInvite,
   drinkPlanLink,
   drinkPlanBalanceUpdate,
   shoppingListReady,

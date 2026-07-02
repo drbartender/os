@@ -64,6 +64,7 @@ export default function EventDetailPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [editing, setEditing] = useState(false);
+  const [inviting, setInviting] = useState(false);
 
   // Proposal + shifts refetch — passed to the payment panel `onUpdate` and run
   // after an event edit (date/time/location/contact changes re-sync the linked
@@ -240,6 +241,30 @@ export default function EventDetailPage() {
             {!editing && (
               <button type="button" className="btn btn-secondary" onClick={() => setEditing(true)}>
                 <Icon name="pen" size={12} />Edit
+              </button>
+            )}
+            {/* Booked events are where portal use matters most, so the invite
+                lives here as well as on ProposalDetail (same endpoint, same id). */}
+            {!editing && proposal.client_email && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={inviting}
+                onClick={async () => {
+                  const who = proposal.client_name || 'the client';
+                  if (!window.confirm(`Email ${who} an invite to their client portal?`)) return;
+                  setInviting(true);
+                  try {
+                    await api.post(`/proposals/${proposal.id}/portal-invite`);
+                    toast.success('Portal invite sent.');
+                  } catch (e) {
+                    toast.error(e.message || 'Failed to send portal invite.');
+                  } finally {
+                    setInviting(false);
+                  }
+                }}
+              >
+                <Icon name="send" size={12} />{inviting ? 'Inviting…' : 'Invite to portal'}
               </button>
             )}
             {/* cc-imported proposals miss the normal post-conversion nudge schedule

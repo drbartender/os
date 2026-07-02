@@ -3,6 +3,7 @@
 // stored subject line (then a humanized type) for auto-captured 'other' rows.
 const LABELS = {
   proposal_sent: 'Proposal sent',
+  portal_invite: 'Portal invite',
   proposal_signed: 'Signed confirmation',
   signed_and_paid: 'Signed and paid',
   drink_plan_ready: 'Drink plan sent',

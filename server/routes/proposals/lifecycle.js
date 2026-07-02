@@ -8,6 +8,9 @@ const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const { createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
 const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
+const { sendEmail } = require('../../utils/email');
+const emailTemplates = require('../../utils/emailTemplates');
+const { PUBLIC_SITE_URL } = require('../../utils/urls');
 
 const router = express.Router();
 
@@ -253,6 +256,46 @@ router.post('/:id/resend', auth, requireAdminOrManager, adminWriteLimiter, async
     );
   } catch (logErr) {
     console.error('Resend activity-log insert failed (non-blocking) for proposal', req.params.id, logErr.code || logErr.name);
+  }
+
+  res.json({ ok: true });
+}));
+
+/**
+ * POST /api/proposals/:id/portal-invite — email the client their portal link
+ * (admin-triggered). Plain invite: the portal sits behind the OTP login
+ * (email a one-time code), so no token rides in the email. Email-only per the
+ * prefer-email-over-SMS default. A send failure surfaces to the admin (this
+ * is a deliberate manual action, not a best-effort side effect); the activity
+ * log is secondary and never 500s an already-sent invite.
+ */
+router.post('/:id/portal-invite', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
+  const pd = await pool.query(`
+    SELECT c.name AS client_name, c.email AS client_email
+    FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+    WHERE p.id = $1`, [req.params.id]);
+  const row = pd.rows[0];
+  if (!row) throw new NotFoundError('Proposal not found');
+  if (!row.client_email) throw new ValidationError({}, 'No client email on file to invite.');
+
+  const tpl = emailTemplates.portalInvite({
+    clientName: row.client_name,
+    portalUrl: `${PUBLIC_SITE_URL}/my-proposals`,
+  });
+  await sendEmail({
+    to: row.client_email,
+    ...tpl,
+    meta: { proposalId: Number(req.params.id), messageType: 'portal_invite' },
+  });
+
+  try {
+    await pool.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+       VALUES ($1, 'portal_invite_sent', 'admin', $2, $3)`,
+      [req.params.id, req.user.id, JSON.stringify({ via: 'admin_invite' })]
+    );
+  } catch (logErr) {
+    console.error('Portal-invite activity-log insert failed (non-blocking) for proposal', req.params.id, logErr.code || logErr.name);
   }
 
   res.json({ ok: true });

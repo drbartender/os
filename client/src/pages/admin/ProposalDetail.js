@@ -64,6 +64,7 @@ export default function ProposalDetail() {
   // Public link copy
   const [linkCopied, setLinkCopied] = useState(false);
   const [resending, setResending] = useState(false);
+  const [inviting, setInviting] = useState(false);
 
   // Drink plan — state stays here because autoAddedMap/cocktailNameById on the
   // Pricing card read drinkPlan.selections.addOns. The card itself is extracted
@@ -213,6 +214,20 @@ export default function ProposalDetail() {
     }
   };
 
+  const invitePortal = async () => {
+    const who = proposal.client_name || 'the client';
+    if (!window.confirm(`Email ${who} an invite to their client portal?`)) return;
+    setInviting(true);
+    try {
+      await api.post(`/proposals/${id}/portal-invite`);
+      toast.success('Portal invite sent.');
+    } catch (err) {
+      toast.error(err.message || 'Failed to send portal invite.');
+    } finally {
+      setInviting(false);
+    }
+  };
+
   const saveNotes = async () => {
     setSavingNotes(true);
     try {
@@ -345,6 +360,11 @@ export default function ProposalDetail() {
             {!editing && canResend && (
               <button type="button" className="btn btn-secondary" onClick={resendProposal} disabled={resending}>
                 <Icon name="send" size={12} />{resending ? 'Resending…' : 'Resend'}
+              </button>
+            )}
+            {!editing && proposal.client_email && (
+              <button type="button" className="btn btn-ghost" onClick={invitePortal} disabled={inviting}>
+                <Icon name="send" size={12} />{inviting ? 'Inviting…' : 'Invite to portal'}
               </button>
             )}
             {!editing && canMarkAccepted && (

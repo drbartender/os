@@ -972,6 +972,7 @@ module.exports = {
   postConsultClient: lifecycle.postConsultClient,
   lastMinuteStaffingConfirmation: lifecycle.lastMinuteStaffingConfirmation,
   gratuityStaffingChange: lifecycle.gratuityStaffingChange,
+  portalInvite: lifecycle.portalInvite,
   // Pre-event reminder emails (Plan 2c)
   eventWeekReminderClient,
   rescheduleNotificationClient,
