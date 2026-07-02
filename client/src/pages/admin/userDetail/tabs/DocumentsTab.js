@@ -3,37 +3,55 @@ import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
 import { fmtDateFull } from '../../../../components/adminos/format';
 
-export default function DocumentsTab({ agreement, payment, profile, application, downloadFile }) {
+export default function DocumentsTab({ agreement, payment, profile, application, previewFile, previewLoading }) {
+  // url + filename are derived as a PAIR from the same source (profile vs
+  // application). Mixing a profile URL with an application filename would let
+  // the extension used for preview-type detection mismatch the file served.
+  const alcohol = profile?.alcohol_certification_file_url
+    ? { url: profile.alcohol_certification_file_url, filename: profile?.alcohol_certification_filename || null }
+    : { url: application?.basset_file_url || null, filename: application?.basset_filename || null };
+  const resume = profile?.resume_file_url
+    ? { url: profile.resume_file_url, filename: profile?.resume_filename || null }
+    : { url: application?.resume_file_url || null, filename: application?.resume_filename || null };
+  const headshot = profile?.headshot_file_url
+    ? { url: profile.headshot_file_url, filename: profile?.headshot_filename || null }
+    : { url: application?.headshot_file_url || null, filename: application?.headshot_filename || null };
+
   const items = [
     {
       name: 'Contractor agreement',
       sub: agreement?.signed_at ? `Signed ${fmtDateFull(String(agreement.signed_at).slice(0, 10))}` : 'Not signed yet',
       kind: agreement?.signed_at ? 'ok' : 'warn',
       url: null,
+      filename: null,
     },
     {
       name: 'W-9 (current year)',
       sub: payment?.w9_file_url ? (payment.w9_filename || 'Submitted') : 'Missing',
       kind: payment?.w9_file_url ? 'ok' : 'danger',
       url: payment?.w9_file_url || null,
+      filename: payment?.w9_filename || null,
     },
     {
       name: 'Alcohol certification',
-      sub: profile?.alcohol_certification_filename || application?.basset_filename || 'Missing',
-      kind: (profile?.alcohol_certification_file_url || application?.basset_file_url) ? 'ok' : 'warn',
-      url: profile?.alcohol_certification_file_url || application?.basset_file_url || null,
+      sub: alcohol.filename || (alcohol.url ? 'Submitted' : 'Missing'),
+      kind: alcohol.url ? 'ok' : 'warn',
+      url: alcohol.url,
+      filename: alcohol.filename,
     },
     {
       name: 'Resume',
-      sub: profile?.resume_filename || application?.resume_filename || 'Not on file',
-      kind: (profile?.resume_file_url || application?.resume_file_url) ? 'ok' : 'neutral',
-      url: profile?.resume_file_url || application?.resume_file_url || null,
+      sub: resume.filename || (resume.url ? 'Submitted' : 'Not on file'),
+      kind: resume.url ? 'ok' : 'neutral',
+      url: resume.url,
+      filename: resume.filename,
     },
     {
       name: 'Headshot',
-      sub: profile?.headshot_filename || application?.headshot_filename || 'Not on file',
-      kind: (profile?.headshot_file_url || application?.headshot_file_url) ? 'ok' : 'neutral',
-      url: profile?.headshot_file_url || application?.headshot_file_url || null,
+      sub: headshot.filename || (headshot.url ? 'Submitted' : 'Not on file'),
+      kind: headshot.url ? 'ok' : 'neutral',
+      url: headshot.url,
+      filename: headshot.filename,
     },
   ];
 
@@ -57,8 +75,13 @@ export default function DocumentsTab({ agreement, payment, profile, application,
                 {it.kind === 'ok' ? 'On file' : it.kind === 'danger' ? 'Missing' : it.kind === 'warn' ? 'Action' : '—'}
               </StatusChip>
               {it.url && (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadFile(it.url)}>
-                  <Icon name="external" size={11} />Open
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => previewFile(it.url, it.filename, it.name)}
+                  disabled={previewLoading === it.url}
+                >
+                  <Icon name="external" size={11} />{previewLoading === it.url ? 'Opening…' : 'Open'}
                 </button>
               )}
             </div>

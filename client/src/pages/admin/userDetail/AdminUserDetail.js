@@ -17,6 +17,7 @@ import {
 } from './helpers';
 import TabButton from './components/TabButton';
 import AssignToEventModal from './components/AssignToEventModal';
+import DocumentPreviewModal from '../../../components/adminos/DocumentPreviewModal';
 import OverviewTab from './tabs/OverviewTab';
 import ShiftsTab from './tabs/ShiftsTab';
 import CertificationsTab from './tabs/CertificationsTab';
@@ -38,6 +39,10 @@ export default function AdminUserDetail() {
 
   const [statusLoading, setStatusLoading] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
+
+  // Document preview lightbox (see previewFile below for the flow).
+  const [preview, setPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(null);
   const [customMessage, setCustomMessage] = useState('');
   const [permsSaving, setPermsSaving] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
@@ -189,6 +194,23 @@ export default function AdminUserDetail() {
       window.open(response.data.url, '_blank', 'noopener,noreferrer');
     } catch (e) {
       toast.error(e.message || 'Could not open file.');
+    }
+  };
+
+  // In-app document preview. Fetches the signed URL then opens the lightbox;
+  // previewLoading disables the clicked row button so a double-click can't
+  // fire two fetches. downloadFile stays as the modal's "Open in new tab"
+  // action — it re-signs a fresh URL, so it works past the 15-minute expiry.
+  const previewFile = async (url, filename, title) => {
+    if (!url || previewLoading) return;
+    setPreviewLoading(url);
+    try {
+      const response = await api.get(url);
+      setPreview({ title, filename, fileUrl: response.data.url, apiPath: url });
+    } catch (e) {
+      toast.error(e.message || 'Could not open file.');
+    } finally {
+      setPreviewLoading(null);
     }
   };
 
@@ -485,7 +507,7 @@ export default function AdminUserDetail() {
       )}
 
       {tab === 'certifications' && (
-        <CertificationsTab profile={profile} application={application} downloadFile={downloadFile} />
+        <CertificationsTab profile={profile} application={application} previewFile={previewFile} previewLoading={previewLoading} />
       )}
 
       {tab === 'payouts' && (
@@ -529,7 +551,7 @@ export default function AdminUserDetail() {
       )}
 
       {tab === 'documents' && (
-        <DocumentsTab agreement={agreement} payment={payment} profile={profile} application={application} downloadFile={downloadFile} />
+        <DocumentsTab agreement={agreement} payment={payment} profile={profile} application={application} previewFile={previewFile} previewLoading={previewLoading} />
       )}
 
       {tab === 'messages' && (
@@ -564,6 +586,17 @@ export default function AdminUserDetail() {
               .catch(() => {});
           }}
           toast={toast}
+        />
+      )}
+
+      {/* Document preview lightbox */}
+      {preview && (
+        <DocumentPreviewModal
+          title={preview.title}
+          filename={preview.filename}
+          fileUrl={preview.fileUrl}
+          onClose={() => setPreview(null)}
+          onOpenInNewTab={() => downloadFile(preview.apiPath)}
         />
       )}
 

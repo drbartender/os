@@ -8537,6 +8537,83 @@ html[data-app="admin-os"] .confirm-modal p {
   color: var(--ink-2);
 }
 
+/* ─── Document Preview Modal ─────────────────────────────── */
+/* Admin-os-only surface (user-detail doc tabs), so every rule is scoped under
+   the admin shell and built on the skin-aware tokens — NOT fixed light-paper
+   values — so it renders correctly in both House Lights and After Hours. */
+html[data-app="admin-os"] .doc-preview-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal);
+  padding: 1rem;
+}
+html[data-app="admin-os"] .doc-preview-modal {
+  background: var(--bg-elev);
+  color: var(--ink-1);
+  border: 1px solid var(--line-2);
+  box-shadow: var(--shadow-pop);
+  border-radius: var(--radius);
+  width: 100%;
+  max-width: 860px;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+}
+html[data-app="admin-os"] .doc-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line-2);
+}
+html[data-app="admin-os"] .doc-preview-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-family: var(--font-display);
+  color: var(--ink-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html[data-app="admin-os"] .doc-preview-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+html[data-app="admin-os"] .doc-preview-body {
+  flex: 1;
+  min-height: 240px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+html[data-app="admin-os"] .doc-preview-img {
+  max-width: 100%;
+  max-height: 78vh;
+  display: block;
+}
+html[data-app="admin-os"] .doc-preview-frame {
+  width: 100%;
+  height: 78vh;
+  border: 0;
+  background: var(--bg-1);
+}
+html[data-app="admin-os"] .doc-preview-loading,
+html[data-app="admin-os"] .doc-preview-empty {
+  color: var(--ink-2);
+  font-size: 13px;
+  padding: 24px;
+  text-align: center;
+}
+
 /* ─── Menu Samples Modal ─────────────────────────────────── */
 .menu-samples-overlay {
   position: fixed;

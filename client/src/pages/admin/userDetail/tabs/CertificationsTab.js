@@ -2,9 +2,14 @@ import React from 'react';
 import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
 
-export default function CertificationsTab({ profile, application, downloadFile }) {
-  const alcoholUrl = profile?.alcohol_certification_file_url || application?.basset_file_url;
-  const alcoholName = profile?.alcohol_certification_filename || application?.basset_filename;
+export default function CertificationsTab({ profile, application, previewFile, previewLoading }) {
+  // url + filename derived as a PAIR from the same source (profile vs
+  // application) so the preview-type extension always matches the file served.
+  const alcohol = profile?.alcohol_certification_file_url
+    ? { url: profile.alcohol_certification_file_url, filename: profile?.alcohol_certification_filename || null }
+    : { url: application?.basset_file_url || null, filename: application?.basset_filename || null };
+  const alcoholUrl = alcohol.url;
+  const alcoholName = alcohol.filename;
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 'var(--gap)' }}>
@@ -28,9 +33,10 @@ export default function CertificationsTab({ profile, application, downloadFile }
                 <button
                   type="button"
                   className="btn btn-ghost btn-sm"
-                  onClick={() => downloadFile(alcoholUrl)}
+                  onClick={() => previewFile(alcoholUrl, alcoholName, 'Alcohol certification')}
+                  disabled={previewLoading === alcoholUrl}
                 >
-                  <Icon name="external" size={11} />Open
+                  <Icon name="external" size={11} />{previewLoading === alcoholUrl ? 'Opening…' : 'Open'}
                 </button>
               </div>
             </div>
