@@ -352,6 +352,14 @@ export default function ShiftDetail() {
         </div>
       </div>
 
+      {/* Paid "No Tip Jar Displayed" choice: unmissable, above the fold.
+          Strict === false so legacy/null rows never show it. */}
+      {proposal?.tip_jar === false && (
+        <div className="sp-nojar-banner" role="alert">
+          <strong>NO TIP JAR</strong> The client paid to skip it. Do not set one out.
+        </div>
+      )}
+
       {/* Quick-status chips */}
       <div className="sp-row" style={{ flexWrap: 'wrap', gap: '0.4rem', marginTop: '0.6rem' }}>
         {viewer.is_admin ? (

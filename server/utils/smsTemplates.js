@@ -97,7 +97,13 @@ function rescheduleSms({ newDate, newStartTime, newLocation }) {
  * recognize the automation. Includes CONFIRM / CANT response codes.
  */
 function staffShiftReminderSms(ctx) {
-  return `Shift Reminder from Dr. Bartender: working ${ctx.eventTypeLabel} at ${ctx.clientName} tomorrow at ${ctx.startTimeLocal}, ${ctx.location}. Setup: ${ctx.setupArrivalTime}. Drink plan and shopping list: ${ctx.link}. Reply CONFIRM to acknowledge or CANT if you have a conflict.`;
+  // tipJar === false is the paid "No Tip Jar Displayed" choice; the packing
+  // decision happens off this reminder, so the warning rides here. Strict
+  // check: null/undefined (no linked proposal, legacy rows) adds nothing.
+  const noJarClause = ctx.tipJar === false
+    ? ' NO TIP JAR at this event: the client paid to skip it, do not set one out.'
+    : '';
+  return `Shift Reminder from Dr. Bartender: working ${ctx.eventTypeLabel} at ${ctx.clientName} tomorrow at ${ctx.startTimeLocal}, ${ctx.location}. Setup: ${ctx.setupArrivalTime}.${noJarClause} Drink plan and shopping list: ${ctx.link}. Reply CONFIRM to acknowledge or CANT if you have a conflict.`;
 }
 
 /**

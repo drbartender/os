@@ -69,7 +69,11 @@ export function GratuityTipsCard({ tipJar, gratuityPrepaid, staffNoun }) {
       </div>
       <div style={row}>
         <span style={{ opacity: 0.7 }}>Tip jar</span>
-        <span>{tipJar ? 'Yes, set out a tip jar' : 'No tip jar requested'}</span>
+        {tipJar ? (
+          <span>Yes, set out a tip jar</span>
+        ) : (
+          <span className="sp-nojar-text">NO TIP JAR, do not set one out</span>
+        )}
       </div>
       <div style={row}>
         <span style={{ opacity: 0.7 }}>Pre-paid gratuity</span>

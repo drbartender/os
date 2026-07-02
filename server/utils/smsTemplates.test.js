@@ -302,3 +302,19 @@ test('paymentFailureSms > falls back to "your event" when eventDate is null', ()
   const s = t.paymentFailureSms({ eventDate: null, link: 'https://x/p/abc' });
   assert.match(s, /payment for your event didn't go through/);
 });
+
+test('staffShiftReminderSms > NO TIP JAR warning only on strict tipJar === false', () => {
+  const base = {
+    eventTypeLabel: 'Birthday Party', clientName: 'Kim', startTimeLocal: '6:00 PM CDT',
+    location: '123 Main St', setupArrivalTime: '5:00 PM', link: 'https://x/sl/abc',
+  };
+  // The paid "No Tip Jar Displayed" choice carries the warning.
+  const noJar = t.staffShiftReminderSms({ ...base, tipJar: false });
+  assert.match(noJar, /NO TIP JAR at this event: the client paid to skip it, do not set one out\./);
+  assert.match(noJar, /Reply CONFIRM/, 'reply codes survive the inserted clause');
+  assertNoEmDash(noJar, 'staffShiftReminderSms (no jar)');
+  // tipJar true AND legacy null/undefined (older rows, missing proposal) stay clean.
+  assert.ok(!t.staffShiftReminderSms({ ...base, tipJar: true }).includes('NO TIP JAR'));
+  assert.ok(!t.staffShiftReminderSms({ ...base }).includes('NO TIP JAR'));
+  assert.ok(!t.staffShiftReminderSms({ ...base, tipJar: null }).includes('NO TIP JAR'));
+});

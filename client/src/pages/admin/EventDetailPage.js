@@ -218,6 +218,11 @@ export default function EventDetailPage() {
                 ⚠ Last-minute — verify staffing
               </span>
             )}
+            {proposal.tip_jar === false && (
+              <span className="lm-hold-badge" title="The client paid to skip the tip jar. Staff must not set one out.">
+                ⚠ No tip jar (client paid to skip it)
+              </span>
+            )}
             <div className="muted" style={{ fontSize: 13 }}>
               {fmtDateFull(proposal.event_date && String(proposal.event_date).slice(0, 10))}
               {timeRange && ` · ${timeRange}`}

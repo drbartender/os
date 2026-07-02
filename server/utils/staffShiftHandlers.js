@@ -329,7 +329,7 @@ async function loadStaffShiftContext(shiftId, staffUserId) {
             p.status AS proposal_status, p.token AS proposal_token,
             p.event_date, p.event_start_time, p.event_duration_hours,
             p.event_timezone, p.event_location,
-            p.event_type, p.event_type_custom,
+            p.event_type, p.event_type_custom, p.tip_jar,
             COALESCE(c.name, s.client_name) AS client_name,
             cp.preferred_name AS staff_name, cp.phone AS staff_phone
        FROM shifts s
@@ -410,6 +410,9 @@ async function handleShiftReminder({ entity, recipient }) {
     location: ctx.event_location || ctx.shift_location || 'TBD',
     setupArrivalTime: setupArrival,
     link,
+    // Strict === false is the paid "No Tip Jar Displayed" choice. NULL or
+    // undefined (older rows, missing proposal) must NOT trigger the warning.
+    tipJar: ctx.tip_jar,
   });
 
   await sendAndLogSms({

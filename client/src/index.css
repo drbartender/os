@@ -14022,6 +14022,39 @@ html[data-app="admin-os"] .sms-reply textarea.form-input:focus {
 .sp-chip.ok      { background: hsl(var(--sp-ok-h) var(--sp-ok-s) 50% / 0.14); color: hsl(var(--sp-ok-h) var(--sp-ok-s) 58%); border-color: hsl(var(--sp-ok-h) var(--sp-ok-s) 50% / 0.3); }
 .sp-chip.warn    { background: hsl(var(--sp-warn-h) var(--sp-warn-s) 50% / 0.16); color: hsl(var(--sp-warn-h) var(--sp-warn-s) 60%); border-color: hsl(var(--sp-warn-h) var(--sp-warn-s) 50% / 0.3); }
 .sp-chip.danger  { background: hsl(var(--sp-danger-h) var(--sp-danger-s) 55% / 0.16); color: hsl(var(--sp-danger-h) var(--sp-danger-s) 65%); border-color: hsl(var(--sp-danger-h) var(--sp-danger-s) 50% / 0.3); }
+
+/* Paid "No Tip Jar Displayed" alert on ShiftDetail. Dark (After Hours) uses
+   the --sp-danger tinted-box treatment; the light (Atelier) skin flips to the
+   jewel-tone bordeaux + transparent + square convention every other staff
+   danger surface follows (.sp-chip.danger, .sp-error-card, .sp-drop-danger). */
+.sp-nojar-banner {
+  margin-top: 0.6rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 8px;
+  background: hsl(var(--sp-danger-h) var(--sp-danger-s) 55% / 0.16);
+  border: 1px solid hsl(var(--sp-danger-h) var(--sp-danger-s) 50% / 0.4);
+  color: hsl(var(--sp-danger-h) var(--sp-danger-s) 65%);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+.sp-nojar-banner strong {
+  display: inline-block;
+  margin-right: 0.5rem;
+  letter-spacing: 0.04em;
+}
+[data-skin="light"] .sp-nojar-banner {
+  background: transparent;
+  border-color: var(--sp-ms-bordeaux);
+  border-radius: 0;
+  color: var(--sp-ms-bordeaux);
+}
+/* Danger text inside the BEO GratuityTipsCard no-jar row (class, not inline,
+   so the light skin can override the color for contrast on paper). */
+.sp-nojar-text {
+  font-weight: 700;
+  color: hsl(var(--sp-danger-h) var(--sp-danger-s) 65%);
+}
+[data-skin="light"] .sp-nojar-text { color: var(--sp-ms-bordeaux); }
 .sp-chip.info    { background: hsl(var(--sp-info-h) var(--sp-info-s) 50% / 0.16); color: hsl(var(--sp-info-h) var(--sp-info-s) 65%); border-color: hsl(var(--sp-info-h) var(--sp-info-s) 50% / 0.3); }
 .sp-chip.neutral { color: var(--sp-ink-3); }
 [data-skin="light"] .sp-chip.ok      { color: var(--sp-ms-emerald); background: transparent; }
