@@ -29,7 +29,9 @@ beforeEach(() => { jest.clearAllMocks(); localStorage.clear(); });
 test('reuses a token-matching proposalDetail without refetching', async () => {
   render(<PrescriptionTab focus={focusA} proposalDetail={detailA} />);
   expect(await screen.findByText('Package A')).toBeInTheDocument();
-  expect(api.get).not.toHaveBeenCalled();
+  // The change-request banner fetch always fires on mount; the guard under
+  // test is that the proposal DETAIL endpoint is not refetched.
+  expect(api.get).not.toHaveBeenCalledWith('/client-portal/proposals/tok-A', expect.anything());
 });
 
 test('ignores a token-MISMATCHED proposalDetail and fetches the focus token instead', async () => {
