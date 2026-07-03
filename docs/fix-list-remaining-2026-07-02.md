@@ -29,7 +29,10 @@ Research map:
 - v2 keeps the schema and review pages; overhauls phase 1/3/4 parsing, adds `package_id` resolution, AI address normalization, dry-run-on-prod-copy safety, idempotent corrective re-runs.
 - Open product questions: is the v2 spec still the direction; clean re-import over the botched v1 data vs forward-only correction; which CSV snapshot is canonical.
 
-### Shopping list: custom request cocktails — Large as specced, Small with the reframe
+### Shopping list / Bar Program — IN FLIGHT 2026-07-02, design-first
+RESHAPED after Dallas diagnosis (pars wrong so items get removed; quantities right; sig ingredients missing; "drinks all need recipes"): the project is now the cocktail-menu screen becoming the Bar Program surface — Menu (exists) + Recipes tab (structured rows; `cocktails.ingredients` JSONB exists, 0/24 populated on prod) + Pars tab (editable, replacing hardcoded `PARS_100`/`SPIRIT_PARS` in shoppingList.js:75-141 + client mirror). Design session FIRST per Dallas ("the tool decides what a surface should be"): prompt doc `docs/cocktail-menu-design-prompt.md` committed, Dallas runs it at claude.ai/design; build spec (endpoints, generator consumption, 24 seeded draft recipes, custom-cocktail fallback) comes after the design lands. Original notes below still describe the generator internals.
+
+### (superseded notes) Shopping list: custom request cocktails — Large as specced, Small with the reframe
 Two-layer gap found in research:
 1. The planner auto-gen path IGNORES `selections.customCocktails` entirely (`buildPlannerGeneratorInput` in `server/utils/shoppingListGen.js` only resolves structured `signatureDrinks`), while the consult path DOES fold customs in (`buildGeneratorInputFromConsult`, `shoppingList.js:449-473`). Inconsistent by source. Fixing layer 1 alone is a quick feed-through.
 2. Even when fed in, free-text ingredients mostly do not map: `mergeSignatureIngredients` keys off an ~18-entry hardcoded `INGREDIENT_MAP` (`shoppingList.js:116-136`); "elderflower liqueur" or "aperol" contribute nothing. Real accuracy needs a structured ingredient/unit catalog. This is the "needs a lot of work" part.
