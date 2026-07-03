@@ -42,7 +42,11 @@ PI-cancel wired into archive voids, Stripe calls moved off held DB connections.
 - **M8 + L2 proper fix** (design): refund scope selector + label-aware/multi-invoice payment
   linking. Overflow beyond one invoice's remaining due is currently alerted (Sentry
   overflow_capped) but unrepresented in the invoice sub-ledger (codex I1/I2, accepted).
-- **COPY batch**: em-dash sweep (~19 files) + sign-off voice decision (Dallas).
+- **COPY batch: DONE 2026-07-03 (merge f4722e0).** Voice = "Cheers, Dallas" (his call); 48
+  sign-offs standardized, 59 string em dashes replaced across the outbound copy files;
+  comments/dividers untouched, zero rewording; residual-dash grep clean, 51 tests green.
+  (Client-side React strings were outside this sweep's audit scope; a client/ copy pass is
+  a separate later item if wanted.)
 - **Design notes (deferred, small):** C4 refund-reversal treatment in the M4 fee share
   (reviewers split: gross-links = fees actually borne vs net-links = remaining exposure;
   currently gross); C5 stale clawback adjustment when a fee is captured after a same-period
