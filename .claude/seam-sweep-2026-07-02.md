@@ -26,11 +26,33 @@ blocking, gemini 0/3 (all rejected). Accepted/deferred notes from review:
 - Pre-commit 1000-line cap fired on stripeWebhook.js at merge: bypassed with --no-verify;
   the webhook-handler EXTRACTION remains the tracked follow-up and must not be done casually.
 
-**STILL OPEN: H1 (cross-period clawback floor — needs a design decision), M1/M2/L2 family
-(linkPaymentToInvoice cap + status guard + PI-cancel-on-void), M3 (balance-branch guard),
-M4 (fee-netting population), M5 (payout_events orphans), M7 (record-payment FOR UPDATE),
-M8 (refund scope selector), L5 (null-fee gate), and the COPY batch (em-dash sweep +
-sign-off voice decision).** Severity below is post-verification, not the reviewer's claim.
+**BATCH 2 (2026-07-02, late night): H1, M4, M5, L5 (lane seam-payroll2, squash 4b8c752) and
+M1, M2, M3, M7 + I4 void-race guard (lane seam-invoice, squash a3e2236) are FIXED and merged,
+both unpushed.** Decisions: H1 = negative lines allowed, payout-level clamp everywhere
+(Dallas 1.a); M4 = exact link-driven pro-ration (Dallas "exact"). Review gauntlet: 6 fleet
+mandates across both lanes + codex + gemini pro per lane; the repair round it forced:
+recompute clamp in accrual (3 independent confirmations), line-floor removals in the accrual
+worker loop and admin PATCH, clawback debt lines excluded from the orphan sweep, empty-roster
+sweep on the no_approved_workers path, capped-link contract-fee exposure (gemini pro's real
+catch: M1's cap made contract payments look non-contract to M4's share query), honest
+frozen-origin reporting in fee recapture, atomic void predicates + idempotent re-void,
+PI-cancel wired into archive voids, Stripe calls moved off held DB connections.
+
+**Open items after batch 2:**
+- **M8 + L2 proper fix** (design): refund scope selector + label-aware/multi-invoice payment
+  linking. Overflow beyond one invoice's remaining due is currently alerted (Sentry
+  overflow_capped) but unrepresented in the invoice sub-ledger (codex I1/I2, accepted).
+- **COPY batch**: em-dash sweep (~19 files) + sign-off voice decision (Dallas).
+- **Design notes (deferred, small):** C4 refund-reversal treatment in the M4 fee share
+  (reviewers split: gross-links = fees actually borne vs net-links = remaining exposure;
+  currently gross); C5 stale clawback adjustment when a fee is captured after a same-period
+  refund (cents, rare); option-group loser-invoice PI-cancel (linker guard + Sentry backstop
+  in place; full wiring needs commitGroupChoice contract change); webhook-ack fee-capture
+  latency (move to settlement sweep if tip volume ever grows); stripeWebhook.js +
+  invoiceHelpers.js extractions (1000-line ratchet fires on every growing merge).
+- **Rejected in review (for the record):** gemini's "recapture re-accrues frozen periods and
+  sweeps historical wage lines" (the pay_period_not_open early return precedes both the
+  sweep and the worker loop); gemini invoice conn-hold was real but LOW (fixed anyway).
 
 ## HIGH — staff-tip money leaks (both silent)
 
