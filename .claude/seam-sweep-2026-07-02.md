@@ -153,7 +153,7 @@ PI-cancel wired into archive voids, Stripe calls moved off held DB connections.
 
 ## Gemini sweeps
 
-- **Schema-vs-code drift (pro, money files): NO FINDINGS.**
+- **Schema-vs-code drift: NO FINDINGS, twice.** Money files (pro, 2026-07-02), then the FULL sweep 2026-07-03: schema.sql against all 138 SQL-bearing route+util files in two gemini-pro chunks, both explicit NO FINDINGS, stderr clean. CheckCherry grep same day: zero user-visible mentions (comments/ccImport tooling only).
 - **Copy audit (flash): 2 confirmed themes.** (1) Em dashes in client/staff-facing copy at scale:
   55 in emailTemplates.js, 10 in lifecycleEmailTemplates.js, and ~17 more copy files (sms.js,
   smsInbound.js, balanceSmsHandlers.js, dripSmsHandlers.js, paymentFailedClientNotify.js, ...) —
