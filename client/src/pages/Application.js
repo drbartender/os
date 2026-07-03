@@ -128,6 +128,19 @@ export default function Application() {
     clearField(name);
   }
 
+    // Long-form pages: on a failed submit, bring the first offending field into
+  // view (18 phone-screens of form otherwise strand the user at the bottom
+  // with only the banner). setTimeout lets React commit the error marks first.
+  function scrollToFirstError() {
+    setTimeout(() => {
+      const bad = document.querySelector('[aria-invalid="true"], .input-error, .field-error');
+      if (bad) {
+        bad.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (typeof bad.focus === 'function') bad.focus({ preventScroll: true });
+      }
+    }, 0);
+  }
+
   async function submit(e) {
     e.preventDefault();
     setError('');
@@ -150,7 +163,7 @@ export default function Application() {
     ];
 
     const result = validate(rules, form);
-    if (!result.valid) { setError(result.message); return; }
+    if (!result.valid) { setError(result.message); scrollToFirstError(); return; }
 
     // Age check (21+)
     const today = new Date();
@@ -161,6 +174,7 @@ export default function Application() {
     if (age < 21) {
       setFieldErrors({ birth_year: 'You must be at least 21 years old to apply.' });
       setError('You must be at least 21 years old to apply.');
+      scrollToFirstError();
       return;
     }
 
@@ -213,7 +227,7 @@ export default function Application() {
       }
     } catch (err) {
       setError(err.message || 'Failed to submit application.');
-      if (err.fieldErrors) setFieldErrors(err.fieldErrors);
+      if (err.fieldErrors) { setFieldErrors(err.fieldErrors); scrollToFirstError(); }
     } finally {
       setLoading(false);
     }

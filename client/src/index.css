@@ -5512,6 +5512,76 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   .wz-stepper-compact { display: flex; }
 }
 
+/* ── Wizard price bar (quote wizard only, <=900px) ──
+   Fixed bottom bar carrying the live Prescription total (tap = breakdown
+   sheet) and the step's primary action, so the price is visible while editing
+   and the CTA is never ten fields below the fold. Scoped to #quote: the class
+   wizard shares wz-* classes but has no bar. 900px matches the existing
+   .wz-sidebar stacking breakpoint, covering the 721-900px tablet band. */
+.wz-pricebar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  background: rgba(18, 22, 28, 0.97);
+  border-top: 1px solid rgba(184, 146, 74, 0.4);
+  z-index: var(--z-sticky);
+}
+.wz-pricebar-price {
+  background: none;
+  border: none;
+  color: var(--parchment);
+  font-family: var(--font-display);
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+  padding: 10px 4px;
+  cursor: pointer;
+  text-align: left;
+}
+.wz-pricebar-cta { min-height: 44px; white-space: nowrap; }
+.wz-pricebar-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: var(--z-overlay);
+  display: flex;
+  align-items: flex-end;
+}
+.wz-pricebar-sheet {
+  width: 100%;
+  max-height: 75vh;
+  overflow-y: auto;
+  background: var(--card-bg);
+  border-radius: 12px 12px 0 0;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+}
+.wz-pricebar-sheet-close {
+  float: right;
+  position: relative; /* paint above the following card so taps land on the button */
+  z-index: 1;
+  background: none;
+  border: none;
+  color: var(--deep-brown);
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.wz-pricebar-sheet .wz-price-card { border: none; box-shadow: none; }
+@media (max-width: 900px) {
+  .wz-pricebar { display: flex; }
+  #quote .wz-sidebar { display: none; }
+  #quote .wz-nav .btn-primary { display: none; }
+  #quote { padding-bottom: 96px; } /* clearance so FormBanner + Back clear the bar */
+}
+
 @keyframes wz-active-breathe {
   0%, 100% { transform: scale(1); }
   50%      { transform: scale(1.06); }

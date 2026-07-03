@@ -87,6 +87,19 @@ export default function Agreement() {
     return base;
   }, []);
 
+    // Long-form pages: on a failed submit, bring the first offending field into
+  // view (18 phone-screens of form otherwise strand the user at the bottom
+  // with only the banner). setTimeout lets React commit the error marks first.
+  function scrollToFirstError() {
+    setTimeout(() => {
+      const bad = document.querySelector('[aria-invalid="true"], .input-error, .field-error');
+      if (bad) {
+        bad.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (typeof bad.focus === 'function') bad.focus({ preventScroll: true });
+      }
+    }, 0);
+  }
+
   async function submit(e) {
     e.preventDefault();
     setError('');
@@ -94,7 +107,7 @@ export default function Agreement() {
 
     // Validate core fields
     const result = validate(rules, form);
-    if (!result.valid) { setError(result.message); return; }
+    if (!result.valid) { setError(result.message); scrollToFirstError(); return; }
 
     // Validate every ack is checked
     const uncheckedAcks = ackList.filter(a => !acks[a.key]);
@@ -103,6 +116,7 @@ export default function Agreement() {
       uncheckedAcks.forEach(a => { errs[a.key] = 'This acknowledgment is required'; });
       setFieldErrors(errs);
       setError('Please confirm each acknowledgment below before signing.');
+      scrollToFirstError();
       return;
     }
 
@@ -121,7 +135,7 @@ export default function Agreement() {
       navigate('/contractor-profile');
     } catch (err) {
       setError(err.message || 'Failed to save agreement.');
-      if (err.fieldErrors) setFieldErrors(err.fieldErrors);
+      if (err.fieldErrors) { setFieldErrors(err.fieldErrors); scrollToFirstError(); }
     } finally {
       setLoading(false);
     }

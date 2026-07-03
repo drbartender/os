@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import FormBanner from '../../../components/FormBanner';
-import { resolveGratuityDisplayLabel } from '../../../utils/gratuityLabels';
 import { useToast } from '../../../context/ToastContext';
 import { ADDON_CATEGORIES } from '../../../data/addonCategories';
 import useFormValidation from '../../../hooks/useFormValidation';
@@ -17,6 +16,8 @@ import {
   filterAddons,
 } from '../../../utils/proposalRules';
 import { getSteps, formatCurrency } from './helpers';
+import PrescriptionCard from './PrescriptionCard';
+import WizardPriceBar from './WizardPriceBar';
 import EventDetailsStep from './steps/EventDetailsStep';
 import YourInfoStep from './steps/YourInfoStep';
 import PackageStep from './steps/PackageStep';
@@ -37,6 +38,9 @@ export default function QuoteWizard() {
   const [loading, setLoading] = useState(true);
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  // Phones: hide the fixed price bar while a form control is focused, so the
+  // iOS keyboard never fights a position:fixed bottom bar (plan C2).
+  const [inputFocused, setInputFocused] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [success, setSuccess] = useState(null);
@@ -603,8 +607,26 @@ export default function QuoteWizard() {
 
   const ROMANS = ['I', 'II', 'III', 'IV', 'V'];
 
+  // Only text-entry controls summon the phone keyboard; radios, checkboxes,
+  // selects, and date wheels must NOT hide the bar (tapping a package card
+  // focuses its radio, and losing the bar there was a verified regression).
+  const summonsKeyboard = (t) => {
+    if (!t) return false;
+    if (t.tagName === 'TEXTAREA') return true;
+    if (t.tagName !== 'INPUT') return false;
+    return /^(text|email|tel|number|search|url|password)$/.test(t.type || 'text');
+  };
+  const trackFocus = (focused) => (e) => {
+    if (summonsKeyboard(e.target)) setInputFocused(focused);
+  };
+
   return (
-    <section className="wz-section" id="quote">
+    <section
+      className="wz-section"
+      id="quote"
+      onFocusCapture={trackFocus(true)}
+      onBlurCapture={trackFocus(false)}
+    >
       {/* Page hero — Apothecary Press */}
       <div className="ws-press-pagehero wz-pagehero">
         <div className="ws-wrap">
@@ -736,49 +758,10 @@ export default function QuoteWizard() {
           )}
         </div>
 
-        {/* Pricing sidebar — Apothecary Press parchment with brass frame */}
+        {/* Pricing sidebar — Apothecary Press parchment with brass frame.
+            Hidden at <=900px (the WizardPriceBar replaces it there). */}
         <div className="wz-sidebar">
-          <div className="wz-price-card">
-            <div className="kicker no-rule wz-price-kicker">Live Estimate</div>
-            <h3 className="wz-price-name">The Prescription</h3>
-            {preview ? (
-              <>
-                <div className="wz-price-total">{formatCurrency(preview.total)}</div>
-                <div className="wz-price-sub">final · all-in · adjusts down for unused hours</div>
-                <div className="divider-ornate wz-price-divider"><span>breakdown</span></div>
-                <div className="wz-price-breakdown">
-                  {preview.breakdown.map((item, i) => (
-                    <div key={i} className="wz-price-line">
-                      <span>{resolveGratuityDisplayLabel(item.label, preview)}</span>
-                      <span>{formatCurrency(item.amount)}</span>
-                    </div>
-                  ))}
-                </div>
-                {preview.floor_applied && (
-                  <div className="wz-price-note">Small event minimum applies</div>
-                )}
-                <div className="wz-price-meta">
-                  {preview.staffing.actual} bartender{preview.staffing.actual !== 1 ? 's' : ''} included
-                </div>
-                <div className="wz-price-trust">
-                  <div className="wz-trust-item">
-                    <span className="wz-trust-mark" aria-hidden="true">⚗</span>
-                    <span>Stripe · sign &amp; pay electronically</span>
-                  </div>
-                  <div className="wz-trust-item">
-                    <span className="wz-trust-mark" aria-hidden="true">⚗</span>
-                    <span>General + liquor liability included</span>
-                  </div>
-                  <div className="wz-trust-item">
-                    <span className="wz-trust-mark" aria-hidden="true">⚗</span>
-                    <span>$100 deposit locks the date</span>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <p className="wz-price-empty">Adjust your event details to see pricing</p>
-            )}
-          </div>
+          <PrescriptionCard preview={preview} />
         </div>
       </div>
 
@@ -814,6 +797,17 @@ export default function QuoteWizard() {
           </button>
         )}
       </div>
+
+      {/* Phones (<=900px): fixed bottom bar carries the live price + the
+          step's primary action; the in-flow primary above is hidden by CSS. */}
+      <WizardPriceBar
+        preview={preview}
+        isFinalStep={step >= steps.length - 1}
+        submitting={submitting}
+        onContinue={tryAdvance}
+        onSubmit={handleSubmit}
+        hidden={inputFocused}
+      />
     </section>
   );
 }
