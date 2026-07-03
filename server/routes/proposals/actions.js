@@ -14,7 +14,7 @@ const emailTemplates = require('../../utils/emailTemplates');
 const { notifyAdminCategory } = require('../../utils/adminNotifications');
 const { linkPaymentToInvoice, createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
-const { voidUnpaidProposalInvoice } = require('../../utils/invoiceVoid');
+const { voidUnpaidProposalInvoice, cancelOpenInvoiceIntents } = require('../../utils/invoiceVoid');
 const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
@@ -153,6 +153,13 @@ router.post('/:id/send-reminder', auth, requireAdminOrManager, asyncHandler(asyn
 router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { amount, paid_in_full, method } = req.body;
 
+  // Fast-fail + lock-gating snapshot ONLY (non-transactional). The authoritative
+  // money math is re-derived from a locked re-read INSIDE the tx below (M7), so a
+  // concurrent duplicate submit can never act on a stale amount_paid. This read
+  // still drives the 404 / already-paid / bad-amount fast fails and the
+  // currentPaid === 0 gating of the client-lock hoist + same-client sweep (both
+  // safe on a slightly stale value: locking the client is harmless and a redundant
+  // sweep is a no-op).
   const result = await pool.query(
     'SELECT id, total_price, amount_paid, deposit_amount, status FROM proposals WHERE id = $1',
     [req.params.id]
@@ -172,13 +179,10 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     throw new ValidationError({ amount: 'Enter a valid payment amount' });
   }
 
-  const newAmountPaid = Math.min(currentPaid + paymentAmount, totalPrice);
-  const isFullyPaid = newAmountPaid >= totalPrice;
-  const newStatus = isFullyPaid ? 'balance_paid' : 'deposit_paid';
-  // The capped delta actually applied to EVERY consumer — proposal ledger,
-  // invoice, activity log, and the client/admin receipt email — never the raw
-  // admin-supplied amount, so an over-payment reports the $Y applied, not $X entered.
-  const appliedAmount = newAmountPaid - currentPaid;
+  // Derived under the proposals row lock inside the tx (see the locked re-read
+  // below), never from the stale snapshot above; declared here so the post-commit
+  // receipt/response can read the values that were actually committed.
+  let newAmountPaid, isFullyPaid, newStatus, appliedAmount;
 
   let groupChoice = { committed: false, conflict: false, archivedLoserIds: [] };
   let sweptAlternativeIds = [];
@@ -212,6 +216,46 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
       sweptAlternativeIds = sweep.sweptIds;
     }
 
+    // M7: authoritative money read UNDER the proposals row lock. The prior code
+    // derived currentPaid/newAmountPaid/appliedAmount from the non-transactional
+    // pre-tx read above and then wrote a blind absolute amount_paid, so two
+    // concurrent duplicate submits (a double-click, or owner + VA) each read the
+    // same stale value and each wrote it, self-correcting the proposal column but
+    // leaving two payment rows + a double-linked invoice (ledger divergence).
+    // Locking the row serializes them: the second submit blocks here until the
+    // first commits, then derives its capped delta from the first's committed
+    // amount_paid. Placed AFTER commitGroupChoice/the sweep so the winner-row lock
+    // is taken with proposal_groups + the client already held (global lock order
+    // clients -> proposal_groups -> proposals); locking the winner earlier would
+    // invert against a concurrent same-group settle and could deadlock.
+    const locked = await dbClient.query(
+      'SELECT total_price, amount_paid, status FROM proposals WHERE id = $1 FOR UPDATE',
+      [proposal.id]
+    );
+    if (!locked.rows[0]) throw new NotFoundError('Proposal not found');
+    const lockedRow = locked.rows[0];
+    // A concurrent settle can have fully paid the proposal since the pre-tx read;
+    // re-apply the fully-paid guard under the lock so a duplicate rejects with
+    // ALREADY_PAID_IN_FULL (the existing response shape) instead of recording a
+    // zero-applied payment.
+    if (['balance_paid', 'confirmed'].includes(lockedRow.status)) {
+      throw new ConflictError('Proposal is already fully paid.', 'ALREADY_PAID_IN_FULL');
+    }
+    const lockedTotal = Number(lockedRow.total_price);
+    const lockedCurrentPaid = Number(lockedRow.amount_paid || 0);
+    const lockedPaymentAmount = paid_in_full ? lockedTotal - lockedCurrentPaid : Number(amount);
+    if (!lockedPaymentAmount || lockedPaymentAmount <= 0) {
+      throw new ValidationError({ amount: 'Enter a valid payment amount' });
+    }
+    // Same Math.min cap semantics as before, now computed from the locked values.
+    newAmountPaid = Math.min(lockedCurrentPaid + lockedPaymentAmount, lockedTotal);
+    isFullyPaid = newAmountPaid >= lockedTotal;
+    newStatus = isFullyPaid ? 'balance_paid' : 'deposit_paid';
+    // The capped delta actually applied to EVERY consumer (proposal ledger,
+    // invoice, activity log, and the client/admin receipt email), never the raw
+    // admin-supplied amount, so an over-payment reports the $Y applied, not $X entered.
+    appliedAmount = newAmountPaid - lockedCurrentPaid;
+
     // accepted_at: an admin-recorded outside payment is an acceptance source
     // (the client paid), so stamp it — otherwise the financial dashboard
     // (metricsQueries filters accepted_at IS NOT NULL) never counts these
@@ -228,12 +272,14 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
       await createInvoiceOnSend(proposal.id, dbClient);
     }
 
-    // Record in proposal_payments. Use the capped delta (newAmountPaid - currentPaid)
-    // so an over-payment request doesn't inflate the ledger beyond the proposal total.
+    // Record in proposal_payments. Use the capped applied delta (appliedAmount,
+    // derived from the locked read) so an over-payment request doesn't inflate the
+    // ledger beyond the proposal total, and a concurrent duplicate records only the
+    // delta on top of the first submit's committed amount_paid.
     await dbClient.query(
       `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status)
        VALUES ($1, $2, $3, 'succeeded')`,
-      [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round((newAmountPaid - currentPaid) * 100)]
+      [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round(appliedAmount * 100)]
     );
 
     // Log activity with the capped applied amount (appliedAmount, hoisted above),
@@ -348,6 +394,7 @@ router.post('/:id/archive', auth, requireAdminOrManager, asyncHandler(async (req
   const scope = req.body?.scope === 'set' ? 'set' : 'one';
 
   let archivedIds = [];
+  const voidedInvoicePairs = [];
   const dbClient = await pool.connect();
   try {
     await dbClient.query('BEGIN');
@@ -388,7 +435,8 @@ router.post('/:id/archive', auth, requireAdminOrManager, asyncHandler(async (req
     for (const pid of targetIds) {
       await dbClient.query(
         `UPDATE proposals SET status = 'archived', updated_at = NOW() WHERE id = $1`, [pid]);
-      await voidUnpaidProposalInvoice(pid, dbClient);
+      const voidRes = await voidUnpaidProposalInvoice(pid, dbClient);
+      for (const invId of voidRes.invoiceIds) voidedInvoicePairs.push({ proposalId: pid, invoiceId: invId });
       await dbClient.query(
         `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
          VALUES ($1, 'archived', 'admin', $2, $3)`,
@@ -412,6 +460,11 @@ router.post('/:id/archive', auth, requireAdminOrManager, asyncHandler(async (req
     } catch (reapErr) {
       if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(reapErr, { tags: { route: 'proposals/archive', reap: 'admin_archive' } });
     }
+  }
+  // Post-commit, best-effort: cancel open checkout PaymentIntents for every
+  // invoice this archive voided (seam-sweep M2); never throws, never blocks.
+  for (const pair of voidedInvoicePairs) {
+    await cancelOpenInvoiceIntents(pair.proposalId, pair.invoiceId);
   }
 
   res.json({ archived_ids: archivedIds });

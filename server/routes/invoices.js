@@ -5,6 +5,7 @@ const { pool } = require('../db');
 const { auth, requireAdminOrManager, clientAuth } = require('../middleware/auth');
 const { publicLimiter } = require('../middleware/rateLimiters');
 const { createInvoice, writeLineItems, voidExtrasInvoiceWithReconcile } = require('../utils/invoiceHelpers');
+const { cancelOpenInvoiceIntents } = require('../utils/invoiceVoid');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
 
@@ -348,9 +349,25 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   // void-before-refresh so the void/audit/reconcile logic never drifts).
   if (status === 'void' && existing.rows[0].label === 'Drink Plan Extras') {
     const client = await pool.connect();
+    let voidedRow;
     try {
       await client.query('BEGIN');
-      await voidExtrasInvoiceWithReconcile(id, req.user.id, client);
+      // Re-check under the row lock (seam-sweep I4): the pre-tx amount_paid
+      // read is stale, and a webhook can link a payment between that read and
+      // this transaction. Never void an invoice that has money on it.
+      const { rows: [locked] } = await client.query(
+        'SELECT amount_paid, status FROM invoices WHERE id = $1 FOR UPDATE', [id]
+      );
+      if (!locked) throw new NotFoundError('Invoice not found.');
+      if (Number(locked.amount_paid) > 0) {
+        throw new ConflictError(
+          'Cannot void an invoice with payments applied. Refund payments first.',
+          'INVOICE_HAS_PAYMENTS'
+        );
+      }
+      if (locked.status !== 'void') {
+        await voidExtrasInvoiceWithReconcile(id, req.user.id, client);
+      }
       const voided = await client.query(
         `SELECT id, token, proposal_id, invoice_number, label,
                 amount_due, amount_paid, status, due_date,
@@ -359,19 +376,32 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         [id]
       );
       await client.query('COMMIT');
-      return res.json({ invoice: voided.rows[0] });
+      voidedRow = voided.rows[0];
     } catch (err) {
       try { await client.query('ROLLBACK'); } catch { /* swallow rollback noise */ }
       throw err;
     } finally {
       client.release();
     }
+    // Post-commit, best-effort, AFTER the pool client is released (Stripe
+    // network calls must not hold a DB connection): cancel any open checkout
+    // PaymentIntents so a client with the pay page already open cannot be
+    // charged for the just-voided invoice (seam-sweep M2). Never blocks.
+    await cancelOpenInvoiceIntents(existing.rows[0].proposal_id, id);
+    return res.json({ invoice: voidedRow });
   }
 
+  // When voiding, the UPDATE predicate re-checks payability atomically
+  // (seam-sweep I4): the pre-read amount_paid is stale, and a webhook can link
+  // a payment between the read and this UPDATE. A void request that loses that
+  // race matches zero rows and 409s instead of voiding a paid invoice.
+  const voidGuard = status === 'void'
+    ? ` AND amount_paid = 0 AND status IN ('draft', 'sent', 'partially_paid')`
+    : '';
   const result = await pool.query(
     `UPDATE invoices
         SET ${setClauses.join(', ')}, updated_at = NOW()
-      WHERE id = ${idParam}
+      WHERE id = ${idParam}${voidGuard}
       RETURNING id, token, proposal_id, invoice_number, label,
                 amount_due, amount_paid, status, due_date,
                 locked, locked_at, created_at, updated_at`,
@@ -379,7 +409,28 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   );
 
   if (!result.rows[0]) {
-    throw new NotFoundError('Invoice not found.');
+    const { rows: [current] } = await pool.query(
+      `SELECT id, token, proposal_id, invoice_number, label,
+              amount_due, amount_paid, status, due_date,
+              locked, locked_at, created_at, updated_at
+         FROM invoices WHERE id = $1`,
+      [id]
+    );
+    if (!current) throw new NotFoundError('Invoice not found.');
+    // Idempotent re-void: already void is a success, not a conflict.
+    if (status === 'void' && current.status === 'void') {
+      return res.json({ invoice: current });
+    }
+    throw new ConflictError(
+      'Cannot void an invoice with payments applied. Refund payments first.',
+      'INVOICE_HAS_PAYMENTS'
+    );
+  }
+
+  // Post-commit, best-effort PI cancellation on void (seam-sweep M2); see the
+  // extras path above for rationale.
+  if (status === 'void') {
+    await cancelOpenInvoiceIntents(result.rows[0].proposal_id, id);
   }
 
   res.json({ invoice: result.rows[0] });

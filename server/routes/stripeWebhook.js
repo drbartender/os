@@ -145,15 +145,29 @@ router.post('/webhook', asyncHandler(async (req, res) => {
               WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')
             `, [proposalId, intent.amount / 100]);
           } else if (paymentType === 'balance') {
-            // Guard archived too — an admin can archive a proposal between the
-            // client opening Stripe and the webhook landing. Reviving it would
-            // break the documented archived → only-draft state machine.
-            // Additive + derived status (same rationale as 'full'): credit what was charged, never "= total_price".
+            // M3 (phantom-Outstanding fix): credit the balance monotonically across
+            // EVERY money-bearing lifecycle state, not just 'deposit_paid'. The old
+            // `WHERE status = 'deposit_paid'` matched zero rows whenever an admin moved
+            // the proposal forward (e.g. to 'confirmed') before the balance webhook
+            // landed: the payment row still committed and the Balance invoice still
+            // paid via the label-blind link below, but amount_paid never incremented,
+            // leaving a phantom Outstanding balance. The WHERE now admits the paid/
+            // confirmed/completed states so the credit always lands; 'archived' stays
+            // excluded, since reviving it would break the documented archived ->
+            // only-draft state machine. Status stays GUARDED by the CASE: only 'deposit_paid'
+            // advances (to balance_paid once fully paid); confirmed/completed are
+            // preserved, never rewound by a payment. Additive, never "= total_price"
+            // (same rationale as the full branch). Idempotent via the proposal_payments
+            // ON CONFLICT insert above.
             await dbClient.query(`
               UPDATE proposals
               SET amount_paid = COALESCE(amount_paid, 0) + $2, autopay_status = NULL,
-                  status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END
-              WHERE id = $1 AND status = 'deposit_paid'
+                  status = CASE
+                    WHEN status IN ('confirmed', 'completed') THEN status
+                    WHEN COALESCE(amount_paid, 0) + $2 >= total_price THEN 'balance_paid'
+                    ELSE 'deposit_paid'
+                  END
+              WHERE id = $1 AND status IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed')
             `, [proposalId, intent.amount / 100]);
           } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
             // Drink plan extras payment — increment amount_paid
