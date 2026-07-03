@@ -10,8 +10,8 @@ const BALANCE_OPTIONS = [
 ];
 
 const NA_OPTIONS = [
-  { value: 'yes', label: 'Yes — some guests won’t drink beer or wine' },
-  { value: 'no', label: 'No — beer and wine covers everyone' },
+  { value: 'yes', label: 'Yes, some guests won’t drink beer or wine' },
+  { value: 'no', label: 'No, beer and wine covers everyone' },
   { value: 'unsure', label: 'Not sure yet' },
 ];
 

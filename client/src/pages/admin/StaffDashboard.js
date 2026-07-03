@@ -65,7 +65,7 @@ export default function StaffDashboard() {
       <div className="page-header">
         <div>
           <div className="page-title">Staff</div>
-          <div className="page-subtitle">Active roster — hiring pipeline lives next door.</div>
+          <div className="page-subtitle">Active roster. Hiring pipeline lives next door.</div>
         </div>
         <div className="page-actions">
           <button type="button" className="btn btn-secondary" onClick={() => navigate('/hiring')}>

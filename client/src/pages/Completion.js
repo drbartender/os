@@ -27,8 +27,8 @@ export default function Completion() {
         <div className="divider-ornate"><span>officially official</span></div>
 
         <p style={{ fontSize: '1.05rem', marginBottom: '1.25rem' }}>
-          Thanks for wrapping things up — your info's in and you're officially part of the team.
-          Your staff portal is open — head there to see open shifts and request your first gig.
+          Thanks for wrapping things up, your info's in and you're officially part of the team.
+          Your staff portal is open. Head there to see open shifts and request your first gig.
         </p>
 
         <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -55,7 +55,7 @@ export default function Completion() {
           <h4 style={{ marginBottom: '0.5rem' }}>What Happens Next</h4>
           <ul style={{ paddingLeft: '1.25rem', fontSize: '0.9rem' }}>
             <li style={{ marginBottom: '0.35rem' }}>Browse open shifts in the staff portal and request the ones that fit your schedule.</li>
-            <li style={{ marginBottom: '0.35rem' }}>We'll confirm your requests as shifts get staffed — watch for SMS/email updates.</li>
+            <li style={{ marginBottom: '0.35rem' }}>We'll confirm your requests as shifts get staffed. Watch for SMS/email updates.</li>
             <li style={{ marginBottom: '0.35rem' }}>
               Join our team WhatsApp group for real-time scheduling updates:{' '}
               <a href={WHATSAPP_GROUP_URL} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', fontWeight: 600 }}>

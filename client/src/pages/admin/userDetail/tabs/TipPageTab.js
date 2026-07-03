@@ -104,7 +104,7 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
               <dd>
                 {url
                   ? <a href={url} target="_blank" rel="noopener noreferrer" className="mono">{url}</a>
-                  : <span className="muted tiny">No tip page token yet — generate a Stripe link to provision one.</span>}
+                  : <span className="muted tiny">No tip page token yet. Generate a Stripe link to provision one.</span>}
               </dd>
               <dt>Stripe link</dt>
               <dd>
@@ -187,7 +187,7 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
               className="btn btn-secondary btn-sm"
               disabled={busy || !!stripeUrl}
               onClick={generate}
-              title={stripeUrl ? 'A Stripe link already exists — use Regenerate to rotate it.' : ''}
+              title={stripeUrl ? 'A Stripe link already exists. Use Regenerate to rotate it.' : ''}
             >
               <Icon name="plus" size={11} />Generate Stripe link
             </button>
@@ -229,7 +229,7 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
               </button>
             )}
             <p className="tiny muted">
-              Deactivating disables the public URL and pauses the Stripe link. Reactivating restores both — the token (and printed QR) is preserved.
+              Deactivating disables the public URL and pauses the Stripe link. Reactivating restores both, the token (and printed QR) is preserved.
             </p>
           </div>
         </div>
@@ -248,7 +248,7 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
               Rotate URL (new token + Stripe link)
             </button>
             <p className="tiny muted">
-              Issues a fresh public URL AND fresh Stripe link. Old printed QRs stop working. Use only if the existing URL is compromised — otherwise prefer Regenerate Stripe link, which preserves the token.
+              Issues a fresh public URL AND fresh Stripe link. Old printed QRs stop working. Use only if the existing URL is compromised. Otherwise prefer Regenerate Stripe link, which preserves the token.
             </p>
           </div>
         </div>

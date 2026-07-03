@@ -64,7 +64,7 @@ export default function EventEditForm({ proposal, onSaved, onCancel }) {
 
   const handleSave = async () => {
     if (!form.package_id) {
-      setError('This event has no package — open it on the proposal to fix that first.');
+      setError('This event has no package. Open it on the proposal to fix that first.');
       return;
     }
     setError('');

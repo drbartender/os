@@ -252,7 +252,7 @@ function BeoDrinkRow({ drink }) {
             })}
           </div>
         )}
-        {drink.garnish && <div className="sp-drink-garnish">Garnish — {drink.garnish}</div>}
+        {drink.garnish && <div className="sp-drink-garnish">Garnish: {drink.garnish}</div>}
       </div>
     </div>
   );

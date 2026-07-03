@@ -359,7 +359,7 @@ export default function CalendarSyncSection() {
                   {' · '}
                   <span
                     className="sp-chip neutral"
-                    title="Detected from your calendar app's User-Agent. Best-effort — may be blank or wrong for uncommon clients."
+                    title="Detected from your calendar app's User-Agent. Best-effort, may be blank or wrong for uncommon clients."
                     style={{ marginLeft: 4 }}
                   >
                     {appName}

@@ -319,7 +319,7 @@ export default function ConsultationForm({ planId, isOpen, onClose, onSaved, coc
                 style={{ width: '100%' }}
               />
               <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
-                {planContext.guest_count ? `Event has ${planContext.guest_count}; override only if revised.` : 'Event has no guest count — required.'}
+                {planContext.guest_count ? `Event has ${planContext.guest_count}; override only if revised.` : 'Event has no guest count. Required.'}
               </div>
             </div>
             <div style={{ flex: 1, minWidth: 240 }}>
@@ -327,7 +327,7 @@ export default function ConsultationForm({ planId, isOpen, onClose, onSaved, coc
               <textarea
                 className="input"
                 rows={3}
-                placeholder="Anything specific from the consult — e.g., 'no fruity drinks for the men', 'Pacifico instead of Modelo'"
+                placeholder="Anything specific from the consult, e.g., 'no fruity drinks for the men', 'Pacifico instead of Modelo'"
                 value={notes}
                 onChange={e => setNotes(e.target.value)}
                 style={{ width: '100%', height: 'auto', padding: '0.5rem 0.65rem' }}

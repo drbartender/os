@@ -154,7 +154,7 @@ export default function ClientLogin() {
           <span className="kicker">Lab Access · No. 06</span>
           <h2>What's inside the prescription.</h2>
           <p className="client-login-benefits-intro">
-            Your event proposal, menu, payments, and team — all in one calm portal.
+            Your event proposal, menu, payments, and team. All in one calm portal.
           </p>
           <ul className="client-login-features">
             <li>

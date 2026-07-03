@@ -145,7 +145,7 @@ export default function InvoicePage() {
           <h1>{isNotFound ? "We couldn't find that invoice." : "We couldn't load this invoice."}</h1>
           <p className="public-error-body">
             {isNotFound
-              ? 'The link may have been mistyped, expired, or the invoice was voided. Double-check the URL — and if you got it from us by email, the latest version is in your inbox.'
+              ? 'The link may have been mistyped, expired, or the invoice was voided. Double-check the URL, and if you got it from us by email, the latest version is in your inbox.'
               : "Something went wrong on our end. Please try again in a moment, or reach out and we'll send you a fresh link."}
           </p>
           <div className="public-error-actions">

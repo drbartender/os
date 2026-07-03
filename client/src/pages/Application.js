@@ -205,7 +205,7 @@ export default function Application() {
       // flow. Everyone else waits on /application-status for admin review.
       const newStatus = submitRes?.data?.onboarding_status || meRes?.data?.user?.onboarding_status;
       if (newStatus === 'hired') {
-        toast.success("You're all set — welcome aboard!");
+        toast.success("You're all set, welcome aboard!");
         navigate('/welcome');
       } else {
         toast.success('Application submitted!');
@@ -235,7 +235,7 @@ export default function Application() {
           <h1 style={{ marginBottom: '0.25rem' }}>Dr. Bartender Job Application</h1>
           <p className="text-muted italic">
             Thanks for applying! The next few sections will help us get to know you.
-            No wrong answers — just be honest and yourself.
+            No wrong answers, just be honest and yourself.
           </p>
         </div>
 
@@ -244,7 +244,7 @@ export default function Application() {
           <div className="card">
             <h3 style={{ marginBottom: '0.5rem' }}>Basic Information</h3>
             <p className="text-muted text-small" style={{ marginBottom: '1.25rem' }}>
-              Let's start with the basics — contact info and location.
+              Let's start with the basics: contact info and location.
             </p>
 
             <div className="two-col">
@@ -495,7 +495,7 @@ export default function Application() {
             <div className="form-group" style={{ marginTop: '1.25rem' }}>
               <label className="form-label">Do you have your own equipment?</label>
               <p className="form-helper">
-                Staff with equipment may be prioritized for certain events, but don't worry — there will be plenty of gigs where equipment is provided or not needed at all.
+                Staff with equipment may be prioritized for certain events, but don't worry, there will be plenty of gigs where equipment is provided or not needed at all.
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 {EQUIPMENT.map(item => (

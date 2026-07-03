@@ -308,7 +308,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
           Here's Your Bar Plan
         </h2>
         <p className="text-muted">
-          Take a look — you can go back and adjust anything before submitting.
+          Take a look, you can go back and adjust anything before submitting.
         </p>
       </div>
 
@@ -711,7 +711,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
                     />
                     <div>
                       <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>
-                        Pay Extras + Balance in Full — {fmt(paymentAmounts.extrasAmount + currentBalance)}
+                        Pay Extras + Balance in Full: {fmt(paymentAmounts.extrasAmount + currentBalance)}
                       </div>
                       <div className="text-muted text-small">
                         Settle your event balance of {fmt(currentBalance)} too

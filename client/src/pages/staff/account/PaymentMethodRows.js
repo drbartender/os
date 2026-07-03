@@ -224,7 +224,7 @@ export function DirectDepositRow({
               <div className="sp-pm-edit-error">{editErrors.account_number}</div>
             )}
             <div className="sp-pm-edit-note">
-              Re-enter both — saved numbers are encrypted and never sent back to your device.
+              Re-enter both. Saved numbers are encrypted and never sent back to your device.
             </div>
           </div>
         ) : (

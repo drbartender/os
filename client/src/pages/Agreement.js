@@ -149,7 +149,7 @@ export default function Agreement() {
         <div className="section-label">Step 3 of 6</div>
         <h1>Independent Contractor Agreement</h1>
         <p className="text-muted italic">
-          This is the contract between you and Dr. Bartender. Please read it carefully — you can come back to it later from your staff portal.
+          This is the contract between you and Dr. Bartender. Please read it carefully, you can come back to it later from your staff portal.
         </p>
       </div>
 
@@ -164,7 +164,7 @@ export default function Agreement() {
       >
         <h3 style={{ marginBottom: '0.5rem' }}>At a Glance</h3>
         <p className="text-small text-muted" style={{ marginBottom: '0.75rem' }}>
-          This box is a plain-English summary. The full contract is below — that's what you're signing.
+          This box is a plain-English summary. The full contract is below, that's what you're signing.
         </p>
         <ul style={{ paddingLeft: '1.25rem', margin: 0 }}>
           {legalText.at_a_glance.map((bullet, i) => (

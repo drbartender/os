@@ -55,7 +55,7 @@ export default function DrinkPlanDetail() {
         setMocktailItems(mocktailsRes.data.mocktails || []);
       } catch (err) {
         if (cancelled) return;
-        if (err.status !== 404) toast.error('Failed to load drink plan — try refreshing.');
+        if (err.status !== 404) toast.error('Failed to load drink plan. Try refreshing.');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -231,7 +231,7 @@ export default function DrinkPlanDetail() {
               onChange={() => switchSource('planner')}
             />
             <span style={{ fontSize: 13 }}>
-              Client planner{plan.submitted_at ? ` — submitted ${fmtDateFull(String(plan.submitted_at).slice(0, 10))}` : ''}
+              Client planner{plan.submitted_at ? `, submitted ${fmtDateFull(String(plan.submitted_at).slice(0, 10))}` : ''}
             </span>
           </label>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: sourceSwitching ? 'wait' : 'pointer' }}>
@@ -243,7 +243,7 @@ export default function DrinkPlanDetail() {
               onChange={() => switchSource('consult')}
             />
             <span style={{ fontSize: 13 }}>
-              Consultation form{plan.consult_filled_at ? ` — ${fmtDateFull(String(plan.consult_filled_at).slice(0, 10))}` : ''}
+              Consultation form{plan.consult_filled_at ? `, ${fmtDateFull(String(plan.consult_filled_at).slice(0, 10))}` : ''}
               {plan.consult_filled_by_email ? ` (${plan.consult_filled_by_email})` : ''}
             </span>
           </label>

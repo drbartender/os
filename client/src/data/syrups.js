@@ -146,7 +146,7 @@ export const DRINK_SYRUP_MAP = {
     syrups: ['orgeat', 'passion-fruit'],
     featured: ['orgeat'],
     notes: {
-      orgeat: 'The classic Mai Tai foundation — rich almond and floral',
+      orgeat: 'The classic Mai Tai foundation, rich almond and floral',
       'passion-fruit': 'Tropical boost alongside orgeat',
     },
   },

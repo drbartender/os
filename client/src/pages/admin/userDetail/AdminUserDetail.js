@@ -619,7 +619,7 @@ export default function AdminUserDetail() {
             <h3 style={{ marginBottom: 8, fontSize: 16 }}>{confirmAction.label}</h3>
             <p style={{ fontSize: 13, color: 'var(--ink-3)', marginBottom: 12 }}>{confirmAction.description}</p>
             <label style={{ display: 'block', fontSize: 12, color: 'var(--ink-3)', marginBottom: 6 }}>
-              Personal note (optional — included in the email to {displayName})
+              Personal note (optional, included in the email to {displayName})
             </label>
             <textarea
               className="form-input"

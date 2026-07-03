@@ -215,8 +215,8 @@ export default function EventDetailPage() {
               <CcImportBadge ccId={proposal.cc_id} />
             </h1>
             {proposal.last_minute_hold && (
-              <span className="lm-hold-badge" title="Booked ≤72h out — verify staff availability before the event">
-                ⚠ Last-minute — verify staffing
+              <span className="lm-hold-badge" title="Booked ≤72h out, verify staff availability before the event">
+                ⚠ Last-minute: verify staffing
               </span>
             )}
             {proposal.tip_jar === false && (

@@ -290,7 +290,7 @@ export default function AddMethodModal({ methods, onClose, onSuccess }) {
 
         {picked && picked !== 'check' && picked !== 'direct_deposit' && (
           <>
-            <div className="sp-modal-sub">Type carefully — typos are not our liability.</div>
+            <div className="sp-modal-sub">Type carefully. Typos are not our liability.</div>
             <div className="sp-modal-label">{option.label} handle</div>
             <input
               className="sp-modal-input sp-mono"
@@ -314,7 +314,7 @@ export default function AddMethodModal({ methods, onClose, onSuccess }) {
         {picked === 'direct_deposit' && (
           <>
             <div className="sp-modal-sub">
-              Both fields are encrypted at rest. Once saved we’ll show you only the last 4 digits — full numbers never leave our server.
+              Both fields are encrypted at rest. Once saved we’ll show you only the last 4 digits. Full numbers never leave our server.
             </div>
             <div className="sp-modal-label">Routing number</div>
             <input

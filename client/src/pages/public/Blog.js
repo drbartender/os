@@ -62,7 +62,7 @@ export default function Blog() {
         <section className="ws-press-labnotes">
           <div className="ws-wrap">
             <div className="card on-paper" style={{ textAlign: 'center', padding: '40px 24px' }}>
-              <p>The lab notebook is empty — experiments in progress. Check back soon!</p>
+              <p>The lab notebook is empty. Experiments in progress. Check back soon!</p>
             </div>
           </div>
         </section>

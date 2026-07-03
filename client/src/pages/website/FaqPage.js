@@ -66,7 +66,7 @@ const FAQ_CATEGORIES = [
       },
       {
         q: "What's the difference between BYOB and hosted packages?",
-        a: "With BYOB, you buy the alcohol and we handle everything else — setup, mixing, serving, and cleanup. With hosted packages, we provide all beverages, mixers, garnishes, and bar supplies. Both include professional bartender service.",
+        a: "With BYOB, you buy the alcohol and we handle everything else: setup, mixing, serving, and cleanup. With hosted packages, we provide all beverages, mixers, garnishes, and bar supplies. Both include professional bartender service.",
       },
       {
         q: 'Do you offer mocktails or non-alcoholic options?',
@@ -76,7 +76,7 @@ const FAQ_CATEGORIES = [
         q: 'Do you offer cocktail classes?',
         a: (
           <>
-            Yes — we run hands-on mixology classes for groups of 8–20 people, starting
+            Yes, we run hands-on mixology classes for groups of 8–20 people, starting
             at $35/person. Perfect for team-building, bachelorette parties, or birthday
             celebrations. <Link to="/classes">Learn more about our classes.</Link>
           </>
@@ -116,7 +116,7 @@ const FAQ_CATEGORIES = [
       },
       {
         q: 'Are your bartenders licensed and insured?',
-        a: 'Every bartender is BASSET-trained and vetted. We carry both general liability and liquor liability insurance — certificate of insurance available on request.',
+        a: 'Every bartender is BASSET-trained and vetted. We carry both general liability and liquor liability insurance. Certificate of insurance available on request.',
       },
     ],
   },
@@ -134,7 +134,7 @@ const FAQ_CATEGORIES = [
       },
       {
         q: 'Do you provide garnishes and mixers?',
-        a: 'For hosted packages, yes — everything is included. For BYOB packages, basic mixers and garnishes are available as add-ons (The Foundation, The Formula, or The Full Compound packages).',
+        a: 'For hosted packages, yes. Everything is included. For BYOB packages, basic mixers and garnishes are available as add-ons (The Foundation, The Formula, or The Full Compound packages).',
       },
     ],
   },

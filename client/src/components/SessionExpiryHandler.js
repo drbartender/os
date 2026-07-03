@@ -22,7 +22,7 @@ export default function SessionExpiryHandler() {
       const isClientRequest = url.startsWith('/client-portal/') || url.startsWith('/client-auth/');
       const target = isClientRequest ? clientLoginPath() : '/login';
 
-      toast.error('Your session expired — please log in again.');
+      toast.error('Your session expired. Please log in again.');
 
       timerRef.current = setTimeout(() => {
         if (isClientRequest) clientLogout();

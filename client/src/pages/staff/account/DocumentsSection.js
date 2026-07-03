@@ -294,7 +294,7 @@ export default function DocumentsSection() {
           tags={agreement.present ? [{ key: 'signed', label: 'signed' }] : []}
           sub={agreement.present
             ? 'Countersigned.'
-            : 'Not signed yet — finish onboarding to upload.'}
+            : 'Not signed yet. Finish onboarding to upload.'}
           actions={null}
         />
 
@@ -319,7 +319,7 @@ export default function DocumentsSection() {
           sub={(() => {
             if (!cert.present) return 'Not on file.';
             if (alcoholExpiryState === 'unknown') {
-              return 'On file — add an expiry on your next replace.';
+              return 'On file. Add an expiry on your next replace.';
             }
             const expStr = formatExpiry(cert.expires_on);
             const file = cert.filename || 'On file';
@@ -327,7 +327,7 @@ export default function DocumentsSection() {
           })()}
           nudge={alcoholExpiryState === 'soon' ? (
             <div className="sp-doc-nudge">
-              Heads up — your alcohol certification expires soon. Tap{' '}
+              Heads up, your alcohol certification expires soon. Tap{' '}
               <strong>Replace</strong> to upload the renewed cert.
             </div>
           ) : null}

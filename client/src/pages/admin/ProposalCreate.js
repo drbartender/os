@@ -239,7 +239,7 @@ export default function ProposalCreate() {
   useEffect(() => {
     if (fbRemovedRef.current) {
       fbRemovedRef.current = false;
-      toast.info('Flavor Blaster removed — requires real glassware.');
+      toast.info('Flavor Blaster removed. Requires real glassware.');
     }
   });
 
@@ -916,7 +916,7 @@ function AddonSection({ form, addons, toggleAddon, setForm, update, preview, isI
 
       {selected.length === 0 ? (
         <div style={{ padding: '10px 12px', border: '1px dashed var(--line-2)', borderRadius: 4, color: 'var(--ink-3)', fontSize: 12 }}>
-          No add-ons. Type below to add — items appear here as line items.
+          No add-ons. Type below to add. Items appear here as line items.
         </div>
       ) : (
         <div style={{ border: '1px solid var(--line-1)', borderRadius: 4, overflow: 'hidden' }}>
@@ -1012,7 +1012,7 @@ function AddonSection({ form, addons, toggleAddon, setForm, update, preview, isI
         <div className="input-group" style={{ padding: '0 10px' }}>
           <Icon name="plus" />
           <input
-            placeholder="Add an add-on — champagne, glassware, banquet…"
+            placeholder="Add an add-on: champagne, glassware, banquet…"
             value={q}
             onFocus={() => setOpen(true)}
             onChange={(e) => { setQ(e.target.value); setOpen(true); }}
@@ -1174,7 +1174,7 @@ function SendSection({ form, saveAsDraft, setSaveAsDraft }) {
           checked={saveAsDraft}
           onChange={(e) => setSaveAsDraft(e.target.checked)}
         />
-        <span>Save as draft instead — nothing is sent; finish it later from the proposal page.</span>
+        <span>Save as draft instead. Nothing is sent; finish it later from the proposal page.</span>
       </label>
     </div>
   );
@@ -1210,7 +1210,7 @@ function PricingDock({ form, preview, packages, submitting, submitLabel, submitB
         </div>
         {isCustomPricing ? (
           <div style={{ fontSize: 15, color: 'var(--ink-1)', marginTop: 6, fontWeight: 500, lineHeight: 1.4 }}>
-            Custom pricing — admin will follow up
+            Custom pricing: admin will follow up
           </div>
         ) : (
           <div className="num" style={{ fontSize: 32, color: 'var(--ink-1)', marginTop: 4, fontWeight: 500 }}>
@@ -1238,7 +1238,7 @@ function PricingDock({ form, preview, packages, submitting, submitLabel, submitB
             fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5,
           }}>
             <strong style={{ color: 'var(--ink-1)' }}>Top Shelf requested.</strong>
-            {' '}This class booking is custom-priced. No live total — the admin
+            {' '}This class booking is custom-priced. No live total. The admin
             will set the price and follow up after the proposal is created.
           </div>
         )}

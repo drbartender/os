@@ -12,7 +12,7 @@ const PARKING_OPTIONS = [
 const EQUIPMENT_OPTIONS = [
   { value: 'coolers', label: 'Cooler(s) for beer, wine, or mixers' },
   { value: 'other', label: 'Other' },
-  { value: 'none', label: 'None — I have everything we need' },
+  { value: 'none', label: 'None. I have everything we need' },
 ];
 
 export default function LogisticsStep({
@@ -93,7 +93,7 @@ export default function LogisticsStep({
           The Day-Of Rundown
         </h2>
         <p className="text-muted">
-          Don't worry if you don't have all the details yet — you can update this later.
+          Don't worry if you don't have all the details yet, you can update this later.
         </p>
       </div>
 
@@ -167,7 +167,7 @@ export default function LogisticsStep({
           Bar Setup &amp; Equipment
         </h3>
         <p className="text-muted text-small mb-1" style={{ color: 'var(--warm-brown)' }}>
-          Every bartender arrives with their own bar kit — shakers, jiggers, strainers, and everything they need to pour.
+          Every bartender arrives with their own bar kit: shakers, jiggers, strainers, and everything they need to pour.
         </p>
         <div className="form-group">
           <label className="form-label">Do you need any additional equipment?</label>

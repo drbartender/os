@@ -228,7 +228,7 @@ export default function PayoutDetail() {
         )}
         {!isPaid && period.payday && (
           <div className="sp-period-banner-foot">
-            <span>Projected — live until payday.</span>
+            <span>Projected: live until payday.</span>
             <span>
               <strong>Pays {fmtShortDate(period.payday)}</strong>
             </span>

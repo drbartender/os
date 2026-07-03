@@ -143,7 +143,7 @@ export default function SignaturePickerStep({
           Signature Cocktails
         </h2>
         <p className="text-muted">
-          Pick the drinks that feel right — we recommend 2-4 for the best flow.
+          Pick the drinks that feel right. We recommend 2-4 for the best flow.
           We'll help you refine later.
         </p>
         <p className="text-muted text-small mt-1">
@@ -521,7 +521,7 @@ export default function SignaturePickerStep({
                         : extractedSpirits[0]}.
                     </label>
                     <p className="text-muted text-small mb-1" style={{ color: 'var(--warm-brown)' }}>
-                      Would you like us to also stock basic mixers (tonic, soda, ginger beer, juices) so guests can make simple mixed drinks with these spirits — in addition to your signature cocktails?
+                      Would you like us to also stock basic mixers (tonic, soda, ginger beer, juices) so guests can make simple mixed drinks with these spirits, in addition to your signature cocktails?
                     </p>
                     <div className="checkbox-grid">
                       <label className="checkbox-label">
@@ -549,7 +549,7 @@ export default function SignaturePickerStep({
                           checked={mixersForSignatureDrinks === 'undecided'}
                           onChange={() => onMixersChange('undecided')}
                         />
-                        <span>Not sure yet — we'll figure it out together</span>
+                        <span>Not sure yet, we'll figure it out together</span>
                       </label>
                     </div>
                   </div>

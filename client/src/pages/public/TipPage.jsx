@@ -83,7 +83,7 @@ export default function TipPage() {
       setFeedbackSent(true);
     } catch {
       // eslint-disable-next-line no-alert
-      alert('Could not send feedback — please try again in a moment.');
+      alert('Could not send feedback. Please try again in a moment.');
     } finally {
       setSubmitting(false);
     }
@@ -161,7 +161,7 @@ export default function TipPage() {
 
         {noPayMethods ? (
           <p className="amount-tagline" style={{ marginTop: 12 }}>
-            Tipping isn't set up for this bartender yet — try again later, or hand them a cash tip.
+            Tipping isn't set up for this bartender yet. Try again later, or hand them a cash tip.
           </p>
         ) : (
           <ul className="pay-list">
@@ -254,7 +254,7 @@ export default function TipPage() {
         {feedbackSent && (
           <div className="tx-thanks">
             <div className="ornament">· · ·</div>
-            <h3>Thanks — we hear you</h3>
+            <h3>Thanks, we hear you</h3>
             <p>We'll be in touch.</p>
           </div>
         )}

@@ -162,7 +162,7 @@ export default function ProposalsDashboard() {
       <div className="page-header">
         <div>
           <div className="page-title">Proposals</div>
-          <div className="page-subtitle">Quotes out the door — track which are sent, viewed, and accepted.</div>
+          <div className="page-subtitle">Quotes out the door. Track which are sent, viewed, and accepted.</div>
         </div>
         <div className="page-actions">
           <button type="button" className="btn btn-primary" onClick={() => navigate('/proposals/new')}>

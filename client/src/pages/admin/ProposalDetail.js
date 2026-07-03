@@ -381,8 +381,8 @@ export default function ProposalDetail() {
               <StatusChip kind={statusInfo.kind}>{statusInfo.label}</StatusChip>
               <CcImportBadge ccId={proposal.cc_id} />
               {proposal.last_minute_hold && (
-                <span className="lm-hold-badge" title="Booked ≤72h out — verify staff availability before the event">
-                  ⚠ Last-minute — verify staffing
+                <span className="lm-hold-badge" title="Booked ≤72h out, verify staff availability before the event">
+                  ⚠ Last-minute: verify staffing
                 </span>
               )}
               {overBudget && (
@@ -559,7 +559,7 @@ export default function ProposalDetail() {
                   <div className="card-body">
                     {proposal.class_options.top_shelf_requested && (
                       <div className="chip warn" style={{ marginBottom: 10 }}>
-                        Top shelf requested — set a custom total before sending
+                        Top shelf requested. Set a custom total before sending
                       </div>
                     )}
                     {proposal.class_options.spirit_category && (

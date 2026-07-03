@@ -23,10 +23,10 @@ export default function SectionGear({ a }) {
   const equip = EQUIPMENT.filter(([k]) => a[k]).map(([, l]) => l);
 
   const toolsPlaceholder = a.tools_none_will_start
-    ? 'None — will start with team kit'
+    ? 'None. Will start with team kit'
     : 'None listed';
   const equipPlaceholder = a.equipment_none_but_open
-    ? 'None — open to acquiring'
+    ? 'None. Open to acquiring'
     : a.equipment_no_space
     ? 'No space for equipment'
     : 'None listed';

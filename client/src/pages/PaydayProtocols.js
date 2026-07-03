@@ -228,7 +228,7 @@ export default function PaydayProtocols() {
         <div className="section-label">Step 5 of 6</div>
         <h1>Payday Protocols</h1>
         <p className="text-muted italic">
-          Everything you need to know about when, how, and how much you'll get paid — and your W-9 and payment preferences.
+          Everything you need to know about when, how, and how much you'll get paid, and your W-9 and payment preferences.
         </p>
       </div>
 
@@ -253,14 +253,14 @@ export default function PaydayProtocols() {
         </div>
         <p className="text-small text-muted">
           Tips from multi-bartender events will be pooled and split evenly.
-          Tip methods vary by event — details will be shared before each gig.
+          Tip methods vary by event. Details will be shared before each gig.
         </p>
       </div>
 
       <div className="card">
         <h3 style={{ marginBottom: '1rem' }}>Time Expectations & Punctuality</h3>
         <p style={{ fontSize: '0.9rem', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
-          No need to track hours or punch a clock — your pay is based on contracted time, which includes:
+          No need to track hours or punch a clock, your pay is based on contracted time, which includes:
         </p>
         <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
           Event time + 1 hour for setup + 30 minutes for breakdown
@@ -279,7 +279,7 @@ export default function PaydayProtocols() {
       <div className="card">
         <h3 style={{ marginBottom: '0.25rem' }}>Final Step: Get Set Up For Payday</h3>
         <p className="text-muted text-small" style={{ marginBottom: '1.5rem' }}>
-          Tell us how to pay you — and complete your W-9 to keep it official.
+          Tell us how to pay you, and complete your W-9 to keep it official.
         </p>
 
         {loadError && <div className="alert alert-info">{loadError}</div>}
@@ -327,7 +327,7 @@ export default function PaydayProtocols() {
                   value={form.venmo_handle} onChange={handleVenmoHandle}
                   placeholder="yourname"
                 />
-                <p className="form-helper">Just the username — we'll strip the @ or venmo.com/u/ for you.</p>
+                <p className="form-helper">Just the username, we'll strip the @ or venmo.com/u/ for you.</p>
               </div>
             )}
 
@@ -340,7 +340,7 @@ export default function PaydayProtocols() {
                   value={form.cashapp_handle} onChange={handleCashappHandle}
                   placeholder="yourname"
                 />
-                <p className="form-helper">Just the cashtag — we'll strip the $ or cash.app/$ for you.</p>
+                <p className="form-helper">Just the cashtag, we'll strip the $ or cash.app/$ for you.</p>
               </div>
             )}
 
@@ -380,7 +380,7 @@ export default function PaydayProtocols() {
                     placeholder="Your account number"
                     style={{ fontFamily: 'monospace', letterSpacing: '0.15em' }}
                   />
-                  <p className="form-helper">Your checking account number — found on a check or in your banking app</p>
+                  <p className="form-helper">Your checking account number, found on a check or in your banking app</p>
                 </div>
               </div>
             )}
@@ -393,7 +393,7 @@ export default function PaydayProtocols() {
 
             {method === 'other' && (
               <div className="alert alert-info" style={{ marginBottom: 0 }}>
-                No problem — we'll coordinate your payout method with you directly before your first payday.
+                No problem, we'll coordinate your payout method with you directly before your first payday.
               </div>
             )}
           </div>
@@ -404,7 +404,7 @@ export default function PaydayProtocols() {
             <p className="text-small text-muted" style={{ marginBottom: '1.25rem' }}>
               Your tip page lives at <strong>drbartender.com/tip/your-name</strong> with a
               QR you can print. Your name is required; the tip handles below are
-              <strong> optional</strong> — add them now, later from My Tip Page, or never.
+              <strong> optional</strong>. Add them now, later from My Tip Page, or never.
               None of this is shared outside DRB.
             </p>
 
@@ -418,14 +418,14 @@ export default function PaydayProtocols() {
                 placeholder="What customers see on your tip page"
               />
               <p className="form-helper">
-                The name customers see on your tip page. Use whatever you go by — your real name, a nickname, a stage name.
+                The name customers see on your tip page. Use whatever you go by: your real name, a nickname, a stage name.
               </p>
             </div>
 
             {p2pPayroll && (
               <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
                 Your payroll {method === 'venmo' ? 'Venmo' : method === 'cashapp' ? 'Cash App' : 'PayPal'}{' '}
-                handle is already on your tip page — no need to re-enter it here.
+                handle is already on your tip page, no need to re-enter it here.
               </div>
             )}
 
@@ -438,7 +438,7 @@ export default function PaydayProtocols() {
                   value={form.venmo_handle} onChange={handleVenmoHandle}
                   placeholder="yourname"
                 />
-                <p className="form-helper">Just the username — we'll strip the @ or venmo.com/u/ for you.</p>
+                <p className="form-helper">Just the username, we'll strip the @ or venmo.com/u/ for you.</p>
               </div>
             )}
 
@@ -451,7 +451,7 @@ export default function PaydayProtocols() {
                   value={form.cashapp_handle} onChange={handleCashappHandle}
                   placeholder="yourname"
                 />
-                <p className="form-helper">Just the cashtag — we'll strip the $ or cash.app/$ for you.</p>
+                <p className="form-helper">Just the cashtag, we'll strip the $ or cash.app/$ for you.</p>
               </div>
             )}
 
@@ -496,7 +496,7 @@ export default function PaydayProtocols() {
             {w9Mode === 'fill' ? (
               w9Done ? (
                 <div className="alert alert-success" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span>W-9 filled out and signed — PDF ready to submit.</span>
+                  <span>W-9 filled out and signed. PDF ready to submit.</span>
                   <button type="button" className="btn btn-secondary btn-sm" style={{ color: 'var(--success)', borderColor: 'var(--success)' }} onClick={() => { setW9Done(false); setW9File(null); }}>
                     Edit W-9
                   </button>

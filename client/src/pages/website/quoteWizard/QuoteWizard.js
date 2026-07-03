@@ -612,7 +612,7 @@ export default function QuoteWizard() {
           <div className="ws-press-eyebrow">Rx · The Prescription</div>
           <h1 className="ws-press-pagehero-title">The Instant Quote.</h1>
           <p className="ws-press-pagehero-sub">
-            Five minutes. Live pricing as you go. We'll send a real proposal — sign and pay in one breath.
+            Five minutes. Live pricing as you go. We'll send a real proposal. Sign and pay in one breath.
           </p>
         </div>
       </div>

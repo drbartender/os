@@ -153,7 +153,7 @@ export const ZellePayButton = ({ handle }) => {
       <span className="pay-mark"><ZelleMark /></span>
       <span className="pay-label">
         Zelle
-        <small>{copied ? 'Copied — paste in your banking app' : `Tap to copy ${handle}`}</small>
+        <small>{copied ? 'Copied. Paste in your banking app' : `Tap to copy ${handle}`}</small>
       </span>
       <span className="pay-chev" aria-live="polite">
         {copied ? <span style={{ fontSize: '0.66rem', letterSpacing: '0.08em' }}>COPIED</span> : <Chevron />}

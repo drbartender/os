@@ -137,7 +137,7 @@ export default function ProposalPricingBreakdown({
             </h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', margin: '0 0 1rem', lineHeight: 1.5 }}>
               Explore cocktails, discover flavors, and tell us what kind of bar experience
-              you're imagining. Nothing is final — just have fun with it.
+              you're imagining. Nothing is final, just have fun with it.
             </p>
             <a
               href={`/plan/${proposal.drink_plan_token}`}

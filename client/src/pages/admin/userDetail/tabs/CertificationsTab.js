@@ -42,7 +42,7 @@ export default function CertificationsTab({ profile, application, previewFile, p
             </div>
           ) : (
             <div className="muted tiny" style={{ padding: 8 }}>
-              No certifications on file. A general cert table isn't tracked yet — upload alcohol cert via the contractor profile.
+              No certifications on file. A general cert table isn't tracked yet. Upload alcohol cert via the contractor profile.
             </div>
           )}
         </div>
@@ -64,7 +64,7 @@ export default function CertificationsTab({ profile, application, previewFile, p
         <div className="card">
           <div className="card-head"><h3>Reminders</h3></div>
           <div className="card-body vstack" style={{ gap: 8 }}>
-            <div className="tiny muted">Renewal-tracking schema not built yet — set up before launch if you'll auto-email staff before expirations.</div>
+            <div className="tiny muted">Renewal-tracking schema not built yet. Set up before launch if you'll auto-email staff before expirations.</div>
           </div>
         </div>
       </div>

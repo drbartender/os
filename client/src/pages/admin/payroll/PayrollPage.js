@@ -81,7 +81,7 @@ function CurrentTab() {
     setProcessing(true);
     try {
       await api.post(`/admin/payroll/periods/${data.period.id}/process`);
-      toast.success('Period frozen — ready to pay.');
+      toast.success('Period frozen. Ready to pay.');
       refresh();
     } catch (err) {
       toast.error(err.response?.data?.error || err.message);

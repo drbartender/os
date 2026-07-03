@@ -13,14 +13,14 @@ export function getSteps(alcoholProvider) {
 // Short taglines shown on tile before expanding (Extras step)
 export const ADDON_TAGLINES = {
   // BYOB bundles
-  'the-foundation': 'Ice, water, cups & napkins — the essentials',
+  'the-foundation': 'Ice, water, cups & napkins. The essentials',
   'the-formula': 'Foundation + mixers, garnishes & bitters',
-  'the-full-compound': 'The works — full mixers, premium garnishes & more',
+  'the-full-compound': 'The works: full mixers, premium garnishes & more',
   // Premium
   'champagne-toast': 'We provide the champagne and flutes',
-  'real-glassware': 'Rocks glasses, coupes & wine glasses — no plastic',
+  'real-glassware': 'Rocks glasses, coupes & wine glasses. No plastic',
   'flavor-blaster-rental': 'Aromatic bubbles that burst on the first sip',
-  'smoked-cocktail-kit': 'Torch and wood chips — smoke any drink on demand',
+  'smoked-cocktail-kit': 'Torch and wood chips. Smoke any drink on demand',
   // Beverage
   'soft-drink-addon': 'Required when 10+ guests (or 20%) drink soda on their own',
   'mocktail-bar': 'We bring all the specialty ingredients',

@@ -25,7 +25,7 @@ const FORMULAS = [
     t: 'Hosted Bar',
     tag: 'full service',
     starting: 'from $1,800',
-    body: "Full-service bar. We bring everything — booze, ice, mixers, garnish, glassware, cups, the whole built bar — and the BASSET-trained staff to run it. You meet your guests; we pour.",
+    body: "Full-service bar. We bring everything: booze, ice, mixers, garnish, glassware, cups, the whole built bar, and the BASSET-trained staff to run it. You meet your guests; we pour.",
     includes: [
       ['Spirits & mixers', 'curated to your menu'],
       ['Bartenders', '2–6 BASSET-certified'],
@@ -49,7 +49,7 @@ const FORMULAS = [
       ['Duration', '2 hours'],
       ['Kits & syrups', 'all included'],
       ['Recipe cards', 'take-home set'],
-      ['Travel', 'within Chicago — IL, IN, MI by quote'],
+      ['Travel', 'within Chicago: IL, IN, MI by quote'],
     ],
     photo: '/images/marketing/service-cocktail-class.jpg',
     alt: 'A flight of cocktails from a private Dr. Bartender cocktail class',
@@ -107,7 +107,7 @@ export default function ServicesPage() {
           <div className="ws-press-eyebrow">No. 03 · Catalogue of Services</div>
           <h1 className="ws-press-pagehero-title">The Catalogue.</h1>
           <p className="ws-press-pagehero-sub">
-            Three formulations of mobile bar service, each priced clearly. Every package includes a bespoke menu — two signature drinks built around your story.
+            Three formulations of mobile bar service, each priced clearly. Every package includes a bespoke menu, two signature drinks built around your story.
           </p>
         </div>
       </section>
@@ -164,7 +164,7 @@ export default function ServicesPage() {
                 Tell us about the night.<br />
                 <em>We'll send a proposal before dinner.</em>
               </h2>
-              <p>Five minutes. Live pricing. No phone tag — just the bar your event needs, costed out clearly.</p>
+              <p>Five minutes. Live pricing. No phone tag. Just the bar your event needs, costed out clearly.</p>
               <Link to="/quote" className="btn btn-primary ws-press-cta-btn">Get an Instant Quote</Link>
             </div>
           </div>

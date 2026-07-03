@@ -385,7 +385,7 @@ export default function CcImportWrapUpPage() {
               </ul>
               <p className="muted tiny" style={{ margin: 0 }}>
                 Sending happens on the next dispatcher tick. Already-sent and not-eligible
-                items in the batch are skipped — see results panel after submit.
+                items in the batch are skipped. See results panel after submit.
               </p>
             </div>
             <div className="card-body" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>

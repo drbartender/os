@@ -44,7 +44,7 @@ export default function DrinkPlansDashboard() {
       const res = await api.get('/drink-plans');
       setPlans(res.data || []);
     } catch (err) {
-      toast.error('Failed to load drink plans — try refreshing.');
+      toast.error('Failed to load drink plans. Try refreshing.');
     } finally {
       setLoading(false);
     }
@@ -107,7 +107,7 @@ export default function DrinkPlansDashboard() {
       <div className="page-header">
         <div>
           <div className="page-title">Drink Plans</div>
-          <div className="page-subtitle">Potion Planning Lab submissions — review and convert into proposals.</div>
+          <div className="page-subtitle">Potion Planning Lab submissions. Review and convert into proposals.</div>
         </div>
         <div className="page-actions">
           <button type="button" className="btn btn-primary" onClick={() => setShowCreate(v => !v)}>

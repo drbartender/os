@@ -21,7 +21,7 @@ api.interceptors.response.use(
     // eslint-disable-next-line no-restricted-syntax
     if (!err.response) {
       return Promise.reject({
-        message: 'Network error — check your connection.',
+        message: 'Network error. Check your connection.',
         code: 'NETWORK_ERROR',
         fieldErrors: undefined,
         status: 0,

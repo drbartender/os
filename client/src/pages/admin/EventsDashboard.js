@@ -82,7 +82,7 @@ export default function EventsDashboard() {
       const res = await api.get('/shifts');
       setEvents(res.data || []);
     } catch (err) {
-      toast.error('Failed to load events — try refreshing.');
+      toast.error('Failed to load events. Try refreshing.');
     } finally {
       setLoading(false);
     }
@@ -250,7 +250,7 @@ export default function EventsDashboard() {
       <div className="page-header">
         <div>
           <div className="page-title">Events</div>
-          <div className="page-subtitle">Every confirmed and manually-created event — staffing and financials in one row.</div>
+          <div className="page-subtitle">Every confirmed and manually-created event. Staffing and financials in one row.</div>
         </div>
         <div className="page-actions">
           <button type="button" className="btn btn-primary" onClick={() => setShowCreateForm(v => !v)}>

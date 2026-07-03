@@ -92,7 +92,7 @@ export default function InterviewScheduleModal({ open, applicant, onClose, onSav
             <span className="tiny muted">Notes (private)</span>
             <textarea
               className="input"
-              placeholder="e.g. Phone — I'll call her"
+              placeholder="e.g. Phone, I'll call her"
               value={notes}
               onChange={e => setNotes(e.target.value)}
               style={{ minHeight: 60, padding: 10, resize: 'vertical' }}

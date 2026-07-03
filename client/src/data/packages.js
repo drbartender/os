@@ -27,7 +27,7 @@ export const PACKAGES = [
     name: 'The Base Compound',
     category: 'full-bar',
     tagline: 'Minimal inputs. Maximum efficiency.',
-    description: 'A stripped-down formula ideal for casual environments and efficient service — delivering a solid range without experimental overload.',
+    description: 'A stripped-down formula ideal for casual environments and efficient service, delivering a solid range without experimental overload.',
     sections: [
       {
         heading: 'Spirits',
@@ -41,7 +41,7 @@ export const PACKAGES = [
           'Miller Lite – An American lager classic. Predictable in the best way.',
           'Michelob Ultra – Light, crisp, and beloved by marathon runners and wine moms alike.',
           'One Red Wine – A balanced, medium-bodied red designed for broad appeal and low fuss.',
-          'One White Wine – Something bright and approachable — usually a chardonnay or sauv blanc depending on availability.',
+          'One White Wine – Something bright and approachable, usually a chardonnay or sauv blanc depending on availability.',
         ],
       },
       {
@@ -68,7 +68,7 @@ export const PACKAGES = [
           'Bacardi Superior Rum – Light-bodied, mix-friendly, and a tropical workhorse.',
           'Jim Beam Bourbon – Warm, familiar, and built for high-volume mixing. America\'s top-selling bourbon for a reason.',
           'Margaritaville Tequila – Crisp and citrusy, great for sours and spritzes.',
-          'Dewar\'s Scotch – A smooth blend with notes of honey and smoke — good for sipping or mixing.',
+          'Dewar\'s Scotch – A smooth blend with notes of honey and smoke, good for sipping or mixing.',
         ],
       },
       {
@@ -102,7 +102,7 @@ export const PACKAGES = [
     name: 'The Enhanced Solution',
     category: 'full-bar',
     tagline: 'Refined inputs. Amplified output.',
-    description: 'Premium spirits. Expanded modifiers. A noticeable bump in complexity and flavor range — for hosts who care about what\'s in the glass without going full molecular mixologist.',
+    description: 'Premium spirits. Expanded modifiers. A noticeable bump in complexity and flavor range, for hosts who care about what\'s in the glass without going full molecular mixologist.',
     sections: [
       {
         heading: 'Spirits',
@@ -111,7 +111,7 @@ export const PACKAGES = [
           'Bombay Sapphire Gin – A bright, botanical punch with hints of spice and citrus.',
           'Bacardi Superior Rum – Crystal clear and ready to disappear into every tropical recipe you throw at it.',
           'Jim Beam Bourbon – Classic Kentucky profile: approachable, warm, and bourbon-purist approved.',
-          '1800 Blanco Tequila – Crisp, clean, and balanced — smooth enough for sipping, sharp enough for margaritas.',
+          '1800 Blanco Tequila – Crisp, clean, and balanced, smooth enough for sipping, sharp enough for margaritas.',
           'Johnnie Walker Red Scotch – Peat light, smoke soft. A beginner\'s blend that still plays well in cocktails.',
         ],
       },
@@ -270,7 +270,7 @@ export const PACKAGES = [
     name: 'The Refined Reaction',
     category: 'beer-wine',
     tagline: 'Polished. Sophisticated. Still streamlined.',
-    description: 'A polished experiment in crowd-pleasing sophistication. Still streamlined, but with a noticeable bump in quality — perfect for weddings, cocktail hours, and milestone celebrations.',
+    description: 'A polished experiment in crowd-pleasing sophistication. Still streamlined, but with a noticeable bump in quality, perfect for weddings, cocktail hours, and milestone celebrations.',
     sections: [
       {
         heading: 'Beer',
@@ -300,7 +300,7 @@ export const PACKAGES = [
     name: 'The Carbon Suspension',
     category: 'beer-wine',
     tagline: 'Expanded range. Zero pretense.',
-    description: 'For bigger crowds or events that need a little more variety — without drifting into fancy territory. Balanced. Approachable. Ready to pour.',
+    description: 'For bigger crowds or events that need a little more variety, without drifting into fancy territory. Balanced. Approachable. Ready to pour.',
     sections: [
       {
         heading: 'Beer & Seltzer',
@@ -308,7 +308,7 @@ export const PACKAGES = [
           'Miller Lite – Your loyal, low-ABV standby.',
           'Michelob Ultra – The crowd favorite that never gets questioned.',
           'Yuengling Lager – Smooth, amber, and unexpectedly complex for the price.',
-          'Seltzer – A rotating mix of flavors and brands — bubbly, light, and festival-friendly.',
+          'Seltzer – A rotating mix of flavors and brands, bubbly, light, and festival-friendly.',
         ],
       },
       {
@@ -331,7 +331,7 @@ export const PACKAGES = [
     name: 'The Cultivated Complex',
     category: 'beer-wine',
     tagline: 'Curated elegance. Lab-certified crowd-pleaser.',
-    description: 'Designed for hosts who want elevated beer and wine service with enough sparkle, variety, and quality to make it feel like the full experience — minus the liquor cabinet.',
+    description: 'Designed for hosts who want elevated beer and wine service with enough sparkle, variety, and quality to make it feel like the full experience, minus the liquor cabinet.',
     sections: [
       {
         heading: 'Beer & Seltzer',
@@ -346,7 +346,7 @@ export const PACKAGES = [
       {
         heading: 'Wine',
         items: [
-          'Two Premium Red Wines & Two Premium White Wines – Thoughtfully chosen by us for depth, balance, and real event compatibility. No gimmicks — just good wine that works.',
+          'Two Premium Red Wines & Two Premium White Wines – Thoughtfully chosen by us for depth, balance, and real event compatibility. No gimmicks, just good wine that works.',
           'Sparkling Wine – Dry, crisp, and celebration-ready.',
         ],
       },

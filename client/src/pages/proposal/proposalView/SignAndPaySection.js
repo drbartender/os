@@ -132,7 +132,7 @@ export default function SignAndPaySection({
 
   const lastMinuteWarning = lastMinuteHold ? (
     <p className="payment-policy-warn">
-      Heads up — because this event is less than 72 hours away, your booking is confirmed
+      Heads up, because this event is less than 72 hours away, your booking is confirmed
       subject to staff availability. In the rare case we can't staff it in time, we'll cancel
       and fully refund you.
     </p>

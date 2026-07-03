@@ -7,7 +7,7 @@ const STEPS = [
     n: 'I',
     kicker: 'Step One · The Prescription',
     t: 'Build an instant quote.',
-    body: 'Five questions. Live pricing as you choose. We send a real proposal — sign and pay in one breath. No 30-minute discovery call required.',
+    body: 'Five questions. Live pricing as you choose. We send a real proposal. Sign and pay in one breath. No 30-minute discovery call required.',
     photo: '/images/marketing/method-instant-quote-phone.jpg',
     alt: 'A phone showing the Dr. Bartender instant quote',
     bullets: [
@@ -20,7 +20,7 @@ const STEPS = [
     n: 'II',
     kicker: 'Step Two · The Potion Planner',
     t: 'Plan the menu.',
-    body: 'A short questionnaire builds a menu around your taste — colors, flavors, allergens, what your guests actually want. Browse our cocktail catalogue. Mark favorites. Add a smoke bubble or two.',
+    body: 'A short questionnaire builds a menu around your taste: colors, flavors, allergens, what your guests actually want. Browse our cocktail catalogue. Mark favorites. Add a smoke bubble or two.',
     photo: '/images/marketing/method-planner-tablet.jpg',
     alt: 'A tablet showing the Dr. Bartender menu planner',
     bullets: [
@@ -50,7 +50,7 @@ const TIMELINE = [
   ['T-30 days', 'Potion Planner opens. Build menu, swap drinks, finalize headcount.'],
   ['T-7 days', 'Final menu locked. Shopping list (BYOB) sent. Setup logistics confirmed.'],
   ['Event day', 'Arrive 90 minutes early. Bar built. Doors open. We pour.'],
-  ['+1 day', 'Final invoice — only adjusts down for unused hours. Photo gallery if you opt in.'],
+  ['+1 day', 'Final invoice: only adjusts down for unused hours. Photo gallery if you opt in.'],
 ];
 
 function StepText({ s }) {
@@ -146,7 +146,7 @@ export default function MethodPage() {
                 Tell us about the night.<br />
                 <em>We'll send a proposal before dinner.</em>
               </h2>
-              <p>Five minutes. Live pricing. No phone tag — just the bar your event needs, costed out clearly.</p>
+              <p>Five minutes. Live pricing. No phone tag. Just the bar your event needs, costed out clearly.</p>
               <Link to="/quote" className="btn btn-primary ws-press-cta-btn">Get an Instant Quote</Link>
             </div>
           </div>

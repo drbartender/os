@@ -6,7 +6,7 @@ const CREDENTIALS = [
   ['Certified', 'BASSET-trained bartenders'],
   ['Insured', 'General + Liquor Liability'],
   ['Trained', 'Front of house → econ degree → culinary school'],
-  ['Based', 'North Side, Chicago — travels'],
+  ['Based', 'North Side, Chicago. Travels'],
 ];
 
 const TIMELINE = [
@@ -14,7 +14,7 @@ const TIMELINE = [
   ['1998–2008', "Ten years on the floor while working at a video game company and finishing a bachelor's in economics."],
   ['2009', 'Culinary school. Learn how a kitchen actually runs.'],
   ['2010', 'Line cook in Breckenridge. Discover I miss the front of the house.'],
-  ['2011', 'First bar gig. Dr. Bartender — born as a pun, kept as a name.'],
+  ['2011', 'First bar gig. Dr. Bartender, born as a pun, kept as a name.'],
   ['2010s', 'Cocktail program lead at three Chicago concepts. Build menus, train staff.'],
   ['2018+', 'National events: NFL Draft, F1 Vegas, Lollapalooza, Electric Forest, EDC Orlando.'],
   ['2024', 'Mobile bar full-time. Wedding & private event focus across IL · IN · MI.'],
@@ -63,8 +63,8 @@ export default function AboutPage() {
               </div>
             </div>
             <div className="ws-press-specimen-foot">
-              <div className="ws-press-specimen-name">Dallas Raby — D.R.</div>
-              <div className="ws-press-specimen-quote">"I'm the Dr. — the Doctor — in Dr. Bartender."</div>
+              <div className="ws-press-specimen-name">Dallas Raby, D.R.</div>
+              <div className="ws-press-specimen-quote">"I'm the Dr., the Doctor, in Dr. Bartender."</div>
             </div>
           </div>
 
@@ -74,16 +74,16 @@ export default function AboutPage() {
               Ten years on the floor, an econ degree, then culinary school.
             </h2>
             <p>
-              I'm <strong>Dallas Raby</strong> — D.R. — and I came up the long way. Roughly{' '}
+              I'm <strong>Dallas Raby</strong>, D.R., and I came up the long way. Roughly{' '}
               <em>ten years working the front of the house</em> while I held down a day job at a{' '}
               <em>video game company</em> and finished a <em>bachelor's in economics</em>. The
-              floor is where I learned how a room actually works — timing, tone, the math of a tip line.
+              floor is where I learned how a room actually works: timing, tone, the math of a tip line.
             </p>
             <p>
               <em>Then</em> I went to culinary school. The kitchen sharpened the palate and taught
               me prep discipline; the bar is where it all came together. Years on the line in{' '}
               <em>Breckenridge</em>, then back to Chicago for cocktail programs, corporate rooms,
-              and a stretch on the national event circuit — the <em>NFL Draft</em>,{' '}
+              and a stretch on the national event circuit, the <em>NFL Draft</em>,{' '}
               <em>F1 Las Vegas</em>, <em>Lollapalooza</em>, <em>Electric Forest</em>,{' '}
               <em>Oceans Calling</em>, <em>EDC Orlando</em>.
             </p>
@@ -134,7 +134,7 @@ export default function AboutPage() {
                 Tell us about the night.<br />
                 <em>We'll send a proposal before dinner.</em>
               </h2>
-              <p>Five minutes. Live pricing. No phone tag — just the bar your event needs, costed out clearly.</p>
+              <p>Five minutes. Live pricing. No phone tag. Just the bar your event needs, costed out clearly.</p>
               <Link to="/quote" className="btn btn-primary ws-press-cta-btn">Get an Instant Quote</Link>
             </div>
           </div>

@@ -32,7 +32,7 @@ export default function PackageIncludesModal({ open, pkg, onClose }) {
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label={`${pkg.name} — what's included`}
+      aria-label={`${pkg.name}: what's included`}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
         display: 'grid', placeItems: 'center', padding: 16,

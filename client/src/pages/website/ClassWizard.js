@@ -336,14 +336,14 @@ export default function ClassWizard() {
                 {selectedPkg && (
                   <div className="wz-supply-section">
                     <h4>Want us to provide the spirits &amp; supplies?</h4>
-                    <p className="wz-supply-hint">BYOB is always an option — you bring the alcohol, we bring everything else.</p>
+                    <p className="wz-supply-hint">BYOB is always an option. You bring the alcohol, we bring everything else.</p>
 
                     <div className="wz-supply-options">
                       <label className={`wz-supply-option ${!form.supply_addon_id && !topShelf ? 'selected' : ''}`}>
                         <input type="radio" name="supply" checked={!form.supply_addon_id && !topShelf}
                           onChange={() => handleSupplySelect('')} />
                         <div className="wz-supply-content">
-                          <div className="wz-supply-name">BYOB — I'll provide the alcohol</div>
+                          <div className="wz-supply-name">BYOB: I'll provide the alcohol</div>
                           <div className="wz-supply-price">Included in base price</div>
                         </div>
                       </label>
@@ -371,7 +371,7 @@ export default function ClassWizard() {
                             <div className="wz-supply-desc">
                               Whiskey: Blanton's, Whistlepig, allocated selections. Tequila: Clase Azul, Don Julio 1942.
                             </div>
-                            <div className="wz-supply-price wz-contact-cta">Custom pricing — we'll follow up</div>
+                            <div className="wz-supply-price wz-contact-cta">Custom pricing: we'll follow up</div>
                           </div>
                         </label>
                       )}

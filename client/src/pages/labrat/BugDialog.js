@@ -3,7 +3,7 @@ import api from '../../utils/api';
 
 const TITLES = {
   bug: 'Report a bug',
-  confusion: "I'm stuck — what's confusing?",
+  confusion: "I'm stuck, what's confusing?",
   'mission-stale': 'This mission seems wrong',
 };
 

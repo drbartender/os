@@ -34,7 +34,7 @@ export default function LabRatMission() {
       if (r.data.mission.seedRecipe) {
         api.post('/qa/seed', { recipe: r.data.mission.seedRecipe })
           .then(s => { if (!cancelled) setSeedResult(s.data); })
-          .catch(e => { if (!cancelled) setSeedError(e?.message || 'Could not set up the test data — flag this as a bug.'); });
+          .catch(e => { if (!cancelled) setSeedError(e?.message || 'Could not set up the test data. Flag this as a bug.'); });
       }
     }).catch(e => { if (!cancelled) setError(e?.message || 'Mission not found'); });
     return () => { cancelled = true; };
@@ -138,12 +138,12 @@ export default function LabRatMission() {
         <div className="labrat-mission-actions">
           <button onClick={openConfusion}>I&apos;m stuck</button>
           <button className="labrat-primary" disabled={!allChecked} onClick={done}>
-            Done — next mission →
+            Done, next mission →
           </button>
         </div>
 
         <p className="labrat-stale-link">
-          <button className="labrat-link" onClick={openStale}>This mission seems wrong — flag it</button>
+          <button className="labrat-link" onClick={openStale}>This mission seems wrong, flag it</button>
         </p>
       </main>
 

@@ -233,7 +233,7 @@ export default function PayPage() {
           </div>
           <div className="sp-period-banner-total">{formatMoney(banner.totalCents)}</div>
           <div className="sp-period-banner-foot">
-            <span>Projected — live until payday.</span>
+            <span>Projected: live until payday.</span>
             {banner.payday && (
               <span>
                 <strong>Pays {fmtShortDate(banner.payday)}</strong>

@@ -130,7 +130,7 @@ export default function ContractorProfile() {
         <div className="section-label">Step 4 of 6</div>
         <h1>Contractor Profile</h1>
         <p className="text-muted italic">
-          Review and confirm your info. {fromApplication ? 'We\'ve pre-filled this from your application — just make sure everything looks good.' : 'This form helps us set up your profile, get you paid, and match you with the right gigs.'}
+          Review and confirm your info. {fromApplication ? 'We\'ve pre-filled this from your application, just make sure everything looks good.' : 'This form helps us set up your profile, get you paid, and match you with the right gigs.'}
         </p>
       </div>
 

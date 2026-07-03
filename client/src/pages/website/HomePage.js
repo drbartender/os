@@ -53,21 +53,21 @@ const SERVICES = [
   {
     n: 'Formula II',
     t: 'Hosted Bar',
-    body: 'Booze, ice, garnish, mixers, cups, and BASSET-trained bartenders — plus a built-out menu and the staff to run it. Bespoke menu included.',
+    body: 'Booze, ice, garnish, mixers, cups, and BASSET-trained bartenders. Plus a built-out menu and the staff to run it. Bespoke menu included.',
     photo: '/images/marketing/service-hosted-bar.jpg',
     alt: 'A Dr. Bartender bartender running a hosted bar at an event',
   },
   {
     n: 'Formula III',
     t: 'Cocktail Classes',
-    body: 'Private classes — kits, syrups, garnishes, and a host with twenty-five years behind the stick. Two hours, eight guests.',
+    body: 'Private classes: kits, syrups, garnishes, and a host with twenty-five years behind the stick. Two hours, eight guests.',
     photo: '/images/marketing/service-cocktail-class.jpg',
     alt: 'A flight of cocktails from a private Dr. Bartender cocktail class',
   },
 ];
 
 const METHOD_STEPS = [
-  { n: 'I', kicker: 'Step One', t: 'The Prescription', body: 'Build an instant quote. Live pricing. We send a real proposal — sign and pay in one breath.' },
+  { n: 'I', kicker: 'Step One', t: 'The Prescription', body: 'Build an instant quote. Live pricing. We send a real proposal. Sign and pay in one breath.' },
   { n: 'II', kicker: 'Step Two', t: 'The Potion Planner', body: 'A short questionnaire builds a menu around your taste. Browse cocktails. Add a smoke bubble.' },
   { n: 'III', kicker: 'Step Three', t: 'The Big Experiment', body: 'On the day, we arrive early, build the bar, and run a tight, smiling shift. You meet guests; we pour.' },
 ];
@@ -76,7 +76,7 @@ const CREDENTIALS = [
   ['Certified', 'BASSET-trained bartenders'],
   ['Insured', 'General + Liquor Liability'],
   ['Trained', 'Front of house → econ degree → culinary school'],
-  ['Based', 'North Side, Chicago — travels'],
+  ['Based', 'North Side, Chicago. Travels'],
 ];
 
 /* Sample reviews shown only while the live Thumbtack ingestion hasn't populated
@@ -92,14 +92,14 @@ const FALLBACK_REVIEWS = [
   {
     id: 'sample-2',
     name: 'James & Sarah K.',
-    text: 'The attention to detail was extraordinary — from the hand-labelled bottles to the copper jiggers. Our wedding guests are still talking about it.',
+    text: 'The attention to detail was extraordinary, from the hand-labelled bottles to the copper jiggers. Our wedding guests are still talking about it.',
     rating: 5,
     role: 'Wedding · 180 guests',
   },
   {
     id: 'sample-3',
     name: 'Marcus T.',
-    text: 'Hired them for a corporate holiday party and it was exactly what we needed — professional, well-paced, and the menu was dialed in.',
+    text: 'Hired them for a corporate holiday party and it was exactly what we needed: professional, well-paced, and the menu was dialed in.',
     rating: 5,
     role: 'Corporate · 80 guests',
   },
@@ -184,7 +184,7 @@ export default function HomePage() {
               </div>
               <p className="ws-press-lede">
                 An apothecary running a contemporary cocktail program. Twenty years behind the
-                stick, distilled into a calm, instant proposal — for weddings and events across{' '}
+                stick, distilled into a calm, instant proposal, for weddings and events across{' '}
                 <em>Illinois, Indiana,</em> and <em>Michigan.</em>
               </p>
               <div className="ws-press-hero-cta">
@@ -238,8 +238,8 @@ export default function HomePage() {
                 </div>
               </div>
               <div className="ws-press-specimen-foot">
-                <div className="ws-press-specimen-name">Dallas Raby — D.R.</div>
-                <div className="ws-press-specimen-quote">"I'm the Dr. — the Doctor — in Dr. Bartender."</div>
+                <div className="ws-press-specimen-name">Dallas Raby, D.R.</div>
+                <div className="ws-press-specimen-quote">"I'm the Dr., the Doctor, in Dr. Bartender."</div>
               </div>
             </div>
           </FadeUp>
@@ -252,14 +252,14 @@ export default function HomePage() {
                 <em>I'm the Dr. in Dr. Bartender.</em>
               </h2>
               <p>
-                I'm <strong>Dallas Raby</strong> — D.R. — and I came up the long way. Roughly{' '}
+                I'm <strong>Dallas Raby</strong>, D.R., and I came up the long way. Roughly{' '}
                 <em>ten years working the front of the house</em> while I held down a day job at a{' '}
                 <em>video game company</em> and finished a <em>bachelor's in economics</em>.{' '}
-                <em>Then</em> I went to culinary school and ended up back where I started — behind the bar.
+                <em>Then</em> I went to culinary school and ended up back where I started, behind the bar.
               </p>
               <p>
                 Corporate rooms, high-craft cocktail programs, and a stretch on the national event
-                circuit — the <em>NFL Draft</em>, <em>F1 Las Vegas</em>, <em>Lollapalooza</em>,{' '}
+                circuit, the <em>NFL Draft</em>, <em>F1 Las Vegas</em>, <em>Lollapalooza</em>,{' '}
                 <em>Electric Forest</em>, <em>Oceans Calling</em>, <em>EDC Orlando</em>.
               </p>
               <div className="divider-ornate ws-press-divider"><span>credentials</span></div>
@@ -285,7 +285,7 @@ export default function HomePage() {
               <span className="kicker center">No. 03 · Catalogue of Services</span>
               <h2 className="ws-press-h2">Three formulations. One laboratory.</h2>
               <p className="ws-press-section-italic">
-                Every bar package includes a <strong>bespoke menu</strong> — two signature drinks built around your story, your colors, and what your guests actually want to drink. No upcharge.
+                Every bar package includes a <strong>bespoke menu</strong>, two signature drinks built around your story, your colors, and what your guests actually want to drink. No upcharge.
               </p>
             </div>
           </FadeUp>
@@ -419,7 +419,7 @@ export default function HomePage() {
                   Tell us about the night.<br />
                   <em>We'll send a proposal before dinner.</em>
                 </h2>
-                <p>Five minutes. Live pricing. No phone tag — just the bar your event needs, costed out clearly.</p>
+                <p>Five minutes. Live pricing. No phone tag. Just the bar your event needs, costed out clearly.</p>
                 <Link to="/quote" className="btn btn-primary ws-press-cta-btn">Get an Instant Quote</Link>
               </div>
             </div>

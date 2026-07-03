@@ -369,7 +369,7 @@ export default function ProfileSection() {
               </div>
               {pending ? (
                 <span className="sp-tf-sub">
-                  Pending verification — check <span className="sp-mono">{pending.new_email}</span>.
+                  Pending verification. Check <span className="sp-mono">{pending.new_email}</span>.
                 </span>
               ) : (
                 <span className="sp-tf-sub">

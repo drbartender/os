@@ -146,7 +146,7 @@ export default function FullBarSpiritsStep({ selections, onChange, plan }) {
                 checked={selections.mixersForSpirits === null}
                 onChange={() => onChange('mixersForSpirits', null)}
               />
-              <span>Not sure yet — we'll figure it out together</span>
+              <span>Not sure yet, we'll figure it out together</span>
             </label>
           </div>
         </div>

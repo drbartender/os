@@ -34,7 +34,7 @@ export default function PayQRModal({
               <QRCodeSVG value={payUrl} size={220} bgColor="#FFFFFF" fgColor="#12161C" level="M" includeMargin />
               <div className="tiny muted" style={{ textAlign: 'center' }}>
                 Scan with your phone. {paymentMethod === 'venmo'
-                  ? 'Venmo sometimes drops the amount — confirm it reads $' + amount.replace('$','') + '.'
+                  ? 'Venmo sometimes drops the amount. Confirm it reads $' + amount.replace('$','') + '.'
                   : 'Cash App fills the amount reliably.'}
               </div>
             </>

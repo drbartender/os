@@ -63,7 +63,7 @@ export default function BlogPost() {
           <h1>We couldn't find that lab note.</h1>
           <p className="public-error-body">
             The link may have been mistyped, or the post might have been moved or removed.
-            Try the index — there's plenty more in the archive.
+            Try the index, there's plenty more in the archive.
           </p>
           <div className="public-error-actions">
             <Link to="/labnotes" className="btn btn-primary">Browse all Lab Notes</Link>

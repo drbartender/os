@@ -20,7 +20,7 @@ export default function LabRatLanding() {
         <h1>Be a Lab Rat</h1>
         <p>
           Dr. Bartender is about to launch. Pick a mission, click around,
-          tell us what&apos;s broken. Five to sixty minutes — your call.
+          tell us what&apos;s broken. Five to sixty minutes, your call.
           Nothing you do here reaches real customers.
         </p>
         <div className="labrat-name">

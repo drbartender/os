@@ -61,7 +61,7 @@ export default function PrintTipCard() {
       <div className="print-controls" data-no-print>
         <h1>Print your tip card</h1>
         <p className="helper">
-          Choose a size, then click "Print" — your browser will open its print dialog.
+          Choose a size, then click "Print". Your browser will open its print dialog.
           Save as PDF and take it to a photo counter, or print at home.
         </p>
         <div className="size-picker">

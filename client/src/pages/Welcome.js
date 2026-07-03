@@ -52,7 +52,7 @@ export default function Welcome() {
           <div className="divider-ornate"><span>What to Expect</span></div>
 
           <p style={{ color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: '1rem' }}>
-            This will take about 10–15 minutes — short, but important.
+            This will take about 10–15 minutes, short, but important.
           </p>
 
 

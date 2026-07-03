@@ -175,7 +175,7 @@ export default function EmailVerifyPage() {
               address that received this link.
             </p>
             <p className="sp-verify-sub-small">
-              You’ll need to sign in again afterwards — all active sessions are
+              You’ll need to sign in again afterwards, all active sessions are
               signed out as part of the change.
             </p>
             <div className="sp-verify-acts">

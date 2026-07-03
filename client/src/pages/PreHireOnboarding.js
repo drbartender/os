@@ -131,7 +131,7 @@ export default function PreHireOnboarding() {
               <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
                 Set up your account to get started. Next you'll fill out a quick contractor
                 application, then sign the agreement, complete your profile, and upload your
-                W-9 — about 20 minutes total.
+                W-9. About 20 minutes total.
               </p>
             </div>
 

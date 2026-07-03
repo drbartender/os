@@ -408,7 +408,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
               onClick={handleApproveAndSend}
               disabled={approveStatus !== 'idle'}
               title={approveStatus === 'approved'
-                ? 'Already approved — client can now see this list'
+                ? 'Already approved, client can now see this list'
                 : 'Save current edits, mark approved, and email the client a link'}
             >
               {approveStatus === 'approving' ? 'Approving…'
