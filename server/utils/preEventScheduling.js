@@ -242,7 +242,7 @@ async function insertIfMissing(executor, {
         AND message_type = $3
         AND recipient_type = $4 AND recipient_id = $5
         AND channel = $6
-        AND status IN ('pending', 'sent', 'deferred')
+        AND status IN ('pending', 'processing', 'sent', 'deferred')
       LIMIT 1`,
     [entityType, entityId, messageType, recipientType, recipientId, channel]
   );

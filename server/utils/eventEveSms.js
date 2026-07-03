@@ -197,7 +197,7 @@ async function scheduleEventEve(proposalId, executor) {
     await exec.query(
       `DELETE FROM scheduled_messages
         WHERE entity_type = 'proposal' AND entity_id = $1
-          AND message_type = 'event_eve' AND status = 'pending'`,
+          AND message_type = 'event_eve' AND status IN ('pending', 'processing')`,
       [proposalId]
     );
     return;
@@ -206,7 +206,7 @@ async function scheduleEventEve(proposalId, executor) {
   await exec.query(
     `DELETE FROM scheduled_messages
       WHERE entity_type = 'proposal' AND entity_id = $1
-        AND message_type = 'event_eve' AND status = 'pending'`,
+        AND message_type = 'event_eve' AND status IN ('pending', 'processing')`,
     [proposalId]
   );
   await exec.query(

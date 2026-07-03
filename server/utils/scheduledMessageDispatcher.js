@@ -422,21 +422,45 @@ async function markSiblingsSuppressed(suppressionKey, currentRowId) {
   );
 }
 
+// Release a claimed row back to 'pending' when a terminal-status write itself
+// fails, so the claim is never orphaned in 'processing' (the drain loop only
+// re-selects 'pending', and the deferred-reactivation pass only touches
+// 'deferred'). Best-effort and guarded on status='processing' so it never
+// stomps a state some other path already wrote. This preserves the pre-claim
+// behavior where a row whose terminal write failed simply stayed retryable.
+async function releaseClaim(rowId) {
+  try {
+    await pool.query(
+      "UPDATE scheduled_messages SET status = 'pending', claimed_at = NULL WHERE id = $1 AND status = 'processing'",
+      [rowId]
+    );
+  } catch (releaseErr) {
+    console.error('[scheduledMessageDispatcher] failed to release claim:', releaseErr.message);
+  }
+}
+
 async function dispatchRow(row) {
   let entity, recipient;
   try {
-    // Stale-row guard. The batch was SELECTed into memory at the top of the
-    // tick; a row processed earlier in the same batch may have flipped this
-    // row's status via suspendClientAutomation (the both-channels-bad cascade
-    // in resolveDelivery flips a client's other pending/deferred rows to
-    // 'suppressed'). Re-verify the row is still 'pending' before doing any
-    // work, if it is not, it was already handled this tick; skip it silently
-    // so resolveDelivery does not re-fire a duplicate admin alert.
-    const stillPending = await pool.query(
-      "SELECT 1 FROM scheduled_messages WHERE id = $1 AND status = 'pending'",
+    // Atomic per-row claim (supersedes the old stale-row SELECT guard). Flip
+    // this row 'pending' -> 'processing' in one statement; only the worker whose
+    // UPDATE returns the row may handle it. This closes two gaps at once:
+    //   1. Concurrency: a second dispatcher tick / instance that SELECTed the
+    //      same pending row loses the claim (rowCount 0) and skips, so a
+    //      notification is never double-sent.
+    //   2. Same-tick staleness: a row flipped earlier this tick by
+    //      suspendClientAutomation / sibling-suppression (pending -> suppressed)
+    //      no longer matches status='pending', so the claim returns 0 and we
+    //      skip silently — exactly what the old guard protected against (no
+    //      duplicate admin alert).
+    // The row stays 'processing' until a terminal write below moves it to
+    // sent/failed/suppressed/deferred, or a failed terminal write releases it
+    // back to 'pending' (releaseClaim) so it stays retryable.
+    const claim = await pool.query(
+      "UPDATE scheduled_messages SET status = 'processing', claimed_at = NOW() WHERE id = $1 AND status = 'pending' RETURNING id",
       [row.id]
     );
-    if (stillPending.rowCount === 0) {
+    if (claim.rowCount === 0) {
       return;
     }
 
@@ -527,8 +551,10 @@ async function dispatchRow(row) {
 
     await handler({ entity, recipient, scheduledMessage: row });
 
+    // Terminal write is guarded on the claim we still hold ('processing'): if
+    // anything flipped this row out from under us, do not overwrite it as 'sent'.
     await pool.query(
-      "UPDATE scheduled_messages SET status = 'sent', sent_at = NOW(), error_message = NULL WHERE id = $1",
+      "UPDATE scheduled_messages SET status = 'sent', sent_at = NOW(), error_message = NULL WHERE id = $1 AND status = 'processing'",
       [row.id]
     );
 
@@ -549,6 +575,7 @@ async function dispatchRow(row) {
         );
       } catch (markErr) {
         console.error('[scheduledMessageDispatcher] failed to mark row suppressed:', markErr.message);
+        await releaseClaim(row.id);
       }
       return;
     }
@@ -559,6 +586,7 @@ async function dispatchRow(row) {
         await deferRowForQuota(row.id);
       } catch (deferErr) {
         console.error('[scheduledMessageDispatcher] failed to defer row for quota:', deferErr.message);
+        await releaseClaim(row.id);
       }
       maybeAlertQuotaOnce({ row_id: row.id, message_type: row.message_type });
       return;
@@ -575,6 +603,7 @@ async function dispatchRow(row) {
       );
     } catch (markErr) {
       console.error('[scheduledMessageDispatcher] failed to mark row failed:', markErr.message);
+      await releaseClaim(row.id);
     }
   }
 }
@@ -611,6 +640,18 @@ async function dispatchPending() {
           SET status = 'pending'
         WHERE status = 'deferred'
           AND scheduled_for <= NOW()`
+    );
+    // Reap stranded claims: a crash or deploy SIGTERM between the claim and its
+    // terminal write leaves a row in 'processing' that nothing re-selects (the
+    // drain pulls 'pending' only), silently losing that notification forever.
+    // Ten minutes is far beyond any legitimate in-flight handler, and the
+    // claimed_at age guard means a concurrent instance's fresh claims are never
+    // stolen.
+    await pool.query(
+      `UPDATE scheduled_messages
+          SET status = 'pending', claimed_at = NULL
+        WHERE status = 'processing'
+          AND claimed_at < NOW() - INTERVAL '10 minutes'`
     );
     // Drain fully: keep pulling batches while the last one was full, so a
     // backlog larger than BATCH_LIMIT clears within this tick instead of
@@ -692,7 +733,7 @@ async function resolveCriticalDeadLetters() {
         AND NOT EXISTS (
           SELECT 1 FROM scheduled_messages sm2
            WHERE sm2.suppression_key = scheduled_messages.suppression_key
-             AND sm2.status IN ('sent','pending','deferred')
+             AND sm2.status IN ('sent','pending','deferred','processing')
         )
       GROUP BY suppression_key, recipient_id, entity_type, entity_id, message_type
       HAVING MAX(COALESCE((payload->>'re_resolve_count')::int, 0)) < 99`
@@ -900,4 +941,7 @@ module.exports = {
   checkSuppression,
   _clearHandlersForTest,
   _handlersForTest,
+  // Test seam: the per-row claim + dispatch unit, exercised directly by the
+  // concurrency (claim) test without draining the whole shared-DB queue.
+  _dispatchRowForTest: dispatchRow,
 };

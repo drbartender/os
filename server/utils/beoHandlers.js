@@ -29,7 +29,7 @@ async function insertBeoNudgeIfMissing(executor, { proposalId, userId, scheduled
         AND message_type=$2
         AND recipient_type='staff' AND recipient_id=$3
         AND channel='sms'
-        AND status IN ('pending', 'sent')
+        AND status IN ('pending', 'processing', 'sent')
       LIMIT 1`,
     [proposalId, BEO_MESSAGE_TYPE, userId]
   );

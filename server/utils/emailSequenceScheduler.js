@@ -11,6 +11,41 @@ function escapeHtml(str) {
 }
 
 /**
+ * Optimistic per-step claim: advance an enrollment's current_step from `fromStep`
+ * to `toStep`, but ONLY if current_step is still `fromStep`. Returns the affected
+ * row count (1 = this worker claimed the step, 0 = a concurrent scheduler tick /
+ * instance already advanced it, so the caller must skip to avoid a duplicate send).
+ *
+ * The advance is the claim: a scheduler tick reads current_step, then races this
+ * predicate before it sends, so exactly one worker ever sends a given step. When
+ * `nextDelay` is provided the same write sets next_step_due_at for the following
+ * step; when it is null (no further step) next_step_due_at is cleared.
+ *
+ * Exported as a test seam so the concurrency test can race the real claim.
+ */
+async function claimSequenceStep(enrollmentId, fromStep, toStep, nextDelay) {
+  if (nextDelay) {
+    const r = await pool.query(
+      `UPDATE email_sequence_enrollments SET
+         current_step = $1, last_step_sent_at = NOW(),
+         next_step_due_at = NOW() + MAKE_INTERVAL(days => $4, hours => $5)
+       WHERE id = $2 AND current_step = $3
+       RETURNING id`,
+      [toStep, enrollmentId, fromStep, nextDelay.days, nextDelay.hours]
+    );
+    return r.rowCount;
+  }
+  const r = await pool.query(
+    `UPDATE email_sequence_enrollments SET
+       current_step = $1, last_step_sent_at = NOW(), next_step_due_at = NULL
+     WHERE id = $2 AND current_step = $3
+     RETURNING id`,
+    [toStep, enrollmentId, fromStep]
+  );
+  return r.rowCount;
+}
+
+/**
  * Process sequence steps for active enrollments that are due.
  * Runs every 15 minutes via setInterval in server/index.js.
  */
@@ -49,23 +84,51 @@ async function processSequenceSteps() {
       try {
         const nextStepOrder = enrollment.current_step + 1;
 
-        // Get the next step
+        // Get the step we are about to send
         const stepResult = await pool.query(
           'SELECT * FROM email_sequence_steps WHERE campaign_id = $1 AND step_order = $2',
           [enrollment.campaign_id, nextStepOrder]
         );
 
         if (!stepResult.rows[0]) {
-          // No more steps — mark as completed
+          // No more steps — mark as completed. Guard on current_step so a
+          // concurrent tick that already advanced this enrollment cannot
+          // re-complete a row that has since moved on.
           await pool.query(
-            `UPDATE email_sequence_enrollments SET status = 'completed', completed_at = NOW() WHERE id = $1`,
-            [enrollment.id]
+            `UPDATE email_sequence_enrollments SET status = 'completed', completed_at = NOW()
+              WHERE id = $1 AND current_step = $2`,
+            [enrollment.id, enrollment.current_step]
           );
           console.log(`[SequenceScheduler] Enrollment ${enrollment.id} completed (no more steps)`);
           continue;
         }
 
         const step = stepResult.rows[0];
+
+        // Look up the FOLLOWING step's delay so the claim can set next_step_due_at
+        // in the same write it uses to advance current_step.
+        const nextNextStep = await pool.query(
+          'SELECT delay_days, delay_hours FROM email_sequence_steps WHERE campaign_id = $1 AND step_order = $2',
+          [enrollment.campaign_id, nextStepOrder + 1]
+        );
+        const nextDelay = nextNextStep.rows[0]
+          ? { days: nextNextStep.rows[0].delay_days, hours: nextNextStep.rows[0].delay_hours }
+          : null;
+
+        // ── Optimistic claim BEFORE the send (exactly-once under concurrent ticks) ──
+        // Advance current_step from the value we read to nextStepOrder, conditional
+        // on it being unchanged. A second scheduler tick / instance that read the
+        // same current_step loses the predicate (rowCount 0) and skips, so the step
+        // email is sent exactly once. The advance IS the claim. Trade-off: a send
+        // that fails after the claim consumes the step (the catch records a 'failed'
+        // email_sends row) — at-most-once, which we accept over the duplicate-send
+        // risk the old advance-after-send ordering carried; the email_sends unique
+        // index on (lead_id, sequence_step_id) backstops any duplicate row.
+        const claimed = await claimSequenceStep(enrollment.id, enrollment.current_step, nextStepOrder, nextDelay);
+        if (claimed === 0) {
+          console.log(`[SequenceScheduler] Enrollment ${enrollment.id} step ${nextStepOrder} already claimed by a concurrent tick — skipping`);
+          continue;
+        }
 
         // Build unsubscribe URL — use UNSUBSCRIBE_SECRET if set, else JWT_SECRET fallback
         const unsubscribeToken = jwt.sign(
@@ -100,37 +163,13 @@ async function processSequenceSteps() {
           meta: { skipLog: true }, // drip sequence step — never enters the client message log
         });
 
-        // Record the send
+        // Record the send. The enrollment was already advanced by the claim above,
+        // so the loop moves to the next due step on the following tick.
         await pool.query(
           `INSERT INTO email_sends (campaign_id, sequence_step_id, lead_id, resend_id, subject, status, sent_at)
            VALUES ($1, $2, $3, $4, $5, 'sent', NOW())`,
           [enrollment.campaign_id, step.id, enrollment.lead_id, emailResult.id, step.subject]
         );
-
-        // Calculate next step due time
-        const nextNextStep = await pool.query(
-          'SELECT delay_days, delay_hours FROM email_sequence_steps WHERE campaign_id = $1 AND step_order = $2',
-          [enrollment.campaign_id, nextStepOrder + 1]
-        );
-
-        // Update enrollment progress
-        if (nextNextStep.rows[0]) {
-          const { delay_days, delay_hours } = nextNextStep.rows[0];
-          await pool.query(
-            `UPDATE email_sequence_enrollments SET
-              current_step = $1, last_step_sent_at = NOW(),
-              next_step_due_at = NOW() + MAKE_INTERVAL(days => $3, hours => $4)
-            WHERE id = $2`,
-            [nextStepOrder, enrollment.id, delay_days, delay_hours]
-          );
-        } else {
-          await pool.query(
-            `UPDATE email_sequence_enrollments SET
-              current_step = $1, last_step_sent_at = NOW(), next_step_due_at = NULL
-            WHERE id = $2`,
-            [nextStepOrder, enrollment.id]
-          );
-        }
 
         console.log(`[SequenceScheduler] Sent step ${nextStepOrder} to ${enrollment.email}`);
 
@@ -175,4 +214,4 @@ async function expireStaleQuoteDrafts() {
   }
 }
 
-module.exports = { processSequenceSteps, expireStaleQuoteDrafts };
+module.exports = { processSequenceSteps, expireStaleQuoteDrafts, claimSequenceStep };

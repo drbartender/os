@@ -3563,3 +3563,42 @@ WHERE u.presence_lead_rank IS NOT NULL
   AND NOT EXISTS (
     SELECT 1 FROM presence_log pl WHERE pl.user_id = u.id AND pl.ended_at IS NULL
   );
+
+-- ─── fix-claims lane: scheduled_messages 'processing' claim state ───
+-- The dispatcher now atomically claims a due row (status 'pending' ->
+-- 'processing') before it does any handler work, so a concurrent tick or a
+-- second instance cannot double-send the same notification. Widen the status
+-- CHECK to admit 'processing'; without it the claim UPDATE throws on first use.
+-- Idempotent DROP + ADD, mirroring the earlier status-CHECK migrations above.
+DO $$ BEGIN
+  ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_status_check;
+  ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_status_check
+    CHECK (status IN ('pending','sent','failed','suppressed','deferred','suppressed_by_sibling','dead_letter','processing'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- claimed_at stamps the moment a dispatcher claimed the row ('processing').
+-- The tick-entry reaper uses it to heal rows stranded mid-claim by a crash or
+-- deploy SIGTERM (flip back to 'pending' after 10 minutes) without ever
+-- touching another live instance's fresh claims.
+ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
+
+-- ─── fix-claims lane: email_sends drip idempotency ───
+-- Backstop for the sequence scheduler's optimistic per-step claim: at most one
+-- drip send per (lead, sequence step). Partial WHERE so campaign / blast sends
+-- (sequence_step_id IS NULL) stay unconstrained by design. A prod dupe-count for
+-- (lead_id, sequence_step_id) returned ZERO groups (checked live 2026-07-03), so
+-- this ships directly — no dedupe backfill required.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_email_sends_drip_step_uniq
+  ON email_sends (lead_id, sequence_step_id)
+  WHERE sequence_step_id IS NOT NULL;
+
+-- ─── fix-claims review repair: widen the enqueue-dedupe backstop to claims ───
+-- The pending-only unique index stops guarding a row the moment the dispatcher
+-- claims it ('processing'), opening a seconds-wide window where re-enqueueing
+-- the same tuple inserts a duplicate that sends later. Recreate the index over
+-- BOTH live statuses so the backstop holds through the claim window. Idempotent
+-- drop-then-create; same tuple, superset predicate, so existing data satisfies it.
+DROP INDEX IF EXISTS idx_scheduled_messages_pending_uniq;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_messages_pending_uniq
+  ON scheduled_messages (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)
+  WHERE status IN ('pending', 'processing');

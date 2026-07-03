@@ -324,16 +324,29 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
     };
   }
 
-  // 10. Approve selected candidates — batch DB update, then sequential SMS (Twilio throttle)
+  // 10. Claim + approve selected candidates — batch DB update, then sequential
+  // SMS (Twilio throttle). The UPDATE only flips rows still 'pending' and RETURNS
+  // the ids it actually changed, so a concurrent auto-assign run or a manual
+  // approval that already moved a request out of 'pending' cannot be re-approved
+  // or re-notified here. Only the returned ids proceed to the SMS + approved
+  // list — exactly-once approval per request.
   const approved = [];
+  let claimedIds = new Set();
   if (selected.length) {
-    await pool.query(
-      `UPDATE shift_requests SET status = 'approved', position = 'Bartender', beo_acknowledged_at = NULL WHERE id = ANY($1)`,
+    const claimResult = await pool.query(
+      `UPDATE shift_requests SET status = 'approved', position = 'Bartender', beo_acknowledged_at = NULL
+        WHERE id = ANY($1) AND status = 'pending' RETURNING id`,
       [selected.map(c => c.request_id)]
     );
+    claimedIds = new Set(claimResult.rows.map(r => r.id));
   }
 
   for (const candidate of selected) {
+    // Skip any candidate we did not actually claim: another actor (a concurrent
+    // auto-assign or a manual approval) moved this request out of 'pending'
+    // between our SELECT and our UPDATE, so it is not ours to approve or notify.
+    if (!claimedIds.has(candidate.request_id)) continue;
+
     // Send SMS notification (same pattern as shifts.js)
     if (candidate.phone) {
       try {
