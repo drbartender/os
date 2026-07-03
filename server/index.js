@@ -131,7 +131,7 @@ const allowedOrigins = [
 const isDev = process.env.NODE_ENV === 'development';
 const isAllowedOrigin = (origin) => {
   if (allowedOrigins.includes(origin)) return true;
-  if (isDev && /^http:\/\/localhost(:\d+)?$/.test(origin)) return true;
+  if (isDev && /^http:\/\/(?:[a-z0-9-]+\.)?localhost(:\d+)?$/.test(origin)) return true;
   return false;
 };
 
