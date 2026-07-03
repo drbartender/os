@@ -148,11 +148,61 @@ test('clawbackTip > full refund creates a negative adjustment split across barte
   assert.equal(rows.length, 2);
   assert.equal(Number(rows[0].adjustment_cents), -1936);
   assert.equal(Number(rows[1].adjustment_cents), -1936);
-  // line_total floors at 0 — no other income on the line.
-  assert.equal(Number(rows[0].line_total_cents), 0);
+  // H1: the synthetic line carries its NEGATIVE total (the old GREATEST(0,...)
+  // floor zeroed it, silently un-collecting every cross-period clawback).
+  assert.equal(Number(rows[0].line_total_cents), -1936);
+
+  // With no other earnings this period, the payout-level clamp holds the
+  // payable amount at 0 (money out is never negative); the residual is
+  // Sentry-warned for manual recovery.
+  const { rows: po } = await pool.query(
+    `SELECT total_cents FROM payouts WHERE contractor_id = $1 AND pay_period_id = $2`,
+    [bartenderA, result.period_id]
+  );
+  assert.equal(Number(po[0].total_cents), 0);
 
   const tip = await pool.query('SELECT refunded_amount_cents FROM tips WHERE id = $1', [tipId]);
   assert.equal(Number(tip.rows[0].refunded_amount_cents), 4000);
+});
+
+test('clawbackTip > H1: cross-period clawback nets against current-period earnings', async () => {
+  // Bartender A earned a $50.00 wage line this period on another shift. The
+  // $40 tip from the PAID prior period is fully refunded: A's share is -1936,
+  // which must actually reduce this period's payable total (5000 - 1936 = 3064).
+  await ensureTodayPeriodOpen();
+  const { rows: [period] } = await pool.query(
+    `SELECT id FROM pay_periods WHERE status = 'open'
+      AND CURRENT_DATE BETWEEN start_date AND end_date`
+  );
+  await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id) VALUES ($1, $2)
+     ON CONFLICT (pay_period_id, contractor_id) DO NOTHING`,
+    [period.id, bartenderA]
+  );
+  const { rows: [s2] } = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES (CURRENT_DATE, '6:00 PM', 'open', $1) RETURNING id`,
+    [paidProposalId]
+  );
+  try {
+    await pool.query(
+      `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents, line_total_cents)
+       SELECT po.id, $1, 4, 4, 1250, 5000, 5000 FROM payouts po
+        WHERE po.contractor_id = $2 AND po.pay_period_id = $3`,
+      [s2.id, bartenderA, period.id]
+    );
+    await clawbackTip(tipId, 4000);
+    const { rows: [po] } = await pool.query(
+      `SELECT total_cents FROM payouts WHERE contractor_id = $1 AND pay_period_id = $2`,
+      [bartenderA, period.id]
+    );
+    // A's clawback share of the 3872c net split is 1936c. The 5000c wage
+    // absorbs it: payable = 3064, not 5000 (old behavior) and not 0.
+    assert.equal(Number(po.total_cents), 3064);
+  } finally {
+    await pool.query('DELETE FROM payout_events WHERE shift_id = $1', [s2.id]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [s2.id]);
+  }
 });
 
 test('clawbackTip > partial then full refund aggregates the delta correctly', async () => {

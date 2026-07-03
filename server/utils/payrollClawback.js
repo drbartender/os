@@ -165,33 +165,56 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
       const payoutId = poRes.rows[0].id;
       touched.push(payoutId);
 
+      // Lines may go NEGATIVE (seam-sweep H1, decided 2026-07-02): a clawback
+      // whose original wage line lives in a prior (already-paid) period lands
+      // as a fresh synthetic row keyed by the ORIGINAL shift, and its negative
+      // line_total is what actually reduces this period's pay. The old
+      // GREATEST(0, ...) floor zeroed exactly that row, so cross-period
+      // clawbacks were silently never collected. The payout-level total is
+      // still clamped at 0 below (money out can't be negative); the negative
+      // nets against the bartender's other lines first.
       // ON CONFLICT: ADD to existing adjustment_cents, append to adjustment_note.
       await client.query(
         `INSERT INTO payout_events
            (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
             adjustment_cents, adjustment_note, line_total_cents)
-         VALUES ($1, $2, 0, 0, 0, 0, $3, $4, GREATEST(0, $3))
+         VALUES ($1, $2, 0, 0, 0, 0, $3, $4, $3)
          ON CONFLICT (payout_id, shift_id) DO UPDATE SET
            adjustment_cents = payout_events.adjustment_cents + EXCLUDED.adjustment_cents,
            adjustment_note  = COALESCE(payout_events.adjustment_note, '') ||
              CASE WHEN payout_events.adjustment_note IS NULL OR payout_events.adjustment_note = ''
                   THEN '' ELSE '; ' END ||
              EXCLUDED.adjustment_note,
-           line_total_cents = GREATEST(0,
+           line_total_cents =
              payout_events.wage_cents + payout_events.gratuity_share_cents
              + payout_events.card_tip_net_cents
-             + payout_events.adjustment_cents + EXCLUDED.adjustment_cents)`,
+             + payout_events.adjustment_cents + EXCLUDED.adjustment_cents`,
         [payoutId, tip.shift_id, negAdj, note]
       );
     }
 
-    await client.query(
+    const totalsRes = await client.query(
       `UPDATE payouts po SET total_cents = GREATEST(0, COALESCE((
          SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
        ), 0))
-       WHERE po.id = ANY($1)`,
+       WHERE po.id = ANY($1)
+       RETURNING po.id, po.contractor_id, po.total_cents,
+         COALESCE((SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id), 0) AS raw_sum`,
       [touched]
     );
+    // If the payout-level clamp engaged (raw sum below zero), the clamped
+    // remainder is uncollectible from this period's payout. Warn loudly so the
+    // admin can recover it manually (future wages, direct repayment).
+    for (const row of totalsRes.rows) {
+      const rawSum = Number(row.raw_sum);
+      if (rawSum < 0) {
+        Sentry.captureMessage('clawbackTip: payout clamped at 0; residual uncollected', {
+          level: 'warning',
+          tags: { util: 'payrollClawback', step: 'payout_clamp_residual' },
+          extra: { tipId, payoutId: row.id, contractorId: row.contractor_id, residualCents: rawSum },
+        });
+      }
+    }
 
     await client.query(
       `UPDATE tips SET refunded_amount_cents = $1, deferred_at = NULL,

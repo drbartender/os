@@ -13,6 +13,11 @@ const {
 const { captureProposalPaymentFees, captureTipFeesForProposal } = require('./payrollTips');
 const { isLegacyCcParticipant } = require('./payrollGuards');
 
+// Invoice labels whose dollars are part of the contract total_price. Kept in
+// sync manually with the CONTRACT_LABELS list inside refundHelpers.js
+// applyRefundReconciliation (same classification, same reason).
+const CONTRACT_LABELS = ['Deposit', 'Balance', 'Full Payment'];
+
 // Safe calendar date of a pg DATE value as 'YYYY-MM-DD'. node-postgres parses
 // a DATE at local midnight, so .toISOString() drifts the day on positive-offset
 // servers; read the local components instead. Mirrors toCalendarYmd in
@@ -127,8 +132,43 @@ async function accruePayoutsForProposal(proposalId) {
       [proposalId]
     );
     if (!workers.rows.length) {
+      // Even with nobody on the roster, prior accruals may have left payable
+      // lines for this proposal in the open period (the roster-correction sweep
+      // below is unreachable from here, so sweep inline). Removing the LAST
+      // worker is the common single-bartender case. Clawback debt lines
+      // (negative adjustment) are preserved, same rule as the main sweep.
+      const swept = await client.query(
+        `DELETE FROM payout_events pe
+          USING payouts po, shifts s
+          WHERE pe.payout_id = po.id AND pe.shift_id = s.id
+            AND s.proposal_id = $1 AND po.pay_period_id = $2
+            AND COALESCE(pe.adjustment_cents, 0) >= 0
+          RETURNING pe.payout_id, po.contractor_id, pe.shift_id, pe.adjustment_cents, pe.adjustment_note`,
+        [proposalId, payPeriodId]
+      );
+      if (swept.rowCount) {
+        const sweptPayoutIds = [...new Set(swept.rows.map(r => r.payout_id))];
+        await client.query(
+          `DELETE FROM payouts po
+            WHERE po.id = ANY($1) AND po.status = 'pending'
+              AND NOT EXISTS (SELECT 1 FROM payout_events WHERE payout_id = po.id)`,
+          [sweptPayoutIds]
+        );
+        await client.query(
+          `UPDATE payouts po SET total_cents = GREATEST(0, COALESCE((
+             SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
+           ), 0))
+           WHERE po.id = ANY($1)`,
+          [sweptPayoutIds]
+        );
+        Sentry.captureMessage('payrollAccrual: roster emptied; swept remaining payable lines', {
+          level: 'warning',
+          tags: { component: 'payrollAccrual', reason: 'empty_roster_sweep' },
+          extra: { proposalId, payPeriodId, removed: swept.rows },
+        });
+      }
       await client.query('COMMIT');
-      return { skipped: true, reason: 'no_approved_workers' };
+      return { skipped: true, reason: 'no_approved_workers', swept: swept.rowCount };
     }
 
     // Bartenders share gratuity and card tips; barbacks/servers do not.
@@ -148,10 +188,38 @@ async function accruePayoutsForProposal(proposalId) {
     const proposalPaidCents = Math.round(Number(proposal.amount_paid || 0) * 100);
     const gratuityFunded = proposalPaidCents >= proposalTotalCents;
     const grossGratuity = gratuityFunded ? extractGratuityCents(proposal.pricing_snapshot) : 0;
+    // Fee numerator (seam-sweep M4, decided 2026-07-02: exact pro-ration): only
+    // fees on dollars INSIDE the total_price denominator may net against the
+    // gratuity. Extra charges (Additional Services invoices, drink-plan extras)
+    // sit outside total_price, so their card fees were over-netting the pool
+    // and underpaying staff. Classification is link-driven: a payment's fee
+    // counts by the share of it that landed on CONTRACT invoices; linkless
+    // payments fall back to payment_type (deposit/balance/full = contract).
+    // Any misclassification errs toward staff (less netting), never toward
+    // the business keeping gratuity.
     const feeRes = await client.query(
-      `SELECT COALESCE(SUM(fee_cents), 0) AS fee
-       FROM proposal_payments WHERE proposal_id = $1 AND status = 'succeeded'`,
-      [proposalId]
+      `SELECT COALESCE(SUM(
+         CASE
+           WHEN links.linked_cents > 0 THEN
+             LEAST(pp.fee_cents,
+               ROUND(pp.fee_cents * LEAST(pp.amount,
+                 links.contract_cents
+                 + CASE WHEN pp.payment_type IN ('deposit', 'balance', 'full')
+                        THEN GREATEST(0, pp.amount - links.linked_cents) ELSE 0 END
+               )::numeric / NULLIF(pp.amount, 0)))
+           WHEN pp.payment_type IN ('deposit', 'balance', 'full') THEN pp.fee_cents
+           ELSE 0
+         END), 0) AS fee
+       FROM proposal_payments pp
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(ip.amount), 0) AS linked_cents,
+                COALESCE(SUM(ip.amount) FILTER (WHERE i.label = ANY($2)), 0) AS contract_cents
+           FROM invoice_payments ip
+           JOIN invoices i ON i.id = ip.invoice_id
+          WHERE ip.payment_id = pp.id AND ip.amount > 0
+       ) links ON TRUE
+       WHERE pp.proposal_id = $1 AND pp.status = 'succeeded'`,
+      [proposalId, CONTRACT_LABELS]
     );
     const gratuityFee = proRataFeeCents(
       grossGratuity, proposalTotalCents, Number(feeRes.rows[0].fee)
@@ -184,9 +252,10 @@ async function accruePayoutsForProposal(proposalId) {
 
     // Existing line items for this event, keyed by contractor+shift, so a
     // re-accrual preserves admin edits (hours, rate, late, adjustment) and
-    // recomputes only the system-owned money fields.
+    // recomputes only the system-owned money fields. pay_period_id is carried so
+    // the roster-correction sweep below can scope its deletes to THIS open period.
     const existingRes = await client.query(
-      `SELECT pe.*, po.contractor_id
+      `SELECT pe.*, po.contractor_id, po.pay_period_id
        FROM payout_events pe
        JOIN payouts po ON po.id = pe.payout_id
        JOIN shifts s ON s.id = pe.shift_id
@@ -219,7 +288,10 @@ async function accruePayoutsForProposal(proposalId) {
       const wage = wageCents(hours, rateCents);
       const share = bartenderShare[w.user_id] || { gratuity: 0, tipGross: 0, tipFee: 0 };
       const tipNet = share.tipGross - share.tipFee;
-      const lineTotal = Math.max(0, wage + share.gratuity + tipNet + adjustment);
+      // No line-level floor (H1): a same-period clawback merged into this line
+      // may legitimately exceed the line's earnings; flooring here would drop
+      // the excess debt on re-accrual. The payout-level recompute clamps at 0.
+      const lineTotal = wage + share.gratuity + tipNet + adjustment;
 
       // Upsert the contractor's payout for this period.
       const payoutRes = await client.query(
@@ -261,11 +333,88 @@ async function accruePayoutsForProposal(proposalId) {
       );
     }
 
-    // Recompute every touched payout's total from its line items.
+    // Roster corrections: remove orphaned payout lines. A worker approved at a
+    // prior accrual may since have been denied, unassigned (dropped_at set), or
+    // deleted; the worker query above already excludes them, so they are absent
+    // from `workers.rows`. Their payout_events line for this proposal's shifts
+    // would otherwise stay payable forever; no other code path deletes
+    // payout_events. Remove any existing line for THIS proposal's shifts, in THIS
+    // open period, whose (contractor, shift) pair is no longer a current worker.
+    // Scoping is deliberately tight: `existingRes` rows are already limited to
+    // this proposal's shifts (the JOIN), and we filter to payPeriodId (proven
+    // open above), so rows in other (frozen) periods and other proposals' shifts
+    // are never touched. A late-tip roll-forward line lives in a different period
+    // than payPeriodId, so it is likewise left alone.
+    const currentKeys = new Set(workers.rows.map(w => `${w.user_id}:${w.shift_id}`));
+    // Clawback debt lines (negative adjustment) are NEVER swept: the person
+    // owes that money regardless of roster status, and the tip's
+    // refunded_amount_cents marker has already advanced, so a swept debt line
+    // would be permanently un-collected (H1's leak in a new guise).
+    const orphans = existingRes.rows.filter(
+      r => Number(r.pay_period_id) === Number(payPeriodId)
+        && !currentKeys.has(`${r.contractor_id}:${r.shift_id}`)
+        && Number(r.adjustment_cents || 0) >= 0
+    );
+    if (orphans.length) {
+      // If a removed worker's line carried an admin-entered adjustment, still
+      // delete it, but make the removal loud so the lost adjustment is auditable.
+      const withAdjustments = orphans.filter(
+        o => Number(o.adjustment_cents) !== 0
+          || (o.adjustment_note !== null && o.adjustment_note !== '')
+      );
+      if (withAdjustments.length) {
+        Sentry.captureMessage(
+          'payrollAccrual: removing payout lines with admin adjustments for off-roster workers',
+          {
+            level: 'warning',
+            tags: { component: 'payrollAccrual', reason: 'orphan_line_with_adjustment' },
+            extra: {
+              proposalId,
+              payPeriodId,
+              removed: withAdjustments.map(o => ({
+                payout_event_id: o.id,
+                payout_id: o.payout_id,
+                shift_id: o.shift_id,
+                contractor_id: o.contractor_id,
+                adjustment_cents: Number(o.adjustment_cents),
+                adjustment_note: o.adjustment_note,
+              })),
+            },
+          }
+        );
+      }
+      await client.query(
+        'DELETE FROM payout_events WHERE id = ANY($1)',
+        [orphans.map(o => o.id)]
+      );
+      // A payout emptied of every line is a $0 pending stub for a worker no longer
+      // on any event this period. It would show as a phantom pending payout on the
+      // period list and block period finalization (maybeFinalizePeriod waits for
+      // every payout to be paid). Delete any such now-empty pending payout.
+      // Payouts that still carry a line (another proposal's shift this period) are
+      // kept and recomputed below; a paid payout is never removed.
+      const orphanPayoutIds = [...new Set(orphans.map(o => o.payout_id))];
+      const emptied = await client.query(
+        `DELETE FROM payouts po
+           WHERE po.id = ANY($1) AND po.status = 'pending'
+             AND NOT EXISTS (SELECT 1 FROM payout_events WHERE payout_id = po.id)
+           RETURNING id`,
+        [orphanPayoutIds]
+      );
+      const deletedPayoutIds = new Set(emptied.rows.map(r => r.id));
+      for (const pid of orphanPayoutIds) {
+        if (!deletedPayoutIds.has(pid)) touchedPayoutIds.add(pid);
+      }
+    }
+
+    // Recompute every touched payout's total from its line items. GREATEST(0,)
+    // matches every sibling recompute (clawback, lateTip, recomputePayoutTotal):
+    // H1 allows negative clawback lines, and a payable total must never go
+    // negative even when a debt line exceeds the period's fresh earnings.
     await client.query(
-      `UPDATE payouts po SET total_cents = COALESCE((
+      `UPDATE payouts po SET total_cents = GREATEST(0, COALESCE((
          SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
-       ), 0)
+       ), 0))
        WHERE po.id = ANY($1)`,
       [Array.from(touchedPayoutIds)]
     );

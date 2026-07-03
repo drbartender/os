@@ -480,3 +480,144 @@ test('GET /contractors/:userId/payouts > returns the contractor history with per
   assert.equal(ours.period.id, periodId);
   assert.equal(Number(ours.event_count), 1);
 });
+
+test('POST /periods/:id/process > recaptures a null-fee tip and folds the captured fee into the payout line', async () => {
+  // L5: a tip whose Stripe fee was unavailable at accrual keeps fee_cents NULL and
+  // pays GROSS. Processing must re-capture the fee and re-accrue first. Make the
+  // contractor an approved bartender so re-accrual actually recomputes the line.
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1,$2,'Bartender','approved')
+     ON CONFLICT (shift_id, user_id) DO UPDATE SET status='approved', position='Bartender'`,
+    [shiftId, contractorId]
+  );
+  const tip = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents, shift_id,
+                       stripe_payment_intent_id, tipped_at)
+     VALUES (gen_random_uuid(), $1, 4000, NULL, $2, 'pi_l5_capture', '2026-05-29 23:30:00+00')
+     RETURNING id`,
+    [contractorId, shiftId]
+  );
+  const tipId = tip.rows[0].id;
+
+  // Fake the Stripe fee source the accrual capture path reads (getStripe() returns
+  // a cached client; stub the method it calls and restore after).
+  const stripe = require('../../utils/stripeClient').getStripe();
+  assert.ok(stripe, 'a Stripe client is available in this environment');
+  const origRetrieve = stripe.paymentIntents.retrieve;
+  stripe.paymentIntents.retrieve = async () => ({
+    latest_charge: { balance_transaction: { fee: 90 } },
+  });
+
+  try {
+    const r = await req('POST', `/api/admin/payroll/periods/${periodId}/process`, adminToken);
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.period.status, 'processing');
+    assert.ok(body.fee_recapture, 'summary returned');
+    assert.ok(body.fee_recapture.tips_null_before >= 1, 'at least one null-fee tip found');
+    assert.equal(body.fee_recapture.tips_null_after, 0, 'no null-fee tips remain after capture');
+
+    // The captured fee ($0.90) flowed into the payout line: gross 4000, fee 90, net 3910.
+    const { rows } = await pool.query(
+      `SELECT card_tip_gross_cents, card_tip_fee_cents, card_tip_net_cents
+         FROM payout_events WHERE shift_id = $1 AND payout_id = $2`,
+      [shiftId, payoutId]
+    );
+    assert.equal(Number(rows[0].card_tip_gross_cents), 4000);
+    assert.equal(Number(rows[0].card_tip_fee_cents), 90, 'captured fee stored on the line');
+    assert.equal(Number(rows[0].card_tip_net_cents), 3910);
+
+    // The tip's fee_cents was persisted by the capture.
+    const t = await pool.query('SELECT fee_cents FROM tips WHERE id = $1', [tipId]);
+    assert.equal(Number(t.rows[0].fee_cents), 90);
+  } finally {
+    stripe.paymentIntents.retrieve = origRetrieve;
+    await pool.query('DELETE FROM tips WHERE id = $1', [tipId]);
+    await pool.query(
+      'DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = $2', [shiftId, contractorId]
+    );
+    await pool.query(
+      `UPDATE payout_events
+          SET card_tip_gross_cents=0, card_tip_fee_cents=0, card_tip_net_cents=0,
+              wage_cents=11000, gratuity_share_cents=10000, line_total_cents=21000
+         WHERE payout_id = $1`,
+      [payoutId]
+    );
+    await pool.query('UPDATE payouts SET total_cents=21000 WHERE id = $1', [payoutId]);
+    await pool.query("UPDATE pay_periods SET status='open' WHERE id = $1", [periodId]);
+  }
+});
+
+test('POST /periods/:id/process > proceeds and warns when a tip fee stays null after retry', async () => {
+  // L5: a Stripe outage must never blockade payroll. When re-capture still cannot
+  // resolve the fee, processing proceeds and the residual is warned to Sentry.
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1,$2,'Bartender','approved')
+     ON CONFLICT (shift_id, user_id) DO UPDATE SET status='approved', position='Bartender'`,
+    [shiftId, contractorId]
+  );
+  const tip = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents, shift_id,
+                       stripe_payment_intent_id, tipped_at)
+     VALUES (gen_random_uuid(), $1, 4000, NULL, $2, 'pi_l5_stillnull', '2026-05-29 23:30:00+00')
+     RETURNING id`,
+    [contractorId, shiftId]
+  );
+  const tipId = tip.rows[0].id;
+
+  // Stripe returns a charge with no settled fee -> stripeFeeFor stays null.
+  const stripe = require('../../utils/stripeClient').getStripe();
+  assert.ok(stripe, 'a Stripe client is available in this environment');
+  const origRetrieve = stripe.paymentIntents.retrieve;
+  stripe.paymentIntents.retrieve = async () => ({
+    latest_charge: { balance_transaction: { fee: null } },
+  });
+
+  // Capture the residual Sentry warning (payroll.js calls Sentry.captureMessage
+  // by property on the shared module object).
+  const Sentry = require('@sentry/node');
+  const origCaptureMessage = Sentry.captureMessage;
+  const warnings = [];
+  Sentry.captureMessage = (msg, ctx) => { warnings.push({ msg, ctx }); };
+
+  try {
+    const r = await req('POST', `/api/admin/payroll/periods/${periodId}/process`, adminToken);
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.period.status, 'processing', 'processing proceeds despite null fee');
+    assert.ok(body.fee_recapture.tips_null_after >= 1, 'residual null-fee tip reported');
+
+    const residual = warnings.find(
+      w => w.ctx && w.ctx.tags && w.ctx.tags.step === 'fee_recapture_residual'
+    );
+    assert.ok(residual, 'residual null-fee warning fired');
+    assert.ok(residual.ctx.extra.tip_ids.includes(tipId), 'warning names the tip');
+
+    // The line paid gross (fee 0) since the fee could not be captured.
+    const { rows } = await pool.query(
+      `SELECT card_tip_fee_cents, card_tip_net_cents
+         FROM payout_events WHERE shift_id = $1 AND payout_id = $2`,
+      [shiftId, payoutId]
+    );
+    assert.equal(Number(rows[0].card_tip_fee_cents), 0);
+    assert.equal(Number(rows[0].card_tip_net_cents), 4000);
+  } finally {
+    Sentry.captureMessage = origCaptureMessage;
+    stripe.paymentIntents.retrieve = origRetrieve;
+    await pool.query('DELETE FROM tips WHERE id = $1', [tipId]);
+    await pool.query(
+      'DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = $2', [shiftId, contractorId]
+    );
+    await pool.query(
+      `UPDATE payout_events
+          SET card_tip_gross_cents=0, card_tip_fee_cents=0, card_tip_net_cents=0,
+              wage_cents=11000, gratuity_share_cents=10000, line_total_cents=21000
+         WHERE payout_id = $1`,
+      [payoutId]
+    );
+    await pool.query('UPDATE payouts SET total_cents=21000 WHERE id = $1', [payoutId]);
+    await pool.query("UPDATE pay_periods SET status='open' WHERE id = $1", [periodId]);
+  }
+});

@@ -204,10 +204,11 @@ router.patch('/payroll/payout-events/:id', auth, adminOnly, asyncHandler(async (
       adjustment_note: 'adjustment_note' in patch ? patch.adjustment_note : row.adjustment_note,
     };
     const wage = Math.round(next.hours * next.rate_cents);
-    const lineTotal = Math.max(
-      0,
-      wage + Number(row.gratuity_share_cents) + Number(row.card_tip_net_cents) + next.adjustment_cents
-    );
+    // No line-level floor (H1): editing a synthetic clawback line (negative
+    // adjustment, zero hours) must not re-floor its debt to 0. The payout-level
+    // recompute clamps the payable total at 0.
+    const lineTotal =
+      wage + Number(row.gratuity_share_cents) + Number(row.card_tip_net_cents) + next.adjustment_cents;
 
     await client.query(
       `UPDATE payout_events
@@ -234,9 +235,106 @@ router.patch('/payroll/payout-events/:id', auth, adminOnly, asyncHandler(async (
   }
 }));
 
+// Card tips matched into THIS period's payouts whose Stripe fee was unavailable
+// at accrual (fee_cents NULL). Accrual COALESCEs a null fee to 0, so these lines
+// pay GROSS and the business silently eats the fee. Returns one row per such tip
+// with the proposal it belongs to. Scoped through payout_events so only tips that
+// actually landed on a payout in this period are considered.
+async function nullFeeTipsForPeriod(periodId) {
+  const { rows } = await pool.query(
+    `SELECT DISTINCT t.id AS tip_id, s.proposal_id
+       FROM tips t
+       JOIN payout_events pe ON pe.shift_id = t.shift_id
+       JOIN payouts po ON po.id = pe.payout_id
+       JOIN shifts s ON s.id = t.shift_id
+      WHERE po.pay_period_id = $1
+        AND t.fee_cents IS NULL
+        AND t.stripe_payment_intent_id IS NOT NULL`,
+    [periodId]
+  );
+  return rows;
+}
+
+// L5: before a period is frozen for processing, heal any tip whose Stripe fee
+// was unavailable at accrual. Re-capture the fee and re-accrue the affected
+// proposals so the captured fee flows into the payout lines (accrual itself calls
+// captureTipFeesForProposal before recomputing). Best-effort and self-contained:
+// a Stripe outage must never blockade payroll, so anything still null after the
+// retry is warned and left to pay gross. Returns a small summary for observability.
+async function recaptureNullTipFeesForPeriod(periodId) {
+  const before = await nullFeeTipsForPeriod(periodId);
+  const proposalIds = [...new Set(before.map(r => r.proposal_id).filter(Boolean))];
+  // Proposals whose own pay period is frozen: accrual captures the tip's fee
+  // (fee capture runs before the period check) but SKIPS the payout rewrite,
+  // so a late-tip ROLL-FORWARD line in THIS period still pays gross. Those
+  // tips must not be reported as healed just because fee_cents went non-null.
+  const frozenProposals = new Set();
+  for (const proposalId of proposalIds) {
+    try {
+      const res = await accruePayoutsForProposal(proposalId);
+      if (res && res.skipped && res.reason === 'pay_period_not_open') {
+        frozenProposals.add(proposalId);
+      }
+    } catch (err) {
+      Sentry.captureException(err, {
+        tags: { route: 'payroll_process', step: 'fee_recapture_reaccrue' },
+        extra: { periodId, proposalId },
+      });
+    }
+  }
+  const lineUnhealed = before.filter(r => frozenProposals.has(r.proposal_id));
+  if (lineUnhealed.length) {
+    Sentry.captureMessage(
+      'payroll process: fee captured but roll-forward line still pays gross (origin period frozen); adjust manually',
+      {
+        level: 'warning',
+        tags: { route: 'payroll_process', step: 'fee_recapture_line_unhealed' },
+        extra: {
+          periodId,
+          tip_ids: lineUnhealed.map(r => r.tip_id),
+          proposal_ids: [...frozenProposals],
+        },
+      }
+    );
+  }
+  const after = proposalIds.length ? await nullFeeTipsForPeriod(periodId) : before;
+  if (after.length) {
+    Sentry.captureMessage(
+      'payroll process: tips still missing a Stripe fee after recapture; proceeding (pays gross)',
+      {
+        level: 'warning',
+        tags: { route: 'payroll_process', step: 'fee_recapture_residual' },
+        extra: {
+          periodId,
+          tip_ids: after.map(r => r.tip_id),
+          proposal_ids: [...new Set(after.map(r => r.proposal_id).filter(Boolean))],
+        },
+      }
+    );
+  }
+  return {
+    tips_null_before: before.length,
+    proposals_reaccrued: proposalIds.length,
+    tips_null_after: after.length,
+    tips_line_unhealed: lineUnhealed.length,
+  };
+}
+
 router.post('/payroll/periods/:id/process', auth, adminOnly, asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) throw new NotFoundError('Period not found');
+
+  // Confirm the period is open before any fee-recapture work; keeps the same
+  // 404/409 semantics and avoids Stripe calls for a period that cannot be flipped.
+  const periodRes = await pool.query('SELECT status FROM pay_periods WHERE id = $1', [id]);
+  if (!periodRes.rows[0]) throw new NotFoundError('Period not found');
+  if (periodRes.rows[0].status !== 'open') {
+    throw new ConflictError(`Period is ${periodRes.rows[0].status}, not open`);
+  }
+
+  // L5: heal gross-paying tips (null Stripe fee) BEFORE freezing the period.
+  const feeRecapture = await recaptureNullTipFeesForPeriod(id);
+
   const { rows } = await pool.query(
     `UPDATE pay_periods SET status = 'processing'
       WHERE id = $1 AND status = 'open'
@@ -244,14 +342,14 @@ router.post('/payroll/periods/:id/process', auth, adminOnly, asyncHandler(async 
     [id]
   );
   if (!rows[0]) {
-    // Either the period doesn't exist or it's not open.
+    // Lost a race: another request flipped the period between our check and here.
     const existing = await pool.query(
       'SELECT status FROM pay_periods WHERE id = $1', [id]
     );
     if (!existing.rows[0]) throw new NotFoundError('Period not found');
     throw new ConflictError(`Period is ${existing.rows[0].status}, not open`);
   }
-  res.json({ period: rows[0] });
+  res.json({ period: rows[0], fee_recapture: feeRecapture });
 }));
 
 router.post('/payroll/payouts/:id/mark-paid', auth, adminOnly, asyncHandler(async (req, res) => {
