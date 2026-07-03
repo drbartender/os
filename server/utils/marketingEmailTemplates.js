@@ -198,7 +198,7 @@ function lowRatingAdminNotification(params) {
     : '<p style="color:#999;font-style:italic;">No comment provided.</p>';
 
   return {
-    subject: `Low rating (${rating}/5) on ${eventTypeLabel} — ${clientName}`,
+    subject: `Low rating (${rating}/5) on ${eventTypeLabel}, ${clientName}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND_PRIMARY};margin-top:0;">Low post-event rating</h2>
       <p><strong>${clientName}</strong> just rated their <strong>${eventTypeLabel}</strong>${eventDateDisplay ? ` on ${eventDateDisplay}` : ''}:</p>

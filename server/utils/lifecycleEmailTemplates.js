@@ -74,7 +74,7 @@ function lastMinuteCaveatHtml(lastMinute) {
 }
 function lastMinuteCaveatText(lastMinute) {
   return lastMinute
-    ? ' Note: because your event is <72h away, your booking is confirmed subject to staff availability — in the rare case we cannot staff it we will cancel and fully refund you.'
+    ? ' Note: because your event is <72h away, your booking is confirmed subject to staff availability, in the rare case we cannot staff it we will cancel and fully refund you.'
     : '';
 }
 
@@ -97,7 +97,7 @@ function signedAndPaidClient({
   // rewire without breaking the existing send.
   if (!bookingBlock || !receiptBlock) {
     return {
-      subject: `Signed & Paid — your ${eventTypeLabel} — Dr. Bartender`,
+      subject: `Signed & Paid: your ${eventTypeLabel} - Dr. Bartender`,
       html: wrapEmail(`
         <h2 style="color:${BRAND.primary};margin-top:0;">You're Locked In!</h2>
         <p>Hi ${esc(name)},</p>
@@ -105,9 +105,9 @@ function signedAndPaidClient({
         ${lastMinuteCaveatHtml(lastMinute)}
         <p>We'll be in touch with next steps as your event date approaches.</p>
         <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
-        <p>Cheers,<br/>The Dr. Bartender Team</p>
+        <p>Cheers, Dallas</p>
       `),
-      text: `Hi ${name}, we've received your signed proposal and your ${paymentType} of $${amount} for your ${eventTypeLabel}. Your date is officially on the books.${lastMinuteCaveatText(lastMinute)} — The Dr. Bartender Team`,
+      text: `Hi ${name}, we've received your signed proposal and your ${paymentType} of $${amount} for your ${eventTypeLabel}. Your date is officially on the books.${lastMinuteCaveatText(lastMinute)} Cheers, Dallas`,
     };
   }
 
@@ -186,7 +186,7 @@ function signedAndPaidClient({
 function drinkPlanLink({ clientName, eventTypeLabel = 'event', planUrl }) {
   const name = clientName || 'there';
   return {
-    subject: `Your Drink Plan for your ${eventTypeLabel} — Dr. Bartender`,
+    subject: `Your Drink Plan for your ${eventTypeLabel} - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Drink Plan is Ready!</h2>
       <p>Hi ${esc(name)},</p>
@@ -194,9 +194,9 @@ function drinkPlanLink({ clientName, eventTypeLabel = 'event', planUrl }) {
       <p>We've created a personalized drink planning questionnaire for your event. Use it to tell us your preferences &mdash; signature cocktails, mocktails, beer &amp; wine, and everything in between.</p>
       ${ctaButton(planUrl, 'Plan Your Drinks')}
       <p style="font-size:14px;color:${BRAND.secondary};">You can return to this link anytime to save your progress or make changes before submitting.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your drink plan for your ${eventTypeLabel} is ready! Visit ${planUrl} to plan your drinks. You can return anytime to save progress. — The Dr. Bartender Team`,
+    text: `Hi ${name}, your drink plan for your ${eventTypeLabel} is ready! Visit ${planUrl} to plan your drinks. You can return anytime to save progress. Cheers, Dallas`,
   };
 }
 
@@ -388,7 +388,7 @@ function changeRequestApproved({ clientName, eventLabel, newTotal, balanceDue, p
       <p>We have updated your <strong>${esc(eventLabel)}</strong>. Your new total is <strong>$${Number(newTotal).toFixed(2)}</strong>.</p>
       ${Number(balanceDue) > 0 ? `<p>Balance remaining: <strong>$${Number(balanceDue).toFixed(2)}</strong>. You can pay it from your portal.</p>` : ''}
       ${ctaButton(portalUrl, 'View your event')}
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
     text: `Hi ${clientName || 'there'}, your ${eventLabel} changes are confirmed. New total $${Number(newTotal).toFixed(2)}.${Number(balanceDue) > 0 ? ` Balance remaining $${Number(balanceDue).toFixed(2)}.` : ''} View: ${portalUrl}`,
   };
@@ -467,9 +467,9 @@ function gratuityStaffingChange({ name, newTotal, gratuity }) {
     <p>Your event grew, so we've added more crew to take great care of your guests. Your pre-paid gratuity scales with the team at the same per-${esc(noun)} rate you chose, so it is now <strong>$${gratTotal.toFixed(2)}</strong> for your ${esc(noun)}s.</p>
     <p>Your new event total is <strong>$${Number(newTotal).toFixed(2)}</strong>.</p>
     <p style="font-size:14px;color:${BRAND.secondary};">Questions? Just reply to this email.</p>
-    <p>Cheers,<br/>The Dr. Bartender Team</p>
+    <p>Cheers, Dallas</p>
   `);
-  const text = `Hi ${who}, your event grew so we added more crew. Your gratuity rate is unchanged; it scales with the team at the same per-${noun} rate you chose, now $${gratTotal.toFixed(2)} for your ${noun}s. New event total: $${Number(newTotal).toFixed(2)}. Cheers, The Dr. Bartender Team`;
+  const text = `Hi ${who}, your event grew so we added more crew. Your gratuity rate is unchanged; it scales with the team at the same per-${noun} rate you chose, now $${gratTotal.toFixed(2)} for your ${noun}s. New event total: $${Number(newTotal).toFixed(2)}. Cheers, Dallas`;
   return { subject, html, text };
 }
 
@@ -492,9 +492,9 @@ function portalInvite({ clientName, portalUrl }) {
       ${ctaButton(portalUrl, 'Open my portal')}
       <p style="font-size:14px;color:${BRAND.secondary};">Logging in is easy: enter the email address this message was sent to and we'll send you a one-time code. No password needed.</p>
       <p style="font-size:14px;color:${BRAND.secondary};">Questions? Just reply to this email.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${first}, your Dr. Bartender client portal has your proposals, payments, receipts, and event details together in one place: ${portalUrl}. Logging in is easy: enter the email address this message was sent to and we'll send you a one-time code. No password needed. Questions? Just reply. Cheers, The Dr. Bartender Team`,
+    text: `Hi ${first}, your Dr. Bartender client portal has your proposals, payments, receipts, and event details together in one place: ${portalUrl}. Logging in is easy: enter the email address this message was sent to and we'll send you a one-time code. No password needed. Questions? Just reply. Cheers, Dallas`,
   };
 }
 

@@ -59,7 +59,7 @@ function disputeWonAdminNotification({
   disputeWonLabel,
   payrollUrl,
 }) {
-  const subject = `Stripe dispute won — restore $${amountDollars} to ${perBartender.length} bartender${perBartender.length === 1 ? '' : 's'}`;
+  const subject = `Stripe dispute won: restore $${amountDollars} to ${perBartender.length} bartender${perBartender.length === 1 ? '' : 's'}`;
   const rows = perBartender.map(b =>
     `<tr><td style="padding:6px 12px">${esc(b.name)}</td><td style="padding:6px 12px;text-align:right">$${esc(b.shareDollars)}</td></tr>`
   ).join('');

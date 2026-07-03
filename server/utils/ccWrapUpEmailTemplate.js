@@ -20,7 +20,7 @@ function renderCcWrapUpEmail({ client, proposal }) {
     <p>Thank you for celebrating with us on ${eventDate}. We hope you had a great time!</p>
     ${reviewBlock}
     <p>We'd love your feedback, <a href="${feedbackUrl}">tell us how we did</a>.</p>
-    <p>Cheers, Dr. Bartender</p>
+    <p>Cheers, Dallas</p>
   `);
 
   const text = [
@@ -29,7 +29,7 @@ function renderCcWrapUpEmail({ client, proposal }) {
     `Thank you for celebrating with us on ${eventDate}.`,
     reviewLink ? `\nLeave a Google review: ${reviewLink}` : '',
     `\nWe'd love your feedback: ${feedbackUrl}`,
-    `\nCheers, Dr. Bartender`,
+    `\nCheers, Dallas`,
   ].filter(Boolean).join('\n');
 
   return { subject, html, text };

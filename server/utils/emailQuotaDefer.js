@@ -36,7 +36,7 @@ async function deferRowForQuota(rowId) {
     `UPDATE scheduled_messages
         SET status = 'deferred',
             scheduled_for = NOW() + INTERVAL '24 hours',
-            error_message = 'deferred: email sending quota reached — retry after reset'
+            error_message = 'deferred: email sending quota reached, retry after reset'
       WHERE id = $1`,
     [rowId]
   );
@@ -52,13 +52,13 @@ function maybeAlertQuotaOnce(context = {}) {
   if (now - _lastQuotaAlertAt < QUOTA_ALERT_THROTTLE_MS) return false;
   _lastQuotaAlertAt = now;
   if (process.env.SENTRY_DSN_SERVER) {
-    Sentry.captureMessage('email sending quota exhausted — scheduled messages deferred for retry', {
+    Sentry.captureMessage('email sending quota exhausted, scheduled messages deferred for retry', {
       level: 'warning',
       tags: { dispatcher: 'scheduled_messages', issue: 'email_quota' },
       extra: context,
     });
   }
-  console.warn('[emailQuotaDefer] email quota exhausted — deferring scheduled messages for retry after reset');
+  console.warn('[emailQuotaDefer] email quota exhausted, deferring scheduled messages for retry after reset');
   return true;
 }
 

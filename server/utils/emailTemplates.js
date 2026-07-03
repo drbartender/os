@@ -54,7 +54,7 @@ function proposalSent({ clientName, eventTypeLabel = 'event', proposalUrl, planU
        ${ctaButton(planUrl, 'Plan Your Drinks')}`
     : '';
   return {
-    subject: `Your Proposal for your ${eventTypeLabel} — Dr. Bartender`,
+    subject: `Your Proposal for your ${eventTypeLabel} - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Proposal is Ready!</h2>
       <p>Hi ${esc(name)},</p>
@@ -62,41 +62,41 @@ function proposalSent({ clientName, eventTypeLabel = 'event', proposalUrl, planU
       ${ctaButton(proposalUrl, 'View Proposal')}
       ${planSection}
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your proposal for your ${eventTypeLabel} is ready! View it here: ${proposalUrl}${planUrl ? ` Plan your drinks here: ${planUrl}` : ''} — The Dr. Bartender Team`,
+    text: `Hi ${name}, your proposal for your ${eventTypeLabel} is ready! View it here: ${proposalUrl}${planUrl ? ` Plan your drinks here: ${planUrl}` : ''}. Cheers, Dallas`,
   };
 }
 
 function proposalOptionsSent({ clientName, eventTypeLabel = 'event', compareUrl }) {
   const name = clientName || 'there';
   return {
-    subject: `Compare your options for your ${eventTypeLabel} — Dr. Bartender`,
+    subject: `Compare your options for your ${eventTypeLabel} - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Options Are Ready to Compare</h2>
       <p>Hi ${esc(name)},</p>
       <p>We've put together a few options for your <strong>${esc(eventTypeLabel)}</strong> so you can compare them side by side and pick the one that fits best.</p>
       ${ctaButton(compareUrl, 'Compare Your Options')}
       <p style="font-size:14px;color:${BRAND.secondary};">When you find the one you like, choose it and sign right from that page. If you have any questions, just reply to this email.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your options for your ${eventTypeLabel} are ready to compare side by side. View them here: ${compareUrl} — The Dr. Bartender Team`,
+    text: `Hi ${name}, your options for your ${eventTypeLabel} are ready to compare side by side. View them here: ${compareUrl}. Cheers, Dallas`,
   };
 }
 
 function proposalSignedConfirmation({ clientName, eventTypeLabel = 'event' }) {
   const name = clientName || 'there';
   return {
-    subject: `Proposal Signed — your ${eventTypeLabel} — Dr. Bartender`,
+    subject: `Proposal Signed: your ${eventTypeLabel} - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Thank You for Signing!</h2>
       <p>Hi ${esc(name)},</p>
       <p>We've received your signed proposal for your <strong>${esc(eventTypeLabel)}</strong>. We're excited to work with you!</p>
       <p><strong>Next step:</strong> Submit your deposit to lock in your date. You'll receive payment instructions shortly, or you can pay directly from the proposal page.</p>
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, thank you for signing the proposal for your ${eventTypeLabel}! Next step: submit your deposit to lock in your date. — The Dr. Bartender Team`,
+    text: `Hi ${name}, thank you for signing the proposal for your ${eventTypeLabel}! Next step: submit your deposit to lock in your date. Cheers, Dallas`,
   };
 }
 
@@ -114,7 +114,7 @@ function lastMinuteCaveatHtml(lastMinute) {
 }
 function lastMinuteCaveatText(lastMinute) {
   return lastMinute
-    ? ' Note: because your event is <72h away, your booking is confirmed subject to staff availability — in the rare case we cannot staff it we will cancel and fully refund you.'
+    ? ' Note: because your event is <72h away, your booking is confirmed subject to staff availability, in the rare case we cannot staff it we will cancel and fully refund you.'
     : '';
 }
 
@@ -144,14 +144,14 @@ function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, p
         <p>Your remaining balance of <strong>$${amount}</strong> for your <strong>${esc(eventTypeLabel)}</strong>${eventBit} just ran${cardBit}. You're paid in full.</p>
         <p>Looking forward to the event.</p>
         <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
-        <p>Cheers,<br/>The Dr. Bartender Team</p>
+        <p>Cheers, Dallas</p>
       `),
-      text: `Hi ${name}, your remaining balance of $${amount} for your ${eventTypeLabel}${eventBit} just ran${last4 ? ` on the card ending in ${last4}` : ' on your card on file'}. You're paid in full. Cheers, The Dr. Bartender Team`,
+      text: `Hi ${name}, your remaining balance of $${amount} for your ${eventTypeLabel}${eventBit} just ran${last4 ? ` on the card ending in ${last4}` : ' on your card on file'}. You're paid in full. Cheers, Dallas`,
     };
   }
   // Default (non-autopay) flow — preserves the existing copy
   return {
-    subject: `Payment Received — your ${eventTypeLabel} — Dr. Bartender`,
+    subject: `Payment Received: your ${eventTypeLabel} - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Payment Received!</h2>
       <p>Hi ${esc(name)},</p>
@@ -159,9 +159,9 @@ function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, p
       ${lastMinuteCaveatHtml(lastMinute)}
       <p>Thank you! We'll be in touch with next steps as your event date approaches.</p>
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, we've received your ${paymentType} of $${amount} for your ${eventTypeLabel}.${lastMinuteCaveatText(lastMinute)} Thank you! — The Dr. Bartender Team`,
+    text: `Hi ${name}, we've received your ${paymentType} of $${amount} for your ${eventTypeLabel}.${lastMinuteCaveatText(lastMinute)} Thank you! Cheers, Dallas`,
   };
 }
 
@@ -177,9 +177,9 @@ function clientOtp({ name, otp }) {
         <span style="display:inline-block;padding:16px 32px;background:${BRAND.bg};border:2px solid ${BRAND.secondary};border-radius:8px;font-size:32px;font-weight:bold;letter-spacing:8px;color:${BRAND.primary};">${otp}</span>
       </div>
       <p style="font-size:14px;color:${BRAND.secondary};">This code expires in 15 minutes. If you didn't request this, you can safely ignore this email.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${n}, your Dr. Bartender login code is: ${otp}. This code expires in 15 minutes. If you didn't request this, you can safely ignore this email. — The Dr. Bartender Team`,
+    text: `Hi ${n}, your Dr. Bartender login code is: ${otp}. This code expires in 15 minutes. If you didn't request this, you can safely ignore this email. Cheers, Dallas`,
   };
 }
 
@@ -230,9 +230,9 @@ function paymentReminderClient({ clientName, eventTypeLabel = 'event', balanceDu
       ${cardLine}
       ${cta}
       ${footer}
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, ${textIntro} ${isAutopay ? 'No action needed. Pay early or change card: ' : 'View and pay: '}${proposalUrl}. Cheers, The Dr. Bartender Team`,
+    text: `Hi ${name}, ${textIntro} ${isAutopay ? 'No action needed. Pay early or change card: ' : 'View and pay: '}${proposalUrl}. Cheers, Dallas`,
   };
 }
 
@@ -268,9 +268,9 @@ function paymentReminderLate({ clientName, eventTypeLabel = 'event', balanceDue,
       <p>${bodyOpen}</p>
       ${ctaButton(proposalUrl, 'View &amp; Pay Balance')}
       ${closeLine}
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your balance of $${Number(balanceDue).toFixed(2)} for your ${eventTypeLabel} is ${daysLate} ${daysLate === 1 ? 'day' : 'days'} past due. Pay here: ${proposalUrl}. ${firm ? 'Please reach out so we can sort this out together.' : 'Reach out if you need help.'} Cheers, The Dr. Bartender Team`,
+    text: `Hi ${name}, your balance of $${Number(balanceDue).toFixed(2)} for your ${eventTypeLabel} is ${daysLate} ${daysLate === 1 ? 'day' : 'days'} past due. Pay here: ${proposalUrl}. ${firm ? 'Please reach out so we can sort this out together.' : 'Reach out if you need help.'} Cheers, Dallas`,
   };
 }
 
@@ -304,9 +304,9 @@ function refundNotificationClient({ clientName, refundAmount, last4, newBalance 
       <p>We've refunded <strong>$${Number(refundAmount).toFixed(2)}</strong>${cardLine}. It should arrive in 5-10 business days depending on your bank.</p>
       ${balanceLine}
       <p style="font-size:14px;color:${BRAND.secondary};">Let me know if you have any questions, just reply to this email.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, we've refunded $${Number(refundAmount).toFixed(2)}${cardLineText}. It should arrive in 5-10 business days. ${balanceLineText} Cheers, The Dr. Bartender Team`,
+    text: `Hi ${name}, we've refunded $${Number(refundAmount).toFixed(2)}${cardLineText}. It should arrive in 5-10 business days. ${balanceLineText} Cheers, Dallas`,
   };
 }
 
@@ -336,9 +336,9 @@ function paymentFailedClient({ clientName, eventTypeLabel = 'event', last4, prop
       <p>Your payment for the <strong>${esc(eventTypeLabel)}</strong> didn't go through${cardClause}.</p>
       ${ctaButton(proposalUrl, 'Update Payment Method')}
       <p>If you have any questions or need help, reply to this email or call me.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your payment for the ${eventTypeLabel} didn't go through${cardClauseText}. Update payment method: ${proposalUrl}. Reach out if you need help. Cheers, The Dr. Bartender Team`,
+    text: `Hi ${name}, your payment for the ${eventTypeLabel} didn't go through${cardClauseText}. Update payment method: ${proposalUrl}. Reach out if you need help. Cheers, Dallas`,
   };
 }
 
@@ -347,7 +347,7 @@ function paymentFailedClient({ clientName, eventTypeLabel = 'event', last4, prop
 function clientSignedAdmin({ clientName, eventTypeLabel = 'event', proposalId, adminUrl }) {
   const name = clientName || 'A client';
   return {
-    subject: `Proposal Signed: ${name} — ${eventTypeLabel} (#${proposalId})`,
+    subject: `Proposal Signed: ${name}, ${eventTypeLabel} (#${proposalId})`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Proposal Signed</h2>
       <p><strong>${esc(name)}</strong> has signed the proposal for their <strong>${esc(eventTypeLabel)}</strong> (#${proposalId}).</p>
@@ -361,7 +361,7 @@ function clientSignedAdmin({ clientName, eventTypeLabel = 'event', proposalId, a
 function paymentReceivedAdmin({ clientName, eventTypeLabel = 'event', amount, paymentType, proposalId, adminUrl }) {
   const name = clientName || 'A client';
   return {
-    subject: `Payment Received: $${amount} — ${name}`,
+    subject: `Payment Received: $${amount}, ${name}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Payment Received</h2>
       <p><strong>${esc(name)}</strong> paid <strong>$${amount}</strong> (${paymentType}) for their <strong>${esc(eventTypeLabel)}</strong> (#${proposalId}).</p>
@@ -374,7 +374,7 @@ function paymentReceivedAdmin({ clientName, eventTypeLabel = 'event', amount, pa
 function signedAndPaidAdmin({ clientName, eventTypeLabel = 'event', amount, paymentType, proposalId, adminUrl }) {
   const name = clientName || 'A client';
   return {
-    subject: `Signed & Paid ($${amount}): ${name} — ${eventTypeLabel} (#${proposalId})`,
+    subject: `Signed & Paid ($${amount}): ${name}, ${eventTypeLabel} (#${proposalId})`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Signed & Paid</h2>
       <p><strong>${esc(name)}</strong> signed the proposal and paid <strong>$${amount}</strong> (${paymentType}) for their <strong>${esc(eventTypeLabel)}</strong> (#${proposalId}).</p>
@@ -388,10 +388,10 @@ function topShelfClassRequestAdmin({ clientName, clientEmail, clientPhone, spiri
   const name = clientName || 'A client';
   const category = spiritCategory === 'whiskey_bourbon' ? 'Whiskey & Bourbon' : spiritCategory === 'tequila_mezcal' ? 'Tequila & Mezcal' : 'Spirits Tasting';
   return {
-    subject: `[Top Shelf Class Quote] ${esc(name)} — ${esc(category)}`,
+    subject: `[Top Shelf Class Quote] ${esc(name)}, ${esc(category)}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Top Shelf Class Request</h2>
-      <p><strong>${esc(name)}</strong> has requested a Top Shelf <strong>${esc(category)}</strong> class. They expect a custom quote — the draft proposal has no pricing yet.</p>
+      <p><strong>${esc(name)}</strong> has requested a Top Shelf <strong>${esc(category)}</strong> class. They expect a custom quote, the draft proposal has no pricing yet.</p>
       <p style="background:${BRAND.bg};padding:12px;border-radius:4px;margin:16px 0;">
         <strong>Contact:</strong> ${esc(clientEmail || 'no email')}${clientPhone ? ` &middot; ${esc(clientPhone)}` : ''}<br/>
         <strong>Guests:</strong> ${esc(guestCount || '?')} &middot; <strong>Event:</strong> ${esc(eventDate || 'TBD')}${eventLocation ? ` &middot; ${esc(eventLocation)}` : ''}
@@ -418,7 +418,7 @@ function newApplicationAdmin({ applicantName, applicantEmail, adminUrl }) {
 function shiftRequestAdmin({ staffName, eventTypeLabel = 'event', eventDate, position, adminUrl }) {
   const eventPhrase = eventTypeLabel === 'event' ? 'an upcoming event' : `an upcoming ${eventTypeLabel} event`;
   return {
-    subject: `Shift Request: ${staffName} — ${eventTypeLabel}`,
+    subject: `Shift Request: ${staffName}, ${eventTypeLabel}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">New Shift Request</h2>
       <p><strong>${esc(staffName)}</strong> has requested to work as <strong>${esc(position)}</strong> at ${esc(eventPhrase)} on ${esc(eventDate)}.</p>
@@ -441,11 +441,11 @@ function shiftRequestApproved({ staffName, eventTypeLabel = 'event', eventDate, 
     : '';
   const setupText = setupTime ? ` Setup / arrive by ${setupTime}.` : '';
   return {
-    subject: `You're Confirmed: ${eventTypeLabel} on ${eventDate} — Dr. Bartender`,
+    subject: `You're Confirmed: ${eventTypeLabel} on ${eventDate} - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">You're Confirmed!</h2>
       <p>Hi ${esc(name)},</p>
-      <p>Great news — you've been confirmed to work ${esc(eventPhrase)}.</p>
+      <p>Great news, you've been confirmed to work ${esc(eventPhrase)}.</p>
       <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:100px;">Date</td><td style="padding:8px 12px;">${esc(eventDate)}</td></tr>
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Time</td><td style="padding:8px 12px;">${esc(startTime)} – ${esc(endTime)}</td></tr>
@@ -453,24 +453,24 @@ function shiftRequestApproved({ staffName, eventTypeLabel = 'event', eventDate, 
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Location</td><td style="padding:8px 12px;">${esc(location)}</td></tr>
       </table>
       <p>Please arrive on time and in proper uniform. See you there!</p>
-      <p>— The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, you're confirmed to work ${eventPhrase} on ${eventDate}, ${startTime} – ${endTime} at ${location}.${setupText} Please arrive on time and in proper uniform. — The Dr. Bartender Team`,
+    text: `Hi ${name}, you're confirmed to work ${eventPhrase} on ${eventDate}, ${startTime} – ${endTime} at ${location}.${setupText} Please arrive on time and in proper uniform. Cheers, Dallas`,
   };
 }
 
 function applicationReceivedConfirmation({ applicantName }) {
   const name = applicantName || 'there';
   return {
-    subject: `Application Received — Dr. Bartender`,
+    subject: `Application Received - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Application Received!</h2>
       <p>Hi ${esc(name)},</p>
       <p>Thank you for applying to join the Dr. Bartender team! We've received your application and will review it shortly.</p>
       <p>We'll reach out with next steps once our team has had a chance to go over your information.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, thank you for applying to Dr. Bartender! We've received your application and will review it shortly. — The Dr. Bartender Team`,
+    text: `Hi ${name}, thank you for applying to Dr. Bartender! We've received your application and will review it shortly. Cheers, Dallas`,
   };
 }
 
@@ -490,16 +490,16 @@ function applicationInterviewInvite({ applicantName, customMessage }) {
   const name = applicantName || 'there';
   const note = customMessageBlock(customMessage);
   return {
-    subject: `We'd like to interview you — Dr. Bartender`,
+    subject: `We'd like to interview you - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Let's Chat!</h2>
       <p>Hi ${esc(name)},</p>
-      <p>Thanks for applying to Dr. Bartender — we liked what we saw and we'd like to set up a quick interview.</p>
+      <p>Thanks for applying to Dr. Bartender, we liked what we saw and we'd like to set up a quick interview.</p>
       ${note}
       <p>Our team will reach out shortly with scheduling details. Feel free to reply to this email with any times that work for you.</p>
-      <p>Talk soon,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, we'd like to interview you. Our team will reach out with scheduling details. ${customMessage ? `Note from the team: ${customMessage}` : ''} — The Dr. Bartender Team`,
+    text: `Hi ${name}, we'd like to interview you. Our team will reach out with scheduling details. ${customMessage ? `Note from the team: ${customMessage}` : ''} Cheers, Dallas`,
   };
 }
 
@@ -520,10 +520,10 @@ function applicationHired({ applicantName, customMessage, staffPortalUrl }) {
       </ol>
       ${cta}
       ${note}
-      <p>If you have any questions getting set up, just reply to this email — we're here to help.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>If you have any questions getting set up, just reply to this email, we're here to help.</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, welcome to the Dr. Bartender team! Log into the staff portal to complete your onboarding: ${staffPortalUrl || 'https://staff.drbartender.com'}${customMessage ? ` Note: ${customMessage}` : ''} — The Dr. Bartender Team`,
+    text: `Hi ${name}, welcome to the Dr. Bartender team! Log into the staff portal to complete your onboarding: ${staffPortalUrl || 'https://staff.drbartender.com'}${customMessage ? ` Note: ${customMessage}` : ''}. Cheers, Dallas`,
   };
 }
 
@@ -531,16 +531,16 @@ function applicationRejected({ applicantName, customMessage }) {
   const name = applicantName || 'there';
   const note = customMessageBlock(customMessage);
   return {
-    subject: `About your application — Dr. Bartender`,
+    subject: `About your application - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Thank You for Applying</h2>
       <p>Hi ${esc(name)},</p>
       <p>Thank you for your interest in joining the Dr. Bartender team and for taking the time to apply. After careful review, we've decided to move forward with other candidates at this time.</p>
       ${note}
       <p>We genuinely appreciate the effort you put into your application, and we wish you the best in your search.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, thank you for applying to Dr. Bartender. After review, we've decided to move forward with other candidates at this time. ${customMessage ? `Note: ${customMessage}` : ''} We wish you the best. — The Dr. Bartender Team`,
+    text: `Hi ${name}, thank you for applying to Dr. Bartender. After review, we've decided to move forward with other candidates at this time. ${customMessage ? `Note: ${customMessage}` : ''} We wish you the best. Cheers, Dallas`,
   };
 }
 
@@ -555,9 +555,9 @@ function applicationDeactivated({ applicantName, customMessage }) {
       <p>This is a notice that your Dr. Bartender staff account has been deactivated. You will no longer receive shift requests or be able to log into the staff portal.</p>
       ${note}
       <p>If you believe this was done in error, or if you have questions, please reply to this email.</p>
-      <p>Best,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your Dr. Bartender staff account has been deactivated. ${customMessage ? `Note: ${customMessage}` : ''} If this was in error, please reply to this email. — The Dr. Bartender Team`,
+    text: `Hi ${name}, your Dr. Bartender staff account has been deactivated. ${customMessage ? `Note: ${customMessage}` : ''} If this was in error, please reply to this email. Cheers, Dallas`,
   };
 }
 
@@ -577,10 +577,10 @@ function abandonedQuote({ clientName, resumeUrl }) {
       <h2 style="color:${BRAND.primary};margin-top:0;">Pick Up Where You Left Off</h2>
       <p>Hi ${esc(name)},</p>
       <p>We noticed you started putting together a quote for your event but didn't finish.
-         No worries — your progress is saved and ready for you!</p>
+         No worries, your progress is saved and ready for you!</p>
       ${ctaButton(resumeUrl, 'Continue Your Quote')}
-      <p style="margin-top:24px;">If you have any questions, just reply to this email — we'd love to help.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p style="margin-top:24px;">If you have any questions, just reply to this email, we'd love to help.</p>
+      <p>Cheers, Dallas</p>
     `),
     text: `Hi ${name}, your quote is waiting! Continue where you left off: ${resumeUrl}`,
   };
@@ -652,7 +652,7 @@ function newThumbtackLeadAdmin({ customerName, customerPhone, category, descript
         ? ctaButton(proposalUrl, 'Review & Send Proposal')
         : (adminUrl ? ctaButton(adminUrl, 'View Client') : '')}
     `),
-    text: `New Thumbtack lead: ${customerName || 'Unknown'} — ${customerPhone || 'no phone'}. Category: ${category || 'N/A'}. Location: ${location || 'N/A'}. Date: ${dateStr}. ${proposalUrl ? `Draft created — review & send: ${proposalUrl}` : 'ACTION: Grab email from Thumbtack.'}${!proposalUrl && adminUrl ? ` View: ${adminUrl}` : ''}`,
+    text: `New Thumbtack lead: ${customerName || 'Unknown'}, ${customerPhone || 'no phone'}. Category: ${category || 'N/A'}. Location: ${location || 'N/A'}. Date: ${dateStr}. ${proposalUrl ? `Draft created, review & send: ${proposalUrl}` : 'ACTION: Grab email from Thumbtack.'}${!proposalUrl && adminUrl ? ` View: ${adminUrl}` : ''}`,
   };
 }
 
@@ -667,7 +667,7 @@ function newThumbtackReviewAdmin({ reviewerName, rating, reviewText }) {
       <p><strong>${name}</strong> left a ${rating !== null && rating !== undefined ? rating + '/5' : ''} review on Thumbtack:</p>
       ${reviewText ? `<div style="background:${BRAND.bg};padding:16px;border-radius:6px;margin:1rem 0;border-left:4px solid ${BRAND.secondary};">${esc(reviewText)}</div>` : '<p style="color:#999;"><em>No review text</em></p>'}
     `),
-    text: `New Thumbtack review from ${reviewerName || 'A customer'}: ${rating}/5 — ${reviewText || '(no text)'}`,
+    text: `New Thumbtack review from ${reviewerName || 'A customer'}: ${rating}/5, ${reviewText || '(no text)'}`,
   };
 }
 
@@ -682,7 +682,7 @@ function labratBugReportAdmin({ bugId, kind, missionId, stepIndex, testerName, w
   // Resend / SMTP would reject header-significant chars, but defense-in-depth.
   const subjectSafe = (v, max = 80) => (v ? String(v).replace(/[\r\n\t]/g, ' ').slice(0, max) : '');
   const subjectName = testerName ? ` from ${subjectSafe(testerName)}` : '';
-  const subjectMission = missionId ? ` — ${subjectSafe(missionId, 60)}` : '';
+  const subjectMission = missionId ? `, ${subjectSafe(missionId, 60)}` : '';
   const formatBlock = (label, value) => value
     ? `<p style="margin:0.5rem 0;"><strong>${label}:</strong><br/>${esc(value).replace(/\n/g, '<br/>')}</p>`
     : '';
@@ -699,9 +699,9 @@ function labratBugReportAdmin({ bugId, kind, missionId, stepIndex, testerName, w
         ${formatBlock(kind === 'mission-stale' ? "What's wrong" : 'What happened', happened)}
         ${formatBlock('What they expected', expected)}
       </div>
-      <p style="color:${BRAND.secondary};font-size:12px;margin-top:1.5rem;">Bug ID: ${esc(bugId || '—')}<br/>Browser: ${esc(browser || 'unknown')}</p>
+      <p style="color:${BRAND.secondary};font-size:12px;margin-top:1.5rem;">Bug ID: ${esc(bugId || '-')}<br/>Browser: ${esc(browser || 'unknown')}</p>
     `),
-    text: `Lab Rat ${kindLabel} from ${testerName || 'anonymous'}${missionId ? ` (mission ${missionId}${Number.isFinite(stepIndex) ? `, step ${stepIndex + 1}` : ''})` : ''}\n\nWhere: ${where || '—'}\nDid: ${didWhat || '—'}\nHappened: ${happened || '—'}${expected ? `\nExpected: ${expected}` : ''}\n\nBug ID: ${bugId || '—'}\nReported: ${reportedAt || new Date().toISOString()}`,
+    text: `Lab Rat ${kindLabel} from ${testerName || 'anonymous'}${missionId ? ` (mission ${missionId}${Number.isFinite(stepIndex) ? `, step ${stepIndex + 1}` : ''})` : ''}\n\nWhere: ${where || '-'}\nDid: ${didWhat || '-'}\nHappened: ${happened || '-'}${expected ? `\nExpected: ${expected}` : ''}\n\nBug ID: ${bugId || '-'}\nReported: ${reportedAt || new Date().toISOString()}`,
   };
 }
 
@@ -736,15 +736,15 @@ function interviewConfirmation({ applicantName, interviewAt }) {
   const dateStr = dt.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const timeStr = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   return {
-    subject: `Interview confirmed — ${dateStr}`,
+    subject: `Interview confirmed: ${dateStr}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Interview confirmed</h2>
       <p>Hi ${esc(name)},</p>
       <p>Your interview with Dr. Bartender is confirmed for <strong>${esc(dateStr)} at ${esc(timeStr)}</strong>.</p>
       <p>If anything changes on your end, just reply to this email.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your interview with Dr. Bartender is confirmed for ${dateStr} at ${timeStr}. If anything changes, reply to this email. — Dr. Bartender`,
+    text: `Hi ${name}, your interview with Dr. Bartender is confirmed for ${dateStr} at ${timeStr}. If anything changes, reply to this email. Cheers, Dallas`,
   };
 }
 
@@ -752,16 +752,16 @@ function paperworkReminder({ applicantName, staffUrl }) {
   const name = applicantName || 'there';
   const url = staffUrl || 'https://staff.drbartender.com';
   return {
-    subject: 'Quick nudge — finish your onboarding',
+    subject: 'Quick nudge: finish your onboarding',
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Just a friendly nudge</h2>
       <p>Hi ${esc(name)},</p>
       <p>This is a quick reminder to finish your Dr. Bartender onboarding paperwork. The portal saves your progress so you can pick up where you left off:</p>
       <p>${ctaButton(url, 'Continue onboarding →')}</p>
-      <p>Reply if you hit a snag — happy to help.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Reply if you hit a snag, happy to help.</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, just a friendly nudge to finish your Dr. Bartender onboarding paperwork: ${url} — Dr. Bartender`,
+    text: `Hi ${name}, just a friendly nudge to finish your Dr. Bartender onboarding paperwork: ${url}. Cheers, Dallas`,
   };
 }
 
