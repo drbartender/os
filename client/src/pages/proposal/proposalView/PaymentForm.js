@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import styles from './styles';
 
@@ -13,6 +13,17 @@ export default function PaymentForm({ onSubmit, payLabel, disabled }) {
   const elements = useElements();
   const [paying, setPaying] = useState(false);
   const [payError, setPayError] = useState('');
+  // Skeleton over the PaymentElement until Stripe paints it. The element stays
+  // MOUNTED underneath (an overlay, never a conditional swap: if it were
+  // unmounted, onReady could never fire and a Stripe-blocked client would be
+  // stranded behind an eternal skeleton). The timeout reveals whatever state
+  // exists so a genuine mount failure is visible instead of masked.
+  const [elementReady, setElementReady] = useState(false);
+  const [revealAnyway, setRevealAnyway] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setRevealAnyway(true), 10000);
+    return () => clearTimeout(t);
+  }, []);
 
   const handlePay = async (e) => {
     e.preventDefault();
@@ -45,7 +56,12 @@ export default function PaymentForm({ onSubmit, payLabel, disabled }) {
 
   return (
     <form onSubmit={handlePay}>
-      <PaymentElement />
+      <div className="sign-pay-element-slot">
+        <PaymentElement onReady={() => setElementReady(true)} />
+        {!elementReady && !revealAnyway && (
+          <div className="sign-pay-element-skeleton" aria-hidden="true">Loading secure payment…</div>
+        )}
+      </div>
       {payError && (
         <p style={{ color: '#c0392b', fontSize: '0.875rem', marginTop: '0.75rem' }}>{payError}</p>
       )}
@@ -55,7 +71,10 @@ export default function PaymentForm({ onSubmit, payLabel, disabled }) {
         style={{
           ...styles.payButton,
           ...((!stripe || paying || disabled)
-            ? { opacity: 0.45, filter: 'grayscale(0.7)', cursor: 'not-allowed' }
+            // Solid muted fill + dark label: the old opacity+grayscale overlay
+            // collapsed to grey-on-grey exactly when a stuck client stares at
+            // this button. Style only; the disabled CONDITION is untouched.
+            ? { backgroundColor: '#B8AD98', color: '#3A2E1E', boxShadow: 'none', cursor: 'not-allowed' }
             : { opacity: 1, cursor: 'pointer' }),
         }}
       >

@@ -1254,6 +1254,7 @@ html[data-app="admin-os"] .file-upload-name {
 
 .sig-mode-btn {
   flex: 1;
+  min-height: 40px;
   padding: 0.45rem 0.75rem;
   font-size: 0.8rem;
   font-weight: 600;
@@ -2334,6 +2335,12 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 .your-menu-extra-tag.removable {
   cursor: pointer;
   transition: background 0.15s;
+  min-height: 32px;
+  align-items: center;
+}
+.your-menu-extra-tag.removable .extra-remove {
+  padding: 6px;
+  margin: -6px -4px -6px 0; /* padded hit area without growing the pill */
 }
 .your-menu-extra-tag.removable:hover {
   background: rgba(29, 140, 137, 0.18);
@@ -2349,7 +2356,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   background: rgba(107, 142, 35, 0.1);
 }
 .extra-source-badge {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 700;
   padding: 0.05rem 0.3rem;
   border-radius: 4px;
@@ -2979,6 +2986,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
+  padding-bottom: 72px; /* the sticky selection bar must never cover the last card or an expanded upgrade panel */
 }
 
 .drink-card-horizontal {
@@ -3465,6 +3473,8 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 }
 .ws-utility-booking { color: var(--brass); }
 .ws-utility-link {
+  display: inline-block;
+  padding: 8px 6px;
   color: rgba(240, 232, 214, 0.7);
   text-decoration: none;
   letter-spacing: 0.18em;
@@ -3592,6 +3602,9 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 .ws-menu-toggle {
   display: none;
   flex-direction: column;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
   gap: 4px;
   background: none;
   border: none;
@@ -3630,7 +3643,7 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 .ws-mobile-drawer a:last-child { border-bottom: none; }
 .ws-mobile-drawer .ws-nav-cta {
   margin-top: 14px;
-  text-align: center;
+  justify-content: center; /* the CTA is inline-flex; text-align never centered it */
 }
 
 @media (max-width: 960px) {
@@ -4090,13 +4103,15 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px; /* row pitch comes from the padded links below (44px tap targets) */
 }
 .ws-footer-col li {
   font-size: 13px;
   color: rgba(240, 232, 214, 0.78);
 }
 .ws-footer-col a {
+  display: inline-block;
+  padding: 10px 0; /* the footer is the de facto mobile nav; 13px text alone was a 17px tap target */
   color: rgba(240, 232, 214, 0.78);
   text-decoration: none;
   transition: color 0.18s ease;
@@ -5954,7 +5969,8 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   font-size: 11px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  padding: 8px 14px;
+  padding: 12px 16px;
+  min-height: 40px;
   border-radius: 999px;
   cursor: pointer;
   transition: background .15s ease, border-color .15s ease, color .15s ease;
@@ -6363,10 +6379,10 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 }
 .wz-tile-info {
   position: absolute;
-  bottom: 8px;
-  right: 10px;
-  width: 22px;
-  height: 22px;
+  bottom: 4px;
+  right: 4px;
+  width: 36px;
+  height: 36px;
   background: transparent;
   border: 1px solid rgba(28, 22, 16, 0.2);
   border-radius: 50%;
@@ -6800,8 +6816,9 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 .wz-nav .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
 .wz-nav .btn-secondary {
   background: transparent;
-  color: var(--deep-brown);
-  border: 2px solid var(--border-dark);
+  /* the nav sits on the dark chalkboard; deep-brown on dark was near-invisible */
+  color: var(--cream-text);
+  border: 2px solid rgba(184, 146, 74, 0.5);
   padding: 0.7rem 1.5rem;
   border-radius: 8px;
   font-family: var(--font-body);
@@ -6811,8 +6828,9 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   transition: all 0.3s ease;
 }
 .wz-nav .btn-secondary:hover {
-  background: var(--parchment);
+  background: rgba(184, 146, 74, 0.14);
   border-color: var(--amber);
+  color: var(--cream-text);
 }
 
 /* Error */
@@ -9270,6 +9288,7 @@ html[data-app="admin-os"] .location-suggest-item.active {
 
 .invoice-document {
   position: relative;
+  min-width: 0; /* grid item: without this the nowrap money columns force min-content width past the track */
   background:
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.45  0 0 0 0 0.32  0 0 0 0 0.18  0 0 0 0.06 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"),
     linear-gradient(180deg, var(--paper) 0%, var(--card-bg) 100%);
@@ -9296,7 +9315,7 @@ html[data-app="admin-os"] .location-suggest-item.active {
 .invoice-eyebrow {
   display: inline-block;
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.32em;
   text-transform: uppercase;
   color: var(--brass);
@@ -9354,14 +9373,14 @@ html[data-app="admin-os"] .location-suggest-item.active {
 }
 .invoice-brand-sub {
   font-family: var(--font-display);
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--brass);
   margin: 2px 0 6px;
 }
 .invoice-brand-line {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   margin: 0;
   line-height: 1.4;
@@ -9400,7 +9419,7 @@ html[data-app="admin-os"] .location-suggest-item.active {
 .invoice-meta-block { min-width: 0; }
 .invoice-meta-label {
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--brass);
@@ -9413,11 +9432,21 @@ html[data-app="admin-os"] .location-suggest-item.active {
   line-height: 1.45;
 }
 .invoice-meta-strong { font-weight: 600; }
+/* Wrap the line-item table so long descriptions/totals scroll inside the
+   card instead of squeezing four columns into ~300px. */
+.invoice-table-wrap { overflow-x: auto; }
+/* Money cells never contain spaces, so nowrap costs nothing and guards a
+   future multi-token amount; headers may wrap ("Unit Price" on one line was
+   pushing the table past 390px). */
+.invoice-table td:nth-child(3),
+.invoice-table td:nth-child(4) { white-space: nowrap; }
+
 .invoice-meta-line {
   font-size: 12px;
   color: var(--text-muted);
   margin: 0;
   line-height: 1.4;
+  overflow-wrap: anywhere; /* long emails must wrap, not push the layout */
 }
 
 /* ── Line-item table ─────────────────────────────────── */
@@ -9433,7 +9462,7 @@ html[data-app="admin-os"] .location-suggest-item.active {
   padding: 10px 8px;
   font-family: var(--font-display);
   font-weight: 400;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--text-muted);
@@ -9491,7 +9520,7 @@ html[data-app="admin-os"] .location-suggest-item.active {
   margin-top: 24px;
   padding-top: 16px;
   border-top: 1px solid rgba(184, 146, 74, 0.3);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   font-style: italic;
   line-height: 1.55;
@@ -9564,7 +9593,7 @@ html[data-app="admin-os"] .location-suggest-item.active {
 }
 .invoice-actions-footnote {
   font-family: var(--font-display);
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--brass);
@@ -9624,14 +9653,14 @@ html[data-app="admin-os"] .location-suggest-item.active {
   line-height: 1.55;
 }
 
-.proposal-layout {
+.proposal-view-layout {
   display: grid;
   grid-template-columns: 1fr;
   gap: 24px;
   align-items: start;
 }
 @media (min-width: 1024px) {
-  .proposal-layout {
+  .proposal-view-layout {
     grid-template-columns: 1fr 380px;
     gap: 30px;
   }
@@ -9920,6 +9949,7 @@ html[data-app="admin-os"] .location-suggest-item.active {
   background: var(--paper);
   border: 1px solid rgba(28, 22, 16, 0.22);
   border-radius: 6px;
+  min-height: 180px; /* reserve the element's space; no dead hole while Stripe loads */
   padding: 14px 14px 4px;
 }
 .sign-pay-footnote {
@@ -13315,7 +13345,7 @@ html[data-app="admin-os"] .field-block {
   50%  { opacity: 1;    transform: scale(1);   box-shadow: 0 0 12px 2px rgba(184,146,74,0.35); }
   100% { opacity: 0.55; transform: scale(0.9); box-shadow: 0 0 0 0 rgba(184,146,74,0.4); }
 }
-.potion-app .potion-save.saved { color: rgba(240,232,214,0.55); }
+.potion-app .potion-save.saved { color: rgba(240,232,214,0.72); }
 .potion-app .potion-save.saved::before { animation-play-state: paused; opacity: 0.4; box-shadow: none; }
 .potion-app .potion-save.failed { color: var(--rust); }
 .potion-app .potion-save.failed::before {
@@ -14364,7 +14394,7 @@ html[data-app="admin-os"] .sms-reply textarea.form-input:focus {
   gap: 5px;
   padding: 2px 9px;
   height: 22px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   border-radius: 99px;
   letter-spacing: 0.01em;
@@ -14459,7 +14489,7 @@ html[data-app="admin-os"] .sms-reply textarea.form-input:focus {
   gap: 0.5rem;
 }
 .sp-shift-when {
-  font-size: 11px;
+  font-size: 12px;
   font-family: var(--sp-font-mono);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -14468,7 +14498,7 @@ html[data-app="admin-os"] .sms-reply textarea.form-input:focus {
   white-space: nowrap;
 }
 .sp-shift-rel {
-  font-size: 11px;
+  font-size: 12px;
   font-family: var(--sp-font-numeric);
   color: var(--sp-ink-2);
   padding: 1px 7px;
@@ -14542,7 +14572,7 @@ html[data-app="admin-os"] .sms-reply textarea.form-input:focus {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0 5px;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--sp-ink-2);
 }
 .sp-roster-pill {
@@ -15537,7 +15567,7 @@ html[data-app="staff"] main {
   background: var(--sp-bg-2);
   border: 1px solid var(--sp-line-2);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 16px;
   color: var(--sp-ink-1);
   font-family: inherit;
   outline: none;
@@ -16089,7 +16119,7 @@ html[data-app="staff"] main {
 
 /* Subsection divider inside a card (e.g. "Emergency contact"). */
 .sp-subsection {
-  font-size: 10px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.14em;
   color: var(--sp-ink-3);
@@ -16109,7 +16139,7 @@ html[data-app="staff"] main {
   flex: 1;
 }
 .sp-tf-k {
-  font-size: 10.5px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--sp-ink-3);
@@ -16122,7 +16152,7 @@ html[data-app="staff"] main {
   background: var(--sp-bg-2);
   border: 1px solid var(--sp-line-1);
   border-radius: 6px;
-  font-size: 13.5px;
+  font-size: 16px;
   color: var(--sp-ink-1);
   font-family: inherit;
   outline: none;
@@ -16141,8 +16171,8 @@ html[data-app="staff"] main {
 }
 [data-skin="light"] .sp-tf-input.has-error { border-color: var(--sp-ms-bordeaux); }
 .sp-tf-sub {
-  font-size: 10.5px;
-  color: var(--sp-ink-3);
+  font-size: 12px;
+  color: var(--sp-ink-2);
   font-style: italic;
   line-height: 1.4;
 }
@@ -16466,7 +16496,7 @@ html[data-app="staff"] main {
   width: 100%;
   background: transparent;
   border: 0;
-  font-size: 13.5px;
+  font-size: 16px;
   color: var(--sp-ink-1);
   outline: none;
   padding: 4px 0;
@@ -17637,7 +17667,7 @@ html[data-app="staff"] main {
   font-family: var(--font-body);
   font-style: italic;
   font-size: 0.82rem;
-  color: rgba(240, 232, 214, 0.65);
+  color: rgba(240, 232, 214, 0.8);
 }
 .cp-rx-actions .cp-share-hint,
 .cp-potion-actions .cp-share-hint,
@@ -17662,3 +17692,38 @@ html[data-app="staff"] main {
 .message-log-row:last-child .message-log-detail { top: auto; bottom: calc(100% + 3px); }
 .message-log-detail-text { display: block; }
 .message-log-detail-error { display: block; margin-top: 4px; color: #c62828; font-weight: 600; }
+
+/* Touch devices: the Time/Number picker arrow buttons were ~22-28px. */
+@media (pointer: coarse) {
+  .number-stepper-steppers button,
+  .time-picker-steppers button,
+  .time-picker-chevron {
+    min-width: 36px;
+    min-height: 36px;
+  }
+}
+
+/* Stripe Payment Element loading skeleton (PaymentForm). Overlays the mounted
+   element; auto-removed on onReady or after the 10s reveal timeout. */
+.sign-pay-element-slot {
+  position: relative;
+  min-height: 150px;
+}
+.sign-pay-element-skeleton {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--paper);
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-style: italic;
+  animation: signPaySkeletonPulse 1.6s ease-in-out infinite;
+}
+@keyframes signPaySkeletonPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+/* Signature accept/clear buttons: comfortable thumb targets */
+.sig-actions .btn-sm, .signature-pad-actions .btn-sm { min-height: 40px; }

@@ -470,7 +470,7 @@ function OpenShiftsTab({ mode, loading, error, onRetry, shifts, busyKey, onOpenS
               ) : (
                 <button
                   type="button"
-                  className="sp-btn sp-btn-sm sp-btn-primary"
+                  className="sp-btn sp-btn-primary"
                   disabled={busy}
                   onClick={(e) => {
                     e.stopPropagation();

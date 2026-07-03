@@ -487,7 +487,7 @@ export default function ProposalView() {
         </div>
 
         {/* ── Two-column on desktop: scroll left, sign-and-pay sticky right ── */}
-        <div className="proposal-layout">
+        <div className="proposal-view-layout">
           <div className="card on-paper proposal-scroll">
             <ProposalHeader proposal={proposal} bartenders={bartenders} />
 

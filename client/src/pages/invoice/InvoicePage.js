@@ -218,6 +218,7 @@ export default function InvoicePage() {
             </div>
           </div>
 
+          <div className="invoice-table-wrap">
           <table className="invoice-table">
             <thead>
               <tr>
@@ -238,6 +239,7 @@ export default function InvoicePage() {
               ))}
             </tbody>
           </table>
+          </div>
 
           <div className="invoice-totals">
             <div className="invoice-totals-row">

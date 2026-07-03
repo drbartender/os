@@ -39,8 +39,16 @@ export default function SignaturePad({ onChange, value, requireAccept = false })
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.parentElement.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = 140;
+    // DPR-scaled backing store so strokes are crisp on retina phones (this is
+    // the legally binding contract signature). Setting width/height RESETS the
+    // 2D transform, so the scale must be re-applied here, every resize, never
+    // once at mount. Drawing code keeps working in CSS-pixel coordinates.
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = 140 * dpr;
+    canvas.style.width = `${rect.width}px`;
+    canvas.style.height = '140px';
+    canvas.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
   function getPos(e) {
