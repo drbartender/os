@@ -7,13 +7,20 @@ lanes:
       - server/routes/thumbtack.test.js
       - server/routes/proposals/crud.js
       - server/routes/proposals/crud.test.js
+      - server/routes/proposals/getOne.js   # added at execution: crud.js hit the 1000-line ratchet, GET /:id extracted here (surfaced + approved in-session)
+      - server/routes/proposals/index.js    # added at execution: mounts getOne last (greedy /:id)
       - server/db/schema.sql
       - client/src/pages/admin/ProposalDetail.js
       - client/src/pages/admin/ProposalDetailPaymentPanel.js
       - client/src/index.css
+      - README.md                           # added at execution: folder tree gained getOne.js
       - ARCHITECTURE.md
     blockedBy: []
     review: full-fleet   # server/routes/thumbtack.js is on scripts/sensitive-paths.txt (webhook); schema change; max effort
+    # EXECUTED 2026-07-02: squash-merged to main a4efe12. Fleet = 5 explicit PASS
+    # (code/security/database/performance/consistency; perf agent misfired twice,
+    # re-driven per the iron rule). Review quick wins folded in: idx_thumbtack_leads_proposal_id
+    # + bounded entity-decode input. Owed: Dallas eyeball smoke (badge + panel line in the app).
 ---
 
 # Thumbtack Budget Warning Implementation Plan
