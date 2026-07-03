@@ -23,6 +23,7 @@
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { resolveEventTimezone, formatEventLocalTime } = require('./eventTimezone');
+const { eventLocalToUtc } = require('./businessTime');
 const { getEventTypeLabel } = require('./eventTypes');
 const { subtractMinutesFromTime } = require('./setupTime');
 const { PUBLIC_SITE_URL } = require('./urls');
@@ -93,35 +94,6 @@ function parseClockTime(raw) {
     return { hour: h, minute: min };
   }
   return null;
-}
-
-/**
- * Convert a calendar date + wall-clock time in an event-local timezone to
- * the corresponding UTC instant. Uses Intl.DateTimeFormat with
- * timeZoneName: 'shortOffset' to read the offset that applies on the given
- * date in the given zone (so summer / winter DST are both honored).
- *
- * @param {string} ymd YYYY-MM-DD calendar date
- * @param {number} hour 0-23 event-local hour
- * @param {number} minute 0-59 event-local minute
- * @param {string} tz IANA timezone identifier (e.g. "America/Chicago")
- * @returns {Date} UTC instant
- */
-function eventLocalToUtc(ymd, hour, minute, tz) {
-  const [y, mo, d] = ymd.split('-').map(Number);
-  const noonUtc = new Date(Date.UTC(y, mo - 1, d, 12, 0, 0));
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    timeZoneName: 'shortOffset',
-    hour: '2-digit',
-    hour12: false,
-  });
-  const parts = fmt.formatToParts(noonUtc);
-  const offsetPart = parts.find((p) => p.type === 'timeZoneName').value;
-  const match = /GMT([+-]?\d{1,2})(?::(\d{2}))?/.exec(offsetPart);
-  const tzHours = match ? Number(match[1]) : 0;
-  const tzMinutes = match && match[2] ? Number(match[2]) * (tzHours >= 0 ? 1 : -1) : 0;
-  return new Date(Date.UTC(y, mo - 1, d, hour - tzHours, minute - tzMinutes, 0));
 }
 
 /**

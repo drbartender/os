@@ -242,7 +242,8 @@ dr-bartender/
 │   │   ├── paystubPdf.js       # PDFKit renderer for staff paystubs (mirrors agreementPdf.js)
 │   │   ├── autoAssign.js       # Auto-assign algorithm (seniority + geo + equipment scoring)
 │   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
-│   │   ├── balanceReminderScheduling.js # Balance-reminder ladder scheduling (extracted from stripe.js)
+│   │   ├── balanceReminderScheduling.js # Balance-reminder ladder scheduling (extracted from stripe.js); anchors 10am event-local
+│   │   ├── businessTime.js     # Canonical business-time primitives: eventLocalToUtc (DST-aware) + chicagoTodayYmd
 │   │   ├── balanceScheduler.js # Autopay balance charge scheduler
 │   │   ├── balanceSmsHandlers.js # Non-autopay balance reminder SMS handlers (due-today, late t1/t3)
 │   │   ├── beoFinalize.js      # BEO Finalize/Unfinalize route registrars + ensureNotFinalized guard (mounted into drinkPlans router)

@@ -193,7 +193,17 @@ async function processEventCompletions() {
         -- never abort the whole batch (the old "|| ':00'"::interval did exactly
         -- that, silently blocking ALL auto-completions every run).
         AND event_start_time ~* '^[0-9]{1,2}:[0-9]{2}( ?[AP]M)?$'
-        AND (event_date + event_start_time::time + (event_duration_hours || ' hours')::interval) < NOW()
+        -- The event-end expression builds a wall-clock timestamp WITHOUT time
+        -- zone; AT TIME ZONE event_timezone interprets it in the EVENT's zone
+        -- (America/Chicago for essentially every row) and yields the true UTC
+        -- instant. Without it, the naive timestamp is compared to NOW() using
+        -- the SESSION tz (GMT in prod), which reads a Chicago evening event as
+        -- ~5-6h earlier and auto-completes it before it has actually ended.
+        -- Keep the (event_duration_hours || ' hours')::interval concat form:
+        -- event_duration_hours is NUMERIC(4,1) and make_interval(hours=>int)
+        -- would truncate a fractional 4.5h duration.
+        AND ((event_date + event_start_time::time + (event_duration_hours || ' hours')::interval)
+              AT TIME ZONE event_timezone) < NOW()
         AND (COALESCE(total_price, 0) - COALESCE(amount_paid, 0)) <= 0
       RETURNING id, event_type, event_type_custom
     `);

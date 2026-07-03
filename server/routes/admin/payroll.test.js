@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { test, before, after } = require('node:test');
+const { test, before, after, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const express = require('express');
@@ -170,6 +170,42 @@ test('GET /payroll/periods/current > returns the open period with payouts and ev
   assert.equal(payout.venmo_handle, 'payroll-test');
   assert.equal(payout.events.length, 1);
   assert.equal(payout.events[0].wage_cents, 11000);
+});
+
+test('GET /payroll/periods/current > evening Chicago boundary picks the current Chicago-day period, not the UTC-day period', async () => {
+  // Two adjacent OPEN Tue-Mon periods. Mon 2026-01-19 18:30 CST = Tue
+  // 2026-01-20 00:30 UTC: the correct "today" is the Chicago Monday (period
+  // 01-13..01-19); the old UTC pick saw Tuesday the 20th (period 01-20..01-26).
+  const cur = await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES ('2026-01-13','2026-01-19','2026-01-20','open')
+     ON CONFLICT (start_date) DO UPDATE SET status='open' RETURNING id`
+  );
+  const currentPeriodId = cur.rows[0].id;
+  const nxt = await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES ('2026-01-20','2026-01-26','2026-01-27','open')
+     ON CONFLICT (start_date) DO UPDATE SET status='open' RETURNING id`
+  );
+  const nextPeriodId = nxt.rows[0].id;
+
+  mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-20T00:30:00Z') });
+  try {
+    const r = await req('GET', '/api/admin/payroll/periods/current', adminToken);
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.ok(body.period, 'a period is returned');
+    assert.equal(body.period.id, currentPeriodId,
+      'the Chicago-day period (01-13..01-19) is chosen, not the UTC-day period (01-20..01-26)');
+    assert.notEqual(body.period.id, nextPeriodId);
+  } finally {
+    mock.timers.reset();
+    await pool.query(
+      `DELETE FROM pay_periods WHERE id IN ($1, $2)
+         AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pay_periods.id)`,
+      [currentPeriodId, nextPeriodId]
+    );
+  }
 });
 
 test('GET /payroll/periods/:id > returns the same shape for a specific period', async () => {

@@ -14,6 +14,7 @@ const { pool } = require('../db');
 const { findOpenPeriodForDate } = require('./payrollProcessing');
 const { payPeriodForDate, computePayday } = require('./payrollPeriods');
 const { splitEvenly } = require('./payrollMath');
+const { chicagoTodayYmd } = require('./businessTime');
 
 async function clawbackTip(tipId, newCumulativeRefundedCents) {
   const client = await pool.connect();
@@ -105,8 +106,11 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
     const netDelta = delta - feeDelta;
     const perBartenderShares = splitEvenly(netDelta, bartenders.length);
 
-    // Find/create the open period containing today.
-    const todayYmd = new Date().toISOString().slice(0, 10);
+    // Find/create the open period containing today. "Today" is the business day
+    // in America/Chicago, not the server's UTC/GMT day: a late-evening clawback
+    // in Chicago must land in the CURRENT Tue-Mon period, not next week's (which
+    // the UTC day would pick once past ~6-7pm Central).
+    const todayYmd = chicagoTodayYmd();
     let period = await findOpenPeriodForDate(client, todayYmd);
     if (!period) {
       const { startDate, endDate } = payPeriodForDate(todayYmd);

@@ -1,6 +1,51 @@
 const { pool } = require('../db');
 const { scheduleMessage } = require('./messageScheduling');
+const { resolveEventTimezone } = require('./eventTimezone');
+const { eventLocalToUtc, chicagoTodayYmd } = require('./businessTime');
 const Sentry = require('@sentry/node');
+
+// Each balance-reminder message_type fires at 10:00am LOCAL (event timezone) on a
+// day offset from balance_due_date. This map is the single source of truth,
+// shared with scripts/healBalanceReminderTimes.js so the scheduler and the heal
+// script can never drift.
+const REMINDER_ANCHOR_HOUR = 10;
+const REMINDER_OFFSET_DAYS = {
+  balance_reminder_autopay_t3: -3,
+  balance_reminder_non_autopay_t3: -3,
+  balance_due_today: 0,
+  balance_late_t1: 1,
+  balance_late_t3: 3,
+  balance_due_today_sms: 0,
+  balance_late_t1_sms: 1,
+  balance_late_t3_sms: 3,
+};
+
+// Shift a YYYY-MM-DD calendar string by whole days (UTC-based, calendar-only, so
+// no wall-clock / DST drift creeps in).
+function shiftYmd(ymd, days) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+// pg returns a DATE as a JS Date at the process-local midnight of that calendar
+// day; read its LOCAL components back to recover the stored YYYY-MM-DD without tz
+// drift. A plain YYYY-MM-DD string passes through unchanged.
+function toBaseYmd(balanceDueDate) {
+  if (balanceDueDate instanceof Date) {
+    const y = balanceDueDate.getFullYear();
+    const m = String(balanceDueDate.getMonth() + 1).padStart(2, '0');
+    const d = String(balanceDueDate.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(balanceDueDate).slice(0, 10);
+}
+
+// The UTC instant for a reminder: REMINDER_ANCHOR_HOUR local on (baseYmd + offsetDays).
+function reminderAnchorInstant(baseYmd, offsetDays, tz) {
+  return eventLocalToUtc(shiftYmd(baseYmd, offsetDays), REMINDER_ANCHOR_HOUR, 0, tz);
+}
 
 /**
  * Schedule the balance-reminder ladder for a freshly-deposit-paid proposal.
@@ -21,7 +66,7 @@ async function scheduleBalanceReminders(proposalId) {
     const id = Number(proposalId);
     if (!Number.isInteger(id)) return;
     const r = await pool.query(
-      `SELECT id, client_id, total_price, amount_paid, balance_due_date, autopay_enrolled
+      `SELECT id, client_id, total_price, amount_paid, balance_due_date, autopay_enrolled, event_timezone
        FROM proposals WHERE id = $1`,
       [id]
     );
@@ -34,21 +79,26 @@ async function scheduleBalanceReminders(proposalId) {
 
     const dueDate = new Date(p.balance_due_date);
     if (Number.isNaN(dueDate.getTime())) return;
-    // Skip only when the balance due date is strictly BEFORE today. pg returns
-    // a DATE column as a JS Date at LOCAL midnight, so `startOfToday` is also
-    // built at local midnight — the two are on the same basis and the compare
-    // is correct no matter what time of day the deposit lands. A balance due
-    // TODAY is NOT skipped (the balance_due_today reminder still schedules),
-    // which is the point: a same-day deposit must not silently drop it.
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    if (dueDate.getTime() < startOfToday.getTime()) return; // balance due strictly before today — admin handles manually
+    // Skip only when the balance due date is strictly BEFORE today, where
+    // "today" is the CHICAGO calendar day. A server-local (UTC) compare flips
+    // to the next day at 6-7pm Chicago, so a deposit landing that evening ON
+    // the due date would wrongly abort the whole ladder (including the late
+    // reminders). Calendar-string compare keeps both sides on the same basis.
+    // A balance due TODAY is NOT skipped: a same-day deposit must not silently
+    // drop the balance_due_today reminder.
+    if (toBaseYmd(p.balance_due_date) < chicagoTodayYmd()) return; // due strictly before Chicago-today — admin handles manually
 
-    const dayMs = 24 * 60 * 60 * 1000;
-    const t3Before = new Date(dueDate.getTime() - 3 * dayMs);
-    const dueDay = dueDate;
-    const t1After = new Date(dueDate.getTime() + 1 * dayMs);
-    const t3After = new Date(dueDate.getTime() + 3 * dayMs);
+    // Anchor each reminder at 10:00am LOCAL (event timezone), matching the send hour every other anchored touch uses (computeScheduledFor SEND_HOUR_LOCAL), so a post-reschedule reanchor computes the identical instant on its labeled day.
+    // Previously these were pg DATE -> JS Date instants at implicit midnight UTC,
+    // which under a GMT session landed the send around 7pm the PRIOR evening in
+    // Chicago. Deriving the labeled day by calendar arithmetic off
+    // balance_due_date keeps DST from shifting which day fires.
+    const tz = resolveEventTimezone(p);
+    const baseYmd = toBaseYmd(p.balance_due_date);
+    const t3Before = reminderAnchorInstant(baseYmd, REMINDER_OFFSET_DAYS.balance_reminder_non_autopay_t3, tz);
+    const dueDay = reminderAnchorInstant(baseYmd, REMINDER_OFFSET_DAYS.balance_due_today, tz);
+    const t1After = reminderAnchorInstant(baseYmd, REMINDER_OFFSET_DAYS.balance_late_t1, tz);
+    const t3After = reminderAnchorInstant(baseYmd, REMINDER_OFFSET_DAYS.balance_late_t3, tz);
 
     const base = {
       entityType: 'proposal',
@@ -89,4 +139,9 @@ async function scheduleBalanceReminders(proposalId) {
   }
 }
 
-module.exports = { scheduleBalanceReminders };
+module.exports = {
+  scheduleBalanceReminders,
+  REMINDER_OFFSET_DAYS,
+  reminderAnchorInstant,
+  toBaseYmd,
+};

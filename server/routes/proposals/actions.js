@@ -167,7 +167,11 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
   if (!result.rows[0]) throw new NotFoundError('Proposal not found');
 
   const proposal = result.rows[0];
-  if (['balance_paid', 'confirmed'].includes(proposal.status)) {
+  // A manual payment may only land on a proposal that is still collecting money.
+  // 'balance_paid'/'confirmed' are already fully paid; 'completed'/'archived' are
+  // terminal — recording against them would wrongly downgrade status back to
+  // deposit_paid/balance_paid (and re-open a closed booking). Reject all four.
+  if (['balance_paid', 'confirmed', 'completed', 'archived'].includes(proposal.status)) {
     throw new ConflictError('Proposal is already fully paid.', 'ALREADY_PAID_IN_FULL');
   }
 
@@ -238,7 +242,7 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     // re-apply the fully-paid guard under the lock so a duplicate rejects with
     // ALREADY_PAID_IN_FULL (the existing response shape) instead of recording a
     // zero-applied payment.
-    if (['balance_paid', 'confirmed'].includes(lockedRow.status)) {
+    if (['balance_paid', 'confirmed', 'completed', 'archived'].includes(lockedRow.status)) {
       throw new ConflictError('Proposal is already fully paid.', 'ALREADY_PAID_IN_FULL');
     }
     const lockedTotal = Number(lockedRow.total_price);

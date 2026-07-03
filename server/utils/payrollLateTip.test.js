@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { test, before, beforeEach, afterEach, after } = require('node:test');
+const { test, before, beforeEach, afterEach, after, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const { rollForwardLateTip } = require('./payrollLateTip');
@@ -460,6 +460,26 @@ test('rollForwardLateTip > a second LATE tip for the same shift aggregates into 
     assert.equal(Number(rows[1].card_tip_gross_cents), 3000);
   } finally {
     await pool.query('DELETE FROM tips WHERE id = $1', [t2.rows[0].id]);
+  }
+});
+
+test('rollForwardLateTip > Chicago evening (Mon 18:30 CST) rolls into the CURRENT Tue-Mon period, not next week (T3)', async () => {
+  // Mon 2026-01-19 18:30 CST = Tue 2026-01-20 00:30 UTC. chicagoTodayYmd() reads
+  // the Chicago Monday (19th); its Tue-Mon period is 2026-01-13..2026-01-19. The
+  // old UTC pick saw the 20th (Tuesday) and would have opened NEXT week's period
+  // (start 2026-01-20), stranding the rolled-forward tip a week late.
+  mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-01-20T00:30:00Z') });
+  try {
+    const result = await rollForwardLateTip(tipId);
+    assert.equal(result.bartenders, 2);
+    const { rows } = await pool.query(
+      "SELECT to_char(start_date, 'YYYY-MM-DD') AS start_ymd FROM pay_periods WHERE id = $1",
+      [result.period_id]
+    );
+    assert.equal(rows[0].start_ymd, '2026-01-13',
+      'rolls into the current Tue-Mon period (Chicago Monday), not next week (2026-01-20)');
+  } finally {
+    mock.timers.reset();
   }
 });
 

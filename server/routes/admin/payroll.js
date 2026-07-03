@@ -15,6 +15,7 @@ const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
 const { rollForwardLateTip } = require('../../utils/payrollLateTip');
 const { retryDeferredTips, MAX_DEFER_ATTEMPTS } = require('../../utils/payrollDeferredRetry');
 const { logAdminAction } = require('../../utils/adminAuditLog');
+const { chicagoTodayYmd } = require('../../utils/businessTime');
 const Sentry = require('@sentry/node');
 
 const router = express.Router();
@@ -79,10 +80,12 @@ router.get('/payroll/periods', auth, adminOnly, asyncHandler(async (req, res) =>
 }));
 
 router.get('/payroll/periods/current', auth, adminOnly, asyncHandler(async (req, res) => {
-  // Today in the server's local tz, then fall back to the most recent open
-  // period if today is not inside any open one (e.g., between the freeze of
-  // one period and the accrual of the first event in the next).
-  const todayYmd = new Date().toISOString().slice(0, 10);
+  // Today in the business timezone (America/Chicago), then fall back to the most
+  // recent open period if today is not inside any open one (e.g., between the
+  // freeze of one period and the accrual of the first event in the next). Using
+  // the Chicago day (not the server's UTC/GMT day) keeps a late-evening admin
+  // load on the current Tue-Mon period instead of jumping to next week's.
+  const todayYmd = chicagoTodayYmd();
   let period = await findOpenPeriodForDate(pool, todayYmd);
   if (!period) {
     const { rows } = await pool.query(
