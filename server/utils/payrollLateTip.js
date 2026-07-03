@@ -150,19 +150,26 @@ async function rollForwardLateTip(tipId) {
 
       // Aggregate INSERT: ON CONFLICT adds to the existing line. wage,
       // gratuity, hours, rate stay 0 (this is a tip-only synthetic row).
+      // No line-level GREATEST(0, ...) floor (seam-sweep H1, 2026-07-02): this
+      // late tip may roll forward onto a row that already carries a NEGATIVE
+      // cross-period clawback adjustment_cents. Flooring the line here would
+      // erase that debt residual before the payout-level clamp sums it (silent,
+      // permanent under-collection — the exact H1 leak). Mirrors the floorless
+      // contract in payrollClawback.js / payrollAccrual.js; the payout total is
+      // still clamped at 0 below, so money out is never negative.
       await client.query(
         `INSERT INTO payout_events
            (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
             card_tip_gross_cents, card_tip_fee_cents, card_tip_net_cents, line_total_cents)
-         VALUES ($1, $2, 0, 0, 0, 0, $3, $4, $5, GREATEST(0, $5))
+         VALUES ($1, $2, 0, 0, 0, 0, $3, $4, $5, $5)
          ON CONFLICT (payout_id, shift_id) DO UPDATE SET
            card_tip_gross_cents = payout_events.card_tip_gross_cents + EXCLUDED.card_tip_gross_cents,
            card_tip_fee_cents   = payout_events.card_tip_fee_cents   + EXCLUDED.card_tip_fee_cents,
            card_tip_net_cents   = payout_events.card_tip_net_cents   + EXCLUDED.card_tip_net_cents,
-           line_total_cents     = GREATEST(0,
+           line_total_cents     =
              payout_events.wage_cents + payout_events.gratuity_share_cents
              + payout_events.card_tip_net_cents + EXCLUDED.card_tip_net_cents
-             + payout_events.adjustment_cents)`,
+             + payout_events.adjustment_cents`,
         [payoutId, tip.shift_id, gross, fee, net]
       );
     }

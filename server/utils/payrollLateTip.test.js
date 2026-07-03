@@ -462,3 +462,66 @@ test('rollForwardLateTip > a second LATE tip for the same shift aggregates into 
     await pool.query('DELETE FROM tips WHERE id = $1', [t2.rows[0].id]);
   }
 });
+
+test('rollForwardLateTip > preserves a negative cross-period clawback residual on the same row (H1)', async () => {
+  // Seam-sweep H1 regression. A cross-period tip clawback lands as a negative
+  // adjustment_cents on a synthetic row keyed by the ORIGINAL shift, floorless
+  // (payrollClawback.js). If a LATE tip then rolls forward onto that SAME
+  // (payout_id, shift_id) row, the ON CONFLICT recompute must keep the line
+  // NEGATIVE — the old GREATEST(0, ...) line floor zeroed it, silently
+  // erasing the debt (the exact H1 leak, invisible because the line was
+  // floored before the payout-level clamp ever summed it).
+  const r1 = await rollForwardLateTip(tipId);
+  const periodId = r1.period_id;
+
+  // Bartender A's rolled-forward line for the frozen shift (net 1936).
+  const aPayout = (await pool.query(
+    'SELECT id FROM payouts WHERE pay_period_id = $1 AND contractor_id = $2',
+    [periodId, bartenderA]
+  )).rows[0].id;
+
+  // Simulate a cross-period clawback landing on A's line exactly as
+  // payrollClawback.js writes it: set a negative adjustment and recompute the
+  // line floorless (payout total is separately clamped elsewhere).
+  await pool.query(
+    `UPDATE payout_events
+        SET adjustment_cents = -5000,
+            line_total_cents = wage_cents + gratuity_share_cents
+              + card_tip_net_cents + (-5000)
+      WHERE payout_id = $1 AND shift_id = $2`,
+    [aPayout, frozenShiftId]
+  );
+
+  // A second late tip for the same shift rolls forward → ON CONFLICT on A's row.
+  const t2 = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id)
+     VALUES (gen_random_uuid(), $1, 1000, 0, 'pi_late_tip_clawback', '2026-05-15 23:55:00+00', $2)
+     RETURNING id`,
+    [bartenderA, frozenShiftId]
+  );
+  try {
+    await rollForwardLateTip(t2.rows[0].id);
+
+    const aLine = (await pool.query(
+      `SELECT card_tip_net_cents, adjustment_cents, line_total_cents
+         FROM payout_events WHERE payout_id = $1 AND shift_id = $2`,
+      [aPayout, frozenShiftId]
+    )).rows[0];
+    // 1000 gross split 2 ways = 500 net added onto A's 1936.
+    assert.equal(Number(aLine.card_tip_net_cents), 2436);
+    assert.equal(Number(aLine.adjustment_cents), -5000);
+    // 1936 + 500 - 5000 = -2564. Old floored code returned 0 here.
+    assert.equal(Number(aLine.line_total_cents), -2564,
+      'negative clawback residual survives the roll-forward (not floored to 0)');
+
+    // Money out is still non-negative: the payout total is clamped at 0, and
+    // the negative line nets against A's future positive lines first.
+    const aTotal = (await pool.query(
+      'SELECT total_cents FROM payouts WHERE id = $1', [aPayout]
+    )).rows[0];
+    assert.equal(Number(aTotal.total_cents), 0, 'payout total clamped at 0, debt carried on the line');
+  } finally {
+    await pool.query('DELETE FROM tips WHERE id = $1', [t2.rows[0].id]);
+  }
+});

@@ -38,6 +38,16 @@ catch: M1's cap made contract payments look non-contract to M4's share query), h
 frozen-origin reporting in fee recapture, atomic void predicates + idempotent re-void,
 PI-cancel wired into archive voids, Stripe calls moved off held DB connections.
 
+**Push-time re-review (2026-07-03) caught an H1 residual seam-payroll2 missed:**
+`payrollLateTip.js` still carried a per-LINE `GREATEST(0, ...)` floor (INSERT + ON
+CONFLICT) after clawback/accrual had dropped theirs. A cross-period clawback line
+(negative `adjustment_cents`) that a later late-tip roll-forward hits on the same
+`(payout_id, shift_id)` row was re-floored to 0 before the payout-level clamp summed
+it — silently re-burying the exact H1 debt. Fixed: line floors removed to match the
+floorless clawback/accrual contract (payout total still clamped); regression test added
+(clawback-first ordering, asserts the negative residual survives). Found by the
+push-time fleet's payroll-seam agent, Claude-verified against the sibling files.
+
 **Open items after batch 2:**
 - **M8 + L2 proper fix** (design): refund scope selector + label-aware/multi-invoice payment
   linking. Overflow beyond one invoice's remaining due is currently alerted (Sentry
