@@ -10461,6 +10461,19 @@ html[data-app="admin-os"][data-skin="dark"] {
   --row-hover: rgba(255,255,255,0.035);
   --row-active: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.08);
 
+  /* ── Apothecary FOREGROUND token remap (spec: after-hours-token-remap) ──
+     Pre-theming components consume the fixed light-paper text tokens from
+     :root and never flip on this skin (dark-on-dark "issues all over").
+     Generalizes the .em-dashboard fix to the whole dark admin root: every
+     var() consumer, seen and unseen, flips at once. Surface tokens (--paper,
+     --parchment, --card-bg, --cream) and --cream-text are deliberately NOT
+     remapped: light islands stay light and get per-island treatment in the
+     restores section below. Public pages are structurally out of scope (no
+     data-app attribute on their html element). */
+  --deep-brown: var(--ink-1);
+  --warm-brown: var(--ink-3);
+  --text-muted: var(--ink-3);
+
   color-scheme: dark;
 }
 
@@ -10474,6 +10487,111 @@ html[data-app="admin-os"][data-skin="dark"] {
 html[data-app="admin-os"][data-skin="dark"] .btn-primary,
 html[data-app="admin-os"][data-skin="dark"] .btn-primary:hover {
   color: #ffffff;
+}
+
+/* ── Stay-light island restores (spec: after-hours-token-remap §2) ──────────
+   The token remap above turns text light; these surfaces keep their light
+   paper/parchment backgrounds on purpose, so their text is restored to
+   literal dark, mirroring the .em-* inner-panel restores at 10512-10534.
+   Discriminator applied: surfaces admin-os already repaints dark (.card,
+   .file-upload-area) get NOTHING — the remap's light text is correct there.
+   Verified needs-nothing: .rte-* (its text token --dark-ink is not remapped),
+   .checkbox-label (transparent on the dark page, remap correct),
+   .admin-plan-logo-thumb (image content, no text), .tip-tablet (public
+   Sign&Pay surface, out of scope). */
+
+/* Dashboard tables stay light (parchment th / card-bg td read fine in the
+   dark shell today). Restore cell text; the .text-muted #5C3319 !important
+   near :1601 is CORRECT on these light cells and is left alone (spec §4
+   deviation: rev 2 assumed dark cells; the cells are light). */
+html[data-app="admin-os"][data-skin="dark"] .admin-table th,
+html[data-app="admin-os"][data-skin="dark"] .data-table th,
+html[data-app="admin-os"][data-skin="dark"] .admin-table td,
+html[data-app="admin-os"][data-skin="dark"] .data-table td {
+  color: #1C1610;
+}
+
+/* Signature pad (parchment frame). .sig-mode-active uses --deep-brown as a
+   BACKGROUND, which the remap would invert to light-on-light; restore the
+   island's contrast pairing with literals. Harmless where never rendered
+   under admin; protective where it is. */
+html[data-app="admin-os"][data-skin="dark"] .sig-mode-btn {
+  background: #E6DDCC;
+  color: #134544;
+}
+html[data-app="admin-os"][data-skin="dark"] .sig-mode-btn.sig-mode-active {
+  background: #1C1610;
+  color: #E6DDCC;
+}
+html[data-app="admin-os"][data-skin="dark"] .signature-container,
+html[data-app="admin-os"][data-skin="dark"] .sig-type-preview {
+  color: #1C1610;
+}
+
+/* Radio tiles carry their own parchment/cream backgrounds; keep their label
+   text dark. */
+html[data-app="admin-os"][data-skin="dark"] .radio-option {
+  color: #1C1610;
+}
+
+/* Clickable cards: the base hover flashes parchment over the dark-repainted
+   card surface. Use the skin's row-hover tint instead. */
+html[data-app="admin-os"][data-skin="dark"] .card-clickable:hover {
+  background: var(--row-hover);
+}
+
+/* Equipment badge: warm-brown border+text would go muted gray under the
+   remap; use the neutral admin chip vocabulary instead. */
+html[data-app="admin-os"][data-skin="dark"] .equipment-badge {
+  border-color: var(--line-3);
+  color: var(--ink-2);
+}
+
+/* Primary-button hover: the base rule near :344 paints the hover background
+   with var(--warm-brown) and, by specificity, beats the admin .btn-primary
+   background (its admin hover only sets filter). That was already a wrong
+   brown flash on admin accent buttons in BOTH skins; after the remap it
+   would be muted gray. Pin the hover to the admin accent (both skins; the
+   existing filter hover still applies on top). */
+html[data-app="admin-os"] .btn-primary:hover:not(:disabled) {
+  background: var(--accent);
+}
+
+/* .form-select's dropdown arrow is an inline SVG with a dark-teal stroke —
+   invisible against the input re-skin below. Neutral-stroke variant. */
+html[data-app="admin-os"] .form-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238a93a0' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+
+/* Bare admin forms (blog editor, settings, proposal-create fields) use the
+   global .form-input/.form-select/.form-textarea, which paint the fixed
+   light-paper apothecary look regardless of skin — the single biggest
+   light-island after the token remap. Generalize the .sms-reply textarea
+   precedent: re-skin all three to the token-adaptive admin input treatment
+   (matches html[data-app="admin-os"] .input). The tokens flip with the skin,
+   so one both-skin rule serves House Lights and After Hours; the global
+   rules stay untouched for public/auth/proposal forms. Focus keeps the base
+   geometry (1px border + full padding) instead of the base rule's
+   2px-border/reduced-padding swap. */
+html[data-app="admin-os"] .form-input,
+html[data-app="admin-os"] .form-select,
+html[data-app="admin-os"] .form-textarea {
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  color: var(--ink-1);
+}
+html[data-app="admin-os"] .form-input::placeholder,
+html[data-app="admin-os"] .form-textarea::placeholder {
+  color: var(--ink-4);
+}
+html[data-app="admin-os"] .form-input:focus,
+html[data-app="admin-os"] .form-select:focus,
+html[data-app="admin-os"] .form-textarea:focus {
+  outline: none;
+  border: 1px solid var(--accent);
+  padding: 12px 14px;
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 /* Status badges (legacy admin chips) */
