@@ -96,6 +96,19 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         isFirstDelivery = inserted.rowCount === 1;
 
         if (isFirstDelivery) {
+          // LOCK ORDER: on an initial-booking payment (the only case where
+          // commitGroupChoice can claim a group / archive losers and the sweep
+          // can archive strays), take the client-row lock FIRST so every
+          // archiver obeys clients -> proposal_groups -> proposals. Without
+          // this hoist, a grouped settle locks loser rows before the sweep's
+          // client lock and can deadlock AB-BA against the admin archive
+          // endpoint (which holds the client lock and wants those rows).
+          if (paymentType === 'full' || paymentType === 'deposit') {
+            await dbClient.query(
+              `SELECT c.id FROM clients c JOIN proposals p ON p.client_id = c.id
+                WHERE p.id = $1 FOR UPDATE OF c`, [proposalId]);
+          }
+
           // Option-group choice-commit — runs BEFORE the credit. First-writer-wins
           // marks this option chosen + archives the losers (voiding their unpaid
           // invoices) in THIS tx. On conflict (a 2nd option paying after another
@@ -690,6 +703,13 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         await dbClient.query("UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_link_id = $1 AND proposal_id = $2", [session.payment_link, proposalId]);
 
         if (isFirstDelivery) {
+          // LOCK ORDER (see payment_intent.succeeded): client-row lock first,
+          // before any group/proposal locking. Both Payment-Link types are
+          // initial bookings, so this hoist is unconditional here.
+          await dbClient.query(
+            `SELECT c.id FROM clients c JOIN proposals p ON p.client_id = c.id
+              WHERE p.id = $1 FOR UPDATE OF c`, [proposalId]);
+
           // Option-group choice-commit (see payment_intent.succeeded). First-writer-
           // wins marks this option chosen + archives losers in THIS tx; on conflict we
           // flag + skip conversion post-commit (the archived guard skips the credit).

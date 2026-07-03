@@ -186,6 +186,16 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
   try {
     await dbClient.query('BEGIN');
 
+    // LOCK ORDER: on an initial payment (the only case that can archive other
+    // proposals via commitGroupChoice/the sweep), take the client-row lock
+    // FIRST so every archiver obeys clients -> proposal_groups -> proposals
+    // and can never deadlock the admin archive endpoint or a concurrent settle.
+    if (currentPaid === 0) {
+      await dbClient.query(
+        `SELECT c.id FROM clients c JOIN proposals p ON p.client_id = c.id
+          WHERE p.id = $1 FOR UPDATE OF c`, [proposal.id]);
+    }
+
     // Option-group choice-commit — first-writer-wins marks this option chosen +
     // archives losers in THIS tx. A conflict (recording a payment on an option the
     // client did not book) aborts the whole handler with a 409 (nothing was captured).
@@ -342,6 +352,20 @@ router.post('/:id/archive', auth, requireAdminOrManager, asyncHandler(async (req
   try {
     await dbClient.query('BEGIN');
 
+    // LOCK ORDER (global hierarchy: clients -> proposal_groups -> proposals).
+    // The client row is locked BEFORE any proposal row, matching the settle
+    // paths (which hoist the same client lock ahead of commitGroupChoice/the
+    // sweep). Locking the target proposal first inverted the order against a
+    // concurrent settle and could deadlock AB-BA. The plain read below only
+    // discovers client_id; the authoritative status check happens on the
+    // re-read under the row lock.
+    const { rows: [peek] } = await dbClient.query(
+      'SELECT id, client_id FROM proposals WHERE id = $1', [req.params.id]);
+    if (!peek) throw new NotFoundError('Proposal not found');
+    if (peek.client_id !== null) {
+      await dbClient.query('SELECT id FROM clients WHERE id = $1 FOR UPDATE', [peek.client_id]);
+    }
+
     const { rows: [target] } = await dbClient.query(
       'SELECT id, client_id, status FROM proposals WHERE id = $1 FOR UPDATE', [req.params.id]);
     if (!target) throw new NotFoundError('Proposal not found');
@@ -351,9 +375,6 @@ router.post('/:id/archive', auth, requireAdminOrManager, asyncHandler(async (req
 
     let targetIds = [target.id];
     if (scope === 'set' && target.client_id !== null) {
-      // Client-row lock: same serializer the payment-time sweep uses, so an
-      // admin bulk-archive and a settling payment can never deadlock.
-      await dbClient.query('SELECT id FROM clients WHERE id = $1 FOR UPDATE', [target.client_id]);
       const { rows: siblings } = await dbClient.query(
         `SELECT id FROM proposals
           WHERE client_id = $1 AND id <> $2

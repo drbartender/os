@@ -94,10 +94,13 @@ async function sweepClientAlternatives(winnerProposalId, dbClient) {
     'SELECT id, client_id FROM proposals WHERE id = $1', [winnerId]);
   if (!winner || winner.client_id === null) return { sweptIds: [] };
 
-  // Serialize concurrent settlements of two ungrouped options for the same
-  // client. The client row plays the role the group row plays for formal
-  // groups; without one shared lock, two simultaneous sweeps could deadlock
-  // AB-BA on each other's proposal rows.
+  // Serialize concurrent archivers via the client row. GLOBAL LOCK ORDER:
+  // clients -> proposal_groups -> proposals — every path that archives
+  // proposals (this sweep, commitGroupChoice's losers via the settle-site
+  // hoist, the admin archive endpoint) must take the client lock before any
+  // proposal row, or two paths can deadlock AB-BA. The settle sites hoist
+  // this same lock BEFORE commitGroupChoice, so this acquisition is normally
+  // a same-tx re-lock (a no-op); it stays here so the helper is safe alone.
   await dbClient.query('SELECT id FROM clients WHERE id = $1 FOR UPDATE', [winner.client_id]);
 
   const { rows: alts } = await dbClient.query(
