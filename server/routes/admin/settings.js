@@ -5,6 +5,7 @@ const { sendEmail } = require('../../utils/email');
 const { geocodeAddress, buildAddressString, delay } = require('../../utils/geocode');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError } = require('../../utils/errors');
+const { getStripPayload } = require('../../utils/presenceStore');
 
 const router = express.Router();
 
@@ -145,6 +146,14 @@ router.get('/badge-counts', auth, requireAdminOrManager, asyncHandler(async (req
   const counts = result.rows[0];
   // Hiring is admin-only; don't surface the applicant count to managers.
   if (req.user.role !== 'admin') counts.new_applications = 0;
+  // Presence strip block rides the existing 60s poll (spec: Fetch and display).
+  // Non-fatal by design: a presence failure must never break badge counts.
+  try {
+    counts.presence = await getStripPayload();
+  } catch (err) {
+    console.warn('[badge-counts] presence block failed:', err.message);
+    counts.presence = null;
+  }
   res.json(counts);
 }));
 

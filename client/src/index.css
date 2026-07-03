@@ -11517,6 +11517,110 @@ html[data-app="admin-os"] .sidebar-brand-text {
 html[data-app="admin-os"] .sidebar-brand-text .muted { color: var(--ink-3); font-weight: 400; }
 html[data-app="admin-os"][data-sidebar="rail"] .sidebar-brand-text { display: none; }
 
+/* ─── Presence strip (spec 2026-07-02) ─────────────────────────── */
+html[data-app="admin-os"] .presence-strip {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line-1);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: relative;
+}
+html[data-app="admin-os"] .presence-strip--placeholder {
+  min-height: 66px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  opacity: 0.5;
+}
+html[data-app="admin-os"] .presence-row { display: flex; align-items: center; gap: 6px; position: relative; }
+html[data-app="admin-os"] .presence-row-main {
+  display: flex; align-items: center; gap: 7px;
+  background: none; border: 0; padding: 3px 2px; cursor: pointer;
+  color: inherit; font: inherit; flex: 1; min-width: 0; text-align: left;
+}
+html[data-app="admin-os"] .presence-row-main:disabled { cursor: default; }
+html[data-app="admin-os"] .presence-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--line-2);
+}
+html[data-app="admin-os"] .presence-dot--desk { background: hsl(var(--ok-h) var(--ok-s) 45%); }
+html[data-app="admin-os"] .presence-dot--available { background: #d9a441; }
+html[data-app="admin-os"] .presence-dot--away { background: var(--line-2); }
+html[data-app="admin-os"] .presence-name { font-weight: 600; font-size: 12px; }
+html[data-app="admin-os"] .presence-state { font-size: 11px; color: var(--text-muted); }
+html[data-app="admin-os"] .presence-dur { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+html[data-app="admin-os"] .presence-leads-pill {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+  border: 1px solid var(--line-2); border-radius: 8px; padding: 1px 6px;
+  background: none; color: var(--text-muted); cursor: pointer;
+}
+html[data-app="admin-os"] .presence-leads-pill.on {
+  border-color: hsl(var(--ok-h) var(--ok-s) 45%);
+  color: hsl(var(--ok-h) var(--ok-s) 50%);
+}
+html[data-app="admin-os"] .presence-leads-pill:disabled { cursor: default; opacity: 0.65; }
+html[data-app="admin-os"] .presence-menu {
+  position: absolute; top: 100%; left: 8px; z-index: 40;
+  background: var(--bg-1, var(--bg-0)); border: 1px solid var(--line-1);
+  border-radius: 6px; padding: 4px; display: flex; flex-direction: column; gap: 2px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+}
+html[data-app="admin-os"] .presence-menu-opt {
+  display: flex; align-items: center; gap: 7px; padding: 5px 10px;
+  background: none; border: 0; color: inherit; font: inherit; font-size: 12px;
+  cursor: pointer; border-radius: 4px; text-align: left;
+}
+html[data-app="admin-os"] .presence-menu-opt:hover { background: var(--line-1); }
+html[data-app="admin-os"] .presence-menu-opt.active { font-weight: 600; }
+html[data-app="admin-os"] .presence-pointer {
+  display: flex; align-items: center; gap: 5px; margin-top: 3px;
+  font-size: 11px; color: var(--text-muted);
+}
+html[data-app="admin-os"] .presence-pointer-name { font-weight: 600; color: inherit; }
+html[data-app="admin-os"] .presence-history-btn {
+  margin-left: auto; background: none; border: 0; cursor: pointer;
+  color: var(--text-muted); padding: 2px; display: flex;
+}
+html[data-app="admin-os"] .presence-history-btn:hover { color: inherit; }
+html[data-app="admin-os"] .presence-error { font-size: 10px; color: var(--danger, #c0392b); }
+/* Pointer initial: hidden in full mode, the rail's colored stand-in for the name */
+html[data-app="admin-os"] .presence-pointer-initial { display: none; font-weight: 700; font-size: 11px; }
+html[data-app="admin-os"] .presence-initial--desk { color: hsl(var(--ok-h) var(--ok-s) 45%); }
+html[data-app="admin-os"] .presence-initial--available { color: #d9a441; }
+html[data-app="admin-os"] .presence-initial--away { color: var(--text-muted); }
+/* Rail mode: dots + colored pointer initial only (spec: Rail mode) */
+html[data-app="admin-os"] .presence-strip--rail .presence-name,
+html[data-app="admin-os"] .presence-strip--rail .presence-state,
+html[data-app="admin-os"] .presence-strip--rail .presence-dur,
+html[data-app="admin-os"] .presence-strip--rail .presence-leads-pill,
+html[data-app="admin-os"] .presence-strip--rail .presence-pointer-label,
+html[data-app="admin-os"] .presence-strip--rail .presence-pointer-name,
+html[data-app="admin-os"] .presence-strip--rail .presence-error { display: none; }
+html[data-app="admin-os"] .presence-strip--rail .presence-pointer-initial { display: inline; }
+
+/* ─── Presence history drawer ──────────────────────────────────── */
+html[data-app="admin-os"] .presence-drawer-status { padding: 16px; color: var(--text-muted); font-size: 13px; }
+html[data-app="admin-os"] .presence-drawer-body { padding: 12px 16px; }
+html[data-app="admin-os"] .presence-totals { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+html[data-app="admin-os"] .presence-totals-card {
+  border: 1px solid var(--line-1); border-radius: 8px; padding: 10px 12px; min-width: 200px; flex: 1;
+}
+html[data-app="admin-os"] .presence-totals-name { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+html[data-app="admin-os"] .presence-totals-row {
+  display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text-muted);
+}
+html[data-app="admin-os"] .presence-log-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+html[data-app="admin-os"] .presence-log-table th {
+  text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line-1);
+  color: var(--text-muted); font-weight: 600;
+}
+html[data-app="admin-os"] .presence-log-table td { padding: 6px 8px; border-bottom: 1px solid var(--line-1); }
+html[data-app="admin-os"] .presence-auto-badge {
+  margin-left: 6px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+  border: 1px solid var(--line-2); border-radius: 6px; padding: 0 5px; color: var(--text-muted);
+}
+
 html[data-app="admin-os"] .sidebar-nav {
   flex: 1;
   padding: 0.5rem 0.4rem;

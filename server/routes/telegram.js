@@ -6,6 +6,8 @@ const telegram = require('../utils/telegram');
 const pendingCall = require('../utils/pendingCall');
 const sms = require('../utils/sms');
 const usPhone = require('../utils/usPhone');
+const presenceStore = require('../utils/presenceStore');
+const presenceActivity = require('../utils/presenceActivity');
 
 const router = express.Router();
 
@@ -23,6 +25,9 @@ let deps = {
   recordAudit: pendingCall.recordAudit,
   placeBridgedCall: sms.placeBridgedCall,
   toUsE164: usPhone.toUsE164,
+  getTelegramTrackedUserId: presenceStore.getTelegramTrackedUserId,
+  hasPendingNudge: presenceStore.hasPendingNudge,
+  presenceTouch: (userId) => presenceActivity.touch(userId, { immediate: true }),
 };
 function __setDeps(d) { deps = { ...deps, ...d }; }
 
@@ -105,6 +110,16 @@ router.post('/:secret', telegramLimiter, async (req, res) => {
     // Silent no-op for anyone else.
     if (String(fromId) !== String(ALLOWED)) return res.sendStatus(200);
 
+    // Presence sign of life (spec 2026-07-02): any message from Zul proves
+    // she is alive. Best-effort; must never block or fail call handling.
+    let presenceUserId = null;
+    try {
+      presenceUserId = await deps.getTelegramTrackedUserId();
+      if (presenceUserId) deps.presenceTouch(presenceUserId);
+    } catch (err) {
+      console.warn('[telegram] presence touch failed:', err.message);
+    }
+
     const userId = fromId;
 
     if (YES_RE.test(text)) {
@@ -126,7 +141,14 @@ router.post('/:secret', telegramLimiter, async (req, res) => {
       // claimable and is a no-op. calls.create cannot live in a DB transaction.
       const claimed = await deps.claimForDial(userId);
       if (!claimed) {
-        await reply(chatId, 'That request expired or there is nothing to confirm. Send the number again.');
+        // A bare "yes" with no pending call is the natural nudge ack
+        // (spec: Sign of life, precedence rule c).
+        let ack = false;
+        try { ack = presenceUserId ? await deps.hasPendingNudge(presenceUserId) : false; }
+        catch (err) { console.warn('[telegram] nudge check failed:', err.message); }
+        await reply(chatId, ack
+          ? 'Got it, keeping you on desk.'
+          : 'That request expired or there is nothing to confirm. Send the number again.');
         return res.sendStatus(200);
       }
 
@@ -170,6 +192,15 @@ router.post('/:secret', telegramLimiter, async (req, res) => {
     // Guard 3 — US-only NANP validation (primary toll-fraud control).
     const targetE164 = deps.toUsE164(text);
     if (!targetE164) {
+      // Unparseable text while a nudge is pending is a nudge ack, not a bad
+      // call attempt: ack it and skip the rejected_validation audit.
+      let ack = false;
+      try { ack = presenceUserId ? await deps.hasPendingNudge(presenceUserId) : false; }
+      catch (err) { console.warn('[telegram] nudge check failed:', err.message); }
+      if (ack) {
+        await reply(chatId, 'Got it, keeping you on desk.');
+        return res.sendStatus(200);
+      }
       await deps.recordAudit({ triggeredBy: userId, targetE164: null, callSid: null, status: 'rejected_validation' });
       await reply(chatId, 'That does not look like a US number. Send a 10-digit US number (no 900 or 976).');
       return res.sendStatus(200);

@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useUserPrefs } from '../../context/UserPrefsContext';
 import Icon from './Icon';
 import NAV from './nav';
+import PresenceStrip from './PresenceStrip';
 
 function isActive(pathname, itemPath) {
   return pathname === itemPath || pathname.startsWith(itemPath + '/');
@@ -20,7 +21,7 @@ function roleLabel(role) {
   return 'Team';
 }
 
-export default function Sidebar({ badges = {}, onCloseMobileNav }) {
+export default function Sidebar({ badges = {}, presence, onPresenceChange, onCloseMobileNav }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { user, logout } = useAuth();
@@ -56,6 +57,8 @@ export default function Sidebar({ badges = {}, onCloseMobileNav }) {
           <Icon name="x" size={16} />
         </button>
       </div>
+
+      <PresenceStrip presence={presence} onPresenceChange={onPresenceChange} rail={rail} currentUser={user} />
 
       <nav className="sidebar-nav scroll-thin">
         {NAV.map(group => (

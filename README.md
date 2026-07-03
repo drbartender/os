@@ -116,6 +116,7 @@ Copy `.env.example` and fill in values. All variables:
 | `VOICE_CALLER_ID` | For VA calling | The 224 US voice line in strict E.164 (`+12242220082`) — outbound caller ID + inbound number. |
 | `VA_CELL` | For VA calling | Zul's cell, strict E.164 (`+63…`), the bridge target. Never normalized, never committed. |
 | `RUN_VA_CALLING_SCHEDULER` | No | `false` disables the VA-calling prune + Telegram webhook-heartbeat scheduler. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
+| `RUN_PRESENCE_SCHEDULER` | No | `false` disables the presence stale-desk nudge / auto-flip sweep (15 min). Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `VA_CALL_DAILY_CAP` | No | Max calls placed per rolling 24h (default 40, DB-backed via `call_audit`). |
 | `VA_CALL_PER_MIN_CAP` | No | Max triggers accepted per minute (default 5). |
 | `VA_CALL_TIME_LIMIT_SEC` | No | Per-call hard `timeLimit` on both legs (default 1800 = 30 min). |
@@ -153,6 +154,7 @@ dr-bartender/
 │   │   │   ├── labratBugs.js   # /tester-bugs (list + PATCH triage state for the LabRatBugsPage)
 │   │   │   ├── search.js       # /search — global record search across clients/proposals/events/staff
 │   │   │   ├── payroll.js      # /payroll — contractor payouts, pay periods, paystub data
+│   │   │   ├── presence.js     # /presence + /presence/state + /presence/leads + /presence/log — time-clock strip + history
 │   │   │   └── ccImport/       # Check Cherry import admin endpoints
 │   │   │       ├── index.js            # Composition router mounted at /api/admin/cc-import
 │   │   │       ├── wrapUp.js           # Bucket B wrap-up worklist + preview + enqueue (Task 18)
@@ -302,6 +304,10 @@ dr-bartender/
 │   │   ├── thumbtackProposalDraft.js # Thumbtack auto-draft builder (createDraftProposalFromLead) + pure field mappers (event-type keyword map, ET date/time split, admin-notes block)
 │   │   ├── tipHandleValidation.js # Validates + normalizes venmo/cashapp handles + paypal.me URLs before persist
 │   │   ├── tipPageLifecycle.js # Tip page activate/deactivate transitions on hire/onboarding/offboard
+│   │   ├── presence.js         # Pure presence helpers: lead-pointer derivation, taking-leads transition matrix, nudge/flip predicates, Central-time bucketing
+│   │   ├── presenceActivity.js # In-memory sign-of-life map + throttled presence_last_seen_at flush (stamped by the auth middleware for tracked users)
+│   │   ├── presenceScheduler.js # Presence sweep (15 min): stale-desk nudge (Telegram/SMS, nudged_at stamped only on confirmed send) + race-safe auto-flip to away (RUN_PRESENCE_SCHEDULER)
+│   │   ├── presenceStore.js    # Presence DB layer: strip payload + lead pointer, transactional transitions/toggle, log totals, id-scoped applyAutoFlip, stampByNudgePhone
 │   │   ├── tipPaymentLinks.js  # Creates/regenerates Stripe Payment Links for bartender tip pages
 │   │   ├── tokens.js           # Canonical public-token shape validation: UUID_RE, isUuid, requireUuidToken(param, message) middleware (404s a non-UUID :token before the DB so it can't cast-throw 22P02 -> 500)
 │   │   ├── urls.js             # Canonical PUBLIC_SITE_URL / ADMIN_URL / STAFF_URL / API_URL resolvers
@@ -359,7 +365,8 @@ dr-bartender/
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
 │   │   │   │                   # StatusChip, StaffPills, AreaChart, Sparkline, Toolbar, Icon, KebabMenu, AddressLink,
 │   │   │   │                   # InterviewScheduleModal, PackageIncludesModal, DocumentPreviewModal (in-app lightbox for staff docs — W-9/BASSET/resume/headshot), MetricsFilterBar,
-│   │   │   │                   # format, nav, shifts; drawers/{InvoicesDrawer,ShiftDrawer})
+│   │   │   │                   # format, nav, shifts, PresenceStrip (sidebar time-clock strip);
+│   │   │   │                   # drawers/{InvoicesDrawer,ShiftDrawer,PresenceDrawer})
 │   │   │   ├── ShoppingList/   # Shopping list generator (PDF export, ConsultationForm admin-input modal)
 │   │   │   └── MenuPNG/        # Standard Menu PNG export (html2canvas-driven, lazy-loaded; renders hidden MenuPreview at print scale 768x960 and downloads as 2304x2880 PNG)
 │   │   ├── data/               # Shared data (addonCategories, eventServicesAgreement, eventTypes, menuSamples, packages, syrups)
@@ -483,6 +490,7 @@ Imports legacy proposals, events, payments, refunds, payouts, leads, and invoice
 
 ### Admin Dashboard
 - **Global Search**: A `Cmd/Ctrl+K` command palette on every admin page searches clients, proposals, events, and staff by partial name, phone number, or email, and jumps straight to the matching record.
+- **Presence tracker**: Desk/available/away strip at the top of the sidebar with a derived "Leads →" pointer (who answers the next lead), an admin-only time-clock drawer with weekly/monthly totals, and a stale-desk nudge (Telegram for Zul, SMS for Dallas) that auto-flips ignored desks to away so totals stay honest.
 - **Staffing**: Application review, hire/reject, interview notes, user management, SMS messaging (compose, recipient picker, shift invitation templates, grouped message history)
 - **Proposals**: Create, price, send, track views/signatures — paid proposals automatically move to Events
 - **Partial Refunds**: Admin partial refunds via Stripe — Approach-A `total_price` correction + audit ledger (`proposal_refunds`), idempotent `charge.refunded` webhook-backstopped

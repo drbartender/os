@@ -3492,3 +3492,74 @@ CREATE TABLE IF NOT EXISTS stripe_payout_lines (
 CREATE INDEX IF NOT EXISTS idx_stripe_payout_lines_payout ON stripe_payout_lines(payout_id);
 CREATE INDEX IF NOT EXISTS idx_stripe_payout_lines_pi ON stripe_payout_lines(stripe_payment_intent_id);
 CREATE INDEX IF NOT EXISTS idx_stripe_payout_lines_unmatched ON stripe_payout_lines(matched_kind) WHERE matched_kind = 'unmatched';
+
+-- ─── Presence tracker (spec docs/superpowers/specs/2026-07-02-presence-tracker-design.md) ───
+-- Two-person time clock: state machine columns on users + interval log.
+-- presence_lead_rank NULL = not tracked. Lowest online-and-taking rank owns
+-- leads; highest rank is the unconditional fallback (Dallas).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS presence_state VARCHAR(20) NOT NULL DEFAULT 'away';
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_presence_state_check;
+ALTER TABLE users ADD CONSTRAINT users_presence_state_check
+  CHECK (presence_state IN ('desk', 'available', 'away'));
+ALTER TABLE users ADD COLUMN IF NOT EXISTS presence_since TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS presence_taking_leads BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS presence_lead_rank INTEGER;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS presence_last_seen_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS presence_nudge_channel VARCHAR(10);
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_presence_nudge_channel_check;
+ALTER TABLE users ADD CONSTRAINT users_presence_nudge_channel_check
+  CHECK (presence_nudge_channel IS NULL OR presence_nudge_channel IN ('sms', 'telegram'));
+-- E.164 destination for sms-channel nudges AND the inbound sign-of-life match
+-- key. This is deliberately NOT contractor_profiles.phone and NEVER the shared
+-- 312 Google Voice line (that is what sits on the admin contractor profile).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS presence_nudge_phone VARCHAR(20);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_presence_lead_rank
+  ON users (presence_lead_rank) WHERE presence_lead_rank IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS presence_log (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  state VARCHAR(20) NOT NULL CHECK (state IN ('desk', 'available', 'away')),
+  taking_leads BOOLEAN NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL,
+  ended_at TIMESTAMPTZ,
+  ended_reason VARCHAR(20) CHECK (ended_reason IN ('switch', 'auto_flip')),
+  nudged_at TIMESTAMPTZ
+);
+-- Exactly one open interval per user; doubles as the concurrency guard for
+-- interval INSERTs (the flip pass guards its close by observed id, see
+-- presenceStore.applyAutoFlip).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_presence_log_one_open
+  ON presence_log (user_id) WHERE ended_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_presence_log_user_started
+  ON presence_log (user_id, started_at DESC);
+
+-- Backfill: rank the two tracked admins. Idempotent (WHERE ... IS NULL);
+-- no-op where the account is absent. Emails verified against the prod users
+-- table 2026-07-02 (admin@drbartender.com id 1, zul@drbartender.com id 2).
+UPDATE users SET presence_lead_rank = 1, presence_nudge_channel = 'telegram'
+  WHERE email = 'zul@drbartender.com' AND presence_lead_rank IS NULL;
+UPDATE users SET presence_lead_rank = 2, presence_nudge_channel = 'sms',
+    presence_nudge_phone = '+19703330527'
+  WHERE email = 'admin@drbartender.com' AND presence_lead_rank IS NULL;
+
+-- Strip display name (plan-review finding): the admin account's contractor
+-- profile exists but has preferred_name NULL, so the INITCAP email fallback
+-- would render "Admin". Backfill the real name; guarded so a hand-set value
+-- is never overwritten.
+UPDATE contractor_profiles SET preferred_name = 'Dallas'
+  WHERE user_id = (SELECT id FROM users WHERE email = 'admin@drbartender.com')
+    AND preferred_name IS NULL;
+
+-- Seed the clock so no consumer ever sees a half-initialized tracked user:
+-- presence_since set, and exactly one open away interval. Guarded, so the
+-- boot-time re-run is a no-op.
+UPDATE users SET presence_since = NOW()
+  WHERE presence_lead_rank IS NOT NULL AND presence_since IS NULL;
+INSERT INTO presence_log (user_id, state, taking_leads, started_at)
+SELECT u.id, u.presence_state, u.presence_taking_leads, u.presence_since
+FROM users u
+WHERE u.presence_lead_rank IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM presence_log pl WHERE pl.user_id = u.id AND pl.ended_at IS NULL
+  );

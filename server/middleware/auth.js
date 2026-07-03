@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { AppError, PermissionError } = require('../utils/errors');
+const presenceActivity = require('../utils/presenceActivity');
 
 // Log access-control failures so a deliberate probe by a logged-in staff
 // account is visible. OWASP A09 — admin/manager routes are the highest-
@@ -36,7 +37,7 @@ const auth = async (req, res, next) => {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const result = await pool.query(
-      'SELECT id, email, role, onboarding_status, can_hire, can_staff, token_version, pre_hired FROM users WHERE id = $1',
+      'SELECT id, email, role, onboarding_status, can_hire, can_staff, token_version, pre_hired, presence_lead_rank FROM users WHERE id = $1',
       [decoded.userId]
     );
     if (!result.rows[0]) return next(new AppError('User not found', 401, 'USER_NOT_FOUND'));
@@ -62,6 +63,12 @@ const auth = async (req, res, next) => {
     }
     // Strip token_version from req.user — route handlers don't need it.
     const { token_version: _, ...userForReq } = u;
+    // Presence sign of life: tracked users only (spec 2026-07-02). In-memory
+    // always, DB at most once per 60s. Fire-and-forget by construction; see
+    // presenceActivity.
+    if (userForReq.presence_lead_rank !== null && userForReq.presence_lead_rank !== undefined) {
+      presenceActivity.touch(userForReq.id);
+    }
     req.user = userForReq;
     next();
   } catch (err) {

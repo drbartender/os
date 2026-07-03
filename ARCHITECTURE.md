@@ -350,6 +350,10 @@ Read-side mirror of Stripe payouts + balance-transaction lines (`server/routes/s
 | GET | `/payroll/deferred-tips` | Admin | List tips deferred while the open pay period was frozen (with stuck-reason: `frozen_period`, `stubs`, or `max_attempts`). |
 | POST | `/payroll/deferred-tips/retry` | Admin | Manually run the deferred-tip sweep; audit-logged as `payroll_deferred_tips_retry` with the summary in `metadata`. |
 | (cover-swaps) | various | Admin | Admin cover-swap approval endpoints (`server/routes/adminCoverSwaps.js`, mounted under `/api/admin`). |
+| GET | `/presence` | Admin+Manager | Presence strip payload: tracked users' states + derived lead-responder pointer (also embedded in `/badge-counts` as `presence`, non-fatal). |
+| POST | `/presence/state` | Admin+Manager (tracked, self only) | Set own presence state (desk/available/away); applies the taking-leads transition rules (away wipes, re-entry resets on). |
+| POST | `/presence/leads` | Admin+Manager (tracked, self only) | Set own taking-leads toggle; rejected while away. |
+| GET | `/presence/log` | Admin | Time-clock history: per-user this-week/this-month desk+available totals (Central time, boundary-split) + the 50 most recent intervals. |
 
 ### Messages — `/api/messages`
 | Method | Path | Auth | Description |
@@ -986,6 +990,14 @@ Phase 4b adds three cross-cutting pieces. Overlap prevention: each handler carri
 - `consecutive_failures` INTEGER NOT NULL DEFAULT 0 — incremented on each failed tick, reset to 0 on success
 - `last_error` TEXT — most recent error string when `last_status = 'failed'`
 - `updated_at` TIMESTAMPTZ DEFAULT NOW()
+
+**presence_log** — Interval log for the two-person presence tracker (admin time clock; spec `docs/superpowers/specs/2026-07-02-presence-tracker-design.md`). One row per state/toggle interval; exactly one open row (`ended_at IS NULL`) per user, enforced by partial unique index `idx_presence_log_one_open`. Tracked users carry presence columns on `users`: `presence_state` (desk/available/away, CHECK), `presence_since`, `presence_taking_leads`, `presence_lead_rank` (NULL = untracked; partial-unique; lowest online-and-taking rank owns leads, highest rank is the fallback), `presence_last_seen_at` (throttled sign-of-life stamp from the auth middleware + webhook splices), `presence_nudge_channel` (sms/telegram, CHECK), `presence_nudge_phone` (E.164 nudge destination + inbound match key; deliberately not `contractor_profiles.phone`).
+- `user_id` FK → users (ON DELETE CASCADE)
+- `state` VARCHAR(20) CHECK (desk/available/away); `taking_leads` BOOLEAN — values during this interval
+- `started_at` / `ended_at` TIMESTAMPTZ — `ended_at` NULL = current interval
+- `ended_reason` CHECK (`switch` = manual, `auto_flip` = the 15-min presence scheduler closed an ignored desk AT its `nudged_at`)
+- `nudged_at` TIMESTAMPTZ — stamped only on a confirmed nudge send; drives the 30-min auto-flip grace
+The presence sweep (`server/utils/presenceScheduler.js`, `RUN_PRESENCE_SCHEDULER`, schedulerHealth name `presence`) nudges open desk intervals older than 6h (Telegram via `TELEGRAM_ALLOWED_USER_ID`, SMS via `presence_nudge_phone`) and auto-flips to away after 30 silent minutes; sign of life = auth-middleware activity (in-memory map + 60s-throttled DB flush in `presenceActivity.js`), a Telegram reply (splice in `routes/telegram.js`, with nudge-ack precedence that never alters VA-calling behavior), or an inbound SMS from the tracked phone (`routes/sms.js` → `stampByNudgePhone`).
 
 **consults** — Scheduled phone consults booked via Cal.com (deferred workstream). The empty table ships ahead of the integration so downstream code (and `scheduled_messages.entity_type = 'consult'`) can reference it without waiting on Cal.com deployment. Drink-plan notes themselves continue to live on `drink_plans.consult_selections`, not here.
 - `id` SERIAL PK

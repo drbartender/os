@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import api from '../utils/api';
 import Sidebar from './adminos/Sidebar';
@@ -9,6 +9,15 @@ export default function AdminLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [badges, setBadges] = useState({});
+  const [presence, setPresence] = useState(null);
+  const lastPresenceMutationRef = useRef(0);
+
+  // POST responses are server truth and must not be overwritten by a poll
+  // that started earlier (spec: Fetch and display, stale-poll guard).
+  const applyPresence = useCallback((data) => {
+    lastPresenceMutationRef.current = Date.now();
+    setPresence(data);
+  }, []);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
@@ -55,7 +64,12 @@ export default function AdminLayout() {
   useEffect(() => {
     const fetchBadges = () => {
       if (document.visibilityState !== 'visible') return;
-      api.get('/admin/badge-counts').then(r => setBadges(r.data || {})).catch(() => {});
+      const startedAt = Date.now();
+      api.get('/admin/badge-counts').then(r => {
+        const { presence: p, ...counts } = r.data || {};
+        setBadges(counts);
+        if (p && startedAt > lastPresenceMutationRef.current) setPresence(p);
+      }).catch(() => {});
     };
     fetchBadges();
     const interval = setInterval(fetchBadges, 60000);
@@ -106,7 +120,7 @@ export default function AdminLayout() {
     <>
       <a href="#main-content" className="skip-nav">Skip to main content</a>
       <div className={`shell${mobileNavOpen ? ' mobile-nav-open' : ''}`}>
-        <Sidebar badges={badges} onCloseMobileNav={closeMobileNav} />
+        <Sidebar badges={badges} presence={presence} onPresenceChange={applyPresence} onCloseMobileNav={closeMobileNav} />
         <Header
           onOpenPalette={() => setPaletteOpen(true)}
           onQuickAdd={() => navigate('/proposals/new')}

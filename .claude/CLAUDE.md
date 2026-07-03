@@ -300,5 +300,6 @@ See `.env.example` for the full list. Key ones:
 | `VOICE_CALLER_ID` | The 224 US voice line in strict E.164 (`+12242220082`). Caller ID on Zul's outbound calls and the number clients dial inbound. |
 | `VA_CELL` | Zul's cell in strict E.164 (`+63…`), the bridge target Twilio calls. **Never run through `normalizePhone`** (US-centric). Lives only here — never on a DB record, never committed. |
 | `RUN_VA_CALLING_SCHEDULER` | Optional. Set to `false` to disable the VA-calling scheduler (hourly prune of `pending_call`/`call_audit`/`telegram_update` + Telegram webhook heartbeat). Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
+| `RUN_PRESENCE_SCHEDULER` | Optional. Set to `false` to disable the presence stale-desk nudge / auto-flip sweep. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `VA_CALL_DAILY_CAP` / `VA_CALL_PER_MIN_CAP` | Toll-fraud spend caps: max calls placed per rolling 24h (default 40, DB-backed by counting `call_audit`) and max triggers accepted per minute (default 5). On trip the bot tells Zul and no call is placed. |
 | `VA_CALL_TIME_LIMIT_SEC` / `PENDING_CALL_TTL_SEC` | Per-call hard `timeLimit` on both call legs (default 1800 = 30 min) and confirm-before-dial pending-record TTL (default 120s). |

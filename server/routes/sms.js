@@ -7,6 +7,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../utils/errors');
 const { sendSMS, normalizePhone } = require('../utils/sms');
 const { xmlEscape } = require('../utils/xmlEscape');
+const presenceStore = require('../utils/presenceStore');
 // Auth: import `auth` and the admin/manager guard exactly as
 // server/routes/emailMarketing.js does.
 const { auth, requireAdminOrManager } = require('../middleware/auth');
@@ -63,6 +64,16 @@ router.post('/inbound', inboundLimiter, async (req, res) => {
       return res.status(403).send('Invalid signature');
     }
     console.warn('[sms/inbound] signature not validated (dev mode — allowing)');
+  }
+
+  // Presence sign of life (spec 2026-07-02): an inbound text from a tracked
+  // admin's nudge phone proves they are alive. Best-effort; never affects
+  // message routing below (staff CONFIRM/CANT keys on contractor_profiles
+  // .phone, a different column).
+  try {
+    await presenceStore.stampByNudgePhone(req.body.From);
+  } catch (err) {
+    console.warn('[sms/inbound] presence stamp failed:', err.message);
   }
 
   let reply = null;

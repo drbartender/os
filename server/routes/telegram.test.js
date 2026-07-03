@@ -18,6 +18,7 @@ function freshStubs(overrides = {}) {
     verifyTelegramSecret: [], isNewUpdate: [], sendTelegramMessage: [],
     upsertPending: [], claimForDial: [], attachCallSid: [],
     countPlacedSince: [], recordAudit: [], placeBridgedCall: [], toUsE164: [],
+    getTelegramTrackedUserId: [], hasPendingNudge: [], presenceTouch: [],
   };
   router.__setDeps({
     verifyTelegramSecret: (req) => { calls.verifyTelegramSecret.push(1); return true; },
@@ -30,6 +31,11 @@ function freshStubs(overrides = {}) {
     recordAudit: async (a) => { calls.recordAudit.push(a); },
     placeBridgedCall: async (a) => { calls.placeBridgedCall.push(a); return { sid: 'CA_test_sid' }; },
     toUsE164: (raw) => { calls.toUsE164.push(raw); return String(raw).replace(/\D/g, '').length >= 10 ? '+13125551234' : null; },
+    // Presence sign-of-life deps (non-DB defaults; recording stubs match the
+    // harness so the "touched with 42" assertion is verifiable).
+    getTelegramTrackedUserId: async () => { calls.getTelegramTrackedUserId.push(1); return 42; },
+    hasPendingNudge: async () => { calls.hasPendingNudge.push(1); return false; },
+    presenceTouch: (userId) => { calls.presenceTouch.push(userId); },
     ...overrides,
   });
 }
@@ -136,6 +142,8 @@ test('YES => cap-check, claim, placeBridgedCall ONCE, attachCallSid, recordAudit
   // PII: reply and log redact to last-4, not the full number.
   assert.match(calls.sendTelegramMessage[0].text, /1234/);
   assert.doesNotMatch(calls.sendTelegramMessage[0].text, /3125551234/);
+  // Sign of life stamps on every allowed message.
+  assert.deepEqual(calls.presenceTouch, [42]);
 });
 
 test('YES with no claimable pending row => expired message, no dial', async () => {
@@ -162,4 +170,40 @@ test('duplicate update_id => 200 no-op (Telegram retry safety)', async () => {
   assert.equal(res.status, 200);
   assert.equal(calls.claimForDial.length, 0);
   assert.equal(calls.placeBridgedCall.length, 0);
+});
+
+test('nudge pending + "yes" + no claimable call => nudge ack, no dial', async () => {
+  freshStubs({ claimForDial: async () => null, hasPendingNudge: async () => true });
+  const res = await post('/api/telegram/testsecret', msg(555, 'yes'));
+  assert.equal(res.status, 200);
+  assert.equal(calls.placeBridgedCall.length, 0);
+  assert.equal(calls.sendTelegramMessage.at(-1).text, 'Got it, keeping you on desk.');
+});
+
+test('nudge pending + "yes" + live pending call => call places (confirm wins over ack)', async () => {
+  freshStubs({ hasPendingNudge: async () => true });
+  const res = await post('/api/telegram/testsecret', msg(555, 'yes'));
+  assert.equal(res.status, 200);
+  assert.equal(calls.claimForDial.length, 1);
+  assert.equal(calls.placeBridgedCall.length, 1);
+  assert.equal(calls.recordAudit.at(-1).status, 'placed');
+  assert.match(calls.sendTelegramMessage.at(-1).text, /Calling/);
+});
+
+test('nudge pending + unparseable text => ack, no rejected_validation audit', async () => {
+  freshStubs({ toUsE164: () => null, hasPendingNudge: async () => true });
+  const res = await post('/api/telegram/testsecret', msg(555, 'still here'));
+  assert.equal(res.status, 200);
+  assert.equal(calls.sendTelegramMessage.at(-1).text, 'Got it, keeping you on desk.');
+  assert.equal(calls.recordAudit.filter((a) => a.status === 'rejected_validation').length, 0);
+  assert.equal(calls.upsertPending.length, 0);
+});
+
+test('no nudge pending + unparseable text => rejected_validation audit + guidance (unchanged)', async () => {
+  freshStubs({ toUsE164: () => null, hasPendingNudge: async () => false });
+  const res = await post('/api/telegram/testsecret', msg(555, 'call my cousin'));
+  assert.equal(res.status, 200);
+  assert.equal(calls.recordAudit.length, 1);
+  assert.equal(calls.recordAudit[0].status, 'rejected_validation');
+  assert.match(calls.sendTelegramMessage.at(-1).text, /does not look like a US number/);
 });

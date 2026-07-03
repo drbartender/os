@@ -448,6 +448,16 @@ async function start() {
         clearHealthRow('va_calling_webhook_health');
       }
 
+      // Presence tracker: stale-desk nudge + auto-flip sweep (spec 2026-07-02).
+      if (enabled('RUN_PRESENCE_SCHEDULER')) {
+        const { sweepPresence } = require('./utils/presenceScheduler');
+        const wrapped = wrapScheduler('presence', 900, sweepPresence);
+        setTimeout(wrapped, 270000); // stagger off the other jobs
+        setInterval(wrapped, 15 * 60 * 1000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('presence');
+      }
+
       // Pre-event reminder handlers (event_week_reminder, long_lead_t30_recap).
       // Must register before the dispatcher's first tick so it can resolve them.
       require('./utils/preEventHandlers').registerAll();
