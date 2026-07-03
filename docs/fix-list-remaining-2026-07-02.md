@@ -15,7 +15,7 @@ Research that shaped it:
 - Facts: payouts are net of fees (surface gross/fee/net; the gratuity fee-netting framing is ACCEPTED, never relitigate); refunds and disputes are negative lines; unmatched transactions need a bucket, not a silent drop; CheckCherry-era charges live in a different Stripe account (out of scope); read-side only per protect-working-paths.
 
 ### Proposal-options compare
-Other windows own it. Post-merge findings F1/F2/F3 are recorded on main (`8efc44c` docs commit) and must be fixed before the compare UI goes live.
+DONE and fully live (2026-07-02): all 7 lanes shipped, findings F1/F2/F3 all FIXED (F1/F2 conflict-guards `b3f9c88`, F3 refund-display clamp `5e9c9d3`), plus archive-controls (first-payment same-client sweep of ungrouped alternatives + admin Archive button with one-vs-set popup + lock-hierarchy fix `0a907f4`). Remaining on this feature: money-seam smoke at the first real grouped booking; compare-page reskin (prompt doc: `docs/compare-page-design-prompt.md`); Dallas archives legacy stragglers 469 + 475 via the new button.
 
 ---
 
