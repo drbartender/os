@@ -334,6 +334,16 @@ export default function ProposalDetail() {
   // Resend only in the active, sent-not-yet-paid window (modified uses "Send to
   // client"); archived and paid/confirmed/completed are excluded here and server-side.
   const canResend = ['sent', 'viewed', 'accepted'].includes(proposal.status);
+  // Over-budget badge (Thumbtack stated budget vs computed total): pre-acceptance
+  // only. budget_max null = no cap known ("not sure" / "More than $X"), never flags.
+  const overBudget = proposal.budget_max != null
+    && Number(proposal.total_price) > Number(proposal.budget_max)
+    && ['draft', 'sent'].includes(proposal.status);
+  const budgetRangeLabel = overBudget
+    ? (Number(proposal.budget_min) > 0
+        ? `$${proposal.budget_min}-$${proposal.budget_max}`
+        : `under $${proposal.budget_max}`)
+    : null;
 
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
@@ -373,6 +383,14 @@ export default function ProposalDetail() {
               {proposal.last_minute_hold && (
                 <span className="lm-hold-badge" title="Booked ≤72h out — verify staff availability before the event">
                   ⚠ Last-minute — verify staffing
+                </span>
+              )}
+              {overBudget && (
+                <span
+                  className="budget-over-badge"
+                  title="Thumbtack lead stated this budget. Consider a discount or trimmed scope to win the job."
+                >
+                  ⚠ Over stated budget: ${Math.round(Number(proposal.total_price))} vs {budgetRangeLabel}
                 </span>
               )}
               {proposal.package_name && <span className="tag">{proposal.package_name}</span>}

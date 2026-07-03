@@ -10,7 +10,6 @@ const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded } = require('../../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
-const { setupTimeDisplay } = require('../../utils/setupTime');
 const { validateProposalRules, stripIncludedAddons } = require('../../utils/proposalRules');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
 const { rescheduleProposalInTx, sendRescheduleEmail } = require('../../utils/rescheduleProposal');
@@ -19,7 +18,6 @@ const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../../utils/errors');
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('../../utils/urls');
 const { findOrCreateClient } = require('../../utils/clientDedup');
-const { getMessageLogForProposal } = require('../../utils/messageLog');
 const { insertProposalRecord } = require('../../utils/proposalInsert');
 
 const router = express.Router();
@@ -361,51 +359,8 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
   }
 }));
 
-/** GET /api/proposals/:id — get single proposal */
-router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const result = await pool.query(`
-    SELECT p.*, c.name AS client_name, c.email AS client_email, c.phone AS client_phone, c.source AS client_source,
-           c.cc_id AS client_cc_id,
-           sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category, sp.includes AS package_includes,
-           u.email AS created_by_email, u.cc_id AS user_cc_id
-    FROM proposals p
-    LEFT JOIN clients c ON c.id = p.client_id
-    LEFT JOIN service_packages sp ON sp.id = p.package_id
-    LEFT JOIN users u ON u.id = p.created_by
-    WHERE p.id = $1
-  `, [req.params.id]);
-
-  if (!result.rows[0]) throw new NotFoundError('Proposal not found');
-
-  // Fetch addons + activity log in parallel — both depend only on proposal id.
-  // Cap activity log fetch at 100 entries (most recent) — an old proposal can
-  // accumulate hundreds of view/update entries otherwise.
-  const [addons, activity, messageLog] = await Promise.all([
-    pool.query(
-      'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
-      [req.params.id]
-    ),
-    pool.query(
-      'SELECT * FROM proposal_activity_log WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 100',
-      [req.params.id]
-    ),
-    getMessageLogForProposal(req.params.id),
-  ]);
-
-  // setup_time_display: server-derived clock time (service start − effective
-  // minutes) for back-of-house display. Raw setup_minutes_before already flows
-  // via SELECT p.* (NULL until an admin overrides; null display when unparseable
-  // start time). Back-of-house only — never added to the public token response.
-  const row = result.rows[0];
-  res.json({
-    ...row,
-    setup_time_display: setupTimeDisplay(row),
-    // SERVER-15: pg returns the now-NUMERIC quantity as a string; coerce to a number.
-    addons: addons.rows.map(a => ({ ...a, quantity: a.quantity === null ? null : Number(a.quantity) })),
-    activity: activity.rows,
-    messageLog,
-  });
-}));
+// GET /api/proposals/:id (single-proposal read) lives in getOne.js — carved out
+// at the file-size ratchet; mounted last in index.js because `/:id` is greedy.
 
 /** GET /api/proposals/:id/legacy-cc-payments — admin-only fetch of
  *  Check-Cherry-imported payment rows for this proposal (those with a

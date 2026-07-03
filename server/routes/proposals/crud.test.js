@@ -286,6 +286,8 @@ before(async () => {
   app.use(express.json());
   app.use('/api/proposals', crudRouter);
   app.use('/api/proposals', lifecycleRouter);
+  // getOne owns GET /:id (carved out of crud.js); mounted last like prod index.js.
+  app.use('/api/proposals', require('./getOne'));
   app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);
     if (err instanceof AppError) {
@@ -905,4 +907,25 @@ test('GET /:id includes the messageLog array', async () => {
   assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
   assert.ok(Array.isArray(res.body.messageLog));
   assert.ok(res.body.messageLog.some((m) => m.message_type === 'proposal_sent'));
+});
+
+test('GET /:id carries the linked Thumbtack lead stated budget (lateral join)', async () => {
+  const proposalId = await insertDraftProposal({ total_price: 505 });
+  const negId = `budget-join-${Date.now()}`;
+  await pool.query(
+    `INSERT INTO thumbtack_leads (negotiation_id, proposal_id, budget_min, budget_max, budget_raw, raw_payload)
+     VALUES ($1, $2, 300, 400, '$300 - $400', '{}'::jsonb)`,
+    [negId, proposalId]
+  );
+  let body;
+  try {
+    const res = await request('GET', `/api/proposals/${proposalId}`, { token: primaryToken });
+    assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
+    body = res.body;
+  } finally {
+    await pool.query('DELETE FROM thumbtack_leads WHERE negotiation_id = $1', [negId]);
+  }
+  assert.equal(body.budget_min, 300);
+  assert.equal(body.budget_max, 400);
+  assert.equal(body.budget_raw, '$300 - $400');
 });

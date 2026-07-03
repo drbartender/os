@@ -9855,6 +9855,21 @@ html[data-app="admin-os"] .location-suggest-item.active {
   vertical-align: middle;
 }
 
+/* Admin proposal detail — over-stated-budget badge (Thumbtack lead): red
+   family, sits beside the orange lm-hold-badge in the proposal header. */
+.budget-over-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #8a1f1f;
+  background: #fbe4e4;
+  border: 1px solid #c0392b;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
 .proposal-paid-card {
   background: rgba(45, 107, 90, 0.15);
   border: 1px solid rgba(45, 107, 90, 0.5);

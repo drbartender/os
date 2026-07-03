@@ -247,6 +247,12 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
               </dd>
             </>
           )}
+          {proposal.budget_raw && (
+            <>
+              <dt>Stated budget</dt>
+              <dd>{proposal.budget_raw}</dd>
+            </>
+          )}
           {proposal.payment_type && (
             <>
               <dt>Type</dt>

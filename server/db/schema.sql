@@ -1737,6 +1737,21 @@ ALTER TABLE thumbtack_leads
 ALTER TABLE thumbtack_leads
   ALTER COLUMN event_duration TYPE NUMERIC(4,1);
 
+-- Stated budget parsed from the lead's Q&A at webhook time (extractBudget in
+-- routes/thumbtack.js). WHOLE DOLLARS, not cents, matching proposals.total_price
+-- units (the documented proposals exception). budget_max NULL = no cap known
+-- ("I'm not sure" or any "More than $X" answer): the over-budget badge never
+-- fires. budget_raw = the decoded original answer, for admin display.
+-- Forward-only by design: existing leads are NOT backfilled (2026-07-02).
+ALTER TABLE thumbtack_leads
+  ADD COLUMN IF NOT EXISTS budget_min INTEGER,
+  ADD COLUMN IF NOT EXISTS budget_max INTEGER,
+  ADD COLUMN IF NOT EXISTS budget_raw TEXT;
+
+-- Serves the per-proposal lead lookups (getOne.js budget lateral join and the
+-- /lead-cost endpoint, both WHERE proposal_id = ... ORDER BY id DESC LIMIT 1).
+CREATE INDEX IF NOT EXISTS idx_thumbtack_leads_proposal_id ON thumbtack_leads(proposal_id);
+
 CREATE TABLE IF NOT EXISTS thumbtack_messages (
   id SERIAL PRIMARY KEY,
   message_id VARCHAR(100) UNIQUE NOT NULL,

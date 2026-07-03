@@ -31,6 +31,88 @@ test('extractGuestCount: no guest question or no number yields null', () => {
   assert.equal(thumbtackRouter.extractGuestCount(null), null);
 });
 
+// Pure unit tests for the stated-budget parser (exported from thumbtack.js).
+// Answer shapes below are real prod payload values verified 2026-07-02
+// (see the spec's Production findings).
+test('extractBudget: single range', () => {
+  assert.deepEqual(
+    thumbtackRouter.extractBudget([{ question: 'Budget', answer: '$300 - $400' }]),
+    { budgetMin: 300, budgetMax: 400, budgetRaw: '$300 - $400' }
+  );
+});
+test('extractBudget: multi-select collapses to min-of-mins / max-of-maxes', () => {
+  const raw = '$300 - $400, $400 - $500, $200 - $300 (typically only for small/brief events)';
+  assert.deepEqual(
+    thumbtackRouter.extractBudget([{ question: 'Budget', answer: raw }]),
+    { budgetMin: 200, budgetMax: 500, budgetRaw: raw }
+  );
+});
+test('extractBudget: "Under $200" bounds [0, 200]', () => {
+  const raw = 'Under $200 (typically only for small/brief events)';
+  assert.deepEqual(
+    thumbtackRouter.extractBudget([{ question: 'Budget', answer: raw }]),
+    { budgetMin: 0, budgetMax: 200, budgetRaw: raw }
+  );
+});
+test('extractBudget: "More than $750" leaves an open max (no flag possible)', () => {
+  assert.deepEqual(
+    thumbtackRouter.extractBudget([{ question: 'Budget', answer: 'More than $750' }]),
+    { budgetMin: 750, budgetMax: null, budgetRaw: 'More than $750' }
+  );
+});
+test('extractBudget: any "More than" token forces the open max even mixed with ranges', () => {
+  const raw = 'More than $750, $500 - $600, $600- $750';
+  assert.deepEqual(
+    thumbtackRouter.extractBudget([{ question: 'Budget', answer: raw }]),
+    { budgetMin: 500, budgetMax: null, budgetRaw: raw }
+  );
+});
+test('extractBudget: unsure-only is all nulls (entity-decoded before matching)', () => {
+  assert.deepEqual(
+    thumbtackRouter.extractBudget([{ question: 'Budget', answer: 'I&#39;m not sure' }]),
+    { budgetMin: null, budgetMax: null, budgetRaw: null }
+  );
+});
+test('extractBudget: unsure token mixed with a range is ignored, raw keeps the decoded answer', () => {
+  assert.deepEqual(
+    thumbtackRouter.extractBudget([{ question: 'Budget', answer: 'I&#39;m not sure, $300 - $400' }]),
+    { budgetMin: 300, budgetMax: 400, budgetRaw: "I'm not sure, $300 - $400" }
+  );
+});
+test('extractBudget: free-form "$300 to $600" and the missing-space "$600- $750"', () => {
+  assert.deepEqual(
+    thumbtackRouter.extractBudget([{ question: 'Budget', answer: '$300 to $600' }]),
+    { budgetMin: 300, budgetMax: 600, budgetRaw: '$300 to $600' }
+  );
+  assert.deepEqual(
+    thumbtackRouter.extractBudget([{ question: 'Budget', answer: '$600- $750' }]),
+    { budgetMin: 600, budgetMax: 750, budgetRaw: '$600- $750' }
+  );
+});
+test('extractBudget: no budget question, junk answer, bare single number, or null details are all nulls', () => {
+  const NULLS = { budgetMin: null, budgetMax: null, budgetRaw: null };
+  assert.deepEqual(thumbtackRouter.extractBudget([{ question: 'Beverage types', answer: 'Beer, Wine' }]), NULLS);
+  assert.deepEqual(thumbtackRouter.extractBudget([{ question: 'Budget', answer: 'call me to discuss' }]), NULLS);
+  assert.deepEqual(thumbtackRouter.extractBudget([{ question: 'Budget', answer: '$400' }]), NULLS);
+  assert.deepEqual(thumbtackRouter.extractBudget(null), NULLS);
+});
+test('parseLead: V4 and legacy both carry the budget fields', () => {
+  const v4 = thumbtackRouter.parseLead({
+    event: { eventType: 'NewLeadV4' },
+    data: { negotiationID: 'neg-budget', request: { details: [{ question: 'Budget', answer: '$300 - $400' }] } },
+  });
+  assert.equal(v4.budgetMin, 300);
+  assert.equal(v4.budgetMax, 400);
+  assert.equal(v4.budgetRaw, '$300 - $400');
+  const legacy = thumbtackRouter.parseLead({
+    leadID: 'lead-budget',
+    request: { details: [{ question: 'Budget', answer: 'More than $750' }] },
+  });
+  assert.equal(legacy.budgetMin, 750);
+  assert.equal(legacy.budgetMax, null);
+  assert.equal(legacy.budgetRaw, 'More than $750');
+});
+
 // Pure unit tests for event-duration capture (exported from thumbtack.js).
 // Real V4 leads carry the event window as proposedTimes[].start/end (never a
 // scalar booking.duration), so the duration is the unambiguous end - start.
@@ -72,7 +154,8 @@ const secret = process.env.THUMBTACK_WEBHOOK_SECRET || null;
 const negA = `test-fail-${Date.now()}`;
 const negB = `test-pii-${Date.now()}`;
 const negC = `test-half-${Date.now()}`;
-const created = { negotiationIds: [negA, negB, negC], proposalIds: [], clientIds: [] };
+const negD = `test-budget-${Date.now()}`;
+const created = { negotiationIds: [negA, negB, negC, negD], proposalIds: [], clientIds: [] };
 
 function httpReq(method, path, headers, body) {
   return new Promise((resolve, reject) => {
@@ -117,6 +200,30 @@ function postLeadV4(negotiationId, start, end) {
         location: { city: 'Chicago', state: 'IL', zipCode: '60601' },
         proposedTimes: [{ start, end }],
         details: [{ question: 'Guests?', answer: '60' }],
+      },
+    },
+  });
+  const headers = { 'Content-Type': 'application/json' };
+  if (secret) headers['x-thumbtack-secret'] = secret;
+  return httpReq('POST', '/api/thumbtack/leads', headers, body);
+}
+
+// V4 lead whose details carry a stated Budget answer (multi-select,
+// entity-encoded exactly like real prod payloads).
+function postLeadV4Budget(negotiationId, budgetAnswer) {
+  const body = JSON.stringify({
+    event: { eventType: 'NewLeadV4' },
+    data: {
+      negotiationID: negotiationId,
+      customer: { firstName: 'Budget', lastName: 'Harness', phone: `+1555${String(Date.now()).slice(-7)}` },
+      request: {
+        category: { name: 'Bartending' }, description: 'budget harness',
+        location: { city: 'Chicago', state: 'IL', zipCode: '60601' },
+        proposedTimes: [{ start: '2026-09-19T23:00:00Z', end: '2026-09-20T03:00:00Z' }],
+        details: [
+          { question: 'Estimated guest count', answer: '76 - 100 guests' },
+          { question: 'Budget', answer: budgetAnswer },
+        ],
       },
     },
   });
@@ -208,6 +315,22 @@ test('a fractional (:30) event window persists the lead and prices the half-hour
 
   const p = await pool.query('SELECT event_duration_hours FROM proposals WHERE id = $1', [lead.rows[0].proposal_id]);
   assert.equal(Number(p.rows[0].event_duration_hours), 3.5, 'draft priced on the real 3.5h, not the 4h default');
+});
+
+test('webhook persists the parsed stated budget on the lead row', async () => {
+  thumbtackRouter.__setDeps({ createDraftProposalFromLead }); // real builder
+  const res = await postLeadV4Budget(negD, 'I&#39;m not sure, $300 - $400, $400 - $500');
+  assert.equal(res.status, 200);
+  const lead = await pool.query(
+    'SELECT budget_min, budget_max, budget_raw, client_id, proposal_id FROM thumbtack_leads WHERE negotiation_id = $1',
+    [negD]
+  );
+  assert.equal(lead.rows.length, 1, 'lead persisted');
+  if (lead.rows[0].client_id) created.clientIds.push(lead.rows[0].client_id);
+  if (lead.rows[0].proposal_id) created.proposalIds.push(lead.rows[0].proposal_id);
+  assert.equal(lead.rows[0].budget_min, 300, 'unsure token ignored; min of selected ranges');
+  assert.equal(lead.rows[0].budget_max, 500, 'max of selected ranges');
+  assert.equal(lead.rows[0].budget_raw, "I'm not sure, $300 - $400, $400 - $500", 'raw stored decoded');
 });
 
 test('POST /messages persists the message and 200s with no admin email block', async () => {

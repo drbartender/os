@@ -1190,7 +1190,8 @@ Admin entry points: "Shopping List" button on Drink Plan Detail (visible wheneve
 - `customer_id`, `customer_name`, `customer_phone`
 - `category`, `description` — what service they're requesting
 - `location_address`, `location_city`, `location_state`, `location_zip`
-- `event_date` TIMESTAMPTZ, `event_duration` INTEGER (minutes), `guest_count`
+- `event_date` TIMESTAMPTZ, `event_duration` NUMERIC(4,1) (hours, end - start of the lead window), `guest_count`
+- `budget_min` / `budget_max` INTEGER (whole dollars), `budget_raw` TEXT — stated budget parsed from the lead Q&A at webhook time (forward-only, no backfill; `budget_max` NULL = no cap known, never flags)
 - `lead_type`, `lead_price`, `charge_state` — Thumbtack billing info
 - `status`: new | contacted | converted | lost
 - `raw_payload` JSONB — full original webhook body

@@ -1,8 +1,8 @@
 // Composition router for /api/proposals/*.
 //
-// Mount order matters: metadata before crud, because crud.js owns the `/:id`
-// dynamic route and would shadow metadata's static paths (`/financials`,
-// `/dashboard-stats`, `/packages`, `/addons`, `/calculate`) if mounted first.
+// Mount order matters: getOne.js owns the greedy GET `/:id` route and mounts
+// LAST, so every static GET path (`/financials`, `/dashboard-stats`,
+// `/packages`, `/addons`, `/calculate`, `/change-requests`) wins first.
 // publicToken and public are mounted first too — they own specific path
 // prefixes (`/t/:token`, `/public/*`) and never collide with `/:id`.
 
@@ -18,5 +18,6 @@ router.use('/', require('./actions'));
 router.use('/', require('./changeRequests'));
 router.use('/', require('./groups'));
 router.use('/', require('./crud'));
+router.use('/', require('./getOne'));
 
 module.exports = router;

@@ -91,6 +91,69 @@ function extractGuestCount(details) {
   return null;
 }
 
+/** Minimal HTML-entity decode for Thumbtack Q&A answers (prod sends e.g. I&#39;m). */
+function decodeEntities(str) {
+  return String(str)
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
+/**
+ * Stated budget from the Thumbtack details Q&A. The answer is a comma-joined
+ * multi-select of ranges ("Under $200 (...)", "$300 - $400", "$600- $750",
+ * "More than $750", "I'm not sure"). Returns integer WHOLE DOLLARS, matching
+ * proposals.total_price units (the documented proposals dollars exception):
+ *   { budgetMin, budgetMax, budgetRaw }
+ * budgetMax null = no cap known (unsure-only, or ANY "More than $X" token),
+ * so the over-budget badge can never fire. All three null when no budget
+ * question exists or nothing parses. A bare single number with no under/more
+ * keyword contributes nothing: not an observed prod shape, and guessing a
+ * bound from it risks a wrong flag.
+ */
+function extractBudget(details) {
+  const NONE = { budgetMin: null, budgetMax: null, budgetRaw: null };
+  if (!Array.isArray(details)) return NONE;
+  for (const d of details) {
+    if (!d || typeof d !== 'object') continue;
+    if (!String(d.question || '').toLowerCase().includes('budget')) continue;
+    // Pre-slice to 2000 (same defensive bound as extractGuestCount) so the
+    // decode regexes never chew an unbounded payload; slice to 500 AFTER the
+    // decode so a boundary never cuts an entity mid-sequence.
+    const raw = decodeEntities(String(d.answer || '').slice(0, 2000)).slice(0, 500);
+    let min = null;
+    let max = null;
+    let openMax = false;
+    for (const token of raw.split(',')) {
+      const t = token.trim().toLowerCase();
+      if (!t || t.includes('not sure')) continue;
+      // 50..100000 filter: discards thousands-separator shrapnel (a "$1,000"
+      // split on commas yields junk fragments) and zero/absurd values.
+      const nums = (t.match(/\d+/g) || []).map(Number).filter((n) => n >= 50 && n <= 100000);
+      if (!nums.length) continue;
+      if (/\bunder\b|\bless than\b/.test(t)) {
+        min = 0;
+        max = max === null ? nums[0] : Math.max(max, nums[0]);
+      } else if (/\bmore than\b|\bover\b|\babove\b/.test(t)) {
+        min = min === null ? nums[0] : Math.min(min, nums[0]);
+        openMax = true;
+      } else if (nums.length >= 2) {
+        const lo = Math.min(...nums);
+        const hi = Math.max(...nums);
+        min = min === null ? lo : Math.min(min, lo);
+        max = max === null ? hi : Math.max(max, hi);
+      }
+      // single bare number with no keyword: contributes nothing
+    }
+    if (min === null && max === null) return NONE;
+    if (openMax) max = null;
+    return { budgetMin: min, budgetMax: max, budgetRaw: raw };
+  }
+  return NONE;
+}
+
 /**
  * Event duration in HOURS from the lead's scheduled window (end - start).
  * Thumbtack V4 leads carry the window as proposedTimes[].start/end ISO
@@ -148,6 +211,7 @@ function parseLead(body) {
       leadPrice: d.leadPrice || null,
       chargeState: d.chargeState || null,
       guestCount: extractGuestCount(req.details),
+      ...extractBudget(req.details),
       details: req.details || [],
     };
   }
@@ -172,6 +236,7 @@ function parseLead(body) {
     leadPrice: body.leadPrice || body.price || null,
     chargeState: body.chargeState || null,
     guestCount: extractGuestCount(req.details),
+    ...extractBudget(req.details),
     details: req.details || [],
   };
 }
@@ -277,14 +342,15 @@ router.post('/leads', asyncHandler(async (req, res) => {
         negotiation_id, client_id, customer_id, customer_name, customer_phone,
         category, description, location_city, location_state, location_zip,
         location_address, event_date, event_duration, guest_count, lead_type,
-        lead_price, charge_state, raw_payload
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+        lead_price, charge_state, budget_min, budget_max, budget_raw, raw_payload
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
       [
         lead.negotiationId, clientId, lead.customerId, truncate(lead.customerName, 255),
         truncate(lead.customerPhone, 50), truncate(lead.category, 255), truncate(lead.description),
         truncate(lead.locationCity, 255), truncate(lead.locationState, 50), truncate(lead.locationZip, 20),
         lead.locationAddress, lead.eventDate, lead.eventDuration,
         lead.guestCount, lead.leadType, lead.leadPrice, lead.chargeState,
+        lead.budgetMin, lead.budgetMax, truncate(lead.budgetRaw, 500),
         JSON.stringify(body),
       ]
     );
@@ -481,5 +547,6 @@ router.post('/reviews', asyncHandler(async (req, res) => {
 module.exports = router;
 module.exports.__setDeps = __setDeps;
 module.exports.extractGuestCount = extractGuestCount; // exported for unit tests
+module.exports.extractBudget = extractBudget; // exported for unit tests
 module.exports.parseLead = parseLead; // exported for unit tests
 module.exports.computeDurationHours = computeDurationHours; // exported for unit tests

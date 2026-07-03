@@ -184,13 +184,14 @@ dr-bartender/
 │   │   ├── mocktails.js        # Mocktail menu CRUD
 │   │   ├── payment.js          # Payment method + W-9 upload
 │   │   ├── progress.js         # Onboarding step tracking
-│   │   ├── proposals/          # Service proposals (publicToken/compareGroup/public/metadata/lifecycle/crud/actions/changeRequests/groups sub-routers)
+│   │   ├── proposals/          # Service proposals (publicToken/compareGroup/public/metadata/lifecycle/crud/getOne/actions/changeRequests/groups sub-routers)
 │   │   │   ├── index.js        # Composition router
 │   │   │   ├── publicToken.js  # /t/:token view + sign
 │   │   │   ├── public.js       # /public/* — packages, addons, calculate, capture-lead, quote-draft, submit
 │   │   │   ├── metadata.js     # /packages, /addons, /calculate, /financials, /dashboard-stats
 │   │   │   ├── lifecycle.js    # Proposal status state machine (PATCH /:id/status)
-│   │   │   ├── crud.js         # admin CRUD (list / get / create / update / archive)
+│   │   │   ├── crud.js         # admin CRUD (list / create / update / archive)
+│   │   │   ├── getOne.js       # GET /:id single-proposal read (carved out of crud.js; greedy `/:id`, mounted last)
 │   │   │   ├── actions.js      # Per-proposal admin actions: notes, create-shift, balance-due-date, send-reminder, record-payment (carved out of crud.js)
 │   │   │   └── changeRequests.js # Admin change-request endpoints (queue, per-proposal list, decline)
 │   │   ├── shifts.js           # Shift scheduling
