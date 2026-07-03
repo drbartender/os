@@ -7,6 +7,7 @@ lanes:
       - server/utils/presence.js
       - server/utils/presence.test.js
       - server/utils/presenceActivity.js
+      - server/utils/presenceActivity.test.js
       - server/utils/presenceStore.js
       - server/utils/presenceScheduler.js
       - server/utils/presenceScheduler.test.js
@@ -57,7 +58,6 @@ lanes:
 - Server suites run ALONE, one at a time (shared dev DB): `node --test <file>`. Test rows use unique email prefixes and are deleted in teardown. Route tests must tolerate the two real backfilled dev rows (assert on test rows' presence in payloads, never on exact array length).
 - Test lead ranks use 900+ values so they never collide with the real dev rows (rank 1 and 2) under the partial UNIQUE index.
 - Commits are in-lane checkpoints (squashed at merge): explicit pathspec always, never `git add .`.
-- `server/index.js` has known uncommitted quick-fix edits in the `os` checkout from a parallel window; the lane cuts from committed main, so expect a trivial adjacent-block merge conflict there and resolve by keeping both scheduler blocks.
 - Backfill emails verified against prod Neon (`production` branch) 2026-07-02: Dallas = `admin@drbartender.com` (id 1), Zul = `zul@drbartender.com` (id 2). Both rows also exist on dev.
 - Dallas's cell (`+19703330527`) IS committed in the schema backfill, by his explicit call 2026-07-02 (private repo; he wants the nudge working day one, no manual rollout step). It is his real cell, deliberately NOT the shared 312 GV line on his contractor profile. The scheduler still treats a NULL phone on an sms-channel user as "send unconfirmed" (log + Sentry, no stamp, no flip) as defense in depth.
 
@@ -125,6 +125,14 @@ UPDATE users SET presence_lead_rank = 2, presence_nudge_channel = 'sms',
     presence_nudge_phone = '+19703330527'
   WHERE email = 'admin@drbartender.com' AND presence_lead_rank IS NULL;
 
+-- Strip display name (plan-review finding): the admin account's contractor
+-- profile exists but has preferred_name NULL, so the INITCAP email fallback
+-- would render "Admin". Backfill the real name; guarded so a hand-set value
+-- is never overwritten.
+UPDATE contractor_profiles SET preferred_name = 'Dallas'
+  WHERE user_id = (SELECT id FROM users WHERE email = 'admin@drbartender.com')
+    AND preferred_name IS NULL;
+
 -- Seed the clock so no consumer ever sees a half-initialized tracked user:
 -- presence_since set, and exactly one open away interval. Guarded, so the
 -- boot-time re-run is a no-op.
@@ -156,6 +164,10 @@ Expected: 2 users (zul rank 1 telegram; admin rank 2 sms with `presence_nudge_ph
 - [ ] **Step 3: Run the block a second time (idempotency proof)**
 
 Expected: no errors, still exactly 2 open intervals.
+
+Rollback note: everything here is additive. Revert = drop the 7 users columns +
+`presence_log` + the two indexes; per the codebase's DROP-deferred pattern, a
+revert would comment the columns dead and defer the physical DROP to tech-debt.
 
 - [ ] **Step 4: Commit**
 
@@ -420,6 +432,7 @@ git commit -m "presence: pure helpers (pointer, transitions, predicates, CT buck
 **Files:**
 - Create: `server/utils/presenceActivity.js`
 - Modify: `server/middleware/auth.js` (the `auth` SELECT at ~line 39 and the `req.user` assignment ~line 66)
+- Test: `server/utils/presenceActivity.test.js`
 
 **Interfaces:**
 - Consumes: `ACTIVITY_FLUSH_MS` from Task 2.
@@ -494,15 +507,64 @@ if (userForReq.presence_lead_rank !== null && userForReq.presence_lead_rank !== 
 }
 ```
 
-- [ ] **Step 3: Sanity-run an existing auth-dependent suite**
+- [ ] **Step 3: Write the seam-injected tests (plan-review finding: the module was built for injection, so test it)**
+
+Create `server/utils/presenceActivity.test.js`:
+
+```js
+// Seam-injected tests for the activity map (no real DB). Distinct user ids
+// per test because the module-level maps persist across tests.
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { touch, lastActivityMs, __setPresenceActivityDeps } = require('./presenceActivity');
+
+function makePool() {
+  const calls = [];
+  return { calls, query: (sql, params) => { calls.push(params[0]); return Promise.resolve(); } };
+}
+
+test('throttle: repeat touches inside 60s flush once; immediate bypasses; window elapse flushes again', () => {
+  const pool = makePool();
+  let now = 1000000;
+  __setPresenceActivityDeps({ pool, now: () => now });
+  touch(101);
+  now += 10000;
+  touch(101); // inside throttle window: no second flush
+  assert.equal(pool.calls.filter(id => id === 101).length, 1);
+  touch(101, { immediate: true }); // immediate bypasses the throttle
+  assert.equal(pool.calls.filter(id => id === 101).length, 2);
+  now += 61000;
+  touch(101); // window elapsed: flushes again
+  assert.equal(pool.calls.filter(id => id === 101).length, 3);
+  assert.equal(lastActivityMs(101), now);
+  assert.equal(lastActivityMs(999), null);
+});
+
+test('flush rejection is swallowed (no unhandled rejection, warn-once)', async () => {
+  __setPresenceActivityDeps({
+    pool: { query: () => Promise.reject(new Error('db down')) },
+    now: () => 5000000,
+  });
+  touch(202, { immediate: true });
+  touch(203, { immediate: true });
+  await new Promise((r) => setTimeout(r, 20)); // let the rejections settle; test fails on unhandledRejection
+});
+```
+
+- [ ] **Step 4: Run**
+
+Run: `node --test server/utils/presenceActivity.test.js`
+Expected: PASS, and no unhandled-rejection noise in the output.
+
+- [ ] **Step 5: Sanity-run an existing auth-dependent suite**
 
 Run: `node --test server/routes/admin/settings.badgeCounts.test.js`
 Expected: PASS (auth changes are additive).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add server/utils/presenceActivity.js server/middleware/auth.js
+git add server/utils/presenceActivity.js server/utils/presenceActivity.test.js server/middleware/auth.js
 git commit -m "presence: activity map + throttled last-seen stamp in auth middleware"
 ```
 
@@ -533,7 +595,7 @@ git commit -m "presence: activity map + throttled last-seen stamp in auth middle
 // transaction; the one-open-interval invariant is enforced by the partial
 // unique index (INSERT side) and by id-scoped guarded UPDATEs (close side).
 const { pool } = require('../db');
-const { ValidationError } = require('./errors');
+const { ValidationError, ConflictError } = require('./errors');
 const { derivePointer, leadsAfterTransition, sumOverlapMs, centralWindows } = require('./presence');
 const presenceActivity = require('./presenceActivity');
 
@@ -594,6 +656,11 @@ async function transitionState(userId, nextState) {
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    // Spec 409 contract: a losing concurrent transition surfaces as
+    // ConflictError, not a 500. Near-unreachable given FOR UPDATE; backstop.
+    if (err && err.code === '23505') {
+      throw new ConflictError('Presence state changed concurrently; refresh and retry');
+    }
     throw err;
   } finally {
     client.release();
@@ -624,6 +691,9 @@ async function setTakingLeads(userId, taking) {
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
+    if (err && err.code === '23505') {
+      throw new ConflictError('Presence state changed concurrently; refresh and retry');
+    }
     throw err;
   } finally {
     client.release();
@@ -866,6 +936,10 @@ Create `server/routes/admin/presence.test.js`. Copy the hand-rolled harness from
   8. Interval bookkeeping: after the sequence in (5)-(6), query presence_log for user a: exactly one open row; every closed row has `ended_reason 'switch'` and `ended_at` equal to the next row's `started_at`.
   9. `GET /presence/log` as manager -> 403; as admin -> 200 with `users` and `intervals` arrays; user a's entry has numeric `week.desk_ms >= 0`.
   10. `GET /badge-counts` as admin -> body has a `presence` object with `users` and `lead_owner_id` keys.
+  11. Badge-counts survives a presence failure (spec-enumerated): `__setPresenceStoreDeps({ pool: { query: async () => { throw new Error('boom'); } } })`, then `GET /badge-counts` as admin -> 200 with `presence: null` and numeric `pending_proposals`; restore with `__setPresenceStoreDeps({ pool })` (the real pool) before the next test.
+  12. Store-level `applyAutoFlip` success (cross-confirmed review finding; call `presenceStore` directly, no HTTP): `transitionState(a, 'desk')`; SELECT a's open interval (id, started_at); `UPDATE presence_log SET nudged_at = started_at + interval '6 hours' WHERE id = $1` and re-SELECT to get `nudged_at` as a Date; `applyAutoFlip({ intervalId, userId: a, startedAt, nudgedAt })` -> `true`; assert the closed row has `ended_at` equal to `nudged_at` and `ended_reason 'auto_flip'`; a new open away row exists with `started_at` equal to `nudged_at`; users row is `away`, `presence_since` = `nudged_at`, `taking_leads false`; and no row anywhere has `ended_at < started_at`.
+  13. Store-level `applyAutoFlip` race-abort: `transitionState(a, 'desk')`; grab the open interval id/`started_at`; stamp `nudged_at` as in test 12; then `transitionState(a, 'available')` (the manual switch wins the race and closes that interval); `applyAutoFlip` with the OLD interval fields -> `false`; user a is still `available` and no `ended_reason 'auto_flip'` row exists for a.
+  14. `stampByNudgePhone(a's phone)` -> returns a's id and a's `presence_last_seen_at` is within the last few seconds; `stampByNudgePhone('+15550000000')` (no match) -> null with no rows changed. This is also the store-level coverage for Task 6's SMS splice.
 
 - [ ] **Step 6: Run**
 
@@ -878,6 +952,13 @@ Expected: PASS. Then re-run `node --test server/routes/admin/settings.badgeCount
 git add server/utils/presenceStore.js server/routes/admin/presence.js server/routes/admin/index.js server/routes/admin/settings.js server/routes/admin/presence.test.js
 git commit -m "presence: store, admin endpoints, badge-counts block"
 ```
+
+- [ ] **Step 8: Checkpoint review (execution-review cadence)**
+
+Dispatch a database-review-focused agent over the Task 1 + Task 4 diff: DDL
+idempotency and the partial unique indexes, transaction boundaries in
+`transitionState` / `setTakingLeads` / `applyAutoFlip`, the 23505 mapping, and
+backfill idempotency. Fix findings before proceeding.
 
 ---
 
@@ -1113,7 +1194,12 @@ Expected: PASS.
 
 - [ ] **Step 5: Register in `server/index.js`**
 
-After the VA-calling scheduler block (after its `clearHealthRow('va_calling_webhook_health');` line) add:
+Placement matters (plan-review finding): the VA-calling block ends with an
+`else if (!globalScheduleDisabled) { clearHealthRow('va_calling_prune'); clearHealthRow('va_calling_webhook_health'); }` branch whose closing brace is at
+~line 449. Insert the presence block AFTER that closing brace and BEFORE the
+`// Pre-event reminder handlers` comment, as a SIBLING of the other scheduler
+if/else blocks. Do NOT insert directly after the `clearHealthRow('va_calling_webhook_health');` line itself: that is inside the else-branch, and the presence
+scheduler would then register only when VA calling is disabled.
 
 ```js
       // Presence tracker: stale-desk nudge + auto-flip sweep (spec 2026-07-02).
@@ -1262,7 +1348,10 @@ In the `POST /inbound` handler, after the signature gate and before the `process
 - [ ] **Step 7: Run the neighboring suite to prove no interference**
 
 Run: `node --test server/utils/smsInbound.test.js`
-Expected: PASS (untouched file, sanity only).
+Expected: PASS (untouched file, sanity only). The new SMS matcher itself is
+covered at the store level by Task 4 test 14 (`stampByNudgePhone` match and
+no-match); this step only proves the existing staff CONFIRM/CANT path is
+untouched.
 
 - [ ] **Step 8: Commit**
 
@@ -1271,19 +1360,32 @@ git add server/routes/telegram.js server/routes/telegram.test.js server/routes/s
 git commit -m "presence: sign-of-life stamps in telegram + sms webhooks, nudge-ack precedence"
 ```
 
+- [ ] **Step 9: Checkpoint review (execution-review cadence)**
+
+Dispatch a security-review-focused agent over the Task 3 + Task 6 diff: the
+auth-middleware SELECT/`req.user` shape change, both verified-webhook splices
+(verification ordering intact, no new unauthenticated write path, fire-and-
+forget guarantees), and the nudge-ack precedence vs the VA-calling grammar.
+Fix findings before proceeding.
+
 ---
 
-### Task 7: Presence strip (client)
+### Task 7: Presence strip + history drawer (client)
+
+One task, one commit (plan-review finding): the strip hard-imports the drawer,
+so they are one compile-coupled UI feature; splitting them produced a
+non-building checkpoint.
 
 **Files:**
 - Modify: `client/src/components/AdminLayout.js` (badge fetch effect ~line 55, Sidebar props ~line 109)
 - Modify: `client/src/components/adminos/Sidebar.js` (props, render after the brand div ~line 58)
 - Create: `client/src/components/adminos/PresenceStrip.js`
+- Create: `client/src/components/adminos/drawers/PresenceDrawer.js`
 - Modify: `client/src/index.css` (append presence styles to the admin-os section)
 
 **Interfaces:**
-- Consumes: strip payload shape from Task 4; `api` (`client/src/utils/api.js`); `Icon` (`clock` and `right` glyphs exist in `adminos/Icon.js`).
-- Produces: `<PresenceStrip presence={...} onPresenceChange={fn} rail={bool} currentUser={user} />`; AdminLayout owns presence state and the stale-poll guard. Task 8 adds the drawer import into PresenceStrip.
+- Consumes: strip payload + log payload shapes from Task 4; `api` (`client/src/utils/api.js`); `Icon` (`clock` and `right` glyphs exist in `adminos/Icon.js`); `Drawer` (`components/adminos/Drawer.js`, props `{ open, onClose, crumb, children }`); loading/error pattern mirrors `drawers/ShiftDrawer.js`.
+- Produces: `<PresenceStrip presence={...} onPresenceChange={fn} rail={bool} currentUser={user} />`; AdminLayout owns presence state and the stale-poll guard.
 
 - [ ] **Step 1: AdminLayout presence state + stale-poll guard**
 
@@ -1442,6 +1544,7 @@ export default function PresenceStrip({ presence, onPresenceChange, rail, curren
         <span className="presence-pointer-label">Leads</span>
         <Icon name="right" size={10} />
         <span className="presence-pointer-name">{owner?.name || ''}</span>
+        <span className={`presence-pointer-initial presence-initial--${owner?.state || 'away'}`}>{(owner?.name || '?')[0]}</span>
         {isAdmin && (
           <button type="button" className="presence-history-btn" title="Time clock" onClick={() => setDrawerOpen(true)}>
             <Icon name="clock" size={11} />
@@ -1454,8 +1557,6 @@ export default function PresenceStrip({ presence, onPresenceChange, rail, curren
   );
 }
 ```
-
-Note: the `PresenceDrawer` import lands in Task 8. To keep this task independently buildable, create the Task 8 file as a stub FIRST if building strictly in order, or build Tasks 7 and 8 together in one pass (preferred; they are one reviewable UI unit).
 
 - [ ] **Step 4: CSS**
 
@@ -1529,41 +1630,29 @@ html[data-app="admin-os"] .presence-history-btn {
 }
 html[data-app="admin-os"] .presence-history-btn:hover { color: inherit; }
 html[data-app="admin-os"] .presence-error { font-size: 10px; color: var(--danger, #c0392b); }
-/* Rail mode: dots only */
+/* Pointer initial: hidden in full mode, the rail's colored stand-in for the name */
+html[data-app="admin-os"] .presence-pointer-initial { display: none; font-weight: 700; font-size: 11px; }
+html[data-app="admin-os"] .presence-initial--desk { color: hsl(var(--ok-h) var(--ok-s) 45%); }
+html[data-app="admin-os"] .presence-initial--available { color: #d9a441; }
+html[data-app="admin-os"] .presence-initial--away { color: var(--text-muted); }
+/* Rail mode: dots + colored pointer initial only (spec: Rail mode) */
 html[data-app="admin-os"] .presence-strip--rail .presence-name,
 html[data-app="admin-os"] .presence-strip--rail .presence-state,
 html[data-app="admin-os"] .presence-strip--rail .presence-dur,
 html[data-app="admin-os"] .presence-strip--rail .presence-leads-pill,
 html[data-app="admin-os"] .presence-strip--rail .presence-pointer-label,
+html[data-app="admin-os"] .presence-strip--rail .presence-pointer-name,
 html[data-app="admin-os"] .presence-strip--rail .presence-error { display: none; }
+html[data-app="admin-os"] .presence-strip--rail .presence-pointer-initial { display: inline; }
 ```
 
 If any variable above (`--bg-1`, `--danger`) is absent from the admin-os token set, check the surrounding rules at ~line 11475 and substitute the token the sidebar itself uses; the fallbacks in `var()` cover the rest.
 
-- [ ] **Step 5: Manual verify (with Task 8's drawer stubbed or built)**
+- [ ] **Step 5: Create `client/src/components/adminos/drawers/PresenceDrawer.js`**
 
-Start the dev servers, log in as admin, and check: strip renders under the brand row; your row opens the three-state menu; switching states updates dot + pointer immediately; leads pill only on Zul's row; rail mode shows dots only; both skins look sane; placeholder shows briefly on a hard reload.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add client/src/components/AdminLayout.js client/src/components/adminos/Sidebar.js client/src/components/adminos/PresenceStrip.js client/src/index.css
-git commit -m "presence: sidebar strip (states, leads pill, pointer)"
-```
-
----
-
-### Task 8: History drawer (client)
-
-**Files:**
-- Create: `client/src/components/adminos/drawers/PresenceDrawer.js`
-- Modify: `client/src/index.css` (append drawer styles)
-
-**Interfaces:**
-- Consumes: log payload from Task 4 (`users[].week.desk_ms` etc., `intervals[]`); `Drawer` (`components/adminos/Drawer.js`, props `{ open, onClose, crumb, children }`); loading/error pattern mirrors `drawers/ShiftDrawer.js`.
-- Produces: `<PresenceDrawer open={bool} onClose={fn} />` consumed by Task 7.
-
-- [ ] **Step 1: Create `client/src/components/adminos/drawers/PresenceDrawer.js`**
+Mirror ShiftDrawer's loading treatment: if it renders a spinner element, use
+that in place of the "Loading…" status text below; the structure is otherwise
+final.
 
 ```jsx
 import React, { useCallback, useEffect, useState } from 'react';
@@ -1656,7 +1745,7 @@ export default function PresenceDrawer({ open, onClose }) {
 }
 ```
 
-- [ ] **Step 2: CSS**
+- [ ] **Step 6: CSS (drawer)**
 
 Append after the strip styles in `client/src/index.css`:
 
@@ -1684,25 +1773,33 @@ html[data-app="admin-os"] .presence-auto-badge {
 }
 ```
 
-- [ ] **Step 3: CI-grade client build (the Vercel gate)**
+- [ ] **Step 7: CI-grade client build (the Vercel gate)**
 
 Run: `cd client && CI=true npx react-scripts build`
 Expected: build succeeds with zero ESLint warnings (warnings are CI-fatal).
 
-- [ ] **Step 4: Manual verify**
+- [ ] **Step 8: Manual verify (strip + drawer together)**
 
-Open the drawer from the strip clock icon: loading state, totals cards for both users, interval table with an `auto` badge only on auto_flip rows, Central timestamps, empty state visible on a fresh DB, error+Retry by temporarily pointing the fetch at a bad path (then restore).
+Start the dev servers, log in as admin, and check: strip renders under the
+brand row with names "Zul" and "Dallas"; your row opens the three-state menu;
+switching states updates dot + pointer immediately; leads pill only on Zul's
+row; rail mode shows the dots plus the pointer as a colored initial (no names,
+no label); both skins look sane; placeholder shows briefly on a hard reload.
+Then the drawer from the strip clock icon: loading state, totals cards for
+both users, interval table with an `auto` badge only on auto_flip rows,
+Central timestamps, empty state visible on a fresh DB, error+Retry by
+temporarily pointing the fetch at a bad path (then restore).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add client/src/components/adminos/drawers/PresenceDrawer.js client/src/index.css
-git commit -m "presence: history drawer (totals + interval log)"
+git add client/src/components/AdminLayout.js client/src/components/adminos/Sidebar.js client/src/components/adminos/PresenceStrip.js client/src/components/adminos/drawers/PresenceDrawer.js client/src/index.css
+git commit -m "presence: sidebar strip + history drawer"
 ```
 
 ---
 
-### Task 9: Docs, env, rollout notes
+### Task 8: Docs, env, rollout notes
 
 **Files:**
 - Modify: `.env.example` (scheduler flags section, near `RUN_VA_CALLING_SCHEDULER` ~line 160)
@@ -1714,7 +1811,9 @@ git commit -m "presence: history drawer (totals + interval log)"
 
 - [ ] **Step 1: `.env.example`**
 
-Add next to the other scheduler flags:
+Add next to the other scheduler flags. Note `.env.example` currently has TWO
+`RUN_VA_CALLING_SCHEDULER=` lines (~160 and ~218); add ours ONCE, next to the
+~line 160 cluster:
 
 ```bash
 RUN_PRESENCE_SCHEDULER=

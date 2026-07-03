@@ -276,8 +276,10 @@ passes it down with a setter. POSTs are not blind-optimistic: the control disabl
 while the mutation is in flight, and the POST *response* payload (server truth)
 replaces the state. On failure (ValidationError, 409 from the unique-index guard,
 network), the strip re-fetches `GET /api/admin/presence`, renders whatever the
-server says, and surfaces the existing Toast error pattern; it never keeps showing
-a state the server refused. A stale-poll guard (AdminLayout records the timestamp of
+server says, and surfaces a small inline error line in the strip (plan-review
+correction 2026-07-02: no admin page actually uses the ToastContainer component,
+so there is no existing toast pattern to reuse); it never keeps showing a state
+the server refused. A stale-poll guard (AdminLayout records the timestamp of
 the last mutation; a poll response whose request started before that timestamp does
 not overwrite presence) stops the 60s poll from clobbering a just-committed change.
 
@@ -307,9 +309,10 @@ the existing `Drawer` component and its sibling drawers' loading + error + retry
 pattern). Contents, per tracked user: this-week and this-month totals for desk and
 available (away shown as the implicit remainder, not totaled), and a table of the 50
 most recent intervals (state, started, ended, duration, leads on/off, an "auto"
-badge for auto_flip closes). States: spinner while loading, error row with a retry
-button on fetch failure, and an explicit empty state ("No history yet") for a
-freshly tracked user with only the seeded open interval. Times displayed in Central.
+badge for auto_flip closes). States: a loading state matching the sibling drawers'
+treatment, error row with a retry button on fetch failure, and an explicit empty
+state ("No history yet") for a freshly tracked user with only the seeded open
+interval. Times displayed in Central.
 Admin-only, matching the log endpoint: the drawer trigger is hidden for managers.
 No new nav item; if this outgrows the drawer it gets promoted to a page later, not
 now.
@@ -325,7 +328,8 @@ now.
 - Scheduler failures are visible via the existing schedulerHealth staleness monitor;
   unconfirmed nudge sends additionally emit console.warn + Sentry capture.
 - Concurrency: the partial unique index guards interval INSERTs (a losing concurrent
-  transition gets a 409, which the strip resolves by re-fetching server truth), and
+  transition gets a 409: the store maps Postgres unique-violation 23505 to
+  ConflictError, and the strip resolves by re-fetching server truth), and
   the flip pass guards its close/update by observed interval id + conditional users
   UPDATE (see Flip pass), so no interleaving can produce a negative-duration row or
   clobber a manual switch.
