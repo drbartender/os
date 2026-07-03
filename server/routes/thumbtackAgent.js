@@ -342,6 +342,12 @@ router.post('/rearm', auth, requireAdminOrManager, asyncHandler(async (req, res)
 const MAX_HARVEST_ATTEMPTS = parseInt(process.env.MAX_HARVEST_ATTEMPTS, 10) > 0
   ? parseInt(process.env.MAX_HARVEST_ATTEMPTS, 10) : 3;
 const HARVEST_FAIL_REASONS = new Set(['render_timeout', 'navigation_error', 'lead_not_found', 'ambiguous', 'session_expired']);
+// Idempotency window for identical (negotiation_id, reason) failure reports. The
+// box agent may retry the SAME report on a network blip; collapse those so one
+// attempt is not counted twice against the cap. Genuine separate attempts are
+// >= HARVEST_COOLDOWN (6h) apart (a lead is not re-offered sooner), well outside
+// this window. Reuses webhook_events, the codebase's dedupe table (see calcom.js).
+const HARVEST_FAIL_DEDUPE_WINDOW = '10 minutes';
 
 // POST /api/admin/thumbtack/harvest-failed  { negotiation_id, reason }  — agent-secret only.
 router.post('/harvest-failed', agentSecretOnly, asyncHandler(async (req, res) => {
@@ -350,9 +356,30 @@ router.post('/harvest-failed', agentSecretOnly, asyncHandler(async (req, res) =>
   if (!negotiationId) throw new ValidationError(null, 'negotiation_id is required');
   if (!HARVEST_FAIL_REASONS.has(reason)) throw new ValidationError(null, 'invalid reason');
 
+  // Idempotency marker (shared by every reason): a fresh INSERT (or one older
+  // than the window, which DO UPDATE refreshes) returns a row -> proceed; a
+  // within-window conflict returns zero rows -> duplicate. `executor` lets the
+  // counting path run this INSIDE its transaction so the marker only commits
+  // together with the counter it guards (a crash between the two can never
+  // swallow a legitimate retry).
+  const harvestFailDedupe = (executor) => executor.query(
+    `INSERT INTO webhook_events (provider, event_id, received_at)
+     VALUES ('thumbtack_harvest_failed', $1, now())
+     ON CONFLICT (provider, event_id) DO UPDATE
+       SET received_at = now()
+       WHERE webhook_events.received_at < now() - $2::interval
+     RETURNING received_at`,
+    [`${negotiationId}:${reason}`, HARVEST_FAIL_DEDUPE_WINDOW]
+  );
+
   // session_expired is an environment problem, not a per-lead failure: alert for
-  // re-login, leave attempts and status untouched.
+  // re-login, leave attempts and status untouched. Deduped so a retry loop of
+  // the same failure does not spam the re-login alert.
   if (reason === 'session_expired') {
+    const dedupe = await harvestFailDedupe(pool);
+    if (dedupe.rowCount === 0) {
+      return res.status(200).json({ status: 'session_expired', deduped: true });
+    }
     await fireHarvestAlert('session_expired', negotiationId);
     console.log(`[thumbtack-harvester] harvest-failed ${negotiationId} -> session_expired (re-login alert)`);
     return res.status(200).json({ status: 'session_expired' });
@@ -363,26 +390,70 @@ router.post('/harvest-failed', agentSecretOnly, asyncHandler(async (req, res) =>
   if (!clientId) return res.status(404).json({ status: 'lead_not_found' });
 
   // ambiguous -> terminal failed + alert (never guess between >1 rendered email).
+  // Deduped so identical retries do not re-alert.
   if (reason === 'ambiguous') {
+    const dedupe = await harvestFailDedupe(pool);
+    if (dedupe.rowCount === 0) {
+      return res.status(200).json({ status: 'failed', deduped: true });
+    }
     await pool.query("UPDATE clients SET email_harvest_status='failed' WHERE id=$1 AND email_harvest_status='pending'", [clientId]);
     await fireHarvestAlert('ambiguous', negotiationId);
     console.log(`[thumbtack-harvester] harvest-failed ${negotiationId} -> ambiguous (failed)`);
     return res.status(200).json({ status: 'failed' });
   }
 
-  // render_timeout | navigation_error | lead_not_found -> bump the counter; at the cap
-  // mark failed + alert, otherwise leave pending (cooldown via attempted_at).
-  const upd = await pool.query(
-    `UPDATE clients SET email_harvest_attempts = email_harvest_attempts + 1
-      WHERE id=$1 AND email_harvest_status='pending'
-      RETURNING email_harvest_attempts`,
-    [clientId]
-  );
-  if (upd.rowCount === 0) return res.status(200).json({ status: 'noop' }); // no longer pending; nothing to count
-  const attempts = upd.rows[0].email_harvest_attempts;
-  if (attempts >= MAX_HARVEST_ATTEMPTS) {
-    await pool.query("UPDATE clients SET email_harvest_status='failed' WHERE id=$1 AND email_harvest_status='pending'", [clientId]);
-    await fireHarvestAlert(`${reason} (max attempts)`, negotiationId);
+  // render_timeout | navigation_error | lead_not_found -> bump the counter; at
+  // the cap mark failed, otherwise leave pending (cooldown via attempted_at).
+  // The dedupe marker, the increment, and the cap-mark commit ATOMICALLY: a
+  // crash after the marker but before the counter would otherwise make the
+  // agent's retry look like a duplicate and lose the attempt entirely.
+  const client = await pool.connect();
+  let attempts = null;
+  let outcome;
+  try {
+    await client.query('BEGIN');
+    const dedupe = await harvestFailDedupe(client);
+    if (dedupe.rowCount === 0) {
+      await client.query('ROLLBACK');
+      outcome = 'deduped';
+    } else {
+      const upd = await client.query(
+        `UPDATE clients SET email_harvest_attempts = email_harvest_attempts + 1
+          WHERE id=$1 AND email_harvest_status='pending'
+          RETURNING email_harvest_attempts`,
+        [clientId]
+      );
+      if (upd.rowCount === 0) {
+        await client.query('COMMIT'); // keep the marker; row no longer pending
+        outcome = 'noop';
+      } else {
+        attempts = upd.rows[0].email_harvest_attempts;
+        if (attempts >= MAX_HARVEST_ATTEMPTS) {
+          await client.query("UPDATE clients SET email_harvest_status='failed' WHERE id=$1 AND email_harvest_status='pending'", [clientId]);
+          await client.query('COMMIT');
+          outcome = 'failed';
+        } else {
+          await client.query('COMMIT');
+          outcome = 'pending';
+        }
+      }
+    }
+  } catch (txErr) {
+    try { await client.query('ROLLBACK'); } catch { /* swallow rollback noise */ }
+    throw txErr;
+  } finally {
+    client.release();
+  }
+
+  if (outcome === 'deduped') {
+    const cur = await pool.query('SELECT email_harvest_status, email_harvest_attempts FROM clients WHERE id=$1', [clientId]);
+    const st = cur.rows[0] ? cur.rows[0].email_harvest_status : 'pending';
+    console.log(`[thumbtack-harvester] harvest-failed ${negotiationId} -> deduped (reason ${reason})`);
+    return res.status(200).json({ status: st === 'failed' ? 'failed' : 'pending', attempts: cur.rows[0] ? cur.rows[0].email_harvest_attempts : null, deduped: true });
+  }
+  if (outcome === 'noop') return res.status(200).json({ status: 'noop' }); // no longer pending; nothing to count
+  if (outcome === 'failed') {
+    await fireHarvestAlert(`${reason} (max attempts)`, negotiationId); // post-commit, best-effort
     console.log(`[thumbtack-harvester] harvest-failed ${negotiationId} -> failed (attempts ${attempts})`);
     return res.status(200).json({ status: 'failed', attempts });
   }

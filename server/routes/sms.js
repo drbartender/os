@@ -87,7 +87,9 @@ router.post('/inbound', inboundLimiter, async (req, res) => {
     console.log(`[sms/inbound] processed: ${result.outcome}`);
   } catch (err) {
     if (process.env.SENTRY_DSN_SERVER) {
-      Sentry.captureException(err, { tags: { webhook: 'twilio' }, extra: { from: req.body && req.body.From } });
+      // Redact the sender to last-4 — the raw From is client PII (match the
+      // slice(-4) idiom in utils/sms.js / smsInbound.js).
+      Sentry.captureException(err, { tags: { webhook: 'twilio' }, extra: { from: `...${String((req.body && req.body.From) || '').slice(-4)}` } });
     }
     console.error('[sms/inbound] processing failed:', err.message);
     // Return 500 so Twilio retries with backoff. processInboundSms dedupes on

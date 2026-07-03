@@ -24,6 +24,7 @@ let deps = {
   countPlacedSince: pendingCall.countPlacedSince,
   recordAudit: pendingCall.recordAudit,
   placeBridgedCall: sms.placeBridgedCall,
+  cancelBridgedCall: sms.cancelBridgedCall,
   toUsE164: usPhone.toUsE164,
   getTelegramTrackedUserId: presenceStore.getTelegramTrackedUserId,
   hasPendingNudge: presenceStore.hasPendingNudge,
@@ -175,13 +176,24 @@ router.post('/:secret', telegramLimiter, async (req, res) => {
       // resolves. A call Twilio has accepted is already billed, so it MUST be
       // audited and counted against the spend cap no matter what happens next.
       await deps.recordAudit({ triggeredBy: userId, targetE164: claimed.targetE164, callSid, status: 'placed' });
-      // attachCallSid is best-effort: it lets the /bridge webhook resolve the
-      // target, but a failure here must never skip the audit above or the reply
-      // below (the call is already placed + counted). Log loudly, do not rethrow.
+      // attachCallSid persists the CallSid on the claimed row so /api/voice/bridge
+      // can resolve the dial target BY CallSid. If it fails, the bridge can never
+      // find the target and Zul would answer into a dead apology-and-hangup. Rather
+      // than leave that dead bridge, best-effort cancel the billed leg (so her phone
+      // does not ring into it) and tell her to re-send the number — the next number
+      // send resets the pending row via upsertPending. The 'placed' audit above
+      // stays: Twilio already accepted (and billed) the call.
       try {
         await deps.attachCallSid(claimed.id, callSid);
       } catch (err) {
-        console.error(`[telegram] attachCallSid failed (call already placed + audited) sid=${last4(callSid)}:`, err.message);
+        console.error(`[telegram] attachCallSid failed (call placed + audited) sid=${last4(callSid)}:`, err.message);
+        try {
+          await deps.cancelBridgedCall({ callSid });
+        } catch (cancelErr) {
+          console.error(`[telegram] cancelBridgedCall failed sid=${last4(callSid)}:`, cancelErr.message);
+        }
+        await reply(chatId, 'That call could not be placed. Send the number again to retry.');
+        return res.sendStatus(200);
       }
       console.log(`[telegram] call placed sid=${last4(callSid)} target=${last4(claimed.targetE164)}`);
       await reply(chatId, `Calling ${last4(claimed.targetE164)} now.`);

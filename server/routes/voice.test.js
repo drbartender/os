@@ -58,6 +58,9 @@ beforeEach(() => {
     lookupTargetByCallSid: async (sid) => { calls.lookups.push(sid); return null; },
     recordAudit: async (row) => { calls.audit.push(row); },
     sendTelegramMessage: async (chatId, text) => { calls.telegram.push({ chatId, text }); return { ok: true }; },
+    // Default: no prior audit row, so the status handler notifies as before. Tests
+    // that exercise the redelivery de-dupe override this to reflect the ledger.
+    auditRowExists: async () => false,
   });
 });
 
@@ -116,6 +119,23 @@ test('/status with a failed leg messages Zul on Telegram and audits the status',
   assert.strictEqual(calls.audit.length, 1);
   assert.strictEqual(calls.audit[0].status, 'failed');
   assert.strictEqual(calls.audit[0].callSid, 'CA_status');
+});
+
+test('/status dedups a redelivered dead-leg by (CallSid, CallStatus): one telegram, one audit', async () => {
+  // Twilio retries status callbacks at-least-once. The guard must skip the second
+  // Telegram + audit for an identical (CallSid, status). The stub models the
+  // ledger: a row "exists" once recordAudit has written that exact pair.
+  const seen = new Set();
+  router.__setVoiceDeps({
+    auditRowExists: async (callSid, status) => seen.has(`${callSid}|${status}`),
+    recordAudit: async (row) => { calls.audit.push(row); seen.add(`${row.callSid}|${row.status}`); },
+  });
+  const first = await post('/api/voice/status', { CallStatus: 'failed', CallSid: 'CA_dedup' });
+  assert.ok(first.status === 204 || first.status === 200);
+  const second = await post('/api/voice/status', { CallStatus: 'failed', CallSid: 'CA_dedup' });
+  assert.ok(second.status === 204 || second.status === 200);
+  assert.strictEqual(calls.telegram.length, 1, 'exactly one Telegram across the redelivery');
+  assert.strictEqual(calls.audit.length, 1, 'exactly one audit row across the redelivery');
 });
 
 test('/status with a completed leg does NOT message Zul', async () => {

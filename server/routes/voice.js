@@ -1,6 +1,7 @@
 const express = require('express');
 const twilio = require('twilio');
 const Sentry = require('@sentry/node');
+const { pool } = require('../db');
 const { xmlEscape } = require('../utils/xmlEscape');
 const { lookupTargetByCallSid, recordAudit } = require('../utils/pendingCall');
 const { sendTelegramMessage } = require('../utils/telegram');
@@ -51,10 +52,22 @@ function isValidTwilioRequest(req) {
   }
 }
 
+// Existence probe for status-callback de-dupe: has this exact (CallSid, status)
+// already been audited? Twilio retries status callbacks at-least-once, so a
+// redelivered dead-leg would otherwise ping Zul + append a second audit row.
+async function auditRowExists(callSid, status) {
+  if (!callSid) return false;
+  const { rows } = await pool.query(
+    'SELECT 1 FROM call_audit WHERE call_sid = $1 AND status = $2 LIMIT 1',
+    [callSid, status]
+  );
+  return rows.length > 0;
+}
+
 // Dependency-injection seam for tests (mirrors server/utils/sms.js:57-58
 // __setSmsDeps). Lets unit tests stub the signature gate + DB/Telegram calls
 // so no real webhook signature, Neon query, or Bot API request is made.
-let _deps = { isValidTwilioRequest, lookupTargetByCallSid, recordAudit, sendTelegramMessage };
+let _deps = { isValidTwilioRequest, lookupTargetByCallSid, recordAudit, sendTelegramMessage, auditRowExists };
 function __setVoiceDeps(d) { _deps = { ..._deps, ...d }; }
 router.__setVoiceDeps = __setVoiceDeps;
 
@@ -153,23 +166,44 @@ router.post('/status', async (req, res) => {
   const status = req.body.CallStatus;
   const callSid = req.body.CallSid || null;
   if (DEAD_STATUSES.has(status)) {
+    // De-dupe Twilio's at-least-once status retries: if we already audited this
+    // exact (CallSid, status) we already messaged Zul, so skip the duplicate
+    // Telegram + audit. Best-effort — if the probe itself fails, fall through and
+    // notify (a rare double-ping beats a silently-swallowed dead-leg alert).
+    let alreadyAudited = false;
+    try {
+      alreadyAudited = await _deps.auditRowExists(callSid, status);
+    } catch (err) {
+      console.error('[voice/status] audit dedup probe failed:', err.message);
+    }
+    if (alreadyAudited) {
+      res.status(204).end();
+      return;
+    }
     const allowed = process.env.TELEGRAM_ALLOWED_USER_ID;
+    let alertDelivered = !allowed; // nothing to deliver when no allowed user is configured
     if (allowed) {
       try {
         await _deps.sendTelegramMessage(allowed, "That call didn't connect, resend the number to retry.");
+        alertDelivered = true;
       } catch (err) {
         console.error('[voice/status] telegram notify failed:', err.message);
       }
     }
-    try {
-      await _deps.recordAudit({
-        triggeredBy: allowed ? Number(allowed) : null,
-        targetE164: null,
-        callSid,
-        status,
-      });
-    } catch (err) {
-      console.error('[voice/status] audit write failed:', err.message);
+    // The audit row doubles as the dedup marker above, so it must only be
+    // written once the alert actually went out (or none was owed). Writing it
+    // on a failed send would make Twilio's redelivery skip the alert forever.
+    if (alertDelivered) {
+      try {
+        await _deps.recordAudit({
+          triggeredBy: allowed ? Number(allowed) : null,
+          targetE164: null,
+          callSid,
+          status,
+        });
+      } catch (err) {
+        console.error('[voice/status] audit write failed:', err.message);
+      }
     }
   }
   res.status(204).end();

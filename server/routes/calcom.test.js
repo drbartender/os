@@ -211,6 +211,57 @@ test('webhook: a failing handler deletes the dedupe row so Cal.com retries (audi
   assert.equal(rows[0].n, 0, 'dedupe row must be deleted on handler failure so the retry re-runs');
 });
 
+// ─── Strand-heal on redelivery (guard 3) ─────────────────────────
+// A CREATE whose dedupe row committed but whose consult was lost (a hard crash
+// between the autocommitted dedupe INSERT and the consult write) must reprocess
+// on Cal.com's retry instead of short-circuiting as "Already processed" forever.
+
+test('strand-heal: a committed dedupe row with no consult reprocesses on redelivery', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  const payload = {
+    uid: 'test-strand-heal-1',
+    startTime: '2026-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Strandheal', email: 'strandheal@calcom-test.example' }],
+  };
+  const body = Buffer.from(JSON.stringify({ triggerEvent: 'BOOKING_CREATED', payload }));
+
+  // First delivery files the consult AND commits the dedupe row.
+  const first = await signedRequest(body, TEST_SECRET);
+  assert.equal(first.status, 200);
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM consults WHERE calcom_event_id = 'test-strand-heal-1'")).rows[0].n, 1);
+
+  // Simulate the strand: consult lost, dedupe row survives.
+  await pool.query("DELETE FROM consults WHERE calcom_event_id = 'test-strand-heal-1'");
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM webhook_events WHERE provider='calcom'")).rows[0].n, 1, 'dedupe row survived the simulated strand');
+
+  // Redelivery must heal: drop the dedupe row + reprocess, recreating the consult.
+  const second = await signedRequest(body, TEST_SECRET);
+  assert.equal(second.status, 200);
+  assert.doesNotMatch(second.text, /already processed/i, 'a stranded redelivery reprocesses, it does not short-circuit');
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM consults WHERE calcom_event_id = 'test-strand-heal-1'")).rows[0].n, 1, 'strand-heal recreated the consult');
+});
+
+test('strand-heal: a redelivery with the consult still present is a plain Already processed', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  const payload = {
+    uid: 'test-strand-present-1',
+    startTime: '2026-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Strandpresent', email: 'strandpresent@calcom-test.example' }],
+  };
+  const body = Buffer.from(JSON.stringify({ triggerEvent: 'BOOKING_CREATED', payload }));
+
+  const first = await signedRequest(body, TEST_SECRET);
+  assert.equal(first.status, 200);
+  // Consult intact: the redelivery must NOT reprocess and must NOT drop the dedupe row.
+  const second = await signedRequest(body, TEST_SECRET);
+  assert.equal(second.status, 200);
+  assert.match(second.text, /already processed/i, 'consult present => plain dedupe short-circuit');
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM consults WHERE calcom_event_id = 'test-strand-present-1'")).rows[0].n, 1);
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM webhook_events WHERE provider='calcom'")).rows[0].n, 1, 'dedupe row is preserved on a true replay');
+});
+
 // ─── BOOKING_CREATED tests ────────────────────────────────────────
 
 async function postCreated(payload) {

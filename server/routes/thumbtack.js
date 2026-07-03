@@ -291,6 +291,59 @@ function parseReview(body) {
   };
 }
 
+// Post-commit side effects for a captured lead: best-effort Core Reaction draft
+// proposal + admin notification. Extracted so the duplicate-heal path (a
+// crash-after-commit strand) can re-run the exact same steps. Never throws; each
+// step is independently guarded. Returns the draft proposalId (or null).
+async function runPostCommitSteps({ lead, clientId }) {
+  // Auto-create a Core Reaction draft proposal (best-effort). A failure here must
+  // NOT surface to the webhook. Idempotent on the lead's existing proposal_id.
+  let proposalId = null;
+  if (clientId) {
+    try {
+      const draft = await _deps.createDraftProposalFromLead({ lead, clientId, negotiationId: lead.negotiationId });
+      proposalId = draft ? draft.proposalId : null;
+    } catch (draftErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(draftErr, { tags: { webhook: 'thumbtack', step: 'draft' } });
+      }
+      console.error('Thumbtack auto-draft failed (non-blocking):', draftErr);
+    }
+  }
+
+  // Admin notification (non-blocking).
+  try {
+    const adminUrl = clientId ? `${ADMIN_URL}/clients/${clientId}` : null;
+    const proposalUrl = proposalId ? `${ADMIN_URL}/proposals/${proposalId}` : null;
+    const tpl = newThumbtackLeadAdmin({
+      customerName: lead.customerName,
+      customerPhone: lead.customerPhone,
+      category: lead.category,
+      description: lead.description,
+      location: [lead.locationCity, lead.locationState].filter(Boolean).join(', '),
+      eventDate: lead.eventDate,
+      details: lead.details,
+      adminUrl,
+      proposalUrl,
+    });
+    await notifyAdminCategory({
+      category: 'routine_thumbtack',
+      subject: tpl.subject,
+      emailHtml: tpl.html,
+      emailText: tpl.text,
+    });
+  } catch (emailErr) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(emailErr, {
+        tags: { webhook: 'thumbtack', route: '/leads' },
+      });
+    }
+    console.error('Thumbtack admin notification failed (non-blocking):', emailErr);
+  }
+
+  return proposalId;
+}
+
 // ─── POST /api/thumbtack/leads ─────────────────────────────────────
 
 router.post('/leads', asyncHandler(async (req, res) => {
@@ -316,11 +369,24 @@ router.post('/leads', asyncHandler(async (req, res) => {
 
     // Deduplicate — skip if we already have this lead
     const existing = await dbClient.query(
-      'SELECT id FROM thumbtack_leads WHERE negotiation_id = $1',
+      'SELECT id, client_id, proposal_id FROM thumbtack_leads WHERE negotiation_id = $1',
       [lead.negotiationId]
     );
     if (existing.rows.length > 0) {
-      await dbClient.query('COMMIT');
+      await dbClient.query('COMMIT'); // close the read-only tx before any heal work
+      const row = existing.rows[0];
+      // Duplicate-heal: a lead committed WITH a client but WITHOUT a draft is a
+      // crash-after-commit strand — the client is created in the SAME tx as the
+      // lead, so a persisted lead + client but no proposal_id means the
+      // post-commit steps never ran (a hard crash right after COMMIT). Re-run them
+      // once. A fully-processed duplicate (proposal_id set) or a clientless lead
+      // (nothing to draft or notify with a link) is left untouched, so a normal
+      // duplicate never re-notifies.
+      if (row.client_id && !row.proposal_id) {
+        console.log(`Thumbtack lead ${lead.negotiationId} duplicate with no draft — healing post-commit steps`);
+        await runPostCommitSteps({ lead, clientId: row.client_id });
+        return res.status(200).json({ status: 'healed' });
+      }
       console.log(`Thumbtack lead ${lead.negotiationId} already exists — skipping`);
       return res.status(200).json({ status: 'duplicate' });
     }
@@ -370,50 +436,9 @@ router.post('/leads', asyncHandler(async (req, res) => {
     await dbClient.query('COMMIT');
     console.log(`Thumbtack lead ${lead.negotiationId} saved — client ${clientId}`);
 
-    // Auto-create a Core Reaction draft proposal (best-effort, post-commit).
-    // A failure here must NOT roll back lead capture or 500 the webhook.
-    let proposalId = null;
-    if (clientId) {
-      try {
-        const draft = await _deps.createDraftProposalFromLead({ lead, clientId, negotiationId: lead.negotiationId });
-        proposalId = draft ? draft.proposalId : null;
-      } catch (draftErr) {
-        if (process.env.SENTRY_DSN_SERVER) {
-          Sentry.captureException(draftErr, { tags: { webhook: 'thumbtack', step: 'draft' } });
-        }
-        console.error('Thumbtack auto-draft failed (non-blocking):', draftErr);
-      }
-    }
-
-    // Admin notification (non-blocking)
-    try {
-      const adminUrl = clientId ? `${ADMIN_URL}/clients/${clientId}` : null;
-      const proposalUrl = proposalId ? `${ADMIN_URL}/proposals/${proposalId}` : null;
-      const tpl = newThumbtackLeadAdmin({
-        customerName: lead.customerName,
-        customerPhone: lead.customerPhone,
-        category: lead.category,
-        description: lead.description,
-        location: [lead.locationCity, lead.locationState].filter(Boolean).join(', '),
-        eventDate: lead.eventDate,
-        details: lead.details,
-        adminUrl,
-        proposalUrl,
-      });
-      await notifyAdminCategory({
-        category: 'routine_thumbtack',
-        subject: tpl.subject,
-        emailHtml: tpl.html,
-        emailText: tpl.text,
-      });
-    } catch (emailErr) {
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(emailErr, {
-          tags: { webhook: 'thumbtack', route: '/leads' },
-        });
-      }
-      console.error('Thumbtack admin notification failed (non-blocking):', emailErr);
-    }
+    // Post-commit side effects (best-effort draft + admin notification). A
+    // failure here must NOT roll back lead capture or 500 the webhook.
+    await runPostCommitSteps({ lead, clientId });
 
     res.status(200).json({ status: 'ok' });
   } catch (err) {

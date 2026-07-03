@@ -363,4 +363,39 @@ describe('notifyDisputeWon', () => {
     assert.notStrictEqual(after.dispute_email_failed_at, null);
     assert.strictEqual(after.dispute_email_attempts, 3);
   });
+
+  test('payroll link is an absolute admin URL even when CLIENT_URL is unset', async () => {
+    const id = TEST_TIP_PREFIX - 12;
+    await seedTip({ id, dispute_email_attempts: 0 });
+
+    // urls.js and payrollDisputeNotify.js both capture ADMIN_URL at module load,
+    // so re-require them fresh with CLIENT_URL unset to exercise the fallback.
+    // The old inline `${process.env.CLIENT_URL || ''}/financials/payroll` yielded
+    // a RELATIVE '/financials/payroll' here; the fix yields the absolute admin URL.
+    const savedClientUrl = process.env.CLIENT_URL;
+    delete process.env.CLIENT_URL;
+    delete require.cache[require.resolve('./urls')];
+    delete require.cache[require.resolve('./payrollDisputeNotify')];
+    const freshMod = require('./payrollDisputeNotify');
+    try {
+      const captured = [];
+      freshMod.__setDeps({
+        sendEmail: async (msg) => { captured.push(msg); return { id: 'msg_test' }; },
+        Sentry: { captureException: () => {}, captureMessage: () => {} },
+        sendTimeoutMs: 100,
+        pool,
+      });
+      process.env.ADMIN_EMAIL = ADMIN_EMAIL_DEFAULT;
+      const result = await freshMod.notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() });
+      assert.strictEqual(result.abandoned, false);
+      assert.strictEqual(captured.length, 1);
+      const blob = `${captured[0].html || ''} ${captured[0].text || ''}`;
+      assert.match(blob, /https:\/\/admin\.drbartender\.com\/financials\/payroll/, 'absolute admin URL, not a relative /financials/payroll');
+    } finally {
+      delete require.cache[require.resolve('./urls')];
+      delete require.cache[require.resolve('./payrollDisputeNotify')];
+      if (typeof savedClientUrl === 'string') process.env.CLIENT_URL = savedClientUrl;
+      else delete process.env.CLIENT_URL;
+    }
+  });
 });

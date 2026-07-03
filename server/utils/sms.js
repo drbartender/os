@@ -21,7 +21,9 @@ async function sendSMS({ to, body, meta }) {
   if (!to) throw new Error('SMS recipient phone number is required');
   if (!client || !notificationsEnabled()) {
     const why = !client ? 'Twilio creds not set' : 'notifications gated off';
-    console.log(`[DEV] SMS skipped (${why}) → ${to} | Body: ${body}`);
+    // Redact recipient to last-4 and drop the body (keep only its length) — the
+    // body can carry client PII. Matches placeBridgedCall's slice(-4) idiom below.
+    console.log(`[DEV] SMS skipped (${why}) → ...${String(to).slice(-4)} | Body length: ${String(body || '').length}`);
     return { sid: `dev-skipped-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` };
   }
   let message;
@@ -31,7 +33,7 @@ async function sendSMS({ to, body, meta }) {
     logClientMessage(buildSmsLogEntry({ to, body, meta, error: err })); // fire-and-forget
     throw err;
   }
-  console.log(`SMS sent: ${message.sid} → ${to}`);
+  console.log(`SMS sent: ${message.sid} → ...${String(to).slice(-4)}`);
   logClientMessage(buildSmsLogEntry({ to, body, meta, result: message })); // fire-and-forget
   return message;
 }
@@ -65,6 +67,34 @@ async function placeBridgedCall({ to, callerId, url, statusCallback, timeLimit }
   }
   const call = await activeClient.calls.create({ from: callerId, to, url, statusCallback, timeLimit });
   console.log(`Bridged call placed: ${call.sid} → ...${String(to).slice(-4)}`);
+  return call;
+}
+
+/**
+ * Best-effort cancel of a bridged call by CallSid. Used when the CallSid could
+ * not be persisted to pending_call (an attachCallSid failure): the /api/voice/
+ * bridge webhook resolves the dial target BY CallSid, so without the row Zul
+ * would answer into a dead apology-and-hangup. Cancelling the billed leg keeps
+ * her phone from ringing into that dead bridge. Gated IDENTICALLY to
+ * placeBridgedCall (sms.js:60-65) so a dev/gated env never touches the live
+ * account. Twilio only cancels a queued/ringing call; an already-answered call
+ * is a no-op on their side. Rethrows a real Twilio error to the caller, which
+ * wraps this in try/catch (never on the critical path).
+ *
+ * @param {Object} opts
+ * @param {string} opts.callSid - the Twilio Call SID to cancel
+ * @returns {Promise<{sid: string|null, status?: string}>}
+ */
+async function cancelBridgedCall({ callSid }) {
+  if (!callSid) return { sid: null, status: 'skipped' };
+  const { client: activeClient, notificationsEnabled: notifEnabled } = _deps;
+  if (!activeClient || !notifEnabled()) {
+    const why = !activeClient ? 'Twilio creds not set' : 'notifications gated off';
+    console.log(`[DEV] Bridged call cancel skipped (${why}) sid=...${String(callSid).slice(-4)}`);
+    return { sid: callSid, status: 'skipped' };
+  }
+  const call = await activeClient.calls(callSid).update({ status: 'canceled' });
+  console.log(`Bridged call canceled: sid=...${String(callSid).slice(-4)}`);
   return call;
 }
 
@@ -147,4 +177,4 @@ async function sendAndLogSms({ to, body, clientId = null, proposalId = null, mes
   return { sid, status: 'sent' };
 }
 
-module.exports = { sendSMS, normalizePhone, sendAndLogSms, placeBridgedCall, __setSmsDeps, _realSendSMS };
+module.exports = { sendSMS, normalizePhone, sendAndLogSms, placeBridgedCall, cancelBridgedCall, __setSmsDeps, _realSendSMS };

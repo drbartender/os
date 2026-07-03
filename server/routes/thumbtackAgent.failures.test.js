@@ -85,6 +85,8 @@ after(async () => {
   if (ORIG_SECRET === undefined) delete process.env.THUMBTACK_AGENT_SECRET;
   else process.env.THUMBTACK_AGENT_SECRET = ORIG_SECRET;
   if (server) await new Promise((r) => server.close(r));
+  // harvest-failed now writes a (negotiation_id:reason) dedupe row to webhook_events.
+  await pool.query("DELETE FROM webhook_events WHERE provider = 'thumbtack_harvest_failed' AND event_id LIKE $1", [`${SUF}-%`]);
   for (const neg of negs) await pool.query('DELETE FROM thumbtack_leads WHERE negotiation_id = $1', [neg]);
   if (adminId) await pool.query("DELETE FROM admin_audit_log WHERE actor_user_id = $1 AND action = 'thumbtack_harvest_rearm'", [adminId]);
   if (clientIds.length) await pool.query('DELETE FROM clients WHERE id = ANY($1::int[])', [clientIds]);
@@ -185,4 +187,27 @@ test('harvest-failed: invalid reason → 400', async () => {
 test('harvest-failed: unknown negotiation_id → 404', async () => {
   const r = await post('/harvest-failed', { negotiation_id: `${SUF}-x`, reason: 'render_timeout' }, { agentSecret: SECRET });
   assert.equal(r.status, 404);
+});
+
+test('harvest-failed: an identical (negotiation_id, reason) retry within the window bumps attempts only once', async () => {
+  const id = await mkClient({ status: 'pending' });
+  const neg = await mkLead(id, 'hfidem');
+
+  const r1 = await post('/harvest-failed', { negotiation_id: neg, reason: 'render_timeout' }, { agentSecret: SECRET });
+  assert.equal(r1.status, 200);
+  assert.equal(r1.body.attempts, 1);
+
+  // Same (negotiation_id, reason) again, immediately: a retried report, deduped.
+  const r2 = await post('/harvest-failed', { negotiation_id: neg, reason: 'render_timeout' }, { agentSecret: SECRET });
+  assert.equal(r2.status, 200);
+  assert.equal(r2.body.deduped, true, 'the within-window retry is recognized as a duplicate');
+  let c = await pool.query('SELECT email_harvest_attempts FROM clients WHERE id=$1', [id]);
+  assert.equal(c.rows[0].email_harvest_attempts, 1, 'a within-window duplicate must not double-count');
+
+  // A DIFFERENT reason for the same lead is NOT identical -> still counts.
+  const r3 = await post('/harvest-failed', { negotiation_id: neg, reason: 'navigation_error' }, { agentSecret: SECRET });
+  assert.equal(r3.status, 200);
+  assert.equal(r3.body.attempts, 2, 'a distinct reason is not deduped');
+  c = await pool.query('SELECT email_harvest_attempts FROM clients WHERE id=$1', [id]);
+  assert.equal(c.rows[0].email_harvest_attempts, 2);
 });

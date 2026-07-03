@@ -76,7 +76,44 @@ router.post('/webhook', calcomWebhookLimiter, asyncHandler(async (req, res) => {
     [eventUid]
   );
   if (dedupe.rowCount === 0) {
-    return res.status(200).send('Already processed');
+    // Strand-heal (audit F1 sibling). The dedupe row is autocommitted BEFORE the
+    // consult is written. The try/catch below un-strands a CAUGHT handler throw,
+    // but a HARD crash (process death) between that commit and the consult write
+    // leaves the row with no consult, and Cal.com's retry would short-circuit
+    // here forever, permanently losing the booking. So on a redelivery of a
+    // consult-CREATING event (CREATE / RESCHEDULE — both leave a consult keyed by
+    // payload.uid on success) whose consult is genuinely absent, drop the dedupe
+    // row and fall through to reprocess (both handlers are idempotent). Any other
+    // event, a missing uid, or a still-present consult is a true replay:
+    // short-circuit unchanged (happy path untouched).
+    const replayEvent = body.triggerEvent;
+    const replayUid = body.payload && body.payload.uid;
+    // startTime gate: a malformed CREATE/RESCHEDULE (uid but no startTime) is
+    // intentionally 200-ignored by the handlers and never writes a consult, so
+    // without this check every redelivery of such an event would loop
+    // delete-dedupe-and-reprocess for nothing.
+    const healable = (replayEvent === 'BOOKING_CREATED' || replayEvent === 'BOOKING_RESCHEDULED')
+      && Boolean(body.payload && body.payload.startTime);
+    let stranded = false;
+    if (healable && replayUid) {
+      const consult = await pool.query(
+        'SELECT 1 FROM consults WHERE calcom_event_id = $1 LIMIT 1',
+        [replayUid]
+      );
+      stranded = consult.rowCount === 0;
+    }
+    if (!stranded) {
+      return res.status(200).send('Already processed');
+    }
+    await pool.query(
+      `DELETE FROM webhook_events WHERE provider = 'calcom' AND event_id = $1`,
+      [eventUid]
+    );
+    sentryWarn('Cal.com dedupe strand healed on redelivery', {
+      tags: { webhook: 'calcom', reason: 'strand_heal' },
+      extra: { triggerEvent: replayEvent, uid: replayUid },
+    });
+    // fall through to normal dispatch below, reprocessing the stranded event.
   }
 
   const event = body.triggerEvent;

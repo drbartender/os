@@ -13,6 +13,7 @@ const { sendEmail } = require('./email');
 const emailTemplates = require('./emailTemplates');
 const { splitEvenly } = require('./payrollMath');
 const { getEventTypeLabel } = require('./eventTypes');
+const { ADMIN_URL } = require('./urls');
 
 function fmtDate(d) {
   if (!d) return '';
@@ -122,7 +123,7 @@ async function notifyDisputeWon(tipId, { reinstatedAmountCents, disputeOpenedAt,
         clientName: tip.client_name || null,
         disputeOpenedLabel: fmtDate(disputeOpenedAt),
         disputeWonLabel: fmtDate(disputeWonAt),
-        payrollUrl: `${process.env.CLIENT_URL || ''}/financials/payroll`,
+        payrollUrl: `${ADMIN_URL}/financials/payroll`,
       });
       const sendPromise = _deps.sendEmail({
         to: process.env.ADMIN_EMAIL,

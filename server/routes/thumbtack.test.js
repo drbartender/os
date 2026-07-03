@@ -402,6 +402,39 @@ test('seeding: a returning lead does NOT re-flag a client whose harvest already 
   assert.equal(status.rows[0].email_harvest_status, 'failed', 'a concluded (failed) harvest must NOT be reset to pending by a new lead');
 });
 
+test('duplicate-heal: a committed lead with no draft heals on redelivery; a fully-processed duplicate does not', async () => {
+  // First delivery: stub the draft to no-op so the lead + client persist but
+  // proposal_id stays null — the exact shape of a crash-after-commit strand
+  // (client committed alongside the lead, post-commit draft never landed).
+  thumbtackRouter.__setDeps({ createDraftProposalFromLead: async () => null });
+  const neg = `test-heal-${Date.now()}`;
+  created.negotiationIds.push(neg);
+  const first = await postLead(neg);
+  assert.equal(first.status, 200);
+  assert.equal(first.body.status, 'ok');
+  const l1 = await pool.query('SELECT client_id, proposal_id FROM thumbtack_leads WHERE negotiation_id = $1', [neg]);
+  const clientId = l1.rows[0].client_id;
+  assert.ok(clientId, 'a client is committed alongside the lead');
+  created.clientIds.push(clientId);
+  assert.equal(l1.rows[0].proposal_id, null, 'strand: no draft yet');
+
+  // Redelivery with the REAL builder: the heal must run the post-commit steps
+  // and create the draft.
+  thumbtackRouter.__setDeps({ createDraftProposalFromLead });
+  const second = await postLead(neg);
+  assert.equal(second.status, 200);
+  assert.equal(second.body.status, 'healed', 'the strand is healed, not a plain duplicate');
+  const l2 = await pool.query('SELECT proposal_id FROM thumbtack_leads WHERE negotiation_id = $1', [neg]);
+  assert.ok(l2.rows[0].proposal_id, 'heal created the draft');
+  created.proposalIds.push(l2.rows[0].proposal_id);
+
+  // Third delivery: proposal_id is now set -> a normal, fully-processed duplicate
+  // -> no heal, no re-notify.
+  const third = await postLead(neg);
+  assert.equal(third.status, 200);
+  assert.equal(third.body.status, 'duplicate', 'a fully-processed duplicate is skipped, never re-run');
+});
+
 after(async () => {
   for (const id of created.proposalIds) {
     await pool.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [id]);

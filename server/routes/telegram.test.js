@@ -17,7 +17,7 @@ function freshStubs(overrides = {}) {
   calls = {
     verifyTelegramSecret: [], isNewUpdate: [], sendTelegramMessage: [],
     upsertPending: [], claimForDial: [], attachCallSid: [],
-    countPlacedSince: [], recordAudit: [], placeBridgedCall: [], toUsE164: [],
+    countPlacedSince: [], recordAudit: [], placeBridgedCall: [], cancelBridgedCall: [], toUsE164: [],
     getTelegramTrackedUserId: [], hasPendingNudge: [], presenceTouch: [],
   };
   router.__setDeps({
@@ -30,6 +30,7 @@ function freshStubs(overrides = {}) {
     countPlacedSince: async (i) => { calls.countPlacedSince.push(i); return 0; },
     recordAudit: async (a) => { calls.recordAudit.push(a); },
     placeBridgedCall: async (a) => { calls.placeBridgedCall.push(a); return { sid: 'CA_test_sid' }; },
+    cancelBridgedCall: async (a) => { calls.cancelBridgedCall.push(a); return { sid: a.callSid, status: 'canceled' }; },
     toUsE164: (raw) => { calls.toUsE164.push(raw); return String(raw).replace(/\D/g, '').length >= 10 ? '+13125551234' : null; },
     // Presence sign-of-life deps (non-DB defaults; recording stubs match the
     // harness so the "touched with 42" assertion is verifiable).
@@ -144,6 +145,34 @@ test('YES => cap-check, claim, placeBridgedCall ONCE, attachCallSid, recordAudit
   assert.doesNotMatch(calls.sendTelegramMessage[0].text, /3125551234/);
   // Sign of life stamps on every allowed message.
   assert.deepEqual(calls.presenceTouch, [42]);
+});
+
+test('attachCallSid failure => cancel the billed leg + tell Zul to retry, never a dead "Calling now"', async () => {
+  // The call is placed + audited, but persisting the CallSid to pending_call
+  // fails, so /api/voice/bridge could never resolve the target: Zul would answer
+  // into a dead apology-and-hangup. The guard must best-effort cancel the leg and
+  // prompt a re-send instead of falsely replying "Calling ... now".
+  freshStubs({ attachCallSid: async () => { throw new Error('db write failed'); } });
+  const res = await post('/api/telegram/testsecret', msg(555, 'yes'));
+  assert.equal(res.status, 200);
+  assert.equal(calls.placeBridgedCall.length, 1, 'the call was still placed');
+  assert.equal(calls.recordAudit.at(-1).status, 'placed', 'a placed+billed call is still audited');
+  assert.equal(calls.cancelBridgedCall.length, 1, 'the stranded leg is cancelled');
+  assert.equal(calls.cancelBridgedCall[0].callSid, 'CA_test_sid');
+  const last = calls.sendTelegramMessage.at(-1).text;
+  assert.match(last, /could not be placed|Send the number again/i, 'Zul is told to retry');
+  assert.doesNotMatch(last, /Calling/, 'never the false "Calling now" on a dead bridge');
+});
+
+test('attachCallSid + cancel both failing => still 200 and still tells Zul to retry (no dead-end)', async () => {
+  freshStubs({
+    attachCallSid: async () => { throw new Error('db write failed'); },
+    cancelBridgedCall: async (a) => { calls.cancelBridgedCall.push(a); throw new Error('twilio cancel failed'); },
+  });
+  const res = await post('/api/telegram/testsecret', msg(555, 'yes'));
+  assert.equal(res.status, 200);
+  assert.equal(calls.cancelBridgedCall.length, 1, 'cancel was attempted even though it failed');
+  assert.match(calls.sendTelegramMessage.at(-1).text, /could not be placed|Send the number again/i);
 });
 
 test('YES with no claimable pending row => expired message, no dial', async () => {
