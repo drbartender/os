@@ -59,7 +59,7 @@ lanes:
 - Commits are in-lane checkpoints (squashed at merge): explicit pathspec always, never `git add .`.
 - `server/index.js` has known uncommitted quick-fix edits in the `os` checkout from a parallel window; the lane cuts from committed main, so expect a trivial adjacent-block merge conflict there and resolve by keeping both scheduler blocks.
 - Backfill emails verified against prod Neon (`production` branch) 2026-07-02: Dallas = `admin@drbartender.com` (id 1), Zul = `zul@drbartender.com` (id 2). Both rows also exist on dev.
-- Dallas's cell is NOT committed to the repo: `presence_nudge_phone` is set by a manual rollout UPDATE (Task 9 checklist). The scheduler must treat a NULL phone on an sms-channel user as "send unconfirmed" (log + Sentry, no stamp, no flip).
+- Dallas's cell (`+19703330527`) IS committed in the schema backfill, by his explicit call 2026-07-02 (private repo; he wants the nudge working day one, no manual rollout step). It is his real cell, deliberately NOT the shared 312 GV line on his contractor profile. The scheduler still treats a NULL phone on an sms-channel user as "send unconfirmed" (log + Sentry, no stamp, no flip) as defense in depth.
 
 ---
 
@@ -93,7 +93,7 @@ ALTER TABLE users ADD CONSTRAINT users_presence_nudge_channel_check
   CHECK (presence_nudge_channel IS NULL OR presence_nudge_channel IN ('sms', 'telegram'));
 -- E.164 destination for sms-channel nudges AND the inbound sign-of-life match
 -- key. This is deliberately NOT contractor_profiles.phone and NEVER the shared
--- 312 Google Voice line. Set by hand at rollout (personal cell, not committed).
+-- 312 Google Voice line (that is what sits on the admin contractor profile).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS presence_nudge_phone VARCHAR(20);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_presence_lead_rank
   ON users (presence_lead_rank) WHERE presence_lead_rank IS NOT NULL;
@@ -121,7 +121,8 @@ CREATE INDEX IF NOT EXISTS idx_presence_log_user_started
 -- table 2026-07-02 (admin@drbartender.com id 1, zul@drbartender.com id 2).
 UPDATE users SET presence_lead_rank = 1, presence_nudge_channel = 'telegram'
   WHERE email = 'zul@drbartender.com' AND presence_lead_rank IS NULL;
-UPDATE users SET presence_lead_rank = 2, presence_nudge_channel = 'sms'
+UPDATE users SET presence_lead_rank = 2, presence_nudge_channel = 'sms',
+    presence_nudge_phone = '+19703330527'
   WHERE email = 'admin@drbartender.com' AND presence_lead_rank IS NULL;
 
 -- Seed the clock so no consumer ever sees a half-initialized tracked user:
@@ -150,7 +151,7 @@ FROM users WHERE presence_lead_rank IS NOT NULL ORDER BY presence_lead_rank;
 SELECT user_id, state, taking_leads, started_at, ended_at FROM presence_log WHERE ended_at IS NULL;
 ```
 
-Expected: 2 users (zul rank 1 telegram, admin rank 2 sms), both `away` with `presence_since` set; 2 open away intervals.
+Expected: 2 users (zul rank 1 telegram; admin rank 2 sms with `presence_nudge_phone` `+19703330527`), both `away` with `presence_since` set; 2 open away intervals.
 
 - [ ] **Step 3: Run the block a second time (idempotency proof)**
 
@@ -1775,9 +1776,7 @@ git commit -m "presence: docs + env flag"
 
 1. Prod schema applies via initDb on boot; verify:
    `SELECT id, email, presence_lead_rank, presence_nudge_channel, presence_nudge_phone, presence_since FROM users WHERE presence_lead_rank IS NOT NULL;`
-   Expected: exactly zul@ (rank 1, telegram) and admin@ (rank 2, sms), both with `presence_since`, plus one open away interval each in presence_log.
-2. Dallas supplies his cell; run by hand on prod (NEVER the shared 312 GV line):
-   `UPDATE users SET presence_nudge_phone = '+1XXXXXXXXXX' WHERE email = 'admin@drbartender.com';`
-   Until then, SMS nudges log + Sentry-warn and never stamp, so Dallas cannot be auto-flipped by an undelivered warning.
-3. Smoke in prod: flip states in the strip, open the drawer, confirm the pointer.
-4. First real 6h desk stint: confirm the nudge arrives (Zul: Telegram; Dallas: SMS) and that replying "yes" (Zul) keeps the state, and silence flips to away 30 min later with the interval closed at the nudge time.
+   Expected: exactly zul@ (rank 1, telegram) and admin@ (rank 2, sms, phone `+19703330527`), both with `presence_since`, plus one open away interval each in presence_log.
+2. Smoke in prod: flip states in the strip, open the drawer, confirm the pointer.
+3. First real 6h desk stint: confirm the nudge arrives (Zul: Telegram; Dallas: SMS from the 888 OS number) and that replying "yes" (Zul) keeps the state, and silence flips to away 30 min later with the interval closed at the nudge time.
+4. Dallas sets a custom notification sound for the 888 OS Twilio number on his cell so nudges are audibly distinct (no code).

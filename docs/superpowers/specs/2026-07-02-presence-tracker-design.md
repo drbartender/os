@@ -122,12 +122,14 @@ columns, insert the new open row. A toggle flip logs a boundary too (same state,
 `taking_leads`), so "who owned leads at 9:42 last Tuesday" is answerable from the log
 alone.
 
-Backfill (idempotent statements in schema.sql, no-op where the account is absent,
-e.g. dev): Zul's admin account gets rank 1 + channel 'telegram'; Dallas's admin
-account gets rank 2 + channel 'sms' + `presence_nudge_phone` = his cell. The
-backfill is keyed by account email; note `admin@drbartender.com` is only the seed
-FALLBACK (`seed.js:11` uses `ADMIN_EMAIL` first), so the exact prod emails for both
-accounts are read from the prod users table at build time, not assumed. The backfill
+Backfill (idempotent statements in schema.sql, no-op where the account is absent):
+Zul's admin account (`zul@drbartender.com`) gets rank 1 + channel 'telegram';
+Dallas's admin account (`admin@drbartender.com`) gets rank 2 + channel 'sms' +
+`presence_nudge_phone` = `'+19703330527'` (his cell, committed literally by his
+explicit call 2026-07-02: private repo, and he wants the nudge working day one with
+no manual rollout step; NEVER the shared 312 GV line, which is what sits on his
+contractor profile). Both emails verified against the prod users table 2026-07-02
+(ids 1 and 2; both rows also exist on dev). The backfill
 also seeds the clock so no consumer ever sees a half-initialized user: for each row
 it ranks, set `presence_since = NOW()` where NULL, and insert an open `away`
 interval into presence_log where that user has no open row (guarded, so re-runs at
@@ -371,16 +373,16 @@ re-review + `/second-opinion` at push. The feature itself carries no money movem
 ## Rollout checklist
 
 1. Apply the new schema.sql statements to the dev DB by hand (not auto-applied).
-2. Before enabling the scheduler in prod: Dallas supplies his cell for
-   `presence_nudge_phone` (never the shared 312 GV line; it is both the nudge
-   destination and the sign-of-life key).
-3. Post-deploy verification (the email-keyed backfill silently no-ops on a
+2. Post-deploy verification (the email-keyed backfill silently no-ops on a
    mismatch): `SELECT id, email, presence_lead_rank, presence_nudge_channel,
    presence_nudge_phone FROM users WHERE presence_lead_rank IS NOT NULL` on prod
-   must return exactly the two expected rows, each with `presence_since` set and an
-   open away interval in presence_log.
-4. Smoke: flip states in the strip in both skins + rail mode; open the drawer;
+   must return exactly the two expected rows (zul rank 1 telegram; admin rank 2
+   sms with phone `+19703330527`), each with `presence_since` set and an open away
+   interval in presence_log.
+3. Smoke: flip states in the strip in both skins + rail mode; open the drawer;
    confirm the pointer follows the derivation table.
+4. Dallas sets a custom notification sound for texts from the OS Twilio number so
+   nudges are audibly distinct (his call, no code).
 
 ## Explicit decisions (from brainstorm + spec review 2026-07-02)
 
