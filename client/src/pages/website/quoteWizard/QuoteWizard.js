@@ -649,6 +649,15 @@ export default function QuoteWizard() {
         })}
       </div>
 
+      {/* Compact stepper — swapped in for the cell strip below 720px (CSS).
+          Same steps array, so labels can never drift from the desktop strip.
+          Known tradeoff (spec): no multi-step jump-back on phones; the Back
+          button and the Review step's edit links cover those flows. */}
+      <div className="wz-stepper-compact" aria-label="Quote progress">
+        <span className="wz-stepper-roman">Step {ROMANS[step] || step + 1} of {ROMANS[steps.length - 1] || steps.length}</span>
+        <span className="wz-stepper-name">{steps[step].label}</span>
+      </div>
+
       <div className="wz-body">
         <div className="wz-form-area">
           {/* Step: Event Details */}

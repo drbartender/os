@@ -1096,6 +1096,18 @@ html[data-app="admin-os"] .file-upload-name {
   font-family: var(--font-body);
 }
 
+/* Phones: the header never wrapped or shrank, so logo + email + Sign Out
+   forced true horizontal page scroll on /apply (425px vs 390 viewport).
+   The email is redundant to an applicant on their own phone; drop it,
+   tighten padding, and let the row wrap as a belt. */
+@media (max-width: 640px) {
+  .site-header {
+    padding: 0.75rem 1rem;
+    flex-wrap: wrap;
+  }
+  .header-user { display: none; }
+}
+
 /* Steps Progress Bar — dark framed */
 .steps-bar {
   background: rgba(26, 20, 16, 0.85);
@@ -1113,6 +1125,22 @@ html[data-app="admin-os"] .file-upload-name {
   min-width: max-content;
   margin: 0 auto;
   max-width: 800px;
+}
+
+/* Compact onboarding counter, phones only: the 7-cell track runs off-screen at
+   390px with the scrollbar hidden, so steps 4-7 were invisible. The existing
+   progress-fill bar stays on all widths. */
+.steps-compact {
+  display: none;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: var(--parchment);
+  padding: 2px 0 6px;
+}
+@media (max-width: 640px) {
+  .steps-track { display: none; }
+  .steps-compact { display: block; }
 }
 
 .step-item {
@@ -5461,19 +5489,27 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   border-bottom: none;
 }
 
+/* Compact one-line stepper, phones only. Replaces the five-cell strip below
+   720px: the cells used to overlap their own labels and force horizontal page
+   scroll (the old media rule set grid-template-columns on a flex container,
+   which is inert). Desktop strip untouched. */
+.wz-stepper-compact {
+  display: none;
+  align-items: baseline;
+  justify-content: center;
+  gap: 12px;
+  border: 1px solid rgba(184, 146, 74, 0.4);
+  background: rgba(18, 22, 28, 0.5);
+  color: var(--cream-text); /* the page inherits dark ink; without this the line is invisible on the chalkboard */
+  font-family: var(--font-body);
+  margin: 0 auto 2rem;
+  padding: 12px 16px;
+}
+.wz-stepper-compact .wz-stepper-name { margin-top: 0; }
+
 @media (max-width: 720px) {
-  .wz-stepper {
-    grid-template-columns: 1fr;
-  }
-  .wz-stepper-cell {
-    border-right: none;
-    border-bottom: 1px solid rgba(184, 146, 74, 0.4);
-    flex-direction: row;
-    align-items: baseline;
-    gap: 12px;
-  }
-  .wz-stepper-cell:last-child { border-bottom: none; }
-  .wz-stepper-name { margin-top: 0; }
+  .wz-stepper { display: none; }
+  .wz-stepper-compact { display: flex; }
 }
 
 @keyframes wz-active-breathe {
@@ -14145,6 +14181,26 @@ html[data-app="admin-os"] .sms-reply textarea.form-input:focus {
   --sp-content-max: 1440px;
 }
 
+/* Fallbacks so the staff surface vars can NEVER resolve to transparent: they
+   are otherwise defined only under [data-skin="dark"|"light"], and any moment
+   <html> lacks data-skin (pre-hydration, a dropped attribute) every
+   background: var(--sp-bg-*) painted nothing and the chalkboard bled through.
+   Dark values, matching the app-global dark body. */
+:root {
+  --sp-bg-0: #0b0d10;
+  --sp-bg-1: #111418;
+  --sp-bg-2: #171b21;
+  --sp-bg-3: #1f242b;
+  --sp-bg-elev: #1b2028;
+  --sp-line-1: #232932;
+  --sp-line-2: #2c333d;
+  --sp-line-3: #3a424d;
+  --sp-ink-1: #eef1f4;
+  --sp-ink-2: #b8c0cc;
+  --sp-ink-3: #7c8593;
+  --sp-ink-4: #565d69;
+}
+
 /* ── After Hours (dark skin) ──────────────────────────────────────────── */
 [data-skin="dark"] {
   /* Surfaces */
@@ -14316,7 +14372,7 @@ html[data-app="admin-os"] .sms-reply textarea.form-input:focus {
   border-radius: 0;
   border: 0;
   border-top: 1px solid var(--sp-line-1);
-  background: transparent;
+  background: var(--sp-bg-0); /* opaque paper; see [data-skin="light"] .sp-card */
   padding: 1rem 0.2rem 1.1rem;
 }
 [data-skin="light"] .sp-shift:first-child { border-top-color: var(--sp-ink-1); }
@@ -14525,7 +14581,9 @@ html[data-app="admin-os"] .sms-reply textarea.form-input:focus {
   border-radius: 0;
   border: 0;
   border-top: 1px solid var(--sp-line-1);
-  background: transparent;
+  /* Opaque paper (same tone as the page, so visually unchanged): a transparent
+     card re-exposed whatever backdrop leaked beneath during the skin flash. */
+  background: var(--sp-bg-0);
   padding: 1.1rem 0.2rem 1.2rem;
 }
 .sp-card.tight { padding: 0.7rem 0.85rem 0.85rem; }
@@ -14646,6 +14704,16 @@ html[data-app="admin-os"] .sms-reply textarea.form-input:focus {
 html[data-app="staff"] body {
   background-color: var(--sp-bg-0);
   background-image: none;
+}
+/* Belt for overscroll/rubber-band areas beyond <body>: paint the root too. */
+html[data-app="staff"] {
+  background: var(--sp-bg-0);
+}
+/* The app-global `main` rule carries the chalkboard IMAGE (not just the color),
+   and StaffShell renders <main className="sp-page">, so the texture bled
+   through behind the greeting/page chrome even with body neutralized. */
+html[data-app="staff"] main {
+  background: var(--sp-bg-0);
 }
 
 /* ── Shell + topbar + tab nav (StaffShell / StaffShellWithThemeWiring) ── */
@@ -15889,6 +15957,7 @@ html[data-app="staff"] body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: 36px;
   padding: 0.55rem 0.75rem 0.65rem;
   background: transparent;
   border: 0;
@@ -16588,6 +16657,53 @@ html[data-app="staff"] body {
 }
 [data-skin="light"] .sp-notif-row-err { color: var(--sp-ms-bordeaux); }
 
+/* Channel toggle switch (NotificationsSection ChannelToggle: .sp-toggle with
+   .on / .disabled / .sp-toggle-overridden states). This block was missing
+   entirely, so the whole 8x3 channel matrix rendered as bare dots with no
+   on/off state and thumb-sized tap targets (2026-07-02 mobile audit P0). */
+.sp-toggle {
+  position: relative;
+  width: 40px;
+  height: 24px;
+  border-radius: 12px;
+  border: 1px solid var(--sp-line-3);
+  background: var(--sp-bg-3);
+  padding: 0;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+/* Invisible expanded touch target (60x44) without growing the visual track. */
+.sp-toggle::before {
+  content: "";
+  position: absolute;
+  inset: -10px;
+}
+.sp-toggle-thumb {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  margin-top: -9px;
+  border-radius: 50%;
+  background: var(--sp-ink-3);
+  transition: transform 0.15s ease, background-color 0.15s ease;
+  pointer-events: none;
+}
+.sp-toggle.on {
+  background: var(--sp-accent);
+  border-color: transparent;
+}
+.sp-toggle.on .sp-toggle-thumb {
+  transform: translateX(15px);
+  background: #fff;
+}
+.sp-toggle.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+[data-skin="light"] .sp-toggle { border-color: var(--sp-line-2); }
+
 /* SMS kill-switch indicator. When users.communication_preferences.sms_enabled
    is false (set by a prior STOP keyword reply, see server/utils/smsInbound.js)
    the server-side resolver strips 'sms' from every delivered channel set.
@@ -16988,6 +17104,41 @@ html[data-app="staff"] body {
   color: rgba(240, 232, 214, 0.72);
 }
 
+/* Blog null-cover fallback: a branded parchment block with the ornament glyph.
+   Replaces the striped developer placeholder ("PHOTO / feature post hero"),
+   which rendered publicly whenever a post had no cover image. */
+.lab-cover-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  background: var(--paper-dark);
+  border: 1px solid var(--border-light);
+  color: var(--text-muted);
+  font-size: 2.4rem;
+}
+
+/* ── mob-strip: shared phone treatment for horizontal nav strips ──
+   Hidden scrollbar + right-edge fade cue + scroll-snap. Pair with
+   utils/stripNav.js (wireStripFade toggles .at-end when fully scrolled;
+   scrollActiveIntoView centers the active item on deep links). Used by the
+   portal tabs and the staff account nav; any future strip gets this class
+   instead of a bespoke fix. */
+.mob-strip {
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-mask-image: linear-gradient(90deg, #000 86%, transparent 100%);
+          mask-image: linear-gradient(90deg, #000 86%, transparent 100%);
+}
+.mob-strip::-webkit-scrollbar { display: none; }
+.mob-strip.at-end {
+  -webkit-mask-image: none;
+          mask-image: none;
+}
+.mob-strip > * { scroll-snap-align: start; }
+
 /* Tab bar — single-line horizontal, brass underline on the active tab. */
 .cp-tabs {
   display: flex;
@@ -16996,6 +17147,10 @@ html[data-app="staff"] body {
   border-bottom: 1px solid rgba(184, 146, 74, 0.4);
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+}
+@media (max-width: 640px) {
+  /* Tighter cells so the third tab visibly peeks past the edge at 390px. */
+  .cp-tab { padding: 14px 15px 12px; letter-spacing: 0.13em; }
 }
 .cp-tab {
   background: transparent;

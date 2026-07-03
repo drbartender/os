@@ -8,6 +8,28 @@
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" />
     <title>Dr. Bartender</title>
+    <!-- Staff-host pre-paint skin: sets data-app/data-skin on <html> BEFORE any
+         CSS applies, so the staff portal never flashes the chalkboard backdrop
+         or resolves --sp-* vars to transparent (they are defined per data-skin).
+         Reads the sp-skin localStorage mirror written by StaffShell; the value
+         is whitelisted to the two literals, and the whole script is inert on
+         every non-staff host. First-ever visit on a device falls back to
+         prefers-color-scheme (nothing mirrored yet). -->
+    <script>
+      (function () {
+        try {
+          if (location.hostname.indexOf('staff.') !== 0) return;
+          var d = document.documentElement;
+          d.setAttribute('data-app', 'staff');
+          var s = null;
+          try { s = localStorage.getItem('sp-skin'); } catch (e) {}
+          if (s !== 'dark' && s !== 'light') {
+            s = (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+          }
+          d.setAttribute('data-skin', s);
+        } catch (e) {}
+      })();
+    </script>
     <!-- Preconnect for the admin-OS font load (Inter / JetBrains / Libre Caslon) -->
     <!-- that AdminLayout injects on mount. Public pages use local IM Fell English -->
     <!-- (no Google Fonts request) so the preconnect's only cost there is a DNS+TLS -->

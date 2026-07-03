@@ -82,6 +82,11 @@ export default function Layout() {
               );
             })}
           </div>
+          {/* Compact counter, phones only (CSS swaps it in for .steps-track,
+              which runs off-screen at 390px). Same STEPS/currentStepIndex. */}
+          <div className="steps-compact">
+            Step {currentStepIndex + 1} of {STEPS.length}: {STEPS[currentStepIndex].label}
+          </div>
           <div style={{ maxWidth: 800, margin: '0.75rem auto 0', padding: '0 4px' }}>
             <div className="progress-track">
               <div className="progress-fill" style={{ width: `${pct}%` }} />

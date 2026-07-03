@@ -49,3 +49,16 @@ test('fetches its own detail when no proposalDetail is provided (home.focus path
   await waitFor(() => expect(api.get).toHaveBeenCalledWith('/client-portal/proposals/tok-B', expect.anything()));
   expect(await screen.findByText('Package B')).toBeInTheDocument();
 });
+
+test('interpolates {bartenders}/{hours} tokens from the portal detail columns', async () => {
+  const detailTokens = {
+    token: 'tok-A', package_name: 'Package A',
+    package_includes: ['{bartenders} professional bartender{bartenders_s}', '{hours} hours of service'],
+    num_bartenders: 2, event_duration_hours: 4,
+    addons: [], payments: [], client_signed_at: null,
+  };
+  render(<PrescriptionTab focus={focusA} proposalDetail={detailTokens} />);
+  expect(await screen.findByText('2 professional bartenders')).toBeInTheDocument();
+  expect(screen.getByText('4 hours of service')).toBeInTheDocument();
+  expect(screen.queryByText(/\{bartenders\}/)).not.toBeInTheDocument();
+});

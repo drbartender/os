@@ -9,11 +9,16 @@
 // the high-stakes Stripe/sign code paths untouched while letting the new chrome
 // live in proper CSS. Full migration is deferred to a post-cutover follow-up.
 
+// CRA import so the texture resolves in every environment: a hand-written
+// "/static/..." URL is never emitted by the build (only /static/js|css|media)
+// and 404'd in dev AND prod, silently flattening the page to plain dark.
+import chalkboardBg from '../../../images/chalkboard_background.png';
+
 const styles = {
   page: {
     minHeight: '100dvh',
     background: 'var(--chalkboard)',
-    backgroundImage: 'url("/static/chalkboard_background.png")',
+    backgroundImage: `url(${chalkboardBg})`,
     backgroundSize: '1200px auto',
     backgroundRepeat: 'repeat',
     padding: '40px 16px 64px',

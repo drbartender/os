@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { interpolatePackageIncludes } from '../../utils/packageIncludes';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { formatPhone } from '../../utils/formatPhone';
 import { getPackageItems } from '../../data/packages';
@@ -318,15 +319,7 @@ export default function ProposalDetail() {
   const snapshot = proposal.pricing_snapshot;
   const bartenders = snapshot?.staffing?.actual;
   const durationHours = snapshot?.inputs?.durationHours;
-  const includes = (proposal.package_includes || []).map(item => {
-    let text = item;
-    if (durationHours != null) text = text.replace(/\{hours\}/g, durationHours);
-    if (bartenders != null) {
-      text = text.replace(/\{bartenders\}/g, bartenders);
-      text = text.replace(/\{bartenders_s\}/g, bartenders !== 1 ? 's' : '');
-    }
-    return text;
-  });
+  const includes = interpolatePackageIncludes(proposal.package_includes, { durationHours, bartenders });
   const packageStructured = getPackageItems(proposal.package_slug);
   const recentActivity = (proposal.activity || []).slice(0, 5);
   const canSend = ['draft', 'modified'].includes(proposal.status);

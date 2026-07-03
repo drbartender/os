@@ -934,8 +934,23 @@ export default function PotionPlanningLab() {
     <div className="auth-page potion-app">
       <div className="page-container">
         {progressStep && (
-          <div style={{ textAlign: 'center', marginBottom: '0.5rem', fontSize: '0.85rem', color: 'var(--parchment)' }}>
-            Step {progressStep} of {totalSteps}
+          <div style={{ textAlign: 'center' }}>
+            {/* lining-nums: the display serif's oldstyle figures drop digits
+                below the baseline ("of 7" read as a subscript typo). The
+                counter + rail classes below existed fully styled in index.css
+                but were never mounted; the bare-text div they replace showed
+                no sense of progress. */}
+            <div className="potion-progress-counter" style={{ fontVariantNumeric: 'lining-nums' }}>
+              Step {progressStep} of {totalSteps}
+            </div>
+            <div className="potion-rail" aria-hidden="true">
+              {Array.from({ length: totalSteps }, (_, i) => (
+                <span
+                  key={i}
+                  className={`potion-rail-tick${i + 1 < progressStep ? ' done' : ''}${i + 1 === progressStep ? ' active' : ''}`}
+                />
+              ))}
+            </div>
           </div>
         )}
 

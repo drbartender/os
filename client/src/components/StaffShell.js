@@ -78,6 +78,10 @@ export default function StaffShell({
     if (typeof document === 'undefined') return;
     if (skin === 'light' || skin === 'dark') {
       document.documentElement.dataset.skin = skin;
+      // Mirror for the pre-paint script in public/index.html (key contract:
+      // 'sp-skin'). Every skin change funnels through this effect (initial
+      // detect, server hydration, user toggle), so this is the one write point.
+      try { localStorage.setItem('sp-skin', skin); } catch (e) { /* private mode */ }
     }
   }, [skin]);
 
@@ -88,7 +92,13 @@ export default function StaffShell({
   useEffect(() => {
     if (typeof document === 'undefined') return undefined;
     document.documentElement.dataset.app = 'staff';
-    return () => { delete document.documentElement.dataset.app; };
+    return () => {
+      // On the staff host the pre-paint script in index.html owns data-app for
+      // the page's whole lifetime; deleting it here would drop the background
+      // neutralizer on portal-to-login navigation and flash the chalkboard.
+      if (window.location.hostname.startsWith('staff.')) return;
+      delete document.documentElement.dataset.app;
+    };
   }, []);
 
   const safeTabs = Array.isArray(tabs) ? tabs : [];

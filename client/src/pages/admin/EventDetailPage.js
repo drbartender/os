@@ -4,6 +4,7 @@ import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { interpolatePackageIncludes } from '../../utils/packageIncludes';
 import { formatPhone } from '../../utils/formatPhone';
 import useDrawerParam from '../../hooks/useDrawerParam';
 import { getPackageItems } from '../../data/packages';
@@ -144,15 +145,7 @@ export default function EventDetailPage() {
     const snapshot = proposal.pricing_snapshot;
     const bartenders = snapshot?.staffing?.actual;
     const durationHours = snapshot?.inputs?.durationHours;
-    const includes = (proposal.package_includes || []).map(item => {
-      let text = item;
-      if (durationHours != null) text = text.replace(/\{hours\}/g, durationHours);
-      if (bartenders != null) {
-        text = text.replace(/\{bartenders\}/g, bartenders);
-        text = text.replace(/\{bartenders_s\}/g, bartenders !== 1 ? 's' : '');
-      }
-      return text;
-    });
+    const includes = interpolatePackageIncludes(proposal.package_includes, { durationHours, bartenders });
     const packageStructured = getPackageItems(proposal.package_slug);
     const timeRange = fmtTimeRange(proposal.event_start_time, proposal.event_duration_hours);
     const contactBits = [

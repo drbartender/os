@@ -1,6 +1,7 @@
-import React, { lazy, Suspense } from 'react';
+import React, { lazy, Suspense, useEffect, useRef } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../../context/AuthContext';
+import { scrollActiveIntoView, wireStripFade } from '../../../utils/stripNav';
 
 // Lazy-loaded so each section ships as its own chunk — opening /account no
 // longer downloads all five section forms (~3.8k lines) up front; only the
@@ -94,6 +95,15 @@ export default function AccountPage() {
   const { section } = useParams();
   const { user, logout } = useAuth();
 
+  // Hooks stay above the redirect return (rules of hooks); both helpers
+  // no-op on a null ref during the redirect render.
+  const navRef = useRef(null);
+  useEffect(() => {
+    const cleanup = wireStripFade(navRef.current);
+    scrollActiveIntoView(navRef.current, navRef.current && navRef.current.querySelector('.sp-acc-navbtn.active'));
+    return cleanup;
+  }, [section]);
+
   // `/account` with no section, or `:section` outside the known
   // set, redirects to the canonical profile entry. `replace` keeps the
   // history clean so Back doesn't ping-pong through the redirect.
@@ -136,7 +146,7 @@ export default function AccountPage() {
         </div>
       </div>
 
-      <nav className="sp-acc-nav" aria-label="Account sections">
+      <nav className="sp-acc-nav mob-strip" aria-label="Account sections" ref={navRef}>
         {SECTIONS.map((s) => {
           const isActive = section === s.id;
           return (

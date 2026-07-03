@@ -5,6 +5,7 @@ import { loadStripe } from '@stripe/stripe-js';
 import { useToast } from '../../../context/ToastContext';
 import { API_BASE_URL as BASE_URL } from '../../../utils/api';
 import { COMPANY_PHONE } from '../../../utils/constants';
+import { interpolatePackageIncludes } from '../../../utils/packageIncludes';
 import { fmt, formatDateShort, DEPOSIT_DOLLARS } from './helpers';
 import styles from './styles';
 import { EVENT_SERVICES_AGREEMENT } from '../../../data/eventServicesAgreement';
@@ -425,16 +426,7 @@ export default function ProposalView() {
   const durationHours = snapshot?.inputs?.durationHours;
 
   // Replace dynamic placeholders in package includes
-  const rawIncludes = proposal.package_includes || [];
-  const includes = rawIncludes.map(item => {
-    let text = item;
-    if (durationHours != null) text = text.replace(/\{hours\}/g, durationHours);
-    if (bartenders != null) {
-      text = text.replace(/\{bartenders\}/g, bartenders);
-      text = text.replace(/\{bartenders_s\}/g, bartenders !== 1 ? 's' : '');
-    }
-    return text;
-  });
+  const includes = interpolatePackageIncludes(proposal.package_includes, { durationHours, bartenders });
   const totalPrice = snapshot ? Number(snapshot.total) : 0;
   const balanceAmount = totalPrice - DEPOSIT_DOLLARS;
 

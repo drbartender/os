@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import * as Sentry from '@sentry/react';
 import api from '../../../../utils/api';
+import { interpolatePackageIncludes } from '../../../../utils/packageIncludes';
 import { formatDollars, formatCents } from '../money';
 import ShareButton from '../ShareButton';
 import ChangeRequestForm from '../ChangeRequestForm';
@@ -47,7 +48,16 @@ export default function PrescriptionTab({ focus, proposalDetail }) {
 
   if (state === 'loading') return <div className="loading" role="status"><div className="spinner" />Loading...</div>;
   if (state === 'error') return <div className="client-alert client-alert-error">Could not load this proposal. <button onClick={() => window.location.reload()}>Retry</button></div>;
-  const includes = Array.isArray(p.package_includes) ? p.package_includes : [];
+  // The portal detail endpoint returns no pricing snapshot, so map the stored
+  // columns: num_bartenders (can differ from the engine-computed staffing the
+  // proposal page shows, but it is the value on the record) and
+  // event_duration_hours. Absent values leave tokens visible rather than
+  // rendering wrong numbers. This tab was the one consumer skipping
+  // interpolation, so clients saw literal "{bartenders}" text (2026-07-02 audit).
+  const includes = interpolatePackageIncludes(p.package_includes, {
+    bartenders: p.num_bartenders ?? undefined,
+    durationHours: p.event_duration_hours ?? undefined,
+  });
   return (<div className="cp-rx">
     <ChangeRequestBanner request={openRequest || lastDecided} onWithdraw={withdraw} />
     <div className="cp-rx-pkg"><h3>{p.package_name || 'Your package'}</h3>

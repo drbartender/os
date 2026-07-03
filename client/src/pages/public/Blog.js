@@ -84,8 +84,8 @@ export default function Blog() {
                     decoding="async"
                   />
                 ) : (
-                  <div className="img-placeholder on-paper-tile" style={{ aspectRatio: '4 / 3', height: '100%' }}>
-                    <span>{'PHOTO\nfeature post hero'}</span>
+                  <div className="lab-cover-fallback" style={{ aspectRatio: '4 / 3', height: '100%' }} aria-hidden="true">
+                    <span>⚗</span>
                   </div>
                 )}
               </div>
@@ -124,8 +124,8 @@ export default function Blog() {
                         decoding="async"
                       />
                     ) : (
-                      <div className="img-placeholder on-paper-tile" style={{ aspectRatio: '4 / 3' }}>
-                        <span>{`PHOTO\npost ${post.chapter_number || ''}\nstill life`}</span>
+                      <div className="lab-cover-fallback" style={{ aspectRatio: '4 / 3' }} aria-hidden="true">
+                        <span>⚗</span>
                       </div>
                     )}
                   </div>
