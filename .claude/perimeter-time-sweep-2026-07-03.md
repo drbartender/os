@@ -7,7 +7,19 @@ tz = GMT** (live SHOW timezone); Render Node = UTC default; single instance with
 RUN_SCHEDULERS gating; initial-tick staggers (60/90/180s) currently outlast Render's ~30s
 deploy drain.
 
-**Status: FINDINGS ONLY — nothing fixed yet.** 23 findings adjudicated: 20 confirmed
+**STATUS: ALL THREE FIX BATCHES BUILT, REVIEWED, MERGED 2026-07-04 early AM (unpushed):
+fix-time f7d8b47, fix-claims 99fd240, fix-perim 7b01a78** (plan v2 executed; per-lane
+full-mandate fleets + codex + gemini; repair rounds folded in: Chicago-basis due-date
+guard, 10am anchor unification with the reschedule reanchor path, stranded-claim reaper
+(claimed_at + tick sweep), 'processing' propagated to enqueue guards + dedupe index,
+atomic harvest dedupe+increment, alert-before-audit ordering, calcom heal startTime gate,
+alerting-reason dedupe. Accepted residuals recorded in the plan/lane reports: DST-spanning
+event completion (2 days/yr class), multi-instance sibling suppression, auto-assign
+capacity semantics (pre-existing), sequence eligibility window (pre-existing), calcom
+CANCELLED-strand scoping, thumbtack persistent-draft-failure re-notify. Client-side
+canRecordPayment archived-gate = UX follow-up.**
+
+Original pre-fix status: 23 findings adjudicated: 20 confirmed
 (1 HIGH, 3 MED, 16 LOW), 3 rejected. Severities below are post-verification.
 
 ## HIGH
