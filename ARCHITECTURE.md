@@ -292,7 +292,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | POST | `/charge-balance/:id` | Admin | Manually trigger off-session autopay balance charge |
 | POST | `/refund/:id` | Admin (`auth, adminOnly`) | Issue a partial refund — auto-targets the largest refundable charge; no cross-charge spanning |
 | GET | `/refunds/:id` | Admin/Manager (`auth, requireAdminOrManager`) | Refund history for a proposal |
-| POST | `/webhook` | Stripe | Handle `payment_intent.succeeded`, `checkout.session.completed`, `charge.refunded`, dispute events, and `payout.paid`/`payout.failed` (read-side payout mirror, livemode-gated, catch-and-ack) |
+| POST | `/webhook` | Stripe | Handle `payment_intent.succeeded`, `checkout.session.completed`, `charge.refunded`, dispute events, and `payout.paid`/`payout.failed` (read-side payout mirror, livemode-gated, catch-and-ack). Structure: `stripeWebhook.js` is signature-verify + dispatch only; per-event handler bodies live in `server/routes/stripeWebhookHandlers/` |
 | POST | `/create-intent-for-invoice/:token` | Public | Create a Stripe PaymentIntent for an open invoice (balance / Additional Services), used by the public token-gated InvoicePage (`server/routes/stripeCreateIntent.js`). |
 
 ### Stripe Payouts — `/api/stripe-payouts`
@@ -829,7 +829,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `status`: draft | sent | paid | partially_paid | void
 - `locked` (boolean), `locked_at` — freezes line items on payment
 - `due_date`, `notes`
-- A proposal's first invoice is created when the proposal enters the `sent` state. `createInvoiceOnSend` (in `server/utils/invoiceHelpers.js`, idempotent on `proposal_id`) runs inside the same DB transaction as the status change on every →sent path: admin `POST /proposals` with `send_now`, admin `PATCH /:id` and `PATCH /:id/status`, and the public `POST /api/proposals/public/submit` quote-wizard submission. Client notification (`sendProposalSentEmail`) fires post-commit and is best-effort.
+- A proposal's first invoice is created when the proposal enters the `sent` state. `createInvoiceOnSend` (via the `server/utils/invoiceHelpers.js` facade; implementation in `invoiceLifecycle.js` — the facade re-exports the invoice sibling modules `invoiceShared/LineItems/Lifecycle/Linking/Extras.js` with an unchanged public interface; idempotent on `proposal_id`) runs inside the same DB transaction as the status change on every →sent path: admin `POST /proposals` with `send_now`, admin `PATCH /:id` and `PATCH /:id/status`, and the public `POST /api/proposals/public/submit` quote-wizard submission. Client notification (`sendProposalSentEmail`) fires post-commit and is best-effort.
 
 **invoice_line_items** — Line items per invoice
 - `invoice_id` FK, `description`, `quantity` (NUMERIC — mirrors proposal_addons.quantity so a fractional add-on quantity flows into the auto-generated invoice without a 500), `unit_price` (cents), `line_total` (cents)

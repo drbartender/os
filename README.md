@@ -204,6 +204,14 @@ dr-bartender/
 │   │   ├── sms.js              # Twilio inbound-SMS webhook + admin thread API
 │   │   ├── telegram.js         # Zul VA-calling OUTBOUND trigger: POST /api/telegram/:secret (secret path + secret_token header + user_id allowlist), NANP validation, confirm-before-dial (YES), claim-then-call bridge
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
+│   │   ├── stripeWebhook.js    # Webhook signature verification + per-event dispatch (handlers live in stripeWebhookHandlers/)
+│   │   ├── stripeWebhookHandlers/ # Per-event webhook handler modules (extracted verbatim from stripeWebhook.js)
+│   │   │   ├── paymentIntentSucceeded.js # deposit/full/balance/invoice/drink-plan settlement + group commit + invoice links
+│   │   │   ├── checkoutSessionCompleted.js # tip-page sessions + Payment-Link deposit/full settlement
+│   │   │   ├── chargeRefunded.js  # refund reconciliation + tip clawback
+│   │   │   ├── paymentIntentFailed.js # failure recording (monotonic guard) + notifications
+│   │   │   ├── disputes.js        # dispute funds withdrawn/reinstated
+│   │   │   └── payout.js          # payout mirror sync (live-only)
 │   │   ├── stripeCreateIntent.js # POST /api/stripe/create-intent/:token (extracted from stripe.js)
 │   │   ├── stripePayouts.js    # GET/POST /api/stripe-payouts — DB-only payout mirror list/detail + rate-limited sweep trigger (read-side; admin/manager)
 │   │   ├── emailChange.js      # Unauthenticated POST /api/me/confirm-email-change — email-link token proves intent, bumps token_version to invalidate old JWTs (mounted at /api/me before me.js)
@@ -269,7 +277,12 @@ dr-bartender/
 │   │   ├── globalSearch.js     # Global record search query engine (clients/proposals/events/staff)
 │   │   ├── googlePlaces.js     # Google Places venue-search proxy
 │   │   ├── drinkPlanExtras.js  # Shared pay-now extras amount helper (computeExtrasBreakdown; mirrors create-intent math)
-│   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking; "Drink Plan Extras" find/refresh/void-reconcile helpers
+│   │   ├── invoiceHelpers.js   # FACADE re-exporting the invoice helper siblings below (public interface unchanged)
+│   │   ├── invoiceShared.js    # Shared invoice internals (toCents, pool fallback)
+│   │   ├── invoiceLineItems.js # Line-item building/writing (generateLineItemsFromProposal, writeLineItems)
+│   │   ├── invoiceLifecycle.js # Invoice creation + balance lifecycle (createInvoiceOnSend, createBalanceInvoice, locking, refresh)
+│   │   ├── invoiceLinking.js   # Payment->invoice linking (linkPaymentToInvoice: status guard, cap, Sentry breadcrumbs)
+│   │   ├── invoiceExtras.js    # "Drink Plan Extras" invoice create/find/refresh/void-reconcile
 │   │   ├── lastMinuteAlert.js  # Last-minute (<72h) booking SMS alert dispatch (admin + broad staff blast, idempotent)
 │   │   ├── lastMinuteStaffingConfirmation.js  # Touch 2.2: bartender-list renderer + notify fn + atomic-flip trigger
 │   │   ├── lifecycleEmailTemplates.js # Lifecycle email templates split out of emailTemplates.js
