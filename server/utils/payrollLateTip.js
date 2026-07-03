@@ -33,11 +33,11 @@ async function rollForwardLateTip(tipId) {
       return null;
     }
     // Bartenders on the original shift. Stub users (cc_id LIKE 'legacy_cc:%')
-    // are filtered out of the per-bartender split — they can't be paid through
-    // Stripe Connect. If ALL bartenders are stubs, the entire rollforward is
-    // skipped (recoverable: rolled_forward_at stays NULL so a future de-stub
-    // can replay). If NO bartenders at all, the tip is marked rolled forward
-    // (permanent: nothing to retry).
+    // are filtered out of the per-bartender split (they can't be paid through
+    // Stripe Connect). If ALL bartenders are stubs, the rollforward is skipped
+    // (recoverable: rolled_forward_at stays NULL and a deferral marker is set so
+    // the retry sweep can replay after a future de-stub). If NO bartenders at
+    // all, the tip is marked rolled forward (permanent: nothing to retry).
     const bartendersRes = await client.query(
       `SELECT sr.user_id, (u.cc_id LIKE 'legacy_cc:%') AS is_stub
          FROM shift_requests sr
@@ -60,12 +60,25 @@ async function rollForwardLateTip(tipId) {
     }
 
     if (bartenders.length === 0) {
+      // Every approved bartender is a legacy_cc stub (can't pay them through
+      // Stripe Connect). Recoverable: rolled_forward_at stays NULL and we COMMIT
+      // a deferral marker (mirroring the frozen-today branch) so the retry sweep
+      // re-attempts once a bartender is de-stubbed. COALESCE keeps the original
+      // deferred_at across repeat retries; defer_attempts bounds the auto-retry.
+      await client.query(
+        `UPDATE tips
+            SET deferred_at = COALESCE(deferred_at, NOW()),
+                defer_kind = 'roll_forward',
+                defer_attempts = defer_attempts + 1
+          WHERE id = $1`,
+        [tipId]
+      );
+      await client.query('COMMIT');
       Sentry.captureMessage('rollForwardLateTip: all shift bartenders are legacy_cc stubs; skipping', {
         level: 'info',
         tags: { util: 'payrollLateTip', step: 'skip_all_stubs' },
         extra: { tipId, shiftId: tip.shift_id, stubCount },
       });
-      await client.query('ROLLBACK');
       return { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' };
     }
 

@@ -16,6 +16,19 @@ let adminId, adminToken, server, baseUrl;
 let contractorId, periodId, payoutId, shiftId, proposalId;
 
 before(async () => {
+  // Pre-clean any stranded fixtures from a prior interrupted run (this suite
+  // seeds its own admin + contractor + proposal/shift/payout chain and had no
+  // pre-clean, so a crash mid-run left the unique emails behind).
+  const emails = "email IN ('payroll-admin@example.com','payroll-contractor@example.com')";
+  await pool.query(`DELETE FROM payout_events WHERE payout_id IN (SELECT id FROM payouts WHERE contractor_id IN (SELECT id FROM users WHERE ${emails}))`);
+  await pool.query(`DELETE FROM payout_events WHERE shift_id IN (SELECT id FROM shifts WHERE event_date = '2026-05-29' AND proposal_id IN (SELECT id FROM proposals WHERE client_id IS NULL AND event_date = '2026-05-29' AND event_type = 'birthday-party'))`);
+  await pool.query(`DELETE FROM payouts WHERE contractor_id IN (SELECT id FROM users WHERE ${emails})`);
+  await pool.query(`DELETE FROM payment_profiles WHERE user_id IN (SELECT id FROM users WHERE ${emails})`);
+  await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN (SELECT id FROM users WHERE ${emails})`);
+  await pool.query(`DELETE FROM users WHERE ${emails}`);
+  await pool.query(`DELETE FROM shifts WHERE event_date = '2026-05-29' AND proposal_id IN (SELECT id FROM proposals WHERE client_id IS NULL AND event_date = '2026-05-29' AND event_type = 'birthday-party')`);
+  await pool.query(`DELETE FROM proposals WHERE client_id IS NULL AND event_date = '2026-05-29' AND event_type = 'birthday-party'`);
+
   const u = await pool.query(
     "INSERT INTO users (email, password_hash, role) VALUES ('payroll-admin@example.com','x','admin') RETURNING id"
   );
@@ -220,6 +233,25 @@ test('PATCH /payout-events/:id > 409 when the payout is already paid', async () 
   }
 });
 
+test('PATCH /payout-events/:id > 409 when the period is processing', async () => {
+  // mark-paid requires processing and copies the stored total_cents, so edits
+  // during processing must be frozen or the recorded payout diverges from what
+  // was sent.
+  const eventRow = await pool.query(
+    'SELECT id FROM payout_events WHERE payout_id = $1', [payoutId]
+  );
+  const eventId = eventRow.rows[0].id;
+  await pool.query("UPDATE pay_periods SET status = 'processing' WHERE id = $1", [periodId]);
+  try {
+    const r = await req(
+      'PATCH', `/api/admin/payroll/payout-events/${eventId}`, adminToken, { hours: 6 }
+    );
+    assert.equal(r.status, 409);
+  } finally {
+    await pool.query("UPDATE pay_periods SET status = 'open' WHERE id = $1", [periodId]);
+  }
+});
+
 test('PATCH /payout-events/:id > 400 on out-of-range hours', async () => {
   const eventRow = await pool.query(
     'SELECT id FROM payout_events WHERE payout_id = $1', [payoutId]
@@ -412,6 +444,26 @@ test('PATCH /tips/:id/assign > frozen_period=true when the shift sits in a paid 
     await pool.query(
       'DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = $2',
       [shiftId, contractorId]
+    );
+    // rollForwardLateTip placed the tip into TODAY's open period as a synthetic
+    // payout + payout_event on the ORIGINAL shift, under a NEW payout the shared
+    // `after` hook does not know about. Remove those (and the now-empty today
+    // period) so the shift delete (FK RESTRICT) is not blocked and no stray open
+    // period lingers for the next run's periods/current check.
+    await pool.query(
+      `DELETE FROM payout_events WHERE shift_id = $1
+         AND payout_id IN (SELECT id FROM payouts WHERE contractor_id = $2 AND id <> $3)`,
+      [shiftId, contractorId, payoutId]
+    );
+    await pool.query(
+      'DELETE FROM payouts WHERE contractor_id = $1 AND id <> $2',
+      [contractorId, payoutId]
+    );
+    await pool.query(
+      `DELETE FROM pay_periods pp
+        WHERE pp.status = 'open'
+          AND CURRENT_DATE BETWEEN pp.start_date AND pp.end_date
+          AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`
     );
     await pool.query("UPDATE pay_periods SET status='open' WHERE id = $1", [periodId]);
   }

@@ -13,9 +13,22 @@ const express = require('express');
 const { pool } = require('../db');
 const stripeRouter = require('./stripe');
 const sync = require('../utils/stripePayoutSync');
+const { getLiveClient } = require('../utils/stripeClient');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('stripeWebhook.payout.test.js refuses to run against production');
+}
+
+// M10: the webhook now passes the event-verified client into syncPayout, so a fake
+// must BE the resolved (live) client, not just the module fallback. Override only the
+// API resources syncPayout touches; .webhooks.constructEvent stays real so signature
+// verification still works.
+function patchLiveClient(fake) {
+  const live = getLiveClient();
+  assert.ok(live, 'getLiveClient() must be non-null (STRIPE_SECRET_KEY set) to exercise the M10 path');
+  live.payouts = fake.payouts;
+  live.balanceTransactions = fake.balanceTransactions;
+  return live;
 }
 
 const N = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -95,7 +108,11 @@ test('payout.failed (live) upserts a failed stripe_payouts row and alerts once',
 
 test('payout.paid (live) upserts a paid payout and syncs its lines through the webhook', async () => {
   const poP = `po_test_${N}_paid`;
-  sync._setStripeClientForTests(fakeStripe({ txnsByPayout: { [poP]: [chargeTxn(`txn_test_${N}_wh`)] } }));
+  const fake = fakeStripe({ txnsByPayout: { [poP]: [chargeTxn(`txn_test_${N}_wh`)] } });
+  sync._setStripeClientForTests(fake);
+  // FIX M10: the webhook routes the event-verified client into syncPayout, so the
+  // fake must also be the resolved live client.
+  patchLiveClient(fake);
   const ev = { id: `evt_${N}_paid`, type: 'payout.paid', livemode: true,
     data: { object: { id: poP, object: 'payout', amount: 43665, currency: 'usd', status: 'paid',
       created: Math.floor(Date.now()/1000), arrival_date: Math.floor(Date.now()/1000),
@@ -106,6 +123,25 @@ test('payout.paid (live) upserts a paid payout and syncs its lines through the w
   assert.ok(p && p.lines_synced_at, 'payout row missing or lines not synced');
   const l = (await pool.query('SELECT payout_id FROM stripe_payout_lines WHERE stripe_balance_txn_id=$1', [`txn_test_${N}_wh`])).rows[0];
   assert.equal(l.payout_id, p.id);
+});
+
+test('payout.paid line-sync uses the event-verified client, not the module fallback (M10)', async () => {
+  const poV = `po_test_${N}_verified`;
+  // If the webhook wrongly used the module fallback (getStripe / _setStripeClientForTests),
+  // the synced line would carry the WRONG txn id; the event-verified (live) client carries
+  // the RIGHT one. The M10 fix passes stripeForEvent through, so the RIGHT txn must win.
+  sync._setStripeClientForTests(fakeStripe({ txnsByPayout: { [poV]: [chargeTxn(`txn_test_${N}_wrong`)] } }));
+  patchLiveClient(fakeStripe({ txnsByPayout: { [poV]: [chargeTxn(`txn_test_${N}_right`)] } }));
+  const ev = { id: `evt_${N}_verified`, type: 'payout.paid', livemode: true,
+    data: { object: { id: poV, object: 'payout', amount: 43665, currency: 'usd', status: 'paid',
+      created: Math.floor(Date.now()/1000), arrival_date: Math.floor(Date.now()/1000),
+      automatic: true, livemode: true, method: 'standard' } } };
+  const res = await postWebhook(ev);
+  assert.equal(res.status, 200);
+  const right = await pool.query('SELECT 1 FROM stripe_payout_lines WHERE stripe_balance_txn_id=$1', [`txn_test_${N}_right`]);
+  const wrong = await pool.query('SELECT 1 FROM stripe_payout_lines WHERE stripe_balance_txn_id=$1', [`txn_test_${N}_wrong`]);
+  assert.equal(right.rows.length, 1, 'line synced from the event-verified (live) client');
+  assert.equal(wrong.rows.length, 0, 'the module-fallback client was NOT used');
 });
 
 test('payout.paid with livemode:false is acked and ignored', async () => {

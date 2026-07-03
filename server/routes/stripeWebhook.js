@@ -523,6 +523,21 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 
     if (proposalId) {
       try {
+        // Monotonic-failure guard (L1): Stripe can deliver a stale payment_failed
+        // AFTER the same PI already succeeded (a retry on the same PI, delivered
+        // out of order). Flipping the session to 'failed', inserting a failed row,
+        // and emailing the client "payment failed" for money we already captured is
+        // wrong. If a succeeded proposal_payments row exists for this PI, ack and
+        // skip all failure handling.
+        const priorSuccess = await pool.query(
+          "SELECT 1 FROM proposal_payments WHERE stripe_payment_intent_id = $1 AND status = 'succeeded' LIMIT 1",
+          [intent.id]
+        );
+        if (priorSuccess.rows[0]) {
+          console.log(`Webhook: payment_failed for intent ${intent.id} (proposal ${proposalId}) arrived after a succeeded payment, skipping failure handling`);
+          return res.json({ received: true });
+        }
+
         // Three independent writes — parallelize via Promise.all.
         await Promise.all([
           pool.query(
@@ -679,6 +694,23 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     // older links (created before payment_type was tagged) on their prior path.
     const linkPaymentType = session.metadata?.payment_type === 'full' ? 'full' : 'deposit';
     if (proposalId) {
+      // Delayed-settlement guard (M9): a Checkout Session can complete with funds not
+      // yet captured (payment_status 'unpaid'/'no_payment_required') for a delayed-
+      // notification payment method. There are no async_payment_succeeded/failed
+      // handlers and the proposal Payment Link does not pin payment_method_types, so
+      // recording this as a succeeded proposal payment would credit unsettled funds.
+      // Card-only today makes this a latent guard; ack without recording payment or
+      // side effects when the session is present-but-not-paid.
+      if (session.payment_status && session.payment_status !== 'paid') {
+        console.warn(`Webhook: checkout.session.completed for proposal ${proposalId} has payment_status '${session.payment_status}' (not paid), acking without recording payment`);
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureMessage(
+            `checkout_session_unpaid: proposal ${proposalId} session ${session.id} payment_status ${session.payment_status}, acked without recording`,
+            'warning'
+          );
+        }
+        return res.json({ received: true });
+      }
       const dbClient = await pool.connect();
       let isFirstDelivery = false;
       let groupChoice = { committed: false, conflict: false, archivedLoserIds: [] };
@@ -971,7 +1003,12 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     const payout = event.data.object;
     try {
       const payoutSync = require('../utils/stripePayoutSync');
-      await payoutSync.syncPayout(payout);
+      // M10: pass the event-verified client so a LIVE payout's line-sync uses the
+      // LIVE keypair. Without it, syncPayout resolves getStripe(), which returns the
+      // TEST client during a STRIPE_TEST_MODE_UNTIL window and errors the line fetch
+      // for a live payout (healed only by a later sweep). stripeForEvent is the client
+      // whose secret verified this event, so its mode matches the payout's.
+      await payoutSync.syncPayout(payout, { stripe: stripeForEvent });
       if (event.type === 'payout.failed') {
         await payoutSync.alertFailedPayout(payout.id);
       }

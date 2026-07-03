@@ -177,6 +177,22 @@ test('clawbackTip > a webhook replay with the same cumulative amount is a no-op'
   assert.equal(replay.delta, 0);
 });
 
+test('clawbackTip > cumulative fee: 100c tip / 33c fee refunded in two 50c slices claws exactly 67c net', async () => {
+  // Boundary case for the fee split. Per-delta rounding claws 34c of fee
+  // (round(33*50/100) twice = 17+17) leaving 66c net; the cumulative
+  // computation claws the correct 33c of fee (17 then 16), leaving 67c net.
+  await pool.query('UPDATE tips SET amount_cents = 100, fee_cents = 33 WHERE id = $1', [tipId]);
+  await clawbackTip(tipId, 50);   // first 50c refund
+  await clawbackTip(tipId, 100);  // cumulative to 100c (full refund)
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(pe.adjustment_cents), 0) AS total
+       FROM payout_events pe JOIN payouts po ON po.id = pe.payout_id
+      WHERE pe.shift_id = $1`,
+    [paidShiftId]
+  );
+  assert.equal(Number(rows[0].total), -67, 'net clawed across both bartenders is exactly 67c, not 66c');
+});
+
 test('clawbackTip > mixed-stub shift: claws back from real bartender only, stubs filtered out', async () => {
   const stub = await pool.query(
     `INSERT INTO users (email, password_hash, role, cc_id)

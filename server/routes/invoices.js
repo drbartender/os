@@ -54,12 +54,20 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
         ORDER BY id`,
       [invoice.id]
     ),
+    // Public payments list. EXCLUDE negative refund-reversal rows: reconciliation
+    // writes a negative invoice_payments row per refund (refundHelpers) to keep
+    // Σ amount == amount_paid, but that same refund already surfaces in the
+    // `refunds` array below. Including the negative row here double-counts a
+    // refund as both a -$X payment record AND a $X refunded line on InvoicePage.
+    // Positive payment links are unaffected. Public token route only; the admin
+    // endpoints do not select payments, so nothing else changes.
     pool.query(
       `SELECT ip.id, ip.amount, ip.created_at,
               pp.payment_type, pp.status AS payment_status
          FROM invoice_payments ip
          JOIN proposal_payments pp ON pp.id = ip.payment_id
         WHERE ip.invoice_id = $1
+          AND ip.amount >= 0
         ORDER BY ip.created_at`,
       [invoice.id]
     ),

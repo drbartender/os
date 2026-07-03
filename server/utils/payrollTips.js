@@ -78,24 +78,33 @@ async function matchTipToEvent(tipId) {
   const shiftId = matchTipToShift(tippedAtMs, windows);
   if (shiftId !== null && shiftId !== undefined) {
     await pool.query('UPDATE tips SET shift_id = $1 WHERE id = $2', [shiftId, tipId]);
-    // If the matched shift's pay period is already frozen, roll forward
-    // immediately so the tip lands on a bartender payout next period.
+    // Accrual already ran once at event completion, so the tip is not yet on any
+    // payout. If the matched shift's pay period is already frozen, roll it forward
+    // so the tip lands on a bartender payout next period. Otherwise (period open,
+    // or none yet) re-accrue the proposal so the tip folds into this period's
+    // payout, mirroring the admin manual-assign route. Both followups manage
+    // their own transactions, so they run outside any transaction here. A failed
+    // followup must never crash tip matching, but it must be loudly captured.
     try {
       const { rows: ps } = await pool.query(
-        `SELECT pp.status
+        `SELECT s.proposal_id, pp.status
            FROM shifts s
            JOIN proposals pr ON pr.id = s.proposal_id
-           JOIN pay_periods pp ON pr.event_date BETWEEN pp.start_date AND pp.end_date
+      LEFT JOIN pay_periods pp ON pr.event_date BETWEEN pp.start_date AND pp.end_date
           WHERE s.id = $1
           LIMIT 1`,
         [shiftId]
       );
-      if (ps[0] && ps[0].status !== 'open') {
+      const row = ps[0];
+      if (row && row.status && row.status !== 'open') {
         const { rollForwardLateTip } = require('./payrollLateTip');
         await rollForwardLateTip(tipId);
+      } else if (row && row.proposal_id) {
+        const { accruePayoutsForProposal } = require('./payrollAccrual');
+        await accruePayoutsForProposal(row.proposal_id);
       }
     } catch (err) {
-      Sentry.captureException(err, { tags: { util: 'matchTipToEvent', step: 'roll_forward' } });
+      Sentry.captureException(err, { tags: { util: 'matchTipToEvent', step: 'post_match_followup' } });
     }
   }
 }

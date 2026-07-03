@@ -231,7 +231,11 @@ async function applyRefundReconciliation(
   // (Approach A) — extra-scope refunds leave the base contract total intact.
   // Exact NUMERIC division ($/100.0); GREATEST clamps ≥ 0.
   const contractCents = amountCents - nonContractCents;
-  const totalAfter = totalBefore - contractCents / 100;
+  // Floor at 0 to match the SQL GREATEST clamp below (and planRefund's pending
+  // preview). Without this the audit figure written to total_price_after could
+  // go negative while the real total_price column is clamped at 0, so refund
+  // history would show a negative total the ledger never actually held.
+  const totalAfter = Math.max(0, totalBefore - contractCents / 100);
   const moneyRes = await dbClient.query(
     `UPDATE proposals
         SET total_price = GREATEST(total_price - ($1 / 100.0), 0),

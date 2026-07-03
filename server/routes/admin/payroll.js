@@ -183,9 +183,16 @@ router.patch('/payroll/payout-events/:id', auth, adminOnly, asyncHandler(async (
       throw new NotFoundError('payout_event not found');
     }
     const row = rows[0];
-    if (row.payout_status === 'paid' || row.period_status === 'paid') {
+    // 'processing' is also frozen: mark-paid copies the stored total_cents, so an
+    // edit during processing would make the recorded payout differ from what was
+    // sent.
+    if (
+      row.payout_status === 'paid'
+      || row.period_status === 'paid'
+      || row.period_status === 'processing'
+    ) {
       await client.query('ROLLBACK');
-      throw new ConflictError('payout or period is paid; edits are frozen');
+      throw new ConflictError('payout or period is paid or processing; edits are frozen');
     }
 
     // Apply the patch on top of the current row.

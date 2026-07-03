@@ -195,6 +195,94 @@ test('invoice amount_paid/status are unchanged by refunds (informational only)',
   assert.equal(r.body.invoice.status, 'paid', 'status is not reopened by a refund');
 });
 
+test('L7: public payments array excludes negative refund-reversal rows; the refund shows once, in refunds only', async () => {
+  // The main invoice fixture carries a positive $500.00 payment link AND a
+  // -$50.00 reversal row (the shape refundHelpers writes on reconcile). The
+  // reversal must NOT surface as a payment (it double-counts the refund, which
+  // already shows in `refunds`); the positive link must stay.
+  const r = await get(`/api/invoices/t/${invoiceToken}`);
+  assert.equal(r.status, 200, `expected 200, got ${r.status}`);
+  const { payments, refunds } = r.body.invoice;
+  assert.ok(Array.isArray(payments), 'payments should be an array');
+  assert.ok(payments.every((p) => Number(p.amount) >= 0),
+    `no negative reversal row in payments, got ${JSON.stringify(payments)}`);
+  assert.ok(payments.some((p) => Number(p.amount) === 50000),
+    'the legitimate positive payment link is still present');
+  assert.equal(refunds.length, 1, 'the refund appears exactly once, in refunds');
+  assert.equal(Number(refunds[0].amount), 5000);
+});
+
+test('L6: a contract refund below zero floors total_price_after AND proposals.total_price at 0.00', async () => {
+  // Tiny $30.00 contract total with a paid $50.00 contract (Balance) invoice: a
+  // $50.00 contract refund would push total_price negative. The SQL clamps the
+  // live column at 0; the audit figure written to proposal_refunds.total_price_after
+  // must floor the same way, so refund history never shows a negative total.
+  const c2 = await pool.query(
+    `INSERT INTO clients (name, email) VALUES ('Refund Floor', $1) RETURNING id`,
+    [`refund-floor-${NONCE}@example.com`]
+  );
+  const cId = c2.rows[0].id;
+  const p2 = await pool.query(
+    `INSERT INTO proposals (client_id, status, total_price, amount_paid) VALUES ($1, 'balance_paid', 30, 50) RETURNING id`,
+    [cId]
+  );
+  const pId = p2.rows[0].id;
+  try {
+    const inv = await pool.query(
+      `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status)
+       VALUES ($1, $2, 'Balance', 5000, 5000, 'paid') RETURNING id`,
+      [pId, `INV${crypto.randomBytes(5).toString('hex')}`]
+    );
+    const payF = await pool.query(
+      `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status) VALUES ($1, 'balance', 5000, 'succeeded') RETURNING id`,
+      [pId]
+    );
+    await pool.query(
+      `INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, 5000)`,
+      [inv.rows[0].id, payF.rows[0].id]
+    );
+
+    const { applyRefundReconciliation } = require('../utils/refundHelpers');
+    const db = await pool.connect();
+    try {
+      await db.query('BEGIN');
+      const r = await applyRefundReconciliation({
+        proposalId: pId,
+        stripeRefundId: `re_floor_${NONCE}`,
+        paymentIntentId: `pi_floor_${NONCE}`,
+        paymentId: payF.rows[0].id,
+        amountCents: 5000, // $50.00 contract refund against a $30.00 total
+        reason: 'contract refund exceeding a tiny total (floor test)',
+        issuedBy: null,
+      }, db);
+      await db.query('COMMIT');
+      assert.equal(r.applied, true, 'reconciliation applied');
+    } catch (e) {
+      await db.query('ROLLBACK');
+      throw e;
+    } finally {
+      db.release();
+    }
+
+    const prop = await pool.query('SELECT total_price FROM proposals WHERE id = $1', [pId]);
+    assert.equal(Number(prop.rows[0].total_price), 0, 'proposals.total_price floors at 0');
+    const ref = await pool.query(
+      `SELECT total_price_after FROM proposal_refunds WHERE stripe_refund_id = $1`,
+      [`re_floor_${NONCE}`]
+    );
+    assert.equal(ref.rows.length, 1, 'refund row written');
+    assert.equal(Number(ref.rows[0].total_price_after), 0,
+      'total_price_after floors at 0, never negative');
+  } finally {
+    await pool.query('DELETE FROM proposal_refunds WHERE proposal_id = $1', [pId]);
+    await pool.query('DELETE FROM invoice_payments WHERE invoice_id IN (SELECT id FROM invoices WHERE proposal_id = $1)', [pId]);
+    await pool.query('DELETE FROM proposal_payments WHERE proposal_id = $1', [pId]);
+    await pool.query('DELETE FROM invoices WHERE proposal_id = $1', [pId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [pId]);
+    await pool.query('DELETE FROM clients WHERE id = $1', [cId]);
+  }
+});
+
 // Runs LAST: drives the REAL applyRefundReconciliation (which mutates this
 // proposal's totals), so it must not precede the assertions above.
 test('attributed partial refund on a combined payment shows ONLY on the invoice it walked onto', async () => {
@@ -265,6 +353,10 @@ test('attributed partial refund on a combined payment shows ONLY on the invoice 
   assert.equal(rd.status, 200, `expected 200 for invoice D, got ${rd.status}`);
   assert.equal(rd.body.invoice.refunds.length, 1, 'invoice D shows the refund once');
   assert.equal(Number(rd.body.invoice.refunds[0].amount), 3000, 'invoice D shows the exact attributed $30.00');
+  // L7: the real reconciliation wrote a -$30.00 reversal row on D; it must NOT
+  // leak into the public payments array (the refund already shows in refunds).
+  assert.ok(rd.body.invoice.payments.every((p) => Number(p.amount) >= 0),
+    `no negative reversal row in invoice D payments, got ${JSON.stringify(rd.body.invoice.payments)}`);
   const re2 = await get(`/api/invoices/t/${invE.rows[0].token}`);
   assert.equal(re2.status, 200, `expected 200 for invoice E, got ${re2.status}`);
   assert.equal(re2.body.invoice.refunds.length, 0, 'invoice E shows NO phantom refund');

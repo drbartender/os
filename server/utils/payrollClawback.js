@@ -93,9 +93,14 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
       return { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' };
     }
 
-    // Proportional fee on the delta.
+    // Fee share of this refund slice, computed cumulatively so rounding at each
+    // partial-refund boundary never drifts a cent: the fee owed on the new
+    // cumulative refunded total minus the fee already clawed on the prior one.
+    // (A per-delta round can lose a cent across multiple partial refunds, e.g.
+    // 100c tip / 33c fee refunded in two 50c slices claws 34c not 33c.)
+    const feeCents = Number(tip.fee_cents || 0);
     const feeDelta = original > 0
-      ? Math.round(Number(tip.fee_cents || 0) * delta / original)
+      ? Math.round(feeCents * newAmt / original) - Math.round(feeCents * oldAmt / original)
       : 0;
     const netDelta = delta - feeDelta;
     const perBartenderShares = splitEvenly(netDelta, bartenders.length);

@@ -358,6 +358,82 @@ test('rollForwardLateTip > skips with all_bartenders_are_legacy_cc_stubs when ev
   }
 });
 
+test('rollForwardLateTip > all-stub shift defers the tip and a repeat retry preserves the marker', async () => {
+  const stubA = await pool.query(
+    `INSERT INTO users (email, password_hash, role, cc_id)
+     VALUES ('all-stub-defer-a@example.com','x','staff','legacy_cc:test:defer-a') RETURNING id`
+  );
+  const stubB = await pool.query(
+    `INSERT INTO users (email, password_hash, role, cc_id)
+     VALUES ('all-stub-defer-b@example.com','x','staff','legacy_cc:test:defer-b') RETURNING id`
+  );
+  const stubAId = stubA.rows[0].id;
+  const stubBId = stubB.rows[0].id;
+  const shift = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','8:30 PM','open',$1) RETURNING id`,
+    [frozenProposalId]
+  );
+  const stubShiftId = shift.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1, $2, 'Bartender', 'approved'), ($1, $3, 'Bartender', 'approved')`,
+    [stubShiftId, stubAId, stubBId]
+  );
+  const tipRes = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id)
+     VALUES (gen_random_uuid(), $1, 3000, 96, 'pi_all_stub_defer', '2026-05-15 23:30:00+00', $2)
+     RETURNING id`,
+    [stubAId, stubShiftId]
+  );
+  const stubTipId = tipRes.rows[0].id;
+
+  try {
+    // First attempt: every bartender is a stub, so it skips but now COMMITs a
+    // deferral marker so the retry sweep (deferred_at IS NOT NULL) can recover it
+    // after a de-stub. Before this fix both deferred_at and rolled_forward_at
+    // stayed NULL, stranding the tip forever.
+    const first = await rollForwardLateTip(stubTipId);
+    assert.deepEqual(first, { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' });
+    const afterFirst = await pool.query(
+      'SELECT deferred_at, defer_kind, defer_attempts, rolled_forward_at FROM tips WHERE id = $1',
+      [stubTipId]
+    );
+    assert.ok(afterFirst.rows[0].deferred_at, 'deferred_at marker set so the retry sweep can find it');
+    assert.equal(afterFirst.rows[0].defer_kind, 'roll_forward');
+    assert.equal(afterFirst.rows[0].defer_attempts, 1);
+    assert.equal(afterFirst.rows[0].rolled_forward_at, null, 'never placed; recoverable');
+    const markedAt = afterFirst.rows[0].deferred_at;
+
+    // A repeat retry on a still-all-stub tip must re-skip WITHOUT clearing or
+    // resetting the marker (no hot-loop, no marker loss).
+    const second = await rollForwardLateTip(stubTipId);
+    assert.deepEqual(second, { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' });
+    const afterSecond = await pool.query(
+      'SELECT deferred_at, defer_attempts FROM tips WHERE id = $1',
+      [stubTipId]
+    );
+    assert.equal(afterSecond.rows[0].deferred_at.getTime(), markedAt.getTime(),
+      'original deferred_at preserved (COALESCE), not reset');
+    assert.equal(afterSecond.rows[0].defer_attempts, 2,
+      'attempts advance so the tip eventually drops from auto-retry');
+
+    // No synthetic payout line was ever created for the stubs.
+    const noPayout = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM payout_events WHERE payout_id IN
+         (SELECT id FROM payouts WHERE contractor_id IN ($1, $2))`,
+      [stubAId, stubBId]
+    );
+    assert.equal(noPayout.rows[0].c, 0);
+  } finally {
+    await pool.query('DELETE FROM tips WHERE id = $1', [stubTipId]);
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [stubShiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [stubShiftId]);
+    await pool.query('DELETE FROM users WHERE id IN ($1, $2)', [stubAId, stubBId]);
+  }
+});
+
 test('rollForwardLateTip > a second LATE tip for the same shift aggregates into the same rows', async () => {
   await rollForwardLateTip(tipId);
   // A second tip — same shift, fresh.
