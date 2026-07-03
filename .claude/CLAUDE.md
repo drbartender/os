@@ -242,7 +242,7 @@ Explicit-only Claude agents for reviewing specs and plans BEFORE any code is wri
 - **HTML Sanitization**: DOMPurify + jsdom (server-side, for blog post bodies)
 - **Styling**: Vanilla CSS (no Tailwind, no preprocessors)
 - **Error Tracking**: `@sentry/node` (server), `@sentry/react` (client)
-- **Dev tools**: nodemon, concurrently, ESLint + eslint-plugin-security, husky + lint-staged
+- **Dev tools**: nodemon, concurrently, ESLint + eslint-plugin-security, husky + lint-staged, playwright-core (mobile:check harness)
 
 ## Environment Variables
 

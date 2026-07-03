@@ -1522,6 +1522,10 @@ Self-hostable open-source scheduling platform. drb-os receives Cal.com webhooks 
   4. `bash scripts/guard-os-main.sh`: the os-stays-on-main guard; blocks any commit from the primary `os` worktree while it is off `main`, and any `docs/superpowers/specs|plans/` doc committed off `main`.
 - **Workflow tooling** (think-on-main / build-in-lanes, not all hook-invoked): `scripts/guard-os-main.sh` (above), `scripts/merge-lane.sh` (flock'd squash-merge wrapper, run only in `os`), `scripts/lane-status.js` (open-lane + stale-lane detection, `npm run lane:status`), `scripts/board-write.sh` (atomic `docs/build-board.md` writer with a PII/Stripe-id denylist), `scripts/sensitive-paths.txt` + `scripts/sensitive-match.js` (the one sensitive-path list and its matcher, the single trigger for review-scaling, conflict-escalation, and auto-pull disqualification), and `scripts/check-claudemd-invariants.sh` + `scripts/claudemd-invariants.txt` (paired keyword/regex coverage check over `CLAUDE.md`). Most carry a co-located `*.test.js` run by `npm test` (`node --test`).
 
+### Mobile Verification Harness
+- **Run**: `npm run mobile:check` (`scripts/mobile-capture.js` + `scripts/mobile-capture.manifest.json`)
+- Dev-only phone-viewport (390x844) screenshot + horizontal-overflow probe over every client-facing surface via headless system Chrome (`playwright-core`); refuses to run against production (`NODE_ENV`/DB-host gate) and writes to the gitignored `/mobile-audit/`. Merge gate for the mobile-fixes lanes (spec `docs/superpowers/specs/2026-07-02-mobile-fixes-design.md`).
+
 ### Claude Code Review Agents
 Seven custom agents in `.claude/agents/` provide automated code review:
 - **Tier 2 (automatic, haiku)**: `security-scan`, `consistency-check`, `error-handling-check` — run in parallel after completing features

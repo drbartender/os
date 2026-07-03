@@ -18,6 +18,8 @@ server/uploads/*
 
 # Claude Code / agent runtime artifacts
 .playwright-mcp/
+# mobile:check harness output (screenshots contain dev-DB client data)
+/mobile-audit/
 .claude/scheduled_tasks.lock
 client/.claude/
 # Local Claude scratch / working artifacts (audit runs, thread-mining, one-off
