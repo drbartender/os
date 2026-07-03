@@ -36,10 +36,10 @@ Two-layer gap found in research:
 - THE REFRAME on the table: surface custom cocktails as an un-costed "client requested X, bar lead to source" checklist section instead of computed quantities. Drops the project from Large to Small. Decide this before scoping.
 - Cross-cutting law: the generator is deliberately duplicated client (`generateShoppingList.js`) and server (`shoppingList.js`); every change lands in both.
 
-### Budget from Thumbtack feed (discount warning) — Medium, GATED on a 5-minute check
-- BLOCKING UNKNOWN: `parseLead` (`server/routes/thumbtack.js:122-176`) does not extract any budget field, and research could not confirm TT sends one. It would arrive in the `request.details` {question, answer} array (same place guest count comes from) and is preserved in `thumbtack_leads.raw_payload`. FIRST STEP: query prod `raw_payload` for budget-like Q&A. If absent, the project dies.
-- If present: parse step + column, normalization (budget is likely a range/string), and an admin warning on the drafted proposal comparing computed `total_price` vs budget ("offer a discount or trim scope"). Surface = the drafted ProposalDetail/pricing screen (there is no dedicated TT lead view; leads auto-draft).
-- Intent (Dallas): win jobs; discounting a random Thursday-afternoon or 1-hour corporate happy hour is fine.
+### Budget from Thumbtack feed (discount warning) — DONE, merged to main 2026-07-02 (a4efe12, not yet pushed)
+- The 5-minute gate PASSED: budget Q&A exists on 191/194 prod leads at `raw_payload -> data -> request -> details` (multi-select ranges + "I'm not sure" ~20%). Built same day: `extractBudget` at webhook time -> `thumbtack_leads.budget_min/budget_max/budget_raw` (whole dollars, forward-only, NO backfill by Dallas's call), lateral join on GET /proposals/:id, red over-budget badge on ProposalDetail (draft/sent only) + "Stated budget" payment-panel line. Full fleet 5x PASS. Spec/plan: `docs/superpowers/specs/2026-07-02-tt-budget-warning-design.md`.
+- Side effects: GET /:id extracted to `server/routes/proposals/getOne.js` (crud.js hit the 1000-line ratchet); `idx_thumbtack_leads_proposal_id` added (also serves /lead-cost).
+- Owed: Dallas eyeball smoke (staged: dev lead `smoke-budget-eyeball` -> proposal 8146; delete the scratch row after).
 
 ### Classes pages / field guide design — "way later," scope ambiguity unresolved
 - `/classes` today is `ClassWizard.js`, a 4-step BOOKING wizard (packages with `bar_type='class'`), not a marketing page; the primary nav does not even link to it. Content source `dr-bartender-class-menu.md` sits at repo root.
