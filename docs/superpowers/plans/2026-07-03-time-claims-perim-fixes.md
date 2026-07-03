@@ -3,132 +3,165 @@ lanes:
   - id: fix-time
     footprint:
       - server/utils/businessTime.js
+      - server/utils/businessTime.test.js
       - server/utils/staffShiftHandlers.js
       - server/utils/balanceScheduler.js
+      - server/utils/balanceScheduler.test.js
       - server/utils/balanceReminderScheduling.js
+      - server/utils/balanceReminderScheduling.test.js
       - server/utils/payrollLateTip.js
+      - server/utils/payrollLateTip.test.js
       - server/utils/payrollClawback.js
-      - server/utils/payrollPeriods.js
-      - server/utils/paystubData.js
-      - server/utils/metricsQueries.js
+      - server/utils/payrollClawback.test.js
       - server/routes/admin/payroll.js
+      - server/routes/admin/payroll.test.js
       - server/routes/proposals/actions.js
+      - server/routes/proposals/recordPayment.statusGuard.test.js
       - server/scripts/healBalanceReminderTimes.js
-      - "**/*.test.js"
     deps: []
     review: full-fleet + /second-opinion (money + scheduler paths)
   - id: fix-claims
     footprint:
-      - server/utils/scheduledMessageDispatcher.js
-      - server/utils/emailSequenceScheduler.js
-      - server/utils/autoAssign.js
       - server/db/schema.sql
-      - "**/*.test.js"
+      - server/utils/scheduledMessageDispatcher.js
+      - server/utils/scheduledMessageDispatcher.claim.test.js
+      - server/utils/emailSequenceScheduler.js
+      - server/utils/emailSequenceScheduler.claim.test.js
+      - server/utils/autoAssign.js
+      - server/utils/autoAssign.claim.test.js
+      - server/scripts/dedupeEmailSends.js
     deps: []
-    review: fleet-lite (money-correctness + database)
+    review: full-fleet + /second-opinion (schema change + send paths are sensitive)
   - id: fix-perim
     footprint:
       - server/routes/thumbtack.js
+      - server/routes/thumbtack.test.js
       - server/routes/thumbtackAgent.js
+      - server/routes/thumbtackAgent.failures.test.js
       - server/routes/calcom.js
+      - server/routes/calcom.test.js
       - server/routes/telegram.js
+      - server/routes/telegram.test.js
       - server/routes/voice.js
+      - server/routes/voice.test.js
       - server/routes/sms.js
       - server/utils/sms.js
       - server/utils/payrollDisputeNotify.js
-      - server/routes/proposals/actions.js
-      - "**/*.test.js"
-    deps: [fix-time]   # actions.js overlap only; serialize AFTER fix-time merges (one-line status-blocklist item)
-    review: fleet-lite (security + consistency)
+      - server/utils/payrollDisputeNotify.test.js
+    deps: []
+    review: full-fleet (webhook/inbound + payroll-util paths are sensitive)
 ---
 
-# Time / Claims / Perimeter fixes — plan (2026-07-03)
+# Time / Claims / Perimeter fixes — plan v2 (2026-07-03)
 
-Source findings: `.claude/perimeter-time-sweep-2026-07-03.md` (all verified). Root-cause
-framing per systematic-debugging: the time bugs are ONE root cause — no canonical
-business-time primitive; 26 `toISOString().slice(0,10)` sites, 13 naive-SQL-time files,
-37 `CURRENT_DATE` uses all improvise. Working references already in-repo:
-`staffShiftHandlers.eventLocalToUtc` (DST-honoring, event_timezone-aware) and
-`stripePayoutSync:184` (atomic claim, "never check-then-act").
+REVISION of v1 after the /review-plan fleet (fidelity, decomposition, feasibility).
+Material changes: review levels raised to full fleet on all three lanes (sensitive-path
+rule); the Class-C migration list was WRONG in v1 (7 of 8 sites are formatters/validators
+or UTC-internal math whose "migration" would have regressed them - incl. a Stripe autopay
+idempotency key) and is now a classified keep-UTC list with ONE real migration; the
+scheduled_messages status CHECK widening was missing; record-payment hardening moved from
+fix-perim to fix-time (shared actions.js -> all three lanes now fully independent/parallel);
+fractional-duration interval form kept; discriminating tests added for every changed site.
 
-## Lane fix-time (the HIGH + the class)
+Source findings: `.claude/perimeter-time-sweep-2026-07-03.md`. Root cause: no canonical
+business-time primitive. Verified preconditions: prod Postgres session tz = GMT;
+proposals.event_timezone EXISTS (schema.sql:2358, TEXT NOT NULL DEFAULT 'America/Chicago',
+all rows populated); staffShiftHandlers.eventLocalToUtc is pure with no external importers
+(safe to move); all v1-cited line numbers verified exact.
 
-1. **New `server/utils/businessTime.js`** (small, pure): `eventLocalToUtc` MOVES here
-   (staffShiftHandlers re-imports; pure move), plus `chicagoTodayYmd()` and
-   `chicagoYmd(dateOrMs)` built on Intl/America/Chicago (DST-safe, server-tz-independent).
-2. **T1 auto-complete (HIGH), SQL-side fix:** the completion predicate becomes
-   `(event_date + event_start_time::time + make_interval(hours => event_duration_hours))
-   AT TIME ZONE COALESCE(event_timezone, 'America/Chicago') < NOW()` — naive wall-clock
-   interpreted in the event's zone, yielding timestamptz for a correct comparison in any
-   session tz. Test MUST assert under an explicit GMT session (SET timezone) with an
-   evening event that old code completes early and new code does not (discriminating).
-   VERIFY FIRST in the lane: proposals.event_timezone column exists + its default
-   (staffShiftHandlers already consumes it); if absent, COALESCE against the constant.
-3. **T2 due-today timing:** `balanceReminderScheduling` anchors each offset row to an
-   explicit Chicago-local send time via `eventLocalToUtc(dueYmd, 9, 0, tz)` (9:00am
-   Chicago on the labeled day; t-3/t+1/t+3 same pattern). PLUS one-off heal script
-   `healBalanceReminderTimes.js` for PENDING rows only (recompute scheduled_for; report
-   count; no sends). Decision point recorded: 9am Chicago is the chosen anchor (was:
-   implicit midnight-UTC).
-4. **T3/T4 pay-period pick:** `payrollLateTip.js:86` + `payrollClawback.js:109` use
-   `chicagoTodayYmd()`. Regression test: freeze clock at Mon 18:30 CST (mock Date) and
-   assert the CURRENT Tue-Mon period is chosen, not next week's.
-5. **Class-C migration (classified, not blanket):** migrate the materially-wrong sites to
-   `chicagoTodayYmd()`: `admin/payroll.js:85/:118` (current-period routes),
-   `paystubData.js:20`, `balanceScheduler.js:74`, `payrollPeriods.js:21` (default arg),
-   `metricsQueries.js:19/:73` (dashboard ranges), `proposals/actions.js:70`. Each site
-   gets a one-line classification note in the lane report. Sites intentionally LEFT UTC
-   (seeds, QA, external-feed timestamps, shifts.js display, calendar feeds, ccImport,
-   rescheduleProposal internals) are listed with reasons — no silent skips.
-6. **Class-A audit note:** the 13 naive-SQL files are classified in the lane report
-   (bug/coarse/display); only T1 is changed in this lane. Any second material find =
-   its own follow-up, not scope creep here.
-7. NOT in scope (accepted, doc'd): autopay/auto-assign CURRENT_DATE early-boundary,
-   bookingWindow skew, DST noon-offset pair.
+## Lane fix-time
 
-## Lane fix-claims (timing-luck removal)
+1. **`server/utils/businessTime.js`**: MOVE `eventLocalToUtc` here verbatim
+   (staffShiftHandlers re-imports; internal caller computeEventStartUtc:141 + export
+   list are the only touchpoints). ADD `chicagoTodayYmd()` (Intl/America/Chicago,
+   DST-safe, server-tz-independent). No other primitives (v1's speculative
+   `chicagoYmd(dateOrMs)` dropped - no consumer after reclassification).
+   Tests: node:test on both functions incl. DST-transition dates.
+2. **T1 auto-complete (HIGH)**: predicate at balanceScheduler.js:~181 becomes
+   `((event_date + event_start_time::time + (event_duration_hours || ' hours')::interval)
+   AT TIME ZONE event_timezone) < NOW()` - keep the interval-concat form
+   (event_duration_hours is NUMERIC(4,1); make_interval(hours=>int) truncates 4.5h).
+   Discriminating test under `SET timezone TO 'GMT'`: evening event that old predicate
+   completes early and new predicate does not; plus a genuinely-ended event still
+   completes.
+3. **T2 due-today anchor**: balanceReminderScheduling SELECT (line ~24) ADDS
+   event_timezone; each offset row anchors via `eventLocalToUtc(labelYmd, 9, 0, tz)`
+   (9:00am local on the labeled day - the decided anchor; was implicit midnight-UTC =
+   ~7pm the prior evening). Heal script `server/scripts/healBalanceReminderTimes.js`
+   recomputes scheduled_for for PENDING rows only, prints per-type counts, sends nothing.
+   Test: scheduled instants assert to 15:00Z (CDT) / 15:00Z-vs-16:00Z DST cases.
+4. **T3/T4 pay-period pick**: payrollLateTip.js:86 + payrollClawback.js:109 use
+   `chicagoTodayYmd()`. Discriminating test: mocked clock Mon 18:30 CST asserts the
+   CURRENT Tue-Mon period is chosen (old code picks next week's).
+5. **Class-C: ONE migration + a keep-UTC ledger.** Migrate ONLY admin/payroll.js:85
+   (the `periods/current` today-pick) to `chicagoTodayYmd()`, with a discriminating
+   evening-boundary test on the route. ALL other census sites are KEEP-UTC, recorded
+   here deliberately: balanceScheduler:74 (formats balance_due_date INTO THE STRIPE
+   AUTOPAY IDEMPOTENCY KEY - changing it risks re-charges; never touch),
+   payrollPeriods:21 (toYmd(date) in a deliberately UTC-internal module; converting
+   breaks Tue-Mon arithmetic), metricsQueries:19/:73 (UTC round-trip validator +
+   range iso(); must stay UTC), paystubData:20 + admin/payroll:118 (pg DATE formatters;
+   UTC slice correct), actions.js:70 (user-input validator round-trip), plus the
+   seeds/QA/feeds/ccImport list from v1. The lane report restates this ledger.
+6. **Record-payment status guard (moved from fix-perim)**: actions.js:170/:241
+   blocklist `['balance_paid','confirmed']` gains 'completed','archived'.
+   Discriminating test (`recordPayment.statusGuard.test.js`): manual payment on a
+   completed proposal 409s and does NOT downgrade status.
+7. NOT in scope (accepted, per findings doc): autopay/auto-assign CURRENT_DATE
+   early-boundary, bookingWindow skew, DST noon-offset pair. Dead-file deletion
+   (5 client files) is tracked in the findings doc, separate approval, not this plan.
 
-Copy the stripePayoutSync atomic-claim shape at three sites:
-1. Dispatcher: per-row claim `UPDATE scheduled_messages SET status='processing' WHERE
-   id=$1 AND status='pending' RETURNING id` before handling; terminal write gains
-   `AND status='processing'`; failure path resets to 'pending' (respecting existing
-   retry semantics — read them first).
-2. Sequences: optimistic claim keyed on current_step (`UPDATE ... SET last_...=NOW()
-   WHERE id=$1 AND current_step=$2 RETURNING`) before send; advance keeps the same
-   predicate. PLUS idempotent unique index on email_sends(lead_id, sequence_step_id)
-   in schema.sql (belt; prod gets it via initDb) — verify no existing dupes first
-   (SELECT count on prod BEFORE the index ships; if dupes exist, index is created
-   after a dedupe heal or as NOT VALID — decide in-lane on evidence).
-3. Auto-assign: `UPDATE shift_requests SET status='approved' ... AND status='pending'
-   RETURNING id`; SMS only the RETURNED ids. Manual-route race gets the same predicate.
-Tests: each site gets a two-concurrent-claims test (gate-connection pattern from
-recordPayment.staleRead.test.js) asserting exactly-one send/approval.
+## Lane fix-claims
 
-## Lane fix-perim (small guards; runs after fix-time merges — actions.js overlap)
+0. **Schema first**: widen the scheduled_messages status CHECK to include
+   'processing' (idempotent DROP CONSTRAINT IF EXISTS + ADD; reaches prod via initDb).
+   Without this the claim UPDATE throws on first use (CHECK at schema.sql:2522/:3113).
+1. **Dispatcher claim**: per-row `UPDATE ... SET status='processing' WHERE id=$1 AND
+   status='pending' RETURNING id` before handling; terminal write gains
+   `AND status='processing'`; failure path resets to 'pending' preserving the existing
+   deferred/reactivation semantics; the existing stale-row guard (~:436, assumes
+   'pending') is SUPERSEDED by the claim and updated accordingly. File is 903 lines -
+   keep the delta lean; verify wc -l < 1000 post-change (else extract first).
+2. **Sequences**: optimistic claim keyed on current_step before send; advance keeps
+   the same predicate. Unique index on email_sends(lead_id, sequence_step_id) ships
+   ONLY after a prod dupe-count returns ZERO (run the count first; if dupes exist,
+   `server/scripts/dedupeEmailSends.js` heals them BEFORE the index lands - a failing
+   CREATE UNIQUE INDEX in initDb would crash server boot). NULL sequence_step_id
+   (campaign sends) stays unconstrained by design. NOT-VALID is not a thing for
+   unique indexes; dedupe-first is the only path.
+3. **Auto-assign**: `UPDATE shift_requests SET status='approved' ... AND
+   status='pending' RETURNING id`; SMS only the RETURNED ids. The manual admin routes
+   (shifts.approval.js upsert, crud.js, coverApprovalCascade) are EXPLICITLY out of
+   scope: different semantics (admin-intent upsert), different files; noted here so
+   the omission is deliberate, not missed.
+Tests: per site, two pool connections racing the claim (gate-connection CONCEPT from
+recordPayment.staleRead.test.js, re-implemented util-level, not its HTTP harness),
+asserting exactly-one send/approval.
 
-1. thumbtack.js: on duplicate short-circuit, heal-check — if lead exists but draft/admin
-   notification missing, run the post-commit steps then (mirrors F1b settle-after-
-   side-effect heal pattern from smsInbound).
-2. thumbtackAgent.js harvest-failed: idempotency key (negotiation_id + reason + agent
-   attempt nonce; simplest: skip increment if an identical failure was recorded within
-   N minutes — decide in-lane from the agent's actual retry cadence).
-3. calcom.js: on 'Already processed', verify the consult row exists; if missing, delete
-   the dedupe row and reprocess (bounded heal, no behavior change on the happy path).
-4. telegram.js: attachCallSid failure aborts cleanly (cancel the Twilio call best-effort
-   + tell Zul to retry) instead of letting /bridge hang up on an answered call.
-5. voice.js status callback: dedupe by (CallSid, CallStatus) — skip Telegram+audit when
-   an identical audit row exists.
-6. PII last-4: routes/sms.js:90 Sentry extra + utils/sms.js:34/:24 logs adopt the
-   existing slice(-4) discipline.
-7. payrollDisputeNotify.js:125 -> urls.js ADMIN_URL.
-8. record-payment status-downgrade hardening (push-review follow-up): add
-   completed/archived to the already-paid blocklist in proposals/actions.js:170/:241.
+## Lane fix-perim (7 small guards, each with a fires-when-and-only-when test)
 
-## Order & merge protocol
+1. thumbtack.js duplicate-heal: on dedupe short-circuit, if the lead exists but draft/
+   admin-notification artifacts are missing, run the post-commit steps. Test: simulate
+   crash-after-commit (lead row present, no draft), retry heals; normal duplicate with
+   artifacts present does NOT re-notify.
+2. thumbtackAgent.js harvest-failed idempotency: identical (negotiation_id, reason)
+   within a short window does not increment attempts. Test: double-POST bumps once.
+3. calcom.js strand-heal: on 'Already processed', verify the consult exists; if
+   missing, delete dedupe row + reprocess. Test: dedupe row present + no consult ->
+   consult created; consult present -> untouched.
+4. telegram.js: attachCallSid failure aborts cleanly (best-effort Twilio cancel +
+   Zul notified) instead of a dead bridge. Test: failing write -> no dangling
+   pending_call, cancel attempted.
+5. voice.js status dedup by (CallSid, CallStatus). Test: redelivered 'failed' sends
+   one Telegram message, one audit row.
+6. PII last-4: routes/sms.js:90 Sentry extra + utils/sms.js:34/:24 adopt slice(-4).
+   Test: log/extra payload assertions.
+7. payrollDisputeNotify.js:125 -> urls.js ADMIN_URL. Test: unset CLIENT_URL still
+   yields absolute admin URL.
 
-fix-time and fix-claims cut immediately, in parallel. fix-perim cuts after fix-time
-merges (shared actions.js). Each lane: tests green serially -> per-lane review at its
-declared level -> squash-merge -> carve-out cleanup. The three ALREADY-BUILT lanes
-(extract-hot, copy-client) merge FIRST, before fix-time cuts, so the time lane builds
-on the extracted stripeWebhook/invoiceHelpers shape and no fix lands in a file about
-to be restructured.
+## Order & protocol
+
+All three lanes are independent (no footprint overlap; verified) - cut all three in
+parallel. Prerequisite already satisfied: extract-hot (4183ede) + copy-client (dcedb4a)
+merged before any fix lane cuts. Each lane: tests green serially -> full-fleet per-lane
+review (+ /second-opinion where declared) -> squash-merge -> carve-out cleanup.
