@@ -54,6 +54,8 @@ lanes:
       - client/src/pages/proposal/proposalView/PaymentForm.js
       - client/src/pages/proposal/proposalView/SignAndPaySection.js
       - client/src/pages/proposal/proposalView/styles.js
+      - client/src/pages/proposal/proposalView/ProposalView.js
+      - client/src/pages/invoice/InvoicePage.js
       - client/src/components/SignaturePad.js
       - client/src/pages/staff/ShiftsPage.js
       - client/src/pages/public/portal/ShareButton.js
@@ -190,18 +192,26 @@ async function probe(page, allowSelectors) {
     consoleErrors = [];
     await page.goto(origin + urlPath, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(entry.settleMs || 2200);
+    if (entry.auth && entry.auth !== 'none') {
+      // Every authed entry MUST set authAssert: a selector that only renders logged-in
+      // (e.g. '.cp-tabs' for the portal, '.sp-tabs' for staff). Without this a stale
+      // tokenVersion or gated account renders logged-out and would false-green the probe.
+      if (!entry.authAssert) { results.push({ name: entry.name, status: 'auth-failed', reason: 'authAssert missing in manifest' }); continue; }
+      const ok = await page.locator(entry.authAssert).first().isVisible().catch(() => false);
+      if (!ok) { results.push({ name: entry.name, status: 'auth-failed' }); continue; }
+    }
     await page.screenshot({ path: path.join(OUT, entry.name + '.jpeg'), fullPage: true, type: 'jpeg', quality: 82 });
     const p = await probe(page, entry.scrollableAllow || []);
-    const pass = p.scrollW <= 392 && p.offRight.length === 0;
+    const pass = p.scrollW <= 390 && p.offRight.length === 0; // spec: fail above 390, no tolerance
     results.push({ name: entry.name, status: pass ? 'pass' : 'FAIL', ...p, consoleErrors: consoleErrors.slice(0, 3) });
   }
 
   await browser.close(); await pool.end();
   fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify(results, null, 2));
   const w = (s) => String(s).padEnd(30);
-  for (const r of results) console.log(w(r.name), r.status.padEnd(8), r.offRight ? r.offRight.join(' | ') : '', r.smallTaps != null ? `taps<36:${r.smallTaps} tiny<12:${r.tinyText}` : '');
-  const bad = results.filter((r) => r.status === 'FAIL' || r.status === 'no-data');
-  if (bad.length) die(`${bad.length} page(s) FAIL or no-data`);
+  for (const r of results) console.log(w(r.name), r.status.padEnd(11), r.offRight ? r.offRight.join(' | ') : '', r.smallTaps != null ? `taps<36:${r.smallTaps} tiny<12:${r.tinyText}` : '', r.consoleErrors && r.consoleErrors.length ? `console:${r.consoleErrors.length}` : '');
+  const bad = results.filter((r) => r.status === 'FAIL' || r.status === 'no-data' || r.status === 'auth-failed');
+  if (bad.length) die(`${bad.length} page(s) FAIL, no-data, or auth-failed`);
   console.log(`[mobile:check] ${results.filter((r) => r.status === 'pass').length} pass, ${results.filter((r) => r.status === 'skipped').length} skipped`);
 })();
 ```
@@ -225,9 +235,9 @@ async function probe(page, allowSelectors) {
     { "name": "plan-welcome", "host": "public.localhost", "path": "/plan/:token", "auth": "none",
       "tokenQuery": "SELECT token FROM drink_plans WHERE status='draft' ORDER BY id DESC LIMIT 1" },
     { "name": "portal-home", "host": "public.localhost", "path": "/my-proposals", "auth": "client",
-      "scrollableAllow": [".cp-tabs"] },
+      "authAssert": ".cp-tabs", "scrollableAllow": [".cp-tabs"] },
     { "name": "staff-account-profile", "host": "staff.localhost", "path": "/account/profile", "auth": "staff",
-      "scrollableAllow": [".sp-acc-nav"] },
+      "authAssert": ".sp-acc-nav", "scrollableAllow": [".sp-acc-nav"] },
     { "name": "compare", "host": "public.localhost", "path": "/compare/:token", "skipped": "no proposal_groups rows in dev" }
   ]
 }
@@ -235,9 +245,9 @@ async function probe(page, allowSelectors) {
 
 Full page list to include: home, services, method, about, faq, labnotes, labnotes-post (tokenQuery on blog slug is not needed; use the index), client-login, quote, classes, labrat, proposal-sent, proposal-paid, plan-welcome, invoice, shopping-list, portal-home, portal-archive, staff dashboard/shifts/shifts-mine/pay/tip-card/account x5, hiring landing/login/register/forgot-password, onboarding welcome/field-guide/agreement/contractor-profile/payday-protocols, apply, admin home/events/proposals/messages, plus `skipped` entries for compare, tip, feedback, populated shopping list, payout detail, rostered shift detail.
 
-- [ ] **Step 5: baseline run.** Dev servers up (client :3000, server :5000 with `NODE_ENV=development`). Run `npm run mobile:check`. Expected on current main: FAILs exactly on the audited P0 surfaces (quote wizard steps, apply, onboarding pages) and passes elsewhere; `smallTaps`/`tinyText` counts are the baseline scoreboard. Save the output in the lane notes.
+- [ ] **Step 5: verify manifest accounts, then baseline run.** First check each manifest account's live row in the dev DB (`SELECT token_version, onboarding_status FROM users WHERE id IN (5, 1488, 1); SELECT token_version FROM clients WHERE id=19;`) and correct the manifest's `tokenVersion` values (and swap accounts if one has been deactivated). Dev servers up (client :3000, server :5000 with `NODE_ENV=development`). Run `npm run mobile:check`. Expected on current main: FAILs exactly on the audited P0 surfaces (quote wizard steps, apply, onboarding pages), `auth-failed` on none, passes elsewhere; `smallTaps`/`tinyText` counts are the baseline scoreboard. Record the summary table in the lane's squash-commit body.
 
-- [ ] **Step 6: docs + commit.** README npm-scripts table row; one ARCHITECTURE line (dev tooling); `playwright-core` added to CLAUDE.md Tech Stack dev-tools list. Commit the lane.
+- [ ] **Step 6: docs + commit.** README npm-scripts table row, including the note that `mobile:check` is EXPECTED to stay red on main until the mobile-sweep lane lands (the baseline failures are the audited P0s; red mid-project is not a regression); one ARCHITECTURE line (dev tooling); `playwright-core` added to CLAUDE.md Tech Stack dev-tools list. Commit the lane.
 
 ---
 
@@ -300,7 +310,7 @@ export function wireStripFade(container) {
 
 Note: when content fits entirely, `scrollLeft + clientWidth >= scrollWidth` is true at rest, so `at-end` applies and no fade shows. That is the no-overflow case handled.
 
-- [ ] **Step 3: portal tabs.** Add `mob-strip` to the `.cp-tabs` container className in `EventCommandCenter.js`; in a `useEffect` on tab change call both helpers (ref on the container, `[aria-current]` or `.active` tab as activeEl). CSS: under `@media (max-width: 640px)` add `.cp-tab { padding: 14px 15px 12px; letter-spacing: 0.13em; }` (locate `.cp-tab` by selector). Do not abbreviate labels.
+- [ ] **Step 3: portal tabs.** Add `mob-strip` to the `.cp-tabs` container className in `EventCommandCenter.js`; in a `useEffect` on tab change call both helpers (ref on the container; the active tab renders `.active` + `aria-selected`, NOT `aria-current`, so target `.active` or `[aria-selected="true"]`). `EventCommandCenter.js` currently imports only React; add the `useEffect`/`useRef` imports. CSS: under `@media (max-width: 640px)` add `.cp-tab { padding: 14px 15px 12px; letter-spacing: 0.13em; }` (locate `.cp-tab` by selector). Do not abbreviate labels.
 
 - [ ] **Step 4: staff account nav.** Same treatment: `mob-strip` on `.sp-acc-nav`, helpers wired in `AccountPage.js` on section change, and bump `.sp-acc-navbtn` vertical padding to reach 36px height.
 
@@ -356,11 +366,11 @@ Accepted regression (spec): mobile loses multi-step jump-back; Back button and R
 
 ```jsx
 <div className="steps-compact">
-  Step {activeIndex + 1} of {STEPS.length}: {STEPS[activeIndex].label}
+  Step {currentStepIndex + 1} of {STEPS.length}: {STEPS[currentStepIndex].label}
 </div>
 ```
 
-(`activeIndex` = the index already used to mark the active `.step-item`; reuse that variable, do not recompute.)
+(`currentStepIndex` is the existing variable at `Layout.js:36` that already marks the active `.step-item`; reuse it, do not recompute.)
 
 - [ ] **Step 2: CSS.**
 
@@ -445,13 +455,16 @@ Whitelist enforced (only the two literals reach `setAttribute`); inert on every 
 .sp-toggle.on { background-color: var(--sp-accent, #3D6B3D); border-color: transparent; }
 .sp-toggle.on .sp-toggle-thumb { transform: translateX(16px); background: #fff; }
 .sp-toggle.disabled { opacity: 0.45; cursor: not-allowed; }
+.sp-toggle.sp-toggle-overridden { border-style: dashed; opacity: 0.7; }
 ```
 
-Match the actual class names and skin accent var used in `NotificationsSection.js` and the `sp-` var names present in `index.css` (verify `.on`/`.disabled` naming against the component before writing; adjust selectors to whatever the JSX emits).
+Class names `.on`/`.disabled` verified against `NotificationsSection.js:541-560` (exact match); the JSX also emits a third state class `sp-toggle-overridden` (admin-forced channel), styled above as dashed+dimmed so the override state is visible too. Use the `sp-` accent var names actually present in `index.css`.
 
 - [ ] **Step 2: verify.** `npm run mobile:check -- --only staff-account-notifications`; eyeball on/off/disabled states in both skins. Commit.
 
 ### Task B6: proposal chalkboard import, /apply header, includes helper, blog fallback, potion rail
+
+Five unrelated small fixes batched as one task; commit each as its OWN in-lane checkpoint (chalkboard, header, helper+consumers, blog, rail) so any one can be surgically reverted before the squash.
 
 **Files:**
 - Modify: `client/src/pages/proposal/proposalView/styles.js`, `client/src/index.css`, `client/src/pages/public/Blog.js`, `client/src/pages/plan/PotionPlanningLab.js`, `client/src/pages/public/portal/tabs/PrescriptionTab.js` (+ its test), `client/src/pages/proposal/proposalView/ProposalView.js`, `client/src/pages/admin/ProposalDetail.js`, `client/src/pages/admin/EventDetailPage.js`
@@ -507,9 +520,9 @@ test('singular drops the s and null ctx leaves tokens', () => {
 
 Run `cd client && CI=true npx react-scripts test --watchAll=false src/utils/packageIncludes.test.js`; fails (module missing) before Step 3's file lands, passes after.
 
-- [ ] **Step 5: wire all four consumers.** Replace the inline copies in `ProposalView.js:428-437`, `ProposalDetail.js:~326`, `EventDetailPage.js:~152` with the helper, and in `PrescriptionTab.js:50-54` interpolate before rendering (`bartenders`/`durationHours` come from the same focus/proposal payload the tab already receives; if a value is absent pass undefined, tokens stay visible rather than rendering wrong numbers). Add one fixture row with tokens to `PrescriptionTab.test.js` asserting the rendered text is interpolated. All four call sites in one commit (cross-cutting rule).
+- [ ] **Step 5: wire all four consumers.** Replace the inline copies in `ProposalView.js:428-437`, `ProposalDetail.js:~326`, `EventDetailPage.js:~152` with the helper. For `PrescriptionTab.js:50-54`: the portal detail endpoint (`server/routes/clientPortal.js:67-97`) returns **no pricing snapshot**; the fields to map are `num_bartenders` and `event_duration_hours` from the tab's payload: `interpolatePackageIncludes(includes, { bartenders: focus.num_bartenders ?? undefined, durationHours: focus.event_duration_hours ?? undefined })` (adjust to the tab's actual prop name for the proposal object). Note: `num_bartenders` is the stored value and can differ from the engine-computed `staffing.actual` the proposal page uses; for the portal display that stored value is the right one available. If a value is absent pass undefined, tokens stay visible rather than rendering wrong numbers. Add one fixture row with tokens to `PrescriptionTab.test.js` asserting the rendered text is interpolated. All four call sites in one commit (cross-cutting rule), and run a `consistency-check` review agent over this specific diff before the lane merges (it is exactly the cross-cutting shape that agent exists for).
 
-- [ ] **Step 6: blog fallback.** In `Blog.js:86-90` and `:126-129`: when `cover_image_url` is null, render `<div className="lab-cover-fallback" aria-hidden="true">⚗</div>` instead of the striped placeholder, with CSS: parchment background, centered ornament glyph, same aspect box as the image. Note for Dallas (not code): upload a cover image for the current featured post.
+- [ ] **Step 6: blog fallback.** In `Blog.js:86-90` and `:126-129`: when `cover_image_url` is null, render `<div className="lab-cover-fallback" aria-hidden="true">⚗</div>` instead of the striped placeholder, with CSS: parchment background, centered ornament glyph, same aspect box as the image. (Deliberate small deviation from the spec's "reuse existing brand classes" wording: one purpose-named class using the existing brand tokens is cleaner than overloading an unrelated `lab-*` class.) Note for Dallas (not code): upload a cover image for the current featured post.
 
 - [ ] **Step 7: potion rail.** In `PotionPlanningLab.js:936-940`: replace the bare text div with the counter plus the styled rail, one tick per queue entry plus confirmation:
 
@@ -552,7 +565,9 @@ Run `cd client && CI=true npx react-scripts test --watchAll=false src/utils/pack
 - [ ] **Step 1: component.**
 
 ```jsx
+import { useState, useEffect } from 'react';
 import PrescriptionCard from './PrescriptionCard';
+import { formatCurrency } from './helpers'; // same import QuoteWizard.js:19 uses
 
 export default function WizardPriceBar({ preview, isFinalStep, submitting, onContinue, onSubmit, cardProps, hidden }) {
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -624,7 +639,7 @@ Load-bearing: `onSubmit` is the SAME `handleSubmit` used by the in-flow button a
 
 (Adjust the last selector to the actual wrapper element around `FormBanner`/`.wz-nav`; add the class to that wrapper in JSX if none exists.)
 
-- [ ] **Step 4: verify.** `npm run mobile:check -- --only quote` plus a driven pass (reuse the audit's flow: fill step I, walk to review) confirming: no price on steps I-II left side, price appears from package step, sheet opens/closes, banner visible above the bar on a validation error, final step shows the guarded submit label. Manual phone walk before merge per spec (keyboard hide/show on the contact step, double-tap on submit). Desktop 1200px eyeball: sidebar unchanged, no bar. Commit; squash-merge after C3.
+- [ ] **Step 4: verify.** `npm run mobile:check -- --only quote` plus a driven pass (reuse the audit's flow: fill step I, walk to review) confirming: no price on steps I-II left side, price appears from package step, sheet opens/closes, banner visible above the bar on a validation error, final step shows the guarded submit label. Manual phone walk before merge per spec (keyboard hide/show on the contact step, double-tap on submit). Desktop 1200px eyeball: sidebar unchanged, no bar. Then one ui-ux screenshot review pass over the new bar/sheet states (it is a new interactive component on the #1 conversion surface). Commit; squash-merge after C3.
 
 ### Task C3: scroll-to-first-error on the three long forms
 
@@ -675,7 +690,7 @@ One lane, grouped commits by surface. Every row shows the exact change; locate s
 | `.invoice-meta-line` | `overflow-wrap: anywhere;` |
 | `.proposal-layout` (the copy near `:9521` used by the public view) | rename to `.proposal-view-layout` here and in `ProposalView.js:498` |
 
-- [ ] Apply, then `npm run mobile:check` full run: `tinyText`/`smallTaps` counts drop materially vs the Lane A baseline, zero new FAILs. Commit.
+- [ ] Apply, then `npm run mobile:check` full run: zero new FAILs, and on the touched pages the `tinyText` count reaches 0 and `smallTaps` drops to at most the known leftovers (record both against the Lane A baseline numbers in the checkpoint message; any touched selector still counted means the fix missed). Commit.
 
 ### Task D2: staff portal sweep
 
@@ -688,7 +703,7 @@ One lane, grouped commits by surface. Every row shows the exact change; locate s
 | `.sp-tf-k`, `.sp-tf-sub`, `.sp-subsection` | 12px floor, helper tone `--sp-ink-2` |
 | `.sp-shift-when`, `.sp-shift-rel`, `.sp-shift-roster-fill`, `.sp-chip` | 12px floor; meta rows promoted from `--sp-ink-4` to `--sp-ink-3`/`--sp-ink-2` |
 
-- [ ] `npm run mobile:check -- --only staff-shifts,staff-account-profile,staff-account-payments`; counts drop, no FAILs. Commit.
+- [ ] `npm run mobile:check -- --only staff-shifts,staff-account-profile,staff-account-payments`; `tinyText` on these pages reaches 0 and `smallTaps` at most the known leftovers vs the Lane A baseline (record both), no FAILs. Commit.
 
 ### Task D3: sign-and-pay page (focused-review scope)
 
