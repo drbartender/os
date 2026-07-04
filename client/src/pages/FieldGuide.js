@@ -168,7 +168,7 @@ const SECTIONS = [
         <p>Serving alcohol comes with legal responsibility. Know the laws and protect yourself, the guests, and Dr. Bartender.</p>
         <ul>
           <li><strong>BASSET certification is required.</strong> You must hold a valid BASSET (or equivalent: TIPS, ServSafe Alcohol) certification before working any event.</li>
-          <li>Never serve a visibly intoxicated person. If someone is slurring, stumbling, or aggressive. Cut them off politely and firmly.</li>
+          <li>Never serve a visibly intoxicated person. If someone is slurring, stumbling, or aggressive, cut them off politely and firmly.</li>
           <li>Do not serve anyone under 21. No exceptions, no "they look old enough." Always check ID if there's any doubt.</li>
           <li>If a guest becomes belligerent after being cut off, alert the event host or security immediately. Do not engage in a confrontation.</li>
         </ul>
@@ -186,7 +186,7 @@ const SECTIONS = [
         <ul>
           <li>Acceptable IDs: State-issued driver's license or ID, U.S. passport, military ID.</li>
           <li>Check the photo, birthdate, and expiration date. Expired IDs are not valid.</li>
-          <li>If the ID looks fake, altered, or doesn't match the person. Politely decline service.</li>
+          <li>If the ID looks fake, altered, or doesn't match the person, politely decline service.</li>
           <li>If a minor attempts to order, do not serve them. Let the event host know if needed.</li>
         </ul>
         <p style={{marginTop:'0.5rem', fontStyle:'italic'}}>A good rule of thumb: if they look under 35, ask for ID. Better safe than sorry, and guests usually appreciate the compliment.</p>
