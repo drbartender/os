@@ -89,7 +89,7 @@ Original pre-fix status: 23 findings adjudicated: 20 confirmed
 Server: ZERO orphan files. Client: 5 dead files, ~578 lines, verified unreferenced incl.
 dynamic imports — `LocationInput.js` (superseded by venue search), `adminos/Sparkline.js`,
 `staff/Placeholder.js`, `pages/website/Website.js` (superseded by QuoteWizard refactor),
-`plan/data/cocktailMenu.js` (comment-referenced only). Deletion awaiting per-action yes.
+`plan/data/cocktailMenu.js` (comment-referenced only). DELETED 2026-07-04 (fc0f1f3) with Dallas approval; CI build verified green post-delete.
 CheckCherry: zero user-visible mentions (comments/ccImport tooling only).
 
 ## Proposed fix batches
