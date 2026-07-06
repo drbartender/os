@@ -42,6 +42,7 @@ lanes:
 - Lane worktrees do not carry `.env`: after cutting the lane run `ln -sf ../../os/.env <worktree>/.env` or every DB-backed suite fails ECONNREFUSED 127.0.0.1:5432.
 - In-lane commits are checkpoints (squashed at merge): explicit pathspec always, never `git add .`.
 - Client gate: `cd client && CI=true npx react-scripts build` must pass (Vercel parity; local lint skips client/).
+- Cross-cutting (deliberate no-op): the badge-counts embed (`server/routes/admin/settings.js`, `counts.presence`) is the only other `getStripPayload` consumer; the payload shape is unchanged, so it needs NO edit and shifts to dibs semantics in lockstep. Do not touch settings.js.
 
 ---
 
@@ -76,6 +77,8 @@ test('pointer: owner away with toggle stuck true still falls back normally', () 
   // away is never eligible; stale taking_leads on an away owner must not grab
   assert.equal(derivePointer([zul('desk', true), dal('away', true)]), 2);
 });
+// The spec's "both away unchanged" case stays covered by the EXISTING test
+// 'pointer: both away -> Dallas (fallback = max rank)'; leave it untouched.
 test('leads transition: owner online default is OFF, chain user stays ON', () => {
   assert.equal(leadsAfterTransition('away', 'desk', false, true), false);      // owner sits down: no dibs
   assert.equal(leadsAfterTransition('away', 'available', false, true), false);
@@ -191,7 +194,10 @@ function makeDeps(overrides = {}) {
   return calls;
 }
 
-beforeEach(() => { process.env.TELEGRAM_ALLOWED_USER_ID = '777'; });
+beforeEach(() => {
+  process.env.TELEGRAM_ALLOWED_USER_ID = '777';
+  delete process.env.SENTRY_DSN_SERVER; // Sentry capture must never fire in tests
+});
 
 test('grab: owner takes pointer from chain user, chain user pinged with dibs copy', async () => {
   const calls = makeDeps();
@@ -239,16 +245,29 @@ test('sms channel dispatches to presence_nudge_phone', async () => {
   assert.match(calls.sms[0].body, /called dibs on leads/);
 });
 
-test('never rejects: throwing sender, throwing lookup, gated skip', async () => {
-  let calls = makeDeps({ sendTelegramMessage: async () => { throw new Error('boom'); } });
-  await notifyDibsEdge({ actorId: 1, before: payload(2), after: payload(1) }); // must not throw
-  calls = makeDeps({ pool: { query: async () => { throw new Error('db down'); } } });
-  await notifyDibsEdge({ actorId: 1, before: payload(2), after: payload(1) }); // must not throw
-  calls = makeDeps({
-    sendTelegramMessage: async (chat, text) => { calls.tg.push(text); return { ok: false, skipped: true }; },
-  });
-  await notifyDibsEdge({ actorId: 1, before: payload(2), after: payload(1) }); // gated skip: silent
-  assert.equal(calls.tg.length, 1); // send attempted, result skipped, no crash
+test('never rejects, and warns only on genuine failure (gated skip is silent)', async () => {
+  const warns = [];
+  const realWarn = console.warn;
+  console.warn = (...args) => warns.push(args.join(' '));
+  try {
+    let calls = makeDeps({ sendTelegramMessage: async () => { throw new Error('boom'); } });
+    await notifyDibsEdge({ actorId: 1, before: payload(2), after: payload(1) }); // must not throw
+    assert.equal(warns.length, 1); // genuine failure reported
+    assert.match(warns[0], /dibs grab ping failed/);
+
+    calls = makeDeps({ pool: { query: async () => { throw new Error('db down'); } } });
+    await notifyDibsEdge({ actorId: 1, before: payload(2), after: payload(1) }); // must not throw
+    assert.equal(warns.length, 2); // lookup failure reported too
+
+    calls = makeDeps({
+      sendTelegramMessage: async (chat, text) => { calls.tg.push(text); return { ok: false, skipped: true }; },
+    });
+    await notifyDibsEdge({ actorId: 1, before: payload(2), after: payload(1) });
+    assert.equal(calls.tg.length, 1); // send attempted, result skipped, no crash
+    assert.equal(warns.length, 2);   // gated skip: NO new warn, no Sentry
+  } finally {
+    console.warn = realWarn;
+  }
 });
 ```
 
@@ -344,8 +363,10 @@ async function notifyDibsEdge({ actorId, before, after }) {
       return; // unknown channel value: silent (CHECK constraint should prevent)
     }
 
-    if (confirmed) console.log(`[presence] dibs ${edge} ping -> user ${recipientId}`);
-    else if (!skipped) reportFailure(recipientId, edge, why);
+    if (confirmed) {
+      const recipient = users.find((u) => u.id === recipientId);
+      console.log(`[presence] dibs ${edge} ping -> ${recipient ? recipient.name : `user ${recipientId}`}`);
+    } else if (!skipped) reportFailure(recipientId, edge, why);
   } catch (err) {
     reportFailure(recipientId, edge, err.message);
   }
@@ -357,7 +378,7 @@ module.exports = { notifyDibsEdge, __setPresenceNotifyDeps };
 - [ ] **Step 4: Run the suite, all green**
 
 Run: `node --test server/utils/presenceNotify.test.js`
-Expected: PASS (6 tests).
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Checkpoint commit**
 
@@ -391,7 +412,12 @@ and in `before()` (after `makeUser` calls), inject fakes recording sends:
 
 ```js
 notifySends = [];
+process.env.TELEGRAM_ALLOWED_USER_ID = process.env.TELEGRAM_ALLOWED_USER_ID || '777';
 __setPresenceNotifyDeps({
+  // Fake pool: the recipient can resolve to a REAL dev row (ranks 1/2 sit
+  // below the 901/902 test rows), and a real row's channel may be NULL.
+  // Pin the lookup so ping assertions never depend on live dev-row state.
+  pool: { query: async () => ({ rows: [{ presence_nudge_channel: 'telegram', presence_nudge_phone: null }] }) },
   sendTelegramMessage: async (chat, text) => { notifySends.push(text); return { ok: true }; },
   sendSMS: async ({ body }) => { notifySends.push(body); return { sid: 'SM-test' }; },
 });
@@ -583,6 +609,44 @@ test('flip: race-aborted flip (applyAutoFlip false) does not notify', async () =
   assert.equal(calls.notified.length, 0);
 });
 
+test('flip: composed with the REAL notifier, owner flip with chain user online sends the release ping; chain user away sends nothing', async () => {
+  // Integration of sweep -> notifyDibsEdge semantics (spec: Scheduler test
+  // addition). Real notifier, fake senders + fake recipient lookup.
+  const { notifyDibsEdge, __setPresenceNotifyDeps } = require('./presenceNotify');
+  const sent = [];
+  __setPresenceNotifyDeps({
+    pool: { query: async () => ({ rows: [{ presence_nudge_channel: 'telegram', presence_nudge_phone: null }] }) },
+    sendTelegramMessage: async (chat, text) => { sent.push(text); return { ok: true }; },
+    sendSMS: async () => ({ sid: 'SM-x' }),
+  });
+  const OWNER = { id: 1, name: 'Dallas', rank: 2, state: 'desk', since: null, taking_leads: true };
+  const CHAIN = { id: 2, name: 'Zul', rank: 1, state: 'desk', since: null, taking_leads: true };
+  const row = dueDesk({ id: 20, user_id: 1, nudged_at: iso(FLIP_GRACE_MS + 60000) });
+
+  // Chain user online: pointer moves 1 -> 2 on the owner's flip => release ping.
+  let payloads = [
+    { users: [CHAIN, OWNER], lead_owner_id: 1 },                                        // before
+    { users: [CHAIN, { ...OWNER, state: 'away', taking_leads: false }], lead_owner_id: 2 }, // after
+  ];
+  makeDeps([row], {
+    getStripPayload: async () => payloads.shift(),
+    notifyDibsEdge, // the real one
+  });
+  await sweepPresence();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0], "Dallas released leads. You're up.");
+
+  // Chain user away: pointer stays with the owner (fallback) => nothing fires.
+  const awayChain = { ...CHAIN, state: 'away', taking_leads: false };
+  payloads = [
+    { users: [awayChain, OWNER], lead_owner_id: 1 },
+    { users: [awayChain, { ...OWNER, state: 'away', taking_leads: false }], lead_owner_id: 1 },
+  ];
+  makeDeps([row], { getStripPayload: async () => payloads.shift(), notifyDibsEdge });
+  await sweepPresence();
+  assert.equal(sent.length, 1); // no new send
+});
+
 test('flip: throwing capture is isolated; flip still applies and sweep continues to next row', async () => {
   const rows = [
     dueDesk({ nudged_at: iso(FLIP_GRACE_MS + 60000) }),
@@ -632,7 +696,7 @@ Replace the flip branch inside `sweepPresence` (nudge pass untouched):
 - [ ] **Step 4: Run the suite, all green**
 
 Run: `node --test server/utils/presenceScheduler.test.js`
-Expected: PASS (existing 8 + 3 new).
+Expected: PASS (existing 8 + 4 new).
 
 - [ ] **Step 5: Checkpoint commit**
 
