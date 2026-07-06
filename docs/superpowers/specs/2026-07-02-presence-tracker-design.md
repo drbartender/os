@@ -2,6 +2,9 @@
 
 Date: 2026-07-02
 Status: approved in brainstorm (section-by-section), pre-plan
+Amended by: `2026-07-06-presence-dibs-design.md` (fallback-owner dibs override on
+the lead pointer + two-edge Telegram notification; supersedes the pointer
+derivation and the toggle's online default described below)
 
 ## Summary
 
