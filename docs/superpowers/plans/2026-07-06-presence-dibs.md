@@ -444,8 +444,12 @@ test('dibs: owner toggle grabs the pointer, pings the displaced user, release re
   r = await post('/api/admin/presence/leads', tokens.b, { taking: false });
   assert.equal(r.status, 200);
   assert.notEqual(r.body.lead_owner_id, ids.b); // release: someone eligible exists (user a is desk+taking)
-  // fire-and-forget: give the un-awaited hook a tick to run
-  await new Promise((res) => setTimeout(res, 50));
+  // fire-and-forget: poll briefly for the un-awaited hook (all presenceNotify
+  // deps are faked in-memory, so this resolves in a tick; the loop just makes
+  // the checkpoint deterministic instead of a fixed sleep)
+  for (let i = 0; i < 40 && notifySends.length < 2; i++) {
+    await new Promise((res) => setTimeout(res, 25));
+  }
   assert.equal(notifySends.some((t) => /called dibs on leads/.test(t)), true);
   assert.equal(notifySends.some((t) => /released leads/.test(t)), true);
 });
