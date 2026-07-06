@@ -19,6 +19,7 @@ const { pool } = require('../../db');
 const { AppError } = require('../../utils/errors');
 const store = require('../../utils/presenceStore');
 const { __setPresenceStoreDeps } = store;
+const { __setPresenceNotifyDeps } = require('../../utils/presenceNotify');
 const presenceRouter = require('./presence');
 const settingsRouter = require('./settings');
 
@@ -26,6 +27,7 @@ let server;
 let baseUrl;
 let tokens = {};
 let ids = {};
+let notifySends = [];
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const EMAIL_PREFIX = 'presence-test-';
@@ -93,6 +95,17 @@ before(async () => {
   await makeUser('b', 'admin', { rank: 902, channel: 'telegram' });
   await makeUser('m', 'manager');
   await makeUser('s', 'staff');
+
+  notifySends = [];
+  process.env.TELEGRAM_ALLOWED_USER_ID = process.env.TELEGRAM_ALLOWED_USER_ID || '777';
+  __setPresenceNotifyDeps({
+    // Fake pool: the recipient can resolve to a REAL dev row (ranks 1/2 sit
+    // below the 901/902 test rows), and a real row's channel may be NULL.
+    // Pin the lookup so ping assertions never depend on live dev-row state.
+    pool: { query: async () => ({ rows: [{ presence_nudge_channel: 'telegram', presence_nudge_phone: null }] }) },
+    sendTelegramMessage: async (chat, text) => { notifySends.push(text); return { ok: true }; },
+    sendSMS: async ({ body }) => { notifySends.push(body); return { sid: 'SM-test' }; },
+  });
 
   const app = express();
   app.use(express.json({ limit: '1mb' }));
@@ -325,4 +338,59 @@ test('stampByNudgePhone: tracked phone stamps last-seen; unknown returns null', 
 
   const none = await store.stampByNudgePhone('+15550000000');
   assert.equal(none, null);
+});
+
+// 15. Dibs: the fallback owner (b, global max rank 902) comes online OFF.
+test('dibs: owner coming online defaults taking_leads OFF; chain user defaults ON', async () => {
+  let r = await post('/api/admin/presence/state', tokens.a, { state: 'desk' });
+  assert.equal(r.status, 200);
+  assert.equal(findUser(r.body, 'a').taking_leads, true);
+  r = await post('/api/admin/presence/state', tokens.b, { state: 'desk' });
+  assert.equal(r.status, 200);
+  assert.equal(findUser(r.body, 'b').taking_leads, false); // asymmetric default
+  assert.notEqual(r.body.lead_owner_id, ids.b); // sitting down never grabs
+});
+
+// 16. Dibs grab moves the pointer and pings; release returns it and pings.
+test('dibs: owner toggle grabs the pointer, pings the displaced user, release returns it', async () => {
+  notifySends = [];
+  let r = await post('/api/admin/presence/leads', tokens.b, { taking: true });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.lead_owner_id, ids.b); // dibs beats every chain user
+  r = await post('/api/admin/presence/leads', tokens.b, { taking: false });
+  assert.equal(r.status, 200);
+  assert.notEqual(r.body.lead_owner_id, ids.b); // release: user a is desk+taking
+  // fire-and-forget: poll briefly for the un-awaited hook (all presenceNotify
+  // deps are faked in-memory, so this resolves in a tick; the loop just makes
+  // the checkpoint deterministic instead of a fixed sleep)
+  for (let i = 0; i < 40 && notifySends.length < 2; i++) {
+    await new Promise((res) => setTimeout(res, 25));
+  }
+  assert.equal(notifySends.some((t) => /called dibs on leads/.test(t)), true);
+  assert.equal(notifySends.some((t) => /released leads/.test(t)), true);
+});
+
+// 17. Going away is a release: pointer leaves the owner, dibs wiped.
+test('dibs: owner going away releases (pointer leaves him)', async () => {
+  await post('/api/admin/presence/leads', tokens.b, { taking: true });
+  const r = await post('/api/admin/presence/state', tokens.b, { state: 'away' });
+  assert.equal(r.status, 200);
+  assert.notEqual(r.body.lead_owner_id, ids.b);
+  assert.equal(findUser(r.body, 'b').taking_leads, false); // away wiped dibs
+});
+
+// 18. The before-capture is failure-isolated: a hiccup never 500s a toggle.
+test('dibs: failing before-capture does not fail the mutation', async () => {
+  const real = store.getStripPayload;
+  let first = true;
+  store.getStripPayload = async () => {
+    if (first) { first = false; throw new Error('capture hiccup'); }
+    return real();
+  };
+  try {
+    const r = await post('/api/admin/presence/state', tokens.b, { state: 'desk' });
+    assert.equal(r.status, 200); // mutation unharmed
+  } finally {
+    store.getStripPayload = real;
+  }
 });

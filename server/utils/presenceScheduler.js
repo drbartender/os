@@ -6,6 +6,7 @@ const sms = require('./sms');
 const telegram = require('./telegram');
 const store = require('./presenceStore');
 const presenceActivity = require('./presenceActivity');
+const presenceNotify = require('./presenceNotify');
 const { isNudgeDue, isFlipDue } = require('./presence');
 
 let _deps = {
@@ -16,6 +17,8 @@ let _deps = {
   lastActivityMs: presenceActivity.lastActivityMs,
   sendTelegramMessage: telegram.sendTelegramMessage,
   sendSMS: sms.sendSMS,
+  getStripPayload: store.getStripPayload,
+  notifyDibsEdge: presenceNotify.notifyDibsEdge,
 };
 function __setPresenceSchedulerDeps(d) { _deps = { ..._deps, ...d }; }
 
@@ -80,9 +83,15 @@ async function sweepPresence() {
     const db = row.presence_last_seen_at ? new Date(row.presence_last_seen_at).getTime() : null;
     const lastSeenMs = mem === null && db === null ? null : Math.max(mem || 0, db || 0);
     if (isFlipDue(row, lastSeenMs, now)) {
+      // Failure-isolated dibs-edge captures: a capture error must never abort
+      // the sweep or the flip. Unconditional (findSweepRows has no rank);
+      // notifyDibsEdge rule 2 filters non-owner flips. Spec 2026-07-06.
+      const before = await _deps.getStripPayload().catch(() => null);
       const flipped = await _deps.applyAutoFlip({ intervalId: row.id, userId: row.user_id });
       if (flipped) {
         console.log(`[presence] auto-flipped ${row.name} to away (nudged ${new Date(row.nudged_at).toISOString()}, no sign of life)`);
+        const after = await _deps.getStripPayload().catch(() => null);
+        await _deps.notifyDibsEdge({ actorId: row.user_id, before, after }).catch(() => {});
       }
     }
   }

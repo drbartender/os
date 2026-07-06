@@ -9,11 +9,19 @@ const {
 const zul = (state, taking) => ({ id: 2, presence_state: state, presence_taking_leads: taking, presence_lead_rank: 1 });
 const dal = (state, taking) => ({ id: 1, presence_state: state, presence_taking_leads: taking, presence_lead_rank: 2 });
 
-test('pointer: Zul desk-and-taking wins', () => {
-  assert.equal(derivePointer([zul('desk', true), dal('desk', true)]), 2);
+test('pointer: Zul desk-and-taking wins when the owner is not taking', () => {
+  assert.equal(derivePointer([zul('desk', true), dal('desk', false)]), 2);
 });
-test('pointer: Zul available + taking wins', () => {
-  assert.equal(derivePointer([zul('available', true), dal('desk', true)]), 2);
+test('pointer: Zul available + taking wins when the owner is not taking', () => {
+  assert.equal(derivePointer([zul('available', true), dal('desk', false)]), 2);
+});
+test('pointer: dibs. owner online-and-taking beats the chain', () => {
+  assert.equal(derivePointer([zul('desk', true), dal('desk', true)]), 1);
+  assert.equal(derivePointer([zul('desk', true), dal('available', true)]), 1);
+});
+test('pointer: owner away with toggle stuck true still falls back normally', () => {
+  // away is never eligible; stale taking_leads on an away owner must not grab
+  assert.equal(derivePointer([zul('desk', true), dal('away', true)]), 2);
 });
 test('pointer: Zul opted out -> Dallas', () => {
   assert.equal(derivePointer([zul('desk', false), dal('away', false)]), 1);
@@ -35,6 +43,17 @@ test('leads transition matrix', () => {
   assert.equal(leadsAfterTransition('desk', 'available', false), false); // opt-out survives
   assert.equal(leadsAfterTransition('available', 'desk', true), true);   // preserved
   assert.equal(leadsAfterTransition('desk', 'away', true), false);       // away wipes
+});
+
+// The spec's "both away unchanged" case stays covered by the EXISTING test
+// 'pointer: both away -> Dallas (fallback = max rank)' above.
+test('leads transition: owner online default is OFF, chain user stays ON', () => {
+  assert.equal(leadsAfterTransition('away', 'desk', false, true), false);      // owner sits down: no dibs
+  assert.equal(leadsAfterTransition('away', 'available', false, true), false);
+  assert.equal(leadsAfterTransition('away', 'desk', false, false), true);      // chain user unchanged
+  assert.equal(leadsAfterTransition('desk', 'available', true, true), true);   // dibs survives desk<->available
+  assert.equal(leadsAfterTransition('available', 'desk', true, true), true);
+  assert.equal(leadsAfterTransition('desk', 'away', true, true), false);       // away wipes dibs
 });
 
 test('nudge due only for open, un-nudged desk past threshold', () => {

@@ -90,15 +90,17 @@ export default function PresenceStrip({ presence, onPresenceChange, rail, curren
               <span className="presence-state">{u.state}</span>
               <span className="presence-dur">{fmtDur(u.since, nowMs)}</span>
             </button>
-            {u.rank < maxRank && (
-              <button
-                type="button"
-                className={`presence-leads-pill${u.taking_leads ? ' on' : ''}`}
-                disabled={!own || u.state === 'away' || busy}
-                onClick={() => own && mutate('/admin/presence/leads', { taking: !u.taking_leads })}
-                title={u.taking_leads ? 'Taking leads' : 'Not taking leads'}
-              >leads</button>
-            )}
+            <button
+              type="button"
+              className={`presence-leads-pill${u.taking_leads ? ' on' : ''}`}
+              disabled={!own || u.state === 'away' || busy}
+              onClick={() => own && mutate('/admin/presence/leads', { taking: !u.taking_leads })}
+              title={
+                u.rank === maxRank
+                  ? (u.taking_leads ? 'Dibs on leads' : 'Not taking leads')
+                  : (u.taking_leads ? 'Taking leads' : 'Not taking leads')
+              }
+            >{u.rank === maxRank && u.taking_leads ? 'dibs' : 'leads'}</button>
             {own && menuOpen && (
               <div className="presence-menu" role="menu">
                 {STATES.map(s => (

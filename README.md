@@ -320,6 +320,7 @@ dr-bartender/
 │   │   ├── tipPageLifecycle.js # Tip page activate/deactivate transitions on hire/onboarding/offboard
 │   │   ├── presence.js         # Pure presence helpers: lead-pointer derivation, taking-leads transition matrix, nudge/flip predicates, Central-time bucketing
 │   │   ├── presenceActivity.js # In-memory sign-of-life map + throttled presence_last_seen_at flush (stamped by the auth middleware for tracked users)
+│   │   ├── presenceNotify.js   # Dibs-edge ping (fire-and-forget): Telegram/SMS to the user the lead pointer moved off/onto when the fallback owner grabs or releases
 │   │   ├── presenceScheduler.js # Presence sweep (15 min): stale-desk nudge (Telegram/SMS, nudged_at stamped only on confirmed send) + race-safe auto-flip to away (RUN_PRESENCE_SCHEDULER)
 │   │   ├── presenceStore.js    # Presence DB layer: strip payload + lead pointer, transactional transitions/toggle, log totals, id-scoped applyAutoFlip, stampByNudgePhone
 │   │   ├── tipPaymentLinks.js  # Creates/regenerates Stripe Payment Links for bartender tip pages

@@ -8,30 +8,36 @@ const FLIP_GRACE_MS = 30 * 60 * 1000;       // silence after the nudge before au
 const ACTIVITY_FLUSH_MS = 60 * 1000;        // max cadence of last-seen DB writes
 
 /**
- * Who answers the next lead. Rows are users (any mix of tracked/untracked);
- * eligible = tracked, not away, taking leads; lowest rank wins. When nobody
- * is eligible the highest-ranked tracked user (Dallas) owns leads
+ * Who answers the next lead. Rows are users (any mix of tracked/untracked).
+ * eligible = tracked, not away, taking leads. The fallback owner (highest
+ * rank, Dallas) eligible = dibs and wins outright; otherwise lowest eligible
+ * rank wins (the chain); otherwise the fallback owner owns leads
  * unconditionally. Returns a user id or null when nobody is tracked.
+ * Spec: docs/superpowers/specs/2026-07-06-presence-dibs-design.md
  */
 function derivePointer(users) {
   const tracked = (users || []).filter(
     (u) => u.presence_lead_rank !== null && u.presence_lead_rank !== undefined
   );
   if (!tracked.length) return null;
+  const fallback = tracked.reduce((a, b) => (b.presence_lead_rank > a.presence_lead_rank ? b : a));
   const eligible = tracked
     .filter((u) => u.presence_state !== 'away' && u.presence_taking_leads)
     .sort((a, b) => a.presence_lead_rank - b.presence_lead_rank);
+  if (eligible.some((u) => u.id === fallback.id)) return fallback.id; // dibs
   if (eligible.length) return eligible[0].id;
-  return tracked.sort((a, b) => b.presence_lead_rank - a.presence_lead_rank)[0].id;
+  return fallback.id;
 }
 
 /**
- * Taking-leads value after a state transition: away wipes it, coming online
- * from away resets it on, desk<->available preserves the explicit choice.
+ * Taking-leads value after a state transition: away wipes it; coming online
+ * from away resets it on for chain users but OFF for the fallback owner (he
+ * never takes dibs just by sitting down); desk<->available preserves the
+ * explicit choice (dibs survives).
  */
-function leadsAfterTransition(prevState, nextState, currentTaking) {
+function leadsAfterTransition(prevState, nextState, currentTaking, isFallbackOwner) {
   if (nextState === 'away') return false;
-  if (prevState === 'away') return true;
+  if (prevState === 'away') return !isFallbackOwner;
   return !!currentTaking;
 }
 

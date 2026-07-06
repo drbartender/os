@@ -7,6 +7,7 @@ const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError } = require('../../utils/errors');
 const { PRESENCE_STATES } = require('../../utils/presence');
 const store = require('../../utils/presenceStore');
+const { notifyDibsEdge } = require('../../utils/presenceNotify');
 
 const router = express.Router();
 
@@ -26,16 +27,23 @@ router.post('/presence/state', auth, requireAdminOrManager, asyncHandler(async (
   if (!PRESENCE_STATES.includes(state)) {
     throw new ValidationError(null, 'state must be one of desk, available, away');
   }
+  // Failure-isolated pre-capture for the dibs-edge ping; never blocks the mutation.
+  const before = await store.getStripPayload().catch(() => null);
   await store.transitionState(req.user.id, state);
-  res.json(await store.getStripPayload());
+  const payload = await store.getStripPayload();
+  notifyDibsEdge({ actorId: req.user.id, before, after: payload }).catch(() => {});
+  res.json(payload);
 }));
 
 router.post('/presence/leads', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   requireTracked(req);
   const { taking } = req.body || {};
   if (typeof taking !== 'boolean') throw new ValidationError(null, 'taking must be a boolean');
+  const before = await store.getStripPayload().catch(() => null);
   await store.setTakingLeads(req.user.id, taking);
-  res.json(await store.getStripPayload());
+  const payload = await store.getStripPayload();
+  notifyDibsEdge({ actorId: req.user.id, before, after: payload }).catch(() => {});
+  res.json(payload);
 }));
 
 router.get('/presence/log', auth, adminOnly, asyncHandler(async (req, res) => {

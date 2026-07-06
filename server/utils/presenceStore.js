@@ -41,13 +41,16 @@ async function transitionState(userId, nextState) {
   try {
     await client.query('BEGIN');
     const cur = await client.query(
-      'SELECT presence_state, presence_taking_leads FROM users WHERE id = $1 AND presence_lead_rank IS NOT NULL FOR UPDATE',
+      `SELECT presence_state, presence_taking_leads,
+              presence_lead_rank = (SELECT MAX(presence_lead_rank) FROM users
+                                    WHERE presence_lead_rank IS NOT NULL) AS is_fallback_owner
+       FROM users WHERE id = $1 AND presence_lead_rank IS NOT NULL FOR UPDATE`,
       [userId]
     );
     if (!cur.rows[0]) throw new ValidationError(null, 'Not a presence-tracked user');
-    const { presence_state: prev, presence_taking_leads: taking } = cur.rows[0];
+    const { presence_state: prev, presence_taking_leads: taking, is_fallback_owner: isOwner } = cur.rows[0];
     if (prev === nextState) { await client.query('ROLLBACK'); return; }
-    const nextTaking = leadsAfterTransition(prev, nextState, taking);
+    const nextTaking = leadsAfterTransition(prev, nextState, taking, isOwner);
     await client.query(
       "UPDATE presence_log SET ended_at = NOW(), ended_reason = 'switch' WHERE user_id = $1 AND ended_at IS NULL",
       [userId]
