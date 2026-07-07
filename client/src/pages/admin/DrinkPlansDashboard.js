@@ -10,6 +10,9 @@ import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
 import ClickableRow from '../../components/ClickableRow';
 import { fmtDate } from '../../components/adminos/format';
+import useUrlListState from '../../hooks/useUrlListState';
+
+const DRINK_PLAN_TABS = ['all', 'submitted', 'pending', 'reviewed'];
 
 const STATUS = {
   pending:   { label: 'Pending',   kind: 'warn' },
@@ -30,8 +33,9 @@ export default function DrinkPlansDashboard() {
   const toast = useToast();
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [tab, setTab] = useState('all');
+  const [listState, setListState] = useUrlListState({ tab: 'all', q: '' });
+  const search = listState.q;
+  const tab = DRINK_PLAN_TABS.includes(listState.tab) ? listState.tab : 'all';
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ client_name: '', client_email: '', event_date: '' });
@@ -150,7 +154,7 @@ export default function DrinkPlansDashboard() {
         </div>
       )}
 
-      <Toolbar search={search} setSearch={setSearch} tabs={tabs} tab={tab} setTab={setTab} />
+      <Toolbar search={search} setSearch={(v) => setListState({ q: v })} tabs={tabs} tab={tab} setTab={(v) => setListState({ tab: v })} />
 
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="tbl-wrap">

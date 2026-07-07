@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
+import useUrlListState from '../../hooks/useUrlListState';
+import EntityLink from '../../components/EntityLink';
 
 export default function EmailConversations() {
   const toast = useToast();
@@ -10,6 +12,9 @@ export default function EmailConversations() {
   const [loading, setLoading] = useState(true);
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
+  // Selected thread lives in the URL (?thread=<leadId>) so Back from a lead
+  // profile reopens the same conversation.
+  const [listState, setListState] = useUrlListState({ thread: '' });
 
   const fetchThreads = useCallback(async () => {
     setLoading(true);
@@ -25,15 +30,24 @@ export default function EmailConversations() {
 
   useEffect(() => { fetchThreads(); }, [fetchThreads]);
 
-  const selectThread = async (leadId) => {
+  const selectThread = useCallback(async (leadId) => {
     setSelectedLeadId(leadId);
+    setListState({ thread: String(leadId) });
     try {
       const res = await api.get(`/email-marketing/conversations/${leadId}`);
       setMessages(res.data);
     } catch (err) {
       toast.error('Failed to load conversation. Try again.');
     }
-  };
+  }, [toast, setListState]);
+
+  // Reopen the thread named in the URL (?thread=<leadId>) after a Back
+  // navigation from the lead profile, once the thread list has loaded.
+  useEffect(() => {
+    if (selectedLeadId || !listState.thread || threads.length === 0) return;
+    const match = threads.find(t => String(t.lead_id) === listState.thread);
+    if (match) selectThread(match.lead_id);
+  }, [threads, listState.thread, selectedLeadId, selectThread]);
 
   const handleReply = async () => {
     if (!replyText.trim() || !selectedLeadId) return;
@@ -86,7 +100,14 @@ export default function EmailConversations() {
                 onClick={() => selectThread(thread.lead_id)}
               >
                 <div className="em-convo-item-header">
-                  <strong>{thread.name}</strong>
+                  <strong>
+                    <EntityLink
+                      to={thread.lead_id ? '/email-marketing/leads/' + thread.lead_id : null}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {thread.name}
+                    </EntityLink>
+                  </strong>
                   {parseInt(thread.unread_count, 10) > 0 && (
                     <span className="em-unread-badge">{thread.unread_count}</span>
                   )}
@@ -106,7 +127,11 @@ export default function EmailConversations() {
             ) : (
               <>
                 <div className="em-convo-thread-header">
-                  <h3>{selectedThread?.name}</h3>
+                  <h3>
+                    <EntityLink to={selectedThread?.lead_id ? '/email-marketing/leads/' + selectedThread.lead_id : null}>
+                      {selectedThread?.name}
+                    </EntityLink>
+                  </h3>
                   <span>{selectedThread?.email}</span>
                   <button className="btn btn-sm btn-secondary" onClick={() => handleMarkReplied(selectedLeadId)}>
                     Mark Reply Received

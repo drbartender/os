@@ -7,15 +7,17 @@ import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 import { LEAD_SOURCES } from '../../utils/leadSources';
+import useUrlListState from '../../hooks/useUrlListState';
 
 export default function EmailLeadsDashboard() {
   const toast = useToast();
   const [leads, setLeads] = useState([]);
   const [total, setTotal] = useState(0);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [sourceFilter, setSourceFilter] = useState('');
-  const [page, setPage] = useState(1);
+  const [listState, setListState] = useUrlListState({ q: '', status: '', source: '', page: '1' });
+  const search = listState.q;
+  const statusFilter = listState.status;
+  const sourceFilter = listState.source;
+  const page = parseInt(listState.page, 10) || 1;
   const [loading, setLoading] = useState(true);
   const [showImport, setShowImport] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -116,15 +118,15 @@ export default function EmailLeadsDashboard() {
       )}
 
       <div className="em-filters">
-        <input className="form-input em-search" placeholder="Search leads..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
-        <select className="form-input em-filter-select" value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }}>
+        <input className="form-input em-search" placeholder="Search leads..." value={search} onChange={e => setListState({ q: e.target.value, page: '1' })} />
+        <select className="form-input em-filter-select" value={statusFilter} onChange={e => setListState({ status: e.target.value, page: '1' })}>
           <option value="">All Statuses</option>
           <option value="active">Active</option>
           <option value="unsubscribed">Unsubscribed</option>
           <option value="bounced">Bounced</option>
           <option value="complained">Complained</option>
         </select>
-        <select className="form-input em-filter-select" value={sourceFilter} onChange={e => { setSourceFilter(e.target.value); setPage(1); }}>
+        <select className="form-input em-filter-select" value={sourceFilter} onChange={e => setListState({ source: e.target.value, page: '1' })}>
           <option value="">All Sources</option>
           {LEAD_SOURCES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
         </select>
@@ -163,9 +165,9 @@ export default function EmailLeadsDashboard() {
 
           {totalPages > 1 && (
             <div className="em-pagination">
-              <button className="btn btn-sm btn-secondary" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>Prev</button>
+              <button className="btn btn-sm btn-secondary" onClick={() => setListState({ page: String(Math.max(1, page - 1)) })} disabled={page === 1}>Prev</button>
               <span>Page {page} of {totalPages} ({total} leads)</span>
-              <button className="btn btn-sm btn-secondary" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}>Next</button>
+              <button className="btn btn-sm btn-secondary" onClick={() => setListState({ page: String(Math.min(totalPages, page + 1)) })} disabled={page === totalPages}>Next</button>
             </div>
           )}
         </>

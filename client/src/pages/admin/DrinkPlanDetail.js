@@ -12,6 +12,7 @@ import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmtDateFull } from '../../components/adminos/format';
 import BackButton from '../../components/adminos/BackButton';
+import EntityLink from '../../components/EntityLink';
 
 const ConsultationForm = lazy(() => import('../../components/ShoppingList/ConsultationForm'));
 
@@ -182,7 +183,9 @@ export default function DrinkPlanDetail() {
             </div>
             <div className="hstack" style={{ gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
               <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, margin: 0, lineHeight: 1.15 }}>
-                {plan.client_name || 'Unnamed Client'}
+                <EntityLink to={plan.client_id ? '/clients/' + plan.client_id : null}>
+                  {plan.client_name || 'Unnamed Client'}
+                </EntityLink>
               </h1>
               <StatusChip kind={st.kind}>{st.label}</StatusChip>
             </div>
@@ -190,6 +193,9 @@ export default function DrinkPlanDetail() {
               {eventTypeLabel}
               {plan.event_date && ` · ${fmtDateFull(String(plan.event_date).slice(0, 10))}`}
               {plan.client_email && ` · ${plan.client_email}`}
+              {plan.proposal_id && (
+                <> · <EntityLink to={'/proposals/' + plan.proposal_id}>Open proposal</EntityLink></>
+              )}
             </div>
           </div>
           <div className="page-actions" style={{ flexShrink: 0 }}>
@@ -244,7 +250,18 @@ export default function DrinkPlanDetail() {
             />
             <span style={{ fontSize: 13 }}>
               Consultation form{plan.consult_filled_at ? `, ${fmtDateFull(String(plan.consult_filled_at).slice(0, 10))}` : ''}
-              {plan.consult_filled_by_email ? ` (${plan.consult_filled_by_email})` : ''}
+              {plan.consult_filled_by_email && (
+                <>
+                  {' ('}
+                  <EntityLink
+                    to={plan.consult_filled_by_user_id ? '/staffing/users/' + plan.consult_filled_by_user_id : null}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {plan.consult_filled_by_email}
+                  </EntityLink>
+                  {')'}
+                </>
+              )}
             </span>
           </label>
           {sourceSwitching && <span className="muted" style={{ fontSize: 12 }}>Regenerating…</span>}

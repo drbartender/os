@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
+import useUrlListState from '../../hooks/useUrlListState';
+import EntityLink from '../../components/EntityLink';
 
 export default function Messages() {
   const toast = useToast();
@@ -11,6 +13,9 @@ export default function Messages() {
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
   const messagesRef = useRef(null);
+  // Selected thread lives in the URL (?client=<id>) so Back from a client
+  // profile reopens the same conversation. Empty = the newest-thread default.
+  const [listState, setListState] = useUrlListState({ client: '' });
 
   const fetchThreads = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -43,16 +48,22 @@ export default function Messages() {
     }
   }, [toast, fetchThreads]);
 
-  const selectThread = (clientId) => openThread(clientId, { markRead: true });
+  const selectThread = (clientId) => {
+    setListState({ client: String(clientId) });
+    openThread(clientId, { markRead: true });
+  };
 
-  // Default to the most recent conversation (threads are newest-first) so the
-  // pane opens on the latest message instead of the empty placeholder. View
+  // Open the thread named in the URL (?client=<id>) after a Back navigation,
+  // else default to the most recent conversation (threads are newest-first) so
+  // the pane opens on the latest message instead of the empty placeholder. View
   // only: it does not mark the conversation read.
   useEffect(() => {
-    if (!selectedClientId && threads.length > 0) {
-      openThread(threads[0].client_id, { markRead: false });
-    }
-  }, [threads, selectedClientId, openThread]);
+    if (selectedClientId || threads.length === 0) return;
+    const fromUrl = listState.client
+      ? threads.find(t => String(t.client_id) === listState.client)
+      : null;
+    openThread((fromUrl || threads[0]).client_id, { markRead: false });
+  }, [threads, selectedClientId, listState.client, openThread]);
 
   // Keep the newest message in view whenever a conversation loads or grows.
   useEffect(() => {
@@ -108,7 +119,14 @@ export default function Messages() {
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectThread(thread.client_id); } }}
               >
                 <div className="sms-list-item-head">
-                  <strong>{thread.name || 'Unknown client'}</strong>
+                  <strong>
+                    <EntityLink
+                      to={thread.client_id ? '/clients/' + thread.client_id : null}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {thread.name || 'Unknown client'}
+                    </EntityLink>
+                  </strong>
                   {thread.unread_count > 0 && (
                     <span className="sms-unread-badge">{thread.unread_count}</span>
                   )}
@@ -127,7 +145,11 @@ export default function Messages() {
             ) : (
               <>
                 <div className="sms-thread-head">
-                  <h3>{selectedThread?.name || 'Unknown client'}</h3>
+                  <h3>
+                    <EntityLink to={selectedThread?.client_id ? '/clients/' + selectedThread.client_id : null}>
+                      {selectedThread?.name || 'Unknown client'}
+                    </EntityLink>
+                  </h3>
                   <span className="muted">{selectedThread?.phone}</span>
                 </div>
 

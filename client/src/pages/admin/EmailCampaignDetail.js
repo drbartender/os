@@ -5,6 +5,7 @@ import api from '../../utils/api';
 import CampaignMetricsBar from '../../components/CampaignMetricsBar';
 import SequenceStepEditor from '../../components/SequenceStepEditor';
 import AudienceSelector from '../../components/AudienceSelector';
+import EntityLink from '../../components/EntityLink';
 import { useToast } from '../../context/ToastContext';
 
 export default function EmailCampaignDetail() {
@@ -252,7 +253,7 @@ export default function EmailCampaignDetail() {
                 <tbody>
                   {campaign.enrollments?.map(e => (
                     <tr key={e.id}>
-                      <td>{e.lead_name}</td>
+                      <td><EntityLink to={e.lead_id ? '/email-marketing/leads/' + e.lead_id : null}>{e.lead_name}</EntityLink></td>
                       <td>{e.lead_email}</td>
                       <td>{e.current_step} / {campaign.steps?.length || '?'}</td>
                       <td><span className={`em-badge em-badge-${e.status}`}>{e.status}</span></td>
@@ -285,7 +286,7 @@ export default function EmailCampaignDetail() {
             <tbody>
               {campaign.sends?.map(s => (
                 <tr key={s.id}>
-                  <td>{s.lead_name}</td>
+                  <td><EntityLink to={s.lead_id ? '/email-marketing/leads/' + s.lead_id : null}>{s.lead_name}</EntityLink></td>
                   <td>{s.lead_email}</td>
                   <td>{s.subject}</td>
                   <td><span className={`em-badge em-badge-${s.status}`}>{s.status}</span></td>

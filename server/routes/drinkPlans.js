@@ -444,7 +444,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
             dp.shopping_list_source,
             dp.shopping_list IS NOT NULL AS has_shopping_list,
             dp.shopping_list_status, dp.shopping_list_approved_at,
-            p.guest_count
+            p.guest_count, p.client_id
      FROM drink_plans dp
      LEFT JOIN users u ON u.id = dp.created_by
      LEFT JOIN users cu ON cu.id = dp.consult_filled_by_user_id

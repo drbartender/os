@@ -4,6 +4,7 @@ import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
+import EntityLink from '../../components/EntityLink';
 import { LEAD_SOURCES } from '../../utils/leadSources';
 
 export default function EmailLeadDetail() {
@@ -159,7 +160,7 @@ export default function EmailLeadDetail() {
             <tbody>
               {lead.sends?.map(send => (
                 <tr key={send.id}>
-                  <td>{send.campaign_name || '—'}</td>
+                  <td><EntityLink to={send.campaign_id ? '/email-marketing/campaigns/' + send.campaign_id : null}>{send.campaign_name || '—'}</EntityLink></td>
                   <td>{send.subject}</td>
                   <td><span className={`em-badge em-badge-${send.status}`}>{send.status}</span></td>
                   <td>{new Date(send.sent_at).toLocaleString()}</td>

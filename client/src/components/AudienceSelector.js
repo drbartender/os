@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../utils/api';
 import { LEAD_SOURCES } from '../utils/leadSources';
+import EntityLink from './EntityLink';
 
 export default function AudienceSelector({ targetSources, targetEventTypes, onChange, selectedLeadIds, onLeadIdsChange }) {
   const [leads, setLeads] = useState([]);
@@ -116,7 +117,16 @@ export default function AudienceSelector({ targetSources, targetEventTypes, onCh
                   checked={(selectedLeadIds || []).includes(lead.id)}
                   onChange={() => handleLeadToggle(lead.id)}
                 />
-                <span>{lead.name}</span>
+                <span>
+                  <EntityLink
+                    to={`/email-marketing/leads/${lead.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {lead.name}
+                  </EntityLink>
+                </span>
                 <span className="em-lead-email">{lead.email}</span>
               </label>
             ))}

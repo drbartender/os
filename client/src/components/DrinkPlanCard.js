@@ -1,5 +1,5 @@
 import React, { memo, useState, lazy, Suspense } from 'react';
-import { useNavigate } from 'react-router-dom';
+import EntityLink from './EntityLink';
 import api from '../utils/api';
 import { useToast } from '../context/ToastContext';
 import { PUBLIC_SITE_URL } from '../utils/constants';
@@ -28,7 +28,6 @@ function formatDateTime(d) {
 // the canonical event-side surface; the proposal-side card stays a lean
 // preview and leaves these off.
 function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullControls = false, guestCount, reload }) {
-  const navigate = useNavigate();
   const toast = useToast();
   const [copied, setCopied] = useState(false);
   const [consultOpen, setConsultOpen] = useState(false);
@@ -179,10 +178,9 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
               </div>
             )}
             <div className="vstack" style={{ gap: 6, marginTop: 12 }}>
-              <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }}
-                onClick={() => navigate(`/drink-plans/${drinkPlan.id}`)}>
+              <EntityLink to={`/drink-plans/${drinkPlan.id}`} className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }}>
                 <Icon name="external" size={11} />View details
-              </button>
+              </EntityLink>
               <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }}
                 onClick={copyLink}>
                 <Icon name="copy" size={11} />{copied ? 'Copied!' : 'Copy client link'}
