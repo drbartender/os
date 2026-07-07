@@ -2902,12 +2902,12 @@ CREATE INDEX IF NOT EXISTS idx_legacy_cc_raw_imports_review ON legacy_cc_raw_imp
 -- ─── CC Import: legacy_cc_proposals — Bucket C archive ───────────────
 CREATE TABLE IF NOT EXISTS legacy_cc_proposals (
   cc_id TEXT PRIMARY KEY,
-  status TEXT NOT NULL,                 -- verbatim CC status string
+  status TEXT NOT NULL,                 -- normalized by the phase-2 loader: booked | cancelled_booking | quote_open | quote_cancelled | quote_expired | quote_postponed
   client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
   client_email_normalized TEXT,
   client_name TEXT,
   event_date DATE,
-  event_type TEXT,                      -- always NULL from 2026-05-25 export
+  event_type TEXT,                      -- populated by the phase-2 loader (2026-07-06 export carries Event Type)
   package_name TEXT,
   service_name TEXT,
   brand TEXT,
@@ -2928,7 +2928,7 @@ CREATE INDEX IF NOT EXISTS idx_legacy_cc_proposals_client_id ON legacy_cc_propos
 CREATE INDEX IF NOT EXISTS idx_legacy_cc_proposals_email ON legacy_cc_proposals(client_email_normalized);
 CREATE INDEX IF NOT EXISTS idx_legacy_cc_proposals_event_date ON legacy_cc_proposals(event_date);
 
--- ─── CC Import: legacy_cc_payments — 337 payment+refund rows ─────────
+-- ─── CC ledger: legacy_cc_payments — all CC payment+refund rows (353 in the 2026-07-06 final export; loaded by scripts/cc-ledger-import.js) ───
 CREATE TABLE IF NOT EXISTS legacy_cc_payments (
   id BIGSERIAL PRIMARY KEY,
   cc_event_id TEXT,                     -- resolved during Phase 4; NULL on orphan
@@ -2936,7 +2936,7 @@ CREATE TABLE IF NOT EXISTS legacy_cc_payments (
   cc_type TEXT NOT NULL CHECK (cc_type IN ('Payment','Refund')),
   paid_on DATE,
   event_date DATE,
-  payment_applied_cents INTEGER NOT NULL,  -- absolute value (sign carried by cc_type)
+  payment_applied_cents INTEGER NOT NULL,  -- SIGNED cents, refunds negative (convention changed 2026-07-07 with the phase-2 ledger loader; v1's absolute-value convention died with v1's code, and signed keeps SUM() honest for the metrics layer)
   tip_cents INTEGER NOT NULL DEFAULT 0,
   processing_fee_cents INTEGER NOT NULL DEFAULT 0,
   net_cents INTEGER,
@@ -3607,3 +3607,15 @@ DROP INDEX IF EXISTS idx_scheduled_messages_pending_uniq;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_messages_pending_uniq
   ON scheduled_messages (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)
   WHERE status IN ('pending', 'processing');
+
+-- ─── cc-ledger lane: phase-2 ledger load (2026-07-07) ───
+-- The v1 raw-import staging layer is retired; the archived CC export files
+-- are the raw layer now, and scripts/cc-ledger-import.js fills the
+-- legacy_cc_* ledger tables directly. raw_import_id therefore becomes
+-- optional (DROP NOT NULL is a no-op when already nullable). Funnel metrics
+-- need quote-creation dates and event totals, which v1's table lacked.
+ALTER TABLE legacy_cc_payments  ALTER COLUMN raw_import_id DROP NOT NULL;
+ALTER TABLE legacy_cc_payouts   ALTER COLUMN raw_import_id DROP NOT NULL;
+ALTER TABLE legacy_cc_proposals ALTER COLUMN raw_import_id DROP NOT NULL;
+ALTER TABLE legacy_cc_proposals ADD COLUMN IF NOT EXISTS cc_created_at TIMESTAMPTZ;
+ALTER TABLE legacy_cc_proposals ADD COLUMN IF NOT EXISTS total_cost_cents INTEGER;

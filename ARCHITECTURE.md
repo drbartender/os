@@ -1222,9 +1222,9 @@ Admin entry points: "Shopping List" button on Drink Plan Detail (visible wheneve
 
 ### Check Cherry Import Tables
 
-One-time migration of legacy proposals, events, payments, payouts, leads, and invoices from Check Cherry. The staging tables remain in the schema after cutover so the Review page can keep surfacing operator triage queues, and so a re-run of any phase stays idempotent against the verbatim source rows.
+REPURPOSED 2026-07-07 (cc-import phase-2 reboot): the v1 importer and its Review pages are retired; these tables are now the frozen **CC-era ledger**, loaded once by `scripts/cc-ledger-import.js` from the final 2026-07-06 CheckCherry exports (archived off-repo) and consumed read-only by the metrics layer. Loader uses replace semantics (`--replace` truncates and reloads; the export files are the source of truth) with verification gates that tie row counts and money sums to CC's own P&L exports to the penny. `raw_import_id` is now nullable on all three ledger tables (the raw layer is the archived files, not staging rows).
 
-**legacy_cc_raw_imports** — Generic JSON staging row, one per imported CSV record (every source file, every entity)
+**legacy_cc_raw_imports** — v1 JSON staging (EMPTY since the phase-2 reboot; kept as harmless scaffolding, one per imported CSV record in v1's design)
 - `id` BIGSERIAL PK
 - `source_file`, `source_entity` ('events' | 'clients' | 'payments' | 'leads' | 'invoices' | 'payouts' | 'wix_field_guide' | 'wix_contractor' | 'wix_payment_info'), `source_row_number`, `source_row_hash` (sha256 of canonicalized JSON)
 - `cc_id` TEXT — present on entity rows that carry one; NULL for payments/payouts/leads/invoices
@@ -1233,13 +1233,14 @@ One-time migration of legacy proposals, events, payments, payouts, leads, and in
 - `import_notes` JSONB — operator + importer annotations (`{candidate_proposal_id,...}`, `{error,column,value,phase}`, `{resolved_by_user_id,resolved_at,decision}`, etc.)
 - UNIQUE `(source_file, source_row_number)` makes re-runs no-op; indexes on `source_entity`, `cc_id` (partial), and `import_status WHERE IN ('duplicate_review','errored')` for the Review page.
 
-**legacy_cc_proposals** — Bucket C archive table (rows the importer chose not to promote into `proposals`)
-- `cc_id` TEXT PK; verbatim CC `status`, `client_id` FK→clients (nullable), normalized client email + name, `event_date`, `package_name`, `service_name`, `brand`, venue fields, `estimated_guests`, `source`, `lead_type`, `package_amount_cents`, public + private notes, `booked_at`
-- `raw_import_id` BIGINT FK→legacy_cc_raw_imports (ON DELETE RESTRICT) ties each archive row back to its source
+**legacy_cc_proposals** — ALL 1,244 CC events (booked AND dead quotes, so close-rate math has its denominator)
+- `cc_id` TEXT PK; `status` normalized ('booked' | 'cancelled_booking' | 'quote_open' | 'quote_cancelled' | 'quote_expired' | 'quote_postponed'), `client_id` FK→clients (linked by email to the phase-1 imported clients; dead quotes stay NULL), normalized client email + name, `event_date`, `event_type`, `package_name`, `service_name`, `brand`, venue fields, `estimated_guests`, `source`, `lead_type`, `package_amount_cents` (unused by the phase-2 loader), public + private notes, `booked_at`
+- `cc_created_at` TIMESTAMPTZ (quote creation, for funnel-by-date), `total_cost_cents` INTEGER (event total, for value metrics) — added 2026-07-07
+- `raw_import_id` BIGINT nullable FK→legacy_cc_raw_imports (NULL since the phase-2 reboot)
 
-**legacy_cc_payments** — Promoted payment and refund rows (337 from the 2026-05-25 export)
-- `id` BIGSERIAL PK; `cc_event_id` TEXT (resolved during Phase 4, NULL on orphan), `cc_event_title`, `cc_type` CHECK ('Payment' | 'Refund')
-- `paid_on`, `event_date`, `payment_applied_cents` (absolute value, sign carried by `cc_type`), `tip_cents`, `processing_fee_cents`, `net_cents`, `event_total_cents`, plus the CC-side totals/tax fields
+**legacy_cc_payments** — All 353 CC payment + refund rows (2026-07-06 final export)
+- `id` BIGSERIAL PK; `cc_event_id` TEXT (NULL — the payments export carries no event id), `cc_event_title`, `cc_type` CHECK ('Payment' | 'Refund')
+- `paid_on`, `event_date`, `payment_applied_cents` (SIGNED cents, refunds negative — convention flipped 2026-07-07 from v1's absolute+sign-by-type so `SUM()` is honest for metrics), `tip_cents`, `processing_fee_cents`, `net_cents`, `event_total_cents`, plus the CC-side totals/tax fields
 - `payment_method`, `processor` ('Stripe Express' | 'Custom'), `receipt_number`, `invoice_number`, `reference_code` (`ch_…` when Stripe), `paid_by`, `assigned_staff`, public + private + operator notes
 - `dismissed_at` TIMESTAMPTZ — set when the operator dismisses an orphan-payment from the Review page (removes from the active queue)
 - `promoted_payment_id` FK→proposal_payments (SET NULL), `promoted_refund_id` FK→proposal_refunds (SET NULL) — only one of the two is populated on promotion (CHECK guard)
