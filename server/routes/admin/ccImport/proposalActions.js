@@ -15,7 +15,7 @@
  *   /proposals/:id/reaccrue-payout            — re-run payroll accrual for a
  *                                              proposal. Useful after an admin
  *                                              has cleared stub co-participants
- *                                              from /admin/cc-import/review.
+ *                                              from the (deleted 2026-07-07) v1 cc-import review page.
  *
  * Spec reference: docs/superpowers/specs/2026-05-25-checkcherry-import-design.md §9.2 §9.3.D, §9.3.E.
  * Plan reference: docs/superpowers/plans/2026-05-26-checkcherry-import.md Task 21.

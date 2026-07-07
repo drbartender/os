@@ -11,6 +11,7 @@
  *   --events   "<path>/report.csv"       ALL events incl. dead quotes (1,244 rows)
  *   --replace                            TRUNCATE the three ledger tables first
  *   --apply                              actually write; default = dry run
+ *   --allow-promoted                     bypass the double-count guard (dev only)
  *
  * Semantics: replace, not upsert. The archived exports are the source of
  * truth; recovery = reload from files. Without --replace, --apply aborts if
@@ -270,7 +271,7 @@ async function run() {
   const apply = args.includes('--apply');
   const replace = args.includes('--replace');
   if (!paths.payments || !paths.expenses || !paths.events) {
-    console.error('Usage: cc-ledger-import.js --payments <report (1).csv> --expenses <report (4).csv> --events <report.csv> [--replace] [--apply]');
+    console.error('Usage: cc-ledger-import.js --payments <report (1).csv> --expenses <report (4).csv> --events <report.csv> [--replace] [--apply] [--allow-promoted]');
     process.exit(1);
   }
 

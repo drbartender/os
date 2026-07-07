@@ -242,6 +242,9 @@ dr-bartender/
 │   │   ├── beoHandlers.js      # BEO dispatcher handler (`beo_unack_nudge_sms`) + scheduling/suppression/reanchor helpers
 │   │   ├── bookingWindow.js    # Pure booking-window math (last-minute ≤14-day full-payment-required predicate)
 │   │   ├── calcomWebhookHelpers.js # Pure Cal.com webhook helpers (HMAC signature verification, payload normalization) consumed by `server/routes/calcom.js`
+│   │   ├── ccWrapUpEmailTemplate.js # wrap-up email subject + html + text renderer (v1 importer deleted; template retained for the drain-only handler below)
+│   │   ├── ccWrapUpHandler.js  # post_event_wrap_up_email dispatcher handler, registered at boot in server/index.js (enqueue endpoint deleted with v1; retained to drain scheduled rows)
+│   │   ├── payrollGuards.js    # isLegacyCcParticipant (per-proposal stub check, used by payrollAccrual); isLegacyCcStubUser kept for parity
 │   │   ├── payrollDeferredRetry.js # Re-runs placement for tips that deferred while the open pay period was frozen (single-flight, attempt-capped); fired off the response path after a successful accrual and from the admin Retry button
 │   │   ├── changeRequests.js   # Client-portal change-request helpers: edit-window classifier, field allowlist, proposed-state preview + diff + price preview, and the reaper that auto-cancels pending requests on archive/complete
 │   │   ├── changeRequestNotifications.js # Admin alert (new request) + client decision (approved/declined) email + SMS sends
