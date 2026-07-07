@@ -49,7 +49,7 @@ test('decodeExport falls back to windows-1252 on invalid utf-8', () => {
 });
 
 test('collapseWhitespace fixes CC double-space names', () => {
-  assert.equal(collapseWhitespace('Kevin  Duffy '), 'Kevin Duffy');
+  assert.equal(collapseWhitespace('Ada  Lovelace '), 'Ada Lovelace');
 });
 
 test('import rule: paid OR confirmed, Customer role only', () => {

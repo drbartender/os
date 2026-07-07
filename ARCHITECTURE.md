@@ -865,7 +865,7 @@ Two new tables mirror Stripe payouts and their balance-transaction lines for a b
 
 **clients** — Client records
 - `name`, `email`, `phone`
-- `source`: direct | referral | thumbtack | zola | website | calcom | instagram | other
+- `source`: direct | referral | thumbtack | zola | website | calcom | instagram | checkcherry | other
 - `notes`
 - `communication_preferences` JSONB — `{sms_enabled, email_enabled, marketing_enabled}` (defaults true). Drives the Automated Communication system's send gating.
 - `email_status` (`ok` | `bad`), `phone_status` (`ok` | `bad`) — channel deliverability flags flipped on bounce/blocked-list signals.

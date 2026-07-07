@@ -42,7 +42,7 @@ authoritative behavior spec is the header comment in
 1. Deploy first: initDb replays schema.sql and extends the CHECK constraint.
 2. `DATABASE_URL=<prod> node scripts/cc-clients-import.js --contacts <report (5).csv> --events <report.csv>` (dry run; expect 184/3/0 and the two orphan-email warnings).
 3. Same command with `--apply`, on Dallas's explicit go.
-4. Eyeball a couple of imported clients + one merged one (Stef D., Tabitha Lopez, Hillarie Rovi) in the admin.
+4. Eyeball a couple of imported clients + one merged one (the 3 merge targets, initials S.D. / T.L. / H.R.) in the admin.
 
 ## Out of scope, tracked for later phases
 
