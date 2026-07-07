@@ -106,6 +106,69 @@ function ccClause(prefix, includeCc) {
   return '';
 }
 
+// ── CC-era ledger legs (cc-import phase 2, 2026-07-07) ─────────────
+//
+// The CheckCherry era lives in the legacy_cc_* ledger tables (loaded once by
+// scripts/cc-ledger-import.js), NOT in proposals — proposals.cc_id is NULL on
+// every native row, so the ccClause above self-zeroes the native leg under
+// 'only' and passes everything under 'all'/'exclude'. The tri-state therefore
+// means: 'all' = native + ledger, 'exclude' = native only, 'only' = ledger
+// only. Ledger money is SIGNED cents (refunds negative), so plain SUM() nets
+// refunds. Funnel semantics: every ledger row was a quote (cc_created_at);
+// a conversion is booked_at IS NOT NULL; value rides total_cost_cents of
+// status='booked' rows. The era is closed, so it contributes nothing to
+// pending/outstanding/pipeline metrics by design (see the phase-2 spec).
+
+/** Whether the CC ledger contributes under this includeCc mode. */
+function ccLedgerOn(includeCc) {
+  return includeCc !== 'exclude';
+}
+
+/** Scalar subquery: CC-era collected CENTS (signed) over paid_on. '0' when off. */
+function ccPaidLeg(from, to, params, includeCc) {
+  if (!ccLedgerOn(includeCc)) return '0';
+  const c = dateClause('lcp.paid_on', from, to, params);
+  return `(SELECT COALESCE(SUM(lcp.payment_applied_cents),0) FROM legacy_cc_payments lcp WHERE TRUE${c})`;
+}
+
+/**
+ * Scalar subquery: CC-era booked value in DOLLARS over booked_at|event_date.
+ * '0' when off. Default rides status='booked' (mirrors native NOT_DEAD
+ * exclusions); anyStatus=true values EVERY conversion (booked_at set,
+ * cancelled bookings included) to mirror native qAccepted, whose count AND
+ * value both survive a later archive.
+ */
+const CC_VALUE_COLUMNS = ['booked_at', 'event_date'];
+function ccBookedValueLeg(column, from, to, params, includeCc, { anyStatus = false } = {}) {
+  if (!CC_VALUE_COLUMNS.includes(column)) throw new Error(`ccBookedValueLeg: bad column ${column}`);
+  if (!ccLedgerOn(includeCc)) return '0';
+  const c = dateClause(`lcpr.${column}`, from, to, params);
+  const scope = anyStatus ? 'lcpr.booked_at IS NOT NULL' : "lcpr.status = 'booked'";
+  return `(SELECT COALESCE(SUM(lcpr.total_cost_cents),0)::float8/100.0 FROM legacy_cc_proposals lcpr WHERE ${scope}${c})`;
+}
+
+/** Scalar subquery: CC-era quote count over cc_created_at, optionally booked-only. '0' when off. */
+function ccQuoteCountLeg(from, to, params, includeCc, { bookedOnly = false } = {}) {
+  if (!ccLedgerOn(includeCc)) return '0';
+  const c = dateClause('lcpr.cc_created_at', from, to, params);
+  const booked = bookedOnly ? " AND lcpr.status = 'booked'" : '';
+  return `(SELECT COUNT(*) FROM legacy_cc_proposals lcpr WHERE lcpr.cc_created_at IS NOT NULL${booked}${c})`;
+}
+
+/** Scalar subquery: CC-era quote value in DOLLARS over cc_created_at. '0' when off. */
+function ccQuoteValueLeg(from, to, params, includeCc) {
+  if (!ccLedgerOn(includeCc)) return '0';
+  const c = dateClause('lcpr.cc_created_at', from, to, params);
+  return `(SELECT COALESCE(SUM(lcpr.total_cost_cents),0)::float8/100.0 FROM legacy_cc_proposals lcpr WHERE lcpr.cc_created_at IS NOT NULL${c})`;
+}
+
+/** Scalar subquery: CC-era conversions (booked_at set) over booked_at. '0' when off. */
+function ccBookedCountLeg(from, to, params, includeCc) {
+  if (!ccLedgerOn(includeCc)) return '0';
+  const c = dateClause('lcpr.booked_at', from, to, params);
+  return `(SELECT COUNT(*) FROM legacy_cc_proposals lcpr WHERE lcpr.booked_at IS NOT NULL${c})`;
+}
+
 // ── SQL builders. Each returns { sql, params }. `f` = { from, to, basis }. ──
 
 const NOT_DEAD = "status <> 'archived'";
@@ -133,8 +196,12 @@ function qSent(f) {
   const params = [];
   const c = dateClause('sent_at', f.from, f.to, params);
   const cc = ccClause('', f.includeCc);
+  // CC era: every ledger row was a sent quote; date axis = cc_created_at.
+  const ccCount = ccQuoteCountLeg(f.from, f.to, params, f.includeCc);
+  const ccValue = ccQuoteValueLeg(f.from, f.to, params, f.includeCc);
   return {
-    sql: `SELECT COUNT(*)::int AS count, COALESCE(SUM(total_price),0)::float8 AS value
+    sql: `SELECT (COUNT(*) + ${ccCount})::int AS count,
+                 (COALESCE(SUM(total_price),0) + ${ccValue})::float8 AS value
           FROM proposals WHERE sent_at IS NOT NULL${c}${cc}`,
     params,
   };
@@ -144,8 +211,16 @@ function qAccepted(f) {
   const params = [];
   const c = dateClause('accepted_at', f.from, f.to, params);
   const cc = ccClause('', f.includeCc);
+  // CC era: a conversion is booked_at IS NOT NULL (cancelled bookings still
+  // converted, mirroring native accepted_at surviving an archive). BOTH axes
+  // use that scope — the per-lane database review caught a count/value
+  // mismatch when the value leg filtered status='booked' (214 counted, 204
+  // valued, $800 dropped).
+  const ccCount = ccBookedCountLeg(f.from, f.to, params, f.includeCc);
+  const ccValue = ccBookedValueLeg('booked_at', f.from, f.to, params, f.includeCc, { anyStatus: true });
   return {
-    sql: `SELECT COUNT(*)::int AS count, COALESCE(SUM(total_price),0)::float8 AS value
+    sql: `SELECT (COUNT(*) + ${ccCount})::int AS count,
+                 (COALESCE(SUM(total_price),0) + ${ccValue})::float8 AS value
           FROM proposals WHERE accepted_at IS NOT NULL${c}${cc}`,
     params,
   };
@@ -155,9 +230,14 @@ function qWinRate(f) {
   const params = [];
   const c = dateClause('sent_at', f.from, f.to, params);
   const cc = ccClause('', f.includeCc);
+  // CC cohort: quotes created in-window; converted-from-cohort = the subset
+  // that ended status='booked'. The era is closed, so it adds NOTHING to
+  // pending — CC 'quote_open' rows are zombies, not live pipeline.
+  const ccCohort = ccQuoteCountLeg(f.from, f.to, params, f.includeCc);
+  const ccBookedFromCohort = ccQuoteCountLeg(f.from, f.to, params, f.includeCc, { bookedOnly: true });
   return {
-    sql: `SELECT COUNT(*)::int AS sent_cohort,
-                 COUNT(*) FILTER (WHERE accepted_at IS NOT NULL AND status <> 'archived')::int AS accepted_from_cohort,
+    sql: `SELECT (COUNT(*) + ${ccCohort})::int AS sent_cohort,
+                 (COUNT(*) FILTER (WHERE accepted_at IS NOT NULL AND status <> 'archived') + ${ccBookedFromCohort})::int AS accepted_from_cohort,
                  COUNT(*) FILTER (WHERE accepted_at IS NULL AND status <> 'archived')::int AS pending
           FROM proposals WHERE sent_at IS NOT NULL${c}${cc}`,
     params,
@@ -207,10 +287,12 @@ function qMoney(f) {
     // Default `all` path keeps the join-less form for performance parity with
     // the pre-filter query. Only join to proposals when filtering by cc_id.
     // Refunds are netted via a scalar subquery so the `all` path stays join-less.
+    // The CC leg is signed cents, so it nets its own refunds.
     if (f.includeCc === 'all') {
       const refunds = refundsInWindow(f.from, f.to, params, 'all');
+      const ccLeg = ccPaidLeg(f.from, f.to, params, f.includeCc);
       return {
-        sql: `SELECT (COALESCE(SUM(pp.amount),0) - ${refunds})::float8 AS value
+        sql: `SELECT (COALESCE(SUM(pp.amount),0) - ${refunds} + ${ccLeg})::float8 AS value
               FROM proposal_payments pp WHERE pp.status = 'succeeded'${c}`,
         params,
         cents: true,
@@ -218,8 +300,9 @@ function qMoney(f) {
     }
     const cc = ccClause('p.', f.includeCc);
     const refunds = refundsInWindow(f.from, f.to, params, f.includeCc);
+    const ccLeg = ccPaidLeg(f.from, f.to, params, f.includeCc);
     return {
-      sql: `SELECT (COALESCE(SUM(pp.amount),0) - ${refunds})::float8 AS value
+      sql: `SELECT (COALESCE(SUM(pp.amount),0) - ${refunds} + ${ccLeg})::float8 AS value
             FROM proposal_payments pp
             JOIN proposals p ON p.id = pp.proposal_id
             WHERE pp.status = 'succeeded'${c}${cc}`,
@@ -230,8 +313,10 @@ function qMoney(f) {
   const col = f.basis === 'scheduled' ? 'event_date' : 'accepted_at';
   const c = dateClause(col, f.from, f.to, params);
   const cc = ccClause('', f.includeCc);
+  // CC leg mirrors the basis: booked value over booked_at, scheduled over event_date.
+  const ccLeg = ccBookedValueLeg(f.basis === 'scheduled' ? 'event_date' : 'booked_at', f.from, f.to, params, f.includeCc);
   return {
-    sql: `SELECT COALESCE(SUM(total_price),0)::float8 AS value
+    sql: `SELECT (COALESCE(SUM(total_price),0) + ${ccLeg})::float8 AS value
           FROM proposals
           WHERE accepted_at IS NOT NULL AND ${NOT_DEAD}${c}${cc}`,
     params,
@@ -258,23 +343,47 @@ function qOutstanding(f) {
  */
 function qRevenue(f) {
   const params = [];
+  const ccOn = ccLedgerOn(f.includeCc);
   let lo;
   let hi;
   if (f.from && f.to) {
     params.push(f.from); lo = `date_trunc('month', $${params.length}::date)`;
     params.push(f.to); hi = `date_trunc('month', $${params.length}::date)`;
   } else {
-    const minExpr = f.basis === 'paid'
+    const nativeMin = f.basis === 'paid'
       ? "(SELECT MIN(created_at) FROM proposal_payments WHERE status='succeeded')"
       : f.basis === 'scheduled'
         ? `(SELECT MIN(event_date) FROM proposals WHERE accepted_at IS NOT NULL AND ${NOT_DEAD})`
         : `(SELECT MIN(accepted_at) FROM proposals WHERE accepted_at IS NOT NULL AND ${NOT_DEAD})`;
+    // Auto bounds follow the mode: the CC era starts earlier than native data,
+    // so 'all' takes the earliest of both mins (LEAST ignores NULLs) and
+    // 'only' uses the ledger min alone. The trailing-24-month cap still rules.
+    const ccMin = f.basis === 'paid'
+      ? '(SELECT MIN(paid_on) FROM legacy_cc_payments)'
+      : f.basis === 'scheduled'
+        ? "(SELECT MIN(event_date) FROM legacy_cc_proposals WHERE status = 'booked')"
+        : "(SELECT MIN(booked_at) FROM legacy_cc_proposals WHERE status = 'booked')";
+    const minExpr = f.includeCc === 'only' ? ccMin
+      : ccOn ? `LEAST(${nativeMin}, ${ccMin})` : nativeMin;
     lo = `GREATEST(
             date_trunc('month', COALESCE(${minExpr}, NOW() - INTERVAL '11 months')),
             date_trunc('month', NOW()) - INTERVAL '23 months')`;
     hi = `date_trunc('month', NOW())`;
   }
   const ccPrefixed = ccClause('p.', f.includeCc);
+  // Per-month CC-era legs, correlated on `ms`. Signed cents net refunds on the
+  // paid leg; the booked/scheduled leg rides status='booked' event totals.
+  const ccPaidMonthly = ccOn
+    ? ` + (SELECT COALESCE(SUM(lcp.payment_applied_cents),0)::float8/100.0 FROM legacy_cc_payments lcp
+          WHERE lcp.paid_on >= ms::date AND lcp.paid_on < (ms + INTERVAL '1 month')::date)`
+    : '';
+  const ccValueMonthly = ccOn
+    ? (f.basis === 'scheduled'
+      ? ` + (SELECT COALESCE(SUM(lcpr.total_cost_cents),0)::float8/100.0 FROM legacy_cc_proposals lcpr
+            WHERE lcpr.status = 'booked' AND lcpr.event_date >= ms::date AND lcpr.event_date < (ms + INTERVAL '1 month')::date)`
+      : ` + (SELECT COALESCE(SUM(lcpr.total_cost_cents),0)::float8/100.0 FROM legacy_cc_proposals lcpr
+            WHERE lcpr.status = 'booked' AND lcpr.booked_at >= ms AND lcpr.booked_at < ms + INTERVAL '1 month')`)
+    : '';
   // For the paid branch we keep the join-less subquery on the default `all`
   // path so the existing performance characteristics are preserved. Only when
   // a cc filter is active do we join to proposals.
@@ -282,19 +391,19 @@ function qRevenue(f) {
     ? `((SELECT COALESCE(SUM(amount),0)::float8/100.0 FROM proposal_payments pp
         WHERE pp.status='succeeded' AND pp.created_at >= ms AND pp.created_at < ms + INTERVAL '1 month')
        - (SELECT COALESCE(SUM(amount),0)::float8/100.0 FROM proposal_refunds pr
-          WHERE pr.status='succeeded' AND pr.created_at >= ms AND pr.created_at < ms + INTERVAL '1 month'))`
+          WHERE pr.status='succeeded' AND pr.created_at >= ms AND pr.created_at < ms + INTERVAL '1 month')${ccPaidMonthly})`
     : `((SELECT COALESCE(SUM(pp.amount),0)::float8/100.0 FROM proposal_payments pp
         JOIN proposals p ON p.id = pp.proposal_id
         WHERE pp.status='succeeded' AND pp.created_at >= ms AND pp.created_at < ms + INTERVAL '1 month'${ccPrefixed})
        - (SELECT COALESCE(SUM(pr.amount),0)::float8/100.0 FROM proposal_refunds pr
           JOIN proposals p ON p.id = pr.proposal_id
-          WHERE pr.status='succeeded' AND pr.created_at >= ms AND pr.created_at < ms + INTERVAL '1 month'${ccPrefixed}))`;
+          WHERE pr.status='succeeded' AND pr.created_at >= ms AND pr.created_at < ms + INTERVAL '1 month'${ccPrefixed})${ccPaidMonthly})`;
   const valueSub = f.basis === 'paid'
     ? paidValueSub
-    : `(SELECT COALESCE(SUM(total_price),0)::float8 FROM proposals p
+    : `((SELECT COALESCE(SUM(total_price),0)::float8 FROM proposals p
         WHERE p.accepted_at IS NOT NULL AND p.${NOT_DEAD}
           AND p.${f.basis === 'scheduled' ? 'event_date' : 'accepted_at'} >= ms
-          AND p.${f.basis === 'scheduled' ? 'event_date' : 'accepted_at'} < ms + INTERVAL '1 month'${ccPrefixed})`;
+          AND p.${f.basis === 'scheduled' ? 'event_date' : 'accepted_at'} < ms + INTERVAL '1 month'${ccPrefixed})${ccValueMonthly})`;
   // The paid monthly value (payments minus refunds) is identical whether it
   // feeds `value` (paid basis) or the `paid` sibling column, so compute it ONCE
   // per month in a LATERAL instead of duplicating both subqueries (4 -> 2).
@@ -328,4 +437,8 @@ const builders = {
   qPipelineOutstanding, qMoney, qOutstanding, qRevenue, qPaidCount,
 };
 
-module.exports = { resolveFilters, priorPeriod, dateClause, ccClause, refundsInWindow, toDollars, BASES, INCLUDE_CC_VALUES, ...builders };
+module.exports = {
+  resolveFilters, priorPeriod, dateClause, ccClause, refundsInWindow, toDollars,
+  ccLedgerOn, ccPaidLeg, ccBookedValueLeg, ccQuoteCountLeg, ccQuoteValueLeg, ccBookedCountLeg,
+  BASES, INCLUDE_CC_VALUES, ...builders,
+};

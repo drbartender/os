@@ -141,6 +141,9 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
   // created_at). Built AFTER collDate so the refund date params follow the
   // payment date params in `collParams`.
   const collRefunds = metrics.refundsInWindow(f.from, f.to, collParams, f.includeCc === 'all' ? 'all' : f.includeCc);
+  // CC-era collected (signed cents over paid_on; '0' under 'exclude'). Same
+  // cash-basis window; the ledger's negative refund rows net themselves.
+  const collCcLedger = metrics.ccPaidLeg(f.from, f.to, collParams, f.includeCc);
   // Unlinked refunds (payment_id NULL): netted in Collected but attach to no
   // payment row, so the ledger rows cannot reflect them. Surface the total (same
   // refund-date window + cc basis as Collected) so the UI can explain any gap
@@ -207,7 +210,7 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
       LIMIT 200
     `, payParams),
     pool.query(
-      `SELECT (COALESCE(SUM(${collAmountCol}),0) - ${collRefunds})::float8 AS c FROM ${collTable}${collJoin}
+      `SELECT (COALESCE(SUM(${collAmountCol}),0) - ${collRefunds} + ${collCcLedger})::float8 AS c FROM ${collTable}${collJoin}
        WHERE ${collStatusCol}='succeeded'${collDate}${collCc}`, collParams),
     pool.query(
       `SELECT COALESCE(SUM(pr.amount),0)::int AS c FROM proposal_refunds pr${unlinkedCcJoin}

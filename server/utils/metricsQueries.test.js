@@ -328,6 +328,101 @@ integTest('integration: all.value == exclude.value + only.value for qMoney and q
   }
 });
 
+// ─── CC-era ledger legs (cc-import phase 2) ─────────────────────────
+
+const LEDGER_BUILDERS = [
+  ['qSent', qSent], ['qAccepted', qAccepted], ['qWinRate', qWinRate],
+];
+
+test('ledger legs: exclude mode emits NO legacy_cc SQL anywhere', () => {
+  // Both the ranged path AND the auto-bounds (no-range) path, which builds
+  // its own min-bound expressions — the ranged path never reaches them.
+  const ranges = [{ from: '2025-01-01', to: '2025-12-31' }, { from: null, to: null }];
+  for (const range of ranges) {
+    for (const basis of ['paid', 'booked', 'scheduled']) {
+      const f = { ...range, basis, includeCc: 'exclude' };
+      for (const [name, b] of [...LEDGER_BUILDERS, ['qMoney', qMoney], ['qRevenue', qRevenue]]) {
+        const { sql } = b(f);
+        assert.ok(!sql.includes('legacy_cc'), `${name}/${basis}/${range.from} leaked a ledger leg under exclude`);
+      }
+    }
+  }
+});
+
+test('qAccepted CC legs use ONE conversion scope for count and value (booked_at set, any status)', () => {
+  const { sql } = qAccepted({ from: null, to: null, basis: 'booked', includeCc: 'only' });
+  // Count leg and value leg must both scope on booked_at IS NOT NULL; a
+  // status='booked' filter on either axis re-opens the 214-counted /
+  // 204-valued mismatch the lane review caught.
+  assert.ok(!sql.includes("status = 'booked'"), 'qAccepted leaked a status filter into a conversion leg');
+  assert.equal((sql.match(/booked_at IS NOT NULL/g) || []).length, 2);
+});
+
+test('ledger legs: all and only modes include the ledger tables', () => {
+  for (const includeCc of ['all', 'only']) {
+    const f = { from: '2025-01-01', to: '2025-12-31', basis: 'paid', includeCc };
+    assert.ok(qMoney(f).sql.includes('legacy_cc_payments'), `qMoney paid missing ledger leg under ${includeCc}`);
+    assert.ok(qRevenue(f).sql.includes('legacy_cc_payments'), `qRevenue paid missing ledger leg under ${includeCc}`);
+    const fb = { ...f, basis: 'booked' };
+    assert.ok(qMoney(fb).sql.includes('legacy_cc_proposals'), `qMoney booked missing ledger leg under ${includeCc}`);
+    assert.ok(qRevenue(fb).sql.includes('legacy_cc_proposals'), `qRevenue booked missing ledger leg under ${includeCc}`);
+    for (const [name, b] of LEDGER_BUILDERS) {
+      assert.ok(b(f).sql.includes('legacy_cc_proposals'), `${name} missing ledger leg under ${includeCc}`);
+    }
+  }
+});
+
+test('ledger legs: era-closed builders NEVER touch the ledger', () => {
+  for (const includeCc of ['all', 'exclude', 'only']) {
+    const f = { from: null, to: null, basis: 'booked', includeCc };
+    for (const [name, b] of [['qOutstanding', qOutstanding], ['qPipelineOutstanding', qPipelineOutstanding],
+      ['qPaidCount', qPaidCount], ['qTimeToAccept', qTimeToAccept], ['qLostValue', qLostValue]]) {
+      assert.ok(!b(f).sql.includes('legacy_cc'), `${name} must stay ledger-free (${includeCc})`);
+    }
+  }
+});
+
+test('ledger legs: placeholder count matches params in every mode/basis/range combo', () => {
+  const ranges = [{ from: null, to: null }, { from: '2025-01-01', to: '2025-12-31' }];
+  for (const range of ranges) {
+    for (const basis of ['paid', 'booked', 'scheduled']) {
+      for (const includeCc of ['all', 'exclude', 'only']) {
+        const f = { ...range, basis, includeCc };
+        for (const [name, b] of [['qMoney', qMoney], ['qRevenue', qRevenue], ...LEDGER_BUILDERS]) {
+          const { sql, params } = b(f);
+          const max = Math.max(0, ...[...sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
+          assert.equal(max, params.length, `${name} ${basis}/${includeCc}/${range.from}: $${max} vs ${params.length} params`);
+        }
+      }
+    }
+  }
+});
+
+integTest('integration: ledger identity all == exclude + only for funnel + paid money', async () => {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('metricsQueries.test.js refuses to run against production');
+  }
+  const { pool } = require('../db');
+  const run = async (b, f) => (await pool.query(b(f).sql, b(f).params)).rows[0];
+  const range = { from: '2024-01-01', to: '2026-12-31' };
+  for (const [name, b, fields] of [
+    ['qMoney/paid', qMoney, ['value']],
+    ['qSent', qSent, ['count', 'value']],
+    ['qAccepted', qAccepted, ['count', 'value']],
+    ['qWinRate', qWinRate, ['sent_cohort', 'accepted_from_cohort']],
+  ]) {
+    const basis = name === 'qMoney/paid' ? 'paid' : 'booked';
+    const [all, exclude, only] = await Promise.all(['all', 'exclude', 'only']
+      .map((includeCc) => run(b, { ...range, basis, includeCc })));
+    for (const field of fields) {
+      const lhs = Number(all[field]);
+      const rhs = Number(exclude[field]) + Number(only[field]);
+      assert.ok(Math.abs(lhs - rhs) < 0.01, `${name}.${field}: all=${lhs} != exclude+only=${rhs}`);
+    }
+  }
+});
+
+
 after(async () => {
   if (hasDb) {
     const { pool } = require('../db');
