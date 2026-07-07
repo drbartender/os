@@ -15,8 +15,22 @@ lanes:
       - client/src/index.css
       - README.md
       - ARCHITECTURE.md
+      # widened at build time (surfaced per the footprint rule): CcImportBadge
+      # had 5 more importers than the plan knew, plus the dead npm scripts.
+      - client/src/pages/admin/ProposalsDashboard.js
+      - client/src/pages/admin/EventDetailPage.js
+      - client/src/pages/admin/ProposalDetailEditForm.js
+      - client/src/pages/admin/ProposalDetail.js
+      - client/src/pages/admin/FinancialsDashboard.js
+      - client/src/pages/admin/ProposalDetailPaymentPanel.js
+      - package.json
     deps: []
     review: light + client build gate (deletion lane; grep-proven zero references)
+    # Build-time carve-out (correct deviation): server/routes/admin/ccImport/
+    # proposalActions.js + test SURVIVE — they serve two LIVE endpoints
+    # (reenroll-drink-plan-nudge, reaccrue-payout) wired to live admin buttons;
+    # not v1 code. Follow-up noted: crud.js /:id/legacy-cc-payments is now
+    # clientless (dead endpoint in sensitive proposals/, cleanup later).
   - id: cc-ledger
     footprint:
       - scripts/cc-ledger-import.js
