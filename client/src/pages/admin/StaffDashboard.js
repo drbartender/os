@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
+import useUrlListState from '../../hooks/useUrlListState';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { formatPhone, stripPhone } from '../../utils/formatPhone';
@@ -10,6 +11,10 @@ import Toolbar from '../../components/adminos/Toolbar';
 import KebabMenu from '../../components/adminos/KebabMenu';
 import ClickableRow from '../../components/ClickableRow';
 import AssignToEventModal from './userDetail/components/AssignToEventModal';
+
+// URL-backed view state (admin cross-nav). Module scope = stable identity.
+const STAFF_DEFAULTS = { tab: 'active', q: '' };
+const STAFF_TABS = ['active', 'all'];
 
 function isLegacyCcStub(s) {
   return typeof s?.cc_id === 'string'
@@ -29,8 +34,11 @@ export default function StaffDashboard() {
   const { user: currentUser } = useAuth();
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [tab, setTab] = useState('active');
+  const [listState, setListState] = useUrlListState(STAFF_DEFAULTS);
+  const tab = STAFF_TABS.includes(listState.tab) ? listState.tab : STAFF_DEFAULTS.tab;
+  const search = listState.q;
+  const setSearch = (v) => setListState({ q: v });
+  const setTab = (t) => setListState({ tab: t });
   const [assignTarget, setAssignTarget] = useState(null);
 
   // include_stubs=true surfaces legacy CC stub users (cc_id LIKE 'legacy_cc:%',

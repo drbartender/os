@@ -1,6 +1,7 @@
 import React from 'react';
 import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
+import EntityLink from '../../../../components/EntityLink';
 
 export default function MessagesTab({ loading, messages, sending, body, setBody, type, setType, result, send, recipient }) {
   return (
@@ -24,7 +25,12 @@ export default function MessagesTab({ loading, messages, sending, body, setBody,
                     {m.message_type}
                   </StatusChip>
                   {m.shift_event_type_label && (
-                    <span className="tiny muted">for {m.shift_event_type_label}</span>
+                    <span className="tiny muted">
+                      for{' '}
+                      <EntityLink to={m.shift_id ? `/events/shift/${m.shift_id}` : null}>
+                        {m.shift_event_type_label}
+                      </EntityLink>
+                    </span>
                   )}
                   <div className="spacer" style={{ flex: 1 }} />
                   <span className="tiny muted">
@@ -38,7 +44,12 @@ export default function MessagesTab({ loading, messages, sending, body, setBody,
                   </div>
                 )}
                 {m.sender_email && (
-                  <div className="tiny muted" style={{ marginTop: 4 }}>Sent by {m.sender_email}</div>
+                  <div className="tiny muted" style={{ marginTop: 4 }}>
+                    Sent by{' '}
+                    <EntityLink to={m.sender_id ? `/staffing/users/${m.sender_id}` : null}>
+                      {m.sender_email}
+                    </EntityLink>
+                  </div>
                 )}
               </div>
             ))

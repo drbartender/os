@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
+import EntityLink from '../EntityLink';
 
 // Round to next 30-min slot for the default datetime.
 const defaultWhen = () => {
@@ -75,7 +76,12 @@ export default function InterviewScheduleModal({ open, applicant, onClose, onSav
     >
       <div onClick={e => e.stopPropagation()} className="card" style={{ width: 460, maxWidth: '92vw' }}>
         <div className="card-head">
-          <h3>{applicant.interview_at ? 'Reschedule' : 'Schedule'} interview · {applicant.full_name}</h3>
+          <h3>
+            {applicant.interview_at ? 'Reschedule' : 'Schedule'} interview ·{' '}
+            <EntityLink to={applicant.id ? `/staffing/applications/${applicant.id}` : null}>
+              {applicant.full_name}
+            </EntityLink>
+          </h3>
         </div>
         <div className="card-body vstack" style={{ gap: 12 }}>
           <label className="vstack" style={{ gap: 4 }}>

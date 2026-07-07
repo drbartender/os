@@ -2,8 +2,13 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
+import useUrlListState from '../../hooks/useUrlListState';
 import StatusChip from '../../components/adminos/StatusChip';
+import EntityLink from '../../components/EntityLink';
 import InterviewScheduleModal from '../../components/adminos/InterviewScheduleModal';
+
+// URL-backed view state (admin cross-nav). Module scope = stable identity.
+const HIRING_DEFAULTS = { q: '' };
 
 const COLUMNS = [
   { key: 'applied',      label: 'Applied',     hint: 'Awaiting first review' },
@@ -38,7 +43,9 @@ export default function HiringDashboard() {
   const [appsLoading, setAppsLoading] = useState(true);
   const [summary, setSummary]         = useState({ new_apps_7d: 0, need_to_schedule: 0, stalled: 0, in_pipeline: 0 });
 
-  const [searchQ, setSearchQ]             = useState('');
+  const [listState, setListState]         = useUrlListState(HIRING_DEFAULTS);
+  const searchQ = listState.q;
+  const setSearchQ = (v) => setListState({ q: v });
   const [searchResults, setSearchResults] = useState([]);
   const [searchOpen, setSearchOpen]       = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -127,7 +134,14 @@ export default function HiringDashboard() {
 
   const closeSchedule = () => {
     setScheduleFor(null);
-    if (searchParams.get('schedule')) setSearchParams({});
+    // Clear only the schedule deep-link param; preserve the declared q view state.
+    if (searchParams.get('schedule')) {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('schedule');
+        return next;
+      }, { replace: true });
+    }
   };
 
   return (
@@ -171,7 +185,14 @@ export default function HiringDashboard() {
                 >
                   <div className="hstack" style={{ gap: 8, justifyContent: 'space-between' }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{r.full_name || r.email}</div>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>
+                        <EntityLink
+                          to={r.state === 'unfinished' ? null : `/staffing/applications/${r.id}`}
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
+                          {r.full_name || r.email}
+                        </EntityLink>
+                      </div>
                       <div className="tiny muted">{r.email}</div>
                     </div>
                     <StatusChip kind={
@@ -337,7 +358,14 @@ function ApplicantCard({ a, onOpen, onSchedule }) {
           <div style={{
             fontSize: 12.5, fontWeight: 600, lineHeight: 1.2,
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-          }}>{a.full_name}</div>
+          }}>
+            <EntityLink
+              to={a.id ? `/staffing/applications/${a.id}` : null}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {a.full_name}
+            </EntityLink>
+          </div>
           <div className="hstack" style={{ gap: 4, marginTop: 2, flexWrap: 'wrap' }}>
             {positions.slice(0, 2).map(p => (
               <span key={p} className="tag" style={{ fontSize: 9.5, padding: '1px 5px' }}>{p}</span>

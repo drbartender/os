@@ -7,6 +7,7 @@ import { getEventTypeLabel } from '../../../../utils/eventTypes';
 import FormBanner from '../../../../components/FormBanner';
 import FieldError from '../../../../components/FieldError';
 import ClickableRow from '../../../../components/ClickableRow';
+import EntityLink from '../../../../components/EntityLink';
 import Sparkbars from '../components/Sparkbars';
 import EquipmentDisplay from '../components/EquipmentDisplay';
 
@@ -131,7 +132,10 @@ export default function OverviewTab(props) {
                         <div style={{ position: 'absolute', left: 3, top: 14, bottom: -10, width: 1, background: 'var(--line-1)' }} />
                       )}
                     </div>
-                    <div>
+                    <EntityLink
+                      to={ev.proposal_id ? `/events/${ev.proposal_id}` : `/events/shift/${ev.id}`}
+                      style={{ display: 'block' }}
+                    >
                       <div style={{ fontSize: 13 }}>
                         <strong>Shift completed</strong>
                         <span className="muted" style={{ marginLeft: 6 }}>· {ev.position || 'Bartender'}</span>
@@ -143,7 +147,7 @@ export default function OverviewTab(props) {
                           event_type_custom: ev.event_type_custom || ev.proposal_event_type_custom,
                         })}
                       </div>
-                    </div>
+                    </EntityLink>
                     <div className="tiny muted" style={{ textAlign: 'right' }}>
                       {ev.event_date ? relDay(String(ev.event_date).slice(0, 10)) : ''}
                     </div>

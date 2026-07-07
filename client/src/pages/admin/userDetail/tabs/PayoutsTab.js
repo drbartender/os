@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import api from '../../../../utils/api';
 import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
+import EntityLink from '../../../../components/EntityLink';
 import { fmt$, fmt$fromCents, fmtDate } from '../../../../components/adminos/format';
 import FormBanner from '../../../../components/FormBanner';
 import FieldError from '../../../../components/FieldError';
@@ -20,7 +21,6 @@ export default function PayoutsTab(props) {
   const w9 = !!payment?.w9_file_url;
 
   const { id: userIdParam } = useParams();
-  const navigate = useNavigate();
   const [payouts, setPayouts] = useState(null);
 
   useEffect(() => {
@@ -41,13 +41,11 @@ export default function PayoutsTab(props) {
               <div className="muted tiny">No payouts yet. Once this contractor works a completed event, the period rows land here.</div>
             )}
             {payouts !== null && payouts.length > 0 && payouts.map(po => (
-              <div
+              <EntityLink
                 key={po.id}
+                to={po.period?.id ? `/financials/payroll?tab=history&period=${po.period.id}` : null}
                 className="hstack"
-                style={{ padding: '8px 0', borderTop: '1px solid var(--line-1)', gap: 8, cursor: 'pointer' }}
-                onClick={() => navigate(`/financials/payroll`)}
-                role="button" tabIndex={0}
-                onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/financials/payroll`); }}
+                style={{ padding: '8px 0', borderTop: '1px solid var(--line-1)', gap: 8, cursor: 'pointer', color: 'inherit' }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600 }}>{fmtDate(po.period.start_date)} – {fmtDate(po.period.end_date)}</div>
@@ -55,7 +53,7 @@ export default function PayoutsTab(props) {
                 </div>
                 <div className="num"><strong>{fmt$fromCents(po.total_cents)}</strong></div>
                 <span className={`chip ${po.status === 'paid' ? 'ok' : 'info'}`}>{po.status}</span>
-              </div>
+              </EntityLink>
             ))}
           </div>
         </div>

@@ -1,14 +1,23 @@
 import React from 'react';
 import { formatPhone } from '../../../../utils/formatPhone';
+import EntityLink from '../../../../components/EntityLink';
 
-export default function ApplicationTab({ application }) {
+// `userId` keys the standalone application page: /staffing/applications/:userId
+// resolves AdminApplicationDetail (route param is the USER id, not the
+// application row pk). Linking there is a cross-reference, not a self-link.
+export default function ApplicationTab({ application, userId }) {
   let positions = [];
   try { positions = JSON.parse(application.positions_interested || '[]'); } catch { positions = []; }
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 'var(--gap)' }}>
       <div className="card">
-        <div className="card-head"><h3>Original application</h3></div>
+        <div className="card-head">
+          <h3>Original application</h3>
+          <EntityLink to={userId ? `/staffing/applications/${userId}` : null} className="tiny">
+            Open full application
+          </EntityLink>
+        </div>
         <div className="card-body">
           <dl className="dl">
             <dt>Full name</dt><dd>{application.full_name || '—'}</dd>

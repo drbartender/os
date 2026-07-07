@@ -3,6 +3,7 @@ import StatusChip from '../../../../components/adminos/StatusChip';
 import { fmtDate } from '../../../../components/adminos/format';
 import { getEventTypeLabel } from '../../../../utils/eventTypes';
 import ClickableRow from '../../../../components/ClickableRow';
+import EntityLink from '../../../../components/EntityLink';
 
 export default function ShiftsTab({ upcoming, past, eventsLoading }) {
   if (eventsLoading) return <div className="muted">Loading shifts…</div>;
@@ -76,10 +77,14 @@ export default function ShiftsTab({ upcoming, past, eventsLoading }) {
                   <tr key={`${ev.id}-past`}>
                     <td>{ev.event_date ? fmtDate(String(ev.event_date).slice(0, 10), { year: 'numeric' }) : '—'}</td>
                     <td>
-                      <strong>{getEventTypeLabel({
-                        event_type: ev.event_type || ev.proposal_event_type,
-                        event_type_custom: ev.event_type_custom || ev.proposal_event_type_custom,
-                      })}</strong>
+                      <strong>
+                        <EntityLink to={ev.proposal_id ? `/events/${ev.proposal_id}` : `/events/shift/${ev.id}`}>
+                          {getEventTypeLabel({
+                            event_type: ev.event_type || ev.proposal_event_type,
+                            event_type_custom: ev.event_type_custom || ev.proposal_event_type_custom,
+                          })}
+                        </EntityLink>
+                      </strong>
                     </td>
                     <td className="muted">{ev.client_name || '—'}</td>
                     <td className="muted">{ev.position || '—'}</td>

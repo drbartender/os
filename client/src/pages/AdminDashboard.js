@@ -6,6 +6,7 @@ import api from '../utils/api';
 import { formatPhone } from '../utils/formatPhone';
 import TimePicker from '../components/TimePicker';
 import ClickableRow from '../components/ClickableRow';
+import EntityLink from '../components/EntityLink';
 
 export default function AdminDashboard() {
   const { user } = useAuth();
@@ -407,7 +408,11 @@ export default function AdminDashboard() {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
                         <div style={{ flex: 1 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-                            <strong style={{ fontSize: '1rem' }}>{shift.client_name || 'Shift'}</strong>
+                            <strong style={{ fontSize: '1rem' }}>
+                              <EntityLink to={shift.proposal_id ? `/events/${shift.proposal_id}` : `/events/shift/${shift.id}`}>
+                                {shift.client_name || 'Shift'}
+                              </EntityLink>
+                            </strong>
                             {shift.event_type_label && <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{shift.event_type_label}</div>}
                             <span className={`badge ${shift.status === 'open' ? 'badge-approved' : shift.status === 'filled' ? 'badge-reviewed' : 'badge-deactivated'}`}>
                               {shift.status}
@@ -474,7 +479,11 @@ export default function AdminDashboard() {
                                 {requests.map(req => (
                                   <tr key={req.id}>
                                     <td>
-                                      <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>{req.preferred_name || req.email}</div>
+                                      <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>
+                                        <EntityLink to={req.user_id ? `/staffing/users/${req.user_id}` : null}>
+                                          {req.preferred_name || req.email}
+                                        </EntityLink>
+                                      </div>
                                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{req.phone ? formatPhone(req.phone) : req.email}</div>
                                     </td>
                                     <td style={{ fontSize: '0.82rem' }}>{req.position || '—'}</td>
@@ -613,7 +622,14 @@ export default function AdminDashboard() {
                                   );
                                 }}
                               />
-                              <span style={{ fontWeight: 600 }}>{r.preferred_name || r.email}</span>
+                              <span style={{ fontWeight: 600 }}>
+                                <EntityLink
+                                  to={r.user_id ? `/staffing/users/${r.user_id}` : null}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {r.preferred_name || r.email}
+                                </EntityLink>
+                              </span>
                               <span className="text-muted" style={{ fontSize: '0.78rem' }}>{formatPhone(r.phone)}</span>
                             </label>
                           ))
@@ -681,7 +697,12 @@ export default function AdminDashboard() {
                               {g.message_type}
                             </span>
                             {g.shift_event_type_label && (
-                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>for {g.shift_event_type_label}</span>
+                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                for{' '}
+                                <EntityLink to={g.shift_id ? `/events/shift/${g.shift_id}` : null}>
+                                  {g.shift_event_type_label}
+                                </EntityLink>
+                              </span>
                             )}
                             <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                               {new Date(g.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
@@ -722,7 +743,11 @@ export default function AdminDashboard() {
                             <tbody>
                               {details.map(d => (
                                 <tr key={d.id}>
-                                  <td style={{ fontSize: '0.88rem' }}>{d.recipient_name || '—'}</td>
+                                  <td style={{ fontSize: '0.88rem' }}>
+                                    <EntityLink to={d.recipient_id ? `/staffing/users/${d.recipient_id}` : null}>
+                                      {d.recipient_name || '—'}
+                                    </EntityLink>
+                                  </td>
                                   <td style={{ fontSize: '0.82rem' }}>{formatPhone(d.recipient_phone)}</td>
                                   <td>
                                     <span className={`badge ${d.status === 'sent' ? 'badge-approved' : 'badge-deactivated'}`}>{d.status}</span>

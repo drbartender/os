@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../../../utils/api';
 import { getEventTypeLabel } from '../../../../utils/eventTypes';
+import EntityLink from '../../../../components/EntityLink';
 import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
 import { fmtDate, relDay } from '../../../../components/adminos/format';
@@ -139,7 +140,14 @@ export default function AssignToEventModal({ userId, staffName, onClose, onAssig
                     <div className="hstack" style={{ alignItems: 'flex-start', gap: 12 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="hstack" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
-                          <strong style={{ fontSize: 13 }}>{s.client_name || 'Event'}</strong>
+                          <strong style={{ fontSize: 13 }}>
+                            <EntityLink
+                              to={s.proposal_id ? `/events/${s.proposal_id}` : `/events/shift/${s.id}`}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {s.client_name || 'Event'}
+                            </EntityLink>
+                          </strong>
                           <StatusChip kind={open === 0 ? 'ok' : open <= 1 ? 'warn' : 'danger'}>
                             {filled}/{needed} staffed
                           </StatusChip>

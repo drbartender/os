@@ -4,6 +4,7 @@ import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
 import Icon from '../../../components/adminos/Icon';
 import StatusChip from '../../../components/adminos/StatusChip';
+import EntityLink from '../../../components/EntityLink';
 import { initialsOf, relDay, AD_FLOW, stageOf, chipKindFor, tryParseArray } from './helpers';
 import BackButton from '../../../components/adminos/BackButton';
 import PipelineStrip from './components/PipelineStrip';
@@ -121,7 +122,12 @@ export default function AdminApplicationDetail() {
               <h1 style={{
                 fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 500,
                 margin: 0, lineHeight: 1.1,
-              }}>{a.full_name}</h1>
+              }}>
+                {/* Cross-link to this person's staff/user record (route `id` is
+                    the USER id, per the note above). Not a self-reference: the
+                    application view and the staff view are distinct pages. */}
+                <EntityLink to={id ? `/staffing/users/${id}` : null}>{a.full_name}</EntityLink>
+              </h1>
               <StatusChip kind={chipKindFor(a.onboarding_status, onboardingPct)}>
                 {isRejected
                   ? 'Rejected'

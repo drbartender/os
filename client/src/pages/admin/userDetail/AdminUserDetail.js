@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../../utils/api';
+import useUrlListState from '../../../hooks/useUrlListState';
+import EntityLink from '../../../components/EntityLink';
 import { formatPhone } from '../../../utils/formatPhone';
 import { useToast } from '../../../context/ToastContext';
 import { useAuth } from '../../../context/AuthContext';
@@ -27,6 +29,15 @@ import MessagesTab from './tabs/MessagesTab';
 import ApplicationTab from './tabs/ApplicationTab';
 import TipPageTab from './tabs/TipPageTab';
 
+// URL-backed tab state (admin cross-nav). No tab-list array existed; this
+// mirrors the TabButton set below. `application` renders conditionally, so it
+// is clamped out when the record has no application. Module scope = stable id.
+const USER_DETAIL_DEFAULTS = { tab: 'overview' };
+const USER_DETAIL_TABS = [
+  'overview', 'shifts', 'certifications', 'payouts',
+  'tip-page', 'documents', 'messages', 'application',
+];
+
 export default function AdminUserDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -35,7 +46,15 @@ export default function AdminUserDetail() {
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('overview');
+  const [tabState, setTabState] = useUrlListState(USER_DETAIL_DEFAULTS);
+  const setTab = (t) => setTabState({ tab: t });
+  // Clamp the URL tab to the real set; drop `application` when this record has
+  // none, so ?tab=application on an application-less user falls to overview.
+  const hasApplicationTab = !!data?.application?.id;
+  const allowedTabs = hasApplicationTab
+    ? USER_DETAIL_TABS
+    : USER_DETAIL_TABS.filter((t) => t !== 'application');
+  const tab = allowedTabs.includes(tabState.tab) ? tabState.tab : USER_DETAIL_DEFAULTS.tab;
 
   const [statusLoading, setStatusLoading] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
@@ -430,7 +449,14 @@ export default function AdminUserDetail() {
         <section className="card" style={{ marginBottom: 'var(--gap)', padding: '1.25rem 1.5rem' }}>
           <h3 style={{ fontSize: 16, margin: '0 0 6px' }}>Re-accrue payouts</h3>
           <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: '0 0 12px' }}>
-            This user participated on {stubCoProposals.length} {stubCoProposals.length === 1 ? 'proposal' : 'proposals'} with legacy CC stub co-participants.
+            This user participated on {stubCoProposals.length} {stubCoProposals.length === 1 ? 'proposal' : 'proposals'} (
+            {stubCoProposals.map((pid, i) => (
+              <React.Fragment key={pid}>
+                {i > 0 && ', '}
+                <EntityLink to={`/proposals/${pid}`}>#{pid}</EntityLink>
+              </React.Fragment>
+            ))}
+            ) with legacy CC stub co-participants.
             Re-run payroll accrual once the stubs are linked or removed.
           </p>
           <button
@@ -570,7 +596,7 @@ export default function AdminUserDetail() {
       )}
 
       {tab === 'application' && application?.id && (
-        <ApplicationTab application={application} />
+        <ApplicationTab application={application} userId={user.id} />
       )}
 
       {/* Assign-to-event modal */}
