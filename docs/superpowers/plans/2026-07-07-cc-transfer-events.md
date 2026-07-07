@@ -12,6 +12,11 @@ lanes:
       - server/routes/proposals/crud.js
       - server/routes/proposals/getOne.js
       - client/src/pages/admin/ProposalDetailPaymentPanel.js
+      # widened at build time (surfaced per the footprint rule): the money
+      # reviewer found refreshUnlockedInvoices re-bills external_paid on
+      # refreshed Balance/Full Payment invoices — netted there + DB test.
+      - server/utils/invoiceLifecycle.js
+      - server/utils/invoiceLifecycle.external.test.js
       - ARCHITECTURE.md
       - README.md
     deps: []
