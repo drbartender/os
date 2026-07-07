@@ -11,5 +11,6 @@ export const CLIENT_SOURCES = [
   { value: 'website',   label: 'Website' },
   { value: 'calcom',    label: 'Cal.com' },
   { value: 'instagram', label: 'Instagram' },
+  { value: 'checkcherry', label: 'CheckCherry' },
   { value: 'other',     label: 'Other' },
 ];

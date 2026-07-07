@@ -23,6 +23,7 @@ const SOURCE = {
   referral:  { label: 'Referral',  kind: 'ok' },
   website:   { label: 'Website',   kind: 'accent' },
   instagram: { label: 'Instagram', kind: 'violet' },
+  checkcherry: { label: 'CheckCherry', kind: 'neutral' },
   other:     { label: 'Other',     kind: 'neutral' },
 };
 

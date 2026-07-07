@@ -6,7 +6,7 @@ const { ValidationError, NotFoundError } = require('../utils/errors');
 
 const router = express.Router();
 
-const VALID_SOURCES = ['direct', 'thumbtack', 'referral', 'website', 'calcom', 'zola', 'instagram', 'other'];
+const VALID_SOURCES = ['direct', 'thumbtack', 'referral', 'website', 'calcom', 'zola', 'instagram', 'checkcherry', 'other'];
 
 // Normalize email to trimmed lowercase (mirrors clientDedup.js) so the
 // case-sensitive partial-unique idx_clients_email_unique actually rejects
