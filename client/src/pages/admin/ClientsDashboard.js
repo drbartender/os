@@ -13,7 +13,6 @@ import KebabMenu from '../../components/adminos/KebabMenu';
 import ClickableRow from '../../components/ClickableRow';
 import RowLink from '../../components/RowLink';
 import { fmt$, fmtDate } from '../../components/adminos/format';
-import CcImportBadge from '../../components/admin/CcImportBadge';
 
 const SOURCE = {
   direct:    { label: 'Direct',    kind: 'neutral' },
@@ -220,7 +219,6 @@ export default function ClientsDashboard() {
                       <div className="hstack">
                         <div className="avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{initialsOf(c.name)}</div>
                         <RowLink to={`/clients/${c.id}`}><strong>{c.name}</strong></RowLink>
-                        <CcImportBadge ccId={c.cc_id} />
                       </div>
                     </td>
                     <td>

@@ -15,7 +15,6 @@ import { AddonQtyStepper, clampAddonQty } from '../../components/AddonControls';
 import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
 import { isQuantityCapable } from '../../utils/proposalRules';
 import { formatSetupTime } from '../../utils/setupTime';
-import CcImportBadge from '../../components/admin/CcImportBadge';
 
 // Read-only audit copy for proposals.gratuity_rate_change_origin (NULL when the
 // rate was never touched, so the line is hidden). Admin-only: this component is
@@ -315,7 +314,6 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
     <div className="card">
       <div className="card-head">
         <h3>Edit proposal</h3>
-        <CcImportBadge ccId={proposal?.cc_id} />
         <span className="k">Internal</span>
       </div>
       <div className="card-body">

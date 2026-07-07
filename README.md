@@ -145,7 +145,6 @@ dr-bartender/
 │   ├── routes/
 │   │   ├── admin/              # Admin endpoints (users/applications/hiring/managers/blog/settings sub-routers)
 │   │   │   ├── index.js        # Composition router
-│   │   │   ├── users.js        # /users CRUD + status + profile + permissions + seniority + /active-staff + /users/:id/stub-co-participated-proposals (cc-import unstub auditing)
 │   │   │   ├── applications.js # /applications + /notes + interview scheduling + scorecard + reject/restore/move/reminder
 │   │   │   ├── hiring.js       # /hiring/summary (KPIs) + /hiring/search (cross-state applicant search)
 │   │   │   ├── managers.js     # /managers CRUD
@@ -155,14 +154,7 @@ dr-bartender/
 │   │   │   ├── search.js       # /search — global record search across clients/proposals/events/staff
 │   │   │   ├── payroll.js      # /payroll — contractor payouts, pay periods, paystub data
 │   │   │   ├── presence.js     # /presence + /presence/state + /presence/leads + /presence/log — time-clock strip + history
-│   │   │   └── ccImport/       # Check Cherry import admin endpoints
-│   │   │       ├── index.js            # Composition router mounted at /api/admin/cc-import
-│   │   │       ├── wrapUp.js           # Bucket B wrap-up worklist + preview + enqueue (Task 18)
-│   │   │       ├── review.js           # Review-page GET (7 sections) + 6 action endpoints (Task 19)
-│   │   │       ├── reviewPromote.js     # The 2 skipDedup force-promote endpoints, extracted for size + atomic promote+status-flip txn (audit 3c-roles)
-│   │   │       ├── phase0.js           # Phase 0 give-up endpoints (extracted to keep review.js under cap)
-│   │   │       ├── search.js           # Review-page proposal + user typeahead pickers + link-preview
-│   │   │       └── proposalActions.js  # Mounted at /api/admin (not under /cc-import/) — re-enroll drink-plan nudge + re-accrue payout (Task 21)
+│   │   │   └── ccImport/       # Live CC re-trigger endpoints (v1 import/review admin UI removed 2026-07-07)
 │   │   ├── agreement.js        # Contractor agreement + digital signature
 │   │   ├── application.js      # Contractor application form
 │   │   ├── auth.js             # POST /register, POST /login, GET /me
@@ -250,9 +242,6 @@ dr-bartender/
 │   │   ├── beoHandlers.js      # BEO dispatcher handler (`beo_unack_nudge_sms`) + scheduling/suppression/reanchor helpers
 │   │   ├── bookingWindow.js    # Pure booking-window math (last-minute ≤14-day full-payment-required predicate)
 │   │   ├── calcomWebhookHelpers.js # Pure Cal.com webhook helpers (HMAC signature verification, payload normalization) consumed by `server/routes/calcom.js`
-│   │   ├── ccWrapUpEmailTemplate.js # cc-import: wrap-up email subject + html + text renderer
-│   │   ├── ccWrapUpHandler.js  # cc-import: post_event_wrap_up_email dispatcher handler (registered at boot in server/index.js)
-│   │   ├── payrollGuards.js    # cc-import: isLegacyCcParticipant (per-proposal stub check, used by payrollAccrual). isLegacyCcStubUser (per-user check) kept for parity; no production callers since the rollForwardLateTip/clawbackTip stub-filter refactor moved the check inline into the bartender SELECT
 │   │   ├── payrollDeferredRetry.js # Re-runs placement for tips that deferred while the open pay period was frozen (single-flight, attempt-capped); fired off the response path after a successful accrual and from the admin Retry button
 │   │   ├── changeRequests.js   # Client-portal change-request helpers: edit-window classifier, field allowlist, proposed-state preview + diff + price preview, and the reaper that auto-cancels pending requests on archive/complete
 │   │   ├── changeRequestNotifications.js # Admin alert (new request) + client decision (approved/declined) email + SMS sends
@@ -371,8 +360,6 @@ dr-bartender/
 │   │   │                       # ClickableRow (table <tr> wrapper: plain click navigates, drag selects/copies text),
 │   │   │                       # RowLink (real-anchor wrapper for a ClickableRow's primary cell: ctrl/cmd/middle-click opens a new tab natively),
 │   │   │                       # AddonControls (shared add-on UI controls: quantity stepper + greyed bundle badge, used by ProposalCreate + ProposalDetailEditForm),
-│   │   │                       # admin/LegacyCcPaymentsPanel (admin-only panel on ProposalDetail that surfaces CC-imported Stripe charges and warns the operator that the DRB OS Refund button cannot reach them),
-│   │   │                       # admin/CcImportBadge (small "Imported from CC" badge rendered next to titles on admin proposals/clients/events pages when cc_id is set),
 │   │   │                       # admin/SourceBadge (small "Thumbtack" origin badge next to a proposal's client name when source='thumbtack'),
 │   │   │                       # StaffShell + StaffShellWithThemeWiring (staff portal v2 layout shell — bottom tab bar + user pill, outlet for routed pages),
 │   │   │                       # StaffUserPillMenu (account-pill dropdown rendered by StaffShell)
@@ -391,7 +378,7 @@ dr-bartender/
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
 │   │   │   ├── (staff)         # Application, ApplicationStatus, HiringLanding, PreHireOnboarding (open pre-hire URL)
 │   │   │   ├── (admin)         # AdminDashboard (AdminUserDetail moved into admin/userDetail/, AdminApplicationDetail moved into admin/applicationDetail/)
-│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, Messages admin SMS conversation/thread page, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/, NotificationSettings per-user notification-subscription toggles, CcImportWrapUpPage Bucket B wrap-up email worklist, CcImportReviewPage 7-section import-reconciliation triage, ProposalChangeRequestCard client-portal change-request review card on Proposal Detail (diff, preview, apply-in-editor, decline), AlternativesPanel option-group manager on Proposal Detail (add/remove alternatives, Send options, copy compare link), ChangeRequestsDashboard admin pending-requests queue at /change-requests, eventDetail/MessageLogCard newest-first client message log (email + SMS, sent/failed) on EventDetailPage, payroll/DeferredTipsPanel admin list + Retry button for tips/clawbacks that deferred while the open pay period was frozen, StripePayoutsTab Stripe payout reconciliation tab on FinancialsDashboard)
+│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, Messages admin SMS conversation/thread page, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/, NotificationSettings per-user notification-subscription toggles, ProposalChangeRequestCard client-portal change-request review card on Proposal Detail (diff, preview, apply-in-editor, decline), AlternativesPanel option-group manager on Proposal Detail (add/remove alternatives, Send options, copy compare link), ChangeRequestsDashboard admin pending-requests queue at /change-requests, eventDetail/MessageLogCard newest-first client message log (email + SMS, sent/failed) on EventDetailPage, payroll/DeferredTipsPanel admin list + Retry button for tips/clawbacks that deferred while the open pay period was frozen, StripePayoutsTab Stripe payout reconciliation tab on FinancialsDashboard)
 │   │   │   ├── staff/          # Staff portal — the live v2 portal, mounted at root on staff.drbartender.com (HomePage, ShiftsPage + ShiftDetail, PayPage + PayoutDetail, TipCardPage, EmailVerifyPage email-change confirm) + PrintTipCard printable QR card (PrintTipCard.jsx + PrintTipCard.layouts.jsx + PrintTipCard.css)
 │   │   │   │   └── account/    # AccountPage shell + sub-nav with ProfileSection, PaymentMethodsSection (+ PaymentMethodRows + AddMethodModal), CalendarSyncSection, NotificationsSection (+ IOSCoachmark + PushPermissionBanner), DocumentsSection (+ ReplaceConfirmModal)
 │   │   │   ├── plan/           # PotionPlanningLab, public post-booking event questionnaire (single flow, created only after deposit; with steps/, components/, data/; components/ScopeBanner + components/WelcomeRoadmap + components/MenuPreview + components/LogoUploadField = apothecary-reskin + Standard Menu shared UI; steps/HostedGuestPrefsStep.js = compact hosted-package guest-preferences step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test; data/menuSections.js = Standard Menu section extractor with menuSections.test.js Jest unit suite)
@@ -415,10 +402,6 @@ dr-bartender/
 │   │                           #   sensitive-match.js (+ .test.js) : matcher that reads sensitive-paths.txt
 │   │                           #   check-claudemd-invariants.sh    : paired keyword/regex coverage check over CLAUDE.md
 │   │                           #   claudemd-invariants.txt         : the invariant manifest it checks
-│   ├── cc-import.js             # Check Cherry importer CLI entrypoint — dispatches to per-phase modules via --phase=N
-│   └── cc-import/               # 7-phase Check Cherry import pipeline (Phase 0 attachments → Phase 6 leads/invoices archive)
-│       ├── lib/                 # Shared utilities: csv, money, dateFmt, duration, timeFormat, fuzzyName, buckets, db, runLog, httpFetch, r2, email, cli
-│       └── phases/              # phase0.js through phase6.js — one file per import phase, each with a co-located *.test.js
 ├── docs/                       # Project docs: build-board.md (Claude-maintained ready/in-flight/shipped index), ops-runbook.md, tech-debt.md,
 │                               # client-portal-v2-project.md, staff-portal-beo-project.md, open-threads.md, superpowers/{specs,plans}/
 ├── .claude/agents/             # Claude Code review agents (7 agents)
@@ -449,9 +432,6 @@ dr-bartender/
 | `npm run worktree:new -- <name>` | Create a parallel-dev worktree at `../worktrees/<name>` on a new branch off `main`, with `node_modules` + husky symlinks wired up |
 | `npm run worktree:rm -- <name>` | Tear down a worktree: remove its symlinks, the worktree, then the branch (`--force` to discard an unmerged branch) |
 | `npm run lane:status` | List open lanes (worktrees) and flag stale ones (48h no-commit, 15+ main commits since cut, or a sensitive path landed on main since cut); run at session start and in the push sweep |
-| `npm run cc-import` | One-shot Check Cherry import run using the default config (runs all 7 phases sequentially) |
-| `npm run cc-import:all` | Explicit "run all phases" alias of `cc-import` |
-| `npm run cc-import:phase0` ... `:phase6` | Single-phase run (`--phase=N`): Phase 0 attachments, Phase 1 leads-as-clients, Phase 2 clients, Phase 3 proposals/events, Phase 4 payments/refunds, Phase 5 payouts, Phase 6 leads + invoices archive |
 
 ## Key Features
 
@@ -500,9 +480,6 @@ dr-bartender/
 - Geocoding via Nominatim: staff addresses and event locations are automatically geocoded for distance calculations
 - Equipment constraint: at least one approved staff member must have required equipment or be willing to pick up from storage
 - Configurable algorithm weights and max distance in Settings > Auto-Assign
-
-### Check Cherry import (one-time, operator-triggered)
-Imports legacy proposals, events, payments, refunds, payouts, leads, and invoices from Check Cherry CSV exports into DRB OS. The 7-phase pipeline (Phase 0 attachments staged to R2, Phase 1 leads-as-clients, Phase 2 clients with email-case dedup, Phase 3 proposals + shifts, Phase 4 payments + refunds via the full `refundHelpers` Approach A mirror, Phase 5 historical payouts, Phase 6 leads + invoices archive) runs via `npm run cc-import` and writes verbatim to `legacy_cc_raw_imports` before promoting to production tables. Suspected duplicates, orphan payments, unmatched payees, and Phase 0 fetch failures surface on `/admin/cc-import/review` for operator triage with 8 in-page action endpoints. Bucket B (past-event) wrap-up emails enqueue from `/admin/cc-import/wrap-up`. Imported proposals/clients/users carry a `cc_id` that drives a small "Imported from CC" badge across admin lists and details.
 
 ### Admin Dashboard
 - **Global Search**: A `Cmd/Ctrl+K` command palette on every admin page searches clients, proposals, events, and staff by partial name, phone number, or email, and jumps straight to the matching record.

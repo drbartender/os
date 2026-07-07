@@ -9,7 +9,6 @@ import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
 import { fmt$, fmtDate, relDay } from '../../components/adminos/format';
 import ClickableRow from '../../components/ClickableRow';
-import CcImportBadge from '../../components/admin/CcImportBadge';
 import SourceBadge from '../../components/admin/SourceBadge';
 import RowLink from '../../components/RowLink';
 
@@ -220,7 +219,6 @@ export default function ProposalsDashboard() {
                   <ClickableRow key={p.id} to={`/proposals/${p.id}`}>
                     <td>
                       <RowLink to={`/proposals/${p.id}`}><strong>{p.client_name || '—'}</strong></RowLink>
-                      <CcImportBadge ccId={p.proposal_cc_id} />
                       <SourceBadge source={p.source} />
                       {p.client_email && <div className="sub">{p.client_email}</div>}
                     </td>

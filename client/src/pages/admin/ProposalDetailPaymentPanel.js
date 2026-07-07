@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../utils/api';
-import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import InvoiceDropdown from '../../components/InvoiceDropdown';
-import LegacyCcPaymentsPanel from '../../components/admin/LegacyCcPaymentsPanel';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmt$2dp } from '../../components/adminos/format';
@@ -14,7 +12,6 @@ import { fmt$2dp } from '../../components/adminos/format';
 // mutation that changes proposal state so the parent can reload.
 export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
   const toast = useToast();
-  const { user: currentUser } = useAuth();
 
   const totalPrice = Number(proposal.total_price || 0);
   const amountPaid = Number(proposal.amount_paid || 0);
@@ -266,11 +263,6 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
             </>
           )}
         </dl>
-
-        {/* Legacy CC payments — admin-only, renders nothing if no imported
-            payments exist. Sits above InvoiceDropdown so it's the first thing
-            an admin sees on a CC-imported proposal's payment card. */}
-        <LegacyCcPaymentsPanel proposalId={proposal.id} currentUserRole={currentUser?.role} />
 
         {/* Invoices */}
         <div style={{ marginTop: 14 }}>

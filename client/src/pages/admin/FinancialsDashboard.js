@@ -8,7 +8,6 @@ import MetricsFilterBar from '../../components/adminos/MetricsFilterBar';
 import useMetricsFilter from '../../hooks/useMetricsFilter';
 import { fmt$, fmt$fromCents, fmtDate } from '../../components/adminos/format';
 import ClickableRow from '../../components/ClickableRow';
-import CcImportBadge from '../../components/admin/CcImportBadge';
 import StripePayoutsTab from './StripePayoutsTab';
 
 const STATUS = {
@@ -141,7 +140,6 @@ export default function FinancialsDashboard() {
                       <ClickableRow key={p.id} to={`/proposals/${p.id}`}>
                         <td>
                           <strong>{p.client_name || '—'}</strong>
-                          <CcImportBadge ccId={p.proposal_cc_id} />
                         </td>
                         <td>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</td>
                         <td>{p.event_date ? fmtDate(String(p.event_date).slice(0, 10), { year: 'numeric' }) : '—'}</td>

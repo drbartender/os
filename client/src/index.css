@@ -930,20 +930,6 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   font-size: 0.75em;
   margin-left: 0.5em;
 }
-.badge-cc-import {
-  background: #e6f0ff;
-  color: #1a4ba0;
-  border: 1px solid #b8d1f5;
-  padding: 2px 8px;
-  border-radius: 3px;
-  font-size: 0.7em;
-  font-weight: 600;
-  text-transform: none;
-  letter-spacing: 0;
-  margin-left: 0.5em;
-  white-space: nowrap;
-  vertical-align: middle;
-}
 
 /* Progress Bar */
 .progress-track {

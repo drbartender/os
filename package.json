@@ -22,15 +22,6 @@
     "worktree:rm": "node scripts/worktree-rm.js",
     "lane:status": "node scripts/lane-status.js",
     "where": "node scripts/show-location.js",
-    "cc-import": "node scripts/cc-import.js",
-    "cc-import:phase0": "node scripts/cc-import.js --phase=0",
-    "cc-import:phase1": "node scripts/cc-import.js --phase=1",
-    "cc-import:phase2": "node scripts/cc-import.js --phase=2",
-    "cc-import:phase3": "node scripts/cc-import.js --phase=3",
-    "cc-import:phase4": "node scripts/cc-import.js --phase=4",
-    "cc-import:phase5": "node scripts/cc-import.js --phase=5",
-    "cc-import:phase6": "node scripts/cc-import.js --phase=6",
-    "cc-import:all": "node scripts/cc-import.js --all",
     "prepare": "husky"
   },
   "dependencies": {
