@@ -155,7 +155,7 @@ async function provisioningSlugSet(db) {
  * @param {object} proposal - Proposal row (must include client_name, client_email, event_type, event_type_custom, event_date, created_by)
  * @returns {object|null} The created drink_plan row, or null if skipped
  */
-async function createDrinkPlan(proposalId, proposal, { skipEmail = false } = {}) {
+async function createDrinkPlan(proposalId, proposal, { skipEmail = false, skipNudge = false } = {}) {
   // Idempotency: skip if a drink plan already exists for this proposal
   const existing = await pool.query(
     'SELECT id FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
@@ -165,10 +165,12 @@ async function createDrinkPlan(proposalId, proposal, { skipEmail = false } = {})
 
   const clientEmail = proposal.client_email;
 
-  // Insert the drink plan
+  // Insert the drink plan. skipNudge also persists as a DURABLE suppression
+  // (nudge_suppressed) so automatic re-enqueues (schedulePreEventReminders on
+  // any proposal PATCH) stay silent until the admin re-enrolls.
   const result = await pool.query(`
-    INSERT INTO drink_plans (client_name, client_email, event_type, event_type_custom, event_date, proposal_id, created_by)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    INSERT INTO drink_plans (client_name, client_email, event_type, event_type_custom, event_date, proposal_id, created_by, nudge_suppressed)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     RETURNING *
   `, [
     proposal.client_name || null,
@@ -177,7 +179,8 @@ async function createDrinkPlan(proposalId, proposal, { skipEmail = false } = {})
     proposal.event_type_custom || null,
     proposal.event_date || null,
     proposalId,
-    proposal.created_by
+    proposal.created_by,
+    skipNudge === true
   ]);
 
   const drinkPlan = result.rows[0];
@@ -187,17 +190,21 @@ async function createDrinkPlan(proposalId, proposal, { skipEmail = false } = {})
   // so a separate drinkPlanLink send would duplicate it. The drink_plans row
   // itself still has to exist here — the orientation payload reads its token.
 
-  // CC-import: enroll the drink-plan nudge (T-21 email + SMS) right after the
-  // plan row is inserted. Hook fires only when this call actually inserted a row
-  // — the idempotent skip path returns null at the top of the function and
-  // never reaches here. Non-blocking: a scheduling failure must not roll back
-  // the plan. See specs/2026-05-25-checkcherry-import-design.md §9.3.D.
-  try {
-    await scheduleDrinkPlanNudge(proposalId, pool);
-  } catch (err) {
-    Sentry.captureException(err, {
-      tags: { hook: 'createDrinkPlan_postinsert', proposalId },
-    });
+  // Enroll the drink-plan nudge (T-21 email + SMS) right after the plan row
+  // is inserted. Hook fires only when this call actually inserted a row — the
+  // idempotent skip path returns null at the top of the function and never
+  // reaches here. Non-blocking: a scheduling failure must not roll back the
+  // plan. skipNudge (cc-transfer 2026-07-07): transferred CC events get their
+  // plan SILENTLY — Dallas intro-notes those clients personally first, then
+  // re-enrolls via the admin reenroll-drink-plan-nudge button when ready.
+  if (!skipNudge) {
+    try {
+      await scheduleDrinkPlanNudge(proposalId, pool);
+    } catch (err) {
+      Sentry.captureException(err, {
+        tags: { hook: 'createDrinkPlan_postinsert', proposalId },
+      });
+    }
   }
 
   return drinkPlan;

@@ -289,13 +289,31 @@ async function run() {
 
     const payments = buildPayments(loadCsv(paths.payments));
     const payouts = buildPayouts(loadCsv(paths.expenses), userIdByName);
-    const events = buildEvents(loadCsv(paths.events), clientIdByEmail);
+    const allEvents = buildEvents(loadCsv(paths.events), clientIdByEmail);
 
-    const { checks, failures } = verify(payments, payouts, events);
+    // Verification gates run at PARSE level (the full export must always tie
+    // to the frozen P&L facts) — the transfer skip below applies at INSERT.
+    const { checks, failures } = verify(payments, payouts, allEvents);
     console.log('Verification gates:');
     for (const [label, got, want] of checks) {
       console.log(`  ${got === want ? 'PASS' : 'FAIL'}  ${label}: ${got}${got === want ? '' : ` (expected ${want})`}`);
     }
+
+    // Transfer registry (cc-import phase 3): events moved to native DRB
+    // proposals live in exactly ONE era — skip their ledger rows on any
+    // reload or the blended metrics double-count their booked value. Their
+    // CC-era PAYMENTS stay (collected in the CC era, cash-basis truth).
+    const { rows: transferredRows } = await pool.query(
+      'SELECT transferred_from_cc_id AS cc_id FROM proposals WHERE transferred_from_cc_id IS NOT NULL'
+    );
+    const transferred = new Set(transferredRows.map((r) => r.cc_id));
+    const events = allEvents.filter((e) => !transferred.has(e.cc_id));
+    const skippedTransferred = allEvents.length - events.length;
+    const skippedBooked = allEvents.filter((e) => transferred.has(e.cc_id) && e.booked_at).length;
+    if (skippedTransferred) {
+      console.log(`Transfer skip: ${skippedTransferred} event(s) already transferred to native proposals (${skippedBooked} booked) — excluded from the load.`);
+    }
+
     const linked = events.filter((e) => e.client_id).length;
     const matchedPayees = new Set(payouts.filter((p) => p.payee_user_id).map((p) => p.payee_name_normalized));
     console.log(`Info: events linked to a client: ${linked}; distinct payees matched to users: ${matchedPayees.size}`);
@@ -372,9 +390,11 @@ async function run() {
               (SELECT count(*)::int FROM legacy_cc_proposals WHERE booked_at IS NOT NULL) booked`
     );
     const a = after[0];
-    console.log(`\nAPPLIED. Ledger now: payments=${a.pay} (applied cents ${a.applied}), payouts=${a.exp}, events=${a.ev} (booked ${a.booked}).`);
+    console.log(`\nAPPLIED. Ledger now: payments=${a.pay} (applied cents ${a.applied}), payouts=${a.exp}, events=${a.ev} (booked ${a.booked}${skippedTransferred ? `; ${skippedTransferred} transferred event(s) excluded` : ''}).`);
     const ok = a.pay === EXPECT.payments && Number(a.applied) === EXPECT.paymentsAppliedCents
-      && a.exp === EXPECT.expenses && a.ev === EXPECT.events && a.booked === EXPECT.booked;
+      && a.exp === EXPECT.expenses
+      && a.ev === EXPECT.events - skippedTransferred
+      && a.booked === EXPECT.booked - skippedBooked;
     console.log(ok ? 'Post-apply verification: PASS' : 'Post-apply verification: FAIL — investigate before trusting the ledger');
     if (!ok) process.exit(1);
   } finally {

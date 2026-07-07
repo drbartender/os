@@ -232,6 +232,14 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
         <dl className="dl" style={{ gridTemplateColumns: '120px 1fr', margin: 0 }}>
           <dt>Total</dt><dd className="num">{fmt$2dp(totalPrice)}</dd>
           <dt>Paid</dt><dd className="num">{fmt$2dp(amountPaid)}</dd>
+          {Number(proposal.external_paid) > 0 && (
+            <>
+              <dt>Off-platform</dt>
+              <dd className="num">
+                {fmt$2dp(Number(proposal.external_paid))} <span className="muted tiny">collected in CheckCherry, included in Paid</span>
+              </dd>
+            </>
+          )}
           <dt>Balance</dt>
           <dd className="num" style={{ color: balanceDue > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>
             {fmt$2dp(balanceDue)}

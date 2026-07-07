@@ -406,6 +406,10 @@ dr-bartender/
 │   │                           #   sensitive-match.js (+ .test.js) : matcher that reads sensitive-paths.txt
 │   │                           #   check-claudemd-invariants.sh    : paired keyword/regex coverage check over CLAUDE.md
 │   │                           #   claudemd-invariants.txt         : the invariant manifest it checks
+│   │                           # one-time CheckCherry migration operator scripts (phases 1-3, each with co-located tests):
+│   │                           #   cc-clients-import.js            : 187 CC clients (dry-run default, cc_id idempotency)
+│   │                           #   cc-ledger-import.js             : frozen CC-era ledger load (P&L penny-tie gates, double-count guard, transfer skip)
+│   │                           #   cc-transfer-events.js           : future CC events -> native proposals (manifest-driven, born-confirmed, comms-guarded, --resume)
 ├── docs/                       # Project docs: build-board.md (Claude-maintained ready/in-flight/shipped index), ops-runbook.md, tech-debt.md,
 │                               # client-portal-v2-project.md, staff-portal-beo-project.md, open-threads.md, superpowers/{specs,plans}/
 ├── .claude/agents/             # Claude Code review agents (7 agents)

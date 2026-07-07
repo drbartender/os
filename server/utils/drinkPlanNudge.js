@@ -211,13 +211,20 @@ async function scheduleDrinkPlanNudge(proposalId, executor) {
   if (proposal.status === 'archived') return;
   if (!proposal.client_id || !proposal.event_date) return;
 
-  // CC-import: events without a drink plan never get nudged. See specs/2026-05-25-checkcherry-import-design.md §9.3.D.
+  // Events without a drink plan never get nudged. And a plan whose nudge is
+  // DURABLY suppressed (cc-transfer: Dallas intro-notes those clients first)
+  // stays silent through every automatic re-run — schedulePreEventReminders
+  // fires on any proposal PATCH, so deleting the pending rows was not enough.
+  // The admin reenroll-drink-plan-nudge endpoint clears the flag.
   const planRes = await exec.query(
-    'SELECT 1 FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
+    'SELECT nudge_suppressed FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
     [proposalId]
   );
   if (planRes.rowCount === 0) {
     return; // No drink plan exists; nothing to nudge about.
+  }
+  if (planRes.rows[0].nudge_suppressed) {
+    return; // Suppressed until the operator re-enrolls.
   }
 
   const scheduledFor = computeScheduledFor('drink_plan_nudge', proposal);

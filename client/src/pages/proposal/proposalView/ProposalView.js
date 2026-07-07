@@ -428,7 +428,16 @@ export default function ProposalView() {
   // Replace dynamic placeholders in package includes
   const includes = interpolatePackageIncludes(proposal.package_includes, { durationHours, bartenders });
   const totalPrice = snapshot ? Number(snapshot.total) : 0;
-  const balanceAmount = totalPrice - DEPOSIT_DOLLARS;
+  // Pre-payment surfaces keep the "after your deposit" figure (total minus the
+  // standard deposit). Once the proposal is in a paid/confirmed state, show the
+  // TRUE remaining balance from the server's amount_paid — which includes
+  // off-platform money on transferred events — instead of assuming exactly one
+  // standard deposit was collected (wrong for paid-in-full, zero-collected, or
+  // CC-transferred events).
+  const inPaidState = ['confirmed', 'deposit_paid', 'balance_paid', 'completed'].includes(proposal.status);
+  const balanceAmount = inPaidState
+    ? Math.max(0, totalPrice - Number(proposal.amount_paid || 0))
+    : totalPrice - DEPOSIT_DOLLARS;
 
   // Calculate balance due date (from DB or default 14 days before event)
   let balanceDueDate = proposal.balance_due_date;
@@ -590,14 +599,14 @@ export default function ProposalView() {
                   </>
                 ) : proposal.autopay_enrolled ? (
                   <>
-                    <h3 className="proposal-paid-title">Deposit received.</h3>
+                    <h3 className="proposal-paid-title">{Number(proposal.amount_paid || 0) > 0 ? 'Deposit received.' : 'Booking confirmed.'}</h3>
                     <p className="proposal-paid-sub">
                       Your remaining balance of {fmt(balanceAmount)} will be automatically charged on {formatDateShort(balanceDueDate)}.
                     </p>
                   </>
                 ) : (
                   <>
-                    <h3 className="proposal-paid-title">Deposit received.</h3>
+                    <h3 className="proposal-paid-title">{Number(proposal.amount_paid || 0) > 0 ? 'Deposit received.' : 'Booking confirmed.'}</h3>
                     <p className="proposal-paid-sub">
                       Your remaining balance of {fmt(balanceAmount)} is due by {formatDateShort(balanceDueDate)}.
                     </p>

@@ -55,6 +55,33 @@ test('registerDrinkPlanNudgeHandlers > registers email + sms types, operational,
   }
 });
 
+test('scheduleDrinkPlanNudge > durable suppression: nudge_suppressed plan stays silent until re-enroll clears it', async () => {
+  _clearHandlersForTest();
+  registerDrinkPlanNudgeHandlers();
+  // cc-transfer: the plan is born suppressed; every automatic re-run
+  // (schedulePreEventReminders on any proposal PATCH) must stay silent.
+  await pool.query(
+    `INSERT INTO drink_plans (client_name, client_email, event_date, proposal_id, nudge_suppressed)
+     VALUES ('Nudge Test', 'nudge-test@example.com', CURRENT_DATE + INTERVAL '60 days', $1, true)`,
+    [proposalId]
+  );
+  await scheduleDrinkPlanNudge(proposalId, pool);
+  let rows = await pool.query(
+    "SELECT 1 FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1 AND message_type LIKE 'drink_plan_nudge%'",
+    [proposalId]
+  );
+  assert.strictEqual(rows.rowCount, 0, 'suppressed plan must enqueue nothing');
+
+  // The admin reenroll button clears the flag, then schedules — mirror it.
+  await pool.query('UPDATE drink_plans SET nudge_suppressed = false WHERE proposal_id = $1', [proposalId]);
+  await scheduleDrinkPlanNudge(proposalId, pool);
+  rows = await pool.query(
+    "SELECT 1 FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1 AND message_type LIKE 'drink_plan_nudge%'",
+    [proposalId]
+  );
+  assert.strictEqual(rows.rowCount, 2, 're-enroll must enqueue the email + sms pair');
+});
+
 test('scheduleDrinkPlanNudge > inserts an email row and an sms row', async () => {
   _clearHandlersForTest();
   registerDrinkPlanNudgeHandlers();

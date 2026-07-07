@@ -77,8 +77,15 @@ async function lockInvoice(invoiceId, dbClient) {
  *
  * amount_due logic:
  *   - "Deposit"       → proposal.deposit_amount in cents
- *   - "Full Payment"  → proposal.total_price in cents
- *   - "Balance" / any → total_price − sum(locked invoice amount_due) in cents
+ *   - "Full Payment"  → (total_price − external_paid) in cents
+ *   - "Balance"       → (total_price − external_paid − sum(locked invoice amount_due)) in cents
+ *
+ * external_paid (cc-transfer, 2026-07-07) is money collected off-platform in
+ * CheckCherry, folded into amount_paid with NO payment rows and NO locked
+ * invoice backing it — the locked-invoice subtraction alone cannot see it.
+ * Netting it here keeps a refreshed Balance / Full Payment invoice from
+ * re-billing money the client already paid. Zero behavior change when
+ * external_paid = 0 (every non-transferred proposal).
  *
  * @param {number} proposalId
  * @param {object} [dbClient]
@@ -89,7 +96,7 @@ async function refreshUnlockedInvoices(proposalId, dbClient) {
   // Fetch proposal financials, locked total, and unlocked invoices in parallel
   const [propResult, lockedResult, unlockedResult] = await Promise.all([
     client.query(
-      `SELECT total_price, deposit_amount FROM proposals WHERE id = $1`,
+      `SELECT total_price, deposit_amount, external_paid FROM proposals WHERE id = $1`,
       [proposalId]
     ),
     client.query(
@@ -111,6 +118,7 @@ async function refreshUnlockedInvoices(proposalId, dbClient) {
   const prop = propResult.rows[0];
   const totalCents = toCents(prop.total_price);
   const depositCents = toCents(prop.deposit_amount);
+  const externalCents = toCents(prop.external_paid);
   const lockedTotal = Number(lockedResult.rows[0].locked_total);
 
   // Fresh line items (shared across all unlocked invoices for this proposal)
@@ -122,9 +130,9 @@ async function refreshUnlockedInvoices(proposalId, dbClient) {
     if (invoice.label === 'Deposit') {
       amountDue = depositCents;
     } else if (invoice.label === 'Full Payment') {
-      amountDue = totalCents;
+      amountDue = Math.max(0, totalCents - externalCents);
     } else if (invoice.label === 'Balance') {
-      amountDue = Math.max(0, totalCents - lockedTotal);
+      amountDue = Math.max(0, totalCents - externalCents - lockedTotal);
     } else {
       // Non-standard labels (e.g., 'Additional Services', manual invoices)
       // have bespoke amounts and line items — skip refresh entirely

@@ -54,6 +54,9 @@ router.post(
     if (planRes.rowCount === 0) throw new ConflictError('no drink plan exists for this proposal');
 
     try {
+      // Clear the durable suppression first (cc-transfer sets it so automatic
+      // re-enqueues stay silent) — this button IS the deliberate re-enroll.
+      await pool.query('UPDATE drink_plans SET nudge_suppressed = false WHERE proposal_id = $1', [id]);
       await scheduleDrinkPlanNudge(id, pool);
     } catch (err) {
       Sentry.captureException(err, {

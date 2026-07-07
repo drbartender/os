@@ -3619,3 +3619,23 @@ ALTER TABLE legacy_cc_payouts   ALTER COLUMN raw_import_id DROP NOT NULL;
 ALTER TABLE legacy_cc_proposals ALTER COLUMN raw_import_id DROP NOT NULL;
 ALTER TABLE legacy_cc_proposals ADD COLUMN IF NOT EXISTS cc_created_at TIMESTAMPTZ;
 ALTER TABLE legacy_cc_proposals ADD COLUMN IF NOT EXISTS total_cost_cents INTEGER;
+
+-- ─── cc-transfer lane: CC event transfer bookkeeping (2026-07-07) ───
+-- Events moved from CheckCherry before its 2026-07-21 shutdown. external_paid
+-- is whole DOLLARS (proposals money exception): money collected in CC, folded
+-- into amount_paid at transfer with NO proposal_payments rows (the CC-era
+-- ledger already holds those payments; native rows would double-count blended
+-- metrics). transferred_from_cc_id links the ledger event row and feeds the
+-- ledger loader's skip-on-reload registry. proposals.cc_id stays a v1 relic
+-- (NULL) so the loader's double-count guard and the metrics tri-state keep
+-- their meaning.
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS transferred_from_cc_id TEXT;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS external_paid NUMERIC(10,2) NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_transferred_cc_id
+  ON proposals(transferred_from_cc_id) WHERE transferred_from_cc_id IS NOT NULL;
+
+-- Durable drink-plan nudge suppression (cc-transfer per-lane review BLOCKER):
+-- deleting pending nudge rows is not durable — any admin PATCH re-runs
+-- schedulePreEventReminders and re-inserts them. The flag survives every
+-- automatic re-run; the admin reenroll-drink-plan-nudge endpoint clears it.
+ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS nudge_suppressed BOOLEAN NOT NULL DEFAULT false;
