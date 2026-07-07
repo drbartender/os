@@ -362,6 +362,7 @@ dr-bartender/
 │   │   │                       # VenueSearchInput (venue-name typeahead (Google Places)),
 │   │   │                       # ClickableRow (table <tr> wrapper: plain click navigates, drag selects/copies text),
 │   │   │                       # RowLink (real-anchor wrapper for a ClickableRow's primary cell: ctrl/cmd/middle-click opens a new tab natively),
+│   │   │                       # EntityLink (quiet inline entity reference: real anchor, inherits color, hover underline; nullish `to` renders children unlinked),
 │   │   │                       # AddonControls (shared add-on UI controls: quantity stepper + greyed bundle badge, used by ProposalCreate + ProposalDetailEditForm),
 │   │   │                       # admin/SourceBadge (small "Thumbtack" origin badge next to a proposal's client name when source='thumbtack'),
 │   │   │                       # StaffShell + StaffShellWithThemeWiring (staff portal v2 layout shell — bottom tab bar + user pill, outlet for routed pages),
@@ -375,7 +376,7 @@ dr-bartender/
 │   │   │   ├── ShoppingList/   # Shopping list generator (PDF export, ConsultationForm admin-input modal)
 │   │   │   └── MenuPNG/        # Standard Menu PNG export (html2canvas-driven, lazy-loaded; renders hidden MenuPreview at print scale 768x960 and downloads as 2304x2880 PNG)
 │   │   ├── data/               # Shared data (addonCategories, eventServicesAgreement, eventTypes, menuSamples, packages, syrups)
-│   │   ├── hooks/              # Custom hooks (useDebounce, useDrawerParam, useFormValidation, useWizardHistory, useMetricsFilter)
+│   │   ├── hooks/              # Custom hooks (useDebounce, useDrawerParam + drawerHref, useFormValidation, useWizardHistory, useMetricsFilter, useUrlListState (URL-backed list/tab/filter view state))
 │   │   ├── pages/
 │   │   │   ├── (auth)          # Login, Register, ForgotPassword, ResetPassword
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion

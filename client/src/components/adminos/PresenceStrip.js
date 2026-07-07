@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import api from '../../utils/api';
 import Icon from './Icon';
 import PresenceDrawer from './drawers/PresenceDrawer';
+import EntityLink from '../EntityLink';
 
 const STATES = [
   { key: 'desk', label: 'Desk' },
@@ -77,19 +78,32 @@ export default function PresenceStrip({ presence, onPresenceChange, rail, curren
         const own = u.id === currentUser?.id;
         return (
           <div key={u.id} className={`presence-row${own ? ' own' : ''}`} title={rail ? `${u.name}: ${u.state}` : undefined}>
-            <button
-              type="button"
-              className="presence-row-main"
-              disabled={!own || busy}
-              onClick={() => own && setMenuOpen(v => !v)}
-              aria-haspopup={own ? 'menu' : undefined}
-              aria-expanded={own ? menuOpen : undefined}
-            >
-              <span className={`presence-dot presence-dot--${u.state}`} />
-              <span className="presence-name">{u.name}</span>
-              <span className="presence-state">{u.state}</span>
-              <span className="presence-dur">{fmtDur(u.since, nowMs)}</span>
-            </button>
+            {own ? (
+              <button
+                type="button"
+                className="presence-row-main"
+                disabled={busy}
+                onClick={() => setMenuOpen(v => !v)}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+              >
+                <span className={`presence-dot presence-dot--${u.state}`} />
+                <span className="presence-name">{u.name}</span>
+                <span className="presence-state">{u.state}</span>
+                <span className="presence-dur">{fmtDur(u.since, nowMs)}</span>
+              </button>
+            ) : (
+              /* Non-own rows had a permanently disabled button (presentational
+                 only); a div renders identically via the same class and lets
+                 the name be a real profile link (anchors can't nest in a
+                 disabled button). Own row keeps its menu toggle unlinked. */
+              <div className="presence-row-main presence-row-main--static">
+                <span className={`presence-dot presence-dot--${u.state}`} />
+                <span className="presence-name"><EntityLink to={`/staffing/users/${u.id}`}>{u.name}</EntityLink></span>
+                <span className="presence-state">{u.state}</span>
+                <span className="presence-dur">{fmtDur(u.since, nowMs)}</span>
+              </div>
+            )}
             <button
               type="button"
               className={`presence-leads-pill${u.taking_leads ? ' on' : ''}`}
@@ -123,7 +137,7 @@ export default function PresenceStrip({ presence, onPresenceChange, rail, curren
       <div className="presence-pointer">
         <span className="presence-pointer-label">Leads</span>
         <Icon name="right" size={10} />
-        <span className="presence-pointer-name">{owner?.name || ''}</span>
+        <span className="presence-pointer-name"><EntityLink to={owner ? `/staffing/users/${owner.id}` : null}>{owner?.name || ''}</EntityLink></span>
         <span className={`presence-pointer-initial presence-initial--${owner?.state || 'away'}`}>{(owner?.name || '?')[0]}</span>
         {isAdmin && (
           <button type="button" className="presence-history-btn" title="Time clock" onClick={() => setDrawerOpen(true)}>

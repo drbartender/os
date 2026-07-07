@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import api from '../../../utils/api';
 import Drawer from '../Drawer';
+import EntityLink from '../../EntityLink';
 
 const CT = { timeZone: 'America/Chicago' };
 function fmtMs(ms) {
@@ -45,7 +46,7 @@ export default function PresenceDrawer({ open, onClose }) {
           <div className="presence-totals">
             {data.users.map(u => (
               <div key={u.id} className="presence-totals-card">
-                <div className="presence-totals-name">{u.name}</div>
+                <div className="presence-totals-name"><EntityLink to={`/staffing/users/${u.id}`}>{u.name}</EntityLink></div>
                 <div className="presence-totals-row">
                   <span>This week</span>
                   <span>{fmtMs(u.week.desk_ms)} desk · {fmtMs(u.week.available_ms)} avail</span>
@@ -67,7 +68,7 @@ export default function PresenceDrawer({ open, onClose }) {
               <tbody>
                 {data.intervals.map(iv => (
                   <tr key={iv.id}>
-                    <td>{iv.user_name}</td>
+                    <td><EntityLink to={iv.user_id ? `/staffing/users/${iv.user_id}` : null}>{iv.user_name}</EntityLink></td>
                     <td>
                       <span className={`presence-dot presence-dot--${iv.state}`} /> {iv.state}
                       {iv.ended_reason === 'auto_flip' && <span className="presence-auto-badge">auto</span>}

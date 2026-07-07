@@ -38,3 +38,12 @@ export default function useDrawerParam() {
 
   return { kind, id, open, close };
 }
+
+// Builds a same-page href that opens a drawer, preserving all other query
+// params. For real links (cmd-click new tab) instead of onClick drawer.open.
+export function drawerHref(searchParams, kind, id) {
+  const next = new URLSearchParams(searchParams);
+  next.set('drawer', kind);
+  next.set('drawerId', String(id));
+  return `?${next.toString()}`;
+}

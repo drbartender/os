@@ -17713,3 +17713,14 @@ html[data-app="staff"] main {
 }
 /* Signature accept/clear buttons: comfortable thumb targets */
 .sig-actions .btn-sm, .signature-pad-actions .btn-sm { min-height: 40px; }
+
+/* EntityLink: quiet inline entity reference (admin cross-nav) */
+.entity-link { color: inherit; text-decoration: none; }
+.entity-link:hover,
+.entity-link:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
+
+/* Palette result rows are real anchors now (admin cross-nav) */
+html[data-app="admin-os"] a.palette-item { color: inherit; text-decoration: none; }
+
+/* Non-own presence rows render as a div; row static, name links (admin cross-nav) */
+html[data-app="admin-os"] .presence-row-main--static { cursor: default; }

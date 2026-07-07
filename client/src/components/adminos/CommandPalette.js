@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Icon from './Icon';
 import api from '../../utils/api';
 import useDebounce from '../../hooks/useDebounce';
@@ -124,16 +124,17 @@ export default function CommandPalette({ open, onClose }) {
               <div className="palette-group-label">{g.group}</div>
               {g.items.map(it => {
                 const path = `${PATH_BY_TYPE[it.type]}/${it.id}`;
+                // Real anchor: cmd/ctrl/middle-click open a new tab natively
+                // (palette stays open for those); plain click closes it.
                 return (
-                  <div key={`${it.type}-${it.id}`} className="palette-item" onClick={go(path)}
-                    role="button" tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === 'Enter') go(path)(); }}>
+                  <Link key={`${it.type}-${it.id}`} to={path} className="palette-item"
+                    onClick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) onClose(); }}>
                     <Icon name={g.icon} />
                     <div>
                       <div>{it.name}</div>
                       {it.detail && <div className="palette-item-sub">{it.detail}</div>}
                     </div>
-                  </div>
+                  </Link>
                 );
               })}
             </div>
