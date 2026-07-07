@@ -304,12 +304,30 @@ async function run() {
     );
     console.log(`Target tables currently: payments=${existing[0].pay} payouts=${existing[0].exp} events=${existing[0].ev}${replace ? ' (will be TRUNCATED)' : ''}`);
 
+    // Double-count guard (per-lane review finding): the metrics blend adds
+    // ledger sums ON TOP of native tables, so it is only correct when no
+    // native row duplicates a ledger row. v1's importer "promoted" CC
+    // payments into proposal_payments (legacy_charge_id) and stamped
+    // proposals.cc_id — a database carrying those would count that money
+    // TWICE under the blended 'all' view. Prod has zero; dev still carries
+    // v1 test junk, hence the explicit bypass.
+    const { rows: dupes } = await pool.query(
+      `SELECT (SELECT count(*)::int FROM proposals WHERE cc_id IS NOT NULL) cc_props,
+              (SELECT count(*)::int FROM proposal_payments WHERE legacy_charge_id IS NOT NULL) promoted_pays`
+    );
+    const promotedContamination = dupes[0].cc_props + dupes[0].promoted_pays;
+    console.log(`Double-count guard: proposals with cc_id=${dupes[0].cc_props}, promoted payments=${dupes[0].promoted_pays}${promotedContamination ? '  <-- blended metrics would DOUBLE-COUNT this era' : ''}`);
+
     if (!apply) {
       console.log('\nDRY RUN - nothing written. Re-run with --apply (add --replace to reload non-empty tables).');
       return;
     }
     if (failures.length) {
       console.error(`\nABORTED: ${failures.length} verification gate(s) failed; nothing written.`);
+      process.exit(1);
+    }
+    if (promotedContamination && !args.includes('--allow-promoted')) {
+      console.error('\nABORTED: native tables carry v1-promoted CC rows (see double-count guard above); loading the ledger would double-count that money in blended metrics. Scrub them or pass --allow-promoted (dev only).');
       process.exit(1);
     }
     if (!replace && (existing[0].pay || existing[0].exp || existing[0].ev)) {
