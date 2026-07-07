@@ -33,13 +33,7 @@ before building anything.
 ---
 
 ## Operational tails (not builds)
-- **Zul VA calling go-live — IN PROGRESS 2026-07-07.** Code + all 3 prod tables (pending_call/call_audit/telegram_update) LIVE; webhook helpers ready. Remaining = console bring-up + Zul validation, runbook `docs/va-calling-runbook.md`:
-  1. @BotFather `/newbot` -> `TELEGRAM_BOT_TOKEN`.
-  2. Render env (first deploy, allowlist UNSET): `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` (fresh one generated this session), `VOICE_CALLER_ID=+12242220082`, `VA_CELL=<Zul +63 cell>`. Deploy.
-  3. Twilio console: confirm PH geo (low on/high off, already verified) + auto-refill/spend alert; point 224 "A call comes in" -> POST `<API_URL>/api/voice/inbound`.
-  4. Claude registers the webhook (setTelegramWebhook) + verifies once step 2 is deployed.
-  5. Zul Start+message -> bot replies her id; set `TELEGRAM_ALLOWED_USER_ID` in Render, redeploy.
-  6. Validation tests 1-3 (audio to Zul cell / Telegram round-trip / inbound forward).
+- **Zul VA calling — LIVE and in use.** Confirmed via prod usage 2026-07-06 (7 calls, 17 Telegram updates logged); Zul places/receives US calls through the Telegram->Twilio bridge. The bring-up runbook is done; nothing owed.
 - **CC migration hand-off (owner, before CC dies 7/21):** turn OFF CheckCherry client notifications; send the 12 Stripe balance invoices (invoice link is the pay path for confirmed proposals; the auto-reminder /proposal link has no pay button); intro-note each client + re-enroll their drink-plan nudge (the reenroll button clears the durable suppression); download signed contracts + a 2026 YTD P&L export. If Sid (due 7/9) / Cody (7/17) pay via CC first, bump external_paid/amount_paid via the documented UPDATE (never a payment row). Check/cash balances: case-by-case UPDATE (record-payment refuses confirmed by design).
 - **Eyeball sweeps owed:** After Hours both-skin (event page, a dashboard, blog-editor fields, primary-button hover); doc-preview modal with a real W-9 PDF + headshot in both skins.
 - **Resend Pro upgrade** — free 100/day cap hit; scheduled sends degrade gracefully; whenever.
