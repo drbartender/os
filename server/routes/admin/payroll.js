@@ -530,7 +530,15 @@ async function loadDeferredTips() {
                     JOIN users u ON u.id = sr.user_id
                LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
                    WHERE sr.shift_id = t.shift_id AND sr.status = 'approved'
-                     AND sr.dropped_at IS NULL AND LOWER(sr.position) = 'bartender') AS staff,
+                     AND sr.dropped_at IS NULL AND LOWER(sr.position) = 'bartender'
+                   ORDER BY u.id) AS staff,
+            ARRAY(SELECT u.id
+                    FROM shift_requests sr
+                    JOIN users u ON u.id = sr.user_id
+               LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+                   WHERE sr.shift_id = t.shift_id AND sr.status = 'approved'
+                     AND sr.dropped_at IS NULL AND LOWER(sr.position) = 'bartender'
+                   ORDER BY u.id) AS staff_ids,
             (t.shift_id IS NOT NULL
              AND EXISTS (SELECT 1 FROM shift_requests sr2 JOIN users u2 ON u2.id = sr2.user_id
                           WHERE sr2.shift_id = t.shift_id AND sr2.status = 'approved'

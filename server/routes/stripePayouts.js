@@ -17,7 +17,8 @@ const LINE_SELECT = `
          l.matched_kind, l.proposal_id, l.invoice_id, l.tip_id,
          c.name AS client_name, pr.event_type, pr.event_type_custom,
          inv.invoice_number, inv.token AS invoice_token,
-         COALESCE(cp.preferred_name, u.email) AS staff_name
+         COALESCE(cp.preferred_name, u.email) AS staff_name,
+         t.target_user_id AS staff_user_id
   FROM stripe_payout_lines l
   LEFT JOIN proposals pr ON pr.id = l.proposal_id
   LEFT JOIN clients c ON c.id = pr.client_id

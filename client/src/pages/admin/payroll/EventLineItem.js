@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
+import EntityLink from '../../../components/EntityLink';
 import { fmt$fromCents, fmtDate } from '../../../components/adminos/format';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 
@@ -69,8 +70,10 @@ export default function EventLineItem({ event, editable, onSaved }) {
     <div className="vstack" style={{ gap: 6, padding: '10px 0', borderTop: '1px solid var(--line-1)' }}>
       <div className="hstack" style={{ gap: 12, flexWrap: 'wrap' }}>
         <div style={{ minWidth: 160 }}>
-          <div className="tiny muted">{fmtDate(event.event_date)}</div>
-          <div style={{ fontWeight: 600 }}>{eventLabel}</div>
+          <EntityLink to={event.shift_id ? `/events/shift/${event.shift_id}` : null}>
+            <div className="tiny muted">{fmtDate(event.event_date)}</div>
+            <div style={{ fontWeight: 600 }}>{eventLabel}</div>
+          </EntityLink>
         </div>
         <div className="hstack" style={{ gap: 6, alignItems: 'center' }}>
           <span className="tiny muted">Hours</span>

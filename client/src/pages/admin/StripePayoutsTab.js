@@ -2,17 +2,37 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import StatusChip from '../../components/adminos/StatusChip';
+import EntityLink from '../../components/EntityLink';
 import { fmt$fromCents, fmtDate } from '../../components/adminos/format';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const PAYOUT_STATUS = { paid: 'ok', in_transit: 'info', pending: 'info', canceled: 'neutral', failed: 'danger' };
 const KIND = { payment: 'ok', tip: 'accent', refund: 'warn', dispute: 'danger', adjustment: 'neutral', unmatched: 'warn' };
 
+// Renders the identifying label for a payout/in-transit line with cross-links:
+// gratuity → the staffer's profile (staff_user_id, from the tips join); payment
+// lines → the owning proposal (proposal_id); the invoice number is a secondary
+// affordance to the public invoice page only when the line carries a token
+// (there is no admin invoice page). Returns JSX (used inside <strong>/<td>).
 function lineLabel(l) {
-  if (l.matched_kind === 'tip') return `Gratuity: ${l.staff_name || 'staff'}`;
+  if (l.matched_kind === 'tip') {
+    return (
+      <>Gratuity: <EntityLink to={l.staff_user_id ? `/staffing/users/${l.staff_user_id}` : null}>{l.staff_name || 'staff'}</EntityLink></>
+    );
+  }
   if (l.client_name) {
     const ev = getEventTypeLabel({ event_type: l.event_type, event_type_custom: l.event_type_custom });
-    return `${l.client_name} (${ev}${l.invoice_number ? `, ${l.invoice_number}` : ''})`;
+    return (
+      <>
+        <EntityLink to={l.proposal_id ? `/proposals/${l.proposal_id}` : null}>{l.client_name} ({ev}</EntityLink>
+        {l.invoice_number && (
+          l.invoice_token
+            ? <>, <a href={`/invoice/${l.invoice_token}`} target="_blank" rel="noopener noreferrer">{l.invoice_number}</a></>
+            : <>, {l.invoice_number}</>
+        )}
+        {')'}
+      </>
+    );
   }
   return l.description || l.stripe_balance_txn_id;
 }

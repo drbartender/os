@@ -6,6 +6,8 @@ import { useToast } from '../../context/ToastContext';
 import StatusChip from '../../components/adminos/StatusChip';
 import MetricsFilterBar from '../../components/adminos/MetricsFilterBar';
 import useMetricsFilter from '../../hooks/useMetricsFilter';
+import useUrlListState from '../../hooks/useUrlListState';
+import EntityLink from '../../components/EntityLink';
 import { fmt$, fmt$fromCents, fmtDate } from '../../components/adminos/format';
 import ClickableRow from '../../components/ClickableRow';
 import StripePayoutsTab from './StripePayoutsTab';
@@ -16,6 +18,10 @@ const STATUS = {
   declined: 'danger',
 };
 const LENS_LABEL = { booked: 'Booked', scheduled: 'Scheduled', paid: 'Paid' };
+// Tab is the only view state this screen owns in the URL. basis/range/from/to/
+// include_cc are already URL-backed by useMetricsFilter (do not double-manage).
+const FIN_DEFAULTS = { tab: 'overview' };
+const FIN_TABS = ['overview', 'payouts'];
 
 export default function FinancialsDashboard() {
   const toast = useToast();
@@ -23,7 +29,8 @@ export default function FinancialsDashboard() {
   const { from, to, basis, includeCc } = filter;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('overview');
+  const [listState, setListState] = useUrlListState(FIN_DEFAULTS);
+  const tab = FIN_TABS.includes(listState.tab) ? listState.tab : 'overview';
   const [payoutBadge, setPayoutBadge] = useState(0);
 
   useEffect(() => {
@@ -69,9 +76,9 @@ export default function FinancialsDashboard() {
 
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: 'var(--gap)' }}>
         <button className={`btn btn-sm ${tab === 'overview' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setTab('overview')}>Overview</button>
+          onClick={() => setListState({ tab: 'overview' })}>Overview</button>
         <button className={`btn btn-sm ${tab === 'payouts' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setTab('payouts')}>
+          onClick={() => setListState({ tab: 'payouts' })}>
           Stripe Payouts{payoutBadge > 0 ? ` (${payoutBadge} unmatched)` : ''}
         </button>
       </div>
@@ -139,7 +146,9 @@ export default function FinancialsDashboard() {
                     return (
                       <ClickableRow key={p.id} to={`/proposals/${p.id}`}>
                         <td>
-                          <strong>{p.client_name || '—'}</strong>
+                          <EntityLink to={p.client_id ? `/clients/${p.client_id}` : null}>
+                            <strong>{p.client_name || '—'}</strong>
+                          </EntityLink>
                         </td>
                         <td>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</td>
                         <td>{p.event_date ? fmtDate(String(p.event_date).slice(0, 10), { year: 'numeric' }) : '—'}</td>
@@ -180,8 +189,16 @@ export default function FinancialsDashboard() {
                     <ClickableRow key={pp.id} style={{ cursor: pp.invoice_token ? 'pointer' : 'default' }}
                       onActivate={() => pp.invoice_token && window.open(`/invoice/${pp.invoice_token}`, '_blank', 'noopener,noreferrer')}
                       title={pp.invoice_token ? 'View invoice' : ''}>
-                      <td><strong>{pp.client_name || '—'}</strong></td>
-                      <td>{getEventTypeLabel({ event_type: pp.event_type, event_type_custom: pp.event_type_custom })}</td>
+                      <td>
+                        <EntityLink to={pp.client_id ? `/clients/${pp.client_id}` : null}>
+                          <strong>{pp.client_name || '—'}</strong>
+                        </EntityLink>
+                      </td>
+                      <td>
+                        <EntityLink to={pp.proposal_id ? `/proposals/${pp.proposal_id}` : null}>
+                          {getEventTypeLabel({ event_type: pp.event_type, event_type_custom: pp.event_type_custom })}
+                        </EntityLink>
+                      </td>
                       <td className="muted" style={{ textTransform: 'capitalize' }}>{pp.payment_type}</td>
                       <td className="num">
                         {fmt$fromCents(Number(pp.net_amount))}

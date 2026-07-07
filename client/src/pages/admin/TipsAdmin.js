@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
+import EntityLink from '../../components/EntityLink';
 import { fmt$fromCents } from '../../components/adminos/format';
 import StatusChip from '../../components/adminos/StatusChip';
 
@@ -157,7 +158,11 @@ function TipsTab() {
               )}
               {!loading && tips.map(t => (
                 <tr key={t.id}>
-                  <td><strong>{t.bartender_name || `user ${t.target_user_id}`}</strong></td>
+                  <td>
+                    <EntityLink to={t.target_user_id ? `/staffing/users/${t.target_user_id}` : null}>
+                      <strong>{t.bartender_name || `user ${t.target_user_id}`}</strong>
+                    </EntityLink>
+                  </td>
                   <td className="num">{fmt$fromCents(t.amount_cents)}</td>
                   <td>{t.tipped_at ? new Date(t.tipped_at).toLocaleString() : '—'}</td>
                   <td className="muted">{t.customer_email || '—'}</td>
@@ -234,7 +239,9 @@ function FeedbackTab() {
             <article key={f.id} className="card">
               <div className="card-head">
                 <h3 style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span>{f.bartender_name || `user ${f.target_user_id}`}</span>
+                  <EntityLink to={f.target_user_id ? `/staffing/users/${f.target_user_id}` : null}>
+                    <span>{f.bartender_name || `user ${f.target_user_id}`}</span>
+                  </EntityLink>
                   <StatusChip kind={ratingKind(f.rating)}>{f.rating}/5</StatusChip>
                   {f.reviewed_at && <span className="muted tiny">reviewed</span>}
                 </h3>

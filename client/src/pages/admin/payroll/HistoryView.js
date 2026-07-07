@@ -6,7 +6,7 @@ import { fmt$fromCents, fmtDate } from '../../../components/adminos/format';
 import PayrollHeader from './PayrollHeader';
 import PayoutRow from './PayoutRow';
 
-export default function HistoryView() {
+export default function HistoryView({ initialPeriodId }) {
   const toast = useToast();
   const [periods, setPeriods] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -28,6 +28,18 @@ export default function HistoryView() {
       .catch(err => toast.error(err.message || 'Failed to load period'))
       .finally(() => setSelectedLoading(false));
   };
+
+  // Pay-period deep-link receiver (/financials/payroll?tab=history&period=<id>).
+  // Once the periods list loads, open the requested period and scroll its list
+  // row into view. Graceful no-op when the id is absent from the loaded list.
+  useEffect(() => {
+    if (!initialPeriodId || !periods.length) return;
+    if (periods.some((p) => String(p.id) === String(initialPeriodId))) {
+      open(initialPeriodId);
+      document.getElementById('period-' + initialPeriodId)?.scrollIntoView({ block: 'start' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPeriodId, periods.length]);
 
   const toggle = (id) => {
     setExpanded(prev => {
@@ -70,6 +82,7 @@ export default function HistoryView() {
         {periods.map(p => (
           <div
             key={p.id}
+            id={'period-' + p.id}
             className="hstack"
             style={{
               padding: '10px 0', borderTop: '1px solid var(--line-1)', gap: 12,

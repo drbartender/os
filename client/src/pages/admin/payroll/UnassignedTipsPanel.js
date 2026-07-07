@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
+import EntityLink from '../../../components/EntityLink';
 import { fmt$fromCents, fmtDate } from '../../../components/adminos/format';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 
@@ -57,7 +58,9 @@ export default function UnassignedTipsPanel() {
         <div key={tip.id} className="card">
           <div className="card-body hstack" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
             <div style={{ minWidth: 160 }}>
-              <div style={{ fontWeight: 600 }}>{tip.contractor_name}</div>
+              <EntityLink to={tip.target_user_id ? `/staffing/users/${tip.target_user_id}` : null}>
+                <div style={{ fontWeight: 600 }}>{tip.contractor_name}</div>
+              </EntityLink>
               <div className="tiny muted">{fmt$fromCents(tip.amount_cents)} on {fmtDate(tip.tipped_at)}</div>
             </div>
             <div style={{ flex: 1, minWidth: 200 }}>

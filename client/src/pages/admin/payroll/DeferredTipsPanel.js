@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
+import EntityLink from '../../../components/EntityLink';
 import { fmt$fromCents, fmtDate } from '../../../components/adminos/format';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 
@@ -76,8 +77,29 @@ export default function DeferredTipsPanel() {
           <div key={t.id} className="card">
             <div className="card-body hstack" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
               <div style={{ minWidth: 200 }}>
-                <div style={{ fontWeight: 600 }}>{(t.staff && t.staff.length) ? t.staff.join(', ') : '(no bartender on shift)'}</div>
-                <div className="tiny muted">{amt}{t.event_date ? ` · ${fmtDate(t.event_date)} ${lbl}` : ''}</div>
+                <div style={{ fontWeight: 600 }}>
+                  {(t.staff && t.staff.length)
+                    ? t.staff.map((name, i) => (
+                        <React.Fragment key={i}>
+                          {i > 0 && ', '}
+                          <EntityLink to={(t.staff_ids && t.staff_ids[i]) ? `/staffing/users/${t.staff_ids[i]}` : null}>
+                            {name}
+                          </EntityLink>
+                        </React.Fragment>
+                      ))
+                    : '(no bartender on shift)'}
+                </div>
+                <div className="tiny muted">
+                  {amt}
+                  {t.event_date && (
+                    <>
+                      {' · '}
+                      <EntityLink to={t.shift_id ? `/events/shift/${t.shift_id}` : null}>
+                        {fmtDate(t.event_date)} {lbl}
+                      </EntityLink>
+                    </>
+                  )}
+                </div>
               </div>
               <div className="tiny muted" style={{ flex: 1 }}>
                 deferred {fmtDeferredAt(t.deferred_at)}

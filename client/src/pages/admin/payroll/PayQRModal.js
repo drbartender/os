@@ -1,5 +1,6 @@
 import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import EntityLink from '../../../components/EntityLink';
 import { fmt$fromCents } from '../../../components/adminos/format';
 import { paymentMethodLabel } from '../userDetail/helpers';
 
@@ -19,7 +20,7 @@ export default function PayQRModal({
     >
       <div className="card" style={{ maxWidth: 420, width: '100%' }}>
         <div className="card-head">
-          <h3>Pay {payout.contractor_name}</h3>
+          <h3>Pay <EntityLink to={payout.contractor_id ? `/staffing/users/${payout.contractor_id}` : null}>{payout.contractor_name}</EntityLink></h3>
           <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
         </div>
         <div className="card-body vstack" style={{ gap: 12, alignItems: 'center' }}>

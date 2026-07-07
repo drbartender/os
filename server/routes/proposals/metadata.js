@@ -171,7 +171,7 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
       `SELECT COUNT(*)::int AS total FROM proposals p
        WHERE p.status NOT IN ('draft')${propDate}${propCc}`, listParams),
     pool.query(`
-      SELECT p.id, p.event_type, p.event_type_custom, p.event_date, p.total_price, p.amount_paid,
+      SELECT p.id, p.client_id, p.event_type, p.event_type_custom, p.event_date, p.total_price, p.amount_paid,
              p.deposit_amount, p.status, p.created_at, p.cc_id AS proposal_cc_id,
              c.name AS client_name, c.email AS client_email, c.cc_id AS client_cc_id,
              sp.name AS package_name
@@ -183,7 +183,7 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
       LIMIT $${listParams.length + 1} OFFSET $${listParams.length + 2}
     `, [...listParams, limit, offset]),
     pool.query(`
-      SELECT pp.id, pp.proposal_id, pp.payment_type, pp.amount, pp.status AS payment_status,
+      SELECT pp.id, pp.proposal_id, p.client_id, pp.payment_type, pp.amount, pp.status AS payment_status,
              pp.created_at, p.event_type, p.event_type_custom, p.cc_id AS proposal_cc_id,
              c.name AS client_name, c.cc_id AS client_cc_id,
              inv.invoice_id, inv.invoice_token,

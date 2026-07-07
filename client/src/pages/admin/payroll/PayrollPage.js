@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
+import useUrlListState from '../../../hooks/useUrlListState';
 import PayrollHeader from './PayrollHeader';
 import PayoutRow from './PayoutRow';
 import UnassignedTipsPanel from './UnassignedTipsPanel';
@@ -13,9 +14,12 @@ const TABS = [
   { id: 'history', label: 'History' },
   { id: 'unassigned', label: 'Unassigned tips' },
 ];
+const TAB_IDS = ['current', 'history', 'unassigned'];
+const PAYROLL_DEFAULTS = { tab: 'current', period: '' };
 
 export default function PayrollPage() {
-  const [tab, setTab] = useState('current');
+  const [listState, setListState] = useUrlListState(PAYROLL_DEFAULTS);
+  const tab = TAB_IDS.includes(listState.tab) ? listState.tab : 'current';
   const navigate = useNavigate();
 
   return (
@@ -38,7 +42,7 @@ export default function PayrollPage() {
             key={t.id}
             type="button"
             className={`btn btn-sm ${tab === t.id ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => setTab(t.id)}
+            onClick={() => setListState({ tab: t.id })}
           >
             {t.label}
           </button>
@@ -46,7 +50,7 @@ export default function PayrollPage() {
       </div>
 
       {tab === 'current' && <CurrentTab />}
-      {tab === 'history' && <HistoryTab />}
+      {tab === 'history' && <HistoryTab initialPeriodId={listState.period} />}
       {tab === 'unassigned' && <UnassignedTab />}
     </div>
   );
@@ -151,8 +155,8 @@ function CurrentTab() {
   );
 }
 
-function HistoryTab() {
-  return <HistoryView />;
+function HistoryTab({ initialPeriodId }) {
+  return <HistoryView initialPeriodId={initialPeriodId} />;
 }
 function UnassignedTab() {
   return (

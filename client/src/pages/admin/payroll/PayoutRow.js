@@ -1,5 +1,6 @@
 import React from 'react';
 import StatusChip from '../../../components/adminos/StatusChip';
+import EntityLink from '../../../components/EntityLink';
 import { fmt$fromCents } from '../../../components/adminos/format';
 import { paymentMethodLabel } from '../userDetail/helpers';
 import EventLineItem from './EventLineItem';
@@ -17,7 +18,12 @@ export default function PayoutRow({ payout, expanded, onToggle, onLineSaved, onP
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
       >
         <div className="hstack" style={{ gap: 12, flex: 1, minWidth: 0 }}>
-          <span style={{ fontWeight: 600 }}>{payout.contractor_name}</span>
+          <EntityLink
+            to={payout.contractor_id ? `/staffing/users/${payout.contractor_id}` : null}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span style={{ fontWeight: 600 }}>{payout.contractor_name}</span>
+          </EntityLink>
           <span className="tiny muted">{paymentMethodLabel(payout.preferred_payment_method) || 'No method'}</span>
         </div>
         <div className="hstack" style={{ gap: 12 }}>
