@@ -4,6 +4,7 @@ import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
+import EntityLink from '../../components/EntityLink';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
 
 // Alternatives panel on ProposalDetail: manage this proposal's option group
@@ -130,14 +131,9 @@ export default function AlternativesPanel({ proposalId, proposal, group, onChang
                 {Number(m.id) === Number(proposalId) ? (
                   <strong>{m.package_name || 'No package yet'}</strong>
                 ) : (
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    style={{ padding: 0 }}
-                    onClick={() => navigate(`/proposals/${m.id}`)}
-                  >
+                  <EntityLink to={`/proposals/${m.id}`} className="btn btn-ghost btn-sm" style={{ padding: 0 }}>
                     {m.package_name || 'No package yet'}
-                  </button>
+                  </EntityLink>
                 )}
                 {Number(m.id) === Number(proposalId) && <span className="sub"> (this one)</span>}
               </div>

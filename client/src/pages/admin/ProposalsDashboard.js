@@ -10,7 +10,8 @@ import Toolbar from '../../components/adminos/Toolbar';
 import { fmt$, fmtDate, relDay } from '../../components/adminos/format';
 import ClickableRow from '../../components/ClickableRow';
 import SourceBadge from '../../components/admin/SourceBadge';
-import RowLink from '../../components/RowLink';
+import EntityLink from '../../components/EntityLink';
+import useUrlListState from '../../hooks/useUrlListState';
 
 // Mirrors `proposals_status_check` in server/db/schema.sql. Keep in sync —
 // the constraint allows draft/sent/viewed/modified/accepted/deposit_paid/
@@ -31,6 +32,12 @@ const STATUS = {
   declined:     { label: 'Declined',     kind: 'danger' },
 };
 
+const TAB_IDS = ['active', 'draft', 'won', 'paid', 'archive', 'all'];
+const SOURCE_IDS = ['thumbtack', 'manual'];
+// View state lives in the URL (admin cross-nav): tab/search/source survive
+// Back from a proposal, and the URL is shareable. Writes replace history.
+const LIST_DEFAULTS = { tab: 'active', q: '', source: '' };
+
 export default function ProposalsDashboard() {
   const navigate = useNavigate();
   const toast = useToast();
@@ -42,9 +49,10 @@ export default function ProposalsDashboard() {
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState({ active: 0, draft: 0, accepted: 0, paid: 0, archived: 0 });
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [tab, setTab] = useState('active');
-  const [sourceFilter, setSourceFilter] = useState('');  // '' | 'thumbtack' | 'manual'
+  const [listState, setListState] = useUrlListState(LIST_DEFAULTS);
+  const tab = TAB_IDS.includes(listState.tab) ? listState.tab : 'active';
+  const search = listState.q;
+  const sourceFilter = SOURCE_IDS.includes(listState.source) ? listState.source : '';
   const [copyMessage, setCopyMessage] = useState('');
 
   // Map UI tab → server query string. Each tab fetches a server-side bucket so
@@ -170,7 +178,7 @@ export default function ProposalsDashboard() {
         </div>
       </div>
 
-      <Toolbar search={search} setSearch={setSearch} tabs={tabs} tab={tab} setTab={setTab} />
+      <Toolbar search={search} setSearch={(v) => setListState({ q: v })} tabs={tabs} tab={tab} setTab={(t) => setListState({ tab: t })} />
 
       <div className="hstack" style={{ gap: 8, marginBottom: 12 }}>
         <label className="tiny muted" htmlFor="source-filter">Source</label>
@@ -179,7 +187,7 @@ export default function ProposalsDashboard() {
           className="input"
           style={{ maxWidth: 200 }}
           value={sourceFilter}
-          onChange={(e) => setSourceFilter(e.target.value)}
+          onChange={(e) => setListState({ source: e.target.value })}
         >
           <option value="">All sources</option>
           <option value="thumbtack">Thumbtack</option>
@@ -218,7 +226,7 @@ export default function ProposalsDashboard() {
                 return (
                   <ClickableRow key={p.id} to={`/proposals/${p.id}`}>
                     <td>
-                      <RowLink to={`/proposals/${p.id}`}><strong>{p.client_name || '—'}</strong></RowLink>
+                      <EntityLink to={p.client_id ? `/clients/${p.client_id}` : null}><strong>{p.client_name || '—'}</strong></EntityLink>
                       <SourceBadge source={p.source} />
                       {p.client_email && <div className="sub">{p.client_email}</div>}
                     </td>
@@ -242,14 +250,9 @@ export default function ProposalsDashboard() {
                     <td className="shrink">
                       <div className="hstack" onMouseUp={(e) => e.stopPropagation()}>
                         {isPaidStatus(p.status) && (
-                          <button
-                            type="button"
-                            className="icon-btn"
-                            title="View event"
-                            onClick={(e) => { e.stopPropagation(); navigate(`/events/${p.id}`); }}
-                          >
+                          <EntityLink to={`/events/${p.id}`} className="icon-btn" title="View event">
                             <Icon name="calendar" size={13} />
-                          </button>
+                          </EntityLink>
                         )}
                         <button
                           type="button"

@@ -12,6 +12,7 @@ import Toolbar from '../../components/adminos/Toolbar';
 import KebabMenu from '../../components/adminos/KebabMenu';
 import ClickableRow from '../../components/ClickableRow';
 import RowLink from '../../components/RowLink';
+import useUrlListState from '../../hooks/useUrlListState';
 import { fmt$, fmtDate } from '../../components/adminos/format';
 
 const SOURCE = {
@@ -31,13 +32,19 @@ function initialsOf(name) {
   return name.split(/\s+/).map(s => s[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
 }
 
+const SORT_IDS = ['recent', 'ltv', 'name'];
+// View state lives in the URL (admin cross-nav): search/sort survive Back
+// from a client profile. Writes replace history.
+const LIST_DEFAULTS = { q: '', sort: 'recent' };
+
 export default function ClientsDashboard() {
   const navigate = useNavigate();
   const toast = useToast();
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [sort, setSort] = useState('recent');
+  const [listState, setListState] = useUrlListState(LIST_DEFAULTS);
+  const search = listState.q;
+  const sort = SORT_IDS.includes(listState.sort) ? listState.sort : 'recent';
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', phone: '', source: 'direct' });
@@ -182,9 +189,9 @@ export default function ClientsDashboard() {
 
       <Toolbar
         search={search}
-        setSearch={setSearch}
+        setSearch={(v) => setListState({ q: v })}
         filters={(
-          <select className="select" value={sort} onChange={e => setSort(e.target.value)} style={{ minWidth: 180 }}>
+          <select className="select" value={sort} onChange={e => setListState({ sort: e.target.value })} style={{ minWidth: 180 }}>
             <option value="recent">Sort · Recently added</option>
             <option value="ltv">Sort · Lifetime value</option>
             <option value="name">Sort · Name</option>
@@ -214,7 +221,7 @@ export default function ClientsDashboard() {
               {!loading && filtered.map(c => {
                 const src = SOURCE[c.source] || { label: c.source || '—', kind: 'neutral' };
                 return (
-                  <ClickableRow key={c.id} onActivate={() => navigate(`/clients/${c.id}`)}>
+                  <ClickableRow key={c.id} to={`/clients/${c.id}`}>
                     <td>
                       <div className="hstack">
                         <div className="avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{initialsOf(c.name)}</div>

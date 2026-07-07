@@ -19,6 +19,7 @@ import AlternativesPanel from './AlternativesPanel';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
+import EntityLink from '../../components/EntityLink';
 
 const STATUS = {
   draft: { label: 'Draft', kind: 'neutral' },
@@ -359,16 +360,13 @@ export default function ProposalDetail() {
             </div>
             <div className="hstack" style={{ gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
               <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, margin: 0, lineHeight: 1.15 }}>
-                {proposal.client_id ? (
-                  <button
-                    type="button"
-                    className="event-client-link"
-                    onClick={() => navigate(`/clients/${proposal.client_id}`)}
-                    title="Open client"
-                  >
-                    {proposal.client_name || `Proposal #${proposal.id}`}
-                  </button>
-                ) : (proposal.client_name || `Proposal #${proposal.id}`)}
+                <EntityLink
+                  to={proposal.client_id ? `/clients/${proposal.client_id}` : null}
+                  className="event-client-link"
+                  title={proposal.client_id ? 'Open client' : undefined}
+                >
+                  {proposal.client_name || `Proposal #${proposal.id}`}
+                </EntityLink>
               </h1>
               <StatusChip kind={statusInfo.kind}>{statusInfo.label}</StatusChip>
               {proposal.last_minute_hold && (
@@ -480,10 +478,9 @@ export default function ProposalDetail() {
                 <div className="card-head">
                   <h3>Client</h3>
                   {proposal.client_id && (
-                    <button type="button" className="btn btn-ghost btn-sm"
-                      onClick={() => navigate(`/clients/${proposal.client_id}`)}>
+                    <EntityLink to={`/clients/${proposal.client_id}`} className="btn btn-ghost btn-sm">
                       <Icon name="external" size={11} />Open client
-                    </button>
+                    </EntityLink>
                   )}
                 </div>
                 <div className="card-body">
@@ -706,10 +703,9 @@ export default function ProposalDetail() {
                 <div className="muted tiny" style={{ marginBottom: 8 }}>
                   Staffing, equipment, and shifts live on the event page.
                 </div>
-                <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }}
-                  onClick={() => navigate(`/events/${proposal.id}`)}>
+                <EntityLink to={`/events/${proposal.id}`} className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }}>
                   <Icon name="calendar" size={11} />Open event
-                </button>
+                </EntityLink>
               </div>
             </div>
           )}
@@ -735,10 +731,19 @@ export default function ProposalDetail() {
               </button>
             </div>
             <div className="card-body">
-              <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+              <div className="muted" style={{ fontSize: 13, marginBottom: 8 }}>
                 {proposal.client_name || 'This client'} has {openSiblings.length} other open
                 {' '}proposal{openSiblings.length === 1 ? '' : 's'}. Archive just this one, or the whole set?
                 Archived proposals move to the Archived shelf and can be recovered later.
+              </div>
+              {/* Peek links open in a new tab so the archive decision is not lost. */}
+              <div className="vstack" style={{ gap: 2, marginBottom: 12 }}>
+                {openSiblings.map(s => (
+                  <EntityLink key={s.id} to={`/proposals/${s.id}`} target="_blank" rel="noopener noreferrer" className="tiny">
+                    #{s.id} · {getEventTypeLabel({ event_type: s.event_type, event_type_custom: s.event_type_custom })}
+                    {s.event_date ? ` · ${String(s.event_date).slice(0, 10)}` : ''}
+                  </EntityLink>
+                ))}
               </div>
               <div className="vstack" style={{ gap: 8 }}>
                 <button type="button" className="btn btn-secondary" disabled={archiving}

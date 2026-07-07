@@ -11,6 +11,7 @@ import StatusChip from '../../components/adminos/StatusChip';
 import { fmt$, fmt$2dp, fmtDate, fmtDateFull } from '../../components/adminos/format';
 import BackButton from '../../components/adminos/BackButton';
 import ClickableRow from '../../components/ClickableRow';
+import RowLink from '../../components/RowLink';
 
 const SOURCE = {
   direct:    { label: 'Direct',    kind: 'neutral' },
@@ -242,10 +243,16 @@ export default function ClientDetail() {
                     </tr>
                   </thead>
                   <tbody>
-                    {proposalRows.map(p => (
-                      <ClickableRow key={p.id} to={`/proposals/${p.id}`}>
+                    {proposalRows.map(p => {
+                      // Paid/confirmed rows have a live event: the row opens the
+                      // event page (staffing/shifts); pre-payment rows open the
+                      // proposal. Event id == proposal id in this app.
+                      const hasEvent = ['deposit_paid', 'balance_paid', 'confirmed', 'completed'].includes(p.status);
+                      const rowTo = hasEvent ? `/events/${p.id}` : `/proposals/${p.id}`;
+                      return (
+                      <ClickableRow key={p.id} to={rowTo}>
                         <td>
-                          <strong>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</strong>
+                          <RowLink to={rowTo}><strong>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</strong></RowLink>
                           {p.group_id != null && groupCounts.get(p.group_id) > 1 && (
                             <div className="sub">{groupCounts.get(p.group_id)} options to compare</div>
                           )}
@@ -256,7 +263,8 @@ export default function ClientDetail() {
                         <td className="num">{fmt$(p.total_price)}</td>
                         <td className="num muted">{fmt$(p.amount_paid)}</td>
                       </ClickableRow>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../utils/api';
+import EntityLink from '../../components/EntityLink';
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
 export default function ChangeRequestsDashboard() {
   const [rows, setRows] = useState(null);
@@ -14,7 +15,7 @@ export default function ChangeRequestsDashboard() {
         <thead><tr><th>Client</th><th>Event</th><th>Window</th><th>Est. total</th><th></th></tr></thead>
         <tbody>{rows.map(r => (
           <tr key={r.id} className={r.edit_window === 'inside_t14' ? 'row-urgent' : ''}>
-            <td>{r.client_name}</td><td>{r.event_type_custom || r.event_type || 'event'}</td>
+            <td><EntityLink to={r.client_id ? `/clients/${r.client_id}` : null}>{r.client_name}</EntityLink></td><td>{r.event_type_custom || r.event_type || 'event'}</td>
             <td>{r.edit_window.replace('_', ' ')}</td><td>{fmt(r.price_preview?.estimated_total)}</td>
             <td><Link to={`/proposals/${r.proposal_id}`}>Review</Link></td>
           </tr>))}</tbody>

@@ -3,6 +3,7 @@ import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 import VenueAddressFields from '../../components/VenueAddressFields';
+import EntityLink from '../../components/EntityLink';
 import SyrupPicker from '../../components/SyrupPicker';
 import ConfirmModal from '../../components/ConfirmModal';
 import FormBanner from '../../components/FormBanner';
@@ -331,7 +332,12 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
           </div>
         )}
         {/* Client */}
-        <div className="meta-k" style={{ marginBottom: 8 }}>Client</div>
+        <div className="hstack" style={{ marginBottom: 8, gap: 8 }}>
+          <div className="meta-k">Client</div>
+          {proposal.client_id && (
+            <EntityLink to={`/clients/${proposal.client_id}`} className="tiny">Open profile</EntityLink>
+          )}
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
           <div>
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Name</label>
