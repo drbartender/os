@@ -17,6 +17,12 @@ lanes:
       # refreshed Balance/Full Payment invoices — netted there + DB test.
       - server/utils/invoiceLifecycle.js
       - server/utils/invoiceLifecycle.external.test.js
+      # widened again (comms-guard BLOCKER): durable nudge suppression needs
+      # the flag respected in the scheduler, set at plan creation, cleared by
+      # the reenroll endpoint; plus the ProposalView paid-card balance fix.
+      - server/utils/drinkPlanNudge.test.js
+      - server/routes/admin/ccImport/proposalActions.js
+      - client/src/pages/proposal/proposalView/ProposalView.js
       - ARCHITECTURE.md
       - README.md
     deps: []
