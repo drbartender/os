@@ -250,6 +250,7 @@ router.get('/detail/:id', auth, requireStaffing, asyncHandler(async (req, res) =
         COALESCE(c.name, s.client_name) AS client_name,
         COALESCE(c.phone, s.client_phone) AS client_phone,
         COALESCE(c.email, s.client_email) AS client_email,
+        c.id AS client_id,
         p.total_price AS proposal_total,
         p.token AS proposal_token,
         rc.request_count,

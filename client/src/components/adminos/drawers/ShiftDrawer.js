@@ -19,6 +19,7 @@ import {
   SHIFT_EQUIPMENT_OPTIONS,
   parseEquipmentArray,
 } from '../shifts';
+import EntityLink from '../../EntityLink';
 
 // ShiftDrawer — focused per-shift management surface launched from EventDetailPage.
 // Replaces the legacy /events/shift/:id page.
@@ -364,7 +365,11 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
       <Icon name="userplus" />
       <span>Staffing</span>
       <span style={{ color: 'var(--ink-4)' }}>/</span>
-      <span style={{ color: 'var(--ink-1)' }}>{shift?.client_name || eventTypeLabel}</span>
+      <span style={{ color: 'var(--ink-1)' }}>
+        <EntityLink to={shift?.client_id ? `/clients/${shift.client_id}` : null}>
+          {shift?.client_name || eventTypeLabel}
+        </EntityLink>
+      </span>
     </div>
   );
 
@@ -397,7 +402,7 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
                 </StatusChip>
               )}
             </div>
-            <h2>{shift.client_name || eventTypeLabel}</h2>
+            <h2><EntityLink to={shift.client_id ? `/clients/${shift.client_id}` : null}>{shift.client_name || eventTypeLabel}</EntityLink></h2>
             <div className="sub">
               {eventTypeLabel}
               {shift.event_date && ` · ${fmtDateFull(String(shift.event_date).slice(0, 10))}`}
@@ -442,7 +447,7 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
                     {(req.staff_name || '?').split(/\s+/).map(s => s[0]).slice(0, 2).join('').toUpperCase()}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="slot-name">{req.staff_name || req.staff_email || '—'}</div>
+                    <div className="slot-name"><EntityLink to={req.user_id ? `/staffing/users/${req.user_id}` : null}>{req.staff_name || req.staff_email || '—'}</EntityLink></div>
                     <div className="tiny muted">Confirmed</div>
                   </div>
                   <button
@@ -478,7 +483,7 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
                         {(req.staff_name || '?').split(/\s+/).map(s => s[0]).slice(0, 2).join('').toUpperCase()}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="slot-name">{req.staff_name || req.staff_email || '—'}</div>
+                        <div className="slot-name"><EntityLink to={req.user_id ? `/staffing/users/${req.user_id}` : null}>{req.staff_name || req.staff_email || '—'}</EntityLink></div>
                         <div className="tiny muted">
                           {reqRoles.length ? `Ranked: ${reqRoles.join(' › ')}` : 'Awaiting approval'}
                         </div>
@@ -530,7 +535,7 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
                         {(req.staff_name || '?').split(/\s+/).map(s => s[0]).slice(0, 2).join('').toUpperCase()}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="slot-name">{req.staff_name || req.staff_email || '—'}</div>
+                        <div className="slot-name"><EntityLink to={req.user_id ? `/staffing/users/${req.user_id}` : null}>{req.staff_name || req.staff_email || '—'}</EntityLink></div>
                         <div className="tiny muted">
                           {reqRoles.length ? `Ranked: ${reqRoles.join(' › ')}` : 'Any role'}
                         </div>

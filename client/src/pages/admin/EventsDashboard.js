@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { useToast } from '../../context/ToastContext';
@@ -14,7 +14,9 @@ import ClickableRow from '../../components/ClickableRow';
 import RowLink from '../../components/RowLink';
 import Toolbar from '../../components/adminos/Toolbar';
 import KebabMenu from '../../components/adminos/KebabMenu';
-import useDrawerParam from '../../hooks/useDrawerParam';
+import useDrawerParam, { drawerHref } from '../../hooks/useDrawerParam';
+import useUrlListState from '../../hooks/useUrlListState';
+import EntityLink from '../../components/EntityLink';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
 import { fmt$, fmtDate, relDay, dayDiff } from '../../components/adminos/format';
@@ -36,6 +38,11 @@ for (let h = 6; h < 24; h++) {
 // manual event can request banquet servers and barbacks too. Order here is the
 // display + slot-build order (bartenders first, then servers, then barbacks).
 const ROSTER_ROLES = [ROLES.BARTENDER, ROLES.BANQUET_SERVER, ROLES.BARBACK];
+
+// URL-backed view state (tab / search / status filter). Kept at module scope so
+// the hook's default identity is stable. Back restores the exact list view.
+const LIST_DEFAULTS = { tab: 'upcoming', q: '', status: '' };
+const EVENT_TABS = ['upcoming', 'unstaffed', 'past', 'all'];
 
 const EMPTY_FORM = {
   client_name: '', client_email: '', client_phone: '',
@@ -66,9 +73,10 @@ export default function EventsDashboard() {
 
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [tab, setTab] = useState('upcoming');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [listState, setListState] = useUrlListState(LIST_DEFAULTS);
+  const tab = EVENT_TABS.includes(listState.tab) ? listState.tab : 'upcoming';
+  const search = listState.q;
+  const statusFilter = listState.status;
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
@@ -374,12 +382,12 @@ export default function EventsDashboard() {
 
       <Toolbar
         search={search}
-        setSearch={setSearch}
+        setSearch={(v) => setListState({ q: v })}
         tabs={tabs}
         tab={tab}
-        setTab={setTab}
+        setTab={(v) => setListState({ tab: v })}
         filters={(
-          <select className="select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ minWidth: 160 }}>
+          <select className="select" value={statusFilter} onChange={e => setListState({ status: e.target.value })} style={{ minWidth: 160 }}>
             <option value="">All statuses</option>
             <option value="contract">Contract pending</option>
             <option value="payment">Balance due</option>
@@ -466,6 +474,7 @@ export default function EventsDashboard() {
 // a stable callback from the parent, so typing into the search box no longer
 // rebuilds 5 closures × N rows on every keystroke.
 const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
+  const [searchParams] = useSearchParams();
   const total = Number(e.proposal_total || 0);
   const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
   const bal = total - paid;
@@ -509,7 +518,7 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
       <td>
         {e.proposal_id
           ? <RowLink to={`/events/${e.proposal_id}`}><strong>{e.client_name || 'Event'}</strong></RowLink>
-          : <strong>{e.client_name || 'Event'}</strong>}
+          : <EntityLink to={drawerHref(searchParams, 'shift', e.id)}><strong>{e.client_name || 'Event'}</strong></EntityLink>}
         <div className="sub">{getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })}{!e.proposal_id && ' · Manual'}</div>
       </td>
       <td>

@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { interpolatePackageIncludes } from '../../utils/packageIncludes';
 import { formatPhone } from '../../utils/formatPhone';
-import useDrawerParam from '../../hooks/useDrawerParam';
+import useDrawerParam, { drawerHref } from '../../hooks/useDrawerParam';
+import EntityLink from '../../components/EntityLink';
 import { getPackageItems } from '../../data/packages';
 import { SYRUPS } from '../../data/syrups';
 import PricingBreakdown from '../../components/PricingBreakdown';
@@ -53,7 +54,7 @@ function fmtTimeRange(start, durationHours) {
 
 export default function EventDetailPage() {
   const { id } = useParams();
-  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user: viewer } = useAuth();
   const toast = useToast();
   const drawer = useDrawerParam();
@@ -190,19 +191,16 @@ export default function EventDetailPage() {
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10, marginBottom: 4 }}>
-              Event · {String(proposal.id).toUpperCase()}
+              Event · <EntityLink to={`/proposals/${proposal.id}`}>{String(proposal.id).toUpperCase()}</EntityLink>
             </div>
             <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, margin: '0 0 6px', lineHeight: 1.15 }}>
-              {proposal.client_id ? (
-                <button
-                  type="button"
-                  className="event-client-link"
-                  onClick={() => navigate(`/clients/${proposal.client_id}`)}
-                  title="Open client"
-                >
-                  {proposal.client_name || 'Event'}
-                </button>
-              ) : (proposal.client_name || 'Event')}
+              <EntityLink
+                to={proposal.client_id ? `/clients/${proposal.client_id}` : null}
+                className="event-client-link"
+                title="Open client"
+              >
+                {proposal.client_name || 'Event'}
+              </EntityLink>
               {` · ${eventTypeLabel}`}
             </h1>
             {proposal.last_minute_hold && (
@@ -332,19 +330,28 @@ export default function EventDetailPage() {
                       : 0;
                     const openShift = () => drawer.open('shift', s.id);
                     return (
+                      /* Row is a div, NOT an anchor: the roster below renders
+                         EntityLinks, and anchors cannot nest. The date/time
+                         header is the row's real anchor (cmd-click opens the
+                         drawer URL in a new tab); a plain click anywhere else
+                         on the row still opens the drawer, yielding to
+                         interactive children. */
                       <div
                         key={s.id}
-                        onClick={openShift}
-                        onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openShift(); } }}
-                        role="button"
-                        tabIndex={0}
                         className="event-shift-row"
                         style={{ marginBottom: 10, cursor: 'pointer', padding: '8px 10px', margin: '0 -10px 4px', borderRadius: 4 }}
-                        title="Manage shift"
+                        onClick={(ev) => { if (ev.target.closest('a, button')) return; openShift(); }}
                       >
                         <div className="hstack" style={{ marginBottom: roleSummary.length > 1 ? 4 : 6, flexWrap: 'wrap' }}>
-                          <strong>{s.event_date ? fmtDate(String(s.event_date).slice(0, 10)) : '—'}</strong>
-                          <span className="tiny muted">{s.start_time || ''}{s.end_time ? ` – ${s.end_time}` : ''}</span>
+                          <Link
+                            to={drawerHref(searchParams, 'shift', s.id)}
+                            title="Manage shift"
+                            className="hstack"
+                            style={{ gap: 8, color: 'inherit', textDecoration: 'none' }}
+                          >
+                            <strong>{s.event_date ? fmtDate(String(s.event_date).slice(0, 10)) : '—'}</strong>
+                            <span className="tiny muted">{s.start_time || ''}{s.end_time ? ` – ${s.end_time}` : ''}</span>
+                          </Link>
                           <div className="spacer" />
                           <StatusChip kind={chipOk ? 'ok' : displayFilled > 0 ? 'warn' : 'danger'}>
                             {displayFilled}/{needed} staffed
@@ -377,7 +384,7 @@ export default function EventDetailPage() {
                               const ackAt = member?.beo_acknowledged_at;
                               return (
                                 <li key={member?.user_id || `${label}-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                  <span>{label}</span>
+                                  <EntityLink to={member?.user_id ? `/staffing/users/${member.user_id}` : null}>{label}</EntityLink>
                                   <StatusChip kind={ackAt ? 'ok' : 'neutral'}>
                                     {ackAt ? `Confirmed ${new Date(ackAt).toLocaleTimeString()}` : 'Not opened'}
                                   </StatusChip>

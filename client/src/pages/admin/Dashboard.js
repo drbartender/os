@@ -12,6 +12,7 @@ import useMetricsFilter from '../../hooks/useMetricsFilter';
 import { fmt$, fmtDate, relDay, dayDiff } from '../../components/adminos/format';
 import { shiftPositions, parsePositionsCount, approvedCount, eventStatusChip } from '../../components/adminos/shifts';
 import ClickableRow from '../../components/ClickableRow';
+import EntityLink from '../../components/EntityLink';
 
 const PIPELINE_COLORS = {
   draft: 'var(--ink-3)',
@@ -23,6 +24,17 @@ const PIPELINE_COLORS = {
 
 function eventRoute(e) {
   return e?.proposal_id ? `/events/${e.proposal_id}` : `/events/shift/${e?.id}`;
+}
+
+// Real-link target for a needs-attention queue item. Event/shift/proposal items
+// get a canonical entity link (cmd-click opens a new tab); hiring and other
+// targetless items return null and stay plain text (the row onClick still
+// navigates them).
+function queueItemHref(a) {
+  if (a.target === 'event') return `/events/${a.ref}`;
+  if (a.target === 'shift') return `/events/shift/${a.ref}`;
+  if (a.target === 'proposal') return `/proposals/${a.ref}`;
+  return null;
 }
 
 const EMPTY_STATS = {
@@ -314,7 +326,9 @@ export default function Dashboard() {
                     <Icon name={a.type === 'unstaffed' ? 'userplus' : a.type === 'proposal' ? 'eye' : a.type === 'application' ? 'pen' : 'alert'} />
                   </div>
                   <div className="queue-main">
-                    <div className="queue-title">{a.title}</div>
+                    <div className="queue-title">
+                      <EntityLink to={queueItemHref(a)} onClick={(e) => e.stopPropagation()}>{a.title}</EntityLink>
+                    </div>
                     <div className="queue-sub">{a.sub}</div>
                   </div>
                   <div className="queue-meta">{a.meta}</div>
