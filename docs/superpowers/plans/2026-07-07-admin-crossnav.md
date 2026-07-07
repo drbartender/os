@@ -15,28 +15,25 @@ lanes:
       - client/src/components/adminos/drawers/PresenceDrawer.js
       - README.md
     blockedBy: []
-    review: light        # shell + new pure client primitives, no money/auth/data surface
+    review: standard     # highest blast radius: ScrollToTop + useUrlListState + EntityLink are consumed app-wide (decomposition-review escalation)
   - id: crossnav-b-events
     footprint:
       - client/src/pages/admin/EventsDashboard.js
       - client/src/pages/admin/EventDetailPage.js
       - client/src/pages/admin/Dashboard.js
       - client/src/components/adminos/drawers/ShiftDrawer.js
-      - server/routes/shifts.queries.js
+      - server/routes/shifts.js
     blockedBy: [crossnav-a-primitives]
-    review: standard     # one read-only SELECT alias in shifts.queries.js (not on sensitive list)
+    review: standard     # one read-only SELECT alias in shifts.js GET /detail/:id (not on sensitive list)
   - id: crossnav-c-proposals-clients
     footprint:
       - client/src/pages/admin/ProposalsDashboard.js
       - client/src/pages/admin/ProposalDetail.js
       - client/src/pages/admin/ProposalDetailEditForm.js
-      - client/src/pages/admin/ProposalCreate.js
       - client/src/pages/admin/AlternativesPanel.js
       - client/src/pages/admin/ChangeRequestsDashboard.js
       - client/src/pages/admin/ClientsDashboard.js
       - client/src/pages/admin/ClientDetail.js
-      - client/src/pages/admin/CcImportReviewPage.js
-      - client/src/pages/admin/CcImportWrapUpPage.js
       - server/routes/clients.js
     blockedBy: [crossnav-a-primitives]
     review: standard     # clients.js touch is only-if-needed read flag; escalate to full-fleet if any money field moves
@@ -104,7 +101,7 @@ lanes:
 
 ## Global Constraints
 
-- **The spec appendix is the work list.** Every row of `docs/superpowers/specs/2026-07-07-admin-crossnav-design.md` Appendix for your lane MUST be resolved; every "Skipped (approved cuts)" row MUST be left alone. Line numbers in the appendix were captured 2026-07-07; re-locate by the quoted display expression if drift has occurred.
+- **The spec appendix is the work list.** Every row of `docs/superpowers/specs/2026-07-07-admin-crossnav-design.md` Appendix for your lane MUST be resolved; every "Skipped (approved cuts)" row MUST be left alone. Line numbers in the appendix were captured 2026-07-07; re-locate by the quoted display expression if drift has occurred. Main moves during design (the cc-demolition merge f39de17 deleted both CcImport pages and obsoleted their 7 rows mid-design): at lane cut, verify your lane's files still exist before building.
 - LabRat surfaces are untouched (feature being removed).
 - Self-references never link (the entity a page is about).
 - No em dashes in any rendered copy or spec/plan prose.
@@ -116,7 +113,7 @@ lanes:
 - Server suites (lanes B/D/F if extended) run ALONE, one at a time: `node --test <file>` with `-r dotenv/config` where the suite needs the dev DB.
 - Dev server is a Claude-managed background process and does NOT auto-reload server edits: after touching `server/`, kill the :5000 listener, relaunch, confirm boot lines.
 - `useUrlListState` defaults objects are declared at module scope (stable identity), never inline in the component body.
-- Keys/param names are part of the URL contract and exactly as specified in the spec table (tab, q, status, source, sort, page, period, client, thread, basis, from, to, include_cc); the pay-period deep link is exactly `/financials/payroll?tab=history&period=<id>`.
+- Keys/param names are part of the URL contract and exactly as specified in the spec table (tab, q, status, source, sort, page, period, client, thread; Financials basis/range/from/to/include_cc stay owned by useMetricsFilter); the pay-period deep link is exactly `/financials/payroll?tab=history&period=<id>`.
 
 ---
 
@@ -433,7 +430,7 @@ At `CommandPalette.js:128` the result rows navigate via `PATH_BY_TYPE[it.type] +
 
 - [ ] **Step 2: Presence staff names link to profiles**
 
-In `PresenceStrip.js` (lines 89 and 126) and `PresenceDrawer.js` (lines 47 and 70), wrap the rendered staff display name in `<EntityLink to={'/staffing/users/' + <the row's user id>}>name</EntityLink>`. Use the id field already present in each payload row (the strip/drawer rows are keyed by user id). Do not link the viewing admin's own row differently: all rows link (a profile is not a self-reference for the strip).
+In `PresenceStrip.js` (lines 89 and 126) and `PresenceDrawer.js` line 47, wrap the rendered staff display name in `<EntityLink to={'/staffing/users/' + <row user id>}>name</EntityLink>`; those three renders carry `u.id`/`owner.id` (verified). `PresenceDrawer.js:70` is the intervals table, keyed by interval id and rendering `iv.user_name`: check the presence payload for `iv.user_id` first; if present, link the same way, if absent leave interval names unlinked (edge severity; do NOT widen into the presence route for it). Do not link the viewing admin's own row differently: all rows link (a profile is not a self-reference for the strip).
 
 - [ ] **Step 3: README folder tree**
 
@@ -442,7 +439,7 @@ Add `EntityLink.js` under components and `useUrlListState.js` under hooks in the
 - [ ] **Step 4: Verify + checkpoint commit**
 
 Run: `cd client && CI=true npx react-scripts build`
-Expected: clean build. Then:
+Expected: clean build. Then click-through on the dev server: open the palette, Enter on a result still navigates and closes it, cmd-click a result opens a new tab, a presence strip name navigates to the staff profile. Then:
 
 ```bash
 git add client/src/components/adminos/CommandPalette.js client/src/components/adminos/PresenceStrip.js client/src/components/adminos/drawers/PresenceDrawer.js README.md
@@ -489,7 +486,7 @@ git commit -m "feat(crossnav): events dashboard URL view state"
 
 **Files:**
 - Modify: `client/src/pages/admin/EventsDashboard.js:512`, `client/src/pages/admin/EventDetailPage.js` (194, 201, 339, 382), `client/src/pages/admin/Dashboard.js` (306, 308), `client/src/components/adminos/drawers/ShiftDrawer.js` (400, 445, 481, 533)
-- Modify: `server/routes/shifts.queries.js` (detail query: add `c.id AS client_id` beside the existing `COALESCE(c.name, s.client_name) AS client_name` at line ~74)
+- Modify: `server/routes/shifts.js` (GET /detail/:id INLINE query at ~245-283: add `c.id AS client_id`; `LEFT JOIN clients c ON c.id = p.client_id` already exists at ~259). CAUTION: the same `COALESCE(c.name, s.client_name) AS client_name` string also appears in `shifts.queries.js` USER_EVENTS_SQL, which is the WRONG query (staff my-events); do not touch shifts.queries.js.
 
 **Interfaces:**
 - Consumes: `EntityLink` (Task 1), `drawerHref` (Task 3).
@@ -513,7 +510,7 @@ Manual (no `proposal_id`) rows: give the `<strong>` name an `<EntityLink to={dra
 
 - [ ] **Step 4: ShiftDrawer (400, 445, 481, 533) + server alias**
 
-Staff names at 445/481/533: `<EntityLink to={'/staffing/users/' + <row user_id>}>`. Client name at 400 (and the crumb at 367): needs `client_id`; add `c.id AS client_id` to the `/shifts/detail/:id` SELECT in `server/routes/shifts.queries.js` (the clients join `c` already exists at line ~74), then `<EntityLink to={shift.client_id ? '/clients/' + shift.client_id : null}>`.
+Staff names at 445/481/533: `<EntityLink to={'/staffing/users/' + <row user_id>}>`. Client name at 400 (and the crumb at 367): needs `client_id`; add `c.id AS client_id` to the GET /detail/:id inline SELECT in `server/routes/shifts.js` (~245-283; clients join at ~259), then `<EntityLink to={shift.client_id ? '/clients/' + shift.client_id : null}>`.
 
 - [ ] **Step 5: Verify**
 
@@ -522,7 +519,7 @@ Restart the managed dev server (server edit). Run `node --test server/routes/shi
 - [ ] **Step 6: Checkpoint commit**
 
 ```bash
-git add client/src/pages/admin/EventsDashboard.js client/src/pages/admin/EventDetailPage.js client/src/pages/admin/Dashboard.js client/src/components/adminos/drawers/ShiftDrawer.js server/routes/shifts.queries.js
+git add client/src/pages/admin/EventsDashboard.js client/src/pages/admin/EventDetailPage.js client/src/pages/admin/Dashboard.js client/src/components/adminos/drawers/ShiftDrawer.js server/routes/shifts.js
 git commit -m "feat(crossnav): events surface entity links + shift detail client_id"
 ```
 
@@ -546,10 +543,10 @@ git commit -m "feat(crossnav): proposals + clients dashboards URL view state"
 
 ---
 
-### Task 8 (Lane C): proposals + clients + CC-import link coverage
+### Task 8 (Lane C): proposals + clients link coverage
 
 **Files:**
-- Modify: `client/src/pages/admin/ProposalDetail.js` (367, 486, 712, 741), `client/src/pages/admin/AlternativesPanel.js:137`, `client/src/pages/admin/ProposalsDashboard.js` (222, 251), `client/src/pages/admin/ProposalCreate.js:460`, `client/src/pages/admin/ProposalDetailEditForm.js:340`, `client/src/pages/admin/ChangeRequestsDashboard.js:17`, `client/src/pages/admin/ClientDetail.js:250`, `client/src/pages/admin/CcImportReviewPage.js` (218, 294, 416, 476), `client/src/pages/admin/CcImportWrapUpPage.js` (246, 295, 306)
+- Modify: `client/src/pages/admin/ProposalDetail.js` (367, 486, 712, 741), `client/src/pages/admin/AlternativesPanel.js:137`, `client/src/pages/admin/ProposalsDashboard.js` (222, 251), `client/src/pages/admin/ProposalDetailEditForm.js:340`, `client/src/pages/admin/ChangeRequestsDashboard.js:17`, `client/src/pages/admin/ClientDetail.js:250`
 - Modify (only if needed): `server/routes/clients.js`
 
 **Interfaces:**
@@ -563,7 +560,6 @@ git commit -m "feat(crossnav): proposals + clients dashboards URL view state"
 
 - [ ] **Step 2: dashboards + create/edit + change requests**
   - ProposalsDashboard 251 "View event" icon-button -> `EntityLink to={'/events/' + p.id}` keeping the icon; 222 (wrong-target edge): make the client cell an `EntityLink to={p.client_id ? '/clients/' + p.client_id : null}` instead of whatever it currently mis-targets.
-  - ProposalCreate 460: the seeded-client banner name -> `EntityLink to={'/clients/' + <seed client id>}`.
   - ProposalDetailEditForm 340: client name -> `EntityLink` same shape.
   - ChangeRequestsDashboard 17: client name in each request row -> `EntityLink to={'/clients/' + r.client_id}`.
 
@@ -571,16 +567,12 @@ git commit -m "feat(crossnav): proposals + clients dashboards URL view state"
 
 Check the `/clients/:id` payload's proposals array: if each row already carries `status`, link rows whose status is in `['deposit_paid','balance_paid','confirmed','completed']` to `'/events/' + p.id` and the rest to `'/proposals/' + p.id`, both via RowLink in the identifying cell (rows may already be ClickableRow; follow the file's current row pattern). If status is absent, add it to the SELECT in `server/routes/clients.js` (read-only alias) and then do the same.
 
-- [ ] **Step 4: CC import (218, 294, 416, 476, 246, 295, 306)**
+- [ ] **Step 4: Verify + checkpoint commit**
 
-ReviewPage 218: switch the existing event link target to `'/proposals/' + it.id` only if the row is proposal-stage (follow the appendix note; both resolve since event id == proposal id; keep `/events/` where the row represents a converted event). 294/416/476 (modal references): wrap named proposal/staff in `EntityLink` (`'/proposals/' + id`, `'/staffing/users/' + id`). WrapUpPage 246/295/306: plain-text proposal/event/client references become `EntityLink`s per the appendix targets (`'/events/' + it.id` for the completed-events table, `'/clients/' + it.client_id` for the client column).
-
-- [ ] **Step 5: Verify + checkpoint commit**
-
-`cd client && CI=true npx react-scripts build` clean; click-through ProposalDetail (all four), ClientDetail rows, one CC table. If clients.js changed, restart dev server and confirm `/clients/:id` payload.
+`cd client && CI=true npx react-scripts build` clean; click-through ProposalDetail (all four) and ClientDetail rows. If clients.js changed, restart dev server and confirm `/clients/:id` payload.
 
 ```bash
-git add client/src/pages/admin/ProposalDetail.js client/src/pages/admin/AlternativesPanel.js client/src/pages/admin/ProposalsDashboard.js client/src/pages/admin/ProposalCreate.js client/src/pages/admin/ProposalDetailEditForm.js client/src/pages/admin/ChangeRequestsDashboard.js client/src/pages/admin/ClientDetail.js client/src/pages/admin/CcImportReviewPage.js client/src/pages/admin/CcImportWrapUpPage.js
+git add client/src/pages/admin/ProposalDetail.js client/src/pages/admin/AlternativesPanel.js client/src/pages/admin/ProposalsDashboard.js client/src/pages/admin/ProposalDetailEditForm.js client/src/pages/admin/ChangeRequestsDashboard.js client/src/pages/admin/ClientDetail.js
 git commit -m "feat(crossnav): proposals + clients + cc-import entity links"
 ```
 
@@ -595,25 +587,28 @@ git commit -m "feat(crossnav): proposals + clients + cc-import entity links"
 
 **Interfaces:**
 - Consumes: `useUrlListState` (Task 2).
-- Produces: `/financials/payroll?tab=history&period=<id>` lands on history with that period expanded and scrolled into view. Lane E's PayoutsTab links against exactly this contract.
+- Produces: `/financials/payroll?tab=history&period=<id>` lands on history with that period opened and scrolled into view. Lane E's PayoutsTab links against exactly this contract. Degradation both directions is safe: if lane E merges first, PayrollPage ignores the unknown params and lands on the default current tab (no crash); if lane D merges first, nothing links to the receiver yet.
 
 - [ ] **Step 1: PayrollPage** adopts `const PAYROLL_DEFAULTS = { tab: 'current', period: '' };`. Tab clamp to `['current','history','unassigned']`. Pass `period` (string id or '') down to `HistoryView` as `initialPeriodId`.
 
 - [ ] **Step 2: HistoryView receiver**
 
+IMPORTANT (feasibility-review corrected): HistoryView's `expanded` Set holds payout-row ids WITHIN an already-opened period (HistoryView.js:15,53-56), NOT period expansion. Opening a period is `open(p.id)` (line ~78), which loads /admin/payroll/periods/:id into `selected`. Seed via the loader:
+
 ```jsx
-// inside HistoryView, after periods load:
-const targetRef = useRef(null);
+// inside HistoryView, after the periods list loads:
 useEffect(() => {
   if (!initialPeriodId || !periods.length) return;
-  setExpanded(prev => (prev.has(initialPeriodId) ? prev : new Set(prev).add(initialPeriodId)));
-  targetRef.current?.scrollIntoView({ block: 'start' });
+  if (periods.some((p) => String(p.id) === String(initialPeriodId))) {
+    open(initialPeriodId);
+    document.getElementById('period-' + initialPeriodId)?.scrollIntoView({ block: 'start' });
+  }
 }, [initialPeriodId, periods.length]);
 ```
 
-Attach `ref={String(p.id) === String(initialPeriodId) ? targetRef : undefined}` on the matching period element. Adapt names to the file's actual expanded-state shape (if expansion is per-row state, set that row open); if the history endpoint pages and the target period is absent from page 1, fall back gracefully (no crash, no scroll).
+Add `id={'period-' + p.id}` to each period element. Do not touch `expanded`. If the target period is absent from the loaded list, fall back gracefully (no open, no scroll, no crash).
 
-- [ ] **Step 3: FinancialsDashboard** adopts `const FIN_DEFAULTS = { tab: 'overview', basis: <current initial>, from: '', to: '', include_cc: 'all' };` wiring its existing tab/filter-bar state through the hook (the basis/from/to/include_cc values currently feeding the `params` object at lines 31-33 become URL-backed).
+- [ ] **Step 3: FinancialsDashboard** adopts `const FIN_DEFAULTS = { tab: 'overview' };` for the tab ONLY (feasibility-review corrected: basis/range/from/to/include_cc are ALREADY URL-backed via useMetricsFilter, hooks/useMetricsFilter.js:33-46; do not double-manage those params, and note it also owns a `range` param).
 
 - [ ] **Step 4: Verify by hand + checkpoint commit**
 
@@ -626,13 +621,38 @@ git commit -m "feat(crossnav): payroll + financials URL state, period deep link"
 
 ---
 
-### Task 10 (Lane D): money-surface link coverage
+### Task 10 (Lane D): money-surface SELECT additions
+
+**Files:**
+- Modify: `server/routes/proposals/metadata.js` (GET /financials handler, line ~112): add `client_id` to BOTH the proposals-table rows and the payments-in-range rows (alias from the proposals/clients join already present in each query).
+- Modify: `server/routes/admin/payroll.js` (GET /payroll/deferred-tips, line ~558; the names come from an `ARRAY(SELECT ...)` subquery at ~528-533 with NO ORDER BY): add `staff_ids` as a second ARRAY() subquery mirroring the names one, and add an explicit IDENTICAL ORDER BY to BOTH subqueries; matching order is the only thing guaranteeing names[i] belongs to staff_ids[i] (wrong alignment = wrong staff profile links on a payroll surface).
+- Modify: `server/routes/stripePayouts.js` (LINE_SELECT at ~14-24): add `staff_user_id` on gratuity-matched lines via a read-only `LEFT JOIN tips ON tips.id = l.tip_id` (no tips join exists today; NULL on non-gratuity lines). `proposal_id` and `invoice_token` are already emitted, which is what Task 11's links and the invoice token anchor rely on.
+
+**Interfaces:**
+- Produces: `client_id` (nullable int) on both /proposals/financials row sets; `staff_ids` (int[] parallel to names) on deferred-tips; `staff_user_id` (nullable int) on stripe-payout lines. Task 11 consumes exactly these names.
+
+- [ ] **Step 0: Read `.claude/seam-sweep-2026-07-02.md`** (standing rule before touching payroll/invoice routes). Additions here are SELECT aliases only; if any change would touch amounts, statuses, or write paths, STOP and surface.
+- [ ] **Step 1: Make the three additions** (read each query first; keep aliases snake_case; nullable where joins can miss).
+- [ ] **Step 2: Test**
+
+Run, ONE AT A TIME: `node -r dotenv/config --test server/routes/admin/payroll.test.js` then `node -r dotenv/config --test server/routes/stripePayouts.test.js` then `node -r dotenv/config --test server/routes/proposals/financialsNetting.test.js`. Expected: all pass (additions are non-breaking columns). Restart the managed dev server; curl each endpoint and grep the new fields.
+
+- [ ] **Step 3: Checkpoint commit**
+
+```bash
+git add server/routes/proposals/metadata.js server/routes/admin/payroll.js server/routes/stripePayouts.js
+git commit -m "feat(crossnav): id columns for money-surface links"
+```
+
+---
+
+### Task 11 (Lane D): money-surface link coverage
 
 **Files:**
 - Modify: `client/src/pages/admin/payroll/PayoutRow.js:20`, `client/src/pages/admin/payroll/EventLineItem.js:73`, `client/src/pages/admin/payroll/UnassignedTipsPanel.js:60`, `client/src/pages/admin/payroll/DeferredTipsPanel.js` (79, 80), `client/src/pages/admin/payroll/PayQRModal.js:22`, `client/src/pages/admin/TipsAdmin.js` (160, 237), `client/src/pages/admin/FinancialsDashboard.js` (143, 183, 185), `client/src/pages/admin/StripePayoutsTab.js` (12, 14, 15), `client/src/components/InvoiceDropdown.js:67`, `client/src/components/adminos/drawers/InvoicesDrawer.js:65`
 
 **Interfaces:**
-- Consumes: `EntityLink` (Task 1), `drawerHref` (Task 3), server fields from Task 11 (`client_id` on financials rows, `staff_ids` on deferred tips, `staff_user_id` on payout lines). Client renders `EntityLink to={x ? ... : null}` so it degrades safely if deployed before Task 11 data flows.
+- Consumes: `EntityLink` (Task 1), `drawerHref` (Task 3), server fields from Task 10 (`client_id` on financials rows, `staff_ids` on deferred tips, `staff_user_id` on payout lines), which lands FIRST so this task's click-through actually verifies the links. Client still renders `EntityLink to={x ? ... : null}` null-safe.
 
 - [ ] **Step 1: payroll components**
   - PayoutRow 20: `<EntityLink to={'/staffing/users/' + payout.contractor_id}>{payout.contractor_name}</EntityLink>`.
@@ -662,35 +682,10 @@ git commit -m "feat(crossnav): money-surface entity links"
 
 ---
 
-### Task 11 (Lane D): money-surface SELECT additions
-
-**Files:**
-- Modify: `server/routes/proposals/metadata.js` (GET /financials handler, line ~112): add `client_id` to BOTH the proposals-table rows and the payments-in-range rows (alias from the proposals/clients join already present in each query).
-- Modify: `server/routes/admin/payroll.js` (GET /payroll/deferred-tips, line ~558): alongside the existing staff-name string array, add `staff_ids` (same order, same length; `array_agg(u.id ORDER BY ...)` mirroring however the names are aggregated).
-- Modify: `server/routes/stripePayouts.js` (payout lines query): add `staff_user_id` on gratuity-matched lines (the tip row's target user id; NULL on non-gratuity lines) and confirm `proposal_id` is already emitted (appendix says yes).
-
-**Interfaces:**
-- Produces: `client_id` (nullable int) on both /proposals/financials row sets; `staff_ids` (int[] parallel to names) on deferred-tips; `staff_user_id` (nullable int) on stripe-payout lines. Task 10 consumes exactly these names.
-
-- [ ] **Step 0: Read `.claude/seam-sweep-2026-07-02.md`** (standing rule before touching payroll/invoice routes). Additions here are SELECT aliases only; if any change would touch amounts, statuses, or write paths, STOP and surface.
-- [ ] **Step 1: Make the three additions** (read each query first; keep aliases snake_case; nullable where joins can miss).
-- [ ] **Step 2: Test**
-
-Run, ONE AT A TIME: `node -r dotenv/config --test server/routes/admin/payroll.test.js` then `node -r dotenv/config --test server/routes/stripePayouts.test.js` then `node -r dotenv/config --test server/routes/proposals/financialsNetting.test.js`. Expected: all pass (additions are non-breaking columns). Restart the managed dev server; curl each endpoint and grep the new fields.
-
-- [ ] **Step 3: Checkpoint commit**
-
-```bash
-git add server/routes/proposals/metadata.js server/routes/admin/payroll.js server/routes/stripePayouts.js
-git commit -m "feat(crossnav): id columns for money-surface links"
-```
-
----
-
 ### Task 12 (Lane E): staffing URL state (dashboards + user-detail tab)
 
 **Files:**
-- Modify: `client/src/pages/admin/StaffDashboard.js` (`{ tab: 'active', q: '' }`), `client/src/pages/admin/HiringDashboard.js` (`{ q: '' }`), `client/src/pages/admin/userDetail/AdminUserDetail.js` (`{ tab: 'overview' }`, clamp to its tab list at line ~38)
+- Modify: `client/src/pages/admin/StaffDashboard.js` (`{ tab: 'active', q: '' }`), `client/src/pages/admin/HiringDashboard.js` (`{ q: '' }`), `client/src/pages/admin/userDetail/AdminUserDetail.js` (`{ tab: 'overview' }`; no tab-list array exists at ~38, only `useState('overview')`: build the clamp list from the TabButton set at ~470-478: overview, shifts, certifications, payouts, tip-page, documents, messages, application, with `application` conditional)
 
 Same adoption mechanics as Task 5. AdminUserDetail is the canonical case: `/staffing/users/7?tab=shifts` must select the shifts tab on load, and Back from an event must land there.
 
@@ -713,8 +708,8 @@ git commit -m "feat(crossnav): staffing URL view state (incl. user-detail tab)"
 **Interfaces:**
 - Consumes: `EntityLink` (Task 1); Task 9's deep-link contract `/financials/payroll?tab=history&period=<id>`.
 
-- [ ] **Step 1: the founding example**: ShiftsTab 76 and OverviewTab 118 event references -> `<EntityLink to={row.proposal_id ? '/events/' + row.proposal_id : '/events/shift/' + row.shift_id}>` around the event label (type + client name stays one link).
-- [ ] **Step 2: PayoutsTab 44**: period rows -> `EntityLink to={'/financials/payroll?tab=history&period=' + p.period_id}` replacing the raw navigate.
+- [ ] **Step 1: the founding example**: ShiftsTab 76 event references -> `<EntityLink to={row.proposal_id ? '/events/' + row.proposal_id : '/events/shift/' + row.shift_id}>` around the event label (type + client name stays one link). OverviewTab: line 62 ALREADY renders a real Link (`to={ev.proposal_id ? '/events/' + ev.proposal_id : '/events/shift/' + ev.id}`); re-locate the appendix :118 item and add an EntityLink ONLY if it is a genuinely different unlinked render, matching the existing field shape (`ev.id` fallback, not `shift_id`).
+- [ ] **Step 2: PayoutsTab 44**: period rows expose a NESTED period object (`po.period.start_date`, PayoutsTab.js:53): link via `EntityLink to={'/financials/payroll?tab=history&period=' + po.period.id}` replacing the raw navigate (the id must match `pay_periods.id`, which is what HistoryView's `open()` loads).
 - [ ] **Step 3: HiringDashboard 169/318**: search-result rows and kanban card names become real links to `'/staffing/applications/' + a.id` (keep drag behavior on cards: link only the name text, not the whole draggable card).
 - [ ] **Step 4: legacy AdminDashboard (410, 477, 616, 684, 725)**: events -> `'/events/' + proposal_id` (fallback `'/events/shift/' + shift_id`), staff names -> `'/staffing/users/' + user_id`, all via EntityLink.
 - [ ] **Step 5: remaining detail refs**: MessagesTab 27 (event via `'/events/shift/' + m.shift_id`) and 41 (sender via `'/staffing/users/' + m.sender_id`); ApplicationTab 11 -> `'/staffing/applications/' + <application user id>`; AdminUserDetail 433 proposal ref -> `'/proposals/' + id`; AssignToEventModal 142 event rows get an EntityLink on the label (modal stays usable: link is secondary to the assign action, so stopPropagation on the link click); AdminApplicationDetail 128 staff ref -> `'/staffing/users/' + id`; InterviewScheduleModal 78 applicant -> `'/staffing/applications/' + id`.
@@ -723,7 +718,7 @@ git commit -m "feat(crossnav): staffing URL view state (incl. user-detail tab)"
 `cd client && CI=true npx react-scripts build` clean; walk the founding example end to end.
 
 ```bash
-git add client/src/pages/admin/HiringDashboard.js client/src/pages/AdminDashboard.js client/src/pages/admin/userDetail client/src/pages/admin/applicationDetail/AdminApplicationDetail.js client/src/components/adminos/InterviewScheduleModal.js
+git add client/src/pages/admin/HiringDashboard.js client/src/pages/AdminDashboard.js client/src/pages/admin/userDetail/AdminUserDetail.js client/src/pages/admin/userDetail/tabs/OverviewTab.js client/src/pages/admin/userDetail/tabs/ShiftsTab.js client/src/pages/admin/userDetail/tabs/PayoutsTab.js client/src/pages/admin/userDetail/tabs/MessagesTab.js client/src/pages/admin/userDetail/tabs/ApplicationTab.js client/src/pages/admin/userDetail/components/AssignToEventModal.js client/src/pages/admin/applicationDetail/AdminApplicationDetail.js client/src/components/adminos/InterviewScheduleModal.js
 git commit -m "feat(crossnav): staffing surface entity links"
 ```
 
@@ -751,7 +746,7 @@ git commit -m "feat(crossnav): comms URL view state"
 
 **Files:**
 - Modify: `client/src/pages/admin/EmailCampaignDetail.js` (255, 288), `client/src/pages/admin/EmailLeadDetail.js:162`, `client/src/pages/admin/EmailConversations.js` (89, 109), `client/src/pages/admin/Messages.js` (111, 130), `client/src/pages/admin/DrinkPlanDetail.js` (185, 189, 247), `client/src/components/DrinkPlanCard.js:183`, `client/src/components/AudienceSelector.js:119`
-- Modify: `server/routes/drinkPlans.js` (GET /:id: add `client_id` alias from the proposals/clients join)
+- Modify: `server/routes/drinkPlans.js` (GET /:id handler at ~434: emit `p.client_id` directly from the EXISTING proposals join; no clients join exists or is needed)
 - Modify (verify-first): `server/routes/emailMarketing.js` (conversations thread list: ONLY if `lead_id` is genuinely absent from the payload, add it as a SELECT alias; no other change)
 
 **Interfaces:**

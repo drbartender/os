@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-07
 **Status:** Approved (section-by-section in brainstorm)
-**Source inventory:** 14-agent workflow sweep of every admin surface (86 raw findings, 50 files; 79 in scope after cuts). Appendix below is the authoritative list.
+**Source inventory:** 14-agent workflow sweep of every admin surface (86 raw findings, 50 files; 71 in scope after cuts and the cc-demolition obsolescence). Appendix below is the authoritative list.
 
 ## Goal
 
@@ -49,12 +49,12 @@ Screens and their keys:
 | DrinkPlansDashboard | tab, q |
 | EmailLeadsDashboard | q, status, source, page |
 | PayrollPage | tab (current/history/unassigned), period (expanded period id; deep-link receiver) |
-| FinancialsDashboard | tab, basis, from, to, include_cc (matching its current state/filter-bar keys) |
+| FinancialsDashboard | tab only (basis/range/from/to/include_cc are ALREADY URL-backed via useMetricsFilter; do not double-manage them) |
 | Messages | client (selected thread) |
 | EmailConversations | thread (selected thread) |
 | AdminUserDetail | tab (overview/shifts/payouts/...) |
 
-CcImportReviewPage keeps its auto-derived section state (reset on return is correct there).
+
 
 ## ScrollToTop POP guard
 
@@ -65,10 +65,10 @@ client/src/components/ScrollToTop.js currently scrolls to top on every pathname 
 | Route (file) | Addition | Consumer |
 |---|---|---|
 | /proposals/financials (server/routes/proposals/, financials handler) | client_id on the proposals table rows AND the payments-in-range rows | FinancialsDashboard client links |
-| /admin/payroll/deferred-tips (server/routes/admin/payroll.js) | staff user ids alongside the existing staff-name strings | DeferredTipsPanel staff links |
-| /stripe-payouts (its route file) | staff user_id on gratuity-matched lines | StripePayoutsTab staff links |
-| /drink-plans/:id (server/routes/drinkPlans.js or drinkPlans/) | client_id | DrinkPlanDetail client link |
-| /shifts shift payload feeding ShiftDrawer (server/routes/shifts.js / shifts.queries.js) | client_id | ShiftDrawer client link |
+| /admin/payroll/deferred-tips (server/routes/admin/payroll.js, ~528-533) | staff_ids as a second ARRAY() subquery MIRRORING the names subquery, with an explicit identical ORDER BY added to BOTH (today the names ARRAY() has no ORDER BY; without matching order the name-to-id index alignment is not guaranteed) | DeferredTipsPanel staff links |
+| /stripe-payouts (server/routes/stripePayouts.js, LINE_SELECT ~14-24) | staff_user_id via a read-only LEFT JOIN tips ON tips.id = l.tip_id (no tips join exists today); proposal_id and invoice_token already emitted | StripePayoutsTab staff links |
+| GET /drink-plans/:id (server/routes/drinkPlans.js, handler ~434) | p.client_id directly from the existing proposals join (no clients join needed) | DrinkPlanDetail client link |
+| GET /shifts/detail/:id (server/routes/shifts.js, inline query at ~245; clients join c already at ~259) | c.id AS client_id | ShiftDrawer client link |
 | /clients/:id (server/routes/clients.js) | only if the proposals array lacks status: a flag distinguishing rows with a live event | ClientDetail event-vs-proposal row links |
 | /email conversations threads (server/routes/emailMarketing.js) | only if lead_id is genuinely absent from the thread list payload (verify first) | EmailConversations sidebar links |
 
@@ -82,7 +82,9 @@ Payroll EventLineItem needs NO server change: it links via /events/shift/:shift_
 - LabRat surfaces.
 - Merging proposal/event views (cross-links only).
 
-## Appendix: authoritative finding list (79 in scope, 7 skipped)
+## Appendix: authoritative finding list (71 in scope, 8 skipped)
+
+> 2026-07-07 post-review correction: 7 rows for CcImportReviewPage/CcImportWrapUpPage were obsoleted mid-design when the cc-demolition lane merged (f39de17) and deleted both pages; ProposalCreate.js:460 moved to skipped (file frozen over the ratchet hard cap).
 
 Severity: core = obvious click-through an admin will use constantly; nice = secondary; edge = marginal but free. "id?" = whether the entity id is already in the data feeding the render.
 
@@ -112,21 +114,13 @@ Severity: core = obvious click-through an admin will use constantly; nice = seco
 | `client/src/pages/admin/EventDetailPage.js:382` | staff member (users) | `/staffing/users/:id` | yes | plain-text | core |
 | `client/src/pages/admin/EventsDashboard.js:512` | event (manual, no proposal) | `/events/:id` | no | wrong-target | edge |
 
-### Lane C; proposals + clients + CC import
+### Lane C; proposals + clients
 
 | File:line | Entity | Target | id? | Current | Sev |
 |---|---|---|---|---|---|
 | `client/src/pages/admin/AlternativesPanel.js:137` | proposal | `/proposals/:id` | yes | pattern-upgrade | core |
-| `client/src/pages/admin/CcImportReviewPage.js:218` | proposal | `/proposals/:id; currently /events/:id (both resolve; event id == proposal id)` | yes | pattern-upgrade | nice |
-| `client/src/pages/admin/CcImportReviewPage.js:294` | proposal | `/proposals/:id` | yes | modal-only | edge |
-| `client/src/pages/admin/CcImportReviewPage.js:416` | staff member | `/staffing/users/:id` | yes | modal-only | edge |
-| `client/src/pages/admin/CcImportReviewPage.js:476` | staff member | `/staffing/users/:id` | yes | modal-only | edge |
-| `client/src/pages/admin/CcImportWrapUpPage.js:246` | proposal | `/proposals/:id (or /events/:id)` | yes | plain-text | nice |
-| `client/src/pages/admin/CcImportWrapUpPage.js:295` | event | `/events/:id (it.id); or /proposals/:id; event id == proposal id in this app` | yes | plain-text | core |
-| `client/src/pages/admin/CcImportWrapUpPage.js:306` | client | `/clients/:id` | yes | plain-text | nice |
 | `client/src/pages/admin/ChangeRequestsDashboard.js:17` | client | `/clients/:id` | yes | plain-text | nice |
 | `client/src/pages/admin/ClientDetail.js:250` | event | `/events/:id` | no | links-to-proposal-not-event | nice |
-| `client/src/pages/admin/ProposalCreate.js:460` | client | `/clients/:id` | yes | plain-text | edge |
 | `client/src/pages/admin/ProposalDetail.js:367` | client | `/clients/:id` | yes | pattern-upgrade | core |
 | `client/src/pages/admin/ProposalDetail.js:486` | client | `/clients/:id` | yes | pattern-upgrade | core |
 | `client/src/pages/admin/ProposalDetail.js:712` | event | `/events/:id` | yes | pattern-upgrade | core |
@@ -199,6 +193,7 @@ Severity: core = obvious click-through an admin will use constantly; nice = seco
 
 | File:line | Entity | Why skipped |
 |---|---|---|
+| `client/src/pages/admin/ProposalCreate.js:460` | client | file frozen over the 1000-line ratchet cap; edge not worth an extraction |
 | `client/src/pages/admin/ProposalDetailPaymentPanel.js:246` | email lead | TT lead cost line; edge, no target |
 | `client/src/components/admin/LegacyCcPaymentsPanel.js:55` | payment | legacy charge id; edge, file not otherwise touched |
 | `client/src/pages/admin/userDetail/tabs/ShiftsTab.js:84` | client | edge needing server change (approved cut) |
