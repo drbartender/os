@@ -102,3 +102,22 @@ Turn OFF CC client notifications once the 13 are live. If a payment still
 slides through CC before 7/21 (Sid due 7/9, Cody due 7/17), Dallas reports
 it and we bump that event's external_paid/amount_paid (small documented
 update path, no payment rows). Then CC cancellation.
+
+## Balance collection decision (push review, 2026-07-07)
+
+Codex push-time review surfaced that transferred proposals are born `confirmed`
+but several still owe money, and 3 places assume confirmed = fully paid:
+(1) record-payment rejects confirmed (can't record a check/cash balance via UI);
+(2) the balance-reminder "View & Pay Balance" link lands on the confirmed
+proposal page, which has no pay button; (3) the enqueue->purge dispatcher gap.
+
+Dallas's call (13 events, personally managed): DON'T loosen the record-payment
+guard. Balances collect via **Stripe invoices** — `create-intent-for-invoice`
+gates only on invoice status, not proposal status, so a Stripe invoice on a
+`confirmed` proposal is fully payable and its email carries a working pay link.
+Send the invoice (don't rely on the auto-reminder /proposal link). If a client
+pays their balance by check/cash, handle it case-by-case with the documented
+UPDATE (external_paid/amount_paid, never a payment row). Dispatcher gap = the
+mandatory RUN_MESSAGE_DISPATCHER_SCHEDULER=false apply-window precondition.
+None of the 3 are wrong-amount or already-paid misfires; all pre-existing to
+the confirmed-with-balance state, surfaced at scale by the 13 transfers.
