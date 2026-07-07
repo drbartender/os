@@ -176,7 +176,7 @@ async function createInvoiceOnSend(proposalId, dbClient) {
 
   // Fetch proposal
   const propResult = await client.query(
-    `SELECT total_price, deposit_amount, payment_type, balance_due_date
+    `SELECT total_price, deposit_amount, payment_type, balance_due_date, external_paid
        FROM proposals WHERE id = $1`,
     [proposalId]
   );
@@ -185,9 +185,15 @@ async function createInvoiceOnSend(proposalId, dbClient) {
   const prop = propResult.rows[0];
   const isDeposit = prop.payment_type === 'deposit';
   const label = isDeposit ? 'Deposit' : 'Full Payment';
+  // Net off-platform money (cc-transfer external_paid, folded into amount_paid
+  // with no payment/invoice rows) so a Full Payment invoice bills the true
+  // remainder — matching refreshUnlockedInvoices. Guaranteed no-op for native
+  // proposals (external_paid defaults 0); only a contrived archive->draft->sent
+  // recovery of a transferred event reaches this at all, but keep the two
+  // invoice-creation paths consistent so neither can re-bill collected money.
   const amountDueCents = isDeposit
     ? toCents(prop.deposit_amount)
-    : toCents(prop.total_price);
+    : Math.max(0, toCents(prop.total_price) - toCents(prop.external_paid));
   const dueDate = isDeposit ? null : (prop.balance_due_date || null);
 
   const invoice = await createInvoice(
