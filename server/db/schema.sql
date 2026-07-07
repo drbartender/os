@@ -792,7 +792,7 @@ CREATE TABLE IF NOT EXISTS clients (
   name VARCHAR(255) NOT NULL,
   email VARCHAR(255),
   phone VARCHAR(50),
-  source VARCHAR(50) DEFAULT 'direct' CHECK (source IN ('direct', 'thumbtack', 'referral', 'website', 'calcom', 'zola', 'instagram', 'other')),
+  source VARCHAR(50) DEFAULT 'direct' CHECK (source IN ('direct', 'thumbtack', 'referral', 'website', 'calcom', 'zola', 'instagram', 'checkcherry', 'other')),
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -2844,9 +2844,14 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 -- 1b. Add new clients.source check constraint. NOT VALID + VALIDATE
 -- surfaces any out-of-enum existing rows loudly rather than swallowing.
+-- 'checkcherry' added 2026-07-06 (cc-clients lane, one-time client import);
+-- this block is the single live definition of clients_source_check and is
+-- replayed every boot, so any new source value MUST be added HERE (a second
+-- drop-and-re-add block later in the file would make this one's VALIDATE
+-- fail once rows with the new value exist).
 ALTER TABLE clients
   ADD CONSTRAINT clients_source_check
-  CHECK (source IN ('direct', 'thumbtack', 'referral', 'website', 'calcom', 'zola', 'instagram', 'other'))
+  CHECK (source IN ('direct', 'thumbtack', 'referral', 'website', 'calcom', 'zola', 'instagram', 'checkcherry', 'other'))
   NOT VALID;
 ALTER TABLE clients VALIDATE CONSTRAINT clients_source_check;
 
