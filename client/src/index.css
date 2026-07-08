@@ -7554,7 +7554,7 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 
 .lab-card-image-wrap {
   width: 100%;
-  height: 200px;
+  aspect-ratio: 1 / 1;
   overflow: hidden;
   background: var(--paper-dark);
   position: relative;
@@ -7573,7 +7573,7 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 .lab-card-image {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   filter: saturate(0.85) contrast(1.05);
   transition: filter 0.3s;
 }
@@ -7651,38 +7651,35 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   padding: 2rem 1.5rem 4rem;
 }
 
+.lab-notebook-hero {
+  display: flex;
+  align-items: center;
+  gap: 2.5rem;
+  margin-bottom: 3rem;
+  padding-bottom: 2rem;
+  border-bottom: 3px double var(--amber);
+}
+
 .lab-notebook-cover {
-  width: 100%;
+  flex: 0 0 42%;
+  max-width: 420px;
   border-radius: var(--radius-lg);
   overflow: hidden;
-  margin-bottom: 2.5rem;
   border: 3px solid var(--border-dark);
   box-shadow: var(--shadow);
-  position: relative;
 }
 
-.lab-notebook-cover::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(to bottom, transparent 60%, rgba(26, 20, 16, 0.4) 100%);
-  pointer-events: none;
-}
-
+/* Cover shows whole — square/portrait art is never cropped (many carry baked-in text) */
 .lab-notebook-cover img {
   width: 100%;
   height: auto;
   display: block;
-  max-height: 480px;
-  object-fit: cover;
 }
 
 .lab-notebook-header {
-  max-width: 720px;
-  margin: 0 auto 2.5rem;
-  text-align: center;
-  padding-bottom: 2rem;
-  border-bottom: 3px double var(--amber);
+  flex: 1;
+  min-width: 0;
+  text-align: left;
 }
 
 .lab-notebook-back {
@@ -8153,8 +8150,8 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   .lab-index-grid { grid-template-columns: 1fr; }
   .blog-post-form .two-col { grid-template-columns: 1fr; }
   .lab-notebook { padding: 1.5rem 1rem 3rem; }
-  .lab-notebook-cover img { max-height: 300px; }
-  .lab-notebook-header { text-align: left; }
+  .lab-notebook-hero { flex-direction: column; align-items: stretch; gap: 1.5rem; margin-bottom: 2rem; }
+  .lab-notebook-cover { flex: none; max-width: 100%; }
   .rte-toolbar { gap: 1px; padding: 0.35rem; }
   .rte-btn { padding: 0.25rem 0.45rem; font-size: 0.78rem; }
 }

@@ -77,23 +77,25 @@ export default function BlogPost() {
   return (
     <PublicLayout>
       <article className="lab-notebook">
-        {post.cover_image_url && (
-          <div className="lab-notebook-cover">
-            {/* Article hero / LCP image — intentionally NOT lazy (lazy-loading the
-                LCP element hurts it); only hint async decoding. */}
-            <img src={resolveImageUrl(post.cover_image_url)} alt={post.title} decoding="async" />
-          </div>
-        )}
-        <div className="lab-notebook-header">
-          <Link to="/labnotes" className="lab-notebook-back">&larr; Back to Lab Notes</Link>
-          {post.chapter_number && (
-            <span className="lab-notebook-chapter">Lab Notes No. {post.chapter_number}</span>
+        <Link to="/labnotes" className="lab-notebook-back">&larr; Back to Lab Notes</Link>
+        <div className="lab-notebook-hero">
+          {post.cover_image_url && (
+            <div className="lab-notebook-cover">
+              {/* Article hero / LCP image — intentionally NOT lazy (lazy-loading the
+                  LCP element hurts it); only hint async decoding. */}
+              <img src={resolveImageUrl(post.cover_image_url)} alt={post.title} decoding="async" />
+            </div>
           )}
-          <h1 className="lab-notebook-title">{post.title}</h1>
-          <div className="lab-notebook-meta">
-            <span>{formatDate(post.published_at)}</span>
-            <span className="lab-notebook-meta-sep">&middot;</span>
-            <span>Dr. Bartender</span>
+          <div className="lab-notebook-header">
+            {post.chapter_number && (
+              <span className="lab-notebook-chapter">Lab Notes No. {post.chapter_number}</span>
+            )}
+            <h1 className="lab-notebook-title">{post.title}</h1>
+            <div className="lab-notebook-meta">
+              <span>{formatDate(post.published_at)}</span>
+              <span className="lab-notebook-meta-sep">&middot;</span>
+              <span>Dr. Bartender</span>
+            </div>
           </div>
         </div>
         <div
