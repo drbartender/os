@@ -47,6 +47,7 @@
   --cream-text: #F0E8D6;
   --deep-brown: #1C1610;
   --text-muted: #5A5048;
+  --text-muted-dark: #B0A48E;     /* muted byline/secondary text on the dark chalkboard surface (7.4:1) */
   --warm-brown: #134544;          /* primary CTA hover — deepened teal */
   --ink: #1C1610;
 
@@ -4887,8 +4888,8 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   display: flex;
   gap: 18px;
   margin-top: 18px;
-  font-size: 12px;
-  letter-spacing: 0.18em;
+  font-size: 13px;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--text-muted);
 }
@@ -4927,8 +4928,8 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 }
 .ws-labnotes-card-body { padding: 22px; }
 .ws-labnotes-card-meta {
-  font-size: 10px;
-  letter-spacing: 0.32em;
+  font-size: 11px;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--text-muted);
 }
@@ -4941,13 +4942,13 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 }
 .ws-labnotes-card-excerpt {
   margin-top: 8px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--deep-brown);
   line-height: 1.55;
 }
 .ws-labnotes-card-date {
   margin-top: 14px;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--text-muted);
@@ -7466,183 +7467,6 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 
 /* === BLOG / LAB NOTES === */
 
-/* ─── Blog Index — Table of Contents ────────────────────────────── */
-
-.lab-index-section {
-  padding: 3rem 1.5rem 4rem;
-  max-width: 1100px;
-  margin: 0 auto;
-}
-
-.lab-index-header {
-  text-align: center;
-  margin-bottom: 3rem;
-}
-
-.lab-index-kicker {
-  font-family: var(--font-body);
-  font-style: italic;
-  color: var(--amber);
-  font-size: 1rem;
-  letter-spacing: 0.05em;
-  display: block;
-  margin-bottom: 0.5rem;
-}
-
-.lab-index-title {
-  font-family: var(--font-display);
-  font-size: clamp(2rem, 5vw, 3rem);
-  color: var(--cream);
-  margin-bottom: 0.75rem;
-}
-
-.lab-index-subtitle {
-  font-family: var(--font-body);
-  color: var(--text-muted);
-  font-size: 1.05rem;
-  max-width: 500px;
-  margin: 0 auto;
-  font-style: italic;
-}
-
-.lab-index-empty {
-  text-align: center;
-  padding: 4rem 1rem;
-  color: var(--text-muted);
-  font-family: var(--font-body);
-  font-style: italic;
-  font-size: 1.1rem;
-}
-
-.lab-index-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 2rem;
-  margin-top: 2rem;
-}
-
-/* ─── Lab Index Cards ───────────────────────────────────────────── */
-
-.lab-card {
-  background: var(--paper);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  text-decoration: none;
-  color: var(--ink);
-  transition: transform 0.2s, box-shadow 0.2s;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 2px 3px 8px rgba(0, 0, 0, 0.15), 0 1px 0 var(--border);
-  position: relative;
-}
-
-.lab-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: linear-gradient(90deg, var(--amber) 0%, var(--amber-light) 100%);
-}
-
-.lab-card:hover {
-  transform: translateY(-4px) rotate(-0.3deg);
-  box-shadow: 4px 6px 20px rgba(0, 0, 0, 0.25);
-}
-
-.lab-card-image-wrap {
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  overflow: hidden;
-  background: var(--paper-dark);
-  position: relative;
-}
-
-.lab-card-image-wrap::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: var(--border);
-}
-
-.lab-card-image {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  filter: saturate(0.85) contrast(1.05);
-  transition: filter 0.3s;
-}
-
-.lab-card:hover .lab-card-image {
-  filter: saturate(1) contrast(1);
-}
-
-.lab-card-placeholder {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, var(--deep-brown) 0%, var(--warm-brown) 100%);
-}
-
-.lab-card-placeholder span {
-  font-family: var(--font-display);
-  font-size: 2rem;
-  color: var(--amber);
-  opacity: 0.4;
-}
-
-.lab-card-body {
-  padding: 1.25rem 1.25rem 1.5rem;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.lab-card-chapter {
-  font-family: var(--font-display);
-  font-size: 0.8rem;
-  color: var(--amber);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  margin-bottom: 0.4rem;
-  display: block;
-}
-
-.lab-card-title {
-  font-family: var(--font-display);
-  font-size: 1.15rem;
-  margin: 0 0 0.5rem;
-  color: var(--ink);
-  line-height: 1.35;
-}
-
-.lab-card-excerpt {
-  font-family: var(--font-body);
-  font-size: 0.92rem;
-  color: var(--text-muted);
-  margin: 0 0 0.75rem;
-  flex: 1;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  line-height: 1.55;
-}
-
-.lab-card-date {
-  font-family: var(--font-body);
-  font-size: 0.82rem;
-  color: var(--text-muted);
-  font-style: italic;
-}
-
 /* ─── Lab Notebook — Single Post ────────────────────────────────── */
 
 .lab-notebook {
@@ -7653,16 +7477,16 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 
 .lab-notebook-hero {
   display: flex;
-  align-items: center;
-  gap: 2.5rem;
+  align-items: flex-start;
+  gap: 2rem;
   margin-bottom: 3rem;
   padding-bottom: 2rem;
   border-bottom: 3px double var(--amber);
 }
 
 .lab-notebook-cover {
-  flex: 0 0 42%;
-  max-width: 420px;
+  flex: 0 0 46%;
+  max-width: 460px;
   border-radius: var(--radius-lg);
   overflow: hidden;
   border: 3px solid var(--border-dark);
@@ -7686,14 +7510,14 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   display: inline-block;
   font-family: var(--font-body);
   font-size: 0.95rem;
-  color: var(--amber);
+  color: var(--amber-light);
   text-decoration: none;
   margin-bottom: 1.5rem;
   transition: color 0.2s;
 }
 
 .lab-notebook-back:hover {
-  color: var(--amber-light);
+  color: var(--brass-bright);
   text-decoration: underline;
 }
 
@@ -7701,7 +7525,7 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   display: block;
   font-family: var(--font-display);
   font-size: 0.9rem;
-  color: var(--amber);
+  color: var(--amber-light);
   text-transform: uppercase;
   letter-spacing: 0.15em;
   margin-bottom: 0.75rem;
@@ -7709,7 +7533,7 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 
 .lab-notebook-title {
   font-family: var(--font-display);
-  font-size: clamp(1.7rem, 4.5vw, 2.6rem);
+  font-size: clamp(1.5rem, 3.8vw, 2.2rem);
   color: var(--cream-text);
   margin: 0 0 1rem;
   line-height: 1.2;
@@ -7718,13 +7542,13 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 .lab-notebook-meta {
   font-family: var(--font-body);
   font-size: 0.95rem;
-  color: var(--text-muted);
+  color: var(--text-muted-dark);
   font-style: italic;
 }
 
 .lab-notebook-meta-sep {
-  margin: 0 0.5rem;
-  color: var(--amber);
+  margin: 0 0.4rem;
+  color: var(--text-muted-dark);
 }
 
 /* ─── Lab Notebook Body (HTML content) ──────────────────────────── */
@@ -7746,7 +7570,7 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 .lab-notebook-body h2 {
   font-family: var(--font-display);
   font-size: 1.55rem;
-  color: var(--amber);
+  color: var(--amber-light);
   margin: 2.5rem 0 1rem;
   padding-bottom: 0.4rem;
   border-bottom: 3px double var(--amber);
@@ -7764,14 +7588,14 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 }
 
 .lab-notebook-body a {
-  color: var(--amber);
+  color: var(--amber-light);
   text-decoration: underline;
   text-underline-offset: 2px;
   transition: color 0.2s;
 }
 
 .lab-notebook-body a:hover {
-  color: var(--amber-light);
+  color: var(--brass-bright);
 }
 
 .lab-notebook-body strong {
@@ -8147,7 +7971,6 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 /* ─── Lab Notes Responsive ──────────────────────────────────────── */
 
 @media (max-width: 768px) {
-  .lab-index-grid { grid-template-columns: 1fr; }
   .blog-post-form .two-col { grid-template-columns: 1fr; }
   .lab-notebook { padding: 1.5rem 1rem 3rem; }
   .lab-notebook-hero { flex-direction: column; align-items: stretch; gap: 1.5rem; margin-bottom: 2rem; }
@@ -8157,7 +7980,6 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 }
 
 @media (max-width: 480px) {
-  .lab-index-section { padding: 2rem 1rem 3rem; }
   .lab-notebook-body h2 { font-size: 1.3rem; }
 }
 
