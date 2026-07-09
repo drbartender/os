@@ -164,7 +164,7 @@ number, per the interaction law):
 
 | Element | Target |
 |---|---|
-| Outstanding tile | `/proposals?balance=open` (live, point in time, no date params by design) |
+| Outstanding tile | `/proposals?tab=all&balance=open` (live, point in time, no date params by design; `tab=all` is load-bearing, the default active bucket hides deposit_paid rows, which hold most open balances; per-lane review finding) |
 | Funnel "Quoted" | proposals list, `cohort=quoted`, current range (predicate mirrors `qSent`: `sent_at IS NOT NULL`, `sent_at` in range, archived included) |
 | Funnel "Won" | proposals list, `cohort=won`, current range (predicate mirrors `qAccepted`: `accepted_at IS NOT NULL`, `accepted_at` in range; NOT `tab=won`, whose `status=accepted` mapping excludes the paid statuses and cannot reconcile) |
 | Funnel "Lost" | proposals list, `cohort=lost`, current range (predicate mirrors `qLostValue`: `sent_at IS NOT NULL AND status = 'archived'`, `sent_at` in range; native by definition) |
