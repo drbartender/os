@@ -4,8 +4,15 @@ const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { publicReadLimiter } = require('../middleware/rateLimiters');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
+const { validateRecipeRows, assertOverridesResolvable, nextRecipeReview } = require('./potions');
+const { normalizeName } = require('../utils/potionCatalog');
 
 const router = express.Router();
+
+// Explicit public column list: recipe_review never ships to the public
+// planner (spec §4); ingredients stays public (accepted spec decision).
+const PUBLIC_MOCKTAIL_COLUMNS = `m.id, m.name, m.category_id, m.emoji, m.description,
+       m.sort_order, m.is_active, m.created_at, m.updated_at, m.ingredients`;
 
 // ─── Public routes ────────────────────────────────────────────────
 
@@ -14,7 +21,7 @@ router.get('/', publicReadLimiter, asyncHandler(async (req, res) => {
   const [catsResult, mocktailsResult] = await Promise.all([
     pool.query('SELECT * FROM mocktail_categories ORDER BY sort_order'),
     pool.query(
-      `SELECT m.*, mc.label AS category_label, mc.sort_order AS category_sort_order
+      `SELECT ${PUBLIC_MOCKTAIL_COLUMNS}, mc.label AS category_label, mc.sort_order AS category_sort_order
        FROM mocktails m
        LEFT JOIN mocktail_categories mc ON mc.id = m.category_id
        WHERE m.is_active = true
@@ -137,32 +144,63 @@ router.delete('/categories/:id', auth, requireAdminOrManager, asyncHandler(async
 
 // ─── Admin — mocktail management ─────────────────────────────────
 
-/** POST /api/mocktails — create mocktail */
+/** POST /api/mocktails — create mocktail. `id` optional (server slug, one
+ *  `-2` retry); recipe rows validated; is_active honored (off-menu drinks). */
 router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { id, name, category_id, emoji, description, sort_order } = req.body;
-  const fieldErrors = {};
-  if (!id) fieldErrors.id = 'ID is required.';
-  if (!name) fieldErrors.name = 'Name is required.';
-  if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
+  const { id, name, category_id, emoji, description, sort_order, ingredients, is_active, recipe_review } = req.body;
+  if (!name) throw new ValidationError({ name: 'Name is required.' });
 
-  try {
-    const result = await pool.query(
-      `INSERT INTO mocktails (id, name, category_id, emoji, description, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [id, name, category_id || null, emoji || null, description || null, sort_order || 0]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    if (err.code === '23505') {
-      throw new ConflictError('A mocktail with that ID already exists.');
+  const { rows: recipeRows } = validateRecipeRows(ingredients);
+  const storedRows = recipeRows || [];
+  await assertOverridesResolvable(storedRows, pool);
+  const review = nextRecipeReview('empty', storedRows, recipe_review) || 'empty';
+
+  const serverSlugged = !id;
+  const baseSlug = serverSlugged ? normalizeName(name).replace(/ /g, '-').slice(0, 100) : String(id);
+  if (!baseSlug) throw new ValidationError({ name: 'Name must contain letters or numbers.' });
+  const attempts = serverSlugged ? [baseSlug, `${baseSlug}-2`] : [baseSlug];
+
+  for (const attemptId of attempts) {
+    try {
+      const result = await pool.query(
+        `INSERT INTO mocktails (id, name, category_id, emoji, description, sort_order, ingredients, is_active, recipe_review)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        [
+          attemptId, name, category_id || null, emoji || null, description || null,
+          sort_order || 0, JSON.stringify(storedRows),
+          is_active === false ? false : true, review,
+        ]
+      );
+      return res.status(201).json(result.rows[0]);
+    } catch (err) {
+      if (err.code === '23505' && attemptId !== attempts[attempts.length - 1]) continue;
+      if (err.code === '23505') {
+        throw new ConflictError(serverSlugged
+          ? 'A drink with that name already exists.'
+          : 'A mocktail with that ID already exists.');
+      }
+      throw err;
     }
-    throw err;
   }
 }));
 
-/** PUT /api/mocktails/:id — update mocktail */
+/** PUT /api/mocktails/:id — update mocktail. Same recipe validation, Menu-tab
+ *  "[object Object]" artifact guard, and empty->draft review transition as
+ *  the cocktails router. */
 router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { name, category_id, emoji, description, sort_order, is_active } = req.body;
+  const { name, category_id, emoji, description, sort_order, is_active, ingredients, recipe_review } = req.body;
+
+  const { rows: recipeRows, allArtifacts } = validateRecipeRows(ingredients);
+  const effectiveRows = allArtifacts ? null : recipeRows;
+  if (effectiveRows) await assertOverridesResolvable(effectiveRows, pool);
+
+  let review = null;
+  if (recipe_review !== undefined || effectiveRows) {
+    const current = await pool.query('SELECT recipe_review FROM mocktails WHERE id = $1', [req.params.id]);
+    if (!current.rows[0]) throw new NotFoundError('Mocktail not found.');
+    review = nextRecipeReview(current.rows[0].recipe_review, effectiveRows, recipe_review);
+  }
+
   const result = await pool.query(
     `UPDATE mocktails SET
       name        = COALESCE($1, name),
@@ -170,8 +208,10 @@ router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
       emoji       = COALESCE($3, emoji),
       description = COALESCE($4, description),
       sort_order  = COALESCE($5, sort_order),
-      is_active   = COALESCE($6, is_active)
-     WHERE id = $7 RETURNING *`,
+      is_active   = COALESCE($6, is_active),
+      ingredients = COALESCE($7::jsonb, ingredients),
+      recipe_review = COALESCE($8, recipe_review)
+     WHERE id = $9 RETURNING *`,
     [
       name || null,
       category_id || null,
@@ -179,6 +219,8 @@ router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
       description || null,
       sort_order ?? null,
       is_active ?? null,
+      effectiveRows ? JSON.stringify(effectiveRows) : null,
+      review,
       req.params.id,
     ]
   );

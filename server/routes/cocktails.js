@@ -4,8 +4,18 @@ const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { publicReadLimiter } = require('../middleware/rateLimiters');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
+const { validateRecipeRows, assertOverridesResolvable, nextRecipeReview } = require('./potions');
+const { normalizeName } = require('../utils/potionCatalog');
 
 const router = express.Router();
+
+// Explicit public column list: recipe_review is internal workflow state and
+// never ships to the unauthenticated planner. `ingredients` stays public by
+// accepted spec decision (§4: matches the menu's ingredient-gist descriptions
+// and powers bartender prep on shift pages).
+const PUBLIC_COCKTAIL_COLUMNS = `c.id, c.name, c.category_id, c.emoji, c.description,
+       c.sort_order, c.is_active, c.created_at, c.updated_at, c.base_spirit,
+       c.ingredients, c.upgrade_addon_slugs`;
 
 // ─── Public routes ────────────────────────────────────────────────
 
@@ -14,7 +24,7 @@ router.get('/', publicReadLimiter, asyncHandler(async (req, res) => {
   const [catsResult, cocktailsResult] = await Promise.all([
     pool.query('SELECT * FROM cocktail_categories ORDER BY sort_order'),
     pool.query(
-      `SELECT c.*, cc.label AS category_label, cc.sort_order AS category_sort_order
+      `SELECT ${PUBLIC_COCKTAIL_COLUMNS}, cc.label AS category_label, cc.sort_order AS category_sort_order
        FROM cocktails c
        LEFT JOIN cocktail_categories cc ON cc.id = c.category_id
        WHERE c.is_active = true
@@ -137,32 +147,67 @@ router.delete('/categories/:id', auth, requireAdminOrManager, asyncHandler(async
 
 // ─── Admin — cocktail management ─────────────────────────────────
 
-/** POST /api/cocktails — create cocktail */
+/** POST /api/cocktails — create cocktail. `id` is optional (server slugs it
+ *  from the name; one `-2` retry on collision). `is_active: false` creates an
+ *  off-menu drink — the needs-recipe Add-recipe path (spec §5). */
 router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { id, name, category_id, emoji, description, sort_order, base_spirit, ingredients, upgrade_addon_slugs } = req.body;
-  const fieldErrors = {};
-  if (!id) fieldErrors.id = 'ID is required.';
-  if (!name) fieldErrors.name = 'Name is required.';
-  if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
+  const { id, name, category_id, emoji, description, sort_order, base_spirit, ingredients, upgrade_addon_slugs, is_active, recipe_review } = req.body;
+  if (!name) throw new ValidationError({ name: 'Name is required.' });
 
-  try {
-    const result = await pool.query(
-      `INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order, base_spirit, ingredients, upgrade_addon_slugs)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [id, name, category_id || null, emoji || null, description || null, sort_order || 0, base_spirit || null, JSON.stringify(ingredients || []), Array.isArray(upgrade_addon_slugs) ? upgrade_addon_slugs : []]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    if (err.code === '23505') {
-      throw new ConflictError('A cocktail with that ID already exists.');
+  const { rows: recipeRows } = validateRecipeRows(ingredients);
+  const storedRows = recipeRows || [];
+  await assertOverridesResolvable(storedRows, pool);
+  const review = nextRecipeReview('empty', storedRows, recipe_review) || 'empty';
+
+  const serverSlugged = !id;
+  const baseSlug = serverSlugged ? normalizeName(name).replace(/ /g, '-').slice(0, 100) : String(id);
+  if (!baseSlug) throw new ValidationError({ name: 'Name must contain letters or numbers.' });
+  const attempts = serverSlugged ? [baseSlug, `${baseSlug}-2`] : [baseSlug];
+
+  for (const attemptId of attempts) {
+    try {
+      const result = await pool.query(
+        `INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order, base_spirit, ingredients, upgrade_addon_slugs, is_active, recipe_review)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+        [
+          attemptId, name, category_id || null, emoji || null, description || null,
+          sort_order || 0, base_spirit || null, JSON.stringify(storedRows),
+          Array.isArray(upgrade_addon_slugs) ? upgrade_addon_slugs : [],
+          is_active === false ? false : true, review,
+        ]
+      );
+      return res.status(201).json(result.rows[0]);
+    } catch (err) {
+      if (err.code === '23505' && attemptId !== attempts[attempts.length - 1]) continue;
+      if (err.code === '23505') {
+        throw new ConflictError(serverSlugged
+          ? 'A drink with that name already exists.'
+          : 'A cocktail with that ID already exists.');
+      }
+      throw err;
     }
-    throw err;
   }
 }));
 
-/** PUT /api/cocktails/:id — update cocktail */
+/** PUT /api/cocktails/:id — update cocktail. Structured recipe rows are
+ *  validated; the frozen Menu tab's "[object Object]" CSV artifact is treated
+ *  as "ingredients not provided" so a Menu-tab edit can never destroy a
+ *  structured recipe. Review transitions: explicit recipe_review (enum) wins;
+ *  otherwise a recipe write auto-flips empty -> draft only. */
 router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { name, category_id, emoji, description, sort_order, is_active, base_spirit, ingredients, upgrade_addon_slugs } = req.body;
+  const { name, category_id, emoji, description, sort_order, is_active, base_spirit, ingredients, upgrade_addon_slugs, recipe_review } = req.body;
+
+  const { rows: recipeRows, allArtifacts } = validateRecipeRows(ingredients);
+  const effectiveRows = allArtifacts ? null : recipeRows;
+  if (effectiveRows) await assertOverridesResolvable(effectiveRows, pool);
+
+  let review = null;
+  if (recipe_review !== undefined || effectiveRows) {
+    const current = await pool.query('SELECT recipe_review FROM cocktails WHERE id = $1', [req.params.id]);
+    if (!current.rows[0]) throw new NotFoundError('Cocktail not found.');
+    review = nextRecipeReview(current.rows[0].recipe_review, effectiveRows, recipe_review);
+  }
+
   const result = await pool.query(
     `UPDATE cocktails SET
       name        = COALESCE($1, name),
@@ -173,8 +218,9 @@ router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
       is_active   = COALESCE($6, is_active),
       base_spirit = COALESCE($7, base_spirit),
       ingredients = COALESCE($8::jsonb, ingredients),
-      upgrade_addon_slugs = COALESCE($9::text[], upgrade_addon_slugs)
-     WHERE id = $10 RETURNING *`,
+      upgrade_addon_slugs = COALESCE($9::text[], upgrade_addon_slugs),
+      recipe_review = COALESCE($10, recipe_review)
+     WHERE id = $11 RETURNING *`,
     [
       name || null,
       category_id || null,
@@ -183,8 +229,9 @@ router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
       sort_order ?? null,
       is_active ?? null,
       base_spirit || null,
-      ingredients !== undefined ? JSON.stringify(ingredients) : null,
+      effectiveRows ? JSON.stringify(effectiveRows) : null,
       Array.isArray(upgrade_addon_slugs) ? upgrade_addon_slugs : null,
+      review,
       req.params.id,
     ]
   );

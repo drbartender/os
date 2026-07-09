@@ -248,9 +248,11 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     SELECT dp.id, dp.token, dp.proposal_id, dp.client_name, dp.client_email,
            dp.event_type, dp.event_type_custom, dp.event_date, dp.serving_type,
            dp.status, dp.finalized_at, dp.exploration_submitted_at, dp.submitted_at, dp.created_at,
-           dp.updated_at, dp.created_by,
+           dp.updated_at, dp.created_by, dp.shopping_list_status, dp.selections,
+           p.guest_count,
            u.email AS created_by_email
     FROM drink_plans dp
+    LEFT JOIN proposals p ON p.id = dp.proposal_id
     LEFT JOIN users u ON u.id = dp.created_by
     WHERE 1=1
   `;
@@ -272,7 +274,38 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   query += ` ORDER BY dp.created_at DESC LIMIT $${limitIdx} OFFSET $${offsetIdx}`;
 
   const result = await pool.query(query, params);
-  res.json(result.rows);
+
+  // Additive enrichment for the Potions plans drawer (spec §4): resolve each
+  // plan's selected drink ids to display names in TWO batched queries across
+  // the whole page (never per-row). `selections` itself is internal here —
+  // extracted then dropped so the payload stays list-sized.
+  const cocktailIds = new Set();
+  const mocktailIds = new Set();
+  for (const row of result.rows) {
+    const sel = row.selections || {};
+    for (const id of Array.isArray(sel.signatureDrinks) ? sel.signatureDrinks : []) cocktailIds.add(id);
+    for (const id of Array.isArray(sel.mocktails) ? sel.mocktails : []) mocktailIds.add(id);
+  }
+  const nameMap = new Map();
+  if (cocktailIds.size > 0) {
+    const r = await pool.query('SELECT id, name FROM cocktails WHERE id = ANY($1::text[])', [[...cocktailIds]]);
+    for (const row of r.rows) nameMap.set(`c:${row.id}`, row.name);
+  }
+  if (mocktailIds.size > 0) {
+    const r = await pool.query('SELECT id, name FROM mocktails WHERE id = ANY($1::text[])', [[...mocktailIds]]);
+    for (const row of r.rows) nameMap.set(`m:${row.id}`, row.name);
+  }
+  const rows = result.rows.map((row) => {
+    const sel = row.selections || {};
+    const drinkNames = [
+      ...(Array.isArray(sel.signatureDrinks) ? sel.signatureDrinks : []).map((id) => nameMap.get(`c:${id}`)),
+      ...(Array.isArray(sel.mocktails) ? sel.mocktails : []).map((id) => nameMap.get(`m:${id}`)),
+      ...(Array.isArray(sel.customCocktails) ? sel.customCocktails : []).map((s) => String(s || '').trim()).filter(Boolean),
+    ].filter(Boolean);
+    const { selections, ...rest } = row;
+    return { ...rest, drink_names: drinkNames };
+  });
+  res.json(rows);
 }));
 
 /** POST /api/drink-plans — create a new plan */

@@ -230,11 +230,16 @@ app.use('/api/shifts', require('./routes/shifts'));
 // to the existing shifts.js handler instead (role-aware: staff = pending-only
 // gate, admin = unrestricted) — no path collision here.
 app.use('/api/shifts', require('./routes/staffShiftActions'));
+// Regenerate mounts BEFORE the flat drink-plans router: its single specific
+// POST (/:id/shopping-list/regenerate) has no method+path overlap there, and
+// unmatched requests fall through (potions plan, lane C).
+app.use('/api/drink-plans', require('./routes/drinkPlans/regenerate'));
 app.use('/api/drink-plans', require('./routes/drinkPlans'));
 app.use('/api/drink-plans', require('./routes/drinkPlanConsult'));
 app.use('/api/beo', require('./routes/beo'));
 app.use('/api/cocktails', require('./routes/cocktails'));
 app.use('/api/mocktails', require('./routes/mocktails'));
+app.use('/api/potions', require('./routes/potions'));
 app.use('/api/proposals', require('./routes/proposals'));
 app.use('/api/clients', require('./routes/clients'));
 app.use('/api/venues', require('./routes/venues'));
