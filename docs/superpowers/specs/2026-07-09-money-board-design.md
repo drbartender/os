@@ -112,9 +112,11 @@ Split into `client/src/pages/admin/overview/` with `OverviewPage.js` composing:
 `MoneyTiles.js` (tiles + expansions), `RevenueChartCard.js` (instrumented chart),
 `FunnelCard.js`, `LeadSpendCard.js`, `RangeTables.js` (proposals + payments).
 The old `Dashboard.js` and `FinancialsDashboard.js` retire; routes point at
-`OverviewPage`. `AreaChart.js` stays for other consumers; the instrumented chart
-is a new component that reuses its gradient defs (extract the rainbow defs into
-a tiny shared module rather than duplicating stops).
+`OverviewPage`. `AreaChart.js` retires too, once the instrumented chart lands:
+`Dashboard.js` was its only consumer (plan-fleet correction to this spec's
+earlier "stays for other consumers" assumption). Its rainbow gradient defs are
+extracted into a tiny shared module (`rainbowDefs.js`) that both it (interim)
+and the new chart render, then the old component is deleted.
 
 ## 4. The instrumented revenue chart
 
