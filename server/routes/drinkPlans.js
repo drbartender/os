@@ -398,67 +398,6 @@ router.get('/by-proposal/:proposalId', auth, requireAdminOrManager, asyncHandler
   res.json(result.rows[0]);
 }));
 
-/** GET /api/drink-plans/:id/shopping-list-data — fetch shaped data for shopping list generation */
-router.get('/:id/shopping-list-data', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  // Fetch the drink plan, joining proposals for guest_count
-  const planResult = await pool.query(
-    `SELECT dp.*, p.guest_count
-     FROM drink_plans dp
-     LEFT JOIN proposals p ON p.id = dp.proposal_id
-     WHERE dp.id = $1`,
-    [req.params.id]
-  );
-  if (!planResult.rows[0]) throw new NotFoundError('Plan not found.');
-  const plan = planResult.rows[0];
-
-  // Resolve signature cocktail IDs to names + ingredients
-  const signatureDrinkIds = (plan.selections && plan.selections.signatureDrinks) || [];
-  let signatureCocktails = [];
-  if (signatureDrinkIds.length > 0) {
-    const cocktailResult = await pool.query(
-      `SELECT id, name, ingredients FROM cocktails WHERE id = ANY($1::text[])`,
-      [signatureDrinkIds]
-    );
-    // Preserve the order from selections
-    const byId = Object.fromEntries(cocktailResult.rows.map(c => [c.id, c]));
-    signatureCocktails = signatureDrinkIds
-      .filter(id => byId[id])
-      .map(id => ({
-        name: byId[id].name,
-        ingredients: byId[id].ingredients || [],
-      }));
-  }
-
-  // Extract self-provided syrup IDs from selections
-  const syrupSelfProvided = (plan.selections && plan.selections.syrupSelfProvided) || [];
-
-  // Extract beer/wine/mixer selections for shopping list filtering
-  const serviceStyle = plan.serving_type || 'full_bar';
-  const sel = plan.selections || {};
-  const isFullBar = serviceStyle === 'full_bar';
-  const beerSelections = isFullBar
-    ? (sel.beerFromFullBar || [])
-    : (sel.beerFromBeerWine || []);
-  const wineSelections = isFullBar
-    ? (sel.wineFromFullBar || [])
-    : (sel.wineFromBeerWine || []);
-
-  res.json({
-    client_name: plan.client_name,
-    event_type: plan.event_type,
-    event_type_custom: plan.event_type_custom,
-    event_date: plan.event_date,
-    guest_count: plan.guest_count || null,
-    service_style: serviceStyle,
-    signature_cocktails: signatureCocktails,
-    syrup_self_provided: syrupSelfProvided,
-    beer_selections: beerSelections,
-    wine_selections: wineSelections,
-    mixers_for_signature_drinks: sel.mixersForSignatureDrinks ?? null,
-    notes: plan.admin_notes || '',
-  });
-}));
-
 /** GET /api/drink-plans/:id — fetch single plan by id. Exclude shopping_list
  *  (has its own endpoint); keep selections for detail rendering. Booleans
  *  (`has_consult_selections`, `has_shopping_list`) keep the JSONB blobs off

@@ -1,8 +1,6 @@
 import React, { useState, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../../utils/api';
-import { generateShoppingList } from './generateShoppingList';
-import { getEventTypeLabel } from '../../utils/eventTypes';
 import { useToast } from '../../context/ToastContext';
 import Icon from '../adminos/Icon';
 
@@ -24,64 +22,43 @@ export default function ShoppingListButton({
   const [loading, setLoading] = useState(false);
   const [guestCountPrompt, setGuestCountPrompt] = useState(false);
   const [manualGuests, setManualGuests] = useState('');
-  const [pendingData, setPendingData] = useState(null);
   const [modalData, setModalData] = useState(null);
   // Initial Approve & Send button state — passed to modal so it doesn't have
   // to re-fetch the same /shopping-list endpoint on mount.
   const [initialApproveStatus, setInitialApproveStatus] = useState('idle');
 
-  const openModal = (apiData, guestCount, savedList) => {
-    if (savedList) {
-      // Use persisted shopping list
-      setModalData(savedList);
-    } else {
-      // Generate fresh from pars
-      const listData = generateShoppingList({
-        clientName: apiData.client_name,
-        guestCount,
-        signatureCocktails: apiData.signature_cocktails,
-        syrupSelfProvided: apiData.syrup_self_provided || [],
-        eventDate: apiData.event_date,
-        notes: apiData.notes,
-        serviceStyle: apiData.service_style || 'full_bar',
-        beerSelections: apiData.beer_selections || [],
-        wineSelections: apiData.wine_selections || [],
-        mixersForSignatureDrinks: apiData.mixers_for_signature_drinks,
-      });
-      // Attach event-type label so the modal/PDF can render it in the header.
-      // generateShoppingList doesn't carry this field through, so we add it here.
-      listData.eventTypeLabel = getEventTypeLabel({
-        event_type: apiData.event_type,
-        event_type_custom: apiData.event_type_custom,
-      });
-      setModalData(listData);
-    }
-  };
-
   const handleClick = async () => {
     setLoading(true);
     try {
-      // Check for saved shopping list first
-      const [dataRes, savedRes] = await Promise.all([
-        api.get(`/drink-plans/${planId}/shopping-list-data`),
-        api.get(`/drink-plans/${planId}/shopping-list`).catch(() => ({ data: { shopping_list: null } })),
-      ]);
-      const data = dataRes.data;
+      // Check for a saved shopping list first.
+      const savedRes = await api
+        .get(`/drink-plans/${planId}/shopping-list`)
+        .catch(() => ({ data: { shopping_list: null } }));
       const saved = savedRes.data.shopping_list;
       // Snapshot the approve state up front so the modal can render the
       // correct button label without an extra round-trip.
       setInitialApproveStatus(savedRes.data.shopping_list_status === 'approved' ? 'approved' : 'idle');
 
       if (saved) {
-        // Use saved list directly
+        // Use the saved list directly.
         setModalData(saved);
-      } else if (!data.guest_count) {
-        // No linked proposal — prompt admin for guest count
-        setPendingData(data);
-        setGuestCountPrompt(true);
-        setManualGuests('');
-      } else {
-        openModal(data, data.guest_count, null);
+        return;
+      }
+
+      // No saved list — generate a fresh one on the server from the live par
+      // catalog (the old client-side generator is retired).
+      try {
+        const res = await api.post(`/drink-plans/${planId}/shopping-list/regenerate`, {});
+        setModalData(res.data.list);
+      } catch (err) {
+        // The endpoint returns 400 when the plan has no guest count anywhere
+        // (no linked proposal); prompt the admin for one, then regenerate.
+        if (err.status === 400) {
+          setGuestCountPrompt(true);
+          setManualGuests('');
+        } else {
+          throw err;
+        }
       }
     } catch (err) {
       console.error('Failed to load shopping list data:', err);
@@ -91,13 +68,23 @@ export default function ShoppingListButton({
     }
   };
 
-  const handleGuestCountSubmit = (e) => {
+  const handleGuestCountSubmit = async (e) => {
     e.preventDefault();
     const count = parseInt(manualGuests, 10);
     if (!count || count < 1) return;
     setGuestCountPrompt(false);
-    openModal(pendingData, count, null);
-    setPendingData(null);
+    setLoading(true);
+    try {
+      const res = await api.post(`/drink-plans/${planId}/shopping-list/regenerate`, {
+        guest_count_override: count,
+      });
+      setModalData(res.data.list);
+    } catch (err) {
+      console.error('Failed to generate shopping list:', err);
+      toast.error(err?.message || 'Failed to generate shopping list. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -136,8 +123,8 @@ export default function ShoppingListButton({
                 autoFocus
               />
               <div className="flex gap-1">
-                <button type="submit" className="btn" disabled={!manualGuests}>Continue</button>
-                <button type="button" className="btn btn-secondary" onClick={() => { setGuestCountPrompt(false); setPendingData(null); }}>Cancel</button>
+                <button type="submit" className="btn" disabled={!manualGuests || loading}>Continue</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setGuestCountPrompt(false)}>Cancel</button>
               </div>
             </form>
           </div>

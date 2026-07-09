@@ -238,6 +238,16 @@ export default function ClientShoppingList() {
           </div>
         )}
 
+        {/* Special requests the bar lead will source (client-requested drinks) */}
+        {list.needsRecipe && list.needsRecipe.length > 0 && (
+          <div style={{ ...styles.cocktailBar, marginTop: '0.75rem' }}>
+            <span style={{ color: '#2FA7A0', fontSize: '0.82rem', fontStyle: 'italic' }}>Special requests: your bar lead will source these </span>
+            <span style={{ color: '#F0E8D6', fontSize: '0.85rem' }}>
+              {list.needsRecipe.map(r => r.name).join('  ·  ')}
+            </span>
+          </div>
+        )}
+
         {/* Actions: PDF download + refresh */}
         <div style={{ textAlign: 'center', padding: '1.5rem 0 2rem' }}>
           <button

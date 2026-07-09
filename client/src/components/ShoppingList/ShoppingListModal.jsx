@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { generateShoppingList } from './generateShoppingList';
+import { useNavigate } from 'react-router-dom';
 import {
   DndContext,
   closestCenter,
@@ -19,7 +19,13 @@ import { CSS } from '@dnd-kit/utilities';
 import api from '../../utils/api';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
 
+// Regenerating pulls a fresh list from the server (the live par catalog) and
+// discards manual edits; saving an already-approved list returns it to review.
+// This copy gates every regenerate entry point (Reset + guest-count change).
+const REGEN_CONFIRM = 'Regenerate replaces your edits, and saving will set the list back to Needs review. Continue?';
+
 export default function ShoppingListModal({ listData, onClose, planId, planToken, initialApproveStatus = 'idle' }) {
+  const navigate = useNavigate();
   const [edited, setEdited] = useState(() => deepClone(listData));
   const [guestCount, setGuestCount] = useState(listData.guestCount);
   const [downloading, setDownloading] = useState(false);
@@ -27,6 +33,10 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   const [undoStack, setUndoStack] = useState([]);
   const [saveStatus, setSaveStatus] = useState('saved'); // 'saved' | 'saving' | 'unsaved'
   const [linkCopied, setLinkCopied] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenError, setRegenError] = useState('');
+  const [addingRecipe, setAddingRecipe] = useState(null); // name being added, or null
+  const [addRecipeError, setAddRecipeError] = useState('');
   // Approve state is seeded by the parent (ShoppingListButton already fetched
   // /shopping-list to load the saved list — it passes status here so we don't
   // duplicate the request on mount).
@@ -74,22 +84,30 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [edited, guestCount, planId]);
 
-  const resetList = useCallback((count = guestCount) => {
-    const fresh = generateShoppingList({
-      clientName: listData.clientName,
-      guestCount: count,
-      signatureCocktails: listData._signatureCocktails || (listData.signatureCocktailNames || []).map(name => ({ name, ingredients: [] })),
-      syrupSelfProvided: listData._syrupSelfProvided || [],
-      eventDate: listData.eventDate,
-      notes: listData.notes,
-      serviceStyle: listData.serviceStyle || 'full_bar',
-      beerSelections: listData.beerSelections || [],
-      wineSelections: listData.wineSelections || [],
-      mixersForSignatureDrinks: listData.mixersForSignatureDrinks,
-    });
-    setEdited(deepClone(fresh));
-    setUndoStack([]);
-  }, [listData, guestCount]);
+  // Regenerate from the server (live par catalog); the client-side generator
+  // mirror is retired. Replaces manual edits, so each call site gates it behind
+  // window.confirm (REGEN_CONFIRM), matching the old Reset/guest-count pattern.
+  const regenerate = useCallback(async (count) => {
+    if (!planId) return;
+    setRegenerating(true);
+    setRegenError('');
+    try {
+      const n = parseInt(count, 10);
+      const body = {};
+      if (n > 0) body.guest_count_override = n;
+      const res = await api.post(`/drink-plans/${planId}/shopping-list/regenerate`, body);
+      const fresh = res.data.list;
+      // The server list omits the display-only event-type label; carry it over.
+      if (!fresh.eventTypeLabel && listData.eventTypeLabel) fresh.eventTypeLabel = listData.eventTypeLabel;
+      setEdited(deepClone(fresh));
+      if (n > 0) setGuestCount(n);
+      setUndoStack([]);
+    } catch (err) {
+      setRegenError(err?.message || 'Failed to regenerate. Try again.');
+    } finally {
+      setRegenerating(false);
+    }
+  }, [planId, listData]);
 
   const handleGuestCountChange = (val) => {
     setGuestCount(val);
@@ -98,8 +116,8 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   const handleGuestCountBlur = () => {
     const count = parseInt(guestCount, 10);
     if (count > 0 && count !== edited.guestCount) {
-      if (window.confirm(`Recalculate quantities for ${count} guests?`)) {
-        resetList(count);
+      if (window.confirm(REGEN_CONFIRM)) {
+        regenerate(count);
       }
     }
   };
@@ -230,6 +248,20 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
     }
   };
 
+  // Client requested a drink we have no recipe for. Create an off-menu draft
+  // cocktail (server slugs the id) and jump to the Recipes tab to author it.
+  const handleAddRecipe = async (name) => {
+    setAddingRecipe(name);
+    setAddRecipeError('');
+    try {
+      const res = await api.post('/cocktails', { name, is_active: false });
+      navigate(`/potions?tab=recipes&drink=${res.data.id}`);
+    } catch (err) {
+      setAddRecipeError(err?.message || `Could not add "${name}". Try again.`);
+      setAddingRecipe(null);
+    }
+  };
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor)
@@ -316,10 +348,11 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           )}
           <button
             className="btn btn-sm btn-secondary"
-            onClick={() => { if (window.confirm('Reset all quantities to auto-calculated values?')) resetList(); }}
+            onClick={() => { if (window.confirm(REGEN_CONFIRM)) regenerate(guestCount); }}
+            disabled={regenerating}
             style={{ whiteSpace: 'nowrap' }}
           >
-            Reset
+            {regenerating ? 'Regenerating…' : 'Regenerate'}
           </button>
           <button onClick={onClose} style={{
             background: 'none', border: 'none', color: 'var(--ink-2)',
@@ -376,6 +409,45 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           </div>
         )}
 
+        {/* ── Client-requested drinks with no recipe yet ── */}
+        {Array.isArray(edited.needsRecipe) && edited.needsRecipe.length > 0 && (
+          <div style={{
+            margin: '0.75rem 1.25rem 0',
+            backgroundColor: 'var(--bg-2)',
+            border: '1px solid var(--accent-line)',
+            borderRadius: 'var(--radius)',
+            padding: '0.75rem 0.875rem',
+          }}>
+            <p style={{ color: 'var(--ink-1)', fontFamily: 'var(--font-display)', fontSize: '0.9rem', margin: '0 0 0.5rem' }}>
+              Client requested: recipe needed
+            </p>
+            {edited.needsRecipe.map((entry, i) => (
+              <div
+                key={(entry.name || '') + '-' + i}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  gap: '0.75rem', padding: '0.25rem 0',
+                }}
+              >
+                <span style={{ color: 'var(--ink-2)', fontSize: '0.85rem' }}>{entry.name}</span>
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => handleAddRecipe(entry.name)}
+                  disabled={addingRecipe !== null}
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  {addingRecipe === entry.name ? 'Adding…' : 'Add recipe'}
+                </button>
+              </div>
+            ))}
+            {addRecipeError && (
+              <p style={{ color: 'hsl(var(--danger-h) var(--danger-s) 55%)', fontSize: '0.8rem', margin: '0.5rem 0 0' }}>
+                {addRecipeError}
+              </p>
+            )}
+          </div>
+        )}
+
         {/* ── Footer actions ── */}
         <div style={{
           display: 'flex',
@@ -392,6 +464,9 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           )}
           {approveError && (
             <span style={{ color: 'hsl(var(--danger-h) var(--danger-s) 55%)', fontSize: '0.82rem', marginRight: 'auto' }}>{approveError}</span>
+          )}
+          {regenError && (
+            <span style={{ color: 'hsl(var(--danger-h) var(--danger-s) 55%)', fontSize: '0.82rem', marginRight: 'auto' }}>{regenError}</span>
           )}
           {planToken && (
             <button className="btn btn-sm btn-secondary" onClick={handleShareLink}>

@@ -53,10 +53,12 @@ export async function generateShoppingListPDF(listData) {
     signatureCocktailNames = [],
     liquorBeerWine = [],
     everythingElse = [],
+    needsRecipe = [],
   } = listData;
 
   const maxRows = Math.max(liquorBeerWine.length, everythingElse.length, 1);
   const hasCocktails = signatureCocktailNames.length > 0;
+  const hasNeeds = Array.isArray(needsRecipe) && needsRecipe.length > 0;
 
   // ── LAYOUT CALCULATION ──
   const HEADER_H = 84;             // chrome height (logo + brand block)
@@ -66,10 +68,12 @@ export async function generateShoppingListPDF(listData) {
   const FOOTER_H = 56;
   const COCKTAIL_H = hasCocktails ? 28 : 0;
   const COCKTAIL_GAP = hasCocktails ? 10 : 0;
+  const NEEDS_H = hasNeeds ? 28 : 0;
+  const NEEDS_GAP = hasNeeds ? 10 : 0;
 
   const bodyStart = HEADER_H + HEADER_RULE_GAP + TOP_PAD;
   const footerStart = PH - BOTTOM_PAD - FOOTER_H;
-  const bodyEnd = footerStart - COCKTAIL_GAP - COCKTAIL_H - 10;
+  const bodyEnd = footerStart - COCKTAIL_GAP - COCKTAIL_H - NEEDS_GAP - NEEDS_H - 10;
   const bodyAvail = bodyEnd - bodyStart;
 
   // Body grid: kickerH + 6 + thH + 2 + maxRows * rowH
@@ -228,6 +232,31 @@ export async function generateShoppingListPDF(listData) {
     doc.text(
       signatureCocktailNames.join('   \u00B7   '),
       MX, cocktailY + 25,
+      { maxWidth: CW },
+    );
+  }
+
+  // ── SPECIAL REQUESTS (client-requested drinks the bar lead sources) ──
+  if (hasNeeds) {
+    const needsY = footerStart - COCKTAIL_GAP - COCKTAIL_H - NEEDS_GAP - NEEDS_H;
+
+    doc.setDrawColor(...C.brass);
+    doc.setLineWidth(0.5);
+    doc.line(MX, needsY, PW - MX, needsY);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(...C.brass);
+    doc.setCharSpace(2);
+    doc.text('SPECIAL REQUESTS: YOUR BAR LEAD WILL SOURCE THESE', MX, needsY + 13);
+    doc.setCharSpace(0);
+
+    doc.setFont('times', 'normal');
+    doc.setFontSize(11);
+    doc.setTextColor(...C.ink);
+    doc.text(
+      needsRecipe.map(r => r.name).join('   ·   '),
+      MX, needsY + 25,
       { maxWidth: CW },
     );
   }
