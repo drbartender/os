@@ -43,3 +43,6 @@ client/.claude/
 # Treat as local-only — don't track. Project-level Claude config lives in
 # .claude/settings.json (committed) instead.
 .claude/settings.local.json
+
+# Claude agent memory written by subagents launched with a nested CWD (ui-ux-reviewer etc.)
+client/src/.claude/
