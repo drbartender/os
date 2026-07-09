@@ -17673,3 +17673,28 @@ html[data-app="admin-os"] .ov-cohort-note button:hover { color: var(--ink-1); }
   }
 }
 /* end */
+/* overview: mb-b1 shell */
+/* Needs-you strip: 3-across on desktop, single column on phones. Queue-item
+   separators move from column borders (removed in the grid) to row borders when
+   the grid collapses. */
+html[data-app="admin-os"] .needs-you-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+html[data-app="admin-os"] .needs-you-grid .queue-item { border-bottom: 0; }
+/* Reserved narrow prep column on the upcoming-events table (lane e fills it);
+   collapsed to a hairline so it takes no visible space until then. */
+html[data-app="admin-os"] .prep-col { width: 1px; padding: 0; }
+@media (max-width: 640px) {
+  html[data-app="admin-os"] .needs-you-grid { grid-template-columns: 1fr; }
+  html[data-app="admin-os"] .needs-you-grid .queue-item { border-bottom: 1px solid var(--line-1); }
+  html[data-app="admin-os"] .needs-you-grid .queue-item:last-child { border-bottom: 0; }
+  /* Tab seg scrolls inside its own container, never the page. */
+  html[data-app="admin-os"] .overview-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+  html[data-app="admin-os"] .overview-tabs .btn { white-space: nowrap; flex: 0 0 auto; }
+}
+/* end */

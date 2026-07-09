@@ -30,8 +30,8 @@ export default function PayrollPage() {
           <div className="page-subtitle">Weekly payroll worklist, history, and stray tips.</div>
         </div>
         <div>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/financials')}>
-            ← Financials
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/dashboard')}>
+            ← Overview
           </button>
         </div>
       </div>

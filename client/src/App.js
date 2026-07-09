@@ -1,5 +1,5 @@
 import React, { Suspense, lazy as lazyBase, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from './utils/api';
 import { getHomePath } from './utils/userRoutes';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -134,7 +134,6 @@ const AdminApplicationDetail = lazy(() => import('./pages/admin/applicationDetai
 const EventsDashboard = lazy(() => import('./pages/admin/EventsDashboard'));
 const EventDetailPage = lazy(() => import('./pages/admin/EventDetailPage'));
 const ClientsDashboard = lazy(() => import('./pages/admin/ClientsDashboard'));
-const FinancialsDashboard = lazy(() => import('./pages/admin/FinancialsDashboard'));
 const PayrollPage = lazy(() => import('./pages/admin/payroll/PayrollPage'));
 const HiringDashboard = lazy(() => import('./pages/admin/HiringDashboard'));
 const SettingsDashboard = lazy(() => import('./pages/admin/SettingsDashboard'));
@@ -146,7 +145,7 @@ const ProposalCreate = lazy(() => import('./pages/admin/ProposalCreate'));
 const ProposalDetail = lazy(() => import('./pages/admin/ProposalDetail'));
 const ChangeRequestsDashboard = lazy(() => import('./pages/admin/ChangeRequestsDashboard'));
 const ClientDetail = lazy(() => import('./pages/admin/ClientDetail'));
-const Dashboard = lazy(() => import('./pages/admin/Dashboard'));
+const OverviewPage = lazy(() => import('./pages/admin/overview/OverviewPage'));
 const BlogDashboard = lazy(() => import('./pages/admin/BlogDashboard'));
 const EmailMarketingDashboard = lazy(() => import('./pages/admin/EmailMarketingDashboard'));
 const EmailLeadsDashboard = lazy(() => import('./pages/admin/EmailLeadsDashboard'));
@@ -248,6 +247,17 @@ function BeoByProposalRedirect() {
       <div className="spinner" aria-hidden="true" />
     </div>
   );
+}
+
+/**
+ * /financials → /dashboard (Dashboard + Financials merged into one Overview
+ * surface). The ?tab=payouts deep link is preserved so bookmarks and email
+ * links to the payouts view land on the merged page's Payouts tab.
+ */
+function FinancialsRedirect() {
+  const [params] = useSearchParams();
+  const tab = params.get('tab');
+  return <Navigate replace to={tab === 'payouts' ? '/dashboard?tab=payouts' : '/dashboard'} />;
 }
 
 /**
@@ -541,7 +551,7 @@ function AppRoutes() {
 
       {/* Admin + Manager shell — mounted at root on admin.drbartender.com */}
       <Route element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}>
-        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/dashboard" element={<OverviewPage />} />
         <Route path="/staffing" element={<AdminStaffDashboard />} />
         <Route path="/staffing/legacy" element={<AdminDashboard />} />
         <Route path="/staffing/users/:id" element={<AdminUserDetail />} />
@@ -562,7 +572,7 @@ function AppRoutes() {
         <Route path="/clients" element={<ClientsDashboard />} />
         <Route path="/clients/:id" element={<ClientDetail />} />
         <Route path="/messages" element={<Messages />} />
-        <Route path="/financials" element={<FinancialsDashboard />} />
+        <Route path="/financials" element={<FinancialsRedirect />} />
         <Route path="/financials/payroll" element={<PayrollPage />} />
         <Route path="/tips" element={<TipsAdmin />} />
         <Route path="/settings" element={<SettingsDashboard />} />

@@ -138,13 +138,13 @@ export default function CommandPalette({ open, onClose }) {
 
   const navGroups = [
     { group: 'Jump to', items: [
-      { label: 'Dashboard',   icon: 'home',      onClick: go('/dashboard') },
+      { label: 'Overview',    icon: 'home',      onClick: go('/dashboard') },
       { label: 'Events',      icon: 'calendar',  onClick: go('/events') },
       { label: 'Proposals',   icon: 'clipboard', onClick: go('/proposals') },
       { label: 'Clients',     icon: 'users',     onClick: go('/clients') },
       { label: 'Staff',       icon: 'userplus',  onClick: go('/staffing') },
       { label: 'Hiring',      icon: 'pen',       onClick: go('/hiring') },
-      { label: 'Financials',  icon: 'dollar',    onClick: go('/financials') },
+      { label: 'Payouts',     icon: 'dollar',    onClick: go('/dashboard?tab=payouts') },
       { label: 'Marketing',   icon: 'mail',      onClick: go('/email-marketing') },
       { label: 'Potions',     icon: 'flask',     onClick: go('/potions') },
       { label: 'Lab Notes',   icon: 'pen',       onClick: go('/blog') },

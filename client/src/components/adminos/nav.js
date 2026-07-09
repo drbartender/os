@@ -2,7 +2,7 @@
 // `badgeKey` maps to the /api/admin/badge-counts response shape.
 const NAV = [
   { section: 'Workspace', items: [
-    { id: 'dashboard',   label: 'Dashboard', icon: 'home',      path: '/dashboard' },
+    { id: 'dashboard',   label: 'Overview',  icon: 'home',      path: '/dashboard' },
     { id: 'events',      label: 'Events',    icon: 'calendar',  path: '/events',    badgeKey: 'unstaffed_events' },
     { id: 'proposals',   label: 'Proposals', icon: 'clipboard', path: '/proposals', badgeKey: 'pending_proposals' },
     { id: 'clients',     label: 'Clients',   icon: 'users',     path: '/clients' },
@@ -11,7 +11,6 @@ const NAV = [
     { id: 'hiring',      label: 'Hiring',    icon: 'pen',       path: '/hiring',    badgeKey: 'new_applications' },
   ]},
   { section: 'Revenue', items: [
-    { id: 'financials',  label: 'Financials',      icon: 'dollar',   path: '/financials' },
     { id: 'tips',        label: 'Tips & Feedback', icon: 'dollar',   path: '/tips' },
     { id: 'marketing',   label: 'Marketing',       icon: 'mail',     path: '/email-marketing' },
   ]},
