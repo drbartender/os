@@ -4,6 +4,54 @@
 // the shopping list shape stays identical regardless of input source.
 
 const { generateShoppingList, buildGeneratorInputFromConsult } = require('./shoppingList');
+const { buildCatalogSlices, normalizeName } = require('./potionCatalog');
+
+// Load the live par catalog and derive slices. Returns null on ANY failure
+// (empty table, missing table mid-deploy, transient DB error) so the pure
+// generator falls back to its legacy constants instead of aborting a caller's
+// transaction — callers must load OUTSIDE any BEGIN. Both failure shapes are
+// Sentry-reported: a silently thin prod list is the one unacceptable outcome.
+async function loadCatalog(dbClient) {
+  try {
+    const result = await dbClient.query(
+      'SELECT * FROM par_items WHERE is_active = true ORDER BY section, sort_order, id'
+    );
+    if (!result.rows.length) {
+      reportCatalogIssue('par_catalog_empty', null);
+      return null;
+    }
+    return buildCatalogSlices(result.rows);
+  } catch (err) {
+    reportCatalogIssue('par_catalog_read_failed', err);
+    return null;
+  }
+}
+
+function reportCatalogIssue(tag, err) {
+  console.error(`Shopping list catalog issue: ${tag}`, err ? err.message : '');
+  if (process.env.SENTRY_DSN_SERVER) {
+    const Sentry = require('@sentry/node');
+    if (err) Sentry.captureException(err, { tags: { op: tag } });
+    else Sentry.captureMessage(tag, 'warning');
+  }
+}
+
+// Report recipe/free-text rows that resolved to no catalog item during a
+// generation (spec §5: silent wrong-list regressions must be visible in prod,
+// not just on the Recipes tab). No-throw; safe to call with any list shape.
+function reportUnresolvedIngredients(list, opTag) {
+  const unresolved = (list && list._unresolvedIngredients) || [];
+  if (!unresolved.length) return;
+  console.warn(`Shopping list unresolved ingredients (${opTag}):`, JSON.stringify(unresolved));
+  if (process.env.SENTRY_DSN_SERVER) {
+    const Sentry = require('@sentry/node');
+    Sentry.captureMessage('unresolved_ingredient', {
+      level: 'warning',
+      tags: { op: opTag },
+      extra: { unresolved },
+    });
+  }
+}
 
 // Mirror of client/src/data/syrups.js SYRUPS — id → display name. Keep in sync
 // when adding new flavors. Only used for shopping-list rendering of the
@@ -24,19 +72,70 @@ const SYRUP_NAME_LOOKUP = {
   'brown-butter': 'Brown Butter', 'espresso': 'Espresso', 'chocolate': 'Chocolate',
 };
 
-// Resolve cocktail IDs to [{name, ingredients}] preserving order. Missing IDs
-// are dropped silently so a renamed/deactivated cocktail doesn't break a
-// shopping list regen.
-async function resolveCocktailIds(cocktailIds, dbClient) {
-  if (!Array.isArray(cocktailIds) || cocktailIds.length === 0) return [];
+// Table allowlist for drink resolution. NEVER interpolate a caller-supplied
+// string into the query; the table name comes only from this fixed map.
+const DRINK_TABLES = { cocktails: 'cocktails', mocktails: 'mocktails' };
+
+// Resolve drink IDs to [{name, ingredients}] preserving order. Missing IDs
+// are dropped silently so a renamed/deactivated drink doesn't break a
+// shopping list regen. Table-aware: consult/planner mocktail ids resolve
+// against the mocktails table (they silently resolved to nothing before,
+// because the old helper only ever queried cocktails).
+async function resolveDrinkIds(ids, table, dbClient) {
+  if (!Array.isArray(ids) || ids.length === 0) return [];
+  const tableName = Object.prototype.hasOwnProperty.call(DRINK_TABLES, table)
+    ? DRINK_TABLES[table]
+    : null;
+  if (!tableName) throw new Error(`resolveDrinkIds: unknown table "${table}"`);
   const result = await dbClient.query(
-    'SELECT id, name, ingredients FROM cocktails WHERE id = ANY($1::text[])',
-    [cocktailIds]
+    `SELECT id, name, ingredients FROM ${tableName} WHERE id = ANY($1::text[])`,
+    [ids]
   );
   const byId = Object.fromEntries(result.rows.map(c => [c.id, c]));
-  return cocktailIds
+  return ids
     .filter(id => byId[id])
     .map(id => ({ name: byId[id].name, ingredients: byId[id].ingredients || [] }));
+}
+
+// Back-compat alias (existing callers).
+async function resolveCocktailIds(cocktailIds, dbClient) {
+  return resolveDrinkIds(cocktailIds, 'cocktails', dbClient);
+}
+
+// Match client free-text custom-drink requests against drinks that HAVE
+// recipes (normalized EXACT equality only — a fuzzy server-side match could
+// put the wrong bottles on a list). Pure; exported for tests.
+// @returns { matched: [{name, ingredients}], needsRecipe: [{name}] }
+function matchCustomNames(customStrings, candidateRows) {
+  const byNorm = new Map();
+  for (const row of candidateRows || []) {
+    const norm = normalizeName(row.name);
+    if (norm && !byNorm.has(norm)) byNorm.set(norm, row);
+  }
+  const matched = [];
+  const needsRecipe = [];
+  for (const raw of customStrings || []) {
+    const name = String(raw || '').trim();
+    if (!name) continue;
+    const hit = byNorm.get(normalizeName(name));
+    if (hit) matched.push({ name: hit.name, ingredients: hit.ingredients || [] });
+    else needsRecipe.push({ name });
+  }
+  return { matched, needsRecipe };
+}
+
+// All drinks (both tables, INCLUDING inactive/off-menu) that carry a recipe —
+// the candidate pool for custom-request matching. Off-menu inclusion is the
+// point: a one-off drink added via "Add recipe" stays matchable forever.
+async function loadRecipeCandidates(dbClient) {
+  const result = await dbClient.query(
+    `SELECT name, ingredients FROM cocktails
+      WHERE ingredients IS NOT NULL AND ingredients::text <> '[]'
+     UNION ALL
+     SELECT name, ingredients FROM mocktails
+      WHERE ingredients IS NOT NULL AND ingredients::text <> '[]'`
+  );
+  return result.rows;
 }
 
 // Build generateShoppingList input from a plan row's planner-side selections.
@@ -44,7 +143,36 @@ async function resolveCocktailIds(cocktailIds, dbClient) {
 async function buildPlannerGeneratorInput(plan, dbClient) {
   const sel = plan.selections || {};
   const sigDrinkIds = Array.isArray(sel.signatureDrinks) ? sel.signatureDrinks : [];
-  const signatureCocktails = await resolveCocktailIds(sigDrinkIds, dbClient);
+  const mocktailIds = Array.isArray(sel.mocktails) ? sel.mocktails : [];
+  const [resolvedSigs, resolvedMocktails] = await Promise.all([
+    resolveDrinkIds(sigDrinkIds, 'cocktails', dbClient),
+    resolveDrinkIds(mocktailIds, 'mocktails', dbClient),
+  ]);
+
+  // Client custom requests (free-text strings, stored on every submitted plan
+  // but consumed by nothing until now): normalized-exact match against every
+  // drink with a recipe (including off-menu); the rest surface as needsRecipe.
+  // Caps mirror the consult path's sanitizer (MAX_LIST_ITEMS 50 / name 200):
+  // the planner submit allowlist stores these uncapped, and unmatched names
+  // ride the blob into admin + public renders, so bound them here.
+  const customStrings = (Array.isArray(sel.customCocktails) ? sel.customCocktails : [])
+    .slice(0, 50)
+    .map(s => String(s || '').trim().slice(0, 200))
+    .filter(Boolean);
+  let matchedCustoms = [];
+  let needsRecipe = [];
+  if (customStrings.length > 0) {
+    const candidates = await loadRecipeCandidates(dbClient);
+    ({ matched: matchedCustoms, needsRecipe } = matchCustomNames(customStrings, candidates));
+    // Dedup: a client who both SELECTS a menu drink and free-types its name
+    // must not get its ingredients counted twice (quantity inflation).
+    const alreadySelected = new Set(
+      [...resolvedSigs, ...resolvedMocktails].map(d => normalizeName(d.name))
+    );
+    matchedCustoms = matchedCustoms.filter(d => !alreadySelected.has(normalizeName(d.name)));
+  }
+
+  const signatureCocktails = [...resolvedSigs, ...resolvedMocktails, ...matchedCustoms];
   const syrupSelfProvided = Array.isArray(sel.syrupSelfProvided) ? sel.syrupSelfProvided : [];
   const syrupNamesById = syrupSelfProvided.length > 0 ? SYRUP_NAME_LOOKUP : {};
   const isFullBar = (plan.serving_type || 'full_bar') === 'full_bar';
@@ -54,6 +182,7 @@ async function buildPlannerGeneratorInput(plan, dbClient) {
     clientName: plan.client_name,
     guestCount: plan.guest_count,
     signatureCocktails,
+    needsRecipe,
     syrupSelfProvided,
     syrupNamesById,
     eventDate: plan.event_date,
@@ -74,8 +203,10 @@ async function buildConsultGeneratorInput(plan, dbClient) {
   const sigIds = Array.isArray(consult.signatureDrinks) ? consult.signatureDrinks : [];
   const mockIds = Array.isArray(consult.mocktails) ? consult.mocktails : [];
   const [resolvedSigs, resolvedMocktails] = await Promise.all([
-    resolveCocktailIds(sigIds, dbClient),
-    resolveCocktailIds(mockIds, dbClient),
+    resolveDrinkIds(sigIds, 'cocktails', dbClient),
+    // Bug fix: mocktail ids previously resolved against the cocktails table
+    // and silently contributed nothing.
+    resolveDrinkIds(mockIds, 'mocktails', dbClient),
   ]);
   const generatorInput = buildGeneratorInputFromConsult(
     consult,
@@ -115,8 +246,12 @@ async function autoGenerateShoppingList(planId, dbClient) {
   if (!plan || !plan.guest_count) return null;
   if (plan.has_list) return null;
 
+  // Catalog load happens here, NOT inside any caller transaction; a failed
+  // read degrades to the legacy constants (loadCatalog Sentry-reports it).
+  const catalog = await loadCatalog(dbClient);
   const input = await buildPlannerGeneratorInput(plan, dbClient);
-  const list = generateShoppingList(input);
+  const list = generateShoppingList(input, catalog);
+  reportUnresolvedIngredients(list, 'auto_gen_shopping_list');
 
   await dbClient.query(
     `UPDATE drink_plans
@@ -149,7 +284,12 @@ function triggerShoppingListAutoGen(planId, opTag = 'auto_gen_shopping_list') {
 
 module.exports = {
   SYRUP_NAME_LOOKUP,
+  loadCatalog,
+  reportUnresolvedIngredients,
+  resolveDrinkIds,
   resolveCocktailIds,
+  matchCustomNames,
+  loadRecipeCandidates,
   buildPlannerGeneratorInput,
   buildConsultGeneratorInput,
   autoGenerateShoppingList,

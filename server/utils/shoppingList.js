@@ -7,6 +7,7 @@
 // fixtures (if any). Pure functions, no DB calls.
 
 const crypto = require('crypto');
+const { resolveRecipeRow, normalizeName } = require('./potionCatalog');
 
 // ─── 100-guest baselines (mirror shoppingListPars.js) ────────────
 
@@ -164,6 +165,37 @@ const SPIRIT_MIXER_PAIRINGS = {
   mezcal:  ['Lime Juice (UNSWEET)', 'Simple Syrup', 'Limes'],
 };
 
+// Wrap the legacy constants in the potionCatalog slice shape so the generator
+// has ONE consumption path. Used only when no live catalog is passed in
+// (catalog missing/empty = par_items read failed or unseeded; callers Sentry-
+// report that). aliasIndex mirrors INGREDIENT_MAP with itemId null, so the
+// merge-size rule (which keys off byId roles) is a no-op on this path and the
+// legacy map's own sizes (spirits already 750mL) flow through untouched.
+let _legacySlices = null;
+function legacySlices() {
+  if (_legacySlices) return _legacySlices;
+  const aliasIndex = Object.entries(INGREDIENT_MAP)
+    .map(([alias, mapped]) => ({
+      alias: normalizeName(alias), itemId: null,
+      item: mapped.item, size: mapped.size, section: mapped.section,
+    }))
+    .sort((a, b) => b.alias.length - a.alias.length || a.alias.localeCompare(b.alias));
+  _legacySlices = {
+    pars100: PARS_100,
+    spiritPars: SPIRIT_PARS,
+    beerStyleMap: BEER_STYLE_MAP,
+    wineStyleMap: WINE_STYLE_MAP,
+    basicMixers: BASIC_MIXERS,
+    garnishes: GARNISHES,
+    alwaysInclude: ALWAYS_INCLUDE,
+    spiritMixerPairings: SPIRIT_MIXER_PAIRINGS,
+    aliasIndex,
+    byId: new Map(),
+    isEmpty: false,
+  };
+  return _legacySlices;
+}
+
 // Mirrors getBottlesPerSyrup from client/src/data/syrups.js. 1 bottle / 50 guests.
 function getBottlesPerSyrup(guestCount) {
   if (!guestCount || guestCount <= 50) return 1;
@@ -191,85 +223,110 @@ function scaleItems(items, guestCount, bottles) {
   }));
 }
 
-function buildBeerItems(beerSelections, guestCount, bottles) {
+function buildBeerItems(beerSelections, guestCount, bottles, slices) {
   const items = [];
   for (const style of beerSelections) {
     if (style === 'None') continue;
-    const mapped = BEER_STYLE_MAP[style];
+    const mapped = slices.beerStyleMap[style];
     if (!mapped) continue;
     items.push(...scaleItems(mapped, guestCount, bottles));
   }
   return items;
 }
 
-function buildWineItems(wineSelections, guestCount, bottles) {
+function buildWineItems(wineSelections, guestCount, bottles, slices) {
   const items = [];
   for (const style of wineSelections) {
     if (style === 'None' || style === 'Other') continue;
-    const mapped = WINE_STYLE_MAP[style];
+    const mapped = slices.wineStyleMap[style];
     if (!mapped) continue;
     items.push(...scaleItems(mapped, guestCount, bottles));
   }
   return items;
 }
 
-function mergeSignatureIngredients(signatureCocktails, liquorBeerWine, everythingElse, guestCount) {
-  const allIngredients = signatureCocktails.flatMap(c =>
-    (c.ingredients || []).map(i => String(i).toLowerCase().trim())
-  );
+// Recipe-aware replacement for the old mergeSignatureIngredients. Rows may be
+// structured recipe objects OR legacy free-text strings; both resolve through
+// the catalog (potionCatalog.resolveRecipeRow: override-active-first, then
+// alias exact-then-longest-substring). Quantity POLICY is deliberately
+// unchanged from legacy (spec: "quantities are usually right"): a missing
+// item lands at 1 per 25 guests, and an item shared by multiple drinks gets
+// +1 per additional use. Per-serving amounts do not drive purchase math in
+// v1. Unresolved rows are collected for the caller to report (never a silent
+// wrong match, never a silent drop without a trace).
+function mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingElse, guestCount, slices, unresolved) {
+  const resolvedRows = [];
+  for (const drink of signatureCocktails) {
+    for (const row of (drink.ingredients || [])) {
+      const resolved = resolveRecipeRow(row, slices);
+      if (!resolved) {
+        const label = typeof row === 'string' ? row : (row && row.ingredient) || '';
+        if (String(label).trim()) unresolved.push({ drink: drink.name, ingredient: String(label).trim() });
+        continue;
+      }
+      // Merge-size rule (spec §3.2): sig-drink spirits are added as 750mL
+      // bottles even though the baseline par row stocks 1.75L. Legacy-map
+      // entries carry itemId null (no byId hit), and their sizes are already
+      // the map's own — so this transform is a no-op on the fallback path.
+      const parRow = slices.byId ? slices.byId.get(resolved.itemId) : null;
+      const size = (parRow && parRow.role === 'spirit' && resolved.size === '1.75L') ? '750mL' : resolved.size;
+      resolvedRows.push({
+        key: resolved.itemId || resolved.item.toLowerCase(),
+        item: resolved.item,
+        size,
+        section: resolved.section,
+      });
+    }
+  }
 
-  // Add missing ingredients
-  allIngredients.forEach(ingredient => {
-    const matchKey = Object.keys(INGREDIENT_MAP).find(k => ingredient.includes(k));
-    if (!matchKey) return;
-    const mapped = INGREDIENT_MAP[matchKey];
-    const targetList = mapped.section === 'liquorBeerWine' ? liquorBeerWine : everythingElse;
-    const exists = targetList.find(i => i.item.toLowerCase() === mapped.item.toLowerCase());
+  // Add missing items (legacy policy: first occurrence wins, 1 per 25 guests).
+  for (const r of resolvedRows) {
+    const targetList = r.section === 'liquorBeerWine' ? liquorBeerWine : everythingElse;
+    const exists = targetList.find(i => i.item.toLowerCase() === r.item.toLowerCase());
     if (!exists) {
       targetList.push({
         _id: uid(),
-        item: mapped.item,
-        size: mapped.size,
+        item: r.item,
+        size: r.size,
         qty: Math.max(1, Math.ceil(guestCount / 25)),
       });
     }
-  });
+  }
 
-  // Boost items used by multiple signature cocktails (+1 per additional cocktail)
-  const ingredientCounts = {};
-  allIngredients.forEach(ing => {
-    const matchKey = Object.keys(INGREDIENT_MAP).find(k => ing.includes(k));
-    if (matchKey) ingredientCounts[matchKey] = (ingredientCounts[matchKey] || 0) + 1;
-  });
-  Object.entries(ingredientCounts).forEach(([key, count]) => {
-    if (count < 2) return;
-    const mapped = INGREDIENT_MAP[key];
-    const targetList = mapped.section === 'liquorBeerWine' ? liquorBeerWine : everythingElse;
-    const item = targetList.find(i => i.item.toLowerCase() === mapped.item.toLowerCase());
-    if (item) item.qty += count - 1;
-  });
+  // Boost items used by multiple signature drinks (+1 per additional use,
+  // applied once per resolved item — legacy applied once per map key).
+  const counts = {};
+  for (const r of resolvedRows) counts[r.key] = (counts[r.key] || 0) + 1;
+  const boosted = new Set();
+  for (const r of resolvedRows) {
+    if (counts[r.key] < 2 || boosted.has(r.key)) continue;
+    boosted.add(r.key);
+    const targetList = r.section === 'liquorBeerWine' ? liquorBeerWine : everythingElse;
+    const item = targetList.find(i => i.item.toLowerCase() === r.item.toLowerCase());
+    if (item) item.qty += counts[r.key] - 1;
+  }
 }
 
-function addSpiritsByKey(spiritKeys, liquorBeerWine, guestCount, bottles) {
+function addSpiritsByKey(spiritKeys, liquorBeerWine, guestCount, bottles, slices) {
   for (const raw of spiritKeys) {
     if (!raw) continue;
-    const par = SPIRIT_PARS[String(raw).toLowerCase()];
+    const par = slices.spiritPars[String(raw).toLowerCase()];
     if (!par) continue;
     if (liquorBeerWine.some(i => i.item.toLowerCase() === par.item.toLowerCase())) continue;
     liquorBeerWine.push(...scaleItems([par], guestCount, bottles));
   }
 }
 
-function addMatchingMixers(spiritKeys, everythingElse, guestCount, bottles) {
+function addMatchingMixers(spiritKeys, everythingElse, guestCount, bottles, slices) {
   const wantedNames = new Set();
   for (const raw of spiritKeys) {
     if (!raw) continue;
-    const list = SPIRIT_MIXER_PAIRINGS[String(raw).toLowerCase()];
+    const list = slices.spiritMixerPairings[String(raw).toLowerCase()];
     if (!list) continue;
     for (const name of list) wantedNames.add(name);
   }
   if (wantedNames.size === 0) return;
-  const lookup = [...BASIC_MIXERS, ...GARNISHES];
+  const lookup = [...slices.basicMixers, ...slices.garnishes];
   for (const name of wantedNames) {
     const found = lookup.find(m => m.item === name);
     if (!found) continue;
@@ -314,7 +371,7 @@ function addSelfProvidedSyrups(syrupSelfProvided, syrupNamesById, everythingElse
 // Consult-mode branch: admin's chip-grid spirit picks are the source of truth
 // (not PARS_100 full-bar baseline). Beer/wine flow through normal builders;
 // mixerMode controls whether additional bar mixers are full / paired / none.
-function buildConsultLists(eventData, bottles) {
+function buildConsultLists(eventData, bottles, slices, unresolved) {
   const {
     guestCount,
     signatureCocktails = [],
@@ -327,28 +384,28 @@ function buildConsultLists(eventData, bottles) {
   const everythingElse = [];
 
   if (Array.isArray(additionalSpirits) && additionalSpirits.length > 0) {
-    addSpiritsByKey(additionalSpirits, liquorBeerWine, guestCount, bottles);
+    addSpiritsByKey(additionalSpirits, liquorBeerWine, guestCount, bottles, slices);
   }
   if (Array.isArray(beerSelections) && beerSelections.length > 0) {
-    liquorBeerWine.push(...buildBeerItems(beerSelections, guestCount, bottles));
+    liquorBeerWine.push(...buildBeerItems(beerSelections, guestCount, bottles, slices));
   }
   if (Array.isArray(wineSelections) && wineSelections.length > 0) {
-    liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles));
+    liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles, slices));
   }
-  mergeSignatureIngredients(signatureCocktails, liquorBeerWine, everythingElse, guestCount);
+  mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingElse, guestCount, slices, unresolved);
   if (mixerMode === 'full') {
-    everythingElse.push(...scaleItems(BASIC_MIXERS, guestCount, bottles));
-    everythingElse.push(...scaleItems(GARNISHES, guestCount, bottles));
+    everythingElse.push(...scaleItems(slices.basicMixers, guestCount, bottles));
+    everythingElse.push(...scaleItems(slices.garnishes, guestCount, bottles));
   } else if (mixerMode === 'matching') {
-    addMatchingMixers(additionalSpirits || [], everythingElse, guestCount, bottles);
+    addMatchingMixers(additionalSpirits || [], everythingElse, guestCount, bottles, slices);
   }
-  everythingElse.push(...scaleItems(ALWAYS_INCLUDE, guestCount, bottles));
+  everythingElse.push(...scaleItems(slices.alwaysInclude, guestCount, bottles));
 
   return { liquorBeerWine, everythingElse };
 }
 
 // Planner-mode branch: client-submitted serviceStyle picks the recipe.
-function buildPlannerLists(eventData, bottles) {
+function buildPlannerLists(eventData, bottles, slices, unresolved) {
   const {
     guestCount,
     signatureCocktails = [],
@@ -361,31 +418,31 @@ function buildPlannerLists(eventData, bottles) {
   let everythingElse = [];
 
   if (serviceStyle === 'full_bar') {
-    liquorBeerWine = scaleItems(PARS_100.liquorBeerWine, guestCount, bottles);
-    everythingElse = scaleItems(PARS_100.everythingElse, guestCount, bottles);
-    mergeSignatureIngredients(signatureCocktails, liquorBeerWine, everythingElse, guestCount);
+    liquorBeerWine = scaleItems(slices.pars100.liquorBeerWine, guestCount, bottles);
+    everythingElse = scaleItems(slices.pars100.everythingElse, guestCount, bottles);
+    mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingElse, guestCount, slices, unresolved);
   } else if (serviceStyle === 'sig_beer_wine') {
-    mergeSignatureIngredients(signatureCocktails, liquorBeerWine, everythingElse, guestCount);
-    liquorBeerWine.push(...buildBeerItems(beerSelections, guestCount, bottles));
-    liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles));
+    mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingElse, guestCount, slices, unresolved);
+    liquorBeerWine.push(...buildBeerItems(beerSelections, guestCount, bottles, slices));
+    liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles, slices));
     if (mixersForSignatureDrinks !== false) {
-      everythingElse.push(...scaleItems(BASIC_MIXERS, guestCount, bottles));
-      everythingElse.push(...scaleItems(GARNISHES, guestCount, bottles));
+      everythingElse.push(...scaleItems(slices.basicMixers, guestCount, bottles));
+      everythingElse.push(...scaleItems(slices.garnishes, guestCount, bottles));
     }
-    everythingElse.push(...scaleItems(ALWAYS_INCLUDE, guestCount, bottles));
+    everythingElse.push(...scaleItems(slices.alwaysInclude, guestCount, bottles));
   } else if (serviceStyle === 'beer_wine') {
-    liquorBeerWine.push(...buildBeerItems(beerSelections, guestCount, bottles));
-    liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles));
-    everythingElse.push(...scaleItems(ALWAYS_INCLUDE, guestCount, bottles));
+    liquorBeerWine.push(...buildBeerItems(beerSelections, guestCount, bottles, slices));
+    liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles, slices));
+    everythingElse.push(...scaleItems(slices.alwaysInclude, guestCount, bottles));
   } else {
     // mocktails / unknown — supplies only
-    everythingElse.push(...scaleItems(ALWAYS_INCLUDE, guestCount, bottles));
+    everythingElse.push(...scaleItems(slices.alwaysInclude, guestCount, bottles));
   }
 
   return { liquorBeerWine, everythingElse };
 }
 
-function generateShoppingList(eventData) {
+function generateShoppingList(eventData, catalog) {
   // Lazy require breaks a circular dependency: shoppingListAddonCoverage.js
   // requires this module for BASIC_MIXERS/GARNISHES, so a top-level require
   // here would hand it this module's still-incomplete exports.
@@ -403,13 +460,20 @@ function generateShoppingList(eventData) {
     wineSelections = [],
     mixersForSignatureDrinks = null,
     mixerMode = null,
+    needsRecipe = [],
   } = eventData;
   const bottles = needsBottles(guestCount);
 
+  // Live catalog slices when provided; legacy constants otherwise (callers
+  // Sentry-report the miss). Purity holds: the catalog arrives as an
+  // argument, never via a DB call from here.
+  const slices = (catalog && !catalog.isEmpty) ? catalog : legacySlices();
+  const unresolved = [];
+
   // mixerMode being explicitly set distinguishes consult mode from planner mode.
   const { liquorBeerWine, everythingElse } = mixerMode
-    ? buildConsultLists(eventData, bottles)
-    : buildPlannerLists(eventData, bottles);
+    ? buildConsultLists(eventData, bottles, slices, unresolved)
+    : buildPlannerLists(eventData, bottles, slices, unresolved);
 
   addSelfProvidedSyrups(syrupSelfProvided, syrupNamesById, everythingElse, guestCount);
 
@@ -436,6 +500,14 @@ function generateShoppingList(eventData) {
     beerSelections,
     wineSelections,
     mixersForSignatureDrinks,
+    // Client custom requests that matched no recipe (spec §5 needs-recipe
+    // flow): passed through by the input builders, rendered as a distinct
+    // block by the modal/public page/PDF, persisted with the saved blob.
+    needsRecipe: Array.isArray(needsRecipe) ? needsRecipe : [],
+    // Recipe/free-text rows that resolved to no catalog item this run.
+    // Callers report these (Sentry 'unresolved_ingredient'); the field also
+    // rides the blob so the admin modal can surface them.
+    _unresolvedIngredients: unresolved,
     _signatureCocktails: signatureCocktails,
     _syrupSelfProvided: syrupSelfProvided,
   };

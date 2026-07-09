@@ -2372,7 +2372,11 @@ test('legacy generator still reproduces the frozen snapshots (capture is faithfu
   // snapshots — that run is the real parity gate.
   const out = runFixtures(generateShoppingList);
   for (const name of Object.keys(SNAPSHOTS)) {
-    assert.deepEqual(out[name], SNAPSHOTS[name], `snapshot ${name}`);
+    // The generator output gained two ADDITIVE fields in lane potions-b
+    // (needsRecipe, _unresolvedIngredients); snapshots predate them. Strip
+    // before comparing — lane B's own suite asserts their contents.
+    const { needsRecipe, _unresolvedIngredients, ...clean } = out[name];
+    assert.deepEqual(clean, SNAPSHOTS[name], `snapshot ${name}`);
   }
 });
 

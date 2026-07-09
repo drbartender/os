@@ -143,10 +143,25 @@ function resolveIngredient(name, catalog) {
       return { itemId: entry.itemId, item: entry.item, size: entry.size, section: entry.section };
     }
   }
+  // Substring fallback (compound free text). English names its base LAST
+  // ("cherry vodka" is a vodka), so among substring hits prefer one whose
+  // alias contains the final token; otherwise longest-alias-first. Without
+  // the head-noun preference, "cherry vodka" would resolve to the cherries
+  // row ('cherry', 6 chars) instead of the vodka row ('vodka', 5 chars) —
+  // a silently wrong bottle, the one outcome this module must never produce.
+  // This also preserves legacy insertion-order semantics on the known
+  // divergences ('whiskey sour' -> Sour Mix, flavored spirits -> the spirit).
+  const lastToken = norm.split(' ').pop();
+  let fallback = null;
   for (const entry of catalog.aliasIndex) {
-    if (norm.includes(entry.alias)) {
+    if (!norm.includes(entry.alias)) continue;
+    if (entry.alias.split(' ').includes(lastToken)) {
       return { itemId: entry.itemId, item: entry.item, size: entry.size, section: entry.section };
     }
+    if (!fallback) fallback = entry;
+  }
+  if (fallback) {
+    return { itemId: fallback.itemId, item: fallback.item, size: fallback.size, section: fallback.section };
   }
   return null;
 }

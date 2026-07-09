@@ -18,6 +18,8 @@ const { generateShoppingList } = require('../utils/shoppingList');
 const {
   buildPlannerGeneratorInput,
   buildConsultGeneratorInput,
+  loadCatalog,
+  reportUnresolvedIngredients,
 } = require('../utils/shoppingListGen');
 
 const router = express.Router();
@@ -168,6 +170,11 @@ router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
   // Function scope so the post-commit email block (after the finally) can read it.
   let isFirstTimeConsultSave = false;
 
+  // Catalog load stays OUTSIDE the transaction: a failed read degrades to the
+  // legacy constants inside generateShoppingList (Sentry-reported) and can
+  // never roll back the admin's consult save.
+  const catalog = await loadCatalog(pool);
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -202,7 +209,7 @@ router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
     }
 
     const input = await buildConsultGeneratorInput(plan, client);
-    const list = generateShoppingList(input);
+    const list = generateShoppingList(input, catalog);
 
     await client.query(
       `UPDATE drink_plans
@@ -224,6 +231,7 @@ router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
     await performConsultsCompletionFlip(client, plan.proposal_id);
 
     await client.query('COMMIT');
+    reportUnresolvedIngredients(list, 'consult_save');
     res.json({ success: true, shopping_list_source: 'consult' });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch (_) { /* swallow rollback failure */ }
@@ -323,6 +331,9 @@ router.patch('/:id/shopping-list-source', auth, requireAdminOrManager, asyncHand
     throw new ValidationError({ source: 'Source must be "planner" or "consult".' });
   }
 
+  // Outside the transaction, same rationale as the consult-save route above.
+  const catalog = await loadCatalog(pool);
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -359,7 +370,7 @@ router.patch('/:id/shopping-list-source', auth, requireAdminOrManager, asyncHand
     const input = source === 'planner'
       ? await buildPlannerGeneratorInput(plan, client)
       : await buildConsultGeneratorInput(plan, client);
-    const list = generateShoppingList(input);
+    const list = generateShoppingList(input, catalog);
 
     await client.query(
       `UPDATE drink_plans
@@ -373,6 +384,7 @@ router.patch('/:id/shopping-list-source', auth, requireAdminOrManager, asyncHand
     );
 
     await client.query('COMMIT');
+    reportUnresolvedIngredients(list, 'source_switch');
     res.json({ success: true, shopping_list_source: source });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch (_) { /* swallow rollback failure */ }
