@@ -17698,3 +17698,188 @@ html[data-app="admin-os"] .prep-col { width: 1px; padding: 0; }
   html[data-app="admin-os"] .overview-tabs .btn { white-space: nowrap; flex: 0 0 auto; }
 }
 /* end */
+/* overview: mb-b2 analysis */
+html[data-app="admin-os"] .ov-collapse-type { display: none; }
+/* Money tiles: a bordered 5-up grid mirroring .stat-row. Each tile is a button
+   (expands) or an anchor (links out); one panel opens at a time below the grid.
+   Sub-lines inside a panel are non-affording (default cursor) per spec §5. */
+html[data-app="admin-os"] .money-tiles {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+html[data-app="admin-os"] .mtile {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+  padding: 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+html[data-app="admin-os"] .mtile + .mtile { border-left: 1px solid var(--line-1); }
+html[data-app="admin-os"] .mtile:hover { background: var(--bg-2); }
+html[data-app="admin-os"] .mtile-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+html[data-app="admin-os"] .mtile-chev,
+html[data-app="admin-os"] .mtile-out { width: 11px; height: 11px; opacity: 0.5; transition: transform 0.15s; }
+html[data-app="admin-os"] .mtile.is-open .mtile-chev { transform: rotate(180deg); }
+html[data-app="admin-os"] .mtile-value {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink-1);
+  line-height: 1.1;
+}
+html[data-app="admin-os"] .mtile-sub { font-size: 11.5px; color: var(--ink-3); }
+html[data-app="admin-os"] .mtile-panel {
+  margin-top: 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+html[data-app="admin-os"] .mtile-line { font-size: 12.5px; color: var(--ink-2); cursor: default; }
+html[data-app="admin-os"] .mtile-cc { color: var(--ink-3); font-size: 11.5px; }
+html[data-app="admin-os"] .mtile-cohort {
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+}
+html[data-app="admin-os"] .mtile-cohort:hover { text-decoration: underline; }
+
+/* Funnel card: each row is a real link (cohort drill-out). Footer is plain text. */
+html[data-app="admin-os"] .funnel-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto 16px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0.5rem;
+  font-size: 12.5px;
+  color: var(--ink-1);
+  text-decoration: none;
+  border-radius: var(--radius);
+}
+html[data-app="admin-os"] .funnel-row + .funnel-row { border-top: 1px solid var(--line-1); }
+html[data-app="admin-os"] .funnel-row:hover { background: var(--bg-2); }
+html[data-app="admin-os"] .funnel-name { color: var(--ink-2); font-weight: 600; }
+html[data-app="admin-os"] .funnel-count,
+html[data-app="admin-os"] .funnel-value {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+html[data-app="admin-os"] .funnel-count { color: var(--ink-3); }
+html[data-app="admin-os"] .funnel-value { font-weight: 600; color: var(--ink-1); }
+html[data-app="admin-os"] .funnel-value.ok { color: hsl(var(--ok-h) var(--ok-s) 52%); }
+html[data-app="admin-os"] .funnel-value.danger { color: hsl(var(--danger-h) var(--danger-s) 55%); }
+html[data-app="admin-os"] .funnel-arrow { width: 14px; height: 14px; opacity: 0.4; }
+html[data-app="admin-os"] .funnel-foot {
+  padding: 0.6rem 1rem;
+  border-top: 1px solid var(--line-1);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+/* Lead-spend card */
+html[data-app="admin-os"] .ls-rows { display: flex; flex-direction: column; gap: 0.35rem; }
+html[data-app="admin-os"] .ls-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+html[data-app="admin-os"] .ls-label { font-size: 12.5px; color: var(--ink-2); }
+html[data-app="admin-os"] .ls-attr-link { color: var(--accent); font-weight: 600; }
+html[data-app="admin-os"] .ls-attr-link:hover { text-decoration: underline; }
+html[data-app="admin-os"] .ls-num { font-family: var(--font-numeric); font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink-1); }
+html[data-app="admin-os"] .attr-bar { height: 8px; border-radius: 4px; background: var(--bg-3); overflow: hidden; }
+html[data-app="admin-os"] .attr-fill { height: 100%; background: var(--accent); border-radius: 4px; }
+
+/* Pipeline rows become links (B2.5); keep the ported grid layout. */
+html[data-app="admin-os"] .pipe-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 50px 80px;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  font-size: 12px;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius);
+}
+html[data-app="admin-os"] .pipe-row:hover { background: var(--bg-2); }
+
+/* History ghost control (spec §9): demoted button that expands to three chips. */
+html[data-app="admin-os"] .history-ctrl { position: relative; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+html[data-app="admin-os"] .history-btn { display: inline-flex; align-items: center; gap: 4px; }
+
+/* Conditional era footnote above the range tables. */
+html[data-app="admin-os"] .ov-era-note {
+  padding: 0.5rem 1rem;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line-1);
+}
+
+/* Mobile (spec §10 / B2.7b): tiles 2-up, tables collapse to the queue-item row
+   pattern (client + type stacked left, amount right). Wide tables still scroll in
+   their own tbl-wrap above this breakpoint; no page-level horizontal scroll. */
+@media (max-width: 640px) {
+  html[data-app="admin-os"] .money-tiles { grid-template-columns: repeat(2, 1fr); }
+  html[data-app="admin-os"] .mtile + .mtile { border-left: 0; }
+  html[data-app="admin-os"] .money-tiles .mtile { border-top: 1px solid var(--line-1); border-left: 1px solid var(--line-1); }
+  html[data-app="admin-os"] .money-tiles .mtile:nth-child(2n+1) { border-left: 0; }
+  html[data-app="admin-os"] .money-tiles .mtile:nth-child(-n+2) { border-top: 0; }
+  html[data-app="admin-os"] .mtile-value { font-size: 22px; }
+
+  html[data-app="admin-os"] .ov-tbl-collapse .tbl thead { display: none; }
+  html[data-app="admin-os"] .ov-tbl-collapse .ov-collapse-type { display: block; }
+  html[data-app="admin-os"] .ov-tbl-collapse .tbl,
+  html[data-app="admin-os"] .ov-tbl-collapse .tbl tbody,
+  html[data-app="admin-os"] .ov-tbl-collapse .tbl tr,
+  html[data-app="admin-os"] .ov-tbl-collapse .tbl td { display: block; }
+  html[data-app="admin-os"] .ov-tbl-collapse .tbl tr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px var(--cell-pad-x);
+    border-bottom: 1px solid var(--line-1);
+    height: auto;
+  }
+  html[data-app="admin-os"] .ov-tbl-collapse .tbl td { border: 0; padding: 0; height: auto; }
+  html[data-app="admin-os"] .ov-tbl-collapse .tbl td:not(:first-child):not(.ov-amt) { display: none; }
+  html[data-app="admin-os"] .ov-tbl-collapse .tbl td:first-child { flex: 1; min-width: 0; }
+  html[data-app="admin-os"] .ov-tbl-collapse .tbl td.ov-amt {
+    display: block;
+    text-align: right;
+    white-space: nowrap;
+    font-family: var(--font-numeric);
+    font-variant-numeric: tabular-nums;
+  }
+}
+/* end */

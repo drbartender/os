@@ -14,6 +14,10 @@ import StripePayoutsTab from '../StripePayoutsTab';
 import NeedsYouStrip from './NeedsYouStrip';
 import UpcomingEventsCard from './UpcomingEventsCard';
 import PipelineCard from './PipelineCard';
+import MoneyTiles from './MoneyTiles';
+import FunnelCard from './FunnelCard';
+import LeadSpendCard from './LeadSpendCard';
+import RangeTables from './RangeTables';
 
 // Ledger-era boundary. b2 and b3 import eraOverlaps from here: era artifacts
 // (cutover marker, list notes, expansion split-lines) render only when the
@@ -33,19 +37,19 @@ const EMPTY_STATS = {
   revenue: [], pipeline: [],
 };
 
+// Financials LAW shape (spec §2). summary.booked/collected/outstanding/avgEvent
+// are DOLLARS; unlinkedRefundsCents + leadSpend.*Cents are CENTS.
+const EMPTY_FIN = {
+  summary: {
+    booked: 0, collected: 0, outstanding: 0, avgEvent: 0, unlinkedRefundsCents: 0,
+    leadSpend: { totalCents: 0, attributedCents: 0, unattributedCents: 0, chargedLeads: 0, attributedLeads: 0 },
+  },
+  proposals: [], recentPayments: [],
+};
+
 const LENS_LABEL = { booked: 'Booked', scheduled: 'Scheduled', paid: 'Paid' };
 const FIN_DEFAULTS = { tab: 'overview' };
 const FIN_TABS = ['overview', 'payouts'];
-
-function Delta({ pct }) {
-  if (pct == null) return null;
-  const up = pct >= 0;
-  return (
-    <span className="tiny" style={{ color: up ? 'hsl(var(--ok-h) var(--ok-s) 45%)' : 'hsl(var(--danger-h) var(--danger-s) 55%)' }}>
-      {up ? '▲' : '▼'} {Math.abs(pct)}% vs prior
-    </span>
-  );
-}
 
 export default function OverviewPage() {
   const navigate = useNavigate();
@@ -58,12 +62,16 @@ export default function OverviewPage() {
   const tab = FIN_TABS.includes(listState.tab) ? listState.tab : 'overview';
   const [payoutBadge, setPayoutBadge] = useState(0);
 
-  // Band 2 (analysis) — obeys the filter bar. Its own error + retry; a failure
-  // here never blanks Band 1.
+  // Band 2 (analysis) — obeys the filter bar. The two LAW fetches (dashboard-stats
+  // + financials) share ONE zone-level error + retry; a failure in either never
+  // blanks Band 1. Per-zone loading, no page-level gate.
   const [stats, setStats] = useState(EMPTY_STATS);
   const [statsLoaded, setStatsLoaded] = useState(false);
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState(false);
+  const [fin, setFin] = useState(EMPTY_FIN);
+  const [finLoaded, setFinLoaded] = useState(false);
+  const [finError, setFinError] = useState(false);
 
   // Band 1 (live) — ignores the filter. Each fetch degrades its own card.
   const [shifts, setShifts] = useState([]);
@@ -73,19 +81,37 @@ export default function OverviewPage() {
   const [proposalsLoading, setProposalsLoading] = useState(true);
   const [applications, setApplications] = useState([]);
 
-  const loadStats = useCallback(() => {
+  const band2Params = useCallback(() => {
     const params = { basis };
     if (from && to) { params.from = from; params.to = to; }
     if (includeCc && includeCc !== 'all') params.include_cc = includeCc;
+    return params;
+  }, [from, to, basis, includeCc]);
+
+  const loadStats = useCallback(() => {
     setStatsLoading(true);
     setStatsError(false);
-    api.get('/proposals/dashboard-stats', { params })
+    api.get('/proposals/dashboard-stats', { params: band2Params() })
       .then(r => { setStats(r.data || EMPTY_STATS); setStatsLoaded(true); })
       .catch(() => { setStatsError(true); })
       .finally(() => { setStatsLoading(false); });
-  }, [from, to, basis, includeCc]);
+  }, [band2Params]);
 
-  useEffect(() => { loadStats(); }, [loadStats]);
+  const loadFinancials = useCallback(() => {
+    setFinError(false);
+    api.get('/proposals/financials', { params: band2Params() })
+      .then(r => { setFin(r.data || EMPTY_FIN); setFinLoaded(true); })
+      .catch(() => { setFinError(true); });
+  }, [band2Params]);
+
+  const reloadBand2 = useCallback(() => { loadStats(); loadFinancials(); }, [loadStats, loadFinancials]);
+
+  useEffect(() => { loadStats(); loadFinancials(); }, [loadStats, loadFinancials]);
+
+  const scrollToId = useCallback((id) => {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
 
   useEffect(() => {
     api.get('/stripe-payouts')
@@ -161,8 +187,10 @@ export default function OverviewPage() {
 
   const m = stats.money || EMPTY_STATS.money;
   const fn = stats.funnel || EMPTY_STATS.funnel;
-  const wr = fn.winRate || EMPTY_STATS.funnel.winRate;
   const pipeline = stats.pipeline || [];
+
+  const band2Error = statsError || finError;
+  const band2Ready = statsLoaded && finLoaded;
 
   return (
     <div className="page">
@@ -187,7 +215,7 @@ export default function OverviewPage() {
         <UpcomingEventsCard upcoming={upcoming} loading={shiftsLoading} error={shiftsError} />
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
           {/* PayrollCard slot arrives in lane c */}
-          <PipelineCard pipeline={pipeline} loading={!statsLoaded && statsLoading} />
+          <PipelineCard pipeline={pipeline} loading={!statsLoaded && statsLoading} error={statsError} />
         </div>
       </div>
 
@@ -207,73 +235,20 @@ export default function OverviewPage() {
         <>
           <MetricsFilterBar filter={filter} />
 
-          {statsError ? (
+          {band2Error ? (
             <div className="card">
               <div className="card-body vstack" style={{ gap: '0.75rem', alignItems: 'flex-start' }}>
                 <div className="chip danger">Couldn't load metrics.</div>
-                <button type="button" className="btn btn-secondary btn-sm" onClick={loadStats}>Retry</button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={reloadBand2}>Retry</button>
               </div>
             </div>
-          ) : !statsLoaded ? (
+          ) : !band2Ready ? (
             <div className="muted" style={{ padding: '1rem 0' }}>Loading…</div>
           ) : (
             <>
-              {/* Money zone — driven by the lens toggle */}
-              <div className="stat-row" style={{ marginBottom: 'var(--gap)' }}>
-                <div className="stat">
-                  <div className="stat-label">{LENS_LABEL[m.basis]}</div>
-                  <div className="stat-value">{fmt$(m.value)}</div>
-                  <div className="stat-sub"><Delta pct={m.deltaPct} /></div>
-                </div>
-                <div className="stat">
-                  <div className="stat-label">Outstanding</div>
-                  <div className="stat-value" style={{ color: m.outstanding > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>
-                    {fmt$(m.outstanding)}
-                  </div>
-                  <div className="stat-sub"><Delta pct={m.outstandingDeltaPct} /></div>
-                </div>
-                <div className="stat">
-                  <div className="stat-label">Sent</div>
-                  <div className="stat-value">{fn.sent.count}</div>
-                  <div className="stat-sub"><span>{fmt$(fn.sent.value)} quoted</span></div>
-                </div>
-                <div className="stat">
-                  <div className="stat-label">Accepted</div>
-                  <div className="stat-value">{fn.accepted.count}</div>
-                  <div className="stat-sub"><span>{fmt$(fn.accepted.value)} won</span></div>
-                </div>
-                <div className="stat">
-                  <div className="stat-label">Win rate</div>
-                  <div className="stat-value">{wr.pct == null ? '—' : `${wr.pct}%`}</div>
-                  <div className="stat-sub">
-                    <span>{wr.acceptedFromCohort} of {wr.sentCohort} sent · {wr.pending} pending</span>
-                  </div>
-                </div>
-              </div>
+              <MoneyTiles money={m} funnel={fn} summary={fin.summary} from={from} to={to} onScrollTo={scrollToId} />
 
-              <div className="stat-row" style={{ marginBottom: 'var(--gap)' }}>
-                <div className="stat">
-                  <div className="stat-label">Time to accept</div>
-                  <div className="stat-value">
-                    {fn.timeToAcceptMedianDays == null ? '—' : `${fn.timeToAcceptMedianDays}d`}
-                  </div>
-                  <div className="stat-sub"><span>median, accepted in range</span></div>
-                </div>
-                <div className="stat">
-                  <div className="stat-label">Pipeline <span className="k">Live</span></div>
-                  <div className="stat-value">{fn.pipelineOutstanding.count}</div>
-                  <div className="stat-sub"><span>{fmt$(fn.pipelineOutstanding.value)} in flight</span></div>
-                </div>
-                <div className="stat">
-                  <div className="stat-label">Lost</div>
-                  <div className="stat-value" style={{ color: fn.lostValue > 0 ? 'hsl(var(--danger-h) var(--danger-s) 55%)' : '' }}>
-                    {fmt$(fn.lostValue)}
-                  </div>
-                  <div className="stat-sub"><span>quoted, did not book</span></div>
-                </div>
-              </div>
-
-              <div className="card">
+              <div className="card" style={{ marginBottom: 'var(--gap)' }}>
                 <div className="card-head">
                   <div className="hstack">
                     <h3>Revenue</h3>
@@ -294,6 +269,13 @@ export default function OverviewPage() {
                     : <AreaChart data={stats.revenue} keys={['value', 'paid']} />}
                 </div>
               </div>
+
+              <div className="grid-2" style={{ marginBottom: 'var(--gap)' }}>
+                <FunnelCard funnel={fn} from={from} to={to} />
+                <LeadSpendCard leadSpend={fin.summary.leadSpend} from={from} to={to} />
+              </div>
+
+              <RangeTables proposals={fin.proposals} payments={fin.recentPayments} summary={fin.summary} from={from} to={to} />
             </>
           )}
         </>
