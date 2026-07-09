@@ -6,6 +6,7 @@ lanes:
       - server/db/schema.sql
       - server/utils/potionCatalog.js
       - server/utils/potionCatalog.test.js
+      - server/utils/shoppingList.js   # EXPORT-ONLY diff (task A2.3): expose the nine legacy constants for the parity test; zero behavior change
     blockedBy: []
     review: full-fleet   # schema.sql is on the sensitive list; parity test is the ship gate for everything downstream
   - id: potions-b-generator
@@ -42,8 +43,9 @@ lanes:
       - client/src/index.css
       - README.md
       - ARCHITECTURE.md
+      - docs/fix-list-remaining-2026-07-02.md
     blockedBy: [potions-c-api]
-    review: standard     # client-only surfaces + docs; ui-ux-review agent included per new-surface convention
+    review: standard     # client-only surfaces + docs; ui-ux-review agent included per new-surface convention. Owns ALL docs edits for D and E (README tree adds + E's file deletions + Key Features + fix-list spec link)
   - id: potions-e-mirror-kill
     footprint:
       - client/src/components/ShoppingList/ShoppingListButton.jsx
@@ -53,14 +55,13 @@ lanes:
       - client/src/components/ShoppingList/shoppingListPars.js
       - client/src/pages/public/ClientShoppingList.js
       - server/routes/drinkPlans.js
-      - README.md
     blockedBy: [potions-c-api]
-    review: standard     # touches a public client-facing page; run ui-ux-review on the public list + PDF render
+    review: standard     # touches a public client-facing page; run ui-ux-review on the public list + PDF render. README/ARCHITECTURE edits (incl. E's deletions) all live in Lane D to avoid a D∥E write-write conflict; E ships only in a push that includes D (the Add-recipe deep link targets /potions)
   - id: potions-f-recipe-drafts
     footprint:
       - server/scripts/seedRecipeDrafts.js
     blockedBy: [potions-a-catalog-core]
-    review: standard     # data authoring + idempotent script; verify against dev DB, prod run is a deploy-day step
+    review: full-fleet   # escalated (plan-review finding): the script writes the parity-critical par_items table in prod; a stray in_full_bar/style/spirit flag on a support row corrupts the parity contract Lane A's full-fleet protects
 ---
 
 # Potions (Bar Program) Implementation Plan
@@ -79,7 +80,7 @@ lanes:
 
 - Push = deploy. Lanes merge by squash via `scripts/merge-lane.sh`; no direct commits to `main` from lanes.
 - `CocktailMenuDashboard.js` is ratchet-frozen at 932 lines; it may not grow. It is NOT in any lane footprint on purpose — no task edits it.
-- `drinkPlans.js` and other existing files under the 700-line soft cap: prefer new sibling files (`regenerate.js` precedent: `server/routes/proposals/getOne.js`).
+- `drinkPlans.js` is 807 lines — already OVER the 700 soft cap (under the 1000 hard cap, and the ratchet only blocks growth past HEAD at 1000+). C2.3's in-place additions stay minimal; E4's `/shopping-list-data` removal (~60 lines) shrinks it. All other new server logic goes in new sibling files (`regenerate.js` precedent: `server/routes/proposals/getOne.js`).
 - Money-free project: no pricing, Stripe, payroll, or invoice files are touched. If a task seems to need one, stop and escalate.
 - Schema changes idempotent (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, `INSERT ... ON CONFLICT (id) DO NOTHING`).
 - Parameterized SQL only. `AppError` subclasses for client-visible errors. `auth + requireAdminOrManager` on every write route.
@@ -167,13 +168,15 @@ GET /api/potions/preview?guests=175&mode=full_bar|spirit_driven   (auth + requir
 
 `mode=full_bar` → planner input `{ serviceStyle: 'full_bar', guestCount }`. `mode=spirit_driven` → consult input `{ mixerMode: 'matching', additionalSpirits: <all spirit_keys present in catalog>, guestCount }`.
 
-**Pars CRUD (Lane C produces, Lane D consumes):** `GET /api/potions/pars` → `{ pars: [rows] }` (active only, ordered). `POST /api/potions/pars` (row minus id → server slugs it; 201 `{ par: row }`). `PUT /api/potions/pars/:id` (COALESCE partial update; 200 `{ par: row }`). `DELETE /api/potions/pars/:id` (soft; `ConflictError` naming referencing drinks when used-by > 0). `POST /api/potions/pars/reorder` `{ items: [{id, sort_order}] }`.
+**Pars CRUD (Lane C produces, Lane D consumes):** `GET /api/potions/pars` → `{ pars: [rows] }` (active only, ordered) where each row additionally carries `used_by: [{ id, name, table }]` (computed server-side in one pass over all drinks' recipes + the catalog resolver — Lane D renders `used_by.length` and never duplicates resolution logic). `POST /api/potions/pars` (row minus id → server slugs it; 201 `{ par: row }`). `PUT /api/potions/pars/:id` (COALESCE partial update; 200 `{ par: row }`). `DELETE /api/potions/pars/:id` (soft; `ConflictError` naming referencing drinks when used-by > 0). `POST /api/potions/pars/reorder` `{ items: [{id, sort_order}] }`.
 
 **Used-by computation (server, shared by DELETE guard and Lane D display):** a drink references par row P when any recipe row's `resolveRecipeRow` result has `itemId === P.id`. Implemented in Lane C as `computeUsedBy(parId)` inside `potions.js` (reads all cocktails+mocktails ingredients + catalog, reuses `potionCatalog` resolver).
 
 **Accepted output delta (the only one):** consult `mixerMode: 'matching'` lists keep identical CONTENT but may reorder mixers (pairing order now derives from catalog row order, not the legacy per-spirit arrays). Every other path is byte-identical, enforced by the parity test.
 
-**Merge-size rule (parity-critical):** the legacy `INGREDIENT_MAP` deliberately added sig-drink spirits as 750mL bottles while baseline pars use 1.75L. Preserved as a rule, not data: in the signature-merge path only, a resolved item with `role='spirit'` and `size='1.75L'` is added as `750mL`. The parity test asserts all 18 legacy `INGREDIENT_MAP` entries resolve to identical `{item,size,section}`.
+**Merge-size rule (parity-critical, now in spec §3.2):** the legacy `INGREDIENT_MAP` deliberately added sig-drink spirits as 750mL bottles while baseline pars use 1.75L. Preserved as a rule, not data: in the signature-merge path only, a resolved item with `role='spirit'` and `size='1.75L'` is added as `750mL`. The parity test asserts all **17** legacy `INGREDIENT_MAP` entries (count verified 2026-07-09; every prior doc said 18) resolve to identical `{item,size,section}`.
+
+**No renames:** the nine legacy constants (`PARS_100`, `SPIRIT_PARS`, `INGREDIENT_MAP`, `BEER_STYLE_MAP`, `WINE_STYLE_MAP`, `BASIC_MIXERS`, `GARNISHES`, `ALWAYS_INCLUDE`, `SPIRIT_MIXER_PAIRINGS`) KEEP their current names — `shoppingListAddonCoverage.js:16` imports `BASIC_MIXERS`/`GARNISHES` at runtime and must keep working untouched. Lane A exports them (export-only); Lane B stops consuming them on the happy path and wraps them in `legacySlices()` for the fallback. Known accepted limitation: the add-on strip set keeps matching legacy item NAMES, so renaming a catalog mixer row exempts it from add-on stripping until a follow-up re-points `computeStripSet` at catalog slices.
 
 ---
 
@@ -250,7 +253,7 @@ section everythingElse (sort_order 10..):
   sour-mix             "Sour Mix"             64oz    1 mixer   aliases={sour}
 ```
 
-  All 22 rows marked `in_full_bar` in liquorBeerWine plus the 21 legacy everythingElse rows (through `ice`) are `in_full_bar = true`; alias-only tail rows (`ginger-beer` onward, and the non-baseline liquor rows) are `in_full_bar = false`. Every alias above that came from `INGREDIENT_MAP` must reproduce its mapping exactly (test A3).
+  `in_full_bar = true` on EXACTLY 34 rows: the 13 liquorBeerWine rows tagged `in_full_bar` above (`titos-vodka` through `yuengling`, the verbatim `PARS_100.liquorBeerWine` set) and the 21 legacy everythingElse rows (`coca-cola` through `ice`, the verbatim `PARS_100.everythingElse` set). ALL other rows (`local-craft-beer`..`blue-curacao`, `ginger-beer`..`sour-mix`) are `in_full_bar = false`. The `pars100`/`basicMixers`/`garnishes`/`alwaysInclude` slices derive by filtering `in_full_bar` + role, so any stray flag breaks the parity gate. Every alias above that came from `INGREDIENT_MAP` must reproduce its mapping exactly (test A3).
 
 - [ ] **A1.3** Run `psql $DATABASE_URL -f server/db/schema.sql` against dev (idempotent; verify re-run is a no-op) and `SELECT COUNT(*) FROM par_items` → 48. Commit.
 
@@ -258,10 +261,11 @@ section everythingElse (sort_order 10..):
 
 - [ ] **A2.1** Implement per Shared contracts. `buildCatalogSlices` filters `is_active`, orders by `(section, sort_order, id)`, casts `qty_per_100` → Number, emits slice rows as `{item, size, qty}` only. `spiritPars.whiskey` = the `bourbon` row (legacy duplication). `spiritMixerPairings` built by iterating mixer-then-garnish rows in order, appending `item` to each spirit in `paired_spirits`. `aliasIndex` sorted alias length DESC. `resolveIngredient(name)`: normalize (Shared contracts), exact alias match, else first substring hit in the sorted index, else null. `resolveRecipeRow(row)`: string row → `resolveIngredient(row)`; object row → active `override_item_id` lookup first, else `resolveIngredient(row.ingredient)`.
 - [ ] **A2.2** No DB imports anywhere in the module (test asserts `require` graph is clean by inspection; module header comment states the purity contract like `shoppingList.js:1-9`).
+- [ ] **A2.3** Export-only diff to `shoppingList.js`: add the nine legacy constants to `module.exports` under their EXISTING names (`PARS_100`, `SPIRIT_PARS`, `INGREDIENT_MAP`, `BEER_STYLE_MAP`, `WINE_STYLE_MAP`, `BASIC_MIXERS`, `GARNISHES`, `ALWAYS_INCLUDE`, `SPIRIT_MIXER_PAIRINGS`). `BASIC_MIXERS`/`GARNISHES` are already exported; keep them. Zero behavior change; `shoppingListAddonCoverage.js:16` untouched and unbroken.
 
 ### Task A3: parity test (the gate)
 
-- [ ] **A3.1** `server/utils/potionCatalog.test.js` (node:test, PURE — feeds the seed literals, no DB): embed the 48 seed rows as fixtures (copied from A1.2; a comment marks them as the schema.sql mirror). Assert deep-equality: `pars100` vs `PARS_100`, `spiritPars` vs `SPIRIT_PARS` (incl. whiskey===bourbon values), `beerStyleMap`/`wineStyleMap` vs legacy maps, `basicMixers`/`garnishes`/`alwaysInclude` vs legacy arrays, `spiritMixerPairings` vs legacy as SETS per spirit (order exempt, the one accepted delta). Assert all 18 `INGREDIENT_MAP` keys resolve to identical `{item,size,section}` (after the merge-size spirit rule).
+- [ ] **A3.1** `server/utils/potionCatalog.test.js` (node:test, PURE — feeds the seed literals, no DB): embed the 48 seed rows as fixtures (copied from A1.2; a comment marks them as the schema.sql mirror). Import the LIVE legacy constants from `shoppingList.js` (exported in A2.3 — never re-typed copies). Assert deep-equality: `pars100` vs `PARS_100`, `spiritPars` vs `SPIRIT_PARS` (incl. whiskey===bourbon values), `beerStyleMap`/`wineStyleMap` vs legacy maps, `basicMixers`/`garnishes`/`alwaysInclude` vs legacy arrays, `spiritMixerPairings` vs legacy as SETS per spirit (order exempt, the one accepted delta per spec goal 6). Assert all 17 `INGREDIENT_MAP` keys resolve to identical `{item,size,section}` (after the merge-size spirit rule). Assert an object recipe row with an INACTIVE `override_item_id` falls through to alias resolution, and with no alias match returns null (spec §8.2 item).
 - [ ] **A3.2** Snapshot fixtures: run legacy `generateShoppingList` (pre-change, exported constants) on 6 representative inputs (full_bar 100/175/40 guests + sig drinks using only legacy-mapped ingredient strings; sig_beer_wine; beer_wine; consult full + matching) and freeze outputs (strip `_id` uuids). These snapshots move to Lane B's test to prove the catalog-driven generator reproduces them.
 - [ ] **A3.3** `node -r dotenv/config --test server/utils/potionCatalog.test.js` → PASS. Commit.
 
@@ -272,7 +276,7 @@ section everythingElse (sort_order 10..):
 
 ### Task B1: catalog-driven generator
 
-- [ ] **B1.1** `shoppingList.js`: rename the seven constants `LEGACY_*` (exported for the fallback + tests). Add `catalog` param; at entry, `const slices = (catalog && !catalog.isEmpty) ? catalog : legacySlices()` where `legacySlices()` wraps the LEGACY_* constants in the same catalog shape (including `aliasIndex` built from `LEGACY_INGREDIENT_MAP`). Every internal consumer (`buildPlannerLists`, `buildConsultLists`, `addSpiritsByKey`, `addMatchingMixers`, `buildBeerItems`, `buildWineItems`) reads from `slices`, never the constants.
+- [ ] **B1.1** `shoppingList.js`: NO renames (see Shared contracts "No renames" — the nine constants keep their names and their A2.3 exports; `shoppingListAddonCoverage.js` untouched). Add `catalog` param; at entry, `const slices = (catalog && !catalog.isEmpty) ? catalog : legacySlices()` where `legacySlices()` wraps the nine existing constants in the catalog shape (including `aliasIndex` built from `INGREDIENT_MAP`, longest-first). Every internal consumer (`buildPlannerLists`, `buildConsultLists`, `addSpiritsByKey`, `addMatchingMixers`, `buildBeerItems`, `buildWineItems`) reads from `slices`, never the constants directly.
 - [ ] **B1.2** `mergeSignatureIngredients` → `mergeSignatureRecipes(signatureCocktails, ..., slices)`: per drink, per recipe row, `resolveRecipeRow`; apply the merge-size spirit rule (1.75L→750mL); missing item pushed with `qty = max(1, ceil(guestCount/25))`, shared-item boost `+1` per extra drink (UNCHANGED policy, keyed by resolved itemId instead of map key). String rows keep working (legacy free text). Unresolved rows: skip + collect; `generateShoppingList` calls `Sentry.captureMessage('unresolved_ingredient', {extra:{drink, ingredient}})` per unresolved (lazy-require Sentry like the existing pattern; no-throw).
 - [ ] **B1.3** `needsRecipe`: `eventData.needsRecipe` (default `[]`) copied onto the output object.
 - [ ] **B1.4** Run Lane A snapshots through the new generator with the seed catalog → byte-identical (minus consult-matching order, compared as sets). Commit.
@@ -281,7 +285,7 @@ section everythingElse (sort_order 10..):
 
 - [ ] **B2.1** `shoppingListGen.js`: add `loadCatalog(dbClient)` per Shared contracts (try/catch → null + `captureMessage('par_catalog_read_failed')`; zero rows → null + `'par_catalog_empty'`). `resolveCocktailIds` → also `resolveDrinkIds(ids, table, dbClient)` with `table ∈ {'cocktails','mocktails'}` (validated against that allowlist, never interpolated from input); consult mocktails resolve from `mocktails` (bug fix). `buildPlannerGeneratorInput` additions: resolve `sel.mocktails` (verify exact selections key against `PotionPlanningLab.js` state at build time; adjust to the real key) into signatureCocktails; read `sel.customCocktails` (strings) → normalized-exact match against all cocktails+mocktails names WHERE `ingredients != '[]'` (one query, includes inactive) → matched ids resolve as drinks, unmatched → `needsRecipe`.
 - [ ] **B2.2** `autoGenerateShoppingList` + `buildConsultGeneratorInput` callers pass `catalog` (loaded once per generation). `drinkPlanConsult.js`: hoist the catalog load ABOVE the `BEGIN` (verify placement against the transaction at `drinkPlanConsult.js:204-226`).
-- [ ] **B2.3** Behavior tests (`shoppingList.generator.test.js`, pure where possible): custom matched / unmatched→needsRecipe; mocktail resolution table fix; alias exact-beats-substring; ginger-beer-vs-gin via length ordering; throwing/empty catalog → legacy fallback output identical to snapshots; unresolved-ingredient collection. Run suite alone → PASS. Commit.
+- [ ] **B2.3** Behavior tests (`shoppingList.generator.test.js`, pure where possible): custom matched / unmatched→needsRecipe; mocktail resolution table fix; alias exact-beats-substring; ginger-beer-vs-gin via length ordering; punctuation-stripping normalization on free text ("Aperol!" resolves; legacy only lowercased+trimmed, so this is new coverage, not a parity case); throwing/empty catalog → legacy fallback output identical to snapshots; unresolved-ingredient collection. Run suite alone → PASS. Commit.
 
 ## Lane C — potions-c-api
 
@@ -296,6 +300,7 @@ section everythingElse (sort_order 10..):
 
 ### Task C2: recipe validation + public trim + enriched list + regenerate
 
+- [ ] **C2.0** `POST /api/cocktails` gains the three Add-recipe enablers (current route at `cocktails.js:141-158` has none of them): `id` becomes optional (server-slugs from `name` via the shared normalizer, spaces→`-`, when absent); the INSERT gains an `is_active` param (default `true`; `false` = off-menu); a 23505 on a server-generated slug retries once with `-2` then throws ConflictError (a client-supplied colliding `id` still throws immediately, current behavior). Route test for each. Without these, spec §5's needs-recipe → Add-recipe → regenerate loop is unbuildable.
 - [ ] **C2.1** `cocktails.js` + `mocktails.js`: validate structured `ingredients` on POST/PUT (array; per-row: `ingredient` non-empty string ≤120, `amount` number > 0, `unit` in set, `note` ≤200, `override_item_id` null or existing ACTIVE par id — one `SELECT id FROM par_items WHERE id = ANY(...) AND is_active` batch check → ValidationError naming the bad row). `recipe_review` transitions: recipe-changed + current `empty` → set `draft`; body may set `recipe_review:'reviewed'` explicitly; any other body value → ValidationError. Mocktails POST/PUT gain `ingredients`/`recipe_review` params (table has the columns from Lane A).
 - [ ] **C2.2** Public trim: `GET /api/cocktails` and `GET /api/mocktails` switch `SELECT c.*`/`m.*` → explicit column lists WITHOUT `recipe_review` (keep `ingredients`; accepted exposure per spec §4). `GET /admin` keeps everything.
 - [ ] **C2.3** `drinkPlans.js` list route: add `shopping_list_status`, `p.guest_count` (LEFT JOIN proposals), and `drink_names` (batched id→name across the page of rows; skip when id set empty). Additive only; assert existing fields unchanged in a route test.
@@ -309,10 +314,10 @@ section everythingElse (sort_order 10..):
 - [ ] **D1** `servingLabels.js`: extract `SERVING_LABEL` from `DrinkPlansDashboard.js:24`; both consumers import it.
 - [ ] **D2** `PotionsPage.js`: tabs `menu|recipes|pars` via `useUrlListState` (default `menu`), drawer via its `drawer` passthrough; Menu tab renders `<CocktailMenuDashboard embedded />`; header carries the Client-plans button (warn chip = count of `shopping_list_status==='pending_review'` from the enriched list, lazy-loaded on first render of the button badge via the same fetch the drawer uses).
 - [ ] **D3** `RecipesTab.js` per spec §6: self-contained fetches (`/cocktails/admin`, `/mocktails/admin`, `/potions/pars` for the resolver display), master list + detail card, debounced whole-recipe PUT autosave with saved/unsaved indicator, flush-before-Mark-reviewed, client validation mirroring C2.1 (FieldError + "fix amount to save"), resolved-purchasable cell with override picker (active pars only), unresolved warning chip linking `/potions?tab=pars`, loading/empty/error+retry states, drink-type seg. Client-side resolution duplicates ONLY the normalize+alias-match display logic (a ~30-line helper in `RecipesTab.js`; generation authority stays server-side).
-- [ ] **D4** `PantryParsTab.js` per spec §6: two section cards, inline edit → PUT per row (optimistic, toast on failure per existing reorder convention), drag-reorder → `/pars/reorder`, Called-on chips, Used-by chip (from a `used_by_counts` field added to `GET /pars` in Lane C — verify; if absent, compute client-side from the recipes fetch), delete with ConflictError copy surfaced, explainer card + pulsing flask (CSS animation under `potions-` namespace), guest preview input + mode seg + Preview button rendering the preview response in a read-only modal.
+- [ ] **D4** `PantryParsTab.js` per spec §6: two section cards, inline edit → PUT per row (optimistic, toast on failure per existing reorder convention), drag-reorder → `/pars/reorder`, Called-on chips, Used-by chip = `row.used_by.length` from `GET /pars` (Lane C contract; no client-side resolution), delete with ConflictError copy surfaced, explainer card + pulsing flask (CSS animation under `potions-` namespace), guest preview input + mode seg + Preview button rendering the preview response in a read-only modal.
 - [ ] **D5** `PlansDrawer.js` per spec §2: enriched list fetch, five-status chip map + "List to review" warn chip, rows → `/drink-plans/:id`, footer "Full index" → `/drink-plans`, loading/empty/error states.
 - [ ] **D6** Nav merge: `nav.js` one `Potions` entry (flask, `/potions`, badgeKey `pending_shopping_lists`); CommandPalette single entry; `App.js` route + redirects (`/cocktail-menu`, `/drink-menu` → `/potions`); `SettingsDashboard` drops `drink-menu` tab AND re-points its default `activeTab` (`SettingsDashboard.js:288`).
-- [ ] **D7** `CI=true npx react-scripts build` green; smoke both skins + mobile widths (no page-level horizontal scroll); README/ARCHITECTURE updates per spec §7. Commit per logical step throughout.
+- [ ] **D7** `CI=true npx react-scripts build` green; smoke both skins + mobile widths (no page-level horizontal scroll); ALL docs updates per spec §7 (README tree adds AND Lane E's two deletions, Key Features entry, ARCHITECTURE route table + potionCatalog mention + schema section, spec link added to the Bar Program entry in `docs/fix-list-remaining-2026-07-02.md`). Commit per logical step throughout.
 
 ## Lane E — potions-e-mirror-kill
 
@@ -320,9 +325,9 @@ section everythingElse (sort_order 10..):
 **Interfaces:** Consumes the regenerate endpoint (Shared contracts). Produces: zero client-side generation; needsRecipe rendering on modal/public/PDF.
 
 - [ ] **E1** `ShoppingListButton.jsx`: first-generate + manual-guest-count flows call regenerate (`guest_count_override` from the manual input); drop the `/shopping-list-data` fetch and the local generator import; loading/error states on the button per existing pattern.
-- [ ] **E2** `ShoppingListModal.jsx`: regenerate button → endpoint, behind `window.confirm` copy: "Regenerate replaces your edits, and saving will set the list back to Needs review. Continue?"; remove generator import; needsRecipe block ("Client requested: recipe needed") with Add-recipe affordance (`POST /cocktails` `is_active:false`, FormBanner on failure, then `navigate('/potions?tab=recipes&drink=<id>')`).
+- [ ] **E2** `ShoppingListModal.jsx`: regenerate button → endpoint, behind `window.confirm` copy: "Regenerate replaces your edits, and saving will set the list back to Needs review. Continue?"; remove generator import; needsRecipe block ("Client requested: recipe needed") with Add-recipe affordance (`POST /cocktails` `is_active:false` — capabilities from C2.0; FormBanner on failure, then `navigate('/potions?tab=recipes&drink=<id>')`). Explicit check: the modal's save path serializes `needsRecipe` into the saved blob (the PUT stores the edited object; verify `needsRecipe` rides `edited` through save AND approve, so the public token route serves it).
 - [ ] **E3** `ClientShoppingList.js` + `ShoppingListPDF.jsx`: render `needsRecipe` when non-empty as "Special requests: your bar lead will source these" (client copy, list of names only).
-- [ ] **E4** Delete the two client generator files; grep client/src (js AND jsx) for `generateShoppingList|shoppingListPars` → only the PDF-internal names remain; retire `GET /:id/shopping-list-data` from `drinkPlans.js` after re-verifying `ShoppingListButton.jsx:66` was its sole consumer. `CI=true npx react-scripts build` green. README tree updated (deletions). Commit.
+- [ ] **E4** Delete the two client generator files; grep client/src (js AND jsx) for `generateShoppingList|shoppingListPars` → only the PDF-internal names remain; retire `GET /:id/shopping-list-data` from `drinkPlans.js` after re-verifying `ShoppingListButton.jsx:66` was its sole consumer. `CI=true npx react-scripts build` green. (README deletion entries are Lane D's D7 — E touches no docs.) Commit.
 
 ## Lane F — potions-f-recipe-drafts
 
@@ -331,7 +336,7 @@ section everythingElse (sort_order 10..):
 
 - [ ] **F1** Script per backfill precedent (`backfillExtrasInvoices.js`: dotenv, pool, `--dry-run`, idempotent: skip drinks whose `ingredients != '[]'`; par inserts `ON CONFLICT (id) DO NOTHING`). It first inserts the recipe-support par rows (all `in_full_bar=false`, `is_active=true`, no baseline flags — invisible to every legacy slice, so parity holds): `sweet-vermouth`, `dry-vermouth`, `campari`, `aperol` (aliases `{aperol}`), `triple-sec` (aliases `{triple sec,orange liqueur,cointreau}`), `coffee-liqueur` (`{coffee liqueur,kahlua}`), `espresso` (section everythingElse, `{espresso,cold brew}`), `orgeat` (`{orgeat,almond syrup}`), `grenadine` (`{grenadine}`), `peychauds-bitters` (`{peychauds}`), `absinthe`, `rye-whiskey` (`{rye}`), `amaretto`, `amaro-nonino` (`{amaro nonino,amaro}`), `averna` (`{averna}`), `green-chartreuse` (`{green chartreuse,chartreuse}`), `maraschino-liqueur` (`{maraschino}`), `lillet-blanc` (`{lillet}`), `mint` (everythingElse, garnish, `{mint,mint leaves,fresh mint}`), `agave-syrup` (`{agave}`), `cream-of-coconut` (`{cream of coconut,coconut cream}`), `heavy-cream` (`{heavy cream,cream}`), `egg-whites` (`{egg white}`), `ginger-syrup` (`{ginger syrup}`), `hibiscus-tea` (`{hibiscus}`), `apple-cider` (`{apple cider}`), `peach-nectar` (`{peach nectar,peach}`), `mango-nectar` (`{mango nectar,mango}`), `strawberries` (`{strawberry,strawberries}`), `cucumber` (`{cucumber}`), `basil` (`{basil}`), `elderflower-syrup` (`{elderflower}`), `chocolate-syrup` (`{chocolate}`), `vanilla-syrup` (`{vanilla}`), `smoked-chips` (`{smoke,smoked}`, note-only garnish). Sizes 750mL for liquors, sensible retail sizes otherwise; `qty_per_100 = 1`.
 - [ ] **F2** Recipes: classic specs, per-serving, resolving through the aliases above (write each as structured rows; e.g. Old Fashioned = Bourbon 2 oz / Simple Syrup 0.25 oz / Angostura 2 dash / Orange peel 1 each note "expressed, garnish"; Margarita = Blanco Tequila 2 oz / Triple Sec 0.75 oz / Lime Juice 1 oz / Simple Syrup 0.25 oz / Lime wheel 1 each; Espresso Martini = Vodka 1.5 oz / Coffee Liqueur 0.5 oz / Espresso 1 oz / Simple Syrup 0.25 oz; ... all 25 cocktails from `schema.sql:420-446` and all 16 mocktails from `schema.sql:521-538`, including retired `last-word`). The full drink-by-drink table is authored IN the script (it is the source of truth Dallas will correct in the UI; `recipe_review='draft'` everywhere).
-- [ ] **F3** `node server/scripts/seedRecipeDrafts.js --dry-run` → prints per-drink plan, 0 writes; run live against dev; verify Recipes tab (or `SELECT` counts: 41 drinks with non-empty ingredients, review='draft'; every recipe row resolves — script exits non-zero listing unresolved rows otherwise, so alias gaps are caught at seed time, not in prod). Commit. **Deploy-day step (checklist item, not code): run against prod Neon default branch via MCP connection string, `--dry-run` first, Dallas go/no-go in between.**
+- [ ] **F3** Script self-checks (hard exits, run before any write): every support par row it inserts has `in_full_bar=false`, `spirit_key=null`, `style_key=null`, empty `paired_spirits` (slice-invisible by construction); after seeding, re-run the Lane A slice derivations against the LIVE par_items rows and assert they still deep-equal the legacy constants (parity holds post-seed). `node server/scripts/seedRecipeDrafts.js --dry-run` → prints per-drink plan, 0 writes; run live against dev; verify 41 drinks with non-empty ingredients, review='draft'; every recipe row resolves — script exits non-zero listing unresolved rows otherwise, so alias gaps are caught at seed time, not in prod. Commit. **Deploy-day step (checklist item, not code): run against prod Neon default branch via MCP connection string, `--dry-run` first, Dallas go/no-go in between.**
 
 ## Self-review notes (kept with the plan)
 
