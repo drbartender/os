@@ -16,6 +16,11 @@ export const fmt$2dp = (n) =>
 export const fmt$fromCents = (n) =>
   n == null ? '—' : '$' + (Number(n) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Whole-dollar display for aggregate `*Cents` fields (unlinkedRefundsCents,
+// leadSpend.*Cents). Aggregates round to whole dollars; unit-normalize at the
+// call site (never a shared divide) so cents and dollar tables can't cross wires.
+export const fmt$wholeFromCents = (n) => fmt$(Math.round(Number(n || 0) / 100));
+
 export const fmtDate = (iso, opts = {}) => {
   if (!iso) return '—';
   const d = new Date(iso + 'T12:00:00');

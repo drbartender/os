@@ -18,6 +18,7 @@ router.use('/', require('./actions'));
 router.use('/', require('./changeRequests'));
 router.use('/', require('./groups'));
 router.use('/', require('./crud'));
+router.use('/', require('./list'));
 router.use('/', require('./getOne'));
 
 module.exports = router;

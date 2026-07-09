@@ -17636,3 +17636,40 @@ html[data-app="admin-os"] .presence-row-main--static { cursor: default; }
 .potions-drawer-row-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .potions-drawer-row-chips { display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-end; flex-shrink: 0; }
 .potions-drawer-footer { padding-top: 0.8rem; display: flex; justify-content: center; }
+/* overview: mb-a proposals filters */
+html[data-app="admin-os"] .ov-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+html[data-app="admin-os"] .ov-cohort-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+html[data-app="admin-os"] .ov-cohort-note button {
+  background: transparent;
+  border: 0;
+  padding: 0 2px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+html[data-app="admin-os"] .ov-cohort-note button:hover { color: var(--ink-1); }
+@media (max-width: 640px) {
+  html[data-app="admin-os"] .ov-filter-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+/* end */

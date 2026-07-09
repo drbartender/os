@@ -46,84 +46,9 @@ const TOTAL_PRICE_OVERRIDE_MAX = 1_000_000;
 
 // ─── Admin CRUD ──────────────────────────────────────────────────
 
-/** GET /api/proposals — list all proposals. Explicit column list — do NOT ship
- *  pricing_snapshot / admin_notes / questionnaire_data / signature_data / stripe_*
- *  to list responses (blobs, PII, can each be 10-50 KB × 50 rows = 2.5 MB). */
-router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { status, view = 'active', search, source, page = 1, limit = 50 } = req.query;
-  // Shared FROM + WHERE built once so the data SELECT and the COUNT(*) cover the
-  // exact same filtered set. whereParams holds ONLY the filter params (status /
-  // search); pagination (LIMIT/OFFSET) is appended to the data query alone.
-  const fromWhere = `
-    FROM proposals p
-    LEFT JOIN clients c ON c.id = p.client_id
-    LEFT JOIN service_packages sp ON sp.id = p.package_id
-    WHERE 1=1`;
-  const whereParams = [];
-  let whereClause = '';
-
-  // An explicit `status` param overrides `view` — used by drill-downs that
-  // pin a specific status. Otherwise `view` selects a status bucket so paid
-  // proposals (which "graduate" to the Events tab) are still discoverable
-  // here under the Paid tab without requiring callers to enumerate statuses.
-  if (status) {
-    whereParams.push(status);
-    whereClause += ` AND p.status = $${whereParams.length}`;
-  } else if (view === 'paid') {
-    whereClause += ` AND p.status IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed')`;
-  } else if (view === 'archive') {
-    whereClause += ` AND p.status = 'archived'`;
-  } else if (view === 'all') {
-    whereClause += ` AND p.status != 'archived'`;
-  } else {
-    // Default 'active' bucket — exclude paid (moved to Events) and archived.
-    whereClause += ` AND p.status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived')`;
-  }
-  if (search) {
-    whereParams.push(`%${search}%`);
-    whereClause += ` AND (c.name ILIKE $${whereParams.length} OR c.email ILIKE $${whereParams.length})`;
-  }
-
-  // Origin filter. Fixed literals only (no user value into SQL) — safe.
-  if (source === 'thumbtack') {
-    whereClause += " AND p.source = 'thumbtack'";
-  } else if (source === 'manual') {
-    whereClause += ' AND p.source IS NULL';
-  }
-
-  let query = `
-    SELECT p.id, p.token, p.client_id, p.event_type, p.event_type_custom,
-           p.event_type_category, p.event_date, p.event_start_time,
-           p.event_duration_hours, p.event_location, p.guest_count, p.num_bars,
-           p.num_bartenders, p.package_id, p.group_id, p.status, p.source, p.total_price, p.amount_paid,
-           p.deposit_amount, p.balance_due_date, p.payment_type, p.autopay_enrolled,
-           p.sent_at, p.accepted_at, p.client_signed_at, p.last_viewed_at, p.view_count,
-           p.created_at, p.updated_at, p.cc_id AS proposal_cc_id,
-           c.name AS client_name, c.email AS client_email, c.phone AS client_phone,
-           c.cc_id AS client_cc_id,
-           sp.name AS package_name, sp.slug AS package_slug
-    ${fromWhere}${whereClause}
-    ORDER BY p.created_at DESC`;
-  const params = [...whereParams];
-  params.push(Number(limit));
-  query += ` LIMIT $${params.length}`;
-  params.push((Number(page) - 1) * Number(limit));
-  query += ` OFFSET $${params.length}`;
-
-  // Data + total run in parallel; COUNT(*) reuses the identical FROM/WHERE and
-  // whereParams (no LIMIT/OFFSET) so the count matches the full filtered set.
-  const [result, countResult] = await Promise.all([
-    pool.query(query, params),
-    pool.query(`SELECT COUNT(*) ${fromWhere}${whereClause}`, whereParams),
-  ]);
-  const total = Number(countResult.rows[0]?.count) || 0;
-  // Non-breaking pagination signal: total in a header, body stays a bare array
-  // so existing consumers are unaffected. CORS sets no global
-  // Access-Control-Expose-Headers, so expose this header per-route.
-  res.set('X-Total-Count', String(total));
-  res.set('Access-Control-Expose-Headers', 'X-Total-Count');
-  res.json(result.rows);
-}));
+// GET /api/proposals (the list handler + its filter params) lives in list.js —
+// carved out at the file-size ratchet so this file could take the new filter
+// work. Mounted in index.js BEFORE getOne.js (getOne owns the greedy `/:id`).
 
 /** POST /api/proposals — create a new proposal.
  *  send_now decides status and is fail-safe: ONLY an explicit `send_now: true`

@@ -11,9 +11,20 @@ import { useSearchParams } from 'react-router-dom';
  */
 const iso = (d) => d.toISOString().slice(0, 10);
 
+// Preset boundaries flip at America/Chicago midnight (the business timezone
+// payroll already uses), not UTC midnight. Only the SEED (today's y/mo/d) is
+// Chicago; the d0/iso math stays UTC-based so the emitted YYYY-MM-DD strings are
+// stable calendar dates the server reads verbatim. en-CA formats as YYYY-MM-DD.
+const CHI_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+export function chicagoYmdParts(now = new Date()) {
+  const [y, m, d] = CHI_DATE.format(now).split('-').map(Number);
+  return { y, mo: m - 1, d };
+}
+
 export function presetRange(preset, today = new Date()) {
-  const y = today.getUTCFullYear();
-  const mo = today.getUTCMonth();
+  const { y, mo, d } = chicagoYmdParts(today);
   const d0 = (Y, M, D) => new Date(Date.UTC(Y, M, D));
   switch (preset) {
     case 'this-month':   return { from: iso(d0(y, mo, 1)), to: iso(d0(y, mo + 1, 0)) };
@@ -22,7 +33,7 @@ export function presetRange(preset, today = new Date()) {
       const q = Math.floor(mo / 3) * 3;
       return { from: iso(d0(y, q, 1)), to: iso(d0(y, q + 3, 0)) };
     }
-    case 'ytd':          return { from: iso(d0(y, 0, 1)), to: iso(d0(y, mo, today.getUTCDate())) };
+    case 'ytd':          return { from: iso(d0(y, 0, 1)), to: iso(d0(y, mo, d)) };
     case 'last-12':      return { from: iso(d0(y, mo - 11, 1)), to: iso(d0(y, mo + 1, 0)) };
     default:             return { from: null, to: null };
   }

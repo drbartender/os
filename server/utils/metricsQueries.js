@@ -440,5 +440,5 @@ const builders = {
 module.exports = {
   resolveFilters, priorPeriod, dateClause, ccClause, refundsInWindow, toDollars,
   ccLedgerOn, ccPaidLeg, ccBookedValueLeg, ccQuoteCountLeg, ccQuoteValueLeg, ccBookedCountLeg,
-  BASES, INCLUDE_CC_VALUES, ...builders,
+  BASES, INCLUDE_CC_VALUES, NOT_DEAD, ...builders,
 };

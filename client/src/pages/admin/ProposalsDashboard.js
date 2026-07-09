@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
-import { getEventTypeLabel } from '../../utils/eventTypes';
+import { getEventTypeLabel, EVENT_TYPES } from '../../utils/eventTypes';
+import { presetRange } from '../../hooks/useMetricsFilter';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { useToast } from '../../context/ToastContext';
 import Icon from '../../components/adminos/Icon';
@@ -34,9 +35,29 @@ const STATUS = {
 
 const TAB_IDS = ['active', 'draft', 'won', 'paid', 'archive', 'all'];
 const SOURCE_IDS = ['thumbtack', 'manual'];
-// View state lives in the URL (admin cross-nav): tab/source survive
-// Back from a proposal, and the URL is shareable. Writes replace history.
-const LIST_DEFAULTS = { tab: 'active', source: '' };
+const AXIS_IDS = ['event', 'sent'];
+const COHORT_IDS = ['quoted', 'won', 'lost'];
+// Tab → server status/view bucket, as objects (not query strings) so the fetch
+// composes them with the new filter params without emitting a duplicate `status`
+// key. status chips and cohort supersede this bucket in the query builder.
+const TAB_TO_PARAMS = {
+  active:  { view: 'active' },
+  draft:   { status: 'draft' },
+  won:     { status: 'accepted' },
+  paid:    { view: 'paid' },
+  archive: { view: 'archive' },
+  all:     { view: 'all' },
+};
+const PRESET_KEYS = ['this-month', 'last-month', 'this-quarter', 'ytd', 'last-12'];
+const PRESET_CHIPS = [
+  ['this-month', 'This month'], ['last-month', 'Last month'], ['this-quarter', 'Quarter'],
+  ['ytd', 'YTD'], ['last-12', 'Last 12'], ['all', 'All'], ['custom', 'Custom'],
+];
+const STATUS_CHIPS = [['sent', 'Sent'], ['viewed', 'Viewed'], ['modified', 'Modified']];
+const COHORT_LABELS = { quoted: 'Quoted', won: 'Won', lost: 'Lost' };
+// View state lives in the URL (admin cross-nav): every control writes through
+// setListState so drill-outs are plain links and Back restores the filters.
+const LIST_DEFAULTS = { tab: 'active', q: '', source: '', from: '', to: '', axis: 'event', status: '', event_type: '', balance: '', cohort: '' };
 
 export default function ProposalsDashboard() {
   const navigate = useNavigate();
@@ -52,19 +73,35 @@ export default function ProposalsDashboard() {
   const [listState, setListState] = useUrlListState(LIST_DEFAULTS);
   const tab = TAB_IDS.includes(listState.tab) ? listState.tab : 'active';
   const sourceFilter = SOURCE_IDS.includes(listState.source) ? listState.source : '';
+  const axis = AXIS_IDS.includes(listState.axis) ? listState.axis : 'event';
+  const cohort = COHORT_IDS.includes(listState.cohort) ? listState.cohort : '';
   const [copyMessage, setCopyMessage] = useState('');
+  // Custom-range date inputs reveal on the Custom chip (or off-preset URL dates).
+  const [showCustom, setShowCustom] = useState(false);
 
-  // Map UI tab → server query string. Each tab fetches a server-side bucket so
-  // paid proposals (which migrate to Events) stay reachable via the Paid tab
-  // without client-side post-filtering of a giant payload.
-  const tabToQuery = useMemo(() => ({
-    active:  '?view=active',
-    draft:   '?status=draft',
-    won:     '?status=accepted',
-    paid:    '?view=paid',
-    archive: '?view=archive',
-    all:     '?view=all',
-  }), []);
+  // Compose the server query from URL-truth listState. Precedence mirrors the
+  // server: cohort supersedes everything; else status chips (a CSV) override the
+  // tab bucket exactly as the server's `status` param overrides `view`; else the
+  // tab's own bucket. Date / axis / event_type / balance layer on top.
+  const queryString = useMemo(() => {
+    const p = new URLSearchParams();
+    if (cohort) {
+      p.set('cohort', cohort);
+    } else if (listState.status) {
+      p.set('status', listState.status);
+    } else {
+      Object.entries(TAB_TO_PARAMS[tab] || TAB_TO_PARAMS.active).forEach(([k, v]) => p.set(k, v));
+    }
+    if (sourceFilter) p.set('source', sourceFilter);
+    if (listState.q) p.set('search', listState.q);
+    if (listState.from) p.set('from', listState.from);
+    if (listState.to) p.set('to', listState.to);
+    if (axis === 'sent') p.set('axis', 'sent');
+    if (listState.event_type) p.set('event_type', listState.event_type);
+    if (listState.balance === 'open') p.set('balance', 'open');
+    return p.toString();
+  }, [cohort, listState.status, listState.q, listState.from, listState.to,
+    listState.event_type, listState.balance, axis, sourceFilter, tab]);
 
   // Tab counts come from /dashboard-stats, re-fetched when the source filter
   // changes so the counts stay consistent with the filtered list. Failing the
@@ -86,16 +123,14 @@ export default function ProposalsDashboard() {
       .catch(() => { /* leave counts at zero — graceful degradation */ });
   }, [sourceFilter]);
 
-  const fetchProposals = useCallback(async (currentTab) => {
+  const fetchProposals = useCallback(async () => {
     setLoading(true);
     try {
-      const qs = tabToQuery[currentTab] || tabToQuery.active;
-      const sourceQs = sourceFilter ? `&source=${sourceFilter}` : '';
-      const list = await api.get(`/proposals${qs}${sourceQs}`);
+      const list = await api.get(`/proposals?${queryString}`);
       const rows = list.data || [];
       setProposals(rows);
-      // X-Total-Count is the unpaginated total for this bucket. Fall back to the
-      // number of rows we actually got if the header is missing (older server).
+      // X-Total-Count is the unpaginated total for this filtered set. Fall back to
+      // the number of rows we actually got if the header is missing (older server).
       const headerTotal = Number(list.headers?.['x-total-count']);
       setTotal(Number.isFinite(headerTotal) ? headerTotal : rows.length);
     } catch (err) {
@@ -104,9 +139,9 @@ export default function ProposalsDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [toast, tabToQuery, sourceFilter]);
+  }, [toast, queryString]);
 
-  useEffect(() => { fetchProposals(tab); }, [fetchProposals, tab]);
+  useEffect(() => { fetchProposals(); }, [fetchProposals]);
 
   const copyLink = (e, token) => {
     e.stopPropagation();
@@ -148,6 +183,58 @@ export default function ProposalsDashboard() {
     { id: 'all',     label: 'All' },
   ]), [counts]);
 
+  // Which preset chip the current from/to matches (all = no dates; custom = an
+  // off-preset URL range). All range math is America/Chicago via presetRange.
+  const activePreset = useMemo(() => {
+    if (!listState.from && !listState.to) return 'all';
+    for (const key of PRESET_KEYS) {
+      const r = presetRange(key);
+      if (r.from === listState.from && r.to === listState.to) return key;
+    }
+    return 'custom';
+  }, [listState.from, listState.to]);
+
+  const statusSet = useMemo(
+    () => new Set((listState.status || '').split(',').filter(Boolean)),
+    [listState.status]
+  );
+
+  const anyFilterActive = Boolean(
+    listState.from || listState.to || cohort || listState.status ||
+    listState.event_type || listState.balance || sourceFilter ||
+    listState.q || axis !== 'event'
+  );
+
+  const applyPreset = (key) => {
+    if (key === 'all') { setShowCustom(false); setListState({ from: '', to: '' }); return; }
+    if (key === 'custom') {
+      setShowCustom(true);
+      if (!listState.from || !listState.to) {
+        const seed = presetRange('last-12');
+        setListState({ from: seed.from, to: seed.to });
+      }
+      return;
+    }
+    setShowCustom(false);
+    const r = presetRange(key);
+    setListState({ from: r.from, to: r.to });
+  };
+  const presetActive = (key) => (showCustom
+    ? key === 'custom'
+    : (key === 'custom' ? activePreset === 'custom' : activePreset === key));
+
+  const toggleStatus = (s) => {
+    const next = new Set(statusSet);
+    if (next.has(s)) next.delete(s); else next.add(s);
+    setListState({ status: [...next].join(',') });
+  };
+
+  const clearFilters = () => { setShowCustom(false); setListState(LIST_DEFAULTS); };
+
+  const cohortRange = (listState.from && listState.to)
+    ? ` · ${fmtDate(listState.from)} to ${fmtDate(listState.to)}`
+    : '';
+
   // Paid statuses surface a "View event" jump-link so admins can move from a
   // paid proposal straight into its EventDetailPage (where shifts/staffing live).
   const isPaidStatus = (status) => ['deposit_paid', 'balance_paid', 'confirmed', 'completed'].includes(status);
@@ -183,6 +270,110 @@ export default function ProposalsDashboard() {
         </select>
       </div>
 
+      <div className="ov-filter-row">
+        <div className="metrics-seg" role="group" aria-label="Date range">
+          {PRESET_CHIPS.map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className={`metrics-seg-btn${presetActive(key) ? ' is-active' : ''}`}
+              aria-pressed={presetActive(key)}
+              onClick={() => applyPreset(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {(showCustom || activePreset === 'custom') && (
+          <>
+            <input
+              type="date"
+              className="input"
+              aria-label="From date"
+              value={listState.from || ''}
+              max={listState.to || undefined}
+              onChange={(e) => setListState({ from: e.target.value })}
+            />
+            <span className="muted tiny">to</span>
+            <input
+              type="date"
+              className="input"
+              aria-label="To date"
+              value={listState.to || ''}
+              min={listState.from || undefined}
+              onChange={(e) => setListState({ to: e.target.value })}
+            />
+          </>
+        )}
+
+        <div className="metrics-seg" role="group" aria-label="Date axis">
+          <button
+            type="button"
+            className={`metrics-seg-btn${axis === 'event' ? ' is-active' : ''}`}
+            aria-pressed={axis === 'event'}
+            onClick={() => setListState({ axis: 'event' })}
+          >
+            Event date
+          </button>
+          <button
+            type="button"
+            className={`metrics-seg-btn${axis === 'sent' ? ' is-active' : ''}`}
+            aria-pressed={axis === 'sent'}
+            onClick={() => setListState({ axis: 'sent' })}
+          >
+            Sent
+          </button>
+        </div>
+
+        <div className="metrics-seg" role="group" aria-label="Status">
+          {STATUS_CHIPS.map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className={`metrics-seg-btn${statusSet.has(key) ? ' is-active' : ''}`}
+              aria-pressed={statusSet.has(key)}
+              onClick={() => toggleStatus(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <select
+          className="input"
+          style={{ maxWidth: 200 }}
+          aria-label="Event type"
+          value={listState.event_type}
+          onChange={(e) => setListState({ event_type: e.target.value })}
+        >
+          <option value="">All event types</option>
+          {EVENT_TYPES.map((t) => (
+            <option key={t.id} value={t.id}>{t.label}</option>
+          ))}
+        </select>
+
+        <div className="metrics-seg" role="group" aria-label="Balance">
+          <button
+            type="button"
+            className={`metrics-seg-btn${listState.balance === 'open' ? ' is-active' : ''}`}
+            aria-pressed={listState.balance === 'open'}
+            onClick={() => setListState({ balance: listState.balance === 'open' ? '' : 'open' })}
+          >
+            Open balance
+          </button>
+        </div>
+      </div>
+
+      {cohort && (
+        <div className="ov-cohort-note">
+          <span>{COHORT_LABELS[cohort]} cohort{cohortRange}</span>
+          <button type="button" aria-label="Clear cohort" onClick={() => setListState({ cohort: '' })}>
+            &times;
+          </button>
+        </div>
+      )}
+
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="tbl-wrap">
           <table className="tbl">
@@ -204,7 +395,17 @@ export default function ProposalsDashboard() {
                 <tr><td colSpan={9} className="muted">Loading…</td></tr>
               )}
               {!loading && rows.length === 0 && (
-                <tr><td colSpan={9} className="muted">No proposals match these filters.</td></tr>
+                <tr>
+                  <td colSpan={9} className="muted">
+                    No proposals match these filters
+                    {anyFilterActive && (
+                      <>
+                        {' · '}
+                        <button type="button" className="btn-ghost" onClick={clearFilters}>Clear filters</button>
+                      </>
+                    )}
+                  </td>
+                </tr>
               )}
               {!loading && rows.map(p => {
                 const st = STATUS[p.status] || { label: p.status || '—', kind: 'neutral' };
