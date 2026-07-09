@@ -12583,6 +12583,10 @@ html[data-app="admin-os"] .palette-item {
   font-size: 13px;
 }
 html[data-app="admin-os"] .palette-item:hover, html[data-app="admin-os"] .palette-item.active { background: var(--row-active); }
+/* While keyboard-navigating, only the .active row paints — a mouse resting on
+   another row must not double-highlight. The kbd-nav class is cleared by the
+   next real mousemove. */
+html[data-app="admin-os"] .palette-list.kbd-nav .palette-item:hover:not(.active) { background: transparent; }
 html[data-app="admin-os"] .palette-item svg { width: 14px; height: 14px; color: var(--ink-3); }
 html[data-app="admin-os"] .palette-item .shortcut { margin-left: auto; display: flex; gap: 3px; }
 html[data-app="admin-os"] .palette-item-sub { font-size: 11.5px; color: var(--ink-4); margin-top: 1px; }
