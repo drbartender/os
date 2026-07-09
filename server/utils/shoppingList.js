@@ -503,4 +503,12 @@ function buildGeneratorInputFromConsult(consult, eventCtx, resolvedSigs = [], re
   };
 }
 
-module.exports = { generateShoppingList, getBottlesPerSyrup, buildGeneratorInputFromConsult, BASIC_MIXERS, GARNISHES };
+// The nine legacy data constants are exported (names unchanged) so the
+// potionCatalog parity test compares against the LIVE values, never copies,
+// and so the catalog-miss fallback can wrap them. shoppingListAddonCoverage
+// keeps importing BASIC_MIXERS/GARNISHES exactly as before.
+module.exports = {
+  generateShoppingList, getBottlesPerSyrup, buildGeneratorInputFromConsult,
+  PARS_100, SPIRIT_PARS, INGREDIENT_MAP, BEER_STYLE_MAP, WINE_STYLE_MAP,
+  BASIC_MIXERS, GARNISHES, ALWAYS_INCLUDE, SPIRIT_MIXER_PAIRINGS,
+};

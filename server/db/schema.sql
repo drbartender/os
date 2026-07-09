@@ -3639,3 +3639,105 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_transferred_cc_id
 -- schedulePreEventReminders and re-inserts them. The flag survives every
 -- automatic re-run; the admin reenroll-drink-plan-nudge endpoint clears it.
 ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS nudge_suppressed BOOLEAN NOT NULL DEFAULT false;
+
+-- ─── Potions: par catalog + structured recipes ───────────────────
+-- Spec: docs/superpowers/specs/2026-07-09-potions-bar-program-design.md
+-- ONE master par catalog. Every legacy hardcoded generator table (PARS_100,
+-- SPIRIT_PARS, INGREDIENT_MAP, beer/wine style maps, BASIC_MIXERS, GARNISHES,
+-- ALWAYS_INCLUDE, SPIRIT_MIXER_PAIRINGS) derives as a slice of these rows via
+-- server/utils/potionCatalog.js. The seed below mirrors shoppingList.js values
+-- byte-for-byte; server/utils/potionCatalog.test.js is the parity gate. Do not
+-- edit seed values without running that test.
+CREATE TABLE IF NOT EXISTS par_items (
+  id VARCHAR(100) PRIMARY KEY,            -- slug, e.g. 'titos-vodka'
+  item VARCHAR(255) NOT NULL,             -- display + purchase name
+  size VARCHAR(50),                       -- '1.75L', '12 pack', 'ea.', 'lbs'
+  qty_per_100 NUMERIC NOT NULL CHECK (qty_per_100 >= 0),
+  section VARCHAR(30) NOT NULL CHECK (section IN ('liquorBeerWine','everythingElse')),
+  role VARCHAR(20) NOT NULL CHECK (role IN ('spirit','wine','beer','mixer','garnish','supplies')),
+  spirit_key VARCHAR(30),                 -- spirit rows: consult chip-grid key ('vodka'..'mezcal')
+  style_key VARCHAR(50),                  -- beer/wine rows: client style pick ('IPA', 'Red', ...)
+  paired_spirits TEXT[] DEFAULT '{}',     -- mixer/garnish rows: matching-mixer triggers
+  ingredient_aliases TEXT[] DEFAULT '{}', -- generic recipe/free-text names that resolve here
+  in_full_bar BOOLEAN NOT NULL DEFAULT false,
+  is_active BOOLEAN NOT NULL DEFAULT true,   -- soft delete (cocktails precedent)
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DROP TRIGGER IF EXISTS update_par_items_updated_at ON par_items;
+CREATE TRIGGER update_par_items_updated_at BEFORE UPDATE ON par_items
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Structured recipes + review workflow on both drink tables.
+ALTER TABLE cocktails ADD COLUMN IF NOT EXISTS recipe_review VARCHAR(20) NOT NULL DEFAULT 'empty';
+ALTER TABLE mocktails ADD COLUMN IF NOT EXISTS ingredients JSONB DEFAULT '[]';
+ALTER TABLE mocktails ADD COLUMN IF NOT EXISTS recipe_review VARCHAR(20) NOT NULL DEFAULT 'empty';
+ALTER TABLE cocktails DROP CONSTRAINT IF EXISTS cocktails_recipe_review_check;
+ALTER TABLE cocktails ADD CONSTRAINT cocktails_recipe_review_check
+  CHECK (recipe_review IN ('empty','draft','reviewed'));
+ALTER TABLE mocktails DROP CONSTRAINT IF EXISTS mocktails_recipe_review_check;
+ALTER TABLE mocktails ADD CONSTRAINT mocktails_recipe_review_check
+  CHECK (recipe_review IN ('empty','draft','reviewed'));
+
+-- Seed: liquorBeerWine. Rows 1-13 are PARS_100.liquorBeerWine verbatim (in_full_bar).
+-- Rows 14-17 are the beer style map (style-only). Rows 18-19 SPIRIT_PARS-only
+-- spirits. Rows 20-23 INGREDIENT_MAP-only liquors (alias-resolvable, in no baseline).
+INSERT INTO par_items (id, item, size, qty_per_100, section, role, spirit_key, style_key, paired_spirits, ingredient_aliases, in_full_bar, sort_order) VALUES
+  ('titos-vodka',          'Tito''s Vodka',        '1.75L', 5,  'liquorBeerWine', 'spirit', 'vodka',   NULL, '{}', '{vodka}',                    true,  10),
+  ('tanqueray-gin',        'Tanqueray Gin',        '1.75L', 1,  'liquorBeerWine', 'spirit', 'gin',     NULL, '{}', '{gin}',                      true,  20),
+  ('bacardi-rum',          'Bacardi Rum',          '1.75L', 2,  'liquorBeerWine', 'spirit', 'rum',     NULL, '{}', '{rum,"white rum"}',          true,  30),
+  ('bulleit-bourbon',      'Bulleit Bourbon',      '1.75L', 4,  'liquorBeerWine', 'spirit', 'bourbon', NULL, '{}', '{bourbon,whiskey}',          true,  40),
+  ('1800-blanco-tequila',  '1800 Blanco Tequila',  '1.75L', 4,  'liquorBeerWine', 'spirit', 'tequila', NULL, '{}', '{tequila,"blanco tequila"}', true,  50),
+  ('cabernet-sauvignon',   'Cabernet Sauvignon',   '750mL', 6,  'liquorBeerWine', 'wine',   NULL, 'Red',       '{}', '{"cabernet sauvignon"}',   true,  60),
+  ('pinot-noir',           'Pinot Noir',           '750mL', 6,  'liquorBeerWine', 'wine',   NULL, 'Red',       '{}', '{"pinot noir"}',           true,  70),
+  ('moscato',              'Moscato',              '750mL', 6,  'liquorBeerWine', 'wine',   NULL, 'White',     '{}', '{moscato}',                true,  80),
+  ('sauvignon-blanc',      'Sauvignon Blanc',      '750mL', 6,  'liquorBeerWine', 'wine',   NULL, 'White',     '{}', '{"sauvignon blanc"}',      true,  90),
+  ('champagne',            'Champagne',            '750mL', 12, 'liquorBeerWine', 'wine',   NULL, 'Sparkling', '{}', '{champagne,prosecco}',     true,  100),
+  ('michelob-ultra',       'Michelob Ultra',       '24pk',  2,  'liquorBeerWine', 'beer',   NULL, 'Light / Easy Drinking', '{}', '{}',           true,  110),
+  ('corona-light',         'Corona / Light',       '24pk',  3,  'liquorBeerWine', 'beer',   NULL, NULL,        '{}', '{}',                       true,  120),
+  ('yuengling',            'Yuengling',            '24pk',  2,  'liquorBeerWine', 'beer',   NULL, NULL,        '{}', '{}',                       true,  130),
+  ('local-craft-beer',     'Local Craft Beer',     '24pk',  2,  'liquorBeerWine', 'beer',   NULL, 'Craft / Local', '{}', '{}',                   false, 140),
+  ('ipa-lagunitas-voodoo', 'IPA (Lagunitas / Voodoo Ranger)', '12pk', 2, 'liquorBeerWine', 'beer', NULL, 'IPA', '{}', '{}',                      false, 150),
+  ('white-claw-variety',   'White Claw Variety',   '12pk',  2,  'liquorBeerWine', 'beer',   NULL, 'Seltzer',   '{}', '{}',                       false, 160),
+  ('athletic-na',          'Athletic Brewing NA',  '12pk',  1,  'liquorBeerWine', 'beer',   NULL, 'Non-Alcoholic', '{}', '{}',                   false, 170),
+  ('scotch-whiskey',       'Scotch Whiskey',       '1.75L', 1,  'liquorBeerWine', 'spirit', 'scotch',  NULL, '{}', '{scotch}',                   false, 180),
+  ('mezcal',               'Mezcal',               '750mL', 1,  'liquorBeerWine', 'spirit', 'mezcal',  NULL, '{}', '{mezcal}',                   false, 190),
+  ('raspberry-vodka',      'Raspberry Vodka',      '750mL', 1,  'liquorBeerWine', 'spirit', NULL, NULL, '{}', '{"raspberry vodka"}',             false, 200),
+  ('malibu-coconut-rum',   'Malibu Coconut Rum',   '750mL', 1,  'liquorBeerWine', 'spirit', NULL, NULL, '{}', '{"coconut rum",malibu}',          false, 210),
+  ('island-blue-pucker',   'Island Blue Pucker',   '750mL', 1,  'liquorBeerWine', 'spirit', NULL, NULL, '{}', '{"island blue pucker"}',          false, 220),
+  ('blue-curacao',         'Blue Curacao',         '750mL', 1,  'liquorBeerWine', 'spirit', NULL, NULL, '{}', '{"blue curacao"}',                false, 230)
+ON CONFLICT (id) DO NOTHING;
+
+-- Seed: everythingElse. Rows 1-21 are PARS_100.everythingElse verbatim, in order
+-- (= BASIC_MIXERS + GARNISHES + ALWAYS_INCLUDE concatenated; in_full_bar).
+-- Rows 22-25 are INGREDIENT_MAP-only mixers (alias-resolvable, in no baseline).
+-- paired_spirits = SPIRIT_MIXER_PAIRINGS inverted, row by row.
+INSERT INTO par_items (id, item, size, qty_per_100, section, role, spirit_key, style_key, paired_spirits, ingredient_aliases, in_full_bar, sort_order) VALUES
+  ('coca-cola',          'Coca Cola',            '12 pack', 2,   'everythingElse', 'mixer',   NULL, NULL, '{rum,bourbon,whiskey}',                        '{"coca cola",coke}',                                       true,  10),
+  ('diet-coke',          'Diet Coke',            '12 pack', 1,   'everythingElse', 'mixer',   NULL, NULL, '{}',                                           '{"diet coke"}',                                                 true,  20),
+  ('sprite',             'Sprite',               '12 pack', 1,   'everythingElse', 'mixer',   NULL, NULL, '{}',                                           '{sprite}',                                                      true,  30),
+  ('club-soda',          'Club Soda',            '8 pack',  6,   'everythingElse', 'mixer',   NULL, NULL, '{vodka,gin,tequila,bourbon,whiskey,scotch}',   '{"club soda","soda water"}',                                    true,  40),
+  ('tonic-water',        'Tonic Water',          '1L',      2,   'everythingElse', 'mixer',   NULL, NULL, '{vodka,gin}',                                  '{"tonic water",tonic}',                                         true,  50),
+  ('cranberry-juice',    'Cranberry Juice',      '64oz',    2,   'everythingElse', 'mixer',   NULL, NULL, '{vodka}',                                      '{cranberry}',                                                   true,  60),
+  ('pineapple-juice',    'Pineapple Juice',      '64oz',    2,   'everythingElse', 'mixer',   NULL, NULL, '{rum}',                                        '{"pineapple juice"}',                                           true,  70),
+  ('orange-juice',       'Orange Juice',         '64oz',    1,   'everythingElse', 'mixer',   NULL, NULL, '{vodka,rum}',                                  '{"orange juice"}',                                              true,  80),
+  ('lemon-juice',        'Lemon Juice',          '31oz',    1,   'everythingElse', 'mixer',   NULL, NULL, '{gin}',                                        '{"lemon juice"}',                                               true,  90),
+  ('lime-juice-unsweet', 'Lime Juice (UNSWEET)', '15oz',    1,   'everythingElse', 'mixer',   NULL, NULL, '{vodka,rum,tequila,mezcal}',                   '{"lime juice"}',                                                true,  100),
+  ('simple-syrup',       'Simple Syrup',         '1L',      2,   'everythingElse', 'mixer',   NULL, NULL, '{gin,tequila,mezcal}',                         '{"simple syrup"}',                                              true,  110),
+  ('angostura-bitters',  'Angostura Bitters',    '4oz',     1,   'everythingElse', 'mixer',   NULL, NULL, '{bourbon,whiskey}',                            '{angostura,bitters}',                                           true,  120),
+  ('premium-cherries',   'Premium Cherries',     'ea.',     1,   'everythingElse', 'garnish', NULL, NULL, '{bourbon,whiskey}',                            '{"brandied cherry",cherry}',                                    true,  130),
+  ('lemons',             'Lemons',               'ea.',     4,   'everythingElse', 'garnish', NULL, NULL, '{gin}',                                        '{"lemon twist","lemon wheel","lemon wedge","lemon peel"}',      true,  140),
+  ('limes',              'Limes',                'ea.',     12,  'everythingElse', 'garnish', NULL, NULL, '{vodka,rum,tequila,mezcal}',                   '{"lime wedge","lime wheel"}',                                   true,  150),
+  ('oranges',            'Oranges',              'ea.',     2,   'everythingElse', 'garnish', NULL, NULL, '{}',                                           '{"orange peel","orange slice","orange wheel","orange twist"}',  true,  160),
+  ('water',              'Water',                '24pk',    4,   'everythingElse', 'supplies', NULL, NULL, '{}',                                          '{}',                                                            true,  170),
+  ('cups-9oz',           'Cups (9oz)',           '500',     1,   'everythingElse', 'supplies', NULL, NULL, '{}',                                          '{}',                                                            true,  180),
+  ('straws',             'Straws',               'box',     1,   'everythingElse', 'supplies', NULL, NULL, '{}',                                          '{}',                                                            true,  190),
+  ('napkins',            'Napkins',              '100',     1,   'everythingElse', 'supplies', NULL, NULL, '{}',                                          '{}',                                                            true,  200),
+  ('ice',                'Ice',                  'lbs',     150, 'everythingElse', 'supplies', NULL, NULL, '{}',                                          '{}',                                                            true,  210),
+  ('ginger-beer',        'Ginger Beer',          '4 pack',  1,   'everythingElse', 'mixer',   NULL, NULL, '{}',                                           '{"ginger beer"}',                                               false, 220),
+  ('ginger-ale',         'Ginger Ale',           '12 pack', 1,   'everythingElse', 'mixer',   NULL, NULL, '{}',                                           '{"ginger ale"}',                                                false, 230),
+  ('lemonade-real',      'Lemonade (REAL)',      '1G',      1,   'everythingElse', 'mixer',   NULL, NULL, '{}',                                           '{lemonade}',                                                    false, 240),
+  ('sour-mix',           'Sour Mix',             '64oz',    1,   'everythingElse', 'mixer',   NULL, NULL, '{}',                                           '{sour,"sour mix"}',                                             false, 250)
+ON CONFLICT (id) DO NOTHING;
