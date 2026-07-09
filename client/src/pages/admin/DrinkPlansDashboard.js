@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { SERVING_LABEL } from '../../utils/servingLabels';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
@@ -21,13 +22,7 @@ const STATUS = {
   reviewed:  { label: 'Reviewed',  kind: 'ok' },
 };
 
-const SERVING_LABEL = {
-  full_bar: 'Full Bar',
-  beer_wine: 'Beer & Wine',
-  beer_wine_seltzer: 'Beer, Wine & Seltzer',
-  non_alcoholic: 'Non-Alcoholic',
-  mocktail: 'Mocktail',
-};
+// SERVING_LABEL moved to utils/servingLabels (shared with the Potions drawer).
 
 export default function DrinkPlansDashboard() {
   const toast = useToast();

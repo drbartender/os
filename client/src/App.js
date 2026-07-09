@@ -138,6 +138,7 @@ const FinancialsDashboard = lazy(() => import('./pages/admin/FinancialsDashboard
 const PayrollPage = lazy(() => import('./pages/admin/payroll/PayrollPage'));
 const HiringDashboard = lazy(() => import('./pages/admin/HiringDashboard'));
 const SettingsDashboard = lazy(() => import('./pages/admin/SettingsDashboard'));
+const PotionsPage = lazy(() => import('./pages/admin/PotionsPage'));
 const DrinkPlansDashboard = lazy(() => import('./pages/admin/DrinkPlansDashboard'));
 const DrinkPlanDetail = lazy(() => import('./pages/admin/DrinkPlanDetail'));
 const ProposalsDashboard = lazy(() => import('./pages/admin/ProposalsDashboard'));
@@ -546,10 +547,11 @@ function AppRoutes() {
         <Route path="/staffing/users/:id" element={<AdminUserDetail />} />
         <Route path="/staffing/applications/:id" element={<AdminApplicationDetail />} />
         <Route path="/hiring" element={<HiringDashboard />} />
+        <Route path="/potions" element={<PotionsPage />} />
         <Route path="/drink-plans" element={<DrinkPlansDashboard />} />
         <Route path="/drink-plans/:id" element={<DrinkPlanDetail />} />
-        <Route path="/cocktail-menu" element={<Navigate to="/settings" replace />} />
-        <Route path="/drink-menu" element={<Navigate to="/settings" replace />} />
+        <Route path="/cocktail-menu" element={<Navigate to="/potions" replace />} />
+        <Route path="/drink-menu" element={<Navigate to="/potions" replace />} />
         <Route path="/proposals" element={<ProposalsDashboard />} />
         <Route path="/proposals/new" element={<ProposalCreate />} />
         <Route path="/proposals/:id" element={<ProposalDetail />} />

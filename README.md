@@ -172,11 +172,13 @@ dr-bartender/
 │   │   ├── contractor.js       # Contractor profile + file uploads
 │   │   ├── drinkPlans.js       # Client event planning questionnaire
 │   │   ├── drinkPlans/
+│   │   │   ├── regenerate.js   # POST /:id/shopping-list/regenerate (fresh list from live par catalog; returns, never saves)
 │   │   │   └── submit.js       # PUT /t/:token submit handler (extracted); creates the "Drink Plan Extras" invoice at submit
 │   │   ├── drinkPlanConsult.js # Admin consult-form routes (alternate input source for shopping lists)
 │   │   ├── messages.js         # SMS messaging to staff
 │   │   ├── mocktails.js        # Mocktail menu CRUD
 │   │   ├── payment.js          # Payment method + W-9 upload
+│   │   ├── potions.js          # Potions bar-program API: par-catalog CRUD/reorder/preview + shared recipe-row validator
 │   │   ├── progress.js         # Onboarding step tracking
 │   │   ├── proposals/          # Service proposals (publicToken/compareGroup/public/metadata/lifecycle/crud/getOne/actions/changeRequests/groups sub-routers)
 │   │   │   ├── index.js        # Composition router
@@ -294,9 +296,10 @@ dr-bartender/
 │   │   ├── scheduledMessageDispatcher.js # 5-minute scheduler: drains pending scheduled_messages rows, applies suppression, invokes per-message-type handlers
 │   │   ├── sendProposalSentEmail.js # Post-commit best-effort client email when a proposal enters the 'sent' state (never throws)
 │   │   ├── setupTime.js        # Pure back-of-house setup-time math (parse/subtract, effectiveSetupMinutes); client twin
-│   │   ├── shoppingList.js     # Shopping-list generator (mirrors client generateShoppingList.js); also includes consult-mode branch + buildGeneratorInputFromConsult translator
+│   │   ├── potionCatalog.js    # Pure par-catalog slices + ingredient alias resolution (Potions); parity-gated by potionCatalog.test.js
+│   │   ├── shoppingList.js     # Shopping-list generator (the ONE generator; consumes potionCatalog slices, legacy-constant fallback); consult-mode branch + buildGeneratorInputFromConsult translator
 │   │   ├── shoppingListAddonCoverage.js # Maps active BYOB-support add-on slugs to the shopping-list items those add-ons cover (computeStripSet); generateShoppingList strips that set
-│   │   ├── shoppingListGen.js  # Shared helpers: resolveCocktailIds, buildPlannerGeneratorInput, buildConsultGeneratorInput, autoGenerateShoppingList
+│   │   ├── shoppingListGen.js  # Shared helpers: loadCatalog, resolveDrinkIds, matchCustomNames, buildPlannerGeneratorInput, buildConsultGeneratorInput, autoGenerateShoppingList
 │   │   ├── sms.js              # Twilio SMS wrapper
 │   │   ├── smsDeliveryStatus.js # Twilio delivery-failure handler — flags bad phone numbers (sets clients.phone_status='bad') on hard SMS failures
 │   │   ├── smsEventDate.js     # Shared SMS event-date formatter (Date or string to "June 12", null when missing)
@@ -351,6 +354,7 @@ dr-bartender/
 │   │   │   ├── leadSources.js  # Lead source enum (mirrors schema CHECK + server validator)
 │   │   │   ├── messageTypes.js # Display-only message_log label map (messageTypeLabel) for the event-detail Messages card; falls back to the stored subject for untagged sends
 │   │   │   ├── proposalRules.js # Shared client proposal business rules (bundle/addon/guardrail logic); CJS twin at server/utils/proposalRules.js
+│   │   │   ├── servingLabels.js # Serving-type display labels (SERVING_LABEL + servingLabel); shared by DrinkPlansDashboard + Potions PlansDrawer
 │   │   │   ├── setupTime.js    # Back-of-house setup-time formatting (twin of server/utils/setupTime.js)
 │   │   │   ├── timeOptions.js  # Time option generator + 12h formatter + input parser
 │   │   │   └── tipCardMarks.js # Derives printable QR-card payment marks from saved handles (Stripe link + handles → mark list)
@@ -375,7 +379,7 @@ dr-bartender/
 │   │   │   │                   # InterviewScheduleModal, PackageIncludesModal, DocumentPreviewModal (in-app lightbox for staff docs — W-9/BASSET/resume/headshot), MetricsFilterBar,
 │   │   │   │                   # format, nav, shifts, PresenceStrip (sidebar time-clock strip);
 │   │   │   │                   # drawers/{InvoicesDrawer,ShiftDrawer,PresenceDrawer})
-│   │   │   ├── ShoppingList/   # Shopping list generator (PDF export, ConsultationForm admin-input modal)
+│   │   │   ├── ShoppingList/   # Shopping list editor modal + PDF export + ConsultationForm (generation is server-side via the regenerate endpoint)
 │   │   │   └── MenuPNG/        # Standard Menu PNG export (html2canvas-driven, lazy-loaded; renders hidden MenuPreview at print scale 768x960 and downloads as 2304x2880 PNG)
 │   │   ├── data/               # Shared data (addonCategories, eventServicesAgreement, eventTypes, menuSamples, packages, syrups)
 │   │   ├── hooks/              # Custom hooks (useDebounce, useDrawerParam + drawerHref, useFormValidation, useWizardHistory, useMetricsFilter, useUrlListState (URL-backed list/tab/filter view state))
@@ -384,7 +388,7 @@ dr-bartender/
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
 │   │   │   ├── (staff)         # Application, ApplicationStatus, HiringLanding, PreHireOnboarding (open pre-hire URL)
 │   │   │   ├── (admin)         # AdminDashboard (AdminUserDetail moved into admin/userDetail/, AdminApplicationDetail moved into admin/applicationDetail/)
-│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, Messages admin SMS conversation/thread page, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/, NotificationSettings per-user notification-subscription toggles, ProposalChangeRequestCard client-portal change-request review card on Proposal Detail (diff, preview, apply-in-editor, decline), AlternativesPanel option-group manager on Proposal Detail (add/remove alternatives, Send options, copy compare link), ChangeRequestsDashboard admin pending-requests queue at /change-requests, eventDetail/MessageLogCard newest-first client message log (email + SMS, sent/failed) on EventDetailPage, payroll/DeferredTipsPanel admin list + Retry button for tips/clawbacks that deferred while the open pay period was frozen, StripePayoutsTab Stripe payout reconciliation tab on FinancialsDashboard)
+│   │   │   ├── admin/          # Dashboard sub-pages (PotionsPage bar-program home at /potions with potions/ RecipesTab + PantryParsTab + PlansDrawer siblings, proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, Messages admin SMS conversation/thread page, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/, NotificationSettings per-user notification-subscription toggles, ProposalChangeRequestCard client-portal change-request review card on Proposal Detail (diff, preview, apply-in-editor, decline), AlternativesPanel option-group manager on Proposal Detail (add/remove alternatives, Send options, copy compare link), ChangeRequestsDashboard admin pending-requests queue at /change-requests, eventDetail/MessageLogCard newest-first client message log (email + SMS, sent/failed) on EventDetailPage, payroll/DeferredTipsPanel admin list + Retry button for tips/clawbacks that deferred while the open pay period was frozen, StripePayoutsTab Stripe payout reconciliation tab on FinancialsDashboard)
 │   │   │   ├── staff/          # Staff portal — the live v2 portal, mounted at root on staff.drbartender.com (HomePage, ShiftsPage + ShiftDetail, PayPage + PayoutDetail, TipCardPage, EmailVerifyPage email-change confirm) + PrintTipCard printable QR card (PrintTipCard.jsx + PrintTipCard.layouts.jsx + PrintTipCard.css)
 │   │   │   │   └── account/    # AccountPage shell + sub-nav with ProfileSection, PaymentMethodsSection (+ PaymentMethodRows + AddMethodModal), CalendarSyncSection, NotificationsSection (+ IOSCoachmark + PushPermissionBanner), DocumentsSection (+ ReplaceConfirmModal)
 │   │   │   ├── plan/           # PotionPlanningLab, public post-booking event questionnaire (single flow, created only after deposit; with steps/, components/, data/; components/ScopeBanner + components/WelcomeRoadmap + components/MenuPreview + components/LogoUploadField = apothecary-reskin + Standard Menu shared UI; steps/HostedGuestPrefsStep.js = compact hosted-package guest-preferences step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test; data/menuSections.js = Standard Menu section extractor with menuSections.test.js Jest unit suite)
@@ -444,6 +448,11 @@ dr-bartender/
 | `npm run lane:status` | List open lanes (worktrees) and flag stale ones (48h no-commit, 15+ main commits since cut, or a sensitive path landed on main since cut); run at session start and in the push sweep |
 
 ## Key Features
+
+### Potions (Bar Program)
+- One admin home at `/potions` for the drink program: Menu (published catalog), Recipes (structured per-serving formulas per drink), Pars (the single par catalog with per-item call-on conditions), plus a client-plans review drawer
+- The shopping-list generator reads the live par catalog and recipes; generic recipe ingredients ("vodka") resolve to recommended purchasables ("Tito's Vodka") through catalog aliases
+- Client custom drink requests match recipes by normalized-exact name; unmatched requests surface as "recipe needed" and admins grow the catalog by adding off-menu recipes
 
 ### Contractor Application & Onboarding
 - Multi-step application form with file uploads (resume, headshot, BASSET cert)

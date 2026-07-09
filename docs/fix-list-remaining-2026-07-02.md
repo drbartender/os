@@ -17,7 +17,7 @@ before building anything.
 ## Design sessions Dallas drives (prompt docs committed, none started)
 - **Dashboard / Financials redesign (Money Board)** — DESIGN LANDED 2026-07-09: brainstorm done, spec committed at `docs/superpowers/specs/2026-07-09-money-board-design.md` (merged 2a surface, rainbow chart ported, exhaustive click map, proposals filter expansion, payroll card, prep queue). Next: spec review fleet, then plan. NOTE: prep-queue lane depends on the Potions merge.
 - **Split-by metrics lane (COMMITTED follow-up, per Dallas 2026-07-09)** — close rate + revenue split by event type and lead source. Queue IMMEDIATELY after the Money Board ships; spec §11 carries the shape. Not wish-list.
-- **Bar Program** (cocktail-menu -> Recipes + Pars tabs) — `docs/cocktail-menu-design-prompt.md`. `cocktails.ingredients` JSONB exists, 0/24 populated; pars hardcoded `shoppingList.js:75-141` + client mirror. No movement since the doc landed. See [[project-bar-program]].
+- **Bar Program -> POTIONS** — BUILT 2026-07-09 per `docs/superpowers/specs/2026-07-09-potions-bar-program-design.md` + plan `docs/superpowers/plans/2026-07-09-potions-bar-program.md`: /potions home (Menu + Recipes + Pars + plans drawer), single par catalog with call-on conditions, 41 draft recipes seeded, generator catalog-driven, client mirror killed. Owed: Dallas recipe review pass (6 low-confidence drafts), prod seedRecipeDrafts run at deploy (dry-run first). See [[project-bar-program]].
 - **Compare-page reskin** — `docs/compare-page-design-prompt.md`, sitting since 7/2; can ride either session above.
 
 ## Scope calls needed before scoping

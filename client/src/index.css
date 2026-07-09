@@ -17573,3 +17573,66 @@ html[data-app="admin-os"] a.palette-item { color: inherit; text-decoration: none
 
 /* Non-own presence rows render as a div; row static, name links (admin cross-nav) */
 html[data-app="admin-os"] .presence-row-main--static { cursor: default; }
+
+/* ═══════════════ Potions (bar program) — /potions ═══════════════
+   New namespace for the Recipes + Pars tabs and the plans drawer
+   (spec 2026-07-09). Menu tab reuses the untouched CocktailMenuDashboard
+   styles. Tokens only; holds in both skins. */
+.potions-tabs { margin-bottom: var(--gap, 1rem); }
+.potions-toolbar { gap: 0.6rem; align-items: center; justify-content: space-between; margin-bottom: 0.8rem; flex-wrap: wrap; }
+.potions-state { display: flex; align-items: center; justify-content: center; gap: 0.6rem; padding: 1.2rem; text-align: center; }
+
+.potions-split { display: grid; grid-template-columns: 290px 1fr; gap: 1rem; align-items: start; }
+@media (max-width: 900px) { .potions-split { grid-template-columns: 1fr; } }
+.potions-master { overflow: hidden; padding: 0; }
+.potions-master-search { padding: 0.55rem; border-bottom: 1px solid var(--border); }
+.potions-master-list { max-height: 560px; overflow-y: auto; }
+.potions-master-row { display: flex; align-items: center; gap: 0.55rem; width: 100%; padding: 0.5rem 0.65rem; background: none; border: none; border-bottom: 1px solid var(--border); cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.potions-master-row:hover { background: var(--row-hover, rgba(0,0,0,0.04)); }
+.potions-master-row.active { background: var(--row-active, rgba(0,0,0,0.06)); box-shadow: inset 2px 0 0 0 var(--accent, currentColor); }
+.potions-master-emoji { width: 1.4rem; text-align: center; }
+.potions-master-name { flex: 1; min-width: 0; font-weight: 600; font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.potions-detail { padding: 0; overflow: hidden; }
+.potions-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; flex-wrap: wrap; padding: 0.75rem 0.9rem; border-bottom: 1px solid var(--border); }
+.potions-detail-emoji { font-size: 1.35rem; }
+.potions-detail-name { font-weight: 700; }
+.potions-detail-foot { padding: 0.6rem 0.9rem; border-top: 1px solid var(--border); }
+
+.potions-cell { height: 30px; padding: 0.15rem 0.45rem; font-size: 0.85rem; }
+.potions-cell-num { width: 74px; text-align: right; }
+.potions-cell-unit { width: 86px; }
+.potions-cell-size { width: 96px; }
+.potions-cell-override { width: 100%; margin-top: 0.25rem; opacity: 0.85; }
+.potions-cell-bad { border-color: var(--danger, #c0392b) !important; }
+.potions-cell-error { font-size: 0.72rem; color: var(--danger, #c0392b); margin-top: 0.15rem; }
+.potions-col-amount { width: 92px; text-align: right; }
+.potions-col-grip { width: 26px; }
+.potions-resolved { min-width: 170px; }
+.potions-chip-btn { border: none; cursor: pointer; font: inherit; }
+.potions-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.potions-projected { color: var(--accent, inherit); font-weight: 600; text-align: right; }
+
+.potions-pars-explainer { margin-bottom: 1rem; }
+.potions-pars-card { margin-bottom: 1rem; }
+.potions-card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; padding-bottom: 0.5rem; }
+.potions-add-row { gap: 0.4rem; flex-wrap: wrap; padding: 0.5rem 0; }
+.potions-flask { color: var(--accent, inherit); display: inline-flex; animation: potions-pulse 3.5s ease-in-out infinite; }
+@keyframes potions-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+.potions-preview-scrim { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
+.potions-preview-modal { width: min(680px, 96vw); max-height: 84vh; display: flex; flex-direction: column; gap: 0.6rem; }
+.potions-preview-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; overflow-y: auto; }
+@media (max-width: 640px) { .potions-preview-cols { grid-template-columns: 1fr; } }
+.potions-preview-label { text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.3rem; }
+.potions-preview-line { display: flex; justify-content: space-between; gap: 0.6rem; padding: 0.15rem 0; border-bottom: 1px dashed var(--border); font-size: 0.85rem; }
+
+.potions-drawer-intro { padding: 0.4rem 0 0.8rem; }
+.potions-drawer-state { display: flex; align-items: center; justify-content: center; gap: 0.6rem; padding: 1.2rem; }
+.potions-drawer-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.6rem; padding: 0.6rem 0.2rem; border-bottom: 1px solid var(--border); text-decoration: none; color: inherit; }
+.potions-drawer-row:hover { background: var(--row-hover, rgba(0,0,0,0.04)); }
+.potions-drawer-row-main { min-width: 0; }
+.potions-drawer-row-name { font-weight: 600; font-size: 0.88rem; }
+.potions-drawer-row-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.potions-drawer-row-chips { display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-end; flex-shrink: 0; }
+.potions-drawer-footer { padding-top: 0.8rem; display: flex; justify-content: center; }

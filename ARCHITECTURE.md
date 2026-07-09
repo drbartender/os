@@ -203,7 +203,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | POST | `/` | Admin | Create new plan (generates UUID token) |
 | GET | `/by-proposal/:proposalId` | Admin | Fetch plan linked to a proposal |
 | POST | `/for-proposal/:proposalId` | Admin | Get-or-create the drink plan for a proposal (used by `DrinkPlanCard`). |
-| GET | `/:id/shopping-list-data` | Admin | Shaped data for shopping list generation (joins proposal for guest_count, resolves cocktail ingredients) |
+| GET | `/:id/shopping-list-data` | Admin | Shaped data for the legacy client-side generation path (retired by the Potions mirror kill once `ShoppingListButton` moved to the regenerate endpoint) |
 | GET | `/:id/shopping-list` | Admin | Fetch persisted shopping list + `shopping_list_status` |
 | PUT | `/:id/shopping-list` | Admin | Save shopping list edits (auto-saved by the modal while admin edits) |
 | PATCH | `/:id/shopping-list/approve` | Admin | Approve list (flips `shopping_list_status` to `'approved'`) and emails client a link |
@@ -235,14 +235,29 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 ### Cocktails — `/api/cocktails`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/` | No | List all cocktails with categories |
-| POST | `/` | Admin | Create/update cocktail |
+| GET | `/` | No | List active cocktails with categories (explicit public columns; `recipe_review` never ships publicly, `ingredients` stays public by accepted spec decision) |
+| POST | `/` | Admin | Create cocktail. `id` optional (server slugs from name, one `-2` retry); `is_active:false` creates an off-menu drink (needs-recipe Add-recipe path); structured recipe rows validated |
 
 ### Mocktails — `/api/mocktails`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/` | No | List all mocktails with categories |
-| POST | `/` | Admin | Create/update mocktail |
+| GET | `/` | No | List active mocktails with categories (same public-column trim as cocktails) |
+| POST | `/` | Admin | Create mocktail (same optional-id slug + recipe validation as cocktails; mocktails now carry `ingredients` + `recipe_review`) |
+
+### Potions (bar program) — `/api/potions`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/pars` | Admin | Active par catalog; each row carries `used_by` `[ {id,name,table} ]` (drinks whose recipes resolve to it) |
+| POST | `/pars` | Admin | Create catalog item (server-generated slug id, `-2` retry on collision) |
+| PUT | `/pars/:id` | Admin | Partial update (item/size/qty_per_100/section/role/spirit_key/style_key/paired_spirits/ingredient_aliases/in_full_bar/sort_order) |
+| DELETE | `/pars/:id` | Admin | Soft delete (`is_active=false`); 409 while any recipe resolves to the row |
+| POST | `/pars/reorder` | Admin | Bulk sort_order (unnest pattern, 500 max) |
+| GET | `/preview` | Admin | Run the generator against the live catalog with a synthetic input (`?guests=1..1000&mode=full_bar\|spirit_driven`); read-only |
+
+Regenerate (mounted at `/api/drink-plans` BEFORE the flat router, from `routes/drinkPlans/regenerate.js`):
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/:id/shopping-list/regenerate` | Admin | Fresh list from the plan's stored inputs + live par catalog; returns `{ list }`, never saves. `shopping_list_source` `'consult'` uses the consult builder; `'planner'`/NULL uses the planner builder. Body `{ guest_count_override?: 1..1000 }`; 400 when no guest count anywhere |
 
 ### Proposals — `/api/proposals`
 | Method | Path | Auth | Description |
@@ -673,6 +688,14 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - Index on `(user_id, created_at DESC)` for fast timeline rendering
 
 ### Event Planning
+
+**par_items** — The ONE master par catalog for Potions (spec 2026-07-09). Every legacy hardcoded generator table (PARS_100, SPIRIT_PARS, INGREDIENT_MAP, beer/wine style maps, BASIC_MIXERS, GARNISHES, ALWAYS_INCLUDE, SPIRIT_MIXER_PAIRINGS) derives as a slice via `server/utils/potionCatalog.js`; `potionCatalog.test.js` is the byte-parity gate.
+- `id` VARCHAR(100) slug PK (`'titos-vodka'`), `item`, `size`, `qty_per_100` NUMERIC (baseline AT 100 GUESTS; the generator scales)
+- `section`: liquorBeerWine | everythingElse; `role`: spirit | wine | beer | mixer | garnish | supplies
+- Call-on conditions: `in_full_bar` (PARS_100 membership), `spirit_key` (consult chip-grid pull), `style_key` (beer/wine client style pull), `paired_spirits` TEXT[] (matching-mixer triggers), `ingredient_aliases` TEXT[] (generic recipe/free-text names that resolve here)
+- `is_active` soft delete (DELETE blocked while any recipe resolves to the row); seeded 48 rows byte-identical to the legacy constants + 35 alias-only recipe-support rows (seedRecipeDrafts)
+
+**cocktails / mocktails recipe columns** — `ingredients` JSONB (ordered structured rows `{ingredient, amount per serving, unit oz|dash|each|splash, note?, override_item_id?}`; legacy plain strings still resolve via aliases) + `recipe_review` (`empty|draft|reviewed`, auto-transition strictly empty->draft on recipe write; explicit `reviewed` only from Mark reviewed). Purchase quantities keep the legacy policy (1 per 25 guests + shared-drink boost); per-serving amounts are display/prep data in v1.
 
 **drink_plans** — Client event questionnaire (created only after the client books — Stripe deposit webhook → `createEventShifts` → `createDrinkPlan`, idempotent; never pre-deposit)
 - `token` UUID (public access)
