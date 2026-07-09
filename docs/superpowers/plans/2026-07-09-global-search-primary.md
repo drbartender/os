@@ -251,6 +251,33 @@ describe('CommandPalette keyboard selection', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/dashboard');
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  test('a latched Enter never fires after the palette is dismissed', async () => {
+    let resolveSearch;
+    api.get.mockReturnValue(new Promise((resolve) => { resolveSearch = resolve; }));
+    const onClose = jest.fn();
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <CommandPalette open onClose={onClose} />
+        <LocationProbe />
+      </MemoryRouter>
+    );
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: 'sett' } });
+    act(() => { jest.advanceTimersByTime(200); });   // request in flight
+    fireEvent.keyDown(input, { key: 'Enter' });      // latch armed
+    rerender(
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <CommandPalette open={false} onClose={onClose} />
+        <LocationProbe />
+      </MemoryRouter>
+    );                                               // parent-initiated close (Esc path)
+    await act(async () => {
+      resolveSearch({ data: { results: { ...EMPTY, clients: [{ type: 'client', id: 3, name: 'Cate Settler', detail: '' }] } } });
+    });
+    expect(screen.getByTestId('location')).toHaveTextContent('/dashboard'); // no ghost navigation
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });
 ```
 
@@ -334,7 +361,8 @@ export default function CommandPalette({ open, onClose }) {
   const reqIdRef = useRef(0);
   // Enter pressed while results were still loading: remember it and activate
   // the top record the moment they land (spec: pending-Enter latch). Cleared
-  // by any keystroke, arrow key, error, or empty result.
+  // by any keystroke, arrow key, error, or empty result — and it dies with the
+  // palette: any dismissal kills it so a late response can't navigate.
   const pendingEnterRef = useRef(false);
   // The user arrow-moved during this query: their explicit selection beats the
   // latch/top-hit default. Cleared on keystroke and on open.
@@ -356,6 +384,12 @@ export default function CommandPalette({ open, onClose }) {
       pendingEnterRef.current = false;
       movedRef.current = false;
       resultsForRef.current = null;
+    } else {
+      // Dismissal (Esc, scrim, row click, ⌘K toggle) must kill a pending latch
+      // and invalidate any in-flight request: a response landing after close
+      // can neither navigate nor write state.
+      pendingEnterRef.current = false;
+      reqIdRef.current += 1;
     }
   }, [open]);
 
@@ -407,7 +441,15 @@ export default function CommandPalette({ open, onClose }) {
 
   if (!open) return null;
 
-  const go = (path) => () => { navigate(path); onClose(); };
+  // Every in-component close goes through dismiss so a pending latch and any
+  // in-flight request die synchronously with the close. (Parent-initiated
+  // closes — Esc, ⌘K toggle — are covered by the open-effect's else branch.)
+  const dismiss = () => {
+    pendingEnterRef.current = false;
+    reqIdRef.current += 1;
+    onClose();
+  };
+  const go = (path) => () => { navigate(path); dismiss(); };
 
   const navGroups = [
     { group: 'Jump to', items: [
@@ -470,7 +512,7 @@ export default function CommandPalette({ open, onClose }) {
     if (!item) return;
     if (item.kind === 'record') {
       navigate(item.path);
-      onClose();
+      dismiss();
     } else {
       item.onClick();
     }
@@ -523,7 +565,7 @@ export default function CommandPalette({ open, onClose }) {
   });
 
   return (
-    <div className="palette-scrim open" onClick={onClose} role="dialog" aria-modal="true" aria-label="Command palette">
+    <div className="palette-scrim open" onClick={dismiss} role="dialog" aria-modal="true" aria-label="Command palette">
       <div className="palette" onClick={(e) => e.stopPropagation()}>
         <div className="palette-input">
           <Icon name="search" />
@@ -559,7 +601,7 @@ export default function CommandPalette({ open, onClose }) {
                 // (palette stays open for those); plain click closes it.
                 return (
                   <Link key={`${it.type}-${it.id}`} to={path} {...rowProps(idx)}
-                    onClick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) onClose(); }}>
+                    onClick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) dismiss(); }}>
                     <Icon name={g.icon} />
                     <div>
                       <div>{it.name}</div>
@@ -604,7 +646,7 @@ export default function CommandPalette({ open, onClose }) {
 - [ ] **Step 2: Run the suite to verify it passes**
 
 Run: `cd client && CI=true npx react-scripts test CommandPalette.test.js`
-Expected: PASS — 10 passed, 0 failed.
+Expected: PASS — 11 passed, 0 failed.
 
 - [ ] **Step 3: Commit**
 
@@ -1236,4 +1278,4 @@ git commit -m "style(search): toolbar launcher sizing + touch un-collapse; READM
 - **Spec coverage:** §3.1 launcher+variant (B1/B3/B5), §3.2 context (B1/B2), §3.3 keyboard+latch+ARIA+hover+scroll (A1/A2/A3), §3.4 five-page cleanup incl. Staff's hoisted setter, Proposals' collapsed memo, comment drift (B4), §5 focus-return + `?q=` inertness (B2 / nothing to do — param unmanaged), §6 tests+build+manual (A1, A3, B5), §7 footprint matches lane front-matter exactly, docs = README only per the mandatory-docs table (component/context rows are "—" for ARCHITECTURE).
 - **Placeholders:** none — every step carries the actual code or exact copy.
 - **Type/name consistency:** `palette-opt-<idx>` ids (A1 tests ↔ A2 impl ↔ aria-activedescendant), `kbd-nav` class (A2 ↔ A3 CSS), `gsearch-toolbar` class (B1 ↔ B5 CSS), `usePalette()`/`openPalette` (B1 ↔ B2 ↔ B3), Toolbar's new 5-prop contract (B3 ↔ B4 call sites).
-- **Refinements now synced INTO the spec (no divergence):** explicit arrow selection beats the latch and arrows cancel a set latch (A1 tests 3/7); latch uses fresh-results semantics rather than `loading` — covers the sub-200ms pre-debounce window and never activates stale prior-query rows (plan-fleet fidelity finding; A1 tests 4/6). Spec §3.3 and §9 updated to match.
+- **Refinements now synced INTO the spec (no divergence):** explicit arrow selection beats the latch and arrows cancel a set latch (A1 tests 3/7); latch uses fresh-results semantics rather than `loading` — covers the sub-200ms pre-debounce window and never activates stale prior-query rows (plan-fleet fidelity finding; A1 tests 4/6); the latch dies with the palette — `dismiss()` on every in-component close plus an open-effect branch for parent closes, so a late response never navigates post-dismissal (per-lane review finding; A1 test 11). Spec §3.3 and §9 updated to match.
