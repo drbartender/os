@@ -183,7 +183,7 @@ export default function PantryParsTab() {
           </div>
           <div className="hstack" style={{ gap: '0.4rem', alignItems: 'center' }}>
             <span className="text-muted text-small">Preview at</span>
-            <input className="form-input potions-cell potions-cell-num" type="number" min="1" max="1000" value={guests}
+            <input className="input potions-cell potions-cell-num" type="number" min="1" max="1000" value={guests}
               onChange={(e) => setGuests(Math.max(1, Math.min(1000, parseInt(e.target.value, 10) || 1)))} />
             <span className="text-muted text-small">guests</span>
             <button type="button" className="btn btn-secondary btn-sm" onClick={runPreview} disabled={previewBusy}>
@@ -207,13 +207,13 @@ export default function PantryParsTab() {
 
             {adding === section.id && (
               <div className="potions-add-row hstack">
-                <input className="form-input potions-cell" placeholder="Item (e.g. Ginger Syrup)" value={addForm.item}
+                <input className="input potions-cell" placeholder="Item (e.g. Ginger Syrup)" value={addForm.item}
                   onChange={(e) => setAddForm((f) => ({ ...f, item: e.target.value }))} />
-                <input className="form-input potions-cell potions-cell-size" placeholder="Size" value={addForm.size}
+                <input className="input potions-cell potions-cell-size" placeholder="Size" value={addForm.size}
                   onChange={(e) => setAddForm((f) => ({ ...f, size: e.target.value }))} />
-                <input className="form-input potions-cell potions-cell-num" type="number" min="0" value={addForm.qty_per_100}
+                <input className="input potions-cell potions-cell-num" type="number" min="0" value={addForm.qty_per_100}
                   onChange={(e) => setAddForm((f) => ({ ...f, qty_per_100: e.target.value }))} title="Qty at 100 guests" />
-                <select className="form-input potions-cell potions-cell-unit" value={addForm.role}
+                <select className="select potions-cell potions-cell-unit" value={addForm.role}
                   onChange={(e) => setAddForm((f) => ({ ...f, role: e.target.value }))}>
                   {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                 </select>
@@ -221,8 +221,8 @@ export default function PantryParsTab() {
               </div>
             )}
 
-            <div className="table-wrap">
-              <table className="data-table potions-pars-table">
+            <div className="tbl-wrap">
+              <table className="tbl potions-pars-table">
                 <thead>
                   <tr>
                     <th className="potions-col-grip"></th>
@@ -252,7 +252,7 @@ export default function PantryParsTab() {
                       >
                         <td className="potions-col-grip">{previewMode === 'all' ? <span className="drag-handle">⠿</span> : null}</td>
                         <td>
-                          <input className="form-input potions-cell" value={row.item} aria-label="Item name"
+                          <input className="input potions-cell" value={row.item} aria-label="Item name"
                             onFocus={(e) => { focusSnapshot.current[`${row.id}:item`] = e.target.value; }}
                             onChange={(e) => setPars((p) => p.map((r) => (r.id === row.id ? { ...r, item: e.target.value } : r)))}
                             onBlur={(e) => {
@@ -262,7 +262,7 @@ export default function PantryParsTab() {
                             }} />
                         </td>
                         <td>
-                          <input className="form-input potions-cell potions-cell-size" value={row.size || ''} aria-label="Size"
+                          <input className="input potions-cell potions-cell-size" value={row.size || ''} aria-label="Size"
                             onFocus={(e) => { focusSnapshot.current[`${row.id}:size`] = e.target.value; }}
                             onChange={(e) => setPars((p) => p.map((r) => (r.id === row.id ? { ...r, size: e.target.value } : r)))}
                             onBlur={(e) => {
@@ -271,7 +271,7 @@ export default function PantryParsTab() {
                             }} />
                         </td>
                         <td className="potions-col-amount">
-                          <input className="form-input potions-cell potions-cell-num" value={row.qty_per_100} aria-label="Quantity at 100 guests"
+                          <input className="input potions-cell potions-cell-num" value={row.qty_per_100} aria-label="Quantity at 100 guests"
                             onFocus={(e) => { focusSnapshot.current[`${row.id}:qty`] = e.target.value; }}
                             onChange={(e) => setPars((p) => p.map((r) => (r.id === row.id ? { ...r, qty_per_100: e.target.value } : r)))}
                             onBlur={(e) => {

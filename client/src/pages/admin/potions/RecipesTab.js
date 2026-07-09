@@ -247,7 +247,7 @@ export default function RecipesTab({ focusDrinkId, onConsumeFocus, goToPars }) {
       <div className="potions-split">
         <div className="card potions-master">
           <div className="potions-master-search">
-            <input className="form-input" placeholder="Find a recipe…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <input className="input" placeholder="Find a recipe…" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
           <div className="potions-master-list scroll-thin">
             {list.length === 0 && <div className="potions-state text-muted">No drinks{q ? ' match' : ' yet'}.</div>}
@@ -283,8 +283,8 @@ export default function RecipesTab({ focusDrinkId, onConsumeFocus, goToPars }) {
               </div>
             </div>
 
-            <div className="table-wrap">
-              <table className="data-table potions-recipe-table">
+            <div className="tbl-wrap">
+              <table className="tbl potions-recipe-table">
                 <thead>
                   <tr>
                     <th>Ingredient</th>
@@ -305,17 +305,17 @@ export default function RecipesTab({ focusDrinkId, onConsumeFocus, goToPars }) {
                     return (
                       <tr key={i}>
                         <td>
-                          <input className={`form-input potions-cell ${problems.ingredient ? 'potions-cell-bad' : ''}`} value={row.ingredient}
+                          <input className={`input potions-cell ${problems.ingredient ? 'potions-cell-bad' : ''}`} value={row.ingredient}
                             onChange={(e) => updateRow(i, { ingredient: e.target.value })} placeholder="Ingredient" />
                           {problems.ingredient && <div className="potions-cell-error">{problems.ingredient}</div>}
                         </td>
                         <td className="potions-col-amount">
-                          <input className={`form-input potions-cell potions-cell-num ${problems.amount ? 'potions-cell-bad' : ''}`} value={row.amount}
+                          <input className={`input potions-cell potions-cell-num ${problems.amount ? 'potions-cell-bad' : ''}`} value={row.amount}
                             onChange={(e) => updateRow(i, { amount: e.target.value })} inputMode="decimal" />
                           {problems.amount && <div className="potions-cell-error">{problems.amount}</div>}
                         </td>
                         <td>
-                          <select className="form-input potions-cell potions-cell-unit" value={row.unit} onChange={(e) => updateRow(i, { unit: e.target.value })}>
+                          <select className="select potions-cell potions-cell-unit" value={row.unit} onChange={(e) => updateRow(i, { unit: e.target.value })}>
                             {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
                           </select>
                         </td>
@@ -328,7 +328,7 @@ export default function RecipesTab({ focusDrinkId, onConsumeFocus, goToPars }) {
                               <span className="chip-dot" />No match
                             </button>
                           )}
-                          <select className="form-input potions-cell potions-cell-override" value={row.override_item_id || ''}
+                          <select className="select potions-cell potions-cell-override" value={row.override_item_id || ''}
                             onChange={(e) => updateRow(i, { override_item_id: e.target.value })}
                             title="Override the purchasable this row resolves to">
                             <option value="">auto</option>
@@ -336,7 +336,7 @@ export default function RecipesTab({ focusDrinkId, onConsumeFocus, goToPars }) {
                           </select>
                         </td>
                         <td className="col-desc">
-                          <input className="form-input potions-cell" value={row.note || ''} placeholder="Note"
+                          <input className="input potions-cell" value={row.note || ''} placeholder="Note"
                             onChange={(e) => updateRow(i, { note: e.target.value })} />
                         </td>
                         <td>
