@@ -15,7 +15,8 @@ before building anything.
 ---
 
 ## Design sessions Dallas drives (prompt docs committed, none started)
-- **Dashboard / Financials redesign** — `docs/dashboard-financials-design-prompt.md`. The timely one: the full CC+native ledger is now live behind these pages and Dallas doesn't use them today ("they both need work"). Contracts in the doc are LAW; build spec after the design lands.
+- **Dashboard / Financials redesign (Money Board)** — DESIGN LANDED 2026-07-09: brainstorm done, spec committed at `docs/superpowers/specs/2026-07-09-money-board-design.md` (merged 2a surface, rainbow chart ported, exhaustive click map, proposals filter expansion, payroll card, prep queue). Next: spec review fleet, then plan. NOTE: prep-queue lane depends on the Potions merge.
+- **Split-by metrics lane (COMMITTED follow-up, per Dallas 2026-07-09)** — close rate + revenue split by event type and lead source. Queue IMMEDIATELY after the Money Board ships; spec §11 carries the shape. Not wish-list.
 - **Bar Program** (cocktail-menu -> Recipes + Pars tabs) — `docs/cocktail-menu-design-prompt.md`. `cocktails.ingredients` JSONB exists, 0/24 populated; pars hardcoded `shoppingList.js:75-141` + client mirror. No movement since the doc landed. See [[project-bar-program]].
 - **Compare-page reskin** — `docs/compare-page-design-prompt.md`, sitting since 7/2; can ride either session above.
 
