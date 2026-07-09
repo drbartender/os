@@ -33,8 +33,8 @@ function toSliceRow(row) {
  * @param {Array} parRows rows of par_items (is_active filtering is honored
  *   here too, so callers may pass unfiltered rows)
  * @returns catalog: { pars100, spiritPars, beerStyleMap, wineStyleMap,
- *   basicMixers, garnishes, alwaysInclude, spiritMixerPairings, aliasIndex,
- *   byId, isEmpty }
+ *   basicMixers, garnishes, alwaysInclude, spiritMixerPairings,
+ *   pairableItems, aliasIndex, byId, isEmpty }
  */
 function buildCatalogSlices(parRows) {
   const rows = (parRows || [])
@@ -102,6 +102,14 @@ function buildCatalogSlices(parRows) {
     }
   }
 
+  // ALL active mixer/garnish rows as slice rows, for matching-mixers lookup.
+  // The baseline basicMixers/garnishes slices are in_full_bar-filtered, so a
+  // paired row outside the full-bar baseline was silently dropped by
+  // addMatchingMixers (push-time second-opinion finding 4). Pairings decide
+  // membership; this slice supplies the row data.
+  const pairableItems = bySection.everythingElse
+    .filter((r) => r.role === 'mixer' || r.role === 'garnish').map(toSliceRow);
+
   // Alias index, longest alias first, so specific names beat generic
   // substrings ("ginger beer" beats "gin", "diet coke" beats "coke").
   const aliasIndex = [];
@@ -123,6 +131,7 @@ function buildCatalogSlices(parRows) {
     garnishes,
     alwaysInclude,
     spiritMixerPairings,
+    pairableItems,
     aliasIndex,
     byId,
     isEmpty: rows.length === 0,

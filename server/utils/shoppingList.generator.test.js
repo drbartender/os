@@ -150,6 +150,60 @@ test('resolveDrinkIds queries the allowlisted table and rejects unknown tables',
   await assert.rejects(() => resolveDrinkIds(['x'], 'users; DROP TABLE', {}), /unknown table/);
 });
 
+test('mocktails-only serving style merges recipe ingredients (gate finding 1)', () => {
+  const virginMojito = {
+    name: 'Virgin Mojito',
+    ingredients: [
+      { ingredient: 'Lime Juice', amount: 1, unit: 'oz' },
+      { ingredient: 'Simple Syrup', amount: 0.75, unit: 'oz' },
+      { ingredient: 'Club Soda', amount: 3, unit: 'oz' },
+    ],
+  };
+  const out = generateShoppingList({
+    guestCount: 100, serviceStyle: 'mocktail', signatureCocktails: [virginMojito],
+  }, catalog);
+  const items = out.everythingElse.map(i => i.item);
+  assert.ok(items.includes('Lime Juice (UNSWEET)'), 'recipe mixer merged');
+  assert.ok(items.includes('Club Soda'), 'recipe soda merged');
+  assert.ok(items.includes('Ice'), 'supplies still ride');
+  assert.equal(out.liquorBeerWine.length, 0, 'no liquor on a mocktails-only list');
+});
+
+test('paired mixer outside the full-bar baseline survives matching mode (gate finding 4)', () => {
+  const rows = SEED_ROWS.concat([{
+    id: 'yuzu-soda', item: 'Yuzu Soda', size: '4 pack', qty_per_100: '2',
+    section: 'everythingElse', role: 'mixer', spirit_key: null, style_key: null,
+    paired_spirits: ['vodka'], ingredient_aliases: [], in_full_bar: false,
+    is_active: true, sort_order: 400,
+  }]);
+  const cat = buildCatalogSlices(rows);
+  assert.ok(cat.spiritMixerPairings.vodka.includes('Yuzu Soda'), 'pairing derived');
+  const out = generateShoppingList({
+    guestCount: 100, mixerMode: 'matching', additionalSpirits: ['vodka'],
+    signatureCocktails: [], beerSelections: [], wineSelections: [],
+  }, cat);
+  assert.ok(out.everythingElse.some(i => i.item === 'Yuzu Soda'),
+    'non-baseline paired mixer included (was silently dropped)');
+  // Baseline parity holds: the pairableItems slice changes nothing when all
+  // paired rows are baseline (snapshot test above already proves it).
+});
+
+test("Peychaud's Bitters resolves to its own row, never Angostura (gate finding 3)", () => {
+  const { resolveIngredient } = require('./potionCatalog');
+  const rows = SEED_ROWS.concat([{
+    id: 'peychauds-bitters', item: "Peychaud's Bitters", size: '10oz', qty_per_100: '1',
+    section: 'liquorBeerWine', role: 'spirit', spirit_key: null, style_key: null,
+    paired_spirits: [], ingredient_aliases: ['peychauds', 'peychaud', 'peychaud s bitters', 'peychauds bitters'],
+    in_full_bar: false, is_active: true, sort_order: 300,
+  }]);
+  const cat = buildCatalogSlices(rows);
+  assert.equal(resolveIngredient("Peychaud's Bitters", cat).item, "Peychaud's Bitters");
+  assert.equal(resolveIngredient('peychauds bitters', cat).item, "Peychaud's Bitters");
+  assert.equal(resolveIngredient('Peychauds', cat).item, "Peychaud's Bitters");
+  // The generic alias still serves generic asks.
+  assert.equal(resolveIngredient('bitters', cat).item, 'Angostura Bitters');
+});
+
 test('reportUnresolvedIngredients tolerates any list shape (no-throw)', () => {
   reportUnresolvedIngredients(null, 'test');
   reportUnresolvedIngredients({}, 'test');

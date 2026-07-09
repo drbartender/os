@@ -56,7 +56,7 @@ const SUPPORT_PARS = [
   sp('aperol', 'Aperol', '750mL', 'liquorBeerWine', 'spirit', ['aperol'], 270),
   sp('triple-sec', 'Triple Sec', '750mL', 'liquorBeerWine', 'spirit', ['triple sec', 'orange liqueur', 'cointreau'], 280),
   sp('coffee-liqueur', 'Coffee Liqueur', '750mL', 'liquorBeerWine', 'spirit', ['coffee liqueur', 'kahlua'], 290),
-  sp('peychauds-bitters', "Peychaud's Bitters", '10oz', 'liquorBeerWine', 'spirit', ['peychauds'], 300),
+  sp('peychauds-bitters', "Peychaud's Bitters", '10oz', 'liquorBeerWine', 'spirit', ['peychauds', 'peychaud', 'peychaud s bitters', 'peychauds bitters'], 300),
   sp('absinthe', 'Absinthe', '750mL', 'liquorBeerWine', 'spirit', ['absinthe'], 310),
   sp('rye-whiskey', 'Rye Whiskey', '750mL', 'liquorBeerWine', 'spirit', ['rye'], 320),
   sp('amaretto', 'Amaretto', '750mL', 'liquorBeerWine', 'spirit', ['amaretto'], 330),
@@ -435,17 +435,47 @@ async function loadParItems() {
 
 // Split live rows into base (no support) and with-support sets, then assert the
 // eight slices are byte-identical. Returns the diffing slice name or null.
-function parityDiff(liveRows) {
+// PRE-write ({ useLive: false }) simulates the would-be state with the
+// in-memory SUPPORT_PARS; POST-write ({ useLive: true }) validates the rows
+// ACTUALLY persisted, so a drifted live row (admin edit, older script
+// version behind ON CONFLICT DO NOTHING) can no longer pass unseen
+// (second-opinion finding 2).
+function parityDiff(liveRows, { useLive = false } = {}) {
   const supportIds = new Set(SUPPORT_PARS.map((r) => r.id));
   const baseRows = liveRows.filter((r) => !supportIds.has(r.id));
-  const withRows = baseRows.concat(SUPPORT_PARS);
+  const withRows = useLive
+    ? liveRows
+    : baseRows.concat(SUPPORT_PARS);
   return firstSliceDiff(buildCatalogSlices(baseRows), buildCatalogSlices(withRows));
 }
 
+// Resolution catalog prefers the LIVE version of every support row (honest on
+// re-runs), falling back to the in-memory seed for rows not yet inserted.
 function resolutionCatalog(liveRows) {
-  const supportIds = new Set(SUPPORT_PARS.map((r) => r.id));
-  const baseRows = liveRows.filter((r) => !supportIds.has(r.id));
-  return buildCatalogSlices(baseRows.concat(SUPPORT_PARS));
+  const liveById = new Map(liveRows.map((r) => [r.id, r]));
+  const missing = SUPPORT_PARS.filter((r) => !liveById.has(r.id));
+  return buildCatalogSlices(liveRows.concat(missing));
+}
+
+// Report support rows whose live call-on fields drifted from the seed intent.
+// Drift is a WARNING (admin edits to aliases/qty are legitimate); anything
+// that breaks slice-invisibility fails the live parity check separately.
+function reportSupportDrift(liveRows) {
+  const liveById = new Map(liveRows.map((r) => [r.id, r]));
+  const drifted = [];
+  for (const seed of SUPPORT_PARS) {
+    const live = liveById.get(seed.id);
+    if (!live) continue;
+    const fields = ['in_full_bar', 'spirit_key', 'style_key', 'section', 'role'];
+    const diffs = fields.filter((f) => JSON.stringify(live[f] ?? null) !== JSON.stringify(seed[f] ?? null));
+    if (JSON.stringify(live.paired_spirits || []) !== JSON.stringify(seed.paired_spirits || [])) diffs.push('paired_spirits');
+    if (diffs.length > 0) drifted.push(`${seed.id} (${diffs.join(', ')})`);
+  }
+  if (drifted.length > 0) {
+    console.warn(`[drift] live support rows differ from seed intent (not repaired; review): ${drifted.join('; ')}`);
+  } else {
+    console.log('[drift] live support rows match seed intent.');
+  }
 }
 
 async function insertSupportPars() {
@@ -595,7 +625,8 @@ async function main() {
 
   // ── Gate B (part 2): re-verify parity against the live table, post-write. ──
   liveRows = await loadParItems();
-  const postDiff = parityDiff(liveRows);
+  reportSupportDrift(liveRows);
+  const postDiff = parityDiff(liveRows, { useLive: true });
   if (postDiff) {
     console.error(`[parity] POST-WRITE CHECK FAILED: slice "${postDiff}" differs. Investigate immediately.`);
     process.exitCode = 1;

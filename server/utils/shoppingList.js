@@ -326,7 +326,11 @@ function addMatchingMixers(spiritKeys, everythingElse, guestCount, bottles, slic
     for (const name of list) wantedNames.add(name);
   }
   if (wantedNames.size === 0) return;
-  const lookup = [...slices.basicMixers, ...slices.garnishes];
+  // pairableItems covers ALL active mixer/garnish rows; the baseline slices
+  // are in_full_bar-filtered and silently dropped paired non-baseline rows
+  // (second-opinion finding 4). Legacy fallback slices carry no
+  // pairableItems, where baseline == pairable anyway.
+  const lookup = slices.pairableItems || [...slices.basicMixers, ...slices.garnishes];
   for (const name of wantedNames) {
     const found = lookup.find(m => m.item === name);
     if (!found) continue;
@@ -435,7 +439,10 @@ function buildPlannerLists(eventData, bottles, slices, unresolved) {
     liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles, slices));
     everythingElse.push(...scaleItems(slices.alwaysInclude, guestCount, bottles));
   } else {
-    // mocktails / unknown — supplies only
+    // mocktails / unknown: recipe ingredients + supplies. The old branch was
+    // supplies-only, so a mocktails-only plan ignored its selected drinks'
+    // seeded recipes entirely (second-opinion finding 1).
+    mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingElse, guestCount, slices, unresolved);
     everythingElse.push(...scaleItems(slices.alwaysInclude, guestCount, bottles));
   }
 
