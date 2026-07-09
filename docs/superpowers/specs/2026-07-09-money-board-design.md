@@ -163,9 +163,14 @@ number, per the interaction law):
 | Element | Target |
 |---|---|
 | Outstanding tile | `/proposals?balance=open` (live, point in time, no date params by design) |
-| Funnel "Quoted" | proposals list, `cohort=quoted`, Sent axis, current range (predicate mirrors `qSent`: `sent_at` in range, archived included) |
-| Funnel "Won" | proposals list, `cohort=won`, Sent axis, current range (predicate mirrors `qAccepted`: `accepted_at IS NOT NULL AND status <> 'archived'`; NOT `tab=won`, whose `status=accepted` mapping excludes the paid statuses and cannot reconcile) |
-| Funnel "Lost" | proposals list, `cohort=lost`, Sent axis, current range (predicate mirrors `qLostValue`; native by definition) |
+| Funnel "Quoted" | proposals list, `cohort=quoted`, current range (predicate mirrors `qSent`: `sent_at IS NOT NULL`, `sent_at` in range, archived included) |
+| Funnel "Won" | proposals list, `cohort=won`, current range (predicate mirrors `qAccepted`: `accepted_at IS NOT NULL`, `accepted_at` in range; NOT `tab=won`, whose `status=accepted` mapping excludes the paid statuses and cannot reconcile) |
+| Funnel "Lost" | proposals list, `cohort=lost`, current range (predicate mirrors `qLostValue`: `sent_at IS NOT NULL AND status = 'archived'`, `sent_at` in range; native by definition) |
+
+Each `cohort` value implies its own date column exactly as the mirrored metric
+query does (quoted/lost date on `sent_at`, won on `accepted_at`); when `cohort`
+is present it supersedes the `axis` param, which exists for the human-facing
+filter bar.
 | Funnel "Open now" | proposals list, `tab=active`, status sent+viewed+modified (live, no date) |
 | Pipeline rows | proposals list, that exact status (`draft` row uses `tab=draft`) (live, no date) |
 | Lead-spend "Attributed" | `/proposals?source=thumbtack&cohort=won` + current range |
