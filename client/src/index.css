@@ -11875,6 +11875,32 @@ html[data-app="admin-os"] .icon-btn svg { width: 14px; height: 14px; }
   html[data-app="admin-os"] .header-search > span:not(.kbd-group) { display: none; }
   html[data-app="admin-os"] .header-search > .kbd-group { display: none; }
 }
+
+/* Toolbar-slot variant of the global-search launcher: fills the slot the old
+   per-page filter input held (Toolbar flex row), matching the 32px control
+   height of .input-group / .select so the row doesn't jiggle. */
+html[data-app="admin-os"] .header-search.gsearch-toolbar {
+  flex: 1 1 auto;
+  min-width: 240px;
+  max-width: 340px;
+  height: 32px;
+}
+
+/* On touch, the header instance collapses to an icon (rule above) — the
+   toolbar instance must NOT: it is the page's primary search affordance.
+   Restore the bar shape at a 44px tap-target height; the kbd hint stays
+   hidden (shortcut is irrelevant on touch). */
+@media (pointer: coarse) {
+  html[data-app="admin-os"] .header-search.gsearch-toolbar {
+    width: auto;
+    min-width: 240px;
+    flex: 1 1 auto;
+    height: 44px;
+    padding: 0 0.6rem;
+    justify-content: flex-start;
+  }
+  html[data-app="admin-os"] .header-search.gsearch-toolbar > span:not(.kbd-group) { display: inline; }
+}
 html[data-app="admin-os"] .icon-btn .dot {
   position: absolute;
   top: 5px; right: 6px;

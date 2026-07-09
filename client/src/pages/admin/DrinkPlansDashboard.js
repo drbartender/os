@@ -33,8 +33,7 @@ export default function DrinkPlansDashboard() {
   const toast = useToast();
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [listState, setListState] = useUrlListState({ tab: 'all', q: '' });
-  const search = listState.q;
+  const [listState, setListState] = useUrlListState({ tab: 'all' });
   const tab = DRINK_PLAN_TABS.includes(listState.tab) ? listState.tab : 'all';
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -91,13 +90,8 @@ export default function DrinkPlansDashboard() {
 
   const filtered = useMemo(() => plans.filter(p => {
     if (tab !== 'all' && p.status !== tab) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      const fields = [p.client_name, p.client_email, p.event_type].filter(Boolean).join(' ').toLowerCase();
-      if (!fields.includes(q)) return false;
-    }
     return true;
-  }), [plans, tab, search]);
+  }), [plans, tab]);
 
   const tabs = useMemo(() => ([
     { id: 'all',       label: 'All',       count: plans.length },
@@ -154,7 +148,7 @@ export default function DrinkPlansDashboard() {
         </div>
       )}
 
-      <Toolbar search={search} setSearch={(v) => setListState({ q: v })} tabs={tabs} tab={tab} setTab={(v) => setListState({ tab: v })} />
+      <Toolbar tabs={tabs} tab={tab} setTab={(v) => setListState({ tab: v })} />
 
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="tbl-wrap">

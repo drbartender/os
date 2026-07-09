@@ -33,9 +33,9 @@ function initialsOf(name) {
 }
 
 const SORT_IDS = ['recent', 'ltv', 'name'];
-// View state lives in the URL (admin cross-nav): search/sort survive Back
+// View state lives in the URL (admin cross-nav): sort survives Back
 // from a client profile. Writes replace history.
-const LIST_DEFAULTS = { q: '', sort: 'recent' };
+const LIST_DEFAULTS = { sort: 'recent' };
 
 export default function ClientsDashboard() {
   const navigate = useNavigate();
@@ -43,7 +43,6 @@ export default function ClientsDashboard() {
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [listState, setListState] = useUrlListState(LIST_DEFAULTS);
-  const search = listState.q;
   const sort = SORT_IDS.includes(listState.sort) ? listState.sort : 'recent';
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -97,19 +96,13 @@ export default function ClientsDashboard() {
   };
 
   const filtered = useMemo(() => {
-    const list = clients.filter(c => {
-      if (!search) return true;
-      const q = search.toLowerCase();
-      const fields = [c.name, c.email, c.phone].filter(Boolean).join(' ').toLowerCase();
-      return fields.includes(q);
-    });
-    return list.sort((a, b) => {
+    return [...clients].sort((a, b) => {
       if (sort === 'ltv') return Number(b.lifetime_value || 0) - Number(a.lifetime_value || 0);
       if (sort === 'name') return (a.name || '').localeCompare(b.name || '');
       // default 'recent'
       return String(b.created_at || '').localeCompare(String(a.created_at || ''));
     });
-  }, [clients, search, sort]);
+  }, [clients, sort]);
 
   return (
     <div className="page">
@@ -188,8 +181,6 @@ export default function ClientsDashboard() {
       )}
 
       <Toolbar
-        search={search}
-        setSearch={(v) => setListState({ q: v })}
         filters={(
           <select className="select" value={sort} onChange={e => setListState({ sort: e.target.value })} style={{ minWidth: 180 }}>
             <option value="recent">Sort · Recently added</option>
@@ -216,7 +207,7 @@ export default function ClientsDashboard() {
             <tbody>
               {loading && (<tr><td colSpan={7} className="muted">Loading…</td></tr>)}
               {!loading && filtered.length === 0 && (
-                <tr><td colSpan={7} className="muted">No clients match this search.</td></tr>
+                <tr><td colSpan={7} className="muted">No clients yet.</td></tr>
               )}
               {!loading && filtered.map(c => {
                 const src = SOURCE[c.source] || { label: c.source || '—', kind: 'neutral' };

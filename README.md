@@ -337,6 +337,7 @@ dr-bartender/
 │   │   ├── context/
 │   │   │   ├── AuthContext.js       # Staff/admin auth state (login, logout, user)
 │   │   │   ├── ClientAuthContext.js # Client auth state
+│   │   │   ├── PaletteContext.js    # openPalette() for any admin surface; provided by AdminLayout
 │   │   │   ├── ToastContext.js      # ToastProvider + useToast() hook
 │   │   │   └── UserPrefsContext.js  # Per-user admin OS prefs (skin/density/sidebar) — strips on logout
 │   │   ├── utils/
@@ -369,6 +370,7 @@ dr-bartender/
 │   │   │                       # StaffUserPillMenu (account-pill dropdown rendered by StaffShell)
 │   │   │   ├── staff/          # Staff portal redesign shared components (Placeholder; ShiftCard; TeamRosterCard; DropCoverModal; BeoSections; PayoutEventRow; LogisticsTag; RoleRankPicker; RequestSheet)
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
+│   │   │   │                   # GlobalSearchButton (search-bar-shaped button that opens the ⌘K command palette; header + toolbar),
 │   │   │   │                   # StatusChip, StaffPills, AreaChart, Toolbar, Icon, KebabMenu, AddressLink,
 │   │   │   │                   # InterviewScheduleModal, PackageIncludesModal, DocumentPreviewModal (in-app lightbox for staff docs — W-9/BASSET/resume/headshot), MetricsFilterBar,
 │   │   │   │                   # format, nav, shifts, PresenceStrip (sidebar time-clock strip);

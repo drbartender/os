@@ -1,17 +1,18 @@
 import React from 'react';
-import Icon from './Icon';
+import GlobalSearchButton from './GlobalSearchButton';
 
 /**
- * Shared list-page toolbar: segmented tabs + search input + filter slot + right slot.
+ * Shared list-page toolbar: segmented tabs + global-search launcher + filter
+ * slot + right slot. The launcher opens the Cmd/Ctrl+K palette — list pages
+ * have no per-page text filter (find-one-thing goes through global search).
  *
  * Props:
- *   search, setSearch               — search input (string + setter)
  *   tabs: [{ id, label, count? }]   — optional left-side tab bar
  *   tab, setTab                     — active tab id + setter
  *   filters                         — optional node rendered to the right of search
  *   right                           — optional node rendered at the far right
  */
-export default function Toolbar({ search, setSearch, tabs, tab, setTab, filters, right }) {
+export default function Toolbar({ tabs, tab, setTab, filters, right }) {
   return (
     <div className="hstack" style={{ gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
       {tabs && (
@@ -29,17 +30,7 @@ export default function Toolbar({ search, setSearch, tabs, tab, setTab, filters,
           ))}
         </div>
       )}
-      {setSearch && (
-        <div className="input-group" style={{ minWidth: 240, maxWidth: 340, flex: 1 }}>
-          <Icon name="search" />
-          <input
-            placeholder="Search…"
-            value={search || ''}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="Search"
-          />
-        </div>
-      )}
+      <GlobalSearchButton variant="toolbar" />
       {filters}
       <div className="spacer" />
       {right}

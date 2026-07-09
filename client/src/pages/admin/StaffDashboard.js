@@ -13,7 +13,7 @@ import ClickableRow from '../../components/ClickableRow';
 import AssignToEventModal from './userDetail/components/AssignToEventModal';
 
 // URL-backed view state (admin cross-nav). Module scope = stable identity.
-const STAFF_DEFAULTS = { tab: 'active', q: '' };
+const STAFF_DEFAULTS = { tab: 'active' };
 const STAFF_TABS = ['active', 'all'];
 
 function isLegacyCcStub(s) {
@@ -36,8 +36,6 @@ export default function StaffDashboard() {
   const [loading, setLoading] = useState(true);
   const [listState, setListState] = useUrlListState(STAFF_DEFAULTS);
   const tab = STAFF_TABS.includes(listState.tab) ? listState.tab : STAFF_DEFAULTS.tab;
-  const search = listState.q;
-  const setSearch = (v) => setListState({ q: v });
   const setTab = (t) => setListState({ tab: t });
   const [assignTarget, setAssignTarget] = useState(null);
 
@@ -55,13 +53,8 @@ export default function StaffDashboard() {
 
   const filtered = useMemo(() => staff.filter(s => {
     if (tab === 'active' && s.onboarding_status !== 'approved') return false;
-    if (search) {
-      const q = search.toLowerCase();
-      const fields = [s.preferred_name, s.email, s.phone, s.city, s.state].filter(Boolean).join(' ').toLowerCase();
-      if (!fields.includes(q)) return false;
-    }
     return true;
-  }), [staff, tab, search]);
+  }), [staff, tab]);
 
   const tabs = useMemo(() => ([
     { id: 'active', label: 'Active', count: staff.filter(s => s.onboarding_status === 'approved').length },
@@ -85,7 +78,7 @@ export default function StaffDashboard() {
         </div>
       </div>
 
-      <Toolbar search={search} setSearch={setSearch} tabs={tabs} tab={tab} setTab={setTab} />
+      <Toolbar tabs={tabs} tab={tab} setTab={setTab} />
 
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="tbl-wrap">

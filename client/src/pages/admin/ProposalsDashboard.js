@@ -34,9 +34,9 @@ const STATUS = {
 
 const TAB_IDS = ['active', 'draft', 'won', 'paid', 'archive', 'all'];
 const SOURCE_IDS = ['thumbtack', 'manual'];
-// View state lives in the URL (admin cross-nav): tab/search/source survive
+// View state lives in the URL (admin cross-nav): tab/source survive
 // Back from a proposal, and the URL is shareable. Writes replace history.
-const LIST_DEFAULTS = { tab: 'active', q: '', source: '' };
+const LIST_DEFAULTS = { tab: 'active', source: '' };
 
 export default function ProposalsDashboard() {
   const navigate = useNavigate();
@@ -51,7 +51,6 @@ export default function ProposalsDashboard() {
   const [loading, setLoading] = useState(true);
   const [listState, setListState] = useUrlListState(LIST_DEFAULTS);
   const tab = TAB_IDS.includes(listState.tab) ? listState.tab : 'active';
-  const search = listState.q;
   const sourceFilter = SOURCE_IDS.includes(listState.source) ? listState.source : '';
   const [copyMessage, setCopyMessage] = useState('');
 
@@ -119,27 +118,16 @@ export default function ProposalsDashboard() {
     });
   };
 
-  // Client-side filter is now only for the free-text search box — server already
-  // returned the right status bucket based on the active tab.
-  const filtered = useMemo(() => {
-    if (!search) return proposals;
-    const q = search.toLowerCase();
-    return proposals.filter(p => {
-      const fields = [p.client_name, p.client_email, p.event_type, p.event_type_custom].filter(Boolean).join(' ').toLowerCase();
-      return fields.includes(q);
-    });
-  }, [proposals, search]);
-
   // Option-group rollup: siblings sharing a non-null group_id collapse into one
   // row (first/newest member represents the set; _optionCount drives the badge).
   // Rows with group_id null stay individual — never collapse the nulls together.
   const rows = useMemo(() => {
     const counts = new Map();
-    filtered.forEach(p => {
+    proposals.forEach(p => {
       if (p.group_id != null) counts.set(p.group_id, (counts.get(p.group_id) || 0) + 1);
     });
     const seen = new Set();
-    return filtered
+    return proposals
       .filter(p => {
         if (p.group_id == null) return true;
         if (seen.has(p.group_id)) return false;
@@ -149,7 +137,7 @@ export default function ProposalsDashboard() {
       .map(p => (p.group_id != null && counts.get(p.group_id) > 1
         ? { ...p, _optionCount: counts.get(p.group_id) }
         : p));
-  }, [filtered]);
+  }, [proposals]);
 
   const tabs = useMemo(() => ([
     { id: 'active',  label: 'Active',   count: counts.active },
@@ -178,7 +166,7 @@ export default function ProposalsDashboard() {
         </div>
       </div>
 
-      <Toolbar search={search} setSearch={(v) => setListState({ q: v })} tabs={tabs} tab={tab} setTab={(t) => setListState({ tab: t })} />
+      <Toolbar tabs={tabs} tab={tab} setTab={(t) => setListState({ tab: t })} />
 
       <div className="hstack" style={{ gap: 8, marginBottom: 12 }}>
         <label className="tiny muted" htmlFor="source-filter">Source</label>
@@ -275,9 +263,7 @@ export default function ProposalsDashboard() {
 
       {!loading && (
         <div className="tiny muted" style={{ padding: '8px 2px' }}>
-          {search
-            ? `${filtered.length} ${filtered.length === 1 ? 'proposal' : 'proposals'} match`
-            : `${total} ${total === 1 ? 'proposal' : 'proposals'}${proposals.length < total ? ` · showing first ${proposals.length}` : ''}`}
+          {`${total} ${total === 1 ? 'proposal' : 'proposals'}${proposals.length < total ? ` · showing first ${proposals.length}` : ''}`}
           {' · Click a row to open'}
         </div>
       )}

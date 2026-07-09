@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import api from '../utils/api';
 import Sidebar from './adminos/Sidebar';
 import Header from './adminos/Header';
 import CommandPalette from './adminos/CommandPalette';
+import PaletteContext from '../context/PaletteContext';
 
 export default function AdminLayout() {
   const navigate = useNavigate();
@@ -19,6 +20,28 @@ export default function AdminLayout() {
     setPresence(data);
   }, []);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Where focus goes back to when the palette closes. Captured at open time
+  // (launcher click or Cmd/Ctrl+K), restored on ANY close path (Esc, scrim,
+  // navigation) so a keyboard user is never dropped to <body>.
+  const paletteTriggerRef = useRef(null);
+  const prevPaletteOpenRef = useRef(false);
+
+  const openPalette = useCallback(() => {
+    paletteTriggerRef.current = document.activeElement;
+    setPaletteOpen(true);
+  }, []);
+  const paletteCtx = useMemo(() => ({ openPalette }), [openPalette]);
+
+  useEffect(() => {
+    if (prevPaletteOpenRef.current && !paletteOpen) {
+      const el = paletteTriggerRef.current;
+      paletteTriggerRef.current = null;
+      // The opener may have unmounted (e.g. Enter navigated to a new page);
+      // only restore focus if it's still in the document.
+      if (el && el.isConnected && typeof el.focus === 'function') el.focus();
+    }
+    prevPaletteOpenRef.current = paletteOpen;
+  }, [paletteOpen]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Mark the document as being inside the Admin OS shell so the scoped CSS
@@ -86,7 +109,10 @@ export default function AdminLayout() {
   const onKey = useCallback((e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
-      setPaletteOpen(v => !v);
+      setPaletteOpen(v => {
+        if (!v) paletteTriggerRef.current = document.activeElement;
+        return !v;
+      });
     } else if (e.key === 'Escape') {
       setPaletteOpen(false);
       setMobileNavOpen(false);
@@ -117,12 +143,11 @@ export default function AdminLayout() {
   const openMobileNav = useCallback(() => setMobileNavOpen(true), []);
 
   return (
-    <>
+    <PaletteContext.Provider value={paletteCtx}>
       <a href="#main-content" className="skip-nav">Skip to main content</a>
       <div className={`shell${mobileNavOpen ? ' mobile-nav-open' : ''}`}>
         <Sidebar badges={badges} presence={presence} onPresenceChange={applyPresence} onCloseMobileNav={closeMobileNav} />
         <Header
-          onOpenPalette={() => setPaletteOpen(true)}
           onQuickAdd={() => navigate('/proposals/new')}
           onOpenMobileNav={openMobileNav}
           mobileNavOpen={mobileNavOpen}
@@ -137,6 +162,6 @@ export default function AdminLayout() {
         />
       </div>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-    </>
+    </PaletteContext.Provider>
   );
 }

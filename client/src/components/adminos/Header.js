@@ -2,6 +2,7 @@ import React from 'react';
 import { useLocation } from 'react-router-dom';
 import Icon from './Icon';
 import NAV from './nav';
+import GlobalSearchButton from './GlobalSearchButton';
 
 function findPageTitle(pathname) {
   for (const group of NAV) {
@@ -12,7 +13,7 @@ function findPageTitle(pathname) {
   return 'Dashboard';
 }
 
-export default function Header({ onOpenPalette, onQuickAdd, unreadCount = 0, onOpenMobileNav, mobileNavOpen = false }) {
+export default function Header({ onQuickAdd, unreadCount = 0, onOpenMobileNav, mobileNavOpen = false }) {
   const { pathname } = useLocation();
   const title = findPageTitle(pathname);
 
@@ -29,13 +30,7 @@ export default function Header({ onOpenPalette, onQuickAdd, unreadCount = 0, onO
         <Icon name="menu" size={20} />
       </button>
       <div className="header-title">{title}</div>
-      <button type="button" className="header-search" onClick={onOpenPalette} aria-label="Open command palette">
-        <Icon name="search" />
-        <span>Search events, clients, proposals…</span>
-        <span className="kbd-group">
-          <span className="kbd">⌘</span><span className="kbd">K</span>
-        </span>
-      </button>
+      <GlobalSearchButton />
       <div className="header-actions">
         <button type="button" className="icon-btn" title="Notifications" aria-label="Notifications">
           <Icon name="bell" />

@@ -39,9 +39,9 @@ for (let h = 6; h < 24; h++) {
 // display + slot-build order (bartenders first, then servers, then barbacks).
 const ROSTER_ROLES = [ROLES.BARTENDER, ROLES.BANQUET_SERVER, ROLES.BARBACK];
 
-// URL-backed view state (tab / search / status filter). Kept at module scope so
+// URL-backed view state (tab / status filter). Kept at module scope so
 // the hook's default identity is stable. Back restores the exact list view.
-const LIST_DEFAULTS = { tab: 'upcoming', q: '', status: '' };
+const LIST_DEFAULTS = { tab: 'upcoming', status: '' };
 const EVENT_TABS = ['upcoming', 'unstaffed', 'past', 'all'];
 
 const EMPTY_FORM = {
@@ -75,7 +75,6 @@ export default function EventsDashboard() {
   const [loading, setLoading] = useState(true);
   const [listState, setListState] = useUrlListState(LIST_DEFAULTS);
   const tab = EVENT_TABS.includes(listState.tab) ? listState.tab : 'upcoming';
-  const search = listState.q;
   const statusFilter = listState.status;
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -182,7 +181,7 @@ export default function EventsDashboard() {
   // navigate / drawer / toast / setReminderTarget closures, but EventRow only
   // re-renders when its props change. Storing the closures in a ref and exposing
   // a single stable `dispatch` lets us memoize EventRow without re-binding on
-  // every parent render (e.g. typing into the search box).
+  // every parent render (e.g. list-state changes).
   const handlersRef = useRef(null);
   handlersRef.current = {
     rowClick: (e) => {
@@ -220,18 +219,13 @@ export default function EventsDashboard() {
           const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
           if (total > 0 && paid >= total) return false;
         }
-        if (search) {
-          const q = search.toLowerCase();
-          const fields = [e.client_name, e.client_email, e.location].filter(Boolean).join(' ').toLowerCase();
-          if (!fields.includes(q)) return false;
-        }
         return true;
       })
       .sort((a, b) => (a.event_date || '').localeCompare(b.event_date || ''));
-  }, [events, tab, statusFilter, search]);
+  }, [events, tab, statusFilter]);
 
-  // Tab badge counts are independent of the active tab/filter/search — keying
-  // them only on `events` keeps them from recomputing on every keystroke.
+  // Tab badge counts are independent of the active tab/filter — keying
+  // them only on `events` keeps them from recomputing on every list-state change.
   const { upcomingCount, unstaffedCount } = useMemo(() => {
     let upcoming = 0;
     let unstaffed = 0;
@@ -381,8 +375,6 @@ export default function EventsDashboard() {
       )}
 
       <Toolbar
-        search={search}
-        setSearch={(v) => setListState({ q: v })}
         tabs={tabs}
         tab={tab}
         setTab={(v) => setListState({ tab: v })}
@@ -471,8 +463,8 @@ export default function EventsDashboard() {
 }
 
 // Memoized row — only re-renders when its event reference changes. Dispatch is
-// a stable callback from the parent, so typing into the search box no longer
-// rebuilds 5 closures × N rows on every keystroke.
+// a stable callback from the parent, so list-state changes no longer rebuild
+// 5 closures × N rows.
 const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
   const [searchParams] = useSearchParams();
   const total = Number(e.proposal_total || 0);
