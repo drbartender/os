@@ -24,7 +24,7 @@ lanes:
       - client/src/index.css   # .gsearch-toolbar sizing + coarse-pointer un-collapse, appended after the pointer:coarse header block (~11877)
       - README.md
     blockedBy: []
-    review: standard   # broad-but-mechanical prop/filter removals + two tiny new files; nothing sensitive
+    review: standard   # broad-but-mechanical prop/filter removals + two tiny new files; nothing sensitive. Pre-merge review MUST include a cross-file consistency pass: all 5 Toolbar call sites agree with the new 5-prop contract
 ---
 
 # Global Search As Primary Per-Page Search — Implementation Plan
@@ -50,7 +50,7 @@ lanes:
 - `CI=true npx react-scripts build` must pass clean (ESLint warnings are errors) — no dead `search`/`setSearch`/`useMemo` bindings may survive.
 - No em dashes in any user-visible copy.
 - `scrollIntoView` must be feature-guarded (`el.scrollIntoView && …`) — jsdom doesn't implement it and the tests run there.
-- File-size ratchet: `CommandPalette.js` grows ~230 → ~300 lines (fine); no file approaches 700.
+- File-size ratchet: `CommandPalette.js` grows ~168 → ~300 lines (fine); no file approaches 700.
 
 ---
 
@@ -69,6 +69,7 @@ lanes:
 
 ```js
 import React from 'react';
+import '@testing-library/jest-dom'; // per-file import — this repo has no setupTests.js
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import CommandPalette from './CommandPalette';
@@ -160,6 +161,17 @@ describe('CommandPalette keyboard selection', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  test('Enter before the debounce even fires still latches (sub-200ms typist)', async () => {
+    api.get.mockResolvedValue({ data: { results: { ...EMPTY, clients: [{ type: 'client', id: 3, name: 'Cate Settler', detail: '' }] } } });
+    const { onClose, input } = renderPalette();
+    fireEvent.change(input, { target: { value: 'sett' } });
+    fireEvent.keyDown(input, { key: 'Enter' }); // debounce hasn't fired yet — nothing is loading
+    expect(screen.getByTestId('location')).toHaveTextContent('/dashboard'); // no nav misfire
+    await act(async () => { jest.advanceTimersByTime(200); }); // debounce fires; mocked request resolves
+    expect(screen.getByTestId('location')).toHaveTextContent('/clients/3');
+    expect(onClose).toHaveBeenCalled();
+  });
+
   test('the latch clears if the user keeps typing', async () => {
     let resolveFirst;
     api.get
@@ -175,6 +187,22 @@ describe('CommandPalette keyboard selection', () => {
     await act(async () => {});                                // flush second resolve
     expect(screen.getByText('Ana Smith')).toBeInTheDocument(); // results shown…
     expect(screen.getByTestId('location')).toHaveTextContent('/dashboard'); // …but no auto-jump
+  });
+
+  test('Enter never activates stale rows from the previous query', async () => {
+    api.get
+      .mockResolvedValueOnce({ data: { results: RESULTS } })
+      .mockResolvedValueOnce({ data: { results: EMPTY } });
+    const { onClose, input } = renderPalette();
+    fireEvent.change(input, { target: { value: 'smith' } });
+    await act(async () => { jest.advanceTimersByTime(200); });
+    expect(screen.getByText('Ana Smith')).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: 'smithx' } }); // old rows still on screen
+    fireEvent.keyDown(input, { key: 'Enter' });               // must latch, NOT jump to stale Ana Smith
+    expect(screen.getByTestId('location')).toHaveTextContent('/dashboard');
+    await act(async () => { jest.advanceTimersByTime(200); }); // 'smithx' returns empty → latch clears, visible no-op
+    expect(screen.getByTestId('location')).toHaveTextContent('/dashboard');
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   test('an explicit arrow selection beats the latch', async () => {
@@ -252,7 +280,7 @@ git commit -m "test(palette): failing suite for keyboard selection + pending-Ent
 Semantics being added (everything else — groups, debounce, stale-request guard, new-tab clicks — is byte-preserved):
 - Flat, display-ordered actionable item list (records then nav/create) drives `activeIndex`; index 0 is the top hit and is pre-selected.
 - `ArrowDown`/`ArrowUp`: `preventDefault` (caret must not move), wrap-around, mark manual control (`movedRef`), clear any latch, scroll the active row into view (feature-guarded for jsdom).
-- `Enter`: if the user has arrow-moved this query, activate the current selection immediately (even mid-load — an explicit selection wins, per spec §3.3 "defaulting to index 0 when the user has not moved"). Otherwise, if a ≥2-char query is still loading, set the pending-Enter latch; else activate the top item. The latch fires the top RECORD when results land (records only — never a nav item), clears on keystroke/arrow/error/empty.
+- `Enter`: if the user has arrow-moved this query, activate the current selection immediately (even mid-load — an explicit selection wins, per spec §3.3 "defaulting to index 0 when the user has not moved"). Otherwise, if the ≥2-char term's FRESH results are not yet on screen (debounce pending, request in flight, or only stale prior-query rows showing — `resultsForRef` tracks which term the current results answered) and there's no search error, set the pending-Enter latch; else activate the top item. The latch fires the top RECORD when results land (records only — never a nav item, never a stale row), clears on keystroke/arrow/error/empty.
 - Keystroke: reset `activeIndex` to 0, clear latch and `movedRef`. Async result arrival does NOT reset (render-time clamp handles shrinkage).
 - Hover: `mouseenter` sets `activeIndex` only when not in keyboard mode (prevents scroll-under-cursor yank); any real `mousemove` exits keyboard mode.
 - ARIA: input `role="combobox"` + `aria-expanded` + `aria-controls` + `aria-activedescendant` + `aria-autocomplete="list"`; list `role="listbox"`; rows `role="option"` + `aria-selected`; group wrappers `role="group"` with the label div `aria-hidden`. Focus never leaves the input; nav rows lose `tabIndex`/`onKeyDown`.
@@ -311,6 +339,11 @@ export default function CommandPalette({ open, onClose }) {
   // The user arrow-moved during this query: their explicit selection beats the
   // latch/top-hit default. Cleared on keystroke and on open.
   const movedRef = useRef(false);
+  // The term the current `results` answered. Enter only activates directly when
+  // results are FRESH for the typed term; otherwise it latches. Covers all three
+  // fast-typist windows: debounce not yet fired, request in flight, and stale
+  // rows from the previous query still on screen.
+  const resultsForRef = useRef(null);
 
   useEffect(() => {
     if (open) {
@@ -322,6 +355,7 @@ export default function CommandPalette({ open, onClose }) {
       setKbdNav(false);
       pendingEnterRef.current = false;
       movedRef.current = false;
+      resultsForRef.current = null;
     }
   }, [open]);
 
@@ -340,6 +374,7 @@ export default function CommandPalette({ open, onClose }) {
     if (term.length < 2) {
       reqIdRef.current += 1; // invalidate any in-flight request
       setResults(null);
+      resultsForRef.current = null;
       setLoading(false);
       setSearchError(false);
       return;
@@ -351,6 +386,7 @@ export default function CommandPalette({ open, onClose }) {
       .then((res) => {
         if (reqId !== reqIdRef.current) return;
         setResults(res.data.results);
+        resultsForRef.current = term; // these results answer THIS term
         setLoading(false);
         if (pendingEnterRef.current) {
           pendingEnterRef.current = false;
@@ -452,10 +488,14 @@ export default function CommandPalette({ open, onClose }) {
     } else if (e.key === 'Enter') {
       e.preventDefault();
       const term = q.trim();
-      // Fast-typist path: results for a real query are still in flight and the
-      // user hasn't picked anything — latch, and land on the top record when
-      // they arrive. Never misfire onto a nav item mid-load.
-      if (loading && term.length >= 2 && !movedRef.current) {
+      // Fast-typist path: the user hasn't picked anything and fresh results
+      // for this exact term aren't on screen yet (debounce pending, request in
+      // flight, or only stale rows from the previous query showing) — latch,
+      // and land on the top record when they arrive. Never misfire onto a nav
+      // item or a stale row. On a search error there is nothing to wait for,
+      // so Enter falls through to the visible selection.
+      const fresh = !!results && resultsForRef.current === term;
+      if (term.length >= 2 && !movedRef.current && !fresh && !searchError) {
         pendingEnterRef.current = true;
         return;
       }
@@ -564,7 +604,7 @@ export default function CommandPalette({ open, onClose }) {
 - [ ] **Step 2: Run the suite to verify it passes**
 
 Run: `cd client && CI=true npx react-scripts test CommandPalette.test.js`
-Expected: PASS — 8 passed, 0 failed.
+Expected: PASS — 10 passed, 0 failed.
 
 - [ ] **Step 3: Commit**
 
@@ -627,6 +667,7 @@ git commit -m "style(palette): suppress hover paint during keyboard nav"
 
 ```js
 import React from 'react';
+import '@testing-library/jest-dom'; // per-file import — this repo has no setupTests.js
 import { render, screen, fireEvent } from '@testing-library/react';
 import PaletteContext from '../../context/PaletteContext';
 import GlobalSearchButton from './GlobalSearchButton';
@@ -942,7 +983,7 @@ git add client/src/components/adminos/Toolbar.js
 git commit -m "feat(search): Toolbar renders the global-search launcher, drops per-page filter input"
 ```
 
-(The client build is NOT expected green yet — the five dashboards still pass `search`/`setSearch` (harmless unknown props) and hold now-unused state; B4 finishes the sweep, then everything is verified together in B5.)
+(Between B3 and B4 the five dashboards still pass `search`/`setSearch` — Toolbar simply ignores the unknown props, and their state stays referenced until B4 removes it, so nothing is dead yet. Everything is verified together in B5; in-lane checkpoints never reach main, so a mid-sweep interim is fine.)
 
 ### Task B4: Remove the client-side filter from the five dashboards
 
@@ -959,7 +1000,7 @@ git commit -m "feat(search): Toolbar renders the global-search launcher, drops p
 
 Line numbers below are pre-change positions; apply top-to-bottom per file.
 
-- [ ] **Step 1: EventsDashboard.js (6 edits)**
+- [ ] **Step 1: EventsDashboard.js (7 edits)**
 
 `:42-44` — defaults + comment:
 ```js
@@ -997,7 +1038,7 @@ and the deps line becomes `}, [events, tab, statusFilter]);`
 // 5 closures × N rows.
 ```
 
-- [ ] **Step 2: ProposalsDashboard.js (5 edits)**
+- [ ] **Step 2: ProposalsDashboard.js (6 edits)**
 
 `:37-39` — comment + defaults:
 ```js
@@ -1110,8 +1151,8 @@ const LIST_DEFAULTS = { sort: 'recent' };
 
 - [ ] **Step 6: Verify zero leftovers, then commit**
 
-Run: `cd client && rg -n "\bsearch\b|setSearch|listState\.q" src/pages/admin/EventsDashboard.js src/pages/admin/ProposalsDashboard.js src/pages/admin/StaffDashboard.js src/pages/admin/ClientsDashboard.js src/pages/admin/DrinkPlansDashboard.js src/components/adminos/Toolbar.js`
-Expected: no output (also confirms no comment drift survived).
+Run: `cd client && rg -n "setSearch|listState\.q|const search\b|search=\{" src/pages/admin/EventsDashboard.js src/pages/admin/ProposalsDashboard.js src/pages/admin/StaffDashboard.js src/pages/admin/ClientsDashboard.js src/pages/admin/DrinkPlansDashboard.js src/components/adminos/Toolbar.js`
+Expected: no output — the pattern targets bindings and props only (a bare-word `search` pattern would false-positive on Toolbar's new JSDoc, which legitimately says "global-search launcher"). Comment drift in the dashboards is handled by the explicit comment edits in Steps 1-5.
 
 ```bash
 git add client/src/pages/admin/EventsDashboard.js client/src/pages/admin/ProposalsDashboard.js client/src/pages/admin/StaffDashboard.js client/src/pages/admin/ClientsDashboard.js client/src/pages/admin/DrinkPlansDashboard.js
@@ -1195,4 +1236,4 @@ git commit -m "style(search): toolbar launcher sizing + touch un-collapse; READM
 - **Spec coverage:** §3.1 launcher+variant (B1/B3/B5), §3.2 context (B1/B2), §3.3 keyboard+latch+ARIA+hover+scroll (A1/A2/A3), §3.4 five-page cleanup incl. Staff's hoisted setter, Proposals' collapsed memo, comment drift (B4), §5 focus-return + `?q=` inertness (B2 / nothing to do — param unmanaged), §6 tests+build+manual (A1, A3, B5), §7 footprint matches lane front-matter exactly, docs = README only per the mandatory-docs table (component/context rows are "—" for ARCHITECTURE).
 - **Placeholders:** none — every step carries the actual code or exact copy.
 - **Type/name consistency:** `palette-opt-<idx>` ids (A1 tests ↔ A2 impl ↔ aria-activedescendant), `kbd-nav` class (A2 ↔ A3 CSS), `gsearch-toolbar` class (B1 ↔ B5 CSS), `usePalette()`/`openPalette` (B1 ↔ B2 ↔ B3), Toolbar's new 5-prop contract (B3 ↔ B4 call sites).
-- **Deliberate refinement within spec intent (documented):** Enter during load activates an EXPLICIT arrow selection immediately instead of latching (spec §3.3's own "defaulting to index 0 when the user has not moved" principle); arrows cancel a set latch. Both tested (A1 tests 3/5).
+- **Refinements now synced INTO the spec (no divergence):** explicit arrow selection beats the latch and arrows cancel a set latch (A1 tests 3/7); latch uses fresh-results semantics rather than `loading` — covers the sub-200ms pre-debounce window and never activates stale prior-query rows (plan-fleet fidelity finding; A1 tests 4/6). Spec §3.3 and §9 updated to match.

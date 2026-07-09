@@ -56,7 +56,7 @@ Add keyboard selection to `CommandPalette.js` over the already-rendered, display
 
 **Enter, including out-running the search (the latch).**
 - If a record/nav item is available at `activeIndex`, `Enter` activates it (record → in-app navigate + close; nav/create → its action). `preventDefault`.
-- **Pending-Enter latch:** if `Enter` is pressed while a query of ≥2 chars is still loading (`loading === true`, records not yet in — the flat list is only `filteredNav` at that instant), do **not** fire a nav item. Instead set a `pendingEnter` flag. When results land for the unchanged query: if there is ≥1 record, activate the **top record** (index 0) and clear the flag; if results are empty, clear the flag (visible no-op). The flag also clears on any further keystroke. This makes "type + Enter" land on the record even when the operator is faster than the debounce — the marquee interaction.
+- **Pending-Enter latch:** if `Enter` is pressed with a ≥2-char query whose **fresh** results are not yet on screen — the 200ms debounce hasn't fired yet, the request is in flight, or only stale rows from the *previous* query are showing (tracked by remembering which term the current results answered) — and the user has not arrow-moved, do **not** fire a nav item or a stale row. Instead set a `pendingEnter` flag. When results land for the typed query: if there is ≥1 record, activate the **top record** and clear the flag; if results are empty, clear the flag (visible no-op). The flag also clears on any further keystroke, on an arrow key (an explicit selection takes over), and on a search error (nothing will arrive; Enter then acts on the visible selection). This makes "type + Enter" land on the record even when the operator out-runs the debounce entirely — the marquee interaction. Keying the latch on `loading` alone would miss the sub-200ms window and could activate stale rows; fresh-results semantics covers all three fast-typist windows.
 - Note the **2-char floor:** server search requires ≥2 chars (`CommandPalette.js:45`) while `filteredNav` filters from 1 char. A single-character query + Enter therefore activates a matching nav item (e.g. "e" → Events), not a record. Intended; documented so it is not read as a bug.
 
 **Highlight + accessibility.**
@@ -135,4 +135,8 @@ Reviewed by the design-stage fleet on 2026-07-09 (grounding / gaps / risk). Outc
 - **Gaps warnings folded:** combobox `aria-activedescendant` ARIA (replacing a self-contradictory roving-tabindex note), `:hover`/keyboard de-conflict, scroll-into-view, reset-only-on-keystroke, reuse `.active`, `preventDefault` arrows, remove redundant per-item Enter handler, delete the Proposals passthrough `useMemo`, Events comment cleanup, launcher mobile sizing, 2-char-floor note.
 - **Risk: clean** (no money/auth/schema/webhook/PII surface; endpoint already guarded).
 
-The three lenses converged: no unresolved finding remains open.
+Plan-stage fleet (fidelity / decomposition / feasibility, same date) folded back one substantive finding:
+
+- **Sub-debounce Enter gap (fidelity):** the latch originally keyed on `loading === true`, which missed Enter pressed *before* the 200ms debounce fired and could activate stale rows from the previous query. Widened to fresh-results semantics (§3.3): latch whenever the typed term's results aren't on screen yet; stale rows never activate; a search error falls through to the visible selection.
+
+The lenses converged: no unresolved finding remains open.
