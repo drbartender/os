@@ -13,6 +13,7 @@ import StripePayoutsTab from '../StripePayoutsTab';
 import NeedsYouStrip from './NeedsYouStrip';
 import UpcomingEventsCard from './UpcomingEventsCard';
 import PipelineCard from './PipelineCard';
+import PayrollCard from './PayrollCard';
 import MoneyTiles from './MoneyTiles';
 import FunnelCard from './FunnelCard';
 import LeadSpendCard from './LeadSpendCard';
@@ -60,6 +61,9 @@ export default function OverviewPage() {
   const [listState, setListState] = useUrlListState(FIN_DEFAULTS);
   const tab = FIN_TABS.includes(listState.tab) ? listState.tab : 'overview';
   const [payoutBadge, setPayoutBadge] = useState(0);
+  // Payroll-overdue Needs-you item reported up by the admin-only PayrollCard.
+  // A manager never mounts PayrollCard, so this stays null and no item appears.
+  const [payrollItem, setPayrollItem] = useState(null);
 
   // Band 2 (analysis) — obeys the filter bar. The two LAW fetches (dashboard-stats
   // + financials) share ONE zone-level error + retry; a failure in either never
@@ -184,6 +188,13 @@ export default function OverviewPage() {
     return items;
   }, [unstaffed, proposals, newApplications]);
 
+  // Payroll overdue is a money-urgency danger item; prepend it ahead of the
+  // operational queue. Absent for managers (payrollItem is never set for them).
+  const queueItems = useMemo(
+    () => (payrollItem ? [payrollItem, ...actionQueue] : actionQueue),
+    [payrollItem, actionQueue]
+  );
+
   const m = stats.money || EMPTY_STATS.money;
   const fn = stats.funnel || EMPTY_STATS.funnel;
   const pipeline = stats.pipeline || [];
@@ -209,11 +220,13 @@ export default function OverviewPage() {
       </div>
 
       {/* Band 1 — live zone (ignores the metrics filter) */}
-      <NeedsYouStrip items={actionQueue} loading={shiftsLoading || proposalsLoading} />
+      <NeedsYouStrip items={queueItems} loading={shiftsLoading || proposalsLoading} />
       <div className="dash-main">
         <UpcomingEventsCard upcoming={upcoming} loading={shiftsLoading} error={shiftsError} />
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
-          {/* PayrollCard slot arrives in lane c */}
+          {/* Payroll card is admin-only: managers mount nothing and fire zero
+              /admin/payroll/* requests (spec §1 role gating). */}
+          {isAdmin && <PayrollCard onOverdue={setPayrollItem} />}
           <PipelineCard pipeline={pipeline} loading={!statsLoaded && statsLoading} error={statsError} />
         </div>
       </div>

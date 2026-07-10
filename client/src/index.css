@@ -17994,3 +17994,44 @@ html[data-app="admin-os"] .ov-foot-caption { margin-left: auto; }
   html[data-app="admin-os"] .ov-foot-caption { margin-left: 0; }
 }
 /* end */
+/* overview: mb-c payroll */
+/* Band 1 payroll card. The whole card is one anchor (EntityLink), so kill the
+   entity-link text underline and let the card carry the click affordance. */
+html[data-app="admin-os"] .ov-payroll-link,
+html[data-app="admin-os"] .ov-payroll-link:hover,
+html[data-app="admin-os"] .ov-payroll-link:focus-visible {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+html[data-app="admin-os"] .ov-payroll-card { transition: border-color 0.1s, box-shadow 0.1s; }
+html[data-app="admin-os"] .ov-payroll-link:hover .ov-payroll-card {
+  border-color: var(--ink-4);
+  box-shadow: var(--shadow-pop, var(--shadow-card));
+}
+html[data-app="admin-os"] .ov-payroll-link:focus-visible .ov-payroll-card {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* Overdue: card flips to warn (§8); the Needs-you item carries the danger. */
+html[data-app="admin-os"] .ov-payroll-card.is-warn {
+  border-color: hsl(var(--warn-h) var(--warn-s) 50%);
+}
+html[data-app="admin-os"] .ov-payroll-arrow { color: var(--ink-4); flex: 0 0 auto; }
+html[data-app="admin-os"] .ov-payroll-headline {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+html[data-app="admin-os"] .ov-payroll-tag { font-size: 10px; }
+html[data-app="admin-os"] .ov-payroll-total { font-size: 22px; margin: 0.15rem 0 0.2rem; }
+html[data-app="admin-os"] .ov-payroll-subs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.6rem;
+}
+/* end */
