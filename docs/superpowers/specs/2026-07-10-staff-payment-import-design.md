@@ -60,6 +60,18 @@ Mirror rows double as a completeness check: a Chase `Cash App*`/Venmo-funding
 row with no matching primary row = missing export month → flagged, never
 silently dropped.
 
+The `cash_other` approval path is concrete: CC-only rows (a CC staff-payment
+expense with no matching platform row) are emitted INTO transactions.csv as
+`platform='cash_other'` / `source_account='cc_expense_log'` / verdict `unsure`
+(txn id = CC expense row ID); flipping the verdict to `staff-pay` is the
+per-row approval. They are also listed in the coverage report.
+
+**Supersedes `legacy_cc_payouts`.** A prior write-only table
+(`legacy_cc_payouts`, loaded by `scripts/cc-ledger-import.js` from the same CC
+report 4) covers overlapping dates. It has zero read consumers today and MUST
+stay that way for earnings/tax surfaces: `staff_payment_history` is the single
+source of historical staff pay. Never sum both.
+
 ## 4. Boundary rule (June 2, 2026)
 
 Prod payroll state (verified 2026-07-09): 6 weekly pay periods from
@@ -72,9 +84,22 @@ Prod payroll state (verified 2026-07-09): 6 weekly pay periods from
   mark-paid flow (deliberately manual — learning the system is a goal).
   Unmatched payments and still-unpaid payouts are both listed; no code writes
   to `payouts` in this project.
+- **Boundary exception (post-boundary pay for pre-boundary work):** a payment
+  dated on/after June 2 that matches NO payout (e.g. a June payment for May
+  work — no pay period ever covered it) would otherwise vanish from every
+  total. The sheet carries a `boundary_exception` column (default no); Dallas
+  flips it to let that row into the ledger. Structurally enforced:
+  `CHECK (paid_on < DATE '2026-06-02' OR boundary_exception)`, and
+  verification asserts every exception row matches no payout (person+amount) —
+  so the exception can never double-count.
 
 A person's true total is always `sum(ledger) + sum(paid payouts)` — zero
-overlap by construction.
+overlap by construction, with the boundary CHECK making it structural, not
+just procedural.
+
+**Tax-year grouping is pinned:** the 1099 view groups the ledger by
+`paid_on` year and payouts by `paid_at` year (constructive receipt) —
+never `pay_periods.payday`.
 
 ## 5. Ledger schema
 
@@ -90,17 +115,37 @@ CREATE TABLE IF NOT EXISTS staff_payment_history (
   payee_handle    TEXT,               -- name/handle exactly as the platform shows it
   memo            TEXT,               -- verbatim; display only
   event_label     TEXT,               -- opportunistic attribution; plain text, NO FK
-  row_fingerprint TEXT NOT NULL UNIQUE, -- hash(platform|account|date|amount|payee|memo|file-seq)
+  boundary_exception BOOLEAN NOT NULL DEFAULT false,  -- §4 escape hatch
+  row_fingerprint TEXT NOT NULL UNIQUE, -- txn-id based where the platform has one; positional hash otherwise
   source_file     TEXT NOT NULL,      -- provenance
-  imported_at     TIMESTAMPTZ DEFAULT NOW()
+  imported_at     TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT sph_before_boundary CHECK (paid_on < DATE '2026-06-02' OR boundary_exception)
 );
 CREATE INDEX IF NOT EXISTS idx_sph_contractor_paid_on
   ON staff_payment_history(contractor_id, paid_on);
+
+-- companion columns on users:
+--   exclude_from_1099 BOOLEAN DEFAULT false  — persisted per-person 1099 flag
+--     (§8.3 view + admin toggle endpoint; import sets it from the sheet; Zul
+--     defaults excluded). Admin-toggleable post-import — not set-once.
+--   import_source TEXT NULL ('payment_history_import') — marks created rows
+--     for the admin-list chip, audit, and the undo path; also de-overloads
+--     'deactivated' vs legacy CC stubs (which key on cc_id).
 ```
 
-Append-only. No edit UI in v1; corrections by script. Import script refuses
-rows on/after 2026-06-02 and is idempotent via `row_fingerprint` (file-seq
-disambiguates identical same-day payments within one export file).
+Fingerprint rule: platforms with a real transaction id (Venmo, Zelle, PayPal)
+fingerprint on `platform|txn_id` — stable across re-exports and file
+reordering. Only id-less PDF rows (Cash App) use the positional
+`platform|account|date|amount|payee|memo|file-seq` hash.
+
+**Financial facts are immutable; attribution is re-runnable.** `paid_on`,
+`amount_cents`, `platform` never change after import (they are the row's
+identity). Re-running the import applies sheet corrections to
+`contractor_id`, `event_label`, and `memo` via
+`ON CONFLICT (row_fingerprint) DO UPDATE` — so a mis-clustered payee fixed in
+the sheet propagates on re-run, and idempotency means "zero NEW rows", not
+"no-op". No edit UI in v1; anything beyond re-attribution is a hand-written
+correction script.
 
 ## 6. Minimal-user import
 
@@ -114,8 +159,26 @@ Per person, decided in people.csv:
 - **`create-ex`** — new `users` row: `onboarding_status='deactivated'`.
   Visible in admin staff list with payment history; permanently excluded from
   active roster queries and the last-minute SMS blast (`approved`-only filter).
+  **Deliberately cannot log in** (deactivated is hard-blocked at the login
+  route): ex-staff history is an admin-side record. If an ex-staffer returns,
+  admin flips their status through the existing lifecycle and they claim via
+  forgot-password like anyone else.
 - **`skip`** — agencies (Qwick), vendors, personal payees. Their rows cannot
   import as staff pay (enforcement: `contractor_id` NOT NULL).
+
+`create-current` also seeds an `onboarding_progress` row
+(`account_created=true`) — every real registration path creates one and the
+onboarding UI assumes it exists.
+
+Imported users carry `import_source='payment_history_import'` and get a small
+"imported" chip in the admin staff list, so dozens of placeholder rows are
+distinguishable from real onboarders at a glance.
+
+Import pre-flight (before the transaction): every `create-*` email is checked
+for uniqueness against existing `users.email` (a hit = error telling Dallas to
+use `existing:<id>` instead) and within the sheet; placeholder slugs
+disambiguate (`-2`, `-3`) instead of colliding — a single 23505 must not abort
+the prod run.
 
 Created rows are silent — no hire/welcome emails, no activity-feed noise.
 
@@ -157,29 +220,60 @@ Data files live on the share only — **never committed** (PII).
      **account decision column** (§6 values), 1099 include/exclude flag
      (default: exclude Zul — foreign contractor, W-8BEN not 1099).
    - `transactions.csv`: every outgoing row — proposed person, verdict
-     (staff-pay / ignore / unsure), event_label + evidence tier.
+     (staff-pay / ignore / unsure), event_label + evidence tier,
+     boundary_exception (§4), incl. the `cash_other` CC-only candidates (§3).
    Dallas edits; the sheet is the sole human-judgment surface.
-4. **Import** — hard-validates the sheets (every staff-pay row resolves to a
-   person; every new person has status + email-or-placeholder; no
-   post-boundary rows), writes users + profiles + ledger in ONE transaction
-   against prod, prints per-person per-year verification totals, emits the §4
-   reconciliation report. Re-runnable; fingerprints make it a no-op on
-   already-imported rows.
+   **Excel-proofing:** the sheet builder also writes `.manifest.json` holding
+   the canonical machine facts (fingerprint → date, amount_cents, platform,
+   account, txn id, payee, memo). The import reads FACTS from the manifest and
+   only the human-judgment columns (verdict, person, account decision, email,
+   phone, status, preferred method, exclude flag, event_label,
+   boundary_exception) from the CSV — so Excel mangling dates, +63 phone
+   numbers, or long txn ids in display columns cannot corrupt the import.
+   Fingerprints are prefixed `fp-` to force text cells. Human-entered
+   phones/emails are normalized+validated on re-read.
+   PayPal rows whose PHP→USD could not be resolved from a linked conversion
+   row carry a blank amount + `unsure` verdict — they can NEVER import until
+   resolved (validation rejects staff-pay rows without a positive amount); a
+   raw PHP magnitude is never stored as USD.
+   The coverage report also lists seeded-phone collisions (an imported
+   person's phone matching an existing `approved` staffer's) — a stale CC
+   phone must not shadow a real staffer in the inbound-SMS resolver.
+4. **Import** — hard-validates manifest+sheets (every staff-pay row resolves
+   to a person; every new person has status + email-or-placeholder; email
+   uniqueness pre-flight per §6; boundary rule per §4), writes users +
+   profiles + ledger in ONE transaction against prod, prints per-person
+   per-year verification totals, emits the §4 reconciliation report, and
+   writes a durable run log (`review/import-run-<ts>.json`: sheet checksum,
+   counts created/updated/skipped, operator) since user creation is
+   deliberately silent elsewhere. Re-runnable: zero NEW rows on unchanged
+   input; attribution fixes propagate per §5.
 
 Final fresh pull of CC reports 4 + 5 immediately before the run (CC dies
-2026-07-21).
+2026-07-21). Prod `--execute` runs in a low-traffic window.
 
 ## 8. Display surfaces (read-only; SELECTs only)
 
 1. **Admin user detail** — historical ledger rows join the existing Payouts
    tab, platform-tagged, with an all-time blended total
-   (`sum(ledger) + sum(paid payouts)`).
+   (`sum(ledger) + sum(paid payouts)`). The tab's existing hardcoded
+   "1099 / tax tracking pending" placeholder card is replaced with a link to
+   the §8.3 view (one 1099 surface, not two). Empty-state copy must handle
+   payouts=0 + ledger>0 (the common ex-staff case).
 2. **Staff portal Pay page** — same blend for the logged-in staffer
-   (IDOR-scoped to `req.user.id`); plain rows: date / amount / platform. No
-   fake paystubs, no event links.
+   (IDOR-scoped to `req.user.id`): blended all-time total + plain rows
+   date / amount / platform. No fake paystubs, no event links, no handles.
+   The page's "No pay history yet" empty state must also consider ledger
+   presence — an imported current staffer with history but no OS payouts
+   must not see "no history".
 3. **1099 totals view** — year-picker table on the Payroll page: person ×
-   year total × platform breakdown × include/exclude flag; CSV export.
-   January workflow: pick year, read column, file.
+   year total × platform breakdown × include/exclude toggle (admin-only
+   PATCH persisting `users.exclude_from_1099`, with pending/disabled state
+   while in flight); CSV export. Year fields pinned per §4. January
+   workflow: pick year, read column, file.
+
+All three new fetches follow the existing inline-error-card + Retry pattern
+(PayPage precedent), with loading and empty states per the house checklist.
 
 ## 9. Security / PII
 
@@ -190,6 +284,11 @@ Final fresh pull of CC reports 4 + 5 immediately before the run (CC dies
   `payment_handle` PII precedent from paystub project respected (staff portal
   shows platform, not other people's handles).
 - Admin routes behind existing role guards.
+- The `.invalid` guard covers BOTH `sendEmail` and `sendBatchEmails`
+  (email.js has two independent send functions), skipping — never throwing.
+- Review sheets on the share hold full contact+payment PII for ~40 people;
+  Dallas confirms the share is not guest-readable and deletes the WhatsApp
+  chat zip (contains EIN letter) from the share root.
 
 ## 10. Out of scope
 
@@ -204,5 +303,12 @@ Final fresh pull of CC reports 4 + 5 immediately before the run (CC dies
 - CC expense log cross-check: every CC staff-payment row matched to a primary
   row or explicitly resolved (missing-export flag or approved `cash_other`).
 - Post-import SQL spot-checks: per-person year totals vs review sheet; row
-  counts; fingerprint uniqueness; no rows ≥ 2026-06-02.
-- Re-run import → zero new rows (idempotency proof).
+  counts; fingerprint uniqueness; no rows ≥ 2026-06-02 except flagged
+  boundary exceptions, and every exception row matches no payout
+  (person+amount) — the no-double-count assert.
+- Re-run import → zero NEW rows (idempotency proof; attribution updates
+  allowed per §5).
+- Documented undo path (operator runbook): delete ledger rows by run
+  (`imported_at` window / run log), deactivate created users by
+  `import_source='payment_history_import'` + creation window. A bad prod run
+  is recoverable without touching live payroll.

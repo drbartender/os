@@ -1,4 +1,0 @@
-// Example App.js route wiring
-import DrBartenderPlaceholder from './pages/DrBartenderPlaceholder';
-
-<Route path="/" element={<DrBartenderPlaceholder />} />
