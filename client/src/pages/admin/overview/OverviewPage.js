@@ -4,7 +4,6 @@ import api from '../../../utils/api';
 import { useAuth } from '../../../context/AuthContext';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 import Icon from '../../../components/adminos/Icon';
-import AreaChart from '../../../components/adminos/AreaChart';
 import MetricsFilterBar from '../../../components/adminos/MetricsFilterBar';
 import useMetricsFilter from '../../../hooks/useMetricsFilter';
 import useUrlListState from '../../../hooks/useUrlListState';
@@ -18,6 +17,7 @@ import MoneyTiles from './MoneyTiles';
 import FunnelCard from './FunnelCard';
 import LeadSpendCard from './LeadSpendCard';
 import RangeTables from './RangeTables';
+import RevenueChartCard from './RevenueChartCard';
 
 // Ledger-era boundary. b2 and b3 import eraOverlaps from here: era artifacts
 // (cutover marker, list notes, expansion split-lines) render only when the
@@ -47,7 +47,6 @@ const EMPTY_FIN = {
   proposals: [], recentPayments: [],
 };
 
-const LENS_LABEL = { booked: 'Booked', scheduled: 'Scheduled', paid: 'Paid' };
 const FIN_DEFAULTS = { tab: 'overview' };
 const FIN_TABS = ['overview', 'payouts'];
 
@@ -248,27 +247,7 @@ export default function OverviewPage() {
             <>
               <MoneyTiles money={m} funnel={fn} summary={fin.summary} from={from} to={to} onScrollTo={scrollToId} />
 
-              <div className="card" style={{ marginBottom: 'var(--gap)' }}>
-                <div className="card-head">
-                  <div className="hstack">
-                    <h3>Revenue</h3>
-                    <span className="k">{LENS_LABEL[m.basis]} by month</span>
-                  </div>
-                  <div className="hstack" style={{ gap: 14 }}>
-                    <span className="hstack tiny muted" style={{ gap: 4 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--accent)' }} />{LENS_LABEL[m.basis]}
-                    </span>
-                    <span className="hstack tiny muted" style={{ gap: 4 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: 'hsl(var(--ok-h) var(--ok-s) 52%)' }} />Collected
-                    </span>
-                  </div>
-                </div>
-                <div className="card-body">
-                  {(stats.revenue || []).length === 0
-                    ? <div className="muted tiny" style={{ padding: '2rem 0', textAlign: 'center' }}>No revenue in this range.</div>
-                    : <AreaChart data={stats.revenue} keys={['value', 'paid']} />}
-                </div>
-              </div>
+              <RevenueChartCard data={stats.revenue || []} filter={filter} basis={m.basis} />
 
               <div className="grid-2" style={{ marginBottom: 'var(--gap)' }}>
                 <FunnelCard funnel={fn} from={from} to={to} />

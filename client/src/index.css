@@ -17883,3 +17883,114 @@ html[data-app="admin-os"] .ov-era-note {
   }
 }
 /* end */
+/* overview: mb-b3 chart */
+/* Chart-head controls: granularity seg + Compare button. Day/Week are permanently
+   disabled (the endpoint is monthly-only) and must NOT afford a click. */
+html[data-app="admin-os"] .ov-chart-ctrls { flex-wrap: wrap; justify-content: flex-end; }
+html[data-app="admin-os"] .ov-gran-seg .ov-seg-disabled,
+html[data-app="admin-os"] .ov-gran-seg .ov-seg-disabled:hover {
+  color: var(--ink-4);
+  cursor: default;
+  opacity: 0.55;
+  background: transparent;
+}
+html[data-app="admin-os"] .ov-compare-btn.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+html[data-app="admin-os"] .ov-compare-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* Legend chips: toggle series visibility. The last visible series is locked
+   (chip disabled + default cursor) so the plot can never go blank. */
+html[data-app="admin-os"] .ov-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+html[data-app="admin-os"] .ov-legend-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid var(--line-1);
+  border-radius: 999px;
+  cursor: pointer;
+}
+html[data-app="admin-os"] .ov-legend-chip:hover { border-color: var(--ink-3); }
+html[data-app="admin-os"] .ov-legend-chip.is-off { opacity: 0.5; }
+html[data-app="admin-os"] .ov-legend-chip.is-off:hover { opacity: 0.7; }
+html[data-app="admin-os"] .ov-legend-chip.is-locked,
+html[data-app="admin-os"] .ov-legend-chip:disabled { cursor: default; }
+html[data-app="admin-os"] .ov-legend-dot { width: 9px; height: 9px; flex: 0 0 auto; }
+
+/* Plot wrapper is the positioning context for the HTML tooltip. */
+html[data-app="admin-os"] .ov-chart-wrap { position: relative; width: 100%; }
+
+/* Hover / tap tooltip. The container ignores pointer events (so a hover under it
+   never flickers); only the coarse-pointer Zoom button opts back in. */
+html[data-app="admin-os"] .ov-chart-tip {
+  position: absolute;
+  top: 8px;
+  transform: translateX(-50%);
+  min-width: 130px;
+  padding: 8px 10px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  z-index: 3;
+}
+html[data-app="admin-os"] .ov-chart-tip-month {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-1);
+  margin-bottom: 5px;
+}
+html[data-app="admin-os"] .ov-chart-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  padding: 1px 0;
+}
+html[data-app="admin-os"] .ov-chart-tip-row b {
+  margin-left: auto;
+  color: var(--ink-1);
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+}
+html[data-app="admin-os"] .ov-tip-dot { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
+html[data-app="admin-os"] .ov-tip-zoom { margin-top: 7px; width: 100%; pointer-events: auto; }
+
+/* Footer: running totals + prior delta + range caption. */
+html[data-app="admin-os"] .ov-chart-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-1);
+}
+html[data-app="admin-os"] .ov-chart-footer b {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-1);
+}
+html[data-app="admin-os"] .ov-delta.up { color: hsl(var(--ok-h) var(--ok-s) 50%); font-weight: 600; }
+html[data-app="admin-os"] .ov-delta.down { color: hsl(var(--danger-h) var(--danger-s) 60%); font-weight: 600; }
+html[data-app="admin-os"] .ov-foot-caption { margin-left: auto; }
+
+@media (max-width: 640px) {
+  html[data-app="admin-os"] .ov-chart-card .card-head { flex-wrap: wrap; gap: 8px; }
+  html[data-app="admin-os"] .ov-chart-ctrls { justify-content: flex-start; }
+  html[data-app="admin-os"] .ov-foot-caption { margin-left: 0; }
+}
+/* end */
