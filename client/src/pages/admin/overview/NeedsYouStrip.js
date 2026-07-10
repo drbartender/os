@@ -13,12 +13,14 @@ function queueItemHref(a) {
   if (a.target === 'proposal') return `/proposals/${a.ref}`;
   if (a.target === 'payroll') return '/financials/payroll';
   if (a.target === 'payouts') return '/dashboard?tab=payouts&show=unmatched';
+  if (a.target === 'drink-plan') return `/drink-plans/${a.ref}`;
+  if (a.target === 'drink-plans-queue') return '/drink-plans?tab=submitted';
   return null;
 }
 
 // Icon by item type; later lanes append their own types (payout, prep) and fall
 // through to the alert glyph until they extend this map.
-const QUEUE_ICON = { unstaffed: 'userplus', proposal: 'eye', application: 'pen', payroll: 'dollar', payouts: 'dollar' };
+const QUEUE_ICON = { unstaffed: 'userplus', proposal: 'eye', application: 'pen', payroll: 'dollar', payouts: 'dollar', prep: 'flask' };
 
 // Full-width live triage strip. Accepts `items` in the existing actionQueue
 // shape ({id,type,priority,title,sub,meta,target,ref}) so lanes c/d/e can append
@@ -32,6 +34,8 @@ export default function NeedsYouStrip({ items = [], loading = false }) {
     else if (a.target === 'proposal') navigate(`/proposals/${a.ref}`);
     else if (a.target === 'payroll') navigate('/financials/payroll');
     else if (a.target === 'payouts') navigate('/dashboard?tab=payouts&show=unmatched');
+    else if (a.target === 'drink-plan') navigate(`/drink-plans/${a.ref}`);
+    else if (a.target === 'drink-plans-queue') navigate('/drink-plans?tab=submitted');
     else if (a.target === 'hiring') navigate('/hiring');
   };
 

@@ -12,6 +12,7 @@ import { parsePositionsCount, approvedCount } from '../../../components/adminos/
 import StripePayoutsTab from '../StripePayoutsTab';
 import NeedsYouStrip from './NeedsYouStrip';
 import UpcomingEventsCard from './UpcomingEventsCard';
+import { buildPrepItems, prepStateFor } from './PrepQueue';
 import PipelineCard from './PipelineCard';
 import PayrollCard from './PayrollCard';
 import MoneyTiles from './MoneyTiles';
@@ -83,6 +84,7 @@ export default function OverviewPage() {
   const [proposals, setProposals] = useState([]);
   const [proposalsLoading, setProposalsLoading] = useState(true);
   const [applications, setApplications] = useState([]);
+  const [drinkPlans, setDrinkPlans] = useState([]);
 
   const band2Params = useCallback(() => {
     const params = { basis };
@@ -137,6 +139,12 @@ export default function OverviewPage() {
       .then(r => { if (!cancelled) setProposals(r.data || []); })
       .catch(() => {}) // proposal-derived queue items simply stay absent
       .finally(() => { if (!cancelled) setProposalsLoading(false); });
+
+    // Prep pipeline: the Potions-enriched drink-plans list (admin+manager).
+    // Isolated like the rest: a failure just means no prep pills or items.
+    api.get('/drink-plans?limit=200')
+      .then(r => { if (!cancelled) setDrinkPlans(Array.isArray(r.data) ? r.data : []); })
+      .catch(() => {}); // prep items simply stay absent
 
     // /admin/applications is admin-only (the Hiring surface is adminOnly). A
     // manager would 403 here on every dashboard load and trip the role_denial
@@ -197,9 +205,10 @@ export default function OverviewPage() {
     title: `${payoutBadge} Stripe ${payoutBadge === 1 ? 'payout' : 'payouts'} unmatched`,
     sub: 'Settlement mirror', meta: String(payoutBadge), target: 'payouts', ref: null,
   } : null), [payoutBadge]);
+  const prepItems = useMemo(() => buildPrepItems(drinkPlans), [drinkPlans]);
   const queueItems = useMemo(
-    () => [payrollItem, payoutsItem, ...actionQueue].filter(Boolean),
-    [payrollItem, payoutsItem, actionQueue]
+    () => [payrollItem, payoutsItem, ...prepItems, ...actionQueue].filter(Boolean),
+    [payrollItem, payoutsItem, prepItems, actionQueue]
   );
 
   const m = stats.money || EMPTY_STATS.money;
@@ -229,7 +238,7 @@ export default function OverviewPage() {
       {/* Band 1 — live zone (ignores the metrics filter) */}
       <NeedsYouStrip items={queueItems} loading={shiftsLoading || proposalsLoading} />
       <div className="dash-main">
-        <UpcomingEventsCard upcoming={upcoming} loading={shiftsLoading} error={shiftsError} />
+        <UpcomingEventsCard upcoming={upcoming} loading={shiftsLoading} error={shiftsError} prepFor={(pid) => prepStateFor(pid, drinkPlans)} />
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
           {/* Payroll card is admin-only: managers mount nothing and fire zero
               /admin/payroll/* requests (spec §1 role gating). */}

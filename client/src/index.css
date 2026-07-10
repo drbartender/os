@@ -18035,3 +18035,8 @@ html[data-app="admin-os"] .ov-payroll-subs {
   gap: 0.2rem 0.6rem;
 }
 /* end */
+/* overview: mb-e prep queue */
+/* Reserved prep column un-collapses only when at least one row has a pill. */
+html[data-app="admin-os"] .prep-col.has-prep { width: auto; padding: 8px 12px; white-space: nowrap; }
+html[data-app="admin-os"] th.prep-col.has-prep { font-weight: 600; }
+/* end */
