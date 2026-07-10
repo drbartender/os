@@ -48,7 +48,7 @@ const EMPTY_FIN = {
   proposals: [], recentPayments: [],
 };
 
-const FIN_DEFAULTS = { tab: 'overview' };
+const FIN_DEFAULTS = { tab: 'overview', show: '' };
 const FIN_TABS = ['overview', 'payouts'];
 
 export default function OverviewPage() {
@@ -190,9 +190,16 @@ export default function OverviewPage() {
 
   // Payroll overdue is a money-urgency danger item; prepend it ahead of the
   // operational queue. Absent for managers (payrollItem is never set for them).
+  // Unmatched payouts ride the same strip; the payouts route is
+  // admin+manager, so this item is visible to both roles by design.
+  const payoutsItem = useMemo(() => (payoutBadge > 0 ? {
+    id: 'payouts-unmatched', type: 'payouts', priority: 'warn',
+    title: `${payoutBadge} Stripe ${payoutBadge === 1 ? 'payout' : 'payouts'} unmatched`,
+    sub: 'Settlement mirror', meta: String(payoutBadge), target: 'payouts', ref: null,
+  } : null), [payoutBadge]);
   const queueItems = useMemo(
-    () => (payrollItem ? [payrollItem, ...actionQueue] : actionQueue),
-    [payrollItem, actionQueue]
+    () => [payrollItem, payoutsItem, ...actionQueue].filter(Boolean),
+    [payrollItem, payoutsItem, actionQueue]
   );
 
   const m = stats.money || EMPTY_STATS.money;
@@ -236,12 +243,12 @@ export default function OverviewPage() {
         <button className={`btn btn-sm ${tab === 'overview' ? 'btn-primary' : 'btn-secondary'}`}
           onClick={() => setListState({ tab: 'overview' })}>Overview</button>
         <button className={`btn btn-sm ${tab === 'payouts' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setListState({ tab: 'payouts' })}>
+          onClick={() => setListState(tab !== 'payouts' && payoutBadge > 0 ? { tab: 'payouts', show: 'unmatched' } : { tab: 'payouts' })}>
           Payouts{payoutBadge > 0 ? ` (${payoutBadge} unmatched)` : ''}
         </button>
       </div>
 
-      {tab === 'payouts' && <StripePayoutsTab />}
+      {tab === 'payouts' && <StripePayoutsTab show={listState.show} onClearShow={() => setListState({ show: '' })} />}
 
       {tab === 'overview' && (
         <>

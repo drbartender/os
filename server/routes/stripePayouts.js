@@ -43,7 +43,8 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
              p.created_at_stripe, p.failure_code, p.failure_message,
              COALESCE(SUM(l.amount_cents), 0)::int AS gross_cents,
              COALESCE(SUM(l.fee_cents), 0)::int AS fee_cents,
-             COUNT(l.id)::int AS line_count
+             COUNT(l.id)::int AS line_count,
+             COUNT(*) FILTER (WHERE l.matched_kind = 'unmatched')::int AS unmatched_count
       FROM stripe_payouts p
       LEFT JOIN stripe_payout_lines l ON l.payout_id = p.id
       GROUP BY p.id ORDER BY p.created_at_stripe DESC`),

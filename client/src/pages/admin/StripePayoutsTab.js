@@ -37,7 +37,7 @@ function lineLabel(l) {
   return l.description || l.stripe_balance_txn_id;
 }
 
-export default function StripePayoutsTab() {
+export default function StripePayoutsTab({ show, onClearShow } = {}) {
   const toast = useToast();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -71,6 +71,17 @@ export default function StripePayoutsTab() {
     });
   }, [load, syncNow]);
 
+  // Entering unmatched focus auto-expands the FIRST unmatched payout. The
+  // detail model is single-expansion (one lazy fetch at a time), so the
+  // plan's cap-at-10 multi-expand adapts to expanding the first row.
+  const autoExpanded = useRef(false);
+  useEffect(() => {
+    if (show !== 'unmatched' || autoExpanded.current || !data) return;
+    const first = (data.payouts || []).find(p => Number(p.unmatched_count || 0) > 0);
+    if (first) { autoExpanded.current = true; toggle(first.id); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [show, data]);
+
   const toggle = (id) => {
     if (expanded === id) return setExpanded(null);
     setExpanded(id);
@@ -89,6 +100,10 @@ export default function StripePayoutsTab() {
   if (!data) return <div className="chip danger">Couldn't load Stripe payouts. Try refreshing.</div>;
   const s = data.summary || {};
   const nearestEta = (data.pending || []).map(l => l.available_on).filter(Boolean).sort()[0] || null;
+  const unmatchedOnly = show === 'unmatched';
+  const shownPayouts = unmatchedOnly
+    ? (data.payouts || []).filter(p => Number(p.unmatched_count || 0) > 0)
+    : (data.payouts || []);
 
   return (
     <>
@@ -142,14 +157,27 @@ export default function StripePayoutsTab() {
       )}
 
       <div className="card" style={{ overflow: 'hidden' }}>
-        <div className="card-head"><h3>Payouts</h3><span className="k">{(data.payouts || []).length}</span></div>
+        <div className="card-head"><h3>Payouts</h3><span className="k">{shownPayouts.length}</span></div>
+        {unmatchedOnly && (
+          <div className="tiny muted" style={{ padding: '8px 16px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="chip warn">Unmatched only</span>
+            {onClearShow && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={onClearShow}>Clear</button>
+            )}
+            {shownPayouts.length === 0 && (
+              (data.pending || []).some(l => l.matched_kind === 'unmatched')
+                ? <span>Unmatched lines are still in transit. See In transit above.</span>
+                : <span>No unmatched payouts right now.</span>
+            )}
+          </div>
+        )}
         <div className="tbl-wrap"><table className="tbl">
           <thead><tr><th>Arrived</th><th>Status</th><th className="num">Gross</th><th className="num">Fees</th><th className="num">Net to bank</th><th className="num">Lines</th></tr></thead>
           <tbody>
-            {(data.payouts || []).length === 0 && (
+            {shownPayouts.length === 0 && !unmatchedOnly && (
               <tr><td colSpan={6} className="muted">No payouts synced yet. Hit Sync now.</td></tr>
             )}
-            {(data.payouts || []).map(p => (
+            {shownPayouts.map(p => (
               <React.Fragment key={p.id}>
                 <tr
                   onClick={() => toggle(p.id)}

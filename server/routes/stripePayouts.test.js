@@ -23,7 +23,7 @@ if (process.env.NODE_ENV === 'production') throw new Error('stripePayouts.test.j
 
 const N = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 let server, baseUrl, adminToken, staffToken;
-let clientId, proposalId, paymentId, invoiceId, payoutRowId, matchedLineId, pendingLineId;
+let clientId, proposalId, paymentId, invoiceId, payoutRowId, matchedLineId, pendingLineId, unmatchedPayoutRowId;
 // Summary fields (in_transit_cents, unmatched_count) are GLOBAL sums over the
 // whole table; the shared dev DB may already hold backfilled mirror rows, so we
 // assert our seeded rows' DELTA against a baseline captured before seeding.
@@ -114,6 +114,18 @@ before(async () => {
     [`txn_test_${N}_pending`]);
   pendingLineId = pl.rows[0].id;
 
+  // Second payout carrying ONE unmatched line: exercises the per-row
+  // unmatched_count (mb-d). Teardown's LIKE patterns already cover both rows.
+  const pou = await pool.query(
+    `INSERT INTO stripe_payouts (stripe_payout_id, amount_cents, currency, status, created_at_stripe, arrival_date, lines_synced_at)
+     VALUES ($1, 9680, 'usd', 'paid', NOW(), CURRENT_DATE, NOW()) RETURNING id`, [`po_test_${N}_u`]);
+  unmatchedPayoutRowId = pou.rows[0].id;
+  await pool.query(
+    `INSERT INTO stripe_payout_lines (stripe_balance_txn_id, payout_id, txn_type, reporting_category,
+       amount_cents, fee_cents, net_cents, available_on, matched_kind)
+     VALUES ($1,$2,'charge','charge',10000,320,9680,NOW(),'unmatched')`,
+    [`txn_test_${N}_u1`, unmatchedPayoutRowId]);
+
   const app = express();
   app.use(express.json());
   app.use('/api/stripe-payouts', payoutsRouter);
@@ -154,12 +166,19 @@ test('GET /api/stripe-payouts is DB-only and returns summary + pending + payouts
   const res = await request('GET', '/api/stripe-payouts', { token: adminToken });
   assert.equal(res.status, 200);
   assert.equal(res.body.summary.in_transit_cents, baseInTransit + 9680, 'in_transit picks up the seeded pending net');
-  assert.equal(res.body.summary.unmatched_count, baseUnmatched + 1, 'unmatched count picks up the seeded pending line');
+  assert.equal(res.body.summary.unmatched_count, baseUnmatched + 2, 'unmatched count picks up the seeded pending line + the unmatched payout line');
   const mine = res.body.payouts.find((p) => p.id === payoutRowId);
   assert.ok(mine, 'seeded payout present');
   assert.equal(mine.gross_cents, 45000, 'gross == SUM of line amounts');
   assert.equal(mine.fee_cents, 1335, 'fee == SUM of line fees');
   assert.equal(mine.line_count, 1);
+  assert.equal(mine.unmatched_count, 0, 'per-row unmatched_count is 0 when every line is matched (mb-d)');
+  const mineU = res.body.payouts.find((x) => x.stripe_payout_id === `po_test_${N}_u`);
+  assert.ok(mineU, 'unmatched-line payout present');
+  assert.equal(mineU.unmatched_count, 1, 'per-row unmatched_count counts unmatched lines (mb-d)');
+  for (const k of ['gross_cents', 'fee_cents', 'line_count', 'status', 'arrival_date']) {
+    assert.ok(k in mine, `pre-existing row field ${k} still present`);
+  }
   const pend = res.body.pending.find((l) => l.id === pendingLineId);
   assert.ok(pend, 'pending line surfaced');
   assert.equal(pend.matched_kind, 'unmatched');
