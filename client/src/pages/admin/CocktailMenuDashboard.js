@@ -6,6 +6,16 @@ import FieldError from '../../components/FieldError';
 
 const SPIRIT_OPTIONS = ['Vodka', 'Gin', 'Rum', 'Tequila', 'Whiskey', 'Scotch', 'Bourbon', 'Mezcal', 'Cognac', 'Amaretto', 'Aperol', 'Other'];
 
+// Recipes are structured rows now (Potions); the Menu tab shows names only.
+// Editing formulas happens on the Recipes tab, never here.
+function ingredientNames(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return '';
+  return rows
+    .map(r => (typeof r === 'string' ? r : (r && r.ingredient) || ''))
+    .filter(Boolean)
+    .join(', ');
+}
+
 function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
@@ -44,8 +54,8 @@ function DrinkTable({ drinks, categories, editingId, editForm, editFieldErrors, 
   };
 
   return (
-    <div className="table-wrap">
-      <table className="data-table">
+    <div className="tbl-wrap">
+      <table className="tbl">
         <thead>
           <tr>
             <th style={{ width: '32px', padding: '0.65rem 0.25rem' }}></th>
@@ -77,18 +87,18 @@ function DrinkTable({ drinks, categories, editingId, editForm, editFieldErrors, 
               {editingId === c.id ? (
                 <>
                   <td></td>
-                  <td><input className="form-input" style={{ width: '52px' }} value={editForm.emoji}
+                  <td><input className="input" style={{ width: '52px' }} value={editForm.emoji}
                     onChange={e => onEditFormChange({ emoji: e.target.value })} /></td>
                   <td>
-                    <input className="form-input" value={editForm.name}
+                    <input className="input" value={editForm.name}
                       onChange={e => onEditFormChange({ name: e.target.value })} />
                     <FieldError error={editFieldErrors?.name} />
                   </td>
-                  <td className="col-desc"><input className="form-input" value={editForm.description}
+                  <td className="col-desc"><input className="input" value={editForm.description}
                     onChange={e => onEditFormChange({ description: e.target.value })} /></td>
                   {withSpirit && (
                     <td className="col-spirit">
-                      <select className="form-input" style={{ minWidth: '110px' }} value={editForm.base_spirit}
+                      <select className="select" style={{ minWidth: '110px' }} value={editForm.base_spirit}
                         onChange={e => onEditFormChange({ base_spirit: e.target.value })}>
                         <option value="">—</option>
                         {SPIRIT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
@@ -96,15 +106,15 @@ function DrinkTable({ drinks, categories, editingId, editForm, editFieldErrors, 
                     </td>
                   )}
                   {withSpirit && (
-                    <td>
-                      <input className="form-input" placeholder="e.g. Vodka, Lime Juice, Sprite"
-                        value={editForm.ingredients || ''}
-                        onChange={e => onEditFormChange({ ingredients: e.target.value })} />
+                    <td className="text-muted text-small">
+                      <span className="desc-cell-text" title="Edit the formula on the Recipes tab">
+                        {ingredientNames(c.ingredients) || '—'}
+                      </span>
                     </td>
                   )}
                   {withSpirit && (
                     <td>
-                      <input className="form-input"
+                      <input className="input"
                         placeholder="e.g. specialty-vermouths, specialty-bitter-aperitifs"
                         title="Comma-separated addon slugs to charge when the package doesn't cover them"
                         value={editForm.upgrade_addon_slugs || ''}
@@ -132,7 +142,7 @@ function DrinkTable({ drinks, categories, editingId, editForm, editFieldErrors, 
                   {withSpirit && (
                     <td className="text-muted text-small">
                       <span className="desc-cell-text">
-                        {Array.isArray(c.ingredients) && c.ingredients.length > 0 ? c.ingredients.join(', ') : '—'}
+                        {ingredientNames(c.ingredients) || '—'}
                       </span>
                     </td>
                   )}
@@ -199,8 +209,8 @@ function CategoryTable({ categories, drinkCounts, editingId, editForm, editField
   };
 
   return (
-    <div className="table-wrap">
-      <table className="data-table">
+    <div className="tbl-wrap">
+      <table className="tbl">
         <thead>
           <tr>
             <th style={{ width: '32px' }}></th>
@@ -229,7 +239,7 @@ function CategoryTable({ categories, drinkCounts, editingId, editForm, editField
                   <>
                     <td></td>
                     <td>
-                      <input className="form-input" value={editForm.label}
+                      <input className="input" value={editForm.label}
                         onChange={e => onEditFormChange({ label: e.target.value })} />
                       <FieldError error={editFieldErrors?.label} />
                     </td>
@@ -284,7 +294,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
   const [editCocktailError, setEditCocktailError] = useState('');
   const [editCocktailFieldErrors, setEditCocktailFieldErrors] = useState({});
   const [addCocktailCategory, setAddCocktailCategory] = useState(null);
-  const [newCocktailForm, setNewCocktailForm] = useState({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '', upgrade_addon_slugs: '' });
+  const [newCocktailForm, setNewCocktailForm] = useState({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', upgrade_addon_slugs: '' });
   const [addCocktailError, setAddCocktailError] = useState('');
   const [addCocktailFieldErrors, setAddCocktailFieldErrors] = useState({});
 
@@ -353,9 +363,9 @@ export default function CocktailMenuDashboard({ embedded = false }) {
     setEditCocktailFieldErrors({});
     try {
       const body = { ...editCocktailForm };
-      if (typeof body.ingredients === 'string') {
-        body.ingredients = body.ingredients.split(',').map(s => s.trim()).filter(Boolean);
-      }
+      // Structured recipes are owned by the Recipes tab; the Menu tab never
+      // writes ingredients (a CSV round-trip would flatten the formula).
+      delete body.ingredients;
       if (typeof body.upgrade_addon_slugs === 'string') {
         body.upgrade_addon_slugs = body.upgrade_addon_slugs.split(',').map(s => s.trim()).filter(Boolean);
       }
@@ -396,11 +406,10 @@ export default function CocktailMenuDashboard({ embedded = false }) {
         description: newCocktailForm.description.trim() || null,
         sort_order: cocktails.filter(c => c.category_id === categoryId).length,
         base_spirit: newCocktailForm.base_spirit || null,
-        ingredients: newCocktailForm.ingredients.split(',').map(s => s.trim()).filter(Boolean),
         upgrade_addon_slugs: newCocktailForm.upgrade_addon_slugs.split(',').map(s => s.trim()).filter(Boolean),
       });
       setCocktails(prev => [...prev, res.data]);
-      setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '', upgrade_addon_slugs: '' });
+      setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', upgrade_addon_slugs: '' });
       setAddCocktailCategory(null);
       toast.success('Cocktail created.');
     } catch (err) {
@@ -637,7 +646,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       {!embedded && (
         <div className="flex-between mb-2" style={{ flexWrap: 'wrap', gap: '1rem' }}>
           <div>
-            <h2 style={{ fontFamily: 'var(--font-display)', margin: 0 }}>Drink Menu</h2>
+            <h2 style={{ margin: 0 }}>Drink Menu</h2>
             <p className="text-muted text-small mt-1">
               {activeCocktails} active cocktails · {activeMocktails} active mocktails
             </p>
@@ -646,21 +655,15 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       )}
 
       {/* ── Type tabs ── */}
-      <div className="tab-nav mb-2">
-        <button className={`tab-btn${isCocktails ? ' active' : ''}`} onClick={() => switchDrinkType('cocktails')}>
-          🍸 Cocktails
-        </button>
-        <button className={`tab-btn${!isCocktails ? ' active' : ''}`} onClick={() => switchDrinkType('mocktails')}>
-          🥤 Mocktails
-        </button>
-      </div>
-
-      {/* ── Sub tabs ── */}
-      <div className="tab-nav mb-2" style={{ borderBottom: '1px solid var(--border)', marginTop: '-0.5rem' }}>
-        <button className={`tab-btn${subTab === 'drinks' ? ' active' : ''}`} style={{ fontSize: '0.78rem' }}
-          onClick={() => setSubTab('drinks')}>Drinks</button>
-        <button className={`tab-btn${subTab === 'categories' ? ' active' : ''}`} style={{ fontSize: '0.78rem' }}
-          onClick={() => setSubTab('categories')}>Categories</button>
+      <div className="flex gap-1 mb-2" style={{ flexWrap: 'wrap' }}>
+        <div className="seg">
+          <button className={isCocktails ? 'active' : ''} onClick={() => switchDrinkType('cocktails')}>Cocktails</button>
+          <button className={!isCocktails ? 'active' : ''} onClick={() => switchDrinkType('mocktails')}>Mocktails</button>
+        </div>
+        <div className="seg">
+          <button className={subTab === 'drinks' ? 'active' : ''} onClick={() => setSubTab('drinks')}>Drinks</button>
+          <button className={subTab === 'categories' ? 'active' : ''} onClick={() => setSubTab('categories')}>Categories</button>
+        </div>
       </div>
 
       {/* ══ COCKTAILS ══ */}
@@ -673,37 +676,34 @@ export default function CocktailMenuDashboard({ embedded = false }) {
             return (
               <div key={cat.id} className="card mb-2">
                 <div className="flex-between mb-1">
-                  <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>{cat.label}</h3>
+                  <h3 style={{ margin: 0 }}>{cat.label}</h3>
                   <button className="btn btn-sm btn-secondary" onClick={() => {
                     setAddCocktailCategory(cat.id);
                     setAddCocktailError('');
                     setAddCocktailFieldErrors({});
-                    setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '', upgrade_addon_slugs: '' });
+                    setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', upgrade_addon_slugs: '' });
                   }}>+ Add Cocktail</button>
                 </div>
 
                 {addCocktailCategory === cat.id && (
-                  <div className="card mb-1" style={{ background: 'var(--cream)' }}>
+                  <div className="card mb-1">
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
                       <div>
-                        <input className="form-input" placeholder="Name *" value={newCocktailForm.name}
+                        <input className="input" placeholder="Name *" value={newCocktailForm.name}
                           onChange={e => setNewCocktailForm(p => ({ ...p, name: e.target.value }))} />
                         <FieldError error={addCocktailFieldErrors?.name} />
                       </div>
-                      <input className="form-input" placeholder="Emoji" value={newCocktailForm.emoji}
+                      <input className="input" placeholder="Emoji" value={newCocktailForm.emoji}
                         onChange={e => setNewCocktailForm(p => ({ ...p, emoji: e.target.value }))} />
                     </div>
-                    <input className="form-input mb-1" placeholder="Description" value={newCocktailForm.description}
+                    <input className="input mb-1" placeholder="Description" value={newCocktailForm.description}
                       onChange={e => setNewCocktailForm(p => ({ ...p, description: e.target.value }))} />
-                    <select className="form-input mb-1" value={newCocktailForm.base_spirit}
+                    <select className="input mb-1" value={newCocktailForm.base_spirit}
                       onChange={e => setNewCocktailForm(p => ({ ...p, base_spirit: e.target.value }))}>
                       <option value="">Base Spirit (optional)</option>
                       {SPIRIT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
-                    <input className="form-input mb-1" placeholder="Ingredients (comma-separated, e.g. Vodka, Lime Juice, Sprite)"
-                      value={newCocktailForm.ingredients}
-                      onChange={e => setNewCocktailForm(p => ({ ...p, ingredients: e.target.value }))} />
-                    <input className="form-input mb-1"
+                    <input className="input mb-1"
                       placeholder="Upgrade addon slugs (CSV, e.g. specialty-vermouths, specialty-bitter-aperitifs)"
                       title="Comma-separated addon slugs to charge when the package doesn't cover them"
                       value={newCocktailForm.upgrade_addon_slugs}
@@ -736,7 +736,6 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                         category_id: c.category_id || '',
                         is_active: c.is_active,
                         base_spirit: c.base_spirit || '',
-                        ingredients: (c.ingredients || []).join(', '),
                         upgrade_addon_slugs: Array.isArray(c.upgrade_addon_slugs) ? c.upgrade_addon_slugs.join(', ') : (c.upgrade_addon_slugs || ''),
                       });
                       setEditCocktailError('');
@@ -758,7 +757,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       {isCocktails && subTab === 'categories' && (
         <div className="card">
           <div className="flex-between mb-2">
-            <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>Cocktail Categories</h3>
+            <h3 style={{ margin: 0 }}>Cocktail Categories</h3>
             <button className="btn btn-sm" onClick={() => {
               setShowAddCocktailCat(true);
               setAddCocktailCatError('');
@@ -767,14 +766,14 @@ export default function CocktailMenuDashboard({ embedded = false }) {
           </div>
           <FormBanner error={editCocktailCatError} fieldErrors={editCocktailCatFieldErrors} />
           {showAddCocktailCat && (
-            <div className="card mb-2" style={{ background: 'var(--cream)' }}>
+            <div className="card mb-2">
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
                 <div>
-                  <input className="form-input" placeholder="Label *" value={newCocktailCatForm.label}
+                  <input className="input" placeholder="Label *" value={newCocktailCatForm.label}
                     onChange={e => setNewCocktailCatForm(p => ({ ...p, label: e.target.value }))} />
                   <FieldError error={addCocktailCatFieldErrors?.label} />
                 </div>
-                <input className="form-input" placeholder="ID (auto if blank)" value={newCocktailCatForm.id}
+                <input className="input" placeholder="ID (auto if blank)" value={newCocktailCatForm.id}
                   onChange={e => setNewCocktailCatForm(p => ({ ...p, id: e.target.value }))} />
               </div>
               <FormBanner error={addCocktailCatError} fieldErrors={addCocktailCatFieldErrors} />
@@ -814,7 +813,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
             return (
               <div key={cat.id} className="card mb-2">
                 <div className="flex-between mb-1">
-                  <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>{cat.label}</h3>
+                  <h3 style={{ margin: 0 }}>{cat.label}</h3>
                   <button className="btn btn-sm btn-secondary" onClick={() => {
                     setAddMocktailCategory(cat.id);
                     setAddMocktailError('');
@@ -824,17 +823,17 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                 </div>
 
                 {addMocktailCategory === cat.id && (
-                  <div className="card mb-1" style={{ background: 'var(--cream)' }}>
+                  <div className="card mb-1">
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
                       <div>
-                        <input className="form-input" placeholder="Name *" value={newMocktailForm.name}
+                        <input className="input" placeholder="Name *" value={newMocktailForm.name}
                           onChange={e => setNewMocktailForm(p => ({ ...p, name: e.target.value }))} />
                         <FieldError error={addMocktailFieldErrors?.name} />
                       </div>
-                      <input className="form-input" placeholder="Emoji" value={newMocktailForm.emoji}
+                      <input className="input" placeholder="Emoji" value={newMocktailForm.emoji}
                         onChange={e => setNewMocktailForm(p => ({ ...p, emoji: e.target.value }))} />
                     </div>
-                    <input className="form-input mb-1" placeholder="Description" value={newMocktailForm.description}
+                    <input className="input mb-1" placeholder="Description" value={newMocktailForm.description}
                       onChange={e => setNewMocktailForm(p => ({ ...p, description: e.target.value }))} />
                     <FormBanner error={addMocktailError} fieldErrors={addMocktailFieldErrors} />
                     <div className="flex gap-1">
@@ -881,7 +880,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       {!isCocktails && subTab === 'categories' && (
         <div className="card">
           <div className="flex-between mb-2">
-            <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>Mocktail Categories</h3>
+            <h3 style={{ margin: 0 }}>Mocktail Categories</h3>
             <button className="btn btn-sm" onClick={() => {
               setShowAddMocktailCat(true);
               setAddMocktailCatError('');
@@ -890,14 +889,14 @@ export default function CocktailMenuDashboard({ embedded = false }) {
           </div>
           <FormBanner error={editMocktailCatError} fieldErrors={editMocktailCatFieldErrors} />
           {showAddMocktailCat && (
-            <div className="card mb-2" style={{ background: 'var(--cream)' }}>
+            <div className="card mb-2">
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
                 <div>
-                  <input className="form-input" placeholder="Label *" value={newMocktailCatForm.label}
+                  <input className="input" placeholder="Label *" value={newMocktailCatForm.label}
                     onChange={e => setNewMocktailCatForm(p => ({ ...p, label: e.target.value }))} />
                   <FieldError error={addMocktailCatFieldErrors?.label} />
                 </div>
-                <input className="form-input" placeholder="ID (auto if blank)" value={newMocktailCatForm.id}
+                <input className="input" placeholder="ID (auto if blank)" value={newMocktailCatForm.id}
                   onChange={e => setNewMocktailCatForm(p => ({ ...p, id: e.target.value }))} />
               </div>
               <FormBanner error={addMocktailCatError} fieldErrors={addMocktailCatFieldErrors} />
