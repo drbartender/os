@@ -1,0 +1,6 @@
+Transaction ID,Date,Time (UTC),Type,Status,Note,From,To,Amount (total),Amount (tip),Amount (tax),Amount (net),Amount (fee),Tax Rate,Tax Exempt,Funding Source,Destination,Beginning Balance,Ending Balance,Statement Period Venmo Fees,Terminal Location,Year to Date Venmo Fees,Disclaimer
+,,,,,,,,,,,,,,,,,$0.00,,,,,
+"""1111111111111111111""",04/12/2025,15:00:00,Payment,Complete,Testman DrB 4/12,Dr. Bartending LLC,Test Person,- $105.00,0,0,0,0,0,FALSE,Chase Personal Checking *6835,(None),0,0,0,Venmo,0,(None)
+"""2222222222222222222""",04/13/2025,16:00:00,Payment,Complete,Thanks for the drinks,Test Friend,Dr. Bartending LLC,+ $50.00,0,0,0,0,0,FALSE,Chase Personal Checking *6835,(None),0,0,0,Venmo,0,(None)
+"""3333333333333333333""",04/14/2025,17:00:00,Merchant Transaction,Complete,"Supplies, with a comma",Dr. Bartending LLC,Test Merchant,- $8.00,0,0,0,0,0,FALSE,Chase Personal Checking *6835,(None),0,0,0,Venmo,0,"Disclaimer text, with a comma and
+an embedded newline"

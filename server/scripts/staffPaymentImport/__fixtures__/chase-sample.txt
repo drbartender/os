@@ -1,0 +1,15 @@
+                                          Account Statement
+                                          Test Business LLC
+
+
+ELECTRONIC WITHDRAWALS
+
+08/03           Zelle Payment To Test Freyer Jpm99Test123                                       200.00
+08/03           Orig CO Name:Venmo               Orig ID:0000000000 Desc Date:250803 CO Entry   157.50
+                Descr:Payment   Sec:Web    Trace#:000000000000000 Eed:250803    Ind ID:0000000000000
+08/04           Payment Sent        08/04 Cash App*Test Person Oakland CA Card 0000              400.00
+08/05           Orig CO Name:Test Bank Name      Orig ID:000000000C Desc Date:  CO Entry Descr:Iat   241.11
+                Paypalsec:Web    Trace#:000000000000000 Eed:250805    Ind ID:0000000000000
+08/06           Ordinary Merchant Debit Card 0000                                                 42.00
+
+                                          Account Statement

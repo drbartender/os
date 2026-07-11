@@ -1,0 +1,4 @@
+ID,Date,Amount,Category,Payee,Reference,Booking: Title,Booking: Date
+100,2025-04-12,105.00,Staff Payment,Test Person,ref1,Smith Wedding,2025-04-11
+101,2025-05-01,250.00,Staff Payment,Test Buddy,ref2,Doe Party,2025-04-30
+102,2025-06-15,60.00,Staff Payment,Test Newperson,ref3,,

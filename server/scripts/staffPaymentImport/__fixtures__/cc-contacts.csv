@@ -1,0 +1,4 @@
+ID,Name,First Name,Last Name,Email,Phone,Roles,Staff Events: Count
+1,Test Person,Test,Person,test.person@example.com,(555) 100-2000,Bartender,12
+2,Test Freyer,Test,Freyer,test.freyer@example.com,555-100-2001,Bartender,8
+3,Test Buddy,Test,Buddy,test.buddy@example.com,,Barback,3
