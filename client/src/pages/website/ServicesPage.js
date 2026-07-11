@@ -8,13 +8,14 @@ const FORMULAS = [
     t: 'BYOB Bar',
     tag: 'most popular',
     starting: 'from $350',
-    body: "You supply the bottles (we'll send a shopping list); we supply the bar. Tools, glassware, garnish prep, ice management, and BASSET-trained pros to pour it all night.",
+    body: "You supply the bottles (we'll send a shopping list); we bring the tools, glassware, garnish prep, ice management, and BASSET-trained pros to pour it all night.",
     includes: [
       ['Bartenders', '1–4 BASSET-certified'],
       ['Tools & glassware', 'pro shaker kit · jiggers'],
       ['Garnish prep', 'cut to spec'],
       ['Shopping list', 'sent 2 weeks prior'],
       ['Ice & cups', 'optional add-on'],
+      ['Portable bar', 'optional add-on · from $50'],
       ['Bespoke menu', 'two signature drinks · included'],
     ],
     photo: '/images/marketing/service-byob-bar.jpg',
@@ -58,7 +59,7 @@ const FORMULAS = [
 
 const ADDONS = [
   ['Smoke Bubble', '+$8/drink', 'Edible-smoke globe over the cocktail. Pop-and-pour theater.'],
-  ['Pop-up Bar Rental', 'from $250', 'Portable bar delivered, set up, and broken down. Several styles available.'],
+  ['Pop-up Bar Rental', 'from $50', 'Portable bar delivered, set up, and broken down. Several styles available.'],
   ['Espresso Service', '+$450', 'Pull shots for your espresso martinis from a real machine.'],
   ['Custom Glassware', 'from $4/ea', 'Etched coupe or rocks glass with your monogram or date.'],
 ];
