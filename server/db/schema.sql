@@ -744,7 +744,7 @@ WHERE slug = 'zero-proof-spirits' AND description = 'Premium zero-proof spirit a
 -- fresh DBs get the new text from the INSERT above, so this is a no-op there.
 UPDATE service_addons
 SET description = 'Cointreau, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur: the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.'
-WHERE slug = 'specialty-niche-liqueurs' AND description = 'Cointreau, green Chartreuse, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur: the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.';
+WHERE slug = 'specialty-niche-liqueurs' AND description = 'Cointreau, green Chartreuse, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur — the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.';
 
 -- Polished descriptions were previously applied unconditionally on every boot,
 -- clobbering any admin-dashboard edits. The INSERT above seeds reasonable
