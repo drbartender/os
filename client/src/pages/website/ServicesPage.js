@@ -8,12 +8,13 @@ const FORMULAS = [
     t: 'BYOB Bar',
     tag: 'most popular',
     starting: 'from $350',
-    body: "You supply the bottles (we'll send a shopping list); we bring the tools, glassware, garnish prep, ice management, and BASSET-trained pros to pour it all night.",
+    body: "You supply the bottles (we'll send a shopping list once your menu is set); we bring the bar kit, cooler, garnish prep, and the BASSET-trained pros to pour it all night.",
     includes: [
-      ['Bartenders', '1–4 BASSET-certified'],
-      ['Tools & glassware', 'pro shaker kit · jiggers'],
+      ['Bartenders', 'BASSET-certified'],
+      ['Bar kit & cooler', 'shaker · jigger · spoon · knife · mat'],
       ['Garnish prep', 'cut to spec'],
-      ['Shopping list', 'sent 2 weeks prior'],
+      ['Shopping list', 'sent when your menu is set'],
+      ['Glassware', 'optional add-on'],
       ['Ice & cups', 'optional add-on'],
       ['Portable bar', 'optional add-on · from $50'],
       ['Bespoke menu', 'two signature drinks · included'],
@@ -26,13 +27,14 @@ const FORMULAS = [
     t: 'Hosted Bar',
     tag: 'full service',
     starting: 'from $18/guest',
-    body: "Full-service bar. We bring everything: booze, ice, mixers, garnish, glassware, cups, the whole built bar, and the BASSET-trained staff to run it. You meet your guests; we pour.",
+    body: "Full-service bar. We bring the spirits, mixers, ice, garnish, cups, napkins, and the BASSET-trained staff to run it. You meet your guests; we pour.",
     includes: [
-      ['Spirits & mixers', 'curated to your menu'],
-      ['Bartenders', '2–6 BASSET-certified'],
-      ['Pop-up bar', 'rental available'],
+      ['Spirits & mixers', 'a set selection · swaps by request'],
+      ['Bartenders', 'BASSET-certified'],
+      ['Cups, napkins, ice', 'stir sticks included'],
       ['Garnish prep', 'fresh, day-of'],
-      ['Glassware & cups', 'compostable available'],
+      ['Glassware', 'optional add-on'],
+      ['Pop-up bar', 'rental available'],
       ['Bespoke menu', 'two signature drinks · included'],
     ],
     photo: '/images/marketing/service-hosted-bar.jpg',
@@ -58,8 +60,10 @@ const FORMULAS = [
 ];
 
 const ADDONS = [
-  ['Smoke Bubble', '+$8/drink', 'Edible-smoke globe over the cocktail. Pop-and-pour theater.'],
+  ['Smoke Bubble', '+$8/drink', 'Smoke globe over the cocktail. Pop-and-pour theater.'],
   ['Pop-up Bar Rental', 'from $50', 'Portable bar delivered, set up, and broken down. Several styles available.'],
+  ['The Foundation', 'from $3/guest', 'BYOB supply bundle: ice delivery, bottled water, premium cups, napkins, and stir sticks. No mixers or garnishes.'],
+  ['The Full Compound', 'from $8/guest', 'The Foundation plus a complete mixer selection, premium garnish package, simple syrup, and bitters.'],
 ];
 
 function ServiceDetails({ s }) {
