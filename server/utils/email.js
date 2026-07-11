@@ -50,6 +50,17 @@ function isQuotaError(error) {
  * @returns {Promise<{id: string}>}
  */
 async function sendEmail({ to, subject, html, text, from, replyTo, attachments, meta }) {
+  // RFC-2606 `.invalid` recipients are import placeholders (staff-payment
+  // import, spec 2026-07-10) — a send to one is always a bug, so drop them
+  // before any provider/gating logic.
+  const recipients = (Array.isArray(to) ? to : [to])
+    .filter((a) => !String(a).toLowerCase().trim().endsWith('.invalid'));
+  if (recipients.length === 0) {
+    console.log(`[email] skipped: all recipients .invalid → ${to} | Subject: ${subject}`);
+    return { id: 'skipped-invalid' };
+  }
+  to = recipients.length === 1 ? recipients[0] : recipients;
+
   if (!resend || !notificationsEnabled()) {
     const why = !resend ? 'RESEND_API_KEY not set' : 'notifications gated off';
     console.log(`[DEV] Email skipped (${why}) → ${to} | Subject: ${subject}${attachments ? ` (with ${attachments.length} attachment(s))` : ''}`);
@@ -84,6 +95,21 @@ async function sendEmail({ to, subject, html, text, from, replyTo, attachments, 
  * @returns {Promise<Array<{id: string}>>}
  */
 async function sendBatchEmails(emails) {
+  // Same `.invalid` guard as sendEmail (spec 2026-07-10). Filter placeholder
+  // recipients per message; a message left with no real recipient is dropped
+  // from the batch entirely — never sent, never thrown. Runs before the
+  // dev-skip mapping so a dropped message produces no return entry either.
+  emails = emails.reduce((kept, e) => {
+    const recipients = (Array.isArray(e.to) ? e.to : [e.to])
+      .filter((a) => !String(a).toLowerCase().trim().endsWith('.invalid'));
+    if (recipients.length === 0) {
+      console.log(`[email] batch: dropped message with all-.invalid recipients → ${e.to} | Subject: ${e.subject}`);
+      return kept;
+    }
+    kept.push({ ...e, to: recipients.length === 1 ? recipients[0] : recipients });
+    return kept;
+  }, []);
+
   if (!resend || !notificationsEnabled()) {
     const why = !resend ? 'RESEND_API_KEY not set' : 'notifications gated off';
     console.log(`[DEV] Batch email skipped (${why}) — ${emails.length} emails`);

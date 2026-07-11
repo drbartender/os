@@ -3741,3 +3741,38 @@ INSERT INTO par_items (id, item, size, qty_per_100, section, role, spirit_key, s
   ('lemonade-real',      'Lemonade (REAL)',      '1G',      1,   'everythingElse', 'mixer',   NULL, NULL, '{}',                                           '{lemonade}',                                                    false, 240),
   ('sour-mix',           'Sour Mix',             '64oz',    1,   'everythingElse', 'mixer',   NULL, NULL, '{}',                                           '{sour,"sour mix"}',                                             false, 250)
 ON CONFLICT (id) DO NOTHING;
+
+-- ─── Staff payment history: imported pre-OS-payroll ledger (spec 2026-07-10) ──
+-- Financial facts immutable; attribution (contractor_id, event_label, memo)
+-- re-runnable via ON CONFLICT DO UPDATE. Historical payments made via
+-- Venmo/CashApp/Zelle/PayPal before the 2026-06-02 payroll boundary
+-- (boundary_exception = sheet-approved post-boundary pay for pre-boundary
+-- work that matches NO payout). NEVER joins pay_periods/payouts at write
+-- time; display surfaces blend the two eras with plain SELECT sums.
+-- Supersedes the write-only legacy_cc_payouts (same CC source, overlapping
+-- dates): earnings/tax surfaces read THIS table only, never both.
+CREATE TABLE IF NOT EXISTS staff_payment_history (
+  id              SERIAL PRIMARY KEY,
+  contractor_id   INTEGER NOT NULL REFERENCES users(id),
+  paid_on         DATE NOT NULL,
+  amount_cents    INTEGER NOT NULL CHECK (amount_cents > 0),
+  platform        TEXT NOT NULL CHECK (platform IN ('venmo','cashapp','zelle','ach','paypal','cash_other')),
+  source_account  TEXT NOT NULL,
+  external_txn_id TEXT,
+  payee_handle    TEXT,
+  memo            TEXT,
+  event_label     TEXT,
+  boundary_exception BOOLEAN NOT NULL DEFAULT false,
+  row_fingerprint TEXT NOT NULL UNIQUE,
+  source_file     TEXT NOT NULL,
+  imported_at     TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT sph_before_boundary CHECK (paid_on < DATE '2026-06-02' OR boundary_exception)
+);
+CREATE INDEX IF NOT EXISTS idx_sph_contractor_paid_on
+  ON staff_payment_history(contractor_id, paid_on);
+
+-- Per-person 1099 exclusion (foreign contractors e.g. Zul: W-8BEN, not 1099-NEC)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS exclude_from_1099 BOOLEAN DEFAULT false;
+-- Import provenance marker: admin-list chip, audit, undo path; also keeps
+-- imported 'deactivated' users distinguishable from legacy CC stubs (cc_id).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS import_source TEXT;
