@@ -130,7 +130,7 @@ function formatBalanceDueDate(proposal) {
 function buildDrinksSummary(proposal) {
   const snap = proposal.pricing_snapshot || {};
   if (snap && snap.package && snap.package.name) {
-    return `${snap.package.name} — selections in your portal`;
+    return `${snap.package.name}, selections in your portal`;
   }
   return 'Drink plan submitted';
 }
