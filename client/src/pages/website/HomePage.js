@@ -37,7 +37,7 @@ function FadeUp({ children, className = '', delay = 0, ...props }) {
 /* ── Data ── */
 const STATS = [
   { k: 'Liability', v: 'Gen + Liq', sub: 'fully insured' },
-  { k: 'Years', v: '20+', sub: 'behind the stick' },
+  { k: 'Years', v: '20+', sub: 'in the industry' },
   { k: 'Coverage', v: 'IL · IN · MI', sub: 'travels regional' },
   { k: 'Avg. Quote', v: '5 min', sub: 'live pricing' },
 ];
@@ -60,7 +60,7 @@ const SERVICES = [
   {
     n: 'Formula III',
     t: 'Cocktail Classes',
-    body: 'Private classes: kits, syrups, garnishes, and a host with twenty-five years behind the stick. Two hours, eight guests.',
+    body: 'Private classes: kits, syrups, garnishes, and a host with twenty years in the industry. Two hours, eight guests.',
     photo: '/images/marketing/service-cocktail-class.jpg',
     alt: 'A flight of cocktails from a private Dr. Bartender cocktail class',
   },
@@ -79,29 +79,29 @@ const CREDENTIALS = [
   ['Based', 'North Side, Chicago. Travels'],
 ];
 
-/* Sample reviews shown only while the live Thumbtack ingestion hasn't populated
- * the database yet. Replaced 1:1 by real /public/reviews data once available. */
+/* Real client reviews used as the fallback until the live Thumbtack feed
+ * populates. Replaced 1:1 by real /public/reviews data once available. */
 const FALLBACK_REVIEWS = [
   {
-    id: 'sample-1',
-    name: 'Eleanor V.',
-    text: 'They transformed our garden party into a Victorian speakeasy. The smoked rosemary gin fizz was nothing short of sorcery.',
+    id: 'review-sara-g',
+    name: 'Sara G.',
+    text: 'Dallas was fantastic. He arrived early, set up quickly, and kept the bar running smoothly all night. The signature cocktails were a hit. Delicious, consistent, and beautifully made, and our guests loved him.',
     rating: 5,
-    role: 'Wedding · 120 guests',
+    role: 'Birthday · 21st',
   },
   {
-    id: 'sample-2',
-    name: 'James & Sarah K.',
-    text: 'The attention to detail was extraordinary, from the hand-labelled bottles to the copper jiggers. Our wedding guests are still talking about it.',
+    id: 'review-mano-s',
+    name: 'Mano S.',
+    text: 'He was on time and did a great job setting up. Kept the drinks coming all night long! I highly recommend him for any occasion you need a bartender.',
     rating: 5,
-    role: 'Wedding · 180 guests',
+    role: 'Private event',
   },
   {
-    id: 'sample-3',
-    name: 'Marcus T.',
-    text: 'Hired them for a corporate holiday party and it was exactly what we needed: professional, well-paced, and the menu was dialed in.',
+    id: 'review-megan-m',
+    name: 'Megan M.',
+    text: "Dallas was amazing! We had a schedule mix-up, completely my fault, and he made it work. All the guests raved about the service, and he made my 50th birthday even better. Can't recommend them enough!",
     rating: 5,
-    role: 'Corporate · 80 guests',
+    role: 'Birthday · 50th',
   },
 ];
 
@@ -183,8 +183,8 @@ export default function HomePage() {
                 <span className="ws-press-tagline-rule" aria-hidden="true" />
               </div>
               <p className="ws-press-lede">
-                An apothecary running a contemporary cocktail program. Twenty years behind the
-                stick, distilled into a calm, instant proposal, for weddings and events across{' '}
+                An apothecary running a contemporary cocktail program. Twenty years in the
+                industry, distilled into a calm, instant proposal, for weddings and events across{' '}
                 <em>Illinois, Indiana,</em> and <em>Michigan.</em>
               </p>
               <div className="ws-press-hero-cta">
@@ -248,7 +248,7 @@ export default function HomePage() {
             <div>
               <span className="kicker">No. 02 · About The Doctor</span>
               <h2 className="ws-press-h2">
-                Twenty-five years in service.<br />
+                Twenty years in the industry.<br />
                 <em>I'm the Dr. in Dr. Bartender.</em>
               </h2>
               <p>

@@ -7,7 +7,7 @@ const FORMULAS = [
     num: 'Formula I',
     t: 'BYOB Bar',
     tag: 'most popular',
-    starting: 'from $950',
+    starting: 'from $350',
     body: "You supply the bottles (we'll send a shopping list); we supply the bar. Tools, glassware, garnish prep, ice management, and BASSET-trained pros to pour it all night.",
     includes: [
       ['Bartenders', '1–4 BASSET-certified'],
@@ -24,7 +24,7 @@ const FORMULAS = [
     num: 'Formula II',
     t: 'Hosted Bar',
     tag: 'full service',
-    starting: 'from $1,800',
+    starting: 'from $18/guest',
     body: "Full-service bar. We bring everything: booze, ice, mixers, garnish, glassware, cups, the whole built bar, and the BASSET-trained staff to run it. You meet your guests; we pour.",
     includes: [
       ['Spirits & mixers', 'curated to your menu'],
@@ -42,7 +42,7 @@ const FORMULAS = [
     t: 'Cocktail Classes',
     tag: 'private',
     starting: 'from $640',
-    body: 'Private group classes for 4–12 guests. We bring kits, syrups, garnishes, glassware, and one host with 25 years behind the stick. Two hours, three drinks per guest, lots of laughter.',
+    body: 'Private group classes for 4–12 guests. We bring kits, syrups, garnishes, glassware, and one host with twenty years in the industry. Two hours, three drinks per guest, lots of laughter.',
     includes: [
       ['Group size', '4–12 guests'],
       ['Drinks per guest', '3 cocktails · tasting'],

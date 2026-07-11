@@ -30,7 +30,7 @@ export default function AboutPage() {
           <div className="ws-press-eyebrow">No. 02 · The Proprietor</div>
           <h1 className="ws-press-pagehero-title">The Doctor is in.</h1>
           <p className="ws-press-pagehero-sub">
-            Twenty-five years in service, distilled into one calm bar at your event.
+            Twenty years in the industry, distilled into one calm bar at your event.
           </p>
         </div>
       </section>
@@ -107,7 +107,7 @@ export default function AboutPage() {
         <div className="ws-wrap">
           <div className="ws-press-section-head">
             <span className="kicker center">No. 02 · A Catalogue of Years</span>
-            <h2 className="ws-press-h2">Twenty-five years, abridged.</h2>
+            <h2 className="ws-press-h2">Twenty years, abridged.</h2>
           </div>
           <div className="card ws-press-career-card">
             <div className="ws-press-career-timeline">

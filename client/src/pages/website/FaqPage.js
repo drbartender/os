@@ -12,8 +12,8 @@ const FAQ_CATEGORIES = [
         a: (
           <>
             Pricing depends on your guest count, event duration, and package choice.
-            Our BYOB packages start around $200–400, while hosted (we provide alcohol)
-            packages start at $25–45 per guest.{' '}
+            Our BYOB package starts at $350 (up to 4 hours), while hosted packages (we provide
+            the alcohol) start at $12–40 per guest depending on tier.{' '}
             <Link to="/quote">Use our quote tool</Link> to get exact pricing for your
             event in seconds.
           </>
@@ -34,7 +34,7 @@ const FAQ_CATEGORIES = [
       },
       {
         q: "What's your cancellation policy?",
-        a: 'Deposits are non-refundable but can be applied to a rescheduled date within 12 months. Final payments are due before the event.',
+        a: "Your $100 deposit is non-refundable. With at least 60 days' notice, we can usually apply it toward a new date within 12 months. If you need to cancel closer in, the full terms in your event services agreement apply. Reach out and we'll always try to work with you.",
       },
       {
         q: 'Is there a minimum guest count?',
@@ -115,7 +115,7 @@ const FAQ_CATEGORIES = [
         a: "Yes. Bartenders arrive early to set up and stay after to break down and clean the bar area. It's all included.",
       },
       {
-        q: 'Are your bartenders licensed and insured?',
+        q: 'Are your bartenders certified and insured?',
         a: 'Every bartender is BASSET-trained and vetted. We carry both general liability and liquor liability insurance. Certificate of insurance available on request.',
       },
     ],
@@ -126,7 +126,7 @@ const FAQ_CATEGORIES = [
     items: [
       {
         q: 'What time do bartenders arrive?',
-        a: 'Typically 30–60 minutes before your event start time for setup, depending on the size and complexity of the bar.',
+        a: 'Typically 30–60 minutes before your event start time, and up to 90 for larger or hosted builds that need more setup.',
       },
       {
         q: 'Can you accommodate dietary restrictions or allergies?',

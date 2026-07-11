@@ -13,7 +13,7 @@ export default function PrescriptionCard({ preview }) {
       {preview ? (
         <>
           <div className="wz-price-total">{formatCurrency(preview.total)}</div>
-          <div className="wz-price-sub">final · all-in · adjusts down for unused hours</div>
+          <div className="wz-price-sub">all-in · adjusts up or down for hours and add-ons</div>
           <div className="divider-ornate wz-price-divider"><span>breakdown</span></div>
           <div className="wz-price-breakdown">
             {preview.breakdown.map((item, i) => (

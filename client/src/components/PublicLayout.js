@@ -69,7 +69,7 @@ export default function PublicLayout({ children }) {
       {/* ── Utility strip ───────────────────────────────────── */}
       <div className="ws-utility">
         <div className="ws-utility-inner">
-          <span className="ws-utility-tag">Mixing Science with Celebration · Est. 2004 · Chicago</span>
+          <span className="ws-utility-tag">Mixing Science with Celebration · Est. 2024 · Chicago</span>
           <span className="ws-utility-right">
             <span className="ws-utility-booking">⚗ Now booking 2026 weddings</span>
             <Link
@@ -153,7 +153,7 @@ export default function PublicLayout({ children }) {
               </div>
             </div>
             <p className="ws-footer-blurb">
-              An apothecary running a contemporary cocktail program. Chicago, est. 2004.
+              An apothecary running a contemporary cocktail program. Chicago, est. 2024.
             </p>
 
             <div className="ws-footer-col">
