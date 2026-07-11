@@ -595,7 +595,7 @@ INSERT INTO service_packages (slug, name, description, category, pricing_type, b
     '["{bartenders} professional instructor{bartenders_s}","Setup & breakdown","Cooler","Menu planning session","Precise alcohol shopping list","Custom menu graphic","Digital Curriculum (recipes & instructions)","Up to {hours} hours of service","$2 million liquor liability insurance"]', 2),
   ('the-base-compound', 'The Base Compound', 'Minimal inputs. Maximum efficiency. A stripped-down formula ideal for casual environments and efficient service, delivering a solid range without experimental overload.', 'hosted', 'per_guest',
     NULL, 18, 5, 50, NULL, 23, 5, 1, 'full_bar', 500,
-    '["Two Signature Cocktails — Pre-formulated in our lab for rapid, reliable deployment","Miller Lite","Michelob Ultra","One Red Wine — balanced, medium-bodied","One White Wine — bright and approachable","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 3),
+    '["Two Signature Cocktails (pre-formulated in our lab for rapid, reliable deployment)","Miller Lite","Michelob Ultra","One Red Wine (balanced, medium-bodied)","One White Wine (bright and approachable)","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 3),
   ('the-midrange-reaction', 'The Midrange Reaction', 'More variables. Still controlled. This formula expands the spirit selection and mixer profile, offering crowd-pleasing flexibility while staying efficient and focused. Ideal for weddings, milestone events, and hosts who want to level up without losing control of the experiment.', 'hosted', 'per_guest',
     NULL, 22, 6, 50, NULL, 27, 6, 1, 'full_bar', 600,
     '["Svedka Vodka","New Amsterdam Gin","Bacardi Superior Rum","Jim Beam Bourbon","Margaritaville Tequila","Dewar''s Scotch","Miller Lite, Michelob Ultra","One Red Wine, One White Wine","Coke, Diet Coke, Sprite","Soda Water & Tonic","Cranberry, Orange & Pineapple Juices","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 4),
@@ -613,7 +613,7 @@ INSERT INTO service_packages (slug, name, description, category, pricing_type, b
     '["3-4 signature mocktail recipes","All mixers, garnishes, syrups","Premium presentation","Full bar setup","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 8),
   ('the-primary-culture', 'The Primary Culture', 'Bare Bones. Fully Functional. A simple yet stable foundation. Great for casual parties and backyard weddings where beer and wine get the job done.', 'hosted', 'per_guest',
     NULL, 12, 4, 50, NULL, 17, 4, 1, 'beer_and_wine', 400,
-    '["Miller Lite","Michelob Ultra","One Red Wine & One White Wine","Infused Water Station — citrus, cucumber, or herbs depending on season","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 9),
+    '["Miller Lite","Michelob Ultra","One Red Wine & One White Wine","Infused Water Station (citrus, cucumber, or herbs depending on season)","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 9),
   ('the-refined-reaction', 'The Refined Reaction', 'A polished experiment in crowd-pleasing sophistication. Still streamlined, but with a noticeable bump in quality. Perfect for weddings, cocktail hours, and milestone celebrations.', 'hosted', 'per_guest',
     NULL, 14, 5, 50, NULL, 19, 5, 1, 'beer_and_wine', 400,
     '["Stella Artois","Corona Extra","One Red & One White Wine","Sparkling Wine","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 10),
@@ -665,11 +665,11 @@ INSERT INTO service_addons (slug, name, description, billing_type, rate, extra_h
   ('full-mixers-only', 'Full Mixers', 'Complete mixer selection. Does not include Foundation items.', 'per_guest', 4.50, NULL, 'byob', 8),
   ('garnish-package-only', 'Garnish Package', 'Premium garnish package (lemons, limes, oranges, cherries, olives).', 'per_100_guests', 50.00, NULL, 'byob', 9),
   ('champagne-toast', 'Champagne Toast', 'Champagne toast for all guests.', 'per_guest', 2.50, NULL, 'all', 10),
-  ('soft-drink-addon', 'Soft Drink Add-On', 'Required if more than 10 guests (or 20% of your headcount) will be drinking soft drinks on their own. Our hosted packages already include Coke, Diet Coke, Sprite, OJ, cranberry, pineapple, soda water, tonic, and grenadine — but those are stocked as mixers (1-3 oz per cocktail), not full pours. Kids, designated drivers, and guests sipping soda or juice straight go through stock fast and can leave your cocktail crowd dry. This add-on bumps up the soft drink supply so everyone stays happy — mixers stay flowing, and the non-drinkers get their own dedicated stash.', 'per_guest', 3.00, NULL, 'all', 20),
+  ('soft-drink-addon', 'Soft Drink Add-On', 'Required if more than 10 guests (or 20% of your headcount) will be drinking soft drinks on their own. Our hosted packages already include Coke, Diet Coke, Sprite, OJ, cranberry, pineapple, soda water, tonic, and grenadine, but those are stocked as mixers (1-3 oz per cocktail), not full pours. Kids, designated drivers, and guests sipping soda or juice straight go through stock fast and can leave your cocktail crowd dry. This add-on bumps up the soft drink supply so everyone stays happy: mixers stay flowing, and the non-drinkers get their own dedicated stash.', 'per_guest', 3.00, NULL, 'all', 20),
   ('pre-batched-mocktail', 'Pre-Batched Mocktail', 'A pre-batched non-alcoholic cocktail ready to pour. Great for events where you want a sophisticated NA option without the complexity of a full mocktail bar. Add more for variety.', 'per_guest', 1.50, NULL, 'all', 21),
   ('mocktail-bar', 'Mocktail Bar', 'Full mocktail bar with signature recipes.', 'per_guest_timed', 7.50, 2.00, 'all', 22),
   ('non-alcoholic-beer', 'Non-Alcoholic Beer', 'Non-alcoholic beer from Athletic Brewing: Upside Dawn (golden ale) and Free Wave Hazy IPA. Two varieties, served chilled at the bar.', 'per_guest', 4.00, NULL, 'hosted', 23),
-  ('zero-proof-spirits', 'Zero-Proof Spirits', 'Premium zero-proof spirits from Lyre''s — non-alcoholic versions of gin, whiskey, rum, and more, used to craft full-flavor NA cocktails.', 'per_guest', 5.00, NULL, 'hosted', 24),
+  ('zero-proof-spirits', 'Zero-Proof Spirits', 'Premium zero-proof spirits from Lyre''s: non-alcoholic versions of gin, whiskey, rum, and more, used to craft full-flavor NA cocktails.', 'per_guest', 5.00, NULL, 'hosted', 24),
   ('banquet-server', 'Banquet Server', 'Professional banquet server.', 'per_hour', 75.00, NULL, 'all', 41),
   ('flavor-blaster-rental', 'Flavor Blaster Rental', 'Flavor blaster equipment rental.', 'flat', 150.00, NULL, 'all', 35),
   ('handcrafted-syrups', 'Handcrafted Syrups', 'Single 750ml bottle of handcrafted syrup.', 'flat', 30.00, NULL, 'all', 30),
@@ -694,7 +694,7 @@ ON CONFLICT (slug) DO NOTHING;
 INSERT INTO service_addons (slug, name, description, billing_type, rate, extra_hour_rate, applies_to, sort_order, minimum_hours, category, requires_addon_slug) VALUES
   ('specialty-bitter-aperitifs', 'Bitter Aperitifs', 'Campari, Aperol, Cynar, and amaro. For Negronis, Boulevardiers, Paper Planes, and anything with a bitter backbone.', 'per_guest', 3.00, NULL, 'hosted', 35, NULL, 'craft_ingredients', NULL),
   ('specialty-vermouths', 'Vermouth & Fortified Wines', 'Sweet and dry vermouth plus Lillet Blanc. For Manhattans, Martinis, Negronis, and Corpse Revivers.', 'per_guest', 1.50, NULL, 'hosted', 36, NULL, 'craft_ingredients', NULL),
-  ('specialty-niche-liqueurs', 'Specialty Liqueurs', 'Cointreau, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur — the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.', 'per_guest', 2.50, NULL, 'hosted', 37, NULL, 'craft_ingredients', NULL),
+  ('specialty-niche-liqueurs', 'Specialty Liqueurs', 'Cointreau, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur: the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.', 'per_guest', 2.50, NULL, 'hosted', 37, NULL, 'craft_ingredients', NULL),
   ('specialty-mezcal', 'Mezcal', 'Smoky agave spirit for Smokey Piñas and mezcal-forward cocktails.', 'per_guest', 3.00, NULL, 'hosted', 38, NULL, 'craft_ingredients', NULL),
   ('specialty-cognac', 'Cognac', 'Aged French grape spirit for Sidecars and classic cognac builds.', 'per_guest', 4.00, NULL, 'hosted', 39, NULL, 'craft_ingredients', NULL)
 ON CONFLICT (slug) DO NOTHING;
@@ -725,7 +725,7 @@ UPDATE service_addons SET rate = 2.00 WHERE slug = 'pre-batched-mocktail';
 -- matches the old seed). Fresh DBs get the new text directly from the INSERT above,
 -- so this becomes a no-op there.
 UPDATE service_addons
-SET description = 'Required if more than 10 guests (or 20% of your headcount) will be drinking soft drinks on their own. Our hosted packages already include Coke, Diet Coke, Sprite, OJ, cranberry, pineapple, soda water, tonic, and grenadine — but those are stocked as mixers (1-3 oz per cocktail), not full pours. Kids, designated drivers, and guests sipping soda or juice straight go through stock fast and can leave your cocktail crowd dry. This add-on bumps up the soft drink supply so everyone stays happy — mixers stay flowing, and the non-drinkers get their own dedicated stash.'
+SET description = 'Required if more than 10 guests (or 20% of your headcount) will be drinking soft drinks on their own. Our hosted packages already include Coke, Diet Coke, Sprite, OJ, cranberry, pineapple, soda water, tonic, and grenadine, but those are stocked as mixers (1-3 oz per cocktail), not full pours. Kids, designated drivers, and guests sipping soda or juice straight go through stock fast and can leave your cocktail crowd dry. This add-on bumps up the soft drink supply so everyone stays happy: mixers stay flowing, and the non-drinkers get their own dedicated stash.'
 WHERE slug = 'soft-drink-addon' AND description = 'Soft drinks for all guests.';
 
 -- Gated description updates for NA beer & zero-proof spirits: endorse Athletic
@@ -736,15 +736,15 @@ SET description = 'Non-alcoholic beer from Athletic Brewing: Upside Dawn (golden
 WHERE slug = 'non-alcoholic-beer' AND description = 'NA beer selection for guests (Athletic Brewing, Heineken 0.0, etc.).';
 
 UPDATE service_addons
-SET description = 'Premium zero-proof spirits from Lyre''s — non-alcoholic versions of gin, whiskey, rum, and more, used to craft full-flavor NA cocktails.'
+SET description = 'Premium zero-proof spirits from Lyre''s: non-alcoholic versions of gin, whiskey, rum, and more, used to craft full-flavor NA cocktails.'
 WHERE slug = 'zero-proof-spirits' AND description = 'Premium zero-proof spirit alternatives for crafted NA cocktails (Seedlip, Lyre''s, etc.).';
 
 -- Gated: drop "green Chartreuse" from Specialty Liqueurs (too specialty to source
 -- reliably). Only rewrites the original seed text so any admin edit is preserved;
 -- fresh DBs get the new text from the INSERT above, so this is a no-op there.
 UPDATE service_addons
-SET description = 'Cointreau, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur — the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.'
-WHERE slug = 'specialty-niche-liqueurs' AND description = 'Cointreau, green Chartreuse, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur — the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.';
+SET description = 'Cointreau, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur: the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.'
+WHERE slug = 'specialty-niche-liqueurs' AND description = 'Cointreau, green Chartreuse, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur: the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.';
 
 -- Polished descriptions were previously applied unconditionally on every boot,
 -- clobbering any admin-dashboard edits. The INSERT above seeds reasonable
