@@ -60,8 +60,6 @@ const FORMULAS = [
 const ADDONS = [
   ['Smoke Bubble', '+$8/drink', 'Edible-smoke globe over the cocktail. Pop-and-pour theater.'],
   ['Pop-up Bar Rental', 'from $50', 'Portable bar delivered, set up, and broken down. Several styles available.'],
-  ['Espresso Service', '+$450', 'Pull shots for your espresso martinis from a real machine.'],
-  ['Custom Glassware', 'from $4/ea', 'Etched coupe or rocks glass with your monogram or date.'],
 ];
 
 function ServiceDetails({ s }) {
