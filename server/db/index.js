@@ -174,6 +174,26 @@ const IDEMPOTENT_PG_CODES = new Set([
   '42P07', '42P06', '42710', '42701', '42P16', '23505', '42704',
 ]);
 
+// Money-integrity indexes that MUST exist after a schema apply. A partial UNIQUE
+// index that fails to build on pre-existing duplicate data raises 23505, which the
+// IDEMPOTENT_PG_CODES swallow above treats as "already applied" — so a
+// silently-absent guard would boot clean with no alert (F7 review follow-up).
+const CRITICAL_INDEXES = ['uq_invoice_payments_positive_link'];
+
+// Returns the names of CRITICAL_INDEXES absent from the DB. Exported for unit
+// testing; called by initDb after the schema apply.
+async function findMissingCriticalIndexes(db = pool) {
+  // Scope to the public schema: index names are unique per schema, so a public
+  // hit is unambiguously the guard we mean, and a same-named index in another
+  // (backup/restore) schema can't mask a real absence in public.
+  const { rows } = await db.query(
+    "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname = ANY($1)",
+    [CRITICAL_INDEXES]
+  );
+  const present = new Set(rows.map((r) => r.indexname));
+  return CRITICAL_INDEXES.filter((name) => !present.has(name));
+}
+
 async function initDb() {
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
   const statements = splitStatements(schema);
@@ -199,6 +219,34 @@ async function initDb() {
         console.error(`Schema statement FAILED [${err.code || 'UNKNOWN'}]:`, err.message.split('\n')[0]);
       }
     }
+
+    // F7 review follow-up: assert money-integrity indexes actually exist. A UNIQUE
+    // INDEX build that hit pre-existing duplicate data would have raised 23505 and
+    // been swallowed as idempotent above, leaving the guard silently absent. Route
+    // any miss through the same unexpected-failure reporting (Sentry + loud log).
+    // Uses the held `client` (one-connection rule), not a bare pool checkout.
+    // Wrapped so a transient catalog error (a DB blip in the instant after the
+    // schema apply) routes into `unexpected` and boots with an alert, matching
+    // this file's alert-don't-wedge design — never a hard boot crash via start()'s
+    // process.exit(1), which would be strictly worse than the silent absence it guards.
+    try {
+      for (const name of await findMissingCriticalIndexes(client)) {
+        unexpected.push({
+          code: 'INTEGRITY_INDEX_ABSENT',
+          message: `money-integrity index missing after schema apply: ${name}`,
+          stmt: name,
+        });
+        console.error(`Money-integrity index MISSING after schema apply: ${name}`);
+      }
+    } catch (checkErr) {
+      unexpected.push({
+        code: 'INTEGRITY_INDEX_CHECK_FAILED',
+        message: `money-integrity index check failed: ${checkErr.message.split('\n')[0]}`,
+        stmt: 'findMissingCriticalIndexes',
+      });
+      console.error('Money-integrity index check FAILED (non-fatal):', checkErr.message.split('\n')[0]);
+    }
+
     if (unexpected.length > 0) {
       // Surface to Sentry so deploys with broken migrations are visible without
       // requiring someone to read server logs.
@@ -220,4 +268,4 @@ async function initDb() {
   }
 }
 
-module.exports = { pool, initDb, splitStatements };
+module.exports = { pool, initDb, splitStatements, findMissingCriticalIndexes };
