@@ -523,7 +523,7 @@ test('Case 8: addon_quantities x2 doubles the addon line and persists quantity',
     [x2Res.body.id, ADDITIONAL_BARTENDER_ID]
   );
   assert.equal(persisted.rows.length, 1, 'one proposal_addons row should be persisted');
-  assert.equal(persisted.rows[0].quantity, x2Addon.quantity,
+  assert.equal(Number(persisted.rows[0].quantity), x2Addon.quantity,
     'persisted quantity should equal the snapshot addon quantity');
   assert.equal(Number(persisted.rows[0].line_total), x2Addon.line_total,
     'persisted line_total should equal the snapshot addon line_total');
