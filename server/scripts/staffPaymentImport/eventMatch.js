@@ -41,7 +41,11 @@ function matchEvents(rows, { ccExpenses = [], ccBookings = [] } = {}, dict) {
     // a. CC expense exact match (payee cluster + exact amount + ≤5 days)
     const exp = ccExpenses.find((e) => e.amountCents === row.amountCents
       && keyFor(e.payee, dict) === payeeKey
-      && e.date && row.date && Math.abs(daysBetween(row.date, e.date)) <= 5);
+      && e.date && row.date
+      // null gap (unparseable date) must be a NON-match — Math.abs(null) is 0,
+      // which silently passed the window before dates were ISO-normalized.
+      && daysBetween(row.date, e.date) !== null
+      && Math.abs(daysBetween(row.date, e.date)) <= 5);
     if (exp && exp.bookingTitle) {
       const label = exp.bookingDate ? `${exp.bookingTitle} (${exp.bookingDate})` : exp.bookingTitle;
       return { ...row, eventLabel: label, eventEvidence: 'cc-expense' };

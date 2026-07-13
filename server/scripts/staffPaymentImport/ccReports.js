@@ -45,13 +45,21 @@ function loadContacts(filePath) {
   })).filter((c) => c.name);
 }
 
+// CC dates are MM-DD-YYYY; everything downstream (boundary compares, year
+// grouping, the ledger DATE insert, daysBetween) assumes ISO. Normalize at
+// the single load choke point so a CC date can never reach a money path raw.
+function ccDateToIso(v) {
+  const m = /^(\d{2})-(\d{2})-(\d{4})/.exec(String(v || '').trim());
+  return m ? `${m[3]}-${m[1]}-${m[2]}` : (v || '');
+}
+
 // CC expenses (report 4): ID,Date,Amount,Category,Payee,Reference,...,Booking: Title,Booking: Date,...
 function loadExpenses(filePath) {
   const { header, rows } = loadRecords(filePath);
   const get = indexer(header);
   return rows.filter((r) => r.length).map((r) => ({
     id: get(r, 'ID'),
-    date: get(r, 'Date'),
+    date: ccDateToIso(get(r, 'Date')),
     amountCents: parseMoney(get(r, 'Amount')),
     category: get(r, 'Category'),
     payee: get(r, 'Payee'),
@@ -66,7 +74,7 @@ function loadBookings(filePath) {
   const get = indexer(header);
   return rows.filter((r) => r.length).map((r) => ({
     title: get(r, 'Title'),
-    eventDate: get(r, 'Event Date'),
+    eventDate: ccDateToIso(get(r, 'Event Date')),
     assignedStaff: (get(r, 'Assigned Staff') || '')
       .split(/[;,]/).map((s) => s.trim()).filter(Boolean),
   })).filter((b) => b.title);
