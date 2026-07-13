@@ -723,6 +723,17 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `service_packages.covered_addon_slugs TEXT[]` — which add-on slugs the hosted
   package's base price already includes. Used by the Potion Planning Lab to
   suppress redundant add-on offers and compute cocktail ingredient gaps.
+- Hosted minimums: `min_guests` (rate-tier threshold, default 50 — under it the
+  small-event rate columns apply), `min_billed_guests` (INTEGER, 25 on non-class
+  per_guest packages, NULL on classes/BYOB), `min_total` (NUMERIC, $550 backstop
+  on those same rows). P4 (fix #8): the base price bills at `max(actualGuests,
+  min_billed_guests)` heads, then clamps to `min_total`. `schema.sql` sets both on
+  every `pricing_type='per_guest' AND bar_type<>'class'` row (the class filter is
+  load-bearing — classes are `category='hosted'` too). The engine
+  (`pricingEngine.js`) keeps staffing / the 1:100 bartender ratio / gratuity
+  surcharges on ACTUAL guests; the snapshot exposes `billed_guests` and
+  `floor_reason` (`'guest_min'|'dollar_min'|null`, with `floor_applied` = reason
+  is non-null) which flow through `POST /api/proposals/public/calculate`.
 
 **service_addons** — Add-on services
 - `slug`, `name`, `description`

@@ -13,7 +13,8 @@ const FAQ_CATEGORIES = [
           <>
             Pricing depends on your guest count, event duration, and package choice.
             Our BYOB package starts at $350 (up to 4 hours), while hosted packages (we provide
-            the alcohol) start at $12–40 per guest depending on tier.{' '}
+            the alcohol) start at $12–40 per guest depending on tier. Hosted packages are billed
+            at a 25-guest minimum, with a $550 event minimum.{' '}
             <Link to="/quote">Use our quote tool</Link> to get exact pricing for your
             event in seconds.
           </>

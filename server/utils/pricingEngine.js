@@ -57,6 +57,35 @@ function isCocktailFullyCovered(cocktail, pkg) {
   return computeCocktailGap(cocktail, pkg).length === 0;
 }
 
+/**
+ * Hosted per-guest base, split into the pre-floor amount and the billed-guest
+ * count, so calculateBaseCost and calculateProposal share ONE source of truth
+ * for the 25-guest billing minimum (P4, fix #8).
+ *
+ * Non-class per_guest packages bill at `max(actualGuests, pkg.min_billed_guests)`
+ * heads; the small/standard RATE TIER stays keyed on ACTUAL guests (identical
+ * outcome under min_guests). The $ floor (pkg.min_total) is applied by the CALLER
+ * via Math.max — this returns the raw, pre-floor amount so the caller can tell
+ * WHICH minimum bound (billed-guests vs the dollar backstop).
+ *
+ * Staffing, the 1:100 bartender ratio, and gratuity surcharges keep using ACTUAL
+ * guests — see the HOSTED PACKAGE RULE header. Do NOT route them through billedGuests.
+ * Classes carry min_billed_guests = NULL, so billedGuests collapses to actual guests
+ * and their math is unchanged.
+ */
+function hostedBaseComponents(pkg, guestCount, durationHours) {
+  const billedGuests = Math.max(guestCount, Number(pkg.min_billed_guests || 0));
+  const isSmall = pkg.min_guests && guestCount < pkg.min_guests; // rate tier on ACTUAL guests
+  const rate4hr = Number(isSmall ? pkg.base_rate_4hr_small : pkg.base_rate_4hr);
+  const rate3hr = isSmall ? (pkg.base_rate_3hr_small || pkg.base_rate_3hr) : pkg.base_rate_3hr;
+  const extraRate = Number(isSmall ? (pkg.extra_hour_rate_small || pkg.extra_hour_rate) : pkg.extra_hour_rate);
+  let rawBase;
+  if (rate3hr && durationHours <= 3) rawBase = billedGuests * Number(rate3hr);
+  else if (durationHours <= 4) rawBase = billedGuests * rate4hr;
+  else rawBase = billedGuests * rate4hr + billedGuests * (durationHours - 4) * extraRate;
+  return { billedGuests, rawBase };
+}
+
 function calculateBaseCost(pkg, guestCount, durationHours) {
   if (!durationHours || durationHours <= 0) {
     throw new Error('Duration must be greater than zero.');
@@ -73,16 +102,9 @@ function calculateBaseCost(pkg, guestCount, durationHours) {
     return base + (durationHours - 4) * Number(pkg.extra_hour_rate);
   }
 
-  // Hosted: per-guest rate with small/standard tiers
-  const isSmall = pkg.min_guests && guestCount < pkg.min_guests;
-  const rate4hr = Number(isSmall ? pkg.base_rate_4hr_small : pkg.base_rate_4hr);
-  const rate3hr = isSmall ? (pkg.base_rate_3hr_small || pkg.base_rate_3hr) : pkg.base_rate_3hr;
-  const extraRate = Number(isSmall ? (pkg.extra_hour_rate_small || pkg.extra_hour_rate) : pkg.extra_hour_rate);
-
-  const floor = Number(pkg.min_total || 0);
-  if (rate3hr && durationHours <= 3) return Math.max(guestCount * Number(rate3hr), floor);
-  if (durationHours <= 4) return Math.max(guestCount * rate4hr, floor);
-  return Math.max(guestCount * rate4hr + guestCount * (durationHours - 4) * extraRate, floor);
+  // Hosted: per-guest rate on the billed-guest count, then clamp to the $ floor.
+  const { rawBase } = hostedBaseComponents(pkg, guestCount, durationHours);
+  return Math.max(rawBase, Number(pkg.min_total || 0));
 }
 
 function calculateBarRental(pkg, numBars) {
@@ -302,7 +324,24 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
   const isHosted = isHostedPackage(pkg); // HOSTED PACKAGE RULE — see helper comment.
   const isClassPackage = isHosted && pkg.bar_type === 'class';
   const baseCost = calculateBaseCost(pkg, guestCount, durationHours);
-  const floorApplied = isHosted && pkg.min_total && baseCost <= Number(pkg.min_total);
+
+  // P4 (fix #8): resolve billed_guests + which hosted minimum bound, so the
+  // display can name it. billed_guests exceeds actual only for hosted packages
+  // with a min_billed_guests (25). 'guest_min' = billing extra heads drove the
+  // price and lands at/above the $ floor; 'dollar_min' = the min_total backstop
+  // raised the result above the billed-guest amount. Staffing/gratuity below
+  // keep using ACTUAL guestCount (HOSTED PACKAGE RULE) — never billedGuests.
+  let billedGuests = guestCount;
+  let floorReason = null;
+  if (isHosted) {
+    const { billedGuests: bg, rawBase } = hostedBaseComponents(pkg, guestCount, durationHours);
+    billedGuests = bg;
+    const floor = Number(pkg.min_total || 0);
+    if (billedGuests > guestCount && rawBase >= floor) floorReason = 'guest_min';
+    else if (floor > 0 && floor > rawBase) floorReason = 'dollar_min';
+  }
+  const floorApplied = floorReason !== null;
+
   const barRental = calculateBarRental(pkg, numBars);
   const staffing = calculateStaffing(pkg, guestCount, durationHours, numBartenders);
 
@@ -522,7 +561,9 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
       staff_noun: staffNoun,
       total: clientGratuityAmount,
     },
-    floor_applied: !!floorApplied,
+    floor_applied: floorApplied,
+    floor_reason: floorReason,
+    billed_guests: billedGuests,
     adjustments: safeAdjustments,
     total_price_override: totalPriceOverride ?? null,
     subtotal: Math.round(subtotal * 100) / 100,

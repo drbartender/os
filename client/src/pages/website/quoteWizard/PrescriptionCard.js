@@ -23,8 +23,11 @@ export default function PrescriptionCard({ preview }) {
               </div>
             ))}
           </div>
-          {preview.floor_applied && (
-            <div className="wz-price-note">Small event minimum applies</div>
+          {preview.floor_reason === 'guest_min' && (
+            <div className="wz-price-note">Small event minimum applied (billed as {preview.billed_guests} guests)</div>
+          )}
+          {preview.floor_reason === 'dollar_min' && (
+            <div className="wz-price-note">Hosted minimum $550 applied</div>
           )}
           <div className="wz-price-meta">
             {preview.staffing.actual} bartender{preview.staffing.actual !== 1 ? 's' : ''} included

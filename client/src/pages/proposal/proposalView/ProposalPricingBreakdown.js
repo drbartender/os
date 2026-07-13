@@ -80,6 +80,18 @@ export default function ProposalPricingBreakdown({
             </tr>
           </tfoot>
         </table>
+        {/* P4 (fix #8): name the hosted minimum that bound. Legacy snapshots
+            without floor_reason render nothing (null-guard). */}
+        {snapshot?.floor_reason === 'guest_min' && (
+          <p style={{ margin: '0.6rem 0 0', fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+            Small event minimum applied (billed as {snapshot.billed_guests} guests).
+          </p>
+        )}
+        {snapshot?.floor_reason === 'dollar_min' && (
+          <p style={{ margin: '0.6rem 0 0', fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+            Hosted minimum $550 applied.
+          </p>
+        )}
       </div>
 
       {/* ── Service Agreement (collapsed-with-fadeout by default) ── */}

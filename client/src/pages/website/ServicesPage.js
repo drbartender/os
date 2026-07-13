@@ -24,7 +24,7 @@ const FORMULAS = [
     t: 'Hosted Bar',
     tag: 'full service',
     starting: 'from $18/guest',
-    body: "Full-service bar. We bring the spirits, mixers, ice, garnish, cups, napkins, and the BASSET-trained staff. We run the bar, you enjoy with your guests.",
+    body: "Full-service bar. We bring the spirits, mixers, ice, garnish, cups, napkins, and the BASSET-trained staff. We run the bar, you enjoy with your guests. Hosted packages are billed at a 25-guest minimum, with a $550 event minimum.",
     includes: [
       ['Spirits & mixers', 'a set selection · swaps by request'],
       ['Bartenders', 'BASSET-certified'],

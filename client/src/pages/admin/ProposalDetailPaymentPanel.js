@@ -273,6 +273,19 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
           )}
         </dl>
 
+        {/* P4 (fix #8): name the hosted minimum that bound the base price. Reads
+            the stored snapshot; legacy snapshots without floor_reason render nothing. */}
+        {proposal.pricing_snapshot?.floor_reason === 'guest_min' && (
+          <p className="muted tiny" style={{ margin: '6px 0 0' }}>
+            Small event minimum applied (billed as {proposal.pricing_snapshot.billed_guests} guests).
+          </p>
+        )}
+        {proposal.pricing_snapshot?.floor_reason === 'dollar_min' && (
+          <p className="muted tiny" style={{ margin: '6px 0 0' }}>
+            Hosted minimum $550 applied.
+          </p>
+        )}
+
         {/* Invoices */}
         <div style={{ marginTop: 14 }}>
           <InvoiceDropdown proposalId={proposal.id} key={invoiceRefreshKey} />

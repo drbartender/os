@@ -577,6 +577,10 @@ CREATE TABLE IF NOT EXISTS service_packages (
 );
 
 ALTER TABLE service_packages ADD COLUMN IF NOT EXISTS min_total NUMERIC(10,2);
+-- P4 (fix #8): hosted 25-guest billing minimum column. The value UPDATE runs
+-- AFTER the seed INSERTs below (it filters on bar_type, added further down, and
+-- must see the seeded rows). Column add is safe here; keep it beside min_total.
+ALTER TABLE service_packages ADD COLUMN IF NOT EXISTS min_billed_guests INTEGER;
 
 DROP TRIGGER IF EXISTS update_service_packages_updated_at ON service_packages;
 CREATE TRIGGER update_service_packages_updated_at BEFORE UPDATE ON service_packages
@@ -2095,6 +2099,20 @@ UPDATE service_packages SET covered_addon_slugs = '{}'                          
 UPDATE service_packages SET covered_addon_slugs = '{}'                                    WHERE slug = 'the-carbon-suspension';
 UPDATE service_packages SET covered_addon_slugs = '{}'                                    WHERE slug = 'the-cultivated-complex';
 UPDATE service_packages SET covered_addon_slugs = '{}'                                    WHERE slug = 'the-clear-reaction';
+
+-- P4 (fix #8): set the hosted 25-guest billing minimum + $550 backstop on every
+-- non-class per_guest package (runs here, after all seeds, so bar_type exists and
+-- the rows are present). The `bar_type <> 'class'` filter is LOAD-BEARING: classes
+-- are category='hosted' + pricing_type='per_guest' too, and must stay NULL so the
+-- engine leaves their math unchanged. BYOB (flat) is untouched (pricing_type filter).
+-- Idempotent via the DISTINCT FROM guard. Legacy min_total floors before this UPDATE
+-- (rollback reference): primary-culture/refined-reaction/clear-reaction 400,
+-- carbon-suspension 425, cultivated-complex 450, base-compound 500,
+-- midrange-reaction 600, enhanced-solution 700, formula-no-5 850,
+-- grand-experiment 1000; classes/BYOB NULL.
+UPDATE service_packages SET min_billed_guests = 25, min_total = 550.00
+ WHERE pricing_type = 'per_guest' AND bar_type <> 'class'
+   AND (min_billed_guests IS DISTINCT FROM 25 OR min_total IS DISTINCT FROM 550.00);
 
 -- Cocktail ingredient gaps: which specialty add-ons each cocktail needs when
 -- the package doesn't cover them. Conservative seed — cheap gaps (grapefruit
