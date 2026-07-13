@@ -79,6 +79,43 @@ function register(router) {
     });
   }));
 
+  // ─── GET /api/me/payment-history ─────────────────────────────────────────
+  // The logged-in staffer's imported pre-OS payment history + a blended
+  // all-time total (imported ledger + own PAID OS payouts). Spec §8.2.
+  //
+  // Hard-scoped to req.user.id (no :userId param, ever). PII discipline: this
+  // returns platform ONLY — NO memo, NO source_account, NO payee handles (spec
+  // §9; mirrors the paystub project's payment_handle exclusion). Reads
+  // staff_payment_history ONLY; never legacy_cc_payouts.
+  router.get('/payment-history', asyncHandler(async (req, res) => {
+    const { rows } = await pool.query(
+      `SELECT paid_on, amount_cents, platform
+         FROM staff_payment_history
+        WHERE contractor_id = $1
+        ORDER BY paid_on DESC, id DESC`,
+      [req.user.id]
+    );
+
+    const ledgerCents = rows.reduce((sum, r) => sum + Number(r.amount_cents), 0);
+    const paidRes = await pool.query(
+      `SELECT COALESCE(SUM(total_cents), 0)::bigint AS cents
+         FROM payouts
+        WHERE contractor_id = $1 AND status = 'paid'`,
+      [req.user.id]
+    );
+    const paidCents = Number(paidRes.rows[0].cents);
+
+    res.json({
+      history: rows.map((r) => ({
+        paid_on: ymd(r.paid_on),
+        amount_cents: Number(r.amount_cents),
+        platform: r.platform,
+      })),
+      total_cents: ledgerCents,
+      blended_total_cents: ledgerCents + paidCents,
+    });
+  }));
+
   // ─── GET /api/me/payouts/:periodId ───────────────────────────────────────
   // One pay period's detail for THIS staffer. The IDOR guard is the JOIN
   // condition po.contractor_id = $1 AND po.pay_period_id = $2: if there is

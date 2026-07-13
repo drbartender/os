@@ -120,6 +120,9 @@ export default function StaffDashboard() {
                           {isStub && (
                             <span className="badge badge-legacy-cc-stub">Legacy CC stub (deactivated)</span>
                           )}
+                          {s.import_source === 'payment_history_import' && (
+                            <span className="imported-chip">imported</span>
+                          )}
                           {s.preferred_name && s.email && <div className="sub">{displayEmail}</div>}
                         </div>
                       </div>

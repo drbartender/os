@@ -18040,3 +18040,136 @@ html[data-app="admin-os"] .ov-payroll-subs {
 html[data-app="admin-os"] .prep-col.has-prep { width: auto; padding: 8px 12px; white-space: nowrap; }
 html[data-app="admin-os"] th.prep-col.has-prep { font-weight: 600; }
 /* end */
+
+/* ==========================================================================
+   Staff payment history (imported pre-OS ledger) — staff-payment-import
+   spec 2026-07-10 §8. Two surfaces, scoped by data-app so the shared class
+   names never collide. Every rule uses design tokens that already flip by
+   skin, so both skins are covered without duplicate blocks.
+   ========================================================================== */
+
+/* Admin: PayoutsTab historical section + StaffDashboard imported chip. */
+html[data-app="admin-os"] .sph-total-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-1);
+}
+html[data-app="admin-os"] .sph-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line-1);
+  font-size: 12.5px;
+}
+html[data-app="admin-os"] .sph-row:first-child { border-top: 0; }
+html[data-app="admin-os"] .sph-when { white-space: nowrap; color: var(--ink-2); }
+html[data-app="admin-os"] .sph-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+html[data-app="admin-os"] .sph-platform-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  border-radius: 4px;
+  background: var(--bg-3);
+  color: var(--ink-2);
+}
+html[data-app="admin-os"] .imported-chip {
+  display: inline-block;
+  margin-left: 0.5em;
+  padding: 1px 6px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-line);
+  vertical-align: middle;
+}
+
+/* Staff portal: PayPage payment-history disclosure. */
+html[data-app="staff"] .sph-details {
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--sp-line-1);
+}
+html[data-app="staff"] .sph-summary {
+  cursor: pointer;
+  padding: 0.7rem 0 0.3rem;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sp-ink-2);
+  list-style: none;
+}
+html[data-app="staff"] .sph-summary::-webkit-details-marker { display: none; }
+html[data-app="staff"] .sph-summary::before {
+  content: "\25B8";
+  display: inline-block;
+  margin-right: 0.4rem;
+  color: var(--sp-ink-3);
+  transition: transform 0.12s ease;
+}
+html[data-app="staff"] .sph-details[open] .sph-summary::before { transform: rotate(90deg); }
+html[data-app="staff"] .sph-list { padding-bottom: 0.4rem; }
+html[data-app="staff"] .sph-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+  border-top: 1px dashed var(--sp-line-1);
+  font-size: 13px;
+}
+html[data-app="staff"] .sph-when {
+  font-family: var(--sp-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sp-ink-2);
+  white-space: nowrap;
+}
+html[data-app="staff"] .sph-platform-chip {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sp-ink-3);
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--sp-bg-2);
+  white-space: nowrap;
+}
+html[data-app="staff"] .sph-amount {
+  font-family: var(--sp-font-numeric);
+  font-variant-numeric: tabular-nums;
+  color: var(--sp-ink-1);
+  white-space: nowrap;
+}
+
+/* 1099 tax-totals tab (Payroll page): excluded rows read muted with a struck
+   total; the include/exclude toggle is a compact inline label. */
+html[data-app="admin-os"] .tax-row-excluded td { opacity: 0.5; }
+/* The 1099 toggle is how you re-include someone, so it must stay fully legible
+   and operable even in a dimmed excluded row. */
+html[data-app="admin-os"] .tax-row-excluded td.tax-toggle-cell { opacity: 1; }
+html[data-app="admin-os"] .tax-total-struck { text-decoration: line-through; }
+html[data-app="admin-os"] .tax-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+html[data-app="admin-os"] .tax-toggle input { cursor: pointer; accent-color: var(--accent); }
+html[data-app="admin-os"] .tax-toggle input:disabled { cursor: progress; }
+/* end sph */

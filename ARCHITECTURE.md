@@ -364,6 +364,10 @@ Read-side mirror of Stripe payouts + balance-transaction lines (`server/routes/s
 | GET | `/payroll/...` | Admin | Payroll surface — contractor payouts, pay periods, and paystub data (`server/routes/admin/payroll.js`, mounted under `/api/admin/payroll`; see the route file for exact paths). |
 | GET | `/payroll/deferred-tips` | Admin | List tips deferred while the open pay period was frozen (with stuck-reason: `frozen_period`, `stubs`, or `max_attempts`). |
 | POST | `/payroll/deferred-tips/retry` | Admin | Manually run the deferred-tip sweep; audit-logged as `payroll_deferred_tips_retry` with the summary in `metadata`. |
+| GET | `/payroll/contractors/:userId/payment-history` | Admin | Imported pre-OS payment history for one contractor (`staff_payment_history` only, never `legacy_cc_payouts`) + `blended_total_cents` = ledger sum + PAID payouts. (`server/routes/admin/payrollTax.js`) |
+| GET | `/payroll/tax-totals?year=YYYY` | Admin | Per-person 1099 calendar-year totals: ledger by `paid_on` year + payouts by `paid_at` year (constructive receipt, never `payday`), plus per-platform breakdown and `exclude_from_1099`. Year defaults to current; validated 2024–2100. |
+| PATCH | `/payroll/tax-totals/:userId/exclude` | Admin | Toggle `users.exclude_from_1099` (foreign contractors on W-8BEN); body `{ exclude: boolean }`. |
+| GET | `/api/me/payment-history` | Staff (self) | The logged-in staffer's imported pre-OS history + blended all-time total, IDOR-scoped to `req.user.id`. Platform ONLY — no memo/source/handle (PII). (`server/routes/staffPortal/payouts.js`) |
 | (cover-swaps) | various | Admin | Admin cover-swap approval endpoints (`server/routes/adminCoverSwaps.js`, mounted under `/api/admin`). |
 | GET | `/presence` | Admin+Manager | Presence strip payload: tracked users' states + derived lead-responder pointer (also embedded in `/badge-counts` as `presence`, non-fatal). |
 | POST | `/presence/state` | Admin+Manager (tracked, self only) | Set own presence state (desk/available/away); applies the taking-leads transition rules (away wipes; re-entry resets on for chain users, OFF for the fallback owner). |
@@ -1254,6 +1258,17 @@ Metrics consumption (`server/utils/metricsQueries.js` + `/api/proposals/dashboar
 - `id` BIGSERIAL PK; `payee_name`, `payee_name_normalized`, `payee_user_id` FK→users (SET NULL — set on link from the Review page), `paid_on`, `amount_cents`, `reference_role`, `category`
 - `raw_import_id` UNIQUE FK→legacy_cc_raw_imports (ON DELETE RESTRICT)
 - Indexes on `payee_user_id`, `paid_on`, `payee_name_normalized` support the unmatched-payee picker
+- **Write-only / superseded.** Zero read consumers; earnings + 1099 surfaces read `staff_payment_history` instead (see below). Never sum both — they overlap.
+
+**staff_payment_history** — Imported historical staff payments (pre-OS-payroll ledger; staff-payment-import 2026-07-10)
+- `id` SERIAL PK; `contractor_id` FK→users (NOT NULL), `paid_on` DATE, `amount_cents` INTEGER CHECK (> 0), `platform` CHECK (`venmo`|`cashapp`|`zelle`|`ach`|`paypal`|`cash_other`), `source_account`, `external_txn_id`, `payee_handle`, `memo`, `event_label` (plain text, NO FK), `boundary_exception` BOOLEAN, `row_fingerprint` TEXT UNIQUE, `source_file`, `imported_at`
+- Financial facts (`paid_on`, `amount_cents`, `platform`) are immutable identity; attribution (`contractor_id`, `event_label`, `memo`) is re-runnable via `ON CONFLICT (row_fingerprint) DO UPDATE`. Fingerprint = `fp-` + sha256 on the transaction id where the platform has one (Venmo/Zelle/PayPal), else a positional hash (Cash App PDFs).
+- **Boundary CHECK `sph_before_boundary`**: `paid_on < DATE '2026-06-02' OR boundary_exception`. June 2 2026 is where live OS payroll (`pay_periods`/`payouts`) takes over. A person's true all-time total is `sum(ledger) + sum(paid payouts)` with **zero overlap by construction**. `boundary_exception=true` is the escape hatch for a post-boundary payment covering pre-boundary work that matches NO payout (verification asserts each exception row matches no payout, so it can never double-count).
+- Index `idx_sph_contractor_paid_on(contractor_id, paid_on)`. Read by the payment-history + 1099 tax-totals endpoints (`server/routes/admin/payrollTax.js`, `server/routes/staffPortal/payouts.js`). **Supersedes `legacy_cc_payouts`** for earnings/tax display — read this table ONLY.
+
+**Columns added to `users` (staff payment import):**
+- **`users.exclude_from_1099` BOOLEAN DEFAULT false** — persisted per-person 1099 exclusion (foreign contractors e.g. Zul on W-8BEN, not 1099-NEC). Admin-toggleable post-import via `PATCH /api/admin/payroll/tax-totals/:userId/exclude`; drives the 1099 tax-totals include/exclude toggle (excluded rows render muted with a struck total and are dropped from the 1099 count).
+- **`users.import_source` TEXT** (`'payment_history_import'`) — provenance marker for accounts created by the import: drives the admin staff-list "imported" chip, the audit trail, and the undo path. Distinct from the `cc_id LIKE 'legacy_cc:%'` stub marker, so imported placeholders and legacy CC stubs stay distinguishable.
 
 **cc_import_phase0_failures** — Durable retry queue for Phase 0 attachment fetches
 - `id` SERIAL PK; `source_url`, `source_entity`, `source_row_hash`

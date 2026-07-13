@@ -48,6 +48,13 @@ import { formatMoney } from '../../utils/formatMoney';
  * new YTD year — matching how the staffer thinks of pay weeks ("I got paid
  * this year for that one").
  */
+// Imported-ledger platform → display label (staff-payment-import spec §8.2).
+const PLATFORM_LABELS = {
+  venmo: 'Venmo', cashapp: 'Cash App', zelle: 'Zelle',
+  ach: 'ACH', paypal: 'PayPal', cash_other: 'Cash / other',
+};
+const platformLabel = (p) => PLATFORM_LABELS[p] || p;
+
 export default function PayPage() {
   const navigate = useNavigate();
 
@@ -66,6 +73,11 @@ export default function PayPage() {
   // payouts list has no period covering today.
   const [fallbackPeriod, setFallbackPeriod] = useState(null);
 
+  // Imported pre-OS payment history + blended all-time total (spec §8.2).
+  const [paymentHistory, setPaymentHistory] = useState([]);
+  const [blendedCents, setBlendedCents] = useState(0);
+  const [historyError, setHistoryError] = useState(null);
+
   const fetchAll = useCallback(async () => {
     setListLoading(true);
     setListError(null);
@@ -73,11 +85,25 @@ export default function PayPage() {
     setDetailError(null);
     setCurrentDetail(null);
     setFallbackPeriod(null);
+    setPaymentHistory([]);
+    setBlendedCents(0);
+    setHistoryError(null);
 
     try {
       const listRes = await api.get('/me/payouts');
       const payouts = Array.isArray(listRes.data?.payouts) ? listRes.data.payouts : [];
       setPayoutsList(payouts);
+
+      // Independent of the payouts flow: imported pre-OS history. A failure
+      // here surfaces inline in its own section, never blanks the page.
+      try {
+        const histRes = await api.get('/me/payment-history');
+        setPaymentHistory(Array.isArray(histRes.data?.history) ? histRes.data.history : []);
+        setBlendedCents(Number.isFinite(histRes.data?.blended_total_cents) ? histRes.data.blended_total_cents : 0);
+      } catch (err) {
+        setHistoryError(err?.message || 'Could not load your payment history.');
+        setPaymentHistory([]);
+      }
 
       // Find the entry whose period covers today and is not yet paid. The
       // list is newest-first; first match wins.
@@ -180,10 +206,12 @@ export default function PayPage() {
   const ytdYear = new Date().getFullYear();
 
   // ── Brand-new-hire empty state ─────────────────────────────────────────
-  // No paid history AND no current-period banner data. The friendly empty
-  // card replaces every section — once even one payout exists this branch
-  // never fires.
-  if (paidPayouts.length === 0 && !banner) {
+  // No paid history AND no current-period banner data AND no imported pre-OS
+  // history (and that fetch didn't error). The friendly empty card replaces
+  // every section — an imported staffer with ledger history but no OS payouts
+  // must NOT see "No pay history yet", so the payment-history presence gates
+  // this too (spec §8.2).
+  if (paidPayouts.length === 0 && !banner && paymentHistory.length === 0 && !historyError) {
     return (
       <>
         <Hero />
@@ -348,6 +376,52 @@ export default function PayPage() {
           ))
         )}
       </section>
+
+      {/* Imported pre-OS payment history (spec §8.2). Blended all-time total on
+          top; the row list is collapsed behind a disclosure. Hidden entirely
+          when there is nothing to show (and the fetch didn't error). */}
+      {(paymentHistory.length > 0 || historyError) && (
+        <section className="sp-card">
+          <div className="sp-card-head">
+            <div className="sp-card-title">Payment history</div>
+          </div>
+          {historyError && paymentHistory.length === 0 ? (
+            <div className="sp-error-card" style={{ marginTop: 0 }}>
+              <div className="sp-error-card-msg">
+                <strong>Couldn’t load your payment history.</strong>
+                <div className="sp-error-card-sub">{historyError}</div>
+              </div>
+              <button type="button" className="sp-btn sp-btn-sm" onClick={fetchAll}>
+                Retry
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="sp-stats">
+                <div className="sp-stat">
+                  <div className="sp-stat-k">All-time paid</div>
+                  <div className="sp-stat-v">{formatMoney(blendedCents)}</div>
+                  <div className="sp-stat-sub">imported history + this system</div>
+                </div>
+              </div>
+              <details className="sph-details">
+                <summary className="sph-summary">
+                  Payments before this system · {paymentHistory.length}
+                </summary>
+                <div className="sph-list">
+                  {paymentHistory.map((h, i) => (
+                    <div key={i} className="sph-row">
+                      <span className="sph-when">{fmtHistoryDate(h.paid_on)}</span>
+                      <span className="sph-platform-chip">{platformLabel(h.platform)}</span>
+                      <span className="sph-amount">{formatMoney(h.amount_cents)}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            </>
+          )}
+        </section>
+      )}
     </>
   );
 }
@@ -502,6 +576,19 @@ function fmtShortDate(iso) {
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleDateString('en-US', {
     weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+// Imported history spans multiple calendar years, so the year is meaningful
+// here (unlike the current-period short dates above).
+function fmtHistoryDate(iso) {
+  if (!iso) return '';
+  const d = new Date(`${String(iso).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', {
+    year: 'numeric',
     month: 'short',
     day: 'numeric',
   });

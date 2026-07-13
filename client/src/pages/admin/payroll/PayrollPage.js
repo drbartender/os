@@ -8,13 +8,15 @@ import PayoutRow from './PayoutRow';
 import UnassignedTipsPanel from './UnassignedTipsPanel';
 import DeferredTipsPanel from './DeferredTipsPanel';
 import HistoryView from './HistoryView';
+import TaxTotalsTab from './TaxTotalsTab';
 
 const TABS = [
   { id: 'current', label: 'Current period' },
   { id: 'history', label: 'History' },
   { id: 'unassigned', label: 'Unassigned tips' },
+  { id: 'tax', label: '1099 / tax' },
 ];
-const TAB_IDS = ['current', 'history', 'unassigned'];
+const TAB_IDS = ['current', 'history', 'unassigned', 'tax'];
 const PAYROLL_DEFAULTS = { tab: 'current', period: '' };
 
 export default function PayrollPage() {
@@ -52,6 +54,7 @@ export default function PayrollPage() {
       {tab === 'current' && <CurrentTab />}
       {tab === 'history' && <HistoryTab initialPeriodId={listState.period} />}
       {tab === 'unassigned' && <UnassignedTab />}
+      {tab === 'tax' && <TaxTotalsTab />}
     </div>
   );
 }

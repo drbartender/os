@@ -33,7 +33,7 @@ router.get('/users', auth, adminOnly, asyncHandler(async (req, res) => {
   const [usersResult, countResult] = await Promise.all([
     pool.query(`
       SELECT
-        u.id, u.email, u.role, u.onboarding_status, u.created_at, u.updated_at, u.cc_id,
+        u.id, u.email, u.role, u.onboarding_status, u.created_at, u.updated_at, u.cc_id, u.import_source,
         op.account_created, op.welcome_viewed, op.field_guide_completed, op.agreement_completed,
         op.contractor_profile_completed, op.payday_protocols_completed, op.onboarding_completed,
         op.last_completed_step, op.updated_at as progress_updated_at,
@@ -445,7 +445,7 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
   const [staffResult, countResult] = await Promise.all([
     pool.query(`
       SELECT
-        u.id, u.email, u.role, u.onboarding_status, u.created_at, u.cc_id,
+        u.id, u.email, u.role, u.onboarding_status, u.created_at, u.cc_id, u.import_source,
         cp.preferred_name, cp.phone, cp.city, cp.state,
         cp.travel_distance, cp.reliable_transportation,
         cp.equipment_portable_bar, cp.equipment_cooler, cp.equipment_table_with_spandex,

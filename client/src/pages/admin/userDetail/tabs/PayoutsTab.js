@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../../../utils/api';
 import Icon from '../../../../components/adminos/Icon';
@@ -8,6 +8,13 @@ import { fmt$, fmt$fromCents, fmtDate } from '../../../../components/adminos/for
 import FormBanner from '../../../../components/FormBanner';
 import FieldError from '../../../../components/FieldError';
 import { rateOf, PAYMENT_METHODS, paymentMethodLabel } from '../helpers';
+
+// Imported-ledger platform → display label (staff-payment-import spec 2026-07-10).
+const PLATFORM_LABELS = {
+  venmo: 'Venmo', cashapp: 'Cash App', zelle: 'Zelle',
+  ach: 'ACH', paypal: 'PayPal', cash_other: 'Cash / other',
+};
+const platformLabel = (p) => PLATFORM_LABELS[p] || p;
 
 export default function PayoutsTab(props) {
   const {
@@ -29,6 +36,27 @@ export default function PayoutsTab(props) {
       .then(r => setPayouts(r.data.payouts || []))
       .catch(() => setPayouts([]));
   }, [userIdParam]);
+
+  // Imported pre-OS payment history + blended all-time total (spec §8.1).
+  const [history, setHistory] = useState(null);
+  const [blendedCents, setBlendedCents] = useState(0);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState(false);
+
+  const loadHistory = useCallback(() => {
+    if (!userIdParam) return;
+    setHistoryLoading(true);
+    setHistoryError(false);
+    api.get(`/admin/payroll/contractors/${userIdParam}/payment-history`)
+      .then(r => {
+        setHistory(r.data.history || []);
+        setBlendedCents(r.data.blended_total_cents || 0);
+      })
+      .catch(() => { setHistoryError(true); setHistory(null); })
+      .finally(() => setHistoryLoading(false));
+  }, [userIdParam]);
+
+  useEffect(() => { loadHistory(); }, [loadHistory]);
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 'var(--gap)' }}>
@@ -58,7 +86,47 @@ export default function PayoutsTab(props) {
           </div>
         </div>
 
-        {/* 1099 / tax — derived from current data */}
+        {/* Imported pre-OS payment history + blended all-time total (spec §8.1) */}
+        <div className="card">
+          <div className="card-head"><h3>Payment history</h3></div>
+          <div className="card-body">
+            {historyLoading && <div className="muted tiny">Loading payment history…</div>}
+            {!historyLoading && historyError && (
+              <div className="vstack" style={{ gap: 8, alignItems: 'flex-start' }}>
+                <span className="chip danger">Couldn't load payment history.</span>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={loadHistory}>Retry</button>
+              </div>
+            )}
+            {!historyLoading && !historyError && history !== null && (
+              <>
+                <div className="sph-total-row">
+                  <span className="tiny muted">All-time paid · imported + OS payroll</span>
+                  <span className="num"><strong>{fmt$fromCents(blendedCents)}</strong></span>
+                </div>
+                {history.length === 0 ? (
+                  <div className="muted tiny" style={{ marginTop: 8 }}>
+                    No pre-OS payments imported for this contractor.
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 6 }}>
+                    {history.map(h => (
+                      <div key={h.id} className="sph-row">
+                        <span className="sph-when">
+                          {fmtDate(h.paid_on, { year: 'numeric' })}
+                          <span className="sph-platform-chip">{platformLabel(h.platform)}</span>
+                        </span>
+                        <span className="tiny muted sph-note">{h.event_label || h.memo || ''}</span>
+                        <span className="num">{fmt$fromCents(h.amount_cents)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* 1099 / tax — one surface; year totals live on the Payroll tax tab (spec §8.3) */}
         <div className="card">
           <div className="card-head"><h3>1099 / tax</h3></div>
           <div className="card-body">
@@ -66,9 +134,10 @@ export default function PayoutsTab(props) {
               <dt>Classification</dt><dd>1099 Independent Contractor</dd>
               <dt>W-9 on file</dt>
               <dd>{w9 ? <StatusChip kind="ok">Submitted</StatusChip> : <StatusChip kind="danger">Missing</StatusChip>}</dd>
-              <dt>YTD earnings</dt><dd className="num muted">Tracking pending</dd>
-              <dt>1099 threshold</dt><dd className="num muted">$600</dd>
             </dl>
+            <EntityLink to="/financials/payroll?tab=tax" className="btn btn-ghost btn-sm" style={{ marginTop: 4 }}>
+              View 1099 tax totals
+            </EntityLink>
           </div>
         </div>
 
