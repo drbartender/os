@@ -1935,6 +1935,16 @@ CREATE INDEX IF NOT EXISTS idx_invoice_payments_payment_id ON invoice_payments(p
 -- the stamp back to the clamp instead of blocking the delete.
 ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS refund_id INTEGER REFERENCES proposal_refunds(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_invoice_payments_refund_id ON invoice_payments(refund_id) WHERE refund_id IS NOT NULL;
+-- F7 (defense-in-depth): one payment must never double-link (double-credit) one
+-- invoice. PARTIAL unique on POSITIVE credit links only (amount > 0), which is the
+-- codebase's own discriminator for a positive link (invoices.js FILTER
+-- WHERE ip.amount > 0; payrollAccrual.js WHERE ip.amount > 0). Every refund
+-- reversal row is amount < 0 and shares (invoice_id, payment_id) with its positive
+-- link, so it is excluded — including LEGACY reversals with refund_id NULL (a
+-- WHERE refund_id IS NULL predicate would collide on those, both on pre-upgrade
+-- prod data and on the invoices.refunds.test fixture).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invoice_payments_positive_link
+  ON invoice_payments(invoice_id, payment_id) WHERE amount > 0;
 
 -- Upgrade: invoices.proposal_id FK from CASCADE to RESTRICT (protect paid invoices)
 -- and invoice_line_items.invoice_id to NOT NULL (for existing tables)
