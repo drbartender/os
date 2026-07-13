@@ -53,26 +53,38 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     });
     return res.status(400).send('Webhook signature verification failed');
   }
-  // `stripeForEvent` is intentionally available for any downstream Stripe API
-  // calls inside this handler so we use the keypair matching the event's mode.
-  void stripeForEvent;
-
   // Live-mode gate (audit 2026-07-13). The verifier list above deliberately tries
   // BOTH the live and test webhook secrets, so an event straddling a
   // STRIPE_TEST_MODE_UNTIL cutover still verifies. But that also means a
-  // signature-verified *test-mode* event (livemode:false) reaches the credit/tip/
-  // refund handlers whenever the test secret is configured — which it stays after a
-  // cutover. OUTSIDE an active test window a zero-dollar test event must never move
-  // real money state (credit a proposal, accrue a tip/payroll, reconcile a refund).
+  // signature-verified *test-mode* event reaches the credit/tip/refund handlers
+  // whenever the test secret is configured — which it stays after a cutover.
+  // OUTSIDE an active test window a zero-dollar test event must never move real
+  // money state (credit a proposal, accrue a tip/payroll, reconcile a refund).
   // So: only ACT on a test-mode event while a test window is actually active
   // (isTestMode()); otherwise ack and drop. This is the single dispatch-level root
   // fix — it covers every current and future handler. payout.js additionally keeps
   // its own always-live-only guard (the payout mirror is live-only even in-window).
-  // Guard on `=== false` (not `!livemode`) so a fixture/malformed event with no
-  // livemode field is treated as live and processed, matching payout.js.
-  if (event.livemode === false && !isTestMode()) {
+  //
+  // "Test-mode" is decided by WHICH SECRET VERIFIED THE EVENT, not by the
+  // `livemode` field in the body. `livemode` is part of the signed payload, so it
+  // is chosen by whoever signed it: anyone holding the TEST webhook secret (the
+  // low-trust one — it lives in CLI sessions, CI, shared envs) could otherwise sign
+  // a body claiming `livemode: true` and credit a real proposal. The secret that
+  // actually verified the signature is the one thing the signer cannot forge, and
+  // we already know it: `stripeForEvent`. A genuine live event always verifies
+  // against the LIVE secret (tried first), so this never drops real money.
+  // `livemode === false` is kept as a belt-and-braces second trigger: `=== false`
+  // (not `!livemode`) so a fixture/malformed event with no livemode field still
+  // fails OPEN toward live and is processed, matching payout.js.
+  const testClient = getTestClient();
+  const verifiedByTestSecret = !!testClient && stripeForEvent === testClient;
+  if ((verifiedByTestSecret || event.livemode === false) && !isTestMode()) {
     return res.json({ received: true, skipped: 'test_mode' });
   }
+
+  // `stripeForEvent` also remains available for any downstream Stripe API calls in
+  // this handler, so we use the keypair matching the event's mode.
+  void stripeForEvent;
 
   if (event.type === 'payment_intent.succeeded') {
     await handlePaymentIntentSucceeded(event);
