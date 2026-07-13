@@ -125,7 +125,7 @@
 | D-WRK | Schedulers→worker split (re-checked by OPS-5: nothing new raises urgency) | still-open, deferred | low/L |
 | D-PLL | PotionPlanningLab state-controller split · D-APP App.js route-manifest dedup · D-QWPC QuoteWizard↔ProposalCreate policy dedup · D-CMD CocktailMenuDashboard redesign (Dallas-driven) | still-open, deferred | low/L each |
 | D-PAG | LIMIT-500 pagination endpoints (unchanged; conversation-history DID gain paging) · campaign-list COUNT FILTER refactor (index landed, query shape didn't) · geocode/blog import loops · applications CASE-blocks-index · metricsQueries include_cc composite index · DEFAULT-vs-supplied duplication · failed-login audit table | still-open, all low, trigger-based | low |
-| D-NOI | `users.notifications_opt_in` DROP COLUMN + 4 test fixtures (no-writer change shipped long ago; two-step drop pending) | still-open | low/S |
+| D-NOI | `users.notifications_opt_in` DROP COLUMN + 4 test fixtures — SHIPPED in the P0 schema-hygiene lane (aebd556, 2026-07-13): column dropped from base CREATE + guarded DROP, fixtures cleaned | fixed | — |
 | D-DEAD | Dead columns DECIDED 2026-07-13: `service_addons.is_default` DROPS (rides qw-schema-hygiene); `applications.favorite_color` KEEPS (displayed humor field, off the dead list). NOTE: the old doc's other two "dead" columns came alive — `calendar_token_created_at` and `shifts.client_email/phone` are now read; dropped from the dead list | resolved | low/S |
 
 ## 3. Accepted risks (re-affirmed, do not fix)
