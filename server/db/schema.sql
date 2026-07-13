@@ -1091,6 +1091,12 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- P6 (cancel-event, fix #7): explicit gratuity-portion attribution on a refund
+-- row (CENTS, Stripe-native). Label-based attribution has no gratuity concept,
+-- so the cancellation refund records how much of itself is the returned gratuity
+-- (auditable + excluded from contract-revenue adjustments downstream).
+ALTER TABLE proposal_refunds ADD COLUMN IF NOT EXISTS gratuity_cents INTEGER;
+
 -- Shifts
 CREATE INDEX IF NOT EXISTS idx_shifts_event_date ON shifts(event_date);
 CREATE INDEX IF NOT EXISTS idx_shifts_status ON shifts(status);
@@ -3532,6 +3538,21 @@ ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_archive_reason_check;
 ALTER TABLE proposals ADD CONSTRAINT proposals_archive_reason_check
   CHECK (archive_reason IS NULL OR archive_reason IN
     ('no_hire','client_cancelled','we_cancelled','event_completed','other','option_not_chosen'));
+
+-- ─── P6 (cancel booked events, fix #7) ───────────────────────────
+-- A booked event that gets cancelled is archived (archive_reason =
+-- 'client_cancelled' | 'we_cancelled', both already in the constraint above).
+-- These columns record WHO cancelled and the audit note. cancelled_by mirrors
+-- the proposal_change_requests.cancelled_by house convention; only 'client' or
+-- 'admin' apply here (a scheduler never cancels a booked event).
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS cancelled_by TEXT;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS cancellation_note TEXT;
+DO $$ BEGIN
+  ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_cancelled_by_check;
+  ALTER TABLE proposals ADD CONSTRAINT proposals_cancelled_by_check
+    CHECK (cancelled_by IS NULL OR cancelled_by IN ('client','admin'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 -- ============================================================
 -- Stripe payout tracking (read-side mirror; spec 2026-07-01)

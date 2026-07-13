@@ -22,6 +22,7 @@ import { parsePositionsCount, approvedCount, remainingByRole } from '../../compo
 import { parsePositionsNeeded, rosterCounts, isEventFullyStaffed } from '../../utils/staffingRoles';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import EventEditForm from './EventEditForm';
+import CancelEventDialog from './CancelEventDialog';
 import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
 import { venueMapQuery } from '../../components/VenueAddressFields';
@@ -67,6 +68,7 @@ export default function EventDetailPage() {
   const [err, setErr] = useState(null);
   const [editing, setEditing] = useState(false);
   const [inviting, setInviting] = useState(false);
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
 
   // Proposal + shifts refetch — passed to the payment panel `onUpdate` and run
   // after an event edit (date/time/location/contact changes re-sync the linked
@@ -276,9 +278,23 @@ export default function EventDetailPage() {
                 Schedule drink-plan nudges
               </button>
             )}
+            {!editing && ['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status) && (
+              <button type="button" className="btn btn-ghost" onClick={() => setShowCancelDialog(true)}>
+                <Icon name="x" size={12} />Cancel event
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {showCancelDialog && (
+        <CancelEventDialog
+          proposalId={id}
+          clientName={proposal.client_name}
+          onClose={() => setShowCancelDialog(false)}
+          onCancelled={() => { loadProposal(); reloadShifts(); }}
+        />
+      )}
 
       <div className="event-detail-grid">
         <div className="vstack" style={{ gap: 'var(--gap)' }}>

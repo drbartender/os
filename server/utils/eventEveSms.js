@@ -223,6 +223,7 @@ async function scheduleEventEve(proposalId, executor) {
 module.exports = {
   registerEventEveHandler,
   scheduleEventEve,
+  handleEventEve, // exported for the archived-guard test (P6.5)
   computeEventEveSendAt,
   formatStartTimeLocal,
   resolveBartender,

@@ -17,6 +17,7 @@ import ProposalDetailEditForm from './ProposalDetailEditForm';
 import ProposalChangeRequestCard from './ProposalChangeRequestCard';
 import AlternativesPanel from './AlternativesPanel';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
+import CancelEventDialog from './CancelEventDialog';
 import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
 import { venueMapQuery } from '../../components/VenueAddressFields';
@@ -84,6 +85,8 @@ export default function ProposalDetail() {
   const [showArchiveModal, setShowArchiveModal] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [openSiblings, setOpenSiblings] = useState([]);
+  // Cancel-event dialog (booked proposals only; fix #7).
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
 
   // Change-request review state. openCr = any pending request (drives the
   // direct-edit warning). pendingCr = the request being applied via the deep-link.
@@ -432,6 +435,11 @@ export default function ProposalDetail() {
                 <Icon name="x" size={12} />{archiving ? 'Archiving…' : 'Archive'}
               </button>
             )}
+            {!editing && ['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status) && (
+              <button type="button" className="btn btn-ghost" onClick={() => setShowCancelDialog(true)}>
+                <Icon name="x" size={12} />Cancel event
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -712,6 +720,16 @@ export default function ProposalDetail() {
           )}
         </div>
       </div>
+
+      {/* Cancel-event dialog (booked proposals; fix #7). */}
+      {showCancelDialog && (
+        <CancelEventDialog
+          proposalId={id}
+          clientName={proposal.client_name}
+          onClose={() => setShowCancelDialog(false)}
+          onCancelled={() => { loadProposal(); }}
+        />
+      )}
 
       {/* Archive scope modal: only shown when the client has other open,
           unpaid proposals (loose alternatives or a formal comparison). */}

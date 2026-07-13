@@ -1,5 +1,4 @@
 const express = require('express');
-const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth, adminOnly, requireAdminOrManager } = require('../middleware/auth');
 const { publicLimiter, publicReadLimiter } = require('../middleware/rateLimiters');
@@ -456,7 +455,7 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
     [proposalId]
   );
 
-  const { planRefund, applyRefundReconciliation } = require('../utils/refundHelpers');
+  const { planRefund } = require('../utils/refundHelpers');
   const plan = planRefund({
     paymentsWithRemaining: payRes.rows.map(r => ({
       id: r.id,
@@ -474,81 +473,23 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
     throw new AppError(plan.message, 400, plan.code);
   }
 
-  // Pending row BEFORE Stripe, so a Stripe success we then fail to record
-  // is still discoverable (and adoptable by the webhook backstop).
-  const pendRes = await pool.query(
-    `INSERT INTO proposal_refunds
-       (proposal_id, payment_id, stripe_payment_intent_id, amount, reason,
-        total_price_before, total_price_after, issued_by, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending')
-     RETURNING id`,
-    [proposalId, plan.targetPaymentId, plan.targetIntentId, plan.amountCents,
-     cleanReason, Number(proposal.total_price), plan.totalPriceAfterDollars, req.user.id]
-  );
-  const pendingRowId = pendRes.rows[0].id;
-
-  let refund;
-  try {
-    refund = await stripe.refunds.create(
-      { payment_intent: plan.targetIntentId, amount: plan.amountCents },
-      { idempotencyKey: `refund-${proposalId}-${idempotency_key}` }
-    );
-  } catch (err) {
-    await pool.query(`UPDATE proposal_refunds SET status = 'failed' WHERE id = $1`, [pendingRowId]);
-    console.error('Stripe refund error:', err);
-    if (err.type === 'StripeInvalidRequestError') {
-      throw new PaymentError(`Refund rejected: ${err.message}`, 'REFUND_REJECTED');
-    }
-    throw new ExternalServiceError('Stripe', err, 'Refund temporarily unavailable. Please try again.');
-  }
-
-  const dbClient = await pool.connect();
-  let recon;
-  try {
-    await dbClient.query('BEGIN');
-    recon = await applyRefundReconciliation(
-      {
-        proposalId: Number(proposalId),
-        stripeRefundId: refund.id,
-        paymentIntentId: plan.targetIntentId,
-        paymentId: plan.targetPaymentId,
-        amountCents: plan.amountCents,
-        reason: cleanReason,
-        issuedBy: req.user.id,
-      },
-      dbClient
-    );
-    await dbClient.query('COMMIT');
-  } catch (dbErr) {
-    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
-    if (process.env.SENTRY_DSN_SERVER) {
-      Sentry.captureException(dbErr, { tags: { route: '/stripe/refund', proposalId } });
-    }
-    // Money already left via Stripe; the charge.refunded webhook backstop
-    // adopts our pending row and reconciles. Surface 502 (not a silent 200),
-    // correct ExternalServiceError signature: (service, originalError, userMsg).
-    console.error('Refund reconciliation failed (webhook will backstop):', dbErr);
-    throw new ExternalServiceError(
-      'Database',
-      dbErr,
-      'Refund was processed by Stripe; the records will finish syncing momentarily.'
-    );
-  } finally {
-    dbClient.release();
-  }
-
-  // applied===false → reconciliation no-op'd because this refund id was
-  // already applied (idempotent winner, e.g. a double-submit whose Stripe
-  // idempotency key returned the same refund). The pending row we inserted
-  // above is now redundant — delete it so it can't strand as a ghost
-  // 'pending' history entry. Money/books are already correct.
-  if (recon && recon.applied === false) {
-    await pool.query(
-      `DELETE FROM proposal_refunds
-        WHERE id = $1 AND status = 'pending' AND stripe_refund_id IS NULL`,
-      [pendingRowId]
-    );
-  }
+  // Orchestration (pending row -> Stripe -> reconcile -> redundant-row cleanup)
+  // lives in the shared refundExecute util so this route and the cancel-event
+  // refund endpoint issue refunds through one code path (P6.4). Behavior here is
+  // unchanged — pinned by the existing refund tests.
+  const { refundExecute } = require('../utils/refundExecute');
+  const { recon } = await refundExecute({
+    stripe,
+    proposalId: Number(proposalId),
+    paymentId: plan.targetPaymentId,
+    paymentIntentId: plan.targetIntentId,
+    amountCents: plan.amountCents,
+    reason: cleanReason,
+    issuedBy: req.user.id,
+    idempotencyKey: `refund-${proposalId}-${idempotency_key}`,
+    totalPriceBeforeDollars: Number(proposal.total_price),
+    totalPriceAfterDollars: plan.totalPriceAfterDollars,
+  });
 
   const after = await pool.query(
     `SELECT p.total_price, p.amount_paid,

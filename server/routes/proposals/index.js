@@ -15,6 +15,7 @@ router.use('/', require('./public'));
 router.use('/', require('./metadata'));
 router.use('/', require('./lifecycle'));
 router.use('/', require('./actions'));
+router.use('/', require('./cancel'));
 router.use('/', require('./changeRequests'));
 router.use('/', require('./groups'));
 router.use('/', require('./crud'));

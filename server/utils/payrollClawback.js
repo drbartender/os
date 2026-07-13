@@ -16,7 +16,12 @@ const { payPeriodForDate, computePayday } = require('./payrollPeriods');
 const { splitEvenly } = require('./payrollMath');
 const { chicagoTodayYmd } = require('./businessTime');
 
-async function clawbackTip(tipId, newCumulativeRefundedCents) {
+async function clawbackTip(tipId, newCumulativeRefundedCents, opts = {}) {
+  // opts.bartenderUserIds: a PRE-RESOLVED bartender set for the tip's shift. Used
+  // by the cancel-event path, where the shift's shift_requests are already flipped
+  // to 'denied' by the time the clawback runs, so the internal approved-query would
+  // find nobody. When provided, stub-filtering still applies (via users.cc_id).
+  const explicitBartenderIds = Array.isArray(opts.bartenderUserIds) ? opts.bartenderUserIds : null;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -60,15 +65,21 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
       return { delta, bartenders: 0 };
     }
 
-    const bartendersRes = await client.query(
-      `SELECT sr.user_id, (u.cc_id LIKE 'legacy_cc:%') AS is_stub
-         FROM shift_requests sr
-         JOIN users u ON u.id = sr.user_id
-        WHERE sr.shift_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL
-          AND LOWER(sr.position) = 'bartender'
-        ORDER BY sr.user_id`,
-      [tip.shift_id]
-    );
+    const bartendersRes = explicitBartenderIds
+      ? await client.query(
+          `SELECT id AS user_id, (cc_id LIKE 'legacy_cc:%') AS is_stub
+             FROM users WHERE id = ANY($1) ORDER BY id`,
+          [explicitBartenderIds]
+        )
+      : await client.query(
+          `SELECT sr.user_id, (u.cc_id LIKE 'legacy_cc:%') AS is_stub
+             FROM shift_requests sr
+             JOIN users u ON u.id = sr.user_id
+            WHERE sr.shift_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL
+              AND LOWER(sr.position) = 'bartender'
+            ORDER BY sr.user_id`,
+          [tip.shift_id]
+        );
     const allBartenders = bartendersRes.rows;
     const bartenders = allBartenders.filter(r => !r.is_stub).map(r => r.user_id);
     const stubCount = allBartenders.length - bartenders.length;
@@ -306,4 +317,93 @@ async function rewindDisputeClawbackByPaymentIntent(paymentIntentId, reinstatedC
   return { rewound: rowCount };
 }
 
-module.exports = { clawbackTip, clawbackTipByPaymentIntent, rewindDisputeClawbackByPaymentIntent };
+/**
+ * Cancel-time tip clawback (P6, fix #7). When a booked event is cancelled, any
+ * card tips already collected on its shifts are clawed back from the bartenders
+ * who would otherwise keep them (the event did not happen). Runs at CANCEL time
+ * so a cancellation WITHOUT a Stripe refund still claws — the charge.refunded
+ * webhook, which normally drives tip clawback, never fires in that case.
+ *
+ * Idempotent and coordinated with the webhook through the SAME marker
+ * (tips.refunded_amount_cents): clawbackTip only ever moves the delta beyond
+ * what was already clawed, so a later charge.refunded on the same tip computes
+ * delta<=0 and no-ops (no double-claw). Frozen-period deferral rules apply
+ * unchanged — clawbackTip defers (sets defer_kind='clawback') when today's pay
+ * period is non-open, and a subsequent retry re-applies once a period opens.
+ *
+ * OVER-CLAW GUARD: card-tip accrual into payout_events is completion-gated
+ * (payrollAccrual refuses non-completed proposals) and cancel applies only to
+ * BOOKED (non-completed) events — so a tip here was, by construction, never
+ * accrued into a payable line. Writing a negative adjustment against the
+ * bartender would reverse money that was never granted. Before clawing, check
+ * for an accrued card-tip line on the tip's shift; when none exists, SKIP the
+ * negative-adjustment write but STILL advance refunded_amount_cents (so a later
+ * charge.refunded webhook clawback computes delta<=0 and stays a no-op) and
+ * breadcrumb the skip. The claw path remains for defense in depth, should an
+ * accrued line ever exist (e.g. a manual re-accrual quirk).
+ *
+ * Uses clawbackTip, which opens its OWN pooled connection per tip, so this must
+ * be called from the post-COMMIT tail of the cancel handler (after the cancel
+ * transaction's client is released), never while a request holds a connection.
+ *
+ * @param {number} proposalId
+ * @param {Map<number, number[]>} [bartendersByShift] pre-denial bartender user ids
+ *        per shift id (the cancel flow captures this before it denies the shift
+ *        requests, so the clawback charges the right people).
+ * @returns {Promise<{tips:number, clawed:number, deferred:number, skipped:number}>}
+ */
+async function clawbackTipsForCancelledProposal(proposalId, bartendersByShift = null) {
+  const { rows } = await pool.query(
+    `SELECT t.id, t.amount_cents, t.shift_id,
+            EXISTS (
+              SELECT 1 FROM payout_events pe
+               WHERE pe.shift_id = t.shift_id AND pe.card_tip_net_cents > 0
+            ) AS accrued
+       FROM tips t
+       JOIN shifts s ON s.id = t.shift_id
+      WHERE s.proposal_id = $1
+        AND COALESCE(t.refunded_amount_cents, 0) < t.amount_cents`,
+    [proposalId]
+  );
+  let clawed = 0;
+  let deferred = 0;
+  let skipped = 0;
+  for (const tip of rows) {
+    if (!tip.accrued) {
+      // Never accrued -> nothing to reverse. Advance the marker (guarded, so a
+      // concurrent webhook clawback can't race it backwards) and clear any
+      // defer state; the webhook's later clawbackTip sees delta<=0 and no-ops.
+      await pool.query(
+        `UPDATE tips SET refunded_amount_cents = amount_cents,
+                deferred_at = NULL, defer_kind = NULL, defer_target_cents = NULL, defer_attempts = 0
+          WHERE id = $1 AND refunded_amount_cents < amount_cents`,
+        [tip.id]
+      );
+      Sentry.captureMessage('clawbackTipsForCancelledProposal: tip never accrued; marker advanced without clawing', {
+        level: 'info',
+        tags: { util: 'payrollClawback', step: 'cancel_claw_skip' },
+        extra: { proposalId, tipId: tip.id, shiftId: tip.shift_id, skipped: 'never_accrued' },
+      });
+      skipped += 1;
+      continue;
+    }
+    // Full clawback: the entire tip is unwound on cancellation.
+    const opts = bartendersByShift
+      ? { bartenderUserIds: bartendersByShift.get(tip.shift_id) || [] }
+      : {};
+    const res = await clawbackTip(tip.id, Number(tip.amount_cents), opts);
+    if (res && res.delta > 0 && res.bartenders > 0) clawed += 1;
+    // clawbackTip returns null when today's period is frozen and it deferred
+    // (a marker was written for a later retry). tip rows here always exist
+    // (JOINed), so null here is the frozen-period deferral, not a missing tip.
+    if (res === null) deferred += 1;
+  }
+  return { tips: rows.length, clawed, deferred, skipped };
+}
+
+module.exports = {
+  clawbackTip,
+  clawbackTipByPaymentIntent,
+  rewindDisputeClawbackByPaymentIntent,
+  clawbackTipsForCancelledProposal,
+};

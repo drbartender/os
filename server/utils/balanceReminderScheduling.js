@@ -66,12 +66,16 @@ async function scheduleBalanceReminders(proposalId) {
     const id = Number(proposalId);
     if (!Number.isInteger(id)) return;
     const r = await pool.query(
-      `SELECT id, client_id, total_price, amount_paid, balance_due_date, autopay_enrolled, event_timezone
+      `SELECT id, client_id, status, total_price, amount_paid, balance_due_date, autopay_enrolled, event_timezone
        FROM proposals WHERE id = $1`,
       [id]
     );
     const p = r.rows[0];
     if (!p) return;
+    // A cancelled (archived) booking must never schedule balance reminders (P6.5):
+    // the cancel flow deletes pending scheduled_messages, and this guard stops any
+    // re-schedule from re-arming a reminder ladder on an archived proposal.
+    if (p.status === 'archived') return;
     if (!p.client_id) return;
     if (!p.balance_due_date) return;
     const balanceDue = Number(p.total_price) - Number(p.amount_paid);

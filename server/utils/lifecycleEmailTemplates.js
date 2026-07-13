@@ -498,6 +498,43 @@ function portalInvite({ clientName, portalUrl }) {
   };
 }
 
+/**
+ * Cancellation confirmation (P6, fix #7). Sent to the client when a booked event
+ * is cancelled. States the agreement outcome and the refund owed per the
+ * agreement. `refundLine` and `outcomeLine` are pre-rendered by the route from the
+ * cancellation math (cents), so this template just presents them. No em dashes.
+ *
+ * @param {object} a
+ * @param {string} a.clientName
+ * @param {string} [a.eventTypeLabel]
+ * @param {string} a.outcomeLine   one plain sentence stating what happens to money
+ * @param {string} [a.refundLine]  optional "You will be refunded $X." sentence
+ * @param {'client'|'admin'} a.cancelledBy who initiated (shapes the opening line)
+ */
+function cancellationConfirmation({ clientName, eventTypeLabel = 'event', outcomeLine, refundLine, cancelledBy }) {
+  const name = (clientName || 'there').trim().split(/\s+/)[0] || 'there';
+  const opener = cancelledBy === 'admin'
+    ? `We are writing to confirm that your ${esc(eventTypeLabel)} has been cancelled.`
+    : `We are confirming that your ${esc(eventTypeLabel)} has been cancelled as requested.`;
+  const refundHtml = refundLine ? `<p><strong>${esc(refundLine)}</strong></p>` : '';
+  const refundTxt = refundLine ? ` ${refundLine}` : '';
+  return {
+    subject: `Your ${eventTypeLabel} has been cancelled - Dr. Bartender`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Cancellation confirmed</h2>
+      <p>Hi ${esc(name)},</p>
+      <p>${opener}</p>
+      <p>${esc(outcomeLine)}</p>
+      ${refundHtml}
+      <p style="font-size:14px;color:${BRAND.secondary};">If anything here looks off, just reply to this email and we will sort it out.</p>
+      <p>Cheers, Dallas</p>
+    `),
+    text: `Hi ${name}, ${cancelledBy === 'admin'
+      ? `we are writing to confirm that your ${eventTypeLabel} has been cancelled.`
+      : `we are confirming that your ${eventTypeLabel} has been cancelled as requested.`} ${outcomeLine}${refundTxt} If anything here looks off, just reply to this email. Cheers, Dallas`,
+  };
+}
+
 module.exports = {
   signedAndPaidClient,
   portalInvite,
@@ -513,4 +550,5 @@ module.exports = {
   changeRequestAdminAlert,
   changeRequestApproved,
   changeRequestDeclined,
+  cancellationConfirmation,
 };
