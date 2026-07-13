@@ -29,7 +29,7 @@ const WINE_OPTIONS = [
 ];
 
 const MIXER_OPTIONS = [
-  { value: 'full',     label: 'Full', description: 'Standard bar mixers (cola, ginger ale, tonic, juices, etc.)' },
+  { value: 'full',     label: 'Full', description: 'Standard bar mixers (cola, ginger beer, tonic, juices, etc.)' },
   { value: 'matching', label: 'Matching', description: 'Only mixers paired to the spirits picked above' },
   { value: 'none',     label: 'None', description: "Don't include extra mixers (sig drink ingredients still go on the list)" },
 ];

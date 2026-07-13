@@ -4,6 +4,8 @@ import { useToast } from '../../../context/ToastContext';
 import {
   permissionState,
   subscribePush,
+  unsubscribePush,
+  isPushSubscribed,
   isIosNeedsInstall,
 } from '../../../utils/pushSubscribe';
 import IOSCoachmark from './IOSCoachmark';
@@ -244,6 +246,21 @@ export default function NotificationsSection() {
   // authoritative between subscribe calls.
   const [pushPermission, setPushPermission] = useState(() => permissionState());
 
+  // Whether THIS device currently holds an active push subscription. Permission
+  // 'granted' is a necessary but not sufficient signal (the user may have
+  // removed the device while keeping browser permission), so we track the real
+  // subscription separately. Seed optimistically from permission for the common
+  // case, then reconcile against the actual subscription on mount to avoid a
+  // wrong "Remove this device" affordance flash.
+  const [pushSubscribed, setPushSubscribed] = useState(() => permissionState() === 'granted');
+  const [removingDevice, setRemovingDevice] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    isPushSubscribed().then((sub) => { if (!cancelled) setPushSubscribed(sub); });
+    return () => { cancelled = true; };
+  }, []);
+
   // iOS install state — see isIosNeedsInstall() for the gating rules.
   // Memoized for free since useState's initializer runs once; navigator.standalone
   // can flip when the staffer launches from the home screen, but that re-loads
@@ -317,7 +334,10 @@ export default function NotificationsSection() {
     const row = matrix[catId] || { push: false, sms: false, email: false };
     const turningOn = !row.push;
 
-    if (turningOn && pushPermission !== 'granted') {
+    // Subscribe first whenever this device isn't currently subscribed — not
+    // just when permission is ungranted. A device that kept browser permission
+    // but was removed still needs a fresh POST before push will deliver.
+    if (turningOn && !pushSubscribed) {
       let result;
       try {
         result = await subscribePush();
@@ -331,6 +351,7 @@ export default function NotificationsSection() {
       }
       if (result.ok) {
         setPushPermission('granted');
+        setPushSubscribed(true);
         flipCell(catId, 'push');
       } else {
         // subscribePush returns the resolved permission state so the banner
@@ -356,7 +377,28 @@ export default function NotificationsSection() {
       return;
     }
     setPushPermission(r.ok ? 'granted' : r.state);
-    if (!r.ok) toast.error(pushFailureMessage(r.state));
+    if (r.ok) setPushSubscribed(true);
+    else toast.error(pushFailureMessage(r.state));
+  }
+
+  // Remove this device — tears down the browser subscription and the stored
+  // server row via unsubscribePush(). Browser permission is untouched (that
+  // can only change in site settings), so the banner falls back to the
+  // enable-push affordance and the user can re-subscribe with one tap. Turning
+  // push cells off in the matrix is intentionally NOT done here: the saved
+  // per-category prefs are kept so re-enabling restores them.
+  async function handleRemoveDevice() {
+    if (removingDevice) return;
+    setRemovingDevice(true);
+    try {
+      await unsubscribePush();
+      setPushSubscribed(false);
+      toast.success('Push removed from this device.');
+    } catch {
+      toast.error("Couldn't remove push from this device. Please try again.");
+    } finally {
+      setRemovingDevice(false);
+    }
   }
 
   async function handleSave() {
@@ -455,7 +497,10 @@ export default function NotificationsSection() {
 
         <PushPermissionBanner
           state={pushState}
+          subscribed={pushSubscribed}
+          removing={removingDevice}
           onEnable={handleEnablePush}
+          onRemove={handleRemoveDevice}
           onShowCoachmark={() => setCoachmarkOpen(true)}
         />
 

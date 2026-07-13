@@ -13,7 +13,7 @@ function findPageTitle(pathname) {
   return 'Dashboard';
 }
 
-export default function Header({ onQuickAdd, unreadCount = 0, onOpenMobileNav, mobileNavOpen = false }) {
+export default function Header({ onQuickAdd, onOpenMobileNav, mobileNavOpen = false }) {
   const { pathname } = useLocation();
   const title = findPageTitle(pathname);
 
@@ -32,10 +32,6 @@ export default function Header({ onQuickAdd, unreadCount = 0, onOpenMobileNav, m
       <div className="header-title">{title}</div>
       <GlobalSearchButton />
       <div className="header-actions">
-        <button type="button" className="icon-btn" title="Notifications" aria-label="Notifications">
-          <Icon name="bell" />
-          {unreadCount > 0 && <span className="dot" />}
-        </button>
         <button type="button" className="icon-btn" title="New proposal" aria-label="Quick create" onClick={onQuickAdd}>
           <Icon name="plus" />
         </button>

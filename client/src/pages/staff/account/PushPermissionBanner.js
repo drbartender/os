@@ -21,18 +21,62 @@ import React from 'react';
  * a future state added without a render branch should fail soft, not crash).
  */
 
-export default function PushPermissionBanner({ state, onEnable, onShowCoachmark }) {
+export default function PushPermissionBanner({
+  state,
+  subscribed = true,
+  removing = false,
+  onEnable,
+  onRemove,
+  onShowCoachmark,
+}) {
   if (state === 'granted') {
+    // Permission is granted but this device has no active subscription (e.g.,
+    // the user just removed it). Offer the enable affordance again rather than
+    // claiming push is on.
+    if (!subscribed) {
+      return (
+        <div className="sp-push-banner neutral" role="status">
+          <BellIcon size={14} />
+          <div className="sp-push-banner-body">
+            <div>
+              <div className="sp-push-banner-t">
+                <strong>Push isn't on for this device.</strong>
+              </div>
+              <div className="sp-notif-banner-sub">
+                Enable push to get app alerts on this device.
+              </div>
+            </div>
+            <button
+              type="button"
+              className="sp-btn sp-btn-sm sp-btn-primary"
+              onClick={onEnable}
+            >
+              Enable push
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="sp-push-banner ok" role="status">
         <CheckIcon size={14} />
-        <div>
-          <div className="sp-push-banner-t">
-            <strong>Push is on for this device.</strong>
+        <div className="sp-push-banner-body">
+          <div>
+            <div className="sp-push-banner-t">
+              <strong>Push is on for this device.</strong>
+            </div>
+            <div className="sp-notif-banner-sub">
+              You'll get push for any category below where it's switched on.
+            </div>
           </div>
-          <div className="sp-notif-banner-sub">
-            You'll get push for any category below where it's switched on.
-          </div>
+          <button
+            type="button"
+            className="sp-btn sp-btn-sm"
+            onClick={onRemove}
+            disabled={removing}
+          >
+            {removing ? 'Removing…' : 'Remove this device'}
+          </button>
         </div>
       </div>
     );

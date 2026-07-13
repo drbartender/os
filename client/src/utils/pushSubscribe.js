@@ -9,6 +9,7 @@
 //   permissionState()    → 'unsupported' | 'granted' | 'denied' | 'default'
 //   subscribePush()      → { ok, state }
 //   unsubscribePush()    → { ok }
+//   isPushSubscribed()   → boolean (this device currently has an active PushSubscription)
 //   isIosNeedsInstall()  → boolean (iOS Safari, not yet installed to home screen)
 //
 // urlBase64ToUint8Array is also exported (named) for unit testing.
@@ -71,6 +72,28 @@ export function permissionState() {
     return 'unsupported';
   }
   return Notification.permission;
+}
+
+/**
+ * Whether THIS device currently holds an active PushSubscription. Distinct
+ * from permissionState(): a browser can have `granted` permission yet no live
+ * subscription (e.g., after the user removed this device). The Notifications
+ * UI needs the true subscription status to decide between the "remove device"
+ * and "enable push" affordances. Null-safe and never throws — resolves false
+ * on any UA without the service-worker API or on any lookup error.
+ */
+export async function isPushSubscribed() {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+    return false;
+  }
+  try {
+    const reg = await navigator.serviceWorker.getRegistration('/staff-sw.js');
+    if (!reg) return false;
+    const sub = await reg.pushManager.getSubscription();
+    return !!sub;
+  } catch {
+    return false;
+  }
 }
 
 /**
