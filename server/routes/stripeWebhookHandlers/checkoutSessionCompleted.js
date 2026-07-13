@@ -5,6 +5,8 @@
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { createEventShifts } = require('../../utils/eventCreation');
+const { getBookingWindow } = require('../../utils/bookingWindow');
+const { notifyLastMinuteBooking } = require('../../utils/lastMinuteAlert');
 const { createInvoiceOnSend, createBalanceInvoice, linkPaymentToInvoice } = require('../../utils/invoiceHelpers');
 const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
 const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
@@ -143,6 +145,10 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
       }
       const dbClient = await pool.connect();
       let isFirstDelivery = false;
+      // Set true in-tx for a ≤72h-out Payment-Link settlement. Gates BOTH the
+      // flag UPDATE (in-tx) and the post-commit SMS blast so a Stripe retry
+      // never double-flags/blasts. Mirrors payment_intent.succeeded.
+      let isLastMinuteHold = false;
       let groupChoice = { committed: false, conflict: false, archivedLoserIds: [] };
       let sweptAlternativeIds = [];
       try {
@@ -218,6 +224,34 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
               [proposalId, session.amount_total / 100]
             );
           }
+
+          // Last-minute staffing hold — a Payment-Link settlement is always an
+          // INITIAL booking (both link types map to full/deposit, the exact
+          // pair payment_intent.succeeded flags on), so no payment-type gate is
+          // needed here. !conflict (F1): a settlement on a non-chosen option must
+          // never flag a hold or trigger the post-commit staff SMS blast. The
+          // blast is gated on this flag AND isFirstDelivery, so a Stripe retry
+          // can't re-flag or re-blast. Mirrors payment_intent.succeeded.
+          if (!groupChoice.conflict) {
+            const lmRes = await dbClient.query(
+              'SELECT event_date, event_start_time FROM proposals WHERE id = $1',
+              [proposalId]
+            );
+            if (lmRes.rows[0]) {
+              const w = getBookingWindow({
+                eventDate: lmRes.rows[0].event_date,
+                eventStartTime: lmRes.rows[0].event_start_time,
+              });
+              if (w.lastMinuteHold) {
+                isLastMinuteHold = true;
+                await dbClient.query(
+                  'UPDATE proposals SET last_minute_hold = true WHERE id = $1',
+                  [proposalId]
+                );
+              }
+            }
+          }
+
           await dbClient.query(
             `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, $2, 'system', $3)`,
             [proposalId, linkPaymentType === 'full' ? 'paid_in_full' : 'deposit_paid', JSON.stringify({ amount: session.amount_total, payment_link: session.payment_link, payment_type: linkPaymentType })]
@@ -269,6 +303,14 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
 
       // Non-blocking post-commit work — only on first delivery.
       if (isFirstDelivery) {
+        // ≤72h booking: admin + broad-net staff SMS blast. Fire-and-forget;
+        // notifyLastMinuteBooking self-guards (try/catch + Sentry, never throws).
+        // Gated by isLastMinuteHold (set in-tx above, which already implies
+        // !conflict) AND isFirstDelivery so a Stripe retry never re-blasts. Fired
+        // BEFORE createEventShifts to mirror payment_intent.succeeded's ordering —
+        // the blast reads only the proposal/client/staff rows, never shift rows,
+        // so it does not depend on the shift existing first.
+        if (isLastMinuteHold) notifyLastMinuteBooking(proposalId);
         // !conflict: no receipt/notify for a non-chosen option (Sentry + manual refund).
         if (!groupChoice.conflict) sendPaymentNotifications(proposalId, session.amount_total || 0, linkPaymentType);
         // A conflicting late payment on a non-chosen option must NOT convert.
