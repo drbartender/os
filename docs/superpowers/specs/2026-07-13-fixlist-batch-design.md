@@ -14,7 +14,7 @@
 - Duplicate Thumbtack lead created stray draft #528 + email-less duplicate client record 1461 for Angelena (data cleanup, not code).
 
 ### Design (approved: "route them to the right spot")
-1. **Home payload carries the open balance invoice.** `/api/client-portal/home` (and the detail endpoint's focus shape) adds `open_invoice_token` + `open_invoice_label` for the focus proposal: the oldest unpaid (`status = 'sent'`) invoice, else null. `shapeFocus` passes it through.
+1. **Home payload carries the open balance invoice.** `/api/client-portal/home` (and the detail endpoint's focus shape) adds `open_invoice_token` + `open_invoice_label` for the focus proposal: the oldest still-payable invoice, **`status IN ('sent','partially_paid')`** (fleet finding: `sent`-only would re-dead-end partial payers), else null. `shapeFocus` passes it through; both focus queries and the public `/t/:token` projection gain the invoices LATERAL.
 2. **Next-Up "Pay balance" links to the invoice** (`/invoice/:token`) when `open_invoice_token` is present; falls back to the proposal page otherwise (unchanged behavior when no payable invoice exists).
 3. **ProposalView paid-state card gets a primary "Pay balance" button** linking to the same open invoice (public proposal payload must expose the open invoice token via its existing allowlisted projection); the planner link is demoted to a secondary link below it. Fully-paid state unchanged.
 4. **Focus ordering prefers bookings.** Both focus queries order by booked-status first: `ORDER BY (p.status IN ('deposit_paid','balance_paid','confirmed')) DESC, p.event_date ASC, p.event_start_time ASC NULLS LAST, p.created_at DESC`. A draft can never shadow a booked event again (fixes Allyson today, prevents recurrence).
@@ -35,7 +35,7 @@ Aggregation is correct everywhere (line totals, payout totals, mark-paid, paystu
 ### Design (approved: preserve)
 1. Client `editable` gate mirrors the server exactly: fields disabled when period status is `processing` or `paid` (or payout not `pending`), with a visible "period is processing — edits are frozen" hint.
 2. Amount + note commit together without disabling inputs mid-entry: keep inputs enabled during save; queue/replace in-flight saves so the latest draft wins; commit fires when focus leaves the adjustment pair (or on explicit blur of either with latest values of both).
-3. **Orphan sweep preserves positive adjustments:** when sweeping an off-roster worker's line that carries `adjustment_cents > 0`, keep the line with wage/gratuity components zeroed and only the adjustment remaining; recompute `line_total_cents`; flag it in the payroll UI (e.g. "reimbursement kept for off-roster worker — zero if not owed") so Dallas can zero it deliberately. Negative-clawback preservation unchanged.
+3. **Orphan sweep preserves positive adjustments as HELD, not payable** (Dallas 2026-07-13: reimbursements are hand-entered at payroll time; track the number, never auto-pay). When sweeping an off-roster worker's line with `adjustment_cents > 0`: keep the row, keep `adjustment_cents` (the tracked number), zero wage/gratuity/card-tip components, and set `line_total_cents = 0` so nothing pays out. Payroll UI shows a chip ("reimbursement held: worker off roster"). Any admin PATCH on the line recomputes `line_total_cents` through the normal editable-fields path, which naturally re-arms the reimbursement if Dallas confirms it's owed. Negative-clawback preservation unchanged.
 
 ---
 
@@ -45,7 +45,7 @@ Aggregation is correct everywhere (line totals, payout totals, mark-paid, paystu
 Server correctly reverts an approved list to `pending_review` on any edit (`drinkPlans.js:503-516`), hiding it from the client (by design). But `ShoppingListModal.jsx` keeps `approveStatus === 'approved'` from the first approval (only approve-failure resets it), and the button is `disabled={approveStatus !== 'idle'}` — permanently dead within that modal session.
 
 ### Design (approved: keep the hide, fix the button)
-On a successful auto-save PUT of a previously-approved list, reset `approveStatus` to `'idle'` and relabel the button **"Re-approve & Send"** so the admin knows the client currently sees the pending state. No schema change, no snapshot of the last-approved version. Client-page pending copy unchanged.
+On a successful auto-save PUT of a previously-approved list, reset `approveStatus` to `'idle'` and relabel the button **"Re-approve & Send"** so the admin knows the client currently sees the pending state. A FAILED auto-save leaves the button in its prior state (correct: the server never reverted the list); the next successful save resets it. Each re-approve re-sends the client email by design (explicit admin action, not a loop risk). No schema change, no snapshot of the last-approved version. Client-page pending copy unchanged.
 
 ---
 
@@ -57,9 +57,9 @@ On a successful auto-save PUT of a previously-approved list, reset `approveStatu
 ### Design (approved)
 Formula for hosted, non-class packages: **base = max( billedGuests × small-tier rate (incl. extra-hour scaling on billedGuests), $550 )** where `billedGuests = max(actualGuests, 25)`.
 
-1. **Schema:** `service_packages.min_billed_guests INTEGER` (idempotent add). Set 25 for all ten hosted party tiers; NULL for classes and BYOB. Update `min_total` to **550.00** for all ten hosted party tiers; classes/BYOB stay NULL. (25×small-rate ≥ every legacy floor, so nothing gets cheaper; the $550 backstop binds only where 25-guest billing lands under it — mocktail/Primary/Refined/Carbon up to ~28-30 actual guests.)
+1. **Schema:** `service_packages.min_billed_guests INTEGER` (idempotent add). The party-tier/class split MUST key on `pricing_type = 'per_guest' AND bar_type <> 'class'` — classes are `category='hosted'` too, so `category` alone would wrongly reprice them (fleet finding). Set `min_billed_guests = 25` and `min_total = 550.00` on those rows; classes and BYOB stay NULL. Record the legacy per-tier `min_total` values in a migration comment for rollback ($400 Primary/Refined/Clear, $425 Carbon, $450 Cultivated, $500 Base, $600 Midrange, $700 Enhanced, $850 No.5, $1000 Grand). (25×small-rate ≥ every legacy floor, so nothing gets cheaper; the $550 backstop binds only where 25-guest billing lands under it — mocktail/Primary/Refined/Carbon up to ~28-30 actual guests.)
 2. **Engine (`calculateBaseCost`):** for per-guest packages, `billedGuests = Math.max(guestCount, Number(pkg.min_billed_guests || 0))`; use billedGuests for the per-guest AND extra-hour terms; keep the small-rate selection on actual guest count (identical outcome under 50; do not change rate-tier semantics); keep `Math.max(..., min_total)` backstop. Classes: `min_billed_guests` NULL → unchanged math. **Staffing, 1:100 bartender ratio, and gratuity surcharges keep using ACTUAL guests** (isHostedPackage rule untouched).
-3. **Snapshot/display:** snapshot records `billed_guests` and `floor_applied` (existing flag) with a reason (`guest_min` | `dollar_min`). Display line "Small-event minimum applied (billed as 25 guests)" / "Hosted minimum $550 applied" on: quote wizard (exists — update copy), admin proposal breakdown, client ProposalView breakdown.
+3. **Snapshot/display:** snapshot records `billed_guests` and `floor_applied` (existing flag) with a reason (`guest_min` | `dollar_min`). The new fields must demonstrably flow through `POST /api/proposals/public/calculate` (the response IS the snapshot; add a test pinning them — the compare matrix consumes them). Display line "Small-event minimum applied (billed as 25 guests)" / "Hosted minimum $550 applied" on: quote wizard (exists — update copy), admin proposal breakdown, client ProposalView breakdown. Legacy snapshots without the fields render no line (null-guard; ProposalView renders the STORED snapshot, not a live recompute).
 4. **Marketing copy:** one-line mention on Services + FAQ ("hosted events are billed at a 25-guest minimum; $550 event minimum"). No other repricing.
 5. **Forward-only:** existing proposals keep stored snapshots/prices. Change-request repricing of an existing booking uses the new engine (correct: a guest-count drop can't deflate below the floor).
 
@@ -86,9 +86,9 @@ Team:
 (blank)
 Notes: <shift notes if present>
 (blank)
-Open in OS: {CLIENT_URL}/events/{shiftId}
+Open in OS: {CLIENT_URL}/events/shift/{shiftId}
 ```
-3. Title unchanged (`Client — Event type`). Staff feed content unchanged apart from the newline fix. Balance line uses proposal totals (paid when `amount_paid ≥ total`). Add route-level tests pinning a rendered DESCRIPTION (none exist today — nothing to fight).
+3. Title unchanged (`Client — Event type`). Staff feed content unchanged apart from the newline fix. Balance line uses proposal totals (paid when `amount_paid ≥ total`); `p.amount_paid` must be added to BOTH admin query sites (the feed query AND the single-shift route — fleet finding: neither selects it today). The OS link uses the `/events/shift/:id` deep-link route (`/events/:id` resolves an EVENT id, not a shift id). Add route-level tests pinning a rendered DESCRIPTION (none exist today — nothing to fight).
 
 ---
 
@@ -99,18 +99,21 @@ Admin-only, lives in the event/proposal action menu (not a top-level button). Th
 
 1. **Who cancels:** client (Agreement §3.1) or Dr. Bartender (§3.3). (Reschedule/postponement §3.2 and force majeure §11 are out of scope v1 — handled manually.)
 2. **Consequence preview (server-computed):** days to event; agreement outcome; exact refund; staff whose shifts get cancelled; scheduled comms/autopay that will halt; client email preview.
-   - Client cancel, **>14 days**: retainer forfeited; refund = max(0, amount_paid − retainer − gratuityPaid) × 0.95 + gratuityPaid. **Gratuity always refunds in full (the portion actually paid); the 5% processing fee applies only to the non-gratuity excess.** Every component clamps ≥ 0 (deposit-only payers get $0 non-gratuity refund, never a negative). Unpaid balance never collected.
+   - Client cancel, **>14 days**: retainer forfeited; refund = max(0, amountPaid − retainer − gratuityPaid) × 0.95 + gratuityPaid. **Gratuity always refunds in full (the portion actually paid); the 5% processing fee applies only to the non-gratuity excess.** Every component clamps ≥ 0 (deposit-only payers get $0 non-gratuity refund, never a negative). Unpaid balance never collected.
    - Client cancel, **≤14 days**: no refund EXCEPT gratuity, which refunds in full (Dallas 2026-07-13; the "every dollar to staff" line stays true — staff didn't work, client gets it back). Unpaid balance remains due (collection manual).
    - **DRB cancels:** full refund of everything paid, including retainer.
+   - **Money sources and units (pinned per fleet):** ALL cancel math runs in CENTS from invoice/payment rows; `proposals.amount_paid` (dollars) is never used in refund math. `amountPaid` = sum of succeeded `proposal_payments` cents; `retainer` = the Deposit invoice's `amount_paid` cents (NOT `STRIPE_DEPOSIT_AMOUNT`, NOT `proposals.deposit_amount` dollars — mixing those is a 100× hazard); `gratuityPaid` = `extractGratuityCents(pricing_snapshot)` gated on the existing gratuity-funded determination (same gate payroll accrual uses), which is $0 for deposit-only payers by construction.
 3. **Guardrail + toggles:** type the client's last name to arm; per-cancellation toggles to suppress the client email and/or staff notifications (default ON).
 
 **Execution (transactional where multi-table):**
-- Proposal → `status = 'archived'`, `archive_reason = 'client_cancelled' | 'drb_cancelled'`, cancellation note + `cancelled_at` + who-cancelled recorded.
+- Proposal → `status = 'archived'`, `archive_reason = 'client_cancelled' | 'we_cancelled'` — these are EXISTING values in the `proposals_archive_reason_check` constraint; `'drb_cancelled'` does not exist and would throw (fleet finding). New columns `cancelled_at TIMESTAMPTZ`, `cancelled_by TEXT CHECK IN ('client','admin')` (matching the house convention on `proposal_change_requests.cancelled_by`), `cancellation_note TEXT` — enumerated here per cross-cutting rules, ARCHITECTURE.md schema section updated.
+- **Server-side guards:** cancel requires a currently-booked status and 409s on already-archived/completed proposals (mirrors existing archive-path rejections; idempotent against double-submit); the typed last name is re-validated SERVER-side against the client record (the UI gate alone is bypassable); if `autopay_status = 'in_progress'` (a balance charge mid-flight at Stripe), preview shows a blocking warning and cancel 409s until it settles — archiving stops scheduler selection but cannot abort an in-flight charge.
 - Linked shifts → `cancelled` via the existing staff-shift machinery (`staffShiftHandlers` kind `'cancelled'`, respecting the suppress toggle).
 - Scheduled comms: delete/void pending `scheduled_messages` for the proposal (processing-delete pattern); autopay must not fire (archived status excluded from scheduler selection — verify + test); event-eve SMS and nudges covered by the same status filters (verify + test each scheduler's WHERE).
 - Unpaid invoices → void via existing invoice-void path.
-- Gratuity already accrued → existing clawback machinery (staff never worked; deferral-marker rules apply for frozen periods).
-- Refund execution is a **separate explicit click** ("Issue $X refund") running through the existing partial-refund machinery with attribution marking the gratuity portion; admin may skip and handle in Stripe. Cancel-without-refund is valid and leaves a visible "refund owed per agreement: $X" note on the proposal.
+- **Gratuity clawback runs at CANCEL time, not refund time** (fleet finding: the `charge.refunded` webhook already triggers clawback, and cancel-without-refund would otherwise never claw back). Cancel executes the clawback idempotently (marker on the tip/accrual row); the webhook-driven clawback must no-op against that marker so a later refund can't double-claw. Deferral-marker rules apply for frozen periods; the frozen-period path gets an explicit test.
+- Refund execution is a **separate explicit click** ("Issue $X refund"). Reality check from the fleet: the existing `planRefund` is single-charge (a booked event has deposit + balance charges) and refund attribution is by invoice label with no gratuity hook. So: extract the inline Stripe refund orchestration from `routes/stripe.js` into a shared util; the cancel-refund loops it per refundable charge (largest-first) until the target is met; refund recording gains an explicit gratuity-portion attribution (`gratuity_cents` on the refund row) so the gratuity component is auditable. Admin may skip and handle in Stripe. Cancel-without-refund is valid and leaves a visible "refund owed per agreement: $X" note on the proposal.
+- **Refunded money is not income** (Dallas 2026-07-13): cancellation refunds are recorded through the standard refund machinery, which Financials already nets out of collected/income (payment-accounting fixes, fcec551). The original contract total is preserved in the cancellation audit note for history.
 - Client email: new lifecycle template (cancellation confirmation, states what was/will be refunded per agreement). Calendar feeds: cancelled shifts already render as cancelled.
 - Log the full computed math + choices (admin notes or audit row).
 
@@ -127,7 +130,7 @@ Dallas delegated the call; recommendation approved: **both surfaces, one engine,
 
 ### Phase B — in-proposal compare matrix
 - Rework `/compare/:token` into an aligned matrix: rows = shared attributes (price for THIS event, deposit, spirits, beer, wine, extras...), columns = packages. Prices computed live per package via `public/calculate` with the event's guest count/hours (one call per package, parallel).
-- Works in two modes: (a) **option-group mode** (today's flow, admin-curated options) — unchanged contract, restyled + aligned; (b) **explore mode** for any single proposal: client can open "compare packages for my event" from ProposalView and see all eligible packages priced for their event.
+- Works in two modes: (a) **option-group mode** (today's flow, admin-curated options) — unchanged contract, restyled + aligned; (b) **explore mode** for any single proposal: client can open "compare packages for my event" from ProposalView and see **all active non-class packages** priced for their event (Dallas 2026-07-13). The minimum-note row falls back to the pre-existing `floor_applied` flag when `floor_reason` is absent (pre-P4 responses).
 - Pre-booking: "Choose this one" keeps today's behavior. Explore-mode choice on an unsent/unbooked proposal routes through admin visibility (no silent package swap of a sent proposal). Post-booking: "request this package" submits a change request with `package_id` (server already prices it; client form gains the package field in this surface only).
 - Included-items detail still `data/packages.js` (moving copy to DB is out of scope; no admin package editor exists).
 - Apothecary components (shared classes, not the current one-off inline styles). Absorbs the backlog "compare-page reskin".
@@ -138,7 +141,9 @@ Ordering note: build after the hosted-minimum lane so displayed floors are final
 
 ## Cross-cutting
 
-- Money paths (#2 payroll, #4 pricing, #6 cancel/refund): max reasoning effort, full review fleet + `/second-opinion` at push (sensitive paths).
+- Money paths (#2 payroll, #4 pricing, #6 cancel/refund): max reasoning effort, full review fleet + `/second-opinion` at push (sensitive paths). Per-lane fleets include `database-review` where SQL writes change (payroll sweep, pricing schema, cancel schema) and `security-review` on the cancel route (admin route executing refunds).
+- Every client-UI lane carries an explicit manual verification step (no client test runner exists); `CI=true react-scripts build` is the mechanical gate.
+- Merge-order seams: `schema.sql` (P4 + P6), ServicesPage/FaqPage copy (P4 + P7 — run P4 first, P7 owns the consolidation), ProposalView.js (P1 + P8), README/ARCHITECTURE (P6/P7/P8).
 - Proposals money is DOLLARS; invoices/tips/Stripe are CENTS.
 - No em dashes in client-facing copy.
 - Email over SMS for new client notifications (cancellation confirmation = email; staff shift-cancel notices use the existing shift-notification channels).
