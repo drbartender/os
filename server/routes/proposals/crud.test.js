@@ -479,11 +479,17 @@ test('Case 6: invoice failure rolls back the whole insert; retry yields exactly 
 // proposal_addons row carries the snapshot quantity through, and the snapshot
 // line_total doubles vs the x1 baseline.
 test('Case 8: addon_quantities x2 doubles the addon line and persists quantity', async () => {
+  // Fresh admin token — its own adminWriteLimiter bucket. primaryToken is
+  // already at its 10/min ceiling from cases 1-6/9, and this case fires TWO
+  // POSTs; a contended bucket would 429 the second one (see the BUDGET note
+  // at the top of this file). makeFreshAdmin() is the documented cure.
+  const token = await makeFreshAdmin();
+
   // Baseline: same addon at the default quantity (1). send_now:true keeps both
   // POSTs on the send path — quantity persistence is identical either way, and
   // staying on one path is consistent with the other send-path cases.
   const baseRes = await request('POST', '/api/proposals', {
-    token: primaryToken,
+    token,
     body: validHostedBody({ send_now: true, addon_ids: [ADDITIONAL_BARTENDER_ID] }),
   });
   trackResponse(baseRes);
@@ -494,7 +500,7 @@ test('Case 8: addon_quantities x2 doubles the addon line and persists quantity',
 
   // x2.
   const x2Res = await request('POST', '/api/proposals', {
-    token: primaryToken,
+    token,
     body: validHostedBody({
       send_now: true,
       addon_ids: [ADDITIONAL_BARTENDER_ID],

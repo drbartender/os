@@ -1,5 +1,5 @@
 import security from "eslint-plugin-security";
-import reactHooks from "./client/node_modules/eslint-plugin-react-hooks/index.js";
+import reactHooks from "eslint-plugin-react-hooks";
 
 export default [
   {
