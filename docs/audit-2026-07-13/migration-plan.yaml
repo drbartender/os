@@ -445,6 +445,12 @@ items:
       coverBroadcast imports the shared utils/positionsNeeded.js instead of its local copy. Sequence
       scheduler loads a campaign's steps once into a Map instead of 2 queries per enrollment per tick;
       sends stay sequential.
+    follow_up: >
+      From the qw-isbartender merge review (2026-07-13): accrual's JS tip-pool filter now trims via
+      isBartender, but the SAME bartender selection is un-trimmed SQL LOWER(sr.position)='bartender' in
+      payrollLateTip.js:47, payrollClawback.js:68, payrollDisputeNotify.js:78, and admin/payroll.js.
+      No padded positions exist today, but a padded row would split accrual vs clawback denominators.
+      Align the SQL to LOWER(TRIM(position)) in this lane (money files - full fleet).
 
   - id: c8-pricing-snapshot-validator
     phase: P3
