@@ -364,6 +364,10 @@ router.post('/leads', asyncHandler(async (req, res) => {
   }
 
   const dbClient = await pool.connect();
+  // Guards against a double dbClient.release(): the post-commit tail releases the
+  // connection early (see below) and the finally must then NOT release it again —
+  // pg throws on a double-release. connect-to-release, one connection per request.
+  let released = false;
   try {
     await dbClient.query('BEGIN');
 
@@ -384,6 +388,13 @@ router.post('/leads', asyncHandler(async (req, res) => {
       // duplicate never re-notifies.
       if (row.client_id && !row.proposal_id) {
         console.log(`Thumbtack lead ${lead.negotiationId} duplicate with no draft — healing post-commit steps`);
+        // Release before the post-commit tail: runPostCommitSteps ->
+        // createDraftProposalFromLead opens its OWN pool.connect(), so holding this
+        // client across it would make the request occupy TWO pooled connections (a
+        // pool-deadlock risk under a lead spike). The read tx already COMMITted and
+        // nothing below touches dbClient; runPostCommitSteps takes no client.
+        dbClient.release();
+        released = true;
         await runPostCommitSteps({ lead, clientId: row.client_id });
         return res.status(200).json({ status: 'healed' });
       }
@@ -436,6 +447,14 @@ router.post('/leads', asyncHandler(async (req, res) => {
     await dbClient.query('COMMIT');
     console.log(`Thumbtack lead ${lead.negotiationId} saved — client ${clientId}`);
 
+    // Release before the post-commit tail: runPostCommitSteps ->
+    // createDraftProposalFromLead opens its OWN pool.connect(), so holding this
+    // client across it would make the request occupy TWO pooled connections (a
+    // pool-deadlock risk under a lead spike). The tx already COMMITted and nothing
+    // below touches dbClient; runPostCommitSteps takes no client.
+    dbClient.release();
+    released = true;
+
     // Post-commit side effects (best-effort draft + admin notification). A
     // failure here must NOT roll back lead capture or 500 the webhook.
     await runPostCommitSteps({ lead, clientId });
@@ -451,7 +470,9 @@ router.post('/leads', asyncHandler(async (req, res) => {
     console.error('Thumbtack lead processing error:', err);
     res.status(500).json({ error: 'Internal error' });
   } finally {
-    dbClient.release();
+    // The post-commit tail may have already released (released=true); pg throws on
+    // a double-release, so only release the client here if that path did not run.
+    if (!released) dbClient.release();
   }
 }));
 
