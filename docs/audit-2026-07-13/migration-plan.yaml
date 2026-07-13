@@ -240,6 +240,18 @@ items:
       succeeded PI for (proposal, balance_due_date) instead of trusting the expired idempotency key.
       Requires a genuine >24h webhook outage to fire today; surgical, not a rewrite.
     review: full fleet + /second-opinion
+    status: >
+      SHIPPED 2026-07-13 (lane audit-a-autopay, other window; 72h TTL + durable charge record +
+      priorBalanceChargeSettling guard) + guard-selection rework same day (lane autopay-guard-fix,
+      after cross-LLM push review found 3 holes: amount-match bypass, LIMIT-1 shadowing, no
+      webhook-confirmed exclusion; fixed = pending-only amount-blind LIMIT-25 scan-past-non-balance).
+    follow_up: >
+      Residual found in the guard-fix adversarial review, PRE-EXISTING and out of that lane's scope:
+      payment_type 'drink_plan_with_balance' intents charge the outstanding balance but are invisible
+      to the guard's payment_type==='balance' check, so an autopay-enrolled client paying their
+      balance through the drink-plan flow during a webhook outage can still be double-charged by
+      autopay. Fix shape: treat drink_plan_with_balance as balance-settling, or key the guard on
+      metadata.balance_amount_cents > 0. Small, money path, full fleet.
 
   - id: m5-dp-submit-reconcile
     phase: P1
