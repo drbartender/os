@@ -42,8 +42,16 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   // duplicate the request on mount).
   const [approveStatus, setApproveStatus] = useState(initialApproveStatus); // 'idle' | 'approving' | 'approved'
   const [approveError, setApproveError] = useState('');
+  // Set true once the list has been approved and then edited back to review
+  // this modal session; it stays true so the re-armed button reads
+  // "Re-approve & Send" instead of the first-time "Approve & Send" copy.
+  const [wasApproved, setWasApproved] = useState(false);
   const isFirstRender = useRef(true);
   const saveTimer = useRef(null);
+  // Mirror approveStatus into a ref so the debounced auto-save closure reads
+  // the current value (the timer captures state from when it was scheduled).
+  const approveStatusRef = useRef(approveStatus);
+  useEffect(() => { approveStatusRef.current = approveStatus; }, [approveStatus]);
 
   function deepClone(d) {
     const uid = () => typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -74,7 +82,16 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           },
         });
         setSaveStatus('saved');
+        // The server reverts an approved list to pending_review on any edit
+        // (drinkPlans.js), hiding it from the client. Re-arm the approve
+        // button so the admin can re-approve and re-send the updated list.
+        if (approveStatusRef.current === 'approved') {
+          setApproveStatus('idle');
+          setWasApproved(true);
+        }
       } catch (err) {
+        // A failed save leaves the button state as-is (the server never
+        // reverted the list); the next successful save re-arms it.
         console.error('Auto-save failed:', err);
         setSaveStatus('unsaved');
       }
@@ -274,6 +291,19 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   const saveColor = saveStatus === 'saved' ? 'hsl(var(--ok-h) var(--ok-s) 42%)'
     : saveStatus === 'saving' ? 'var(--ink-3)'
     : 'hsl(var(--danger-h) var(--danger-s) 55%)';
+
+  // Approve button copy. Once the list was approved and edited back to review,
+  // the re-armed button reads "Re-approve & Send" and its tooltip warns that
+  // the client is currently on the pending screen until it is re-sent.
+  const approveLabel = approveStatus === 'approving' ? 'Approving…'
+    : approveStatus === 'approved' ? '✓ Approved & Sent'
+    : wasApproved ? 'Re-approve & Send'
+    : 'Approve & Send to Client';
+  const approveTitle = approveStatus === 'approved'
+    ? 'Already approved, client can now see this list'
+    : wasApproved
+      ? 'Your edits set this list back to Needs review, so the client sees the pending screen. Re-approve to send them the updated list.'
+      : 'Save current edits, mark approved, and email the client a link';
 
   return createPortal(
     <div style={{
@@ -482,13 +512,9 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
               className="btn btn-success"
               onClick={handleApproveAndSend}
               disabled={approveStatus !== 'idle'}
-              title={approveStatus === 'approved'
-                ? 'Already approved, client can now see this list'
-                : 'Save current edits, mark approved, and email the client a link'}
+              title={approveTitle}
             >
-              {approveStatus === 'approving' ? 'Approving…'
-                : approveStatus === 'approved' ? '✓ Approved & Sent'
-                : 'Approve & Send to Client'}
+              {approveLabel}
             </button>
           )}
         </div>
