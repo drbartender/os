@@ -370,21 +370,31 @@ test('POST /payouts/:id/mark-paid > 400 on an invalid method', async () => {
 });
 
 test('GET /unassigned-tips > lists tips with NULL shift_id and candidate shifts', async () => {
+  // The endpoint WINDOWS to tipped_at > NOW()-90d and candidate event_date >
+  // NOW()-120d, so unlike the rest of this suite these fixtures must be
+  // RECENT. Safe for pay-period isolation: an unassigned tip never accrues,
+  // so recent dates on this path create/touch no pay_periods row.
+  const recentShift = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES (CURRENT_DATE - 3, '6:00 PM', 'open', $1) RETURNING id`,
+    [proposalId]
+  );
+  const recentShiftId = recentShift.rows[0].id;
   const tip = await pool.query(
     `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, stripe_payment_intent_id, tipped_at)
-     VALUES (gen_random_uuid(), $1, 5000, 'pi_unassigned_test', '2019-06-05 23:30:00+00')
+     VALUES (gen_random_uuid(), $1, 5000, 'pi_unassigned_test', NOW() - INTERVAL '1 day')
      RETURNING id`,
     [contractorId]
   );
   const tipId = tip.rows[0].id;
   try {
-    // Make the contractor an approved bartender on the fixture shift so it
+    // Make the contractor an approved bartender on the recent shift so it
     // shows up in candidate_shifts.
     await pool.query(
       `INSERT INTO shift_requests (shift_id, user_id, position, status)
        VALUES ($1,$2,'Bartender','approved')
        ON CONFLICT (shift_id, user_id) DO UPDATE SET status='approved'`,
-      [shiftId, contractorId]
+      [recentShiftId, contractorId]
     );
     const r = await req('GET', '/api/admin/payroll/unassigned-tips', adminToken);
     assert.equal(r.status, 200);
@@ -393,13 +403,14 @@ test('GET /unassigned-tips > lists tips with NULL shift_id and candidate shifts'
     assert.ok(ours, 'fixture tip listed');
     assert.equal(ours.amount_cents, 5000);
     assert.ok(Array.isArray(ours.candidate_shifts));
-    assert.ok(ours.candidate_shifts.find(c => c.shift_id === shiftId), 'fixture shift in candidates');
+    assert.ok(ours.candidate_shifts.find(c => c.shift_id === recentShiftId), 'fixture shift in candidates');
   } finally {
     await pool.query('DELETE FROM tips WHERE id = $1', [tipId]);
     await pool.query(
       'DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = $2',
-      [shiftId, contractorId]
+      [recentShiftId, contractorId]
     );
+    await pool.query('DELETE FROM shifts WHERE id = $1', [recentShiftId]);
   }
 });
 
