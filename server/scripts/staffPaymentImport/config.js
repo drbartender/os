@@ -41,6 +41,10 @@ const SOURCE_ACCOUNTS = {
 
 // --- CLI dir resolution -----------------------------------------------------
 function getArg(argv, flag) {
+  // Accept both `--flag value` and `--flag=value` — the import preflight's
+  // refusal message suggests the equals form, so the parser must honor it.
+  const eq = argv.find((a) => a.startsWith(flag + '='));
+  if (eq) return eq.slice(flag.length + 1);
   const i = argv.indexOf(flag);
   return i !== -1 && i + 1 < argv.length ? argv[i + 1] : null;
 }
