@@ -12,6 +12,7 @@ const {
 } = require('./payrollMath');
 const { captureProposalPaymentFees, captureTipFeesForProposal } = require('./payrollTips');
 const { isLegacyCcParticipant } = require('./payrollGuards');
+const { isBartender } = require('./staffingRoles');
 
 // Invoice labels whose dollars are part of the contract total_price. Kept in
 // sync manually with the CONTRACT_LABELS list inside refundHelpers.js
@@ -173,9 +174,9 @@ async function accruePayoutsForProposal(proposalId) {
 
     // Bartenders share gratuity and card tips; barbacks/servers do not.
     // Case-insensitive: production seeds the position as 'Bartender'.
-    const bartenders = workers.rows.filter(
-      w => (w.position || '').toLowerCase() === 'bartender'
-    );
+    // Route through the canonical isBartender helper so a position with
+    // stray whitespace still counts (it trims before comparing).
+    const bartenders = workers.rows.filter(w => isBartender(w.position));
 
     // Gratuity pool, net of the card fee. Per spec section 4.2 the fee
     // denominator is the proposal's full contracted price (proposals.total_price),
