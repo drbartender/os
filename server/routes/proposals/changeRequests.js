@@ -24,12 +24,32 @@ router.get('/change-requests', auth, requireAdminOrManager, asyncHandler(async (
 }));
 
 // GET /api/proposals/:id/change-requests, one proposal's requests.
+// package_names resolves any package_id appearing in a diff to its name so the
+// admin card can render "Package: The Base Compound -> Formula No. 5" instead
+// of raw ids (P8: the client change-request form now submits package_id).
+// Looks up by id with no is_active filter — a historical request may reference
+// a since-deactivated package and its name must still render.
 router.get('/:id/change-requests', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const r = await pool.query(
     'SELECT * FROM proposal_change_requests WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 50',
     [req.params.id]
   );
-  res.json({ requests: r.rows });
+  const pkgIds = new Set();
+  for (const row of r.rows) {
+    for (const src of [row.requested_changes, row.baseline]) {
+      const v = src && src.package_id;
+      if (v !== null && v !== undefined && Number.isFinite(Number(v))) pkgIds.add(Number(v));
+    }
+  }
+  let packageNames = {};
+  if (pkgIds.size > 0) {
+    const pr = await pool.query(
+      'SELECT id, name FROM service_packages WHERE id = ANY($1::int[])',
+      [[...pkgIds]]
+    );
+    packageNames = Object.fromEntries(pr.rows.map((p) => [p.id, p.name]));
+  }
+  res.json({ requests: r.rows, package_names: packageNames });
 }));
 
 // POST /api/proposals/change-requests/:id/decline, decline with a required reason.

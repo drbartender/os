@@ -21,12 +21,19 @@ const crFmt = (v) => {
 export default function ProposalChangeRequestCard({ proposalId, onChanged, onApply }) {
   const toast = useToast();
   const [requests, setRequests] = useState([]);
+  const [packageNames, setPackageNames] = useState({});
   const [reason, setReason] = useState('');
-  const load = useCallback(() => api.get(`/proposals/${proposalId}/change-requests`).then(r => setRequests(r.data.requests || [])).catch(() => {}), [proposalId]);
+  const load = useCallback(() => api.get(`/proposals/${proposalId}/change-requests`).then(r => {
+    setRequests(r.data.requests || []);
+    setPackageNames(r.data.package_names || {});
+  }).catch(() => {}), [proposalId]);
   useEffect(() => { load(); }, [load]);
   const open = requests.find(r => r.status === 'pending');
   if (!open) return null;
   const pv = open.price_preview || {};
+  // package_id diffs render the package NAME (id fallback if the server map
+  // misses it) — the raw id means nothing to a human.
+  const crVal = (k, v) => (k === 'package_id' && v != null && packageNames[v]) ? packageNames[v] : crFmt(v);
   const decline = async () => {
     if (!reason.trim()) { toast.error('Add a reason to decline.'); return; }
     try {
@@ -46,7 +53,7 @@ export default function ProposalChangeRequestCard({ proposalId, onChanged, onApp
           {Object.keys(open.requested_changes || {}).map(k => (
             <React.Fragment key={k}>
               <dt>{CR_FIELD_LABELS[k] || k}</dt>
-              <dd>{crFmt((open.baseline || {})[k])} → {crFmt(open.requested_changes[k])}</dd>
+              <dd>{crVal(k, (open.baseline || {})[k])} → {crVal(k, open.requested_changes[k])}</dd>
             </React.Fragment>
           ))}
         </div>

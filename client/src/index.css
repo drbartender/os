@@ -10007,6 +10007,198 @@ html[data-app="admin-os"] .location-suggest-item.active {
 
 
 /* ═══════════════════════════════════════════════════════════
+   COMPARE MATRIX (P8) — aligned package matrix, shared by the
+   /compare option-group page and the in-proposal explore section.
+   Paper-card surface so it reads on light or dark backgrounds.
+   Desktop: one aligned CSS grid (horizontal scroll when wide).
+   Under 640px: each column collapses to a self-contained card.
+   ═══════════════════════════════════════════════════════════ */
+.pkg-compare-page {
+  min-height: 100dvh;
+  background: var(--chalkboard);
+  padding: 40px 16px 64px;
+  font-family: var(--font-body);
+}
+.pkg-compare-inner { max-width: 1080px; margin: 0 auto; }
+.pkg-compare-centered {
+  min-height: 60vh;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 16px;
+}
+.pkg-compare-kicker { display: flex; justify-content: center; margin: 0 0 6px; color: var(--brass) !important; }
+.pkg-compare-title {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(1.7rem, 6vw, 2.2rem);
+  text-align: center;
+  color: var(--cream-text);
+  margin: 4px 0 20px;
+}
+
+.pkg-matrix-wrap {
+  background: var(--paper);
+  border: 1px solid rgba(184, 146, 74, 0.4);
+  border-radius: 12px;
+  padding: 20px;
+  color: var(--deep-brown);
+}
+.pkg-matrix-caption {
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  text-align: center;
+  margin: 0 0 16px;
+}
+
+.pkg-matrix-scroll { overflow-x: auto; }
+.pkg-matrix {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.9fr) repeat(var(--pm-cols, 2), minmax(150px, 1fr));
+  min-width: min-content;
+}
+.pkg-matrix-cell {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(184, 146, 74, 0.22);
+  font-size: 0.86rem;
+  line-height: 1.45;
+  color: var(--deep-brown);
+}
+.pkg-matrix-rowlabel {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--brass);
+  display: flex;
+  align-items: center;
+}
+.pkg-matrix-head {
+  border-bottom: 2px solid rgba(184, 146, 74, 0.5);
+  padding-top: 4px;
+}
+.pkg-matrix-badge {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brass);
+  border: 1px solid rgba(184, 146, 74, 0.5);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.pkg-matrix-name {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 400;
+  margin: 6px 0 0;
+  color: var(--deep-brown);
+}
+.pkg-matrix-current {
+  display: inline-block;
+  margin-left: 8px;
+  font-family: var(--font-display);
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--brass);
+  background: rgba(184, 146, 74, 0.16);
+  border-radius: 999px;
+  padding: 2px 7px;
+  vertical-align: middle;
+}
+.pkg-matrix-price {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--deep-brown);
+}
+.pkg-matrix-note { font-style: italic; font-size: 0.78rem; color: var(--text-muted); }
+.pkg-matrix-muted { color: rgba(90, 80, 72, 0.55); }
+.pkg-matrix-choosecell { border-bottom: none; padding-top: 14px; }
+.pkg-matrix-choose {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--brass);
+  color: var(--cream-text);
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.pkg-matrix-choose:hover:not(:disabled) { background: var(--brass-bright); }
+.pkg-matrix-choose:disabled {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid rgba(184, 146, 74, 0.4);
+  cursor: default;
+}
+
+/* Mobile card fallback (hidden on desktop) */
+.pkg-matrix-cards { display: none; }
+.pkg-matrix-card {
+  border: 1px solid rgba(184, 146, 74, 0.35);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+.pkg-matrix-card:last-child { margin-bottom: 0; }
+.pkg-matrix-card-head { margin-bottom: 10px; }
+.pkg-matrix-card-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(184, 146, 74, 0.18);
+  font-size: 0.88rem;
+}
+.pkg-matrix-card-row > span:first-child {
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--brass);
+  flex: 0 0 34%;
+}
+.pkg-matrix-card-row > span:last-child { text-align: right; color: var(--deep-brown); }
+.pkg-matrix-card-section > span:last-child { line-height: 1.4; }
+.pkg-matrix-card-choose { margin-top: 14px; }
+
+/* In-proposal explore section (rendered from ProposalView) */
+.pkg-explore {
+  max-width: 1240px;
+  margin: 8px auto 0;
+  padding: 8px clamp(8px, 3vw, 24px) 0;
+  text-align: center;
+}
+.pkg-explore-toggle {
+  background: transparent;
+  border: 1px solid var(--brass);
+  color: var(--brass);
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 11px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.pkg-explore-toggle:hover { background: rgba(184, 146, 74, 0.12); }
+.pkg-explore-panel { margin-top: 16px; text-align: left; }
+
+@media (max-width: 640px) {
+  .pkg-matrix-scroll { display: none; }
+  .pkg-matrix-cards { display: block; }
+  .pkg-matrix-wrap { padding: 14px; }
+}
+
+
+/* ═══════════════════════════════════════════════════════════
    PRINT VIEW — Letter, white background, Georgia, B&W ink
    Strips chalkboard chrome and actions rail; PAID stamp goes B&W too.
    ═══════════════════════════════════════════════════════════ */

@@ -11,16 +11,33 @@ export default function ChangeRequestForm({ proposal, token, onSubmitted, onCanc
   const [form, setForm] = useState({
     guest_count: proposal.guest_count, event_duration_hours: proposal.event_duration_hours,
     num_bars: proposal.num_bars ?? 1, event_date: proposal.event_date ? String(proposal.event_date).slice(0, 10) : '',
-    note: '',
+    package_id: proposal.package_id, note: '',
   });
+  // Package options for the swap selector (P8). Public endpoint, current package
+  // preselected. Non-class only, but always keep the current package present so a
+  // class booking can still see (and keep) its own selection.
+  const [packages, setPackages] = useState([]);
   const [preview, setPreview] = useState(null);
   const [previewError, setPreviewError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const seq = useRef(0);
 
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/proposals/public/packages')
+      .then(({ data }) => {
+        if (cancelled) return;
+        const list = (data || []).filter(p => p.bar_type !== 'class' || p.id === proposal.package_id);
+        setPackages(list);
+      })
+      .catch(() => { /* selector falls back to the current package only */ });
+    return () => { cancelled = true; };
+  }, [proposal.package_id]);
+
   const proposed = useCallback(() => ({
     guest_count: Number(form.guest_count), event_duration_hours: Number(form.event_duration_hours),
-    num_bars: Number(form.num_bars), ...(form.event_date ? { event_date: form.event_date } : {}),
+    num_bars: Number(form.num_bars), package_id: Number(form.package_id),
+    ...(form.event_date ? { event_date: form.event_date } : {}),
   }), [form]);
 
   const fetchPreview = useCallback(async () => {
@@ -61,9 +78,20 @@ export default function ChangeRequestForm({ proposal, token, onSubmitted, onCanc
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  // Ensure the current package is always an option even before the list loads
+  // or if the fetch failed, so the selector never renders empty.
+  const packageOptions = packages.length
+    ? packages
+    : [{ id: proposal.package_id, name: proposal.package_name || 'Current package' }];
+
   return (
     <div className="cp-change-form">
       <h3>Request a change</h3>
+      <label className="form-label">Package
+        <select value={form.package_id} onChange={e => set('package_id', e.target.value)}>
+          {packageOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      </label>
       <label className="form-label">Guest count
         <input type="number" min="1" max="1000" value={form.guest_count} onChange={e => set('guest_count', e.target.value)} />
       </label>

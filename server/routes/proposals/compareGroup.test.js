@@ -96,6 +96,16 @@ test('compare GET returns visible options with a shared header and NO PII', asyn
       assert.ok(!(leaky in o), `option must not expose ${leaky}`);
     }
     assert.ok('package_slug' in o && 'total_price' in o && 'pricing_type' in o, 'option has the compare fields');
+    assert.ok('package_id' in o, 'option exposes package_id');
+    // The compare matrix renders the STORED total (never a live reprice) and
+    // derives the minimum note from the STORED snapshot's floor fields — the
+    // keys are always present (null/false when the snapshot lacks them).
+    assert.equal(Number(o.total_price), 100, 'stored total_price is threaded through as-is');
+    for (const k of ['floor_reason', 'billed_guests', 'floor_applied']) {
+      assert.ok(k in o, `option carries stored snapshot field ${k}`);
+    }
+    assert.equal(o.floor_reason, null, 'empty snapshot yields null floor_reason');
+    assert.equal(o.floor_applied, false, 'empty snapshot yields floor_applied false');
   }
 });
 

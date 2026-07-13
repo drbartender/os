@@ -44,8 +44,13 @@ function safeAddonQty(raw) {
 
 // ─── Public website endpoints (no auth) ─────────────────────────
 
-/** GET /api/proposals/public/packages — list active packages (public, limited fields) */
-router.get('/public/packages', publicLimiter, asyncHandler(async (req, res) => {
+/** GET /api/proposals/public/packages — list active packages (public, limited
+ * fields). publicReadLimiter (100/15min): read-only and cheap, and it shares a
+ * client's IP budget with the quote wizard, proposal loads, and the P8 explore
+ * matrix (which opens with 1 packages + ~9 calculate calls) — the 20/15min
+ * publicLimiter budget would 429 normal sessions. Write endpoints in this file
+ * (capture-lead, submit) stay on publicLimiter. */
+router.get('/public/packages', publicReadLimiter, asyncHandler(async (req, res) => {
   const result = await pool.query(
     `SELECT id, name, slug, category, bar_type, description, pricing_type, includes,
             base_rate_3hr, base_rate_4hr, base_rate_3hr_small, base_rate_4hr_small,
@@ -66,8 +71,11 @@ router.get('/public/addons', publicLimiter, asyncHandler(async (req, res) => {
   res.json(result.rows);
 }));
 
-/** POST /api/proposals/public/calculate — preview pricing (public, no save) */
-router.post('/public/calculate', publicLimiter, asyncHandler(async (req, res) => {
+/** POST /api/proposals/public/calculate — preview pricing (public, no save).
+ * POST in verb but read-only in effect (pure pricing preview, no write), so it
+ * sits on publicReadLimiter (100/15min) — see the packages note above; the
+ * explore matrix fires one of these per non-class package in parallel. */
+router.post('/public/calculate', publicReadLimiter, asyncHandler(async (req, res) => {
   const { package_id, guest_count, duration_hours, num_bars, addon_ids, addon_quantities, syrup_selections } = req.body;
   if (!package_id) throw new ValidationError({ package_id: 'Package is required' });
 

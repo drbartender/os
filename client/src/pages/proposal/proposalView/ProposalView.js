@@ -13,6 +13,7 @@ import ProposalHeader from './ProposalHeader';
 import ProposalPricingBreakdown from './ProposalPricingBreakdown';
 import SignAndPaySection from './SignAndPaySection';
 import { isGratuityBelowFloor, gratuityFloorMessage } from './gratuityFloor';
+import { ExplorePackagesSection } from '../compare/PackageMatrix';
 
 // ─── Main component ───────────────────────────────────────────────
 
@@ -23,6 +24,12 @@ export default function ProposalView() {
   const [proposal, setProposal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // True when the resolver says this proposal is one option in a comparison
+  // group. Gates the explore-packages section off: a curated comparison
+  // already exists for this event, and the generic full-catalog matrix would
+  // muddy it (the ?choose=1 hand-off keeps the client on this page, so the
+  // status gate alone is not enough).
+  const [inOptionGroup, setInOptionGroup] = useState(false);
 
   // Form-level error banner (sign-and-pay section). Stripe card errors are
   // handled by Stripe Elements' own messaging inside <PaymentForm/>.
@@ -104,6 +111,7 @@ export default function ProposalView() {
       .then((res) => {
         if (cancelled) return true;
         const r = res.data || {};
+        if (r.grouped) setInOptionGroup(true);
         if (r.decided && r.chosen_token && r.chosen_token !== token) {
           navigate(`/proposal/${r.chosen_token}?choose=1`, { replace: true });
           return true;
@@ -633,6 +641,11 @@ export default function ProposalView() {
             )}
           </aside>
         </div>
+
+        {/* Explore other packages priced for this event. Pre-booking only (the
+            section self-gates on status) AND never on an option-group member,
+            where the admin-curated /compare comparison is the one to show. */}
+        {!inOptionGroup && <ExplorePackagesSection proposal={proposal} />}
 
         {/* Footer */}
         <div style={styles.footer}>
