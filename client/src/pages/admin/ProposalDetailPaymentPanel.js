@@ -258,12 +258,13 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
               <dd>{proposal.budget_raw}</dd>
             </>
           )}
-          {proposal.payment_type && (
-            <>
-              <dt>Type</dt>
-              <dd>{proposal.payment_type === 'full' ? 'Paid in full' : 'Deposit'}</dd>
-            </>
-          )}
+          {/* No payment_type row: it recorded the elected arrangement (deposit vs
+              pay-in-full), not money received, so it read as a status it could not
+              back up ('full' is stamped at intent creation, before any charge, and
+              the column defaults to 'deposit' on untouched drafts). The lifecycle
+              status chip (Deposit paid / Paid in full) carries this truthfully.
+              The column itself stays: invoiceLifecycle reads it to pick the
+              Deposit vs Full invoice. */}
           {proposal.autopay_enrolled && (
             <>
               <dt>Autopay</dt>
