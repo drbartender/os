@@ -6,7 +6,7 @@ A full-stack platform for Dr. Bartender's bartending service business. Handles c
 
 | Layer | Technology |
 |---|---|
-| Backend | Node.js 18+ / Express 4.18 |
+| Backend | Node 26 (pinned via `.node-version`) / Express 4.18 |
 | Frontend | React 18 (Create React App) / React Router 6 |
 | Database | PostgreSQL (raw SQL via `pg`, no ORM) |
 | Auth | JWT + bcryptjs |
@@ -26,7 +26,7 @@ A full-stack platform for Dr. Bartender's bartending service business. Handles c
 
 ## Prerequisites
 
-- **Node.js** 18+
+- **Node.js** 26 (pinned via `.node-version`; matches what Render runs in prod today). The planned LTS-alignment decision lives in `docs/audit-2026-07-13/migration-plan.yaml` (`def-node-lts`).
 - **PostgreSQL** (local instance or remote connection string)
 - **Stripe**, **Resend**, **Twilio**, and **Cloudflare R2** accounts (for full functionality — the app runs without them but those features won't work)
 

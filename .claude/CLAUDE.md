@@ -227,7 +227,7 @@ Explicit-only Claude agents for reviewing specs and plans BEFORE any code is wri
 
 ## Tech Stack
 
-- **Backend**: Node.js 18+ / Express 4.18
+- **Backend**: Node.js 26 (pinned; see .node-version) / Express 4.18
 - **Frontend**: React 18 (Create React App) / React Router 6
 - **Database**: Neon PostgreSQL (via `pg` driver, raw SQL — no ORM)
 - **Auth**: JWT (jsonwebtoken) + bcryptjs
