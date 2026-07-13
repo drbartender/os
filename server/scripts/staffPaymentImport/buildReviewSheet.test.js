@@ -155,3 +155,29 @@ test('a clean fixture run reports zero errors', () => {
   const cov = fs.readFileSync(path.join(reviewDir, 'coverage-report.txt'), 'utf8');
   assert.match(cov, /ERRORS \(routed files[^\n]*— 0/);
 });
+
+test('re-run people.csv aggregates the PRESERVED cluster, no ghost person rows', () => {
+  const { dataDir, reviewDir } = setup();
+  run({ dataDir, reviewDir });
+  const txnPath = path.join(reviewDir, 'transactions.csv');
+  const peoplePath = path.join(reviewDir, 'people.csv');
+  const lines = fs.readFileSync(txnPath, 'utf8').split('\n');
+  // Re-assign one row's cluster to an existing other cluster (a "dupe" merge).
+  const idx = lines.findIndex((l, i) => i > 0 && l.split(',').length === 17 && l.split(',')[9]);
+  assert.ok(idx > 0);
+  const cols = lines[idx].split(',');
+  const fromCluster = cols[9];
+  cols[9] = 'merged target cluster';
+  lines[idx] = cols.join(',');
+  fs.writeFileSync(txnPath, lines.join('\n'));
+
+  run({ dataDir, reviewDir }); // re-run
+  const people = fs.readFileSync(peoplePath, 'utf8');
+  // The merged-into cluster must exist as a people row...
+  assert.match(people, /^merged target cluster,/m);
+  // ...and if the source cluster had only that one row, it must NOT ghost:
+  const txnsAfter = fs.readFileSync(txnPath, 'utf8').split('\n').slice(1);
+  const stillReferenced = txnsAfter.some((l) => l.split(',')[9] === fromCluster);
+  const ghostRow = people.split('\n').find((l) => l.startsWith(fromCluster + ','));
+  if (!stillReferenced) assert.strictEqual(ghostRow, undefined, `ghost people row for unreferenced cluster "${fromCluster}"`);
+});

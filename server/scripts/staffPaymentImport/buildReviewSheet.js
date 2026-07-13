@@ -265,6 +265,17 @@ function run({ dataDir, reviewDir }) {
   const currentFps = new Set(txnRows.map((t) => t.row.fingerprint));
   const vanished = [...prevTxn.keys()].filter((fp) => fp && !currentFps.has(fp));
 
+  // Apply the preserved human columns BEFORE clustering people, so the people
+  // table aggregates the same verdict/cluster the transactions.csv rows carry.
+  // (Ghost-person bug: aggregating the freshly-computed values produced people
+  // rows no transaction referenced after an edit re-assigned a cluster.)
+  for (const t of txnRows) {
+    const prev = prevTxn.get(t.row.fingerprint);
+    if (!prev) continue;
+    if (prev.person_cluster) t.personCluster = prev.person_cluster;
+    if (prev.verdict) t.verdict = prev.verdict;
+  }
+
   // ---- Build people clusters (staff-pay + unsure only) -------------------
   const isZul = (key, names) => /\bzul/i.test(key) || /zuleika/i.test(key)
     || names.some((n) => /\bzul/i.test(n) || /zuleika/i.test(n));
