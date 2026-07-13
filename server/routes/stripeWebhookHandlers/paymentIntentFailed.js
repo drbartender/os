@@ -17,6 +17,25 @@ module.exports = async function handlePaymentIntentFailed(event, res) {
 
     if (proposalId) {
       try {
+        // Event-level idempotency (audit 2026-07-13). Stripe redelivers at-least-once.
+        // The succeeded / tip / refund branches each dedupe on a natural per-row key,
+        // but a FAILED attempt has none: a single PaymentIntent can fail multiple
+        // DISTINCT times (a retry after a decline reuses the same intent id), so a
+        // dedupe keyed on the intent id would wrongly swallow a genuine second failure
+        // and its admin alert. Gate on the unique Stripe EVENT id instead — a real
+        // second failure carries a new event id and still records, while a redelivery
+        // of the SAME event is a no-op (no duplicate failed row, activity entry, or
+        // un-throttled admin email). Uses the webhook_events ledger (pruned at 30d).
+        const firstSeen = await pool.query(
+          `INSERT INTO webhook_events (provider, event_id) VALUES ('stripe', $1)
+           ON CONFLICT (provider, event_id) DO NOTHING RETURNING event_id`,
+          [event.id]
+        );
+        if (firstSeen.rowCount === 0) {
+          console.log(`Webhook: duplicate payment_failed delivery for event ${event.id} (proposal ${proposalId}) — skipping`);
+          return res.json({ received: true });
+        }
+
         // Monotonic-failure guard (L1): Stripe can deliver a stale payment_failed
         // AFTER the same PI already succeeded (a retry on the same PI, delivered
         // out of order). Flipping the session to 'failed', inserting a failed row,

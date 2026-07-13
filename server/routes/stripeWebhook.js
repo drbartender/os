@@ -10,7 +10,7 @@
 const express = require('express');
 const Sentry = require('@sentry/node');
 const asyncHandler = require('../middleware/asyncHandler');
-const { getLiveClient, getTestClient } = require('../utils/stripeClient');
+const { getLiveClient, getTestClient, isTestMode } = require('../utils/stripeClient');
 
 const handlePaymentIntentSucceeded = require('./stripeWebhookHandlers/paymentIntentSucceeded');
 const handlePaymentIntentFailed = require('./stripeWebhookHandlers/paymentIntentFailed');
@@ -57,11 +57,31 @@ router.post('/webhook', asyncHandler(async (req, res) => {
   // calls inside this handler so we use the keypair matching the event's mode.
   void stripeForEvent;
 
+  // Live-mode gate (audit 2026-07-13). The verifier list above deliberately tries
+  // BOTH the live and test webhook secrets, so an event straddling a
+  // STRIPE_TEST_MODE_UNTIL cutover still verifies. But that also means a
+  // signature-verified *test-mode* event (livemode:false) reaches the credit/tip/
+  // refund handlers whenever the test secret is configured — which it stays after a
+  // cutover. OUTSIDE an active test window a zero-dollar test event must never move
+  // real money state (credit a proposal, accrue a tip/payroll, reconcile a refund).
+  // So: only ACT on a test-mode event while a test window is actually active
+  // (isTestMode()); otherwise ack and drop. This is the single dispatch-level root
+  // fix — it covers every current and future handler. payout.js additionally keeps
+  // its own always-live-only guard (the payout mirror is live-only even in-window).
+  // Guard on `=== false` (not `!livemode`) so a fixture/malformed event with no
+  // livemode field is treated as live and processed, matching payout.js.
+  if (event.livemode === false && !isTestMode()) {
+    return res.json({ received: true, skipped: 'test_mode' });
+  }
+
   if (event.type === 'payment_intent.succeeded') {
     await handlePaymentIntentSucceeded(event);
     if (res.headersSent) return;
   }
 
+  // payment_failed is the one branch with no natural per-row idempotency key (a PI can
+  // fail multiple distinct times), so its handler dedupes redeliveries on the Stripe
+  // event id via the webhook_events ledger — the lone event-level gate in this file.
   if (event.type === 'payment_intent.payment_failed') {
     await handlePaymentIntentFailed(event, res);
     if (res.headersSent) return;

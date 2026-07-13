@@ -6,6 +6,9 @@ process.env.SEND_NOTIFICATIONS = 'false';
 const WEBHOOK_SECRET = 'whsec_test_guards';
 process.env.STRIPE_WEBHOOK_SECRET = WEBHOOK_SECRET;
 process.env.STRIPE_WEBHOOK_SECRET_TEST = '';
+// Force "not in a test window" so the live-mode gate (livemode:false → dropped) is
+// deterministic regardless of a local .env carrying a future STRIPE_TEST_MODE_UNTIL.
+process.env.STRIPE_TEST_MODE_UNTIL = '';
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -88,6 +91,8 @@ after(async () => {
   // settle before teardown.
   await new Promise((r) => setTimeout(r, 400));
   if (server) await new Promise((r) => server.close(r));
+  // Event-id idempotency ledger rows written by the new tests (keyed by NONCE).
+  await pool.query("DELETE FROM webhook_events WHERE provider = 'stripe' AND event_id LIKE $1", [`evt_${NONCE}%`]);
   if (proposalIds.length) {
     const ids = proposalIds;
     await pool.query('DELETE FROM invoice_payments WHERE invoice_id IN (SELECT id FROM invoices WHERE proposal_id = ANY($1::int[]))', [ids]);
@@ -241,4 +246,60 @@ test('payment_failed with NO prior success DOES record the failure (guard is spe
   assert.equal(sess.status, 'failed', 'session flipped to failed for a genuine failure');
   const log = await one("SELECT COUNT(*)::int AS n FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'payment_failed'", [p]);
   assert.equal(log.n, 1, 'payment_failed activity log recorded');
+});
+
+// ── AUDIT 2026-07-13: live-mode gate — a verified TEST event must not credit ──
+
+test('payment_intent.succeeded with livemode:false (out of test window) credits nothing', async () => {
+  const p = await seedProposal({ status: 'accepted' });
+  const piId = `pi_${NONCE}_testmode`;
+
+  const r = await postWebhook({
+    id: `evt_${NONCE}_testmode`, type: 'payment_intent.succeeded', livemode: false,
+    data: {
+      object: {
+        id: piId, amount: 10000, payment_method: null,
+        metadata: { proposal_id: String(p), payment_type: 'full' },
+      },
+    },
+  });
+  assert.equal(r.status, 200, `webhook should ack, got ${r.status} ${r.body}`);
+  assert.match(r.body, /test_mode/, 'response marks the event skipped as test_mode');
+
+  const pay = await one('SELECT COUNT(*)::int AS n FROM proposal_payments WHERE stripe_payment_intent_id = $1', [piId]);
+  assert.equal(pay.n, 0, 'no proposal_payments row from a test-mode event');
+  const prop = await one('SELECT status, amount_paid FROM proposals WHERE id = $1', [p]);
+  assert.equal(prop.status, 'accepted', 'proposal status unchanged by a test-mode event');
+  assert.equal(Number(prop.amount_paid), 0, 'amount_paid unchanged by a test-mode event');
+});
+
+// ── AUDIT 2026-07-13: payment_failed event-id idempotency (Finding 2) ─────────
+
+test('payment_failed redelivery of the SAME event records only one failed row', async () => {
+  const p = await seedProposal({ status: 'deposit_paid', amountPaid: 100 });
+  const piId = `pi_${NONCE}_dupfail`;
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
+     VALUES ($1, $2, 10000, 'pending')`,
+    [p, piId]
+  );
+  const ev = {
+    id: `evt_${NONCE}_dupfail`, type: 'payment_intent.payment_failed',
+    data: {
+      object: {
+        id: piId, amount: 10000, metadata: { proposal_id: String(p), payment_type: 'deposit' },
+        last_payment_error: { message: 'your card was declined' },
+      },
+    },
+  };
+
+  const r1 = await postWebhook(ev);
+  assert.equal(r1.status, 200);
+  const r2 = await postWebhook(ev); // Stripe at-least-once redelivery of the same event
+  assert.equal(r2.status, 200);
+
+  const failed = await one("SELECT COUNT(*)::int AS n FROM proposal_payments WHERE stripe_payment_intent_id = $1 AND status = 'failed'", [piId]);
+  assert.equal(failed.n, 1, 'redelivery of the same event does not insert a second failed row');
+  const log = await one("SELECT COUNT(*)::int AS n FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'payment_failed'", [p]);
+  assert.equal(log.n, 1, 'redelivery does not add a second payment_failed activity entry');
 });
