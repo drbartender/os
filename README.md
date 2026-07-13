@@ -121,6 +121,7 @@ Copy `.env.example` and fill in values. All variables:
 | `VA_CALL_PER_MIN_CAP` | No | Max triggers accepted per minute (default 5). |
 | `VA_CALL_TIME_LIMIT_SEC` | No | Per-call hard `timeLimit` on both legs (default 1800 = 30 min). |
 | `PENDING_CALL_TTL_SEC` | No | Confirm-before-dial pending-record TTL in seconds (default 120). |
+| `LABRAT_SEED_ENABLED` | No | Prod kill-switch for the Lab Rat seed endpoint (`POST /api/qa/seed`, which mints staff test users). Default CLOSED in production (endpoint 404s); set `true` during a tester campaign. Ignored outside production. |
 
 The frontend uses one build-time variable set in `client/.env.production`:
 - `REACT_APP_API_URL` — absolute URL to the backend (e.g., `https://os-g7oa.onrender.com`)

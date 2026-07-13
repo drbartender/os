@@ -53,6 +53,13 @@ router.post('/shortlist', publicLimiter, asyncHandler(async (req, res) => {
 }));
 
 router.post('/seed', labratSeedGlobalLimiter, labratSeedLimiter, asyncHandler(async (req, res) => {
+  // Prod kill-switch: this endpoint mints staff users + returns plaintext creds.
+  // Closed by default in production (NODE_ENV gate, same philosophy as RUN_SCHEDULERS/
+  // SEND_NOTIFICATIONS); flip LABRAT_SEED_ENABLED=true only during a tester campaign.
+  // 404 (not 403) so the endpoint's existence is not confirmed to probes.
+  if (process.env.NODE_ENV === 'production' && process.env.LABRAT_SEED_ENABLED !== 'true') {
+    throw new NotFoundError('Not found');
+  }
   const { recipe } = req.body || {};
   if (!recipe || typeof recipe !== 'string') {
     throw new ValidationError({ recipe: 'required' }, 'recipe required');
