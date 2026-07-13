@@ -5102,6 +5102,138 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 
 
 /* ═══════════════════════════════════════════════════════════
+   PACKAGES / FORMULARY — public pricing catalogue (P7)
+   ═══════════════════════════════════════════════════════════ */
+
+.ws-pkg-section { padding: 40px 0; }
+
+.ws-pkg-note-band { padding: 10px 0 0; }
+.ws-pkg-note {
+  text-align: center;
+  max-width: 640px;
+  margin: 0 auto;
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--warm-brown);
+}
+
+.ws-pkg-group-blurb {
+  margin: 12px auto 0;
+  max-width: 560px;
+  font-size: 15px;
+  color: var(--text-muted);
+}
+.card .ws-pkg-group-blurb { color: var(--text-muted); }
+
+.ws-pkg-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+.ws-pkg-card {
+  padding: 28px !important;
+  margin-bottom: 0 !important;
+}
+.ws-pkg-name {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--deep-brown);
+  line-height: 1.15;
+}
+.ws-pkg-tagline {
+  margin-top: 7px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--brass);
+}
+.ws-pkg-price {
+  margin-top: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ws-pkg-price-main {
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--warm-brown);
+}
+.ws-pkg-price-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.ws-pkg-desc {
+  margin-top: 14px;
+  font-size: 15px;
+  color: var(--deep-brown);
+}
+.ws-pkg-divider { margin: 20px 0 16px; }
+.ws-pkg-sections {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 22px;
+}
+.ws-pkg-section-head {
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--brass);
+  margin-bottom: 6px;
+}
+.ws-pkg-section-items {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ws-pkg-section-items li {
+  font-size: 13.5px;
+  color: var(--deep-brown);
+  line-height: 1.4;
+}
+.ws-pkg-state {
+  text-align: center;
+  padding: 40px 24px !important;
+}
+.ws-pkg-state-cta {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
+/* Text link from the Services cards over to the full pricing page */
+.ws-press-service-alllink {
+  display: inline-block;
+  margin-top: 16px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--brass);
+}
+.ws-press-service-alllink:hover { color: var(--warm-brown); }
+
+@media (max-width: 720px) {
+  .ws-pkg-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+  .ws-pkg-sections { grid-template-columns: 1fr; }
+}
+
+
+/* ═══════════════════════════════════════════════════════════
    METHOD — alternating step blocks + timeline card
    ═══════════════════════════════════════════════════════════ */
 

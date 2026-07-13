@@ -97,6 +97,7 @@ export default function PublicLayout({ children }) {
 
           <nav className="ws-nav-left" aria-label="Primary">
             <RouterNavLink to="/services" onClick={closeNav}>Services</RouterNavLink>
+            <RouterNavLink to="/packages" onClick={closeNav}>Packages</RouterNavLink>
             <RouterNavLink to="/method" onClick={closeNav}>Method</RouterNavLink>
             <RouterNavLink to="/labnotes" onClick={closeNav}>Lab Notes</RouterNavLink>
             <RouterNavLink to="/faq" onClick={closeNav}>FAQ</RouterNavLink>
@@ -120,6 +121,7 @@ export default function PublicLayout({ children }) {
         {/* Mobile drawer — slides down beneath header */}
         <div className={`ws-mobile-drawer ${mobileNav ? 'open' : ''}`}>
           <RouterNavLink to="/services" onClick={closeNav}>Services</RouterNavLink>
+          <RouterNavLink to="/packages" onClick={closeNav}>Packages</RouterNavLink>
           <RouterNavLink to="/method" onClick={closeNav}>Method</RouterNavLink>
           <RouterNavLink to="/about" onClick={closeNav}>About</RouterNavLink>
           <RouterNavLink to="/labnotes" onClick={closeNav}>Lab Notes</RouterNavLink>
@@ -160,6 +162,7 @@ export default function PublicLayout({ children }) {
               <div className="ws-footer-col-head">Surface</div>
               <ul>
                 <li><Link to="/services">Services</Link></li>
+                <li><Link to="/packages">Packages</Link></li>
                 <li><Link to="/method">Method</Link></li>
                 <li><Link to="/about">About</Link></li>
                 <li><Link to="/faq">FAQ</Link></li>

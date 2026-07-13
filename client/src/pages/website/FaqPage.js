@@ -13,10 +13,10 @@ const FAQ_CATEGORIES = [
           <>
             Pricing depends on your guest count, event duration, and package choice.
             Our BYOB package starts at $350 (up to 4 hours), while hosted packages (we provide
-            the alcohol) start at $12–40 per guest depending on tier. Hosted packages are billed
+            the alcohol) start at $12 to $40 per guest depending on tier. Hosted packages are billed
             at a 25-guest minimum, with a $550 event minimum.{' '}
-            <Link to="/quote">Use our quote tool</Link> to get exact pricing for your
-            event in seconds.
+            <Link to="/packages">See all packages and pricing</Link>, or{' '}
+            <Link to="/quote">use our quote tool</Link> for exact pricing in seconds.
           </>
         ),
       },
@@ -39,7 +39,7 @@ const FAQ_CATEGORIES = [
       },
       {
         q: 'Is there a minimum guest count?',
-        a: "For hosted packages (we provide the alcohol), the minimum is 25 guests. For BYOB and mocktail packages, there's no minimum.",
+        a: "Our hosted bar packages are billed at a 25-guest minimum, with a $550 event minimum. That includes the hosted mocktail bar. BYOB service has no guest minimum, and our cocktail and mocktail classes are priced per person with an 8-guest minimum.",
       },
       {
         q: 'Do you offer discounts for non-profits or recurring events?',

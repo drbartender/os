@@ -85,6 +85,7 @@ function ServiceDetails({ s }) {
         <Link to="/quote" className="btn btn-primary">Build a Quote</Link>
         <Link to="/method" className="btn btn-secondary">How it works</Link>
       </div>
+      <Link to="/packages" className="ws-press-service-alllink">See all packages &amp; pricing →</Link>
     </div>
   );
 }

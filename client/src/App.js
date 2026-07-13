@@ -59,6 +59,7 @@ function lazy(factory) {
 const QuotePage = lazy(() => import('./pages/website/QuotePage'));
 const FaqPage = lazy(() => import('./pages/website/FaqPage'));
 const ServicesPage = lazy(() => import('./pages/website/ServicesPage'));
+const PackagesPage = lazy(() => import('./pages/website/PackagesPage'));
 const MethodPage = lazy(() => import('./pages/website/MethodPage'));
 const AboutPage = lazy(() => import('./pages/website/AboutPage'));
 const Blog = lazy(() => import('./pages/public/Blog'));
@@ -323,6 +324,7 @@ function PublicWebsiteRoutes() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/services" element={<ServicesPage />} />
+        <Route path="/packages" element={<PackagesPage />} />
         <Route path="/method" element={<MethodPage />} />
         <Route path="/about" element={<AboutPage />} />
         <Route path="/quote" element={<QuotePage />} />
@@ -495,6 +497,7 @@ function AppRoutes() {
       {/* Website accessible on admin domain for preview */}
       <Route path="/website" element={<HomePage />} />
       <Route path="/services" element={<ServicesPage />} />
+      <Route path="/packages" element={<PackagesPage />} />
       <Route path="/method" element={<MethodPage />} />
       <Route path="/about" element={<AboutPage />} />
       <Route path="/quote" element={<QuotePage />} />

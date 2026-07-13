@@ -396,7 +396,7 @@ dr-bartender/
 │   │   │   ├── proposal/       # ProposalView (public client-facing) — split into proposalView/ folder (parent + ProposalHeader + ProposalPricingBreakdown + SignAndPaySection + PaymentForm + AgreementText markdown-lite renderer + helpers + styles) + compare/ (ProposalCompare — side-by-side option-group page at /compare/:token)
 │   │   │   ├── public/         # Client portal (ClientLogin, ClientShoppingList, Blog, BlogPost) + tip flow (TipPage with TipPage.atoms.jsx + TipPage.css, TipPageThanks post-tip feedback)
 │   │   │   │   └── portal/     # Client Portal v2 — PortalHome (landing), EventCommandCenter (focus shell), OverviewWidgets, ArchiveList, ShareButton, EmptyStates, ChangeRequestForm (request-a-change form with live price preview), money/nextUp/constants helpers + tabs/ (OverviewTab, PrescriptionTab, PotionTab, ReceiptsTab, ChangeRequestBanner pending/decided status banner on the Prescription tab)
-│   │   │   └── website/        # Public website (HomePage, ServicesPage, MethodPage, AboutPage, FaqPage, QuotePage, ClassWizard, quoteWizard/ — split QuoteWizard with steps/extras/ (AddonTile + BundlePicker + AddonAccordion) for the Extras step redesign)
+│   │   │   └── website/        # Public website (HomePage, ServicesPage, PackagesPage, MethodPage, AboutPage, FaqPage, QuotePage, ClassWizard, quoteWizard/ — split QuoteWizard with steps/extras/ (AddonTile + BundlePicker + AddonAccordion) for the Extras step redesign)
 │   │   ├── images/             # Brand assets
 │   │   └── index.css           # Global styles
 │   ├── vercel.json             # SPA rewrite rule for Vercel
@@ -459,6 +459,7 @@ dr-bartender/
 - Progress tracking across steps
 
 ### Service Proposal System
+- Public packages/pricing page at `/packages` (marketing nav beside Services): renders every active non-class package from the live `/api/proposals/public/packages` endpoint, grouped as BYOB, Hosted Beer & Wine, Hosted Full Bar, and Hosted Mocktail, with a "from $X" price per package and slug-keyed included sections from `client/src/data/packages.js` (a package missing from that catalog renders name + description only). States the hosted 25-guest / $550 minimum once; Services + FAQ pricing copy point here to kill price drift
 - 12 service packages across BYOB and Hosted categories
 - 18 add-on services with per-guest, per-hour, flat, and timed billing
 - Dynamic pricing engine that calculates staffing, bar rental, and add-on costs
