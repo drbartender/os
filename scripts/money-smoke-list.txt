@@ -1,0 +1,28 @@
+# money-smoke-list.txt — money-path suites run by the pre-push gate
+# (scripts/testdb-smoke.js). One repo-relative test file per line; blank lines
+# and #-comments ignored. Every listed file MUST exist — a missing file is a
+# HARD FAIL, not a skip (a silently-shrinking gate is worse than none).
+#
+# Assembled from EXISTING money-path suites only. Slow, rate-limiter-bound
+# suites (e.g. proposals/crud.test.js) are deliberately excluded — the full
+# suite is stage 2's job. Keep this list ~2.5 min serial or trim.
+
+# Payroll accrual / clawback / late-tip
+server/utils/payrollAccrual.test.js
+server/utils/payrollClawback.test.js
+server/utils/payrollLateTip.test.js
+server/utils/payrollMath.test.js
+
+# Autopay durable-charge trio
+server/utils/autopayDurableCharge.test.js
+server/utils/balanceScheduler.autopayDurable.test.js
+server/routes/stripe.chargeBalanceDurable.test.js
+
+# Stripe webhook guards + last-minute checkout completion
+server/routes/stripeWebhook.guards.test.js
+server/routes/stripeWebhookHandlers/checkoutSessionCompleted.lastMinute.test.js
+
+# Refunds + invoice lifecycle
+server/routes/invoices.refunds.test.js
+server/utils/refundHelpers.test.js
+server/utils/invoiceLifecycle.additionalInvoice.test.js

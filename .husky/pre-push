@@ -1,21 +1,38 @@
 #!/usr/bin/env sh
-# pre-push — block any push that would fail the Vercel client build.
+# pre-push — two mechanical gates before a push reaches prod:
+#   1. MONEY SMOKE  (runs when server/ changed) — the money-path test suites
+#      against an isolated Neon ci-smoke branch (scripts/testdb-smoke.js).
+#      Runs FIRST because it fails faster than the ~1 min client build. Until a
+#      NEON_API_KEY is configured it prints a loud SKIP banner and allows the
+#      push (see README > Test gate); once the key exists it is a HARD gate.
+#   2. CLIENT BUILD (runs when client/ changed) — the EXACT command Vercel runs
+#      (CI=true react-scripts build), where ESLint warnings are FATAL. Nothing
+#      else local catches that: lint-staged only covers server/, and a plain
+#      `eslint` run treats it as a non-fatal warning.
 #
-# Vercel runs `react-scripts build` with CI=true, where ESLint warnings
-# (e.g. no-unused-vars) are FATAL. Nothing else local catches that:
-# lint-staged only covers server/, and a plain `eslint` run treats it as
-# a non-fatal warning. So we run the EXACT same command Vercel runs — but
-# only when this push actually changes client/ (server-only / docs pushes
-# stay instant).
-#
-# Emergencies only: bypass with `git push --no-verify`.
+# Server-only or docs-only pushes skip the client build; client-only or
+# docs-only pushes skip the money smoke. Emergencies only: git push --no-verify.
 set -e
 
+# Resolve the diff base once (origin/main when it exists; empty on first push).
 if git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
-  if git diff --quiet origin/main HEAD -- client/; then
-    echo "pre-push: no client/ changes vs origin/main — skipping client build gate."
-    exit 0
-  fi
+  BASE=origin/main
+else
+  BASE=""
+fi
+
+# ── Gate 1: money smoke (server/ or the smoke list changed) — runs FIRST ──
+if [ -n "$BASE" ] && git diff --quiet "$BASE" HEAD -- server/ scripts/money-smoke-list.txt; then
+  echo "pre-push: no server/ changes vs origin/main — skipping money smoke gate."
+else
+  echo "pre-push: server/ changed — running the money-path smoke gate…"
+  node scripts/testdb-smoke.js
+fi
+
+# ── Gate 2: client build (unchanged from the original client-only gate) ──
+if [ -n "$BASE" ] && git diff --quiet "$BASE" HEAD -- client/; then
+  echo "pre-push: no client/ changes vs origin/main — skipping client build gate."
+  exit 0
 fi
 
 echo "pre-push: client/ changed — running the Vercel-equivalent gate (CI=true react-scripts build, ~1 min)…"

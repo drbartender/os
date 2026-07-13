@@ -409,6 +409,8 @@ dr-bartender/
 │   │                           #   lane-status.js (+ .test.js)     : open-lane listing + stale-lane detection (npm run lane:status)
 │   │                           #   sensitive-paths.txt             : the one sensitive-path list (review/conflict/auto-pull trigger)
 │   │                           #   sensitive-match.js (+ .test.js) : matcher that reads sensitive-paths.txt
+│   │                           #   testdb-smoke.js                 : pre-push money-smoke gate (npm run test:smoke); resets Neon ci-smoke + runs the money suites (see README > Test gate)
+│   │                           #   money-smoke-list.txt            : the money-path suite list testdb-smoke.js runs
 │   │                           #   check-claudemd-invariants.sh    : paired keyword/regex coverage check over CLAUDE.md
 │   │                           #   claudemd-invariants.txt         : the invariant manifest it checks
 │   │                           # one-time CheckCherry migration operator scripts (phases 1-3, each with co-located tests):
@@ -437,6 +439,7 @@ dr-bartender/
 | `npm run admin:create` | Promote an existing user to admin (or create one) from `ADMIN_EMAIL`/`ADMIN_PASSWORD` |
 | `npm run lint` | Run ESLint on all server code |
 | `npm run lint:fix` | Run ESLint with auto-fix on server code |
+| `npm run test:smoke` | Run the pre-push money-path smoke gate manually (`scripts/testdb-smoke.js`): reset the isolated Neon `ci-smoke` branch, apply the schema, and run the money suites serially. No `NEON_API_KEY` → prints a loud SKIP banner and exits 0. See [Test gate](#test-gate). |
 | `npm run audit:check` | Check for known dependency vulnerabilities |
 | `npm run check:filesize` | Report every source file by line-count zone (RED over 1000, YELLOW 700-1000) |
 | `npm run mobile:check` | Dev-only phone-viewport (390x844) screenshot + overflow probe of every client-facing surface (`scripts/mobile-capture.js`); merge gate for the mobile-fixes lanes. EXPECTED to stay red on main until the mobile-sweep lane lands: the baseline failures are the audited P0s, not regressions |
@@ -568,6 +571,24 @@ The React app is deployed separately on Vercel. `client/vercel.json` handles SPA
 
 ### Database
 Schema is auto-initialized on server start via `server/db/index.js`, which runs `schema.sql`. All DDL is idempotent (`IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`).
+
+### Test gate
+
+Because a push to `main` **is** the deploy, `.husky/pre-push` is the only place that can actually block a bad deploy. Two mechanical gates run there:
+
+- **Money smoke** (when the push touches `server/` or `scripts/money-smoke-list.txt`) — runs first. It resets the isolated Neon `ci-smoke` branch (a prod-parented copy) to its parent, fetches its connection URI, runs `initDb` against it (which also validates any `schema.sql` change *before* prod boot replays it), then runs the money-path suites in `scripts/money-smoke-list.txt` serially (payroll accrual/clawback/late-tip, autopay durable trio, Stripe webhook guards + last-minute checkout, refunds/invoice lifecycle — ~60s total). Any failure blocks the push. Slow, rate-limiter-bound suites are deliberately excluded.
+- **Client build** (when the push touches `client/`) — the exact `CI=true react-scripts build` Vercel runs, catching CI-fatal ESLint warnings.
+
+Server-only or docs-only pushes skip the client build; client-only or docs-only pushes skip the money smoke.
+
+**Credential — `NEON_API_KEY`.** The money smoke reads the key from `process.env.NEON_API_KEY` or `~/.secrets/neon_api_key` (trimmed). **Until the key exists the gate prints a loud red "MONEY SMOKE SKIPPED — not yet blocking" banner and allows the push** (fail-open, so pushes are not bricked before setup). The gate must run from a checkout with `.env` at the repo root (several suites need `JWT_SECRET` + Stripe test creds); pushes happen from `os`, which always has one. Once the key is present the gate is **hard and fail-closed**: any error in the reset / URI / `initDb` step, or any failing suite, blocks the push. To set it up:
+
+1. `console.neon.tech` → account settings → **API keys** → **Create API key**.
+2. Save it: `mkdir -p ~/.secrets && printf '%s' '<key>' > ~/.secrets/neon_api_key && chmod 600 ~/.secrets/neon_api_key` (no trailing newline needed — the runner trims). Never commit it.
+
+The connection URI and the API key are never printed (masked in every error). Run it manually any time with `npm run test:smoke`.
+
+**Emergency escape:** `git push --no-verify` bypasses both gates (deliberate, per-push, visible) — same as the client build gate.
 
 ## Operational Runbook
 

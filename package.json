@@ -12,6 +12,7 @@
     "lint": "eslint server/",
     "lint:fix": "eslint server/ --fix",
     "test": "node --test \"server/**/*.test.js\"",
+    "test:smoke": "node scripts/testdb-smoke.js",
     "audit:check": "npm audit --omit=dev || true",
     "check:filesize": "node scripts/check-file-size.js --all",
     "mobile:check": "node scripts/mobile-capture.js",
