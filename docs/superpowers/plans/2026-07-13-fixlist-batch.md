@@ -52,6 +52,7 @@ lanes:
       - server/db/schema.sql                  # fleet rework: held_state column replaces note-marker
       - server/routes/admin/payroll.js        # fleet rework: PATCH re-arm sets held_state='confirmed'
       - server/utils/paystubData.js           # fleet rework: exclude held lines from adjustment aggregates
+      - server/routes/staffPortal/payouts.js  # fleet residual: staff-side adjustments aggregate held exclusion
       - ARCHITECTURE.md
     deps: []
     review: [code-review, consistency-check, database-review, second-opinion]
@@ -130,8 +131,13 @@ lanes:
       - client/src/pages/proposal/compare/PackageMatrix.js
       - client/src/pages/proposal/proposalView/ProposalView.js
       - client/src/pages/public/portal/ChangeRequestForm.js
+      - client/src/pages/admin/ProposalChangeRequestCard.js   # fleet: render package NAMES not raw ids
+      - client/src/index.css                                  # matrix styles (vanilla-CSS invariant)
       - server/routes/proposals/compareGroup.js
       - server/routes/proposals/compareGroup.test.js
+      - server/routes/proposals/changeRequests.js             # fleet: package-name map for admin diff display
+      - server/routes/proposals/public.js                     # fleet: pricing reads move off the 20-cap limiter
+      - server/middleware/rateLimiters.js                     # fleet: read-limiter for public pricing endpoints
       - README.md
       - ARCHITECTURE.md
     deps: []          # soft preference: run after P4 so displayed floors are final; matrix falls back to floor_applied when floor_reason absent
