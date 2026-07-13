@@ -17684,7 +17684,6 @@ html[data-app="admin-os"] .needs-you-grid {
 html[data-app="admin-os"] .needs-you-grid .queue-item { border-bottom: 0; }
 /* Reserved narrow prep column on the upcoming-events table (lane e fills it);
    collapsed to a hairline so it takes no visible space until then. */
-html[data-app="admin-os"] .prep-col { width: 1px; padding: 0; }
 @media (max-width: 640px) {
   html[data-app="admin-os"] .needs-you-grid { grid-template-columns: 1fr; }
   html[data-app="admin-os"] .needs-you-grid .queue-item { border-bottom: 1px solid var(--line-1); }
@@ -18036,9 +18035,6 @@ html[data-app="admin-os"] .ov-payroll-subs {
 }
 /* end */
 /* overview: mb-e prep queue */
-/* Reserved prep column un-collapses only when at least one row has a pill. */
-html[data-app="admin-os"] .prep-col.has-prep { width: auto; padding: 8px 12px; white-space: nowrap; }
-html[data-app="admin-os"] th.prep-col.has-prep { font-weight: 600; }
 /* end */
 
 /* ==========================================================================

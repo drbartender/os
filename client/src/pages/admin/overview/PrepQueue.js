@@ -1,26 +1,10 @@
 import { dayDiff, fmtDate } from '../../../components/adminos/format';
 
-// Prep pipeline over the Potions-enriched drink-plans list (event-side plans
+// Prep queue items over the Potions-enriched drink-plans list (event-side plans
 // are the canonical records; /drink-plans/:id is the admin surface for one).
 // Vocabulary mirrors potions/PlansDrawer.js: plan statuses
 // pending/draft/exploration_saved/submitted/reviewed, plus the shopping-list
 // states pending_review ("List to review") and approved.
-
-// Pill state for one proposal's plan, or null (no plan / unknown state =>
-// render nothing, never a wrong chip).
-export function prepStateFor(proposalId, plans) {
-  if (!proposalId || !Array.isArray(plans)) return null;
-  const plan = plans.find(p => p.proposal_id === proposalId);
-  if (!plan) return null;
-  if (plan.shopping_list_status === 'approved') return { label: 'List approved', kind: 'ok' };
-  if (plan.shopping_list_status === 'pending_review') return { label: 'List to review', kind: 'warn' };
-  if (plan.status === 'submitted') return { label: 'Needs shopping list', kind: 'warn' };
-  if (plan.status === 'reviewed') return { label: 'Reviewed', kind: 'ok' };
-  if (['pending', 'draft', 'exploration_saved'].includes(plan.status)) {
-    return { label: 'With client', kind: 'neutral' };
-  }
-  return null;
-}
 
 function proximityPriority(eventDate) {
   if (!eventDate) return 'info';

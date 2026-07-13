@@ -11,8 +11,7 @@ import { fmt$, fmtDate, dayDiff } from '../../../components/adminos/format';
 import { parsePositionsCount, approvedCount } from '../../../components/adminos/shifts';
 import StripePayoutsTab from '../StripePayoutsTab';
 import NeedsYouStrip from './NeedsYouStrip';
-import UpcomingEventsCard from './UpcomingEventsCard';
-import { buildPrepItems, prepStateFor } from './PrepQueue';
+import { buildPrepItems } from './PrepQueue';
 import PipelineCard from './PipelineCard';
 import PayrollCard from './PayrollCard';
 import MoneyTiles from './MoneyTiles';
@@ -84,7 +83,6 @@ export default function OverviewPage() {
   // Band 1 (live) — ignores the filter. Each fetch degrades its own card.
   const [shifts, setShifts] = useState([]);
   const [shiftsLoading, setShiftsLoading] = useState(true);
-  const [shiftsError, setShiftsError] = useState(false);
   const [proposals, setProposals] = useState([]);
   const [proposalsLoading, setProposalsLoading] = useState(true);
   const [applications, setApplications] = useState([]);
@@ -157,10 +155,9 @@ export default function OverviewPage() {
   useEffect(() => {
     let cancelled = false;
     setShiftsLoading(true);
-    setShiftsError(false);
     api.get('/shifts')
       .then(r => { if (!cancelled) setShifts(r.data || []); })
-      .catch(() => { if (!cancelled) setShiftsError(true); })
+      .catch(() => {}) // unstaffed queue items simply stay absent
       .finally(() => { if (!cancelled) setShiftsLoading(false); });
 
     setProposalsLoading(true);
@@ -266,14 +263,13 @@ export default function OverviewPage() {
 
       {/* Band 1 — live zone (ignores the metrics filter) */}
       <NeedsYouStrip items={queueItems} loading={shiftsLoading || proposalsLoading} />
-      <div className="dash-main">
-        <UpcomingEventsCard upcoming={upcoming} loading={shiftsLoading} error={shiftsError} prepFor={(pid) => prepStateFor(pid, drinkPlans)} />
-        <div className="vstack" style={{ gap: 'var(--gap)' }}>
-          {/* Payroll card is admin-only: managers mount nothing and fire zero
-              /admin/payroll/* requests (spec §1 role gating). */}
-          {isAdmin && <PayrollCard onOverdue={setPayrollItem} />}
-          <PipelineCard pipeline={pipeline} loading={!statsLoaded && statsLoading} error={statsError} />
-        </div>
+      {/* Events card scrapped (Dallas, 2026-07-13): /events covers the week-ahead
+          view. Prep queue items in the strip remain the prep surface. */}
+      <div className="grid-2" style={{ marginBottom: 'var(--gap)' }}>
+        {/* Payroll card is admin-only: managers mount nothing and fire zero
+            /admin/payroll/* requests (spec §1 role gating). */}
+        {isAdmin && <PayrollCard onOverdue={setPayrollItem} />}
+        <PipelineCard pipeline={pipeline} loading={!statsLoaded && statsLoading} error={statsError} />
       </div>
 
       {/* Band 2 — analysis zone (obeys the filter bar) */}
