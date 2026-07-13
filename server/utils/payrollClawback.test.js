@@ -60,21 +60,25 @@ before(async () => {
 });
 
 beforeEach(async () => {
+  // This suite's own paid ("already settled") period, on a UNIQUE far-past week
+  // (Tue 2019-03-05..Mon 2019-03-11) that no other payroll suite uses — the tip's
+  // original event lives here. The clawback itself lands in TODAY's open period
+  // (chicagoTodayYmd), so this seeded period is only ever referenced by its id.
   const p = await pool.query(
     `INSERT INTO pay_periods (start_date, end_date, payday, status)
-     VALUES ('2026-05-12','2026-05-18','2026-05-19','paid')
+     VALUES ('2019-03-05','2019-03-11','2019-03-12','paid')
      ON CONFLICT (start_date) DO UPDATE SET status='paid' RETURNING id`
   );
   paidPeriodId = p.rows[0].id;
   const pr = await pool.query(
     `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time, event_duration_hours, total_price)
-     VALUES (NULL, '2026-05-15', 'completed', 'wedding', '6:00 PM', 4, 2000)
+     VALUES (NULL, '2019-03-05', 'completed', 'wedding', '6:00 PM', 4, 2000)
      RETURNING id`
   );
   paidProposalId = pr.rows[0].id;
   const s = await pool.query(
     `INSERT INTO shifts (event_date, start_time, status, proposal_id)
-     VALUES ('2026-05-15','6:00 PM','open',$1) RETURNING id`,
+     VALUES ('2019-03-05','6:00 PM','open',$1) RETURNING id`,
     [paidProposalId]
   );
   paidShiftId = s.rows[0].id;
@@ -90,7 +94,7 @@ beforeEach(async () => {
   const t = await pool.query(
     `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
                        stripe_payment_intent_id, tipped_at, shift_id, refunded_amount_cents)
-     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_claw_test', '2026-05-15 23:30:00+00', $2, 0)
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_claw_test', '2019-03-05 23:30:00+00', $2, 0)
      RETURNING id`,
     [bartenderA, paidShiftId]
   );
@@ -105,10 +109,10 @@ afterEach(async () => {
   );
   await pool.query('DELETE FROM payouts WHERE contractor_id IN ($1,$2)', [bartenderA, bartenderB]);
   // Only delete the open period if it has no payouts referencing it (the dev
-  // DB's shared open period must be preserved). Frozen test period (2026-05-12)
-  // preserved separately.
+  // DB's shared open period must be preserved). This suite's own paid period
+  // (2019-03-05) is preserved separately and torn down by id below.
   await pool.query(
-    `DELETE FROM pay_periods pp WHERE pp.status='open' AND pp.start_date <> '2026-05-12'
+    `DELETE FROM pay_periods pp WHERE pp.status='open' AND pp.start_date <> '2019-03-05'
        AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`
   );
   // Defense in depth: any tip targeting either fixture bartender, even if
@@ -281,7 +285,7 @@ test('clawbackTip > mixed-stub shift: claws back from real bartender only, stubs
   );
   const mixedShift = await pool.query(
     `INSERT INTO shifts (event_date, start_time, status, proposal_id)
-     VALUES ('2026-05-15','7:00 PM','open',$1) RETURNING id`,
+     VALUES ('2019-03-05','7:00 PM','open',$1) RETURNING id`,
     [paidProposalId]
   );
   const mixedShiftId = mixedShift.rows[0].id;
@@ -362,7 +366,7 @@ test('clawbackTip > emergency-dropped bartender is excluded from the clawback sp
   );
   const dropShift = await pool.query(
     `INSERT INTO shifts (event_date, start_time, status, proposal_id)
-     VALUES ('2026-05-15','9:00 PM','open',$1) RETURNING id`,
+     VALUES ('2019-03-05','9:00 PM','open',$1) RETURNING id`,
     [paidProposalId]
   );
   const dropShiftId = dropShift.rows[0].id;
@@ -444,7 +448,7 @@ test('clawbackTip > skips with all_bartenders_are_legacy_cc_stubs when every shi
   const stubBId = stubB.rows[0].id;
   const allStubShift = await pool.query(
     `INSERT INTO shifts (event_date, start_time, status, proposal_id)
-     VALUES ('2026-05-15','8:00 PM','open',$1) RETURNING id`,
+     VALUES ('2019-03-05','8:00 PM','open',$1) RETURNING id`,
     [paidProposalId]
   );
   const allStubShiftId = allStubShift.rows[0].id;

@@ -8,7 +8,11 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('payrollAccrual.test.js refuses to run against production');
 }
 
-let userId, proposalId, shiftId;
+// This suite owns a UNIQUE far-past OPEN pay period (Tue 2019-02-05..Mon
+// 2019-02-11). Every proposal's event_date sits INSIDE it, so accrual (which
+// resolves the period from event_date via ensurePayPeriod) lands here and never
+// reads, forces, or mutates the shared CURRENT_DATE period the dev app sees.
+let userId, proposalId, shiftId, ownPeriodId;
 
 before(async () => {
   const u = await pool.query(
@@ -20,21 +24,19 @@ before(async () => {
      ON CONFLICT (user_id) DO UPDATE SET hourly_rate = 20.00`,
     [userId]
   );
+  const per = await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES ('2019-02-05','2019-02-11','2019-02-12','open')
+     ON CONFLICT (start_date) DO UPDATE SET status = 'open' RETURNING id`
+  );
+  ownPeriodId = per.rows[0].id;
 });
 
 beforeEach(async () => {
-  // Heal the pay period that covers today. A prior processing/paid run in the
-  // shared dev DB can leave the current period frozen, which makes accrual a
-  // no-op ({skipped:'pay_period_not_open'}) and silently fails every assertion
-  // below. No other payroll suite uses today's period (they seed fixed past
-  // dates), so forcing it open here is isolated and needs no teardown.
-  await pool.query(
-    "UPDATE pay_periods SET status = 'open' WHERE CURRENT_DATE BETWEEN start_date AND end_date"
-  );
   const p = await pool.query(
     `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time,
                             event_duration_hours, total_price, amount_paid, pricing_snapshot)
-     VALUES (NULL, CURRENT_DATE, 'completed', 'birthday-party', '6:00 PM', 4, 1000, 1000,
+     VALUES (NULL, '2019-02-05', 'completed', 'birthday-party', '6:00 PM', 4, 1000, 1000,
              '{"breakdown":[{"label":"Shared Gratuity","amount":100}]}')
      RETURNING id`
   );
@@ -43,7 +45,7 @@ beforeEach(async () => {
   // production shifts, so accrual must read the duration from the proposal.
   const s = await pool.query(
     `INSERT INTO shifts (event_date, start_time, status, proposal_id)
-     VALUES (CURRENT_DATE, '6:00 PM', 'open', $1) RETURNING id`,
+     VALUES ('2019-02-05', '6:00 PM', 'open', $1) RETURNING id`,
     [proposalId]
   );
   shiftId = s.rows[0].id;
@@ -69,6 +71,9 @@ afterEach(async () => {
 after(async () => {
   await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [userId]);
   await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+  // Only this suite's own period id is deleted; afterEach already cleared every
+  // payout referencing it, so no foreign row is touched.
+  await pool.query('DELETE FROM pay_periods WHERE id = $1', [ownPeriodId]);
   await pool.end();
 });
 

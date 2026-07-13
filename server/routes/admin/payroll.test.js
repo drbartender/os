@@ -21,13 +21,13 @@ before(async () => {
   // pre-clean, so a crash mid-run left the unique emails behind).
   const emails = "email IN ('payroll-admin@example.com','payroll-contractor@example.com')";
   await pool.query(`DELETE FROM payout_events WHERE payout_id IN (SELECT id FROM payouts WHERE contractor_id IN (SELECT id FROM users WHERE ${emails}))`);
-  await pool.query(`DELETE FROM payout_events WHERE shift_id IN (SELECT id FROM shifts WHERE event_date = '2026-05-29' AND proposal_id IN (SELECT id FROM proposals WHERE client_id IS NULL AND event_date = '2026-05-29' AND event_type = 'birthday-party'))`);
+  await pool.query(`DELETE FROM payout_events WHERE shift_id IN (SELECT id FROM shifts WHERE event_date = '2019-06-05' AND proposal_id IN (SELECT id FROM proposals WHERE client_id IS NULL AND event_date = '2019-06-05' AND event_type = 'birthday-party'))`);
   await pool.query(`DELETE FROM payouts WHERE contractor_id IN (SELECT id FROM users WHERE ${emails})`);
   await pool.query(`DELETE FROM payment_profiles WHERE user_id IN (SELECT id FROM users WHERE ${emails})`);
   await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN (SELECT id FROM users WHERE ${emails})`);
   await pool.query(`DELETE FROM users WHERE ${emails}`);
-  await pool.query(`DELETE FROM shifts WHERE event_date = '2026-05-29' AND proposal_id IN (SELECT id FROM proposals WHERE client_id IS NULL AND event_date = '2026-05-29' AND event_type = 'birthday-party')`);
-  await pool.query(`DELETE FROM proposals WHERE client_id IS NULL AND event_date = '2026-05-29' AND event_type = 'birthday-party'`);
+  await pool.query(`DELETE FROM shifts WHERE event_date = '2019-06-05' AND proposal_id IN (SELECT id FROM proposals WHERE client_id IS NULL AND event_date = '2019-06-05' AND event_type = 'birthday-party')`);
+  await pool.query(`DELETE FROM proposals WHERE client_id IS NULL AND event_date = '2019-06-05' AND event_type = 'birthday-party'`);
 
   const u = await pool.query(
     "INSERT INTO users (email, password_hash, role) VALUES ('payroll-admin@example.com','x','admin') RETURNING id"
@@ -54,22 +54,26 @@ before(async () => {
     [contractorId]
   );
 
+  // UNIQUE far-past open period (Tue 2019-06-04..Mon 2019-06-10) owned by this
+  // suite; the fixture proposal/shift/payout all live inside it. Avoids the
+  // 2026-05-26 start_date that payrollProcessing.test.js also seeds (a shared
+  // start_date is the cross-suite FK-collision this isolation pass removes).
   const p = await pool.query(
     `INSERT INTO pay_periods (start_date, end_date, payday, status)
-     VALUES ('2026-05-26','2026-06-01','2026-06-02','open')
+     VALUES ('2019-06-04','2019-06-10','2019-06-11','open')
      ON CONFLICT (start_date) DO UPDATE SET status='open' RETURNING id`
   );
   periodId = p.rows[0].id;
   const pr = await pool.query(
     `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time, event_duration_hours, total_price, amount_paid, pricing_snapshot)
-     VALUES (NULL, '2026-05-29', 'completed', 'birthday-party', '6:00 PM', 4, 1000, 1000,
+     VALUES (NULL, '2019-06-05', 'completed', 'birthday-party', '6:00 PM', 4, 1000, 1000,
              '{"breakdown":[{"label":"Shared Gratuity","amount":100}]}')
      RETURNING id`
   );
   proposalId = pr.rows[0].id;
   const s = await pool.query(
     `INSERT INTO shifts (event_date, start_time, status, proposal_id)
-     VALUES ('2026-05-29','6:00 PM','open',$1) RETURNING id`,
+     VALUES ('2019-06-05','6:00 PM','open',$1) RETURNING id`,
     [proposalId]
   );
   shiftId = s.rows[0].id;
@@ -368,7 +372,7 @@ test('POST /payouts/:id/mark-paid > 400 on an invalid method', async () => {
 test('GET /unassigned-tips > lists tips with NULL shift_id and candidate shifts', async () => {
   const tip = await pool.query(
     `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, stripe_payment_intent_id, tipped_at)
-     VALUES (gen_random_uuid(), $1, 5000, 'pi_unassigned_test', '2026-05-29 23:30:00+00')
+     VALUES (gen_random_uuid(), $1, 5000, 'pi_unassigned_test', '2019-06-05 23:30:00+00')
      RETURNING id`,
     [contractorId]
   );
@@ -403,7 +407,7 @@ test('PATCH /tips/:id/assign > sets shift_id and re-accrues for open period', as
   const tip = await pool.query(
     `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
                        stripe_payment_intent_id, tipped_at)
-     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_assign_test', '2026-05-29 23:30:00+00')
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_assign_test', '2019-06-05 23:30:00+00')
      RETURNING id`,
     [contractorId]
   );
@@ -455,7 +459,7 @@ test('PATCH /tips/:id/assign > frozen_period=true when the shift sits in a paid 
   const tip = await pool.query(
     `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
                        stripe_payment_intent_id, tipped_at)
-     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_frozen_test', '2026-05-29 23:30:00+00')
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_frozen_test', '2019-06-05 23:30:00+00')
      RETURNING id`,
     [contractorId]
   );
@@ -530,7 +534,7 @@ test('POST /periods/:id/process > recaptures a null-fee tip and folds the captur
   const tip = await pool.query(
     `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents, shift_id,
                        stripe_payment_intent_id, tipped_at)
-     VALUES (gen_random_uuid(), $1, 4000, NULL, $2, 'pi_l5_capture', '2026-05-29 23:30:00+00')
+     VALUES (gen_random_uuid(), $1, 4000, NULL, $2, 'pi_l5_capture', '2019-06-05 23:30:00+00')
      RETURNING id`,
     [contractorId, shiftId]
   );
@@ -597,7 +601,7 @@ test('POST /periods/:id/process > proceeds and warns when a tip fee stays null a
   const tip = await pool.query(
     `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents, shift_id,
                        stripe_payment_intent_id, tipped_at)
-     VALUES (gen_random_uuid(), $1, 4000, NULL, $2, 'pi_l5_stillnull', '2026-05-29 23:30:00+00')
+     VALUES (gen_random_uuid(), $1, 4000, NULL, $2, 'pi_l5_stillnull', '2019-06-05 23:30:00+00')
      RETURNING id`,
     [contractorId, shiftId]
   );

@@ -1,28 +1,47 @@
 require('dotenv').config();
-const { test, before, beforeEach, afterEach, after } = require('node:test');
+const { test, before, beforeEach, afterEach, after, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const { rollForwardLateTip } = require('./payrollLateTip');
 
 if (process.env.NODE_ENV === 'production') throw new Error('refuses to run against production');
 
-// Dates no other payroll suite uses. FROZEN period contains the event; OPEN period contains "today"
-// is forced below. We instead force the WHOLE accrual surface to use these dates by pinning the tip's
-// shift to the frozen period and toggling the period that contains today.
-const FROZEN_START = '2026-04-07', FROZEN_END = '2026-04-13'; // a Tue-Mon, status 'paid'
-let userId, shiftId, tipId;
+// Full isolation from the shared CURRENT_DATE pay period. This suite must
+// exercise place-vs-defer, which means toggling "today's" period between open
+// and frozen — a destructive mutation if done against the real dev-app row.
+// Instead it pins the JS clock (mock.timers, Date only) to a far-past "today":
+// rollForwardLateTip / clawbackTip / retryDeferredTips resolve their destination
+// period from chicagoTodayYmd() (which reads new Date()), and findOpenPeriodForDate
+// keys on that JS-derived ymd — NOT SQL CURRENT_DATE — so they land in a PRIVATE
+// period this suite owns and toggles by start_date. The real "today" row is never
+// touched. Two UNIQUE far-past weeks, used by no other payroll suite:
+//   CURRENT — Tue 2019-05-07..Mon 2019-05-13 (the mocked "today" period)
+//   FROZEN  — Tue 2019-04-09..Mon 2019-04-15 (paid; the tip's original event)
+const TODAY_INSTANT = '2019-05-07T12:00:00Z'; // noon UTC = same Chicago calendar day
+const CUR_START = '2019-05-07';
+const FROZEN_START = '2019-04-09', FROZEN_END = '2019-04-15';
+let userId, shiftId, tipId, curPeriodId, frozenPeriodId;
 
 before(async () => {
   const u = await pool.query("INSERT INTO users (email,password_hash,role) VALUES ('deftip@example.com','x','staff') RETURNING id");
   userId = u.rows[0].id;
   await pool.query("INSERT INTO contractor_profiles (user_id, hourly_rate) VALUES ($1,20.00) ON CONFLICT (user_id) DO UPDATE SET hourly_rate=20.00", [userId]);
-  // Frozen period the tip's event lives in.
-  await pool.query(
-    `INSERT INTO pay_periods (start_date,end_date,payday,status) VALUES ($1,$2,$3,'paid')
-     ON CONFLICT (start_date) DO UPDATE SET status='paid'`, [FROZEN_START, FROZEN_END, '2026-04-14']);
+  // Frozen (paid) period the tip's original event lives in.
+  const fp = await pool.query(
+    `INSERT INTO pay_periods (start_date,end_date,payday,status) VALUES ($1,$2,'2019-04-16','paid')
+     ON CONFLICT (start_date) DO UPDATE SET status='paid' RETURNING id`, [FROZEN_START, FROZEN_END]);
+  frozenPeriodId = fp.rows[0].id;
+  // The private "today" period the mocked clock resolves to. Seeded open;
+  // individual tests toggle its status via setCurrentPeriod().
+  const cp = await pool.query(
+    `INSERT INTO pay_periods (start_date,end_date,payday,status) VALUES ('2019-05-07','2019-05-13','2019-05-14','open')
+     ON CONFLICT (start_date) DO UPDATE SET status='open' RETURNING id`);
+  curPeriodId = cp.rows[0].id;
 });
 
 beforeEach(async () => {
+  // Pin "today" to the far-past CURRENT week for every rollForward/clawback/retry.
+  mock.timers.enable({ apis: ['Date'], now: Date.parse(TODAY_INSTANT) });
   const p = await pool.query(
     `INSERT INTO proposals (client_id,event_date,status,event_type,event_start_time,event_duration_hours,total_price,amount_paid,pricing_snapshot)
      VALUES (NULL,$1,'completed','birthday-party','6:00 PM',4,1000,1000,'{"breakdown":[]}') RETURNING id`, [FROZEN_START]);
@@ -45,24 +64,29 @@ afterEach(async () => {
   await pool.query("DELETE FROM tips WHERE id=$1", [tipId]);
   await pool.query("DELETE FROM shift_requests WHERE shift_id=$1", [shiftId]);
   await pool.query("DELETE FROM shifts WHERE id=$1", [shiftId]);
+  // Reset this suite's own CURRENT period to open for the next test (each test
+  // sets the status it needs at its start; this just keeps state predictable).
+  await pool.query("UPDATE pay_periods SET status='open' WHERE start_date=$1", [CUR_START]);
+  mock.timers.reset();
 });
 
 after(async () => {
-  // Restore today's SHARED pay period (the suite flips it via setTodayPeriod). 'open' is
-  // the benign default; leaving it processing/paid would bleed into other payroll suites.
-  await pool.query("UPDATE pay_periods SET status='open' WHERE CURRENT_DATE BETWEEN start_date AND end_date");
   await pool.query("DELETE FROM contractor_profiles WHERE user_id=$1", [userId]);
   await pool.query("DELETE FROM users WHERE id=$1", [userId]);
+  // Delete ONLY this suite's own periods, by captured id. afterEach already
+  // cleared every payout referencing the CURRENT period.
+  await pool.query("DELETE FROM pay_periods WHERE id = ANY($1)", [[curPeriodId, frozenPeriodId]]);
   await pool.end();
 });
 
-// Force the period containing today into a given status.
-async function setTodayPeriod(status) {
-  await pool.query("UPDATE pay_periods SET status=$1 WHERE CURRENT_DATE BETWEEN start_date AND end_date", [status]);
+// Force this suite's private "today" period (the one the mocked clock resolves
+// to) into a given status. Keyed on the suite's own start_date, never CURRENT_DATE.
+async function setCurrentPeriod(status) {
+  await pool.query("UPDATE pay_periods SET status=$1 WHERE start_date=$2", [status, CUR_START]);
 }
 
 test('rollForwardLateTip > frozen today defers and marks the tip', async () => {
-  await setTodayPeriod('processing'); // freeze today so roll-forward defers
+  await setCurrentPeriod('processing'); // freeze today so roll-forward defers
   const r = await rollForwardLateTip(tipId);
   assert.equal(r, null);
   const { rows } = await pool.query("SELECT deferred_at, defer_kind, defer_attempts, rolled_forward_at FROM tips WHERE id=$1", [tipId]);
@@ -73,9 +97,9 @@ test('rollForwardLateTip > frozen today defers and marks the tip', async () => {
 });
 
 test('rollForwardLateTip > open today places and clears the marker (idempotent)', async () => {
-  await setTodayPeriod('processing');
+  await setCurrentPeriod('processing');
   await rollForwardLateTip(tipId);            // defers, marks
-  await setTodayPeriod('open');               // open today
+  await setCurrentPeriod('open');               // open today
   const r = await rollForwardLateTip(tipId);  // retry
   assert.ok(r && r.bartenders === 1);
   const { rows } = await pool.query("SELECT deferred_at, defer_kind, defer_attempts, rolled_forward_at FROM tips WHERE id=$1", [tipId]);
@@ -90,7 +114,7 @@ test('rollForwardLateTip > open today places and clears the marker (idempotent)'
 });
 
 test('rollForwardLateTip > defer marker does NOT resurrect an already-placed tip (race guard)', async () => {
-  await setTodayPeriod('open');
+  await setCurrentPeriod('open');
   await rollForwardLateTip(tipId);                 // places, rolled_forward_at set, marker NULL
   // Simulate the racy late marker write hitting an already-placed tip:
   await pool.query("UPDATE tips SET deferred_at=COALESCE(deferred_at,NOW()), defer_kind='roll_forward', defer_attempts=defer_attempts+1 WHERE id=$1 AND rolled_forward_at IS NULL", [tipId]);
@@ -101,9 +125,9 @@ test('rollForwardLateTip > defer marker does NOT resurrect an already-placed tip
 const { clawbackTip } = require('./payrollClawback');
 
 test('clawbackTip > frozen today defers and marks with target', async () => {
-  await setTodayPeriod('open');
+  await setCurrentPeriod('open');
   await rollForwardLateTip(tipId);     // place the tip so there's a line to claw
-  await setTodayPeriod('processing');  // freeze today
+  await setCurrentPeriod('processing');  // freeze today
   const r = await clawbackTip(tipId, 2000); // refund $20 of the $50 tip
   assert.equal(r, null);
   const { rows } = await pool.query("SELECT deferred_at, defer_kind, defer_target_cents, refunded_amount_cents FROM tips WHERE id=$1", [tipId]);
@@ -114,7 +138,7 @@ test('clawbackTip > frozen today defers and marks with target', async () => {
 });
 
 test('clawbackTip > refund on a roll_forward-deferred (never placed) tip records refund, no negative line', async () => {
-  await setTodayPeriod('processing');
+  await setCurrentPeriod('processing');
   await rollForwardLateTip(tipId);     // roll_forward-deferred (never placed)
   const r = await clawbackTip(tipId, 5000); // full refund arrives while still deferred
   assert.ok(r && r.unplaced === true);
@@ -128,9 +152,9 @@ test('clawbackTip > refund on a roll_forward-deferred (never placed) tip records
 });
 
 test('clawbackTip > escalating refund while deferred raises defer_target_cents', async () => {
-  await setTodayPeriod('open');
+  await setCurrentPeriod('open');
   await rollForwardLateTip(tipId);     // place so there is a line
-  await setTodayPeriod('processing');  // freeze today
+  await setCurrentPeriod('processing');  // freeze today
   await clawbackTip(tipId, 2000);      // defer $20
   await clawbackTip(tipId, 3500);      // a larger refund lands, still frozen
   const { rows } = await pool.query("SELECT defer_target_cents, refunded_amount_cents FROM tips WHERE id=$1", [tipId]);
@@ -141,9 +165,9 @@ test('clawbackTip > escalating refund while deferred raises defer_target_cents',
 const { retryDeferredTips } = require('./payrollDeferredRetry');
 
 test('retryDeferredTips > places a deferred late tip and clears its marker', async () => {
-  await setTodayPeriod('processing');
+  await setCurrentPeriod('processing');
   await rollForwardLateTip(tipId);   // deferred
-  await setTodayPeriod('open');
+  await setCurrentPeriod('open');
   const summary = await retryDeferredTips();
   assert.equal(summary.resolved, 1);
   const { rows } = await pool.query("SELECT deferred_at FROM tips WHERE id=$1", [tipId]);
@@ -151,10 +175,10 @@ test('retryDeferredTips > places a deferred late tip and clears its marker', asy
 });
 
 test('retryDeferredTips > skips tips past the attempt cap (stays deferred)', async () => {
-  await setTodayPeriod('processing');
+  await setCurrentPeriod('processing');
   await rollForwardLateTip(tipId);                 // deferred, attempts=1
   await pool.query("UPDATE tips SET defer_attempts = 25 WHERE id=$1", [tipId]); // simulate stuck
-  await setTodayPeriod('open');
+  await setCurrentPeriod('open');
   const summary = await retryDeferredTips();
   assert.equal(summary.scanned, 0, 'capped tip not scanned');
   const { rows } = await pool.query("SELECT deferred_at FROM tips WHERE id=$1", [tipId]);
@@ -164,14 +188,16 @@ test('retryDeferredTips > skips tips past the attempt cap (stays deferred)', asy
 const { accruePayoutsForProposal } = require('./payrollAccrual');
 
 test('accrual hook > a successful accrual sweeps a deferred tip', async () => {
-  await setTodayPeriod('processing');
+  await setCurrentPeriod('processing');
   await rollForwardLateTip(tipId);  // deferred
-  await setTodayPeriod('open');
-  // A fresh, unrelated funded proposal that accrues into today's open period.
+  await setCurrentPeriod('open');
+  // A fresh, unrelated funded proposal whose event_date sits in the CURRENT
+  // (mocked-today) period, so accrual resolves there and its post-commit sweep
+  // fires under the same mocked clock.
   const p2 = await pool.query(
     `INSERT INTO proposals (client_id,event_date,status,event_type,event_start_time,event_duration_hours,total_price,amount_paid,pricing_snapshot)
-     VALUES (NULL,CURRENT_DATE,'completed','birthday-party','6:00 PM',4,1000,1000,'{"breakdown":[]}') RETURNING id`);
-  const s2 = await pool.query("INSERT INTO shifts (event_date,start_time,status,proposal_id) VALUES (CURRENT_DATE,'6:00 PM','open',$1) RETURNING id", [p2.rows[0].id]);
+     VALUES (NULL,'2019-05-07','completed','birthday-party','6:00 PM',4,1000,1000,'{"breakdown":[]}') RETURNING id`);
+  const s2 = await pool.query("INSERT INTO shifts (event_date,start_time,status,proposal_id) VALUES ('2019-05-07','6:00 PM','open',$1) RETURNING id", [p2.rows[0].id]);
   await pool.query("INSERT INTO shift_requests (shift_id,user_id,position,status) VALUES ($1,$2,'Bartender','approved')", [s2.rows[0].id, userId]);
   await accruePayoutsForProposal(p2.rows[0].id);
   // Wait for the off-response-path sweep to run. Polls instead of a fixed sleep
