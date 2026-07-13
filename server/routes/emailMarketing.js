@@ -34,7 +34,11 @@ const VALID_LEAD_SOURCES = ['manual', 'csv_import', 'website', 'quote_wizard', '
 
 /** GET /leads — list leads with search/filter/pagination */
 router.get('/leads', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { search, status, lead_source, page = 1, limit = 50 } = req.query;
+  const { search, status, lead_source } = req.query;
+  // Bound pagination: a non-numeric limit otherwise casts to NaN and 22P02-500s;
+  // page=0 yields a negative OFFSET. Clamp to [1, 100], default 50; page floors at 1.
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   let query = 'SELECT * FROM email_leads WHERE 1=1';
   const params = [];
 

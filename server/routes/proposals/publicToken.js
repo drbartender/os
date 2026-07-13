@@ -56,10 +56,7 @@ router.get('/t/:token/resolve', publicLimiter, requireUuidToken, asyncHandler(as
 }));
 
 /** GET /api/proposals/t/:token — fetch proposal by token (public) */
-router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
-  if (!UUID_RE.test(req.params.token)) {
-    throw new NotFoundError('This proposal is no longer available');
-  }
+router.get('/t/:token', publicLimiter, requireUuidToken, asyncHandler(async (req, res) => {
   // Public-safe column allowlist — do NOT expose admin_notes, stripe_customer_id,
   // stripe_payment_method_id, client_signature_ip, client_signature_user_agent,
   // created_by, setup_minutes_before, or other internal fields. setup_minutes_before

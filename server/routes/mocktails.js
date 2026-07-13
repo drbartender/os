@@ -46,7 +46,7 @@ router.get('/admin', auth, requireAdminOrManager, asyncHandler(async (req, res) 
 }));
 
 /** GET /api/mocktails/categories — all categories */
-router.get('/categories', asyncHandler(async (req, res) => {
+router.get('/categories', publicReadLimiter, asyncHandler(async (req, res) => {
   const result = await pool.query('SELECT * FROM mocktail_categories ORDER BY sort_order');
   res.json(result.rows);
 }));

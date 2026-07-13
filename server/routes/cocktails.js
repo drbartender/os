@@ -49,7 +49,7 @@ router.get('/admin', auth, requireAdminOrManager, asyncHandler(async (req, res) 
 }));
 
 /** GET /api/cocktails/categories — all categories (public) */
-router.get('/categories', asyncHandler(async (req, res) => {
+router.get('/categories', publicReadLimiter, asyncHandler(async (req, res) => {
   const result = await pool.query('SELECT * FROM cocktail_categories ORDER BY sort_order');
   res.json(result.rows);
 }));

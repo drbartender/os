@@ -31,6 +31,11 @@ const COHORTS = {
 router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { status, view = 'active', search, source, page = 1, limit = 50,
     axis, event_type: eventType, balance, cohort, from, to } = req.query;
+  // Bound pagination: a non-numeric limit (?limit=abc) otherwise casts to NaN and
+  // 22P02-500s; ?page=0 yields a negative OFFSET. Clamp to [1, 200], default 50;
+  // page floors at 1 (matches clients.js).
+  const lim = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+  const pg = Math.max(1, parseInt(page, 10) || 1);
   // Shared FROM + WHERE built once so the data SELECT and the COUNT(*) cover the
   // exact same filtered set. whereParams holds ONLY the filter params (status /
   // search / date / event_type); pagination (LIMIT/OFFSET) is appended to the
@@ -139,9 +144,9 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     ${fromWhere}${whereClause}
     ORDER BY p.created_at DESC`;
   const params = [...whereParams];
-  params.push(Number(limit));
+  params.push(lim);
   query += ` LIMIT $${params.length}`;
-  params.push((Number(page) - 1) * Number(limit));
+  params.push((pg - 1) * lim);
   query += ` OFFSET $${params.length}`;
 
   // Data + total run in parallel; COUNT(*) reuses the identical FROM/WHERE and
