@@ -35,6 +35,7 @@ lanes:
       - server/routes/proposals/publicToken.js
       - client/src/pages/public/portal/nextUp.js
       - client/src/pages/public/portal/constants.js
+      - client/src/pages/public/portal/tabs/PrescriptionTab.js   # fleet finding: 3rd Pay-balance CTA
       - client/src/pages/proposal/proposalView/ProposalView.js
       - server/routes/clientPortal.home.test.js
       - server/routes/clientPortal.focusOrder.test.js
@@ -48,6 +49,10 @@ lanes:
       - client/src/pages/admin/payroll/PayoutRow.js
       - server/utils/payrollAccrual.js
       - server/utils/payrollAccrual.sweepPreserve.test.js
+      - server/db/schema.sql                  # fleet rework: held_state column replaces note-marker
+      - server/routes/admin/payroll.js        # fleet rework: PATCH re-arm sets held_state='confirmed'
+      - server/utils/paystubData.js           # fleet rework: exclude held lines from adjustment aggregates
+      - ARCHITECTURE.md
     deps: []
     review: [code-review, consistency-check, database-review, second-opinion]
   - id: P3
