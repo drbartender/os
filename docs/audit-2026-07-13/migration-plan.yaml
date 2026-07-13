@@ -1,0 +1,591 @@
+# Migration plan — 2026-07-13 whole-codebase audit
+# Companion docs: system-map.md (subsystem map) + tech-debt-register.md (findings, evidence, rejected fixes).
+# NO code has been written. Each lane below is proposed; Dallas greenlights lanes (or phases) explicitly.
+# Lane mechanics follow CLAUDE.md: think-on-main, build-in-lanes, squash merge; `sensitive: true` lanes
+# get the full review fleet + /second-opinion at push per the review model, regardless of size.
+
+meta:
+  title: os refactor / debt burn-down
+  date: 2026-07-13
+  repo: /home/drbartender/projects/os
+  head_sha: 46e969b
+  audit_method: 55-agent workflow (12 mappers, 3 reconcilers, 11 hunters, adversarial verification)
+  guiding_principles:
+    - Payment flow judged HARDENED 2026-07-11; recommended AGAINST rewrite. Nothing here rewrites it.
+    - Minimal-first; never gold-plate battle-tested money code (see register section 5, rejected fixes).
+    - Behavior-inert consolidation before structural splits; splits only where files are both big AND hot.
+    - Every schema change idempotent (IF NOT EXISTS / guarded DO-block), per schema.sql convention.
+    - Additive test lanes are always safe and can interleave anywhere.
+
+phases:
+  - id: P0
+    name: Resilience + hygiene quick wins
+    intent: Small, verified-safe fixes closing real failure modes (process crash, pool deadlock instance, dead health check, unclamped params). All S effort; can run as parallel lanes.
+  - id: P1
+    name: Known correctness mediums
+    intent: The carried medium/high items from prior audits, each surgical, each money/auth-adjacent (full fleet).
+  - id: P2
+    name: Safety net
+    intent: Test coverage on guarded paths + the CI/test-isolation project (the one confirmed-medium structural gap).
+  - id: P3
+    name: Consolidation (drift-killers)
+    intent: Single-source the hand-copied constants/maps/helpers that have already drifted or demonstrably will.
+  - id: P4
+    name: Structural splits
+    intent: File-size ratchet relief on hot files, using the codebase's own established split patterns.
+  - id: P5
+    name: Deferred / triggered projects
+    intent: Own design sessions or explicit triggers; listed so they are not lost. Not scheduled.
+
+# ── P0 ──────────────────────────────────────────────────────────────────────
+items:
+  - id: qw-pool-thumbtack
+    phase: P0
+    title: Release pooled client before Thumbtack /leads post-commit tail
+    findings: [PAT-1]
+    severity: low   # verified; but it is the documented #1 bug class on an externally-triggered endpoint
+    effort: S
+    sensitive: true          # server/routes/thumbtack.js is a webhook sensitive path
+    footprint: [server/routes/thumbtack.js]
+    action: >
+      Mirror the 2026-07-13 capture-lead fix: release dbClient (released-flag guard, NOT a bare early
+      release; the finally at :454 would double-release and pg throws) before runPostCommitSteps at
+      :441 and the heal path at :387.
+    verify: existing thumbtack tests + manual webhook replay
+
+  - id: qw-process-net
+    phase: P0
+    title: Chain floating geocode queries + add process-level rejection net
+    findings: [OPS-1]
+    severity: low
+    effort: S
+    sensitive: false
+    footprint: [server/routes/shifts.js, server/routes/contractor.js, server/routes/admin/users.js, server/index.js]
+    action: >
+      Add `return` before the inner pool.query in the four geocode .then() callbacks so rejections reach
+      the existing .catch; add process.on('unhandledRejection'/'uncaughtException') in index.js that
+      Sentry-captures and logs instead of letting Node kill the web process + all 13 schedulers.
+
+  - id: qw-health-shutdown
+    phase: P0
+    title: Real DB health check + graceful SIGTERM drain + boot env assertions
+    findings: [OPS-3, OPS-2, OPS-4]
+    severity: low
+    effort: S
+    sensitive: true          # touches .env.example contract? no; but index.js scheduler area — treat light-plus
+    footprint: [server/index.js, render.yaml]
+    action: >
+      /api/health runs SELECT 1 with a short statement timeout, 503 on failure; add healthCheckPath to
+      render.yaml. Capture server from app.listen; SIGTERM -> stop interval timers, server.close() drain,
+      pool.end(), hard timeout. Add one fail-fast required-env block (DATABASE_URL + transactional
+      provider keys); keep warn-only for optional integrations.
+
+  - id: qw-endpoint-hygiene
+    phase: P0
+    title: Clamp list params + missing limiters + missing UUID guard
+    findings: [SEC-1, PERF-2, SEC-2, PT-1]
+    severity: low
+    effort: S
+    sensitive: false
+    footprint: [server/routes/proposals/list.js, server/routes/emailMarketing.js, server/routes/cocktails.js, server/routes/mocktails.js, server/routes/proposals/publicToken.js]
+    action: >
+      proposals/list.js + emailMarketing leads: Math.min/Math.max clamp on limit/page like every sibling
+      endpoint. Add publicReadLimiter to both /categories routes. Add requireUuidToken to GET /t/:token
+      (publicToken.js:59) matching its sibling routes.
+
+  - id: qw-isbartender
+    phase: P0
+    title: Route payrollAccrual tip-pool filter through shared isBartender()
+    findings: [DUP-S5]
+    severity: low
+    effort: S
+    sensitive: true          # payroll*.js — money seam; full fleet despite one-line diff
+    footprint: [server/utils/payrollAccrual.js]
+    action: >
+      Replace the inline (w.position||'').toLowerCase()==='bartender' at payrollAccrual.js:177 with
+      staffingRoles.isBartender (adds the .trim() the canonical helper performs).
+
+  - id: qw-schema-hygiene
+    phase: P0
+    title: Schema hygiene batch (FK align, index, timestamptz, money CHECKs, dead-column drop)
+    findings: [SCH-1, SCH-3, SCH-4, SCH-5, D-NOI]
+    severity: low
+    effort: S
+    sensitive: true          # server/db/schema.sql
+    footprint: [server/db/schema.sql, server/utils/*.test.js]
+    action: >
+      Guarded blocks: message_log.client_id -> ON DELETE SET NULL + drop NOT NULL (matches every other
+      client FK + the clientMerge invariant). transport_acknowledged_at -> TIMESTAMPTZ (read only as
+      boolean today). CREATE INDEX idx_payout_events_shift_id. CHECK (amount >= 0) on proposal_payments,
+      CHECK (amount_due >= 0 AND amount_paid >= 0) on invoices via NOT VALID + VALIDATE after confirming
+      no legit negative rows (invoice_payments stays signed). DROP COLUMN users.notifications_opt_in +
+      update the 4 test fixtures that still INSERT it.
+    caution: verify prod rows before VALIDATE; each block idempotent.
+
+  - id: qw-node-pin
+    phase: P0
+    title: Pin Node runtime to the major Render currently resolves
+    findings: [DEP-1]
+    severity: low
+    effort: S
+    sensitive: false
+    footprint: [.node-version, package.json, render.yaml, README.md]
+    action: >
+      Add .node-version + NODE_VERSION matching what Render resolves TODAY (confirm in dashboard); narrow
+      engines.node to that major; fix README/CLAUDE tech-stack wording. The deliberate bump to 22 LTS is
+      def-node-22 (P5), a separate verified step (pg/bcryptjs/sharp are native).
+
+  - id: qw-test-noise
+    phase: P0
+    title: Fix crud.test Case 8 rate-limit fragility + eslint plugin root dep
+    findings: [TST-3, DEP-4]
+    severity: low
+    effort: S
+    sensitive: false
+    footprint: [server/routes/proposals/crud.test.js, eslint.config.mjs, package.json]
+    action: >
+      Case 8: makeFreshAdmin() for a clean adminWriteLimiter bucket (root cause is bucket exhaustion on
+      shared primaryToken, not a product bug). Add eslint-plugin-react-hooks as root devDependency and
+      import by bare specifier instead of the client/node_modules relative path.
+
+  - id: qw-dead-files
+    phase: P0
+    title: Remove tracked probe artifacts + stale mirror comment
+    findings: [DC-1, DUP-S4]
+    severity: low
+    effort: S
+    sensitive: false
+    footprint: [blog-import/test.webp, blog-import/writetest.txt, server/utils/shoppingList.js]
+    action: >
+      git rm blog-import/test.webp (1.7MB) + writetest.txt (zero references). Rewrite shoppingList.js
+      header: server is authoritative, client consumes via API; keep only the live syrups.js sync note.
+
+# ── P1 ──────────────────────────────────────────────────────────────────────
+  - id: m1-refund-reap
+    phase: P1
+    title: Refund on paid proposal must reap/suppress the live booking
+    findings: [M-1]
+    severity: high
+    effort: M
+    sensitive: true
+    decision_needed: reap-vs-suppress (see decisions_needed)
+    footprint: [server/utils/refundHelpers.js, server/routes/proposals/actions.js, server/utils/scheduledMessageDispatcher.js]
+    action: >
+      Today a refunded proposal reconciles back to 'accepted': shifts stay staffed, balance invoice lives,
+      reminders keep firing (prod-confirmed, proposal 500). Either reap-on-refund (cancel shift + void
+      invoice + suppress scheduled_messages) or widen checkSuppression + teach archive to reap shifts.
+      Same family as the shipped record-payment status-downgrade guard.
+    review: full fleet + /second-opinion (money + webhook family)
+
+  - id: m2-lastminute-parity
+    phase: P1
+    title: Payment-link 'full' settlement joins the last-minute staffing path
+    findings: [M-2]
+    severity: medium
+    effort: S
+    sensitive: true
+    footprint: [server/routes/stripeWebhookHandlers/checkoutSessionCompleted.js]
+    action: >
+      Mirror paymentIntentSucceeded: set last_minute_hold + notifyLastMinuteBooking in the 'full' branch
+      (checkoutSessionCompleted.js:193-206) for <72h events. Was deliberately skipped in a prior deploy.
+    review: full fleet + /second-opinion
+
+  - id: m3-qa-seed-gate
+    phase: P1
+    title: Gate /api/qa/seed staff-account mint
+    findings: [M-3]
+    severity: medium
+    effort: S
+    sensitive: true
+    footprint: [server/routes/labrat.js, server/index.js, .env.example]
+    action: >
+      Cheapest close per audit: env flag (LABRAT_ENABLED) or shared-secret header for the tester program;
+      keep rate limits. Accounts are pre-claim 'applied' so risk is bounded, but it mints staff rows and
+      returns a plaintext password unauthenticated today.
+
+  - id: m4-autopay-outage-guard
+    phase: P1
+    title: Autopay reclaim checks Stripe before re-charging
+    findings: [M-4]
+    severity: medium
+    effort: M
+    sensitive: true
+    footprint: [server/utils/balanceScheduler.js]
+    action: >
+      Before charging a reclaimed in_progress row (>24h stale claim), query Stripe for an existing
+      succeeded PI for (proposal, balance_due_date) instead of trusting the expired idempotency key.
+      Requires a genuine >24h webhook outage to fire today; surgical, not a rewrite.
+    review: full fleet + /second-opinion
+
+  - id: m5-dp-submit-reconcile
+    phase: P1
+    title: Drink-plan submit reconciles proposal payment status after price raise
+    findings: [M-5]
+    severity: low
+    effort: M
+    sensitive: true
+    footprint: [server/routes/drinkPlans/submit.js]
+    action: >
+      After the total_price update (:264), apply reconcileProposalPaymentStatus like crud PATCH does, so
+      a paid proposal gaining extras demotes correctly. Low reachability (submit-once gate) but violates
+      the cross-cutting rule.
+
+  - id: m6-mergeclients
+    phase: P1
+    title: Wire mergeClients behind an admin gate, or delete it
+    findings: [M-6]
+    severity: medium
+    effort: S
+    sensitive: false
+    decision_needed: wire-vs-delete
+    footprint: [server/utils/clientMerge.js, server/routes/admin/*, client/src/pages/admin/*]
+    action: >
+      Exported since the CC import, zero consumers, no gate/audit/confirm exists. First consumer MUST be
+      admin-gated + activity-logged + confirmation-guarded. If merge UX is not wanted soon, delete the
+      export instead of shipping a loaded gun.
+
+  - id: m7-archive-reason
+    phase: P1
+    title: Archive endpoint writes archive_reason
+    findings: [F-AR]
+    severity: medium
+    effort: S
+    sensitive: false
+    footprint: [server/routes/proposals/actions.js, client/src/pages/admin/ProposalDetail.js]
+    action: >
+      Accept a reason (no_hire/client_cancelled/we_cancelled/event_completed/other) on POST /:id/archive
+      and write it; small reason picker on the admin archive action. CHECK already allows the values.
+
+  - id: m8-audit-transcribe
+    phase: P1
+    title: Transcribe the 2026-07-11 payment/auth audit into .claude/
+    findings: [M-8]
+    severity: low
+    effort: S
+    sensitive: false
+    footprint: [.claude/payment-auth-audit-2026-07-11.md]
+    action: >
+      The audit's 3 low/info findings exist only in session memory. Write the doc like
+      seam-sweep-2026-07-02.md from what is recoverable so the tail is not lost; mark gaps as lost.
+
+# ── P2 ──────────────────────────────────────────────────────────────────────
+  - id: t1-auth-tests
+    phase: P2
+    title: Staff auth() gate + token-version tests
+    findings: [TST-1]
+    effort: S
+    sensitive: false   # additive tests only
+    footprint: [server/middleware/auth.envelope.test.js]
+    action: >
+      ~4 cases: stale tokenVersion -> 401 TOKEN_VERSION_MISMATCH; suspended/deactivated/rejected staff ->
+      403 with right code; admin with suspended status still passes (owner-lockout exemption).
+
+  - id: t2-webhook-route-tests
+    phase: P2
+    title: SMS webhook signature-gate route test + rate-limiter tests + preEventHandlers formatter tests
+    findings: [TST-4, TST-6, TST-7]
+    effort: S
+    sensitive: false
+    footprint: [server/routes/sms.test.js, server/middleware/rateLimiters.test.js, server/utils/preEventHandlers.test.js]
+    action: >
+      Mirror stripeWebhook.testSecretGate.test.js for routes/sms.js (bad signature prod-mode -> 403 +
+      Sentry; /conversations requires admin). loginLimiter/adminWriteLimiter threshold tests. Pure
+      formatter tests for preEventHandlers (the last *Handlers.js without a test sibling).
+
+  - id: t3-client-money-tests
+    phase: P2
+    title: formatMoney + buildTipDeepLink unit tests
+    findings: [TST-5]
+    effort: S
+    sensitive: false
+    footprint: [client/src/utils/formatMoney.test.js, client/src/utils/buildTipDeepLink.test.js]
+    action: >
+      Pin the customer-facing money formatter (negatives, thousands, NaN) and per-provider tip deep links
+      (missing handle -> null, paypal.me normalization). Under an hour; note client tests currently run
+      manually only (see t5-ci).
+
+  - id: t4-payroll-isolation
+    phase: P2
+    title: Payroll suite pay_periods isolation (serial runs stay)
+    findings: [TST-2]
+    effort: M
+    sensitive: false
+    footprint: ["server/utils/payroll*.test.js", "server/routes/admin/payroll.test.js"]
+    action: >
+      Each suite gets its own far-past start_date pay_period (payrollLateTip pattern); teardown DELETEs
+      scoped to suite-created rows. Do NOT re-enable --test-concurrency (rejected; suites also collide
+      on users/proposals in the shared dev DB).
+
+  - id: t5-ci
+    phase: P2
+    title: CI test gate on an isolated DB (design session)
+    findings: [M-CI]
+    severity: medium
+    effort: L
+    sensitive: false
+    depends_on: [t4-payroll-isolation]
+    decision_needed: ci-shape
+    footprint: [.github/workflows/, server/db/, package.json]
+    action: >
+      The one confirmed-medium structural gap: 203 server tests are invoked by nothing; push = deploy.
+      Design session to pick the shape: ephemeral Neon branch per run (Neon API) vs throwaway schema;
+      GitHub Action on push vs a pre-push money-path smoke subset (pricingEngine/webhook/payroll) first.
+      Also wire client `react-scripts test` and the scripts/ test glob into whatever gate lands.
+
+# ── P3 ──────────────────────────────────────────────────────────────────────
+  - id: c1-booked-statuses
+    phase: P3
+    title: Single-source the booked/paid status set (JS first, SQL opportunistic)
+    findings: [DUP-S1]
+    severity: medium
+    effort: M
+    sensitive: true   # touches metricsQueries/money gating; values stay identical
+    footprint: [server/utils/proposalStatus.js, server/routes/clientPortal/summary.js, server/utils/changeRequests.js, server/utils/proposalGroupCommit.js, server/utils/rescheduleProposal.js, server/utils/drinkPlanAccess.js]
+    action: >
+      New server/utils/proposalStatus.js exporting BOOKED_STATUSES (+ SQL fragment helper). Replace the
+      five JS Sets/arrays (two of which are BOTH named BOOKED in different modules) mechanically. SQL
+      literals migrate only value-identically and only opportunistically; several sites negate the set
+      plus 'archived' (globalSearch.js:89, list.js:74), so no naive fragment swap there. Change zero
+      status values.
+
+  - id: c2-status-label-maps
+    phase: P3
+    title: Shared client status label/kind maps (proposal + drink plan)
+    findings: [DUP-C2]
+    effort: S
+    sensitive: false
+    footprint: [client/src/utils/proposalStatusMap.js, client/src/utils/drinkPlanStatusMap.js, client/src/pages/admin/ProposalDetail.js, client/src/pages/admin/ProposalsDashboard.js, client/src/pages/admin/ClientDetail.js, client/src/pages/admin/AlternativesPanel.js, client/src/pages/admin/DrinkPlansDashboard.js, client/src/pages/admin/potions/PlansDrawer.js]
+    action: >
+      One {label, kind} lookup per enum with a single fallback (pattern: gratuityLabels/servingLabels).
+      Fixes the live divergences: completed green-vs-gray, archived/declined coverage, exploration_saved
+      missing from one map. Decide the canonical 'completed' color once.
+
+  - id: c3-money-constants
+    phase: P3
+    title: Shared safeAddonQty + CONTRACT_LABELS
+    findings: [FIX-1, MS-1]
+    effort: S
+    sensitive: true   # payrollAccrual/refundHelpers import the new constant; values identical
+    footprint: [server/utils/proposalMoneyShared.js, server/routes/proposals/crud.js, server/routes/proposals/public.js, server/routes/proposals/metadata.js, server/utils/changeRequests.js, server/utils/payrollAccrual.js, server/utils/refundHelpers.js, server/utils/invoiceLifecycle.js]
+    action: >
+      Lift the 4x safeAddonQty and the 3x hand-synced CONTRACT_LABELS ['Deposit','Balance','Full Payment']
+      into one shared module; imports only, zero value changes. (extractGratuityCents label-match fragility
+      gets a comment pointing at the constant.)
+
+  - id: c4-url-and-fmt
+    phase: P3
+    title: proposalUrl() helper + 3x change-request formatter
+    findings: [DUP-S3, DUP-C1-safe-slice]
+    effort: S
+    sensitive: false
+    footprint: [server/utils/urls.js, server/utils/balanceSmsHandlers.js, server/utils/dripSmsHandlers.js, server/utils/scheduledMessageDispatcher.js, server/utils/sendProposalSentEmail.js, server/utils/preEventHandlers.js, server/utils/marketingHandlers.js, client/src/pages/admin/ChangeRequestsDashboard.js, client/src/pages/admin/ProposalChangeRequestCard.js, client/src/pages/public/portal/ChangeRequestForm.js]
+    action: >
+      proposalUrl(token) WITH encodeURIComponent in utils/urls.js, imported at the 3 identical private
+      copies + inline builders (stripe.js already encodes; do not change it). Client: one shared
+      change-request dollar formatter replacing the 3 byte-identical copies. DO NOT touch payroll
+      .toFixed sites or formatMoney/fmt$fromCents (rejected, register section 5).
+
+  - id: c5-date-time-helpers
+    phase: P3
+    title: Shared client date/time formatters (kill the date-only timezone trap)
+    findings: [DUP-C3, DUP-C4]
+    effort: M
+    sensitive: false
+    footprint: [client/src/components/adminos/format.js, client/src/pages/**]
+    action: >
+      Extend adminos/format.js (widest adoption): fmtDateOnly (safe for date-only columns), fmtDate/
+      fmtDateTime (timestamptz), formatTime12h re-export, one start+duration end-time helper. Replace the
+      ~15 hand-rolled copies; the bare `new Date(d)` on date-only columns is an off-by-one-day in Chicago.
+
+  - id: c6-source-list
+    phase: P3
+    title: Single source for client/lead source enum (5-way today)
+    findings: [FIX-2]
+    effort: M
+    sensitive: true   # schema.sql CHECKs
+    footprint: [client/src/utils/clientSources.js, client/src/utils/leadSources.js, server/utils/, server/db/schema.sql]
+    action: >
+      One canonical list; schema CHECKs regenerated from it via guarded DO-blocks; client utils import or
+      mirror-with-test. Adding a source value today requires edits in 5+ places.
+
+  - id: c7-misc-consolidation
+    phase: P3
+    title: parsePositionsNeeded import + emailSequence N+1 batch
+    findings: [MS-2, PERF-1]
+    effort: S
+    sensitive: true   # coverBroadcast.js is on the sensitive list
+    footprint: [server/utils/coverBroadcast.js, server/utils/emailSequenceScheduler.js]
+    action: >
+      coverBroadcast imports the shared utils/positionsNeeded.js instead of its local copy. Sequence
+      scheduler loads a campaign's steps once into a Map instead of 2 queries per enrollment per tick;
+      sends stay sequential.
+
+  - id: c8-pricing-snapshot-validator
+    phase: P3
+    title: pricing_snapshot version stamp + read validator (design session)
+    findings: [F-PS]
+    severity: medium
+    effort: M
+    sensitive: true
+    decision_needed: validator-contract
+    footprint: [server/utils/pricingEngine.js, server/utils/pricingSnapshot.js, server/utils/eventCreation.js, server/utils/payrollAccrual.js, server/utils/invoiceExtras.js, server/utils/changeRequests.js, server/utils/preEventHandlers.js, server/utils/setupTime.js]
+    action: >
+      Highest-value carry from the old register: PRICING_SNAPSHOT_VERSION written by calculateProposal,
+      one parse/validate helper wrapped around the 6+ unversioned readers, tolerant of legacy snapshots.
+      Adds a guard AROUND the engine without changing its math. Needs its own short design session
+      (legacy-snapshot tolerance rules) + full fleet.
+
+# ── P4 ──────────────────────────────────────────────────────────────────────
+  - id: s1-proposalcreate-split
+    phase: P4
+    title: Split ProposalCreate.js by its own in-file sections (unfreeze the only RED file)
+    findings: [CPX-4]
+    effort: M
+    sensitive: false
+    footprint: [client/src/pages/admin/ProposalCreate.js, client/src/pages/admin/proposalCreate/]
+    action: >
+      Extract the already-self-contained ClientSection/EventSection/PackageSection/AddonSection (:436,
+      :557, :734, :864) into a proposalCreate/ folder, the documented split pattern. Client form code,
+      pricing math is server-side. Verify with CI=true react-scripts build + eyeball.
+
+  - id: s2-comms-splits
+    phase: P4
+    title: Split the two near-hard-cap comms engines
+    findings: [FIX-3, CPX-3]
+    effort: M
+    sensitive: true   # *EmailTemplates.js / scheduler files are sensitive-listed
+    footprint: [server/utils/emailTemplates.js, server/utils/scheduledMessageDispatcher.js, server/utils/]
+    action: >
+      emailTemplates.js (980L) sheds a domain sibling (the lifecycle/marketing split pattern already
+      exists). Dispatcher (947L): move concrete balance handlers (:864-905) to a registered-handlers
+      module and dead-letter recovery (:715-853) to its own file; engine drops under ~600. Both will
+      block their next feature add otherwise.
+
+  - id: s3-admin-users-split
+    phase: P4
+    title: Split contractor tip-page/Stripe sub-API out of admin/users.js
+    findings: [CPX-7]
+    effort: M
+    sensitive: false
+    footprint: [server/routes/admin/users.js, server/routes/admin/contractorTipPage.js, server/routes/admin/index.js]
+    action: >
+      Move :605-810 (tip-page patch, rotate-token, generate/regenerate-stripe, activate/deactivate) to a
+      sibling router; optionally tips/tip-feedback (:810-899) too. users.js keeps identity + onboarding.
+
+  - id: s4-shifts-split
+    phase: P4
+    title: Continue shifts.js handler extraction
+    findings: [CPX-6, CPX-5]
+    effort: M
+    sensitive: true   # staffShiftActions.js is sensitive-listed
+    footprint: [server/routes/shifts.js, server/utils/staffShiftHandlers.js, server/routes/staffShiftActions.js]
+    action: >
+      PUT /:id (~109L, 21 body fields) and cancel-or-unassign (~100L) move to staffShiftHandlers.js like
+      the three handlers already extracted. staffShiftActions: shared applyCoverTransition helper for the
+      four ~200-line cover/drop handlers (lower priority; can be its own later lane).
+
+  - id: s5-crud-tail-extraction
+    phase: P4
+    title: crud.js PATCH post-commit tail extraction ONLY (design session)
+    findings: [CPX-1-tail]
+    effort: M
+    sensitive: true
+    decision_needed: worth-it   # verifiers split on whether even the tail is safely mechanical
+    footprint: [server/routes/proposals/crud.js, server/utils/]
+    action: >
+      Fold the five post-commit best-effort blocks (:721-835) into one runProposalUpdateSideEffects
+      helper. Verification flagged the hoisted closure state (shouldSendRescheduleEmail, notify flags,
+      fresh post-commit re-reads) as load-bearing, so this is design-session + full fleet or not at all.
+      The in-transaction body is untouchable (register section 5).
+
+# ── P5 (deferred / triggered; listed so they are not lost) ─────────────────
+  - id: def-vite
+    phase: P5
+    title: CRA -> Vite migration (locked decision, unscheduled)
+    findings: [DEP-3]
+    effort: L
+    notes: >
+      Blocker inventory now quantified and unusually clean: 7 REACT_APP_ env vars, one SW in public/,
+      CRA proxy field, jest->vitest, Sentry sourcemaps. No jsconfig/aliases. Killing CRA also retires
+      the accepted transitive-CVE pile and the two-ESLint-majors mess.
+  - id: def-node-22
+    phase: P5
+    title: Deliberate Node 22 LTS bump (after qw-node-pin)
+    depends_on: [qw-node-pin]
+    notes: native deps (pg/bcryptjs/sharp) verified on a clean build + boot before flipping prod.
+  - id: def-worker-split
+    phase: P5
+    title: Schedulers -> worker process
+    notes: >
+      Re-checked this audit (OPS-5): 13 jobs but every money/comms-critical one individually hardened
+      (atomic claims + idempotency keys); nothing new raises urgency. qw-process-net addresses the real
+      cost (crash blast-radius) far cheaper. Revisit on Render multi-instance or scheduler #20.
+  - id: def-text-jsonb
+    phase: P5
+    title: TEXT->JSONB migration (now 5 columns)
+    findings: [D-TXT, SCH-2]
+    notes: >
+      shifts.positions_needed + equipment_required PLUS shift_requests.requested_positions,
+      applications.positions_interested, experience_types (first one feeds the payroll position seam).
+      Own spec: prod data migration + callsite sweep + rollback plan.
+  - id: def-css-audit
+    phase: P5
+    title: index.css dead-rule measurement (report-only first)
+    findings: [PERF-3]
+    notes: >
+      515KB render-blocking on every surface. Step 1 is measurement only (PurgeCSS report-only or
+      DevTools coverage); purge decision after numbers. Consider extending the size ratchet to warn on
+      index.css growth.
+  - id: def-refund-scope
+    phase: P5
+    title: Admin refund-scope selector + honest multi-invoice sub-ledger (M8/L2 design)
+    notes: core money bug already fixed; this is the deferred design item, low.
+  - id: def-client-arch
+    phase: P5
+    title: Client architecture design sessions (Dallas-driven)
+    notes: >
+      QuoteWizard<->ProposalCreate policy dedup; App.js 4-tree route-manifest dedup; PotionPlanningLab
+      controller-hook split; CocktailMenuDashboard redesign; legacy .badge -> StatusChip migration
+      (DUP-C5, fold into next AdminDashboard touch); legacy DrinkPlansDashboard/DrinkPlanDetail
+      confirm-dead check.
+  - id: def-triggered-perf
+    phase: P5
+    title: Trigger-based perf backlog (unchanged from old register)
+    notes: >
+      LIMIT-500 pagination (trigger: first "missing old events" ticket); campaign COUNT FILTER refactor
+      (index already landed); geocode/blog import loops; applications CASE-vs-index (trigger: >10k rows);
+      metricsQueries include_cc composite index (trigger: proposal_payments ~100k); failed-login DB trail;
+      DEFAULT-vs-supplied sweep.
+  - id: def-product-tails
+    phase: P5
+    title: Product-decision tails from fix-list (not audit debt)
+    notes: >
+      Drink-plan edit lock Option A (parked, shovel-ready); syrup self-provided cross-check re-diagnosis;
+      manager iCal scope; notification bell wire-or-remove; unsubscribePush wire-or-delete; ginger-ale
+      copy; legacy-cc-payments dead endpoint removal (ride a proposals lane); favorite_color/is_default
+      column drops (confirm intent); scripts/archive keep-vs-delete.
+
+decisions_needed:
+  - id: reap-vs-suppress
+    for: m1-refund-reap
+    question: On refund of a paid proposal, hard-reap (cancel shift, void invoice, clear reminders) or archive+suppress (keep rows, silence everything)? Reap is cleaner ops; suppress preserves history if the client re-books.
+  - id: wire-vs-delete
+    for: m6-mergeclients
+    question: Build the admin merge UI now (gated + logged + confirmed) or delete the unwired export until merge UX is actually wanted?
+  - id: ci-shape
+    for: t5-ci
+    question: GitHub Action w/ ephemeral Neon branch (full suite, ~real) vs pre-push money-path smoke subset first (cheaper, local)? Both eventually; which lands first?
+  - id: validator-contract
+    for: c8-pricing-snapshot-validator
+    question: Version-stamp semantics for legacy snapshots (tolerate-and-tag vs backfill pass?).
+  - id: worth-it
+    for: s5-crud-tail-extraction
+    question: Verifiers split on whether even the post-commit tail extraction pays for its review cost. Skip entirely is a legitimate answer.
+
+rejected:  # verified as net-negative; see tech-debt-register.md section 5 for full reasoning
+  - {finding: DUP-S2,  what: fullPayCents/balanceDueCents helpers across hardened charge paths}
+  - {finding: CPX-2,   what: unifying POST/PATCH pricing setup in crud.js}
+  - {finding: DUP-C1,  what: locale money formatter over payroll .toFixed sites (breaks pay links/inputs/CSV)}
+  - {finding: TST-2b,  what: re-enabling --test-concurrency on the shared dev DB}
+  - {finding: CPX-1,   what: extracting crud.js in-transaction change-request block}
+  - {finding: DEP-1b,  what: blind Node 22 jump without a pin-and-verify step}
