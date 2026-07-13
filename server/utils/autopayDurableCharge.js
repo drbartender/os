@@ -24,51 +24,81 @@ async function recordBalanceIntent({ proposalId, intentId, amountCents }, db = p
 
 /**
  * (b) Double-charge guard for the stale-TTL re-claim. Before creating a NEW
- * balance intent, find the prior balance intent for this proposal+amount and
- * ask Stripe for its TRUE status — the local stripe_sessions.status is
- * unreliable during the very webhook outage this guards against (it stays
- * 'pending'). Returns { skip:true } when the prior balance intent is already
- * succeeded/processing (leave the claim for the webhook/reconcile) or cannot be
- * retrieved (lean money-safe); { skip:false } when absent, canceled, or
- * requires_payment_method (safe to re-charge).
+ * balance intent, find the prior *unresolved* balance intent for this proposal
+ * and ask Stripe for its TRUE status — the local stripe_sessions.status is
+ * unreliable during the very webhook outage this guards against (a paid intent
+ * stays 'pending' until the webhook lands). Returns { skip:true } when a prior
+ * balance intent is already succeeded/processing (leave the claim for the
+ * webhook/reconcile) or cannot be retrieved (lean money-safe); { skip:false }
+ * when there is no still-settling balance intent (safe to re-charge).
  *
- * `amount` is the money-scoping proxy for "this balance due date": stripe_sessions
- * carries no payment_type/due_date column, and the balance for a given due date is
- * a fixed dollar amount, so amount + the retrieved metadata.payment_type==='balance'
- * check uniquely identifies the prior balance charge. On a genuine first charge no
- * amount-matching balance row exists, so this no-ops (charges) — which makes running
- * it every cycle a SAFE SUPERSET of "stale re-claim only" (it also catches a settling
- * prior intent on a failed-status re-claim, which stale-only scoping would double-charge).
+ * SELECTION — status='pending' only, no amount filter, newest-first up to 10:
+ *   - `status = 'pending'` scopes to LOCALLY-UNRESOLVED rows. The webhook flips a
+ *     paid intent to 'succeeded' (paymentIntentSucceeded.js:218), a decline to
+ *     'failed' (paymentIntentFailed.js:57), and stripeCreateIntent cancels a
+ *     superseded pending row to 'canceled'. Excluding everything but 'pending' is
+ *     what keeps a historically paid-and-credited balance (now 'succeeded') from
+ *     reading as "settling forever" and wedging every future legitimate charge.
+ *     The prior comment claimed `status <> 'canceled'` was fine; it was not — it
+ *     swept in webhook-confirmed 'succeeded' rows and caused a CHARGE_SETTLING loop.
+ *   - NO amount filter. The old code matched `amount = $2` on the assumption that
+ *     the balance for a due date is a fixed dollar figure. That is false: total_price
+ *     can change mid-outage (drink-plan submit, admin edit), so the settling prior
+ *     intent no longer matches the new balanceCents and the guard would miss it →
+ *     double charge. Payment_type is the true discriminator, read from Stripe below.
+ *   - Newest-first, LIMIT 25: other 'pending' rows (invoice checkout, drink-plan
+ *     payment) also carry intent ids, so a single newest row could be a non-balance
+ *     intent shadowing an older settling balance intent. We scan a bounded window
+ *     and classify each by its retrieved metadata rather than trusting the first row.
+ *     The bound sits far above any plausible per-proposal pending-row count (extras
+ *     retries accumulate 2-4) so a settling balance intent cannot be evicted from
+ *     the window by newer non-balance rows; it exists only to cap Stripe retrieves.
+ *
+ * ITERATION (newest-first): retrieve each candidate. A retrieve failure fails closed
+ * (skip). A non-balance intent is skipped past (CONTINUE) — it is not our charge. A
+ * balance intent that is succeeded/processing is the settling one → skip. A balance
+ * intent that is terminal (canceled / requires_payment_method / other) does NOT
+ * unblock: we CONTINUE to older candidates, because a newer FAILED balance retry must
+ * not shadow an older ORIGINAL balance intent that is still settling. Only when the
+ * whole window holds no still-settling balance intent do we allow the charge.
  */
-async function priorBalanceChargeSettling({ proposalId, amountCents, stripe }, db = pool) {
+async function priorBalanceChargeSettling({ proposalId, stripe }, db = pool) {
   const prior = await db.query(
     `SELECT stripe_payment_intent_id
        FROM stripe_sessions
       WHERE proposal_id = $1
-        AND amount = $2
         AND stripe_payment_intent_id IS NOT NULL
-        AND status <> 'canceled'
+        AND status = 'pending'
       ORDER BY created_at DESC
-      LIMIT 1`,
-    [proposalId, amountCents]
+      LIMIT 25`,
+    [proposalId]
   );
-  const priorIntentId = prior.rows[0]?.stripe_payment_intent_id;
-  if (!priorIntentId) return { skip: false, reason: 'absent' };
+  const rows = prior.rows;
 
-  let intent;
-  try {
-    intent = await stripe.paymentIntents.retrieve(priorIntentId);
-  } catch (e) {
-    // Can't confirm it's safe to re-charge → SKIP. The claim stays for the
-    // webhook/reconcile; an admin can force it once Stripe is reachable. Not
-    // double-charging beats a possible miss.
-    return { skip: true, reason: 'retrieve_failed', priorIntentId };
+  for (const row of rows) {
+    const priorIntentId = row.stripe_payment_intent_id;
+    let intent;
+    try {
+      intent = await stripe.paymentIntents.retrieve(priorIntentId);
+    } catch (e) {
+      // Can't confirm it's safe to re-charge → SKIP (fail closed). The claim
+      // stays for the webhook/reconcile; an admin can force it once Stripe is
+      // reachable. Not double-charging beats a possible miss.
+      return { skip: true, reason: 'retrieve_failed', priorIntentId };
+    }
+    if (intent?.metadata?.payment_type !== 'balance') {
+      // A deposit / invoice / drink-plan intent — not our charge. Keep scanning.
+      continue;
+    }
+    if (intent.status === 'succeeded' || intent.status === 'processing') {
+      return { skip: true, reason: 'settling', priorIntentId, priorStatus: intent.status };
+    }
+    // Balance-typed but terminal (canceled / requires_payment_method / other): a
+    // newer failed retry must not unblock past an OLDER settling original — keep
+    // scanning the remaining, older candidates before deciding it is safe.
   }
-  if (intent?.metadata?.payment_type !== 'balance') {
-    return { skip: false, reason: 'not_balance', priorIntentId, priorStatus: intent?.status };
-  }
-  const settling = intent.status === 'succeeded' || intent.status === 'processing';
-  return { skip: settling, reason: settling ? 'settling' : 'terminal', priorIntentId, priorStatus: intent.status };
+
+  return { skip: false, reason: rows.length ? 'no_settling_balance_intent' : 'absent' };
 }
 
 module.exports = { recordBalanceIntent, priorBalanceChargeSettling };

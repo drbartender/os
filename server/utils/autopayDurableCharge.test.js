@@ -48,56 +48,120 @@ test('recordBalanceIntent > inserts one durable pending row; redelivery is a no-
   assert.equal(rows[0].status, 'pending');
 });
 
-test('priorBalanceChargeSettling > SKIP when the prior balance intent is succeeded (webhook down)', async () => {
-  const priorId = `pi_${MARK}_succ`;
+// Each guard test scans EVERY pending row for the proposal, so wipe the
+// proposal's sessions first to keep tests independent.
+async function clearSessions() {
+  await pool.query('DELETE FROM stripe_sessions WHERE proposal_id = $1', [propId]);
+}
+// Insert a pending intent row with an explicit age so newest-first ordering is
+// deterministic (agoInterval e.g. '1 hour'; omit for NOW()).
+async function seedSession(intentId, amount, agoInterval) {
+  const createdAt = agoInterval ? `NOW() - INTERVAL '${agoInterval}'` : 'NOW()';
   await pool.query(
-    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
-     VALUES ($1, $2, 25000, 'pending')`, [propId, priorId]
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status, created_at)
+     VALUES ($1, $2, $3, 'pending', ${createdAt})`, [propId, intentId, amount]
   );
+}
+
+test('priorBalanceChargeSettling > (a) SKIP on a settling balance intent at a DIFFERENT amount than the new balance', async () => {
+  // fixes (1): total_price changed mid-outage, so the settling prior intent's amount
+  // (25000) no longer equals the new balanceCents. The old amount-filtered query
+  // missed it and double-charged; the amount-blind scan catches it.
+  await clearSessions();
+  const priorId = `pi_${MARK}_diffamt`;
+  await seedSession(priorId, 25000);
   const stripe = fakeStripe({ [priorId]: { id: priorId, status: 'succeeded', metadata: { payment_type: 'balance' } } });
-  const r = await priorBalanceChargeSettling({ proposalId: propId, amountCents: 25000, stripe });
-  assert.equal(r.skip, true);
+  const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
+  assert.equal(r.skip, true, 'a settling balance intent must block regardless of amount drift');
+  assert.equal(r.reason, 'settling');
   assert.equal(r.priorStatus, 'succeeded');
 });
 
-test('priorBalanceChargeSettling > CHARGE when the prior balance intent is terminal (requires_payment_method)', async () => {
-  const priorId = `pi_${MARK}_reqpm`;
-  await pool.query(
-    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
-     VALUES ($1, $2, 26000, 'pending')`, [propId, priorId]
-  );
-  const stripe = fakeStripe({ [priorId]: { id: priorId, status: 'requires_payment_method', metadata: { payment_type: 'balance' } } });
-  const r = await priorBalanceChargeSettling({ proposalId: propId, amountCents: 26000, stripe });
-  assert.equal(r.skip, false, 'a canceled/requires_payment_method prior intent must NOT block a re-charge');
+test('priorBalanceChargeSettling > (b) SKIP when a NEWER non-balance intent shadows an OLDER settling balance intent', async () => {
+  // fixes (2): invoice/drink-plan checkout inserts a newer pending non-balance row.
+  // The old newest-only + not_balance→skip:false returned CHARGE; the bounded scan
+  // steps past the non-balance intent and finds the older settling balance one.
+  await clearSessions();
+  const balId = `pi_${MARK}_oldbal`;
+  const invId = `pi_${MARK}_newinv`;
+  await seedSession(balId, 30000, '2 hours'); // older
+  await seedSession(invId, 40000);            // newer (NOW)
+  const stripe = fakeStripe({
+    [invId]: { id: invId, status: 'succeeded', metadata: { payment_type: 'invoice' } },
+    [balId]: { id: balId, status: 'succeeded', metadata: { payment_type: 'balance' } },
+  });
+  const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
+  assert.equal(r.skip, true, 'a newer non-balance intent must not shadow an older settling balance intent');
+  assert.equal(r.reason, 'settling');
+  assert.equal(r.priorIntentId, balId);
 });
 
-test('priorBalanceChargeSettling > CHARGE when no prior balance row exists (absent = fresh charge)', async () => {
+test('priorBalanceChargeSettling > (c) a webhook-confirmed (status=succeeded) row is NOT a candidate → CHARGE', async () => {
+  // fixes (3): a historically paid-and-credited balance is flipped to 'succeeded'
+  // locally by the webhook. status='pending'-only selection excludes it, so it can
+  // never read as "settling forever" and wedge every future legitimate charge.
+  await clearSessions();
+  const paidId = `pi_${MARK}_paidsucc`;
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
+     VALUES ($1, $2, 31000, 'succeeded')`, [propId, paidId]
+  );
+  const stripe = fakeStripe({ [paidId]: { id: paidId, status: 'succeeded', metadata: { payment_type: 'balance' } } });
+  const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
+  assert.equal(r.skip, false, 'a locally-resolved succeeded row must not block a fresh legitimate charge');
+  assert.equal(r.reason, 'absent');
+});
+
+test('priorBalanceChargeSettling > (d) scan past a NEWER terminal balance intent to an OLDER settling one → SKIP', async () => {
+  await clearSessions();
+  const oldSucc = `pi_${MARK}_oldsucc`;
+  const newReqpm = `pi_${MARK}_newreqpm`;
+  await seedSession(oldSucc, 32000, '2 hours'); // older, settling
+  await seedSession(newReqpm, 32000);           // newer, terminal retry
+  const stripe = fakeStripe({
+    [newReqpm]: { id: newReqpm, status: 'requires_payment_method', metadata: { payment_type: 'balance' } },
+    [oldSucc]: { id: oldSucc, status: 'succeeded', metadata: { payment_type: 'balance' } },
+  });
+  const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
+  assert.equal(r.skip, true, 'a newer failed retry must not unblock past an older settling original');
+  assert.equal(r.reason, 'settling');
+  assert.equal(r.priorIntentId, oldSucc);
+});
+
+test('priorBalanceChargeSettling > (d2) a lone terminal balance intent (requires_payment_method) → CHARGE', async () => {
+  await clearSessions();
+  const priorId = `pi_${MARK}_reqpm`;
+  await seedSession(priorId, 26000);
+  const stripe = fakeStripe({ [priorId]: { id: priorId, status: 'requires_payment_method', metadata: { payment_type: 'balance' } } });
+  const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
+  assert.equal(r.skip, false, 'a terminal requires_payment_method prior intent must NOT block a re-charge');
+  assert.equal(r.reason, 'no_settling_balance_intent');
+});
+
+test('priorBalanceChargeSettling > (e) SKIP (money-safe) when the prior intent cannot be retrieved', async () => {
+  await clearSessions();
+  const priorId = `pi_${MARK}_gone`;
+  await seedSession(priorId, 28000);
+  const stripe = fakeStripe({}); // retrieve throws → can't confirm safe
+  const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
+  assert.equal(r.skip, true, 'unconfirmable prior intent leans money-safe: do not fire a second charge');
+  assert.equal(r.reason, 'retrieve_failed');
+});
+
+test('priorBalanceChargeSettling > (f) CHARGE when no pending rows exist (absent = fresh charge)', async () => {
+  await clearSessions();
   const stripe = fakeStripe({});
-  const r = await priorBalanceChargeSettling({ proposalId: propId, amountCents: 99999, stripe });
+  const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
   assert.equal(r.skip, false);
   assert.equal(r.reason, 'absent');
 });
 
-test('priorBalanceChargeSettling > CHARGE when the amount-matching row is NOT a balance intent', async () => {
+test('priorBalanceChargeSettling > a newest non-balance intent with no balance intent behind it → CHARGE', async () => {
+  await clearSessions();
   const priorId = `pi_${MARK}_dep`;
-  await pool.query(
-    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
-     VALUES ($1, $2, 27000, 'pending')`, [propId, priorId]
-  );
+  await seedSession(priorId, 27000);
   const stripe = fakeStripe({ [priorId]: { id: priorId, status: 'succeeded', metadata: { payment_type: 'deposit' } } });
-  const r = await priorBalanceChargeSettling({ proposalId: propId, amountCents: 27000, stripe });
-  assert.equal(r.skip, false, 'an amount-collision with a non-balance intent must not skip the balance charge');
-  assert.equal(r.reason, 'not_balance');
-});
-
-test('priorBalanceChargeSettling > SKIP (money-safe) when the prior intent cannot be retrieved', async () => {
-  const priorId = `pi_${MARK}_gone`;
-  await pool.query(
-    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
-     VALUES ($1, $2, 28000, 'pending')`, [propId, priorId]
-  );
-  const stripe = fakeStripe({}); // retrieve throws → can't confirm safe
-  const r = await priorBalanceChargeSettling({ proposalId: propId, amountCents: 28000, stripe });
-  assert.equal(r.skip, true, 'unconfirmable prior intent leans money-safe: do not fire a second charge');
-  assert.equal(r.reason, 'retrieve_failed');
+  const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
+  assert.equal(r.skip, false, 'a non-balance intent alone must not skip the balance charge');
+  assert.equal(r.reason, 'no_settling_balance_intent');
 });

@@ -84,7 +84,7 @@ async function processAutopayCharges() {
         // is stale). Ask Stripe for the truth and SKIP a second real charge if so;
         // leave the claim in_progress for the webhook/reconcile. On a genuine first
         // charge no prior balance row exists, so this no-ops.
-        const guard = await priorBalanceChargeSettling({ proposalId: proposal.id, amountCents: balanceCents, stripe });
+        const guard = await priorBalanceChargeSettling({ proposalId: proposal.id, stripe });
         if (guard.skip) {
           console.log(`[BalanceScheduler] Skipping re-charge for proposal ${proposal.id}: prior balance intent ${guard.priorIntentId} ${guard.reason}${guard.priorStatus ? ` (${guard.priorStatus})` : ''}`);
           Sentry.captureMessage('Autopay re-claim skipped — prior balance intent still settling', {

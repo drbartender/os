@@ -330,11 +330,11 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(asy
   const idempotencyKey = `autopay-balance-${proposal.id}-${balanceDueIso}`;
 
   // F1(b): stale re-claim double-charge guard (mirrors the scheduler). If a prior
-  // balance intent for this proposal+amount is already succeeded/processing at
+  // balance intent for this proposal is already succeeded/processing at
   // Stripe (webhook still down), do NOT fire a second charge — surface 409 and
   // leave the claim in_progress for the webhook/reconcile. On a first charge no
   // prior balance row exists, so this no-ops.
-  const guard = await priorBalanceChargeSettling({ proposalId: proposal.id, amountCents: balanceCents, stripe });
+  const guard = await priorBalanceChargeSettling({ proposalId: proposal.id, stripe });
   if (guard.skip) {
     if (guard.reason === 'retrieve_failed') {
       // Couldn't reach Stripe to confirm the prior intent's status (transient). Do
