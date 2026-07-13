@@ -24,6 +24,7 @@ import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import EventEditForm from './EventEditForm';
 import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
+import { venueMapQuery } from '../../components/VenueAddressFields';
 import { STAFF_URL } from '../../utils/constants';
 
 const MenuPNG = lazy(() => import('../../components/MenuPNG/MenuPNG'));
@@ -218,7 +219,7 @@ export default function EventDetailPage() {
               {timeRange && ` · ${timeRange}`}
               {/* Back-of-house setup time (server-derived; never on public surfaces) */}
               {proposal.setup_time_display && ` · setup ${proposal.setup_time_display}`}
-              {proposal.event_location && <>{' · '}<AddressLink address={proposal.event_location} /></>}
+              {proposal.event_location && <>{' · '}<AddressLink address={proposal.event_location} mapQuery={venueMapQuery(proposal)} /></>}
             </div>
             {contactBits.length > 0 && (
               <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>

@@ -57,6 +57,7 @@ router.get('/:proposalId', auth, beoReadLimiter, asyncHandler(async (req, res) =
   const propRow = await pool.query(
     `SELECT p.id, p.event_type, p.event_type_custom, p.event_date, p.event_start_time,
             p.event_duration_hours, p.event_timezone, p.event_location, p.guest_count,
+            p.venue_street, p.venue_city, p.venue_state, p.venue_zip,
             p.num_bars, p.num_bartenders, p.setup_minutes_before, p.status,
             p.balance_due_date, p.client_id,
             p.tip_jar, p.gratuity_rate, (p.pricing_snapshot->>'staff_noun') AS staff_noun,
@@ -233,6 +234,13 @@ router.get('/:proposalId', auth, beoReadLimiter, asyncHandler(async (req, res) =
       event_duration_hours: p.event_duration_hours,
       event_timezone: p.event_timezone,
       event_location: p.event_location,
+      // Structured address parts (address-only, name excluded) so the staff
+      // "Get directions" link geocodes the street address instead of the venue
+      // name — see venueMapQuery in client/src/components/VenueAddressFields.js.
+      venue_street: p.venue_street,
+      venue_city: p.venue_city,
+      venue_state: p.venue_state,
+      venue_zip: p.venue_zip,
       guest_count: p.guest_count,
       num_bars: p.num_bars,
       num_bartenders: p.num_bartenders,

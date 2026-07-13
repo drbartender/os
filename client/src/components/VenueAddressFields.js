@@ -87,3 +87,15 @@ export function formatVenue(v = {}) {
   const cityStateZip = [cityState, v.venue_zip].filter(Boolean).join(' ');
   return [v.venue_name, v.venue_street, cityStateZip].filter(Boolean).join(', ');
 }
+
+// Address-only Google Maps `?query=` string (mirrors composeVenueMapQuery in
+// server/utils/venueAddress.js — keep in sync). Excludes venue_name so Google
+// geocodes the street address instead of text-searching the name and landing on
+// a same-named place or a vague area. Returns null when there is no street/city,
+// so callers fall back to the full composed location string.
+export function venueMapQuery(v) {
+  const o = v || {};
+  const cityState = [o.venue_city, o.venue_state].filter(Boolean).join(', ');
+  const cityStateZip = [cityState, o.venue_zip].filter(Boolean).join(' ');
+  return [o.venue_street, cityStateZip].filter(Boolean).join(', ') || null;
+}

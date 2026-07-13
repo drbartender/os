@@ -5,6 +5,7 @@ import { useToast } from '../../context/ToastContext';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { formatSetupTime } from '../../utils/setupTime';
+import { venueMapQuery } from '../../components/VenueAddressFields';
 import TeamRosterCard from '../../components/staff/TeamRosterCard';
 import DropCoverModal from '../../components/staff/DropCoverModal';
 import {
@@ -464,7 +465,7 @@ export default function ShiftDetail() {
         {(proposal?.event_location || shiftRow?.location) && (
           <a
             className="sp-btn sp-btn-sm"
-            href={mapsHref(proposal?.event_location || shiftRow?.location)}
+            href={mapsHref(venueMapQuery(proposal) || proposal?.event_location || shiftRow?.location)}
             target="_blank"
             rel="noreferrer"
           >

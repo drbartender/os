@@ -19,6 +19,7 @@ import AlternativesPanel from './AlternativesPanel';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
+import { venueMapQuery } from '../../components/VenueAddressFields';
 import EntityLink from '../../components/EntityLink';
 
 const STATUS = {
@@ -514,7 +515,7 @@ export default function ProposalDetail() {
                         ? ` · ${proposal.event_duration_hours} ${Number(proposal.event_duration_hours) === 1 ? 'hour' : 'hours'}`
                         : ''}
                     </dd>
-                    <dt>Location</dt><dd><AddressLink address={proposal.event_location} /></dd>
+                    <dt>Location</dt><dd><AddressLink address={proposal.event_location} mapQuery={venueMapQuery(proposal)} /></dd>
                     <dt>Guests</dt><dd className="num">{proposal.guest_count || '—'}</dd>
                     {proposal.num_bars > 0 && <><dt>Portable bars</dt><dd className="num">{proposal.num_bars}</dd></>}
                     {proposal.client_provides_glassware && (

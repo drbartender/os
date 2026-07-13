@@ -29,6 +29,27 @@ function composeVenueLocation(v = {}) {
   return [name, street, cityStateZip].filter(Boolean).join(', ') || null;
 }
 
+/**
+ * Address-only Google Maps `?query=` string: [street, "City, State Zip"].
+ * Deliberately EXCLUDES venue_name. The maps query param is a free-text search,
+ * not a geocode; leading with the venue name makes Google match the name (often
+ * a different same-named place, or a vague area) instead of the street address.
+ * Returns null when there is no street/city to geocode, so callers fall back to
+ * the full composed event_location (legacy rows that only have a free-text one).
+ * Mirrored client-side as venueMapQuery in
+ * client/src/components/VenueAddressFields.js — keep in sync.
+ */
+function composeVenueMapQuery(v) {
+  const o = v || {};
+  const street = s(o.venue_street);
+  const city = s(o.venue_city);
+  const state = s(o.venue_state);
+  const zip = s(o.venue_zip);
+  const cityState = [city, state].filter(Boolean).join(', ');
+  const cityStateZip = [cityState, zip].filter(Boolean).join(' ');
+  return [street, cityStateZip].filter(Boolean).join(', ') || null;
+}
+
 /** True when the address is "complete enough" to dispatch staff. */
 function isVenueComplete(v = {}) {
   return !!(s(v.venue_street) && s(v.venue_city) && s(v.venue_state));
@@ -61,4 +82,4 @@ function validateVenue(v = {}, opts = {}) {
   return e;
 }
 
-module.exports = { VENUE_STATES, composeVenueLocation, isVenueComplete, validateVenue };
+module.exports = { VENUE_STATES, composeVenueLocation, composeVenueMapQuery, isVenueComplete, validateVenue };
