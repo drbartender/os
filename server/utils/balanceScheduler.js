@@ -4,6 +4,7 @@ const { pool } = require('../db');
 const { getEventTypeLabel } = require('./eventTypes');
 const { notifyAdminCategory } = require('./adminNotifications');
 const { accruePayoutsForProposal } = require('./payrollAccrual');
+const { recordBalanceIntent, priorBalanceChargeSettling } = require('./autopayDurableCharge');
 
 // Rate-limit the no-stripe-client alert so Sentry isn't spammed every cycle.
 let stripeUnavailableLastLog = 0;
@@ -31,7 +32,9 @@ async function processAutopayCharges() {
     // row-lock so concurrent scheduler runs (or a manual admin charge race)
     // can't grab the same proposal. autopay_status='in_progress' blocks
     // re-selection until the webhook moves status='balance_paid' OR the
-    // 24h TTL elapses for stuck claims (webhook never landed).
+    // 72h TTL elapses for stuck claims (webhook never landed). TTL bumped
+    // 24h->72h (F1): a 24h TTL equalled Stripe's idempotency-key lifetime, so a
+    // >24h webhook outage re-fired with an expired key -> a SECOND real charge.
     const result = await pool.query(`
       UPDATE proposals
       SET autopay_status = 'in_progress', autopay_attempted_at = NOW()
@@ -43,7 +46,7 @@ async function processAutopayCharges() {
         AND (
           autopay_status IS NULL
           OR autopay_status = 'failed'
-          OR (autopay_status = 'in_progress' AND autopay_attempted_at < NOW() - INTERVAL '24 hours')
+          OR (autopay_status = 'in_progress' AND autopay_attempted_at < NOW() - INTERVAL '72 hours')
         )
       RETURNING id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
                 event_type, event_type_custom, balance_due_date
@@ -76,6 +79,21 @@ async function processAutopayCharges() {
       const idempotencyKey = `autopay-balance-${proposal.id}-${balanceDueIso}`;
 
       try {
+        // F1(b): on a stale (>72h) re-claim a prior balance intent may already be
+        // settling at Stripe with the webhook still down (the local session status
+        // is stale). Ask Stripe for the truth and SKIP a second real charge if so;
+        // leave the claim in_progress for the webhook/reconcile. On a genuine first
+        // charge no prior balance row exists, so this no-ops.
+        const guard = await priorBalanceChargeSettling({ proposalId: proposal.id, amountCents: balanceCents, stripe });
+        if (guard.skip) {
+          console.log(`[BalanceScheduler] Skipping re-charge for proposal ${proposal.id}: prior balance intent ${guard.priorIntentId} ${guard.reason}${guard.priorStatus ? ` (${guard.priorStatus})` : ''}`);
+          Sentry.captureMessage('Autopay re-claim skipped — prior balance intent still settling', {
+            level: 'warning',
+            tags: { scheduler: 'autopay', proposalId: proposal.id, reason: guard.reason },
+          });
+          return; // leave autopay_status='in_progress'
+        }
+
         const intent = await stripe.paymentIntents.create({
           amount: balanceCents,
           currency: 'usd',
@@ -89,6 +107,11 @@ async function processAutopayCharges() {
             payment_type: 'balance',
           },
         }, { idempotencyKey });
+
+        // F1(a): durable charge record — persist immediately, independent of the
+        // webhook, so a later >24h outage can never erase our knowledge of this
+        // charge. ON CONFLICT DO NOTHING = idempotent on any Stripe retry.
+        await recordBalanceIntent({ proposalId: proposal.id, intentId: intent.id, amountCents: balanceCents });
 
         console.log(`[BalanceScheduler] Charged $${(balanceCents / 100).toFixed(2)} for proposal ${proposal.id} (intent: ${intent.id})`);
         // Webhook will handle status update and logging

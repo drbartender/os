@@ -20,6 +20,7 @@ const {
 // Shared helpers extracted to a sibling module (also used by the create-intent
 // sub-router) so create-intent's gratuity logic doesn't grow this over-cap file.
 const { DEPOSIT_AMOUNT, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
+const { recordBalanceIntent, priorBalanceChargeSettling } = require('../utils/autopayDurableCharge');
 
 // create-intent lives in its own module (extracted in the gratuity split).
 router.use(require('./stripeCreateIntent'));
@@ -285,7 +286,7 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(asy
       AND (
         autopay_status IS NULL
         OR autopay_status = 'failed'
-        OR (autopay_status = 'in_progress' AND autopay_attempted_at < NOW() - INTERVAL '24 hours')
+        OR (autopay_status = 'in_progress' AND autopay_attempted_at < NOW() - INTERVAL '72 hours')
       )
     RETURNING id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
               autopay_enrolled, status, event_type, event_type_custom, balance_due_date
@@ -328,6 +329,29 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(asy
     : 'no-date';
   const idempotencyKey = `autopay-balance-${proposal.id}-${balanceDueIso}`;
 
+  // F1(b): stale re-claim double-charge guard (mirrors the scheduler). If a prior
+  // balance intent for this proposal+amount is already succeeded/processing at
+  // Stripe (webhook still down), do NOT fire a second charge — surface 409 and
+  // leave the claim in_progress for the webhook/reconcile. On a first charge no
+  // prior balance row exists, so this no-ops.
+  const guard = await priorBalanceChargeSettling({ proposalId: proposal.id, amountCents: balanceCents, stripe });
+  if (guard.skip) {
+    if (guard.reason === 'retrieve_failed') {
+      // Couldn't reach Stripe to confirm the prior intent's status (transient). Do
+      // NOT report "settling" (misleading) and do NOT hold the claim for 72h — release
+      // it so the admin can retry immediately. Still money-safe: the guard re-queries
+      // Stripe on the next attempt before any charge, so a genuinely-settling prior
+      // intent is caught then. (The scheduler path instead leaves the claim in_progress
+      // and self-heals via the 72h TTL; the admin path releases so a click isn't
+      // locked out for three days behind a network blip.)
+      await pool.query(`UPDATE proposals SET autopay_status = NULL WHERE id = $1`, [proposal.id]);
+      throw new ExternalServiceError('Stripe', new Error('prior-intent verify failed'), 'Could not verify the prior charge with Stripe. Please try again shortly.');
+    }
+    // A prior balance intent is genuinely succeeded/processing — leave the claim
+    // in_progress for the webhook to reconcile, and tell the admin.
+    throw new ConflictError('A prior balance charge is already settling for this proposal', 'CHARGE_SETTLING');
+  }
+
   let intent;
   try {
     intent = await stripe.paymentIntents.create({
@@ -354,6 +378,10 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(asy
     }
     throw new ExternalServiceError('Stripe', err, 'Payment temporarily unavailable. Please try again.');
   }
+
+  // F1(a): durable charge record — persist immediately, independent of the
+  // webhook (mirrors the scheduler). Idempotent via ON CONFLICT DO NOTHING.
+  await recordBalanceIntent({ proposalId: proposal.id, intentId: intent.id, amountCents: balanceCents });
 
   // Webhook will handle status update on success
   res.json({ status: intent.status, amount: balanceCents });

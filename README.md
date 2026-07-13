@@ -240,6 +240,7 @@ dr-bartender/
 │   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
 │   │   ├── balanceReminderScheduling.js # Balance-reminder ladder scheduling (extracted from stripe.js); anchors 10am event-local
 │   │   ├── businessTime.js     # Canonical business-time primitives: eventLocalToUtc (DST-aware) + chicagoTodayYmd
+│   │   ├── autopayDurableCharge.js # Durable autopay charge record + stale-reclaim double-charge guard (F1)
 │   │   ├── balanceScheduler.js # Autopay balance charge scheduler
 │   │   ├── balanceSmsHandlers.js # Non-autopay balance reminder SMS handlers (due-today, late t1/t3)
 │   │   ├── beoFinalize.js      # BEO Finalize/Unfinalize route registrars + ensureNotFinalized guard (mounted into drinkPlans router)
