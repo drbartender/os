@@ -4,7 +4,7 @@
 // (early ack); funds_withdrawn falls through to the dispatcher's ack.
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
-const { clawbackTipByPaymentIntent } = require('../../utils/payrollClawback');
+const { clawbackTipByPaymentIntent, rewindDisputeClawbackByPaymentIntent } = require('../../utils/payrollClawback');
 
 async function handleDisputeFundsWithdrawn(event) {
     const dispute = event.data.object;
@@ -15,6 +15,13 @@ async function handleDisputeFundsReinstated(event, res) {
     const dispute = event.data.object;
     const piId = dispute.payment_intent;
     if (piId) {
+      // F5: roll the clawback counter back FIRST, decoupled from the admin email.
+      // Not gated on dispute_won_at (the ledger must not wait on email delivery)
+      // — it carries its own idempotency column, tips.dispute_reinstated_at.
+      // Errors propagate so Stripe retries the delivery; the rewind is a no-op
+      // on redelivery, and notifyDisputeWon below is idempotent via dispute_won_at.
+      await rewindDisputeClawbackByPaymentIntent(piId, Number(dispute.amount || 0));
+
       const { rows } = await pool.query('SELECT id FROM tips WHERE stripe_payment_intent_id = $1', [piId]);
       if (rows[0]) {
         try {

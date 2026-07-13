@@ -2855,6 +2855,10 @@ ALTER TABLE proposal_payments ADD COLUMN IF NOT EXISTS fee_cents INTEGER;
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS rolled_forward_at TIMESTAMPTZ;
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS refunded_amount_cents INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_won_at TIMESTAMPTZ;
+-- F5 dispute-won ledger rewind (2026-07-13): on charge.dispute.funds_reinstated
+-- roll the clawback counter back so a LATER genuine refund re-claws correctly.
+-- Own idempotency column, deliberately NOT dispute_won_at (that gates the email).
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_reinstated_at TIMESTAMPTZ;
 -- Dispute-email retry bailout (2026-05-25)
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_email_attempts INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_email_failed_at TIMESTAMPTZ;

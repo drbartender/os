@@ -258,4 +258,52 @@ async function clawbackTipByPaymentIntent(paymentIntentId, newCumulativeCents) {
   await clawbackTip(rows[0].id, newCumulativeCents);
 }
 
-module.exports = { clawbackTip, clawbackTipByPaymentIntent };
+/**
+ * F5 dispute-won ledger rewind. When Stripe reinstates the funds on a disputed
+ * card tip (charge.dispute.funds_reinstated — we WON), roll the cumulative
+ * refunded counter back down by the reinstated amount so a LATER genuine refund
+ * computes a real delta and re-claws, instead of seeing refunded_amount_cents
+ * already at the tip total and no-opping (delta=0 — the F5 under-claw bug).
+ *
+ * clawbackTip only ever moves refunded_amount_cents FORWARD, so this is the one
+ * place the counter is reduced. It ALSO disarms a still-deferred clawback
+ * (defer_kind='clawback') so retryDeferredTips can't later claw a won dispute.
+ * It does NOT auto re-pay the bartender: the positive adjustment stays a manual
+ * Phase-2 step (see payrollDisputeNotify).
+ *
+ * Idempotent via tips.dispute_reinstated_at: a Stripe redelivery of the same
+ * reinstatement finds the column already stamped and updates 0 rows (no-op), so
+ * the counter is never rewound twice. One bare pool.query, no held client.
+ *
+ * @param {string} paymentIntentId  Stripe payment_intent on the disputed charge
+ * @param {number} reinstatedCents  dispute.amount reinstated, in cents
+ * @returns {Promise<{rewound: number}>}  rows updated (1 first time, 0 on redelivery)
+ */
+async function rewindDisputeClawbackByPaymentIntent(paymentIntentId, reinstatedCents) {
+  if (!paymentIntentId || !Number.isInteger(reinstatedCents) || reinstatedCents <= 0) {
+    return { rewound: 0 };
+  }
+  const { rowCount } = await pool.query(
+    `UPDATE tips
+        SET refunded_amount_cents = GREATEST(refunded_amount_cents - LEAST($2, refunded_amount_cents), 0),
+            dispute_reinstated_at = NOW(),
+            -- A dispute we WON must also disarm a still-DEFERRED clawback (the
+            -- period was frozen at withdrawal time, so the clawback never ran and
+            -- refunded_amount_cents is still 0). Otherwise retryDeferredTips would
+            -- later replay clawbackTip(defer_target_cents) and claw the bartender
+            -- for a charge that stands. Scope the clear to defer_kind='clawback' —
+            -- a 'roll_forward' marker is a legitimate late-tip PLACEMENT, unrelated
+            -- to the dispute, and must NOT be cleared. (Every CASE arm reads the
+            -- pre-UPDATE defer_kind, so they clear atomically together.)
+            deferred_at        = CASE WHEN defer_kind = 'clawback' THEN NULL ELSE deferred_at END,
+            defer_target_cents = CASE WHEN defer_kind = 'clawback' THEN NULL ELSE defer_target_cents END,
+            defer_attempts     = CASE WHEN defer_kind = 'clawback' THEN 0    ELSE defer_attempts END,
+            defer_kind         = CASE WHEN defer_kind = 'clawback' THEN NULL ELSE defer_kind END
+      WHERE stripe_payment_intent_id = $1
+        AND dispute_reinstated_at IS NULL`,
+    [paymentIntentId, reinstatedCents]
+  );
+  return { rewound: rowCount };
+}
+
+module.exports = { clawbackTip, clawbackTipByPaymentIntent, rewindDisputeClawbackByPaymentIntent };
