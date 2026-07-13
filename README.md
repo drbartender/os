@@ -257,7 +257,6 @@ dr-bartender/
 │   │   ├── channelFallback.js  # Channel-substitution decision for single-channel operational touches (picks the live channel when the registered one's status is 'bad')
 │   │   ├── clientAutomationSuspension.js # Suspends a client's remaining automation when both email_status and phone_status are 'bad' (sets clients.automation_suspended_at, cancels pending scheduled_messages)
 │   │   ├── clientDedup.js      # Find-or-create a client de-duped on email OR phone (name-guarded, backfill-only); the single intake find-or-create
-│   │   ├── clientMerge.js      # Merge a duplicate client into the canonical one (catalog-driven FK repoint, then delete the loser)
 │   │   ├── consultRecap.js     # Formats saved consult selections into the post-consult email recap
 │   │   ├── drinkPlanAccess.js  # Pure post-booking drink-plan access guard (fail-safe pre-booking allowlist)
 │   │   ├── drinkPlanNudge.js   # Drink-plan / Potion Planner nudge: email + SMS touch and scheduling
