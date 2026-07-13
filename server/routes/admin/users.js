@@ -369,7 +369,7 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
     geocodeAddress(buildAddressString({ street_address, city, state, zip_code }))
       .then(coords => {
         if (coords) {
-          pool.query('UPDATE contractor_profiles SET lat = $1, lng = $2 WHERE user_id = $3', [coords.lat, coords.lng, userId]);
+          return pool.query('UPDATE contractor_profiles SET lat = $1, lng = $2 WHERE user_id = $3', [coords.lat, coords.lng, userId]);
         }
       })
       .catch(err => console.error('[Admin] Geocode error:', err.message));

@@ -210,7 +210,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     geocodeAddress(buildAddressString({ street_address, city, state, zip_code }))
       .then(coords => {
         if (coords) {
-          pool.query(
+          return pool.query(
             'UPDATE contractor_profiles SET lat = $1, lng = $2 WHERE user_id = $3',
             [coords.lat, coords.lng, req.user.id]
           );

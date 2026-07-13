@@ -38,13 +38,34 @@ if (process.env.SENTRY_DSN_SERVER) {
   console.log('Sentry server SDK initialized');
 }
 
+// Process-level safety net. A floating promise rejection used to take the whole
+// process down (Node's default for unhandledRejection is to crash); here we
+// convert it into a Sentry alert + log and KEEP the process alive so one stray
+// rejection can't drop every in-flight request. uncaughtException leaves process
+// state undefined, so we capture + log and still exit(1) (Node crashes anyway —
+// we only add observability before it goes).
+process.on('unhandledRejection', (reason) => {
+  if (process.env.SENTRY_DSN_SERVER) {
+    Sentry.captureException(reason, { tags: { kind: 'unhandledRejection' } });
+  }
+  console.error('Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  if (process.env.SENTRY_DSN_SERVER) {
+    Sentry.captureException(err, { tags: { kind: 'uncaughtException' } });
+  }
+  console.error('Uncaught exception:', err);
+  process.exit(1);
+});
+
 const express = require('express');
 const compression = require('compression');
 const cors = require('cors');
 const helmet = require('helmet');
 const fileUpload = require('express-fileupload');
 const path = require('path');
-const { initDb } = require('./db');
+const { initDb, pool } = require('./db');
 const { auth } = require('./middleware/auth');
 const { getSignedUrl } = require('./utils/storage');
 const { AppError, ExternalServiceError } = require('./utils/errors');
@@ -58,6 +79,33 @@ const { dispatchPending } = require('./utils/scheduledMessageDispatcher');
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
   console.error('FATAL: JWT_SECRET must be set and at least 32 characters');
   process.exit(1);
+}
+
+// Production-only required-env assertion. These integrations have no safe
+// degraded mode in prod — a missing one is a silent-failure trap (DB never
+// connects, no email/SMS goes out, every file upload 500s). Fail fast at boot
+// with the full list instead of surfacing hours later as scattered runtime
+// errors. Dev is exempt (local work runs without Twilio/R2/etc). Optional
+// integrations (Cal.com, Telegram, VAPID, Places) warn or fail closed on their
+// own and are intentionally excluded. R2_* names are exactly what
+// server/utils/storage.js reads.
+if (process.env.NODE_ENV === 'production') {
+  const requiredEnv = [
+    'DATABASE_URL',
+    'RESEND_API_KEY',
+    'TWILIO_ACCOUNT_SID',
+    'TWILIO_AUTH_TOKEN',
+    'TWILIO_PHONE_NUMBER',
+    'R2_ACCOUNT_ID',
+    'R2_ACCESS_KEY_ID',
+    'R2_SECRET_ACCESS_KEY',
+    'R2_BUCKET_NAME',
+  ];
+  const missing = requiredEnv.filter((name) => !process.env[name]);
+  if (missing.length > 0) {
+    console.error(`FATAL: missing required env vars in production: ${missing.join(', ')}`);
+    process.exit(1);
+  }
 }
 
 // Cal.com webhook secret presence check. Emits a one-shot warning so the
@@ -264,8 +312,22 @@ app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/test-feedback', require('./routes/testFeedback'));
 app.use('/api/qa', require('./routes/labrat'));
 
-// Health check — must be registered BEFORE the React catch-all below
-app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+// Health check — must be registered BEFORE the React catch-all below.
+// Probes the DB (Render's health probe + uptime pingers hit this): a SELECT 1
+// raced against a ~2s timeout. DB reachable -> 200 {status:'ok'}; a DB error or
+// a probe that outlives the timeout -> 503 {status:'degraded'} so the platform
+// can pull an instance whose DB link has gone dark.
+app.get('/api/health', async (req, res) => {
+  try {
+    await Promise.race([
+      pool.query('SELECT 1'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('health timeout')), 2000)),
+    ]);
+    res.json({ status: 'ok' });
+  } catch (err) {
+    res.status(503).json({ status: 'degraded' });
+  }
+});
 
 // Frontend is served separately on Vercel
 
@@ -311,7 +373,7 @@ app.use((err, req, res, next) => {
 async function start() {
   try {
     await initDb();
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`✓ Server running on port ${PORT}`);
 
       // Schedulers fire only when NODE_ENV=production. They send real emails
@@ -515,6 +577,28 @@ async function start() {
           `Set RUN_SCHEDULERS=true to fire them locally.`
         );
       }
+    });
+
+    // Graceful shutdown. Render sends SIGTERM on deploy/scale-down, then hard-
+    // kills after a grace window. Stop accepting new connections, let in-flight
+    // requests drain (server.close), close the pool, then exit clean. The unref'd
+    // hard-timeout is the backstop: a wedged request can't outlive Render's kill
+    // window and strand the shutdown.
+    process.on('SIGTERM', () => {
+      console.log('SIGTERM received — draining connections and shutting down');
+      const hardExit = setTimeout(() => {
+        console.error('Graceful shutdown timed out — forcing exit');
+        process.exit(1);
+      }, 15000);
+      hardExit.unref();
+      server.close(async () => {
+        try {
+          await pool.end();
+        } catch (err) {
+          console.error('Error closing pool during shutdown:', err);
+        }
+        process.exit(0);
+      });
     });
   } catch (err) {
     console.error('Failed to start server:', err);

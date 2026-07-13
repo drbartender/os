@@ -397,7 +397,7 @@ router.post('/', auth, requireStaffing, asyncHandler(async (req, res) => {
     geocodeAddress(location)
       .then(coords => {
         if (coords) {
-          pool.query('UPDATE shifts SET lat = $1, lng = $2 WHERE id = $3', [coords.lat, coords.lng, shift.id]);
+          return pool.query('UPDATE shifts SET lat = $1, lng = $2 WHERE id = $3', [coords.lat, coords.lng, shift.id]);
         }
       })
       .catch(err => console.error('[Shifts] Geocode error:', err.message));
@@ -506,7 +506,7 @@ router.put('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
     geocodeAddress(location)
       .then(coords => {
         if (coords) {
-          pool.query('UPDATE shifts SET lat = $1, lng = $2 WHERE id = $3', [coords.lat, coords.lng, shift.id]);
+          return pool.query('UPDATE shifts SET lat = $1, lng = $2 WHERE id = $3', [coords.lat, coords.lng, shift.id]);
         }
       })
       .catch(err => console.error('[Shifts] Geocode error:', err.message));
