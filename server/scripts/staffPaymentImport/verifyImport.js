@@ -17,26 +17,23 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../../../.env') });
 const { pool } = require('../../db');
 const { getArg, BOUNDARY } = require('./config');
-const { validateSheets, planPeopleEmails, ymd, inPayoutWindow } = require('./importValidation');
-const { loadSheet } = require('./importFromSheet');
+const { validateSheets, planPeopleEmails, ymd, checkBoundaryNoDoubleCount } = require('./importValidation');
+const {
+  loadSheet, findOrphanedFingerprints, readPriorRunLogs, readRetractions,
+  findReimportedRetractions, runLogUserIds,
+} = require('./importFromSheet');
 
 const EXPECTED_STATUS = { 'create-current': 'in_progress', 'create-ex': 'deactivated' };
 
-// Pure assert (tested in verifyImport.test.js). A boundary-exception row must
-// match NO payout for the same contractor at |amount| ≤ 1¢ AND within that
-// payout's collection window [start_date, payday+14d] — else it double-counts
-// against a payout that could also be marked paid. The date bound stops an
-// unrelated same-amount payout months away from false-failing. `payouts` carry
-// start_date + payday. Returns failure strings (empty ⇒ ok).
-function checkBoundaryNoDoubleCount(exceptionRows, payouts) {
-  const failures = [];
-  for (const r of exceptionRows) {
-    const clash = payouts.find((po) => po.contractor_id === r.contractor_id
-      && Math.abs(po.total_cents - r.amount_cents) <= 1
-      && inPayoutWindow(r.paid_on, po));
-    if (clash) failures.push(`boundary_exception row ${r.row_fingerprint} (contractor ${r.contractor_id}, $${(r.amount_cents / 100).toFixed(2)}) matches payout ${clash.id} — would double-count`);
-  }
-  return failures;
+// Pure (E2b): ledger rows for THIS import's contractors whose fingerprint is NOT
+// in (toImport ∪ retractions) are orphaned residue — a DB-side check independent
+// of run logs, so a lost/deleted run log can no longer hide a stale row. `dbRows`
+// carry row_fingerprint; returns the residue fingerprints (deduped, sorted).
+function findLedgerResidue(dbRows, toImport, retracted = []) {
+  const accounted = new Set([...toImport.map((r) => r.fingerprint), ...retracted]);
+  const residue = new Set();
+  for (const r of dbRows) if (!accounted.has(r.row_fingerprint)) residue.add(r.row_fingerprint);
+  return [...residue].sort();
 }
 
 async function run({ reviewDir }) {
@@ -48,6 +45,39 @@ async function run({ reviewDir }) {
   const warn = (msg) => results.push({ level: 'warn', msg });
 
   if (errors.length) { fail(`sheet no longer validates (${errors.length} errors) — cannot verify`); return report(results); }
+
+  // (VECTOR 2 / E2) Retraction guards. Read the run logs + retraction ledger once.
+  const priorRunLogs = readPriorRunLogs(reviewDir);
+  const retracted = readRetractions(reviewDir);
+
+  // (E2a) A retracted fingerprint that reappears as staff-pay must be un-retracted
+  // explicitly, not silently reconciled.
+  const reimported = findReimportedRetractions(toImport, retracted);
+  if (reimported.length) {
+    fail(`${reimported.length} fingerprint(s) are retracted but present as staff-pay in the sheet: ${reimported.join(', ')} — remove them from retractions.json to re-import`);
+  }
+
+  // A fingerprint imported by a PRIOR run but no longer in toImport and not formally
+  // retracted is an orphan the insert/update-only import cannot retract — a silent
+  // ledger residue. Fail loud; retraction is manual.
+  const orphaned = findOrphanedFingerprints(priorRunLogs, toImport, retracted);
+  if (orphaned.length) {
+    fail(`${orphaned.length} orphaned fingerprint(s) from prior run logs are absent from the current sheet — retract manually: DELETE FROM staff_payment_history WHERE row_fingerprint IN (${orphaned.map((fp) => `'${fp}'`).join(', ')});`);
+  } else {
+    pass('no orphaned fingerprints from prior run logs');
+  }
+
+  // (E2b) The retraction ledger must not lie: if any RETRACTED fingerprint is still
+  // present in staff_payment_history, the manual DELETE never happened — FAIL,
+  // regardless of user scope.
+  const retractedPresent = retracted.length
+    ? (await pool.query('SELECT row_fingerprint FROM staff_payment_history WHERE row_fingerprint = ANY($1)', [retracted])).rows.map((r) => r.row_fingerprint)
+    : [];
+  if (retractedPresent.length) {
+    fail(`retraction ledger is lying — ${retractedPresent.length} retracted fingerprint(s) are STILL in staff_payment_history: ${retractedPresent.join(', ')}`);
+  } else if (retracted.length) {
+    pass(`all ${retracted.length} retracted fingerprint(s) are absent from the ledger`);
+  }
 
   // Resolve cluster → user id (existing ids + created/reused by email) + status.
   const clusterToEmail = planPeopleEmails(peopleActions);
@@ -74,6 +104,18 @@ async function run({ reviewDir }) {
       fail(`user ${u.id} ("${p.cluster}") status ${u.onboarding_status}, expected ${expected} (non-import account)`);
     }
   }
+
+  // (E2b) DB-side residue scan: every ledger row belonging to this import's contractors
+  // must be accounted for by the sheet or a retraction. The user set is widened to
+  // include ALL user ids recorded in surviving run logs, so a FULLY-dropped person
+  // (removed from the sheet entirely) whose id lives only in a log is still scanned.
+  const importUserIds = [...new Set([...clusterToUserId.values(), ...runLogUserIds(priorRunLogs)])].filter((v) => v !== null && v !== undefined);
+  const residueRows = importUserIds.length
+    ? (await pool.query('SELECT row_fingerprint, contractor_id FROM staff_payment_history WHERE contractor_id = ANY($1)', [importUserIds])).rows
+    : [];
+  const residue = findLedgerResidue(residueRows, toImport, retracted);
+  if (residue.length) fail(`${residue.length} ledger row(s) for this import's contractors are in neither the sheet nor retractions (stale residue): ${residue.join(', ')}`);
+  else pass(`no stale ledger residue for this import's contractors (${residueRows.length} rows scanned)`);
 
   const fps = toImport.map((r) => r.fingerprint);
   const dbRows = fps.length
@@ -154,4 +196,6 @@ if (require.main === module) {
     .catch((err) => { console.error('[verifyImport] FAILED:', err.message); pool.end().then(() => process.exit(1)); });
 }
 
-module.exports = { run, checkBoundaryNoDoubleCount };
+// checkBoundaryNoDoubleCount is re-exported (it now lives in importValidation, so
+// importFromSheet can run it inside its transaction without a require cycle).
+module.exports = { run, checkBoundaryNoDoubleCount, findLedgerResidue };

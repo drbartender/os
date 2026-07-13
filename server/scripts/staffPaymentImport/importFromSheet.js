@@ -24,7 +24,7 @@ const bcrypt = require('bcryptjs');
 const { pool } = require('../../db');
 const { parseCsv } = require('./parsers/csvUtil');
 const { getArg } = require('./config');
-const { validateSheets, planPeopleEmails, checkAttachRole } = require('./importValidation');
+const { validateSheets, planPeopleEmails, checkAttachRole, checkBoundaryNoDoubleCount, checkPlaceholderNameMatch } = require('./importValidation');
 
 // ---- sheet readers ----------------------------------------------------------
 function readCsvObjects(filePath) {
@@ -55,6 +55,104 @@ function loadSheet(reviewDir) {
   };
 }
 
+// ---- retraction guard (VECTOR 2 / E2) ---------------------------------------
+// Read every durable run log the review dir already holds. Prior --execute runs
+// each drop an import-run-<ts>.json carrying the fingerprints they imported. A
+// corrupt/unparseable log is a HARD ERROR naming the file (fail-closed): silently
+// dropping it would shrink the union and let a real orphan slip through.
+function readPriorRunLogs(reviewDir) {
+  if (!fs.existsSync(reviewDir)) return [];
+  return fs.readdirSync(reviewDir)
+    .filter((f) => /^import-run-.*\.json$/.test(f))
+    .map((f) => {
+      try { return JSON.parse(fs.readFileSync(path.join(reviewDir, f), 'utf8')); }
+      catch (e) { throw new Error(`corrupt run log ${f}: ${e.message} — fix or remove it (fail-closed: cannot compute orphans from a partial log set)`); }
+    });
+}
+
+const RETRACTIONS_FILE = 'retractions.json';
+
+// Retraction ledger (E2a): fingerprints an operator has manually DELETEd from the
+// ledger and formally recorded, so future runs stop flagging them. Fail-closed on
+// a corrupt file (same reasoning as run logs).
+function readRetractions(reviewDir) {
+  const p = path.join(reviewDir, RETRACTIONS_FILE);
+  if (!fs.existsSync(p)) return [];
+  let parsed;
+  try { parsed = JSON.parse(fs.readFileSync(p, 'utf8')); }
+  catch (e) { throw new Error(`corrupt ${RETRACTIONS_FILE}: ${e.message} — fix or remove it (fail-closed)`); }
+  return Array.isArray(parsed.fingerprints) ? parsed.fingerprints : [];
+}
+
+function writeRetractions(reviewDir, fingerprints, operator) {
+  const out = {
+    updated: new Date().toISOString(),
+    operator: operator || process.env.USER || 'unknown',
+    fingerprints,
+  };
+  fs.writeFileSync(path.join(reviewDir, RETRACTIONS_FILE), `${JSON.stringify(out, null, 2)}\n`);
+}
+
+// PURE. Fingerprints a prior run imported that are ABSENT from the current toImport
+// (verdict flipped to ignore/unsure, or the row removed) AND not formally retracted.
+// The import is insert/update-only, so these ledger rows would silently persist —
+// return them (deduped, sorted) so the caller can REFUSE and print the retraction path.
+function findOrphanedFingerprints(priorRunLogs, toImport, retracted = []) {
+  const accounted = new Set([...toImport.map((r) => r.fingerprint), ...retracted]);
+  const orphaned = new Set();
+  for (const log of priorRunLogs) {
+    const fps = log && Array.isArray(log.fingerprints) ? log.fingerprints : [];
+    for (const fp of fps) if (!accounted.has(fp)) orphaned.add(fp);
+  }
+  return [...orphaned].sort();
+}
+
+// PURE (E2a). A retraction whitelists a fingerprint forever, so a retracted fp that
+// REAPPEARS as staff-pay in the current sheet must be a HARD ERROR — silently
+// reconciling it back would make any later re-drop invisible to both guards. Returns
+// the toImport ∩ retracted overlap (deduped, sorted); the operator must explicitly
+// un-retract (remove from retractions.json) to re-import.
+function findReimportedRetractions(toImport, retracted) {
+  const retractedSet = new Set(retracted || []);
+  const hits = new Set();
+  for (const r of toImport) if (retractedSet.has(r.fingerprint)) hits.add(r.fingerprint);
+  return [...hits].sort();
+}
+
+// PURE (E2b). Union of every user id a surviving run log recorded (created / reused /
+// existing). verifyImport widens its residue scan to these so a FULLY-dropped person's
+// stale ledger rows are still scanned when the log survives.
+function runLogUserIds(priorRunLogs) {
+  const ids = new Set();
+  for (const log of priorRunLogs || []) {
+    for (const key of ['created_user_ids', 'reused_user_ids', 'existing_user_ids']) {
+      for (const id of (Array.isArray(log[key]) ? log[key] : [])) ids.add(id);
+    }
+  }
+  return [...ids];
+}
+
+// CLI mode: record a manual retraction (E2a). VERIFIES via SELECT that the given
+// fingerprints are truly ABSENT from staff_payment_history (the operator must run
+// the DELETE first), then appends them to retractions.json. Refuses if any are
+// still present — never deletes anything itself (retraction stays manual).
+async function recordRetraction({ reviewDir, fingerprints, operator }) {
+  const fps = [...new Set((fingerprints || []).map((f) => String(f).trim()).filter(Boolean))];
+  if (!fps.length) { console.error('[retraction] no fingerprints given (--record-retraction=<fp,fp>)'); return { ok: false, errors: ['no fingerprints'] }; }
+
+  const present = (await pool.query('SELECT row_fingerprint FROM staff_payment_history WHERE row_fingerprint = ANY($1)', [fps])).rows.map((r) => r.row_fingerprint);
+  if (present.length) {
+    console.error(`[retraction] REFUSED — ${present.length} fingerprint(s) are STILL in staff_payment_history; DELETE them first, then record:`);
+    present.forEach((fp) => console.error(`  - ${fp}`));
+    return { ok: false, errors: present };
+  }
+
+  const merged = [...new Set([...readRetractions(reviewDir), ...fps])].sort();
+  writeRetractions(reviewDir, merged, operator);
+  console.log(`[retraction] recorded ${fps.length} fingerprint(s); ${RETRACTIONS_FILE} now holds ${merged.length}.`);
+  return { ok: true, recorded: fps, total: merged.length };
+}
+
 const dollars = (cents) => (cents / 100).toFixed(2);
 function dbHost() {
   try { return new URL(process.env.DATABASE_URL).host; } catch { return 'unknown'; }
@@ -67,7 +165,10 @@ async function preflight(peopleActions, clusterToEmail, allowAdminIds = new Set(
 
   const emails = [...clusterToEmail.values()];
   const emailRows = emails.length
-    ? (await pool.query('SELECT id, lower(email) AS email, import_source, exclude_from_1099 FROM users WHERE lower(email) = ANY($1)', [emails])).rows
+    ? (await pool.query(
+      `SELECT u.id, lower(u.email) AS email, u.import_source, u.exclude_from_1099, cp.preferred_name
+         FROM users u LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+        WHERE lower(u.email) = ANY($1)`, [emails])).rows
     : [];
   const byEmail = new Map(emailRows.map((r) => [r.email, r]));
 
@@ -95,7 +196,12 @@ async function preflight(peopleActions, clusterToEmail, allowAdminIds = new Set(
     const hit = byEmail.get(email);
     if (!hit) { plan.set(p.cluster, { mode: 'insert', email }); continue; }
     if (hit.import_source === 'payment_history_import') {
-      plan.set(p.cluster, { mode: 'reuse', userId: hit.id, email, priorExclude: hit.exclude_from_1099 }); // our own prior placeholder/row → idempotent
+      // (E1 belt, now a WARN) Injective placeholder emails already guarantee email
+      // match ⇒ same cluster, so a name mismatch here is not proof of a wrong merge —
+      // it also fires legitimately after a claimed user renames their profile. Surface
+      // it as a visible warning on the plan line instead of blocking a valid re-run.
+      const nameCheck = checkPlaceholderNameMatch({ email, profileName: hit.preferred_name, proposedName: p.proposed_name });
+      plan.set(p.cluster, { mode: 'reuse', userId: hit.id, email, priorExclude: hit.exclude_from_1099, nameWarn: nameCheck.ok ? null : nameCheck.error }); // our own prior placeholder/row → idempotent
     } else {
       errors.push(`create-* person "${p.cluster}" email ${email} already belongs to a non-import user (id ${hit.id}) — use existing:${hit.id}`);
     }
@@ -106,11 +212,38 @@ async function preflight(peopleActions, clusterToEmail, allowAdminIds = new Set(
 // ---- one transaction: users + profiles + ledger -----------------------------
 async function runImport({ reviewDir, execute, operator, allowAdminIds = new Set() }) {
   const { manifest, people, transactions, checksum } = loadSheet(reviewDir);
-  const { errors, toImport, toReconcile, peopleActions } = validateSheets({ manifest, people, transactions });
+  const { errors, toImport, toReconcile, peopleActions, skippedUnsure } = validateSheets({ manifest, people, transactions });
   if (errors.length) {
     console.error(`\n[import] VALIDATION FAILED — ${errors.length} error(s); nothing written:`);
     errors.forEach((e) => console.error(`  - ${e}`));
     return { ok: false, errors };
+  }
+
+  const retracted = readRetractions(reviewDir);
+
+  // (E2a) A retracted fingerprint that reappears as staff-pay must be un-retracted
+  // explicitly — silently reconciling it back would hide any later re-drop. Refuse.
+  const reimported = findReimportedRetractions(toImport, retracted);
+  if (reimported.length) {
+    console.error(`\n[import] RETRACTED-YET-PRESENT — ${reimported.length} fingerprint(s) are in retractions.json but present as staff-pay in the sheet; refusing:`);
+    reimported.forEach((fp) => console.error(`  - fingerprint ${fp} is retracted but present as staff-pay — if re-importing intentionally, remove it from retractions.json first`));
+    return { ok: false, errors: [`retracted-yet-present — ${reimported.length} fingerprint(s): ${reimported.join(', ')}`] };
+  }
+
+  // (VECTOR 2 / E2) Retraction guard — runs on EVERY run (dry + execute). A finger-
+  // print a PRIOR run imported that is no longer in toImport AND not formally
+  // retracted is an orphan this insert/update-only import cannot retract; refuse and
+  // print the manual retraction path (DELETE, then record — never an auto-DELETE).
+  const orphaned = findOrphanedFingerprints(readPriorRunLogs(reviewDir), toImport, retracted);
+  if (orphaned.length) {
+    const inList = orphaned.map((fp) => `'${fp}'`).join(', ');
+    console.error(`\n[import] RETRACTION REQUIRED — ${orphaned.length} previously-imported fingerprint(s) are no longer in the sheet; refusing to proceed (insert/update-only never retracts):`);
+    orphaned.forEach((fp) => console.error(`  - ${fp}`));
+    console.error('  1) Delete the orphaned ledger rows manually (see the undo runbook):');
+    console.error(`       DELETE FROM staff_payment_history WHERE row_fingerprint IN (${inList});`);
+    console.error('  2) Record the retraction so future runs proceed (verifies they are gone first):');
+    console.error(`       node server/scripts/staffPaymentImport/importFromSheet.js --record-retraction=${orphaned.join(',')} --review-dir ${reviewDir}`);
+    return { ok: false, errors: [`retraction required — ${orphaned.length} orphaned fingerprint(s): ${orphaned.join(', ')}`] };
   }
 
   const clusterToEmail = planPeopleEmails(peopleActions);
@@ -131,14 +264,19 @@ async function runImport({ reviewDir, execute, operator, allowAdminIds = new Set
     // 1) People → user ids.
     for (const p of peopleActions) {
       const decision = pre.plan.get(p.cluster);
+      // (fix 4) blank exclude_1099 = NO CHANGE — only an explicit yes|no writes the
+      // flag, so a blank cell can never silently strip an existing exclusion (Zul).
+      // The plan shows the effective value (prior when untouched) so no spurious
+      // true→false CHANGED prints on a blank.
+      const effExclude = p.exclude_1099_provided ? p.exclude_1099 : decision.priorExclude;
       if (decision.mode === 'existing') {
-        await client.query('UPDATE users SET exclude_from_1099 = $1 WHERE id = $2', [p.exclude_1099, decision.userId]);
+        if (p.exclude_1099_provided) await client.query('UPDATE users SET exclude_from_1099 = $1 WHERE id = $2', [p.exclude_1099, decision.userId]);
         clusterToUserId.set(p.cluster, decision.userId);
-        existing.push({ cluster: p.cluster, userId: decision.userId, email: decision.email, role: decision.role, name: decision.name, priorExclude: decision.priorExclude, exclude: p.exclude_1099 });
+        existing.push({ cluster: p.cluster, userId: decision.userId, email: decision.email, role: decision.role, name: decision.name, priorExclude: decision.priorExclude, exclude: effExclude });
       } else if (decision.mode === 'reuse') {
-        await client.query('UPDATE users SET exclude_from_1099 = $1 WHERE id = $2', [p.exclude_1099, decision.userId]);
+        if (p.exclude_1099_provided) await client.query('UPDATE users SET exclude_from_1099 = $1 WHERE id = $2', [p.exclude_1099, decision.userId]);
         clusterToUserId.set(p.cluster, decision.userId);
-        reused.push({ cluster: p.cluster, userId: decision.userId, email: decision.email, priorExclude: decision.priorExclude, exclude: p.exclude_1099 });
+        reused.push({ cluster: p.cluster, userId: decision.userId, email: decision.email, priorExclude: decision.priorExclude, exclude: effExclude, nameWarn: decision.nameWarn });
       } else {
         const status = p.action === 'create-current' ? 'in_progress' : 'deactivated';
         const preHired = p.action === 'create-current';
@@ -193,7 +331,23 @@ async function runImport({ reviewDir, execute, operator, allowAdminIds = new Set
       );
     }
 
-    printPlan({ reviewDir, execute, checksum, created, reused, existing, toImport, toReconcile, clusterToUserId, inserted, attributionUpdated, unchanged });
+    // (fix 3) No-double-count assert INSIDE the transaction, BEFORE COMMIT — every
+    // boundary_exception row must clash with no payout (same contractor, |amount|
+    // ≤ 1¢, within the collection window). A clash throws → the catch ROLLBACKs,
+    // even under --execute, instead of committing a double-count and only catching
+    // it in verifyImport after the money already landed.
+    const exceptionRows = toImport
+      .filter((r) => r.boundary_exception)
+      .map((r) => ({ row_fingerprint: r.fingerprint, contractor_id: clusterToUserId.get(r.cluster), amount_cents: r.amount_cents, paid_on: r.paid_on }));
+    if (exceptionRows.length) {
+      const { rows: payouts } = await client.query(
+        `SELECT po.id, po.contractor_id, po.total_cents, po.status, pp.start_date, pp.payday
+           FROM payouts po JOIN pay_periods pp ON pp.id = po.pay_period_id`);
+      const dbl = checkBoundaryNoDoubleCount(exceptionRows, payouts);
+      if (dbl.length) throw new Error(`boundary no-double-count check failed (aborting, nothing committed):\n  ${dbl.join('\n  ')}`);
+    }
+
+    printPlan({ reviewDir, execute, checksum, created, reused, existing, toImport, toReconcile, clusterToUserId, inserted, attributionUpdated, unchanged, skippedUnsure });
 
     if (execute) await client.query('COMMIT');
     else await client.query('ROLLBACK');
@@ -209,7 +363,7 @@ async function runImport({ reviewDir, execute, operator, allowAdminIds = new Set
   if (execute) {
     runLogPath = writeRunLog({
       reviewDir, checksum, operator, created, reused, existing, toImport,
-      counts: { inserted, attributionUpdated, unchanged, reconcile: toReconcile.length },
+      counts: { inserted, attributionUpdated, unchanged, reconcile: toReconcile.length, skippedUnsure },
     });
     console.log(`\n[import] COMMITTED. run log → ${runLogPath}`);
   } else {
@@ -219,7 +373,7 @@ async function runImport({ reviewDir, execute, operator, allowAdminIds = new Set
 }
 
 // ---- write plan + per-person/per-year ---------------------------------------
-function printPlan({ reviewDir, execute, checksum, created, reused, existing, toImport, toReconcile, clusterToUserId, inserted, attributionUpdated, unchanged }) {
+function printPlan({ reviewDir, execute, checksum, created, reused, existing, toImport, toReconcile, clusterToUserId, inserted, attributionUpdated, unchanged, skippedUnsure = 0 }) {
   console.log(`\n=== STAFF PAYMENT IMPORT — ${execute ? 'EXECUTE' : 'DRY RUN'} ===`);
   console.log(`review-dir: ${reviewDir}`);
   console.log(`db host:    ${dbHost()}`);
@@ -232,7 +386,10 @@ function printPlan({ reviewDir, execute, checksum, created, reused, existing, to
     : `exclude_1099=${c.exclude}`);
   console.log(`\nPEOPLE (${created.length + reused.length + existing.length} actions):`);
   created.forEach((c) => console.log(`  CREATE(${c.status === 'in_progress' ? 'current' : 'ex'})  ${c.cluster.padEnd(20)} ${c.email.padEnd(34)} exclude_1099=${c.exclude}`));
-  reused.forEach((c) => console.log(`  REUSE(import)      ${c.cluster.padEnd(20)} ${c.email.padEnd(34)} id=${String(c.userId).padEnd(6)} ${excl(c)}`));
+  reused.forEach((c) => {
+    console.log(`  REUSE(import)      ${c.cluster.padEnd(20)} ${c.email.padEnd(34)} id=${String(c.userId).padEnd(6)} ${excl(c)}`);
+    if (c.nameWarn) console.log(`      WARN name-mismatch: ${c.nameWarn} (proceeding; injective email confirms the account)`);
+  });
   // EXISTING attaches history to a real account — print email/role/name so the
   // operator can eyeball identity, not just an id.
   existing.forEach((c) => console.log(`  EXISTING           ${c.cluster.padEnd(20)} id=${c.userId} ${c.role} <${c.email}> "${c.name}"  ${excl(c)}`));
@@ -251,6 +408,7 @@ function printPlan({ reviewDir, execute, checksum, created, reused, existing, to
     .forEach((g) => console.log(`  ${g.cluster.padEnd(24)} ${g.year}  ${String(g.count).padStart(3)}  $${dollars(g.cents)}  → contractor_id=${clusterToUserId.get(g.cluster)}`));
 
   console.log(`\nRECONCILE (post-boundary staff-pay, NOT imported): ${toReconcile.length} row(s) → run reconcile.js`);
+  console.log(`skipped (unsure): ${skippedUnsure}`);
 }
 
 // ---- durable run log (execute only; spec §7.4 audit + undo path) -------------
@@ -269,6 +427,7 @@ function writeRunLog({ reviewDir, checksum, operator, created, reused, existing,
       ledger_attribution_updated: counts.attributionUpdated,
       ledger_unchanged: counts.unchanged,
       reconcile_pending: counts.reconcile,
+      skipped_unsure: counts.skippedUnsure,
     },
     created_user_ids: created.map((c) => c.userId),
     reused_user_ids: reused.map((c) => c.userId),
@@ -285,15 +444,37 @@ if (require.main === module) {
   const argv = process.argv.slice(2);
   const reviewDir = getArg(argv, '--review-dir');
   if (!reviewDir) { console.error('--review-dir <dir> is required'); process.exit(1); }
-  const execute = argv.includes('--execute');
   const operator = getArg(argv, '--operator');
-  // Admin ids approved to receive attached history — lives in the operator's
-  // command, never in the editable sheet (tamper-resistant).
-  const allowAdminIds = new Set((getArg(argv, '--allow-admin-ids') || '')
-    .split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter(Number.isInteger));
-  runImport({ reviewDir: path.resolve(reviewDir), execute, operator, allowAdminIds })
-    .then((res) => pool.end().then(() => process.exit(res.ok ? 0 : 1)))
-    .catch((err) => { console.error('[import] FAILED:', err.message); pool.end().then(() => process.exit(1)); });
+
+  // Retraction-record mode (E2a): --record-retraction=<fp,fp>. Verifies absence in
+  // the ledger, then appends to retractions.json. Never runs an import. ANY argv
+  // starting with --record-retraction that does NOT parse to a non-empty fp list is a
+  // HARD usage error — never a silent fall-through to a dry-run import (E2c).
+  const recordArg = argv.find((a) => a.startsWith('--record-retraction'));
+  if (recordArg) {
+    const eq = recordArg.indexOf('=');
+    const fingerprints = eq === -1 ? [] : recordArg.slice(eq + 1).split(',').map((s) => s.trim()).filter(Boolean);
+    if (!fingerprints.length) {
+      console.error('--record-retraction requires a non-empty comma-separated fingerprint list: --record-retraction=<fp,fp>');
+      process.exit(1);
+    }
+    recordRetraction({ reviewDir: path.resolve(reviewDir), fingerprints, operator })
+      .then((res) => pool.end().then(() => process.exit(res.ok ? 0 : 1)))
+      .catch((err) => { console.error('[retraction] FAILED:', err.message); pool.end().then(() => process.exit(1)); });
+  } else {
+    const execute = argv.includes('--execute');
+    // Admin ids approved to receive attached history — lives in the operator's
+    // command, never in the editable sheet (tamper-resistant).
+    const allowAdminIds = new Set((getArg(argv, '--allow-admin-ids') || '')
+      .split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter(Number.isInteger));
+    runImport({ reviewDir: path.resolve(reviewDir), execute, operator, allowAdminIds })
+      .then((res) => pool.end().then(() => process.exit(res.ok ? 0 : 1)))
+      .catch((err) => { console.error('[import] FAILED:', err.message); pool.end().then(() => process.exit(1)); });
+  }
 }
 
-module.exports = { runImport, loadSheet, readCsvObjects, preflight };
+module.exports = {
+  runImport, loadSheet, readCsvObjects, preflight,
+  findOrphanedFingerprints, readPriorRunLogs, readRetractions, writeRetractions, recordRetraction,
+  findReimportedRetractions, runLogUserIds,
+};

@@ -5,7 +5,10 @@
 // Run: node --test server/scripts/staffPaymentImport/importValidation.test.js
 const test = require('node:test');
 const assert = require('node:assert');
-const { validateSheets, normalizePhoneImport, normalizeEmail, checkAttachRole } = require('./importValidation');
+const {
+  validateSheets, normalizePhoneImport, normalizeEmail, checkAttachRole,
+  planPeopleEmails, checkBoundaryNoDoubleCount, checkPlaceholderNameMatch,
+} = require('./importValidation');
 
 // ---- a fully-valid baseline every rule-test mutates into one violation -------
 function baseSet() {
@@ -301,4 +304,116 @@ test('ignore and unsure rows are neither imported nor reconciled', () => {
   assert.ok(!toImport.some((r) => r.fingerprint === 'fp-aaa'));
   assert.ok(!toImport.some((r) => r.fingerprint === 'fp-bbb'));
   assert.strictEqual(toImport.length, 1); // only the cash_other staff-pay row
+});
+
+// ==== hardening: identity-swap vector + smaller fixes ========================
+
+// VECTOR 1 (a) / E1: placeholder emails are keyed on the CLUSTER with an INJECTIVE
+// sha256 suffix — slugify alone is lossy, so a readable slug + hash of the exact
+// cluster key keeps the human-readable part while guaranteeing distinct clusters
+// get distinct emails. Placeholders stay order-independent.
+test('planPeopleEmails keys placeholders on the cluster with an injective hash suffix', () => {
+  const a = { cluster: 'jo ann', action: 'create-current', emailProvided: false, email: '', proposed_name: 'Jo-Ann' };
+  const b = { cluster: 'joann', action: 'create-ex', emailProvided: false, email: '', proposed_name: 'Jo Ann' };
+  const fwd = planPeopleEmails([a, b]);
+  const rev = planPeopleEmails([b, a]);
+  assert.match(fwd.get('jo ann'), /^jo-ann-[0-9a-f]{8}@imported\.invalid$/);
+  assert.match(fwd.get('joann'), /^joann-[0-9a-f]{8}@imported\.invalid$/);
+  assert.notStrictEqual(fwd.get('jo ann'), fwd.get('joann'), 'distinct clusters get distinct placeholders');
+  assert.strictEqual(fwd.get('jo ann'), rev.get('jo ann'), 'order-independent');
+  assert.strictEqual(fwd.get('joann'), rev.get('joann'), 'order-independent');
+});
+
+// E1 residue: slugify is LOSSY (non-ASCII collapses). Assigned in isolation (as
+// separate runs would), lossy/non-Latin cluster keys must still get DISTINCT
+// emails — the hash of the exact cluster key makes identity truly injective.
+test('planPeopleEmails is injective over lossy / non-ASCII cluster keys (cross-run)', () => {
+  const emailFor = (cluster) => planPeopleEmails([{ cluster, action: 'create-current', emailProvided: false, email: '', proposed_name: 'x' }]).get(cluster);
+  assert.notStrictEqual(emailFor('josé'), emailFor('josè'), "'josé' and 'josè' both slugify to 'jos'");
+  assert.notStrictEqual(emailFor('李伟'), emailFor('王芳'), 'all-non-Latin clusters both slugify to "imported"');
+});
+
+// E1: with injective emails, two clusters that slugify identically are NO LONGER an
+// error — they get distinct emails via the hash suffix. (The within-sheet guard now
+// keys on the full placeholder, so it only catches literal cluster-key dupes.)
+test('two no-email clusters that slugify identically now get distinct injective emails (no slug error)', () => {
+  const s = baseSet();
+  s.people[0].cluster = 'joe x'; s.people[0].email = ''; s.people[0].proposed_name = 'Joe X';
+  s.people[1].cluster = 'joe-x'; s.people[1].email = ''; s.people[1].proposed_name = 'Joe Ex';
+  s.transactions[0].person_cluster = 'joe x';
+  s.transactions[1].person_cluster = 'joe-x';
+  const { errors, peopleActions } = validateSheets(s);
+  assert.deepStrictEqual(errors.filter((e) => /slugif/i.test(e)), [], `unexpected slug error: ${errors.join(' | ')}`);
+  const m = planPeopleEmails(peopleActions);
+  assert.notStrictEqual(m.get('joe x'), m.get('joe-x'));
+});
+
+// E1 (b) belt (now a WARN, not a hard error): the pure check still flags a mismatch
+// between the existing profile name and the sheet name (used for a printed warning).
+test('checkPlaceholderNameMatch: matching name slugs pass; a mismatch is flagged (naming both) for a WARN', () => {
+  assert.deepStrictEqual(
+    checkPlaceholderNameMatch({ email: 'jo-ann@imported.invalid', profileName: 'Jo Ann', proposedName: 'Jo-Ann' }),
+    { ok: true, error: null },
+  );
+  const bad = checkPlaceholderNameMatch({ email: 'jo-ann@imported.invalid', profileName: 'Jo Ann', proposedName: 'Bob Smith' });
+  assert.strictEqual(bad.ok, false);
+  assert.match(bad.error, /placeholder identity mismatch/i);
+  assert.match(bad.error, /jo-ann@imported\.invalid/);
+  assert.match(bad.error, /Jo Ann/);
+  assert.match(bad.error, /Bob Smith/);
+});
+
+// E3: two clusters resolving to the same existing:<id> would attach two people's
+// ledgers to one account — hard error. Distinct ids are fine.
+test('two clusters resolving to the same existing:<id> is an error; distinct ids are fine', () => {
+  const dup = baseSet();
+  dup.people[0].account_decision = 'existing:37';
+  dup.people[1].account_decision = 'existing:37';
+  const { errors: dupErrors } = validateSheets(dup);
+  assert.ok(dupErrors.some((e) => /existing:37/.test(e) && /(same|multiple|resolve)/i.test(e)),
+    `expected a duplicate-existing error, got: ${dupErrors.join(' | ')}`);
+
+  const ok = baseSet();
+  ok.people[0].account_decision = 'existing:37';
+  ok.people[1].account_decision = 'existing:38';
+  const { errors: okErrors } = validateSheets(ok);
+  assert.ok(!okErrors.some((e) => /resolve to existing/i.test(e)),
+    `distinct ids should not error, got: ${okErrors.join(' | ')}`);
+});
+
+// FIX 5: unsure-verdict rows are skipped, but the count must be surfaced.
+test('validateSheets counts unsure-verdict rows as skippedUnsure', () => {
+  const s = baseSet();
+  s.transactions[0].verdict = 'unsure';
+  s.transactions[1].verdict = 'unsure';
+  const { skippedUnsure } = validateSheets(s);
+  assert.strictEqual(skippedUnsure, 2);
+});
+
+// FIX 4: a blank exclude_1099 cell means NO CHANGE — only explicit yes/no write
+// the flag. peopleActions must carry whether the flag was explicitly provided.
+test('exclude_1099 blank is "no change" (exclude_1099_provided=false); explicit yes/no is provided', () => {
+  const s = baseSet();
+  s.people[0].exclude_1099 = 'yes'; // test person
+  s.people[1].exclude_1099 = '';    // test freyer — blank = no change
+  s.people[2].exclude_1099 = 'no';  // test buddy
+  const { peopleActions } = validateSheets(s);
+  const person = peopleActions.find((p) => p.cluster === 'test person');
+  const freyer = peopleActions.find((p) => p.cluster === 'test freyer');
+  const buddy = peopleActions.find((p) => p.cluster === 'test buddy');
+  assert.strictEqual(person.exclude_1099_provided, true);
+  assert.strictEqual(person.exclude_1099, true);
+  assert.strictEqual(freyer.exclude_1099_provided, false); // blank → no change
+  assert.strictEqual(buddy.exclude_1099_provided, true);
+  assert.strictEqual(buddy.exclude_1099, false);
+});
+
+// FIX 3: the pure boundary no-double-count assert now lives in importValidation
+// (so importFromSheet can run it INSIDE its transaction without a require cycle).
+test('checkBoundaryNoDoubleCount is exported from importValidation and flags an in-window clash', () => {
+  const payout = { id: 5, contractor_id: 99, total_cents: 20000, start_date: '2026-06-01', payday: '2026-06-09' };
+  const row = { row_fingerprint: 'fp-x', contractor_id: 99, amount_cents: 20000, paid_on: '2026-06-09' };
+  const f = checkBoundaryNoDoubleCount([row], [payout]);
+  assert.strictEqual(f.length, 1);
+  assert.match(f[0], /would double-count/);
 });

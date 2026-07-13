@@ -14,6 +14,8 @@
 // Also exports the normalizers + deterministic placeholder-email planner shared
 // with importFromSheet.js / verifyImport.js / reconcile.js.
 
+const crypto = require('crypto'); // deterministic hashing only — no I/O, stays pure
+
 const VERDICTS = new Set(['staff-pay', 'ignore', 'unsure']);
 const EXCLUDE_VALUES = new Set(['yes', 'no', '']);
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -41,6 +43,16 @@ function slugify(name) {
     .replace(/^-+|-+$/g, '') || 'imported';
 }
 
+// (E1) INJECTIVE placeholder-email local part for a cluster key. slugify is lossy
+// (non-ASCII collapses; 'josé'/'josè' → 'jos', all-non-Latin → 'imported'), so a
+// readable slug alone would let a DIFFERENT person's cluster reuse-merge into an
+// existing placeholder account. Append an 8-hex sha256 of the EXACT cluster string:
+// the slug stays human-readable, the hash makes email identity ≡ cluster identity.
+function placeholderEmailBase(cluster) {
+  const hash = crypto.createHash('sha256').update(String(cluster)).digest('hex').slice(0, 8);
+  return `${slugify(cluster)}-${hash}`;
+}
+
 // Deterministic placeholder-email plan for create-* people with NO real email.
 // Same sheet + same order ⇒ same assignment on every run, so a re-run reclaims
 // each person's existing @imported.invalid row by email (idempotency) instead
@@ -57,15 +69,24 @@ function planPeopleEmails(peopleActions) {
       used.add(p.email);
     }
   }
-  for (const p of peopleActions) {
-    if ((p.action === 'create-current' || p.action === 'create-ex') && !p.emailProvided) {
-      const base = slugify(p.proposed_name);
-      let email = `${base}@imported.invalid`;
-      let n = 2;
-      while (used.has(email)) { email = `${base}-${n}@imported.invalid`; n += 1; }
-      used.add(email);
-      assigned.set(p.cluster, email);
-    }
+  // (E1) The placeholder is an INJECTIVE function of the CLUSTER KEY
+  // (placeholderEmailBase = slug + sha256(cluster)), never slugify(proposed_name):
+  // email identity ≡ cluster identity, so cross-run the same email means the same
+  // cluster (the legit idempotent reuse) and a DIFFERENT person can never reuse-merge
+  // into it. Disambiguation runs in DETERMINISTIC cluster order (plain code-point
+  // compare for cross-machine stability), never sheet-row order — though with the
+  // hash a real collision is only ever against a literal same-cluster row.
+  const cmp = (a, b) => { const x = String(a.cluster); const y = String(b.cluster); return x < y ? -1 : x > y ? 1 : 0; };
+  const noEmail = peopleActions
+    .filter((p) => (p.action === 'create-current' || p.action === 'create-ex') && !p.emailProvided)
+    .sort(cmp);
+  for (const p of noEmail) {
+    const base = placeholderEmailBase(p.cluster);
+    let email = `${base}@imported.invalid`;
+    let n = 2;
+    while (used.has(email)) { email = `${base}-${n}@imported.invalid`; n += 1; }
+    used.add(email);
+    assigned.set(p.cluster, email);
   }
   return assigned;
 }
@@ -117,6 +138,23 @@ function inPayoutWindow(paidOn, payout) {
   return p >= ymd(payout.start_date) && p <= addDays(ymd(payout.payday), 14);
 }
 
+// Pure assert (fix 3; tested in importValidation.test.js + verifyImport.test.js).
+// A boundary-exception row must match NO payout for the same contractor at
+// |amount| ≤ 1¢ AND within that payout's collection window [start_date, payday+14d]
+// — else it double-counts against a payout that could also be marked paid. Lives
+// here (not verifyImport) so importFromSheet can run it INSIDE its transaction
+// before COMMIT without a require cycle. Returns failure strings (empty ⇒ ok).
+function checkBoundaryNoDoubleCount(exceptionRows, payouts) {
+  const failures = [];
+  for (const r of exceptionRows) {
+    const clash = payouts.find((po) => po.contractor_id === r.contractor_id
+      && Math.abs(po.total_cents - r.amount_cents) <= 1
+      && inPayoutWindow(r.paid_on, po));
+    if (clash) failures.push(`boundary_exception row ${r.row_fingerprint} (contractor ${r.contractor_id}, $${(r.amount_cents / 100).toFixed(2)}) matches payout ${clash.id} — would double-count`);
+  }
+  return failures;
+}
+
 // Pure role guard for existing:<id> attachment. staff/manager are payable workers
 // → attach silently. admin needs an explicit --allow-admin-ids entry (which lives
 // in the operator's command, NOT the editable sheet) because a real admin account
@@ -129,6 +167,16 @@ function checkAttachRole(user, allowAdminIds) {
     return { ok: false, error: `existing:${id} is an admin account (${email}) — re-run with --allow-admin-ids=${id} if intended` };
   }
   return { ok: false, error: `existing:${id} is a ${role} account (${email}) — refusing to attach staff-payment history` };
+}
+
+// (E1 belt, pure) When preflight REUSEs an import-created placeholder account, the
+// account must still belong to the same person: slug(existing contractor profile
+// name) must equal slug(sheet proposed_name). A mismatch means a different person's
+// cluster is silently merging into this account (the lossy-slug cross-run case that
+// the cluster-keyed email cannot catch alone). Returns { ok, error }.
+function checkPlaceholderNameMatch({ email, profileName, proposedName }) {
+  if (slugify(profileName) === slugify(proposedName)) return { ok: true, error: null };
+  return { ok: false, error: `placeholder identity mismatch: account ${email} belongs to "${profileName || ''}", sheet says "${proposedName || ''}"` };
 }
 
 function validateSheets({ manifest = {}, people = [], transactions = [] } = {}) {
@@ -146,6 +194,7 @@ function validateSheets({ manifest = {}, people = [], transactions = [] } = {}) 
   // Which clusters are referenced by a staff-pay txn → the actionable set.
   const staffPayClusters = new Set();
   const fpSeen = new Set();
+  let skippedUnsure = 0; // (fix 5) unsure rows are dropped — surface the count.
   for (const t of transactions) {
     const fp = String(t.fingerprint || '').trim();
     const verdict = String(t.verdict || '').trim();
@@ -156,6 +205,7 @@ function validateSheets({ manifest = {}, people = [], transactions = [] } = {}) 
       if (fpSeen.has(fp)) errors.push(`duplicate fingerprint ${fp} in transactions`);
       fpSeen.add(fp);
     }
+    if (verdict === 'unsure') skippedUnsure += 1;
     if (verdict === 'staff-pay') {
       const cluster = String(t.person_cluster || '').trim();
       if (cluster) staffPayClusters.add(cluster);
@@ -210,6 +260,9 @@ function validateSheets({ manifest = {}, people = [], transactions = [] } = {}) 
       preferred_method: String(p.preferred_method || '').trim(),
       preferred_handle: String(p.preferred_handle || '').trim(),
       exclude_1099: excludeRaw === 'yes',
+      // (fix 4) blank cell = NO CHANGE; only explicit yes|no writes the flag, so a
+      // blank must never silently strip an existing exclusion on existing/reuse.
+      exclude_1099_provided: excludeRaw === 'yes' || excludeRaw === 'no',
       current_or_ex: String(p.current_or_ex || '').trim(),
     });
   }
@@ -218,6 +271,39 @@ function validateSheets({ manifest = {}, people = [], transactions = [] } = {}) 
   for (const [email, clusters] of emailToClusters.entries()) {
     if (clusters.length > 1) {
       errors.push(`duplicate email "${email}" within sheet (clusters ${clusters.join(', ')})`);
+    }
+  }
+
+  // VECTOR 1 (b) / E1 belt: guard keyed on the FULL placeholder (slug + hash). With
+  // the injective hash suffix two DISTINCT clusters can no longer collide, so this
+  // now only catches a literal same-placeholder collision (already impossible via the
+  // duplicate-cluster check) — kept as a cheap belt against a future scheme regression.
+  const placeholderToClusters = new Map();
+  for (const a of peopleActions) {
+    if ((a.action === 'create-current' || a.action === 'create-ex') && !a.emailProvided) {
+      const base = placeholderEmailBase(a.cluster);
+      if (!placeholderToClusters.has(base)) placeholderToClusters.set(base, []);
+      placeholderToClusters.get(base).push(a.cluster);
+    }
+  }
+  for (const [base, clusters] of placeholderToClusters.entries()) {
+    if (clusters.length > 1) {
+      errors.push(`no-email create-* clusters ${clusters.map((c) => `"${c}"`).join(', ')} map to the same placeholder "${base}@imported.invalid" — give one a distinct cluster key or a real email`);
+    }
+  }
+
+  // E3: two clusters that resolve to the SAME existing:<id> would attach two
+  // different people's ledgers to one account — hard error, dedupe by target id.
+  const existingIdToClusters = new Map();
+  for (const a of peopleActions) {
+    if (a.action === 'existing') {
+      if (!existingIdToClusters.has(a.existingId)) existingIdToClusters.set(a.existingId, []);
+      existingIdToClusters.get(a.existingId).push(a.cluster);
+    }
+  }
+  for (const [id, clusters] of existingIdToClusters.entries()) {
+    if (clusters.length > 1) {
+      errors.push(`multiple clusters resolve to the same existing:${id} (clusters ${clusters.join(', ')}) — one target account per cluster`);
     }
   }
 
@@ -284,7 +370,7 @@ function validateSheets({ manifest = {}, people = [], transactions = [] } = {}) 
     }
   }
 
-  return { errors, toImport, toReconcile, peopleActions };
+  return { errors, toImport, toReconcile, peopleActions, skippedUnsure };
 }
 
 module.exports = {
@@ -297,5 +383,7 @@ module.exports = {
   ymd,
   addDays,
   inPayoutWindow,
+  checkBoundaryNoDoubleCount,
   checkAttachRole,
+  checkPlaceholderNameMatch,
 };

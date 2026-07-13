@@ -5,7 +5,7 @@
 // Run: node --test server/scripts/staffPaymentImport/verifyImport.test.js
 const test = require('node:test');
 const assert = require('node:assert');
-const { checkBoundaryNoDoubleCount } = require('./verifyImport');
+const { checkBoundaryNoDoubleCount, findLedgerResidue } = require('./verifyImport');
 
 // Payout: period 2026-06-01, payday 2026-06-09 → window [2026-06-01, 2026-06-23].
 const PAYOUT = { id: 5, contractor_id: 99, total_cents: 20000, start_date: '2026-06-01', payday: '2026-06-09' };
@@ -37,4 +37,25 @@ test('an amount off by more than 1¢ (in window) does not fail', () => {
 
 test('no exception rows ⇒ no failures', () => {
   assert.deepStrictEqual(checkBoundaryNoDoubleCount([], [PAYOUT]), []);
+});
+
+// ==== E2 (b): DB-side ledger-residue scan (independent of run logs) ==========
+// Rows in the ledger for THIS import's contractors whose fingerprint is NOT in
+// (toImport ∪ retractions) are orphaned residue — a run log lost/deleted can no
+// longer hide them. Pure set logic here; the SELECT that feeds it lives in run().
+const dbRow = (fp) => ({ row_fingerprint: fp, contractor_id: 42 });
+
+test('findLedgerResidue: a ledger fp not in toImport nor retractions is residue', () => {
+  const rows = [dbRow('fp-a'), dbRow('fp-b'), dbRow('fp-stale')];
+  assert.deepStrictEqual(findLedgerResidue(rows, [{ fingerprint: 'fp-a' }, { fingerprint: 'fp-b' }], []), ['fp-stale']);
+});
+
+test('findLedgerResidue: a retracted fp is NOT residue', () => {
+  const rows = [dbRow('fp-a'), dbRow('fp-stale')];
+  assert.deepStrictEqual(findLedgerResidue(rows, [{ fingerprint: 'fp-a' }], ['fp-stale']), []);
+});
+
+test('findLedgerResidue: every ledger row accounted for ⇒ empty', () => {
+  const rows = [dbRow('fp-a'), dbRow('fp-b')];
+  assert.deepStrictEqual(findLedgerResidue(rows, [{ fingerprint: 'fp-a' }, { fingerprint: 'fp-b' }], []), []);
 });
