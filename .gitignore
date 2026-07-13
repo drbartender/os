@@ -29,6 +29,7 @@ client/.claude/
 .claude/_*
 .claude/gen-*
 .claude/mobile-audit-*
+.claude/agent-memory/
 /_*
 /handoff*.md
 
