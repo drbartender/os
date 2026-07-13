@@ -34,15 +34,16 @@ lanes:
       - server/utils/autopayDurableCharge.test.js
       - server/utils/balanceScheduler.autopayDurable.test.js
       - server/routes/stripe.chargeBalanceDurable.test.js
+      - README.md
     deps: []
-    review: [money-fleet, second-opinion]
+    review: [code-review, consistency-check, second-opinion]
   - id: B
     title: Drink-plan submit payment-status reconcile (F2)
     footprint:
       - server/routes/drinkPlans/submit.js
       - server/routes/drinkPlans/submitReconcile.test.js
     deps: []
-    review: [money-fleet, second-opinion]
+    review: [code-review, consistency-check, second-opinion]
   - id: C
     title: Dispute-won ledger rewind (F5)
     footprint:
@@ -52,28 +53,35 @@ lanes:
       - server/utils/payrollDisputeRewind.test.js
       - ARCHITECTURE.md
     deps: []
-    review: [money-fleet, second-opinion]
-  - id: D
-    title: Auth hardening — qa-seed gate + OTP neutral (F3, F6)
+    review: [code-review, consistency-check, database-review, second-opinion]
+  - id: D1
+    title: qa-seed prod gate (F3)
     footprint:
       - server/index.js
       - server/utils/qaMount.js
       - server/utils/qaMount.test.js
-      - server/routes/clientAuth.js
-      - server/routes/clientAuth.otpNeutral.test.js
       - README.md
     deps: []
-    review: [auth-fleet, second-opinion]
+    review: [security-review, second-opinion]
+  - id: D2
+    title: OTP verify neutral response (F6)
+    footprint:
+      - server/routes/clientAuth.js
+      - server/routes/clientAuth.otpNeutral.test.js
+    deps: []
+    review: [security-review, second-opinion]
   - id: E
     title: invoice_payments uniqueness (F7)
     footprint:
       - server/db/schema.sql
       - server/utils/invoicePaymentsUniqueLink.test.js
     deps: []
-    review: [full-fleet, second-opinion]
+    review: [database-review, second-opinion]
 ```
 
-**Parallelism & sequencing.** A, B, D are fully independent and parallel. C and E both append to `server/db/schema.sql` — build in parallel, but serialize their *merges* through the os lock (the merge model already enforces this). Their edits append distinct statements to different regions (C: a `tips` column after line 2808; E: an `invoice_payments` index after line 1889), so no textual conflict is expected; if one lands first, the other rebases trivially. No lane blocks another.
+**Parallelism & sequencing.** A, B, D1, D2 are fully independent and parallel. D1 (qa-seed gate) and D2 (OTP fix) are two separate features on disjoint files, so they are two lanes → two squash commits, never bundled (CLAUDE.md: no bundling two independent features in one commit). C and E both append to `server/db/schema.sql` — build in parallel, but serialize their *merges* through the os lock (the merge model already enforces this). Their edits append distinct statements to different regions (C: a `tips` column after line 2808; E: an `invoice_payments` index after line 1889), so no textual conflict is expected; if one lands first, the other rebases trivially. No lane blocks another.
+
+**Review cadence (which specialized agents fire per lane, at merge):** A, B → `code-review` + `consistency-check` (money/pricing seams); C → `code-review` + `consistency-check` + `database-review` (payroll-ledger money seam + `tips` DDL); D1, D2 → `security-review` (auth surface); E → `database-review` (live-table `CREATE UNIQUE INDEX` that runs on prod boot via `initDb`). All sensitive lanes also get `/second-opinion` at push.
 
 **Prod-deploy gates (carry into the push checklist).**
 - **E (F7):** before shipping, run the duplicate-positive-link probe against prod (read-only) and confirm zero rows — `initDb` runs `CREATE UNIQUE INDEX` on boot, so a pre-existing double-link would block boot. (Query in Lane E → Task E1 → prod note.)
@@ -260,8 +268,9 @@ async function recordBalanceIntent({ proposalId, intentId, amountCents }, db = p
  * carries no payment_type/due_date column, and the balance for a given due date is
  * a fixed dollar amount, so amount + the retrieved metadata.payment_type==='balance'
  * check uniquely identifies the prior balance charge. On a genuine first charge no
- * amount-matching balance row exists, so this no-ops (charges) — which is why running
- * it every cycle is behaviorally identical to "stale re-claim only".
+ * amount-matching balance row exists, so this no-ops (charges) — which makes running
+ * it every cycle a SAFE SUPERSET of "stale re-claim only" (it also catches a settling
+ * prior intent on a failed-status re-claim, which stale-only scoping would double-charge).
  */
 async function priorBalanceChargeSettling({ proposalId, amountCents, stripe }, db = pool) {
   const prior = await db.query(
@@ -299,11 +308,13 @@ module.exports = { recordBalanceIntent, priorBalanceChargeSettling };
 
 4. **Run test, expect PASS:** `node -r dotenv/config --test server/utils/autopayDurableCharge.test.js` → all 7 cases pass.
 
-5. **Commit:** `git add server/utils/autopayDurableCharge.js server/utils/autopayDurableCharge.test.js && git commit -m "A1: durable-charge helper (recordBalanceIntent + priorBalanceChargeSettling) for autopay F1"`
+5. **Commit:** First add `autopayDurableCharge.js` under the `server/utils/` folder tree in `README.md` (new util file — the pre-commit doc hook warns otherwise; one-line tree entry, no behavior). Then: `git add server/utils/autopayDurableCharge.js server/utils/autopayDurableCharge.test.js README.md && git commit -m "A1: durable-charge helper (recordBalanceIntent + priorBalanceChargeSettling) for autopay F1"`
 
 ---
 
 ### Task A2 — Wire the scheduler: durable insert (a), stale-reclaim guard (b), 72h TTL (c)
+
+> **Test isolation (feasibility review):** A2's `before()` calls `processAutopayCharges()`, a DB-wide claim + fake-charge over every eligible proposal on the shared dev DB. It snapshots/restores stranger claim state and purges `pi_faketest_%` rows in `after()`, but a mid-run crash could strand real proposals `in_progress`. Run this suite only when the dev DB is not mid-real-autopay (fake Stripe stub → no real money moves regardless).
 
 **Files**
 - **Modify** `server/utils/balanceScheduler.js` — add require after line 6; edit claim-TTL comment (lines 33-34) + interval (line 46, `24 hours`→`72 hours`); insert guard + durable-record inside `chargeOne`'s `try` (around lines 78-93)
@@ -551,7 +562,7 @@ const { recordBalanceIntent, priorBalanceChargeSettling } = require('./autopayDu
 ### Task A3 — Wire the manual charge-balance route: durable insert (a), guard (b), 72h TTL (c)
 
 **Files**
-- **Modify** `server/routes/stripe.js` — add require after line 22; interval `24 hours`→`72 hours` at line 288; insert guard after line 329 (before `let intent;`); insert durable-record after the create `try`/`catch` (after line 356, before line 358)
+- **Modify** `server/routes/stripe.js` — add require after line 22; interval `24 hours`→`72 hours` at line 288; insert guard after line 330 (before `let intent;` at line 331); insert durable-record after the create `try`/`catch` (after line 356, before line 358)
 - **Test** `server/routes/stripe.chargeBalanceDurable.test.js` (new)
 
 **Interfaces**
@@ -1509,7 +1520,7 @@ async function rewindDisputeClawbackByPaymentIntent(paymentIntentId, reinstatedC
 module.exports = { clawbackTip, clawbackTipByPaymentIntent, rewindDisputeClawbackByPaymentIntent };
 ```
 
-**3d. Doc update.** In `ARCHITECTURE.md`, after line 1050 (`dispute_won_at` bullet) add:
+**3d. Doc update.** In `ARCHITECTURE.md`, after the `dispute_won_at` bullet (line 1051) add:
 
 ```
 - `dispute_reinstated_at` TIMESTAMPTZ — set by `rewindDisputeClawbackByPaymentIntent` on `charge.dispute.funds_reinstated`; idempotency marker for the F5 ledger rewind (rolls `refunded_amount_cents` back down by the reinstated amount so a later genuine refund re-claws instead of no-opping at delta=0). Deliberately separate from `dispute_won_at` (which gates the admin email) so the ledger rewind never waits on email delivery.
