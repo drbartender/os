@@ -24,13 +24,23 @@ async function recordBalanceIntent({ proposalId, intentId, amountCents }, db = p
 
 /**
  * (b) Double-charge guard for the stale-TTL re-claim. Before creating a NEW
- * balance intent, find the prior *unresolved* balance intent for this proposal
- * and ask Stripe for its TRUE status — the local stripe_sessions.status is
- * unreliable during the very webhook outage this guards against (a paid intent
+ * balance intent, find the prior *unresolved* balance-covering intent for this
+ * proposal and ask Stripe for its TRUE status — the local stripe_sessions.status
+ * is unreliable during the very webhook outage this guards against (a paid intent
  * stays 'pending' until the webhook lands). Returns { skip:true } when a prior
- * balance intent is already succeeded/processing (leave the claim for the
+ * balance-covering intent is already succeeded/processing (leave the claim for the
  * webhook/reconcile) or cannot be retrieved (lean money-safe); { skip:false }
- * when there is no still-settling balance intent (safe to re-charge).
+ * when there is no still-settling balance-covering intent (safe to re-charge).
+ *
+ * CLASSIFICATION — "covers the balance" is the discriminator, not one payment_type
+ * string. TWO intent shapes settle the outstanding balance: the plain autopay/manual
+ * balance charge (metadata.payment_type==='balance') AND the drink-plan checkout that
+ * folds the balance in (metadata.payment_type==='drink_plan_with_balance', which also
+ * carries metadata.balance_amount_cents as a string; routes/stripe.js
+ * create-drink-plan-intent). The extras-only variant (payment_type
+ * ==='drink_plan_extras') sets balance_amount_cents='0' and does NOT cover the balance.
+ * So the predicate is: payment_type==='balance' OR Number(balance_amount_cents||0) > 0.
+ * A deposit / full / invoice / extras-only intent fails it and is scanned past.
  *
  * SELECTION — status='pending' only, no amount filter, newest-first up to 10:
  *   - `status = 'pending'` scopes to LOCALLY-UNRESOLVED rows. The webhook flips a
@@ -45,7 +55,8 @@ async function recordBalanceIntent({ proposalId, intentId, amountCents }, db = p
  *     the balance for a due date is a fixed dollar figure. That is false: total_price
  *     can change mid-outage (drink-plan submit, admin edit), so the settling prior
  *     intent no longer matches the new balanceCents and the guard would miss it →
- *     double charge. Payment_type is the true discriminator, read from Stripe below.
+ *     double charge. Whether the intent COVERS the balance is the true discriminator,
+ *     read from Stripe metadata below (see CLASSIFICATION above).
  *   - Newest-first, LIMIT 25: other 'pending' rows (invoice checkout, drink-plan
  *     payment) also carry intent ids, so a single newest row could be a non-balance
  *     intent shadowing an older settling balance intent. We scan a bounded window
@@ -55,12 +66,13 @@ async function recordBalanceIntent({ proposalId, intentId, amountCents }, db = p
  *     the window by newer non-balance rows; it exists only to cap Stripe retrieves.
  *
  * ITERATION (newest-first): retrieve each candidate. A retrieve failure fails closed
- * (skip). A non-balance intent is skipped past (CONTINUE) — it is not our charge. A
- * balance intent that is succeeded/processing is the settling one → skip. A balance
- * intent that is terminal (canceled / requires_payment_method / other) does NOT
- * unblock: we CONTINUE to older candidates, because a newer FAILED balance retry must
- * not shadow an older ORIGINAL balance intent that is still settling. Only when the
- * whole window holds no still-settling balance intent do we allow the charge.
+ * (skip). An intent that does not cover the balance is skipped past (CONTINUE) — it is
+ * not our charge. A balance-covering intent that is succeeded/processing is the settling
+ * one → skip. A balance-covering intent that is terminal (canceled /
+ * requires_payment_method / other) does NOT unblock: we CONTINUE to older candidates,
+ * because a newer FAILED balance retry must not shadow an older ORIGINAL balance-covering
+ * intent that is still settling. Only when the whole window holds no still-settling
+ * balance-covering intent do we allow the charge.
  */
 async function priorBalanceChargeSettling({ proposalId, stripe }, db = pool) {
   const prior = await db.query(
@@ -86,14 +98,17 @@ async function priorBalanceChargeSettling({ proposalId, stripe }, db = pool) {
       // reachable. Not double-charging beats a possible miss.
       return { skip: true, reason: 'retrieve_failed', priorIntentId };
     }
-    if (intent?.metadata?.payment_type !== 'balance') {
-      // A deposit / invoice / drink-plan intent — not our charge. Keep scanning.
+    const m = intent?.metadata || {};
+    const coversBalance = m.payment_type === 'balance' || Number(m.balance_amount_cents || 0) > 0;
+    if (!coversBalance) {
+      // A deposit / invoice / full / drink_plan_extras (balance 0) intent — not our
+      // charge, it does not settle the outstanding balance. Keep scanning.
       continue;
     }
     if (intent.status === 'succeeded' || intent.status === 'processing') {
       return { skip: true, reason: 'settling', priorIntentId, priorStatus: intent.status };
     }
-    // Balance-typed but terminal (canceled / requires_payment_method / other): a
+    // Covers-balance but terminal (canceled / requires_payment_method / other): a
     // newer failed retry must not unblock past an OLDER settling original — keep
     // scanning the remaining, older candidates before deciding it is safe.
   }

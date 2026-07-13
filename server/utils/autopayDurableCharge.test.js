@@ -165,3 +165,42 @@ test('priorBalanceChargeSettling > a newest non-balance intent with no balance i
   assert.equal(r.skip, false, 'a non-balance intent alone must not skip the balance charge');
   assert.equal(r.reason, 'no_settling_balance_intent');
 });
+
+test('priorBalanceChargeSettling > (g) a settling drink_plan_with_balance intent (covers balance) → SKIP', async () => {
+  // The drink-plan checkout mints payment_type='drink_plan_with_balance' carrying
+  // balance_amount_cents when the client pays their outstanding balance through the
+  // drink-plan flow. During an outage it settles the balance, so it must block autopay.
+  await clearSessions();
+  const priorId = `pi_${MARK}_dpbal`;
+  await seedSession(priorId, 50000);
+  const stripe = fakeStripe({ [priorId]: { id: priorId, status: 'succeeded', metadata: { payment_type: 'drink_plan_with_balance', balance_amount_cents: '50000' } } });
+  const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
+  assert.equal(r.skip, true, 'a settling drink_plan_with_balance intent must block a second balance charge');
+  assert.equal(r.reason, 'settling');
+  assert.equal(r.priorIntentId, priorId);
+});
+
+test('priorBalanceChargeSettling > (h) a drink_plan_extras intent (balance_amount_cents=0) does NOT cover balance → CHARGE', async () => {
+  // Extras-only drink-plan intents carry balance_amount_cents='0' and do not settle the
+  // outstanding balance, so they must not block the legitimate balance charge.
+  await clearSessions();
+  const priorId = `pi_${MARK}_dpextras`;
+  await seedSession(priorId, 12000);
+  const stripe = fakeStripe({ [priorId]: { id: priorId, status: 'succeeded', metadata: { payment_type: 'drink_plan_extras', balance_amount_cents: '0' } } });
+  const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
+  assert.equal(r.skip, false, 'an extras-only drink-plan intent must not skip the balance charge');
+  assert.equal(r.reason, 'no_settling_balance_intent');
+});
+
+test('priorBalanceChargeSettling > (i) a covering intent with balance_amount_cents absent but payment_type=balance → SKIP', async () => {
+  // Regression on the original type: a plain balance intent has no balance_amount_cents
+  // metadata but still covers the balance via payment_type==='balance'.
+  await clearSessions();
+  const priorId = `pi_${MARK}_balnoamt`;
+  await seedSession(priorId, 33000);
+  const stripe = fakeStripe({ [priorId]: { id: priorId, status: 'processing', metadata: { payment_type: 'balance' } } });
+  const r = await priorBalanceChargeSettling({ proposalId: propId, stripe });
+  assert.equal(r.skip, true, 'a plain balance intent (no balance_amount_cents) must still block');
+  assert.equal(r.reason, 'settling');
+  assert.equal(r.priorStatus, 'processing');
+});
