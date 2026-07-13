@@ -79,10 +79,19 @@ router.get('/t/:token', publicLimiter, requireUuidToken, asyncHandler(async (req
       sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
       sp.includes AS package_includes,
       c.name AS client_name, c.email AS client_email,
-      c.phone AS client_phone_raw, c.source AS client_source
+      c.phone AS client_phone_raw, c.source AS client_source,
+      oi.open_invoice_token
     FROM proposals p
     LEFT JOIN service_packages sp ON sp.id = p.package_id
     LEFT JOIN clients c ON c.id = p.client_id
+    -- Oldest still-payable invoice for THIS proposal (client-owned token for the
+    -- client's own invoice; no PII widening). Lets ProposalView's paid-state card
+    -- link "Pay balance" straight to /invoice/:token.
+    LEFT JOIN LATERAL (
+      SELECT token AS open_invoice_token
+      FROM invoices WHERE proposal_id = p.id AND status IN ('sent','partially_paid')
+      ORDER BY created_at ASC LIMIT 1
+    ) oi ON true
     WHERE p.token = $1
   `, [req.params.token]);
 

@@ -24,6 +24,10 @@ function shapeFocus(r) {
     balance_due_date: r.balance_due_date,
     drink_plan_token: r.drink_plan_token || null,
     drink_plan_submitted: r.drink_plan_submitted_at !== null && r.drink_plan_submitted_at !== undefined,
+    // Oldest still-payable invoice (sent|partially_paid) so "Pay balance" routes
+    // to /invoice/:token instead of dead-ending on the proposal/planner page.
+    open_invoice_token: r.open_invoice_token || null,
+    open_invoice_label: r.open_invoice_label || null,
   };
 }
 module.exports = { BOOKED, PROPOSAL_SUMMARY_COLUMNS, shapeFocus };

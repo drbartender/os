@@ -37,6 +37,17 @@ async function mkProposal(clientId, { status = 'sent', date = null, start = null
     [clientId, status, date, start, total, paid, reason]);
   return r.rows[0];
 }
+// Invoice amounts are CENTS (per money-unit invariant). invoice_number is
+// globally unique — a crypto-random 20-char token keeps parallel test files from
+// colliding on the UNIQUE index.
+async function mkInvoice(proposalId, { status = 'sent', label = 'Balance', amount_due = 0, amount_paid = 0 }) {
+  const num = ('T' + crypto.randomBytes(6).toString('hex')).slice(0, 20);
+  const r = await pool.query(
+    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, token`,
+    [proposalId, num, label, amount_due, amount_paid, status]);
+  return r.rows[0];
+}
 
 before(async () => {
   const app = express();
@@ -54,6 +65,8 @@ before(async () => {
   await new Promise(r => { server = app.listen(0, () => { baseUrl = `http://127.0.0.1:${server.address().port}`; r(); }); });
 });
 after(async () => {
+  // invoices.proposal_id FK is ON DELETE RESTRICT — delete invoices before proposals.
+  await pool.query("DELETE FROM invoices WHERE proposal_id IN (SELECT id FROM proposals WHERE client_id IN (SELECT id FROM clients WHERE email LIKE $1))", [EMAIL_LIKE]);
   await pool.query("DELETE FROM proposals WHERE client_id IN (SELECT id FROM clients WHERE email LIKE $1)", [EMAIL_LIKE]);
   await pool.query("DELETE FROM clients WHERE email LIKE $1", [EMAIL_LIKE]);
   await new Promise(r => server.close(r));
@@ -86,9 +99,12 @@ test('IDOR: B sees only B rows, never A', async () => {
   assert.notEqual(res.body.focus.token, ap.token);
 });
 
-test('two-plus upcoming -> soonest is focus, count 2', async () => {
+test('two-plus upcoming (same status tier) -> soonest is focus, count 2', async () => {
+  // Both unbooked so this isolates DATE ordering within a status tier. Cross-tier
+  // precedence (booked beats unbooked regardless of date) is pinned in
+  // clientPortal.focusOrder.test.js after the fix #9 status-first ORDER BY.
   const c = await mkClient('two');
-  await mkProposal(c.id, { status: 'deposit_paid', date: '2099-09-01' });
+  await mkProposal(c.id, { status: 'sent', date: '2099-09-01' });
   const soon = await mkProposal(c.id, { status: 'sent', date: '2099-08-01' });
   const res = await request('/api/client-portal/home', c.token);
   assert.equal(res.body.focus.token, soon.token); assert.equal(res.body.upcoming_count, 2);
@@ -146,4 +162,63 @@ test('detail endpoint: unowned token -> 404 (JSON, not HTML)', async () => {
   const p = await mkProposal(a.id, { status: 'sent', date: '2099-01-01' });
   const res = await request(`/api/client-portal/proposals/${p.token}`, b.token);
   assert.equal(res.status, 404);
+});
+
+// ─── Open balance-invoice on the focus payload (fix #9 P1.3) ──────────────
+test('focus with a sent Balance invoice exposes open_invoice_token + label', async () => {
+  const c = await mkClient('inv-sent');
+  const p = await mkProposal(c.id, { status: 'deposit_paid', date: '2099-10-05', total: '4800.00', paid: '1000.00' });
+  const inv = await mkInvoice(p.id, { status: 'sent', label: 'Balance', amount_due: 380000 });
+  const res = await request('/api/client-portal/home', c.token);
+  assert.equal(res.body.focus.token, p.token);
+  assert.equal(res.body.focus.open_invoice_token, inv.token);
+  assert.equal(res.body.focus.open_invoice_label, 'Balance');
+});
+
+test('partially_paid invoice still surfaces as open_invoice_token (no re-dead-end)', async () => {
+  const c = await mkClient('inv-partial');
+  const p = await mkProposal(c.id, { status: 'deposit_paid', date: '2099-10-06', total: '4800.00', paid: '2000.00' });
+  const inv = await mkInvoice(p.id, { status: 'partially_paid', label: 'Balance', amount_due: 380000, amount_paid: 100000 });
+  const res = await request('/api/client-portal/home', c.token);
+  assert.equal(res.body.focus.open_invoice_token, inv.token);
+  assert.equal(res.body.focus.open_invoice_label, 'Balance');
+});
+
+test('paid-up client: open_invoice_token null (no sent/partially_paid invoice)', async () => {
+  const c = await mkClient('inv-paid');
+  const p = await mkProposal(c.id, { status: 'balance_paid', date: '2099-10-07', total: '4800.00', paid: '4800.00' });
+  await mkInvoice(p.id, { status: 'paid', label: 'Balance', amount_due: 380000, amount_paid: 380000 });
+  const res = await request('/api/client-portal/home', c.token);
+  assert.equal(res.body.focus.open_invoice_token, null);
+  assert.equal(res.body.focus.open_invoice_label, null);
+});
+
+test('draft / void invoices are not payable -> open_invoice_token null', async () => {
+  const c = await mkClient('inv-nonpay');
+  const p = await mkProposal(c.id, { status: 'deposit_paid', date: '2099-10-08', total: '4800.00', paid: '1000.00' });
+  await mkInvoice(p.id, { status: 'draft', label: 'Balance', amount_due: 380000 });
+  await mkInvoice(p.id, { status: 'void', label: 'Balance', amount_due: 380000 });
+  const res = await request('/api/client-portal/home', c.token);
+  assert.equal(res.body.focus.open_invoice_token, null);
+});
+
+test('oldest payable invoice wins when several exist', async () => {
+  const c = await mkClient('inv-oldest');
+  const p = await mkProposal(c.id, { status: 'deposit_paid', date: '2099-10-09', total: '4800.00', paid: '1000.00' });
+  const older = await mkInvoice(p.id, { status: 'sent', label: 'Balance', amount_due: 200000 });
+  await pool.query("UPDATE invoices SET created_at = NOW() - INTERVAL '2 days' WHERE id = $1", [older.id]);
+  await mkInvoice(p.id, { status: 'sent', label: 'Adjustment', amount_due: 50000 });
+  const res = await request('/api/client-portal/home', c.token);
+  assert.equal(res.body.focus.open_invoice_token, older.token);
+  assert.equal(res.body.focus.open_invoice_label, 'Balance');
+});
+
+test('detail endpoint mirrors open_invoice_token on the proposal', async () => {
+  const c = await mkClient('inv-detail');
+  const p = await mkProposal(c.id, { status: 'deposit_paid', date: '2099-10-10', total: '4800.00', paid: '1000.00' });
+  const inv = await mkInvoice(p.id, { status: 'sent', label: 'Balance', amount_due: 380000 });
+  const res = await request(`/api/client-portal/proposals/${p.token}`, c.token);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.proposal.open_invoice_token, inv.token);
+  assert.equal(res.body.proposal.open_invoice_label, 'Balance');
 });

@@ -27,20 +27,32 @@ router.get('/home', asyncHandler(async (req, res) => {
   // the detail route below has none either; keep them consistent).
   const clientId = req.user.id;
   const email = req.user.email;
+  // Focus ordering prefers BOOKED proposals so a newer draft can never shadow a
+  // booked event on the same date/time (fix #9). open_invoice_token/label carry
+  // the oldest still-payable invoice (status sent|partially_paid) so Next-Up can
+  // route "Pay balance" straight to the invoice page instead of the planner.
+  // partially_paid is load-bearing: sent-only would re-dead-end a part-payer.
+  const BOOKED_FIRST = `ORDER BY (p.status IN ('deposit_paid','balance_paid','confirmed')) DESC,
+                                 p.event_date ASC, p.event_start_time ASC NULLS LAST, p.created_at DESC LIMIT 1`;
   const focusSelect = `
     SELECT ${PROPOSAL_SUMMARY_COLUMNS},
-           dp.token AS drink_plan_token, dp.submitted_at AS drink_plan_submitted_at
+           dp.token AS drink_plan_token, dp.submitted_at AS drink_plan_submitted_at,
+           oi.open_invoice_token, oi.open_invoice_label
     FROM proposals p
     LEFT JOIN LATERAL (
       SELECT token, submitted_at FROM drink_plans
       WHERE proposal_id = p.id AND proposal_id IN (SELECT id FROM proposals WHERE client_id = $1)
       ORDER BY id LIMIT 1
     ) dp ON true
+    LEFT JOIN LATERAL (
+      SELECT token AS open_invoice_token, label AS open_invoice_label
+      FROM invoices WHERE proposal_id = p.id AND status IN ('sent','partially_paid')
+      ORDER BY created_at ASC LIMIT 1
+    ) oi ON true
     WHERE p.client_id = $1 AND p.status <> 'archived' AND p.status <> 'completed'`;
   const [dated, nullDraft, countRes, archiveRes, draftRes] = await Promise.all([
-    pool.query(`${focusSelect} AND p.event_date >= CURRENT_DATE
-                ORDER BY p.event_date ASC, p.event_start_time ASC NULLS LAST, p.created_at DESC LIMIT 1`, [clientId]),
-    pool.query(`${focusSelect} AND p.event_date IS NULL ORDER BY p.created_at DESC LIMIT 1`, [clientId]),
+    pool.query(`${focusSelect} AND p.event_date >= CURRENT_DATE ${BOOKED_FIRST}`, [clientId]),
+    pool.query(`${focusSelect} AND p.event_date IS NULL ${BOOKED_FIRST}`, [clientId]),
     pool.query(`SELECT COUNT(*)::int AS n FROM proposals
                 WHERE client_id = $1 AND status NOT IN ('archived','completed') AND event_date >= CURRENT_DATE`, [clientId]),
     // Archive is bounded (LIMIT 50) so the landing payload can't grow without
@@ -82,6 +94,7 @@ router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.')
       p.view_count, p.last_viewed_at, p.created_at, p.updated_at,
       p.venue_name, p.venue_city, p.venue_state, p.total_price_override,
       dp.token AS drink_plan_token, dp.submitted_at AS drink_plan_submitted_at,
+      oi.open_invoice_token, oi.open_invoice_label,
       sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
       sp.includes AS package_includes,
       c.name AS client_name, c.email AS client_email, c.phone AS client_phone
@@ -93,6 +106,11 @@ router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.')
       WHERE proposal_id = p.id AND proposal_id IN (SELECT id FROM proposals WHERE client_id = $2)
       ORDER BY id LIMIT 1
     ) dp ON true
+    LEFT JOIN LATERAL (
+      SELECT token AS open_invoice_token, label AS open_invoice_label
+      FROM invoices WHERE proposal_id = p.id AND status IN ('sent','partially_paid')
+      ORDER BY created_at ASC LIMIT 1
+    ) oi ON true
     WHERE p.token = $1 AND p.client_id = $2
   `, [req.params.token, req.user.id]);
 

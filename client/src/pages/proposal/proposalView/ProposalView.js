@@ -612,6 +612,18 @@ export default function ProposalView() {
                     </p>
                   </>
                 )}
+                {/* Primary pay control for a booked-but-not-fully-paid event:
+                    route straight to the balance invoice (fix #9 — no more
+                    planner dead-end). Renders only when an open invoice exists. */}
+                {!isFullyPaid && proposal.open_invoice_token && (
+                  <a
+                    href={`/invoice/${proposal.open_invoice_token}`}
+                    className="btn btn-primary"
+                    style={{ marginTop: '4px' }}
+                  >
+                    Pay balance
+                  </a>
+                )}
                 {proposal.drink_plan_token && (
                   <a href={`/plan/${proposal.drink_plan_token}`} className="proposal-paid-link">
                     Open the Potion Planner →

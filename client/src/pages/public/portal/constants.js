@@ -15,6 +15,8 @@ export function mapDetailToFocus(p) {
     balance_due_date: p.balance_due_date,
     drink_plan_token: p.drink_plan_token || null,
     drink_plan_submitted: p.drink_plan_submitted_at !== null && p.drink_plan_submitted_at !== undefined,
+    open_invoice_token: p.open_invoice_token || null,
+    open_invoice_label: p.open_invoice_label || null,
   };
 }
 export function mapArchiveRow(r) {
@@ -24,5 +26,6 @@ export function mapArchiveRow(r) {
     event_date: r.event_date, event_start_time: null, guest_count: null,
     venue_label: 'Location TBD', total_price: Number(r.total_price ?? 0), amount_paid: 0,
     balance_due: 0, balance_due_date: null, drink_plan_token: null, drink_plan_submitted: false,
+    open_invoice_token: null, open_invoice_label: null,
   };
 }

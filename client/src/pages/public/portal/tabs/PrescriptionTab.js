@@ -76,7 +76,7 @@ export default function PrescriptionTab({ focus, proposalDetail }) {
       {p.payments.map(pay => <div key={pay.id} className="cp-leader"><span>{pay.payment_type}</span><span>{formatCents(pay.amount)}</span></div>)}</div>)}
     <div className="cp-rx-actions">
       {!focus.booked && <a className="btn client-btn-primary" href={`/proposal/${focus.token}`}>Review & book</a>}
-      {focus.balance_due > 0 && <a className="btn client-btn-primary" href={`/proposal/${focus.token}`}>Pay balance</a>}
+      {focus.balance_due > 0 && <a className="btn client-btn-primary" href={focus.open_invoice_token ? `/invoice/${focus.open_invoice_token}` : `/proposal/${focus.token}`}>Pay balance</a>}
       <ShareButton url={`/proposal/${focus.token}`} label="Share this proposal" />
       {editable && !openRequest && !showForm && (
         <button type="button" className="btn client-btn-secondary" onClick={() => setShowForm(true)}>Request a change</button>
