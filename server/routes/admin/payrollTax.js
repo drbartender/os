@@ -119,7 +119,13 @@ router.get('/payroll/tax-totals', auth, adminOnly, asyncHandler(async (req, res)
          FROM payouts
         WHERE status = 'paid'
           AND paid_at IS NOT NULL
-          AND EXTRACT(YEAR FROM paid_at) = $1
+          -- paid_at is TIMESTAMPTZ and the Postgres session runs at GMT (see
+          -- server/utils/businessTime.js), so a bare EXTRACT(YEAR ...) reads the year
+          -- in GMT, not in business time: a payout marked paid on Dec 31 after 6pm
+          -- Chicago lands in the NEXT tax year and misfiles that contractor's 1099.
+          -- Constructive receipt is the payer's local date, so extract in Chicago.
+          -- (The ledger side above uses paid_on, a bare DATE, which has no such skew.)
+          AND EXTRACT(YEAR FROM (paid_at AT TIME ZONE 'America/Chicago')) = $1
         GROUP BY contractor_id
      ),
      combined AS (
