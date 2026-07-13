@@ -310,7 +310,10 @@ app.use('/api/telegram', require('./routes/telegram'));
 app.use('/api/voice', require('./routes/voice'));
 app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/test-feedback', require('./routes/testFeedback'));
-app.use('/api/qa', require('./routes/labrat'));
+// QA / labrat harness. /api/qa/seed mints loginable, self-escalating accounts,
+// so the whole /api/qa tree MUST 404 in production. The gate lives in a helper
+// (server/utils/qaMount.js) so it is unit-testable without booting the server.
+require('./utils/qaMount').mountQa(app);
 
 // Health check — must be registered BEFORE the React catch-all below.
 // Probes the DB (Render's health probe + uptime pingers hit this): a SELECT 1

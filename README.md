@@ -322,6 +322,7 @@ dr-bartender/
 │   │   ├── presenceScheduler.js # Presence sweep (15 min): stale-desk nudge (Telegram/SMS, nudged_at stamped only on confirmed send) + race-safe auto-flip to away (RUN_PRESENCE_SCHEDULER)
 │   │   ├── presenceStore.js    # Presence DB layer: strip payload + lead pointer, transactional transitions/toggle, log totals, id-scoped applyAutoFlip, stampByNudgePhone
 │   │   ├── tipPaymentLinks.js  # Creates/regenerates Stripe Payment Links for bartender tip pages
+│   │   ├── qaMount.js          # Gates the /api/qa (labrat) mount to non-production so the self-escalating /seed endpoint 404s in prod (F3)
 │   │   ├── tokens.js           # Canonical public-token shape validation: UUID_RE, isUuid, requireUuidToken(param, message) middleware (404s a non-UUID :token before the DB so it can't cast-throw 22P02 -> 500)
 │   │   ├── urls.js             # Canonical PUBLIC_SITE_URL / ADMIN_URL / STAFF_URL / API_URL resolvers
 │   │   ├── usPhone.js          # US/NANP phone validation: toUsE164, isUsE164 (normalizePhone + strict +1 NANP gate, rejects intl + 900/976) — primary VA-calling toll-fraud control
