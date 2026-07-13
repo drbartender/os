@@ -8,7 +8,7 @@ const { clientAuth } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
 const { clientOtp } = require('../utils/emailTemplates');
 const asyncHandler = require('../middleware/asyncHandler');
-const { ValidationError, ConflictError } = require('../utils/errors');
+const { ValidationError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -100,11 +100,15 @@ router.post('/verify', otpLimiter, asyncHandler(async (req, res) => {
   // On the 6th attempt, invalidate the OTP entirely — the user must request
   // a new code.
   if ((client.auth_token_attempts ?? 0) >= 5) {
+    // Invalidate the OTP entirely (the user must request a new code), but return
+    // the SAME neutral 400 as the wrong/unknown/expired cases (F6). A distinct 409
+    // RATE_LIMITED was a membership oracle — it revealed the email existed AND had
+    // a live OTP. The invalidation above still enforces the ceiling.
     await pool.query(
       'UPDATE clients SET auth_token = NULL, auth_token_expires_at = NULL, auth_token_attempts = 0 WHERE id = $1',
       [client.id]
     );
-    throw new ConflictError('Too many attempts. Please request a new code.', 'RATE_LIMITED');
+    throw new ValidationError({ otp: 'This code is invalid or has expired' });
   }
 
   // Check OTP hash
