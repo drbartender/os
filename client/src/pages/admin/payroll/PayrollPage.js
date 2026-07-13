@@ -132,6 +132,11 @@ function CurrentTab() {
   if (loading) return <div className="muted">Loading…</div>;
   if (!data) return <div className="chip danger">Couldn't load the current period.</div>;
 
+  // Mirror the server freeze gate exactly (admin/payroll.js rejects payout-event
+  // edits when the period is `processing` OR `paid`). Editing during processing
+  // used to look live but 409 on save; the hint below explains the frozen state.
+  const editable = !!(data.period && data.period.status !== 'paid' && data.period.status !== 'processing');
+
   return (
     <>
       <PayrollHeader
@@ -140,6 +145,11 @@ function CurrentTab() {
         onProcess={processPeriod}
         processing={processing}
       />
+      {data.period && data.period.status === 'processing' && (
+        <div className="muted tiny" style={{ marginBottom: 'var(--gap)' }}>
+          Period is processing. Line edits are frozen.
+        </div>
+      )}
       {(data.payouts || []).map(po => (
         <PayoutRow
           key={po.id}
@@ -148,7 +158,7 @@ function CurrentTab() {
           onToggle={() => toggle(po.id)}
           onLineSaved={onLineSaved}
           onPaid={onPaid}
-          editable={data.period && data.period.status !== 'paid'}
+          editable={editable}
         />
       ))}
       {(!data.payouts || data.payouts.length === 0) && (

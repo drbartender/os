@@ -2812,6 +2812,30 @@ CREATE INDEX IF NOT EXISTS idx_payouts_pay_period ON payouts(pay_period_id);
 CREATE INDEX IF NOT EXISTS idx_payout_events_payout ON payout_events(payout_id);
 CREATE INDEX IF NOT EXISTS idx_payout_events_shift_id ON payout_events(shift_id);
 
+-- Held reimbursements (fix #4, 2026-07-13). When the accrual roster sweep finds
+-- an off-roster worker's line carrying a positive admin reimbursement
+-- (adjustment_cents > 0), the line is HELD instead of deleted: held_state='held',
+-- every payable component + hours zeroed, line_total_cents = 0 (non-payable),
+-- adjustment_cents preserved as the tracked number. Lifecycle:
+--   NULL        -> normal line; sweeps may hold (if reimbursement) or delete it.
+--   'held'      -> tracked, non-payable; sweeps never re-touch it; excluded from
+--                  paystub adjustment aggregates. Admin PATCH re-arms line_total
+--                  and flips to 'confirmed'.
+--   'confirmed' -> admin explicitly decided to pay the off-roster reimbursement;
+--                  sweeps NEVER re-hold it. Cleared back to NULL if the worker
+--                  rejoins the roster (accrual re-seeds hours from contracted).
+ALTER TABLE payout_events ADD COLUMN IF NOT EXISTS held_state TEXT
+  CHECK (held_state IN ('held', 'confirmed'));
+-- Backfill from the short-lived note-marker hold mechanism (2026-07-13, lane
+-- fixbatch-p2 pre-review; never shipped to prod — dev rows only). Idempotent:
+-- the held_state IS NULL guard makes re-runs no-ops.
+UPDATE payout_events
+   SET held_state = 'held'
+ WHERE held_state IS NULL
+   AND adjustment_cents > 0
+   AND line_total_cents = 0
+   AND adjustment_note LIKE '%held: worker off roster%';
+
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS fee_cents INTEGER;
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_tips_shift ON tips(shift_id);

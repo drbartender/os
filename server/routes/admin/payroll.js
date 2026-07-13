@@ -49,6 +49,7 @@ async function loadPeriodWithPayouts(periodRow) {
               pe.gratuity_share_cents,
               pe.card_tip_gross_cents, pe.card_tip_fee_cents, pe.card_tip_net_cents,
               pe.adjustment_cents, pe.adjustment_note, pe.line_total_cents,
+              pe.held_state,
               p.event_date, p.event_type, p.event_type_custom
          FROM payout_events pe
          JOIN shifts s ON s.id = pe.shift_id
@@ -212,16 +213,22 @@ router.patch('/payroll/payout-events/:id', auth, adminOnly, asyncHandler(async (
     // recompute clamps the payable total at 0.
     const lineTotal =
       wage + Number(row.gratuity_share_cents) + Number(row.card_tip_net_cents) + next.adjustment_cents;
+    // Held-reimbursement re-arm (fix #4): this recompute already makes a held
+    // line payable again (line_total = wage + gratuity + card_tip + adjustment),
+    // so any admin PATCH on a 'held' line IS the confirmation. Flip it to
+    // 'confirmed' in the same UPDATE — a structural state the accrual sweeps
+    // respect (never re-held), sticky regardless of later note edits.
+    const nextHeldState = row.held_state === 'held' ? 'confirmed' : row.held_state;
 
     await client.query(
       `UPDATE payout_events
           SET hours = $1, rate_cents = $2, late = $3,
               adjustment_cents = $4, adjustment_note = $5,
-              wage_cents = $6, line_total_cents = $7
-        WHERE id = $8`,
+              wage_cents = $6, line_total_cents = $7, held_state = $8
+        WHERE id = $9`,
       [next.hours, next.rate_cents, next.late,
        next.adjustment_cents, next.adjustment_note,
-       wage, lineTotal, eventId]
+       wage, lineTotal, nextHeldState, eventId]
     );
     const payoutTotal = await recomputePayoutTotal(client, row.payout_id);
     await client.query('COMMIT');

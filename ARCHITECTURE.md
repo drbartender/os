@@ -866,6 +866,17 @@ Two new tables mirror Stripe payouts and their balance-transaction lines for a b
 - Link FKs (all ON DELETE SET NULL): `proposal_payment_id`, `tip_id`, `proposal_refund_id`, `proposal_id`, `invoice_id`
 - Indexes: `payout_id`, `stripe_payment_intent_id`, partial index on `matched_kind='unmatched'`
 
+### Staff Payroll
+
+Weekly Tue–Mon payroll: `pay_periods` (status open → processing → paid) → `payouts` (one per contractor per period, `total_cents` = clamped sum of its lines) → `payout_events` (per-event line items). Owned by `server/utils/payrollAccrual.js` (accrual + roster sweeps) and `server/routes/admin/payroll.js` (admin worklist + PATCH edits). All money integer cents.
+
+**payout_events** — one line per (payout, shift); `UNIQUE (payout_id, shift_id)`
+- `contracted_hours`, `hours`, `rate_cents`, `wage_cents` (= hours × rate), `late`
+- `gratuity_share_cents`, `card_tip_gross_cents`, `card_tip_fee_cents`, `card_tip_net_cents`
+- `adjustment_cents` (admin-entered, may be negative for clawback debt — no line-level floor, the payout total clamps at 0), `adjustment_note`
+- `line_total_cents` = wage + gratuity + card-tip net + adjustment
+- `held_state` TEXT CHECK (`held` | `confirmed`), nullable — held-reimbursement lifecycle (fix #4, 2026-07-13). When a roster sweep finds an off-roster worker's line with a POSITIVE `adjustment_cents`, the line is HELD, not deleted: `held_state='held'`, hours + all payable components zeroed, `line_total_cents = 0` (tracked but non-payable; the reimbursement must be hand-confirmed at payroll, never auto-paid). Semantics live in this column, never in the free-text note. Sweeps never re-touch `held` rows. Any admin PATCH on a `held` line recomputes `line_total` (re-arms the money) and flips it to `confirmed`; `confirmed` lines are NEVER re-held (sticky through note edits and re-accruals). If the worker rejoins the roster, accrual re-seeds `hours` from `contracted_hours` (the held 0 is not admin-owned), restores wage, clears `held_state` to NULL, and the adjustment rides along. Held lines are excluded from paystub adjustment aggregates (`paystubData.js`, this-period + YTD) so the stub foots against net.
+
 ### Clients
 
 **clients** — Client records

@@ -58,7 +58,7 @@ async function assemblePaystubData(contractorId, periodId) {
     pool.query(
       `SELECT pe.shift_id, pe.hours, pe.wage_cents, pe.gratuity_share_cents,
               pe.card_tip_net_cents, pe.adjustment_cents, pe.adjustment_note,
-              pe.line_total_cents,
+              pe.line_total_cents, pe.held_state,
               pr.event_date, pr.event_type, pr.event_type_custom,
               c.name AS client_name
          FROM payout_events pe
@@ -76,10 +76,16 @@ async function assemblePaystubData(contractorId, periodId) {
       [contractorId, h.payday]
     ),
     pool.query(
+      // Held reimbursements (payout_events.held_state = 'held') are tracked but
+      // NON-payable: line_total_cents = 0, so payout totals (net) exclude them
+      // by construction. The adjustments aggregate must exclude them too or the
+      // stub stops footing (Adjustments vs NET PAID would disagree by exactly
+      // the held amount). Confirmed lines pay out normally and stay included.
       `SELECT COALESCE(SUM(pe.wage_cents),0) AS wages,
               COALESCE(SUM(pe.gratuity_share_cents),0) AS gratuity,
               COALESCE(SUM(pe.card_tip_net_cents),0) AS card_tips,
-              COALESCE(SUM(pe.adjustment_cents),0) AS adjustments
+              COALESCE(SUM(pe.adjustment_cents)
+                FILTER (WHERE pe.held_state IS DISTINCT FROM 'held'),0) AS adjustments
          FROM payout_events pe
          JOIN payouts po ON po.id = pe.payout_id
          JOIN pay_periods pp ON pp.id = po.pay_period_id
@@ -92,7 +98,10 @@ async function assemblePaystubData(contractorId, periodId) {
     wages_cents: sum('wage_cents'),
     gratuity_cents: sum('gratuity_share_cents'),
     card_tips_net_cents: sum('card_tip_net_cents'),
-    adjustments_cents: sum('adjustment_cents'),
+    // Same held-exclusion as the YTD aggregate above (see the SQL comment).
+    adjustments_cents: ev.rows.reduce(
+      (a, r) => a + (r.held_state === 'held' ? 0 : Number(r.adjustment_cents || 0)), 0
+    ),
     net_cents: Number(h.total_cents), // canonical payout total, not a re-sum
   };
 

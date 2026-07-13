@@ -19,6 +19,50 @@ const { isBartender } = require('./staffingRoles');
 // applyRefundReconciliation (same classification, same reason).
 const CONTRACT_LABELS = ['Deposit', 'Balance', 'Full Payment'];
 
+// HOLD semantics for the roster sweeps (fix #4, 2026-07-13; reworked to
+// structural state after review). A POSITIVE reimbursement adjustment on an
+// off-roster worker's line is never deleted: reimbursements are entered by hand
+// and confirmed at payroll time, so a missed roster flag must never silently
+// auto-pay one, and it must equally never be silently dropped. The line is HELD:
+// `held_state = 'held'`, adjustment_cents stays as the tracked number, and every
+// payable component (wage/gratuity/card-tip gross+fee+net) AND hours go to 0 so
+// line_total_cents = 0 (non-payable). The note is NOT touched — hold semantics
+// live in the column, never in admin-editable free text (the review-caught
+// failure: an admin cleaning a marker note disarmed the old idempotency guard
+// and the next accrual re-zeroed a confirmed reimbursement).
+//
+// Lifecycle: NULL -> 'held' (sweep) -> 'confirmed' (admin PATCH re-arms
+// line_total; see routes/admin/payroll.js) -> NULL (worker rejoins the roster;
+// the worker loop below re-seeds hours from contracted and clears the state).
+// Sweeps never re-touch 'held' rows and NEVER re-hold 'confirmed' rows — the
+// admin explicitly decided to pay an off-roster reimbursement, and that decision
+// is sticky regardless of note edits or re-accruals.
+//
+// Zeroing hours is load-bearing: the PATCH recomputes wage = hours x rate, and a
+// surviving non-zero hours would resurrect wage for a worker who was removed
+// from the roster. Negative clawback lines are preserved by a separate rule
+// (H1); zero-adjustment lines are still deleted.
+
+// Hold the given payout_event lines (by id). Only lines with held_state IS NULL
+// are touched, so a re-accrual never re-zeroes a held line's tracked adjustment
+// nor an admin's confirmed reimbursement. Returns the distinct payout ids
+// actually held this call (for the caller's recompute set).
+async function holdReimbursementLines(client, eventIds) {
+  if (!eventIds.length) return [];
+  const { rows } = await client.query(
+    `UPDATE payout_events
+        SET held_state = 'held',
+            hours = 0, wage_cents = 0, gratuity_share_cents = 0,
+            card_tip_gross_cents = 0, card_tip_fee_cents = 0, card_tip_net_cents = 0,
+            line_total_cents = 0
+      WHERE id = ANY($1)
+        AND held_state IS NULL
+      RETURNING payout_id`,
+    [eventIds]
+  );
+  return [...new Set(rows.map(r => r.payout_id))];
+}
+
 // Safe calendar date of a pg DATE value as 'YYYY-MM-DD'. node-postgres parses
 // a DATE at local midnight, so .toISOString() drifts the day on positive-offset
 // servers; read the local components instead. Mirrors toCalendarYmd in
@@ -133,43 +177,68 @@ async function accruePayoutsForProposal(proposalId) {
       [proposalId]
     );
     if (!workers.rows.length) {
-      // Even with nobody on the roster, prior accruals may have left payable
-      // lines for this proposal in the open period (the roster-correction sweep
-      // below is unreachable from here, so sweep inline). Removing the LAST
-      // worker is the common single-bartender case. Clawback debt lines
-      // (negative adjustment) are preserved, same rule as the main sweep.
+      // Nobody left on this event's roster. Prior accruals may have left payable
+      // lines for this proposal in the open period; the main roster-correction
+      // sweep below is unreachable from here, so sweep inline. Positive
+      // reimbursements are HELD (kept + tracked, zeroed to non-payable);
+      // zero-adjustment lines are deleted; negative clawback debt is preserved
+      // (H1). Removing the LAST worker is the common single-bartender case.
+      const holdCandidates = await client.query(
+        `SELECT pe.id
+           FROM payout_events pe
+           JOIN payouts po ON po.id = pe.payout_id
+           JOIN shifts s ON s.id = pe.shift_id
+          WHERE s.proposal_id = $1 AND po.pay_period_id = $2
+            AND COALESCE(pe.adjustment_cents, 0) > 0
+            AND pe.held_state IS NULL`,
+        [proposalId, payPeriodId]
+      );
+      const heldPayoutIds = await holdReimbursementLines(
+        client, holdCandidates.rows.map(r => r.id)
+      );
       const swept = await client.query(
         `DELETE FROM payout_events pe
           USING payouts po, shifts s
           WHERE pe.payout_id = po.id AND pe.shift_id = s.id
             AND s.proposal_id = $1 AND po.pay_period_id = $2
-            AND COALESCE(pe.adjustment_cents, 0) >= 0
+            AND COALESCE(pe.adjustment_cents, 0) = 0
           RETURNING pe.payout_id, po.contractor_id, pe.shift_id, pe.adjustment_cents, pe.adjustment_note`,
         [proposalId, payPeriodId]
       );
-      if (swept.rowCount) {
-        const sweptPayoutIds = [...new Set(swept.rows.map(r => r.payout_id))];
+      if (swept.rowCount || heldPayoutIds.length) {
+        const affectedPayoutIds = [...new Set([
+          ...swept.rows.map(r => r.payout_id),
+          ...heldPayoutIds,
+        ])];
+        // A held line keeps its payout non-empty; only a payout emptied of every
+        // line is a phantom pending stub to delete.
         await client.query(
           `DELETE FROM payouts po
             WHERE po.id = ANY($1) AND po.status = 'pending'
               AND NOT EXISTS (SELECT 1 FROM payout_events WHERE payout_id = po.id)`,
-          [sweptPayoutIds]
+          [affectedPayoutIds]
         );
         await client.query(
           `UPDATE payouts po SET total_cents = GREATEST(0, COALESCE((
              SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
            ), 0))
            WHERE po.id = ANY($1)`,
-          [sweptPayoutIds]
+          [affectedPayoutIds]
         );
         Sentry.captureMessage('payrollAccrual: roster emptied; swept remaining payable lines', {
           level: 'warning',
           tags: { component: 'payrollAccrual', reason: 'empty_roster_sweep' },
-          extra: { proposalId, payPeriodId, removed: swept.rows },
+          extra: {
+            proposalId, payPeriodId, preserved: true,
+            deleted: swept.rows, held_payout_ids: heldPayoutIds,
+          },
         });
       }
       await client.query('COMMIT');
-      return { skipped: true, reason: 'no_approved_workers', swept: swept.rowCount };
+      return {
+        skipped: true, reason: 'no_approved_workers',
+        swept: swept.rowCount, held: heldPayoutIds.length,
+      };
     }
 
     // Bartenders share gratuity and card tips; barbacks/servers do not.
@@ -271,12 +340,20 @@ async function accruePayoutsForProposal(proposalId) {
 
     for (const w of workers.rows) {
       const prior = existing.get(`${w.user_id}:${w.shift_id}`);
+      // A held/confirmed prior line belongs to a worker who was off the roster
+      // and is now BACK on it. Its hours=0 came from the hold, not from an
+      // admin — treating them as admin-owned would silently accrue wage = 0
+      // for a worker who is actually working (the review-caught defect). Re-seed
+      // hours from contracted exactly as a first accrual would, and clear the
+      // held state below (the upsert writes held_state = NULL); the tracked
+      // adjustment and note ride along untouched.
+      const priorHeld = !!(prior && prior.held_state);
       // First accrual seeds contracted_hours/hours/rate from the contract;
       // afterwards the admin owns them, so re-accrual preserves the prior row.
       const contractedHrs = prior
         ? Number(prior.contracted_hours)
         : contractedHours(Number(proposal.event_duration_hours) || 0);
-      const hours = prior ? Number(prior.hours) : contractedHrs;
+      const hours = prior && !priorHeld ? Number(prior.hours) : contractedHrs;
       const rateCents = prior
         ? Number(prior.rate_cents)
         : Math.round(Number(w.hourly_rate) * 100);
@@ -308,13 +385,17 @@ async function accruePayoutsForProposal(proposalId) {
       payoutsCreatedCount += 1;
 
       // Upsert the payout_event line. Every column is set from EXCLUDED, so the
-      // recompute uses the same JS-computed values as the insert.
+      // recompute uses the same JS-computed values as the insert. held_state is
+      // always NULL here: a line being accrued for an on-roster worker is by
+      // definition not held, and this write is exactly what clears a prior
+      // hold/confirm when the worker rejoins the roster.
       await client.query(
         `INSERT INTO payout_events
            (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
             late, gratuity_share_cents, card_tip_gross_cents, card_tip_fee_cents,
-            card_tip_net_cents, adjustment_cents, adjustment_note, line_total_cents)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+            card_tip_net_cents, adjustment_cents, adjustment_note, line_total_cents,
+            held_state)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULL)
          ON CONFLICT (payout_id, shift_id) DO UPDATE SET
            contracted_hours = EXCLUDED.contracted_hours,
            hours = EXCLUDED.hours,
@@ -327,7 +408,8 @@ async function accruePayoutsForProposal(proposalId) {
            card_tip_net_cents = EXCLUDED.card_tip_net_cents,
            adjustment_cents = EXCLUDED.adjustment_cents,
            adjustment_note = EXCLUDED.adjustment_note,
-           line_total_cents = EXCLUDED.line_total_cents`,
+           line_total_cents = EXCLUDED.line_total_cents,
+           held_state = EXCLUDED.held_state`,
         [payoutId, w.shift_id, contractedHrs, hours, rateCents, wage,
          late, share.gratuity, share.tipGross, share.tipFee,
          tipNet, adjustment, adjustmentNote, lineTotal]
@@ -350,29 +432,36 @@ async function accruePayoutsForProposal(proposalId) {
     // Clawback debt lines (negative adjustment) are NEVER swept: the person
     // owes that money regardless of roster status, and the tip's
     // refunded_amount_cents marker has already advanced, so a swept debt line
-    // would be permanently un-collected (H1's leak in a new guise).
+    // would be permanently un-collected (H1's leak in a new guise). Positive
+    // reimbursements are HELD, not deleted (holdReimbursementLines); only
+    // zero-adjustment orphan lines are deleted. Lines already 'held' are left
+    // alone, and 'confirmed' lines are NEVER re-held or deleted — the admin
+    // explicitly decided to pay that off-roster reimbursement.
     const orphans = existingRes.rows.filter(
       r => Number(r.pay_period_id) === Number(payPeriodId)
         && !currentKeys.has(`${r.contractor_id}:${r.shift_id}`)
         && Number(r.adjustment_cents || 0) >= 0
     );
     if (orphans.length) {
-      // If a removed worker's line carried an admin-entered adjustment, still
-      // delete it, but make the removal loud so the lost adjustment is auditable.
-      const withAdjustments = orphans.filter(
-        o => Number(o.adjustment_cents) !== 0
-          || (o.adjustment_note !== null && o.adjustment_note !== '')
+      const toHold = orphans.filter(
+        o => Number(o.adjustment_cents || 0) > 0 && !o.held_state
       );
-      if (withAdjustments.length) {
+      const toDelete = orphans.filter(o => Number(o.adjustment_cents || 0) === 0);
+
+      // Positive reimbursements: HOLD (kept + tracked, zeroed to non-payable). An
+      // admin PATCH later re-arms line_total = wage + gratuity + card_tip +
+      // adjustment. Breadcrumb so a held reimbursement is auditable (preserved).
+      await holdReimbursementLines(client, toHold.map(o => o.id));
+      if (toHold.length) {
         Sentry.captureMessage(
-          'payrollAccrual: removing payout lines with admin adjustments for off-roster workers',
+          'payrollAccrual: holding off-roster payout lines with reimbursements (confirm or zero at payroll)',
           {
             level: 'warning',
-            tags: { component: 'payrollAccrual', reason: 'orphan_line_with_adjustment' },
+            tags: { component: 'payrollAccrual', reason: 'orphan_reimbursement_held', preserved: true },
             extra: {
               proposalId,
               payPeriodId,
-              removed: withAdjustments.map(o => ({
+              held: toHold.map(o => ({
                 payout_event_id: o.id,
                 payout_id: o.payout_id,
                 shift_id: o.shift_id,
@@ -384,16 +473,46 @@ async function accruePayoutsForProposal(proposalId) {
           }
         );
       }
-      await client.query(
-        'DELETE FROM payout_events WHERE id = ANY($1)',
-        [orphans.map(o => o.id)]
-      );
+
+      // Zero-adjustment orphans are deleted. A deleted line that still carried a
+      // note is logged for audit (the note text is lost with the row).
+      if (toDelete.length) {
+        const withNote = toDelete.filter(
+          o => o.adjustment_note !== null && o.adjustment_note !== ''
+        );
+        if (withNote.length) {
+          Sentry.captureMessage(
+            'payrollAccrual: removing zero-adjustment off-roster payout lines that carried a note',
+            {
+              level: 'warning',
+              tags: { component: 'payrollAccrual', reason: 'orphan_noted_line_removed' },
+              extra: {
+                proposalId,
+                payPeriodId,
+                removed: withNote.map(o => ({
+                  payout_event_id: o.id,
+                  payout_id: o.payout_id,
+                  shift_id: o.shift_id,
+                  contractor_id: o.contractor_id,
+                  adjustment_cents: Number(o.adjustment_cents),
+                  adjustment_note: o.adjustment_note,
+                })),
+              },
+            }
+          );
+        }
+        await client.query(
+          'DELETE FROM payout_events WHERE id = ANY($1)',
+          [toDelete.map(o => o.id)]
+        );
+      }
+
       // A payout emptied of every line is a $0 pending stub for a worker no longer
       // on any event this period. It would show as a phantom pending payout on the
       // period list and block period finalization (maybeFinalizePeriod waits for
-      // every payout to be paid). Delete any such now-empty pending payout.
-      // Payouts that still carry a line (another proposal's shift this period) are
-      // kept and recomputed below; a paid payout is never removed.
+      // every payout to be paid). Delete any such now-empty pending payout. A held
+      // line keeps its payout non-empty, so those survive and are recomputed below
+      // (their held line_total is 0). A paid payout is never removed.
       const orphanPayoutIds = [...new Set(orphans.map(o => o.payout_id))];
       const emptied = await client.query(
         `DELETE FROM payouts po

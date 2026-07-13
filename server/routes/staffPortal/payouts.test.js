@@ -415,3 +415,50 @@ test('GET /api/me/payouts/:periodId > 404 on a period the user was never paid in
   assert.strictEqual(res.status, 404);
   assert.strictEqual(res.body.code, 'NOT_FOUND');
 });
+
+test('GET /api/me/payouts/:periodId > summary excludes held reimbursements from adjustments (foots against total)', async () => {
+  // A held reimbursement (payout_events.held_state = 'held', fix #4) is tracked
+  // but NON-payable: line_total 0, so the canonical payout total excludes it by
+  // construction. The summary's adjustments sum must exclude it too — otherwise
+  // Adjustments vs total_cents disagree by exactly the held amount on the staff
+  // Pay tab. Seed a held line onto payout A, verify the summary still foots,
+  // clean up in finally (mirrors the IDOR test's seed-inside-test pattern).
+  const sHeld = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, end_time, status, proposal_id, location)
+     VALUES ('2025-12-13', '18:00', '22:00', 'completed', $1, '444 Fourth St') RETURNING id`,
+    [proposalId]
+  );
+  const heldShiftId = sHeld.rows[0].id;
+  const heldPe = await pool.query(
+    `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
+                                 late, gratuity_share_cents,
+                                 card_tip_gross_cents, card_tip_fee_cents, card_tip_net_cents,
+                                 adjustment_cents, adjustment_note, line_total_cents, held_state)
+     VALUES ($1, $2, 0, 0, 2500, 0, false, 0, 0, 0, 0, 700, 'held reimbursement', 0, 'held')
+     RETURNING id`,
+    [payoutAId, heldShiftId]
+  );
+  const heldPeId = heldPe.rows[0].id;
+
+  try {
+    const res = await request('GET', `/api/me/payouts/${payPeriodId}`, { token: tokenA });
+    assert.strictEqual(res.status, 200);
+    // The held line IS visible in the events list (line_total 0)...
+    assert.strictEqual(res.body.events.length, 3);
+    const heldRow = res.body.events.find((e) => e.shift_id === heldShiftId);
+    assert.ok(heldRow, 'held line rendered in events');
+    assert.strictEqual(heldRow.adjustment_cents, 700);
+    assert.strictEqual(heldRow.line_total_cents, 0);
+    // ...but the adjustments aggregate excludes it: still only the payable 500
+    // from the seeded 'tip top-up' line, and the summary foots against the
+    // canonical payout total.
+    assert.strictEqual(res.body.summary.adjustments_cents, 500, 'held 700 excluded from adjustments');
+    assert.strictEqual(res.body.summary.total_cents, 30000);
+    // Component sums untouched (held lines zero these by construction).
+    assert.strictEqual(res.body.summary.wages_cents, 22000);
+    assert.strictEqual(res.body.summary.gratuity_cents, 2500);
+  } finally {
+    await pool.query('DELETE FROM payout_events WHERE id = $1', [heldPeId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [heldShiftId]);
+  }
+});
