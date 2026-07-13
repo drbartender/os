@@ -192,7 +192,13 @@ async function fetchTeamsByShiftIds(shiftIds) {
   return map;
 }
 
-/** Format team list for iCal description. currentUserId moves that user to top. */
+/**
+ * Format the team bullet list for an iCal description. currentUserId moves that
+ * user to the top. Returns only the `• Name — Position` lines joined by REAL
+ * newlines (single \n) — each description builder supplies its own header
+ * ("Team:" admin-side, "Dr. Bartender Team:" staff-side) and lets escapeICalText
+ * do the escaping. Joining with a literal '\\n' here was the double-escape bug.
+ */
 function formatTeamList(team, currentUserId) {
   if (!team || !team.length) return '';
   const sorted = [...team];
@@ -204,8 +210,7 @@ function formatTeamList(team, currentUserId) {
       sorted.unshift(mine);
     }
   }
-  const lines = sorted.map(t => `• ${t.name} — ${t.position || 'Staff'}`);
-  return `Dr. Bartender Team:\\n${lines.join('\\n')}`;
+  return sorted.map(t => `• ${t.name} — ${t.position || 'Staff'}`).join('\n');
 }
 
 // ─── iCal document builder ────────────────────────────────────────
@@ -257,17 +262,63 @@ function trimNotes(notes, maxLen = 500) {
   return notes.length > maxLen ? notes.slice(0, maxLen) + '…' : notes;
 }
 
-function buildAdminDescription(shift, teamList) {
+/** Filter falsy, join with the middle-dot separator; null when nothing remains. */
+function joinDot(items) {
+  const parts = items.filter(Boolean);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+/** Render a minutes-of-day value as a 12-hour clock ("13:00" → "1:00 PM"). */
+function fmt12(totalMin, withPeriod = true) {
+  const m = ((totalMin % 1440) + 1440) % 1440;
+  const period = Math.floor(m / 60) >= 12 ? 'PM' : 'AM';
+  let h = Math.floor(m / 60) % 12;
+  if (h === 0) h = 12;
+  const base = `${h}:${String(m % 60).padStart(2, '0')}`;
+  return withPeriod ? `${base} ${period}` : base;
+}
+
+/**
+ * "Setup 1:00 PM · Service 2:00–6:00 PM" from setup_minutes_before/start/end.
+ * Returns null when the start time is unparseable (so the line is skipped).
+ * Setup is derived by subtracting setup_minutes_before (default 60) from start.
+ */
+function serviceWindow(shift) {
+  const start = parseTime12(shift.start_time);
+  if (!start) return null;
+  const startMin = start.hours * 60 + start.minutes;
   const parts = [];
-  if (shift.client_name) parts.push(`Client: ${shift.client_name}`);
-  if (shift.client_phone) parts.push(`Phone: ${shift.client_phone}`);
-  if (shift.client_email) parts.push(`Email: ${shift.client_email}`);
-  if (shift.guest_count) parts.push(`Guests: ${shift.guest_count}`);
-  if (shift.proposal_total) parts.push(`Total: $${Number(shift.proposal_total).toLocaleString()}`);
-  if (teamList) { parts.push(''); parts.push(teamList); }
+  const setupMin = Number(shift.setup_minutes_before ?? 60);
+  if (Number.isFinite(setupMin) && setupMin > 0) parts.push(`Setup ${fmt12(startMin - setupMin)}`);
+  const end = parseTime12(shift.end_time);
+  if (end) {
+    const endMin = end.hours * 60 + end.minutes;
+    const samePeriod = (start.hours >= 12) === (end.hours >= 12);
+    parts.push(`Service ${fmt12(startMin, !samePeriod)}–${fmt12(endMin)}`);
+  } else {
+    parts.push(`Service ${fmt12(startMin)}`);
+  }
+  return parts.join(' · ');
+}
+
+function buildAdminDescription(shift, teamList) {
+  const money = shift.proposal_total ? `Total: $${Number(shift.proposal_total).toLocaleString()}` : null;
+  const balance = (shift.proposal_total ?? null) === null ? null
+    : (Number(shift.amount_paid || 0) >= Number(shift.proposal_total)
+        ? 'Balance: paid'
+        : `Balance: $${(Number(shift.proposal_total) - Number(shift.amount_paid || 0)).toLocaleString()}`);
   const notes = trimNotes(shift.notes);
-  if (notes) { parts.push(''); parts.push(`Notes: ${notes}`); }
-  return parts.join('\\n');
+  const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
+  const lines = [
+    joinDot([shift.guest_count && `Guests: ${shift.guest_count}`, money, balance]),
+    joinDot([shift.client_name && `Client: ${shift.client_name}`, shift.client_phone, shift.client_email]),
+    shift.location && `Venue: ${shift.location}`,
+    serviceWindow(shift),
+    teamList && `\nTeam:\n${teamList}`,
+    notes && `\nNotes: ${notes}`,
+    `\nOpen in OS: ${clientUrl}/events/shift/${shift.id}`,
+  ].filter(Boolean);
+  return lines.join('\n');
 }
 
 function buildStaffDescription(shift, teamList) {
@@ -277,10 +328,10 @@ function buildStaffDescription(shift, teamList) {
     const timeLine = shift.end_time ? `${shift.start_time} – ${shift.end_time}` : shift.start_time;
     parts.push(timeLine);
   }
-  if (teamList) { parts.push(''); parts.push(teamList); }
+  if (teamList) { parts.push(''); parts.push(`Dr. Bartender Team:\n${teamList}`); }
   const notes = trimNotes(shift.notes);
   if (notes) { parts.push(''); parts.push(`Notes: ${notes}`); }
-  return parts.join('\\n');
+  return parts.join('\n');
 }
 
 // ─── Routes ───────────────────────────────────────────────────────
@@ -305,7 +356,7 @@ router.get('/feed/:token', requireUuidToken('token', 'Calendar feed not found'),
     const result = await pool.query(`
       SELECT s.*,
         c.name AS client_name, c.phone AS client_phone, c.email AS client_email,
-        p.total_price AS proposal_total, p.guest_count
+        p.total_price AS proposal_total, p.amount_paid, p.guest_count
       FROM shifts s
       LEFT JOIN proposals p ON p.id = s.proposal_id
       LEFT JOIN clients c ON c.id = p.client_id
@@ -449,7 +500,7 @@ router.get('/event/:shiftId.ics', auth, asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT s.*,
       c.name AS client_name, c.phone AS client_phone, c.email AS client_email,
-      p.total_price AS proposal_total, p.guest_count,
+      p.total_price AS proposal_total, p.amount_paid, p.guest_count,
       sr.position
     FROM shifts s
     LEFT JOIN proposals p ON p.id = s.proposal_id
