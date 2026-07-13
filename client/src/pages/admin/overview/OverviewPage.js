@@ -49,8 +49,11 @@ const EMPTY_FIN = {
   proposals: [], recentPayments: [],
 };
 
-const FIN_DEFAULTS = { tab: 'overview', show: '' };
+const FIN_DEFAULTS = { tab: 'overview', show: '', split: '' };
 const FIN_TABS = ['overview', 'payouts'];
+// Funnel-card split lens. '' = None (existing funnel body). URL-backed via
+// useUrlListState so a split is shareable/back-button-able.
+const SPLIT_VALUES = ['source', 'event_type'];
 
 export default function OverviewPage() {
   const navigate = useNavigate();
@@ -61,6 +64,7 @@ export default function OverviewPage() {
 
   const [listState, setListState] = useUrlListState(FIN_DEFAULTS);
   const tab = FIN_TABS.includes(listState.tab) ? listState.tab : 'overview';
+  const split = SPLIT_VALUES.includes(listState.split) ? listState.split : '';
   const [payoutBadge, setPayoutBadge] = useState(0);
   // Payroll-overdue Needs-you item reported up by the admin-only PayrollCard.
   // A manager never mounts PayrollCard, so this stays null and no item appears.
@@ -112,6 +116,31 @@ export default function OverviewPage() {
   const reloadBand2 = useCallback(() => { loadStats(); loadFinancials(); }, [loadStats, loadFinancials]);
 
   useEffect(() => { loadStats(); loadFinancials(); }, [loadStats, loadFinancials]);
+
+  // Funnel-card split (lazy): only fetches when a split lens is active. Own
+  // catch + cancelled flag, isolated from the two LAW fetches — a failure shows
+  // a card-level error + retry and never blanks the funnel or the rest of Band 2.
+  // Refetches on split / from / to change (and on an explicit retry nonce).
+  const [splitData, setSplitData] = useState(null);
+  const [splitLoading, setSplitLoading] = useState(false);
+  const [splitError, setSplitError] = useState(false);
+  const [splitNonce, setSplitNonce] = useState(0);
+  const retrySplit = useCallback(() => setSplitNonce(n => n + 1), []);
+  const onSplitChange = useCallback((next) => setListState({ split: next }), [setListState]);
+
+  useEffect(() => {
+    if (!split) { setSplitData(null); setSplitError(false); setSplitLoading(false); return undefined; }
+    let cancelled = false;
+    setSplitLoading(true);
+    setSplitError(false);
+    const params = { by: split };
+    if (from && to) { params.from = from; params.to = to; }
+    api.get('/proposals/metrics-split', { params })
+      .then(r => { if (!cancelled) setSplitData(r.data || null); })
+      .catch(() => { if (!cancelled) setSplitError(true); })
+      .finally(() => { if (!cancelled) setSplitLoading(false); });
+    return () => { cancelled = true; };
+  }, [split, from, to, splitNonce]);
 
   const scrollToId = useCallback((id) => {
     const el = document.getElementById(id);
@@ -279,7 +308,12 @@ export default function OverviewPage() {
               <RevenueChartCard data={stats.revenue || []} filter={filter} basis={m.basis} />
 
               <div className="grid-2" style={{ marginBottom: 'var(--gap)' }}>
-                <FunnelCard funnel={fn} from={from} to={to} />
+                <FunnelCard
+                  funnel={fn} from={from} to={to}
+                  split={split} onSplitChange={onSplitChange}
+                  splitData={splitData} splitLoading={splitLoading}
+                  splitError={splitError} onRetrySplit={retrySplit}
+                />
                 <LeadSpendCard leadSpend={fin.summary.leadSpend} from={from} to={to} />
               </div>
 

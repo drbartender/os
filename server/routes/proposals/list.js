@@ -103,10 +103,19 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     whereClause += ' AND p.sent_at IS NOT NULL';
   }
 
-  // (4) Event type — parameterized equality (a custom value is just data, safe).
-  if (eventType) {
+  // (4) Event type — normalized on BOTH sides so a split-by drill-out lands on
+  // ALL of a segment's rows across the twin vocabularies (native slug
+  // `wedding-reception` + Thumbtack human string "Wedding Reception"). The value
+  // is parameterized; the normalization is a FIXED SQL fragment (spec §7). An
+  // exact-slug caller still matches (a slug normalizes to itself), so this is
+  // backward compatible. The sentinel `__untyped` maps to NULL/empty event_type
+  // (mirrors the metrics-split KEY_EXPR).
+  if (eventType === '__untyped') {
+    whereClause += ` AND (p.event_type IS NULL OR TRIM(p.event_type) = '')`;
+  } else if (eventType) {
     whereParams.push(eventType);
-    whereClause += ` AND p.event_type = $${whereParams.length}`;
+    whereClause += ` AND LOWER(REGEXP_REPLACE(TRIM(p.event_type), '\\s+', '-', 'g'))`
+      + ` = LOWER(REGEXP_REPLACE(TRIM($${whereParams.length}), '\\s+', '-', 'g'))`;
   }
 
   // (5) Open balance — accepted-side rows still owing. NOT_DEAD is the shared

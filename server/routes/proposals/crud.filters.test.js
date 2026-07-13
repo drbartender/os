@@ -46,6 +46,8 @@ let idDraftNeverSent;  // sent_at NULL, event_date in range
 let idThumbtack;       // source = thumbtack, status sent
 let idCustomType;      // custom event_type value, status sent
 let idBoundary;        // sent_at 23:50 on the range-end day (half-open boundary)
+let idHumanType;       // event_type stored as the Thumbtack human string "Wedding Reception"
+let idNullType;        // event_type NULL (found via the __untyped sentinel)
 
 const createdProposalIds = new Set();
 
@@ -144,6 +146,17 @@ before(async () => {
   idBoundary = await seed({
     status: 'sent', sentAt: '2026-06-30 23:50:00', eventDate: '2026-06-30',
     eventType: 'dinner-party', total: 900, paid: 0,
+  });
+  // Thumbtack-draft human-string vocabulary. Normalizes to the `wedding-reception`
+  // slug, so `event_type=wedding-reception` must find it (split-by lane, A2.2).
+  idHumanType = await seed({
+    status: 'sent', sentAt: '2026-06-03', eventDate: '2026-06-24',
+    eventType: 'Wedding Reception', total: 1100, paid: 0,
+  });
+  // Untyped row: the `__untyped` sentinel must match NULL/empty event_type.
+  idNullType = await seed({
+    status: 'sent', sentAt: '2026-06-02', eventDate: '2026-06-25',
+    eventType: null, total: 800, paid: 0,
   });
 
   const app = express();
@@ -307,6 +320,47 @@ test('event_type parameterized, custom value safe', async () => {
   // Injection-shaped value is a parameterized literal, not SQL — no 500.
   const inj = await request('GET', `/api/proposals?view=all&event_type=${encodeURIComponent("' OR 1=1--")}`);
   assert.equal(inj.status, 200, `event_type must be parameterized: ${inj.raw}`);
+});
+
+// ─── event_type normalized on BOTH sides (twin-vocabulary drill-out) ──────────
+test('event_type=<slug> matches the human-string vocabulary too', async () => {
+  const res = await request('GET', '/api/proposals?view=all&event_type=wedding-reception');
+  assert.equal(res.status, 200, res.raw);
+  const ids = idsOf(res);
+  // The "Wedding Reception" row normalizes to the wedding-reception slug and is found.
+  assert.ok(ids.includes(idHumanType), 'slug param finds the human-string row');
+  // Other typed rows are excluded.
+  assert.ok(!ids.includes(idThumbtack), 'a holiday-party row is excluded');
+  assert.ok(!ids.includes(idCustomType), 'a gala-custom row is excluded');
+});
+
+test('event_type=<HumanString> matches the slug vocabulary too (symmetric)', async () => {
+  const res = await request('GET', `/api/proposals?view=all&event_type=${encodeURIComponent('Wedding Reception')}`);
+  assert.equal(res.status, 200, res.raw);
+  const ids = idsOf(res);
+  // Symmetric: the human-string param normalizes and finds its own visible row.
+  assert.ok(ids.includes(idHumanType), 'human-string param normalizes and matches');
+  assert.ok(!ids.includes(idThumbtack), 'unrelated types excluded');
+});
+
+// ─── __untyped sentinel matches NULL/empty event_type ────────────────────────
+test('event_type=__untyped matches the NULL-type row and excludes typed rows', async () => {
+  const res = await request('GET', '/api/proposals?view=all&event_type=__untyped');
+  assert.equal(res.status, 200, res.raw);
+  const ids = idsOf(res);
+  assert.ok(ids.includes(idNullType), '__untyped finds the NULL event_type row');
+  for (const id of [idHumanType, idCustomType, idThumbtack, idBoundary]) {
+    assert.ok(!ids.includes(id), `__untyped excludes the typed row ${id}`);
+  }
+});
+
+// ─── exact-slug match still works (backward compat) ──────────────────────────
+test('exact-slug event_type still matches after normalization (backward compat)', async () => {
+  const res = await request('GET', '/api/proposals?view=all&event_type=holiday-party');
+  assert.equal(res.status, 200, res.raw);
+  const ids = idsOf(res);
+  assert.ok(ids.includes(idThumbtack), 'exact slug still matches its own row');
+  assert.ok(!ids.includes(idHumanType), 'the wedding row is not a holiday-party');
 });
 
 // ─── existing responses unchanged with no new params ─────────────────────────

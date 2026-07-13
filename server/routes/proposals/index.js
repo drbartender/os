@@ -19,6 +19,7 @@ router.use('/', require('./changeRequests'));
 router.use('/', require('./groups'));
 router.use('/', require('./crud'));
 router.use('/', require('./list'));
+router.use('/', require('./metricsSplit'));
 router.use('/', require('./getOne'));
 
 module.exports = router;

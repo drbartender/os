@@ -181,11 +181,12 @@ dr-bartender/
 │   │   ├── payment.js          # Payment method + W-9 upload
 │   │   ├── potions.js          # Potions bar-program API: par-catalog CRUD/reorder/preview + shared recipe-row validator
 │   │   ├── progress.js         # Onboarding step tracking
-│   │   ├── proposals/          # Service proposals (publicToken/compareGroup/public/metadata/lifecycle/crud/getOne/actions/changeRequests/groups sub-routers)
+│   │   ├── proposals/          # Service proposals (publicToken/compareGroup/public/metadata/lifecycle/crud/getOne/actions/changeRequests/groups/metricsSplit sub-routers)
 │   │   │   ├── index.js        # Composition router
 │   │   │   ├── publicToken.js  # /t/:token view + sign
 │   │   │   ├── public.js       # /public/* — packages, addons, calculate, capture-lead, quote-draft, submit
 │   │   │   ├── metadata.js     # /packages, /addons, /calculate, /financials, /dashboard-stats
+│   │   │   ├── metricsSplit.js # GET /metrics-split — funnel sent/accepted math split by source or event_type (native-only sibling of dashboard-stats)
 │   │   │   ├── lifecycle.js    # Proposal status state machine (PATCH /:id/status)
 │   │   │   ├── crud.js         # admin CRUD (list / create / update / archive)
 │   │   │   ├── getOne.js       # GET /:id single-proposal read (carved out of crud.js; greedy `/:id`, mounted last)

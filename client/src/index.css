@@ -18173,3 +18173,82 @@ html[data-app="admin-os"] .tax-toggle {
 html[data-app="admin-os"] .tax-toggle input { cursor: pointer; accent-color: var(--accent); }
 html[data-app="admin-os"] .tax-toggle input:disabled { cursor: progress; }
 /* end sph */
+
+/* overview: splitby — Funnel-card Split lens (None | Source | Type). The seg
+   sits in the card head; the segment table reuses the funnel-row grid idiom with
+   a Close% mini-bar, and collapses to a stacked two-column row at 640px. */
+html[data-app="admin-os"] .splitby-seg { flex: 0 0 auto; }
+
+html[data-app="admin-os"] .splitby-head,
+html[data-app="admin-os"] .splitby-row {
+  display: grid;
+  grid-template-columns: 1.5fr auto auto minmax(70px, 1.1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0.5rem;
+  font-size: 12.5px;
+}
+html[data-app="admin-os"] .splitby-head {
+  padding-top: 4px;
+  padding-bottom: 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--line-1);
+}
+html[data-app="admin-os"] .splitby-row {
+  color: var(--ink-1);
+  text-decoration: none;
+  border-radius: var(--radius);
+}
+html[data-app="admin-os"] .splitby-row + .splitby-row { border-top: 1px solid var(--line-1); }
+html[data-app="admin-os"] a.splitby-row:hover { background: var(--bg-2); }
+html[data-app="admin-os"] .splitby-row.is-other { color: var(--ink-3); cursor: default; }
+html[data-app="admin-os"] .splitby-name {
+  color: var(--ink-2);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html[data-app="admin-os"] .splitby-num,
+html[data-app="admin-os"] .splitby-close-h {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+html[data-app="admin-os"] .splitby-quoted { color: var(--ink-3); }
+html[data-app="admin-os"] .splitby-won { font-weight: 600; color: var(--ink-1); }
+html[data-app="admin-os"] .splitby-close { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+html[data-app="admin-os"] .splitby-pct {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  min-width: 34px;
+  text-align: right;
+}
+html[data-app="admin-os"] .splitby-close .bar { flex: 1; min-width: 34px; max-width: 90px; }
+html[data-app="admin-os"] .splitby-note {
+  padding: 0.6rem 0.5rem 0.2rem;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+html[data-app="admin-os"] .splitby-state { padding: 0.9rem 0.5rem; font-size: 12.5px; }
+
+@media (max-width: 640px) {
+  html[data-app="admin-os"] .splitby-head { display: none; }
+  html[data-app="admin-os"] .splitby-row {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "name won"
+      "quoted close";
+    row-gap: 2px;
+  }
+  html[data-app="admin-os"] .splitby-name { grid-area: name; }
+  html[data-app="admin-os"] .splitby-won { grid-area: won; text-align: right; }
+  html[data-app="admin-os"] .splitby-quoted { grid-area: quoted; text-align: left; }
+  html[data-app="admin-os"] .splitby-close { grid-area: close; }
+}
+/* end overview: splitby */
