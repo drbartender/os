@@ -15,8 +15,8 @@ let testUserId;
 before(async () => {
   const passwordHash = await bcrypt.hash('test', 4);
   const { rows } = await pool.query(
-    `INSERT INTO users (email, password_hash, role, onboarding_status, notifications_opt_in)
-     VALUES ($1, $2, 'staff', 'approved', true) RETURNING id`,
+    `INSERT INTO users (email, password_hash, role, onboarding_status)
+     VALUES ($1, $2, 'staff', 'approved') RETURNING id`,
     [`channel-resolver-test-${Date.now()}@example.com`, passwordHash]
   );
   testUserId = rows[0].id;

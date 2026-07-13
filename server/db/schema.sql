@@ -15,7 +15,6 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash VARCHAR(255) NOT NULL,
   role VARCHAR(20) DEFAULT 'staff' CHECK (role IN ('staff', 'admin')),
   onboarding_status VARCHAR(50) DEFAULT 'in_progress',
-  notifications_opt_in BOOLEAN DEFAULT false, -- DEAD (audit 5b): write-only, superseded by *_notification_preferences JSONB; pending DROP in a follow-up migration
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -639,7 +638,6 @@ CREATE TABLE IF NOT EXISTS service_addons (
   rate NUMERIC(10,2) NOT NULL,
   extra_hour_rate NUMERIC(10,2),
   applies_to VARCHAR(20) DEFAULT 'all' CHECK (applies_to IN ('byob', 'hosted', 'all')),
-  is_default BOOLEAN DEFAULT false,
   sort_order INTEGER DEFAULT 0,
   is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -975,6 +973,31 @@ CREATE TABLE IF NOT EXISTS proposal_payments (
   status VARCHAR(50) DEFAULT 'pending',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Non-negative money guard. proposal_payments.amount is always a positive charge
+-- (refund reversals live on invoice_payments, which is deliberately left
+-- unconstrained). Added NOT VALID first (cheap, skips the table scan) then
+-- validated in a separate guarded step so re-runs skip the scan once convalidated.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'proposal_payments_amount_nonneg'
+      AND conrelid = 'proposal_payments'::regclass
+  ) THEN
+    ALTER TABLE proposal_payments
+      ADD CONSTRAINT proposal_payments_amount_nonneg CHECK (amount >= 0) NOT VALID;
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'proposal_payments_amount_nonneg'
+      AND conrelid = 'proposal_payments'::regclass
+      AND convalidated = false
+  ) THEN
+    ALTER TABLE proposal_payments VALIDATE CONSTRAINT proposal_payments_amount_nonneg;
+  END IF;
+END $$;
 
 -- ─── Performance Indexes ─────────────────────────────────────────
 
@@ -1834,6 +1857,31 @@ CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
 DROP TRIGGER IF EXISTS update_invoices_updated_at ON invoices;
 CREATE TRIGGER update_invoices_updated_at BEFORE UPDATE ON invoices
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Non-negative money guard on both invoice amount columns (cents). Added
+-- NOT VALID first (cheap) then validated in a separate guarded step so re-runs
+-- skip the scan once convalidated.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'invoices_amounts_nonneg'
+      AND conrelid = 'invoices'::regclass
+  ) THEN
+    ALTER TABLE invoices
+      ADD CONSTRAINT invoices_amounts_nonneg
+      CHECK (amount_due >= 0 AND amount_paid >= 0) NOT VALID;
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'invoices_amounts_nonneg'
+      AND conrelid = 'invoices'::regclass
+      AND convalidated = false
+  ) THEN
+    ALTER TABLE invoices VALIDATE CONSTRAINT invoices_amounts_nonneg;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS invoice_line_items (
   id SERIAL PRIMARY KEY,
@@ -2793,6 +2841,7 @@ CREATE TABLE IF NOT EXISTS payout_events (
 
 CREATE INDEX IF NOT EXISTS idx_payouts_pay_period ON payouts(pay_period_id);
 CREATE INDEX IF NOT EXISTS idx_payout_events_payout ON payout_events(payout_id);
+CREATE INDEX IF NOT EXISTS idx_payout_events_shift_id ON payout_events(shift_id);
 
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS fee_cents INTEGER;
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL;
@@ -3309,7 +3358,7 @@ CREATE TRIGGER update_pcr_updated_at BEFORE UPDATE ON proposal_change_requests
 CREATE TABLE IF NOT EXISTS message_log (
   id            SERIAL PRIMARY KEY,
   proposal_id   INTEGER NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
-  client_id     INTEGER NOT NULL REFERENCES clients(id),
+  client_id     INTEGER REFERENCES clients(id) ON DELETE SET NULL,
   channel       TEXT NOT NULL CHECK (channel IN ('email','sms')),
   message_type  TEXT NOT NULL DEFAULT 'other',
   recipient     TEXT NOT NULL,
@@ -3324,6 +3373,32 @@ CREATE TABLE IF NOT EXISTS message_log (
 CREATE INDEX IF NOT EXISTS idx_message_log_proposal
   ON message_log (proposal_id, created_at DESC, id DESC);
 
+-- Existing-DB migration: message_log.client_id was born INTEGER NOT NULL with a
+-- bare FK (no ON DELETE). Bring it in line with every other client FK — nullable
+-- + ON DELETE SET NULL — so deleting a client degrades the ledger row instead of
+-- blocking the delete. Fresh DBs are already born correct (see the CREATE above);
+-- this converges a migrated DB onto the identical final shape. Guarded on both
+-- the NOT NULL flag and the FK's confdeltype so re-runs are no-ops.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'message_log' AND column_name = 'client_id'
+      AND is_nullable = 'NO'
+  ) THEN
+    ALTER TABLE message_log ALTER COLUMN client_id DROP NOT NULL;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'message_log_client_id_fkey'
+      AND conrelid = 'message_log'::regclass
+      AND confdeltype <> 'n'
+  ) THEN
+    ALTER TABLE message_log DROP CONSTRAINT message_log_client_id_fkey;
+    ALTER TABLE message_log ADD CONSTRAINT message_log_client_id_fkey
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
 -- ===========================================================================
 -- Staffing roster + waitlist + logistics
 -- (spec docs/superpowers/specs/2026-06-30-staffing-roster-and-waitlist-design.md)
@@ -3334,7 +3409,22 @@ CREATE INDEX IF NOT EXISTS idx_message_log_proposal
 ALTER TABLE shift_requests ADD COLUMN IF NOT EXISTS requested_positions TEXT DEFAULT '[]';
 -- Set when a staffer acknowledges they can transport equipment/supplies on a
 -- transport-required event. NULL on Bar Kit Only events.
-ALTER TABLE shift_requests ADD COLUMN IF NOT EXISTS transport_acknowledged_at TIMESTAMP;
+ALTER TABLE shift_requests ADD COLUMN IF NOT EXISTS transport_acknowledged_at TIMESTAMPTZ;
+-- Existing-DB migration: this column was originally born as a bare TIMESTAMP
+-- (the file's only one). Fresh DBs are now born TIMESTAMPTZ via the ADD above;
+-- convert an existing timestamp-typed column exactly once. Stored values were
+-- written as UTC instants, so reinterpret them AT TIME ZONE 'UTC'.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'shift_requests' AND column_name = 'transport_acknowledged_at'
+      AND data_type = 'timestamp without time zone'
+  ) THEN
+    ALTER TABLE shift_requests
+      ALTER COLUMN transport_acknowledged_at TYPE TIMESTAMPTZ
+      USING transport_acknowledged_at AT TIME ZONE 'UTC';
+  END IF;
+END $$;
 -- Effective "this event needs a supply run" flag the UI reads. Computed default
 -- (hosted OR any requires_provisioning add-on) unless an admin overrode it.
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS supply_run_required BOOLEAN DEFAULT false;
@@ -3776,3 +3866,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS exclude_from_1099 BOOLEAN DEFAULT fal
 -- Import provenance marker: admin-list chip, audit, undo path; also keeps
 -- imported 'deactivated' users distinguishable from legacy CC stubs (cc_id).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS import_source TEXT;
+
+-- ─── Dead-column drops (audit 2026-07-13) ───────────────────────────────────
+-- Both columns are write-only relics with no live reader (routes + client were
+-- cleaned months ago; only schema + test fixtures still named them). Dropped
+-- from the base CREATE TABLE above (fresh DBs never grow them) and here for
+-- existing DBs. IF EXISTS keeps both sides idempotent and convergent.
+--   notifications_opt_in: superseded by *_notification_preferences JSONB.
+--   is_default:           never read or written.
+ALTER TABLE users DROP COLUMN IF EXISTS notifications_opt_in;
+ALTER TABLE service_addons DROP COLUMN IF EXISTS is_default;

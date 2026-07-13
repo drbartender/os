@@ -25,8 +25,8 @@ before(async () => {
   proposalId = p.rows[0].id;
   const passwordHash = await bcrypt.hash('x', 4);
   const u = await pool.query(
-    `INSERT INTO users (email, password_hash, role, onboarding_status, notifications_opt_in)
-     VALUES ($1, $2, 'staff', 'approved', true) RETURNING id`,
+    `INSERT INTO users (email, password_hash, role, onboarding_status)
+     VALUES ($1, $2, 'staff', 'approved') RETURNING id`,
     [`beo-handlers-staff-${Date.now()}@example.com`, passwordHash]
   );
   userId = u.rows[0].id;

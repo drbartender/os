@@ -608,7 +608,6 @@ Agent + admin-paste surface for filling the customer email Thumbtack never sends
 - `role`: staff | admin | manager
 - `onboarding_status`: in_progress | applied | interviewing | hired | rejected | submitted | reviewed | approved | deactivated
 - `can_hire`, `can_staff` (boolean permission flags)
-- `notifications_opt_in`
 - `notification_preferences` JSONB — per-category admin alert toggles (`urgent_booking`, `urgent_consult`, `urgent_staffing`, `urgent_client_reply`, `payment_failure`, `feedback`, `system_error`, `routine_admin`, `routine_thumbtack`, `routine_hiring`, `routine_finance`), all default true. Drives the Automated Communication system's per-admin routing.
 - `communication_preferences` JSONB — `{sms_enabled, email_enabled, marketing_enabled}` (defaults true). Channel-level on/off shared by admin alerts and staff notifications.
 
@@ -800,7 +799,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 **proposal_payments** — Individual payment records
 - `proposal_id` FK, `stripe_payment_intent_id`
 - `payment_type`: deposit | balance | full | invoice | drink_plan_extras | drink_plan_with_balance (column VARCHAR(30))
-- `amount` (cents), `status`
+- `amount` (cents), `status` — CHECK `proposal_payments_amount_nonneg` (`amount >= 0`); refund reversals live on `invoice_payments`, which is deliberately left unconstrained
 
 **proposal_refunds** — Audit ledger for partial refunds
 - `id` PK; `proposal_id` FK→proposals (ON DELETE RESTRICT, NOT NULL); `payment_id` FK→proposal_payments (ON DELETE RESTRICT, nullable); `stripe_payment_intent_id`; `stripe_refund_id`
@@ -832,7 +831,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 **invoices** — Invoice records (sit on top of proposals)
 - `proposal_id` FK, `token` (UUID for shareable links)
 - `invoice_number` (INV-0001), `label` (Deposit, Balance, etc.)
-- `amount_due` (cents), `amount_paid` (cents)
+- `amount_due` (cents), `amount_paid` (cents) — CHECK `invoices_amounts_nonneg` (`amount_due >= 0 AND amount_paid >= 0`)
 - `status`: draft | sent | paid | partially_paid | void
 - `locked` (boolean), `locked_at` — freezes line items on payment
 - `due_date`, `notes`
@@ -909,7 +908,7 @@ Two new tables mirror Stripe payouts and their balance-transaction lines for a b
 - `shift_id` FK, `user_id` FK (unique together)
 - `position`, `status` (pending/approved/rejected), `notes`. `position` is the resolved canonical role and the only money-sensitive field here (payroll's tip split keys on `LOWER(position)='bartender'`). It is NULL on a fresh request and written at approval from the staffer's `requested_positions` (or an admin override). The request / assign / approve handlers and the position-resolution logic live in `server/routes/shifts.approval.js` (extracted from `shifts.js`); a `shift_requests_position_canonical` CHECK enforces canonical values.
 - `requested_positions` (TEXT, default `'[]'`) — the staffer's RANKED role preferences (JSON array of canonical labels). Drives the computed waitlist (`server/utils/staffingClassification.js`): a pending request whose ranked roles are all full is treated as waitlisted (no stored "waitlisted" status). Empty = "any open role" (legacy / back-filled rows).
-- `transport_acknowledged_at` (TIMESTAMP) — set when the staffer acknowledges the equipment/supply transport requirement when requesting a transport-required shift; cleared when the event is no longer transport-required, and re-required on each submit if the logistics escalate.
+- `transport_acknowledged_at` (TIMESTAMPTZ) — set when the staffer acknowledges the equipment/supply transport requirement when requesting a transport-required shift; cleared when the event is no longer transport-required, and re-required on each submit if the logistics escalate.
 - `acknowledged_at` TIMESTAMPTZ — set when the assigned staff member texts CONFIRM for the shift (Comms Phase 2 two-way SMS). Lives on the per-(shift, staff) row, not on `shifts`. Index `idx_shift_requests_user_id` on `user_id` supports the inbound-SMS nearest-approved-shift lookup.
 - `beo_acknowledged_at` TIMESTAMPTZ — BEO read-receipt stamp set by `POST /api/beo/:proposalId/acknowledge`. Independent from `acknowledged_at` (shift CONFIRM); a staffer who has CONFIRMed the shift still must open the BEO to acknowledge it. Cleared on Unfinalize, on re-assign (`POST /:id/assign`), on approve-after-deny re-request, on `PUT /requests/:requestId` deny/approve, and on auto-assign promotion — so a stale ack from a prior cycle never carries forward.
 
@@ -937,7 +936,7 @@ Two new tables mirror Stripe payouts and their balance-transaction lines for a b
 **message_log** — Append-only ledger of client-facing outbound messages (email + SMS), one row per send attempt. Written fire-and-forget at the `sendEmail` / `sendSMS` choke points via `server/utils/messageLog.js` (so coverage is structural, not a per-callsite checklist), and read newest-first into the admin `GET /proposals/:id` response for the event-detail Messages card (`client/src/pages/admin/eventDetail/MessageLogCard.js`). Keyed by `proposal_id` so a row logged at proposal stage shows on the event page after conversion. Lead-marketing sends pass `meta: { skipLog: true }` and are excluded; recipients that resolve to no client row are skipped.
 - `id` SERIAL PK
 - `proposal_id` INTEGER NOT NULL FK → proposals (ON DELETE CASCADE)
-- `client_id` INTEGER NOT NULL FK → clients
+- `client_id` INTEGER FK → clients (ON DELETE SET NULL — matches every other client FK; deleting a client degrades the ledger row instead of blocking the delete)
 - `channel` TEXT NOT NULL CHECK (`email`, `sms`)
 - `message_type` TEXT NOT NULL DEFAULT `'other'` — machine label (e.g. `proposal_sent`, `drink_plan_ready`, `shopping_list_ready`, `signed_and_paid`, `payment_received`); friendly display labels live in `client/src/utils/messageTypes.js`
 - `recipient` TEXT NOT NULL — email address or E.164 phone
