@@ -6,6 +6,8 @@
 
 **Standing constraints honored throughout:** the payment flow was audited 2026-07-11 and judged hardened, with an explicit recommendation AGAINST rewriting it. Fixes below that touch money paths carry a `fix-risk` note from verification; several suggested fixes were explicitly REJECTED on that basis (§5).
 
+**Decisions resolved 2026-07-13 (Dallas):** all five open calls answered; see `migration-plan.yaml` `decisions_resolved` for the one-liners and the affected items for detail. Headlines: M-1 goes archive-does-the-reaping; mergeClients gets DELETED; CI lands pre-push-smoke-first; pricing_snapshot validator is tolerate-and-tag; crud tail extraction is opportunistic-only. Lightning round: `favorite_color` KEEP / `is_default` DROP; notification bell REMOVE; unsubscribePush WIRE; manager iCal feed is intended behavior (closed); ginger ale out of the consult copy; `migrate-to-gcs.js` deleted (archive/ dir convention stays). Node fact from Sentry runtime context: prod runs **v26.5.0** (non-LTS Current) while dev tests on 24.16 and docs said 18; pin 26 as-is first, LTS alignment deferred.
+
 ---
 
 ## 1. Verified findings — act on these (sequenced in migration-plan.yaml)
@@ -90,7 +92,7 @@
 ### Dead code
 
 - **DC-1** · `blog-import/test.webp` (1.7MB) + `writetest.txt` are tracked write-probe leftovers, referenced by nothing. `git rm`. S.
-- **DC-2** · `server/scripts/archive/` holds a GCS migrator (storage path never shipped) + superseded blog importers. Explicitly-named archive dir, so owner call: keep as convention or delete `migrate-to-gcs.js` at minimum. Decision needed.
+- **DC-2** · `server/scripts/archive/` holds a GCS migrator (storage path never shipped) + superseded blog importers. DECIDED 2026-07-13: archive-dir convention stays; delete `migrate-to-gcs.js` only (rides qw-dead-files). S.
 - **FIX-4** (fix-list) · dead `GET /:id/legacy-cc-payments` endpoint (clientless after CC v1 demolition; test still exercises it). Remove in a later proposals-touching lane. S.
 - **FIX-5** (fix-list) · header notification bell renders with no onClick and a hardcoded 0 count. Wire it or remove it. S.
 - **FIX-6** (fix-list) · `unsubscribePush()` exported, no UI calls it. Wire a remove-device action or delete. S.
@@ -116,7 +118,7 @@
 | F-PCW | Proposal-creation consolidation: shared `insertProposalRecord` exists but `public.js:366` still hand-rolls its own 22-column INSERT | partially-fixed | low/L |
 | F-SYR | Syrup picker generators don't cross-check self-provided vs comped/paid syrups (suspected bug, needs fresh re-diagnosis) | still-open | low/M |
 | F-DL | Drink-plan edit lock still coupled to submit status; admin reopen control unbuilt (Option A, deliberately parked) | parked | medium/M |
-| F-ICAL | Manager iCal feed scope (audit F3): managers currently get the full admin feed; intended shape unconfirmed | still-open | low/M |
+| F-ICAL | Manager iCal feed scope (audit F3): managers get the full admin feed — CONFIRMED INTENDED 2026-07-13, item closed | closed | — |
 | F-ING | INGREDIENT_MAP substring-match fragility mitigated (length-sorted aliases) not eliminated | still-open | low/S |
 | F-GA | ConsultationForm copy still says "ginger ale" (Dallas call) | still-open | low/S |
 | D-TXT | shifts TEXT→JSONB migration (now + SCH-2's three columns) | still-open | low/L (own spec) |
@@ -124,7 +126,7 @@
 | D-PLL | PotionPlanningLab state-controller split · D-APP App.js route-manifest dedup · D-QWPC QuoteWizard↔ProposalCreate policy dedup · D-CMD CocktailMenuDashboard redesign (Dallas-driven) | still-open, deferred | low/L each |
 | D-PAG | LIMIT-500 pagination endpoints (unchanged; conversation-history DID gain paging) · campaign-list COUNT FILTER refactor (index landed, query shape didn't) · geocode/blog import loops · applications CASE-blocks-index · metricsQueries include_cc composite index · DEFAULT-vs-supplied duplication · failed-login audit table | still-open, all low, trigger-based | low |
 | D-NOI | `users.notifications_opt_in` DROP COLUMN + 4 test fixtures (no-writer change shipped long ago; two-step drop pending) | still-open | low/S |
-| D-DEAD | Dead columns: `service_addons.is_default`, `applications.favorite_color` (confirm the humor field before dropping). NOTE: the old doc's other two "dead" columns came alive — `calendar_token_created_at` and `shifts.client_email/phone` are now read; dropped from the dead list | partially-obsolete | low/S |
+| D-DEAD | Dead columns DECIDED 2026-07-13: `service_addons.is_default` DROPS (rides qw-schema-hygiene); `applications.favorite_color` KEEPS (displayed humor field, off the dead list). NOTE: the old doc's other two "dead" columns came alive — `calendar_token_created_at` and `shifts.client_email/phone` are now read; dropped from the dead list | resolved | low/S |
 
 ## 3. Accepted risks (re-affirmed, do not fix)
 

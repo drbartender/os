@@ -119,21 +119,25 @@ items:
       boolean today). CREATE INDEX idx_payout_events_shift_id. CHECK (amount >= 0) on proposal_payments,
       CHECK (amount_due >= 0 AND amount_paid >= 0) on invoices via NOT VALID + VALIDATE after confirming
       no legit negative rows (invoice_payments stays signed). DROP COLUMN users.notifications_opt_in +
-      update the 4 test fixtures that still INSERT it.
+      update the 4 test fixtures that still INSERT it. DROP COLUMN service_addons.is_default (confirmed
+      dead; Dallas 2026-07-13). applications.favorite_color stays - KEEP decision, it is displayed on
+      the application tab; removed from the dead list.
     caution: verify prod rows before VALIDATE; each block idempotent.
 
   - id: qw-node-pin
     phase: P0
-    title: Pin Node runtime to the major Render currently resolves
+    title: Pin Node runtime to what prod actually runs today (v26)
     findings: [DEP-1]
     severity: low
     effort: S
     sensitive: false
     footprint: [.node-version, package.json, render.yaml, README.md]
     action: >
-      Add .node-version + NODE_VERSION matching what Render resolves TODAY (confirm in dashboard); narrow
-      engines.node to that major; fix README/CLAUDE tech-stack wording. The deliberate bump to 22 LTS is
-      def-node-22 (P5), a separate verified step (pg/bcryptjs/sharp are native).
+      FACT (Sentry runtime context, prod event 2026-07-13): Render resolves engines '>=18' to
+      node v26.5.0 - a non-LTS Current line - while the dev box tests on 24.16 and docs say 18.
+      Pin 26 exactly as-is (.node-version + NODE_VERSION + narrow engines; zero behavior change,
+      freezes the silent float); fix README/CLAUDE wording. Aligning prod+dev on one LTS is
+      def-node-lts (P5), a separate verified step (pg/bcryptjs/sharp are native).
 
   - id: qw-test-noise
     phase: P0
@@ -150,31 +154,51 @@ items:
 
   - id: qw-dead-files
     phase: P0
-    title: Remove tracked probe artifacts + stale mirror comment
-    findings: [DC-1, DUP-S4]
+    title: Remove tracked probe artifacts + GCS migrator + stale mirror comment
+    findings: [DC-1, DC-2, DUP-S4]
     severity: low
     effort: S
     sensitive: false
-    footprint: [blog-import/test.webp, blog-import/writetest.txt, server/utils/shoppingList.js]
+    decision: archive/ dir convention stays; delete migrate-to-gcs.js only (Dallas 2026-07-13)
+    footprint: [blog-import/test.webp, blog-import/writetest.txt, server/scripts/archive/migrate-to-gcs.js, server/utils/shoppingList.js, README.md]
     action: >
-      git rm blog-import/test.webp (1.7MB) + writetest.txt (zero references). Rewrite shoppingList.js
-      header: server is authoritative, client consumes via API; keep only the live syrups.js sync note.
+      git rm blog-import/test.webp (1.7MB) + writetest.txt (zero references) + server/scripts/archive/
+      migrate-to-gcs.js (targets GCS, a storage path never shipped; drop its README folder-tree line).
+      Rewrite shoppingList.js header: server is authoritative, client consumes via API; keep only the
+      live syrups.js sync note.
+
+  - id: qw-decided-tails
+    phase: P0
+    title: Decided product tails (bell, push unsubscribe, mixer copy)
+    findings: [FIX-5, FIX-6, F-GA]
+    severity: low
+    effort: S
+    sensitive: false
+    decision: all three resolved by Dallas 2026-07-13
+    footprint: [client/src/components/adminos/Header.js, client/src/utils/pushSubscribe.js, client/src/pages/staff/account/, client/src/components/ShoppingList/ConsultationForm.jsx]
+    action: >
+      (1) REMOVE the dead notification bell from the admin header (no onClick, count hardwired 0; a real
+      notification center is a future design session if ever). (2) WIRE unsubscribePush as a small
+      "remove this device" action in the staff notifications section. (3) Mixer copy: drop "ginger ale"
+      from the ConsultationForm Full-option description (swap to ginger beer, the mixer actually in the
+      catalog).
 
 # ── P1 ──────────────────────────────────────────────────────────────────────
   - id: m1-refund-reap
     phase: P1
-    title: Refund on paid proposal must reap/suppress the live booking
+    title: Archive becomes the booking kill switch; refund flow prompts archive
     findings: [M-1]
     severity: high
     effort: M
     sensitive: true
-    decision_needed: reap-vs-suppress (see decisions_needed)
-    footprint: [server/utils/refundHelpers.js, server/routes/proposals/actions.js, server/utils/scheduledMessageDispatcher.js]
+    decision: archive-does-the-reaping (Dallas 2026-07-13)
+    footprint: [server/routes/proposals/actions.js, server/utils/refundHelpers.js, client/src/pages/admin/ProposalDetailPaymentPanel.js]
     action: >
-      Today a refunded proposal reconciles back to 'accepted': shifts stay staffed, balance invoice lives,
-      reminders keep firing (prod-confirmed, proposal 500). Either reap-on-refund (cancel shift + void
-      invoice + suppress scheduled_messages) or widen checkSuppression + teach archive to reap shifts.
-      Same family as the shipped record-payment status-downgrade guard.
+      DECIDED: archive is the single kill switch. Teach the archive endpoint to reap: cancel linked
+      shifts, void unpaid invoices, suppress pending scheduled_messages (checkSuppression already honors
+      archived). Refund flow finishes by prompting "archive this booking?" when the refund zeroes
+      amount_paid; partial refunds never auto-kill. refundHelpers stays essentially untouched. Composes
+      with m7-archive-reason (the reason picker rides the same archive surface).
     review: full fleet + /second-opinion (money + webhook family)
 
   - id: m2-lastminute-parity
@@ -232,17 +256,17 @@ items:
 
   - id: m6-mergeclients
     phase: P1
-    title: Wire mergeClients behind an admin gate, or delete it
+    title: Delete the unwired mergeClients export
     findings: [M-6]
     severity: medium
     effort: S
     sensitive: false
-    decision_needed: wire-vs-delete
-    footprint: [server/utils/clientMerge.js, server/routes/admin/*, client/src/pages/admin/*]
+    decision: delete (Dallas 2026-07-13; no dupe pain observed)
+    footprint: [server/utils/clientMerge.js]
     action: >
-      Exported since the CC import, zero consumers, no gate/audit/confirm exists. First consumer MUST be
-      admin-gated + activity-logged + confirmation-guarded. If merge UX is not wanted soon, delete the
-      export instead of shipping a loaded gun.
+      DECIDED: delete. Zero consumers, no gate/audit/confirm exists. Remove the module (and any test
+      sibling); it lives in git history one revert away if merge UX is ever wanted, at which point the
+      first consumer MUST be admin-gated + activity-logged + confirmation-guarded.
 
   - id: m7-archive-reason
     phase: P1
@@ -318,19 +342,21 @@ items:
 
   - id: t5-ci
     phase: P2
-    title: CI test gate on an isolated DB (design session)
+    title: Test gate, staged - pre-push money smoke first, Action tripwire second
     findings: [M-CI]
     severity: medium
     effort: L
     sensitive: false
     depends_on: [t4-payroll-isolation]
-    decision_needed: ci-shape
-    footprint: [.github/workflows/, server/db/, package.json]
+    decision: blessed (Dallas 2026-07-13) - pre-push smoke -> Action later; pre-push latency accepted
+    footprint: [.husky/pre-push, .github/workflows/, server/db/, package.json]
     action: >
-      The one confirmed-medium structural gap: 203 server tests are invoked by nothing; push = deploy.
-      Design session to pick the shape: ephemeral Neon branch per run (Neon API) vs throwaway schema;
-      GitHub Action on push vs a pre-push money-path smoke subset (pricingEngine/webhook/payroll) first.
-      Also wire client `react-scripts test` and the scripts/ test glob into whatever gate lands.
+      DECIDED order. Stage 1: pre-push hook runs the money-path smoke subset (pricingEngine + webhook +
+      payroll suites) against an isolated DB; this is the only shape that can actually BLOCK a deploy
+      since push = deploy. Isolation: persistent 'test' Neon branch reset-from-parent per run (faster
+      and cheaper than create/destroy). Stage 2: GitHub Action running the full suite on the same
+      mechanism as the after-the-fact tripwire; wire client `react-scripts test` and the scripts/ test
+      glob into it.
 
 # ── P3 ──────────────────────────────────────────────────────────────────────
   - id: c1-booked-statuses
@@ -427,13 +453,14 @@ items:
     severity: medium
     effort: M
     sensitive: true
-    decision_needed: validator-contract
+    decision: tolerate-and-tag (Dallas 2026-07-13)
     footprint: [server/utils/pricingEngine.js, server/utils/pricingSnapshot.js, server/utils/eventCreation.js, server/utils/payrollAccrual.js, server/utils/invoiceExtras.js, server/utils/changeRequests.js, server/utils/preEventHandlers.js, server/utils/setupTime.js]
     action: >
-      Highest-value carry from the old register: PRICING_SNAPSHOT_VERSION written by calculateProposal,
-      one parse/validate helper wrapped around the 6+ unversioned readers, tolerant of legacy snapshots.
-      Adds a guard AROUND the engine without changing its math. Needs its own short design session
-      (legacy-snapshot tolerance rules) + full fleet.
+      DECIDED contract: tolerate-and-tag. calculateProposal stamps PRICING_SNAPSHOT_VERSION on write;
+      one shared parse/validate helper wraps the 6+ readers; version-absent snapshots are treated as v1
+      semantics forever (Sentry-warn, proceed); hard-fail ONLY on unknown FUTURE versions. No prod
+      backfill pass over money rows. Adds a guard AROUND the engine without changing its math. Full
+      fleet at merge.
 
 # ── P4 ──────────────────────────────────────────────────────────────────────
   - id: s1-proposalcreate-split
@@ -486,17 +513,19 @@ items:
 
   - id: s5-crud-tail-extraction
     phase: P4
-    title: crud.js PATCH post-commit tail extraction ONLY (design session)
+    title: crud.js PATCH post-commit tail extraction - opportunistic only
     findings: [CPX-1-tail]
     effort: M
     sensitive: true
-    decision_needed: worth-it   # verifiers split on whether even the tail is safely mechanical
+    decision: skip as standalone; piggyback (Dallas 2026-07-13)
+    status: opportunistic-only
     footprint: [server/routes/proposals/crud.js, server/utils/]
     action: >
-      Fold the five post-commit best-effort blocks (:721-835) into one runProposalUpdateSideEffects
-      helper. Verification flagged the hoisted closure state (shouldSendRescheduleEmail, notify flags,
-      fresh post-commit re-reads) as load-bearing, so this is design-session + full fleet or not at all.
-      The in-transaction body is untouchable (register section 5).
+      DECIDED: no standalone lane. Fold the five post-commit best-effort blocks (:721-835) into one
+      runProposalUpdateSideEffects helper ONLY when a future feature lane already has crud.js open with
+      the full fleet running (zero marginal review cost). The hoisted closure state
+      (shouldSendRescheduleEmail, notify flags, fresh post-commit re-reads) is load-bearing; the
+      in-transaction body is untouchable regardless (register section 5).
 
 # ── P5 (deferred / triggered; listed so they are not lost) ─────────────────
   - id: def-vite
@@ -508,11 +537,14 @@ items:
       Blocker inventory now quantified and unusually clean: 7 REACT_APP_ env vars, one SW in public/,
       CRA proxy field, jest->vitest, Sentry sourcemaps. No jsconfig/aliases. Killing CRA also retires
       the accepted transitive-CVE pile and the two-ESLint-majors mess.
-  - id: def-node-22
+  - id: def-node-lts
     phase: P5
-    title: Deliberate Node 22 LTS bump (after qw-node-pin)
+    title: Align prod + dev on one LTS line (after qw-node-pin)
     depends_on: [qw-node-pin]
-    notes: native deps (pg/bcryptjs/sharp) verified on a clean build + boot before flipping prod.
+    notes: >
+      Prod floated to 26.5.0 (Current, non-LTS); dev box is 24.16 (Active LTS). After the freeze-pin,
+      pick the line deliberately - 24 LTS matches where all daily testing happens; 26 hits LTS Oct 2026.
+      Native deps (pg/bcryptjs/sharp) verified on a clean build + boot before flipping prod.
   - id: def-worker-split
     phase: P5
     title: Schedulers -> worker process
@@ -560,27 +592,21 @@ items:
     phase: P5
     title: Product-decision tails from fix-list (not audit debt)
     notes: >
-      Drink-plan edit lock Option A (parked, shovel-ready); syrup self-provided cross-check re-diagnosis;
-      manager iCal scope; notification bell wire-or-remove; unsubscribePush wire-or-delete; ginger-ale
-      copy; legacy-cc-payments dead endpoint removal (ride a proposals lane); favorite_color/is_default
-      column drops (confirm intent); scripts/archive keep-vs-delete.
+      Still open: drink-plan edit lock Option A (parked, shovel-ready); syrup self-provided cross-check
+      re-diagnosis; legacy-cc-payments dead endpoint removal (ride a proposals lane). RESOLVED
+      2026-07-13 and moved to lanes: bell/push/copy -> qw-decided-tails; is_default drop ->
+      qw-schema-hygiene; migrate-to-gcs.js -> qw-dead-files. CLOSED: manager iCal feed = admin feed is
+      intended behavior (Dallas); favorite_color KEEP (displayed humor field, off the dead list).
 
-decisions_needed:
-  - id: reap-vs-suppress
-    for: m1-refund-reap
-    question: On refund of a paid proposal, hard-reap (cancel shift, void invoice, clear reminders) or archive+suppress (keep rows, silence everything)? Reap is cleaner ops; suppress preserves history if the client re-books.
-  - id: wire-vs-delete
-    for: m6-mergeclients
-    question: Build the admin merge UI now (gated + logged + confirmed) or delete the unwired export until merge UX is actually wanted?
-  - id: ci-shape
-    for: t5-ci
-    question: GitHub Action w/ ephemeral Neon branch (full suite, ~real) vs pre-push money-path smoke subset first (cheaper, local)? Both eventually; which lands first?
-  - id: validator-contract
-    for: c8-pricing-snapshot-validator
-    question: Version-stamp semantics for legacy snapshots (tolerate-and-tag vs backfill pass?).
-  - id: worth-it
-    for: s5-crud-tail-extraction
-    question: Verifiers split on whether even the post-commit tail extraction pays for its review cost. Skip entirely is a legitimate answer.
+decisions_resolved:  # all five answered by Dallas 2026-07-13; details inline on each item
+  - {id: reap-vs-suppress,   for: m1-refund-reap,               answer: archive-does-the-reaping; refund flow prompts archive when amount_paid zeroes}
+  - {id: wire-vs-delete,     for: m6-mergeclients,              answer: delete the export; no dupe pain observed}
+  - {id: ci-shape,           for: t5-ci,                        answer: pre-push money smoke first, Action tripwire second; latency accepted}
+  - {id: validator-contract, for: c8-pricing-snapshot-validator, answer: tolerate-and-tag; no prod backfill}
+  - {id: worth-it,           for: s5-crud-tail-extraction,       answer: skip standalone; opportunistic piggyback only}
+  # lightning round: archive/ dir stays but migrate-to-gcs.js deleted; favorite_color KEEP / is_default DROP;
+  # notification bell REMOVE; unsubscribePush WIRE; manager iCal = admin feed is intended (CLOSED);
+  # ginger ale OUT of ConsultationForm copy; Node = pin the observed prod 26.5.0, LTS alignment deferred.
 
 rejected:  # verified as net-negative; see tech-debt-register.md section 5 for full reasoning
   - {finding: DUP-S2,  what: fullPayCents/balanceDueCents helpers across hardened charge paths}
