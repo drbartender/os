@@ -263,9 +263,14 @@ async function createBalanceInvoice(proposalId, dbClient) {
 // ─── 9. createAdditionalInvoiceIfNeeded ──────────────────────────────────────
 
 /**
- * Called after a proposal edit when locked invoices already exist.
- * Creates an "Additional Services" invoice for the price increase (if any).
- * Returns null if no locked invoices exist or the price didn't increase.
+ * Called after a proposal edit when locked invoices already exist. Every caller
+ * runs refreshUnlockedInvoices() FIRST, which re-bills a price increase into any
+ * unlocked Balance/Full Payment invoice. So this mints an "Additional Services"
+ * invoice ONLY when the delta cannot be absorbed that way — i.e. every
+ * balance-bearing invoice is locked (the fully-paid case).
+ * Returns null if: no locked invoices exist; OR an unlocked Balance/Full Payment
+ * invoice already absorbed the delta (else it would double-bill); OR the price
+ * didn't increase.
  *
  * @param {number} proposalId
  * @param {number} oldTotalCents   The total_price before the edit, in cents.
@@ -283,6 +288,26 @@ async function createAdditionalInvoiceIfNeeded(proposalId, oldTotalCents, dbClie
     [proposalId]
   );
   if (lockedResult.rows.length === 0) return null;
+
+  // Do NOT mint an Additional Services invoice when an unlocked balance-bearing
+  // invoice (Balance / Full Payment) still exists: every caller runs
+  // refreshUnlockedInvoices() first, which rebuilds that invoice from the NEW
+  // total_price and so already absorbs the price increase. Adding a separate
+  // Additional Services invoice on top would bill the same delta twice — the
+  // deposit_paid re-price case (locked Deposit + unlocked Balance), which hit
+  // both the admin re-price (crud.js) and the drink-plan submit (F2) paths. The
+  // additional invoice is the right surface ONLY when the delta cannot be
+  // re-billed through an unlocked invoice — i.e. every balance-bearing invoice is
+  // locked (the fully-paid case). ('Deposit' is a fixed amount that never absorbs
+  // the delta in refreshUnlockedInvoices, so it correctly does not count here.)
+  const absorbing = await client.query(
+    `SELECT id FROM invoices
+      WHERE proposal_id = $1 AND locked = false AND status != 'void'
+        AND label IN ('Balance', 'Full Payment')
+      LIMIT 1`,
+    [proposalId]
+  );
+  if (absorbing.rows.length > 0) return null;
 
   // Fetch new total
   const propResult = await client.query(

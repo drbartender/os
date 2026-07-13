@@ -8,7 +8,8 @@
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { calculateProposal } = require('../../utils/pricingEngine');
-const { refreshUnlockedInvoices, findOrRefreshExtrasInvoice, findExtrasInvoice, voidExtrasInvoiceWithReconcile } = require('../../utils/invoiceHelpers');
+const { refreshUnlockedInvoices, findOrRefreshExtrasInvoice, findExtrasInvoice, voidExtrasInvoiceWithReconcile, createAdditionalInvoiceIfNeeded } = require('../../utils/invoiceHelpers');
+const { reconcileProposalPaymentStatus } = require('../../utils/proposalStatus');
 const { computeExtrasBreakdown } = require('../../utils/drinkPlanExtras');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
@@ -150,6 +151,13 @@ async function handleSubmit(req, res) {
       // increments it below (matching what create-intent charged). Capture it now
       // so the extras invoice bar-rental line matches the Stripe charge.
       const numBarsAtIntent = proposal ? (proposal.num_bars || 0) : 0;
+      // F2: snapshot the pre-extras total (cents) BEFORE the total_price UPDATE
+      // below, so the add-to-balance branch bills only the delta via
+      // createAdditionalInvoiceIfNeeded (mirrors crud.js oldTotalCents). Declared
+      // at transaction scope because the pricing block and the invoice block are
+      // separate `if (proposal)` scopes. proposal.total_price is the pre-UPDATE
+      // dollar value (the DB UPDATE never mutates this JS object).
+      const oldTotalCents = Math.round(Number(proposal?.total_price || 0) * 100);
 
       if (proposal) {
         // Pull the package so we can validate autoAdded addons against its coverage.
@@ -265,6 +273,35 @@ async function handleSubmit(req, res) {
             [snapshot.total, JSON.stringify(snapshot), proposal.id]
           );
 
+          // F2 (CLAUDE.md cross-cutting: price up -> re-evaluate payment status).
+          // The extras just raised total_price; a fully-paid proposal that now
+          // owes must not keep showing "Paid in Full". Mirror crud.js: demote
+          // balance_paid -> deposit_paid and disarm autopay only on the
+          // was-fully-paid transition. reconcile is pure; the UPDATE uses the
+          // SAME tx client (one-connection rule). Keep proposal.status honest in
+          // memory so the post-commit notification below reports the real state.
+          const rec = reconcileProposalPaymentStatus({
+            status: proposal.status, amountPaid: proposal.amount_paid, totalPrice: snapshot.total,
+          });
+          if (rec.changed) {
+            const priorStatus = proposal.status;
+            await client.query(
+              rec.autopayDisarmed
+                ? 'UPDATE proposals SET status = $1, autopay_enrolled = false, autopay_status = NULL WHERE id = $2'
+                : 'UPDATE proposals SET status = $1 WHERE id = $2',
+              [rec.status, proposal.id]
+            );
+            proposal.status = rec.status;
+            await client.query(
+              `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
+               VALUES ($1, 'status_changed', 'client', $2)`,
+              [proposal.id, JSON.stringify({
+                from: priorStatus, to: rec.status,
+                reason: 'drink_plan_extras_reconciled', new_total: snapshot.total,
+              })]
+            );
+          }
+
           await client.query(
             `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
              VALUES ($1, 'drink_plan_addons_added', 'client', $2)`,
@@ -354,6 +391,12 @@ async function handleSubmit(req, res) {
             });
           }
           await refreshUnlockedInvoices(proposal.id, client);
+          // F2: a fully-paid proposal's invoices are LOCKED, so the refresh above
+          // can't re-bill the extras delta. Mirror crud.js: raise a separate
+          // "Additional Services" invoice for (newTotal - oldTotal). No-op when no
+          // locked invoice exists or the delta is <= 0 (idempotent on any
+          // admin-reset re-submit: oldTotalCents == newTotalCents -> null).
+          await createAdditionalInvoiceIfNeeded(proposal.id, oldTotalCents, client);
         }
       }
 
