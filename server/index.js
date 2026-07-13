@@ -72,7 +72,6 @@ const { AppError, ExternalServiceError } = require('./utils/errors');
 const { processAutopayCharges, processEventCompletions } = require('./utils/balanceScheduler');
 const { processScheduledAutoAssigns } = require('./utils/autoAssignScheduler');
 const { processSequenceSteps, expireStaleQuoteDrafts } = require('./utils/emailSequenceScheduler');
-const { purgeLabratTestData } = require('./utils/labratCleanup');
 const { dispatchPending } = require('./utils/scheduledMessageDispatcher');
 
 // Startup guards — fail fast if critical env vars are missing
@@ -309,11 +308,6 @@ app.use('/api/sms', require('./routes/sms'));
 app.use('/api/telegram', require('./routes/telegram'));
 app.use('/api/voice', require('./routes/voice'));
 app.use('/api/invoices', require('./routes/invoices'));
-app.use('/api/test-feedback', require('./routes/testFeedback'));
-// QA / labrat harness. /api/qa/seed mints loginable, self-escalating accounts,
-// so the whole /api/qa tree MUST 404 in production. The gate lives in a helper
-// (server/utils/qaMount.js) so it is unit-testable without booting the server.
-require('./utils/qaMount').mountQa(app);
 
 // Health check — must be registered BEFORE the React catch-all below.
 // Probes the DB (Render's health probe + uptime pingers hit this): a SELECT 1
@@ -444,15 +438,6 @@ async function start() {
         setInterval(wrapped, 24 * 60 * 60 * 1000);
       } else if (!globalScheduleDisabled) {
         clearHealthRow('quote_draft_cleanup');
-      }
-
-      // Lab rat test-data purge — every hour
-      if (enabled('RUN_LABRAT_PURGE_SCHEDULER')) {
-        const wrapped = wrapScheduler('labrat_purge', 3600, purgeLabratTestData);
-        setTimeout(wrapped, 150000);
-        setInterval(wrapped, 60 * 60 * 1000);
-      } else if (!globalScheduleDisabled) {
-        clearHealthRow('labrat_purge');
       }
 
       // Webhook events prune — drop webhook_events rows older than 30 days

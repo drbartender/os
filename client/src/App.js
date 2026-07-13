@@ -80,12 +80,6 @@ const PotionPlanningLab = lazy(() => import('./pages/plan/PotionPlanningLab'));
 const ClientShoppingList = lazy(() => import('./pages/public/ClientShoppingList'));
 const PortalHome = lazy(() => import('./pages/public/portal/PortalHome'));
 
-// Lazy-loaded: Lab Rat tester program (kept out of main bundle for non-tester visitors)
-const LabRatLanding = lazy(() => import('./pages/labrat/LabRatLanding'));
-const LabRatQuiz = lazy(() => import('./pages/labrat/LabRatQuiz'));
-const LabRatMissions = lazy(() => import('./pages/labrat/LabRatMissions'));
-const LabRatMission = lazy(() => import('./pages/labrat/LabRatMission'));
-
 // Lazy-loaded: public token-gated pages (Stripe SDK stays out of main bundle)
 const ProposalView = lazy(() => import('./pages/proposal/proposalView/ProposalView'));
 const ProposalCompare = lazy(() => import('./pages/proposal/compare/ProposalCompare'));
@@ -157,7 +151,6 @@ const EmailAnalyticsDashboard = lazy(() => import('./pages/admin/EmailAnalyticsD
 const EmailConversations = lazy(() => import('./pages/admin/EmailConversations'));
 const Messages = lazy(() => import('./pages/admin/Messages'));
 const TipsAdmin = lazy(() => import('./pages/admin/TipsAdmin'));
-const LabRatBugsPage = lazy(() => import('./pages/admin/LabRatBugsPage'));
 const ClassWizard = lazy(() => import('./pages/website/ClassWizard'));
 
 const SuspenseFallback = (
@@ -351,11 +344,6 @@ function PublicWebsiteRoutes() {
         <Route path="/my-proposals" element={<PortalHome />} />
         <Route path="/my-proposals/archive" element={<PortalHome />} />
         <Route path="/my-proposals/:token/:tab" element={<PortalHome />} />
-        {/* Lab Rat tester program */}
-        <Route path="/labrat" element={<LabRatLanding />} />
-        <Route path="/labrat/quiz" element={<LabRatQuiz />} />
-        <Route path="/labrat/missions" element={<LabRatMissions />} />
-        <Route path="/labrat/m/:id" element={<LabRatMission />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
@@ -486,12 +474,6 @@ function StaffSiteRoutes() {
 function AppRoutes() {
   const context = getSiteContext();
 
-  // Lab Rat lives on the public domain, but we want it reachable on localhost too
-  // (no subdomain in dev). Route by path before context dispatch.
-  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/labrat')) {
-    return <PublicWebsiteRoutes />;
-  }
-
   if (context === 'public') return <PublicWebsiteRoutes />;
   if (context === 'hiring') return <HiringRoutes />;
   if (context === 'staff') return <StaffSiteRoutes />;
@@ -577,7 +559,6 @@ function AppRoutes() {
         <Route path="/tips" element={<TipsAdmin />} />
         <Route path="/settings" element={<SettingsDashboard />} />
         <Route path="/blog" element={<BlogDashboard />} />
-        <Route path="/labrat-bugs" element={<LabRatBugsPage />} />
         <Route path="/email-marketing" element={<EmailMarketingDashboard />}>
           <Route index element={<EmailLeadsDashboard />} />
           <Route path="leads" element={<EmailLeadsDashboard />} />

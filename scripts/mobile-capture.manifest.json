@@ -20,7 +20,6 @@
     { "name": "client-login", "host": "public.localhost", "path": "/login", "auth": "none" },
     { "name": "quote", "host": "public.localhost", "path": "/quote", "auth": "none" },
     { "name": "classes", "host": "public.localhost", "path": "/classes", "auth": "none" },
-    { "name": "labrat", "host": "public.localhost", "path": "/labrat", "auth": "none" },
 
     { "name": "proposal-sent", "host": "public.localhost", "path": "/proposal/:token", "auth": "none", "settleMs": 2600,
       "tokenQuery": "SELECT token FROM proposals WHERE status='sent' ORDER BY id DESC LIMIT 1" },

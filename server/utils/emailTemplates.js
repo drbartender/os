@@ -673,38 +673,6 @@ function newThumbtackReviewAdmin({ reviewerName, rating, reviewText }) {
 
 // ─── Tip-page feedback (1-3★ negative-rating notification) ──────
 
-function labratBugReportAdmin({ bugId, kind, missionId, stepIndex, testerName, where, didWhat, happened, expected, browser, reportedAt }) {
-  let kindLabel = kind || 'Report';
-  if (kind === 'bug') kindLabel = 'Bug';
-  else if (kind === 'confusion') kindLabel = 'Confusion';
-  else if (kind === 'mission-stale') kindLabel = 'Stale mission';
-  // Strip CR/LF/tab and cap length before interpolating into the email subject —
-  // Resend / SMTP would reject header-significant chars, but defense-in-depth.
-  const subjectSafe = (v, max = 80) => (v ? String(v).replace(/[\r\n\t]/g, ' ').slice(0, max) : '');
-  const subjectName = testerName ? ` from ${subjectSafe(testerName)}` : '';
-  const subjectMission = missionId ? `, ${subjectSafe(missionId, 60)}` : '';
-  const formatBlock = (label, value) => value
-    ? `<p style="margin:0.5rem 0;"><strong>${label}:</strong><br/>${esc(value).replace(/\n/g, '<br/>')}</p>`
-    : '';
-  return {
-    subject: `[Lab Rat] ${kindLabel}${subjectName}${subjectMission}`,
-    html: wrapEmail(`
-      <h2 style="color:${BRAND.primary};margin-top:0;">Lab Rat ${kindLabel.toLowerCase()} report</h2>
-      <p style="color:${BRAND.secondary};margin:0 0 1rem;">${esc(reportedAt || new Date().toISOString())}</p>
-      <p><strong>Tester:</strong> ${esc(testerName || 'anonymous')}</p>
-      ${missionId ? `<p><strong>Mission:</strong> ${esc(missionId)}${Number.isFinite(stepIndex) ? ` (step ${stepIndex + 1})` : ''}</p>` : ''}
-      ${where ? `<p><strong>Where:</strong> ${esc(where)}</p>` : ''}
-      <div style="background:${BRAND.bg};padding:16px;border-radius:6px;margin:1rem 0;border-left:4px solid ${BRAND.secondary};">
-        ${formatBlock('What they did', didWhat)}
-        ${formatBlock(kind === 'mission-stale' ? "What's wrong" : 'What happened', happened)}
-        ${formatBlock('What they expected', expected)}
-      </div>
-      <p style="color:${BRAND.secondary};font-size:12px;margin-top:1.5rem;">Bug ID: ${esc(bugId || '-')}<br/>Browser: ${esc(browser || 'unknown')}</p>
-    `),
-    text: `Lab Rat ${kindLabel} from ${testerName || 'anonymous'}${missionId ? ` (mission ${missionId}${Number.isFinite(stepIndex) ? `, step ${stepIndex + 1}` : ''})` : ''}\n\nWhere: ${where || '-'}\nDid: ${didWhat || '-'}\nHappened: ${happened || '-'}${expected ? `\nExpected: ${expected}` : ''}\n\nBug ID: ${bugId || '-'}\nReported: ${reportedAt || new Date().toISOString()}`,
-  };
-}
-
 function tipFeedbackAdminNotification({ displayName, rating, comment, submitterEmail, adminUrl }) {
   const name = displayName || 'a bartender';
   const stars = '★'.repeat(rating) + '☆'.repeat(5 - rating);
@@ -950,8 +918,6 @@ module.exports = {
   newThumbtackReviewAdmin,
   // Tip-page feedback
   tipFeedbackAdminNotification,
-  // Lab Rat bug reports
-  labratBugReportAdmin,
   // Hiring redesign
   interviewConfirmation,
   paperworkReminder,

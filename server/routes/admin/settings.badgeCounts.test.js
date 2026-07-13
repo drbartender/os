@@ -117,9 +117,9 @@ after(async () => {
 });
 
 const COUNT_KEYS = ['pending_proposals', 'unstaffed_events', 'new_applications',
-  'pending_shopping_lists', 'open_tester_bugs', 'unread_sms'];
+  'pending_shopping_lists', 'unread_sms'];
 
-test('admin reads badge-counts: all six integer counts, seeded applicant visible', async () => {
+test('admin reads badge-counts: all five integer counts, seeded applicant visible', async () => {
   const res = await get('/api/admin/badge-counts', adminToken);
   assert.equal(res.status, 200);
   for (const k of COUNT_KEYS) assert.equal(typeof res.body[k], 'number', `${k} should be a number`);

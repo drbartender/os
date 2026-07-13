@@ -512,11 +512,6 @@ Agent + admin-paste surface for filling the customer email Thumbtack never sends
 |---|---|---|---|
 | GET | `/` | No | Returns curated 4–5 star Thumbtack reviews + count + average rating for the public HomePage. 5-minute in-memory cache, 120 req/min rate limit. Query: `?limit=1..20` (default 9). |
 
-### Test Feedback — `/api/test-feedback`
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/` | No (rate-limited, 10/hour per IP via `labratFeedbackLimiter`) | Receives Lab Rat bug/confusion/mission-stale reports (`kind`, `missionId`, `stepIndex`, `testerName`, `where`, `didWhat`, `happened`, `expected`, `browser`). Inserts into the `tester_bugs` Postgres table via `bugLog.appendBug` AND fire-and-forget emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` (default `contact@drbartender.com`) as a redundant notification path. Also accepts the legacy `{ reportText, progressSummary }` shape from `/testing-guide.html` via a back-compat shim. Admin triage UI at `/labrat-bugs`; CLI listing via `npm run bugs:list`. |
-
 ### Public Tip Pages — `/api/public/tip`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -528,11 +523,6 @@ Agent + admin-paste surface for filling the customer email Thumbtack never sends
 |---|---|---|---|
 | GET | `/:token` | No (token-gated) | Display data for the post-event feedback router page (client first name, event type). |
 | POST | `/:token` | No (token-gated) | Submit a rating (1-5). A 4-5 rating returns a Google Reviews redirect URL; a 1-3 rating records the feedback in `post_event_feedback` and emails an admin alert. Idempotent per proposal. |
-
-### Lab Rat (QA) — `/api/qa`
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| (missions / quiz / seed / bug-counts) | various | Mixed | Lab Rat tester program — missions, quiz, seed data, and bug counts (`server/routes/labrat.js`). Public seed routes are rate-limited; see the route file for exact paths. |
 
 ### Authenticated Self — `/api/me`
 | Method | Path | Auth | Description |
@@ -570,8 +560,6 @@ Agent + admin-paste surface for filling the customer email Thumbtack never sends
 | GET | `/tips` | Admin | Paginated list of all successful tips across bartenders for the TipsAdmin overview (filter by bartender, date range). |
 | GET | `/tip-feedback` | Admin | List unreviewed tip-page feedback submissions for admin triage. |
 | POST | `/tip-feedback/:id/review` | Admin | Mark a feedback row as reviewed (records reviewer + timestamp). |
-| GET | `/tester-bugs` | Admin/Manager | List Lab Rat bug reports (filter `?status=open\|fixed\|wontfix\|all` and `?missionId=...`). Returns `{ bugs, openCountByMission }`. |
-| PATCH | `/tester-bugs/:id` | Admin/Manager | Update a bug's triage state — body `{ status?, fixCommitSha?, notes? }`. Bumps `status_updated_at`. |
 | GET | `/users/:id/stub-co-participated-proposals` | Admin/Manager | Proposals where the given user co-participated on a shift with a legacy CC stub. Powers the user-detail "Co-participated with a CC stub" affordance. |
 | POST | `/proposals/:id/reenroll-drink-plan-nudge` | Admin | Re-schedule the drink-plan nudge (email + SMS) for a CC-imported proposal that now has a `drink_plans` row. Idempotent — duplicate-pending insert no-ops. Mounted from `routes/admin/ccImport/proposalActions.js`. |
 | POST | `/proposals/:id/reaccrue-payout` | Admin | Re-run `accruePayoutsForProposal` for a CC proposal after stub cleanup. Returns the structured `{ skipped, reason }` result. Mounted from `routes/admin/ccImport/proposalActions.js`. |
@@ -1079,30 +1067,6 @@ Dibs (spec `docs/superpowers/specs/2026-07-06-presence-dibs-design.md`): the fal
 - `reviewed_at` TIMESTAMPTZ, `reviewed_by` FK → users (admin who triaged; ON DELETE SET NULL — preserves history if an admin is removed)
 - `created_at` TIMESTAMPTZ DEFAULT NOW()
 - Submission emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL`; admin reviews via `GET /api/admin/tip-feedback`
-
-**tester_bugs** — Lab Rat tester-program bug reports (replaces the prior filesystem JSONL store, which was wiped on every Render deploy)
-- `id` TEXT PK — `bug_<iso>_<hex>` server-generated, sortable by timestamp
-- `kind` TEXT NOT NULL CHECK (`bug` | `confusion` | `mission-stale`)
-- `mission_id` TEXT, `step_index` INTEGER — links a report back to a Lab Rat mission and step
-- `tester_name` — optional contact (testers are unauthenticated)
-- `where_at`, `did_what`, `happened`, `expected`, `browser` — captured form fields (server-side length caps in `bugLog.appendBug`)
-- `reported_at` TIMESTAMPTZ DEFAULT NOW()
-- `status` TEXT NOT NULL DEFAULT `'open'` CHECK (`open` | `fixed` | `wontfix`)
-- `status_updated_at` TIMESTAMPTZ — bumped by `setBugStatus` on every triage update
-- `fix_commit_sha`, `notes` — admin triage metadata
-- Partial indexes on `(reported_at DESC) WHERE status='open'` and `(mission_id) WHERE status='open' AND mission_id IS NOT NULL` — both keep the badge-counts and mission-picker queries cheap as the table grows. A non-partial `(status, reported_at DESC)` index also covers the admin list view when filtering by `fixed` / `wontfix` / `all`.
-- `readAllBugs` caps results at 500 rows (defends against runaway result sets; far above current volume).
-- Insert path: `POST /api/test-feedback` → `bugLog.appendBug` → INSERT (plus best-effort admin email)
-- Read paths: admin UI `GET /api/admin/tester-bugs`, mission-picker badges `GET /api/qa/shortlist`, CLI `npm run bugs:list`
-
-**mission_completions** — Lab Rat mission completion log (replaces the prior filesystem JSONL store, which was wiped on every Render deploy — same fix pattern as `tester_bugs` from 2026-05-10)
-- `id` BIGSERIAL PK
-- `mission_id` TEXT NOT NULL
-- `tester_name` TEXT — optional
-- `completed_at` TIMESTAMPTZ DEFAULT NOW()
-- Index `idx_mission_completions_mission_id` supports the shortlist's `GROUP BY mission_id COUNT(*)` aggregation
-- Insert path: `POST /api/qa/complete` → `missionStats.logCompletion` → INSERT
-- Read path: `POST /api/qa/shortlist` → `missionStats.getCompletionCounts`
 
 **admin_audit_log** — Generic durable record of admin actions on user-owned resources. Initial call sites: tip-page rotate-token + regenerate-stripe; extend as more auditable surfaces emerge (role changes, deactivation, etc.).
 - `id` BIGSERIAL PK

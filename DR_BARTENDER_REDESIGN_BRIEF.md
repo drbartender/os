@@ -370,8 +370,6 @@ Organized by the density categories from §5.0.
 
 ### 6.4. Out of scope
 
-**Lab Rat (`pages/labrat/*`, `labrat.css`).** Intentionally off-brand tester program. Don't touch in this overhaul.
-
 **Email templates (`server/utils/emailTemplates.js`).** Deferred to a follow-up PR after the website ships. The redesign creates dissonance otherwise (clients book on a teal-and-parchment site, then get an amber-and-cream email), so this *will* happen — just not in this brief. Update `wrapEmail()` and `wrapMarketingEmail()` separately.
 
 **PDFs (`agreementPdf.js`, invoice "Save as PDF", `ShoppingListPDF.jsx`).** Out of scope for v1. Different rendering pipelines (PDFKit, html2pdf, jsPDF). Update separately.
@@ -473,7 +471,7 @@ Cliffs notes:
 - Four hosts: `drbartender.com`, `hiring.drbartender.com`, `staff.drbartender.com`, `admin.drbartender.com` (admin out of scope)
 - Token-gated pages mount on every host: `/proposal/:token`, `/plan/:token`, `/invoice/:token`, `/shopping-list/:token`
 - Routing decided in `client/src/App.js:137-144` based on `window.location.hostname`
-- One global stylesheet (`client/src/index.css`) plus two intentional exceptions (`labrat.css`, `proposalView/styles.js`)
+- One global stylesheet (`client/src/index.css`) plus one intentional exception (`proposalView/styles.js`)
 
 ---
 

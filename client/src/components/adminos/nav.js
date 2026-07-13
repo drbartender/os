@@ -17,7 +17,6 @@ const NAV = [
   { section: 'Content', items: [
     { id: 'potions',     label: 'Potions',       icon: 'flask',     path: '/potions', badgeKey: 'pending_shopping_lists' },
     { id: 'blog',        label: 'Lab Notes',     icon: 'pen',       path: '/blog' },
-    { id: 'labrat-bugs', label: 'Lab Rat Bugs',  icon: 'clipboard', path: '/labrat-bugs', badgeKey: 'open_tester_bugs' },
     { id: 'settings',    label: 'Settings',      icon: 'gear',      path: '/settings' },
   ]},
 ];

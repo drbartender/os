@@ -142,23 +142,7 @@ The redesigned v2 portal is now the live staff portal, mounted at root on `staff
 
 ---
 
-## G. Lab Rat Tester Program (public, lazy-loaded)
-
-| File | Purpose |
-|---|---|
-| `client/src/pages/labrat/LabRatLanding.js` | Tester program intro — "Be a Lab Rat", optional first-name field, links to quiz or missions. Has its own scoped `data-app="labrat"` styling block in `labrat.css`. |
-| `client/src/pages/labrat/LabRatQuiz.js` | Quick onboarding quiz that picks a starting mission. |
-| `client/src/pages/labrat/LabRatMissions.js` | Mission picker. |
-| `client/src/pages/labrat/LabRatMission.js` | Single mission view with checklist + bug submission. |
-| `client/src/pages/labrat/BugDialog.js` | Modal for filing bug reports back to the inbox. |
-| `client/src/pages/labrat/linkify.js` | Helper for turning URLs into anchors in mission text. |
-| `client/src/pages/labrat/labrat.css` | Lab-Rat-only CSS, scoped via `data-app="labrat"`. |
-
-(This program is intentionally separate from the visual brand. Decide whether the overhaul includes it or leaves it alone.)
-
----
-
-## H. Shared Components Used by Client-Facing Pages
+## G. Shared Components Used by Client-Facing Pages
 
 These will get touched anywhere they're rendered in a redesigned page. They're the connective tissue.
 
@@ -187,16 +171,15 @@ These will get touched anywhere they're rendered in a redesigned page. They're t
 
 ---
 
-## I. Global Styling
+## H. Global Styling
 
 | File | Purpose |
 |---|---|
 | `client/src/index.css` | Vanilla CSS for the entire app — class names like `ws-*` (website), `wz-*` (wizards), `client-*` (portal), `lab-*` (blog), `auth-page`, `card`, `btn-primary`, `radio-option`, etc. No Tailwind, no preprocessor. CSS variables for `--font-display`, `--amber`, `--deep-brown`, `--parchment`, `--cream-text`, `--success`, `--rust`. The single biggest file the redesign will touch. |
-| `client/src/pages/labrat/labrat.css` | Scoped Lab Rat styles (separate so they don't leak). |
 
 ---
 
-## J. Server Surfaces That Render or Email Client-Facing Content
+## I. Server Surfaces That Render or Email Client-Facing Content
 
 Worth knowing because the overhaul probably touches the things clients receive in their inbox or download.
 
@@ -204,14 +187,13 @@ Worth knowing because the overhaul probably touches the things clients receive i
 |---|---|
 | `server/utils/emailTemplates.js` | All transactional + admin-notification email HTML. `wrapEmail()` is the transactional shell, `wrapMarketingEmail()` is the marketing shell with unsubscribe footer. Includes proposal-sent / payment-received / drink-plan-ready / interview-confirmation / paperwork-reminder / new-application-admin / top-shelf-class-request templates. |
 | `server/utils/agreementPdf.js` | PDFKit renderer for the signed contractor-agreement PDF that contractors get emailed. |
-| `client/public/testing-guide.html` | Built from `TESTING.md` by `scripts/build-testing-guide.js`. Lab Rat program references it. |
 | `client/src/data/menuSamples.js`, `addonCategories.js`, `eventTypes.js`, `packages.js`, `syrups.js` | Static catalog data. `packages.js` and `syrups.js` are shown to clients; changes here re-skin the Quote Wizard add-on cards and Potion Planning Lab. |
 
 **Setup time is back-of-house only.** `proposals.setup_minutes_before` (admin override; NULL ⇒ derive 90 hosted / 60 else), the synced `shifts.setup_minutes_before`, and the derived `setup_time_display` are crew arrival/prep timing — surfaced ONLY on admin event/proposal pages, the staff portal (Shifts tab / ShiftDetail), and the staff hire-confirmation email (`shiftRequestApproved`). The public token route (`server/routes/proposals/publicToken.js`) uses an explicit column allowlist that **deliberately omits** `setup_minutes_before` and adds no derived setup key to its `res.json` — clients/leads never see it. No client-facing email or token-gated template (proposal / invoice / drink plan / shopping list) renders setup time.
 
 ---
 
-## K. Design Rules & Conventions
+## J. Design Rules & Conventions
 
 The load-bearing constraints — anything the redesign should know going in. Pulled from `CLAUDE.md`, `README.md`, `ARCHITECTURE.md`, and the actual `index.css` tokens.
 
@@ -224,7 +206,6 @@ The load-bearing constraints — anything the redesign should know going in. Pul
 
 Everything lives in `client/src/index.css` (8,865 lines). The only exceptions:
 
-- `client/src/pages/labrat/labrat.css` — scoped Lab Rat styles, gated by `data-app="labrat"`.
 - Per-page inline-style objects in `proposalView/styles.js` and `ClientShoppingList.js`. These two surfaces opted out of the global stylesheet entirely.
 
 If the redesign introduces a new approach (Tailwind, CSS modules, design-token JSON, CSS-in-JS), it's a deliberate break from this rule — not a drop-in.
@@ -407,7 +388,6 @@ The lab/apothecary metaphor runs through copy too — useful to know if the over
 - **Onboarding chrome:** "Welcome to the Lab", "Lab Access Requirements", "Field Guide", "Payday Protocols".
 - **Blog:** *Lab Notes* (chapter-numbered).
 - **Drink-plan flow:** *Potion Planning Lab*.
-- **Tester program:** *Be a Lab Rat* — and yes, this is intentionally gritty/separate.
 
 If you're rebranding, the metaphor is everywhere. If you're refreshing, the metaphor likely stays — but it's the single biggest decision to make up front.
 
@@ -455,8 +435,6 @@ The primary status badges in `index.css` (`badge-inprogress`, `badge-submitted`,
 
 **Hiring and the staff portal share the auth pages.** The hiring host shows a 4-step "how to apply" landing, drives applicants through Register → Application → ApplicationStatus, and once the admin flips them to `hired` the same domain can host the onboarding flow (Welcome → Field Guide → Agreement → Profile → Payday → Complete). Once the contractor is `submitted` they bounce over to staff.drbartender.com which has its own sidebar app (Dashboard / Shifts / Schedule / Events / Resources / Profile). Admin/manager users get a sidebar shortcut back to admin.drbartender.com.
 
-**Lab Rat is a deliberately off-brand tester program** with its own scoped CSS. Decide whether to leave it alone or include it in the overhaul.
-
 **Styling is one big `index.css`.** No Tailwind, no CSS-in-JS, no design tokens beyond a few CSS variables. The proposal page (`proposalView/styles.js`) and shopping list (inline styles in `ClientShoppingList.js`) are exceptions — they each carry their own style objects independent of the global stylesheet.
 
 ---
@@ -494,9 +472,8 @@ The primary status badges in `index.css` (`badge-inprogress`, `badge-submitted`,
 
 A few "is this in scope?" questions worth answering up front, because they fork the plan:
 
-1. **Lab Rat program** — has its own scoped visual language. Leave alone, or align with new system?
-2. **Shopping list dark theme** — `ClientShoppingList.js` is a wholly separate visual system (own inline styles). Mobile-first, dark, intentional. Keep as-is, or absorb into the new design system?
-3. **Proposal page styling** — lives in `proposalView/styles.js` as JS objects, not in `index.css`. Decision: migrate to the new system's classes, or keep self-contained?
-4. **Admin shell vs marketing** — "client facing" reads as everything except `pages/admin/` and `components/AdminLayout.js` + `components/adminos/*`. Confirm. (Staff portal is technically internal-but-external — they're contractors, not employees, and they touch the brand.)
-5. **Email templates** — `wrapEmail()` and `wrapMarketingEmail()` define the visual language clients see in their inbox. They'll feel disjointed if the website changes but the emails don't. In scope?
-6. **PDFs** — the signed agreement PDF (`agreementPdf.js`), invoice "Save as PDF" output, and ShoppingListPDF all carry brand. Re-skin too?
+1. **Shopping list dark theme** — `ClientShoppingList.js` is a wholly separate visual system (own inline styles). Mobile-first, dark, intentional. Keep as-is, or absorb into the new design system?
+2. **Proposal page styling** — lives in `proposalView/styles.js` as JS objects, not in `index.css`. Decision: migrate to the new system's classes, or keep self-contained?
+3. **Admin shell vs marketing** — "client facing" reads as everything except `pages/admin/` and `components/AdminLayout.js` + `components/adminos/*`. Confirm. (Staff portal is technically internal-but-external — they're contractors, not employees, and they touch the brand.)
+4. **Email templates** — `wrapEmail()` and `wrapMarketingEmail()` define the visual language clients see in their inbox. They'll feel disjointed if the website changes but the emails don't. In scope?
+5. **PDFs** — the signed agreement PDF (`agreementPdf.js`), invoice "Save as PDF" output, and ShoppingListPDF all carry brand. Re-skin too?

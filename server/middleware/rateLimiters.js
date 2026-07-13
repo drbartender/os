@@ -62,43 +62,6 @@ const clientPortalWriteLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Lab Rat seed endpoint mints real users + clients on every call AND returns
-// a working credential (for the pre-hire-invitation recipe). Tight per-IP cap
-// resists single-IP flooding; secondary global cap caps damage from a
-// distributed attacker rotating IPs. Combined with the hourly cleanup
-// scheduler (labratCleanup.js), the steady-state max-attacker damage is
-// roughly the global limit, since older rows continuously evaporate.
-const labratSeedLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 2,
-  message: { error: 'Too many seed requests. Try again in an hour.' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-// Global cap across all IPs — IP-rotating attacker still hits this ceiling.
-const labratSeedGlobalLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 20,
-  // Same key for every request so all IPs share the bucket.
-  keyGenerator: () => 'labrat-seed-global',
-  message: { error: 'Lab Rat seed is temporarily saturated. Try again later.' },
-  standardHeaders: false,
-  legacyHeaders: false,
-});
-
-// Lab Rat bug-report endpoint is unauthenticated and triggers an admin email
-// with a user-controlled Reply-To. Tighter than publicLimiter so a botnet
-// can't reflect spam through contact@drbartender.com. 10/hour per IP is
-// generous for a real tester finishing a multi-mission session.
-const labratFeedbackLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10,
-  message: { error: 'Too many feedback submissions. Try again in an hour.' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
 // Admin proposal writes (POST /proposals, PATCH /:id/status) can fire client
 // emails — every →sent transition emails the client. Keyed by user id, not IP,
 // so an office NAT doesn't share a bucket. 10/min is still far above any human
@@ -140,7 +103,7 @@ const venueSearchLimiter = rateLimit({
 });
 
 // Global ceiling across all IPs, so an IP-rotating attacker still hits a cap
-// on the paid Google quota. Same pattern as labratSeedGlobalLimiter. Sized for
+// on the paid Google quota (same shared-bucket keyGenerator pattern). Sized for
 // whole-site quote volume, not a single user; raise if real traffic nears it.
 const venueSearchGlobalLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -214,9 +177,6 @@ module.exports = {
   drinkPlanWriteLimiter,
   logoUploadLimiter,
   clientPortalWriteLimiter,
-  labratSeedLimiter,
-  labratSeedGlobalLimiter,
-  labratFeedbackLimiter,
   adminWriteLimiter,
   adminSearchLimiter,
   venueSearchLimiter,

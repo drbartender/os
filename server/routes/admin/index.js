@@ -11,7 +11,6 @@ router.use('/', require('./managers'));
 router.use('/', require('./blog'));
 router.use('/', require('./settings'));
 router.use('/', require('./hiring'));
-router.use('/', require('./labratBugs'));
 router.use('/', require('./search'));
 router.use('/', require('./payroll'));
 router.use('/', require('./payrollTax'));

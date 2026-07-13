@@ -139,7 +139,6 @@ router.get('/badge-counts', auth, requireAdminOrManager, asyncHandler(async (req
          WHERE u.onboarding_status = 'applied')::int AS new_applications,
       (SELECT COUNT(*) FROM drink_plans
          WHERE shopping_list_status = 'pending_review')::int AS pending_shopping_lists,
-      (SELECT COUNT(*) FROM tester_bugs WHERE status = 'open')::int AS open_tester_bugs,
       (SELECT COUNT(*) FROM sms_messages
          WHERE direction = 'inbound' AND read_at IS NULL AND client_id IS NOT NULL)::int AS unread_sms
   `);

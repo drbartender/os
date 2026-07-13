@@ -2322,42 +2322,6 @@ ALTER TABLE tip_page_feedback
   ADD CONSTRAINT tip_page_feedback_reviewed_by_fkey
   FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL;
 
--- ─── Lab Rat tester bug reports (Postgres-persistent, 2026-05-10) ──
--- Replaces the prior filesystem JSONL store at server/data/tester-bugs/
--- which was wiped on every Render deploy (filesystem is ephemeral).
--- Real tester submissions were lost in late April / early May 2026 —
--- this table is the durable copy. Email-on-submit (testFeedback.js)
--- is the redundant notification path that survived the prior outage.
-CREATE TABLE IF NOT EXISTS tester_bugs (
-  id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('bug', 'confusion', 'mission-stale')),
-  mission_id TEXT,
-  step_index INTEGER,
-  tester_name TEXT,
-  tester_email TEXT,
-  where_at TEXT,
-  did_what TEXT,
-  happened TEXT,
-  expected TEXT,
-  browser TEXT,
-  screenshot_url TEXT,
-  reported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'fixed', 'wontfix')),
-  status_updated_at TIMESTAMPTZ,
-  fix_commit_sha TEXT,
-  notes TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_tester_bugs_open_reported_at
-  ON tester_bugs(reported_at DESC) WHERE status = 'open';
-CREATE INDEX IF NOT EXISTS idx_tester_bugs_mission_open
-  ON tester_bugs(mission_id) WHERE status = 'open' AND mission_id IS NOT NULL;
--- General-purpose index for the admin list view when filtering by
--- status='fixed' / 'wontfix' / 'all'. The partial indexes above only help
--- the status='open' path.
-CREATE INDEX IF NOT EXISTS idx_tester_bugs_status_reported_at
-  ON tester_bugs(status, reported_at DESC);
-
 -- ─── Admin audit log (2026-05-12) ──────────────────────────────────
 -- Generic durable record of admin actions on user-owned resources.
 -- Initial call sites: tip-page rotate-token + regenerate-stripe. Add
@@ -2378,29 +2342,6 @@ CREATE INDEX IF NOT EXISTS idx_admin_audit_log_target_created_at
   ON admin_audit_log(target_user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_log_action_created_at
   ON admin_audit_log(action, created_at DESC);
-
--- ─── Lab Rat mission completion log (Postgres-persistent, 2026-05-14) ──
--- Replaces the prior filesystem JSONL store at
--- server/data/mission-completions.jsonl which was wiped on every Render
--- deploy. Same fix as tester_bugs (2026-05-10). The shortlist algorithm
--- in server/utils/shortlist.js reads from here to detect p0 saturation
--- and to favor least-completed missions when sorting within a tier.
-CREATE TABLE IF NOT EXISTS mission_completions (
-  id BIGSERIAL PRIMARY KEY,
-  mission_id TEXT NOT NULL,
-  tester_name TEXT,
-  completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_mission_completions_mission_id
-  ON mission_completions(mission_id);
-
--- ─── Lab Rat tester_bugs: drop unused contact fields (2026-05-14) ──
--- The BugDialog UI never collected tester_email or screenshot_url; the
--- backend validation and admin-viewer rendering were defending an unused
--- attack surface. Confirmed empty before drop. Triage workflow is admin
--- UI + Claude session, not email reply.
-ALTER TABLE tester_bugs DROP COLUMN IF EXISTS tester_email;
-ALTER TABLE tester_bugs DROP COLUMN IF EXISTS screenshot_url;
 
 -- ─── Metrics filtering: date-column indexes (2026-05-17) ──────────
 -- Dashboard/Financials filter by sent_at, accepted_at, and payment

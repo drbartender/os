@@ -15,8 +15,6 @@
     "audit:check": "npm audit --omit=dev || true",
     "check:filesize": "node scripts/check-file-size.js --all",
     "mobile:check": "node scripts/mobile-capture.js",
-    "build:testing-guide": "node scripts/build-testing-guide.js",
-    "bugs:list": "node server/scripts/bugsList.js",
     "optimize:assets": "node scripts/optimize-assets.js",
     "worktree:new": "node scripts/worktree-new.js",
     "worktree:rm": "node scripts/worktree-rm.js",
