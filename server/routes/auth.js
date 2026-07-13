@@ -14,7 +14,15 @@ const { writeActivityBestEffort, writeInterviewNoteBestEffort } = require('../ut
 
 const router = express.Router();
 
-// Per-account login lockout
+// Per-account login lockout.
+// NOTE (audited 2026-07-13): this Map is NOT an unbounded-growth risk, despite looking
+// like one. The only write is the failed-password branch below, which is reachable only
+// AFTER the users lookup returns a row — an unknown email throws first. So the key space
+// is bounded by registered users (dozens), not by attacker-supplied input, and a
+// credential-stuffing flood of unknown emails adds zero entries. Do not "fix" this with
+// a sweep; there is nothing to sweep. If the failed-attempt tracking is ever moved ABOVE
+// the user lookup (the correct fix for the user-enumeration timing oracle), it becomes
+// attacker-keyed and WILL need a bound at that point.
 const loginAttempts = new Map(); // email -> { count, firstAttempt }
 const MAX_ATTEMPTS = 10;
 const LOCKOUT_WINDOW = 15 * 60 * 1000; // 15 minutes
@@ -234,7 +242,10 @@ router.post('/claim-pre-hire', authLimiter, auth, asyncHandler(async (req, res) 
       // moved them to 'interviewing', 'rejected', etc. while we were running).
       // Treat as a no-op: roll back, return the current user without writes.
       await client.query('ROLLBACK');
-      const appResult = await pool.query('SELECT id FROM applications WHERE user_id = $1', [req.user.id]);
+      // Reuse this client: a rolled-back client is back in autocommit and reusable, and
+      // pool.query() here would take a SECOND pooled connection while we still hold this
+      // one. One connection per request, connect to release.
+      const appResult = await client.query('SELECT id FROM applications WHERE user_id = $1', [req.user.id]);
       return res.json({ user: { ...req.user, onboarding_status: freshStatus, has_application: appResult.rows.length > 0 } });
     }
 

@@ -226,7 +226,10 @@ router.patch('/payroll/payout-events/:id', auth, adminOnly, asyncHandler(async (
     const payoutTotal = await recomputePayoutTotal(client, row.payout_id);
     await client.query('COMMIT');
 
-    const refreshed = await pool.query(
+    // Post-COMMIT refresh on the client we already hold: pool.query() would take a
+    // SECOND pooled connection while this one is still checked out (released in the
+    // finally below). One connection per request, connect to release.
+    const refreshed = await client.query(
       `SELECT * FROM payout_events WHERE id = $1`, [eventId]
     );
     res.json({ event: refreshed.rows[0], payout_total_cents: payoutTotal });
@@ -405,7 +408,8 @@ router.post('/payroll/payouts/:id/mark-paid', auth, adminOnly, asyncHandler(asyn
     const finalized = await maybeFinalizePeriod(client, rows[0].pay_period_id);
     await client.query('COMMIT');
 
-    const refreshed = await pool.query(
+    // Post-COMMIT refresh on the client we already hold — see the note above.
+    const refreshed = await client.query(
       `SELECT id, contractor_id, status, total_cents,
               payment_method, payment_handle, paid_at, paystub_storage_key
          FROM payouts WHERE id = $1`,

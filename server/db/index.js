@@ -5,11 +5,24 @@ const path = require('path');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL?.includes('neon.tech') ? { rejectUnauthorized: false } : false,
-  // Pool sizing (SERVER-11): GET /api/proposals/dashboard-stats fans out ~14
-  // concurrent aggregate queries; the pg default max of 10 forced the overflow
-  // to queue on pg-pool.connect (the spans Sentry flagged as an "N+1"). 20 covers
-  // the widest concurrent fan-out with headroom.
-  max: 20,
+  // Pool sizing (SERVER-11, revised): the admin Money Board mounts BOTH aggregate
+  // endpoints at once (OverviewPage useEffect), and each fans out its own Promise.all:
+  // /proposals/dashboard-stats ~14 concurrent queries + /proposals/financials ~9. So a
+  // SINGLE page load demands ~23 simultaneous checkouts, which already overshot the old
+  // max of 20 (that comment counted only the 14 and missed the +9). Two admins/managers
+  // loading together is ~46, plus the autopay sweep (CONCURRENCY=5) and any in-flight
+  // Stripe webhook transaction holding a client. 50 covers two concurrent Money Board
+  // loads with operational headroom instead of queueing them toward the 10s
+  // connectionTimeoutMillis, where a slow scan or a Neon cold start turns the queue into
+  // 500s that starve unrelated requests (webhooks, staff portal) too.
+  // Ceiling check: 50 is safe against either Neon endpoint. Through the pooled
+  // (PgBouncer) endpoint, app-side connections are multiplexed onto a handful of
+  // backends and the binding limit is max_client_conn (thousands). Against a direct
+  // compute, max_connections scales with compute size and is >= 112 even on the
+  // smallest 0.25 CU tier. Do NOT size this against a single observed max_connections
+  // reading: it is compute-size dependent, and via PgBouncer it is not the constraint
+  // at all.
+  max: 50,
   connectionTimeoutMillis: 10000,
 });
 

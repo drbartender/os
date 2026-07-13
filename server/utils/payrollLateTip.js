@@ -103,12 +103,16 @@ async function rollForwardLateTip(tipId) {
     }
     if (period.status !== 'open') {
       // Today's period is itself frozen (atypical, recoverable). Discard the no-op
-      // period upsert, then persist a deferral marker on a fresh connection.
+      // period upsert, then persist a deferral marker on this same connection: a
+      // rolled-back client is back in autocommit and fully reusable, whereas
+      // pool.query() would take a SECOND pooled connection while we still hold this
+      // one, and on a refund/dispute webhook storm enough handlers each holding two
+      // connections exhaust the pool.
       await client.query('ROLLBACK');
       try {
         // Guard on rolled_forward_at IS NULL so a placement that committed during
         // this race is never re-flagged (no resurrection / double-pay).
-        await pool.query(
+        await client.query(
           `UPDATE tips
               SET deferred_at = COALESCE(deferred_at, NOW()),
                   defer_kind = 'roll_forward',

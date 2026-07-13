@@ -129,7 +129,11 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
       // retry can re-apply this clawback once a period opens.
       await client.query('ROLLBACK');
       try {
-        await pool.query(
+        // Reuse this client (a rolled-back client is back in autocommit and fully
+        // reusable) rather than pool.query(), which would take a SECOND pooled
+        // connection while we still hold this one. On a refund/dispute webhook storm
+        // enough handlers each holding two connections exhaust the pool.
+        await client.query(
           `UPDATE tips
               SET deferred_at = COALESCE(deferred_at, NOW()),
                   defer_kind = 'clawback', defer_target_cents = $2,

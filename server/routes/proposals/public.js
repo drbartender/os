@@ -156,23 +156,30 @@ router.post('/public/capture-lead', publicLimiter, asyncHandler(async (req, res)
 
     await dbClient.query('COMMIT');
 
-    // Auto-enroll in abandoned quote sequence (outside transaction — non-blocking)
+    // Auto-enroll in abandoned quote sequence. The transaction COMMITted above, so
+    // dbClient is back in autocommit and each query below runs standalone. Reuse it
+    // rather than calling pool.query(), which would check out a SECOND pooled
+    // connection while this request still holds its first: under a quote-wizard
+    // spike enough concurrent requests each holding one connection and waiting on
+    // another exhaust the pool and deadlock it (nobody can release until they get a
+    // connection nobody can free). One connection per request, connect to release.
+    // Still best-effort / non-blocking.
     try {
-      const hasProposal = await pool.query(
+      const hasProposal = await dbClient.query(
         `SELECT 1 FROM clients c JOIN proposals p ON p.client_id = c.id WHERE c.email = $1 LIMIT 1`,
         [cleanEmail]
       );
       if (!hasProposal.rows[0]) {
-        const campaign = await pool.query(
+        const campaign = await dbClient.query(
           `SELECT id FROM email_campaigns WHERE name = 'Abandoned Quote Followup' AND type = 'sequence' AND status = 'active' LIMIT 1`
         );
         if (campaign.rows[0]) {
-          const firstStep = await pool.query(
+          const firstStep = await dbClient.query(
             'SELECT delay_days, delay_hours FROM email_sequence_steps WHERE campaign_id = $1 ORDER BY step_order LIMIT 1',
             [campaign.rows[0].id]
           );
           const { delay_days = 0, delay_hours = 2 } = firstStep.rows[0] || {};
-          await pool.query(
+          await dbClient.query(
             `INSERT INTO email_sequence_enrollments (campaign_id, lead_id, next_step_due_at)
              VALUES ($1, $2, NOW() + MAKE_INTERVAL(days => $3, hours => $4))
              ON CONFLICT (campaign_id, lead_id) DO NOTHING`,
