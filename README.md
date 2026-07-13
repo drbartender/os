@@ -336,8 +336,7 @@ dr-bartender/
 │       ├── staffPaymentImport/   # Offline one-off pipeline (never imported by the server): parse Venmo/CashApp/Zelle/PayPal exports → classify/cluster → build a human review sheet → single-transaction import into staff_payment_history. Data files live on the share only, never committed (config.js, staging.js, parsers/, dictionary.js, classify.js, eventMatch.js, exportKnownPeople.js, ccReports.js, buildReviewSheet.js; importFromSheet.js/reconcile.js/verifyImport.js land with the import lane)
 │       └── archive/               # One-time migrations (already run, kept for history)
 │           ├── importBlogPosts.js
-│           ├── migrateBlogBodies.js
-│           └── migrate-to-gcs.js
+│           └── migrateBlogBodies.js
 ├── client/
 │   ├── src/
 │   │   ├── App.js              # All routes, auth guards (ProtectedRoute, RequireHired, etc.)

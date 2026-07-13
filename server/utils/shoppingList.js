@@ -1,10 +1,12 @@
-// Server-side shopping list generator. Mirrors
-// client/src/components/ShoppingList/generateShoppingList.js + shoppingListPars.js +
-// the syrup helper from client/src/data/syrups.js (getBottlesPerSyrup) so the
-// drink-plan submit transaction can auto-generate a draft list for admin review
-// without round-tripping through the browser. Keep the algorithm in sync — when
-// you change one side, mirror the change to the other and update the unit-test
-// fixtures (if any). Pure functions, no DB calls.
+// Server-side shopping list generator. This module is the SOLE source of truth
+// for shopping-list generation; the client no longer computes lists locally and
+// instead consumes GET /api/drink-plans/t/:token/shopping-list. The drink-plan
+// submit transaction calls these functions to auto-generate a draft list for
+// admin review without round-tripping through the browser.
+// One cross-file claim remains: getBottlesPerSyrup mirrors the same helper in
+// client/src/data/syrups.js (1 bottle / 50 guests). Keep those two in sync; if
+// you change the syrup ratio on one side, mirror it to the other.
+// Pure functions, no DB calls.
 
 const crypto = require('crypto');
 const { resolveRecipeRow, normalizeName } = require('./potionCatalog');
