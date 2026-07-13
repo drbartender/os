@@ -89,13 +89,19 @@ export function formatVenue(v = {}) {
 }
 
 // Address-only Google Maps `?query=` string (mirrors composeVenueMapQuery in
-// server/utils/venueAddress.js — keep in sync). Excludes venue_name so Google
-// geocodes the street address instead of text-searching the name and landing on
-// a same-named place or a vague area. Returns null when there is no street/city,
-// so callers fall back to the full composed location string.
+// server/utils/venueAddress.js — keep in sync, including the trim). Excludes
+// venue_name so Google geocodes the street address instead of text-searching the
+// name and landing on a same-named place or a vague area.
+// Returns null when there is NO STREET: the name is then the only thing locating
+// the venue, so there is nothing better to geocode and the caller must fall back
+// to the full composed location string (which includes the name). Dropping the
+// name without a street to replace it would route staff to a city centroid.
+const vs = (x) => String(x ?? '').trim();
 export function venueMapQuery(v) {
   const o = v || {};
-  const cityState = [o.venue_city, o.venue_state].filter(Boolean).join(', ');
-  const cityStateZip = [cityState, o.venue_zip].filter(Boolean).join(' ');
-  return [o.venue_street, cityStateZip].filter(Boolean).join(', ') || null;
+  const street = vs(o.venue_street);
+  if (!street) return null;
+  const cityState = [vs(o.venue_city), vs(o.venue_state)].filter(Boolean).join(', ');
+  const cityStateZip = [cityState, vs(o.venue_zip)].filter(Boolean).join(' ');
+  return [street, cityStateZip].filter(Boolean).join(', ') || null;
 }

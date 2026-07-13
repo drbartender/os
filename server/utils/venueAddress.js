@@ -42,6 +42,13 @@ function composeVenueLocation(v = {}) {
 function composeVenueMapQuery(v) {
   const o = v || {};
   const street = s(o.venue_street);
+  // No street means the venue NAME is the only thing that locates this place, so there
+  // is nothing better to geocode: return null and let the caller fall back to the full
+  // composed event_location (which includes the name). Dropping the name here without a
+  // street to replace it would send staff to a city centroid instead of the venue --
+  // most rows have no street (35 of 206 in prod at time of writing), so that fallback is
+  // the common path, not the edge case.
+  if (!street) return null;
   const city = s(o.venue_city);
   const state = s(o.venue_state);
   const zip = s(o.venue_zip);
