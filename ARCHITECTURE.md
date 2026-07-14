@@ -548,6 +548,7 @@ Agent + admin-paste surface for filling the customer email Thumbtack never sends
 | POST | `/confirm-email-change` | No (email-link token) | Unauthenticated confirm — the email-link token proves intent, applies the new email, and bumps `token_version` to invalidate old JWTs. Mounted at `/api/me` before `me.js` (`emailChange.js`). |
 
 ### Admin Tip Pages — `/api/admin/contractors/:userId/tip-page`
+_(all in `server/routes/admin/contractorTipPage.js`)_
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | PATCH | `/` | Admin | Override tip-page fields for a bartender (display name, photo, payment handles, status). |
@@ -558,6 +559,7 @@ Agent + admin-paste surface for filling the customer email Thumbtack never sends
 | POST | `/activate` | Admin | Re-activate a previously deactivated tip page. |
 
 ### Admin Tip Activity — `/api/admin`
+_(all in `server/routes/admin/contractorTipPage.js`)_
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/tips` | Admin | Paginated list of all successful tips across bartenders for the TipsAdmin overview (filter by bartender, date range). |

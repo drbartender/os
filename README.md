@@ -145,6 +145,8 @@ dr-bartender/
 │   ├── routes/
 │   │   ├── admin/              # Admin endpoints (users/applications/hiring/managers/blog/settings sub-routers)
 │   │   │   ├── index.js        # Composition router
+│   │   │   ├── users.js        # /users CRUD + onboarding state machine + /active-staff + seniority
+│   │   │   ├── contractorTipPage.js # /contractors/:userId/tip-page admin actions (patch/rotate-token/generate-stripe/regenerate-stripe/activate/deactivate) + /tips + /tip-feedback review
 │   │   │   ├── applications.js # /applications + /notes + interview scheduling + scorecard + reject/restore/move/reminder
 │   │   │   ├── hiring.js       # /hiring/summary (KPIs) + /hiring/search (cross-state applicant search)
 │   │   │   ├── managers.js     # /managers CRUD
