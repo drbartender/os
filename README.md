@@ -291,8 +291,11 @@ dr-bartender/
 │   │   ├── orientationData.js  # Assembles the booking/receipt/planner payload for the orientation email
 │   │   ├── pendingCall.js      # VA-calling DB helpers: upsertPending, claimForDial (conditional UPDATE claim-then-call), attachCallSid, lookupTargetByCallSid, countPlacedSince (daily/per-min cap), recordAudit, pruneVaCallingRows
 │   │   ├── phone.js            # Save-time phone validation (10 digits, strips country code 1)
-│   │   ├── pricingEngine.js    # Pure pricing calculation engine
+│   │   ├── pricingEngine.js    # Pure pricing calculation engine (stamps pricing_snapshot._version)
+│   │   ├── pricingSnapshot.js  # PRICING_SNAPSHOT_VERSION + readSnapshot(): tolerant versioned reader every server pricing_snapshot consumer routes through (legacy=v1 tolerated, unknown future version throws)
 │   │   ├── proposalInsert.js    # Shared proposals-row + addons INSERT builder (insertProposalRecord); single source of the proposal INSERT shape, used by the manual create route and the Thumbtack auto-draft util
+│   │   ├── proposalMoneyShared.js # Shared safeAddonQty + CONTRACT_LABELS (single source; consumed by proposals routes, changeRequests, payrollAccrual, refundHelpers)
+│   │   ├── clientSources.js    # Canonical CLIENT_SOURCES / LEAD_SOURCES vocabularies (schema CHECKs + client mirrors point here)
 │   │   ├── proposalRules.js     # Server twin of client proposalRules.js + validateProposalRules (authoritative bundle/addon/guardrail gate)
 │   │   ├── pushDispatch.js     # Push-channel dispatch (dispatchPushRow): sends Web Push outside any DB transaction, prunes 410/404-dead subs in a short separate transaction (SERVER-17 fix)
 │   │   ├── scheduledMessageDispatcher.js # 5-minute scheduler: drains pending scheduled_messages rows, applies suppression, invokes per-message-type handlers
@@ -351,7 +354,10 @@ dr-bartender/
 │   │   │   ├── clientSources.js # Canonical client source list (mirrors schema CHECK + server VALID_SOURCES)
 │   │   │   ├── constants.js    # App-wide constants
 │   │   │   ├── eventTypes.js   # Event type id→label resolver (mirrors server)
+│   │   │   ├── formatDelta.js  # Shared change-request dollar-delta formatter (admin queue/card + public portal form)
 │   │   │   ├── formatMoney.js  # Integer-cents → human dollar string (e.g. `1234` → `$12.34`, `123456` → `$1,234.56`); canonical client-side money formatter for staff portal Pay surfaces
+│   │   │   ├── proposalStatusMap.js # Shared proposal status → {label, kind} map (single source for admin status chips)
+│   │   │   ├── drinkPlanStatusMap.js # Shared drink-plan status → {label, kind} map
 │   │   │   ├── formatPhone.js  # Phone number formatting
 │   │   │   ├── leadSources.js  # Lead source enum (mirrors schema CHECK + server validator)
 │   │   │   ├── messageTypes.js # Display-only message_log label map (messageTypeLabel) for the event-detail Messages card; falls back to the stored subject for untagged sends

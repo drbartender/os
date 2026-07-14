@@ -616,6 +616,16 @@ items:
       qw-schema-hygiene; migrate-to-gcs.js -> qw-dead-files. CLOSED: manager iCal feed = admin feed is
       intended behavior (Dallas); favorite_color KEEP (displayed humor field, off the dead list).
 
+p3_followups:  # small residuals surfaced by the P3 lane builds/reviews (2026-07-13), none blocking
+  - RangeTables.js:11 carries a 7th kind-only proposal-status map (already matching the canonical); point it at proposalStatusMeta(x).kind in a future client touch.
+  - Route validators still hold inline source lists (clients.js VALID_SOURCES, emailMarketing.js VALID_LEAD_SOURCES) + 2 client badge maps (ClientsDashboard/ClientDetail SOURCE maps); import from utils/clientSources when those files are next open.
+  - paymentFailedClientNotify.js:60 still builds the proposal URL inline (un-encoded); adopt urls.proposalUrl on next touch.
+  - Two un-TRIMmed LOWER(position)='bartender' compares remain, both non-payroll or other-window-owned - autoAssign.js:149 (scheduling) and proposals/cancel.js:328 (fixbatch cancel lane); align opportunistically.
+  - Two additional unversioned pricing_snapshot readers outside c8's footprint (stripeCreateIntent.js + one more per review); route through readSnapshot on next touch.
+  - client/src/utils/setupTime.js (manual twin of server setupTime) still reads the snapshot raw - fine (client cannot use the Sentry-bearing reader); keep the twin comment honest.
+  - c2 judgment calls, veto-able - completed = green 'ok' everywhere (changed ProposalsDashboard from gray); proposal chips now sentence case; drink-plan 'pending' kept per-surface (dashboard warn, drawer neutral) pending an owner canonical.
+  - Payroll suites' shared-DB pattern hardened 2026-07-13 after debugging: current-period fixtures must key on chicagoTodayYmd (UTC keying = red every Chicago evening) and use track-and-restore, never blanket-delete open periods (two suites had destroyed the dev DB's live period).
+
 decisions_resolved:  # all five answered by Dallas 2026-07-13; details inline on each item
   - {id: reap-vs-suppress,   for: m1-refund-reap,               answer: archive-does-the-reaping; refund flow prompts archive when amount_paid zeroes}
   - {id: wire-vs-delete,     for: m6-mergeclients,              answer: delete the export; no dupe pain observed}
