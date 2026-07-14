@@ -55,3 +55,8 @@ server/utils/*Handlers.js
 
 # Env-var contract
 .env.example
+
+# Route-body extractions from shifts.js (2026-07-14 split): cancel-or-unassign
+# denies approved shift_requests + BEO-nudge suppression — same class as its
+# listed siblings shifts.approval.js / staffShiftActions.js.
+server/routes/shifts.handlers.js
