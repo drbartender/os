@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatPhone } from '../utils/formatPhone';
+import { fmtDateOnly } from '../components/adminos/format';
 import TimePicker from '../components/TimePicker';
 import ClickableRow from '../components/ClickableRow';
 import EntityLink from '../components/EntityLink';
@@ -182,11 +183,10 @@ export default function AdminDashboard() {
     }
   }
 
-  const fmtDate = (iso) => {
-    if (!iso) return '—';
-    const dateStr = typeof iso === 'string' ? iso.slice(0, 10) : new Date(iso).toISOString().slice(0, 10);
-    return new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  };
+  // Shared date-only formatter with this view's weekday/no-year style.
+  // year:undefined cancels fmtDateOnly's default year so the output matches the
+  // prior local "Mon, Jul 13" format. (Inputs here are always JSON date strings.)
+  const fmtDate = (iso) => fmtDateOnly(iso, { weekday: 'short', month: 'short', day: 'numeric', year: undefined });
 
   // Permission flags for the current user
   const isAdmin     = user?.role === 'admin';

@@ -12,7 +12,7 @@ import PricingBreakdown from '../../components/PricingBreakdown';
 import DrinkPlanCard from '../../components/DrinkPlanCard';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
-import { fmtDateFull } from '../../components/adminos/format';
+import { fmtDateFull, fmtDateTime } from '../../components/adminos/format';
 import ProposalDetailEditForm from './ProposalDetailEditForm';
 import ProposalChangeRequestCard from './ProposalChangeRequestCard';
 import AlternativesPanel from './AlternativesPanel';
@@ -24,11 +24,10 @@ import { venueMapQuery } from '../../components/VenueAddressFields';
 import EntityLink from '../../components/EntityLink';
 import { proposalStatusMeta } from '../../utils/proposalStatusMap';
 
-function formatDateTime(d) {
-  if (!d) return '—';
-  return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
-}
-
+// formatTime12 kept LOCAL (not routed through utils/timeOptions.formatTime12h):
+// event_start_time is a free-text VARCHAR(20) with mixed legacy formats
+// ("6:00 PM"), which this lenient parser and the strict formatTime12h render
+// differently — consolidating would change the displayed start time.
 function formatTime12(t) {
   if (!t) return '?';
   const [h, m] = t.split(':').map(Number);
@@ -662,7 +661,7 @@ export default function ProposalDetail() {
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div>{entry.action}</div>
                             <div className="tiny muted">
-                              {entry.actor_type} · {formatDateTime(entry.created_at)}
+                              {entry.actor_type} · {fmtDateTime(entry.created_at)}
                             </div>
                           </div>
                         </div>
@@ -800,7 +799,7 @@ export default function ProposalDetail() {
                           </div>
                         </div>
                         <div className="tiny muted" style={{ whiteSpace: 'nowrap' }}>
-                          {formatDateTime(entry.created_at)}
+                          {fmtDateTime(entry.created_at)}
                         </div>
                       </div>
                       {(details.ip || details.location) && (

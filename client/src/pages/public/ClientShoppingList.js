@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { fmtDateOnly } from '../../components/adminos/format';
 // Logo served as a static, browser-cacheable file (decoded from the shared
 // base64 asset) so the ~82 KB data URI never ships inside this public page's
 // JS bundle. The PDF path keeps the base64 — jsPDF needs the bytes in hand.
@@ -109,11 +110,6 @@ export default function ClientShoppingList() {
   const checkedCount = allItems.filter(i => checked[itemKey(i.section, i)]).length;
   const progress = totalItems > 0 ? Math.round((checkedCount / totalItems) * 100) : 0;
 
-  const formatDate = (d) => {
-    if (!d) return '';
-    return new Date(d).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' });
-  };
-
   const renderSection = (title, items, section) => {
     const uncheckedItems = items.filter(i => !checked[itemKey(section, i)]);
     const checkedItems = items.filter(i => checked[itemKey(section, i)]);
@@ -210,7 +206,7 @@ export default function ClientShoppingList() {
           <h2 style={styles.clientName}>{data.client_name || list.clientName}</h2>
           <div style={styles.metaRow}>
             {list.guestCount && <span>{list.guestCount} Guests</span>}
-            {data.event_date && <span>{formatDate(data.event_date)}</span>}
+            {data.event_date && <span>{fmtDateOnly(data.event_date)}</span>}
           </div>
         </div>
 

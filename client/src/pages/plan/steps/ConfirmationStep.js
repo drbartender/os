@@ -6,6 +6,7 @@ import { QUICK_PICKS } from '../data/servingTypes';
 import { formatPhoneInput } from '../../../utils/formatPhone';
 import { SYRUPS, calculateSyrupCost, getBottlesPerSyrup, getAllUniqueSyrups } from '../../../data/syrups';
 import { API_BASE_URL as BASE_URL } from '../../../utils/api';
+import { fmtDateOnly } from '../../../components/adminos/format';
 import ScopeBanner from '../components/ScopeBanner';
 
 // Module-scoped lazy init — fetch the publishable key once and reuse the
@@ -26,11 +27,6 @@ function getStripePromise() {
 
 const fmt = (n) =>
   `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-function formatDateShort(d) {
-  if (!d) return '';
-  return new Date(d).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' });
-}
 
 // ─── Stripe payment form (must be inside <Elements>) ─────────────
 
@@ -715,7 +711,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
                       </div>
                       <div className="text-muted text-small">
                         Settle your event balance of {fmt(currentBalance)} too
-                        {displayBalanceDueDate && ` (due ${formatDateShort(displayBalanceDueDate)})`}.
+                        {displayBalanceDueDate && ` (due ${fmtDateOnly(displayBalanceDueDate)})`}.
                       </div>
                     </div>
                   </div>
@@ -740,7 +736,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
                     <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>Add to My Balance</div>
                     <div className="text-muted text-small">
                       {fmt(paymentAmounts.extrasAmount)} will be added to your balance
-                      {displayBalanceDueDate && ` (due ${formatDateShort(displayBalanceDueDate)})`}
+                      {displayBalanceDueDate && ` (due ${fmtDateOnly(displayBalanceDueDate)})`}
                     </div>
                   </div>
                 </div>

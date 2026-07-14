@@ -5,6 +5,7 @@ import { useToast } from '../context/ToastContext';
 import { PUBLIC_SITE_URL } from '../utils/constants';
 import Icon from './adminos/Icon';
 import StatusChip from './adminos/StatusChip';
+import { fmtDateTime } from './adminos/format';
 import ShoppingListButton from './ShoppingList/ShoppingListButton';
 
 // Lazy so the consult form (and its cocktail/mocktail dependency graph) stays
@@ -17,11 +18,6 @@ const DRINK_PLAN_STATUS = {
   submitted: { label: 'Submitted', kind: 'info' },
   reviewed: { label: 'Reviewed', kind: 'ok' },
 };
-
-function formatDateTime(d) {
-  if (!d) return '—';
-  return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
-}
 
 // `fullControls` turns on the admin-prep controls (consult input + the
 // shopping-list button gated the same way as the full drink-plan page). It's
@@ -162,7 +158,7 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
               {drinkPlan.submitted_at && (
                 <>
                   <dt>Submitted</dt>
-                  <dd>{formatDateTime(drinkPlan.submitted_at)}</dd>
+                  <dd>{fmtDateTime(drinkPlan.submitted_at)}</dd>
                 </>
               )}
               {drinkPlan.serving_type && (
@@ -217,7 +213,7 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
               {drinkPlan.finalized_at && (
                 <>
                   <div className="muted tiny" style={{ marginTop: 4 }}>
-                    Finalized {formatDateTime(drinkPlan.finalized_at)}
+                    Finalized {fmtDateTime(drinkPlan.finalized_at)}
                   </div>
                   <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }} onClick={unfinalize}>
                     Unfinalize

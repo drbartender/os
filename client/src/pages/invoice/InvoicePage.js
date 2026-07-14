@@ -6,6 +6,7 @@ import api from '../../utils/api';
 import FormBanner from '../../components/FormBanner';
 import { useToast } from '../../context/ToastContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { fmtDateOnly } from '../../components/adminos/format';
 // Shared brand logo (gold character badge), reused from the shopping-list PDF so
 // the mark renders reliably in the html2pdf "Save as PDF" (base64, no image-load race).
 import { LOGO_BASE64 } from '../../components/ShoppingList/logoBase64';
@@ -15,14 +16,12 @@ function formatCurrency(cents) {
   return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 }
 
+// created_at columns are TIMESTAMPTZ (absolute instants); bare `new Date` in
+// local time is correct here. Date-ONLY columns (due_date, event_date) use the
+// shared fmtDateOnly instead.
 function formatDate(d) {
   if (!d) return '—';
   return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-}
-
-function formatDateOnly(d) {
-  if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' });
 }
 
 function PaymentForm({ onSuccess }) {
@@ -193,7 +192,7 @@ export default function InvoicePage() {
               {invoice.due_date && (
                 <>
                   <p className="invoice-meta-label" style={{ marginTop: '0.65rem' }}>Due Date</p>
-                  <p className="invoice-meta-value">{formatDateOnly(invoice.due_date)}</p>
+                  <p className="invoice-meta-value">{fmtDateOnly(invoice.due_date)}</p>
                 </>
               )}
             </div>
@@ -209,7 +208,7 @@ export default function InvoicePage() {
                 {getEventTypeLabel({ event_type: invoice.event_type, event_type_custom: invoice.event_type_custom })}
               </p>
               <p className="invoice-meta-line">
-                {formatDateOnly(invoice.event_date)}
+                {fmtDateOnly(invoice.event_date)}
                 {invoice.event_location ? ` · ${invoice.event_location}` : ''}
               </p>
               {invoice.guest_count && (

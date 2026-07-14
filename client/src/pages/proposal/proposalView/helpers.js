@@ -1,5 +1,6 @@
 // Local helpers for ProposalView. Note: `fmt` here matches `fmt$2dp` from
 // adminos/format. Kept local to keep the public proposal page self-contained.
+import { fmtDateOnly, calcEndTime as sharedCalcEndTime } from '../../../components/adminos/format';
 
 export const DEPOSIT_CENTS = parseInt(process.env.REACT_APP_DEPOSIT_AMOUNT) || 10000;
 export const DEPOSIT_DOLLARS = DEPOSIT_CENTS / 100;
@@ -7,6 +8,10 @@ export const DEPOSIT_DOLLARS = DEPOSIT_CENTS / 100;
 export const fmt = (n) =>
   `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+// Kept LOCAL (not routed through utils/timeOptions.formatTime12h): event_start_time
+// is a free-text VARCHAR(20) with mixed legacy formats ("6:00 PM", "6:00PM"). This
+// lenient parser and the strict formatTime12h produce different output for those
+// legacy values, so consolidating would change the rendered start time.
 export function formatTime(t) {
   if (!t) return '';
   const [hStr, mStr] = t.split(':');
@@ -16,16 +21,10 @@ export function formatTime(t) {
   return `${h12}:${mStr} ${ampm}`;
 }
 
-export function calcEndTime(startTime, durationHours) {
-  if (!startTime) return '';
-  const [hStr, mStr] = startTime.split(':');
-  const totalMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10) + Math.round(Number(durationHours) * 60);
-  const endH = Math.floor(totalMinutes / 60) % 24;
-  const endM = totalMinutes % 60;
-  return formatTime(`${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`);
-}
+// Delegates to the shared calcEndTime (adminos/format). The constructed end HH:MM
+// is always canonical, so its 12h formatting matches this file's formatTime.
+export const calcEndTime = (startTime, durationHours) => sharedCalcEndTime(startTime, durationHours);
 
-export function formatDateShort(d) {
-  if (!d) return '';
-  return new Date(d).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' });
-}
+// Delegates to the shared date-only formatter; preserves the '' empty-value
+// sentinel this page's callers expect (the shared helper returns '—').
+export const formatDateShort = (d) => (d ? fmtDateOnly(d) : '');
