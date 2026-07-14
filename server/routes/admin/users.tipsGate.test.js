@@ -9,7 +9,9 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../../db');
 const { AppError } = require('../../utils/errors');
-const usersRouter = require('./users');
+// Tips/tip-feedback routes live in contractorTipPage.js (split from users.js
+// 2026-07-14). Mounted at the REAL prefix: their URLs are /api/admin/tips etc.
+const contractorTipPageRouter = require('./contractorTipPage');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('users.tipsGate.test.js refuses to run against production');
@@ -40,7 +42,7 @@ before(async () => {
 
   const app = express();
   app.use(express.json());
-  app.use('/api/admin/users', usersRouter);
+  app.use('/api/admin', contractorTipPageRouter);
   app.use((err, req, res, _next) => {
     if (err instanceof AppError) return res.status(err.statusCode).json({ error: err.message, code: err.code });
     return res.status(500).json({ error: 'Internal error', code: 'INTERNAL_ERROR' });
@@ -69,7 +71,7 @@ function req(method, path, token) {
   });
 }
 
-for (const path of ['/api/admin/users/tips', '/api/admin/users/tip-feedback']) {
+for (const path of ['/api/admin/tips', '/api/admin/tip-feedback']) {
   test(`GET ${path}: manager forbidden (403 PERMISSION_DENIED)`, async () => {
     const r = await req('GET', path, managerToken);
     assert.equal(r.status, 403, `manager should be 403, got ${r.status} ${JSON.stringify(r.body)}`);
@@ -82,7 +84,7 @@ for (const path of ['/api/admin/users/tips', '/api/admin/users/tip-feedback']) {
 }
 
 test('POST /tip-feedback/:id/review: manager forbidden (403 PERMISSION_DENIED)', async () => {
-  const r = await req('POST', '/api/admin/users/tip-feedback/999999/review', managerToken);
+  const r = await req('POST', '/api/admin/tip-feedback/999999/review', managerToken);
   assert.equal(r.status, 403, `manager should be 403, got ${r.status} ${JSON.stringify(r.body)}`);
   assert.equal(r.body.code, 'PERMISSION_DENIED');
 });
