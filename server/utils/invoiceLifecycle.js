@@ -5,6 +5,11 @@
 const { toCents, db } = require('./invoiceShared');
 const { generateLineItemsFromProposal, writeLineItems } = require('./invoiceLineItems');
 
+// The invoice-label literals written below ('Deposit' / 'Balance' /
+// 'Full Payment') are the origin of the contract-total classification. The
+// shared CONTRACT_LABELS constant (./proposalMoneyShared, consumed by
+// payrollAccrual + refundHelpers) mirrors this exact set — keep them in sync.
+
 // ─── 1. formatInvoiceNumber ──────────────────────────────────────────────────
 
 /**

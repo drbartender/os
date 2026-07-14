@@ -19,6 +19,7 @@ const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = 
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('../../utils/urls');
 const { findOrCreateClient } = require('../../utils/clientDedup');
 const { insertProposalRecord } = require('../../utils/proposalInsert');
+const { safeAddonQty } = require('../../utils/proposalMoneyShared');
 
 const router = express.Router();
 
@@ -29,18 +30,6 @@ const router = express.Router();
 // verify the txn rolls back.
 let _deps = { createInvoiceOnSend, sendProposalSentEmail };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
-
-// Coerce a client-supplied addon quantity into a bounded positive integer.
-// Mirrors public.js safeAddonQty — untrusted body input (admin cockpit), so a
-// negative/fractional/NaN/non-scalar value must not flow into pricing money
-// math. Cap at 20 to bound any single addon line.
-const MAX_ADDON_QTY = 20;
-function safeAddonQty(raw) {
-  if (typeof raw !== 'number' && typeof raw !== 'string') return 1;
-  const n = parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 1) return 1;
-  return Math.min(MAX_ADDON_QTY, n);
-}
 
 const TOTAL_PRICE_OVERRIDE_MAX = 1_000_000;
 

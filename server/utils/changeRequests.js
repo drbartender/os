@@ -2,6 +2,7 @@ const { pool } = require('../db');
 const { calculateProposal } = require('./pricingEngine');
 const { validateProposalRules, stripIncludedAddons } = require('./proposalRules');
 const { ValidationError } = require('./errors');
+const { safeAddonQty } = require('./proposalMoneyShared');
 
 const { BOOKED_SET: BOOKED } = require('./proposalStatus');
 
@@ -15,14 +16,6 @@ const EDITABLE_FIELDS = [
   'addon_ids', 'addon_variants', 'addon_quantities',
 ];
 const SIMPLE_FIELDS = EDITABLE_FIELDS.filter(f => !f.startsWith('addon_'));
-
-const MAX_ADDON_QTY = 20;
-function safeAddonQty(raw) {
-  if (typeof raw !== 'number' && typeof raw !== 'string') return 1;
-  const n = parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 1) return 1;
-  return Math.min(MAX_ADDON_QTY, n);
-}
 
 // 'pre_booking' when not booked; else inside_t14 within 14 days of the event,
 // else before_t14. Approximate at the day boundary, which is fine because every

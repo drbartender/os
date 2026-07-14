@@ -11,6 +11,7 @@
  */
 
 const { reconcileProposalPaymentStatus } = require('./proposalStatus');
+const { CONTRACT_LABELS } = require('./proposalMoneyShared');
 
 function fmtUSD(cents) {
   return '$' + (cents / 100).toFixed(2);
@@ -175,8 +176,8 @@ async function applyRefundReconciliation(
   // refund into several against the same charge (the no-spanning rule
   // forces this) can never over-reverse an invoice. Walk greedily, clamped
   // per invoice. Extra-scope portions (non-contract label) are tracked so
-  // they do NOT shrink total_price.
-  const CONTRACT_LABELS = ['Deposit', 'Balance', 'Full Payment'];
+  // they do NOT shrink total_price. CONTRACT_LABELS is the shared constant
+  // (./proposalMoneyShared), same classification payrollAccrual uses.
   let nonContractCents = 0;
   if (paymentId !== null && paymentId !== undefined) {
     const links = await dbClient.query(

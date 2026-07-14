@@ -13,11 +13,10 @@ const {
 const { captureProposalPaymentFees, captureTipFeesForProposal } = require('./payrollTips');
 const { isLegacyCcParticipant } = require('./payrollGuards');
 const { isBartender } = require('./staffingRoles');
-
-// Invoice labels whose dollars are part of the contract total_price. Kept in
-// sync manually with the CONTRACT_LABELS list inside refundHelpers.js
-// applyRefundReconciliation (same classification, same reason).
-const CONTRACT_LABELS = ['Deposit', 'Balance', 'Full Payment'];
+// Invoice labels whose dollars are part of the contract total_price. Canonical
+// definition lives in ./proposalMoneyShared (shared with refundHelpers.js
+// applyRefundReconciliation — same classification, same reason).
+const { CONTRACT_LABELS } = require('./proposalMoneyShared');
 
 // HOLD semantics for the roster sweeps (fix #4, 2026-07-13; reworked to
 // structural state after review). A POSITIVE reimbursement adjustment on an

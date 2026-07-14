@@ -6,19 +6,9 @@ const { stripIncludedAddons } = require('../../utils/proposalRules');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError } = require('../../utils/errors');
 const metrics = require('../../utils/metricsQueries');
+const { safeAddonQty } = require('../../utils/proposalMoneyShared');
 
 const router = express.Router();
-
-// Coerce a client-supplied addon quantity into a bounded positive integer.
-// Mirrors public.js / crud.js safeAddonQty — keeps the /calculate preview's
-// money math identical to the persist path.
-const MAX_ADDON_QTY = 20;
-function safeAddonQty(raw) {
-  if (typeof raw !== 'number' && typeof raw !== 'string') return 1;
-  const n = parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 1) return 1;
-  return Math.min(MAX_ADDON_QTY, n);
-}
 
 // ─── Package & add-on listing (auth required) ────────────────────
 
