@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const { clawbackTip, clawbackTipByPaymentIntent } = require('./payrollClawback');
 const { payPeriodForDate, computePayday } = require('./payrollPeriods');
+const { chicagoTodayYmd } = require('./businessTime');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('payrollClawback.test.js refuses to run against production');
@@ -15,19 +16,34 @@ if (process.env.NODE_ENV === 'production') {
 // `paid` or the open one ends before today), that subquery returns NULL and
 // the payouts.pay_period_id NOT NULL constraint fires. Force-open the period
 // for today's date the same way production payroll code would create it.
+// "Today" must be the BUSINESS day (America/Chicago), matching how clawbackTip
+// itself resolves its destination period. Keying anything on Postgres
+// CURRENT_DATE (UTC) or new Date().toISOString() makes this suite seed/read
+// NEXT week's period every Chicago evening once UTC rolls over (~19:00 CT),
+// while the util under test correctly lands in the current Tue-Mon week —
+// green by day, red by night (bitten 2026-07-13).
+function todayPeriodStart() {
+  return payPeriodForDate(chicagoTodayYmd()).startDate;
+}
+
 async function ensureTodayPeriodOpen() {
-  const todayYmd = new Date().toISOString().slice(0, 10);
-  const { startDate, endDate } = payPeriodForDate(todayYmd);
+  const { startDate, endDate } = payPeriodForDate(chicagoTodayYmd());
   const payday = computePayday(endDate);
-  await pool.query(
+  const r = await pool.query(
     `INSERT INTO pay_periods (start_date, end_date, payday, status)
      VALUES ($1, $2, $3, 'open')
-     ON CONFLICT (start_date) DO UPDATE SET status = 'open'`,
+     ON CONFLICT (start_date) DO UPDATE SET status = 'open'
+     RETURNING id`,
     [startDate, endDate, payday]
   );
+  return r.rows[0].id;
 }
 
 let bartenderA, bartenderB, paidPeriodId, paidProposalId, paidShiftId, tipId;
+// Today's REAL period on the shared dev DB: track-and-restore, never delete a
+// pre-existing row. (A prior teardown here blanket-deleted payout-less open
+// periods and destroyed the dev DB's live current period — 2026-07-13.)
+let todayPeriodId = null, todayPeriodPreExisted = false, todayPeriodOrigStatus = null;
 
 before(async () => {
   // Pre-clean any stranded fixtures from prior failed runs (full FK chain:
@@ -41,6 +57,25 @@ before(async () => {
   await pool.query(`DELETE FROM shift_requests WHERE user_id IN (SELECT id FROM users WHERE ${fixtureFilter})`);
   await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN (SELECT id FROM users WHERE ${fixtureFilter})`);
   await pool.query(`DELETE FROM users WHERE ${fixtureFilter}`);
+
+  // Capture today's period state BEFORE the suite touches anything, so after()
+  // can restore reality instead of guessing: reuse a pre-existing row (forcing
+  // it open for the run), or create one and own its deletion.
+  const existing = await pool.query(
+    'SELECT id, status FROM pay_periods WHERE start_date = $1 LIMIT 1',
+    [todayPeriodStart()]
+  );
+  if (existing.rows[0]) {
+    todayPeriodId = existing.rows[0].id;
+    todayPeriodPreExisted = true;
+    todayPeriodOrigStatus = existing.rows[0].status;
+    if (todayPeriodOrigStatus !== 'open') {
+      await pool.query("UPDATE pay_periods SET status='open' WHERE id = $1", [todayPeriodId]);
+    }
+  } else {
+    todayPeriodId = await ensureTodayPeriodOpen();
+    todayPeriodPreExisted = false;
+  }
 
   const a = await pool.query(
     "INSERT INTO users (email, password_hash, role) VALUES ('claw-a@example.com','x','staff') RETURNING id"
@@ -108,13 +143,9 @@ afterEach(async () => {
     [paidShiftId, bartenderA, bartenderB]
   );
   await pool.query('DELETE FROM payouts WHERE contractor_id IN ($1,$2)', [bartenderA, bartenderB]);
-  // Only delete the open period if it has no payouts referencing it (the dev
-  // DB's shared open period must be preserved). This suite's own paid period
-  // (2019-03-05) is preserved separately and torn down by id below.
-  await pool.query(
-    `DELETE FROM pay_periods pp WHERE pp.status='open' AND pp.start_date <> '2019-03-05'
-       AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`
-  );
+  // Today's real period is NEVER deleted here — the suite only removes its own
+  // payout rows from it (above, by contractor id). Its row lifecycle lives in
+  // before()/after() via track-and-restore.
   // Defense in depth: any tip targeting either fixture bartender, even if
   // created by a sub-test that didn't reach its finally.
   await pool.query('DELETE FROM tips WHERE target_user_id IN ($1, $2)', [bartenderA, bartenderB]);
@@ -129,6 +160,22 @@ after(async () => {
   for (const id of [bartenderA, bartenderB]) {
     await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [id]);
     await pool.query('DELETE FROM users WHERE id = $1', [id]);
+  }
+  // Restore reality for today's period: put back the original status on a
+  // pre-existing row; delete the row only if THIS suite created it (and only
+  // when nothing else references it).
+  if (todayPeriodId) {
+    if (todayPeriodPreExisted) {
+      if (todayPeriodOrigStatus !== 'open') {
+        await pool.query('UPDATE pay_periods SET status = $1 WHERE id = $2', [todayPeriodOrigStatus, todayPeriodId]);
+      }
+    } else {
+      await pool.query(
+        `DELETE FROM pay_periods pp WHERE pp.id = $1
+           AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`,
+        [todayPeriodId]
+      );
+    }
   }
   await pool.end();
 });
@@ -193,32 +240,28 @@ test('clawbackTip > H1: cross-period clawback nets against current-period earnin
   // Bartender A earned a $50.00 wage line this period on another shift. The
   // $40 tip from the PAID prior period is fully refunded: A's share is -1936,
   // which must actually reduce this period's payable total (5000 - 1936 = 3064).
-  await ensureTodayPeriodOpen();
-  const { rows: [period] } = await pool.query(
-    `SELECT id FROM pay_periods WHERE status = 'open'
-      AND CURRENT_DATE BETWEEN start_date AND end_date`
-  );
+  const todayPeriod = await ensureTodayPeriodOpen();
   await pool.query(
     `INSERT INTO payouts (pay_period_id, contractor_id) VALUES ($1, $2)
      ON CONFLICT (pay_period_id, contractor_id) DO NOTHING`,
-    [period.id, bartenderA]
+    [todayPeriod, bartenderA]
   );
   const { rows: [s2] } = await pool.query(
     `INSERT INTO shifts (event_date, start_time, status, proposal_id)
-     VALUES (CURRENT_DATE, '6:00 PM', 'open', $1) RETURNING id`,
-    [paidProposalId]
+     VALUES ($2, '6:00 PM', 'open', $1) RETURNING id`,
+    [paidProposalId, chicagoTodayYmd()]
   );
   try {
     await pool.query(
       `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents, line_total_cents)
        SELECT po.id, $1, 4, 4, 1250, 5000, 5000 FROM payouts po
         WHERE po.contractor_id = $2 AND po.pay_period_id = $3`,
-      [s2.id, bartenderA, period.id]
+      [s2.id, bartenderA, todayPeriod]
     );
     await clawbackTip(tipId, 4000);
     const { rows: [po] } = await pool.query(
       `SELECT total_cents FROM payouts WHERE contractor_id = $1 AND pay_period_id = $2`,
-      [bartenderA, period.id]
+      [bartenderA, todayPeriod]
     );
     // A's clawback share of the 3872c net split is 1936c. The 5000c wage
     // absorbs it: payable = 3064, not 5000 (old behavior) and not 0.
@@ -305,12 +348,12 @@ test('clawbackTip > mixed-stub shift: claws back from real bartender only, stubs
   const cbTipId = tipRes.rows[0].id;
   // Seed the real bartender's payout_event (what rollForwardLateTip on a mixed
   // shift would have created via the new code path).
-  await ensureTodayPeriodOpen();
+  const realPeriodId = await ensureTodayPeriodOpen();
   await pool.query(
     `INSERT INTO payouts (pay_period_id, contractor_id)
-     VALUES ((SELECT id FROM pay_periods WHERE status='open' AND CURRENT_DATE BETWEEN start_date AND end_date), $1)
+     VALUES ($2, $1)
      ON CONFLICT (pay_period_id, contractor_id) DO NOTHING`,
-    [realId]
+    [realId, realPeriodId]
   );
   await pool.query(
     `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
@@ -389,12 +432,12 @@ test('clawbackTip > emergency-dropped bartender is excluded from the clawback sp
   );
   const cbTipId = tipRes.rows[0].id;
   // Seed the working bartender's paid-out event (full tip, since they worked solo).
-  await ensureTodayPeriodOpen();
+  const workedPeriodId = await ensureTodayPeriodOpen();
   await pool.query(
     `INSERT INTO payouts (pay_period_id, contractor_id)
-     VALUES ((SELECT id FROM pay_periods WHERE status='open' AND CURRENT_DATE BETWEEN start_date AND end_date), $1)
+     VALUES ($2, $1)
      ON CONFLICT (pay_period_id, contractor_id) DO NOTHING`,
-    [workedId]
+    [workedId, workedPeriodId]
   );
   await pool.query(
     `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
