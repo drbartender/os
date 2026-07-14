@@ -66,7 +66,14 @@ export default function HistoryView({ initialPeriodId }) {
             payout={po}
             expanded={expanded.has(po.id)}
             onToggle={() => toggle(po.id)}
-            editable={false}
+            // Same freeze rule as the Current tab (the server 409-guards this
+            // too): still-open periods stay editable even from History — the
+            // June backfill era needs line corrections before mark-paid.
+            // Paid payouts stay locked individually.
+            editable={!!(selected.period
+              && selected.period.status !== 'paid'
+              && selected.period.status !== 'processing'
+              && po.status !== 'paid')}
           />
         ))}
       </>
