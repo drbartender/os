@@ -6,6 +6,8 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../../db');
 const { AppError } = require('../../utils/errors');
+const { payPeriodForDate, computePayday } = require('../../utils/payrollPeriods');
+const { chicagoTodayYmd } = require('../../utils/businessTime');
 const payrollRouter = require('./payroll');
 
 if (process.env.NODE_ENV === 'production') {
@@ -14,6 +16,32 @@ if (process.env.NODE_ENV === 'production') {
 
 let adminId, adminToken, server, baseUrl;
 let contractorId, periodId, payoutId, shiftId, proposalId;
+// Today's REAL (America/Chicago) period on the shared dev DB: track-and-restore,
+// never blanket-delete. GET /periods/current prefers the period containing the
+// CHICAGO today, so fixtures for it must live there — keying anything on UTC
+// (CURRENT_DATE / toISOString) goes red every Chicago evening (bitten 2026-07-13).
+let todayPeriodId = null, todayPeriodPreExisted = false, todayPeriodOrigStatus = null;
+
+async function trackTodayPeriod() {
+  const { startDate, endDate } = payPeriodForDate(chicagoTodayYmd());
+  const existing = await pool.query('SELECT id, status FROM pay_periods WHERE start_date = $1 LIMIT 1', [startDate]);
+  if (existing.rows[0]) {
+    todayPeriodId = existing.rows[0].id;
+    todayPeriodPreExisted = true;
+    todayPeriodOrigStatus = existing.rows[0].status;
+    if (todayPeriodOrigStatus !== 'open') {
+      await pool.query("UPDATE pay_periods SET status='open' WHERE id = $1", [todayPeriodId]);
+    }
+  } else {
+    const r = await pool.query(
+      `INSERT INTO pay_periods (start_date, end_date, payday, status)
+       VALUES ($1, $2, $3, 'open') ON CONFLICT (start_date) DO UPDATE SET status='open' RETURNING id`,
+      [startDate, endDate, computePayday(endDate)]
+    );
+    todayPeriodId = r.rows[0].id;
+    todayPeriodPreExisted = false;
+  }
+}
 
 before(async () => {
   // Pre-clean any stranded fixtures from a prior interrupted run (this suite
@@ -53,6 +81,8 @@ before(async () => {
      ON CONFLICT (user_id) DO UPDATE SET preferred_payment_method='venmo', venmo_handle='payroll-test'`,
     [contractorId]
   );
+
+  await trackTodayPeriod();
 
   // UNIQUE far-past open period (Tue 2019-06-04..Mon 2019-06-10) owned by this
   // suite; the fixture proposal/shift/payout all live inside it. Avoids the
@@ -113,6 +143,22 @@ after(async () => {
   await pool.query('DELETE FROM payment_profiles WHERE user_id = $1', [contractorId]);
   await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [contractorId]);
   await pool.query('DELETE FROM users WHERE id IN ($1,$2)', [adminId, contractorId]);
+  // Restore reality for today's period (see trackTodayPeriod): put back the
+  // original status on a pre-existing row; delete the row only if this suite
+  // created it and nothing references it.
+  if (todayPeriodId) {
+    if (todayPeriodPreExisted) {
+      if (todayPeriodOrigStatus !== 'open') {
+        await pool.query('UPDATE pay_periods SET status = $1 WHERE id = $2', [todayPeriodOrigStatus, todayPeriodId]);
+      }
+    } else {
+      await pool.query(
+        `DELETE FROM pay_periods pp WHERE pp.id = $1
+           AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`,
+        [todayPeriodId]
+      );
+    }
+  }
   await pool.end();
 });
 
@@ -163,17 +209,43 @@ test('GET /payroll/periods > lists periods with summary counts', async () => {
 });
 
 test('GET /payroll/periods/current > returns the open period with payouts and events', async () => {
-  const r = await req('GET', '/api/admin/payroll/periods/current', adminToken);
-  assert.equal(r.status, 200);
-  const body = JSON.parse(r.body);
-  assert.equal(body.period.id, periodId);
-  const payout = body.payouts.find(p => p.id === payoutId);
-  assert.ok(payout);
-  assert.equal(payout.contractor_id, contractorId);
-  assert.equal(payout.preferred_payment_method, 'venmo');
-  assert.equal(payout.venmo_handle, 'payroll-test');
-  assert.equal(payout.events.length, 1);
-  assert.equal(payout.events[0].wage_cents, 11000);
+  // Primary path: the route prefers the period containing the CHICAGO today,
+  // which on a shared dev DB legitimately exists — so this test seeds its
+  // payout THERE (tracked by trackTodayPeriod) rather than relying on the
+  // no-today-period fallback (untestable here without deleting real rows;
+  // the Chicago-boundary test below covers day-selection semantics).
+  const po = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, status, total_cents)
+     VALUES ($1, $2, 'pending', 11000)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET total_cents = 11000
+     RETURNING id`,
+    [todayPeriodId, contractorId]
+  );
+  const todayPayoutId = po.rows[0].id;
+  await pool.query(
+    `INSERT INTO payout_events
+       (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
+        gratuity_share_cents, line_total_cents)
+     VALUES ($1, $2, 5.5, 5.5, 2000, 11000, 0, 11000)
+     ON CONFLICT (payout_id, shift_id) DO UPDATE SET wage_cents = 11000`,
+    [todayPayoutId, shiftId]
+  );
+  try {
+    const r = await req('GET', '/api/admin/payroll/periods/current', adminToken);
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.period.id, todayPeriodId);
+    const payout = body.payouts.find(p => p.id === todayPayoutId);
+    assert.ok(payout);
+    assert.equal(payout.contractor_id, contractorId);
+    assert.equal(payout.preferred_payment_method, 'venmo');
+    assert.equal(payout.venmo_handle, 'payroll-test');
+    assert.equal(payout.events.length, 1);
+    assert.equal(payout.events[0].wage_cents, 11000);
+  } finally {
+    await pool.query('DELETE FROM payout_events WHERE payout_id = $1', [todayPayoutId]);
+    await pool.query('DELETE FROM payouts WHERE id = $1', [todayPayoutId]);
+  }
 });
 
 test('GET /payroll/periods/current > evening Chicago boundary picks the current Chicago-day period, not the UTC-day period', async () => {
@@ -510,11 +582,15 @@ test('PATCH /tips/:id/assign > frozen_period=true when the shift sits in a paid 
       'DELETE FROM payouts WHERE contractor_id = $1 AND id <> $2',
       [contractorId, payoutId]
     );
+    // Clean only STRAY periods a re-accrual may have created — never the
+    // tracked real today-period (track-and-restore owns that row's lifecycle).
     await pool.query(
       `DELETE FROM pay_periods pp
         WHERE pp.status = 'open'
           AND CURRENT_DATE BETWEEN pp.start_date AND pp.end_date
-          AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`
+          AND pp.id <> $1
+          AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`,
+      [todayPeriodId]
     );
     await pool.query("UPDATE pay_periods SET status='open' WHERE id = $1", [periodId]);
   }
