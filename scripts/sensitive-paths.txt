@@ -60,3 +60,10 @@ server/utils/*Handlers.js
 # denies approved shift_requests + BEO-nudge suppression — same class as its
 # listed siblings shifts.approval.js / staffShiftActions.js.
 server/routes/shifts.handlers.js
+
+# Glob gap found 2026-07-14: the patterns above miss the BASE template/dispatcher
+# files (emailTemplates.js does not match *EmailTemplates.js; the dispatcher does
+# not end in Scheduler.js). Explicit entries:
+server/utils/emailTemplates.js
+server/utils/scheduledMessageDispatcher.js
+server/utils/dispatcherDeadLetters.js
