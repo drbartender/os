@@ -12,15 +12,14 @@ import Toolbar from '../../components/adminos/Toolbar';
 import ClickableRow from '../../components/ClickableRow';
 import { fmtDate } from '../../components/adminos/format';
 import useUrlListState from '../../hooks/useUrlListState';
+import { drinkPlanStatusMeta } from '../../utils/drinkPlanStatusMap';
 
 const DRINK_PLAN_TABS = ['all', 'submitted', 'pending', 'reviewed'];
 
-const STATUS = {
-  pending:   { label: 'Pending',   kind: 'warn' },
-  draft:     { label: 'Draft',     kind: 'neutral' },
-  submitted: { label: 'Submitted', kind: 'info' },
-  reviewed:  { label: 'Reviewed',  kind: 'ok' },
-};
+// This dashboard styles a `pending` plan as an attention affordance ('warn'),
+// which the shared map (neutral) intentionally does not; keep that override
+// local so the rest of the statuses stay on the single source.
+const PENDING_META = { label: 'Pending', kind: 'warn' };
 
 // SERVING_LABEL moved to utils/servingLabels (shared with the Potions drawer).
 
@@ -164,7 +163,7 @@ export default function DrinkPlansDashboard() {
                 <tr><td colSpan={6} className="muted">No drink plans match these filters.</td></tr>
               )}
               {!loading && filtered.map(p => {
-                const st = STATUS[p.status] || { label: p.status || '—', kind: 'neutral' };
+                const st = p.status === 'pending' ? PENDING_META : drinkPlanStatusMeta(p.status);
                 return (
                   <ClickableRow key={p.id} to={`/drink-plans/${p.id}`}>
                     <td>

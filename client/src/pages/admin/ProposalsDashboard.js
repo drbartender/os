@@ -13,25 +13,7 @@ import ClickableRow from '../../components/ClickableRow';
 import SourceBadge from '../../components/admin/SourceBadge';
 import EntityLink from '../../components/EntityLink';
 import useUrlListState from '../../hooks/useUrlListState';
-
-// Mirrors `proposals_status_check` in server/db/schema.sql. Keep in sync —
-// the constraint allows draft/sent/viewed/modified/accepted/deposit_paid/
-// balance_paid/confirmed/completed/archived. ('declined' is not in the
-// constraint but appears here as a safety entry — the sign endpoint never
-// writes it; remove if unused after one full deploy cycle.)
-const STATUS = {
-  draft:        { label: 'Draft',        kind: 'neutral' },
-  sent:         { label: 'Sent',         kind: 'info' },
-  viewed:       { label: 'Viewed',       kind: 'accent' },
-  modified:     { label: 'Modified',     kind: 'violet' },
-  accepted:     { label: 'Accepted',     kind: 'ok' },
-  deposit_paid: { label: 'Deposit Paid', kind: 'ok' },
-  balance_paid: { label: 'Paid in Full', kind: 'ok' },
-  confirmed:    { label: 'Confirmed',    kind: 'ok' },
-  completed:    { label: 'Completed',    kind: 'neutral' },
-  archived:     { label: 'Archived',     kind: 'neutral' },
-  declined:     { label: 'Declined',     kind: 'danger' },
-};
+import { proposalStatusMeta } from '../../utils/proposalStatusMap';
 
 const TAB_IDS = ['active', 'draft', 'won', 'paid', 'archive', 'all'];
 const SOURCE_IDS = ['thumbtack', 'manual'];
@@ -408,7 +390,7 @@ export default function ProposalsDashboard() {
                 </tr>
               )}
               {!loading && rows.map(p => {
-                const st = STATUS[p.status] || { label: p.status || '—', kind: 'neutral' };
+                const st = proposalStatusMeta(p.status);
                 const viewTitle = p.last_viewed_at
                   ? `Last viewed ${new Date(p.last_viewed_at).toLocaleString()}${p.view_count ? ` · ${p.view_count} view${Number(p.view_count) === 1 ? '' : 's'}` : ''}`
                   : undefined;

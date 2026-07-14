@@ -12,6 +12,7 @@ import { fmt$, fmt$2dp, fmtDate, fmtDateFull } from '../../components/adminos/fo
 import BackButton from '../../components/adminos/BackButton';
 import ClickableRow from '../../components/ClickableRow';
 import RowLink from '../../components/RowLink';
+import { proposalStatusMeta } from '../../utils/proposalStatusMap';
 
 const SOURCE = {
   direct:    { label: 'Direct',    kind: 'neutral' },
@@ -23,12 +24,6 @@ const SOURCE = {
   instagram: { label: 'Instagram', kind: 'violet' },
   checkcherry: { label: 'CheckCherry', kind: 'neutral' },
   other:     { label: 'Other',     kind: 'neutral' },
-};
-
-const PROP_STATUS = {
-  draft: 'neutral', sent: 'info', viewed: 'accent', modified: 'violet',
-  accepted: 'ok', deposit_paid: 'ok', balance_paid: 'ok', completed: 'ok',
-  declined: 'danger', confirmed: 'ok',
 };
 
 function initialsOf(name) {
@@ -259,7 +254,7 @@ export default function ClientDetail() {
                         </td>
                         <td>{p.event_date ? fmtDate(String(p.event_date).slice(0, 10), { year: 'numeric' }) : '—'}</td>
                         <td className="muted">{p.package_name || '—'}</td>
-                        <td><StatusChip kind={PROP_STATUS[p.status] || 'neutral'}>{p.status || '—'}</StatusChip></td>
+                        <td><StatusChip kind={proposalStatusMeta(p.status).kind}>{p.status || '—'}</StatusChip></td>
                         <td className="num">{fmt$(p.total_price)}</td>
                         <td className="num muted">{fmt$(p.amount_paid)}</td>
                       </ClickableRow>

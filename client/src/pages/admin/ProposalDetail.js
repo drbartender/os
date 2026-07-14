@@ -22,19 +22,7 @@ import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
 import { venueMapQuery } from '../../components/VenueAddressFields';
 import EntityLink from '../../components/EntityLink';
-
-const STATUS = {
-  draft: { label: 'Draft', kind: 'neutral' },
-  sent: { label: 'Sent', kind: 'info' },
-  viewed: { label: 'Viewed', kind: 'accent' },
-  modified: { label: 'Modified', kind: 'violet' },
-  accepted: { label: 'Accepted', kind: 'ok' },
-  deposit_paid: { label: 'Deposit paid', kind: 'ok' },
-  balance_paid: { label: 'Paid in full', kind: 'ok' },
-  confirmed: { label: 'Confirmed', kind: 'ok' },
-  completed: { label: 'Completed', kind: 'ok' },
-  declined: { label: 'Declined', kind: 'danger' },
-};
+import { proposalStatusMeta } from '../../utils/proposalStatusMap';
 
 function formatDateTime(d) {
   if (!d) return '—';
@@ -315,7 +303,7 @@ export default function ProposalDetail() {
   if (loading) return <div className="page"><div className="muted">Loading proposal…</div></div>;
   if (!proposal) return null;
 
-  const statusInfo = STATUS[proposal.status] || { label: proposal.status, kind: 'neutral' };
+  const statusInfo = proposalStatusMeta(proposal.status);
   const eventTypeLabel = getEventTypeLabel({
     event_type: proposal.event_type,
     event_type_custom: proposal.event_type_custom,

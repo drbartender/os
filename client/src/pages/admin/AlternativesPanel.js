@@ -6,6 +6,7 @@ import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import EntityLink from '../../components/EntityLink';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
+import { proposalStatusMeta } from '../../utils/proposalStatusMap';
 
 // Alternatives panel on ProposalDetail: manage this proposal's option group
 // ("compare your options"). Extracted from ProposalDetail to keep that file
@@ -13,11 +14,6 @@ import { PUBLIC_SITE_URL } from '../../utils/constants';
 // and passes it down; onChanged asks the parent to refetch group + proposal.
 
 const GROUPABLE_STATUSES = ['draft', 'sent', 'viewed', 'modified'];
-const STATUS_KIND = {
-  draft: 'neutral', sent: 'info', viewed: 'accent', modified: 'violet',
-  accepted: 'ok', deposit_paid: 'ok', balance_paid: 'ok', confirmed: 'ok',
-  completed: 'ok', archived: 'neutral',
-};
 const fmt$ = (n) => `$${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function AlternativesPanel({ proposalId, proposal, group, onChanged }) {
@@ -138,7 +134,7 @@ export default function AlternativesPanel({ proposalId, proposal, group, onChang
                 {Number(m.id) === Number(proposalId) && <span className="sub"> (this one)</span>}
               </div>
               <span className="num muted">{fmt$(m.total_price)}</span>
-              <StatusChip kind={STATUS_KIND[m.status] || 'neutral'}>{m.status}</StatusChip>
+              <StatusChip kind={proposalStatusMeta(m.status).kind}>{m.status}</StatusChip>
               {!decided && (
                 <button
                   type="button"

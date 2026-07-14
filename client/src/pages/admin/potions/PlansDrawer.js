@@ -5,18 +5,11 @@ import StatusChip from '../../../components/adminos/StatusChip';
 import api from '../../../utils/api';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 import { servingLabel } from '../../../utils/servingLabels';
+import { drinkPlanStatusMeta } from '../../../utils/drinkPlanStatusMap';
 
 // Client drink plans, compact review list (Potions design 1a). Plans are
 // usually reached from their event; this is the quick queue plus a link to
-// the kept-alive full index at /drink-plans. Covers all five plan statuses
-// (the old index forgot exploration_saved).
-const STATUS = {
-  pending:            { label: 'Pending',   kind: 'neutral' },
-  draft:              { label: 'Draft',     kind: 'neutral' },
-  exploration_saved:  { label: 'Exploring', kind: 'info' },
-  submitted:          { label: 'Submitted', kind: 'info' },
-  reviewed:           { label: 'Reviewed',  kind: 'ok' },
-};
+// the kept-alive full index at /drink-plans.
 
 export default function PlansDrawer({ open, onClose }) {
   const [plans, setPlans] = useState(null);
@@ -59,7 +52,7 @@ export default function PlansDrawer({ open, onClose }) {
       )}
 
       {!error && plans !== null && plans.map((p) => {
-        const status = STATUS[p.status] || { label: p.status, kind: 'neutral' };
+        const status = drinkPlanStatusMeta(p.status);
         const meta = [
           p.event_date ? new Date(p.event_date).toLocaleDateString() : null,
           p.guest_count ? `${p.guest_count} guests` : null,
