@@ -64,4 +64,4 @@ The 27-commit batch (031fb6d..77005c5) got its push-time fleet + /second-opinion
 - Payment accounting: non-flat add-on comp residual (brief owed).
 - Audit leftover: manager iCal in `calendar.js` (last open audit item).
 - Tech debt: `notifications_opt_in` dead column DROP (4 test fixtures still INSERT it); `.form-select` focus padding-right; no-tip-jar badge redness vs last-minute badge; `.staffing-stat strong` ink emphasis.
-- Empty v1 tables (`legacy_cc_raw_imports`, `cc_import_runs`, `cc_import_phase0_failures`) stay as harmless scaffolding; dev DB still carries 1,215 v1 clients + 176 v1 proposals (guard-blocked from ledger load; scrub = housekeeping).
+- Empty v1 tables (`legacy_cc_raw_imports`, `cc_import_runs`, `cc_import_phase0_failures`) stay as harmless scaffolding. Dev v1 junk SCRUBBED 2026-07-14: 176 v1 proposals (+ shifts/refunds/scheduled messages) and 1,199 v1 clients deleted transactionally with verification; 16 CC-marked clients with real proposals kept; ~1,207 dev `legacy_cc_proposals.client_id` links nulled (no live consumer); 22 `users.cc_id` rows deliberately untouched.
