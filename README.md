@@ -197,6 +197,7 @@ dr-bartender/
 │   │   ├── shifts.js           # Shift scheduling
 │   │   ├── shifts.queries.js   # Extracted SQL projections/queries for shifts.js
 │   │   ├── shifts.approval.js  # Request/assign/approve handlers + position-resolution money seam (extracted from shifts.js)
+│   │   ├── shifts.handlers.js  # Shift-lifecycle mutation handlers (update, cancel-or-unassign) extracted from shifts.js
 │   │   ├── staffShiftActions.js # Drop / Cover shift marketplace (drop, request-cover, claim-cover, emergency-drop, withdraw) under /api/shifts
 │   │   ├── adminCoverSwaps.js  # Admin cover-swap approval endpoints (mounted under /api/admin)
 │   │   ├── sms.js              # Twilio inbound-SMS webhook + admin thread API
