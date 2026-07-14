@@ -25,7 +25,7 @@ const { SuppressMessageError } = require('./errors');
 const { sendAndLogSms } = require('./sms');
 const smsTemplates = require('./smsTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
-const { PUBLIC_SITE_URL } = require('./urls');
+const { proposalUrl } = require('./urls');
 const { formatEventDateForSms: eventDateSms } = require('./smsEventDate');
 
 /**
@@ -53,10 +53,6 @@ async function loadDripSmsContext(proposalId) {
   const prefs = proposal.comm_prefs || {};
   if (prefs.sms_enabled === false) throw new SuppressMessageError('sms_opted_out');
   return proposal;
-}
-
-function proposalUrl(token) {
-  return `${PUBLIC_SITE_URL}/proposal/${token}`;
 }
 
 async function sendDripSms(proposalId, messageType, bodyFn) {

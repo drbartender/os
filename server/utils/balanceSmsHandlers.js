@@ -24,7 +24,7 @@ const { registerHandler } = require('./scheduledMessageDispatcher');
 const { SuppressMessageError } = require('./errors');
 const { sendAndLogSms } = require('./sms');
 const smsTemplates = require('./smsTemplates');
-const { PUBLIC_SITE_URL } = require('./urls');
+const { proposalUrl } = require('./urls');
 const { formatEventDateForSms: eventDateSms } = require('./smsEventDate');
 
 const DAY_SECONDS = 86400;
@@ -58,10 +58,6 @@ async function loadBalanceSmsContext(proposalId) {
   const balanceDue = Number(ctx.total_price) - Number(ctx.amount_paid);
   if (!(balanceDue > 0)) throw new SuppressMessageError(`balance_not_positive:${balanceDue}`);
   return ctx;
-}
-
-function proposalUrl(token) {
-  return `${PUBLIC_SITE_URL}/proposal/${token}`;
 }
 
 async function sendBalanceSms(proposalId, messageType, bodyFn) {

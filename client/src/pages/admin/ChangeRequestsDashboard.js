@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../utils/api';
 import EntityLink from '../../components/EntityLink';
-const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
+import { formatMoneyDelta as fmt } from '../../utils/formatDelta';
 export default function ChangeRequestsDashboard() {
   const [rows, setRows] = useState(null);
   useEffect(() => { api.get('/proposals/change-requests?status=pending').then(r => setRows(r.data.requests)).catch(() => setRows([])); }, []);

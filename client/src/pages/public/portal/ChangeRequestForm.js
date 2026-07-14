@@ -2,9 +2,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as Sentry from '@sentry/react';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
+import { formatMoneyDelta as fmt } from '../../../utils/formatDelta';
 
 const authHeader = () => { const t = localStorage.getItem('db_client_token'); return t ? { Authorization: `Bearer ${t}` } : {}; };
-const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
 
 export default function ChangeRequestForm({ proposal, token, onSubmitted, onCancel }) {
   const toast = useToast();

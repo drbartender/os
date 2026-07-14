@@ -4,7 +4,7 @@ const { sendEmail } = require('./email');
 const emailTemplates = require('./emailTemplates');
 const { resolveEventTimezone, formatEventLocalTime } = require('./eventTimezone');
 const { getEventTypeLabel } = require('./eventTypes');
-const { PUBLIC_SITE_URL } = require('./urls');
+const { PUBLIC_SITE_URL, proposalUrl } = require('./urls');
 const { readSnapshot } = require('./pricingSnapshot');
 
 /**
@@ -175,7 +175,7 @@ async function handleEventWeekReminder({ entity, recipient, scheduledMessage: _s
     location: ctx.event_location,
     guestCount: ctx.guest_count,
     packageName: ctx.package_name || getEventTypeLabel({ event_type: ctx.event_type, event_type_custom: ctx.event_type_custom }),
-    proposalUrl: ctx.token ? `${PUBLIC_SITE_URL}/proposal/${ctx.token}` : null,
+    proposalUrl: ctx.token ? proposalUrl(ctx.token) : null,
   });
 
   await sendEmail({ to: ctx.client_email, ...tpl });

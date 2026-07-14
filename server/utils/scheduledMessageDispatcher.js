@@ -4,7 +4,7 @@ const { sendEmail } = require('./email');
 const { esc } = require('./htmlEscape');
 const emailTemplates = require('./emailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
-const { PUBLIC_SITE_URL } = require('./urls');
+const { proposalUrl } = require('./urls');
 const { resolveChannelFallback } = require('./channelFallback');
 const { suspendClientAutomation } = require('./clientAutomationSuspension');
 const { SuppressMessageError, QuotaExceededError } = require('./errors');
@@ -849,10 +849,6 @@ async function resolveCriticalDeadLetters() {
 }
 
 // ─── Built-in money-path handlers ────────────────────────────
-
-function proposalUrl(token) {
-  return `${PUBLIC_SITE_URL}/proposal/${token}`;
-}
 
 function lastFour(_proposal) {
   // last4 is not stored on proposals today (only stripe_payment_method_id).

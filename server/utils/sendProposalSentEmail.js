@@ -12,7 +12,7 @@ const smsTemplates = require('./smsTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
 const { shouldSendImmediate } = require('./messageSuppression');
 
-const { PUBLIC_SITE_URL } = require('./urls');
+const { proposalUrl: buildProposalUrl } = require('./urls');
 const { formatEventDateForSms } = require('./smsEventDate');
 
 // Dependency seam for tests.
@@ -30,7 +30,7 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin' } = {}) {
     if (!proposal || !proposal.client_email) {
       // No email — fall through to the SMS attempt below anyway.
     } else {
-      const proposalUrl = `${PUBLIC_SITE_URL}/proposal/${proposal.token}`;
+      const proposalUrl = buildProposalUrl(proposal.token);
       const eventTypeLabel = getEventTypeLabel({
         event_type: proposal.event_type,
         event_type_custom: proposal.event_type_custom,
@@ -82,7 +82,7 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin' } = {}) {
     const body = smsTemplates.initialProposalSms({
       eventTypeLabel,
       eventDate: formatEventDateForSms(proposal.event_date),
-      link: `${PUBLIC_SITE_URL}/proposal/${proposal.token}`,
+      link: buildProposalUrl(proposal.token),
     });
     await _deps.sendAndLogSms({
       to: proposal.client_phone,

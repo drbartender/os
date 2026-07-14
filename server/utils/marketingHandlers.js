@@ -5,7 +5,7 @@ const { sendEmail } = require('./email');
 const tpl = require('./marketingEmailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
 const { resolveEventTimezone } = require('./eventTimezone'); // Gemini Finding 4
-const { PUBLIC_SITE_URL, ADMIN_URL, API_URL } = require('./urls');
+const { PUBLIC_SITE_URL, ADMIN_URL, API_URL, proposalUrl } = require('./urls');
 const {
   isRetentionEligibleEventType,
   shouldScheduleNewYearTouch,
@@ -350,7 +350,7 @@ function makeMarketingTemplateContext(proposal) {
       event_type_custom: proposal.event_type_custom,
     }),
     eventDateDisplay: formatEventDateDisplay(proposal.event_date),
-    proposalUrl: `${PUBLIC_SITE_URL}/proposal/${proposal.token}`,
+    proposalUrl: proposalUrl(proposal.token),
     unsubscribeUrl: buildUnsubscribeUrl(proposal.client_id),
   };
 }

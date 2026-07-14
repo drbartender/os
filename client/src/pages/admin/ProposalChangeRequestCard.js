@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
-
-const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
+import { formatMoneyDelta as fmt } from '../../utils/formatDelta';
 
 const CR_FIELD_LABELS = {
   guest_count: 'Guests', event_duration_hours: 'Duration (hrs)', num_bars: 'Portable bars',

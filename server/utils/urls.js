@@ -18,4 +18,10 @@ if (process.env.NODE_ENV === 'production' && !process.env.PUBLIC_SITE_URL) {
   console.warn('[urls] PUBLIC_SITE_URL is not set — falling back to https://drbartender.com. Set it explicitly to avoid surprises in preview/staging.');
 }
 
-module.exports = { PUBLIC_SITE_URL, ADMIN_URL, STAFF_URL, API_URL };
+// Public client-facing proposal link. Tokens are UUIDs today, so
+// encodeURIComponent is a no-op — it future-proofs against any non-UUID token.
+function proposalUrl(token) {
+  return `${PUBLIC_SITE_URL}/proposal/${encodeURIComponent(token)}`;
+}
+
+module.exports = { PUBLIC_SITE_URL, ADMIN_URL, STAFF_URL, API_URL, proposalUrl };
