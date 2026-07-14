@@ -5,6 +5,7 @@ const { effectiveSetupMinutes } = require('./setupTime');
 const { scheduleDrinkPlanNudge } = require('./drinkPlanNudge');
 const { parsePositionsNeeded, rosterCounts } = require('./positionsNeeded');
 const { canonicalizeRole } = require('./staffingRoles');
+const { readSnapshot } = require('./pricingSnapshot');
 
 /**
  * Convert a 24-hour time string (e.g. "17:00") and add hours to produce a new time string.
@@ -86,9 +87,7 @@ const STAFFING_NAME_TO_SLUG = {
 // throws on a malformed snapshot.
 async function loadStaffingAddons(proposal, db) {
   try {
-    const snap = typeof proposal.pricing_snapshot === 'string'
-      ? JSON.parse(proposal.pricing_snapshot)
-      : proposal.pricing_snapshot;
+    const snap = readSnapshot(proposal.pricing_snapshot, { context: 'eventCreation' });
     if (snap && Array.isArray(snap.addons) && snap.addons.length) {
       return snap.addons
         .map((a) => ({ slug: a.slug, quantity: Number(a.quantity) || 0 }))
@@ -116,9 +115,7 @@ async function loadStaffingAddons(proposal, db) {
 // package row (package_id can be NULL after a package delete).
 async function isHostedProposal(proposal, db) {
   try {
-    const snap = typeof proposal.pricing_snapshot === 'string'
-      ? JSON.parse(proposal.pricing_snapshot)
-      : proposal.pricing_snapshot;
+    const snap = readSnapshot(proposal.pricing_snapshot, { context: 'eventCreation' });
     if (snap && snap.package && snap.package.pricing_type) {
       return snap.package.pricing_type === 'per_guest';
     }

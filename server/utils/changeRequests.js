@@ -3,6 +3,7 @@ const { calculateProposal } = require('./pricingEngine');
 const { validateProposalRules, stripIncludedAddons } = require('./proposalRules');
 const { ValidationError } = require('./errors');
 const { safeAddonQty } = require('./proposalMoneyShared');
+const { readSnapshot } = require('./pricingSnapshot');
 
 const { BOOKED_SET: BOOKED } = require('./proposalStatus');
 
@@ -80,7 +81,7 @@ async function priceProposedState(proposal, proposed, db = pool) {
     numBars: Number(proposed.num_bars ?? proposal.num_bars ?? 1),
     numBartenders: proposed.num_bartenders ?? null,
     addons,
-    syrupSelections: proposal.pricing_snapshot?.syrups?.selections || [],
+    syrupSelections: readSnapshot(proposal.pricing_snapshot, { context: 'changeRequests' })?.syrups?.selections || [],
     adjustments: proposal.adjustments || [],
     totalPriceOverride: proposal.total_price_override ?? null,
   });
@@ -91,7 +92,7 @@ async function buildPreview(proposal, proposed, db = pool) {
   const snapshot = await priceProposedState(proposal, proposed, db);
   const currentTotal = Number(proposal.total_price_override ?? proposal.total_price ?? 0);
   const estimatedTotal = Number(snapshot.total);
-  const currentStaffing = Number(proposal.pricing_snapshot?.staffing?.actual ?? proposal.num_bartenders ?? 1);
+  const currentStaffing = Number(readSnapshot(proposal.pricing_snapshot, { context: 'changeRequests' })?.staffing?.actual ?? proposal.num_bartenders ?? 1);
   return {
     snapshot,
     price_preview: {

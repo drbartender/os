@@ -5,6 +5,7 @@ const emailTemplates = require('./emailTemplates');
 const { resolveEventTimezone, formatEventLocalTime } = require('./eventTimezone');
 const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
+const { readSnapshot } = require('./pricingSnapshot');
 
 /**
  * Look up the proposal + client + package data needed to render any pre-event
@@ -128,7 +129,7 @@ function formatBalanceDueDate(proposal) {
  * 'Drink plan submitted'. Plan 2d's drink-plan touches will refine this.
  */
 function buildDrinksSummary(proposal) {
-  const snap = proposal.pricing_snapshot || {};
+  const snap = readSnapshot(proposal.pricing_snapshot, { context: 'preEventHandlers' }) || {};
   if (snap && snap.package && snap.package.name) {
     return `${snap.package.name}, selections in your portal`;
   }

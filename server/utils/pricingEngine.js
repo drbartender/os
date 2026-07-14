@@ -6,6 +6,7 @@
 const {
   SHARED_GRATUITY_LABEL, GRATUITY_LABEL, currentDisplayLabels,
 } = require('./gratuityLabels');
+const { PRICING_SNAPSHOT_VERSION } = require('./pricingSnapshot');
 
 /**
  * HOSTED PACKAGE RULE — do not lose this.
@@ -516,6 +517,7 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
   }
 
   return {
+    _version: PRICING_SNAPSHOT_VERSION,
     calculated_at: new Date().toISOString(),
     inputs: { guestCount, durationHours, numBars, numBartenders: staffing.actual },
     package: {

@@ -6,6 +6,7 @@
  */
 
 const { isHostedPackage } = require('./pricingEngine');
+const { readSnapshot } = require('./pricingSnapshot');
 
 /**
  * Parse a time string into total minutes since midnight.
@@ -57,7 +58,7 @@ function subtractMinutesFromTime(timeStr, minutes) {
  */
 function effectiveSetupMinutes(proposal, pkg) {
   return proposal?.setup_minutes_before ??
-    (isHostedPackage(pkg ?? proposal?.pricing_snapshot?.package) ? 90 : 60);
+    (isHostedPackage(pkg ?? readSnapshot(proposal?.pricing_snapshot, { context: 'setupTime' })?.package) ? 90 : 60);
 }
 
 /**

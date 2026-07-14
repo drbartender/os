@@ -13,6 +13,8 @@ const {
 const { captureProposalPaymentFees, captureTipFeesForProposal } = require('./payrollTips');
 const { isLegacyCcParticipant } = require('./payrollGuards');
 const { isBartender } = require('./staffingRoles');
+const { readSnapshot } = require('./pricingSnapshot');
+
 // Invoice labels whose dollars are part of the contract total_price. Canonical
 // definition lives in ./proposalMoneyShared (shared with refundHelpers.js
 // applyRefundReconciliation — same classification, same reason).
@@ -256,7 +258,9 @@ async function accruePayoutsForProposal(proposalId) {
     const proposalTotalCents = Math.round(Number(proposal.total_price || 0) * 100);
     const proposalPaidCents = Math.round(Number(proposal.amount_paid || 0) * 100);
     const gratuityFunded = proposalPaidCents >= proposalTotalCents;
-    const grossGratuity = gratuityFunded ? extractGratuityCents(proposal.pricing_snapshot) : 0;
+    const grossGratuity = gratuityFunded
+      ? extractGratuityCents(readSnapshot(proposal.pricing_snapshot, { context: 'payrollAccrual' }))
+      : 0;
     // Fee numerator (seam-sweep M4, decided 2026-07-02: exact pro-ration): only
     // fees on dollars INSIDE the total_price denominator may net against the
     // gratuity. Extra charges (Additional Services invoices, drink-plan extras)

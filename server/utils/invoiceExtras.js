@@ -8,6 +8,7 @@ const { reconcileProposalPaymentStatus } = require('./proposalStatus');
 const { ConflictError } = require('./errors');
 const { writeLineItems } = require('./invoiceLineItems');
 const { createInvoice } = require('./invoiceLifecycle');
+const { readSnapshot } = require('./pricingSnapshot');
 
 // ─── 11. writeExtrasLineItems + createDrinkPlanExtrasInvoice ──────────────────
 
@@ -172,7 +173,7 @@ async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmo
     if (!propRes.rows[0]) throw new Error(`Proposal ${proposalId} not found`);
     selections = dpRes.rows[0].selections || {};
     guestCount = propRes.rows[0].guest_count;
-    pricingSnapshot = propRes.rows[0].pricing_snapshot;
+    pricingSnapshot = readSnapshot(propRes.rows[0].pricing_snapshot, { context: 'invoiceExtras' });
     numBars = propRes.rows[0].num_bars;
   }
 
