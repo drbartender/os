@@ -17997,21 +17997,93 @@ html[data-app="admin-os"] .ov-cohort-note button:hover { color: var(--ink-1); }
   }
 }
 /* end */
-/* overview: mb-b1 shell */
-/* Needs-you strip: 3-across on desktop, single column on phones. Queue-item
-   separators move from column borders (removed in the grid) to row borders when
-   the grid collapses. */
-html[data-app="admin-os"] .needs-you-grid {
+/* overview: needs-attention tabs (natabs-a) */
+/* Band 1 row: tabbed triage card (wide) beside Pipeline (narrow). */
+html[data-app="admin-os"] .ov-band1 {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 2fr 1fr;
+  gap: var(--gap);
+  margin-bottom: var(--gap);
+  align-items: start;
 }
-html[data-app="admin-os"] .needs-you-grid .queue-item { border-bottom: 0; }
-/* Reserved narrow prep column on the upcoming-events table (lane e fills it);
-   collapsed to a hairline so it takes no visible space until then. */
+/* min-width:0 kills the grid-item min-content floor, or the nowrap tab chips
+   blow the track out past the viewport and drag the whole page wide. */
+html[data-app="admin-os"] .ov-band1 > * { min-width: 0; }
+/* Tab chip row under the card head. Scrolls inside its own container on
+   phones, never the page (LAW). */
+html[data-app="admin-os"] .nat-tabs {
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--line-1);
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  -webkit-overflow-scrolling: touch;
+}
+html[data-app="admin-os"] .nat-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.6rem;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-pill, 999px);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  transition: border-color 0.1s, background 0.1s, color 0.1s;
+}
+html[data-app="admin-os"] .nat-tab:hover { border-color: var(--ink-4); }
+html[data-app="admin-os"] .nat-tab.is-active {
+  color: var(--ink-1);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+/* Greyed at zero ONLY when no dot: a payroll-overdue Money tab has count 0
+   but a danger dot and must not be dimmed. ink-3 (not ink-4) keeps the
+   still-clickable chip above the 3:1 UI-contrast bar in both skins. */
+html[data-app="admin-os"] .nat-tab.is-empty { color: var(--ink-3); }
+/* An empty tab can also be the ACTIVE one (admin, quiet board, Money default):
+   active wins the paint or the selected chip reads dimmed. */
+html[data-app="admin-os"] .nat-tab.is-active.is-empty { color: var(--ink-1); }
+/* Dot colors mirror the queue-icon priority tokens so tab and row agree. */
+html[data-app="admin-os"] .nat-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+html[data-app="admin-os"] .nat-dot.warn { background: hsl(var(--warn-h) var(--warn-s) 55%); }
+html[data-app="admin-os"] .nat-dot.danger { background: hsl(var(--danger-h) var(--danger-s) 60%); }
+html[data-app="admin-os"] .nat-dot.info { background: hsl(var(--info-h) var(--info-s) 60%); }
+/* Light skin mirrors its .queue-icon priority palette (ms tokens), so the
+   tab dot and the row icon never disagree within a skin. */
+html[data-app="admin-os"][data-skin="light"] .nat-dot.warn { background: var(--ms-camel); }
+html[data-app="admin-os"][data-skin="light"] .nat-dot.danger { background: var(--ms-bordeaux); }
+html[data-app="admin-os"][data-skin="light"] .nat-dot.info { background: var(--ms-navy); }
+html[data-app="admin-os"] .nat-panel.is-hidden { display: none; }
+html[data-app="admin-os"] .nat-empty { padding: 0.75rem 1rem; }
+html[data-app="admin-os"] .nat-overflow .queue-title a { color: var(--ink-3); }
+/* Payroll status block: Money tab body content (PayrollStatus.js). */
+html[data-app="admin-os"] .nat-payroll {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--line-1);
+  transition: background 0.1s;
+}
+html[data-app="admin-os"] .ov-payroll-link:hover .nat-payroll { background: var(--row-hover); }
+html[data-app="admin-os"] .ov-payroll-link:focus-visible .nat-payroll {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+html[data-app="admin-os"] .nat-payroll.is-warn {
+  box-shadow: inset 3px 0 0 hsl(var(--warn-h) var(--warn-s) 50%);
+}
 @media (max-width: 640px) {
-  html[data-app="admin-os"] .needs-you-grid { grid-template-columns: 1fr; }
-  html[data-app="admin-os"] .needs-you-grid .queue-item { border-bottom: 1px solid var(--line-1); }
-  html[data-app="admin-os"] .needs-you-grid .queue-item:last-child { border-bottom: 0; }
+  html[data-app="admin-os"] .ov-band1 { grid-template-columns: 1fr; }
   /* Tab seg scrolls inside its own container, never the page. */
   html[data-app="admin-os"] .overview-tabs {
     overflow-x: auto;
@@ -18317,9 +18389,10 @@ html[data-app="admin-os"] .ov-foot-caption { margin-left: auto; }
   html[data-app="admin-os"] .ov-foot-caption { margin-left: 0; }
 }
 /* end */
-/* overview: mb-c payroll */
-/* Band 1 payroll card. The whole card is one anchor (EntityLink), so kill the
-   entity-link text underline and let the card carry the click affordance. */
+/* overview: mb-c payroll (now the Money-tab status block, natabs-a) */
+/* The whole block is one anchor (EntityLink), so kill the entity-link text
+   underline and let the block carry the click affordance. Block chrome
+   (hover, focus, is-warn) lives with the natabs rules above. */
 html[data-app="admin-os"] .ov-payroll-link,
 html[data-app="admin-os"] .ov-payroll-link:hover,
 html[data-app="admin-os"] .ov-payroll-link:focus-visible {
@@ -18327,20 +18400,6 @@ html[data-app="admin-os"] .ov-payroll-link:focus-visible {
   text-decoration: none;
   color: inherit;
 }
-html[data-app="admin-os"] .ov-payroll-card { transition: border-color 0.1s, box-shadow 0.1s; }
-html[data-app="admin-os"] .ov-payroll-link:hover .ov-payroll-card {
-  border-color: var(--ink-4);
-  box-shadow: var(--shadow-pop, var(--shadow-card));
-}
-html[data-app="admin-os"] .ov-payroll-link:focus-visible .ov-payroll-card {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-/* Overdue: card flips to warn (§8); the Needs-you item carries the danger. */
-html[data-app="admin-os"] .ov-payroll-card.is-warn {
-  border-color: hsl(var(--warn-h) var(--warn-s) 50%);
-}
-html[data-app="admin-os"] .ov-payroll-arrow { color: var(--ink-4); flex: 0 0 auto; }
 html[data-app="admin-os"] .ov-payroll-headline {
   display: flex;
   align-items: center;

@@ -55,14 +55,18 @@ export default function Messages() {
 
   // Open the thread named in the URL (?client=<id>) after a Back navigation,
   // else default to the most recent conversation (threads are newest-first) so
-  // the pane opens on the latest message instead of the empty placeholder. View
-  // only: it does not mark the conversation read.
+  // the pane opens on the latest message instead of the empty placeholder.
+  // A URL-named thread is a deliberate open (a needs-attention item, a shared
+  // link): mark it read so the item clears (spec 2026-07-14 §1 inclusion
+  // test). The bare-visit auto-open of threads[0] is a convenience and must
+  // NOT silently clear that thread's unread count.
   useEffect(() => {
     if (selectedClientId || threads.length === 0) return;
     const fromUrl = listState.client
       ? threads.find(t => String(t.client_id) === listState.client)
       : null;
-    openThread((fromUrl || threads[0]).client_id, { markRead: false });
+    if (fromUrl) openThread(fromUrl.client_id, { markRead: true });
+    else openThread(threads[0].client_id, { markRead: false });
   }, [threads, selectedClientId, listState.client, openThread]);
 
   // Keep the newest message in view whenever a conversation loads or grows.

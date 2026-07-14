@@ -15,10 +15,9 @@ function proximityPriority(eventDate) {
   return 'info';
 }
 
-const MAX_PREP_ITEMS = 4;
-
 // Needs-you items for the two ball-in-your-court stages. Past events are
 // excluded (a submitted plan for a finished event is history, not a queue).
+// Uncapped: the tabbed card caps at render (6 rows + overflow link).
 export function buildPrepItems(plans) {
   if (!Array.isArray(plans)) return [];
   const upcomingOnly = plans.filter(p => {
@@ -50,18 +49,5 @@ export function buildPrepItems(plans) {
 
   const rank = { danger: 0, warn: 1, info: 2 };
   items.sort((a, b) => (rank[a.priority] ?? 3) - (rank[b.priority] ?? 3));
-
-  if (items.length > MAX_PREP_ITEMS) {
-    const overflow = items.length - MAX_PREP_ITEMS;
-    return [
-      ...items.slice(0, MAX_PREP_ITEMS),
-      {
-        id: 'prep-overflow', type: 'prep', priority: 'info',
-        title: `${overflow} more ${overflow === 1 ? 'plan' : 'plans'} waiting on prep`,
-        sub: 'Open the drink plans queue', meta: String(overflow),
-        target: 'drink-plans-queue', ref: null,
-      },
-    ];
-  }
   return items;
 }

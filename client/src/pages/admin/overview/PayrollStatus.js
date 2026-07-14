@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import api from '../../../utils/api';
 import EntityLink from '../../../components/EntityLink';
-import Icon from '../../../components/adminos/Icon';
 import { fmt$wholeFromCents, fmtDate } from '../../../components/adminos/format';
 import { chicagoYmdParts } from '../../../hooks/useMetricsFilter';
 
-// Band 1 payroll card (spec §8). Admin-only: OverviewPage mounts this ONLY for
-// admins, so a manager fires zero /admin/payroll/* requests (§1 role gating).
-// Read-only surfacing; no process/mark-paid actions, no accrual code paths.
+// Money-tab payroll status block (spec 2026-07-14 §2 Money): the retired
+// PayrollCard's logic with the card chrome dropped. Admin-only: NeedsYouStrip
+// mounts this ONLY for admins, so a manager fires zero /admin/payroll/*
+// requests (2026-07-09 spec §1 role gating). Read-only surfacing; no
+// process/mark-paid actions, no accrual code paths. Not a queue item: overdue
+// is reported up as a boolean and feeds the Money tab's danger dot.
 
 const PAYROLL_HREF = '/financials/payroll';
 
@@ -23,15 +25,13 @@ const weekday = (v, opt = 'long') => {
 };
 
 // Today in the business timezone (America/Chicago) as YYYY-MM-DD, so the payday
-// comparison flips at Chicago midnight like every other range computation (§4).
+// comparison flips at Chicago midnight like every other range computation.
 function chicagoTodayYmd() {
   const { y, mo, d } = chicagoYmdParts();
   return `${y}-${String(mo + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
-const periodRange = (p) => `${fmtDate(ymd10(p.start_date))} – ${fmtDate(ymd10(p.end_date))}`;
-
-export default function PayrollCard({ onOverdue }) {
+export default function PayrollStatus({ onOverdue }) {
   const [periods, setPeriods] = useState(null);   // array | null
   const [current, setCurrent] = useState(null);   // { period, payouts } | null
   const [periodsErr, setPeriodsErr] = useState(false);
@@ -42,7 +42,7 @@ export default function PayrollCard({ onOverdue }) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    // Two core fetches decide the card body; either failing degrades to link-only.
+    // Two core fetches decide the block body; either failing degrades to link-only.
     Promise.allSettled([
       api.get('/admin/payroll/periods'),
       api.get('/admin/payroll/periods/current'),
@@ -55,7 +55,7 @@ export default function PayrollCard({ onOverdue }) {
       setLoading(false);
     });
     // Deferred-tips count is a non-blocking extra (same source DeferredTipsPanel
-    // renders): its failure only hides the sub-line, never the card.
+    // renders): its failure only hides the sub-line, never the block.
     api.get('/admin/payroll/deferred-tips')
       .then(r => { if (!cancelled) setDeferred((r.data?.tips || []).length); })
       .catch(() => {});
@@ -81,12 +81,6 @@ export default function PayrollCard({ onOverdue }) {
         headline: `Due ${weekday(due.payday) || 'soon'}`,
         total, staff, overdue,
         href: `/financials/payroll?tab=history&period=${due.id}`,
-        overdueItem: overdue ? {
-          id: 'payroll-overdue', type: 'payroll', priority: 'danger',
-          title: 'Payroll overdue',
-          sub: `${periodRange(due)} · due ${fmtDate(ymd10(due.payday))}`,
-          meta: fmt$wholeFromCents(total), target: 'payroll', ref: null,
-        } : null,
       };
     }
 
@@ -107,11 +101,11 @@ export default function PayrollCard({ onOverdue }) {
     return { kind: 'empty', href: PAYROLL_HREF };
   }, [loading, periodsErr, currentErr, periods, current]);
 
-  // Report the overdue Needs-you item up to OverviewPage. Admin-only by
-  // construction: this card only mounts for admins. `view` is memoized on the raw
-  // inputs, so `view.overdueItem` is referentially stable and this cannot loop.
+  // Report overdue up so the Money tab's dot (and the default-tab pick) can
+  // fire without this block's tab being active. `view` is memoized on the raw
+  // inputs, so this cannot loop.
   useEffect(() => {
-    if (onOverdue) onOverdue(view.overdueItem || null);
+    if (onOverdue) onOverdue(view.kind === 'due' && Boolean(view.overdue));
   }, [onOverdue, view]);
 
   const deferredLine = deferred > 0 && (
@@ -150,13 +144,7 @@ export default function PayrollCard({ onOverdue }) {
 
   return (
     <EntityLink to={view.href} className="ov-payroll-link">
-      <div className={`card ov-payroll-card${view.overdue ? ' is-warn' : ''}`}>
-        <div className="card-head">
-          <h3><Icon name="dollar" size={12} /> Payroll</h3>
-          <Icon name="right" size={14} className="ov-payroll-arrow" />
-        </div>
-        <div className="card-body">{body}</div>
-      </div>
+      <div className={`nat-payroll${view.overdue ? ' is-warn' : ''}`}>{body}</div>
     </EntityLink>
   );
 }

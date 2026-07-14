@@ -2,18 +2,19 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../../utils/api';
 import { useAuth } from '../../../context/AuthContext';
-import { getEventTypeLabel } from '../../../utils/eventTypes';
 import Icon from '../../../components/adminos/Icon';
 import MetricsFilterBar from '../../../components/adminos/MetricsFilterBar';
 import useMetricsFilter from '../../../hooks/useMetricsFilter';
 import useUrlListState from '../../../hooks/useUrlListState';
-import { fmt$, fmtDate, dayDiff } from '../../../components/adminos/format';
+import { dayDiff } from '../../../components/adminos/format';
 import { parsePositionsCount, approvedCount } from '../../../components/adminos/shifts';
 import StripePayoutsTab from '../StripePayoutsTab';
 import NeedsYouStrip from './NeedsYouStrip';
 import { buildPrepItems } from './PrepQueue';
+import {
+  buildStaffingItems, buildClientItems, buildSalesItems, buildMoneyItems, computeTabs,
+} from './queueItems';
 import PipelineCard from './PipelineCard';
-import PayrollCard from './PayrollCard';
 import MoneyTiles from './MoneyTiles';
 import FunnelCard from './FunnelCard';
 import LeadSpendCard from './LeadSpendCard';
@@ -65,9 +66,10 @@ export default function OverviewPage() {
   const tab = FIN_TABS.includes(listState.tab) ? listState.tab : 'overview';
   const split = SPLIT_VALUES.includes(listState.split) ? listState.split : '';
   const [payoutBadge, setPayoutBadge] = useState(0);
-  // Payroll-overdue Needs-you item reported up by the admin-only PayrollCard.
-  // A manager never mounts PayrollCard, so this stays null and no item appears.
-  const [payrollItem, setPayrollItem] = useState(null);
+  // Payroll-overdue flag reported up by the admin-only PayrollStatus block
+  // (via NeedsYouStrip). A manager never mounts the block, so this stays
+  // false: it feeds the Money tab's danger dot, not an item.
+  const [payrollOverdue, setPayrollOverdue] = useState(false);
 
   // Band 2 (analysis) — obeys the filter bar. The two LAW fetches (dashboard-stats
   // + financials) share ONE zone-level error + retry; a failure in either never
@@ -87,6 +89,11 @@ export default function OverviewPage() {
   const [proposalsLoading, setProposalsLoading] = useState(true);
   const [applications, setApplications] = useState([]);
   const [drinkPlans, setDrinkPlans] = useState([]);
+  const [drinkPlansLoading, setDrinkPlansLoading] = useState(true);
+  const [payoutsLoading, setPayoutsLoading] = useState(true);
+  const [changeRequests, setChangeRequests] = useState([]);
+  const [conversations, setConversations] = useState([]);
+  const [clientsLoading, setClientsLoading] = useState(true);
 
   const band2Params = useCallback(() => {
     const params = { basis };
@@ -148,7 +155,8 @@ export default function OverviewPage() {
   useEffect(() => {
     api.get('/stripe-payouts')
       .then(r => setPayoutBadge(r.data?.summary?.unmatched_count || 0))
-      .catch(() => {}); // badge is best-effort; the tab itself surfaces errors
+      .catch(() => {}) // badge is best-effort; the tab itself surfaces errors
+      .finally(() => setPayoutsLoading(false));
   }, []);
 
   // Operational fetches — each isolated, no shared loading gate.
@@ -160,17 +168,35 @@ export default function OverviewPage() {
       .catch(() => {}) // unstaffed queue items simply stay absent
       .finally(() => { if (!cancelled) setShiftsLoading(false); });
 
+    // limit=200 (the route's cap): the default newest-50 window drops the
+    // OLDEST still-sent proposals, which is exactly what sales aging surfaces.
     setProposalsLoading(true);
-    api.get('/proposals')
+    api.get('/proposals', { params: { limit: 200 } })
       .then(r => { if (!cancelled) setProposals(r.data || []); })
       .catch(() => {}) // proposal-derived queue items simply stay absent
       .finally(() => { if (!cancelled) setProposalsLoading(false); });
 
+    // Clients tab sources (admin+manager). One shared loading flag so the
+    // card's collapsed state can't flash before these resolve; either failing
+    // just means those items stay absent.
+    setClientsLoading(true);
+    Promise.allSettled([
+      api.get('/proposals/change-requests', { params: { status: 'pending' } }),
+      api.get('/sms/conversations'),
+    ]).then(([crRes, smsRes]) => {
+      if (cancelled) return;
+      if (crRes.status === 'fulfilled') setChangeRequests(crRes.value.data?.requests || []);
+      if (smsRes.status === 'fulfilled') setConversations(Array.isArray(smsRes.value.data) ? smsRes.value.data : []);
+      setClientsLoading(false);
+    });
+
     // Prep pipeline: the Potions-enriched drink-plans list (admin+manager).
     // Isolated like the rest: a failure just means no prep pills or items.
+    setDrinkPlansLoading(true);
     api.get('/drink-plans?limit=200')
       .then(r => { if (!cancelled) setDrinkPlans(Array.isArray(r.data) ? r.data : []); })
-      .catch(() => {}); // prep items simply stay absent
+      .catch(() => {}) // prep items simply stay absent
+      .finally(() => { if (!cancelled) setDrinkPlansLoading(false); });
 
     // /admin/applications is admin-only (the Hiring surface is adminOnly). A
     // manager would 403 here on every dashboard load and trip the role_denial
@@ -192,49 +218,17 @@ export default function OverviewPage() {
   const newApplications = useMemo(() =>
     Array.isArray(applications) ? applications.filter(a => a.onboarding_status === 'applied').length : 0, [applications]);
 
-  const actionQueue = useMemo(() => {
-    const items = [];
-    unstaffed.slice(0, 3).forEach(e => {
-      const open = parsePositionsCount(e) - approvedCount(e);
-      const days = dayDiff(e.event_date.slice(0, 10));
-      items.push({
-        id: 'unstaffed-' + e.id, type: 'unstaffed', priority: days < 7 ? 'danger' : 'warn',
-        title: `${e.client_name || 'Event'} needs ${open} ${open === 1 ? 'bartender' : 'bartenders'}`,
-        sub: `${getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })} · ${fmtDate(e.event_date.slice(0, 10))} · ${days}d out`,
-        meta: `${open} open`, target: e.proposal_id ? 'event' : 'shift', ref: e.proposal_id || e.id,
-      });
-    });
-    proposals.filter(p => ['sent', 'viewed', 'modified'].includes(p.status)).slice(0, 2).forEach(p => {
-      items.push({
-        id: 'prop-' + p.id, type: 'proposal', priority: 'info',
-        title: `${p.client_name || p.client_email} proposal · ${p.status}`,
-        sub: getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom }),
-        meta: fmt$(Number(p.total_price || 0)), target: 'proposal', ref: p.id,
-      });
-    });
-    if (newApplications > 0) {
-      items.push({
-        id: 'apps', type: 'application', priority: 'info',
-        title: `${newApplications} new ${newApplications === 1 ? 'application' : 'applications'}`,
-        sub: 'Review in hiring', meta: `${newApplications} new`, target: 'hiring', ref: null,
-      });
-    }
-    return items;
-  }, [unstaffed, proposals, newApplications]);
-
-  // Payroll overdue is a money-urgency danger item; prepend it ahead of the
-  // operational queue. Absent for managers (payrollItem is never set for them).
-  // Unmatched payouts ride the same strip; the payouts route is
-  // admin+manager, so this item is visible to both roles by design.
-  const payoutsItem = useMemo(() => (payoutBadge > 0 ? {
-    id: 'payouts-unmatched', type: 'payouts', priority: 'warn',
-    title: `${payoutBadge} Stripe ${payoutBadge === 1 ? 'payout' : 'payouts'} unmatched`,
-    sub: 'Settlement mirror', meta: String(payoutBadge), target: 'payouts', ref: null,
-  } : null), [payoutBadge]);
+  // Tab assembly (spec 2026-07-14 §2): pure builders over the fetched state.
+  // The old un-aged proposal followups are gone by design; only sent-unviewed
+  // past 72h survives, as the conditional Sales tab.
+  const staffingItems = useMemo(() => buildStaffingItems(unstaffed, newApplications), [unstaffed, newApplications]);
   const prepItems = useMemo(() => buildPrepItems(drinkPlans), [drinkPlans]);
-  const queueItems = useMemo(
-    () => [payrollItem, payoutsItem, ...prepItems, ...actionQueue].filter(Boolean),
-    [payrollItem, payoutsItem, prepItems, actionQueue]
+  const clientItems = useMemo(() => buildClientItems(changeRequests, conversations), [changeRequests, conversations]);
+  const salesItems = useMemo(() => buildSalesItems(proposals, Date.now()), [proposals]);
+  const moneyItems = useMemo(() => buildMoneyItems(payoutBadge), [payoutBadge]);
+  const tabs = useMemo(
+    () => computeTabs({ staffing: staffingItems, prep: prepItems, clients: clientItems, money: moneyItems, sales: salesItems, payrollOverdue, isAdmin }),
+    [staffingItems, prepItems, clientItems, moneyItems, salesItems, payrollOverdue, isAdmin]
   );
 
   const m = stats.money || EMPTY_STATS.money;
@@ -261,14 +255,15 @@ export default function OverviewPage() {
         </div>
       </div>
 
-      {/* Band 1 — live zone (ignores the metrics filter) */}
-      <NeedsYouStrip items={queueItems} loading={shiftsLoading || proposalsLoading} />
-      {/* Events card scrapped (Dallas, 2026-07-13): /events covers the week-ahead
-          view. Prep queue items in the strip remain the prep surface. */}
-      <div className="grid-2" style={{ marginBottom: 'var(--gap)' }}>
-        {/* Payroll card is admin-only: managers mount nothing and fire zero
-            /admin/payroll/* requests (spec §1 role gating). */}
-        {isAdmin && <PayrollCard onOverdue={setPayrollItem} />}
+      {/* Band 1 — live zone (ignores the metrics filter). One row: the tabbed
+          Needs-attention card (payroll status absorbed as the Money tab body,
+          admin-only per spec §1 role gating) beside Pipeline. */}
+      <div className="ov-band1">
+        {/* Every item source gates `loading` so the terminal collapsed state
+            can never flash and then expand as a late fetch lands. */}
+        <NeedsYouStrip tabs={tabs}
+          loading={shiftsLoading || proposalsLoading || clientsLoading || drinkPlansLoading || payoutsLoading}
+          isAdmin={isAdmin} onPayrollOverdue={setPayrollOverdue} />
         <PipelineCard pipeline={pipeline} loading={!statsLoaded && statsLoading} error={statsError} />
       </div>
 
