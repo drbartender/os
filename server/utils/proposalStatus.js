@@ -34,4 +34,41 @@ function reconcileProposalPaymentStatus({ status, amountPaid, totalPrice }) {
   return { status: next, changed, autopayDisarmed, overpaid, overpaidCents };
 }
 
-module.exports = { reconcileProposalPaymentStatus };
+// THE definition of "counts as booked". A proposal in one of these statuses has
+// been signed-and-paid (deposit or beyond) and is treated as a real, revenue-
+// bearing booking. This single set gates: drink-plan access (drinkPlanAccess.js),
+// change-request eligibility + edit window (changeRequests.js), the reschedule-
+// email guard (rescheduleProposal.js), option-group commit's "already converted,
+// don't archive" check (proposalGroupCommit.js), and the client-portal focus
+// summary's `booked` flag (routes/clientPortal/summary.js).
+//
+// SQL LITERALS ELSEWHERE INTENTIONALLY STAY LOCAL: several queries embed a status
+// list inline and are NOT this bare set, so they must not be rewritten to
+// bookedStatusSqlList() blindly. Known sites: metricsQueries, globalSearch,
+// proposals/list, proposals/metadata, clients, and stripe's
+// paymentIntentSucceeded — some are negations, and some add 'archived', so their
+// literal differs from this set on purpose. bookedStatusSqlList() is exported for
+// FUTURE consolidation of the sites that ARE exactly this set only.
+//
+// Shapes: consumers vary between a Set (.has) and an Array (.includes / passed as
+// a pg param via = ANY / <> ALL). Provide both so no site has to reshape.
+const BOOKED_STATUSES = Object.freeze([
+  'deposit_paid', 'balance_paid', 'confirmed', 'completed',
+]);
+
+const BOOKED_SET = new Set(BOOKED_STATUSES);
+
+function isBooked(status) {
+  return BOOKED_SET.has(status);
+}
+
+// Quoted SQL fragment: 'deposit_paid','balance_paid','confirmed','completed'.
+// Exported for future use; NOT wired into any SQL site in this lane.
+function bookedStatusSqlList() {
+  return BOOKED_STATUSES.map((s) => `'${s}'`).join(',');
+}
+
+module.exports = {
+  reconcileProposalPaymentStatus,
+  BOOKED_STATUSES, BOOKED_SET, isBooked, bookedStatusSqlList,
+};

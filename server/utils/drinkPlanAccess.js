@@ -3,7 +3,7 @@
 // unknown/typo status — is treated as pre-booking and LOCKED. Fail-safe
 // allowlist: we never expose the wizard (which can run a Stripe charge in
 // ConfirmationStep) without a confirmed booking.
-const POST_BOOKING_PROPOSAL_STATUSES = ['deposit_paid', 'balance_paid', 'confirmed', 'completed'];
+const { BOOKED_STATUSES: POST_BOOKING_PROPOSAL_STATUSES } = require('./proposalStatus');
 
 function isDrinkPlanPreBooking(proposalStatus) {
   return !POST_BOOKING_PROPOSAL_STATUSES.includes(proposalStatus);

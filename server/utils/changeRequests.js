@@ -3,7 +3,7 @@ const { calculateProposal } = require('./pricingEngine');
 const { validateProposalRules, stripIncludedAddons } = require('./proposalRules');
 const { ValidationError } = require('./errors');
 
-const BOOKED = new Set(['deposit_paid', 'balance_paid', 'confirmed', 'completed']);
+const { BOOKED_SET: BOOKED } = require('./proposalStatus');
 
 // The only fields a change request may carry. Server-enforced: anything outside
 // this set is rejected (spec 3.2), which is what actually keeps discounts /

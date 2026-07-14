@@ -12,8 +12,8 @@
 //   - group already decided by THIS winner-> { committed:false, conflict:false, [] }  (idempotent replay)
 //   - group already decided by ANOTHER    -> { committed:false, conflict:true,  [] }  (money on a loser)
 const { voidUnpaidProposalInvoice } = require('./invoiceVoid');
+const { BOOKED_STATUSES: CONVERTED_STATUSES } = require('./proposalStatus');
 
-const CONVERTED_STATUSES = ['deposit_paid', 'balance_paid', 'confirmed', 'completed'];
 // Pre-payment statuses eligible for the same-client sweep; matches the lifecycle
 // state machine's ->archived set exactly.
 const SWEEPABLE_STATUSES = ['draft', 'sent', 'viewed', 'modified', 'accepted'];

@@ -1,7 +1,7 @@
 // Single source of truth for the proposal-summary fields /home and the detail
 // endpoint both expose. NOTE: drink_plan_token / drink_plan_submitted_at are
 // appended by the consuming query's drink_plans join, NOT part of this column list.
-const BOOKED = new Set(['deposit_paid', 'balance_paid', 'confirmed', 'completed']);
+const { BOOKED_SET: BOOKED } = require('../../utils/proposalStatus');
 const PROPOSAL_SUMMARY_COLUMNS = [
   'p.token', 'p.status', 'p.archive_reason', 'p.event_type', 'p.event_type_custom',
   'p.event_date', 'p.event_start_time', 'p.guest_count',

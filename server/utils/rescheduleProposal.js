@@ -7,6 +7,7 @@ const { getHandlerMeta } = require('./scheduledMessageDispatcher');
 const { shouldSendImmediate } = require('./messageSuppression');
 const { computeScheduledFor, schedulePreEventReminders } = require('./preEventScheduling');
 const { getBookingWindow } = require('./bookingWindow');
+const { BOOKED_SET } = require('./proposalStatus');
 
 // Defense-in-depth: even though post_event_wrap_up_email registers with
 // offsetFromEventDate: null (which already short-circuits via the
@@ -408,8 +409,7 @@ async function rescheduleProposalInTx(client, { proposalId, old, updated }) {
   // Pre-sign+pay date/time edits don't need a reschedule email — the proposal
   // hasn't been sent yet (or has been sent but not signed, in which case the
   // next status-driven email replaces it).
-  const POST_SIGNPAY = new Set(['deposit_paid', 'balance_paid', 'confirmed', 'completed']);
-  if (status === 'archived' || !POST_SIGNPAY.has(status)) return { shouldSendEmail: false };
+  if (status === 'archived' || !BOOKED_SET.has(status)) return { shouldSendEmail: false };
 
   // Gemini Finding 4 (SUGGESTION) + Pre-execution Finding B3: when event_date
   // shifts, recompute balance_due_date by preserving the ORIGINAL offset
