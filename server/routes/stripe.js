@@ -439,13 +439,16 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   // decided downstream by the linked invoice LABEL (applyRefundReconciliation),
   // not here. Only the drink_plan_* rails are excluded. Stripe's own
   // per-charge refund cap is the final over-refund backstop on top of the
-  // remainingCents math (which nets prior succeeded refunds per charge).
+  // remainingCents math, which nets prior succeeded AND pending refunds per
+  // charge — a pending row means a refund may already be in flight at Stripe
+  // (reconcile failed, webhook will adopt it), and Stripe's cap only blocks
+  // doubles that exceed the charge, not a repeated PARTIAL amount.
   const payRes = await pool.query(
     `SELECT pp.id,
             pp.stripe_payment_intent_id,
             pp.amount
               - COALESCE((SELECT SUM(pr.amount) FROM proposal_refunds pr
-                           WHERE pr.payment_id = pp.id AND pr.status = 'succeeded'), 0)
+                           WHERE pr.payment_id = pp.id AND pr.status IN ('succeeded', 'pending')), 0)
               AS "remainingCents"
        FROM proposal_payments pp
       WHERE pp.proposal_id = $1

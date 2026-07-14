@@ -1,5 +1,11 @@
 require('dotenv').config();
 process.env.SEND_NOTIFICATIONS = 'false';
+// Prod (Render + the pg session) runs GMT while the dev box runs Chicago local
+// time. Pin the process to UTC so timezone regressions (notice-date derivation
+// off cancelled_at) reproduce here exactly as they would in prod. Business-time
+// reads in the code under test are tz-explicit (chicagoYmdOf / chicagoTodayYmd),
+// so this only de-masks LOCAL-component bugs.
+process.env.TZ = 'UTC';
 
 // P6.7: cancel-booked-event route. DB-bound; Stripe is a DI stub (getStripe seam,
 // overridden before the router is required). Covers preview math, the transactional
@@ -36,7 +42,7 @@ const fakeStripe = {
 require('../../utils/stripeClient').getStripe = () => fakeStripe;
 const { clawbackTipByPaymentIntent } = require('../../utils/payrollClawback');
 const { payPeriodForDate, computePayday } = require('../../utils/payrollPeriods');
-const { chicagoTodayYmd } = require('../../utils/businessTime');
+const { chicagoTodayYmd, eventLocalToUtc } = require('../../utils/businessTime');
 
 const proposalsRouter = require('./index');
 
@@ -536,5 +542,130 @@ test('refund: a drb cancellation refund spans the deposit + balance charges', as
     const r2 = await post(`/api/proposals/${o.proposalId}/cancel/refund`, await mintAdmin(), { idempotency_key: crypto.randomBytes(6).toString('hex') });
     assert.equal(r2.status, 200, JSON.stringify(r2.body));
     assert.equal(r2.body.refunded_cents, 0, 'nothing more to refund');
+  } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
+});
+
+test('refund: a drink_plan_with_balance charge is refundable at cancellation (no silent clamp)', async () => {
+  const o = await seedBooked({ eventDaysOut: 30, totalPrice: 1000, amountPaid: 1000,
+    depositPaidCents: 10000, balancePaidCents: 70000 });
+  const prior = await setTodayPeriod('open');
+  try {
+    // Remaining $200 was paid through the drink-plan combined checkout.
+    await pool.query(
+      `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status, stripe_payment_intent_id)
+       VALUES ($1, 'drink_plan_with_balance', 20000, 'succeeded', $2)`,
+      [o.proposalId, `pi_dp_${NONCE}_dpa`]
+    );
+
+    const c = await post(`/api/proposals/${o.proposalId}/cancel`, await mintAdmin(),
+      { mode: 'drb', confirm_last_name: 'Smith', suppress_client_email: true });
+    assert.equal(c.status, 200, JSON.stringify(c.body));
+    assert.equal(c.body.refund_cents, 100000, 'target includes the drink-plan payment');
+
+    refundsCreated.length = 0;
+    const r = await post(`/api/proposals/${o.proposalId}/cancel/refund`, await mintAdmin(),
+      { idempotency_key: crypto.randomBytes(6).toString('hex') });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.refunded_cents, 100000, 'drink-plan charge is reachable, nothing clamped');
+    assert.equal(r.body.shortfall_cents, 0, 'no stranded remainder');
+    assert.equal(r.body.charges.length, 3, 'refund spanned deposit + balance + drink-plan charges');
+    const stripeSum = refundsCreated.reduce((a, x) => a + x.amount, 0);
+    assert.equal(stripeSum, 100000, 'Stripe saw the full amount');
+  } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
+});
+
+test('refund: daysOut uses the CHICAGO day of cancelled_at, so an evening cancel cannot flip the <=14d branch', async () => {
+  const o = await seedBooked({ eventDaysOut: 15, totalPrice: 1000, amountPaid: 1000,
+    depositPaidCents: 10000, balancePaidCents: 90000 });
+  const prior = await setTodayPeriod('open');
+  try {
+    // Pin the event exactly 15 CHICAGO-days out, independent of the pg session date.
+    const chicagoToday = chicagoTodayYmd();
+    const [cy, cm, cd] = chicagoToday.split('-').map(Number);
+    const eventYmd = new Date(Date.UTC(cy, cm - 1, cd + 15, 12)).toISOString().slice(0, 10);
+    await pool.query(`UPDATE proposals SET event_date = $2 WHERE id = $1`, [o.proposalId, eventYmd]);
+
+    const c = await post(`/api/proposals/${o.proposalId}/cancel`, await mintAdmin(),
+      { mode: 'client', confirm_last_name: 'Smith', suppress_client_email: true });
+    assert.equal(c.status, 200, JSON.stringify(c.body));
+    // >14d branch: (100000 - 10000 retainer - 15000 gratuity) * 0.95 + 15000.
+    assert.equal(c.body.refund_cents, 86250, 'cancel-time math promised the >14d amount');
+
+    // Simulate an evening cancel: 19:30 in Chicago is already TOMORROW in UTC,
+    // which under the old local-component derivation read daysOut as 14.
+    const eveningInstant = eventLocalToUtc(chicagoToday, 19, 30, 'America/Chicago');
+    await pool.query(`UPDATE proposals SET cancelled_at = $2 WHERE id = $1`, [o.proposalId, eveningInstant]);
+
+    refundsCreated.length = 0;
+    const r = await post(`/api/proposals/${o.proposalId}/cancel/refund`, await mintAdmin(),
+      { idempotency_key: crypto.randomBytes(6).toString('hex') });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.refunded_cents, 86250, 'refund-time daysOut matches the promised >14d amount');
+  } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
+});
+
+test('refund: a pending refund row (Stripe reached, unreconciled) is netted, so a retry cannot double-issue', async () => {
+  const o = await seedBooked({ eventDaysOut: 30, totalPrice: 1000, amountPaid: 1000,
+    depositPaidCents: 10000, balancePaidCents: 90000 });
+  const prior = await setTodayPeriod('open');
+  try {
+    const c = await post(`/api/proposals/${o.proposalId}/cancel`, await mintAdmin(),
+      { mode: 'drb', confirm_last_name: 'Smith', suppress_client_email: true });
+    assert.equal(c.status, 200, JSON.stringify(c.body));
+
+    // Simulate a prior /cancel/refund attempt that reached Stripe on the balance
+    // charge but died before reconciliation: the row stays 'pending' (with
+    // stripe_refund_id NULL — reconciliation is what stamps it) until the
+    // charge.refunded webhook adopts it. A fresh-idempotency-key retry follows.
+    await pool.query(
+      `INSERT INTO proposal_refunds
+         (proposal_id, payment_id, stripe_payment_intent_id, amount, reason,
+          total_price_before, total_price_after, status)
+       VALUES ($1, $2, 'pi_pending_sim', 90000, 'Event cancellation refund (Dr. Bartender)',
+               1000, 1000, 'pending')`,
+      [o.proposalId, o.balPayId]
+    );
+
+    refundsCreated.length = 0;
+    const r = await post(`/api/proposals/${o.proposalId}/cancel/refund`, await mintAdmin(),
+      { idempotency_key: crypto.randomBytes(6).toString('hex') });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.already_refunded_cents, 90000, 'the in-flight pending amount counts as already refunded');
+    assert.equal(r.body.refunded_cents, 10000, 'only the uncovered deposit remainder is issued');
+    const stripeSum = refundsCreated.reduce((a, x) => a + x.amount, 0);
+    assert.equal(stripeSum, 10000, 'Stripe was NOT asked to re-issue the pending 90000');
+    const balRows = await pool.query(
+      `SELECT status, COUNT(*)::int AS n FROM proposal_refunds WHERE payment_id = $1 GROUP BY status`,
+      [o.balPayId]);
+    assert.deepEqual(balRows.rows, [{ status: 'pending', n: 1 }], 'no new refund row on the pending charge');
+  } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
+});
+
+test('refund: a legacy-CC (no-intent) payment surfaces as shortfall_cents, never silently clamped', async () => {
+  const o = await seedBooked({ eventDaysOut: 30, totalPrice: 1200, amountPaid: 1200,
+    depositPaidCents: 10000, balancePaidCents: 90000 });
+  const prior = await setTodayPeriod('open');
+  try {
+    // $200 collected on the legacy Check Cherry rail: succeeded, but no Stripe
+    // intent to refund against. The agreement target includes it; Stripe can't.
+    await pool.query(
+      `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status, legacy_charge_id)
+       VALUES ($1, 'balance', 20000, 'succeeded', $2)`,
+      [o.proposalId, `ch_legacy_${NONCE}`]
+    );
+
+    const c = await post(`/api/proposals/${o.proposalId}/cancel`, await mintAdmin(),
+      { mode: 'drb', confirm_last_name: 'Smith', suppress_client_email: true });
+    assert.equal(c.status, 200, JSON.stringify(c.body));
+    assert.equal(c.body.refund_cents, 120000, 'target includes the legacy payment');
+
+    refundsCreated.length = 0;
+    const r = await post(`/api/proposals/${o.proposalId}/cancel/refund`, await mintAdmin(),
+      { idempotency_key: crypto.randomBytes(6).toString('hex') });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.refunded_cents, 100000, 'only the Stripe-reachable charges are issued');
+    assert.equal(r.body.shortfall_cents, 20000, 'the unreachable legacy amount is surfaced, not clamped');
+    const stripeSum = refundsCreated.reduce((a, x) => a + x.amount, 0);
+    assert.equal(stripeSum, 100000, 'Stripe was never asked to cover the legacy 20000');
   } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
 });

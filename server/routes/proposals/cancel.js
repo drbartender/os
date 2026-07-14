@@ -32,7 +32,7 @@ const { sendRefundClientNotification } = require('../../utils/refundClientNotify
 const { sendEmail } = require('../../utils/email');
 const lifecycleTemplates = require('../../utils/lifecycleEmailTemplates');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
-const { chicagoTodayYmd } = require('../../utils/businessTime');
+const { chicagoTodayYmd, chicagoYmdOf } = require('../../utils/businessTime');
 
 const router = express.Router();
 
@@ -488,6 +488,7 @@ router.post('/:id/cancel/refund', auth, adminOnly, adminWriteLimiter, asyncHandl
 
   let alreadyRefunded = 0;
   let refundedCents = 0;
+  let shortfallCents = 0;
   let anyApplied = false;
   const perCharge = [];
 
@@ -512,34 +513,48 @@ router.post('/:id/cancel/refund', auth, adminOnly, adminWriteLimiter, asyncHandl
     }
 
     const mode = proposal.cancelled_by === 'admin' ? 'drb' : 'client';
-    // daysOut is fixed at the notice (cancellation) date, not "now".
-    const daysOut = wholeDaysBetween(toCalendarYmd(proposal.cancelled_at), ctx.eventYmd);
+    // daysOut is fixed at the notice (cancellation) date, not "now". The notice
+    // date is the CHICAGO calendar day of cancelled_at — the execute path used
+    // chicagoTodayYmd(), and toCalendarYmd on a TIMESTAMPTZ reads the GMT day
+    // on prod, flipping the <=14d agreement branch for evening cancels.
+    const daysOut = wholeDaysBetween(chicagoYmdOf(proposal.cancelled_at), ctx.eventYmd);
     const math = computeCancellationRefund({
       mode, daysOut,
       amountPaidCents: ctx.amountPaidCents, retainerCents: ctx.retainerCents,
       gratuityPaidCents: ctx.gratuityPaidCents,
     });
 
-    // Already-refunded (any prior refund) caps how much of the target remains.
+    // Already-refunded caps how much of the target remains. 'pending' counts:
+    // a pending row means refundExecute reached Stripe but reconciliation
+    // hasn't landed (the charge.refunded webhook adopts it) — that money may
+    // already be out, so a retry with a fresh idempotency key must NOT
+    // re-issue it. A stranded pre-Stripe pending row blocks conservatively
+    // (under-refund beats double-refund) until it resolves.
     const priorRes = await dbClient.query(
       `SELECT COALESCE(SUM(amount), 0)::int AS cents FROM proposal_refunds
-        WHERE proposal_id = $1 AND status = 'succeeded'`,
+        WHERE proposal_id = $1 AND status IN ('succeeded', 'pending')`,
       [req.params.id]
     );
     alreadyRefunded = Number(priorRes.rows[0].cents);
     let remainingTarget = Math.max(0, math.refundCents - alreadyRefunded);
 
-    // Refundable charges, largest-first, netting prior succeeded refunds per charge.
+    // Refundable charges, largest-first, netting prior succeeded AND pending
+    // (possibly in-flight) refunds per charge. Unlike the admin partial-refund
+    // route, which deliberately excludes the drink_plan_* rails from MANUAL
+    // refunds, a cancellation refund covers the client's full payment set —
+    // assembleContext sums every succeeded payment into the target, so every
+    // Stripe-reachable rail must be refundable or the gap silently strands.
     const payRes = await dbClient.query(
       `SELECT pp.id, pp.stripe_payment_intent_id,
               pp.amount
                 - COALESCE((SELECT SUM(pr.amount) FROM proposal_refunds pr
-                             WHERE pr.payment_id = pp.id AND pr.status = 'succeeded'), 0)
+                             WHERE pr.payment_id = pp.id AND pr.status IN ('succeeded', 'pending')), 0)
                 AS "remainingCents"
          FROM proposal_payments pp
         WHERE pp.proposal_id = $1 AND pp.status = 'succeeded'
           AND pp.stripe_payment_intent_id IS NOT NULL
-          AND pp.payment_type IN ('deposit', 'balance', 'full', 'invoice')
+          AND pp.payment_type IN ('deposit', 'balance', 'full', 'invoice',
+                                  'drink_plan_with_balance', 'drink_plan_extras')
         ORDER BY "remainingCents" DESC`,
       [req.params.id]
     );
@@ -547,7 +562,18 @@ router.post('/:id/cancel/refund', auth, adminOnly, adminWriteLimiter, asyncHandl
       .map(r => ({ id: r.id, intentId: r.stripe_payment_intent_id, remaining: Number(r.remainingCents) }))
       .filter(c => c.remaining > 0);
     const refundableRemainder = charges.reduce((a, c) => a + c.remaining, 0);
+    // Any target the Stripe-reachable charges can't cover (manual / legacy CC
+    // payments) is surfaced, never silently clamped — the client email at
+    // cancel time promised the full agreement amount.
+    shortfallCents = Math.max(0, remainingTarget - refundableRemainder);
     remainingTarget = Math.min(remainingTarget, refundableRemainder);
+    if (shortfallCents > 0) {
+      Sentry.captureMessage('cancel/refund: agreement target exceeds Stripe-refundable remainder', {
+        level: 'warning',
+        tags: { route: 'proposals/cancel', step: 'refund_shortfall' },
+        extra: { proposalId: proposalIdNum, shortfallCents, targetCents: math.refundCents, alreadyRefunded },
+      });
+    }
 
     if (remainingTarget > 0) {
       // Attribute the gratuity portion across charges, largest-first, until exhausted.
@@ -596,7 +622,7 @@ router.post('/:id/cancel/refund', auth, adminOnly, adminWriteLimiter, asyncHandl
     await sendRefundClientNotification({ proposalId: req.params.id, amountCents: refundedCents, source: 'cancel_refund' });
   }
 
-  res.json({ refunded_cents: refundedCents, already_refunded_cents: alreadyRefunded, charges: perCharge });
+  res.json({ refunded_cents: refundedCents, already_refunded_cents: alreadyRefunded, shortfall_cents: shortfallCents, charges: perCharge });
 }));
 
 module.exports = router;

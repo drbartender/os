@@ -8,6 +8,10 @@
  *     in an event-local zone -> the corresponding UTC instant (DST-honoring).
  *     Moved here verbatim from staffShiftHandlers.js, which now re-imports it.
  *   - chicagoTodayYmd(): today's calendar date in the business timezone.
+ *   - chicagoYmdOf(value): the Chicago calendar date of any instant. Use for
+ *     TIMESTAMPTZ columns (e.g. cancelled_at) — reading local Date components
+ *     off an instant gives the GMT day on prod, one day late for any evening
+ *     Chicago timestamp.
  */
 
 /**
@@ -49,16 +53,29 @@ function eventLocalToUtc(ymd, hour, minute, tz) {
  * @returns {string} YYYY-MM-DD
  */
 function chicagoTodayYmd() {
+  return chicagoYmdOf(new Date());
+}
+
+/**
+ * The calendar date (YYYY-MM-DD) in America/Chicago of a given instant
+ * (Date or anything new Date() accepts, e.g. a pg TIMESTAMPTZ value).
+ * DST-safe and server-tz-independent, same as chicagoTodayYmd.
+ *
+ * @param {Date|string|number} value an instant
+ * @returns {string} YYYY-MM-DD
+ */
+function chicagoYmdOf(value) {
+  const instant = value instanceof Date ? value : new Date(value);
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Chicago',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).formatToParts(new Date());
+  }).formatToParts(instant);
   const y = parts.find((p) => p.type === 'year').value;
   const m = parts.find((p) => p.type === 'month').value;
   const d = parts.find((p) => p.type === 'day').value;
   return `${y}-${m}-${d}`;
 }
 
-module.exports = { eventLocalToUtc, chicagoTodayYmd };
+module.exports = { eventLocalToUtc, chicagoTodayYmd, chicagoYmdOf };
