@@ -1,8 +1,10 @@
-// Canonical client source list. Must match `VALID_SOURCES` in
-// server/routes/clients.js, the `clients_source_check` constraint in
-// server/db/schema.sql, and the duplicated local `SOURCE` badge maps in
-// client/src/pages/admin/ClientsDashboard.js and
-// client/src/pages/admin/ClientDetail.js.
+// Client acquisition source vocabulary (clients.source dropdown + badges).
+// Mirrors server/utils/clientSources.js (CLIENT_SOURCES) — the canonical list.
+// Keep both files in sync when adding a source, and also update:
+//   - server/routes/clients.js VALID_SOURCES validator
+//   - the clients_source_check CHECK in server/db/schema.sql (base def + migration)
+//   - the local `SOURCE` badge maps in client/src/pages/admin/ClientsDashboard.js
+//     and client/src/pages/admin/ClientDetail.js
 export const CLIENT_SOURCES = [
   { value: 'direct',    label: 'Direct' },
   { value: 'referral',  label: 'Referral' },

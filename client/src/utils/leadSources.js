@@ -1,11 +1,11 @@
-// Single source of truth for valid lead source values.
-// Mirrors:
-//   - server/routes/emailMarketing.js VALID_LEAD_SOURCES
-//   - schema.sql CHECK constraint on email_leads.lead_source
-//
-// When adding a value here, update both of those — the schema, the validator,
-// and every consumer (filter dropdowns, edit forms, audience selector) picks
-// the new value up automatically.
+// Email-lead attribution vocabulary (email_leads.lead_source).
+// Mirrors server/utils/clientSources.js (LEAD_SOURCES) — the canonical list.
+// Keep both files in sync when adding a value, and also update:
+//   - server/routes/emailMarketing.js VALID_LEAD_SOURCES validator
+//   - the email_leads_lead_source_check CHECK in server/db/schema.sql
+//     (base def + migration)
+// Consumers (filter dropdowns, edit forms, audience selector) pick up new
+// values automatically.
 
 const LEAD_SOURCES = [
   'manual',

@@ -794,6 +794,8 @@ CREATE TABLE IF NOT EXISTS clients (
   name VARCHAR(255) NOT NULL,
   email VARCHAR(255),
   phone VARCHAR(50),
+  -- Value set mirrors server/utils/clientSources.js (CLIENT_SOURCES). Keep in
+  -- sync; the live definition is the clients_source_check migration block below.
   source VARCHAR(50) DEFAULT 'direct' CHECK (source IN ('direct', 'thumbtack', 'referral', 'website', 'calcom', 'zola', 'instagram', 'checkcherry', 'other')),
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -1361,6 +1363,9 @@ CREATE TABLE IF NOT EXISTS email_leads (
   company VARCHAR(255),
   event_type VARCHAR(100),
   location VARCHAR(255),
+  -- Value set mirrors server/utils/clientSources.js (LEAD_SOURCES). Keep in
+  -- sync; the replayed email_leads_lead_source_check migration below is the
+  -- live definition.
   lead_source VARCHAR(100) DEFAULT 'manual'
     CHECK (lead_source IN ('manual','csv_import','website','quote_wizard','potion_lab','thumbtack','referral','instagram','facebook','google','other')),
   notes TEXT,
@@ -2222,6 +2227,7 @@ END $$;
 -- constraint omitted it, causing every wizard lead capture to fail with a
 -- constraint violation. Replace the constraint to include wizard + lab
 -- sources used by public funnels.
+-- Value set mirrors server/utils/clientSources.js (LEAD_SOURCES) — canonical.
 ALTER TABLE email_leads DROP CONSTRAINT IF EXISTS email_leads_lead_source_check;
 ALTER TABLE email_leads ADD CONSTRAINT email_leads_lead_source_check
   CHECK (lead_source IN ('manual','csv_import','website','quote_wizard','potion_lab','thumbtack','referral','instagram','facebook','google','other'));
@@ -2901,6 +2907,7 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 -- replayed every boot, so any new source value MUST be added HERE (a second
 -- drop-and-re-add block later in the file would make this one's VALIDATE
 -- fail once rows with the new value exist).
+-- Value set mirrors server/utils/clientSources.js (CLIENT_SOURCES) — canonical.
 ALTER TABLE clients
   ADD CONSTRAINT clients_source_check
   CHECK (source IN ('direct', 'thumbtack', 'referral', 'website', 'calcom', 'zola', 'instagram', 'checkcherry', 'other'))
