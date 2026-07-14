@@ -559,7 +559,7 @@ _(all in `server/routes/admin/contractorTipPage.js`)_
 | POST | `/activate` | Admin | Re-activate a previously deactivated tip page. |
 
 ### Admin Tip Activity — `/api/admin`
-_(all in `server/routes/admin/contractorTipPage.js`)_
+_(tips/tip-feedback rows in `server/routes/admin/contractorTipPage.js`; the stub-co-participated row in `admin/users.js`; the two proposal rows in `admin/ccImport/proposalActions.js` as each notes)_
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/tips` | Admin | Paginated list of all successful tips across bartenders for the TipsAdmin overview (filter by bartender, date range). |
