@@ -240,6 +240,7 @@ dr-bartender/
 │   │   ├── businessTime.js     # Canonical business-time primitives: eventLocalToUtc (DST-aware) + chicagoTodayYmd
 │   │   ├── autopayDurableCharge.js # Durable autopay charge record + stale-reclaim double-charge guard (F1)
 │   │   ├── balanceScheduler.js # Autopay balance charge scheduler
+│   │   ├── balanceReminderHandlers.js # Balance reminder EMAIL handlers (autopay/non-autopay T-3, due-today, late t1/t3); registered by the dispatcher at module init (registerBalanceReminderHandlers)
 │   │   ├── balanceSmsHandlers.js # Non-autopay balance reminder SMS handlers (due-today, late t1/t3)
 │   │   ├── beoFinalize.js      # BEO Finalize/Unfinalize route registrars + ensureNotFinalized guard (mounted into drinkPlans router)
 │   │   ├── beoHandlers.js      # BEO dispatcher handler (`beo_unack_nudge_sms`) + scheduling/suppression/reanchor helpers
@@ -281,6 +282,7 @@ dr-bartender/
 │   │   ├── lastMinuteAlert.js  # Last-minute (<72h) booking SMS alert dispatch (admin + broad staff blast, idempotent)
 │   │   ├── lastMinuteStaffingConfirmation.js  # Touch 2.2: bartender-list renderer + notify fn + atomic-flip trigger
 │   │   ├── lifecycleEmailTemplates.js # Lifecycle email templates split out of emailTemplates.js
+│   │   ├── staffHiringEmailTemplates.js # Staff/hiring/application email templates split out of emailTemplates.js (re-exported by it for backwards compat)
 │   │   ├── messageLog.js      # Append-only client-message ledger: pure builders + logClientMessage (fire-and-forget, never throws) + getMessageLogForProposal; written at the sendEmail/sendSMS choke points, read on GET /proposals/:id
 │   │   ├── onboardingProgress.js # ensureOnboardingProgress — lazy progress-row seed for legacy accounts (step writes are UPDATE-only)
 │   │   ├── messageScheduling.js # scheduleMessage(...): idempotent insert of a future touch into the scheduled_messages table
@@ -299,6 +301,7 @@ dr-bartender/
 │   │   ├── clientSources.js    # Canonical CLIENT_SOURCES / LEAD_SOURCES vocabularies (schema CHECKs + client mirrors point here)
 │   │   ├── proposalRules.js     # Server twin of client proposalRules.js + validateProposalRules (authoritative bundle/addon/guardrail gate)
 │   │   ├── pushDispatch.js     # Push-channel dispatch (dispatchPushRow): sends Web Push outside any DB transaction, prunes 410/404-dead subs in a short separate transaction (SERVER-17 fix)
+│   │   ├── dispatcherDeadLetters.js # Critical-path dead-letter re-resolve sweep (resolveCriticalDeadLetters) split out of scheduledMessageDispatcher.js; called once per tick
 │   │   ├── scheduledMessageDispatcher.js # 5-minute scheduler: drains pending scheduled_messages rows, applies suppression, invokes per-message-type handlers
 │   │   ├── sendProposalSentEmail.js # Post-commit best-effort client email when a proposal enters the 'sent' state (never throws)
 │   │   ├── setupTime.js        # Pure back-of-house setup-time math (parse/subtract, effectiveSetupMinutes); client twin
