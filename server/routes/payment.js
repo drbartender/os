@@ -3,6 +3,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
+const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
 const { auth } = require('../middleware/auth');
 const { isValidUpload } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
@@ -133,6 +134,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       }
 
       step = 'update_onboarding_progress';
+      await ensureOnboardingProgress(req.user.id, client);
       await client.query(
         `UPDATE onboarding_progress SET payday_protocols_completed=true, onboarding_completed=true, last_completed_step='onboarding_completed' WHERE user_id=$1`,
         [req.user.id]

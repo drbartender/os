@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../db');
+const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
 const { auth } = require('../middleware/auth');
 const { isValidUpload } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
@@ -192,6 +193,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     }
 
     // Mark step complete
+    await ensureOnboardingProgress(req.user.id, client);
     await client.query(
       `UPDATE onboarding_progress SET contractor_profile_completed=true, last_completed_step='contractor_profile_completed' WHERE user_id=$1`,
       [req.user.id]

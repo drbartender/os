@@ -1,5 +1,6 @@
 const express = require('express');
 const { pool } = require('../db');
+const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError } = require('../utils/errors');
@@ -24,6 +25,7 @@ router.put('/step', auth, asyncHandler(async (req, res) => {
   // complete, ignore step writes — otherwise a stale client that gets bounced
   // back through /welcome (see Completion.js handoff) would regress
   // last_completed_step and re-corrupt the row. Return the row unchanged.
+  await ensureOnboardingProgress(req.user.id);
   const cur = await pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [req.user.id]);
   if (cur.rows[0]?.onboarding_completed) {
     return res.json(cur.rows[0]);

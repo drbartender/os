@@ -1,6 +1,7 @@
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
+const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { publicReadLimiter, signLimiter } = require('../middleware/rateLimiters');
@@ -150,6 +151,7 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
       saved = ins.rows[0];
     }
 
+    await ensureOnboardingProgress(req.user.id, client);
     await client.query(
       `UPDATE onboarding_progress
           SET agreement_completed=true, last_completed_step='agreement_completed'

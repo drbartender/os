@@ -622,6 +622,7 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `user_id` FK → users
 - Boolean columns: `account_created`, `welcome_viewed`, `field_guide_completed`, `agreement_completed`, `contractor_profile_completed`, `payday_protocols_completed`, `onboarding_completed`
 - `last_completed_step`
+- Rows are seeded at registration; legacy accounts predating that seeding get one lazily via `server/utils/onboardingProgress.js` (`ensureOnboardingProgress`, called before every step write — step writes are UPDATE-only, and the active-staff roster INNER JOINs this table, so a missing row made a completed onboarding invisible).
 
 **contractor_profiles** — Personal details for hired contractors
 - `user_id` FK → users
