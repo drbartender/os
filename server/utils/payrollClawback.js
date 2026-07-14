@@ -76,7 +76,7 @@ async function clawbackTip(tipId, newCumulativeRefundedCents, opts = {}) {
              FROM shift_requests sr
              JOIN users u ON u.id = sr.user_id
             WHERE sr.shift_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL
-              AND LOWER(sr.position) = 'bartender'
+              AND LOWER(TRIM(sr.position)) = 'bartender'
             ORDER BY sr.user_id`,
           [tip.shift_id]
         );

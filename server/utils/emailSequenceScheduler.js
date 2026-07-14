@@ -80,17 +80,31 @@ async function processSequenceSteps() {
     // not the Vercel SPA (which catches /api/* via rewrite and serves index.html).
     const unsubscribeBase = `${API_URL}/api/email-marketing/unsubscribe`;
 
+    // Preload every step for the campaigns in this batch — one query per campaign
+    // into a Map keyed by step_order — so the per-row loop resolves both the step
+    // to send and the following step's delay from memory instead of issuing 2
+    // sequential queries per enrollment.
+    const campaignIds = [...new Set(dueEnrollments.rows.map((e) => e.campaign_id))];
+    const stepsByCampaign = new Map();
+    for (const campaignId of campaignIds) {
+      const { rows: stepRows } = await pool.query(
+        'SELECT * FROM email_sequence_steps WHERE campaign_id = $1',
+        [campaignId]
+      );
+      const byOrder = new Map();
+      for (const s of stepRows) byOrder.set(s.step_order, s);
+      stepsByCampaign.set(campaignId, byOrder);
+    }
+
     for (const enrollment of dueEnrollments.rows) {
       try {
         const nextStepOrder = enrollment.current_step + 1;
+        const campaignSteps = stepsByCampaign.get(enrollment.campaign_id);
 
-        // Get the step we are about to send
-        const stepResult = await pool.query(
-          'SELECT * FROM email_sequence_steps WHERE campaign_id = $1 AND step_order = $2',
-          [enrollment.campaign_id, nextStepOrder]
-        );
+        // Get the step we are about to send (from the preloaded Map)
+        const step = campaignSteps && campaignSteps.get(nextStepOrder);
 
-        if (!stepResult.rows[0]) {
+        if (!step) {
           // No more steps — mark as completed. Guard on current_step so a
           // concurrent tick that already advanced this enrollment cannot
           // re-complete a row that has since moved on.
@@ -103,16 +117,11 @@ async function processSequenceSteps() {
           continue;
         }
 
-        const step = stepResult.rows[0];
-
-        // Look up the FOLLOWING step's delay so the claim can set next_step_due_at
-        // in the same write it uses to advance current_step.
-        const nextNextStep = await pool.query(
-          'SELECT delay_days, delay_hours FROM email_sequence_steps WHERE campaign_id = $1 AND step_order = $2',
-          [enrollment.campaign_id, nextStepOrder + 1]
-        );
-        const nextDelay = nextNextStep.rows[0]
-          ? { days: nextNextStep.rows[0].delay_days, hours: nextNextStep.rows[0].delay_hours }
+        // Look up the FOLLOWING step's delay (from the preloaded Map) so the claim
+        // can set next_step_due_at in the same write it uses to advance current_step.
+        const nextNextStep = campaignSteps.get(nextStepOrder + 1);
+        const nextDelay = nextNextStep
+          ? { days: nextNextStep.delay_days, hours: nextNextStep.delay_hours }
           : null;
 
         // ── Optimistic claim BEFORE the send (exactly-once under concurrent ticks) ──

@@ -541,22 +541,22 @@ async function loadDeferredTips() {
                     JOIN users u ON u.id = sr.user_id
                LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
                    WHERE sr.shift_id = t.shift_id AND sr.status = 'approved'
-                     AND sr.dropped_at IS NULL AND LOWER(sr.position) = 'bartender'
+                     AND sr.dropped_at IS NULL AND LOWER(TRIM(sr.position)) = 'bartender'
                    ORDER BY u.id) AS staff,
             ARRAY(SELECT u.id
                     FROM shift_requests sr
                     JOIN users u ON u.id = sr.user_id
                LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
                    WHERE sr.shift_id = t.shift_id AND sr.status = 'approved'
-                     AND sr.dropped_at IS NULL AND LOWER(sr.position) = 'bartender'
+                     AND sr.dropped_at IS NULL AND LOWER(TRIM(sr.position)) = 'bartender'
                    ORDER BY u.id) AS staff_ids,
             (t.shift_id IS NOT NULL
              AND EXISTS (SELECT 1 FROM shift_requests sr2 JOIN users u2 ON u2.id = sr2.user_id
                           WHERE sr2.shift_id = t.shift_id AND sr2.status = 'approved'
-                            AND sr2.dropped_at IS NULL AND LOWER(sr2.position) = 'bartender')
+                            AND sr2.dropped_at IS NULL AND LOWER(TRIM(sr2.position)) = 'bartender')
              AND NOT EXISTS (SELECT 1 FROM shift_requests sr3 JOIN users u3 ON u3.id = sr3.user_id
                               WHERE sr3.shift_id = t.shift_id AND sr3.status = 'approved'
-                                AND sr3.dropped_at IS NULL AND LOWER(sr3.position) = 'bartender'
+                                AND sr3.dropped_at IS NULL AND LOWER(TRIM(sr3.position)) = 'bartender'
                                 AND u3.cc_id NOT LIKE 'legacy_cc:%')) AS all_stubs
        FROM tips t
   LEFT JOIN shifts s ON s.id = t.shift_id

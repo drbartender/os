@@ -75,7 +75,7 @@ async function notifyDisputeWon(tipId, { reinstatedAmountCents, disputeOpenedAt,
       const bRes = await client.query(
         `SELECT sr.user_id FROM shift_requests sr
           WHERE sr.shift_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL
-            AND LOWER(sr.position) = 'bartender'
+            AND LOWER(TRIM(sr.position)) = 'bartender'
           ORDER BY sr.user_id`,
         [tip.shift_id]
       );
