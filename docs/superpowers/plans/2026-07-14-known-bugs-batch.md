@@ -12,8 +12,10 @@ lanes:
       - server/routes/proposals/cancel.test.js
       - client/src/pages/admin/ProposalDetail.js
       - client/src/pages/admin/ProposalDetailPaymentPanel.js
+      - client/src/pages/admin/ProposalsDashboard.js
       - client/src/components/adminos/shifts.js
       - server/routes/proposals/list.js
+      - server/routes/proposals/lifecycle.js
     deps: []
     review: full-fleet
     sensitive: true   # by plan mandate (m1-refund-reap), not by path list
@@ -58,8 +60,6 @@ lanes:
       - server/utils/refundSweepScheduler.test.js
       - server/index.js
       - .env.example
-      - .claude/CLAUDE.md
-      - README.md
     deps: []
     review: full-fleet
     sensitive: true
@@ -83,6 +83,8 @@ lanes:
     footprint:
       - server/utils/autoAssign.js
       - server/utils/coverBroadcast.js
+      - server/utils/autoAssign.bartenderScope.test.js
+      - server/utils/coverBroadcast.test.js
     deps: []
     review: full-fleet
     sensitive: true
@@ -94,6 +96,7 @@ lanes:
       - server/routes/stripeWebhookHandlers/checkoutSessionCompleted.lastMinute.test.js
       - docs/audit-2026-07-13/migration-plan.yaml
       - scripts/sensitive-paths.txt
+      - client/src/index.css
     deps: []
     review: light
     sensitive: false
@@ -105,6 +108,48 @@ Eight file-disjoint lanes, all parallel. Every builder reads the spec plus its
 bug sections in the findings doc BEFORE coding; the findings doc carries current
 file:line anchors, red-test designs, and hard constraints per bug. TDD in every
 lane: write the red test first, watch it fail, then fix.
+
+## Design-review deltas (2026-07-14, 3-judge fleet; binding on builders)
+
+- **Held-row invariant (kb-c AND kb-d):** held => line_total = payable
+  components + LEAST(net adjustment_cents, 0). See the amended B4 spec section.
+  kb-c adds the cross-lane test (claw onto a fixture-seeded held-negative row).
+- **kb-a:** B5's failure rig throws StripeInvalidRequestError (definitive), plus
+  a green guard for the B6 interaction (ambiguous failure leaves a pending row
+  that nets into alreadyRefunded, retry refunds 0). lifecycle.js archived→draft
+  restore clears cancelled_at/cancelled_by/cancellation_note/archive_reason
+  (focused test). When the archive modal opens via the refund prompt, default
+  the reason select to 'client_cancelled' (a cancelled booking must not land as
+  'no_hire' silently). Archived-list label map lands in ProposalsDashboard.js.
+  Rewrite any findings-doc client copy containing em dashes.
+- **kb-b:** the drink-plan intent route gains the same EVENT_CANCELLED guard
+  (spec B3 addition) with its own red test. Keep the webhook alert insert INSIDE
+  the isFirstDelivery gate or Stripe retries duplicate it. Pre-merge regression:
+  re-run checkoutSessionCompleted.lastMinute.test.js and the existing
+  stripeWebhook.{guards,balanceBranch,invoiceLink,optionGroup} suites, not just
+  the two new files.
+- **kb-e:** sweep SELECT requires stripe_payment_intent_id IS NOT NULL
+  (NULL-intent rows: Sentry-warn + skip); a thrown refunds.list error skips the
+  row and never reaches mark-failed; warn-once-then-daily on stuck rows.
+  README/CLAUDE.md env-table updates move to the post-merge docs commit.
+- **kb-f:** B11's concurrency test barrier must count send-entries PLUS
+  completed 204 responses (post-fix only the claim winner enters the send; a
+  both-enter barrier hangs the suite). voice.js claim/release pair early-outs on
+  NULL CallSid (mirrors the existing auditRowExists guard; DELETE on NULL would
+  strand orphan rows). Expect the B9 end-to-end test to flake if the other
+  window is co-testing; re-run serially.
+- **kb-d:** paystub/portal sign-scoping ships in the same commit as the sweep
+  change; staff line-level held-negative presentation is an accepted residual
+  (spec). Rewrite chip copy without em dashes.
+- **kb-h:** B7's RTL step-driver must mock the real dialog sequence (mode →
+  POST /cancel/preview → preview → POST /cancel) or deliberately use the
+  documented shorter path; add a .client-alert-warning tint to index.css (only
+  error/success exist today).
+- **Docs commit (post-merge, on main, single owner):** README folder tree +
+  ARCHITECTURE mentions for shiftReap.js and refundSweepScheduler.js, env-var
+  tables (CLAUDE.md + README) for RUN_REFUND_PENDING_SWEEP_SCHEDULER,
+  ARCHITECTURE Database Schema note for uq_call_audit_dead_leg. This avoids
+  three lanes colliding on README.md.
 
 ## Build notes per lane
 

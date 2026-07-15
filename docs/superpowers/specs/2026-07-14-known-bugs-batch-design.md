@@ -59,7 +59,11 @@ closed in the same lane: archived list SELECT gains archive_reason + label map.
 ### B3 post-cancel money doors
 (1) create-intent-for-invoice/:token gains an archived-proposal guard: 409
 ConflictError code EVENT_CANCELLED (not 410: archived→draft recovery exists);
-InvoicePage already renders err.message. (2) Settle-on-archived alert in BOTH
+InvoicePage already renders err.message. DESIGN-REVIEW ADDITION (gaps judge,
+verified): create-drink-plan-intent/:token has the SAME hole (its SELECT never
+reads p.status, and 'with_balance' folds the full post-refund balance back in);
+apply the identical 409 EVENT_CANCELLED guard there, with its own red test.
+stripe.js is already in kb-b's footprint. (2) Settle-on-archived alert in BOTH
 paymentIntentSucceeded.js and checkoutSessionCompleted.js: in-tx activity-log row
 action='payment_on_archived' + post-commit Sentry warning + notifyAdminCategory
 email telling the admin to re-run Cancel → Refund. The credit itself stays
@@ -71,11 +75,30 @@ to avoid cross-lane edits to cancel.js.
 
 ### B4 held_state-blind clawback/late-tip upserts
 Both ON CONFLICT DO UPDATE line_total recomputes gain a CASE on
-`payout_events.held_state = 'held'`: held rows keep line_total = payable
-components only (adjustment stays tracked, never included) until the admin
-confirm PATCH re-arms it. ELSE branches byte-identical to today (H1 tests pin
-this). Sentry breadcrumb when a claw lands on a held row. This is NOT a floor:
-the number is gated on the admin decision point, never destroyed. FLAG 2.
+`payout_events.held_state = 'held'`. DESIGN-REVIEW AMENDMENT (all three judges,
+blocker): B4 and B13 must share ONE system invariant for held rows or paystubs
+un-foot and parked debt gets destroyed when an upsert lands on a held-negative
+line. The invariant, binding on BOTH kb-c and kb-d:
+
+    held row => line_total_cents = payable components + LEAST(net adjustment_cents, 0)
+
+Concretely: clawback held branch = wage + gratuity + card_tip +
+LEAST(payout_events.adjustment_cents + EXCLUDED.adjustment_cents, 0); late-tip
+held branch = wage + gratuity + card_tip + EXCLUDED.card_tip_net_cents +
+LEAST(payout_events.adjustment_cents, 0). For every held row that exists at
+HEAD (both hold callers filter adjustment > 0) LEAST = 0, so this is
+byte-equivalent to the components-only design for the positive case; it only
+diverges once B13's held-negative rows exist, where the debt must stay inside
+line_total so it keeps collecting through the payout-level clamp and the
+sign-scoped readers keep footing. The over-claw sub-case test asserts
+line_total = LEAST(netted adjustment, 0) (e.g. -3000), NOT 0. ELSE branches
+stay byte-identical to today (H1 tests pin this). Sentry breadcrumb when a
+claw lands on a held row. Cross-lane test (lives in kb-c's
+payrollClawback.test.js, fixture-seeded so it needs no kb-d code): seed a held
+row with adjustment_cents = -1500 and line_total = -1500, claw onto it, assert
+line_total = LEAST(-1500 - claw, 0) and held_state unchanged. FLAG 2 (reworded):
+only the POSITIVE (reimbursement) portion of a held adjustment parks pending
+admin confirm; net-negative debt keeps collecting, consistent with FLAG 5.
 
 ### B5 cancel-refund retry over-refund
 /cancel/refund caps money-out at a lifetime target: snapshot read-back from the
@@ -84,6 +107,16 @@ plus post-cancel succeeded payments (B3 headroom), `effectiveTarget =
 min(liveMath, snapshot + postCancelCents)`. No snapshot row (legacy data): live
 math + Sentry warn, exact status quo. All new queries through the held dbClient
 inside the advisory-lock tx. Cap only, not target-replacement (FLAG 3).
+DESIGN-REVIEW AMENDMENTS (blockers/warnings): (a) B5's mid-loop-failure test
+rig MUST throw a DEFINITIVE Stripe error type (StripeInvalidRequestError),
+because B6 reclassifies StripeAPIError/StripeConnectionError to leave the row
+'pending', and pending rows net into alreadyRefunded; add an explicit green
+guard pinning the post-B6 interaction (ambiguous failure leaves a pending row,
+the retry computes remainingTarget 0 and refunds nothing until the sweeper
+resolves it: conservative, correct). (b) The archived→draft restore transition
+(lifecycle.js) now CLEARS cancelled_at, cancelled_by, cancellation_note, and
+archive_reason, so a restored proposal is not refundable against a stale cancel
+snapshot and a later re-cancel writes a fresh one; focused test in kb-a.
 
 ### B6 stranded pending refund + ambiguous-error misclassification
 (1) refundExecute passes metadata {proposal_refund_row_id, proposal_id} to
@@ -97,7 +130,17 @@ pooled connection, match by metadata row id first then unique-amount, adopt via
 applyRefundReconciliation (the single authority), no candidate → guarded
 mark-failed + Sentry. Registered in index.js under
 RUN_REFUND_PENDING_SWEEP_SCHEDULER (15-min tick, ~180s stagger), env var added
-to .env.example + CLAUDE.md/README tables.
+to .env.example (repo doc tables update in the post-merge docs commit).
+DESIGN-REVIEW AMENDMENTS (risk judge, blocker): (a) the sweep SELECT gains
+`AND stripe_payment_intent_id IS NOT NULL`; NULL-intent rows are unadoptable,
+and stripe-node drops an undefined list param so the query would go
+ACCOUNT-WIDE and the unique-amount fallback could adopt a foreign proposal's
+refund (ledger corruption); Sentry-warn and skip those rows instead. (b) A
+THROWN refunds.list error (wrong mode under STRIPE_TEST_MODE_UNTIL, outage)
+SKIPS the row: it stays pending, Sentry-tagged, and never reaches the
+mark-failed branch; mark-failed fires only on a successful, intent-filtered,
+candidate-less list. (c) Avoid per-tick repeat warnings for a permanently
+ambiguous row: warn on first aged encounter, re-warn at most daily.
 
 ### B7 shortfall_cents surfaced in CancelEventDialog
 Display-only: shortfall-aware toast (toast.info; ToastContext has no warning
@@ -175,9 +218,11 @@ shipped (FLAG 6).
    approved staff. One step beyond the recorded M-1 letter, but it closes the
    prod-confirmed "bartender applied to a cancelled event and was never told"
    gap and matches the cancel flow's behavior.
-2. B4: a claw that nets a held reimbursement to <= 0 stays PARKED on the held
-   row until the admin confirms (re-arms the netted number) or zeroes (conscious
-   write-off). Visible via Sentry + the payroll held badge, never silent.
+2. B4 (reworded after design review): on a held row, only the POSITIVE
+   reimbursement portion parks pending your confirm; a net-NEGATIVE adjustment
+   (debt) stays inside line_total and keeps collecting through the payout-level
+   clamp, consistent with flag 5. Confirm re-arms the netted number; zeroing is
+   a conscious write-off. Visible via Sentry + the payroll held badge.
 3. B5 ships the conservative CAP. The sibling retry-UNDER-refund residual (live
    gratuity-funded gate flipping false after partial reconciliation) is recorded
    in the fix-list doc; fixing it means replacing the target with the snapshot,
@@ -189,6 +234,22 @@ shipped (FLAG 6).
    admin can zero to forgive via the existing PATCH.
 6. B14 is read-side alignment only; a one-off prod TRIM normalization script is
    the durable end-of-class fix if you want it later.
+
+## Accepted residuals (design review, recorded not fixed)
+- B1: the shift-reap block inherits cancel.js's pre-existing lock order (shifts
+  then shift_requests) while the staff drop/cover marketplace locks
+  shift_requests first; a racing pair can 40P01 and roll back cleanly
+  (retryable, no corruption). Pre-existing with cancel; extraction stays
+  verbatim rather than silently reordering locks.
+- B13: staff-facing line rows (Past tab, payout detail) show a held-negative
+  line as a bare negative amount with no marker; the admin chip + Sentry carry
+  the context. Staff-side presentation polish is a follow-on.
+- B10: if Thumbtack counts repeated 503s toward webhook health/auto-disable,
+  the 10-minute window plus the 30/min rate limiter bounds exposure; recorded
+  next to the existing provider-never-retries residual.
+- B6: an ambiguous-error pending row blocks that charge's refund headroom for
+  up to ~45 minutes and is invisible in the history view until resolved; the
+  ExternalServiceError copy carries the explanation.
 
 ## Explicitly out of scope
 - Dispatcher multi-instance double-send (unreachable in prod's single-scheduler
