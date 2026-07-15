@@ -266,6 +266,7 @@ See `.env.example` for the full list. Key ones:
 | `RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER` | Optional. Set to `false` to disable the hourly `webhook_events` 30-day prune. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `RUN_PENDING_EMAIL_CLEANUP_SCHEDULER` | Optional. Set to `false` to disable the daily `pending_email_changes` 7-day purge (spec §6.10). Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `RUN_STRIPE_PAYOUT_SWEEP_SCHEDULER` | Optional. Set to `false` to disable the daily Stripe payout mirror sweep (webhook-miss heal, pending bucket, re-match). Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
+| `RUN_REFUND_PENDING_SWEEP_SCHEDULER` | Optional. Set to `false` to disable the 15-minute stale-pending-refund sweep (reconciles `proposal_refunds` rows stuck `pending` >30 min against Stripe: adopts the real refund or marks it failed). Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `CLIENT_URL` | Admin/staff frontend origin (CORS + admin dashboard links in emails). In prod: `https://admin.drbartender.com` |
 | `PUBLIC_SITE_URL` | Public marketing site origin used in client-facing token URLs (proposal, drink plan, invoice, shopping list). In prod: `https://drbartender.com` |
 | `STAFF_URL` | Staff portal origin in hire-confirmation emails. Optional — defaults to `https://staff.drbartender.com`. |

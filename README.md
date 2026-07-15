@@ -71,6 +71,7 @@ Copy `.env.example` and fill in values. All variables:
 | `RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER` | No | Set to `false` to disable the hourly `webhook_events` 30-day prune. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `RUN_PENDING_EMAIL_CLEANUP_SCHEDULER` | No | Set to `false` to disable the daily `pending_email_changes` 7-day purge. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `RUN_STRIPE_PAYOUT_SWEEP_SCHEDULER` | No | Set to `false` to disable the daily Stripe payout mirror sweep (webhook-miss heal, pending bucket, re-match). Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
+| `RUN_REFUND_PENDING_SWEEP_SCHEDULER` | No | Set to `false` to disable the 15-minute stale-pending-refund sweep (reconciles `proposal_refunds` rows stuck `pending` >30 min against `stripe.refunds.list`: adopts the real refund or marks it failed). Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `CLIENT_URL` | Yes | Admin/staff frontend URL for CORS + admin dashboard links in emails (e.g., `http://localhost:3000` in dev, `https://admin.drbartender.com` in prod) |
 | `PUBLIC_SITE_URL` | Yes | Public marketing site URL used in client-facing token links — proposals, drink plans, invoices, shopping lists (e.g., `http://localhost:3000` in dev, `https://drbartender.com` in prod) |
 | `STAFF_URL` | No | Staff portal origin used in hire-confirmation emails (e.g., `http://localhost:3000` in dev, `https://staff.drbartender.com` in prod). Falls back to the prod URL if unset. |
@@ -291,7 +292,9 @@ dr-bartender/
 │   │   ├── messageScheduling.js # scheduleMessage(...): idempotent insert of a future touch into the scheduled_messages table
 │   │   ├── messageSuppression.js # shouldSendImmediate(...): shared archive / comm-prefs / bad-contact gate for immediate-send paths
 │   │   ├── refundHelpers.js    # Partial-refund planner (planRefund) + idempotent reconciliation (applyRefundReconciliation, incl. status⟷money + autopay-disarm)
-│   │   ├── refundExecute.js    # Shared one-charge refund orchestration (pending row → stripe.refunds.create → applyRefundReconciliation → cleanup); used by the admin refund route AND the cancel-event refund endpoint — the only place stripe.refunds.create is called
+│   │   ├── refundExecute.js    # Shared one-charge refund orchestration (pending row → stripe.refunds.create → applyRefundReconciliation → cleanup); used by the admin refund route AND the cancel-event refund endpoint — the only place stripe.refunds.create is called. Ambiguous Stripe errors (connection/API) leave the row `pending` (not `failed`) so the sweeper can reconcile it against Stripe
+│   │   ├── refundSweepScheduler.js # Stale-pending-refund reconciler (sweepStalePendingRefunds): rows `pending` >30 min w/ NULL stripe_refund_id are matched against stripe.refunds.list (by metadata row-id, then unique amount) → adopt via applyRefundReconciliation, or mark failed if the refund never reached Stripe (gated by RUN_REFUND_PENDING_SWEEP_SCHEDULER)
+│   │   ├── shiftReap.js        # reapShiftsForProposal: soft-cancels a proposal's shifts, denies open shift_requests, suppresses shift-level pending scheduled_messages + BEO nudges, returns per-shift approved/bartender user ids. Extracted from the cancel flow; shared by cancel AND the archive endpoint (M-1 refund-reap)
 │   │   ├── cancellationMath.js # Pure cancellation-refund math (computeCancellationRefund; all CENTS): >14d excess-less-5%-fee + full gratuity, <=14d gratuity-only, DRB full refund
 │   │   ├── metricsQueries.js   # Pure metrics filter parsing + SQL builders (resolveFilters, dateClause, qMoney, qWinRate, etc.)
 │   │   ├── orientationData.js  # Assembles the booking/receipt/planner payload for the orientation email
