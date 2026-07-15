@@ -156,7 +156,9 @@ describe('CommandPalette keyboard selection', () => {
     act(() => { jest.advanceTimersByTime(200); });
     expect(api.get).not.toHaveBeenCalled(); // 2-char floor
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(screen.getByTestId('location')).toHaveTextContent('/events'); // "Events" is the first label containing "e"
+    // "Overview" (the Money Board relabel of Dashboard) is now the first nav
+    // label containing "e"; before the relabel it was "Events".
+    expect(screen.getByTestId('location')).toHaveTextContent('/dashboard');
   });
 
   test('selection resets to the top on a new keystroke', async () => {
