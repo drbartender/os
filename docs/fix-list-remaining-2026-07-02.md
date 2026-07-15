@@ -27,6 +27,35 @@ Re-verify line numbers before building anything.
 - **Classes / field guide** — restyle existing (`ClassWizard.js` booking wizard + `FieldGuide.js` staff doc; redesign brief already covers restyles) OR new marketing/content pages? Unresolved.
 - **Staff payment system** — quiet for weeks; superseded by the shipped paystub/payroll work, or still queued (minimal-first, absorbs multi-bartender tipping)?
 
+## Known-bugs batch — FIXED on main 2026-07-14 (UNPUSHED, awaiting Dallas push cue)
+The 14-bug sweep below (B1-B14) was re-verified against HEAD by a parallel
+investigation, specced + plan-reviewed (docs/superpowers/{specs,plans}/2026-07-14-known-bugs-batch*),
+built in 8 file-disjoint lanes (kb-a..kb-h), each per-lane review-fleet clean
+(full fleet on the 7 money/sensitive lanes, light on kb-h), and squash-merged
+(90f3029..419f585 + docs c1bfd2c). NOT PUSHED. At push: full fleet +
+/second-opinion on the sensitive commits + money-smoke gate.
+- **B1 refund-leaves-booking-live** — FIXED (M-1 archive-does-the-reaping): shared `shiftReap.js`, archive endpoint reaps shifts + pending messages + voids invoices, refund UI prompts archive at amount_paid=0, eventStatusChip 'Cancelled' branch, email-only staff notify on reap.
+- **B2 archive_reason** — FIXED: reason picker (allowlist, default no_hire, client_cancelled default on the refund-prompt path), written + displayed in the archived list.
+- **B3 post-cancel money doors** — FIXED: 409 EVENT_CANCELLED on the invoice AND drink-plan public intent routes; settle-on-archived Sentry+admin alert in both webhook handlers; cancel cancels PIs on surviving invoices too.
+- **B4 held_state-blind upserts** — FIXED: clawback + late-tip held-branch CASE honors the shared invariant (line_total = payable components + LEAST(net adjustment, 0)).
+- **B5 cancel-refund retry over-refund** — FIXED: lifetime cap = min(liveMath, cancel-time refund_owed_cents snapshot + post-cancel headroom); lifecycle restore clears cancel state.
+- **B6 stranded pending refund + ambiguous-error misclassification** — FIXED: refundExecute leaves ambiguous errors pending; new `refundSweepScheduler.js` reconciles stale pendings against Stripe.
+- **B7 shortfall_cents in CancelEventDialog** — FIXED (display).
+- **B8 lastMinute test registerAll** — FIXED (test).
+- **B9 eventEveSms processing-delete** — FIXED (revert to pending-only DELETE).
+- **B10 thumbtack heal re-notify** — FIXED (10-min in-flight gate, 503 retry_later); calcom refuted (no notifications there).
+- **B11 voice dead-leg TOCTOU** — FIXED (atomic claim + `uq_call_audit_dead_leg` partial unique index; prod+dev pre-checked no dup pairs).
+- **B12 autopay-guard drink-plan blindness** — was ALREADY FIXED (2f6e0dc); docs/meta stamped only.
+- **B13 orphan-sweep negative-adjustment** — FIXED (held-with-payable, sign-scoped readers foot).
+- **B14 un-TRIMmed position** — FIXED at cancel.js (money) + autoAssign + coverBroadcast; the shift_requests CHECK made padded rows unseedable, so it landed as P3 idiom alignment.
+
+**Accepted residuals + follow-ups recorded from this batch (deliberately not built):**
+- **W1 (from kb-a review): a THIRD archive door does not reap.** `PATCH /proposals/:id/status -> 'archived'` (lifecycle.js, admin, `?force=true` from any status) reaps only marketing/change-requests, never shifts/messages/invoices. NOT reachable from the UI (ProposalDetail only posts sent/accepted through it; the Archive button uses `/:id/archive`), and the dispatcher archived-cascade backstops comms, but a raw-API archive of a shift-bearing booking keeps the shift live — the B1 symptom via a different door. Fix: route lifecycle->archived through `reapShiftsForProposal` or block it for shift-bearing proposals. Small; do in a later proposals-touching lane.
+- **B5 cross-cycle residual:** after cancel -> refund -> restore -> re-book -> re-pay -> re-cancel, the second cancellation's snapshot is computed from a gross SUM of all succeeded payments (refunds never demote payment rows), so the forfeited cycle-1 retainer can partially leak back into the cycle-2 cap. Visible in the preview before money moves. Snapshot-per-cycle or a payment-row demotion would close it.
+- **B9 edge:** a reschedule landing in the seconds-wide mid-send window whose send then hangs >10 min gets reaper-redispatched with the hardcoded "tomorrow" copy for an event now days out (details otherwise fresh). Double-rare; part of the notification-dup cluster.
+- **B4/B13:** a held reimbursement clawed to exactly 0 while the worker is still off-roster is deleted by the next sweep's adj==0 path (loses only the audit note, zero money). B11 NULL-CallSid dead legs (non-prod, forged posts fail signature) no longer write a forensic audit row.
+- **B10:** if Thumbtack counts repeated 503s toward webhook health/auto-disable, a crash-strand whose only retry lands inside the 10-min window stays unhealed until manual replay (lead+client rows are committed and visible). B6: an ambiguous-error pending row blocks that charge's headroom for ~45 min and is invisible in refund history until the sweeper resolves it.
+
 ## Known bugs (prod-confirmed, unbuilt)
 - **A refund on a paid proposal leaves the entire booking live.** Found 2026-07-09 on proposal 500 (Shruti Parekh: refunded 7/1, still sitting on the Events board 8 days later with 11 pending client reminders queued). `issueRefund` (`server/utils/refundHelpers.js`) reverses the payment, reverses the linked invoice(s), and downgrades `proposals.status` back to `accepted` (`refundHelpers.js:282-283`). It touches nothing else: that file has zero references to `shifts` or `scheduled_messages`. So a fully-refunded booking keeps (1) its auto-created shift at `status='open'`, visible on the Events board *and* in the staff open-shifts feed, where a bartender can and did apply to work a cancelled event; (2) its balance invoice at `status='sent'`, still dunnable; (3) its whole pending `scheduled_messages` ladder. The dispatcher's `checkSuppression` gates only on `proposal.status === 'archived'` (`scheduledMessageDispatcher.js:140`), and `accepted` is not `archived`, so balance reminders (which recompute `total_price - amount_paid > 0`), drink-plan nudges, event-week and event-eve reminders all keep firing at the refunded client.
   - Compounding it: `POST /proposals/:id/archive` (`actions.js:397`) voids invoices and suppresses messages but **never touches shifts**; and neither the admin Events feed (`shifts.js:40`) nor `EventsDashboard.js` filters on `shifts.status` or `proposals.status`. So archiving the proposal does not remove the row, and soft-cancelling the shift does not either. Only a hard `DELETE FROM shifts` does.
