@@ -236,7 +236,7 @@ router.post('/requests/:requestId/drop', asyncHandler(async (req, res) => {
     if (ctx.dropped_at) {
       throw new ConflictError('This shift was already dropped.', 'already_dropped');
     }
-    if (ctx.pay_period_status === 'processing') {
+    if (['processing', 'reopened'].includes(ctx.pay_period_status)) {
       throw new ConflictError(
         'This shift falls in a pay period that is being processed; contact management.',
         'pay_period_processing'
@@ -372,7 +372,7 @@ router.post('/requests/:requestId/request-cover', asyncHandler(async (req, res) 
     if (ctx.cover_requested_at) {
       throw new ConflictError('Cover was already requested for this shift.', 'already_requested');
     }
-    if (ctx.pay_period_status === 'processing') {
+    if (['processing', 'reopened'].includes(ctx.pay_period_status)) {
       throw new ConflictError(
         'This shift falls in a pay period that is being processed; contact management.',
         'pay_period_processing'
@@ -532,7 +532,7 @@ router.post('/requests/:shiftId/claim-cover', asyncHandler(async (req, res) => {
     if (orig.shift_status === 'cancelled') {
       throw new ConflictError('This shift was cancelled.', 'shift_cancelled');
     }
-    if (orig.pay_period_status === 'processing') {
+    if (['processing', 'reopened'].includes(orig.pay_period_status)) {
       throw new ConflictError(
         'This shift falls in a pay period that is being processed; contact management.',
         'pay_period_processing'
@@ -735,7 +735,9 @@ router.post('/requests/:requestId/emergency-drop', asyncHandler(async (req, res)
     }
     // Pay-period guard does NOT apply to emergency drops (spec §6.5): the
     // event is by definition <72h out, so it cannot be in a processing
-    // period (those run after payday, days after event).
+    // period (those run after payday, days after event). The same argument
+    // covers 'reopened' (payroll redesign 2026-07-14): it derives only from
+    // 'processing', so a future shift cannot sit in one either.
 
     hoursOut = hoursToEvent({ event_date: ctx.event_date, start_time: ctx.start_time });
     if (hoursOut === null) {

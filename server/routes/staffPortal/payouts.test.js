@@ -309,9 +309,33 @@ test('GET /api/me/payouts > returns the staffer-scoped list with event_count', a
   assert.strictEqual(row.period.end_date, PERIOD_END);
   assert.strictEqual(row.period.payday, PERIOD_PAYDAY);
   assert.strictEqual(row.period.status, 'paid');
-  // PII: payment_method + payment_handle MUST NOT be present.
+  // PII: payment_method + payment_handle + payment_reference MUST NOT be present.
   assert.ok(!('payment_method' in row), 'payment_method is not projected');
   assert.ok(!('payment_handle' in row), 'payment_handle is not projected');
+  assert.ok(!('payment_reference' in row), 'payment_reference is not projected');
+});
+
+test('GET /api/me/payouts > a reopened period renders as processing, raw status never leaks', async () => {
+  // 'reopened' is an admin-internal state (payroll redesign 2026-07-14); staff
+  // surfaces alias it to 'processing' so a mid-correction period reads as a
+  // normal frozen one.
+  await pool.query(`UPDATE pay_periods SET status = 'reopened' WHERE id = $1`, [payPeriodId]);
+  try {
+    const list = await request('GET', '/api/me/payouts', { token: tokenA });
+    assert.strictEqual(list.status, 200);
+    const row = list.body.payouts.find((p) => p.id === payoutAId);
+    assert.ok(row, 'seeded payout is in the list');
+    assert.strictEqual(row.period.status, 'processing');
+    assert.ok(!JSON.stringify(list.body).includes('reopened'), 'raw reopened never rendered in list');
+
+    const detail = await request('GET', `/api/me/payouts/${payPeriodId}`, { token: tokenA });
+    assert.strictEqual(detail.status, 200);
+    assert.strictEqual(detail.body.period.status, 'processing');
+    assert.ok(!('payment_reference' in (detail.body.payout || {})), 'payment_reference absent from detail payout');
+    assert.ok(!JSON.stringify(detail.body).includes('reopened'), 'raw reopened never rendered in detail');
+  } finally {
+    await pool.query(`UPDATE pay_periods SET status = 'paid' WHERE id = $1`, [payPeriodId]);
+  }
 });
 
 test('GET /api/me/payouts > does not include another user\'s payouts', async () => {

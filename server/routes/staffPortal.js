@@ -121,7 +121,8 @@ router.get('/staff-home', asyncHandler(async (req, res) => {
 
     pool.query(`
       SELECT pp.id AS pay_period_id, pp.start_date, pp.end_date,
-             pp.payday, pp.status,
+             pp.payday,
+             CASE WHEN pp.status = 'reopened' THEN 'processing' ELSE pp.status END AS status,
              po.id AS payout_id, COALESCE(po.total_cents, 0) AS total_cents,
              COALESCE((
                SELECT COUNT(*)::int FROM payout_events pe WHERE pe.payout_id = po.id

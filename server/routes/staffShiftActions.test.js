@@ -277,6 +277,106 @@ test('POST /drop > pay_period processing returns 409 pay_period_processing', asy
   }
 });
 
+test('POST /drop > pay_period reopened returns 409 pay_period_processing', async () => {
+  // 'reopened' (payroll redesign 2026-07-14) is the admin mid-correction
+  // state; staff roster actions stay blocked exactly like processing.
+  const { requestId, shiftId } = await seedShiftWithRequest({
+    daysFromNow: 20, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const po = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, total_cents)
+     VALUES ($1, $2, 0)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET total_cents = EXCLUDED.total_cents
+     RETURNING id`,
+    [payPeriodId, staffUserId]
+  );
+  await pool.query(
+    `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents)
+     VALUES ($1, $2, 4, 4, 2500)
+     ON CONFLICT (payout_id, shift_id) DO NOTHING`,
+    [po.rows[0].id, shiftId]
+  );
+  await pool.query(`UPDATE pay_periods SET status = 'reopened' WHERE id = $1`, [payPeriodId]);
+
+  try {
+    const res = await request('POST', `/api/shifts/requests/${requestId}/drop`, { token: staffToken });
+    assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+    assert.strictEqual(res.body.code, 'pay_period_processing');
+  } finally {
+    await pool.query(`UPDATE pay_periods SET status = 'open' WHERE id = $1`, [payPeriodId]);
+    await pool.query(`DELETE FROM payout_events WHERE shift_id = $1`, [shiftId]);
+    await pool.query(`DELETE FROM payouts WHERE pay_period_id = $1 AND contractor_id = $2`, [payPeriodId, staffUserId]);
+  }
+});
+
+test('POST /request-cover > pay_period reopened returns 409 pay_period_processing', async () => {
+  // The guard fires before the 72h-336h window check, so the 20-day fixture
+  // works here too.
+  const { requestId, shiftId } = await seedShiftWithRequest({
+    daysFromNow: 20, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const po = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, total_cents)
+     VALUES ($1, $2, 0)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET total_cents = EXCLUDED.total_cents
+     RETURNING id`,
+    [payPeriodId, staffUserId]
+  );
+  await pool.query(
+    `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents)
+     VALUES ($1, $2, 4, 4, 2500)
+     ON CONFLICT (payout_id, shift_id) DO NOTHING`,
+    [po.rows[0].id, shiftId]
+  );
+  await pool.query(`UPDATE pay_periods SET status = 'reopened' WHERE id = $1`, [payPeriodId]);
+
+  try {
+    const res = await request('POST', `/api/shifts/requests/${requestId}/request-cover`, {
+      token: staffToken,
+      body: { reason: 'Family conflict' },
+    });
+    assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+    assert.strictEqual(res.body.code, 'pay_period_processing');
+  } finally {
+    await pool.query(`UPDATE pay_periods SET status = 'open' WHERE id = $1`, [payPeriodId]);
+    await pool.query(`DELETE FROM payout_events WHERE shift_id = $1`, [shiftId]);
+    await pool.query(`DELETE FROM payouts WHERE pay_period_id = $1 AND contractor_id = $2`, [payPeriodId, staffUserId]);
+  }
+});
+
+test('POST /claim-cover > pay_period reopened returns 409 pay_period_processing', async () => {
+  // claim-cover reads pay_period_status through its OWN context query
+  // (staffShiftActions.js:510), so the drop test does not cover this guard.
+  const { shiftId } = await seedShiftAwaitingCover({ originalUserId: staffUserId });
+  const po = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, total_cents)
+     VALUES ($1, $2, 0)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET total_cents = EXCLUDED.total_cents
+     RETURNING id`,
+    [payPeriodId, staffUserId]
+  );
+  await pool.query(
+    `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents)
+     VALUES ($1, $2, 4, 4, 2500)
+     ON CONFLICT (payout_id, shift_id) DO NOTHING`,
+    [po.rows[0].id, shiftId]
+  );
+  await pool.query(`UPDATE pay_periods SET status = 'reopened' WHERE id = $1`, [payPeriodId]);
+
+  try {
+    const res = await request('POST', `/api/shifts/requests/${shiftId}/claim-cover`, {
+      token: otherStaffToken,
+      body: {},
+    });
+    assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+    assert.strictEqual(res.body.code, 'pay_period_processing');
+  } finally {
+    await pool.query(`UPDATE pay_periods SET status = 'open' WHERE id = $1`, [payPeriodId]);
+    await pool.query(`DELETE FROM payout_events WHERE shift_id = $1`, [shiftId]);
+    await pool.query(`DELETE FROM payouts WHERE pay_period_id = $1 AND contractor_id = $2`, [payPeriodId, staffUserId]);
+  }
+});
+
 test('POST /drop > NULL payout_events passes the pay-period gate', async () => {
   const { requestId } = await seedShiftWithRequest({
     daysFromNow: 20, startTimeStr: '18:00', userId: staffUserId,

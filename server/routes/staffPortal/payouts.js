@@ -47,7 +47,7 @@ function register(router) {
       `SELECT po.id, po.status, po.total_cents, po.paid_at, po.paystub_storage_key,
               pp.id   AS period_id,
               pp.start_date, pp.end_date, pp.payday,
-              pp.status AS period_status,
+              CASE WHEN pp.status = 'reopened' THEN 'processing' ELSE pp.status END AS period_status,
               COALESCE(ec.event_count, 0) AS event_count
          FROM payouts po
          JOIN pay_periods pp ON pp.id = po.pay_period_id
@@ -143,7 +143,7 @@ function register(router) {
               pp.start_date,
               pp.end_date,
               pp.payday,
-              pp.status        AS period_status
+              CASE WHEN pp.status = 'reopened' THEN 'processing' ELSE pp.status END AS period_status
          FROM payouts po
          JOIN pay_periods pp ON pp.id = po.pay_period_id
         WHERE po.contractor_id = $1
