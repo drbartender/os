@@ -30,9 +30,19 @@ if (process.env.NODE_ENV === 'production') {
 // Fake Stripe (DI) — install before requiring the router (cancel.js destructures
 // getStripe at load).
 const refundsCreated = [];
+// Mid-loop-failure rig (B5): when failOnCallN > 0, the Nth (1-based) refunds.create
+// throws a DEFINITIVE Stripe error. StripeInvalidRequestError is intentional: even
+// after B6 (sibling lane) reclassifies StripeAPIError/ConnectionError to LEAVE the
+// row pending, a definitive rejection still marks the row 'failed', so this rig
+// stays stable across that merge (a 'failed' row does not count in netting).
+const refundFailRig = { failOnCallN: 0, calls: 0 };
 const fakeStripe = {
   refunds: {
     create: async ({ payment_intent, amount }) => {
+      refundFailRig.calls += 1;
+      if (refundFailRig.failOnCallN && refundFailRig.calls >= refundFailRig.failOnCallN) {
+        throw Object.assign(new Error('boom'), { type: 'StripeInvalidRequestError' });
+      }
       const id = `re_${payment_intent}_${amount}_${crypto.randomBytes(3).toString('hex')}`;
       refundsCreated.push({ payment_intent, amount, id });
       return { id, payment_intent, amount, status: 'succeeded' };
@@ -194,6 +204,54 @@ async function seedBooked(opts = {}) {
     out.tipAmountCents = tipAmountCents;
   }
   return out;
+}
+
+// Seed a proposal whose whole payment was collected as ONE 'full' charge spanning
+// the Deposit (10000) + Balance (90000) invoices (this is the geometry that
+// reproduces B5: refunding the 'full' charge reverses the Deposit invoice — the
+// retainer — FIRST, inflating a later live-math recompute). withDrinkPlan adds a
+// separate drink_plan_extras charge (20000) on an 'Additional Services' invoice.
+async function seedFullChargeGeometry({ withDrinkPlan = true } = {}) {
+  seq += 1;
+  const totalDollars = withDrinkPlan ? 1200 : 1000;
+  const c = await pool.query(
+    `INSERT INTO clients (name, email) VALUES ('Jane Smith', $1) RETURNING id`,
+    [`${NONCE}-full-${seq}@example.com`]);
+  const clientId = c.rows[0].id;
+  seededClients.push(clientId);
+  const snapshot = { breakdown: [{ label: 'Shared Gratuity', amount: 150 }] };
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_type, event_timezone, event_date,
+        event_start_time, event_duration_hours, total_price, amount_paid, pricing_snapshot, autopay_enrolled)
+     VALUES ($1, 'balance_paid', 'wedding', 'America/Chicago', (CURRENT_DATE + '30 days'::interval),
+        '18:00', 4, $2, $2, $3, false) RETURNING id`,
+    [clientId, totalDollars, JSON.stringify(snapshot)]);
+  const proposalId = p.rows[0].id;
+  seeded.push(proposalId);
+  const mkInv = async (label, due, paid) => (await pool.query(
+    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status)
+     VALUES ($1, $2, $3, $4, $5, 'paid') RETURNING id`,
+    [proposalId, `INV${crypto.randomBytes(5).toString('hex')}`, label, due, paid])).rows[0].id;
+  const depInvId = await mkInv('Deposit', 10000, 10000);
+  const balInvId = await mkInv('Balance', 90000, 90000);
+  const fullPay = await pool.query(
+    `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status, stripe_payment_intent_id)
+     VALUES ($1, 'full', 100000, 'succeeded', $2) RETURNING id`,
+    [proposalId, `pi_full_${NONCE}_${seq}`]);
+  const fullPayId = fullPay.rows[0].id;
+  await pool.query(`INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, 10000)`, [depInvId, fullPayId]);
+  await pool.query(`INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, 90000)`, [balInvId, fullPayId]);
+  let addInvId = null; let dpPayId = null;
+  if (withDrinkPlan) {
+    addInvId = await mkInv('Additional Services', 20000, 20000);
+    const dpPay = await pool.query(
+      `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status, stripe_payment_intent_id)
+       VALUES ($1, 'drink_plan_extras', 20000, 'succeeded', $2) RETURNING id`,
+      [proposalId, `pi_dp_${NONCE}_${seq}`]);
+    dpPayId = dpPay.rows[0].id;
+    await pool.query(`INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, 20000)`, [addInvId, dpPayId]);
+  }
+  return { proposalId, clientId, depInvId, balInvId, addInvId, fullPayId, dpPayId };
 }
 
 async function cleanupProposal(o) {
@@ -482,6 +540,36 @@ test('clawback accrued: an accrued card-tip line IS clawed at cancel; webhook re
   } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
 });
 
+test('clawback accrued with a case-variant position ("BARTENDER") is captured and clawed at cancel (B14)', async () => {
+  // B14: the cancel-time bartender capture (extracted into shiftReap.js) uses
+  // LOWER(TRIM(position)) to agree with the accrual/clawback matchers. The
+  // whitespace-padded vector the findings doc proposed is UNREACHABLE: the
+  // shift_requests_position_canonical CHECK rejects any padded position (23514),
+  // so the TRIM is defense-in-depth / P3 idiom alignment (TRIM of clean data is
+  // identity), not a behavioral fix. This is a GREEN guard: a case-variant
+  // 'BARTENDER' row (which the CHECK permits) must be captured and clawed, and
+  // the TRIM must not regress that case-insensitive match.
+  const o = await seedBooked({ eventDaysOut: 30, withShiftTip: true, tipAmountCents: 4000 });
+  const prior = await setTodayPeriod('open');
+  try {
+    await pool.query("UPDATE shift_requests SET position = 'BARTENDER' WHERE shift_id = $1", [o.shiftId]);
+    await seedAccruedTipLine(prior.id, o.bartenderId, o.shiftId, 4000);
+
+    const r = await post(`/api/proposals/${o.proposalId}/cancel`, await mintAdmin(),
+      { mode: 'client', confirm_last_name: 'Smith', suppress_client_email: true, suppress_staff_notifications: true });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const line = await pool.query(
+      `SELECT pe.adjustment_cents, pe.card_tip_net_cents, pe.line_total_cents
+         FROM payout_events pe JOIN payouts po ON po.id = pe.payout_id
+        WHERE pe.shift_id = $1 AND po.contractor_id = $2`,
+      [o.shiftId, o.bartenderId]);
+    assert.equal(Number(line.rows[0].adjustment_cents), -4000, 'case-variant bartender captured and clawed');
+    assert.equal(Number(line.rows[0].card_tip_net_cents), 4000, 'original accrued tip untouched');
+    assert.equal(Number(line.rows[0].line_total_cents), 0, 'line nets to zero after the claw');
+  } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
+});
+
 test('clawback frozen-period: an accrued tip defers with a marker while the period is frozen', async () => {
   const o = await seedBooked({ eventDaysOut: 30, withShiftTip: true, tipAmountCents: 4000 });
   const prior = await setTodayPeriod('processing'); // today's period is frozen
@@ -641,6 +729,47 @@ test('refund: a pending refund row (Stripe reached, unreconciled) is netted, so 
   } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
 });
 
+test('cancel: cancels open checkout PIs for a SURVIVING partially_paid invoice, not just voided ones (B3 piece 3)', async () => {
+  // Cancel preserves partially-paid invoices as the payment record (voids only
+  // amount_paid=0 rows), but a client with the pay page already open can still
+  // charge that surviving invoice. cancel must run cancelOpenInvoiceIntents over
+  // the survivors too, not only the voided ids.
+  const o = await seedBooked({ eventDaysOut: 30, totalPrice: 1000, amountPaid: 1000,
+    depositPaidCents: 10000, balancePaidCents: 90000 });
+  // A surviving partially_paid invoice (amount_paid > 0 => NOT voided at cancel).
+  const survInv = await pool.query(
+    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status)
+     VALUES ($1, $2, 'Additional Services', 20000, 5000, 'partially_paid') RETURNING id`,
+    [o.proposalId, `INV${crypto.randomBytes(5).toString('hex')}`]);
+  const survInvId = survInv.rows[0].id;
+  // A pending checkout PI aimed at the surviving invoice (invoice id in metadata).
+  const openPiId = `pi_surv_${o.proposalId}`;
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, status) VALUES ($1, $2, 'pending')`,
+    [o.proposalId, openPiId]);
+
+  const invoiceVoid = require('../../utils/invoiceVoid');
+  const canceledPis = [];
+  invoiceVoid._setStripeForTests({
+    paymentIntents: {
+      retrieve: async (id) => ({ id, status: 'requires_payment_method', metadata: { invoice_id: String(survInvId) } }),
+      cancel: async (id) => { canceledPis.push(id); return { id, status: 'canceled' }; },
+    },
+  });
+  try {
+    const c = await post(`/api/proposals/${o.proposalId}/cancel`, await mintAdmin(),
+      { mode: 'drb', confirm_last_name: 'Smith', suppress_client_email: true, suppress_staff_notifications: true });
+    assert.equal(c.status, 200, JSON.stringify(c.body));
+    // At HEAD the post-commit loop walks only voidedInvoiceIds, so the surviving
+    // invoice's open PI is never cancelled => canceledPis is empty (RED).
+    assert.ok(canceledPis.includes(openPiId), 'open PI for the surviving invoice was cancelled');
+  } finally {
+    invoiceVoid._setStripeForTests(null);
+    await pool.query('DELETE FROM stripe_sessions WHERE proposal_id = $1', [o.proposalId]);
+    await cleanupProposal(o);
+  }
+});
+
 test('refund: a legacy-CC (no-intent) payment surfaces as shortfall_cents, never silently clamped', async () => {
   const o = await seedBooked({ eventDaysOut: 30, totalPrice: 1200, amountPaid: 1200,
     depositPaidCents: 10000, balancePaidCents: 90000 });
@@ -667,5 +796,131 @@ test('refund: a legacy-CC (no-intent) payment surfaces as shortfall_cents, never
     assert.equal(r.body.shortfall_cents, 20000, 'the unreachable legacy amount is surfaced, not clamped');
     const stripeSum = refundsCreated.reduce((a, x) => a + x.amount, 0);
     assert.equal(stripeSum, 100000, 'Stripe was never asked to cover the legacy 20000');
+  } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
+});
+
+// ── B5: cancellation-refund retry over-refund cap ─────────────────────────
+test('refund: a mid-loop failure retry caps money-out at the cancel-time snapshot, not the inflated live target (B5)', async () => {
+  const o = await seedFullChargeGeometry({ withDrinkPlan: true });
+  const prior = await setTodayPeriod('open');
+  try {
+    // Cancel client >14d → snapshot refund_owed_cents = (120000-10000-15000)*0.95 + 15000 = 105250.
+    const c = await post(`/api/proposals/${o.proposalId}/cancel`, await mintAdmin(),
+      { mode: 'client', confirm_last_name: 'Smith', suppress_client_email: true, suppress_staff_notifications: true });
+    assert.equal(c.status, 200, JSON.stringify(c.body));
+    assert.equal(c.body.refund_cents, 105250, 'cancel-time snapshot');
+
+    // First run: charge 1 (the 'full' 100000) reconciles and zeroes the Deposit
+    // invoice; charge 2 (drink_plan 5250 remainder) throws a definitive error and
+    // is marked 'failed' (excluded from netting).
+    refundsCreated.length = 0;
+    refundFailRig.calls = 0; refundFailRig.failOnCallN = 2;
+    const r1 = await post(`/api/proposals/${o.proposalId}/cancel/refund`, await mintAdmin(),
+      { idempotency_key: crypto.randomBytes(6).toString('hex') });
+    assert.notEqual(r1.status, 200, 'the mid-loop failure surfaces (non-200)');
+    const depAfter = await pool.query('SELECT amount_paid FROM invoices WHERE id = $1', [o.depInvId]);
+    assert.equal(Number(depAfter.rows[0].amount_paid), 0, 'Deposit invoice reversed by the first charge (retainer now shrunk)');
+
+    // Retry (rig cleared, fresh key): live math inflates to (120000-0-15000)*0.95 +
+    // 15000 = 114750, but the snapshot cap holds money-out to 105250 - 100000 = 5250.
+    refundsCreated.length = 0;
+    refundFailRig.calls = 0; refundFailRig.failOnCallN = 0;
+    const r2 = await post(`/api/proposals/${o.proposalId}/cancel/refund`, await mintAdmin(),
+      { idempotency_key: crypto.randomBytes(6).toString('hex') });
+    assert.equal(r2.status, 200, JSON.stringify(r2.body));
+    assert.equal(r2.body.refunded_cents, 5250, 'retry issues only the snapshot remainder (HEAD RED: 14750)');
+    const succeeded = await pool.query(
+      `SELECT COALESCE(SUM(amount),0)::int AS s FROM proposal_refunds WHERE proposal_id = $1 AND status = 'succeeded'`,
+      [o.proposalId]);
+    assert.equal(Number(succeeded.rows[0].s), 105250, 'lifetime refunded capped at the snapshot (HEAD RED: 114750)');
+    const stripeSum = refundsCreated.reduce((a, x) => a + x.amount, 0);
+    assert.equal(stripeSum, 5250, 'Stripe saw exactly the 5250 remainder on retry');
+  } finally { refundFailRig.failOnCallN = 0; await cleanupProposal(o); await restoreTodayPeriod(prior); }
+});
+
+test('refund: a second run after the retainer was reversed refunds 0, not 0.95x the retainer (B5)', async () => {
+  const o = await seedFullChargeGeometry({ withDrinkPlan: false });
+  const prior = await setTodayPeriod('open');
+  try {
+    // Cancel client >14d → snapshot (100000-10000-15000)*0.95 + 15000 = 86250.
+    const c = await post(`/api/proposals/${o.proposalId}/cancel`, await mintAdmin(),
+      { mode: 'client', confirm_last_name: 'Smith', suppress_client_email: true, suppress_staff_notifications: true });
+    assert.equal(c.status, 200, JSON.stringify(c.body));
+    assert.equal(c.body.refund_cents, 86250);
+
+    refundsCreated.length = 0;
+    const r1 = await post(`/api/proposals/${o.proposalId}/cancel/refund`, await mintAdmin(),
+      { idempotency_key: crypto.randomBytes(6).toString('hex') });
+    assert.equal(r1.status, 200, JSON.stringify(r1.body));
+    assert.equal(r1.body.refunded_cents, 86250, 'first run pays the full agreement amount');
+    const depAfter = await pool.query('SELECT amount_paid FROM invoices WHERE id = $1', [o.depInvId]);
+    assert.equal(Number(depAfter.rows[0].amount_paid), 0, 'Deposit invoice reversed');
+
+    refundsCreated.length = 0;
+    const r2 = await post(`/api/proposals/${o.proposalId}/cancel/refund`, await mintAdmin(),
+      { idempotency_key: crypto.randomBytes(6).toString('hex') });
+    assert.equal(r2.status, 200, JSON.stringify(r2.body));
+    assert.equal(r2.body.refunded_cents, 0, 'second run refunds nothing (HEAD RED: 9500 = 0.95x retainer)');
+    assert.equal(refundsCreated.length, 0, 'no Stripe refund issued on the second run');
+  } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
+});
+
+test('refund: the cap admits legitimate POST-CANCEL payments cent-for-cent, no shortfall (B5 x B3 headroom)', async () => {
+  const o = await seedFullChargeGeometry({ withDrinkPlan: false });
+  const prior = await setTodayPeriod('open');
+  try {
+    const c = await post(`/api/proposals/${o.proposalId}/cancel`, await mintAdmin(),
+      { mode: 'client', confirm_last_name: 'Smith', suppress_client_email: true, suppress_staff_notifications: true });
+    assert.equal(c.status, 200, JSON.stringify(c.body));
+    assert.equal(c.body.refund_cents, 86250);
+    // Full agreement refund.
+    const r1 = await post(`/api/proposals/${o.proposalId}/cancel/refund`, await mintAdmin(),
+      { idempotency_key: crypto.randomBytes(6).toString('hex') });
+    assert.equal(r1.body.refunded_cents, 86250);
+
+    // A post-cancel payment lands (e.g. a stale checkout settling AFTER cancel).
+    // created_at defaults to NOW() > cancelled_at, so it raises the cap headroom.
+    await pool.query(
+      `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status, stripe_payment_intent_id)
+       VALUES ($1, 'balance', 20000, 'succeeded', $2)`,
+      [o.proposalId, `pi_post_${NONCE}_${o.proposalId}`]);
+
+    refundsCreated.length = 0;
+    const r2 = await post(`/api/proposals/${o.proposalId}/cancel/refund`, await mintAdmin(),
+      { idempotency_key: crypto.randomBytes(6).toString('hex') });
+    assert.equal(r2.status, 200, JSON.stringify(r2.body));
+    assert.equal(r2.body.refunded_cents, 20000, 'the post-cancel money is refundable on top of the snapshot');
+    assert.equal(r2.body.shortfall_cents, 0, 'cap headroom admits it, nothing stranded');
+  } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
+});
+
+test('refund: an ambiguous-failure pending row nets into the capped target so a retry refunds 0 (B5 x B6)', async () => {
+  const o = await seedFullChargeGeometry({ withDrinkPlan: false });
+  const prior = await setTodayPeriod('open');
+  try {
+    const c = await post(`/api/proposals/${o.proposalId}/cancel`, await mintAdmin(),
+      { mode: 'client', confirm_last_name: 'Smith', suppress_client_email: true, suppress_staff_notifications: true });
+    assert.equal(c.status, 200, JSON.stringify(c.body));
+    assert.equal(c.body.refund_cents, 86250);
+
+    // Simulate B6's post-merge behavior: an ambiguous Stripe error left a PENDING
+    // refund row for the full agreement amount (stripe_refund_id NULL) and
+    // reconciliation never ran (retainer still intact). The retry must net the
+    // pending amount and refund nothing (conservative under-refund) until the
+    // sweeper resolves it.
+    await pool.query(
+      `INSERT INTO proposal_refunds
+         (proposal_id, payment_id, stripe_payment_intent_id, amount, reason,
+          total_price_before, total_price_after, status)
+       VALUES ($1, $2, $3, 86250, 'Event cancellation refund (client)', 1000, 1000, 'pending')`,
+      [o.proposalId, o.fullPayId, `pi_amb_${o.proposalId}`]);
+
+    refundsCreated.length = 0;
+    const r = await post(`/api/proposals/${o.proposalId}/cancel/refund`, await mintAdmin(),
+      { idempotency_key: crypto.randomBytes(6).toString('hex') });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.already_refunded_cents, 86250, 'the pending amount counts as already refunded');
+    assert.equal(r.body.refunded_cents, 0, 'retry refunds nothing while the ambiguous row is unresolved');
+    assert.equal(refundsCreated.length, 0, 'no Stripe refund issued');
   } finally { await cleanupProposal(o); await restoreTodayPeriod(prior); }
 });

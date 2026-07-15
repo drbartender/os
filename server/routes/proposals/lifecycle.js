@@ -91,11 +91,19 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
     // $1 is cast to text consistently in every position — `status` is a varchar
     // column, and mixing a bare `$1` with `$1::text` makes Postgres deduce
     // conflicting types for the same parameter ("inconsistent types deduced").
+    // Restoring to 'draft' (the only ->draft transition is archived->draft) CLEARS
+    // the cancel snapshot so a restored proposal is not refundable against a stale
+    // cancel figure and a later re-cancel writes a fresh one. The clears are no-ops
+    // for any other ->draft source (those columns are already NULL there).
     result = await dbClient.query(
       `UPDATE proposals SET
          status = $1::text,
          sent_at     = CASE WHEN $1::text = 'sent'     THEN COALESCE(sent_at, NOW())     ELSE sent_at END,
-         accepted_at = CASE WHEN $1::text = 'accepted' THEN COALESCE(accepted_at, NOW()) ELSE accepted_at END
+         accepted_at = CASE WHEN $1::text = 'accepted' THEN COALESCE(accepted_at, NOW()) ELSE accepted_at END,
+         cancelled_at      = CASE WHEN $1::text = 'draft' THEN NULL ELSE cancelled_at END,
+         cancelled_by      = CASE WHEN $1::text = 'draft' THEN NULL ELSE cancelled_by END,
+         cancellation_note = CASE WHEN $1::text = 'draft' THEN NULL ELSE cancellation_note END,
+         archive_reason    = CASE WHEN $1::text = 'draft' THEN NULL ELSE archive_reason END
        WHERE id = $2 RETURNING *`,
       [status, req.params.id]
     );

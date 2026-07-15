@@ -24,7 +24,7 @@ const { extractGratuityCents } = require('../../utils/payrollMath');
 const { refundExecute } = require('../../utils/refundExecute');
 const { clawbackTipsForCancelledProposal } = require('../../utils/payrollClawback');
 const { notifyStaffOfCancellation } = require('../../utils/staffShiftHandlers');
-const { suppressBeoNudgesForStaffers } = require('../../utils/beoHandlers');
+const { reapShiftsForProposal } = require('../../utils/shiftReap');
 const { cancelOpenInvoiceIntents } = require('../../utils/invoiceVoid');
 const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
@@ -244,6 +244,7 @@ router.post('/:id/cancel', auth, requireAdminOrManager, adminWriteLimiter, async
 
   let math = null;
   let voidedInvoiceIds = [];
+  let survivingInvoiceIds = []; // sent/partially_paid invoices left intact (B3 piece 3)
   let affectedShiftStaff = []; // [{ shiftId, userIds }]
   const bartendersByShift = new Map(); // shiftId -> [bartender user ids], captured pre-denial
   let clientEmail = null;
@@ -308,43 +309,15 @@ router.post('/:id/cancel', auth, requireAdminOrManager, adminWriteLimiter, async
       [req.params.id, archiveReason, cancelledBy, note || null]
     );
 
-    // 2. Cancel every non-cancelled linked shift, reusing the shift-cancel pattern.
-    const shifts = await dbClient.query(
-      `SELECT id FROM shifts WHERE proposal_id = $1 AND status <> 'cancelled'`,
-      [req.params.id]
-    );
-    for (const s of shifts.rows) {
-      const approved = await dbClient.query(
-        "SELECT user_id FROM shift_requests WHERE shift_id = $1 AND status = 'approved'",
-        [s.id]
-      );
-      const userIds = approved.rows.map(r => r.user_id);
-      // Capture the approved BARTENDERS before we deny the requests, so the
-      // post-commit tip clawback charges the right people (the clawback's own
-      // approved-query would find nobody once these rows flip to 'denied').
-      const bt = await dbClient.query(
-        `SELECT user_id FROM shift_requests
-          WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL
-            AND LOWER(position) = 'bartender'`,
-        [s.id]
-      );
-      bartendersByShift.set(s.id, bt.rows.map(r => r.user_id));
-      await dbClient.query("UPDATE shifts SET status = 'cancelled' WHERE id = $1", [s.id]);
-      await dbClient.query(
-        "UPDATE shift_requests SET status = 'denied' WHERE shift_id = $1 AND status != 'denied'",
-        [s.id]
-      );
-      await dbClient.query(
-        `UPDATE scheduled_messages SET status = 'suppressed', error_message = 'event cancelled'
-          WHERE entity_type = 'shift' AND entity_id = $1
-            AND message_type IN ('shift_reminder', 'staff_thank_you')
-            AND status = 'pending'`,
-        [s.id]
-      );
-      if (userIds.length) {
-        await suppressBeoNudgesForStaffers(req.params.id, userIds, dbClient, 'event cancelled');
-        affectedShiftStaff.push({ shiftId: s.id, userIds });
-      }
+    // 2. Cancel every non-cancelled linked shift + reap its staffing side effects
+    //    via the shared reaper (also used by the archive endpoint, so the two
+    //    kill switches can never drift). bartendersByShift feeds the post-commit
+    //    tip clawback (approved bartenders captured PRE-denial); affectedShiftStaff
+    //    feeds the cancellation notifications (any approved staffer).
+    const reaped = await reapShiftsForProposal(req.params.id, dbClient, 'event cancelled');
+    for (const { shiftId, userIds, bartenderUserIds } of reaped) {
+      bartendersByShift.set(shiftId, bartenderUserIds);
+      if (userIds.length) affectedShiftStaff.push({ shiftId, userIds });
     }
 
     // 3. Delete pending proposal-level scheduled comms (balance reminders, event-eve).
@@ -365,6 +338,16 @@ router.post('/:id/cancel', auth, requireAdminOrManager, adminWriteLimiter, async
       [req.params.id]
     );
     voidedInvoiceIds = voided.rows.map(r => r.id);
+
+    // B3 piece 3: partially/paid invoices (amount_paid > 0) survive the void as the
+    // payment record, but their public pay page stays live. Capture the survivors so
+    // the post-commit PI-cancel loop closes those open checkout windows too. Runs
+    // AFTER the void so voided ids are excluded (the two sets stay disjoint).
+    const survivors = await dbClient.query(
+      `SELECT id FROM invoices WHERE proposal_id = $1 AND status IN ('sent', 'partially_paid')`,
+      [req.params.id]
+    );
+    survivingInvoiceIds = survivors.rows.map(r => r.id);
 
     // 5. Audit: append the computed math + original contract total to admin_notes,
     //    and write a queryable activity-log row.
@@ -422,8 +405,11 @@ router.post('/:id/cancel', auth, requireAdminOrManager, adminWriteLimiter, async
     Sentry.captureException(reapErr, { tags: { route: 'proposals/cancel', step: 'reap' } });
   }
 
-  // Cancel open checkout PaymentIntents for each voided invoice (best-effort).
-  for (const invId of voidedInvoiceIds) {
+  // Cancel open checkout PaymentIntents for each voided AND surviving invoice
+  // (B3 piece 3). cancelOpenInvoiceIntents never touches 'processing' intents, so
+  // a settling charge is untouched; a client mid-checkout on a cancelled event
+  // gets a card-declined-style error. Best-effort; never unwinds the archive.
+  for (const invId of [...voidedInvoiceIds, ...survivingInvoiceIds]) {
     try { await cancelOpenInvoiceIntents(req.params.id, invId); } catch (_) { /* best-effort */ }
   }
 
@@ -524,6 +510,41 @@ router.post('/:id/cancel/refund', auth, adminOnly, adminWriteLimiter, asyncHandl
       gratuityPaidCents: ctx.gratuityPaidCents,
     });
 
+    // Lifetime cap on money-out (B5). Each refund's reconciliation reverses the
+    // Deposit invoice (retainer) FIRST, so a retry re-reads a shrunken retainerCents
+    // and computes a HIGHER live target — over-refunding ~0.95x the retainer. Cap at
+    // the agreement figure recorded atomically at cancel time (refund_owed_cents in
+    // the 'cancelled' activity-log row), plus post-cancel succeeded payments (B3
+    // money is refundable cent-for-cent on top of the agreement). Cap only (min),
+    // never target-replacement — under-refund beats double-refund. No snapshot
+    // (legacy/manually-cancelled data) → live math + Sentry warn (status quo). All
+    // reads on the held dbClient (one-connection rule; inside the advisory-lock tx).
+    const snapRes = await dbClient.query(
+      `SELECT (details->>'refund_owed_cents')::int AS owed
+         FROM proposal_activity_log
+        WHERE proposal_id = $1 AND action = 'cancelled'
+          AND details->>'refund_owed_cents' IS NOT NULL
+        ORDER BY id DESC LIMIT 1`,
+      [req.params.id]
+    );
+    let effectiveTargetCents = math.refundCents;
+    if (snapRes.rows[0]) {
+      const owedCents = Number(snapRes.rows[0].owed);
+      const postCancelRes = await dbClient.query(
+        `SELECT COALESCE(SUM(amount), 0)::int AS cents FROM proposal_payments
+          WHERE proposal_id = $1 AND status = 'succeeded' AND created_at > $2`,
+        [req.params.id, proposal.cancelled_at]
+      );
+      const postCancelCents = Number(postCancelRes.rows[0].cents);
+      effectiveTargetCents = Math.min(math.refundCents, owedCents + postCancelCents);
+    } else {
+      Sentry.captureMessage('cancel/refund: no cancel snapshot; refunding against live math', {
+        level: 'warning',
+        tags: { route: 'proposals/cancel', step: 'refund_no_snapshot' },
+        extra: { proposalId: proposalIdNum },
+      });
+    }
+
     // Already-refunded caps how much of the target remains. 'pending' counts:
     // a pending row means refundExecute reached Stripe but reconciliation
     // hasn't landed (the charge.refunded webhook adopts it) — that money may
@@ -536,7 +557,7 @@ router.post('/:id/cancel/refund', auth, adminOnly, adminWriteLimiter, asyncHandl
       [req.params.id]
     );
     alreadyRefunded = Number(priorRes.rows[0].cents);
-    let remainingTarget = Math.max(0, math.refundCents - alreadyRefunded);
+    let remainingTarget = Math.max(0, effectiveTargetCents - alreadyRefunded);
 
     // Refundable charges, largest-first, netting prior succeeded AND pending
     // (possibly in-flight) refunds per charge. Unlike the admin partial-refund
@@ -571,7 +592,7 @@ router.post('/:id/cancel/refund', auth, adminOnly, adminWriteLimiter, asyncHandl
       Sentry.captureMessage('cancel/refund: agreement target exceeds Stripe-refundable remainder', {
         level: 'warning',
         tags: { route: 'proposals/cancel', step: 'refund_shortfall' },
-        extra: { proposalId: proposalIdNum, shortfallCents, targetCents: math.refundCents, alreadyRefunded },
+        extra: { proposalId: proposalIdNum, shortfallCents, targetCents: math.refundCents, effectiveTargetCents, alreadyRefunded },
       });
     }
 

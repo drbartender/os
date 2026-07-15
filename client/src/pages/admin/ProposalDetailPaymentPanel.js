@@ -10,7 +10,7 @@ import { fmt$2dp } from '../../components/adminos/format';
 // Owns: balance due date editor, charge-balance button, payment-link generation,
 // record-payment form, invoice list + create form. Calls onUpdate after any
 // mutation that changes proposal state so the parent can reload.
-export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
+export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFullyRefunded }) {
   const toast = useToast();
 
   const totalPrice = Number(proposal.total_price || 0);
@@ -109,7 +109,15 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
       setShowRefund(false);
       setRefundAmount('');
       setRefundReason('');
-      onUpdate?.();
+      // A full refund that zeroes the balance leaves the booking demoted but still
+      // live everywhere else; prompt the admin to close it (archive-with-reap for a
+      // demoted booking, or the cancel dialog for a still-confirmed one). The parent
+      // reads the pre-refund status to route.
+      if (Number(res.data.amount_paid) <= 0 && onFullyRefunded) {
+        onFullyRefunded();
+      } else {
+        onUpdate?.();
+      }
     } catch (err) {
       toast.error(err.message || 'Refund failed.');
     } finally {

@@ -15,6 +15,8 @@ const { notifyAdminCategory } = require('../../utils/adminNotifications');
 const { linkPaymentToInvoice, createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
 const { voidUnpaidProposalInvoice, cancelOpenInvoiceIntents } = require('../../utils/invoiceVoid');
+const { reapShiftsForProposal } = require('../../utils/shiftReap');
+const { notifyStaffOfCancellation } = require('../../utils/staffShiftHandlers');
 const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
@@ -389,6 +391,12 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
 // ->archived transitions exactly (paid/completed proposals never archive here).
 const ARCHIVABLE_STATUSES = ['draft', 'sent', 'viewed', 'modified', 'accepted'];
 
+// Reasons an admin may pick for a MANUAL archive — a semantic subset of the
+// archive_reason DB CHECK. 'event_completed' and 'option_not_chosen' are
+// deliberately excluded (they are auto/derived-path-only markers), so this route
+// can never mislabel an abandoned or cancelled lead; the DB CHECK is the backstop.
+const ARCHIVE_REASONS = ['no_hire', 'client_cancelled', 'we_cancelled', 'other'];
+
 /** POST /api/proposals/:id/archive — archive this proposal, or (scope 'set') this
  *  plus every other open, unpaid proposal for the same client (covers formal
  *  option groups and loose multi-proposal sets with one rule). Archives in one
@@ -396,9 +404,16 @@ const ARCHIVABLE_STATUSES = ['draft', 'sent', 'viewed', 'modified', 'accepted'];
  *  reaps run post-commit, matching the ->archived lifecycle semantics. */
 router.post('/:id/archive', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const scope = req.body?.scope === 'set' ? 'set' : 'one';
+  // archive_reason: default 'no_hire' (never NULL), validated against the route
+  // allowlist. The same admin reason applies to the whole scope 'set'.
+  const archiveReason = req.body?.archive_reason ?? 'no_hire';
+  if (!ARCHIVE_REASONS.includes(archiveReason)) {
+    throw new ValidationError({ archive_reason: 'Invalid archive reason' });
+  }
 
   let archivedIds = [];
   const voidedInvoicePairs = [];
+  const reapedStaff = []; // [{ shiftId, userIds }] for the post-commit notify tail
   const dbClient = await pool.connect();
   try {
     await dbClient.query('BEGIN');
@@ -438,13 +453,27 @@ router.post('/:id/archive', auth, requireAdminOrManager, asyncHandler(async (req
 
     for (const pid of targetIds) {
       await dbClient.query(
-        `UPDATE proposals SET status = 'archived', updated_at = NOW() WHERE id = $1`, [pid]);
+        `UPDATE proposals SET status = 'archived', archive_reason = $2, updated_at = NOW() WHERE id = $1`,
+        [pid, archiveReason]);
       const voidRes = await voidUnpaidProposalInvoice(pid, dbClient);
       for (const invId of voidRes.invoiceIds) voidedInvoicePairs.push({ proposalId: pid, invoiceId: invId });
+      // Reap staffing exactly like the P6 cancel flow (shared helper) so a
+      // fully-refunded-then-demoted booking doesn't leave its shift live on the
+      // staff feed. No-op for the common unpaid-draft archive (no shifts).
+      const reaped = await reapShiftsForProposal(pid, dbClient, 'proposal archived');
+      for (const { shiftId, userIds } of reaped) {
+        if (userIds.length) reapedStaff.push({ shiftId, userIds });
+      }
+      // Delete pending proposal-level comms, mirroring cancel.js exactly so the
+      // two kill switches cannot drift.
+      await dbClient.query(
+        `DELETE FROM scheduled_messages
+          WHERE entity_type = 'proposal' AND entity_id = $1 AND status = 'pending'`,
+        [pid]);
       await dbClient.query(
         `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
          VALUES ($1, 'archived', 'admin', $2, $3)`,
-        [pid, req.user.id, JSON.stringify({ scope, via: 'archive_endpoint', batch_root: target.id })]);
+        [pid, req.user.id, JSON.stringify({ scope, archive_reason: archiveReason, via: 'archive_endpoint', batch_root: target.id })]);
     }
     archivedIds = targetIds;
 
@@ -469,6 +498,17 @@ router.post('/:id/archive', auth, requireAdminOrManager, asyncHandler(async (req
   // invoice this archive voided (seam-sweep M2); never throws, never blocks.
   for (const pair of voidedInvoicePairs) {
     await cancelOpenInvoiceIntents(pair.proposalId, pair.invoiceId);
+  }
+
+  // Notify approved staff of the reaped shifts (email only; SMS costs). Post-commit,
+  // best-effort — notifyStaffOfCancellation takes its own connections, so it must
+  // run after the tx client is released (one-connection rule). FLAG 1.
+  for (const { shiftId, userIds } of reapedStaff) {
+    try {
+      await notifyStaffOfCancellation({ shiftId, staffUserIds: userIds, kind: 'cancelled', sms: false, email: true });
+    } catch (notifyErr) {
+      if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(notifyErr, { tags: { route: 'proposals/archive', step: 'staff-notify' } });
+    }
   }
 
   res.json({ archived_ids: archivedIds });

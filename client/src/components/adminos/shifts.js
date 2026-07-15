@@ -165,6 +165,12 @@ export function eventStatusChip(e) {
   const status = e.proposal_status || e.status;
   const total = Number(e.proposal_total || e.total_price || 0);
   const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
+  // A cancelled/archived booking (via the P6 cancel flow or the archive reap) or a
+  // soft-cancelled shift. Show this BEFORE the payment-state chips so a
+  // refunded-then-archived event never reads "No payment" in an Upcoming list.
+  if (status === 'archived' || e.shift_status === 'cancelled') {
+    return <StatusChip kind="neutral">Cancelled</StatusChip>;
+  }
   if (status === 'sent' || status === 'viewed' || status === 'modified') {
     return <StatusChip kind="warn">Contract out</StatusChip>;
   }

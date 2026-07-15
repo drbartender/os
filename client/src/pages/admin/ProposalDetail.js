@@ -72,6 +72,7 @@ export default function ProposalDetail() {
   const [showArchiveModal, setShowArchiveModal] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [openSiblings, setOpenSiblings] = useState([]);
+  const [archiveReason, setArchiveReason] = useState('no_hire');
   // Cancel-event dialog (booked proposals only; fix #7).
   const [showCancelDialog, setShowCancelDialog] = useState(false);
 
@@ -275,11 +276,9 @@ export default function ProposalDetail() {
         siblings = []; // sibling fetch is best-effort; single-archive still works
       }
     }
-    if (siblings.length === 0) {
-      const ok = window.confirm('Archive this proposal? It moves to the Archived shelf and can be recovered later.');
-      if (ok) await doArchive('one');
-      return;
-    }
+    // Always open the modal (even with no siblings) so a reason is captured — the
+    // old no-sibling window.confirm path recorded none, leaving archive_reason NULL.
+    setArchiveReason('no_hire');
     setOpenSiblings(siblings);
     setShowArchiveModal(true);
   };
@@ -287,7 +286,7 @@ export default function ProposalDetail() {
   const doArchive = async (scope) => {
     setArchiving(true);
     try {
-      const res = await api.post(`/proposals/${id}/archive`, { scope });
+      const res = await api.post(`/proposals/${id}/archive`, { scope, archive_reason: archiveReason });
       const n = (res.data.archived_ids || []).length;
       toast.success(n > 1 ? `${n} proposals archived.` : 'Proposal archived.');
       setShowArchiveModal(false);
@@ -296,6 +295,24 @@ export default function ProposalDetail() {
       toast.error(err?.response?.data?.error || err.message || 'Failed to archive.');
     } finally {
       setArchiving(false);
+    }
+  };
+
+  // Refund-completion prompt (B1): a full refund zeroed the balance, so the booking
+  // is demoted but still live on the staff feed / comms. Route by the PRE-refund
+  // status: a demoted booking (was deposit_paid/balance_paid, now 'accepted') opens
+  // the archive-with-reap flow defaulted to 'client_cancelled' (never a silent
+  // 'no_hire' on a cancelled booking); a still-'confirmed' proposal (a full refund
+  // does not demote it) opens the cancel dialog, which nets the already-issued refund.
+  const onFullyRefunded = () => {
+    const wasConfirmed = proposal.status === 'confirmed';
+    loadProposal();
+    if (wasConfirmed) {
+      setShowCancelDialog(true);
+    } else {
+      setArchiveReason('client_cancelled');
+      setOpenSiblings([]);
+      setShowArchiveModal(true);
     }
   };
 
@@ -682,7 +699,7 @@ export default function ProposalDetail() {
 
         {/* Right rail */}
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
-          <ProposalDetailPaymentPanel proposal={proposal} onUpdate={loadProposal} />
+          <ProposalDetailPaymentPanel proposal={proposal} onUpdate={loadProposal} onFullyRefunded={onFullyRefunded} />
 
           <DrinkPlanCard
             proposalId={proposal.id}
@@ -737,30 +754,57 @@ export default function ProposalDetail() {
               </button>
             </div>
             <div className="card-body">
-              <div className="muted" style={{ fontSize: 13, marginBottom: 8 }}>
-                {proposal.client_name || 'This client'} has {openSiblings.length} other open
-                {' '}proposal{openSiblings.length === 1 ? '' : 's'}. Archive just this one, or the whole set?
-                Archived proposals move to the Archived shelf and can be recovered later.
+              {openSiblings.length > 0 ? (
+                <>
+                  <div className="muted" style={{ fontSize: 13, marginBottom: 8 }}>
+                    {proposal.client_name || 'This client'} has {openSiblings.length} other open
+                    {' '}proposal{openSiblings.length === 1 ? '' : 's'}. Archive just this one, or the whole set?
+                    Archived proposals move to the Archived shelf and can be recovered later.
+                  </div>
+                  {/* Peek links open in a new tab so the archive decision is not lost. */}
+                  <div className="vstack" style={{ gap: 2, marginBottom: 12 }}>
+                    {openSiblings.map(s => (
+                      <EntityLink key={s.id} to={`/proposals/${s.id}`} target="_blank" rel="noopener noreferrer" className="tiny">
+                        #{s.id} · {getEventTypeLabel({ event_type: s.event_type, event_type_custom: s.event_type_custom })}
+                        {s.event_date ? ` · ${String(s.event_date).slice(0, 10)}` : ''}
+                      </EntityLink>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="muted" style={{ fontSize: 13, marginBottom: 8 }}>
+                  Archive this proposal? It moves to the Archived shelf and can be recovered later.
+                </div>
+              )}
+              <div className="vstack" style={{ gap: 4, marginBottom: 12 }}>
+                <label className="meta-k" htmlFor="archive-reason">Reason</label>
+                <select id="archive-reason" className="select" value={archiveReason}
+                  onChange={(e) => setArchiveReason(e.target.value)} disabled={archiving}>
+                  <option value="no_hire">No hire</option>
+                  <option value="client_cancelled">Client cancelled</option>
+                  <option value="we_cancelled">We cancelled</option>
+                  <option value="other">Other</option>
+                </select>
               </div>
-              {/* Peek links open in a new tab so the archive decision is not lost. */}
-              <div className="vstack" style={{ gap: 2, marginBottom: 12 }}>
-                {openSiblings.map(s => (
-                  <EntityLink key={s.id} to={`/proposals/${s.id}`} target="_blank" rel="noopener noreferrer" className="tiny">
-                    #{s.id} · {getEventTypeLabel({ event_type: s.event_type, event_type_custom: s.event_type_custom })}
-                    {s.event_date ? ` · ${String(s.event_date).slice(0, 10)}` : ''}
-                  </EntityLink>
-                ))}
-              </div>
-              <div className="vstack" style={{ gap: 8 }}>
-                <button type="button" className="btn btn-secondary" disabled={archiving}
-                  onClick={() => doArchive('one')}>
-                  Just this proposal
-                </button>
-                <button type="button" className="btn btn-primary" disabled={archiving}
-                  onClick={() => doArchive('set')}>
-                  {archiving ? 'Archiving…' : `This one + ${openSiblings.length} other${openSiblings.length === 1 ? '' : 's'} (whole set)`}
-                </button>
-              </div>
+              {openSiblings.length > 0 ? (
+                <div className="vstack" style={{ gap: 8 }}>
+                  <button type="button" className="btn btn-secondary" disabled={archiving}
+                    onClick={() => doArchive('one')}>
+                    Just this proposal
+                  </button>
+                  <button type="button" className="btn btn-primary" disabled={archiving}
+                    onClick={() => doArchive('set')}>
+                    {archiving ? 'Archiving…' : `This one + ${openSiblings.length} other${openSiblings.length === 1 ? '' : 's'} (whole set)`}
+                  </button>
+                </div>
+              ) : (
+                <div className="vstack" style={{ gap: 8 }}>
+                  <button type="button" className="btn btn-primary" disabled={archiving}
+                    onClick={() => doArchive('one')}>
+                    {archiving ? 'Archiving…' : 'Archive proposal'}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

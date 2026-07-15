@@ -37,6 +37,16 @@ const PRESET_CHIPS = [
 ];
 const STATUS_CHIPS = [['sent', 'Sent'], ['viewed', 'Viewed'], ['modified', 'Modified']];
 const COHORT_LABELS = { quoted: 'Quoted', won: 'Won', lost: 'Lost' };
+// Human labels for the archive_reason bucket, shown under the status chip on an
+// archived row so the Archived shelf distinguishes no-hire from a cancellation.
+const ARCHIVE_REASON_LABELS = {
+  no_hire: 'No hire',
+  client_cancelled: 'Client cancelled',
+  we_cancelled: 'We cancelled',
+  event_completed: 'Event completed',
+  option_not_chosen: 'Option not chosen',
+  other: 'Other',
+};
 // View state lives in the URL (admin cross-nav): every control writes through
 // setListState so drill-outs are plain links and Back restores the filters.
 const LIST_DEFAULTS = { tab: 'active', q: '', source: '', from: '', to: '', axis: 'event', status: '', event_type: '', balance: '', cohort: '' };
@@ -414,7 +424,12 @@ export default function ProposalsDashboard() {
                       ) : '—'}
                     </td>
                     <td className="muted">{p.package_name || '—'}</td>
-                    <td><StatusChip kind={st.kind}>{st.label}</StatusChip></td>
+                    <td>
+                      <StatusChip kind={st.kind}>{st.label}</StatusChip>
+                      {p.status === 'archived' && p.archive_reason && (
+                        <div className="sub">{ARCHIVE_REASON_LABELS[p.archive_reason] || p.archive_reason}</div>
+                      )}
+                    </td>
                     <td className="muted">{p.sent_at ? relDay(String(p.sent_at).slice(0, 10)) : '—'}</td>
                     <td className="muted" title={viewTitle}>{p.last_viewed_at ? relDay(String(p.last_viewed_at).slice(0, 10)) : '—'}</td>
                     <td className="num"><strong>{fmt$(p.total_price)}</strong></td>
