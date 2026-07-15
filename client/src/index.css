@@ -18647,3 +18647,31 @@ html[data-app="admin-os"] .splitby-state { padding: 0.9rem 0.5rem; font-size: 12
   html[data-app="admin-os"] .splitby-close { grid-area: close; }
 }
 /* end overview: splitby */
+
+/* Payroll pay-run queue + pay panel (payroll redesign 2026-07-14). Existing
+   tokens only, so both admin-os skins work; the QR tile is the one deliberate
+   skin-invariant element (scanners need a light background). */
+html[data-app="admin-os"] .payrun-expansion {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+}
+html[data-app="admin-os"] .payrun-lines { flex: 1 1 380px; min-width: 0; }
+html[data-app="admin-os"] .pay-panel {
+  flex: 0 1 320px;
+  min-width: 280px;
+  padding: 12px;
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  background: var(--bg-2);
+}
+html[data-app="admin-os"] .pay-panel .seg { flex-wrap: wrap; }
+html[data-app="admin-os"] .pay-qr-tile {
+  background: #ffffff;
+  padding: 10px;
+  border-radius: 8px;
+  line-height: 0;
+  display: inline-block;
+}
+/* end payroll pay run */
