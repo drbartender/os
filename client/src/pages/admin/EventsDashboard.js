@@ -20,17 +20,20 @@ import useUrlListState from '../../hooks/useUrlListState';
 import EntityLink from '../../components/EntityLink';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
-import { fmt$, fmtDate, relDay, dayDiff } from '../../components/adminos/format';
+import { fmt$, fmtDate, fmtTimeRange24, dayDiff } from '../../components/adminos/format';
 import { shiftPositions, parsePositionsCount, approvedCount, eventStatusChip, remainingByRole, SHIFT_EQUIPMENT_OPTIONS, parseEquipmentArray } from '../../components/adminos/shifts';
 import { ROLES } from '../../utils/staffingRoles';
 
+// value stays 12h ("7:00 PM") — it is stored raw into shifts.start_time and read
+// by the staff portal, so the stored format must not change. Only the displayed
+// label flips to 24h for the admin dropdown.
 const TIME_SLOTS = [];
 for (let h = 6; h < 24; h++) {
   for (let m = 0; m < 60; m += 30) {
     const hh = h > 12 ? h - 12 : h === 0 ? 12 : h;
     const ampm = h >= 12 ? 'PM' : 'AM';
     const mm = m === 0 ? '00' : '30';
-    TIME_SLOTS.push(`${hh}:${mm} ${ampm}`);
+    TIME_SLOTS.push({ value: `${hh}:${mm} ${ampm}`, label: `${String(h).padStart(2, '0')}:${mm}` });
   }
 }
 
@@ -327,7 +330,7 @@ export default function EventsDashboard() {
                 <div className="meta-k" style={{ marginBottom: 4 }}>Start time</div>
                 <select className="select" value={form.start_time} onChange={e => handleField('start_time', e.target.value)}>
                   <option value="">Select…</option>
-                  {TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}
+                  {TIME_SLOTS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
                 <FieldError error={fieldErrors?.start_time} />
               </div>
@@ -335,7 +338,7 @@ export default function EventsDashboard() {
                 <div className="meta-k" style={{ marginBottom: 4 }}>End time</div>
                 <select className="select" value={form.end_time} onChange={e => handleField('end_time', e.target.value)}>
                   <option value="">Select…</option>
-                  {TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}
+                  {TIME_SLOTS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
                 <FieldError error={fieldErrors?.end_time} />
               </div>
@@ -552,7 +555,7 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
       </td>
       <td>
         <div>{fmtDate(e.event_date && e.event_date.slice(0, 10))}</div>
-        <div className="sub">{e.event_date ? `${relDay(e.event_date.slice(0, 10))}${e.start_time ? ' · ' + e.start_time : ''}` : '—'}</div>
+        <div className="sub">{e.start_time ? fmtTimeRange24(e.start_time, e.end_time, e.event_duration_hours) : '—'}</div>
       </td>
       <td className="muted">{(typeof e.location === 'string' && e.location.trim()) || '—'}</td>
       <td className="num">{guestCount || '—'}</td>

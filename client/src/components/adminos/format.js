@@ -78,6 +78,46 @@ export const fmtTime24 = (str) => {
   return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
 };
 
+// Parse a tolerant time string to minutes-since-midnight, or null.
+const timeToMinutes = (str) => {
+  const t = fmtTime24(str);
+  const m = /^(\d{2}):(\d{2})$/.exec(t);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+};
+
+// Admin event/shift time range in 24h with a duration suffix.
+//   "18:00–23:00 · 5h"  (stored or derived end + duration)
+//   "18:00 · 5h"        (no end, duration present)
+//   "18:00–23:00"       (end present, no duration)
+//   "18:00"             (start only)
+//   ""                  (no/unparseable start)
+// Prefers the stored end; else derives end from start + durationHours (mod 24).
+// durStyle 'dot' → "· 5h" (default); 'paren' → "(5 hrs)" for EventDetailPage parity.
+export const fmtTimeRange24 = (start, end, durationHours, { durStyle = 'dot' } = {}) => {
+  const startMin = timeToMinutes(start);
+  if (startMin === null) return start ? String(start) : '';
+  const fmt = (mins) => `${String(Math.floor(mins / 60) % 24).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+  const start24 = fmt(startMin);
+
+  const dur = Number(durationHours);
+  const haveDur = Number.isFinite(dur) && dur > 0;
+
+  let endMin = timeToMinutes(end);
+  if (endMin === null && haveDur) endMin = (startMin + Math.round(dur * 60)) % 1440;
+  const range = endMin === null ? start24 : `${start24}–${fmt(endMin)}`;
+
+  let hrs = haveDur ? dur : null;
+  if (hrs === null && endMin !== null) {
+    const span = (((endMin - startMin) % 1440) + 1440) % 1440;
+    if (span > 0) hrs = span / 60;
+  }
+  if (hrs === null) return range;
+  const dLabel = durStyle === 'paren'
+    ? `(${Number(hrs)} ${Number(hrs) === 1 ? 'hr' : 'hrs'})`
+    : `· ${Number(hrs)}h`;
+  return `${range} ${dLabel}`;
+};
+
 // End time from a "HH:MM" start + duration in hours, wrapping past midnight.
 // Formats via the canonical 12h formatter; the constructed HH:MM is always
 // canonical, so the wrap math is what matters here.

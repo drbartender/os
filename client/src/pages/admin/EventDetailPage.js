@@ -17,7 +17,7 @@ import EventDetailPlanLogo from './EventDetailPlanLogo';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
-import { fmtDate, fmtDateFull, fmtTime24, relDay } from '../../components/adminos/format';
+import { fmtDate, fmtDateFull, fmtTime24, fmtTimeRange24, relDay } from '../../components/adminos/format';
 import { parsePositionsCount, approvedCount, remainingByRole } from '../../components/adminos/shifts';
 import { parsePositionsNeeded, rosterCounts, isEventFullyStaffed } from '../../utils/staffingRoles';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
@@ -29,30 +29,6 @@ import { venueMapQuery } from '../../components/VenueAddressFields';
 import { STAFF_URL } from '../../utils/constants';
 
 const MenuPNG = lazy(() => import('../../components/MenuPNG/MenuPNG'));
-
-// "18:00" + 5 → "18:00–23:00 (5 hrs)". Tolerates a 12-hour stored value
-// ("6:00 PM") and falls back to whatever we have if the time can't be parsed.
-function fmtTimeRange(start, durationHours) {
-  if (!start) return null;
-  const dur = Number(durationHours);
-  const durLabel = Number.isFinite(dur) && dur > 0
-    ? ` (${dur} ${dur === 1 ? 'hr' : 'hrs'})`
-    : '';
-  const m = String(start).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
-  if (!m) return durLabel ? `${start}${durLabel}` : String(start);
-  let h = Number(m[1]);
-  const min = Number(m[2]);
-  const ap = m[3] && m[3].toUpperCase();
-  if (ap === 'PM' && h !== 12) h += 12;
-  if (ap === 'AM' && h === 12) h = 0;
-  const pad = (n) => String(n).padStart(2, '0');
-  const startMin = h * 60 + min;
-  const startStr = `${pad(Math.floor(startMin / 60) % 24)}:${pad(startMin % 60)}`;
-  if (!Number.isFinite(dur) || dur <= 0) return startStr;
-  const endTotal = startMin + Math.round(dur * 60);
-  const endStr = `${pad(Math.floor(endTotal / 60) % 24)}:${pad(endTotal % 60)}`;
-  return `${startStr}–${endStr}${durLabel}`;
-}
 
 export default function EventDetailPage() {
   const { id } = useParams();
@@ -150,7 +126,7 @@ export default function EventDetailPage() {
     const durationHours = snapshot?.inputs?.durationHours;
     const includes = interpolatePackageIncludes(proposal.package_includes, { durationHours, bartenders });
     const packageStructured = getPackageItems(proposal.package_slug);
-    const timeRange = fmtTimeRange(proposal.event_start_time, proposal.event_duration_hours);
+    const timeRange = fmtTimeRange24(proposal.event_start_time, null, proposal.event_duration_hours, { durStyle: 'paren' });
     const contactBits = [
       proposal.client_phone && formatPhone(proposal.client_phone),
       proposal.client_email,
