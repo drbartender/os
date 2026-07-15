@@ -23,6 +23,8 @@ lastMinuteAlert.notifyLastMinuteBooking = (proposalId) => { notifyCalls.push(Str
 
 const stripeRouter = require('../stripe');
 const { addAlternative } = require('../../utils/proposalGroups');
+const preEventHandlers = require('../../utils/preEventHandlers');
+const { registerDrinkPlanNudgeHandlers } = require('../../utils/drinkPlanNudge');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('checkoutSessionCompleted.lastMinute.test.js refuses to run against production');
@@ -117,6 +119,14 @@ async function seedGroup({ eventDate = null } = {}) {
 const one = async (sql, params) => (await pool.query(sql, params)).rows[0];
 
 before(async () => {
+  // Register dispatcher handlers (and their offset metadata) exactly as
+  // server/index.js does at boot, mirroring preEventScheduling.test.js.
+  // Without this, computeScheduledFor('event_week_reminder') throws inside
+  // scheduleDepositPaidReminders' swallowed catch and zero reminder rows are
+  // ever inserted (B8).
+  preEventHandlers.registerAll();
+  registerDrinkPlanNudgeHandlers();
+
   const app = express();
   app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
   app.use('/api/stripe', stripeRouter);
@@ -158,6 +168,17 @@ test('(a) link settlement on a <72h-out event flags last_minute_hold and blasts 
   assert.equal(row.last_minute_hold, true, 'last_minute_hold flagged for the <72h link settlement');
   assert.equal(Number(row.amount_paid), 100, 'deposit still credited');
   assert.equal(notifyCalls.filter((id) => id === String(p)).length, 1, 'staff blast fired exactly once');
+
+  // B8: the deposit settlement must actually schedule the pre-event reminder.
+  // Without preEventHandlers.registerAll() in before(), computeScheduledFor
+  // throws inside scheduleDepositPaidReminders' swallowed catch and no row is
+  // ever inserted, so this assertion is the red test for the harness gap.
+  const sched = await pool.query(
+    `SELECT message_type FROM scheduled_messages
+      WHERE entity_type = 'proposal' AND entity_id = $1
+        AND message_type = 'event_week_reminder'`, [p]);
+  assert.equal(sched.rowCount, 1,
+    'event_week_reminder scheduled via the Payment-Link deposit settlement');
 });
 
 test('(b) link settlement on a >72h-out event does NOT flag last_minute_hold', async () => {
@@ -200,4 +221,12 @@ test('(d) a settlement on a non-chosen (conflict) option never flags a hold', as
   assert.equal(loser.status, 'archived', 'loser stays archived (not converted)');
   assert.equal(loser.last_minute_hold, false, 'no last-minute hold flagged on the non-chosen option');
   assert.equal(notifyCalls.filter((id) => id === String(loserId)).length, 0, 'no staff blast for the non-chosen option');
+
+  // B8 (optional strengthening): the conflict-loser leg schedules zero
+  // reminders — pins the !groupChoice.conflict gate in checkoutSessionCompleted.
+  const loserSched = await pool.query(
+    `SELECT message_type FROM scheduled_messages
+      WHERE entity_type = 'proposal' AND entity_id = $1
+        AND message_type = 'event_week_reminder'`, [loserId]);
+  assert.equal(loserSched.rowCount, 0, 'no reminders scheduled for the non-chosen option');
 });

@@ -93,9 +93,15 @@ export default function CancelEventDialog({ proposalId, clientName, onClose, onC
         : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const res = await api.post(`/proposals/${proposalId}/cancel/refund`, { idempotency_key });
       setRefunded(res.data);
-      toast.success(res.data.refunded_cents > 0
-        ? `Refund of ${usd(res.data.refunded_cents)} issued.`
-        : 'Nothing left to refund.');
+      if (res.data.shortfall_cents > 0) {
+        // ToastContext has no warning method; the durable surface is the
+        // persistent client-alert-warning in the done-step render below.
+        toast.info(`Refund of ${usd(res.data.refunded_cents)} issued. ${usd(res.data.shortfall_cents)} must be refunded manually.`);
+      } else {
+        toast.success(res.data.refunded_cents > 0
+          ? `Refund of ${usd(res.data.refunded_cents)} issued.`
+          : 'Nothing left to refund.');
+      }
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Could not issue the refund.');
     } finally {
@@ -245,6 +251,11 @@ export default function CancelEventDialog({ proposalId, clientName, onClose, onC
                   {refunded.refunded_cents > 0
                     ? `Refund of ${usd(refunded.refunded_cents)} issued.`
                     : 'Nothing left to refund on this proposal.'}
+                </div>
+              )}
+              {refunded && refunded.shortfall_cents > 0 && (
+                <div className="client-alert client-alert-warning" role="status">
+                  {usd(refunded.shortfall_cents)} could not be refunded automatically (paid by legacy card or a manual payment). Refund this remainder by hand in Stripe.
                 </div>
               )}
               <div className="hstack" style={{ justifyContent: 'flex-end' }}>

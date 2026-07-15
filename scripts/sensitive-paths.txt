@@ -67,3 +67,6 @@ server/routes/shifts.handlers.js
 server/utils/emailTemplates.js
 server/utils/scheduledMessageDispatcher.js
 server/utils/dispatcherDeadLetters.js
+
+# Sole autopay double-charge guard; matched no existing glob (known-bugs B12, 2026-07-14).
+server/utils/autopayDurableCharge.js

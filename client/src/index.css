@@ -8433,6 +8433,12 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   border: 1px solid #b4e8bb;
 }
 
+.client-alert-warning {
+  background: #fdf8ef;
+  color: #8a5a12;
+  border: 1px solid #e8d3a0;
+}
+
 /* Client Dashboard */
 
 .client-dashboard-section {
