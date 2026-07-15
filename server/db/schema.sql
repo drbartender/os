@@ -2776,7 +2776,7 @@ CREATE TABLE IF NOT EXISTS pay_periods (
 DO $$ BEGIN
   ALTER TABLE pay_periods DROP CONSTRAINT IF EXISTS pay_periods_status_check;
   ALTER TABLE pay_periods ADD CONSTRAINT pay_periods_status_check
-    CHECK (status IN ('open', 'processing', 'paid'));
+    CHECK (status IN ('open', 'processing', 'reopened', 'paid'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 CREATE TABLE IF NOT EXISTS payouts (
@@ -2799,6 +2799,10 @@ DO $$ BEGIN
   ALTER TABLE payouts ADD CONSTRAINT payouts_status_check
     CHECK (status IN ('pending', 'paid'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- Free-text payment trace (Zelle conf #, Venmo txn note, check number),
+-- stamped at mark-paid. Admin-only: staff projections never select it.
+ALTER TABLE payouts ADD COLUMN IF NOT EXISTS payment_reference TEXT;
 
 CREATE TABLE IF NOT EXISTS payout_events (
   id SERIAL PRIMARY KEY,

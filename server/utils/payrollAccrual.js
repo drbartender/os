@@ -185,6 +185,14 @@ async function accruePayoutsForProposal(proposalId) {
     // payroll; rolling it into the open period is a Phase 2 concern.
     if (payPeriod.status !== 'open') {
       await client.query('COMMIT');
+      // Observability only (payroll-redesign spec, the one accrual exception):
+      // this skip is silent success to every caller, and wages, unlike tips,
+      // have no deferral marker to retry from.
+      Sentry.captureMessage('accrual skipped: pay period not open', {
+        level: 'warning',
+        tags: { route: 'payroll_accrual', step: 'pay_period_not_open_skip' },
+        extra: { proposalId, pay_period_status: payPeriod.status },
+      });
       return { skipped: true, reason: 'pay_period_not_open', pay_period_status: payPeriod.status };
     }
     const payPeriodId = payPeriod.id;

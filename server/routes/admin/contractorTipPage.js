@@ -20,7 +20,7 @@ const router = express.Router();
 // `regenerate-stripe` preserves tip_page_token so existing printed QRs keep
 // working — only the Stripe link rotates.
 
-const ALLOWED_PAYMENT_METHODS = ['venmo', 'cashapp', 'paypal', 'check', 'direct_deposit', 'other'];
+const ALLOWED_PAYMENT_METHODS = ['venmo', 'cashapp', 'paypal', 'zelle', 'check', 'direct_deposit', 'other'];
 
 // Managers shouldn't be able to mutate an admin's tip page (rotate their Stripe
 // link, change their handles, or deactivate them). Admins can mutate anyone.

@@ -29,9 +29,11 @@ router.get('/payroll/healthcheck', auth, adminOnly, asyncHandler(async (req, res
 async function loadPeriodWithPayouts(periodRow) {
   const payoutsRes = await pool.query(
     `SELECT po.id, po.contractor_id, po.status, po.total_cents,
-            po.payment_method, po.payment_handle, po.paid_at, po.paystub_storage_key,
+            po.payment_method, po.payment_handle, po.payment_reference,
+            po.paid_at, po.paystub_storage_key,
             COALESCE(cp.preferred_name, u.email) AS contractor_name,
-            pp.preferred_payment_method, pp.venmo_handle, pp.cashapp_handle, pp.paypal_url
+            pp.preferred_payment_method, pp.venmo_handle, pp.cashapp_handle,
+            pp.paypal_url, pp.zelle_handle
        FROM payouts po
        JOIN users u ON u.id = po.contractor_id
   LEFT JOIN contractor_profiles cp ON cp.user_id = po.contractor_id
@@ -71,7 +73,9 @@ router.get('/payroll/periods', auth, adminOnly, asyncHandler(async (req, res) =>
     `SELECT pp.id, pp.start_date, pp.end_date, pp.payday, pp.status,
             COALESCE(SUM(po.total_cents), 0) AS total_cents,
             COUNT(po.id) FILTER (WHERE po.status = 'paid') AS paid_count,
-            COUNT(po.id) FILTER (WHERE po.status = 'pending') AS pending_count
+            COUNT(po.id) FILTER (WHERE po.status = 'pending') AS pending_count,
+            COALESCE(SUM(po.total_cents) FILTER (WHERE po.status = 'paid'), 0) AS paid_cents,
+            COALESCE(SUM(po.total_cents) FILTER (WHERE po.status = 'pending'), 0) AS owed_cents
        FROM pay_periods pp
   LEFT JOIN payouts po ON po.pay_period_id = pp.id
    GROUP BY pp.id
@@ -112,7 +116,7 @@ router.get('/payroll/periods/:id', auth, adminOnly, asyncHandler(async (req, res
 }));
 
 const EDITABLE_FIELDS = ['hours', 'rate_cents', 'late', 'adjustment_cents', 'adjustment_note'];
-const ALLOWED_PAY_METHODS = new Set(['venmo', 'cashapp', 'paypal', 'check', 'direct_deposit', 'other']);
+const ALLOWED_PAY_METHODS = new Set(['venmo', 'cashapp', 'paypal', 'zelle', 'check', 'direct_deposit', 'other']);
 
 // pg returns DATE columns as JS Date objects. String(Date) yields
 // "Fri May 29 2026 ..." which breaks both `.slice(0,10)` formatting and
@@ -179,7 +183,7 @@ router.patch('/payroll/payout-events/:id', auth, adminOnly, asyncHandler(async (
          JOIN payouts po ON po.id = pe.payout_id
          JOIN pay_periods pp ON pp.id = po.pay_period_id
         WHERE pe.id = $1
-        FOR UPDATE OF pe, po`,
+        FOR UPDATE OF pe, po, pp`,
       [eventId]
     );
     if (!rows[0]) {
@@ -337,20 +341,32 @@ router.post('/payroll/periods/:id/process', auth, adminOnly, asyncHandler(async 
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) throw new NotFoundError('Period not found');
 
-  // Confirm the period is open before any fee-recapture work; keeps the same
-  // 404/409 semantics and avoids Stripe calls for a period that cannot be flipped.
-  const periodRes = await pool.query('SELECT status FROM pay_periods WHERE id = $1', [id]);
+  // Confirm the period is processable before any fee-recapture work; keeps the
+  // same 404/409 semantics and avoids Stripe calls for a period that cannot be
+  // flipped. 'reopened' re-processes after an "I fucked up" line fix.
+  const periodRes = await pool.query('SELECT status, end_date FROM pay_periods WHERE id = $1', [id]);
   if (!periodRes.rows[0]) throw new NotFoundError('Period not found');
-  if (periodRes.rows[0].status !== 'open') {
-    throw new ConflictError(`Period is ${periodRes.rows[0].status}, not open`);
+  if (periodRes.rows[0].status !== 'open' && periodRes.rows[0].status !== 'reopened') {
+    throw new ConflictError(`Period is ${periodRes.rows[0].status}, not processable`);
+  }
+  // Processing a period whose week has not ended silently blackholes wages:
+  // events completing later that week accrue nothing (accrual's
+  // pay_period_not_open skip has no retry and no marker). Require an explicit
+  // force from the confirm dialog.
+  if (ymd(periodRes.rows[0].end_date) >= chicagoTodayYmd() && req.body?.force !== true) {
+    throw new ConflictError('period is still in progress; pass force to process anyway');
   }
 
   // L5: heal gross-paying tips (null Stripe fee) BEFORE freezing the period.
+  // On a re-process from 'reopened' the re-accrue step is refused by accrual
+  // (pay_period_not_open), so affected lines stay gross and the existing
+  // fee_recapture_line_unhealed Sentry warning fires; that is what protects
+  // already-paid gross payouts from being silently rewritten.
   const feeRecapture = await recaptureNullTipFeesForPeriod(id);
 
   const { rows } = await pool.query(
     `UPDATE pay_periods SET status = 'processing'
-      WHERE id = $1 AND status = 'open'
+      WHERE id = $1 AND status IN ('open', 'reopened')
       RETURNING id, start_date, end_date, payday, status`,
     [id]
   );
@@ -360,9 +376,71 @@ router.post('/payroll/periods/:id/process', auth, adminOnly, asyncHandler(async 
       'SELECT status FROM pay_periods WHERE id = $1', [id]
     );
     if (!existing.rows[0]) throw new NotFoundError('Period not found');
-    throw new ConflictError(`Period is ${existing.rows[0].status}, not open`);
+    throw new ConflictError(`Period is ${existing.rows[0].status}, not processable`);
   }
-  res.json({ period: rows[0], fee_recapture: feeRecapture });
+  // A period with zero pending payouts (all paid pre-reopen, or none at all)
+  // finalizes immediately; mark-paid can never run on it, so this is the only
+  // place the flip can happen. The response reflects the outcome so the client
+  // drops the card instead of stranding a phantom processing period.
+  const finalized = await maybeFinalizePeriod(pool, id);
+  if (finalized) {
+    rows[0].status = 'paid'; // keep the embedded period object consistent with period_status
+    Sentry.addBreadcrumb({
+      category: 'payroll',
+      message: 'process_finalized_immediately',
+      data: { period_id: id },
+    });
+  }
+  res.json({
+    period: rows[0],
+    period_status: finalized ? 'paid' : 'processing',
+    fee_recapture: feeRecapture,
+  });
+}));
+
+router.post('/payroll/periods/:id/reopen', auth, adminOnly, asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) throw new NotFoundError('Period not found');
+
+  // The "I fucked up" path: flip processing -> 'reopened' (NEVER back to
+  // 'open'). Every payroll money writer freezes on status !== 'open', so
+  // 'reopened' is inert to accrual / late-tip / clawback / fee recapture for
+  // free, while PATCH line edits (which block only paid/processing) come back
+  // for PENDING payouts. Paid payouts stay locked by their own status checks.
+  // Race safety: mark-paid holds FOR UPDATE OF po, pp until COMMIT with
+  // maybeFinalizePeriod inside that transaction, so this single guarded UPDATE
+  // serializes behind a concurrent final mark-paid + finalize and re-evaluates
+  // to zero rows (409). Do not "improve" this into check-then-act.
+  const { rows } = await pool.query(
+    `UPDATE pay_periods SET status = 'reopened'
+      WHERE id = $1 AND status = 'processing'
+      RETURNING id, start_date, end_date, payday, status`,
+    [id]
+  );
+  if (!rows[0]) {
+    const existing = await pool.query('SELECT status FROM pay_periods WHERE id = $1', [id]);
+    if (!existing.rows[0]) throw new NotFoundError('Period not found');
+    throw new ConflictError(`Period is ${existing.rows[0].status}, not processing`);
+  }
+
+  const counts = await pool.query(
+    `SELECT COUNT(*) FILTER (WHERE status = 'paid') AS paid,
+            COUNT(*) FILTER (WHERE status = 'pending') AS pending
+       FROM payouts WHERE pay_period_id = $1`,
+    [id]
+  );
+  // logAdminAction is best-effort and never throws (it self-routes failures to Sentry).
+  await logAdminAction({
+    actorUserId: req.user.id,
+    targetUserId: null,
+    action: 'payroll_period_reopen',
+    metadata: {
+      period_id: id,
+      paid_count: Number(counts.rows[0].paid),
+      pending_count: Number(counts.rows[0].pending),
+    },
+  });
+  res.json({ period: rows[0] });
 }));
 
 router.post('/payroll/payouts/:id/mark-paid', auth, adminOnly, asyncHandler(async (req, res) => {
@@ -378,13 +456,27 @@ router.post('/payroll/payouts/:id/mark-paid', auth, adminOnly, asyncHandler(asyn
   if (handle !== null && handle.length > 200) {
     throw new ValidationError(null, 'payment_handle exceeds 200 chars');
   }
+  const prRaw = req.body && req.body.payment_reference;
+  // Whitespace-only collapses to NULL, never an empty string in the column.
+  const reference = (prRaw !== null && prRaw !== undefined) ? (String(prRaw).trim() || null) : null;
+  if (reference !== null && reference.length > 200) {
+    throw new ValidationError(null, 'payment_reference exceeds 200 chars');
+  }
+  // Drift guard: the pay panel locks the payout total when it generates the
+  // QR/link and sends it back here. Presence check is strict (!== undefined):
+  // a $0 payout total is a designed state under the H1 debt clamp, so no
+  // truthiness shortcuts.
+  const expectedTotal = req.body ? req.body.expected_total_cents : undefined;
+  if (expectedTotal !== undefined && (!Number.isInteger(expectedTotal) || expectedTotal < 0)) {
+    throw new ValidationError(null, 'expected_total_cents must be a non-negative integer');
+  }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
       `SELECT po.id, po.status AS payout_status, po.pay_period_id,
-              pp.status AS period_status
+              po.total_cents, pp.status AS period_status
          FROM payouts po
          JOIN pay_periods pp ON pp.id = po.pay_period_id
         WHERE po.id = $1
@@ -403,13 +495,33 @@ router.post('/payroll/payouts/:id/mark-paid', auth, adminOnly, asyncHandler(asyn
       await client.query('ROLLBACK');
       throw new ConflictError(`period is ${rows[0].period_status}; mark-paid requires processing`);
     }
+    // Compare against total_cents read under the same row lock: a reopen +
+    // line edit in another tab between generate and this click can never be
+    // recorded at the stale amount. No amounts in the breadcrumb.
+    if (expectedTotal !== undefined && Number(rows[0].total_cents) !== expectedTotal) {
+      await client.query('ROLLBACK');
+      Sentry.addBreadcrumb({
+        category: 'payroll',
+        message: 'mark_paid_drift_409',
+        data: { payout_id: id },
+      });
+      throw new ConflictError('payout total changed since the code was generated; regenerate');
+    }
+    if (expectedTotal === undefined) {
+      // Scripted/legacy mark-paids skip the drift guard; keep them visible.
+      Sentry.addBreadcrumb({
+        category: 'payroll',
+        message: 'mark_paid_without_expected_total',
+        data: { payout_id: id },
+      });
+    }
 
     await client.query(
       `UPDATE payouts
           SET status = 'paid', payment_method = $1, payment_handle = $2,
-              paid_at = NOW(), paid_by = $3
-        WHERE id = $4`,
-      [method, handle, req.user.id, id]
+              payment_reference = $3, paid_at = NOW(), paid_by = $4
+        WHERE id = $5`,
+      [method, handle, reference, req.user.id, id]
     );
 
     const finalized = await maybeFinalizePeriod(client, rows[0].pay_period_id);
@@ -418,7 +530,8 @@ router.post('/payroll/payouts/:id/mark-paid', auth, adminOnly, asyncHandler(asyn
     // Post-COMMIT refresh on the client we already hold — see the note above.
     const refreshed = await client.query(
       `SELECT id, contractor_id, status, total_cents,
-              payment_method, payment_handle, paid_at, paystub_storage_key
+              payment_method, payment_handle, payment_reference,
+              paid_at, paystub_storage_key
          FROM payouts WHERE id = $1`,
       [id]
     );
@@ -591,7 +704,8 @@ router.get('/payroll/contractors/:userId/payouts', auth, adminOnly, asyncHandler
   if (!Number.isInteger(userId)) throw new ValidationError(null, 'invalid userId');
   const { rows } = await pool.query(
     `SELECT po.id, po.status, po.total_cents,
-            po.payment_method, po.payment_handle, po.paid_at, po.paystub_storage_key,
+            po.payment_method, po.payment_handle, po.payment_reference,
+            po.paid_at, po.paystub_storage_key,
             pp.id AS period_id, pp.start_date, pp.end_date, pp.payday, pp.status AS period_status,
             COALESCE(ec.event_count, 0) AS event_count
        FROM payouts po
@@ -609,6 +723,7 @@ router.get('/payroll/contractors/:userId/payouts', auth, adminOnly, asyncHandler
     payouts: rows.map(r => ({
       id: r.id, status: r.status, total_cents: r.total_cents,
       payment_method: r.payment_method, payment_handle: r.payment_handle,
+      payment_reference: r.payment_reference,
       paid_at: r.paid_at, paystub_storage_key: r.paystub_storage_key,
       event_count: r.event_count,
       period: {

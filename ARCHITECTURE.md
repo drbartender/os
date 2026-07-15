@@ -366,6 +366,9 @@ Read-side mirror of Stripe payouts + balance-transaction lines (`server/routes/s
 | PUT | `/settings` | Admin | Update app_settings key-value pairs |
 | POST | `/backfill-geocodes` | Admin | Geocode all staff/shift addresses and backfill hire dates |
 | GET | `/payroll/...` | Admin | Payroll surface — contractor payouts, pay periods, and paystub data (`server/routes/admin/payroll.js`, mounted under `/api/admin/payroll`; see the route file for exact paths). |
+| POST | `/payroll/periods/:id/process` | Admin | Flip `open`/`reopened` → `processing`: runs the fee-recapture healing pass, freezes line edits. 409s while the period's week is still in progress unless body `{ force: true }` (early-process wage guard). Finalizes immediately when no pending payouts remain; response carries `period_status` (`'paid'` or `'processing'`) plus the `fee_recapture` summary. |
+| POST | `/payroll/periods/:id/reopen` | Admin | The "I fucked up" path: flip `processing` → `reopened` (never back to `open`) so PENDING payouts' lines become editable again while every payroll money writer still refuses the period. Paid payouts stay locked. 409 unless the period is `processing`; audit-logged as `payroll_period_reopen`. |
+| POST | `/payroll/payouts/:id/mark-paid` | Admin | Record an external payment: `{ payment_method, payment_handle, payment_reference?, expected_total_cents? }`. `zelle` is an allowed method. `expected_total_cents` (non-negative integer) is the drift guard: compared against `total_cents` under the row lock, 409 on mismatch so a stale generated QR/link can never be recorded. |
 | GET | `/payroll/deferred-tips` | Admin | List tips deferred while the open pay period was frozen (with stuck-reason: `frozen_period`, `stubs`, or `max_attempts`). |
 | POST | `/payroll/deferred-tips/retry` | Admin | Manually run the deferred-tip sweep; audit-logged as `payroll_deferred_tips_retry` with the summary in `metadata`. |
 | GET | `/payroll/contractors/:userId/payment-history` | Admin | Imported pre-OS payment history for one contractor (`staff_payment_history` only, never `legacy_cc_payouts`) + `blended_total_cents` = ledger sum + PAID payouts. (`server/routes/admin/payrollTax.js`) |
@@ -876,7 +879,7 @@ Two new tables mirror Stripe payouts and their balance-transaction lines for a b
 
 ### Staff Payroll
 
-Weekly Tue–Mon payroll: `pay_periods` (status open → processing → paid) → `payouts` (one per contractor per period, `total_cents` = clamped sum of its lines) → `payout_events` (per-event line items). Owned by `server/utils/payrollAccrual.js` (accrual + roster sweeps) and `server/routes/admin/payroll.js` (admin worklist + PATCH edits). All money integer cents.
+Weekly Tue–Mon payroll: `pay_periods` (status open → processing → paid, plus `reopened`: the admin "I fucked up" state reached only from `processing`, editable like `open` for pending payouts but refused by every money writer because they all test `status = 'open'`; re-processing returns it to `processing`) → `payouts` (one per contractor per period, `total_cents` = clamped sum of its lines; `payment_reference` TEXT holds the mark-paid trace: Zelle conf #, Venmo note, check number; admin-only, never in staff projections) → `payout_events` (per-event line items). Owned by `server/utils/payrollAccrual.js` (accrual + roster sweeps) and `server/routes/admin/payroll.js` (admin worklist + PATCH edits). All money integer cents.
 
 **payout_events** — one line per (payout, shift); `UNIQUE (payout_id, shift_id)`
 - `contracted_hours`, `hours`, `rate_cents`, `wage_cents` (= hours × rate), `late`
