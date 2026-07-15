@@ -65,7 +65,9 @@ export default function TimePicker({
     const maxTotal = maxHour * 60 + 30;
     let total;
     const cur = toMinutes(value);
-    if (cur === null) {
+    // NaN guard: a legacy free-text value ("6:00 PM") splits to NaN, which
+    // slips the null check and would step to "NaN:NaN" and persist it.
+    if (cur === null || Number.isNaN(cur)) {
       total = mins > 0 ? minTotal : maxTotal;
     } else if (mins > 0) {
       // snap up to next 30-min grid line
