@@ -14,6 +14,25 @@ const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRe
 const { matchTipToEvent } = require('../../utils/payrollTips');
 const { UUID_RE } = require('../../utils/tokens');
 const { sendPaymentNotifications } = require('../../utils/stripePaymentNotifications');
+const { notifyAdminCategory } = require('../../utils/adminNotifications');
+
+// B3: email-first admin alert when a payment settles onto a cancelled (archived)
+// proposal. Fire-and-forget from the post-commit tail; notifyAdminCategory self-
+// guards, the extra catch keeps this from masking sibling post-commit work. Copy
+// carries no em dashes (client/admin copy convention). Mirrors paymentIntentSucceeded.
+function notifyPaymentOnArchived(proposalId, amountCents, paymentType, archiveReason) {
+  const dollars = `$${(amountCents / 100).toFixed(2)}`;
+  const reasonSuffix = archiveReason ? ` (archive reason: ${archiveReason})` : '';
+  const line = `A ${paymentType} payment of ${dollars} just settled on proposal #${proposalId}, which was already cancelled${reasonSuffix}. The money is in the ledger, but the cancellation refund math ran before it arrived. Open the proposal, run Cancel, then Refund, to recover it.`;
+  return notifyAdminCategory({
+    category: 'payment_failure',
+    subject: `Payment received on a cancelled event (proposal #${proposalId})`,
+    emailText: line,
+    emailHtml: `<p>${line}</p>`,
+  }).catch((err) => {
+    console.error('payment_on_archived admin notify failed (non-blocking):', err && err.message);
+  });
+}
 
 module.exports = async function handleCheckoutSessionCompleted(event, res) {
     const session = event.data.object;
@@ -151,6 +170,11 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
       let isLastMinuteHold = false;
       let groupChoice = { committed: false, conflict: false, archivedLoserIds: [] };
       let sweptAlternativeIds = [];
+      // B3: set in-tx when this Payment-Link settlement lands on an already-archived
+      // (cancelled) proposal. On this rail the amount_paid UPDATE already excludes
+      // archived (credit is a no-op), but the proposal_payments row and the invoice
+      // link still record — so the alert is what surfaces the divergence.
+      let archivedSettle = null;
       try {
         await dbClient.query('BEGIN');
 
@@ -279,6 +303,25 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
           }
           // !conflict (F2): never mint a Balance invoice on an archived non-chosen option.
           if (!groupChoice.conflict) await createBalanceInvoice(proposalId, dbClient);
+
+          // B3 settle-on-archived alert (parity with payment_intent.succeeded). A
+          // stale Payment-Link checkout can complete after the proposal was archived.
+          // The credit UPDATE above already excludes archived, but the payment row +
+          // invoice link still record silently — leave an in-tx breadcrumb + a
+          // post-commit admin alert so the admin re-runs Cancel then Refund. Inside
+          // isFirstDelivery so a Stripe retry never duplicates it. SAME dbClient.
+          const archStatus = await dbClient.query(
+            'SELECT status, archive_reason, cancelled_at FROM proposals WHERE id = $1',
+            [proposalId]
+          );
+          if (archStatus.rows[0] && archStatus.rows[0].status === 'archived') {
+            const archiveReason = archStatus.rows[0].archive_reason || null;
+            archivedSettle = { archiveReason };
+            await dbClient.query(
+              `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'payment_on_archived', 'system', $2)`,
+              [proposalId, JSON.stringify({ amount: session.amount_total, payment_intent_id: session.payment_intent, payment_type: linkPaymentType, archive_reason: archiveReason })]
+            );
+          }
         } else {
           console.log(`Webhook: duplicate checkout.session.completed for intent ${session.payment_intent} — skipping`);
         }
@@ -303,6 +346,19 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
 
       // Non-blocking post-commit work — only on first delivery.
       if (isFirstDelivery) {
+        // B3 settle-on-archived alert (post-commit, connection released). Credit +
+        // in-tx breadcrumb already committed above. Warn Sentry + email-first admin
+        // notify (category 'payment_failure') to re-run Cancel then Refund.
+        if (archivedSettle) {
+          if (process.env.SENTRY_DSN_SERVER) {
+            Sentry.captureMessage(
+              `payment_landed_on_archived_proposal (proposal ${proposalId}, session ${session.id}, type ${linkPaymentType}, $${((session.amount_total || 0) / 100).toFixed(2)}) — re-run Cancel then Refund`,
+              'warning'
+            );
+          }
+          notifyPaymentOnArchived(proposalId, session.amount_total || 0, linkPaymentType, archivedSettle.archiveReason);
+        }
+
         // ≤72h booking: admin + broad-net staff SMS blast. Fire-and-forget;
         // notifyLastMinuteBooking self-guards (try/catch + Sentry, never throws).
         // Gated by isLastMinuteHold (set in-tx above, which already implies

@@ -44,7 +44,8 @@ router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This 
 
   const planRes = await pool.query(`
     SELECT dp.id AS plan_id, dp.token AS plan_token, dp.status AS plan_status,
-           p.id AS proposal_id, p.total_price, p.amount_paid, p.event_date,
+           p.id AS proposal_id, p.status AS proposal_status,
+           p.total_price, p.amount_paid, p.event_date,
            p.balance_due_date, p.guest_count, p.num_bars, p.stripe_customer_id,
            p.event_type, p.event_type_custom, p.pricing_snapshot,
            c.email AS client_email, c.name AS client_name
@@ -58,6 +59,18 @@ router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This 
   const data = planRes.rows[0];
 
   if (!data.proposal_id) throw new ConflictError('No linked proposal for this plan');
+
+  // Archived-event guard (B3 piece 1b): this route folds a past-due balance back
+  // into the charge ('drink_plan_with_balance'), so a cancelled (archived) event
+  // left a live charge surface on the public drink-plan link. Reject BEFORE any
+  // Stripe call. 409 (not 410): archived->draft recovery exists, so re-activating
+  // the proposal unblocks automatically on the next request (live status read).
+  if (data.proposal_status === 'archived') {
+    throw new ConflictError(
+      'This event was cancelled, so this payment can no longer be made online. If you think this is a mistake, email contact@drbartender.com.',
+      'EVENT_CANCELLED'
+    );
+  }
 
   // Extras amount via the shared helper — the SAME math the submit handler uses
   // to build the "Drink Plan Extras" invoice, so the invoice amount_due can
@@ -531,7 +544,7 @@ router.post('/create-intent-for-invoice/:token', requireUuidToken('token', 'This
 
   const invRes = await pool.query(`
     SELECT i.id AS invoice_id, i.invoice_number, i.amount_due, i.amount_paid, i.status AS invoice_status,
-           p.id AS proposal_id, p.event_type, p.event_type_custom, p.stripe_customer_id,
+           p.id AS proposal_id, p.status AS proposal_status, p.event_type, p.event_type_custom, p.stripe_customer_id,
            c.email AS client_email, c.name AS client_name
     FROM invoices i
     JOIN proposals p ON p.id = i.proposal_id
@@ -542,6 +555,19 @@ router.post('/create-intent-for-invoice/:token', requireUuidToken('token', 'This
   if (!invRes.rows[0]) throw new NotFoundError('This invoice is no longer available');
 
   const inv = invRes.rows[0];
+
+  // Archived-event guard (B3 piece 1): cancel voids only amount_paid=0 invoices,
+  // so a partially_paid invoice survives cancel in a payable status and its emailed
+  // link stayed a live charge surface. Reject BEFORE any Stripe call (keep it AFTER
+  // the invoice fetch so voided-invoice 404 behavior is untouched). 409 (not 410):
+  // archived->draft recovery exists, so a re-activated proposal unblocks automatically.
+  if (inv.proposal_status === 'archived') {
+    throw new ConflictError(
+      'This event was cancelled, so this invoice can no longer be paid online. If you think this is a mistake, email contact@drbartender.com.',
+      'EVENT_CANCELLED'
+    );
+  }
+
   const balanceCents = inv.amount_due - inv.amount_paid;
   if (balanceCents <= 0) {
     throw new ConflictError('This invoice has already been paid in full', 'ALREADY_PAID');
