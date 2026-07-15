@@ -504,8 +504,6 @@ export default function EventDetailPage() {
         </div>
 
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
-          <MessageLogCard messages={proposal.messageLog} />
-
           <ProposalDetailPaymentPanel proposal={proposal} onUpdate={loadProposal} />
 
           <DrinkPlanCard
@@ -545,6 +543,8 @@ export default function EventDetailPage() {
               <MenuPNG plan={drinkPlan} />
             </Suspense>
           )}
+
+          <MessageLogCard messages={proposal.messageLog} />
         </div>
       </div>
 
