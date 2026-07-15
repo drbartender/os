@@ -21,7 +21,7 @@ const { notifyAdminCategory } = require('../../utils/adminNotifications');
 function notifyPaymentOnArchived(proposalId, amountCents, paymentType, archiveReason) {
   const dollars = `$${(amountCents / 100).toFixed(2)}`;
   const reasonSuffix = archiveReason ? ` (archive reason: ${archiveReason})` : '';
-  const line = `A ${paymentType} payment of ${dollars} just settled on proposal #${proposalId}, which was already cancelled${reasonSuffix}. The money is in the ledger, but the cancellation refund math ran before it arrived. Open the proposal, run Cancel, then Refund, to recover it.`;
+  const line = `A ${paymentType} payment of ${dollars} just settled on proposal #${proposalId}, which was already cancelled${reasonSuffix}. The money is in the ledger, but the cancellation refund already ran before it arrived. Open the proposal and refund this payment straight from the payment panel (the Refund button), which returns it without re-running the cancellation math. Do NOT expect the Cancel then Refund flow to catch it: the booking is already archived, so that path may report nothing is owed.`;
   return notifyAdminCategory({
     category: 'payment_failure',
     subject: `Payment received on a cancelled event (proposal #${proposalId})`,
@@ -83,24 +83,58 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
                 WHERE p.id = $1 FOR UPDATE OF c`, [proposalId]);
           }
 
+          // B3: detect a settle onto an already-archived (cancelled) proposal
+          // ONCE, up front, and record the breadcrumb here. This proposal's
+          // archived state is pre-existing and terminal for the credit branches
+          // below (commitGroupChoice and the sweep only ever archive OTHER rows —
+          // group losers / same-client strays — never this winner), so a single
+          // early read is stable for the whole tx. archivedSettle then drives
+          // (a) the post-commit admin alert AND (b) the suppression of every
+          // CONVERSION side effect (balance invoice, last-minute hold + staff
+          // blast, shift creation, reminder ladder, marketing enroll, client
+          // receipt). The money still lands in proposal_payments (and in
+          // amount_paid on the rails that do not exclude archived) so
+          // /cancel/refund or a manual refund can return it — we suppress only
+          // the "treat this as a live booking" behavior, never the credit.
+          const archRes = await dbClient.query(
+            'SELECT status, archive_reason FROM proposals WHERE id = $1',
+            [proposalId]
+          );
+          if (archRes.rows[0] && archRes.rows[0].status === 'archived') {
+            archivedSettle = { archiveReason: archRes.rows[0].archive_reason || null };
+            await dbClient.query(
+              `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'payment_on_archived', 'system', $2)`,
+              [proposalId, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType, archive_reason: archivedSettle.archiveReason })]
+            );
+          }
+
           // Option-group choice-commit — runs BEFORE the credit. First-writer-wins
           // marks this option chosen + archives the losers (voiding their unpaid
           // invoices) in THIS tx. On conflict (a 2nd option paying after another
           // already won) the amount_paid guards below skip the archived row's credit;
           // we flag it and skip conversion post-commit.
-          groupChoice = await commitGroupChoice(proposalId, dbClient);
-          if (groupChoice.conflict && process.env.SENTRY_DSN_SERVER) {
-            Sentry.captureMessage(
-              `option_paid_after_decided: payment on a non-chosen option (proposal ${proposalId}, intent ${intent.id}) — refund manually`,
-              'warning'
-            );
+          // !archivedSettle (B3): a stale payment on an ALREADY-cancelled proposal
+          // must never make it win/decide a group — a cancelled option cannot be
+          // the chosen one, and letting it archive its live siblings is exactly the
+          // "treat the settle as a live initial booking" harm this guard closes.
+          if (!archivedSettle) {
+            groupChoice = await commitGroupChoice(proposalId, dbClient);
+            if (groupChoice.conflict && process.env.SENTRY_DSN_SERVER) {
+              Sentry.captureMessage(
+                `option_paid_after_decided: payment on a non-chosen option (proposal ${proposalId}, intent ${intent.id}) — refund manually`,
+                'warning'
+              );
+            }
           }
 
           // Same-client sweep of UNGROUPED alternatives: on an initial-booking
           // payment (deposit/full only — never balance/extras/invoice, where a
           // new draft for the client's NEXT event is legitimate), archive the
           // client's other open, unpaid proposals like formal-group losers.
-          if (!groupChoice.conflict && (paymentType === 'full' || paymentType === 'deposit')) {
+          // !archivedSettle (B3): a stale payment on a cancelled event is NOT the
+          // client's first real booking, so it must never sweep (silently archive
+          // + void) the client's legitimate rebooking quotes.
+          if (!groupChoice.conflict && !archivedSettle && (paymentType === 'full' || paymentType === 'deposit')) {
             const sweep = await sweepClientAlternatives(proposalId, dbClient);
             sweptAlternativeIds = sweep.sweptIds;
           }
@@ -208,7 +242,7 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
           // flag AND isFirstDelivery, so a Stripe retry can't re-flag or re-blast.
           // !conflict (F1): a payment on a non-chosen option must never flag a
           // last-minute hold or trigger the post-commit staff SMS blast.
-          if ((paymentType === 'full' || paymentType === 'deposit') && !groupChoice.conflict) {
+          if ((paymentType === 'full' || paymentType === 'deposit') && !groupChoice.conflict && !archivedSettle) {
             const lmRes = await dbClient.query(
               'SELECT event_date, event_start_time FROM proposals WHERE id = $1',
               [proposalId]
@@ -393,31 +427,11 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             }
           }
 
-          // !conflict (F2): never mint a Balance invoice on an archived non-chosen option.
-          if (paymentType === 'deposit' && !groupChoice.conflict) {
+          // !conflict (F2): never mint a Balance invoice on an archived non-chosen
+          // option. !archivedSettle (B3): never mint one on a cancelled event a
+          // stale payment just landed on — the admin refunds it, no live booking.
+          if (paymentType === 'deposit' && !groupChoice.conflict && !archivedSettle) {
             await createBalanceInvoice(proposalId, dbClient);
-          }
-
-          // B3 settle-on-archived alert: a payment (a 'processing' PI at cancel
-          // time, a stale Payment-Link/invoice link, or a race) can land after the
-          // proposal was archived. The credit above stays byte-identical — blocking
-          // it would strand charged money and break the /cancel/refund recompute
-          // pickup. Instead, leave an in-tx breadcrumb + a post-commit admin alert so
-          // the admin re-runs Cancel then Refund (that recompute absorbs the money).
-          // Inside isFirstDelivery so a Stripe retry never duplicates it. SAME dbClient
-          // (one-connection rule). archived is terminal for the credit branches above,
-          // so this read reflects the pre-existing archived state, not a mid-tx change.
-          const archStatus = await dbClient.query(
-            'SELECT status, archive_reason, cancelled_at FROM proposals WHERE id = $1',
-            [proposalId]
-          );
-          if (archStatus.rows[0] && archStatus.rows[0].status === 'archived') {
-            const archiveReason = archStatus.rows[0].archive_reason || null;
-            archivedSettle = { archiveReason };
-            await dbClient.query(
-              `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'payment_on_archived', 'system', $2)`,
-              [proposalId, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType, archive_reason: archiveReason })]
-            );
           }
         } else {
           console.log(`Webhook: duplicate delivery for intent ${intent.id} — skipping (already processed)`);
@@ -475,8 +489,9 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
         // separate block below into this single helper invocation.
         let depositRemindersScheduled = false;
         // !conflict: no reminder ladder (and, via this flag, no sign+pay marketing
-        // enroll below) for a payment on a non-chosen option.
-        if ((paymentType === 'deposit' || paymentType === 'full') && !groupChoice.conflict) {
+        // enroll below) for a payment on a non-chosen option. !archivedSettle (B3):
+        // nor for a stale payment on a cancelled event.
+        if ((paymentType === 'deposit' || paymentType === 'full') && !groupChoice.conflict && !archivedSettle) {
           const { scheduleDepositPaidReminders } = require('../../utils/depositPaidSchedulers');
           await scheduleDepositPaidReminders(proposalId, { source: 'payment_intent.succeeded' });
           depositRemindersScheduled = true;
@@ -486,7 +501,9 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
         // sending the orientation email — the orientation payload reads
         // drink_plans.token, which only exists once createEventShifts has run.
         // A conflicting late payment on a non-chosen option must NOT convert.
-        if (!groupChoice.conflict) {
+        // !archivedSettle (B3): a stale payment on a cancelled event must NOT mint
+        // a phantom open shift (createEventShifts is status-blind; this is the gate).
+        if (!groupChoice.conflict && !archivedSettle) {
           try {
             const shift = await createEventShifts(proposalId);
             if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
@@ -514,7 +531,9 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
 
         // !conflict: no "payment received" receipt/notify for a non-chosen option
         // (the Sentry flag + manual refund is the admin path for that money).
-        if (!groupChoice.conflict) sendPaymentNotifications(proposalId, intent.amount, paymentType);
+        // !archivedSettle (B3): no conversion receipt for a stale payment on a
+        // cancelled event — the payment_on_archived admin alert is that money's path.
+        if (!groupChoice.conflict && !archivedSettle) sendPaymentNotifications(proposalId, intent.amount, paymentType);
 
         // depositRemindersScheduled covers both balance + pre-event scheduling
         // above. This block remains as the deposit-only marketing/drip anchor.

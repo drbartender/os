@@ -65,13 +65,31 @@ async function seedArchivedProposal({ totalPrice = 1000, amountPaid = 100 } = {}
     [`wh-archset-${NONCE}-${clientIds.length}@example.com`]
   );
   clientIds.push(c.rows[0].id);
+  // event_date/event_start_time are set so createEventShifts would actually
+  // INSERT a shift (shifts.event_date is NOT NULL) if the archived side-effect
+  // gate were removed — that makes the "no phantom shift" assertions genuine
+  // red-tests rather than passing on the NOT-NULL insert throwing.
   const p = await pool.query(
     `INSERT INTO proposals
        (client_id, status, total_price, amount_paid, deposit_amount, pricing_snapshot,
-        archive_reason, cancelled_at)
-     VALUES ($1, 'archived', $2, $3, 100, '{}'::jsonb, 'client_cancelled', NOW())
-     RETURNING id`,
+        archive_reason, cancelled_at, event_date, event_start_time)
+     VALUES ($1, 'archived', $2, $3, 100, '{}'::jsonb, 'client_cancelled', NOW(),
+             CURRENT_DATE + 7, '18:00:00')
+     RETURNING id, client_id`,
     [c.rows[0].id, totalPrice, amountPaid]
+  );
+  proposalIds.push(p.rows[0].id);
+  return { id: p.rows[0].id, clientId: p.rows[0].client_id };
+}
+
+// A live, unpaid rebooking quote for an EXISTING client — the exact thing the
+// same-client sweep must NOT archive when a stale payment lands on that client's
+// separately-cancelled booking.
+async function seedOpenSibling(clientId, { status = 'sent' } = {}) {
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, status, total_price, amount_paid, deposit_amount, pricing_snapshot)
+     VALUES ($1, $2, 2000, 0, 200, '{}'::jsonb) RETURNING id`,
+    [clientId, status]
   );
   proposalIds.push(p.rows[0].id);
   return p.rows[0].id;
@@ -127,7 +145,7 @@ after(async () => {
 // ── TEST B: payment_intent.succeeded (invoice rail) onto an archived proposal ──
 
 test('payment_intent.succeeded invoice payment on archived proposal STILL credits, and logs payment_on_archived', async () => {
-  const p = await seedArchivedProposal({ totalPrice: 1000, amountPaid: 100 });
+  const { id: p } = await seedArchivedProposal({ totalPrice: 1000, amountPaid: 100 });
   const inv = await seedInvoice(p, { status: 'partially_paid', amountDue: 50000, amountPaid: 10000 });
   const piId = `pi_${NONCE}_invoice`;
 
@@ -155,12 +173,18 @@ test('payment_intent.succeeded invoice payment on archived proposal STILL credit
   // (3) The new alert breadcrumb.
   const log = await one("SELECT COUNT(*)::int AS n FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'payment_on_archived'", [p]);
   assert.equal(log.n, 1, "a 'payment_on_archived' activity-log row exists for the archived settle");
+
+  // (4) NO conversion side effect: a stale payment on a cancelled event must not
+  // mint a phantom open shift (createEventShifts is status-blind; the handler
+  // gates it on the archived flag). RED before the side-effect-suppression fix.
+  const shift = await one('SELECT COUNT(*)::int AS n FROM shifts WHERE proposal_id = $1', [p]);
+  assert.equal(shift.n, 0, 'no phantom shift created for a payment on an archived proposal');
 });
 
 // ── TEST C: checkout.session.completed (Payment-Link rail) onto archived ──
 
 test('checkout.session.completed on archived proposal logs payment_on_archived and does NOT change amount_paid', async () => {
-  const p = await seedArchivedProposal({ totalPrice: 1000, amountPaid: 100 });
+  const { id: p } = await seedArchivedProposal({ totalPrice: 1000, amountPaid: 100 });
   await seedInvoice(p, { status: 'sent', amountDue: 50000, amountPaid: 0 });
   const piId = `pi_${NONCE}_checkout`;
   const linkId = `plink_${NONCE}_checkout`;
@@ -187,4 +211,56 @@ test('checkout.session.completed on archived proposal logs payment_on_archived a
   // The new alert breadcrumb.
   const log = await one("SELECT COUNT(*)::int AS n FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'payment_on_archived'", [p]);
   assert.equal(log.n, 1, "a 'payment_on_archived' activity-log row exists for the checkout settle");
+
+  // NO conversion side effect: no phantom shift for a stale checkout on a
+  // cancelled event.
+  const shift = await one('SELECT COUNT(*)::int AS n FROM shifts WHERE proposal_id = $1', [p]);
+  assert.equal(shift.n, 0, 'no phantom shift created for a checkout settle on an archived proposal');
+});
+
+// ── TEST D: checkout deposit onto archived proposal with NO pre-existing ──
+// invoice must NOT mint a fresh Balance invoice (createBalanceInvoice is status-
+// blind; the handler gates it on the archived flag). This is the sharpest pin
+// for the balance-invoice suppression: TEST C seeds a Balance invoice, so its
+// idempotency guard would mask a missing archived-gate — here there is none to
+// hide behind. RED before the side-effect-suppression fix.
+
+test('checkout.session.completed deposit on archived proposal mints NO Balance invoice, NO shift, and does NOT sweep the client rebooking', async () => {
+  const { id: p, clientId } = await seedArchivedProposal({ totalPrice: 1000, amountPaid: 100 });
+  // A legitimate live rebooking quote for the SAME client — must survive.
+  const sibling = await seedOpenSibling(clientId, { status: 'sent' });
+  const piId = `pi_${NONCE}_noinv`;
+  const linkId = `plink_${NONCE}_noinv`;
+
+  const r = await postWebhook({
+    id: `evt_${NONCE}_noinv`, type: 'checkout.session.completed', livemode: true,
+    data: {
+      object: {
+        id: `cs_${NONCE}_noinv`, object: 'checkout.session',
+        payment_status: 'paid', amount_total: 40000, payment_intent: piId, payment_link: linkId,
+        metadata: { proposal_id: String(p), payment_type: 'deposit' },
+      },
+    },
+  });
+  assert.equal(r.status, 200, `webhook should 200, got ${r.status} ${r.body}`);
+
+  // Payment still records (money is in the ledger for a manual refund).
+  const pay = await one("SELECT COUNT(*)::int AS n FROM proposal_payments WHERE stripe_payment_intent_id = $1 AND status = 'succeeded'", [piId]);
+  assert.equal(pay.n, 1, 'a succeeded proposal_payments row was recorded');
+
+  // The archived gate must suppress the Balance invoice AND the shift.
+  const invCount = await one('SELECT COUNT(*)::int AS n FROM invoices WHERE proposal_id = $1', [p]);
+  assert.equal(invCount.n, 0, 'no Balance invoice minted on a cancelled event (archived gate holds)');
+  const shift = await one('SELECT COUNT(*)::int AS n FROM shifts WHERE proposal_id = $1', [p]);
+  assert.equal(shift.n, 0, 'no phantom shift created');
+
+  // The same-client sweep must NOT touch the live rebooking quote. RED before
+  // the sweep gate: sweepClientAlternatives would archive it as option_not_chosen.
+  const sib = await one('SELECT status, archive_reason FROM proposals WHERE id = $1', [sibling]);
+  assert.equal(sib.status, 'sent', 'the client rebooking quote is NOT swept/archived by a stale payment on a cancelled booking');
+  assert.equal(sib.archive_reason, null, 'the rebooking quote carries no archive_reason');
+
+  // Alert breadcrumb still present.
+  const log = await one("SELECT COUNT(*)::int AS n FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'payment_on_archived'", [p]);
+  assert.equal(log.n, 1, "a 'payment_on_archived' activity-log row exists");
 });

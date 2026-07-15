@@ -23,7 +23,7 @@ const { notifyAdminCategory } = require('../../utils/adminNotifications');
 function notifyPaymentOnArchived(proposalId, amountCents, paymentType, archiveReason) {
   const dollars = `$${(amountCents / 100).toFixed(2)}`;
   const reasonSuffix = archiveReason ? ` (archive reason: ${archiveReason})` : '';
-  const line = `A ${paymentType} payment of ${dollars} just settled on proposal #${proposalId}, which was already cancelled${reasonSuffix}. The money is in the ledger, but the cancellation refund math ran before it arrived. Open the proposal, run Cancel, then Refund, to recover it.`;
+  const line = `A ${paymentType} payment of ${dollars} just settled on proposal #${proposalId}, which was already cancelled${reasonSuffix}. The money is in the ledger, but the cancellation refund already ran before it arrived. Open the proposal and refund this payment straight from the payment panel (the Refund button), which returns it without re-running the cancellation math. Do NOT expect the Cancel then Refund flow to catch it: the booking is already archived, so that path may report nothing is owed.`;
   return notifyAdminCategory({
     category: 'payment_failure',
     subject: `Payment received on a cancelled event (proposal #${proposalId})`,
@@ -202,20 +202,47 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
             `SELECT c.id FROM clients c JOIN proposals p ON p.client_id = c.id
               WHERE p.id = $1 FOR UPDATE OF c`, [proposalId]);
 
+          // B3: detect a settle onto an already-archived (cancelled) proposal
+          // ONCE, up front, and record the breadcrumb here (parity with
+          // payment_intent.succeeded). commitGroupChoice / the sweep archive only
+          // OTHER rows, never this one, so a single early read is stable for the
+          // whole tx. archivedSettle drives (a) the post-commit admin alert AND
+          // (b) suppression of every CONVERSION side effect (balance invoice,
+          // last-minute hold + staff blast, shift creation, reminder ladder,
+          // marketing enroll, client receipt). The payment row + invoice link
+          // still record so a manual refund can return the money.
+          const archRes = await dbClient.query(
+            'SELECT status, archive_reason FROM proposals WHERE id = $1',
+            [proposalId]
+          );
+          if (archRes.rows[0] && archRes.rows[0].status === 'archived') {
+            archivedSettle = { archiveReason: archRes.rows[0].archive_reason || null };
+            await dbClient.query(
+              `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'payment_on_archived', 'system', $2)`,
+              [proposalId, JSON.stringify({ amount: session.amount_total, payment_intent_id: session.payment_intent, payment_type: linkPaymentType, archive_reason: archivedSettle.archiveReason })]
+            );
+          }
+
           // Option-group choice-commit (see payment_intent.succeeded). First-writer-
           // wins marks this option chosen + archives losers in THIS tx; on conflict we
           // flag + skip conversion post-commit (the archived guard skips the credit).
-          groupChoice = await commitGroupChoice(proposalId, dbClient);
-          if (groupChoice.conflict && process.env.SENTRY_DSN_SERVER) {
-            Sentry.captureMessage(
-              `option_paid_after_decided: payment-link payment on a non-chosen option (proposal ${proposalId}, session ${session.id}) — refund manually`,
-              'warning'
-            );
+          // !archivedSettle (B3): a stale link payment on an already-cancelled
+          // proposal must never make it win/decide a group or archive its siblings.
+          if (!archivedSettle) {
+            groupChoice = await commitGroupChoice(proposalId, dbClient);
+            if (groupChoice.conflict && process.env.SENTRY_DSN_SERVER) {
+              Sentry.captureMessage(
+                `option_paid_after_decided: payment-link payment on a non-chosen option (proposal ${proposalId}, session ${session.id}) — refund manually`,
+                'warning'
+              );
+            }
           }
 
           // Same-client sweep of ungrouped alternatives (see payment_intent.succeeded).
           // Both Payment-Link types are initial bookings, so no payment-type gate here.
-          if (!groupChoice.conflict) {
+          // !archivedSettle (B3): a stale link payment on a cancelled event must never
+          // sweep (archive + void) the client's legitimate rebooking quotes.
+          if (!groupChoice.conflict && !archivedSettle) {
             const sweep = await sweepClientAlternatives(proposalId, dbClient);
             sweptAlternativeIds = sweep.sweptIds;
           }
@@ -256,7 +283,7 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
           // never flag a hold or trigger the post-commit staff SMS blast. The
           // blast is gated on this flag AND isFirstDelivery, so a Stripe retry
           // can't re-flag or re-blast. Mirrors payment_intent.succeeded.
-          if (!groupChoice.conflict) {
+          if (!groupChoice.conflict && !archivedSettle) {
             const lmRes = await dbClient.query(
               'SELECT event_date, event_start_time FROM proposals WHERE id = $1',
               [proposalId]
@@ -301,27 +328,10 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
               await linkPaymentToInvoice(openInvoice.rows[0].id, paymentRow.rows[0].id, session.amount_total, dbClient);
             }
           }
-          // !conflict (F2): never mint a Balance invoice on an archived non-chosen option.
-          if (!groupChoice.conflict) await createBalanceInvoice(proposalId, dbClient);
-
-          // B3 settle-on-archived alert (parity with payment_intent.succeeded). A
-          // stale Payment-Link checkout can complete after the proposal was archived.
-          // The credit UPDATE above already excludes archived, but the payment row +
-          // invoice link still record silently — leave an in-tx breadcrumb + a
-          // post-commit admin alert so the admin re-runs Cancel then Refund. Inside
-          // isFirstDelivery so a Stripe retry never duplicates it. SAME dbClient.
-          const archStatus = await dbClient.query(
-            'SELECT status, archive_reason, cancelled_at FROM proposals WHERE id = $1',
-            [proposalId]
-          );
-          if (archStatus.rows[0] && archStatus.rows[0].status === 'archived') {
-            const archiveReason = archStatus.rows[0].archive_reason || null;
-            archivedSettle = { archiveReason };
-            await dbClient.query(
-              `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'payment_on_archived', 'system', $2)`,
-              [proposalId, JSON.stringify({ amount: session.amount_total, payment_intent_id: session.payment_intent, payment_type: linkPaymentType, archive_reason: archiveReason })]
-            );
-          }
+          // !conflict (F2): never mint a Balance invoice on an archived non-chosen
+          // option. !archivedSettle (B3): nor on a cancelled event a stale
+          // Payment-Link checkout just settled on — the admin refunds it.
+          if (!groupChoice.conflict && !archivedSettle) await createBalanceInvoice(proposalId, dbClient);
         } else {
           console.log(`Webhook: duplicate checkout.session.completed for intent ${session.payment_intent} — skipping`);
         }
@@ -368,9 +378,13 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
         // so it does not depend on the shift existing first.
         if (isLastMinuteHold) notifyLastMinuteBooking(proposalId);
         // !conflict: no receipt/notify for a non-chosen option (Sentry + manual refund).
-        if (!groupChoice.conflict) sendPaymentNotifications(proposalId, session.amount_total || 0, linkPaymentType);
+        // !archivedSettle (B3): no conversion receipt for a stale payment on a
+        // cancelled event — the payment_on_archived admin alert is that money's path.
+        if (!groupChoice.conflict && !archivedSettle) sendPaymentNotifications(proposalId, session.amount_total || 0, linkPaymentType);
         // A conflicting late payment on a non-chosen option must NOT convert.
-        if (!groupChoice.conflict) {
+        // !archivedSettle (B3): a stale checkout on a cancelled event must NOT mint
+        // a phantom open shift (createEventShifts is status-blind; this is the gate).
+        if (!groupChoice.conflict && !archivedSettle) {
           try {
             const shift = await createEventShifts(proposalId);
             if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
@@ -398,7 +412,8 @@ module.exports = async function handleCheckoutSessionCompleted(event, res) {
         // full). A paid-in-full link has no balance, so the balance-reminder
         // rungs self-skip; the pre-event reminders still apply.
         // !conflict: neither reminders nor sign+pay marketing for a non-chosen option.
-        if (!groupChoice.conflict) {
+        // !archivedSettle (B3): nor for a stale payment on a cancelled event.
+        if (!groupChoice.conflict && !archivedSettle) {
           const { scheduleDepositPaidReminders } = require('../../utils/depositPaidSchedulers');
           await scheduleDepositPaidReminders(Number(proposalId), { source: 'checkout.session.completed' });
 
