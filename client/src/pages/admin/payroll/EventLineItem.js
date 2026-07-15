@@ -30,11 +30,16 @@ export default function EventLineItem({ event, editable, onSaved }) {
   // save response must not clobber the note mid-typing.
   const adjFocused = useRef(false);
 
-  // A positive reimbursement that the accrual sweep held because the worker fell
-  // off the roster: tracked (adjustment_cents) but non-payable (line_total 0)
-  // until an admin confirms it by editing the line (any PATCH re-arms it and
-  // flips held_state to 'confirmed'). Structural column, never note text.
-  const isHeldReimbursement = event.held_state === 'held';
+  // A line the accrual sweep held because the worker fell off the roster
+  // (structural held_state, never note text). Sign-scoped (B13): a POSITIVE
+  // adjustment is a reimbursement parked pending confirm (non-payable,
+  // line_total 0); a NEGATIVE adjustment is a docked/clawed line whose wage is
+  // zeroed but whose balance keeps deducting (line_total = the debt). Any PATCH
+  // re-arms the line and flips held_state to 'confirmed'.
+  const isHeld = event.held_state === 'held';
+  const heldAdjustmentCents = Number(event.adjustment_cents);
+  const isHeldReimbursement = isHeld && heldAdjustmentCents > 0;
+  const isHeldNegative = isHeld && heldAdjustmentCents < 0;
 
   // Resync the draft from props after a successful PATCH (the server may
   // normalize values, and the parent merges the updated row into local state).
@@ -195,6 +200,11 @@ export default function EventLineItem({ event, editable, onSaved }) {
       {isHeldReimbursement && (
         <div className="hstack" style={{ gap: 6 }}>
           <StatusChip kind="warn">reimbursement held: confirm or zero at payroll</StatusChip>
+        </div>
+      )}
+      {isHeldNegative && (
+        <div className="hstack" style={{ gap: 6 }}>
+          <StatusChip kind="warn">Off-roster line held: wage zeroed, balance still deducted. Edit to confirm or zero to forgive.</StatusChip>
         </div>
       )}
     </div>

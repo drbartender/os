@@ -21,32 +21,56 @@ const { readSnapshot } = require('./pricingSnapshot');
 const { CONTRACT_LABELS } = require('./proposalMoneyShared');
 
 // HOLD semantics for the roster sweeps (fix #4, 2026-07-13; reworked to
-// structural state after review). A POSITIVE reimbursement adjustment on an
-// off-roster worker's line is never deleted: reimbursements are entered by hand
-// and confirmed at payroll time, so a missed roster flag must never silently
-// auto-pay one, and it must equally never be silently dropped. The line is HELD:
-// `held_state = 'held'`, adjustment_cents stays as the tracked number, and every
-// payable component (wage/gratuity/card-tip gross+fee+net) AND hours go to 0 so
-// line_total_cents = 0 (non-payable). The note is NOT touched — hold semantics
-// live in the column, never in admin-editable free text (the review-caught
-// failure: an admin cleaning a marker note disarmed the old idempotency guard
-// and the next accrual re-zeroed a confirmed reimbursement).
+// structural state after review; extended to negative-adjustment wage lines
+// 2026-07-14, B13). When a roster sweep finds an off-roster worker's line, its
+// treatment keys on the STRUCTURE of the line, never on adjustment provenance.
+// The one system invariant shared with the clawback/late-tip upserts is:
+//
+//   held row => line_total_cents = payable components + LEAST(adjustment_cents, 0)
+//
+// Two structurally different rows are HELD, because in both cases the payable
+// components must stop paying (worker off roster) while the adjustment must be
+// preserved for the admin decision:
+//   (a) a POSITIVE reimbursement (entered by hand, confirmed at payroll) — a
+//       missed roster flag must never silently auto-pay one; and
+//   (b) a real wage line whose adjustment_cents went NEGATIVE (an admin dock via
+//       the payout-event PATCH, or a same-period clawback merged into the wage
+//       line via the ON CONFLICT arm) — dropping it is either an H1 re-leak or a
+//       silently forgiven dock.
+// The hold zeroes hours + every payable component (wage/gratuity/card-tip
+// gross+fee+net) and sets line_total_cents = LEAST(adjustment_cents, 0). For a
+// positive hold LEAST = 0, so the line is non-payable exactly as before the B13
+// change. For a negative hold the debt stays inside line_total, so it keeps
+// collecting through the payout-level GREATEST(0, SUM(line_total)) clamp and the
+// sign-scoped paystub/portal readers keep footing against the payout total.
+// adjustment_cents stays the tracked number and the note is NOT touched: hold
+// semantics live in the column, never in admin-editable free text (the
+// review-caught failure: an admin cleaning a marker note disarmed the old
+// idempotency guard and the next accrual re-zeroed a confirmed reimbursement).
+//
+// Pure clawback debt stubs (all payables zero, negative adjustment: the
+// payrollClawback INSERT shape) are NOT held and NOT deleted; they survive
+// verbatim (H1: the tip's refunded_amount_cents marker has already advanced, so
+// destroying the debt line permanently un-collects it).
 //
 // Lifecycle: NULL -> 'held' (sweep) -> 'confirmed' (admin PATCH re-arms
 // line_total; see routes/admin/payroll.js) -> NULL (worker rejoins the roster;
 // the worker loop below re-seeds hours from contracted and clears the state).
-// Sweeps never re-touch 'held' rows and NEVER re-hold 'confirmed' rows — the
-// admin explicitly decided to pay an off-roster reimbursement, and that decision
-// is sticky regardless of note edits or re-accruals.
+// Sweeps never re-touch 'held' rows and NEVER re-hold 'confirmed' rows: the
+// admin explicitly decided the off-roster line's fate, and that decision is
+// sticky regardless of note edits or re-accruals.
 //
 // Zeroing hours is load-bearing: the PATCH recomputes wage = hours x rate, and a
 // surviving non-zero hours would resurrect wage for a worker who was removed
-// from the roster. Negative clawback lines are preserved by a separate rule
-// (H1); zero-adjustment lines are still deleted.
+// from the roster. Zero-adjustment orphan lines (no payable to preserve, no debt
+// to keep) are still deleted.
 
 // Hold the given payout_event lines (by id). Only lines with held_state IS NULL
 // are touched, so a re-accrual never re-zeroes a held line's tracked adjustment
-// nor an admin's confirmed reimbursement. Returns the distinct payout ids
+// nor an admin's confirmed reimbursement. line_total_cents becomes
+// LEAST(adjustment_cents, 0): 0 for a positive (reimbursement) hold, the
+// negative debt itself for a negative (docked/clawed) hold, so the debt keeps
+// collecting through the payout-level clamp. Returns the distinct payout ids
 // actually held this call (for the caller's recompute set).
 async function holdReimbursementLines(client, eventIds) {
   if (!eventIds.length) return [];
@@ -55,7 +79,7 @@ async function holdReimbursementLines(client, eventIds) {
         SET held_state = 'held',
             hours = 0, wage_cents = 0, gratuity_share_cents = 0,
             card_tip_gross_cents = 0, card_tip_fee_cents = 0, card_tip_net_cents = 0,
-            line_total_cents = 0
+            line_total_cents = LEAST(payout_events.adjustment_cents, 0)
       WHERE id = ANY($1)
         AND held_state IS NULL
       RETURNING payout_id`,
@@ -181,17 +205,23 @@ async function accruePayoutsForProposal(proposalId) {
       // Nobody left on this event's roster. Prior accruals may have left payable
       // lines for this proposal in the open period; the main roster-correction
       // sweep below is unreachable from here, so sweep inline. Positive
-      // reimbursements are HELD (kept + tracked, zeroed to non-payable);
-      // zero-adjustment lines are deleted; negative clawback debt is preserved
-      // (H1). Removing the LAST worker is the common single-bartender case.
+      // reimbursements AND negative-adjustment wage lines WITH payables are HELD
+      // (kept + tracked, zeroed to non-payable, line_total = LEAST(adj,0));
+      // zero-adjustment lines are deleted; pure negative clawback debt stubs (no
+      // payables) are preserved untouched (H1). Same structural discriminator as
+      // the main orphan sweep below. Removing the LAST worker is the common
+      // single-bartender case.
       const holdCandidates = await client.query(
         `SELECT pe.id
            FROM payout_events pe
            JOIN payouts po ON po.id = pe.payout_id
            JOIN shifts s ON s.id = pe.shift_id
           WHERE s.proposal_id = $1 AND po.pay_period_id = $2
-            AND COALESCE(pe.adjustment_cents, 0) > 0
-            AND pe.held_state IS NULL`,
+            AND pe.held_state IS NULL
+            AND (pe.adjustment_cents > 0
+                 OR (pe.adjustment_cents < 0
+                     AND (pe.wage_cents > 0 OR pe.gratuity_share_cents > 0
+                          OR pe.card_tip_net_cents <> 0 OR pe.hours > 0)))`,
         [proposalId, payPeriodId]
       );
       const heldPayoutIds = await holdReimbursementLines(
@@ -432,47 +462,74 @@ async function accruePayoutsForProposal(proposalId) {
     // are never touched. A late-tip roll-forward line lives in a different period
     // than payPeriodId, so it is likewise left alone.
     const currentKeys = new Set(workers.rows.map(w => `${w.user_id}:${w.shift_id}`));
-    // Clawback debt lines (negative adjustment) are NEVER swept: the person
-    // owes that money regardless of roster status, and the tip's
-    // refunded_amount_cents marker has already advanced, so a swept debt line
-    // would be permanently un-collected (H1's leak in a new guise). Positive
-    // reimbursements are HELD, not deleted (holdReimbursementLines); only
+    // Structural discriminator (B13): a line is HELD, not paid, whenever the
+    // worker is off the roster and the line either carries a POSITIVE
+    // reimbursement OR is a real wage line whose adjustment went NEGATIVE (an
+    // admin dock or a same-period clawback merged into the wage line). Both must
+    // stop paying the worker's wage while the adjustment stays live for the admin
+    // decision; holdReimbursementLines sets line_total = LEAST(adjustment, 0) so
+    // a positive hold is non-payable and a negative hold keeps collecting the
+    // debt. Pure clawback debt stubs (all payables zero, negative adjustment) are
+    // NEVER swept: the person owes that money regardless of roster status and the
+    // tip's refunded_amount_cents marker has already advanced, so a swept debt
+    // line would be permanently un-collected (H1's leak in a new guise) — they
+    // are excluded from `orphans` below by !hasPayable and survive verbatim. Only
     // zero-adjustment orphan lines are deleted. Lines already 'held' are left
-    // alone, and 'confirmed' lines are NEVER re-held or deleted — the admin
-    // explicitly decided to pay that off-roster reimbursement.
+    // alone, and 'confirmed' lines are NEVER re-held or deleted: the admin
+    // explicitly decided that off-roster line's fate.
+    const hasPayable = (r) =>
+      Number(r.wage_cents || 0) > 0
+      || Number(r.gratuity_share_cents || 0) > 0
+      || Number(r.card_tip_net_cents || 0) !== 0
+      || Number(r.hours || 0) > 0;
     const orphans = existingRes.rows.filter(
       r => Number(r.pay_period_id) === Number(payPeriodId)
         && !currentKeys.has(`${r.contractor_id}:${r.shift_id}`)
-        && Number(r.adjustment_cents || 0) >= 0
+        && (Number(r.adjustment_cents || 0) >= 0 || hasPayable(r))
     );
     if (orphans.length) {
       const toHold = orphans.filter(
-        o => Number(o.adjustment_cents || 0) > 0 && !o.held_state
+        o => (Number(o.adjustment_cents || 0) > 0
+              || (Number(o.adjustment_cents || 0) < 0 && hasPayable(o)))
+          && !o.held_state
       );
       const toDelete = orphans.filter(o => Number(o.adjustment_cents || 0) === 0);
 
-      // Positive reimbursements: HOLD (kept + tracked, zeroed to non-payable). An
-      // admin PATCH later re-arms line_total = wage + gratuity + card_tip +
-      // adjustment. Breadcrumb so a held reimbursement is auditable (preserved).
+      // HOLD (kept + tracked, zeroed to non-payable / debt-collecting). An admin
+      // PATCH later re-arms line_total = wage + gratuity + card_tip + adjustment
+      // and flips to 'confirmed'. One UPDATE handles both signs (LEAST). Two
+      // distinct breadcrumbs so the auditable reason is precise: a positive hold
+      // parks a reimbursement pending confirm; a negative hold keeps collecting a
+      // dock/clawback off a worker who is no longer on the roster (closes the old
+      // "survives silently, fully payable" gap).
       await holdReimbursementLines(client, toHold.map(o => o.id));
-      if (toHold.length) {
+      const heldPositive = toHold.filter(o => Number(o.adjustment_cents || 0) > 0);
+      const heldNegative = toHold.filter(o => Number(o.adjustment_cents || 0) < 0);
+      const heldExtra = (bucket) => bucket.map(o => ({
+        payout_event_id: o.id,
+        payout_id: o.payout_id,
+        shift_id: o.shift_id,
+        contractor_id: o.contractor_id,
+        adjustment_cents: Number(o.adjustment_cents),
+        adjustment_note: o.adjustment_note,
+      }));
+      if (heldPositive.length) {
         Sentry.captureMessage(
           'payrollAccrual: holding off-roster payout lines with reimbursements (confirm or zero at payroll)',
           {
             level: 'warning',
             tags: { component: 'payrollAccrual', reason: 'orphan_reimbursement_held', preserved: true },
-            extra: {
-              proposalId,
-              payPeriodId,
-              held: toHold.map(o => ({
-                payout_event_id: o.id,
-                payout_id: o.payout_id,
-                shift_id: o.shift_id,
-                contractor_id: o.contractor_id,
-                adjustment_cents: Number(o.adjustment_cents),
-                adjustment_note: o.adjustment_note,
-              })),
-            },
+            extra: { proposalId, payPeriodId, held: heldExtra(heldPositive) },
+          }
+        );
+      }
+      if (heldNegative.length) {
+        Sentry.captureMessage(
+          'payrollAccrual: holding off-roster payout lines with a negative adjustment (debt still collecting; confirm or zero at payroll)',
+          {
+            level: 'warning',
+            tags: { component: 'payrollAccrual', reason: 'orphan_negative_adjustment_held', preserved: true },
+            extra: { proposalId, payPeriodId, held: heldExtra(heldNegative) },
           }
         );
       }
@@ -515,7 +572,9 @@ async function accruePayoutsForProposal(proposalId) {
       // period list and block period finalization (maybeFinalizePeriod waits for
       // every payout to be paid). Delete any such now-empty pending payout. A held
       // line keeps its payout non-empty, so those survive and are recomputed below
-      // (their held line_total is 0). A paid payout is never removed.
+      // (a positive hold's line_total is 0; a negative hold's is the debt, which
+      // the GREATEST(0, SUM) clamp floors to a $0 payable total). A paid payout is
+      // never removed.
       const orphanPayoutIds = [...new Set(orphans.map(o => o.payout_id))];
       const emptied = await client.query(
         `DELETE FROM payouts po

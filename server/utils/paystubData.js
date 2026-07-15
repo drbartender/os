@@ -76,16 +76,20 @@ async function assemblePaystubData(contractorId, periodId) {
       [contractorId, h.payday]
     ),
     pool.query(
-      // Held reimbursements (payout_events.held_state = 'held') are tracked but
-      // NON-payable: line_total_cents = 0, so payout totals (net) exclude them
-      // by construction. The adjustments aggregate must exclude them too or the
-      // stub stops footing (Adjustments vs NET PAID would disagree by exactly
-      // the held amount). Confirmed lines pay out normally and stay included.
+      // Held lines (payout_events.held_state = 'held') are sign-scoped (B13). A
+      // held POSITIVE reimbursement is tracked but NON-payable (line_total = 0),
+      // so it is excluded from the adjustments aggregate or the stub stops
+      // footing (Adjustments vs NET PAID would disagree by the held amount). A
+      // held NEGATIVE line (docked/clawed off-roster worker) keeps its debt in
+      // line_total (LEAST(adj,0)) and thus IS inside the payout total, so it must
+      // be COUNTED here or the stub un-foots by the debt. Exclude only held rows
+      // with a positive adjustment; confirmed lines pay out normally and stay in.
       `SELECT COALESCE(SUM(pe.wage_cents),0) AS wages,
               COALESCE(SUM(pe.gratuity_share_cents),0) AS gratuity,
               COALESCE(SUM(pe.card_tip_net_cents),0) AS card_tips,
               COALESCE(SUM(pe.adjustment_cents)
-                FILTER (WHERE pe.held_state IS DISTINCT FROM 'held'),0) AS adjustments
+                FILTER (WHERE pe.held_state IS DISTINCT FROM 'held'
+                        OR pe.adjustment_cents < 0),0) AS adjustments
          FROM payout_events pe
          JOIN payouts po ON po.id = pe.payout_id
          JOIN pay_periods pp ON pp.id = po.pay_period_id
@@ -98,9 +102,12 @@ async function assemblePaystubData(contractorId, periodId) {
     wages_cents: sum('wage_cents'),
     gratuity_cents: sum('gratuity_share_cents'),
     card_tips_net_cents: sum('card_tip_net_cents'),
-    // Same held-exclusion as the YTD aggregate above (see the SQL comment).
+    // Same sign-scoped held-exclusion as the YTD aggregate above (B13): exclude
+    // only a held POSITIVE reimbursement (line_total 0); a held NEGATIVE line's
+    // debt is inside the payout total, so it must be counted.
     adjustments_cents: ev.rows.reduce(
-      (a, r) => a + (r.held_state === 'held' ? 0 : Number(r.adjustment_cents || 0)), 0
+      (a, r) => a + ((r.held_state === 'held' && Number(r.adjustment_cents || 0) > 0)
+        ? 0 : Number(r.adjustment_cents || 0)), 0
     ),
     net_cents: Number(h.total_cents), // canonical payout total, not a re-sum
   };

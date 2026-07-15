@@ -12,6 +12,7 @@ const { accruePayoutsForProposal } = require('./payrollAccrual');
 const { payPeriodForDate, computePayday } = require('./payrollPeriods');
 const { assemblePaystubData } = require('./paystubData');
 const payrollRouter = require('../routes/admin/payroll');
+const { register: registerStaffPayouts } = require('../routes/staffPortal/payouts');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('payrollAccrual.sweepPreserve.test.js refuses to run against production');
@@ -31,13 +32,17 @@ if (process.env.NODE_ENV === 'production') {
 // survive untouched; zero-adjustment lines are still deleted.
 
 const EVENT_DATE = '2026-08-11';
-const EMAILS = "email IN ('sweep-admin@example.com','sweep-current@example.com','sweep-a@example.com','sweep-b@example.com','sweep-d@example.com','sweep-e@example.com','sweep-f@example.com','sweep-g@example.com')";
+const EMAILS = "email IN ('sweep-admin@example.com','sweep-current@example.com','sweep-a@example.com','sweep-b@example.com','sweep-d@example.com','sweep-e@example.com','sweep-f@example.com','sweep-g@example.com','sweep-cur3@example.com','sweep-h@example.com','sweep-i@example.com','sweep-j@example.com','sweep-k@example.com')";
 
 let server, baseUrl, adminToken;
 let periodId, proposalId1, proposalId2, shiftId1, shiftId2;
+let proposalId3, proposalId4, shiftId3, shiftId4;
 let adminId, currentId, userA, userB, userD, userE, userF, userG;
+let curr3Id, userH, userI, userJ, userK;
 // payout_event ids for the seeded lines
-let peA, peB, peD, peE;
+let peA, peB, peD, peE, peH, peI, peJ;
+// req.user.id for the mounted staff-portal payouts router (B13 footing mirror).
+let meUserId = null;
 
 async function seedUser(email, role = 'staff') {
   const u = await pool.query(
@@ -169,9 +174,77 @@ before(async () => {
     wage_cents: 8000, hours: 4, line_total_cents: 8700,
   }));
 
+  // ── B13 fixtures: negative-adjustment wage lines on off-roster workers ──
+  curr3Id = await seedUser('sweep-cur3@example.com');
+  userH = await seedUser('sweep-h@example.com');
+  userI = await seedUser('sweep-i@example.com');
+  userJ = await seedUser('sweep-j@example.com');
+  userK = await seedUser('sweep-k@example.com');
+
+  // Proposal 3 (has one current worker, curr3 -> exercises the orphan sweep).
+  const pr3 = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time,
+                            event_duration_hours, total_price, amount_paid, pricing_snapshot)
+     VALUES (NULL, $1, 'completed', 'sweep-preserve-test', '5:00 PM', 4, 1000, 0, '{"breakdown":[]}')
+     RETURNING id`,
+    [EVENT_DATE]
+  );
+  proposalId3 = pr3.rows[0].id;
+  const s3 = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ($1, '5:00 PM', 'open', $2) RETURNING id`,
+    [EVENT_DATE, proposalId3]
+  );
+  shiftId3 = s3.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1, $2, 'Bartender', 'approved')`,
+    [shiftId3, curr3Id]
+  );
+  //  H: off-roster wage line with a NEGATIVE adjustment (admin dock) -> must be
+  //  HELD by the orphan sweep (payable components zeroed, debt kept in line_total).
+  ({ eventId: peH } = await seedPayoutLine(userH, shiftId3, {
+    adjustment_cents: -1500, adjustment_note: 'till shortage',
+    wage_cents: 9000, hours: 4.5, line_total_cents: 7500,
+  }));
+  //  J: an ALREADY-held negative line (for the PATCH-confirm lifecycle test).
+  ({ eventId: peJ } = await seedPayoutLine(userJ, shiftId3, {
+    adjustment_cents: -1500, adjustment_note: 'docked wage',
+    wage_cents: 0, hours: 0, line_total_cents: -1500, held_state: 'held',
+  }));
+
+  // Proposal 4 (no current workers -> exercises the empty-roster inline sweep).
+  const pr4 = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time,
+                            event_duration_hours, total_price, amount_paid, pricing_snapshot)
+     VALUES (NULL, $1, 'completed', 'sweep-preserve-test', '8:00 PM', 4, 1000, 0, '{"breakdown":[]}')
+     RETURNING id`,
+    [EVENT_DATE]
+  );
+  proposalId4 = pr4.rows[0].id;
+  const s4 = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ($1, '8:00 PM', 'open', $2) RETURNING id`,
+    [EVENT_DATE, proposalId4]
+  );
+  shiftId4 = s4.rows[0].id;
+  //  I: negative-adjustment wage line on an event with no roster -> HELD via the
+  //  empty-roster sweep (same structural discriminator as the main sweep).
+  ({ eventId: peI } = await seedPayoutLine(userI, shiftId4, {
+    adjustment_cents: -1500, adjustment_note: 'register short',
+    wage_cents: 9000, hours: 4.5, line_total_cents: 7500,
+  }));
+
   const app = express();
   app.use(express.json());
   app.use('/api/admin', payrollRouter);
+  // Mount the real staff-portal payouts router behind a fake auth that pins
+  // req.user.id to `meUserId` (set per-test). This lets the footing test hit the
+  // ACTUAL GET /api/me/payouts/:periodId aggregate, not a re-derivation.
+  const meRouter = express.Router();
+  meRouter.use((req, _res, next) => { req.user = { id: meUserId }; next(); });
+  registerStaffPayouts(meRouter);
+  app.use('/api/me', meRouter);
   app.use((err, req, res, _next) => {
     if (err instanceof AppError) return res.status(err.statusCode).json({ error: err.message });
     res.status(500).json({ error: err.message });
@@ -402,4 +475,156 @@ test('schema backfill stamps held_state on old marker rows and is idempotent', a
   assert.equal(Number(g.adjustment_cents), 300, 'adjustment untouched by backfill');
   const second = await pool.query(backfillSql);
   assert.equal(second.rowCount, 0, 'second run is a no-op (idempotent)');
+});
+
+// ── B13: negative-adjustment wage lines on off-roster workers are HELD ──
+// A wage line whose adjustment went negative (admin dock, or a same-period
+// clawback merged into the wage line) used to survive the sweep FULLY PAYABLE
+// once its worker fell off the roster, because the guard keyed on the sign of
+// adjustment_cents alone. The structural discriminator (hasPayable) now HOLDS
+// these: payable components zeroed, the debt kept in line_total = LEAST(adj,0)
+// so it keeps collecting through the payout-level clamp, held_state 'held', a
+// distinct Sentry breadcrumb. Pure clawback stubs (no payables) still survive
+// verbatim (H1); positive reimbursements are unchanged (LEAST(pos,0)=0).
+
+test('B13 main sweep: HOLDS an off-roster wage line with a NEGATIVE adjustment (wage zeroed, debt kept)', async () => {
+  const res = await accruePayoutsForProposal(proposalId3);
+  assert.equal(res.skipped, false, 'accrual ran (curr3 is on the roster)');
+
+  const h = await lineById(peH);
+  assert.ok(h, 'the negative-adjustment wage line survives the sweep (not deleted, not left payable)');
+  assert.equal(h.held_state, 'held', 'held_state set structurally (RED at HEAD: stays NULL, fully payable)');
+  assert.equal(Number(h.adjustment_cents), -1500, 'adjustment preserved as the tracked debt');
+  assert.equal(Number(h.line_total_cents), -1500, 'line_total = LEAST(adj,0) = the debt (keeps collecting)');
+  assert.equal(Number(h.wage_cents), 0, 'wage zeroed (worker off roster)');
+  assert.equal(Number(h.gratuity_share_cents), 0, 'gratuity zeroed');
+  assert.equal(Number(h.card_tip_net_cents), 0, 'card tip net zeroed');
+  assert.equal(Number(h.hours), 0, 'hours zeroed');
+  assert.equal(h.adjustment_note, 'till shortage', 'note untouched (structural state, not marker text)');
+
+  const po = await pool.query('SELECT total_cents FROM payouts WHERE id = $1', [h.payout_id]);
+  assert.equal(Number(po.rows[0].total_cents), 0, 'payout total recomputed GREATEST(0, -1500) = 0');
+});
+
+test('B13 empty-roster sweep: HOLDS a negative-adjustment wage line when nobody is on the roster', async () => {
+  const res = await accruePayoutsForProposal(proposalId4);
+  assert.equal(res.skipped, true);
+  assert.equal(res.reason, 'no_approved_workers');
+
+  const i = await lineById(peI);
+  assert.ok(i, 'the negative-adjustment line survives the empty-roster sweep');
+  assert.equal(i.held_state, 'held', 'held_state set structurally (RED at HEAD: stays NULL, payable)');
+  assert.equal(Number(i.adjustment_cents), -1500, 'adjustment preserved');
+  assert.equal(Number(i.line_total_cents), -1500, 'line_total = LEAST(adj,0)');
+  assert.equal(Number(i.wage_cents), 0, 'wage zeroed');
+  assert.equal(Number(i.hours), 0, 'hours zeroed');
+  assert.equal(i.adjustment_note, 'register short', 'note untouched');
+  const po = await pool.query('SELECT total_cents FROM payouts WHERE id = $1', [i.payout_id]);
+  assert.equal(Number(po.rows[0].total_cents), 0, 'payout total clamped to 0');
+});
+
+test('B13 PATCH confirms a held negative line: held -> confirmed, line_total stays the debt, sticky', async () => {
+  meUserId = null;
+  const r = await req('PATCH', `/api/admin/payroll/payout-events/${peJ}`, adminToken, { adjustment_note: 'confirmed dock' });
+  assert.equal(r.status, 200);
+  const body = JSON.parse(r.body);
+  assert.equal(body.event.held_state, 'confirmed', 'held flips to confirmed on admin PATCH');
+  assert.equal(Number(body.event.line_total_cents), -1500, 'line_total stays = adjustment (hours 0 -> wage 0)');
+  assert.equal(Number(body.event.adjustment_cents), -1500, 'adjustment intact');
+  assert.equal(Number(body.event.wage_cents), 0, 'wage stays 0');
+  assert.equal(Number(body.payout_total_cents), 0, 'payout total clamps the debt to 0');
+
+  // A subsequent re-accrual must leave the confirmed line untouched (never re-held).
+  await accruePayoutsForProposal(proposalId3);
+  const j = await lineById(peJ);
+  assert.equal(j.held_state, 'confirmed', 'still confirmed after re-accrual');
+  assert.equal(Number(j.line_total_cents), -1500, 'still collecting the debt');
+  assert.equal(Number(j.adjustment_cents), -1500, 'adjustment intact');
+});
+
+test('B13 footing: a held NEGATIVE line is COUNTED in adjustments so the paystub AND portal foot', async () => {
+  // userK: one normal PAID wage line (10000) + one held NEGATIVE line
+  // (adjustment -1500, line_total -1500) in the same PAID payout. Payout total =
+  // 10000 - 1500 = 8500. The adjustments bucket MUST include the -1500 (unlike a
+  // held positive, which is line_total 0) or Adjustments vs NET PAID disagree by
+  // exactly the debt. This is the "merged debt summed against other lines" case.
+  const { payoutId } = await seedPayoutLine(userK, shiftId1, {
+    adjustment_cents: 0, adjustment_note: null,
+    wage_cents: 10000, hours: 5, line_total_cents: 10000,
+    payout_status: 'paid',
+  });
+  await seedPayoutLine(userK, shiftId2, {
+    adjustment_cents: -1500, adjustment_note: 'docked, off roster',
+    wage_cents: 0, hours: 0, line_total_cents: -1500,
+    held_state: 'held', payout_status: 'paid',
+  });
+  await pool.query(
+    `UPDATE payouts SET total_cents = 8500, paid_at = NOW(), payment_method = 'venmo'
+      WHERE id = $1`,
+    [payoutId]
+  );
+
+  const stub = await assemblePaystubData(userK, periodId);
+  assert.ok(stub, 'paystub data assembled');
+  assert.equal(stub.thisPeriod.adjustments_cents, -1500, 'held-negative debt is COUNTED this period (RED at HEAD: excluded -> 0)');
+  assert.equal(stub.thisPeriod.wages_cents, 10000, 'wages include the paid line');
+  assert.equal(stub.thisPeriod.net_cents, 8500, 'net = canonical payout total');
+  assert.equal(
+    stub.thisPeriod.wages_cents + stub.thisPeriod.gratuity_cents
+      + stub.thisPeriod.card_tips_net_cents + stub.thisPeriod.adjustments_cents,
+    stub.thisPeriod.net_cents,
+    'this-period breakdown foots against net'
+  );
+  assert.equal(stub.ytd.adjustments_cents, -1500, 'YTD adjustments include the held-negative debt');
+  assert.equal(stub.ytd.wages_cents, 10000, 'YTD wages');
+  assert.equal(stub.ytd.net_cents, 8500, 'YTD net = paid payout total');
+  assert.equal(
+    stub.ytd.wages_cents + stub.ytd.gratuity_cents
+      + stub.ytd.card_tips_net_cents + stub.ytd.adjustments_cents,
+    stub.ytd.net_cents,
+    'YTD breakdown foots against net'
+  );
+
+  // Mirror-check the ACTUAL staff-portal detail aggregate (staffPortal/payouts.js).
+  meUserId = userK;
+  const r = await req('GET', `/api/me/payouts/${periodId}`, null, null);
+  meUserId = null;
+  assert.equal(r.status, 200);
+  const detail = JSON.parse(r.body);
+  assert.equal(detail.summary.adjustments_cents, -1500, 'portal counts the held-negative debt (RED at HEAD: 0)');
+  assert.equal(detail.summary.total_cents, 8500, 'portal total = canonical payout total');
+  const s = detail.summary;
+  assert.equal(
+    s.wages_cents + s.gratuity_cents
+      + (s.card_tips_gross_cents - s.card_processing_fee_cents) + s.adjustments_cents,
+    s.total_cents,
+    'portal summary foots against total_cents'
+  );
+});
+
+test('B13 roster re-add: a held docked worker regains wage; held cleared; debt preserved', async () => {
+  const pre = await lineById(peH);
+  assert.equal(pre.held_state, 'held', 'precondition: line is held (from the main-sweep test)');
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1, $2, 'Bartender', 'approved')
+     ON CONFLICT (shift_id, user_id) DO UPDATE SET status = 'approved', dropped_at = NULL`,
+    [shiftId3, userH]
+  );
+  try {
+    const res = await accruePayoutsForProposal(proposalId3);
+    assert.equal(res.skipped, false, 'accrual ran');
+    const h = await lineById(peH);
+    assert.equal(h.held_state, null, 'held_state cleared on roster re-add');
+    assert.equal(Number(h.hours), 4.5, 'hours re-seeded from contracted_hours (not the held 0)');
+    assert.equal(Number(h.wage_cents), 9000, 'contracted wage restored (4.5h x $20/hr)');
+    assert.equal(Number(h.adjustment_cents), -1500, 'dock preserved');
+    assert.equal(h.adjustment_note, 'till shortage', 'note preserved');
+    assert.equal(Number(h.line_total_cents), 7500, 'line_total = wage + shares - dock');
+  } finally {
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = $2', [shiftId3, userH]);
+    await accruePayoutsForProposal(proposalId3);
+    const h = await lineById(peH);
+    assert.equal(h.held_state, 'held', 'line re-held after the worker went off roster again');
+  }
 });

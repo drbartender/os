@@ -179,11 +179,13 @@ function register(router) {
     // Sum in JS off the same rows we're already returning. Money is integer
     // cents — Number() each column before summing (pg returns INTEGERs as JS
     // numbers, but we coerce defensively in case a NUMERIC sneaks in).
-    // Held reimbursements (held_state = 'held') are tracked but NON-payable:
-    // their line_total is 0, so the canonical payout total excludes them by
-    // construction — the adjustments aggregate must exclude them too or the
-    // summary stops footing against total_cents (mirrors paystubData.js).
-    // Wage/gratuity/tip components are zeroed on held lines by construction.
+    // Held lines are sign-scoped (B13, mirrors paystubData.js). A held POSITIVE
+    // reimbursement is tracked but NON-payable (line_total 0), so it is excluded
+    // from the adjustments aggregate or the summary stops footing against
+    // total_cents. A held NEGATIVE line (docked/clawed off-roster worker) keeps
+    // its debt in line_total (LEAST(adj,0)), so it IS inside the payout total and
+    // must be counted here. Wage/gratuity/tip components are zeroed on any held
+    // line by construction. Exclude only held rows with a positive adjustment.
     let wages = 0;
     let gratuity = 0;
     let cardGross = 0;
@@ -194,7 +196,7 @@ function register(router) {
       gratuity    += Number(r.gratuity_share_cents);
       cardGross   += Number(r.card_tip_gross_cents);
       cardFee     += Number(r.card_tip_fee_cents);
-      adjustments += r.held_state === 'held' ? 0 : Number(r.adjustment_cents);
+      adjustments += (r.held_state === 'held' && Number(r.adjustment_cents) > 0) ? 0 : Number(r.adjustment_cents);
       return {
         shift_id: r.shift_id,
         event_date: ymd(r.event_date),
