@@ -87,6 +87,39 @@ async function recordAudit({ triggeredBy, targetE164, callSid, status }) {
   );
 }
 
+// Atomic dead-leg alert claim (spec B11 TOCTOU fix). The /status callback claims
+// the right to alert BEFORE sending Telegram, using the uq_call_audit_dead_leg
+// partial unique index as the arbiter: at most one concurrent (call_sid,
+// dead-status) callback wins the INSERT; the losers get DO NOTHING (empty
+// RETURNING). The winning row doubles as the forensic audit row. Returns true iff
+// this caller won and therefore owns the alert. Caller must pass a non-null
+// callSid (NULL call_sid is outside the partial index and is handled by the
+// caller's early-out).
+async function claimDeadLegAudit({ triggeredBy, callSid, status }) {
+  const { rows } = await pool.query(
+    `INSERT INTO call_audit (triggered_by, target_e164, call_sid, status)
+     VALUES ($1, NULL, $2, $3)
+     ON CONFLICT (call_sid, status)
+       WHERE call_sid IS NOT NULL AND status IN ('no-answer','busy','failed','canceled')
+       DO NOTHING
+     RETURNING id`,
+    [triggeredBy ?? null, callSid, status]
+  );
+  return rows.length > 0;
+}
+
+// Release a dead-leg claim after a FAILED send so Twilio's next at-least-once
+// redelivery can re-claim and re-alert (preserves the deliberate
+// retry-on-failed-send property). Scoped by (call_sid, status) — the exact key
+// this request just claimed, so it can never delete another call's or status's
+// audit row.
+async function releaseDeadLegAudit({ callSid, status }) {
+  await pool.query(
+    'DELETE FROM call_audit WHERE call_sid = $1 AND status = $2',
+    [callSid, status]
+  );
+}
+
 // Chunked DELETE loop (mirror of webhookEventsPruneScheduler.js:10-34).
 async function batchedDelete(sql, params) {
   let total = 0;
@@ -153,6 +186,8 @@ module.exports = {
   lookupTargetByCallSid,
   countPlacedSince,
   recordAudit,
+  claimDeadLegAudit,
+  releaseDeadLegAudit,
   pruneVaCallingRows,
   RETENTION_DAYS,
   PRUNE_BATCH_SIZE,

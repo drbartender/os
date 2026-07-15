@@ -197,7 +197,7 @@ async function scheduleEventEve(proposalId, executor) {
     await exec.query(
       `DELETE FROM scheduled_messages
         WHERE entity_type = 'proposal' AND entity_id = $1
-          AND message_type = 'event_eve' AND status IN ('pending', 'processing')`,
+          AND message_type = 'event_eve' AND status = 'pending'`,
       [proposalId]
     );
     return;
@@ -206,9 +206,22 @@ async function scheduleEventEve(proposalId, executor) {
   await exec.query(
     `DELETE FROM scheduled_messages
       WHERE entity_type = 'proposal' AND entity_id = $1
-        AND message_type = 'event_eve' AND status IN ('pending', 'processing')`,
+        AND message_type = 'event_eve' AND status = 'pending'`,
     [proposalId]
   );
+  // Delete pending-only (NOT 'processing'): a mid-send row is a live dispatcher
+  // claim, and its terminal sent-marker is guarded on status='processing'
+  // (scheduledMessageDispatcher terminal write). Deleting it here would erase
+  // that claim, drop the sent-marker, and let the re-INSERT below queue a
+  // duplicate T-24 SMS. The arbiter for the ON CONFLICT is the WIDENED partial
+  // unique index (schema.sql idx_scheduled_messages_pending_uniq, over
+  // status IN ('pending','processing')): if a mid-send row survives the
+  // pending-only DELETE, this INSERT conflicts against it and DO-NOTHINGs — the
+  // in-flight send is the single event-eve touch (handleEventEve renders from
+  // the live DB at send time), its sent-marker lands, and no duplicate row is
+  // scheduled. Mirrors insertIfMissing treating 'processing' as already-covered.
+  // Accepted trade-off: a reschedule landing in that seconds-wide mid-send
+  // window does not get a fresh T-24 SMS at the new event time.
   await exec.query(
     `INSERT INTO scheduled_messages
        (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)

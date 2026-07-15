@@ -33,6 +33,13 @@ test('schema.sql declares telegram_update with update_id as PK', () => {
   assert.match(schemaSql, /update_id\s+BIGINT PRIMARY KEY/);
 });
 
+test('schema.sql declares uq_call_audit_dead_leg as a partial unique index for the atomic dead-leg claim (B11)', () => {
+  assert.match(
+    schemaSql,
+    /CREATE UNIQUE INDEX IF NOT EXISTS uq_call_audit_dead_leg[\s\S]*?ON call_audit\s*\(call_sid,\s*status\)[\s\S]*?WHERE call_sid IS NOT NULL[\s\S]*?status IN \('no-answer','busy','failed','canceled'\)/
+  );
+});
+
 // ── (b) DB-integration: apply the idempotent DDL and verify via catalog ──────
 // Skips when DATABASE_URL is unset (pure tests above still cover content).
 // Applying CREATE TABLE/INDEX IF NOT EXISTS is safe against the shared dev DB:
@@ -61,6 +68,7 @@ before(async () => {
 
 after(async () => {
   if (!HAS_DB || !pool) return;
+  await pool.query("DELETE FROM call_audit WHERE call_sid LIKE 'TEST_B11_%' OR triggered_by = -999011");
   await pool.end();
 });
 
@@ -127,6 +135,35 @@ dbTest('expected indexes exist (call_sid, created_at)', async () => {
     rows.map((r) => r.indexname),
     ['idx_call_audit_created_at', 'idx_pending_call_call_sid']
   );
+});
+
+dbTest('uq_call_audit_dead_leg dedups one row per (call_sid, dead-status) and ignores NULL call_sid (B11)', async () => {
+  // A first dead-leg row inserts.
+  await pool.query(
+    "INSERT INTO call_audit (triggered_by, target_e164, call_sid, status) VALUES (-999011, NULL, 'TEST_B11_x', 'failed')"
+  );
+  // A duplicate (call_sid, dead-status) raw INSERT must violate the partial unique index.
+  await assert.rejects(
+    () => pool.query(
+      "INSERT INTO call_audit (triggered_by, target_e164, call_sid, status) VALUES (-999011, NULL, 'TEST_B11_x', 'failed')"
+    ),
+    /duplicate key value|unique constraint/i
+  );
+  // The partial predicate EXCLUDES call_sid=NULL: two 'rejected_cap' NULL rows both insert.
+  await pool.query(
+    "INSERT INTO call_audit (triggered_by, target_e164, call_sid, status) VALUES (-999011, NULL, NULL, 'rejected_cap')"
+  );
+  await pool.query(
+    "INSERT INTO call_audit (triggered_by, target_e164, call_sid, status) VALUES (-999011, NULL, NULL, 'rejected_cap')"
+  );
+  // A different status for the same call_sid is a distinct key (e.g. the 'placed' row).
+  await pool.query(
+    "INSERT INTO call_audit (triggered_by, target_e164, call_sid, status) VALUES (-999011, NULL, 'TEST_B11_x', 'placed')"
+  );
+  const { rows } = await pool.query(
+    "SELECT COUNT(*)::int AS n FROM call_audit WHERE triggered_by = -999011"
+  );
+  assert.equal(rows[0].n, 4, 'one dead-leg + two NULL rejected_cap + one placed all persisted');
 });
 
 dbTest('telegram_update update_id is the primary key', async () => {

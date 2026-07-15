@@ -418,6 +418,16 @@ test('duplicate-heal: a committed lead with no draft heals on redelivery; a full
   created.clientIds.push(clientId);
   assert.equal(l1.rows[0].proposal_id, null, 'strand: no draft yet');
 
+  // The heal now fires only OUTSIDE the in-flight window (created_at older than
+  // 10 minutes). Backdate the strand so this redelivery is heal-eligible; without
+  // this the fix would defer it as an in-flight duplicate (503 retry_later).
+  // Semantics-preserving: the strand still heals on redelivery — now meaning a
+  // redelivery that arrives outside the original attempt's in-flight window.
+  await pool.query(
+    "UPDATE thumbtack_leads SET created_at = NOW() - INTERVAL '20 minutes' WHERE negotiation_id = $1",
+    [neg]
+  );
+
   // Redelivery with the REAL builder: the heal must run the post-commit steps
   // and create the draft.
   thumbtackRouter.__setDeps({ createDraftProposalFromLead });
@@ -433,6 +443,67 @@ test('duplicate-heal: a committed lead with no draft heals on redelivery; a full
   const third = await postLead(neg);
   assert.equal(third.status, 200);
   assert.equal(third.body.status, 'duplicate', 'a fully-processed duplicate is skipped, never re-run');
+});
+
+// B10 RED: a duplicate delivered while the FIRST attempt's post-commit tail is
+// still in flight (inside the 10-minute window) must NOT double-notify. The
+// proposal_id heal marker cannot tell a crashed original from one still alive in
+// its tail; the created_at window gate defers the in-flight duplicate with a 503
+// so the provider keeps retrying rather than firing a second admin notify.
+test('B10: a duplicate delivered while the first attempt is mid-tail defers (503) and does not double-notify', async () => {
+  let draftCalls = 0;
+  let releaseFirstDraft;
+  const firstDraftGate = new Promise((r) => { releaseFirstDraft = r; });
+  let notifyCount = 0;
+  thumbtackRouter.__setDeps({
+    // First call parks in the post-commit tail (models the original still alive,
+    // pre-notify). Later calls return null immediately. Returns null so proposal_id
+    // stays NULL — the exact strand shape the heal marker keys on.
+    createDraftProposalFromLead: async () => {
+      draftCalls += 1;
+      if (draftCalls === 1) await firstDraftGate;
+      return null;
+    },
+    notifyAdminCategory: async () => { notifyCount += 1; return { ok: true }; },
+  });
+  const negI = `test-inflight-${Date.now()}`;
+  created.negotiationIds.push(negI);
+
+  // Attempt A: do NOT await — it commits the lead + client, releases, then parks
+  // inside runPostCommitSteps at the draft gate (before its own notify).
+  const firstP = postLead(negI);
+
+  // Wait until A has committed the lead with a client and proposal_id still NULL.
+  let leadRow = null;
+  for (let i = 0; i < 200; i += 1) {
+    const r = await pool.query('SELECT client_id, proposal_id FROM thumbtack_leads WHERE negotiation_id = $1', [negI]);
+    if (r.rows.length && r.rows[0].client_id && r.rows[0].proposal_id === null) { leadRow = r.rows[0]; break; }
+    await new Promise((res) => setTimeout(res, 25));
+  }
+  assert.ok(leadRow, 'attempt A committed the lead + client and is parked in its post-commit tail');
+  created.clientIds.push(leadRow.client_id);
+
+  try {
+    // The duplicate arrives inside the in-flight window: must be deferred, not healed.
+    const dup = await postLead(negI);
+    assert.equal(dup.status, 503, 'the in-flight duplicate is deferred (503), not healed (HEAD: 200)');
+    assert.equal(dup.body.status, 'retry_later');
+    // The gated duplicate touched nothing: no second draft-builder call, no notify.
+    assert.equal(draftCalls, 1, 'the gated duplicate did not invoke the draft builder a second time');
+  } finally {
+    // Always release A's parked tail — otherwise its HTTP request never responds
+    // and the after() server.close() hangs.
+    releaseFirstDraft();
+  }
+
+  // A finishes and fires its single notify.
+  const first = await firstP;
+  assert.equal(first.status, 200);
+  assert.equal(first.body.status, 'ok');
+  assert.equal(notifyCount, 1, 'exactly one admin notify across the original + in-flight duplicate (HEAD: 2)');
+
+  const afterRow = await pool.query('SELECT proposal_id FROM thumbtack_leads WHERE negotiation_id = $1', [negI]);
+  assert.equal(afterRow.rows[0].proposal_id, null, 'the gated duplicate left proposal_id NULL');
 });
 
 after(async () => {

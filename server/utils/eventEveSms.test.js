@@ -117,3 +117,94 @@ test('event_eve handler > sends an SMS even with no bartender assigned', async (
   assert.strictEqual(rows[0].status, 'sent');
   __setSmsDeps({ sendSMS: require('./sms')._realSendSMS });
 });
+
+// B9: reverting the 99fd240 'processing' widening. A reschedule must NOT delete
+// a mid-send ('processing') row out from under the dispatcher.
+test('scheduleEventEve > a reschedule during a mid-send claim keeps the sent-marker and never queues a duplicate', async () => {
+  _clearHandlersForTest();
+  registerEventEveHandler();
+  // 1. Schedule the initial event_eve row (pending).
+  await scheduleEventEve(proposalId);
+  // 2. Simulate the dispatcher claiming the row (pending -> processing), exactly
+  //    as dispatchRow does (scheduledMessageDispatcher.js claim UPDATE).
+  const claim = await pool.query(
+    `UPDATE scheduled_messages SET status='processing', claimed_at=NOW()
+      WHERE entity_id=$1 AND entity_type='proposal' AND message_type='event_eve' AND status='pending'`,
+    [proposalId]
+  );
+  assert.strictEqual(claim.rowCount, 1, 'the initial pending row was claimed');
+  // 3. A reschedule moves the event out.
+  await pool.query(
+    "UPDATE proposals SET event_date = event_date + INTERVAL '7 days' WHERE id = $1",
+    [proposalId]
+  );
+  // 4. The reschedule cascade re-invokes scheduleEventEve while the send is in flight.
+  await scheduleEventEve(proposalId);
+  // 5. Simulate the dispatcher's terminal sent-marker (guarded on status='processing').
+  const terminal = await pool.query(
+    `UPDATE scheduled_messages SET status='sent', sent_at=NOW()
+      WHERE entity_id=$1 AND entity_type='proposal' AND message_type='event_eve' AND status='processing'`,
+    [proposalId]
+  );
+  // The in-flight claim must survive the reschedule so its sent-marker lands (HEAD: 0 — deleted).
+  assert.strictEqual(terminal.rowCount, 1, 'the surviving processing row was marked sent (claim not deleted)');
+  // ...and no duplicate pending row was scheduled for the tuple (HEAD: 1 — the re-insert).
+  const pending = await pool.query(
+    "SELECT COUNT(*)::int AS n FROM scheduled_messages WHERE entity_id=$1 AND message_type='event_eve' AND status='pending'",
+    [proposalId]
+  );
+  assert.strictEqual(pending.rows[0].n, 0, 'no duplicate pending event_eve row');
+  const all = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE entity_id=$1 AND message_type='event_eve'",
+    [proposalId]
+  );
+  assert.strictEqual(all.rows.length, 1, 'exactly one event_eve row total');
+  assert.strictEqual(all.rows[0].status, 'sent');
+});
+
+// B9: end-to-end race through the real dispatcher. A reschedule fired while the
+// dispatcher is mid-send must not double-schedule or lose the send.
+test('scheduleEventEve > end-to-end: a reschedule racing a live dispatch sends exactly once, no duplicate queued', async () => {
+  _clearHandlersForTest();
+  registerEventEveHandler();
+  const { __setSmsDeps } = require('./sms');
+  let smsCount = 0;
+  let releaseGate;
+  const gate = new Promise((r) => { releaseGate = r; });
+  let markEntered;
+  const entered = new Promise((r) => { markEntered = r; });
+  __setSmsDeps({
+    sendSMS: async () => { smsCount += 1; markEntered(); await gate; return { sid: `stub-${Date.now()}` }; },
+  });
+  try {
+    // A due event_eve row (mirrors the handler test's insert above).
+    await pool.query(
+      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+       VALUES ($1, 'proposal', 'event_eve', 'client', $2, 'sms', NOW() - INTERVAL '1 minute')`,
+      [proposalId, clientId]
+    );
+    // Dispatch WITHOUT awaiting; the stub blocks on the gate mid-send (the row is now 'processing').
+    const dispatchP = dispatchPending();
+    await entered;
+    // Reschedule racing the in-flight send.
+    await pool.query(
+      "UPDATE proposals SET event_date = event_date + INTERVAL '7 days' WHERE id = $1",
+      [proposalId]
+    );
+    await scheduleEventEve(proposalId);
+    // Let the send finish.
+    releaseGate();
+    await dispatchP;
+    assert.strictEqual(smsCount, 1, 'exactly one SMS sent across the race');
+    const { rows } = await pool.query(
+      "SELECT status FROM scheduled_messages WHERE entity_id=$1 AND message_type='event_eve'",
+      [proposalId]
+    );
+    assert.strictEqual(rows.length, 1, 'exactly one event_eve row total');
+    assert.strictEqual(rows[0].status, 'sent', 'the in-flight row was marked sent (HEAD: pending — the queued duplicate)');
+    assert.strictEqual(rows.filter((r) => r.status === 'pending').length, 0, 'no duplicate pending row was queued');
+  } finally {
+    releaseGate();
+    __setSmsDeps({ sendSMS: require('./sms')._realSendSMS });
+  }
+});

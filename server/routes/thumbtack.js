@@ -10,8 +10,9 @@ const { safeEqual } = require('../utils/secrets');
 const { createDraftProposalFromLead } = require('../utils/thumbtackProposalDraft');
 
 // Test seam: lets thumbtack.test.js stub the draft builder to throw and prove
-// the webhook still 200s with the lead persisted.
-let _deps = { createDraftProposalFromLead };
+// the webhook still 200s with the lead persisted, and count notifyAdminCategory
+// calls to prove the in-flight-duplicate heal gate does not double-notify.
+let _deps = { createDraftProposalFromLead, notifyAdminCategory };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 const asyncHandler = require('../middleware/asyncHandler');
 
@@ -326,7 +327,7 @@ async function runPostCommitSteps({ lead, clientId }) {
       adminUrl,
       proposalUrl,
     });
-    await notifyAdminCategory({
+    await _deps.notifyAdminCategory({
       category: 'routine_thumbtack',
       subject: tpl.subject,
       emailHtml: tpl.html,
@@ -373,7 +374,9 @@ router.post('/leads', asyncHandler(async (req, res) => {
 
     // Deduplicate — skip if we already have this lead
     const existing = await dbClient.query(
-      'SELECT id, client_id, proposal_id FROM thumbtack_leads WHERE negotiation_id = $1',
+      `SELECT id, client_id, proposal_id,
+              (created_at < NOW() - INTERVAL '10 minutes') AS heal_eligible
+         FROM thumbtack_leads WHERE negotiation_id = $1`,
       [lead.negotiationId]
     );
     if (existing.rows.length > 0) {
@@ -387,6 +390,22 @@ router.post('/leads', asyncHandler(async (req, res) => {
       // (nothing to draft or notify with a link) is left untouched, so a normal
       // duplicate never re-notifies.
       if (row.client_id && !row.proposal_id) {
+        // The proposal_id heal marker cannot distinguish a crashed original from
+        // one still alive in its post-commit tail: the admin notify runs
+        // unconditionally in that tail and is never claimed or recorded. Treat
+        // created_at as the original attempt's implicit lease — a duplicate
+        // arriving within the window must presume the tail is still in flight and
+        // about to notify, so defer with a 503 instead of firing a second notify.
+        // 503 (not 200 'duplicate') keeps the provider's retry chain alive, so a
+        // genuine crash-after-commit strand whose first retry lands inside the
+        // window is NOT permanently lost: Thumbtack retries with backoff, and once
+        // the window passes (proposal_id still NULL) the heal fires; meanwhile in
+        // the overlap case the original finishes within seconds, sets proposal_id,
+        // and the next retry short-circuits as a plain 200 'duplicate'.
+        if (!row.heal_eligible) {
+          console.log(`Thumbtack lead ${lead.negotiationId} duplicate inside the in-flight window — deferring heal (retry_later)`);
+          return res.status(503).json({ status: 'retry_later' });
+        }
         console.log(`Thumbtack lead ${lead.negotiationId} duplicate with no draft — healing post-commit steps`);
         // Release before the post-commit tail: runPostCommitSteps ->
         // createDraftProposalFromLead opens its OWN pool.connect(), so holding this

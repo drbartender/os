@@ -3512,6 +3512,21 @@ CREATE TABLE IF NOT EXISTS call_audit (
 CREATE INDEX IF NOT EXISTS idx_call_audit_created_at
   ON call_audit (created_at);
 
+-- uq_call_audit_dead_leg: atomic claim for the dead-leg alert dedup (spec B11).
+-- The /status callback claims the right to alert with INSERT ... ON CONFLICT DO
+-- NOTHING on (call_sid, status) BEFORE it sends the Telegram, closing the
+-- check-then-act (TOCTOU) window where two concurrent redeliveries both passed a
+-- SELECT probe and both alerted. PARTIAL on purpose: call_audit also holds
+-- call_sid=NULL rows (rejected_cap / rejected_validation and a placement 'failed')
+-- plus one 'placed' row per call; scoping to non-null call_sid + the four dead
+-- statuses constrains ONLY the dead-leg callback rows, so the claim can never
+-- silently DO-NOTHING a spend-cap-relevant insert. (call_sid,'placed') and
+-- (call_sid,'failed') are distinct keys, so a call with both rows is unaffected.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_call_audit_dead_leg
+  ON call_audit (call_sid, status)
+  WHERE call_sid IS NOT NULL
+    AND status IN ('no-answer','busy','failed','canceled');
+
 -- telegram_update: Telegram update_id de-dupe (retry / at-least-once delivery).
 -- isNewUpdate() does INSERT ... ON CONFLICT DO NOTHING; a fresh insert means the
 -- update has not been processed. Pruned past retention.
