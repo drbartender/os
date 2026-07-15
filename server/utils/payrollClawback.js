@@ -193,7 +193,15 @@ async function clawbackTip(tipId, newCumulativeRefundedCents, opts = {}) {
       // still clamped at 0 below (money out can't be negative); the negative
       // nets against the bartender's other lines first.
       // ON CONFLICT: ADD to existing adjustment_cents, append to adjustment_note.
-      await client.query(
+      // B4 held-row invariant (2026-07-14, shared with payrollAccrual's B13
+      // hold semantics): a HELD row's line_total_cents = payable components +
+      // LEAST(net adjustment_cents, 0). The claw still NETS into the tracked
+      // adjustment (audit trail preserved), but a held POSITIVE reimbursement
+      // never becomes payable through this upsert — only the admin confirm
+      // PATCH re-arms it — while net-NEGATIVE debt stays INSIDE line_total so
+      // it keeps collecting through the payout-level clamp. NOT a floor: the
+      // tracked number is never destroyed, only gated on held_state.
+      const upsertRes = await client.query(
         `INSERT INTO payout_events
            (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
             adjustment_cents, adjustment_note, line_total_cents)
@@ -204,12 +212,29 @@ async function clawbackTip(tipId, newCumulativeRefundedCents, opts = {}) {
              CASE WHEN payout_events.adjustment_note IS NULL OR payout_events.adjustment_note = ''
                   THEN '' ELSE '; ' END ||
              EXCLUDED.adjustment_note,
-           line_total_cents =
+           line_total_cents = CASE WHEN payout_events.held_state = 'held' THEN
              payout_events.wage_cents + payout_events.gratuity_share_cents
              + payout_events.card_tip_net_cents
-             + payout_events.adjustment_cents + EXCLUDED.adjustment_cents`,
+             + LEAST(payout_events.adjustment_cents + EXCLUDED.adjustment_cents, 0)
+           ELSE
+             payout_events.wage_cents + payout_events.gratuity_share_cents
+             + payout_events.card_tip_net_cents
+             + payout_events.adjustment_cents + EXCLUDED.adjustment_cents
+           END
+         RETURNING held_state`,
         [payoutId, tip.shift_id, negAdj, note]
       );
+      // A claw landing on a held row is parked, never silent: the netted
+      // adjustment waits on the same mandatory admin decision the held
+      // reimbursement itself awaits (confirm re-arms the netted number;
+      // zeroing is a conscious write-off). Mirrors payout_clamp_residual.
+      if (upsertRes.rows[0] && upsertRes.rows[0].held_state === 'held') {
+        Sentry.captureMessage('clawbackTip: claw netted into held reimbursement; parked pending admin confirm/zero', {
+          level: 'warning',
+          tags: { util: 'payrollClawback', step: 'claw_on_held_line' },
+          extra: { tipId, payoutId, shiftId: tip.shift_id, contractorId: userId, clawCents: negAdj },
+        });
+      }
     }
 
     const totalsRes = await client.query(

@@ -165,6 +165,14 @@ async function rollForwardLateTip(tipId) {
       // permanent under-collection — the exact H1 leak). Mirrors the floorless
       // contract in payrollClawback.js / payrollAccrual.js; the payout total is
       // still clamped at 0 below, so money out is never negative.
+      // B4 held-row invariant (2026-07-14, shared with payrollClawback.js and
+      // payrollAccrual's B13 hold semantics): a HELD row's line_total_cents =
+      // payable components + LEAST(adjustment_cents, 0). The NEW tip money
+      // stays payable (rollForwardLateTip only splits among currently-approved
+      // non-stub bartenders, so the recipient is legitimately on the roster);
+      // only the held POSITIVE reimbursement stays excluded until the admin
+      // confirm PATCH re-arms it, while held NEGATIVE debt keeps collecting
+      // inside line_total. NOT a floor: nothing is destroyed, only gated.
       await client.query(
         `INSERT INTO payout_events
            (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
@@ -174,10 +182,15 @@ async function rollForwardLateTip(tipId) {
            card_tip_gross_cents = payout_events.card_tip_gross_cents + EXCLUDED.card_tip_gross_cents,
            card_tip_fee_cents   = payout_events.card_tip_fee_cents   + EXCLUDED.card_tip_fee_cents,
            card_tip_net_cents   = payout_events.card_tip_net_cents   + EXCLUDED.card_tip_net_cents,
-           line_total_cents     =
+           line_total_cents     = CASE WHEN payout_events.held_state = 'held' THEN
              payout_events.wage_cents + payout_events.gratuity_share_cents
              + payout_events.card_tip_net_cents + EXCLUDED.card_tip_net_cents
-             + payout_events.adjustment_cents`,
+             + LEAST(payout_events.adjustment_cents, 0)
+           ELSE
+             payout_events.wage_cents + payout_events.gratuity_share_cents
+             + payout_events.card_tip_net_cents + EXCLUDED.card_tip_net_cents
+             + payout_events.adjustment_cents
+           END`,
         [payoutId, tip.shift_id, gross, fee, net]
       );
     }

@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { test, before, beforeEach, afterEach, after, mock } = require('node:test');
 const assert = require('node:assert/strict');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { clawbackTip, clawbackTipByPaymentIntent } = require('./payrollClawback');
 const { payPeriodForDate, computePayday } = require('./payrollPeriods');
@@ -520,5 +521,200 @@ test('clawbackTip > skips with all_bartenders_are_legacy_cc_stubs when every shi
     await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [allStubShiftId]);
     await pool.query('DELETE FROM shifts WHERE id = $1', [allStubShiftId]);
     await pool.query('DELETE FROM users WHERE id IN ($1, $2)', [stubAId, stubBId]);
+  }
+});
+
+// --- B4: held-row invariant (2026-07-14 known-bugs batch, design-review amended) ---
+// SYSTEM INVARIANT (shared with kb-d / B13): a held row's line_total_cents =
+// payable components + LEAST(net adjustment_cents, 0). A held POSITIVE
+// reimbursement stays non-payable until the admin confirm PATCH re-arms it; a
+// net-NEGATIVE adjustment (debt) stays inside line_total so it keeps collecting
+// through the payout-level clamp. This is NOT a floor: nothing is GREATESTed
+// per-line, the tracked number is never destroyed, only gated.
+
+// Shared scaffolding for the held-row tests: one dedicated bartender on a
+// dedicated shift (so split arithmetic is 1-way and exact), a tip with fee 0,
+// and a payout_events row seeded directly in the post-hold state (hold
+// CREATION is payrollAccrual's job, covered by payrollAccrual.sweepPreserve).
+async function seedHeldFixture({ email, pi, tipCents, heldAdjustmentCents, heldLineTotalCents }) {
+  const u = await pool.query(
+    `INSERT INTO users (email, password_hash, role) VALUES ($1,'x','staff') RETURNING id`,
+    [email]
+  );
+  const userId = u.rows[0].id;
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, hourly_rate) VALUES ($1, 20.00)
+     ON CONFLICT (user_id) DO UPDATE SET hourly_rate = 20.00`,
+    [userId]
+  );
+  const s = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2019-03-05','10:00 PM','open',$1) RETURNING id`,
+    [paidProposalId]
+  );
+  const shiftId = s.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1, $2, 'Bartender', 'approved')`,
+    [shiftId, userId]
+  );
+  const t = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id, rolled_forward_at, refunded_amount_cents)
+     VALUES (gen_random_uuid(), $1, $3, 0, $4, NOW() - INTERVAL '1 day', $2, NOW(), 0)
+     RETURNING id`,
+    [userId, shiftId, tipCents, pi]
+  );
+  const heldTipId = t.rows[0].id;
+  const periodId = await ensureTodayPeriodOpen();
+  const po = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id) VALUES ($1, $2)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET pay_period_id = EXCLUDED.pay_period_id
+     RETURNING id`,
+    [periodId, userId]
+  );
+  const payoutId = po.rows[0].id;
+  await pool.query(
+    `INSERT INTO payout_events
+       (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
+        adjustment_cents, adjustment_note, line_total_cents, held_state)
+     VALUES ($1, $2, 0, 0, 0, 0, $3, 'held: worker off roster', $4, 'held')`,
+    [payoutId, shiftId, heldAdjustmentCents, heldLineTotalCents]
+  );
+  return { userId, shiftId, heldTipId, payoutId, periodId };
+}
+
+async function cleanHeldFixture(fx) {
+  await pool.query('DELETE FROM payout_events WHERE payout_id = $1', [fx.payoutId]);
+  await pool.query('DELETE FROM payouts WHERE id = $1', [fx.payoutId]);
+  await pool.query('DELETE FROM tips WHERE id = $1', [fx.heldTipId]);
+  await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [fx.shiftId]);
+  await pool.query('DELETE FROM shifts WHERE id = $1', [fx.shiftId]);
+  await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [fx.userId]);
+  await pool.query('DELETE FROM users WHERE id = $1', [fx.userId]);
+}
+
+test('clawbackTip > claw on a HELD reimbursement line nets the tracked adjustment without resurrecting payability', async (t) => {
+  // A held reimbursement (+5000 tracked, non-payable) takes a 2000 claw. The
+  // claw NETS into the tracked adjustment (5000 -> 3000) but the line stays
+  // non-payable: line_total = components(0) + LEAST(3000, 0) = 0. At HEAD the
+  // held-blind recompute resurrects the held money as payable (line_total
+  // 3000, payout total 3000) while held_state stays 'held' — RED.
+  const sentrySpy = t.mock.method(Sentry, 'captureMessage');
+  const fx = await seedHeldFixture({
+    email: 'cb-held-reimb@example.com', pi: 'pi_cb_held_reimb',
+    tipCents: 2000, heldAdjustmentCents: 5000, heldLineTotalCents: 0,
+  });
+  try {
+    await clawbackTip(fx.heldTipId, 2000);
+
+    const line = (await pool.query(
+      `SELECT adjustment_cents, adjustment_note, line_total_cents, held_state
+         FROM payout_events WHERE payout_id = $1 AND shift_id = $2`,
+      [fx.payoutId, fx.shiftId]
+    )).rows[0];
+    assert.equal(Number(line.adjustment_cents), 3000, 'claw nets into the tracked adjustment');
+    assert.equal(line.held_state, 'held', 'hold survives the claw');
+    assert.equal(Number(line.line_total_cents), 0,
+      'held line stays non-payable: components + LEAST(3000, 0) = 0');
+    assert.match(line.adjustment_note, /Chargeback on tip/, 'audit trail keeps accumulating');
+
+    const total = (await pool.query(
+      'SELECT total_cents FROM payouts WHERE id = $1', [fx.payoutId]
+    )).rows[0];
+    assert.equal(Number(total.total_cents), 0, 'held money never reaches the payable total');
+
+    const heldWarn = sentrySpy.mock.calls.find(
+      c => c.arguments[1] && c.arguments[1].tags && c.arguments[1].tags.step === 'claw_on_held_line'
+    );
+    assert.ok(heldWarn, 'Sentry warning fired for a claw landing on a held row');
+  } finally {
+    await cleanHeldFixture(fx);
+  }
+});
+
+test('clawbackTip > over-claw on a HELD line parks the netted debt inside line_total (LEAST, not zero)', async () => {
+  // AMENDED assertion (design review, all three judges): +5000 held, claw
+  // 8000 -> net adjustment -3000 and line_total = LEAST(-3000, 0) = -3000,
+  // NOT 0. The debt must stay INSIDE line_total so it keeps collecting through
+  // the payout-level clamp; a components-only held branch would strand it at 0
+  // and destroy parked debt. (This case coincides with HEAD's formula because
+  // the net is negative — it pins the amended invariant against the
+  // components-only variant, alongside the RED reimbursement case above.)
+  const fx = await seedHeldFixture({
+    email: 'cb-held-overclaw@example.com', pi: 'pi_cb_held_overclaw',
+    tipCents: 8000, heldAdjustmentCents: 5000, heldLineTotalCents: 0,
+  });
+  try {
+    await clawbackTip(fx.heldTipId, 8000);
+
+    const line = (await pool.query(
+      `SELECT adjustment_cents, line_total_cents, held_state
+         FROM payout_events WHERE payout_id = $1 AND shift_id = $2`,
+      [fx.payoutId, fx.shiftId]
+    )).rows[0];
+    assert.equal(Number(line.adjustment_cents), -3000, 'over-claw nets the tracked adjustment negative');
+    assert.equal(line.held_state, 'held', 'hold survives the over-claw');
+    assert.equal(Number(line.line_total_cents), -3000,
+      'debt parks INSIDE line_total: LEAST(-3000, 0) = -3000, never zeroed');
+
+    // With no other earnings the payout-level clamp holds money-out at 0;
+    // the residual is what the payout_clamp_residual warning reports.
+    const total = (await pool.query(
+      'SELECT total_cents FROM payouts WHERE id = $1', [fx.payoutId]
+    )).rows[0];
+    assert.equal(Number(total.total_cents), 0, 'payout total = GREATEST(0, -3000) = 0');
+  } finally {
+    await cleanHeldFixture(fx);
+  }
+});
+
+test('clawbackTip > cross-lane: claw onto a fixture-seeded held-NEGATIVE row keeps collecting the debt', async () => {
+  // kb-d (B13) holds an off-roster worker's docked line at its NEGATIVE
+  // adjustment (line_total = LEAST(adj, 0) = adj). Fixture-seeded here so this
+  // needs no kb-d code. A 1000 claw landing on that row must deepen the debt —
+  // line_total = LEAST(-1500 - 1000, 0) = -2500 — and the payout recompute
+  // must include it: a 5000 wage line on the same payout nets to 2500.
+  const fx = await seedHeldFixture({
+    email: 'cb-held-negadj@example.com', pi: 'pi_cb_held_negadj',
+    tipCents: 1000, heldAdjustmentCents: -1500, heldLineTotalCents: -1500,
+  });
+  let wageShiftId = null;
+  try {
+    const s2 = await pool.query(
+      `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+       VALUES ('2019-03-05','11:00 PM','open',$1) RETURNING id`,
+      [paidProposalId]
+    );
+    wageShiftId = s2.rows[0].id;
+    await pool.query(
+      `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents, line_total_cents)
+       VALUES ($1, $2, 4, 4, 1250, 5000, 5000)`,
+      [fx.payoutId, wageShiftId]
+    );
+
+    await clawbackTip(fx.heldTipId, 1000);
+
+    const line = (await pool.query(
+      `SELECT adjustment_cents, line_total_cents, held_state
+         FROM payout_events WHERE payout_id = $1 AND shift_id = $2`,
+      [fx.payoutId, fx.shiftId]
+    )).rows[0];
+    assert.equal(Number(line.adjustment_cents), -2500, 'claw nets into the held debt');
+    assert.equal(line.held_state, 'held', 'hold survives');
+    assert.equal(Number(line.line_total_cents), -2500,
+      'debt keeps collecting: LEAST(-1500 - 1000, 0) = -2500');
+
+    const total = (await pool.query(
+      'SELECT total_cents FROM payouts WHERE id = $1', [fx.payoutId]
+    )).rows[0];
+    assert.equal(Number(total.total_cents), 2500,
+      'payout recompute includes the debt: GREATEST(0, 5000 - 2500) = 2500');
+  } finally {
+    if (wageShiftId) {
+      await pool.query('DELETE FROM payout_events WHERE shift_id = $1', [wageShiftId]);
+      await pool.query('DELETE FROM shifts WHERE id = $1', [wageShiftId]);
+    }
+    await cleanHeldFixture(fx);
   }
 });

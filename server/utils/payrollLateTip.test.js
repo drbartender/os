@@ -3,12 +3,39 @@ const { test, before, beforeEach, afterEach, after, mock } = require('node:test'
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const { rollForwardLateTip } = require('./payrollLateTip');
+const { payPeriodForDate, computePayday } = require('./payrollPeriods');
+const { chicagoTodayYmd } = require('./businessTime');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('payrollLateTip.test.js refuses to run against production');
 }
 
+// The held-line sub-test pre-seeds a payout in today's open period so the
+// roll-forward's ON CONFLICT lands on a seeded held row. "Today" must be the
+// BUSINESS day (America/Chicago), matching how rollForwardLateTip itself
+// resolves its destination period — keying on UTC makes the suite seed NEXT
+// week's period every Chicago evening (green by day, red by night; bitten
+// 2026-07-13). Same track-and-restore law as payrollClawback.test.js: today's
+// REAL period on the shared dev DB is never deleted, only status-restored.
+function todayPeriodStart() {
+  return payPeriodForDate(chicagoTodayYmd()).startDate;
+}
+
+async function ensureTodayPeriodOpen() {
+  const { startDate, endDate } = payPeriodForDate(chicagoTodayYmd());
+  const payday = computePayday(endDate);
+  const r = await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES ($1, $2, $3, 'open')
+     ON CONFLICT (start_date) DO UPDATE SET status = 'open'
+     RETURNING id`,
+    [startDate, endDate, payday]
+  );
+  return r.rows[0].id;
+}
+
 let bartenderA, bartenderB, frozenPeriodId, frozenProposalId, frozenShiftId, tipId;
+let todayPeriodId = null, todayPeriodPreExisted = false, todayPeriodOrigStatus = null;
 
 before(async () => {
   // Pre-clean any stranded fixtures from prior failed runs (FK chain).
@@ -16,6 +43,25 @@ before(async () => {
   await pool.query(`DELETE FROM shift_requests WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'late-tip-%@example.com' OR email LIKE 'mixed-%@example.com' OR email LIKE 'all-stub-%@example.com')`);
   await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'late-tip-%@example.com' OR email LIKE 'mixed-%@example.com')`);
   await pool.query(`DELETE FROM users WHERE email LIKE 'late-tip-%@example.com' OR email LIKE 'mixed-stub@example.com' OR email LIKE 'mixed-real@example.com' OR email LIKE 'all-stub-%@example.com'`);
+
+  // Capture today's period state BEFORE the suite touches anything, so after()
+  // can restore reality instead of guessing: reuse a pre-existing row (forcing
+  // it open for the run), or create one and own its deletion.
+  const existing = await pool.query(
+    'SELECT id, status FROM pay_periods WHERE start_date = $1 LIMIT 1',
+    [todayPeriodStart()]
+  );
+  if (existing.rows[0]) {
+    todayPeriodId = existing.rows[0].id;
+    todayPeriodPreExisted = true;
+    todayPeriodOrigStatus = existing.rows[0].status;
+    if (todayPeriodOrigStatus !== 'open') {
+      await pool.query("UPDATE pay_periods SET status='open' WHERE id = $1", [todayPeriodId]);
+    }
+  } else {
+    todayPeriodId = await ensureTodayPeriodOpen();
+    todayPeriodPreExisted = false;
+  }
 
   const a = await pool.query(
     "INSERT INTO users (email, password_hash, role) VALUES ('late-tip-a@example.com','x','staff') RETURNING id"
@@ -89,10 +135,16 @@ afterEach(async () => {
   // but ONLY if no payouts reference it. The dev DB has a pre-existing open
   // pay_period (2026-05-26 to 2026-06-01) used as the shared prereq; do not
   // touch it. The frozen test period (2026-05-12) is preserved separately.
+  // Today's REAL period is likewise excluded: its row lifecycle lives in
+  // before()/after() via track-and-restore (never blanket-delete a row the
+  // suite didn't create — that destroyed the dev DB's live current period
+  // once already, 2026-07-13).
   await pool.query(
     `DELETE FROM pay_periods pp WHERE pp.status = 'open'
        AND pp.start_date <> '2026-05-12'
-       AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`
+       AND pp.start_date <> $1
+       AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`,
+    [todayPeriodStart()]
   );
   // Defense in depth: any tip targeting either fixture bartender, even if
   // created by a sub-test that didn't reach its finally. Pre-existing tests
@@ -109,6 +161,22 @@ after(async () => {
   for (const id of [bartenderA, bartenderB]) {
     await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [id]);
     await pool.query('DELETE FROM users WHERE id = $1', [id]);
+  }
+  // Restore reality for today's period: put back the original status on a
+  // pre-existing row; delete the row only if THIS suite created it (and only
+  // when nothing else references it).
+  if (todayPeriodId) {
+    if (todayPeriodPreExisted) {
+      if (todayPeriodOrigStatus !== 'open') {
+        await pool.query('UPDATE pay_periods SET status = $1 WHERE id = $2', [todayPeriodOrigStatus, todayPeriodId]);
+      }
+    } else {
+      await pool.query(
+        `DELETE FROM pay_periods pp WHERE pp.id = $1
+           AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`,
+        [todayPeriodId]
+      );
+    }
   }
   await pool.end();
 });
@@ -543,5 +611,96 @@ test('rollForwardLateTip > preserves a negative cross-period clawback residual o
     assert.equal(Number(aTotal.total_cents), 0, 'payout total clamped at 0, debt carried on the line');
   } finally {
     await pool.query('DELETE FROM tips WHERE id = $1', [t2.rows[0].id]);
+  }
+});
+
+test('rollForwardLateTip > late tip onto a HELD line pays the tip but keeps the held reimbursement non-payable', async () => {
+  // B4 held-row invariant (2026-07-14 known-bugs batch, design-review amended,
+  // shared with kb-d/B13): held => line_total = payable components +
+  // LEAST(net adjustment_cents, 0). The NEW tip money stays payable (the
+  // recipient is legitimately on the roster); only the held +5000
+  // reimbursement stays excluded until the admin confirm PATCH re-arms it.
+  // line_total = 3600 + LEAST(5000, 0) = 3600. At HEAD the held-blind
+  // recompute resurrects the reimbursement (line_total 8600) — RED.
+  const u = await pool.query(
+    `INSERT INTO users (email, password_hash, role)
+     VALUES ('late-tip-held@example.com','x','staff') RETURNING id`
+  );
+  const heldUserId = u.rows[0].id;
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, hourly_rate) VALUES ($1, 20.00)
+     ON CONFLICT (user_id) DO UPDATE SET hourly_rate = 20.00`,
+    [heldUserId]
+  );
+  const s = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','9:30 PM','open',$1) RETURNING id`,
+    [frozenProposalId]
+  );
+  const heldShiftId = s.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1, $2, 'Bartender', 'approved')`,
+    [heldShiftId, heldUserId]
+  );
+  const tipRes = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id)
+     VALUES (gen_random_uuid(), $1, 4000, 400, 'pi_late_tip_held', '2026-05-15 23:30:00+00', $2)
+     RETURNING id`,
+    [heldUserId, heldShiftId]
+  );
+  const heldTipId = tipRes.rows[0].id;
+  // Seed the post-hold state directly in TODAY's open period, where the
+  // roll-forward will land (hold CREATION is payrollAccrual's job, covered by
+  // payrollAccrual.sweepPreserve.test.js): components zeroed, +5000 tracked,
+  // line_total 0, held.
+  const periodId = await ensureTodayPeriodOpen();
+  const po = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id) VALUES ($1, $2)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET pay_period_id = EXCLUDED.pay_period_id
+     RETURNING id`,
+    [periodId, heldUserId]
+  );
+  const payoutId = po.rows[0].id;
+  await pool.query(
+    `INSERT INTO payout_events
+       (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
+        adjustment_cents, adjustment_note, line_total_cents, held_state)
+     VALUES ($1, $2, 0, 0, 0, 0, 5000, 'held: worker off roster', 0, 'held')`,
+    [payoutId, heldShiftId]
+  );
+
+  try {
+    const result = await rollForwardLateTip(heldTipId);
+    assert.equal(result.bartenders, 1);
+    assert.equal(result.period_id, periodId, 'roll-forward lands in the seeded open period');
+
+    const line = (await pool.query(
+      `SELECT card_tip_gross_cents, card_tip_fee_cents, card_tip_net_cents,
+              adjustment_cents, line_total_cents, held_state
+         FROM payout_events WHERE payout_id = $1 AND shift_id = $2`,
+      [payoutId, heldShiftId]
+    )).rows[0];
+    assert.equal(Number(line.card_tip_gross_cents), 4000);
+    assert.equal(Number(line.card_tip_fee_cents), 400);
+    assert.equal(Number(line.card_tip_net_cents), 3600);
+    assert.equal(Number(line.adjustment_cents), 5000, 'tracked reimbursement untouched');
+    assert.equal(line.held_state, 'held', 'hold survives the roll-forward');
+    assert.equal(Number(line.line_total_cents), 3600,
+      'tip is payable, held reimbursement is not: 3600 + LEAST(5000, 0) = 3600');
+
+    const total = (await pool.query(
+      'SELECT total_cents FROM payouts WHERE id = $1', [payoutId]
+    )).rows[0];
+    assert.equal(Number(total.total_cents), 3600, 'payout total pays the tip only');
+  } finally {
+    await pool.query('DELETE FROM payout_events WHERE payout_id = $1', [payoutId]);
+    await pool.query('DELETE FROM payouts WHERE id = $1', [payoutId]);
+    await pool.query('DELETE FROM tips WHERE id = $1', [heldTipId]);
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [heldShiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [heldShiftId]);
+    await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [heldUserId]);
+    await pool.query('DELETE FROM users WHERE id = $1', [heldUserId]);
   }
 });
