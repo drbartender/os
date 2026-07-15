@@ -146,7 +146,7 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
   const approvedResult = await pool.query(
     `SELECT COUNT(*) AS cnt FROM shift_requests
       WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL
-        AND LOWER(position) = 'bartender'`,
+        AND LOWER(TRIM(position)) = 'bartender'`,
     [shiftId]
   );
   const alreadyApproved = parseInt(approvedResult.rows[0].cnt, 10);

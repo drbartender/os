@@ -117,3 +117,75 @@ test('real assign writes position=Bartender and never seats the server-only requ
     assert.notEqual(r.user_id, legacyServerUser, 'the committed-server requester was never approved');
   }
 });
+
+// B14 (kb-g-trim-align): the already-approved-bartender count at autoAssign.js
+// uses a case-insensitive position compare that this lane aligns to
+// LOWER(TRIM(position)) to match every payroll matcher. Note this alignment is
+// DEFENSE-IN-DEPTH for shift_requests: the DB CHECK
+// `shift_requests_position_canonical` (LOWER(position) IN
+// ('bartender','banquet server','barback'), itself un-trimmed) already rejects
+// any whitespace-padded shift_requests.position, so autoAssign can never
+// observe a padded row. The planned "seed a padded ' Bartender ' row" RED test
+// is therefore un-seedable — the INSERT is rejected by the CHECK. These two
+// GREEN guards pin that reality instead: (A) the CHECK blocks padded data (the
+// invariant that makes the TRIM a no-op here), and (B) case-insensitive
+// counting still works, i.e. the TRIM does not regress case-folding.
+
+test('DB CHECK rejects a whitespace-padded shift_requests.position, so autoAssign never sees padded data (LOWER(TRIM) is defense-in-depth here)', async () => {
+  const u = await mkStaff('checkguard', 'Bartender');
+  const sh = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, end_time, status, location, positions_needed, equipment_required)
+     VALUES (CURRENT_DATE + 15, '18:00', '22:00', 'open', '1 Check Rd', '["Bartender"]', '[]') RETURNING id`
+  );
+  const sid = sh.rows[0].id;
+  try {
+    await assert.rejects(
+      pool.query(
+        `INSERT INTO shift_requests (shift_id, user_id, status, position, requested_positions)
+         VALUES ($1, $2, 'approved', ' Bartender ', '["Bartender"]')`,
+        [sid, u]
+      ),
+      (err) => err.code === '23514' && /position_canonical/.test(err.constraint || ''),
+      'a padded shift_requests.position must be rejected by the DB CHECK'
+    );
+  } finally {
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [sid]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [sid]);
+    await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [u]);
+    await pool.query('DELETE FROM users WHERE id = $1', [u]);
+  }
+});
+
+test('a canonical mixed-case approved bartender ("BARTENDER") counts toward slotsRemaining (TRIM preserves case-insensitive counting)', async () => {
+  const u = await mkStaff('caps', 'Bartender');
+  const sh = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, end_time, status, location, positions_needed, equipment_required)
+     VALUES (CURRENT_DATE + 16, '18:00', '22:00', 'open', '2 Caps Rd', '["Bartender"]', '[]') RETURNING id`
+  );
+  const sid = sh.rows[0].id;
+  try {
+    // One approved bartender fills the single slot; its position is all-caps
+    // (CHECK-allowed: LOWER('BARTENDER') = 'bartender'). slotsRemaining must
+    // resolve to 0 -> the short-circuit "all filled" message.
+    await pool.query(
+      `INSERT INTO shift_requests (shift_id, user_id, status, position, requested_positions)
+       VALUES ($1, $2, 'approved', 'BARTENDER', '["Bartender"]')`,
+      [sid, u]
+    );
+    const result = await autoAssignShift(sid, { dryRun: true });
+    assert.equal(
+      result.message,
+      'All positions already filled.',
+      'an all-caps canonical approved bartender must count toward alreadyApproved/slotsRemaining'
+    );
+  } finally {
+    await pool.query(
+      `DELETE FROM scheduled_messages WHERE entity_type = 'shift' AND entity_id = $1`,
+      [sid]
+    );
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [sid]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [sid]);
+    await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [u]);
+    await pool.query('DELETE FROM users WHERE id = $1', [u]);
+  }
+});

@@ -22,6 +22,7 @@ let barbackId;
 let mutedId;
 let busyId;
 let managerTeammateId;
+let paddedTeammateId;
 let clientId;
 let proposalId;
 let shiftId;
@@ -124,6 +125,24 @@ before(async () => {
     [managerTeammateId]
   );
 
+  // B14 (kb-g-trim-align): padded-position teammate. contractor_profiles.position
+  // = ' Bartender ' with leading + trailing whitespace — the legacy / imported /
+  // direct-edit vector the canonicalizing routes never mint. Seeded via raw SQL.
+  // A padded bartender must still bucket to 'bartender' and receive the cover
+  // broadcast. Approved, not muted, free — every filter but the position CASE
+  // passes, isolating the trim behavior.
+  const pt = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1, $2, 'staff', 'approved', 0) RETURNING id`,
+    [`cover-broadcast-padded-${NONCE}@example.com`, ph]
+  );
+  paddedTeammateId = pt.rows[0].id;
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, phone, preferred_name, position, hourly_rate)
+     VALUES ($1, '5550000007', 'Pat Padded', ' Bartender ', 25.00)`,
+    [paddedTeammateId]
+  );
+
   // Client + proposal + shift (the one being covered).
   const c = await pool.query(
     `INSERT INTO clients (name, email, phone) VALUES ($1, $2, '+15555550001') RETURNING id`,
@@ -191,7 +210,7 @@ after(async () => {
   await pool.query(`DELETE FROM shifts WHERE proposal_id = $1`, [proposalId]);
   await pool.query(`DELETE FROM proposals WHERE id = $1`, [proposalId]);
   await pool.query(`DELETE FROM clients WHERE id = $1`, [clientId]);
-  const allUserIds = [requesterId, teammateId, barbackId, mutedId, busyId, managerTeammateId].filter(Boolean);
+  const allUserIds = [requesterId, teammateId, barbackId, mutedId, busyId, managerTeammateId, paddedTeammateId].filter(Boolean);
   await pool.query(`DELETE FROM contractor_profiles WHERE user_id = ANY($1::int[])`, [allUserIds]);
   await pool.query(`DELETE FROM users WHERE id = ANY($1::int[])`, [allUserIds]);
   await pool.end();
@@ -279,6 +298,20 @@ test('broadcastCoverRequest > includes a qualified manager-bartender teammate (m
     [shiftId, managerTeammateId]
   );
   assert.ok(rows.length >= 1, 'a qualified manager-bartender must receive the cover broadcast');
+  assert.ok(result.broadcast_count >= 1);
+});
+
+test('broadcastCoverRequest > includes a bartender teammate whose position is whitespace-padded (" Bartender ")', async () => {
+  const result = await broadcastCoverRequest(shiftId, requesterId);
+  const { rows } = await pool.query(
+    `SELECT 1 FROM scheduled_messages
+      WHERE entity_type = 'shift' AND entity_id = $1 AND recipient_id = $2`,
+    [shiftId, paddedTeammateId]
+  );
+  // At HEAD the un-trimmed CASE buckets ' bartender ', which never equals the
+  // canonical 'bartender' matchRole, so the padded teammate is dropped (RED).
+  // With LOWER(TRIM(cp.position)) it buckets to 'bartender' and is probed (GREEN).
+  assert.ok(rows.length >= 1, 'a padded-position bartender teammate must receive the cover broadcast');
   assert.ok(result.broadcast_count >= 1);
 });
 

@@ -153,10 +153,10 @@ async function broadcastCoverRequest(shiftId, requestingUserId) {
         AND u.onboarding_status = 'approved'
         AND u.id <> $1
         AND CASE
-              WHEN LOWER(cp.position) IN ('banquet server', 'server') THEN 'banquet server'
-              WHEN LOWER(cp.position) = 'barback' THEN 'barback'
-              WHEN LOWER(cp.position) = 'bartender' THEN 'bartender'
-              ELSE LOWER(cp.position)
+              WHEN LOWER(TRIM(cp.position)) IN ('banquet server', 'server') THEN 'banquet server'
+              WHEN LOWER(TRIM(cp.position)) = 'barback' THEN 'barback'
+              WHEN LOWER(TRIM(cp.position)) = 'bartender' THEN 'bartender'
+              ELSE LOWER(TRIM(cp.position))
             END = ANY($2::text[])
         AND (
           u.staff_notification_preferences IS NULL
