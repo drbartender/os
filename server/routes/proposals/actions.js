@@ -502,12 +502,12 @@ router.post('/:id/archive', auth, requireAdminOrManager, asyncHandler(async (req
 
   // Notify approved staff of the reaped shifts (email only; SMS costs). Post-commit,
   // best-effort — notifyStaffOfCancellation takes its own connections, so it must
-  // run after the tx client is released (one-connection rule). FLAG 1.
+  // run after the tx client is released (one-connection rule).
   for (const { shiftId, userIds } of reapedStaff) {
     try {
       await notifyStaffOfCancellation({ shiftId, staffUserIds: userIds, kind: 'cancelled', sms: false, email: true });
     } catch (notifyErr) {
-      if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(notifyErr, { tags: { route: 'proposals/archive', step: 'staff-notify' } });
+      Sentry.captureException(notifyErr, { tags: { route: 'proposals/archive', step: 'staff-notify' } });
     }
   }
 
