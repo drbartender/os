@@ -25,12 +25,13 @@ lanes:
     review: full-fleet
     sensitive: true   # staffShiftActions.js on the path list
   - id: pr-c-payrun-client
-    scope: [tab remap, PayRunView, PayPanel, queue rows, deletions, css]
+    scope: [tab remap, PayRunView, PayPanel, queue rows, HistoryView rewrite, deletions, css]
     footprint:
       - client/src/pages/admin/payroll/PayrollPage.js
       - client/src/pages/admin/payroll/PayRunView.js
       - client/src/pages/admin/payroll/PayPanel.js
       - client/src/pages/admin/payroll/PayoutRow.js
+      - client/src/pages/admin/payroll/HistoryView.js
       - client/src/pages/admin/payroll/EventLineItem.js
       - client/src/pages/admin/payroll/PayQRModal.js
       - client/src/pages/admin/payroll/MarkPaidAction.js
@@ -41,9 +42,8 @@ lanes:
     review: [code-review, security-review, consistency-check]   # money-adjacent UI: amounts, mark-paid, no-logging rule
     sensitive: false
   - id: pr-d-history-links
-    scope: [HistoryView paid-only + redirect, PayrollStatus due-detector + links, PayoutsTab routing, zelle client enum]
+    scope: [PayrollStatus due-detector + links, PayoutsTab routing, zelle client enum]
     footprint:
-      - client/src/pages/admin/payroll/HistoryView.js
       - client/src/pages/admin/overview/PayrollStatus.js
       - client/src/pages/admin/userDetail/tabs/PayoutsTab.js
       - client/src/pages/admin/userDetail/helpers.js
@@ -103,6 +103,11 @@ pr-b and pr-c run in parallel once pr-a merges. pr-d cuts after pr-c merges.
 The open stale lane `kb-a-cancel-archive` is footprint-disjoint from all four
 lanes; it does not block this plan.
 
+Plan-fleet note: HistoryView's rewrite lives in pr-c (not pr-d) because pr-c
+deletes `PayrollHeader.js` and changes `PayoutRow`'s contract, and HistoryView
+imports both (HistoryView.js:6,62,64). Splitting them would leave main
+unbuildable or functionally broken between the two merges.
+
 ---
 
 ## Lane pr-a-server-core
@@ -146,10 +151,12 @@ alongside each change; commit per logical chunk (lane checkpoints are fine).
    Nothing else changes; the existing guard already passes `reopened`.
 4. **`POST /payroll/periods/:id/process`**:
    - Pre-check and guarded UPDATE both accept `('open','reopened')`.
-   - Early-process guard BEFORE the fee-recapture call: load `end_date`; if
-     `ymd(end_date) >= chicagoTodayYmd()` and `req.body?.force !== true`,
+   - Early-process guard BEFORE the fee-recapture call: the pre-check SELECT
+     (payroll.js:342) gains `end_date` (`SELECT status, end_date FROM ...`);
+     if `ymd(end_date) >= chicagoTodayYmd()` and `req.body?.force !== true`,
      throw `ConflictError('period is still in progress; pass force to process anyway')`.
-     (`chicagoTodayYmd` comes from the same util payrollLateTip.js imports.)
+     Both `ymd` (payroll.js:120) and `chicagoTodayYmd` (imported at
+     payroll.js:18) are already in scope; no new imports.
    - After the flip: `const finalized = await maybeFinalizePeriod(pool, id);`
      and respond
      `res.json({ period: rows[0], period_status: finalized ? 'paid' : 'processing', fee_recapture: feeRecapture })`.
@@ -175,14 +182,22 @@ alongside each change; commit per logical chunk (lane checkpoints are fine).
                COUNT(*) FILTER (WHERE status = 'pending') AS pending
           FROM payouts WHERE pay_period_id = $1`, [id]
      );
-     await logAdminAction(req.user.id, 'payroll_period_reopen', {
-       period_id: id, paid_count: Number(counts.rows[0].paid), pending_count: Number(counts.rows[0].pending),
+     await logAdminAction({
+       actorUserId: req.user.id,
+       targetUserId: null,
+       action: 'payroll_period_reopen',
+       metadata: {
+         period_id: id,
+         paid_count: Number(counts.rows[0].paid),
+         pending_count: Number(counts.rows[0].pending),
+       },
      });
      res.json({ period: rows[0] });
    }));
    ```
-   Match `logAdminAction`'s actual signature at payroll.js:584 (adjust the
-   call shape to the existing pattern, not the sketch above).
+   (`logAdminAction` takes a single object `{ actorUserId, targetUserId,
+   action, metadata }` and never throws; see the existing call at
+   payroll.js:584.)
 6. **`POST /payroll/payouts/:id/mark-paid` additions**:
    - `ALLOWED_PAY_METHODS` (payroll.js:115) gains `'zelle'`.
    - Body: `payment_reference` optional string, trim, ≤200 else
@@ -250,12 +265,17 @@ assertion against the dev DB (see spec Testing for the full matrix):
   `expected_total_cents: 0` vs $0 payout passes; `1.5` and `-1` 400;
   omitted field marks paid exactly as today.
 - zelle: mark-paid accepts `payment_method: 'zelle'`; period payload carries
-  `zelle_handle`.
+  `zelle_handle`; the contractorTipPage preferred-method route accepts
+  `'zelle'` (extend the existing enum coverage in
+  `server/routes/admin/users.tipsGate.test.js` or assert inline in this
+  suite).
 - process: in-progress period (end_date >= Chicago today) 409s without
   `force: true`, passes with it; zero-pending period finalizes and response
   carries `period_status: 'paid'`; reopened period re-processes.
-- reference: stored trimmed, 201-char 400s, returned by loadPeriodWithPayouts
-  and the mark-paid response.
+- reference: stored trimmed, 201-char 400s, returned by ALL THREE admin read
+  paths: loadPeriodWithPayouts, the mark-paid response, AND the contractor
+  payouts endpoint (whose explicit response map is exactly the path that
+  silently drops un-mapped columns).
 - rollups: paid_cents/owed_cents match seeded SUMs; total_cents/paid_count/
   pending_count unchanged.
 
@@ -285,10 +305,14 @@ claim-cover all rejected with the same error code as processing
 ### Task B2: staff-portal status aliasing
 
 - `server/routes/staffPortal.js` (current_period tile, ~:122-134) and
-  `server/routes/staffPortal/payouts.js` (:50, :76, :225): wherever
-  `pp.status` is projected to staff, alias:
-  `CASE WHEN pp.status = 'reopened' THEN 'processing' ELSE pp.status END AS status`
-  (keep the output column name identical).
+  `server/routes/staffPortal/payouts.js`: the SQL projection sites are
+  lines **50** (list) and **146** (detail); the JS response maps at :76 and
+  :225 read the projected column and need no change. Alias in the SQL,
+  KEEPING each site's existing output column name (both payouts.js sites use
+  `AS period_status`; renaming breaks the JS maps):
+  `CASE WHEN pp.status = 'reopened' THEN 'processing' ELSE pp.status END AS period_status`
+  Then sweep the file for any other `pp.status` projection the line numbers
+  miss; the raw-string test below is the safety net.
 - Extend `server/routes/staffPortal/payouts.test.js`: (1) the existing PII
   exclusion assertions gain `payment_reference`; (2) with a reopened period
   seeded, no staff payout/list/detail response contains the raw string
@@ -319,6 +343,10 @@ New `client/src/pages/admin/payroll/PayRunView.js` (<300 lines; extract a
 all from spec Client changes:
 
 - Fetches `GET /admin/payroll/periods`; keeps periods with status != 'paid'.
+- Consumes the `period` URL param (the target of PayrollStatus / PayoutsTab /
+  HistoryView-redirect deep links): scroll to and expand that period's card
+  on load. PayrollPage passes `listState.period` down, mirroring how
+  HistoryTab receives it today.
 - Sort: period whose `start_date..end_date` covers Chicago-today first (any
   non-paid status), then rest oldest-payday-first.
 - Stat strip: still owed (SUM owed_cents), unpaid payouts (SUM
@@ -356,40 +384,48 @@ machine from the spec. Key mechanics:
 - QR: `QRCodeSVG` on a white tile, both skins.
 - NEVER console.log / breadcrumb the pay URL or clipboard payloads.
 
-### Task C4: queue row, line editor, deletions, css
+### Task C4: queue row, line editor, HistoryView rewrite
 
 - `PayoutRow.js`: queue-row shape (name, method+handle tag, events/hours,
   amount, status chip, Pay toggle).
 - `EventLineItem.js`: unchanged mechanics; the expansion's left column gains
-  the "Payout total" row with the "Matches the QR" chip (design 3a).
-- DELETE `PayQRModal.js`, `MarkPaidAction.js`, `PayrollHeader.js` (grep for
-  importers first; spec says PayrollPage + HistoryView are the only two for
-  PayrollHeader, and HistoryView keeps compiling because pr-d rewrites it;
-  if HistoryView still imports PayrollHeader at this lane's cut, replace that
-  usage with a plain heading inline in this lane to keep the build green).
-- `index.css`: pay-panel styles on existing tokens, both skins.
-- `README.md`: folder tree diff (adds/deletes above).
+  the "Payout total" row with the method-agnostic "Matches the code" chip
+  (spec wording; the design mock's "Matches the QR" is wrong for the
+  paypal/zelle/direct_deposit/check states).
+- `HistoryView.js` rewrite (moved into this lane by the plan fleet: it
+  imports PayrollHeader at :6,62 and renders PayoutRow with the old contract
+  at :64, so it must change in the same squash that deletes/reshapes them):
+  keep fetching the full periods list; display paid periods only; drill-in
+  read-only showing `payment_reference` (NULL renders blank). Deep-link: a
+  `period` param resolving to a non-paid period navigates to
+  `?tab=payrun&period=<id>`; missing/unknown param shows the plain list.
 
-Verify: `CI=true npx react-scripts build` from `client/` passes; then drive
-the flow against the local dev server (restart it first, it is a
-Claude-managed background process): process a seeded period, generate, mark
-paid with reference, reopen, edit, re-process, mark paid.
+### Task C5: deletions, css, docs
+
+- DELETE `PayQRModal.js`, `MarkPaidAction.js`, `PayrollHeader.js`. Grep for
+  importers first; after C1-C4 the expected remaining importer count for each
+  is zero (PayrollHeader's two importers, PayrollPage and HistoryView, were
+  both rewritten in this lane).
+- `index.css`: pay-panel styles on existing tokens, both skins.
+- `README.md`: folder tree diff (adds/deletes above) plus the key-features
+  note per the mandatory-docs table.
+
+Verify (preconditions: pr-a merged, its schema change applied to the dev DB,
+dev server restarted since it is a Claude-managed background process):
+`CI=true npx react-scripts build` from `client/` passes; then drive the flow
+against the local dev server: process a seeded period (expect the
+in-progress hard-confirm if it is the current week), generate, mark paid
+with reference, reopen, edit a pending line, re-process, mark paid; open the
+History tab and confirm a paid period drill-in shows the reference.
 
 ---
 
 ## Lane pr-d-history-links
 
-Spec sections: Client changes (HistoryView, deep-link producers), Server
-changes 5 mirrors (client enum).
+Spec sections: Client changes (deep-link producers), Server changes 5
+mirrors (client enum). HistoryView itself is pr-c's Task C4.
 
-### Task D1: HistoryView
-
-`HistoryView.js`: keep fetching the full periods list; display paid only;
-drill-in read-only with `payment_reference` shown (NULL renders blank).
-Deep-link: `period` param resolving to a non-paid period → navigate to
-`?tab=payrun&period=<id>`; missing/unknown → plain list.
-
-### Task D2: producers + enum
+### Task D1: producers + enum
 
 - `overview/PayrollStatus.js`: due-detector becomes
   `['processing','reopened'].includes(p.status) && Number(p.pending_count || 0) > 0`;
@@ -414,5 +450,17 @@ legacy `?tab=history&period=<open id>` bookmark redirecting.
   re-trigger the sensitive-path fleet + `/second-opinion` at push time.
 - Push is Dallas's explicit call, as always. Money-smoke gate will run on the
   server changes at push.
+- **pr-a must never ship alone**: its early-process guard 409s a current-week
+  process without `force: true`, and the pre-redesign client
+  (PayrollPage.js:90 `CurrentTab.processPeriod`) sends no force and cannot
+  retry. Merge-is-not-deploy covers the interim; push only after pr-c has
+  merged.
 - After pr-a merges and its schema change applies, the dev DB accepts
-  `reopened`; pr-b/pr-c tests depend on that (hence deps).
+  `reopened`; pr-b/pr-c tests depend on that (hence deps). Post-deploy, run
+  the same `pg_get_constraintdef` check against prod.
+- Deploy note carried from the spec: any period already wedged in
+  `processing` with zero pending payouts before this ships heals manually
+  via reopen then re-process (the wedge fix then finalizes it).
+- File-size: payroll.js is 622 lines and the pr-a additions land it near but
+  under the 700 soft cap (~690). Keep additions tight; do not add beyond the
+  plan's scope to this file.
