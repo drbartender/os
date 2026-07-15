@@ -8,15 +8,18 @@
 export const DEFAULT_HOURS_PER_SHIFT = 4;
 export const DEFAULT_HOURLY_RATE = 20;
 
-// Canonical lowercase enum, matching server/routes/admin/users.js:520.
-// Zelle was retired; if a contractor still has 'Zelle' on file from before the
-// switch, the dropdown will not list it and the next save normalizes it.
-export const PAYMENT_METHODS = ['venmo', 'cashapp', 'paypal', 'check', 'direct_deposit', 'other'];
+// Canonical lowercase enum, mirroring the server allow-lists
+// (server/routes/admin/payroll.js ALLOWED_PAY_METHODS and
+// server/routes/admin/contractorTipPage.js ALLOWED_PAYMENT_METHODS).
+// Zelle rejoined 2026-07-14 with the payroll redesign: staff can prefer it
+// and mark-paid records it (paid through chase.com on the desktop).
+export const PAYMENT_METHODS = ['venmo', 'cashapp', 'paypal', 'zelle', 'check', 'direct_deposit', 'other'];
 
 const PAYMENT_METHOD_LABELS = {
   venmo: 'Venmo',
   cashapp: 'Cash App',
   paypal: 'PayPal',
+  zelle: 'Zelle',
   check: 'Check',
   direct_deposit: 'Direct Deposit',
   other: 'Other',

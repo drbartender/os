@@ -67,10 +67,11 @@ export default function PayrollStatus({ onOverdue }) {
     if (periodsErr || currentErr) return { kind: 'error', href: PAYROLL_HREF };
 
     // Most recent closed-but-unpaid period = the next check to cut. Periods come
-    // ordered start_date DESC, so find() returns the most recent. 'processing' is
-    // the frozen/being-paid state; a pending payout remains -> still due.
+    // ordered start_date DESC, so find() returns the most recent. 'processing'
+    // is the frozen/being-paid state; 'reopened' is mid-correction (payroll
+    // redesign 2026-07-14) and just as owed. A pending payout remains -> due.
     const due = (periods || []).find(
-      p => p.status === 'processing' && Number(p.pending_count || 0) > 0
+      p => ['processing', 'reopened'].includes(p.status) && Number(p.pending_count || 0) > 0
     );
     if (due) {
       const total = Number(due.total_cents || 0);
@@ -80,7 +81,7 @@ export default function PayrollStatus({ onOverdue }) {
         kind: 'due',
         headline: `Due ${weekday(due.payday) || 'soon'}`,
         total, staff, overdue,
-        href: `/financials/payroll?tab=history&period=${due.id}`,
+        href: `/financials/payroll?tab=payrun&period=${due.id}`,
       };
     }
 

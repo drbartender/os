@@ -71,7 +71,12 @@ export default function PayoutsTab(props) {
             {payouts !== null && payouts.length > 0 && payouts.map(po => (
               <EntityLink
                 key={po.id}
-                to={po.period?.id ? `/financials/payroll?tab=history&period=${po.period.id}` : null}
+                // Route on the PERIOD's status, never the payout's: a paid
+                // payout can sit inside a reopened/processing period, and
+                // History only lists paid periods.
+                to={po.period?.id
+                  ? `/financials/payroll?tab=${po.period.status === 'paid' ? 'history' : 'payrun'}&period=${po.period.id}`
+                  : null}
                 className="hstack"
                 style={{ padding: '8px 0', borderTop: '1px solid var(--line-1)', gap: 8, cursor: 'pointer', color: 'inherit' }}
               >
