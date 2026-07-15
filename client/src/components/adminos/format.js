@@ -53,10 +53,29 @@ export const fmtDateOnly = (iso, opts = {}) => {
 
 // TIMESTAMPTZ moments (submitted_at, finalized_at, activity created_at). Bare
 // `new Date(ts)` in local time is correct here — these are absolute instants,
-// not date-only columns.
+// not date-only columns. 24-hour clock: admin-only importers (client-facing
+// surfaces have their own 12h formatters — keep it that way).
 export const fmtDateTime = (ts) => {
   if (!ts) return '—';
-  return new Date(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return new Date(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+};
+
+// Tolerant 24h reformatter for the free-text shifts.start_time / end_time /
+// proposals.event_start_time columns, which hold a mix of "7:00 PM" (server
+// eventCreation), "6:00PM" (legacy free text), and canonical "HH:MM"
+// (TimePicker). Admin display only — staff/client surfaces stay 12h.
+// Empty → ''. Unparseable non-empty → returned as-is (never blank a value).
+export const fmtTime24 = (str) => {
+  if (!str) return '';
+  const m = String(str).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (!m) return String(str);
+  let h = Number(m[1]);
+  const min = Number(m[2]);
+  const ap = m[3] && m[3].toUpperCase();
+  if (ap === 'PM' && h !== 12) h += 12;
+  if (ap === 'AM' && h === 12) h = 0;
+  if (h > 23 || min > 59) return String(str);
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
 };
 
 // End time from a "HH:MM" start + duration in hours, wrapping past midnight.

@@ -133,7 +133,7 @@ export default function EmailCampaignDetail() {
           <div className="em-campaign-meta">
             <span className="em-badge em-badge-type">{campaign.type}</span>
             <span className={`em-badge em-badge-status-${campaign.status}`}>{campaign.status}</span>
-            {campaign.sent_at && <span className="em-meta-date">Sent {new Date(campaign.sent_at).toLocaleString()}</span>}
+            {campaign.sent_at && <span className="em-meta-date">Sent {new Date(campaign.sent_at).toLocaleString('en-US', { hour12: false })}</span>}
           </div>
         </div>
         <div className="em-actions">
@@ -290,7 +290,7 @@ export default function EmailCampaignDetail() {
                   <td>{s.lead_email}</td>
                   <td>{s.subject}</td>
                   <td><span className={`em-badge em-badge-${s.status}`}>{s.status}</span></td>
-                  <td>{new Date(s.sent_at).toLocaleString()}</td>
+                  <td>{new Date(s.sent_at).toLocaleString('en-US', { hour12: false })}</td>
                 </tr>
               ))}
             </tbody>

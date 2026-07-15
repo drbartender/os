@@ -19,13 +19,23 @@ export default function TimePicker({
   minHour = 0,
   maxHour = 23,
   className = 'form-input',
-  placeholder = '—:— —',
+  placeholder,
   disabled = false,
   required = false,
   id,
   name,
+  hour24 = false, // display-only: admin pages render/accept "HH:MM"; onChange still emits canonical "HH:MM" either way
 }) {
-  const [displayValue, setDisplayValue] = useState(formatTime12h(value));
+  // In 24h mode, normalize legacy free-text values ("6:00 PM") to canonical
+  // "HH:MM" for display; fall back to the raw value when it can't be parsed
+  // (already-canonical values pass straight through). onChange still emits
+  // canonical "HH:MM" either way, so the stored value is never altered here.
+  const toDisplay = useCallback(
+    (v) => (hour24 ? (v ? (parseTimeInput(v, { minHour, maxHour }) || v) : '') : formatTime12h(v)),
+    [hour24, minHour, maxHour]
+  );
+  const effectivePlaceholder = placeholder ?? (hour24 ? '—:—' : '—:— —');
+  const [displayValue, setDisplayValue] = useState(toDisplay(value));
   const [isOpen, setIsOpen] = useState(false);
   const [isFlashing, setIsFlashing] = useState(false);
   const wrapperRef = useRef(null);
@@ -34,8 +44,8 @@ export default function TimePicker({
 
   // Keep display in sync when parent updates value externally
   useEffect(() => {
-    setDisplayValue(formatTime12h(value));
-  }, [value]);
+    setDisplayValue(toDisplay(value));
+  }, [value, toDisplay]);
 
   const slots = useMemo(() => generateTimeOptions(minHour, maxHour + 1), [minHour, maxHour]);
 
@@ -47,8 +57,8 @@ export default function TimePicker({
 
   const commit = useCallback((next) => {
     if (next !== value) onChange(next);
-    setDisplayValue(formatTime12h(next));
-  }, [value, onChange]);
+    setDisplayValue(toDisplay(next));
+  }, [value, onChange, toDisplay]);
 
   const stepBy = useCallback((mins) => {
     const minTotal = minHour * 60;
@@ -80,7 +90,7 @@ export default function TimePicker({
     }
     const parsed = parseTimeInput(raw, { minHour, maxHour });
     if (parsed === null) {
-      setDisplayValue(formatTime12h(value));
+      setDisplayValue(toDisplay(value));
       flash();
     } else {
       commit(parsed);
@@ -150,7 +160,7 @@ export default function TimePicker({
         onChange={(e) => setDisplayValue(e.target.value)}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
-        placeholder={placeholder}
+        placeholder={effectivePlaceholder}
         disabled={disabled}
         required={required}
         id={id}
@@ -204,7 +214,7 @@ export default function TimePicker({
                   setIsOpen(false);
                 }}
               >
-                {slot.label}
+                {hour24 ? slot.value : slot.label}
               </li>
             );
           })}

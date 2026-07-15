@@ -2,6 +2,7 @@ import React from 'react';
 import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
 import EntityLink from '../../../../components/EntityLink';
+import { fmtDateTime } from '../../../../components/adminos/format';
 
 export default function MessagesTab({ loading, messages, sending, body, setBody, type, setType, result, send, recipient }) {
   return (
@@ -34,7 +35,7 @@ export default function MessagesTab({ loading, messages, sending, body, setBody,
                   )}
                   <div className="spacer" style={{ flex: 1 }} />
                   <span className="tiny muted">
-                    {m.created_at ? new Date(m.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''}
+                    {m.created_at ? fmtDateTime(m.created_at) : ''}
                   </span>
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }}>{m.body}</div>

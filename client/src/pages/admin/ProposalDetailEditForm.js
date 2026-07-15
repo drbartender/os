@@ -387,7 +387,7 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Start time</label>
             <TimePicker className="input" value={editForm.event_start_time || ''}
               onChange={(v) => update('event_start_time', v)}
-              minHour={6} maxHour={23} />
+              minHour={6} maxHour={23} hour24 />
           </div>
           <div>
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Duration (hours)</label>
@@ -412,7 +412,7 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
               const effMin = editForm.setup_minutes_before === '' || editForm.setup_minutes_before == null
                 ? (pkgIsHosted ? 90 : 60)
                 : Number(editForm.setup_minutes_before);
-              const clock = formatSetupTime(editForm.event_start_time, effMin);
+              const clock = formatSetupTime(editForm.event_start_time, effMin, { hour24: true });
               return (
                 <div className="tiny muted" style={{ marginTop: 4 }}>
                   {clock

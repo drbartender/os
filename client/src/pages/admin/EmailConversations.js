@@ -145,7 +145,7 @@ export default function EmailConversations() {
                         <span className="em-message-direction">
                           {msg.direction === 'outbound' ? 'You' : 'Lead'}
                         </span>
-                        <span className="em-message-time">{new Date(msg.created_at).toLocaleString()}</span>
+                        <span className="em-message-time">{new Date(msg.created_at).toLocaleString('en-US', { hour12: false })}</span>
                       </div>
                       {msg.subject && <div className="em-message-subject">{msg.subject}</div>}
                       <div className="em-message-body">{msg.body_text || '(HTML content)'}</div>

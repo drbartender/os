@@ -13,6 +13,7 @@ import {
 } from '../../../utils/staffingRoles';
 import Drawer from '../Drawer';
 import Icon from '../Icon';
+import { fmtTime24 } from '../format';
 import StatusChip from '../StatusChip';
 import { fmtDateFull } from '../format';
 import {
@@ -417,8 +418,8 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
               <div className="meta-item">
                 <div className="meta-k">When</div>
                 <div className="meta-v">
-                  {shift.start_time || '—'}
-                  {shift.end_time ? ` – ${shift.end_time}` : ''}
+                  {fmtTime24(shift.start_time) || '—'}
+                  {shift.end_time ? ` – ${fmtTime24(shift.end_time)}` : ''}
                 </div>
               </div>
               <div className="meta-item">

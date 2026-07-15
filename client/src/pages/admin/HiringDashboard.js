@@ -413,7 +413,7 @@ function Footer({ a, status, onSchedule }) {
     const when = diff <= 0 ? 'Today' : diff === 1 ? 'Tomorrow' : `In ${diff}d`;
     return (
       <span>
-        {when} · {dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+        {when} · {dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
       </span>
     );
   }

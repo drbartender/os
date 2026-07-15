@@ -30,13 +30,13 @@ function describe(event) {
   }
   if (event.event_type === 'interview_scheduled' && meta.interview_at) {
     const d = new Date(meta.interview_at);
-    return `${d.toLocaleDateString()} · ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+    return `${d.toLocaleDateString()} · ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`;
   }
   if (event.event_type === 'interview_rescheduled') {
     if (meta.cleared) return 'Cleared scheduled time';
     if (meta.interview_at) {
       const d = new Date(meta.interview_at);
-      return `Now ${d.toLocaleDateString()} · ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+      return `Now ${d.toLocaleDateString()} · ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`;
     }
   }
   if (event.event_type === 'reminder_sent') {

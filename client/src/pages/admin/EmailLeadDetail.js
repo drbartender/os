@@ -163,7 +163,7 @@ export default function EmailLeadDetail() {
                   <td><EntityLink to={send.campaign_id ? '/email-marketing/campaigns/' + send.campaign_id : null}>{send.campaign_name || '—'}</EntityLink></td>
                   <td>{send.subject}</td>
                   <td><span className={`em-badge em-badge-${send.status}`}>{send.status}</span></td>
-                  <td>{new Date(send.sent_at).toLocaleString()}</td>
+                  <td>{new Date(send.sent_at).toLocaleString('en-US', { hour12: false })}</td>
                 </tr>
               ))}
             </tbody>
@@ -182,7 +182,7 @@ export default function EmailLeadDetail() {
               <div key={msg.id} className={`em-message em-message-${msg.direction}`}>
                 <div className="em-message-header">
                   <span className="em-message-direction">{msg.direction === 'outbound' ? 'You' : 'Lead'}</span>
-                  <span className="em-message-time">{new Date(msg.created_at).toLocaleString()}</span>
+                  <span className="em-message-time">{new Date(msg.created_at).toLocaleString('en-US', { hour12: false })}</span>
                 </div>
                 {msg.subject && <div className="em-message-subject">{msg.subject}</div>}
                 <div className="em-message-body">{msg.body_text || '(HTML content)'}</div>

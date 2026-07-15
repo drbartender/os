@@ -7,7 +7,7 @@ function timeLabel(iso) {
   const today = new Date();
   const sameDay = d.toDateString() === today.toDateString();
   return sameDay
-    ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
     : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 

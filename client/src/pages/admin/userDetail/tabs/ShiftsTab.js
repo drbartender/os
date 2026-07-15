@@ -1,6 +1,6 @@
 import React from 'react';
 import StatusChip from '../../../../components/adminos/StatusChip';
-import { fmtDate } from '../../../../components/adminos/format';
+import { fmtDate, fmtTime24 } from '../../../../components/adminos/format';
 import { getEventTypeLabel } from '../../../../utils/eventTypes';
 import ClickableRow from '../../../../components/ClickableRow';
 import EntityLink from '../../../../components/EntityLink';
@@ -36,7 +36,7 @@ export default function ShiftsTab({ upcoming, past, eventsLoading }) {
                   >
                     <td>
                       <div>{ev.event_date ? fmtDate(String(ev.event_date).slice(0, 10), { year: 'numeric' }) : '—'}</div>
-                      <div className="sub">{ev.start_time ? `${ev.start_time}${ev.end_time ? ` – ${ev.end_time}` : ''}` : ''}</div>
+                      <div className="sub">{ev.start_time ? `${fmtTime24(ev.start_time)}${ev.end_time ? ` – ${fmtTime24(ev.end_time)}` : ''}` : ''}</div>
                     </td>
                     <td>
                       <strong>{getEventTypeLabel({

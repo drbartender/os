@@ -4,7 +4,7 @@ import { getEventTypeLabel } from '../../../../utils/eventTypes';
 import EntityLink from '../../../../components/EntityLink';
 import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
-import { fmtDate, relDay } from '../../../../components/adminos/format';
+import { fmtDate, fmtTime24, relDay } from '../../../../components/adminos/format';
 import { parsePositions } from '../helpers';
 
 export default function AssignToEventModal({ userId, staffName, onClose, onAssigned, toast }) {
@@ -159,7 +159,7 @@ export default function AssignToEventModal({ userId, staffName, onClose, onAssig
                         <div className="tiny muted" style={{ marginTop: 2 }}>
                           {s.event_date ? fmtDate(String(s.event_date).slice(0, 10), { year: 'numeric' }) : '—'}
                           {s.event_date ? ` · ${relDay(String(s.event_date).slice(0, 10))}` : ''}
-                          {s.start_time ? ` · ${s.start_time}` : ''}
+                          {s.start_time ? ` · ${fmtTime24(s.start_time)}` : ''}
                           {s.location ? ` · ${s.location}` : ''}
                         </div>
                       </div>

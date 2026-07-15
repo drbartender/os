@@ -126,6 +126,7 @@ export default function EventSection({ form, update, merge, fieldErrors, isHoste
             onChange={(v) => update('event_start_time', v)}
             minHour={6}
             maxHour={23}
+            hour24
           />
         </Lbl>
 

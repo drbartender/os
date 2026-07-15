@@ -17,7 +17,7 @@ import EventDetailPlanLogo from './EventDetailPlanLogo';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
-import { fmtDate, fmtDateFull, relDay } from '../../components/adminos/format';
+import { fmtDate, fmtDateFull, fmtTime24, relDay } from '../../components/adminos/format';
 import { parsePositionsCount, approvedCount, remainingByRole } from '../../components/adminos/shifts';
 import { parsePositionsNeeded, rosterCounts, isEventFullyStaffed } from '../../utils/staffingRoles';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
@@ -367,7 +367,7 @@ export default function EventDetailPage() {
                             style={{ gap: 8, color: 'inherit', textDecoration: 'none' }}
                           >
                             <strong>{s.event_date ? fmtDate(String(s.event_date).slice(0, 10)) : '—'}</strong>
-                            <span className="tiny muted">{s.start_time || ''}{s.end_time ? ` – ${s.end_time}` : ''}</span>
+                            <span className="tiny muted">{fmtTime24(s.start_time)}{s.end_time ? ` – ${fmtTime24(s.end_time)}` : ''}</span>
                           </Link>
                           <div className="spacer" />
                           <StatusChip kind={chipOk ? 'ok' : displayFilled > 0 ? 'warn' : 'danger'}>
@@ -403,7 +403,7 @@ export default function EventDetailPage() {
                                 <li key={member?.user_id || `${label}-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                   <EntityLink to={member?.user_id ? `/staffing/users/${member.user_id}` : null}>{label}</EntityLink>
                                   <StatusChip kind={ackAt ? 'ok' : 'neutral'}>
-                                    {ackAt ? `Confirmed ${new Date(ackAt).toLocaleTimeString()}` : 'Not opened'}
+                                    {ackAt ? `Confirmed ${new Date(ackAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}` : 'Not opened'}
                                   </StatusChip>
                                 </li>
                               );

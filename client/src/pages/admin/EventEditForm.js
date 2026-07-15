@@ -152,7 +152,7 @@ export default function EventEditForm({ proposal, onSaved, onCancel }) {
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Start time</label>
             <TimePicker className="input" value={form.event_start_time || ''}
               onChange={(v) => update('event_start_time', v)}
-              minHour={6} maxHour={23} />
+              minHour={6} maxHour={23} hour24 />
           </div>
           <div>
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Duration (hours)</label>
@@ -171,7 +171,7 @@ export default function EventEditForm({ proposal, onSaved, onCancel }) {
               const effMin = form.setup_minutes_before === '' || form.setup_minutes_before == null
                 ? (eventIsHosted ? 90 : 60)
                 : Number(form.setup_minutes_before);
-              const clock = formatSetupTime(form.event_start_time, effMin);
+              const clock = formatSetupTime(form.event_start_time, effMin, { hour24: true });
               return (
                 <div className="tiny muted" style={{ marginTop: 4 }}>
                   {clock

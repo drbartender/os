@@ -10,7 +10,7 @@ function fmtMs(ms) {
   return h ? `${h}h ${m % 60}m` : `${m}m`;
 }
 function fmtTs(iso) {
-  return iso ? new Date(iso).toLocaleString('en-US', { ...CT, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  return iso ? new Date(iso).toLocaleString('en-US', { ...CT, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '';
 }
 function fmtSpan(iv, nowMs) {
   const end = iv.ended_at ? new Date(iv.ended_at).getTime() : nowMs;

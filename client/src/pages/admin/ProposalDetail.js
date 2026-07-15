@@ -12,7 +12,7 @@ import PricingBreakdown from '../../components/PricingBreakdown';
 import DrinkPlanCard from '../../components/DrinkPlanCard';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
-import { fmtDateFull, fmtDateTime } from '../../components/adminos/format';
+import { fmtDateFull, fmtDateTime, fmtTime24 } from '../../components/adminos/format';
 import ProposalDetailEditForm from './ProposalDetailEditForm';
 import ProposalChangeRequestCard from './ProposalChangeRequestCard';
 import AlternativesPanel from './AlternativesPanel';
@@ -23,18 +23,6 @@ import AddressLink from '../../components/adminos/AddressLink';
 import { venueMapQuery } from '../../components/VenueAddressFields';
 import EntityLink from '../../components/EntityLink';
 import { proposalStatusMeta } from '../../utils/proposalStatusMap';
-
-// formatTime12 kept LOCAL (not routed through utils/timeOptions.formatTime12h):
-// event_start_time is a free-text VARCHAR(20) with mixed legacy formats
-// ("6:00 PM"), which this lenient parser and the strict formatTime12h render
-// differently — consolidating would change the displayed start time.
-function formatTime12(t) {
-  if (!t) return '?';
-  const [h, m] = t.split(':').map(Number);
-  const hour12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  return `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
-}
 
 export default function ProposalDetail() {
   const { id } = useParams();
@@ -395,7 +383,7 @@ export default function ProposalDetail() {
             <div className="muted" style={{ fontSize: 13 }}>
               {eventTypeLabel}
               {proposal.event_date && ` · ${fmtDateFull(String(proposal.event_date).slice(0, 10))}`}
-              {proposal.event_start_time && ` · ${formatTime12(proposal.event_start_time)}`}
+              {proposal.event_start_time && ` · ${fmtTime24(proposal.event_start_time)}`}
               {proposal.event_location && ` · ${proposal.event_location}`}
               {proposal.guest_count != null && ` · ${proposal.guest_count} guests`}
             </div>
@@ -522,7 +510,7 @@ export default function ProposalDetail() {
                     <dd>{proposal.event_date ? fmtDateFull(String(proposal.event_date).slice(0, 10)) : '—'}</dd>
                     <dt>Time</dt>
                     <dd>
-                      {proposal.event_start_time ? formatTime12(proposal.event_start_time) : '—'}
+                      {proposal.event_start_time ? fmtTime24(proposal.event_start_time) : '—'}
                       {proposal.event_duration_hours
                         ? ` · ${proposal.event_duration_hours} ${Number(proposal.event_duration_hours) === 1 ? 'hour' : 'hours'}`
                         : ''}

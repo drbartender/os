@@ -40,13 +40,17 @@ function parseToMinutes(timeStr) {
  * Wraps mod 1440 so e.g. 90 min before 12:30 AM → "11:00 PM".
  * Same semantics/output as the server twin's subtractMinutesFromTime().
  * Returns null on unparseable input.
+ *
+ * `hour24` is a CLIENT-ONLY display flag (not mirrored server-side): admin
+ * pages render 24h ("HH:MM"), staff pages keep the default 12h.
  */
-export function subtractMinutesFromTime(timeStr, minutes) {
+export function subtractMinutesFromTime(timeStr, minutes, { hour24 = false } = {}) {
   const total = parseToMinutes(timeStr);
   if (total === null || !Number.isFinite(Number(minutes))) return null;
   const wrapped = (((total - Number(minutes)) % 1440) + 1440) % 1440;
   const newH = Math.floor(wrapped / 60);
   const newM = wrapped % 60;
+  if (hour24) return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
   const hour12 = newH > 12 ? newH - 12 : (newH === 0 ? 12 : newH);
   const ampm = newH >= 12 ? 'PM' : 'AM';
   return `${hour12}:${String(newM).padStart(2, '0')} ${ampm}`;
@@ -57,6 +61,6 @@ export function subtractMinutesFromTime(timeStr, minutes) {
  * Falls back to the 60-minute default when minutes is null/undefined.
  * Returns null when startTime is missing or unparseable.
  */
-export function formatSetupTime(startTime, minutes) {
-  return subtractMinutesFromTime(startTime, minutes ?? 60);
+export function formatSetupTime(startTime, minutes, opts = {}) {
+  return subtractMinutesFromTime(startTime, minutes ?? 60, opts);
 }

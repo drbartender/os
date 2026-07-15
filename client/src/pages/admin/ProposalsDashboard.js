@@ -402,7 +402,7 @@ export default function ProposalsDashboard() {
               {!loading && rows.map(p => {
                 const st = proposalStatusMeta(p.status);
                 const viewTitle = p.last_viewed_at
-                  ? `Last viewed ${new Date(p.last_viewed_at).toLocaleString()}${p.view_count ? ` · ${p.view_count} view${Number(p.view_count) === 1 ? '' : 's'}` : ''}`
+                  ? `Last viewed ${new Date(p.last_viewed_at).toLocaleString('en-US', { hour12: false })}${p.view_count ? ` · ${p.view_count} view${Number(p.view_count) === 1 ? '' : 's'}` : ''}`
                   : undefined;
                 return (
                   <ClickableRow key={p.id} to={`/proposals/${p.id}`}>

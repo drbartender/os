@@ -28,7 +28,7 @@ export default function StatsCard({ a, scorecard }) {
               <dd>
                 {new Date(a.interview_at).toLocaleString([], {
                   weekday: 'short', month: 'short', day: 'numeric',
-                  hour: 'numeric', minute: '2-digit',
+                  hour: '2-digit', minute: '2-digit', hour12: false,
                 })}
               </dd>
             </>

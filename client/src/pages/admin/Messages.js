@@ -164,7 +164,7 @@ export default function Messages() {
                       <div className="sms-bubble-meta">
                         {msg.direction === 'outbound' ? 'You' : 'Client'}
                         {' . '}
-                        {new Date(msg.created_at).toLocaleString()}
+                        {new Date(msg.created_at).toLocaleString('en-US', { hour12: false })}
                         {msg.status === 'failed' && ' . failed to send'}
                       </div>
                     </div>

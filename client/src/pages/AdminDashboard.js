@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatPhone } from '../utils/formatPhone';
-import { fmtDateOnly } from '../components/adminos/format';
+import { fmtDateOnly, fmtTime24 } from '../components/adminos/format';
 import TimePicker from '../components/TimePicker';
 import ClickableRow from '../components/ClickableRow';
 import EntityLink from '../components/EntityLink';
@@ -326,6 +326,7 @@ export default function AdminDashboard() {
                         id="shift-start-time"
                         value={shiftForm.start_time}
                         onChange={(v) => setShiftForm(f => ({ ...f, start_time: v }))}
+                        hour24
                       />
                     </div>
                     <div>
@@ -334,6 +335,7 @@ export default function AdminDashboard() {
                         id="shift-end-time"
                         value={shiftForm.end_time}
                         onChange={(v) => setShiftForm(f => ({ ...f, end_time: v }))}
+                        hour24
                       />
                     </div>
                     <div>
@@ -427,7 +429,7 @@ export default function AdminDashboard() {
                           <div style={{ marginTop: '0.3rem', fontSize: '0.83rem', color: 'var(--text-muted)', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
                             <span>📅 {fmtDate(shift.event_date)}</span>
                             {(shift.start_time || shift.end_time) && (
-                              <span>🕐 {shift.start_time || '?'} – {shift.end_time || '?'}</span>
+                              <span>🕐 {fmtTime24(shift.start_time) || '?'} – {fmtTime24(shift.end_time) || '?'}</span>
                             )}
                             {shift.location && <span>📍 {shift.location}</span>}
                           </div>
@@ -705,7 +707,7 @@ export default function AdminDashboard() {
                               </span>
                             )}
                             <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                              {new Date(g.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                              {new Date(g.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
                             </span>
                           </div>
                           <p style={{ fontSize: '0.88rem', margin: '0.3rem 0', color: 'var(--deep-brown)' }}>

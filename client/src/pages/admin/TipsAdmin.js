@@ -164,7 +164,7 @@ function TipsTab() {
                     </EntityLink>
                   </td>
                   <td className="num">{fmt$fromCents(t.amount_cents)}</td>
-                  <td>{t.tipped_at ? new Date(t.tipped_at).toLocaleString() : '—'}</td>
+                  <td>{t.tipped_at ? new Date(t.tipped_at).toLocaleString('en-US', { hour12: false }) : '—'}</td>
                   <td className="muted">{t.customer_email || '—'}</td>
                 </tr>
               ))}
@@ -246,7 +246,7 @@ function FeedbackTab() {
                   {f.reviewed_at && <span className="muted tiny">reviewed</span>}
                 </h3>
                 <span className="muted tiny">
-                  {f.created_at ? new Date(f.created_at).toLocaleString() : '—'}
+                  {f.created_at ? new Date(f.created_at).toLocaleString('en-US', { hour12: false }) : '—'}
                 </span>
               </div>
               <div className="card-body">
