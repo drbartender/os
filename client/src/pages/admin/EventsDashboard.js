@@ -14,6 +14,7 @@ import ClickableRow from '../../components/ClickableRow';
 import RowLink from '../../components/RowLink';
 import Toolbar from '../../components/adminos/Toolbar';
 import KebabMenu from '../../components/adminos/KebabMenu';
+import SortableTh from '../../components/adminos/SortableTh';
 import useDrawerParam, { drawerHref } from '../../hooks/useDrawerParam';
 import useUrlListState from '../../hooks/useUrlListState';
 import EntityLink from '../../components/EntityLink';
@@ -43,6 +44,20 @@ const ROSTER_ROLES = [ROLES.BARTENDER, ROLES.BANQUET_SERVER, ROLES.BARBACK];
 // the hook's default identity is stable. Back restores the exact list view.
 const LIST_DEFAULTS = { tab: 'upcoming', status: '' };
 const EVENT_TABS = ['upcoming', 'unstaffed', 'past', 'all'];
+
+// Sort accessors, one per sortable column. Text/date accessors return '' when
+// missing so the comparator can push blanks to the bottom; numeric accessors
+// return a number (missing => 0). Manual rows have no proposal_status, so they
+// read as blank and sort last on status in both directions like any other blank.
+const EVENT_SORT_ACCESSORS = {
+  event: e => (e.client_name || '').toLowerCase(),
+  event_date: e => (e.event_date ? e.event_date.slice(0, 10) : ''),
+  location: e => (typeof e.location === 'string' ? e.location.trim().toLowerCase() : ''),
+  guests: e => Number(e.guest_count || e.proposal_guest_count || 0),
+  status: e => (e.proposal_status || ''),
+  total: e => Number(e.proposal_total || 0),
+  balance: e => Number(e.proposal_total || 0) - Number(e.proposal_amount_paid || e.amount_paid || 0),
+};
 
 const EMPTY_FORM = {
   client_name: '', client_email: '', client_phone: '',
@@ -76,6 +91,14 @@ export default function EventsDashboard() {
   const [listState, setListState] = useUrlListState(LIST_DEFAULTS);
   const tab = EVENT_TABS.includes(listState.tab) ? listState.tab : 'upcoming';
   const statusFilter = listState.status;
+  // Ephemeral sort (not URL-persisted): reverts to the default event-date sort
+  // on navigation. First click asc, second flips desc, new column resets asc.
+  const [sort, setSort] = useState({ key: 'event_date', dir: 'asc' });
+  const onSort = useCallback((key) => {
+    setSort(prev => (prev.key === key
+      ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: 'asc' }));
+  }, []);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
@@ -202,6 +225,20 @@ export default function EventsDashboard() {
   }, []);
 
   const filtered = useMemo(() => {
+    const acc = EVENT_SORT_ACCESSORS[sort.key] || EVENT_SORT_ACCESSORS.event_date;
+    const cmp = (a, b) => {
+      const va = acc(a), vb = acc(b);
+      const aBlank = va === '' || va == null;
+      const bBlank = vb === '' || vb == null;
+      if (aBlank && bBlank) return a.id - b.id;      // both blank: stable by id
+      if (aBlank) return 1;                          // blanks last, either direction
+      if (bBlank) return -1;
+      let r = (typeof va === 'number' && typeof vb === 'number')
+        ? va - vb
+        : String(va).localeCompare(String(vb));
+      if (r === 0) return a.id - b.id;               // stable tiebreak, unsigned
+      return sort.dir === 'asc' ? r : -r;            // flip only the value compare
+    };
     return events
       .filter(e => {
         const day = e.event_date ? dayDiff(e.event_date.slice(0, 10)) : null;
@@ -221,8 +258,8 @@ export default function EventsDashboard() {
         }
         return true;
       })
-      .sort((a, b) => (a.event_date || '').localeCompare(b.event_date || ''));
-  }, [events, tab, statusFilter]);
+      .sort(cmp);
+  }, [events, tab, statusFilter, sort]);
 
   // Tab badge counts are independent of the active tab/filter — keying
   // them only on `events` keeps them from recomputing on every list-state change.
@@ -392,14 +429,14 @@ export default function EventsDashboard() {
           <table className="tbl">
             <thead>
               <tr>
-                <th>Event</th>
-                <th>Date</th>
-                <th>Location</th>
-                <th className="num">Guests</th>
+                <SortableTh label="Event" sortKey="event" sort={sort} onSort={onSort} />
+                <SortableTh label="Date" sortKey="event_date" sort={sort} onSort={onSort} />
+                <SortableTh label="Location" sortKey="location" sort={sort} onSort={onSort} />
+                <SortableTh label="Guests" sortKey="guests" sort={sort} onSort={onSort} className="num" />
                 <th>Staffing</th>
-                <th>Status</th>
-                <th className="num">Total</th>
-                <th className="num">Balance</th>
+                <SortableTh label="Status" sortKey="status" sort={sort} onSort={onSort} />
+                <SortableTh label="Total" sortKey="total" sort={sort} onSort={onSort} className="num" />
+                <SortableTh label="Balance" sortKey="balance" sort={sort} onSort={onSort} className="num" />
                 <th />
               </tr>
             </thead>

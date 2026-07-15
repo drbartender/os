@@ -24,13 +24,28 @@ const COHORTS = {
   won:    { dateCol: 'p.accepted_at', where: 'p.accepted_at IS NOT NULL' },
   lost:   { dateCol: 'p.sent_at',     where: "p.sent_at IS NOT NULL AND p.status = 'archived'" },
 };
+// Whitelisted sort columns for the admin list. A client's ?sort= value is a KEY
+// here and nothing else — each maps to a fixed SQL expression, so no user text
+// reaches SQL (same contract as axis/cohort above). ?dir is asc|desc (default
+// desc). An unknown/absent ?sort falls back to created_at DESC. The keys mirror
+// ProposalsDashboard's SortableTh sortKeys exactly.
+const SORT_COLUMNS = {
+  client: 'LOWER(c.name)',
+  event: "LOWER(COALESCE(NULLIF(TRIM(p.event_type_custom), ''), p.event_type, ''))",
+  event_date: 'p.event_date',
+  package: 'LOWER(sp.name)',
+  status: 'p.status',
+  sent: 'p.sent_at',
+  last_viewed: 'p.last_viewed_at',
+  total: 'p.total_price',
+};
 
 /** GET /api/proposals — list all proposals. Explicit column list — do NOT ship
  *  pricing_snapshot / admin_notes / questionnaire_data / signature_data / stripe_*
  *  to list responses (blobs, PII, can each be 10-50 KB × 50 rows = 2.5 MB). */
 router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { status, view = 'active', search, source, page = 1, limit = 50,
-    axis, event_type: eventType, balance, cohort, from, to } = req.query;
+    axis, event_type: eventType, balance, cohort, from, to, sort, dir } = req.query;
   // Bound pagination: a non-numeric limit (?limit=abc) otherwise casts to NaN and
   // 22P02-500s; ?page=0 yields a negative OFFSET. Clamp to [1, 200], default 50;
   // page floors at 1 (matches clients.js).
@@ -130,6 +145,21 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     whereClause += ` AND p.accepted_at IS NOT NULL AND p.${NOT_DEAD} AND (p.total_price - COALESCE(p.amount_paid,0)) > 0`;
   }
 
+  // Whitelisted ORDER BY. sortExpr comes from the fixed SORT_COLUMNS map and
+  // sortDir from a literal branch — no user text is interpolated into SQL.
+  // NULLS LAST keeps blank dates/prices at the bottom in BOTH directions; the
+  // p.id tiebreaker makes the 50-row LIMIT page deterministic.
+  // typeof guard: a bare SORT_COLUMNS[sort] can resolve to an inherited
+  // Object.prototype member (?sort=toString / constructor / __proto__ …) — truthy
+  // but not a column expression, which would stringify into the clause and 500.
+  // Only a string value from our own map counts; anything else falls back.
+  const rawSortExpr = SORT_COLUMNS[sort];
+  const sortExpr = typeof rawSortExpr === 'string' ? rawSortExpr : null;
+  const sortDir = dir === 'asc' ? 'ASC' : 'DESC';
+  const orderBy = sortExpr
+    ? `ORDER BY ${sortExpr} ${sortDir} NULLS LAST, p.id DESC`
+    : 'ORDER BY p.created_at DESC, p.id DESC';
+
   let query = `
     SELECT p.id, p.token, p.client_id, p.event_type, p.event_type_custom,
            p.event_type_category, p.event_date, p.event_start_time,
@@ -142,7 +172,7 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
            c.cc_id AS client_cc_id,
            sp.name AS package_name, sp.slug AS package_slug
     ${fromWhere}${whereClause}
-    ORDER BY p.created_at DESC`;
+    ${orderBy}`;
   const params = [...whereParams];
   params.push(lim);
   query += ` LIMIT $${params.length}`;

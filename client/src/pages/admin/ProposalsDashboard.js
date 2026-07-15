@@ -8,6 +8,7 @@ import { useToast } from '../../context/ToastContext';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
+import SortableTh from '../../components/adminos/SortableTh';
 import { fmt$, fmtDate, relDay } from '../../components/adminos/format';
 import ClickableRow from '../../components/ClickableRow';
 import SourceBadge from '../../components/admin/SourceBadge';
@@ -70,6 +71,15 @@ export default function ProposalsDashboard() {
   const [copyMessage, setCopyMessage] = useState('');
   // Custom-range date inputs reveal on the Custom chip (or off-preset URL dates).
   const [showCustom, setShowCustom] = useState(false);
+  // Ephemeral sort (not URL-persisted): null = server default (created_at desc);
+  // reverts to default on navigation. Drives server-side sort/dir params because
+  // the list is paginated (50/tab) — client-side would only reorder the page.
+  const [sort, setSort] = useState(null);
+  const onSort = useCallback((key) => {
+    setSort(prev => (prev && prev.key === key
+      ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: 'asc' }));
+  }, []);
 
   // Compose the server query from URL-truth listState. Precedence mirrors the
   // server: cohort supersedes everything; else status chips (a CSV) override the
@@ -91,9 +101,12 @@ export default function ProposalsDashboard() {
     if (axis === 'sent') p.set('axis', 'sent');
     if (listState.event_type) p.set('event_type', listState.event_type);
     if (listState.balance === 'open') p.set('balance', 'open');
+    // Ephemeral sort → server params. Whitelisted server-side (list.js SORT_COLUMNS);
+    // absent = server default (created_at desc).
+    if (sort) { p.set('sort', sort.key); p.set('dir', sort.dir); }
     return p.toString();
   }, [cohort, listState.status, listState.q, listState.from, listState.to,
-    listState.event_type, listState.balance, axis, sourceFilter, tab]);
+    listState.event_type, listState.balance, axis, sourceFilter, tab, sort]);
 
   // Tab counts come from /dashboard-stats, re-fetched when the source filter
   // changes so the counts stay consistent with the filtered list. Failing the
@@ -371,14 +384,14 @@ export default function ProposalsDashboard() {
           <table className="tbl">
             <thead>
               <tr>
-                <th>Client</th>
-                <th>Event</th>
-                <th>Event date</th>
-                <th>Package</th>
-                <th>Status</th>
-                <th>Sent</th>
-                <th>Last viewed</th>
-                <th className="num">Total</th>
+                <SortableTh label="Client" sortKey="client" sort={sort} onSort={onSort} />
+                <SortableTh label="Event" sortKey="event" sort={sort} onSort={onSort} />
+                <SortableTh label="Event date" sortKey="event_date" sort={sort} onSort={onSort} />
+                <SortableTh label="Package" sortKey="package" sort={sort} onSort={onSort} />
+                <SortableTh label="Status" sortKey="status" sort={sort} onSort={onSort} />
+                <SortableTh label="Sent" sortKey="sent" sort={sort} onSort={onSort} />
+                <SortableTh label="Last viewed" sortKey="last_viewed" sort={sort} onSort={onSort} />
+                <SortableTh label="Total" sortKey="total" sort={sort} onSort={onSort} className="num" />
                 <th />
               </tr>
             </thead>

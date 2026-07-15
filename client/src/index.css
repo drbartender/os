@@ -12622,6 +12622,16 @@ html[data-app="admin-os"] .tbl td.shrink { width: 1%; white-space: nowrap; }
    real anchor so ctrl/cmd/middle-click opens a new tab. Pairs with ClickableRow. */
 html[data-app="admin-os"] .tbl .row-link { color: inherit; text-decoration: none; cursor: pointer; }
 html[data-app="admin-os"] .tbl .row-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+/* Clickable sortable column headers (SortableTh). Tokens resolve per skin, so
+   one block covers light + dark. The direction glyph is faint until the column
+   is the active sort; the active header brightens to --ink-1. */
+html[data-app="admin-os"] .tbl thead th.sortable { cursor: pointer; user-select: none; }
+html[data-app="admin-os"] .tbl thead th.sortable:hover { color: var(--ink-1); }
+html[data-app="admin-os"] .tbl thead th.sortable:focus-visible { outline: 2px solid var(--ink-1); outline-offset: -2px; }
+html[data-app="admin-os"] .tbl thead th.sortable .th-sort-inner { display: inline-flex; align-items: center; gap: 4px; }
+html[data-app="admin-os"] .tbl thead th.sortable .th-sort-inner svg { opacity: 0.4; }
+html[data-app="admin-os"] .tbl thead th.sortable[aria-sort]:not([aria-sort="none"]) { color: var(--ink-1); }
+html[data-app="admin-os"] .tbl thead th.sortable[aria-sort]:not([aria-sort="none"]) .th-sort-inner svg { opacity: 1; }
 
 /* ==========================================================================
    Badges / chips / status
