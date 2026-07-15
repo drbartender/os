@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { pool } = require('../db');
 const { refundExecute } = require('./refundExecute');
-const { PaymentError } = require('./errors');
+const { PaymentError, ExternalServiceError } = require('./errors');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('refundExecute.test.js refuses to run against production');
@@ -165,4 +165,74 @@ test('stripe error: marks the pending row failed and throws PaymentError', async
     [proposalId]
   );
   assert.equal(failed.rows[0].status, 'failed', 'pending row flipped to failed');
+});
+
+// B6: ambiguous Stripe errors (we cannot know whether the refund reached Stripe)
+// must LEAVE the pending row pending so it blocks headroom and the sweeper
+// resolves it. Today refundExecute.js flips ANY error to 'failed' → these fail.
+test('ambiguous errors (StripeConnectionError, StripeAPIError) leave the row pending and throw ExternalServiceError', async () => {
+  for (const type of ['StripeConnectionError', 'StripeAPIError']) {
+    const reason = `ambiguous ${type}`;
+    const ambiguousStripe = {
+      refunds: {
+        create: async () => {
+          const e = new Error(`ambiguous ${type}`);
+          e.type = type;
+          throw e;
+        },
+      },
+    };
+    await assert.rejects(
+      () => refundExecute({
+        stripe: ambiguousStripe,
+        proposalId,
+        paymentId: payId,
+        paymentIntentId: `pi_refexec_${NONCE}`,
+        amountCents: 3000,
+        reason,
+        issuedBy: null,
+        idempotencyKey: `refund-${proposalId}-${NONCE}-${type}`,
+        totalPriceBeforeDollars: 1000,
+        totalPriceAfterDollars: 970,
+      }),
+      (err) => err instanceof ExternalServiceError,
+      `${type} should throw ExternalServiceError`
+    );
+    const r = await pool.query(
+      `SELECT status, stripe_refund_id FROM proposal_refunds
+        WHERE proposal_id = $1 AND reason = $2 ORDER BY created_at DESC LIMIT 1`,
+      [proposalId, reason]
+    );
+    assert.equal(r.rows[0].status, 'pending', `${type} leaves the row pending (today flips it failed)`);
+    assert.equal(r.rows[0].stripe_refund_id, null, `${type} leaves stripe_refund_id NULL`);
+  }
+});
+
+// B6: the sweeper's exact-match anchor. refunds.create must carry the pending
+// row id + proposal id in metadata. Today no metadata is passed → this fails.
+test('passes metadata.proposal_refund_row_id and proposal_id to stripe.refunds.create', async () => {
+  let captured = null;
+  const capturingStripe = {
+    refunds: {
+      create: async (params) => {
+        captured = params;
+        return { id: `re_meta_${NONCE}`, status: 'succeeded', payment_intent: params.payment_intent, amount: params.amount };
+      },
+    },
+  };
+  const out = await refundExecute({
+    stripe: capturingStripe,
+    proposalId,
+    paymentId: payId,
+    paymentIntentId: `pi_refexec_${NONCE}`,
+    amountCents: 4000,
+    reason: 'metadata anchor',
+    issuedBy: null,
+    idempotencyKey: `refund-${proposalId}-${NONCE}-meta`,
+    totalPriceBeforeDollars: 1000,
+    totalPriceAfterDollars: 960,
+  });
+  assert.ok(captured && captured.metadata, 'metadata object passed to refunds.create');
+  assert.equal(captured.metadata.proposal_refund_row_id, String(out.refundRowId), 'row id anchor stamped');
+  assert.equal(captured.metadata.proposal_id, String(proposalId), 'proposal id stamped');
 });

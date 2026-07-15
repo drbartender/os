@@ -57,20 +57,45 @@ async function refundExecute({
   );
   const pendingRowId = pendRes.rows[0].id;
 
-  // 2. Stripe.
+  // 2. Stripe. metadata carries the pending row id + proposal id so the
+  //    stranded-pending sweeper (refundSweepScheduler.js) can match a refund
+  //    Stripe processed back to this exact row, and so the refund is traceable
+  //    in the Stripe dashboard.
   let refund;
   try {
     refund = await stripe.refunds.create(
-      { payment_intent: paymentIntentId, amount: amountCents },
+      {
+        payment_intent: paymentIntentId,
+        amount: amountCents,
+        metadata: {
+          proposal_refund_row_id: String(pendingRowId),
+          proposal_id: String(proposalId),
+        },
+      },
       { idempotencyKey }
     );
   } catch (err) {
-    await pool.query(`UPDATE proposal_refunds SET status = 'failed' WHERE id = $1`, [pendingRowId]);
     console.error('Stripe refund error:', err);
-    if (err.type === 'StripeInvalidRequestError') {
+    // Split by certainty. ONLY a definitive rejection (Stripe refused the
+    // request; no money moved) may fail the row. StripeCardError and
+    // StripeInvalidRequestError are the two definitive families.
+    if (err.type === 'StripeInvalidRequestError' || err.type === 'StripeCardError') {
+      await pool.query(`UPDATE proposal_refunds SET status = 'failed' WHERE id = $1`, [pendingRowId]);
       throw new PaymentError(`Refund rejected: ${err.message}`, 'REFUND_REJECTED');
     }
-    throw new ExternalServiceError('Stripe', err, 'Refund temporarily unavailable. Please try again.');
+    // Ambiguous (StripeConnectionError socket timeout, StripeAPIError 5xx,
+    // unknown): the refund MAY have reached Stripe. Marking 'failed' here would
+    // re-open refund headroom and let a retry issue a SECOND real refund.
+    // Leave the row 'pending' — it blocks headroom conservatively (e97dfec) and
+    // the sweeper reconciles it against Stripe within the hour.
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(err, { tags: { util: 'refundExecute', outcome: 'ambiguous_pending' } });
+    }
+    throw new ExternalServiceError(
+      'Stripe',
+      err,
+      'The refund status is unconfirmed. It will auto-resolve within the hour. Do not re-issue it.'
+    );
   }
 
   // 3. Reconcile in its own tx. applyRefundReconciliation adopts the pending row

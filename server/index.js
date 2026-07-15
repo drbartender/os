@@ -474,6 +474,17 @@ async function start() {
         clearHealthRow('stripe_payout_sweep');
       }
 
+      // Refund pending sweep — 15-min heal of stranded 'pending' proposal_refunds
+      // rows (adopt via Stripe refunds.list, else mark failed after a 30-min age gate) — B6
+      if (enabled('RUN_REFUND_PENDING_SWEEP_SCHEDULER')) {
+        const { sweepStalePendingRefunds } = require('./utils/refundSweepScheduler');
+        const wrapped = wrapScheduler('refund_pending_sweep', 900, sweepStalePendingRefunds);
+        setTimeout(wrapped, 180000);
+        setInterval(wrapped, 15 * 60 * 1000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('refund_pending_sweep');
+      }
+
       // VA calling maintenance (spec §Components-7 + §Security-9): hourly prune
       // of expired pending_call + aged-out call_audit/telegram_update rows, plus
       // a ~6h Telegram webhook heartbeat (re-arms a silently-disabled webhook so
