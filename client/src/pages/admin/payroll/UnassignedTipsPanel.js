@@ -5,6 +5,17 @@ import EntityLink from '../../../components/EntityLink';
 import { fmt$fromCents, fmtDate } from '../../../components/adminos/format';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 
+// event_date is a DATE column that serializes as a full ISO timestamp; slice to
+// the date part before fmtDate (same idiom as the other payroll files).
+const ymd10 = (v) => (v ? String(v).slice(0, 10) : null);
+// tipped_at is a TIMESTAMPTZ instant, so it formats directly in local time
+// (never sliced: its UTC calendar date can differ from the local one).
+const fmtTippedAt = (ts) => {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
+
 export default function UnassignedTipsPanel() {
   const toast = useToast();
   const [tips, setTips] = useState([]);
@@ -61,7 +72,7 @@ export default function UnassignedTipsPanel() {
               <EntityLink to={tip.target_user_id ? `/staffing/users/${tip.target_user_id}` : null}>
                 <div style={{ fontWeight: 600 }}>{tip.contractor_name}</div>
               </EntityLink>
-              <div className="tiny muted">{fmt$fromCents(tip.amount_cents)} on {fmtDate(tip.tipped_at)}</div>
+              <div className="tiny muted">{fmt$fromCents(tip.amount_cents)} on {fmtTippedAt(tip.tipped_at)}</div>
             </div>
             <div style={{ flex: 1, minWidth: 200 }}>
               <select
@@ -74,7 +85,7 @@ export default function UnassignedTipsPanel() {
                   const lbl = getEventTypeLabel({ event_type: c.event_type, event_type_custom: c.event_type_custom });
                   return (
                     <option key={c.shift_id} value={c.shift_id}>
-                      {fmtDate(c.event_date)} · {lbl}
+                      {fmtDate(ymd10(c.event_date))} · {lbl}
                     </option>
                   );
                 })}

@@ -14,6 +14,10 @@ const fmtDeferredAt = (ts) => {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
+// event_date is a DATE column that also serializes as a full ISO timestamp;
+// slice to the date part before fmtDate (same idiom as the other payroll files).
+const ymd10 = (v) => (v ? String(v).slice(0, 10) : null);
+
 export default function DeferredTipsPanel() {
   const toast = useToast();
   const [tips, setTips] = useState([]);
@@ -95,7 +99,7 @@ export default function DeferredTipsPanel() {
                     <>
                       {' · '}
                       <EntityLink to={t.shift_id ? `/events/shift/${t.shift_id}` : null}>
-                        {fmtDate(t.event_date)} {lbl}
+                        {fmtDate(ymd10(t.event_date))} {lbl}
                       </EntityLink>
                     </>
                   )}

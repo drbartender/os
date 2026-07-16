@@ -1,6 +1,13 @@
 import React from 'react';
-import { fmtDate } from '../../../../components/adminos/format';
 import { relDay, dayDiff, SCORECARD_DIMS } from '../helpers';
+
+// applied_at is a TIMESTAMPTZ instant (full ISO), which fmtDate (date-only,
+// assumes 'YYYY-MM-DD') can't parse; format it directly in local time.
+const fmtAppliedAt = (ts) => {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
 
 // Pipeline stats summary on the right rail. Pure presentational.
 export default function StatsCard({ a, scorecard }) {
@@ -18,7 +25,7 @@ export default function StatsCard({ a, scorecard }) {
       <div className="card-body">
         <dl className="dl">
           <dt>Applied</dt>
-          <dd>{relDay(a.applied_at)} <span className="muted">· {fmtDate(a.applied_at)}</span></dd>
+          <dd>{relDay(a.applied_at)} <span className="muted">· {fmtAppliedAt(a.applied_at)}</span></dd>
           <dt>Days in pipeline</dt>
           <dd className="num">{days != null ? days : '—'}</dd>
           {a.referral_source && (<><dt>Referral</dt><dd>{a.referral_source}</dd></>)}

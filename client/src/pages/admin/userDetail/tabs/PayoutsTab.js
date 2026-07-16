@@ -16,6 +16,10 @@ const PLATFORM_LABELS = {
 };
 const platformLabel = (p) => PLATFORM_LABELS[p] || p;
 
+// Pay-period DATE columns serialize as full ISO timestamps; slice to the date
+// part before fmtDate (same idiom as the other payroll files).
+const ymd10 = (v) => (v ? String(v).slice(0, 10) : null);
+
 export default function PayoutsTab(props) {
   const {
     profile, payment, seniority, seniorityLoading,
@@ -81,8 +85,8 @@ export default function PayoutsTab(props) {
                 style={{ padding: '8px 0', borderTop: '1px solid var(--line-1)', gap: 8, cursor: 'pointer', color: 'inherit' }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600 }}>{fmtDate(po.period.start_date)} – {fmtDate(po.period.end_date)}</div>
-                  <div className="tiny muted">{Number(po.event_count)} event{Number(po.event_count) === 1 ? '' : 's'} · Payday {fmtDate(po.period.payday)}</div>
+                  <div style={{ fontWeight: 600 }}>{fmtDate(ymd10(po.period.start_date))} – {fmtDate(ymd10(po.period.end_date))}</div>
+                  <div className="tiny muted">{Number(po.event_count)} event{Number(po.event_count) === 1 ? '' : 's'} · Payday {fmtDate(ymd10(po.period.payday))}</div>
                 </div>
                 <div className="num"><strong>{fmt$fromCents(po.total_cents)}</strong></div>
                 <span className={`chip ${po.status === 'paid' ? 'ok' : 'info'}`}>{po.status}</span>
