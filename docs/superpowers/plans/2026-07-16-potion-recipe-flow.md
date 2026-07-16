@@ -25,7 +25,7 @@ lanes:
 # Potion Custom-Recipe Flow Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> **House override:** this repo executes plans through the lane model (CLAUDE.md): one worktree lane, checkpoint commits in-lane, squash merge to main. Tasks 1-3 (server) and Tasks 4-6 (client) are independent tracks and may run as parallel subagents; Task 7 runs last.
+> **House override:** this repo executes plans through the lane model (CLAUDE.md): one worktree lane, checkpoint commits in-lane, squash merge to main. Tasks 1-3 (server) and Tasks 4-6 (client) are independent CODE tracks and may run as parallel subagents; Task 7 runs last. VERIFICATION is not parallel: Task 5's manual verify and the fold-in path depend on Tasks 1-2 being in the lane (until Task 1 lands, POST /cocktails silently drops the unknown `request_aliases` field, so alias seeding would false-verify). A parallel client subagent defers its manual verify until the server track is merged into the lane. Mid-lane review checkpoint after Task 3 (server track complete): run the database-review agent on the schema/matcher batch and the security-review agent on the public-GET hygiene + client-typed request_aliases handling, so server findings surface before the client track builds on them.
 
 **Goal:** A custom client drink can be given a recipe (with an editable name) in a drawer over the shopping list, missing par items can be added inline, and the finished recipe folds back into the list as a signature drink with its ingredients, surviving renames.
 
@@ -43,7 +43,7 @@ lanes:
 - Server test law: suites run ALONE against the shared dev DB: `node -r dotenv/config --test <file>`; every created row cleaned up in `after()`.
 - Client gate: `cd client && CI=true npx react-scripts build` must pass (CI-fatal ESLint).
 - Git: explicit pathspec staging only; lane checkpoints commit freely (squash-merged later).
-- `request_aliases` is client-typed text: it must NEVER be added to `PUBLIC_COCKTAIL_COLUMNS` (`server/routes/cocktails.js:15`) or `PUBLIC_MOCKTAIL_COLUMNS` (`server/routes/mocktails.js:14`).
+- `request_aliases` is client-typed text: it must NEVER be added to `PUBLIC_COCKTAIL_COLUMNS` (`server/routes/cocktails.js:16`) or `PUBLIC_MOCKTAIL_COLUMNS` (`server/routes/mocktails.js:14`).
 - Dev server is a Claude-managed background process with no auto-reload: restart it after server edits before manual verification.
 
 ---
@@ -63,7 +63,8 @@ lanes:
 
 - [ ] **Step 1: DDL**
 
-Append to `server/db/schema.sql` directly after the `mocktails ADD COLUMN IF NOT EXISTS recipe_review` line (3810):
+Append to `server/db/schema.sql` after line 3816 (after the `recipe_review` CHECK
+constraints, keeping that block contiguous):
 
 ```sql
 -- Client-request aliases: raw free-text strings a client typed that resolve to
@@ -140,7 +141,9 @@ test('name validation parity: POST rejects oversized, PUT rejects empty and over
 - [ ] **Step 4: Run to verify they fail**
 
 Run: `node -r dotenv/config --test server/routes/potions.test.js`
-Expected: both new tests FAIL (`request_aliases` undefined on the response / status 201 instead of 400).
+Expected: all three new tests FAIL. Note the DDL from Step 2 is already applied, so the
+sanitize test fails on `deepEqual [] vs expected` (the DB default rides back through
+`RETURNING *`), not on `undefined`; the reject tests fail on 201-instead-of-400.
 
 - [ ] **Step 5: Implement the sanitizer in `server/routes/potions.js`**
 
@@ -183,26 +186,35 @@ with `requestAliases` appended to the params array. Mirror in `server/routes/moc
 
 - [ ] **Step 6b: Name validation on all four write routes**
 
-In BOTH routers' POST, replace `if (!name) throw new ValidationError({ name: 'Name is required.' });` with:
+Validate AND STORE the trimmed name (review finding: validating trimmed but storing raw
+leaves the leading-whitespace overflow open, since Postgres only forgives excess
+TRAILING spaces on VARCHAR). In BOTH routers' POST, replace
+`if (!name) throw new ValidationError({ name: 'Name is required.' });` with:
 
 ```js
-  if (!name || !String(name).trim() || String(name).trim().length > 255) {
+  const trimmedName = String(name || '').trim();
+  if (!trimmedName || trimmedName.length > 255) {
     throw new ValidationError({ name: 'Name is required (255 characters max).' });
   }
 ```
 
+and use `trimmedName` everywhere the POST used `name` (the slug base
+`normalizeName(trimmedName)` and the INSERT parameter).
+
 In BOTH routers' PUT, immediately after the destructure:
 
 ```js
+  let trimmedName = null;
   if (name !== undefined && name !== null) {
-    const trimmedName = String(name).trim();
+    trimmedName = String(name).trim();
     if (!trimmedName || trimmedName.length > 255) {
       throw new ValidationError({ name: 'Name is required (255 characters max).' });
     }
   }
 ```
 
-(No behavior change for requests that omit `name`; the PUT's `name || null` COALESCE path stays.)
+and the UPDATE's first parameter becomes `trimmedName` (replacing `name || null`; omitted
+name still COALESCEs to the old value).
 
 - [ ] **Step 7: Run to verify they pass**
 
@@ -392,7 +404,7 @@ Expected: new test FAILS at the `signatureCocktailNames` assert (name renamed aw
 
 - [ ] **Step 3: Strip in the PUT + public GET hygiene**
 
-`server/routes/drinkPlans.js`, inside the PUT after the type check (line 510). Spec §4:
+`server/routes/drinkPlans.js`, inside the PUT after the type check (lines 515-517). Spec §4:
 ALL underscore-prefixed keys are generation-run diagnostics (`_unresolvedIngredients`,
 `_signatureCocktails`, `_syrupSelfProvided`), none has a runtime reader of the saved
 copy:
@@ -427,7 +439,7 @@ admin modal's first open still shows the unresolved warning):
 
 - [ ] **Step 4: Write the strip test**
 
-Create `server/routes/drinkPlans.shoppingListStrip.test.js` on the harness pattern of `server/routes/drinkPlans.beo.test.js` (fresh express app, mount `require('./drinkPlans')` at `/api/drink-plans`, real admin JWT, dev DB, cleanup in `after()`):
+Create `server/routes/drinkPlans.shoppingListStrip.test.js` on the app-bootstrap pattern of `server/routes/drinkPlans.beo.test.js` (fresh express app, mount `require('./drinkPlans')` at `/api/drink-plans`, real admin JWT, dev DB, cleanup in `after()`), but COPY the `request(method, path, body, token)` helper from `potions.test.js` (the beo file's helper has a different `request(method, path, { token, body })` signature and the snippets below use the potions one):
 
 ```js
 test('PUT shopping-list strips every underscore-prefixed key before persisting', async () => {
@@ -492,7 +504,7 @@ git commit -m "feat(potions): rename-safe regenerate e2e + PUT strips _unresolve
 - Modify: `client/src/pages/admin/potions/RecipesTab.js`
 
 **Interfaces:**
-- Consumes: `api`, `useToast`, `StatusChip`; existing endpoints `PUT /cocktails/:id`, `PUT /mocktails/:id`, `POST /potions/pars`.
+- Consumes: `api`, `useToast`; existing endpoints `PUT /cocktails/:id`, `PUT /mocktails/:id`, `POST /potions/pars`. (`StatusChip` is NOT used by the moved detail pane; it stays in RecipesTab's master list. Importing it unused fails the CI lint gate.)
 - Produces (the contract Tasks 5-6 build against):
 
 ```jsx
@@ -508,8 +520,18 @@ git commit -m "feat(potions): rename-safe regenerate e2e + PUT strips _unresolve
 />
 ```
 
-Also exported: `normalizeName` (named export; NeedsRecipeSection's reuse-before-create
-lookup uses the same normalization the matcher uses).
+Also exported: `normalizeName` and `REVIEW` (named exports; NeedsRecipeSection's
+reuse-before-create lookup uses the matcher's normalization, and RecipesTab's retained
+master list still renders `REVIEW` chips and filters via `normalizeName`).
+
+The component is wrapped in `forwardRef` and exposes ONE imperative method:
+
+```js
+ref.flush(): Promise<void>  // cancel the debounce and persist the pending payload NOW
+```
+
+The drawer's fold-in awaits it before regenerating (Task 5); the regenerate endpoint
+reads the drink tables, so an unflushed edit would otherwise fold in a stale recipe.
 
 - [ ] **Step 1: Create `client/src/components/potions/RecipeEditor.js`**
 
@@ -522,11 +544,22 @@ Move VERBATIM from `RecipesTab.js`: `UNITS`, `REVIEW`, `normalizeName` (re-expor
 
 ```jsx
 const [nameDraft, setNameDraft] = useState(drink.name);
-useEffect(() => { setNameDraft(drink.name); }, [drink.id]);
+const nameDraftRef = useRef(drink.name);
+useEffect(() => {
+  setNameDraft(drink.name);
+  nameDraftRef.current = drink.name;
+  // Reset on drink switch only; depending on drink.name would clobber
+  // in-progress typing after every rename persist.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [drink.id]);
 const nameEditable = drink.is_active === false;
 const nameProblem = nameEditable && !String(nameDraft || '').trim()
   ? 'Name this drink to save.' : null;
 ```
+
+(The eslint-disable is required: `react-hooks/exhaustive-deps` is CI-fatal under the
+Step 3 gate; RecipesTab.js:165 and ShoppingListModal.jsx:101 use the same escape for
+the same pattern.)
 
 In the header, replace the static `<div className="potions-detail-name">{drink.name}</div>` with:
 
@@ -537,7 +570,13 @@ In the header, replace the static `<div className="potions-detail-name">{drink.n
     value={nameDraft}
     autoFocus={autoFocusName}
     maxLength={255}
-    onChange={(e) => { setNameDraft(e.target.value); scheduleSave(rowsRef.current); }}
+    onChange={(e) => {
+      setNameDraft(e.target.value);
+      // Sync the ref BEFORE scheduleSave: the armed payload must carry THIS
+      // keystroke (the render-synced mirror would be one keystroke stale).
+      nameDraftRef.current = e.target.value;
+      scheduleSave(rowsRef.current);
+    }}
     placeholder="Drink name"
     aria-label="Drink name"
   />
@@ -547,14 +586,41 @@ In the header, replace the static `<div className="potions-detail-name">{drink.n
 {nameProblem && <div className="potions-cell-error">{nameProblem}</div>}
 ```
 
-`scheduleSave` gains the name: block when `nameProblem`, and `pendingRef.current = { drink, type, rows: nextRows, name: nameDraftRef.current }` (mirror `rowsRef` with a `nameDraftRef`). `persist(drink, type, nextRows, extra)` sends:
+`scheduleSave` gains the name: block when `nameProblem`, and
+`pendingRef.current = { drink, type, rows: nextRows, name: nameDraftRef.current }`.
+`persist` gains a `pendingName` parameter and MUST consume it, never read
+`nameDraftRef.current` live (the target-bound pendingRef pattern exists exactly so a
+fast selection switch cannot write drink B's payload onto drink A; a live ref read at
+flush time would reintroduce that cross-save for names). Every call site passes the
+name from the same binding as the rows: the debounce timer and `flush` pass
+`pending.name`; `markReviewed` passes `nameDraftRef.current` alongside
+`rowsRef.current` (both live, both the currently selected drink).
 
 ```js
-const trimmedName = String(nameRef || '').trim();
-const body = { ingredients: clean, ...extra };
-if (drink.is_active === false && trimmedName && trimmedName !== drink.name) body.name = trimmedName;
-const res = await api.put(`/${type}/${drink.id}`, body);
+const persist = useCallback(async (drink, type, nextRows, pendingName, extra = {}, { silent = false } = {}) => {
+  // ...clean rows as before...
+  const body = { ingredients: clean, ...extra };
+  const trimmedName = String(pendingName || '').trim();
+  if (drink.is_active === false && trimmedName && trimmedName !== drink.name) body.name = trimmedName;
+  const res = await api.put(`/${type}/${drink.id}`, body);
+  // ...onDrinkChange(res.data), save-state handling as before...
+}, [toast, onDrinkChange]);
 ```
+
+The imperative flush handle (shared by the unmount flush and Task 5's fold-in):
+
+```js
+const flushPending = useCallback(async () => {
+  if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+  const pending = pendingRef.current;
+  pendingRef.current = null;
+  if (pending) await persist(pending.drink, pending.type, pending.rows, pending.name, {}, { silent: true });
+}, [persist]);
+
+useImperativeHandle(ref, () => ({ flush: flushPending }), [flushPending]);
+```
+
+(Component declared with `forwardRef`; `useImperativeHandle` imported from react.)
 
 5. **Inline add-par.** Replace the No-match chip cell content. New local state `addingParForRow` (row index or null) and `parForm` (`{ item, size, role }`):
 
@@ -608,7 +674,12 @@ Keep: data/pars loading, seg control, search, `focusDrinkId` deep-link consume, 
 )}
 ```
 
-Import: `import RecipeEditor from '../../../components/potions/RecipeEditor';`
+Import: `import RecipeEditor, { normalizeName, REVIEW } from '../../../components/potions/RecipeEditor';`
+(the retained master list still renders `REVIEW` chips at line 255 and filters with
+`normalizeName` at 229-230, so "delete everything moved" excludes those two: they move
+to RecipeEditor and come BACK as imports). Also delete RecipesTab's now-unused
+`useToast` import and `const toast = useToast();` (persist and markReviewed moved out;
+an unused variable is CI-fatal).
 
 - [ ] **Step 3: Build gate**
 
@@ -728,8 +799,15 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
     }
   };
 
-  const closeDrawer = () => {
+  const editorRef = useRef(null); // RecipeEditor flush handle (Task 4 Interfaces)
+
+  const closeDrawer = async () => {
     const target = drawerTarget;
+    // Flush BEFORE deciding/folding: regenerate reads the drink tables, so an
+    // edit still inside the editor's debounce would fold in a stale recipe
+    // (review finding: silent incomplete list). flush() persists via the
+    // target-bound pending payload; a failed persist already toasts.
+    try { await editorRef.current?.flush(); } catch (_) { /* toasted by persist */ }
     setDrawerTarget(null);
     if (target && rowCount > 0 && window.confirm(
       `Fold "${target.drink.name}" into the list? Regenerating replaces your manual edits, and saving will set the list back to Needs review.`
@@ -751,6 +829,7 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
   //           </div>
   //         )}
   //         <RecipeEditor
+  //           ref={editorRef}
   //           drink={drawerTarget.drink} type={drawerTarget.type} pars={pars} autoFocusName
   //           onDrinkChange={(u) => setDrawerTarget((prev) => (prev ? { ...prev, drink: { ...prev.drink, ...u } } : prev))}
   //           onParsChange={(p) => setPars((prev) => [...(prev || []), p])}
@@ -786,6 +865,10 @@ Expected: compiles clean (unused-var ESLint errors from the removed state are CI
 
 - [ ] **Step 4: Manual verify (event-side path, the canonical surface)**
 
+GATE: run this step only after server Tasks 1-2 are in the lane. Until Task 1 lands,
+POST /cocktails silently drops the unknown `request_aliases` field and the fold-in
+match would false-verify.
+
 Restart the dev server. Event -> drink plan -> Shopping List. On a plan whose custom drink has no recipe: "Add recipe" opens the DRAWER over the modal (drawer paints above: it renders inside the modal's portal subtree, so its z-index 51 only competes inside that stacking context where nothing exceeds 10 - verify visually). Name input is focused and editable; author two rows; one row with an unknown ingredient shows No match -> add it inline -> chip resolves. Close the drawer -> confirm prompt -> list regenerates: drink on the Signature Cocktails line, its resolvable ingredients merged, needsRecipe entry gone. Decline path: close without confirm leaves the list untouched.
 
 - [ ] **Step 5: Checkpoint commit**
@@ -804,7 +887,7 @@ git commit -m "feat(potions): recipe drawer over the shopping list (no navigatio
 - Modify: `client/src/components/ShoppingList/ShoppingListModal.jsx` (strip + flush)
 
 **Interfaces:**
-- Consumes: `unresolved` prop (`[{ drink, ingredient }]`), the modal's autosave effect (lines 66-103) and `handleApprove` PUT (lines ~250).
+- Consumes: `unresolved` prop (`[{ drink, ingredient }]`), the modal's autosave effect (lines 66-103) and the `handleApproveAndSend` PUT (function at line 238, PUT at 251).
 - Produces: no new exports; the PUT payload never carries `_unresolvedIngredients`; pending edits survive modal close.
 
 - [ ] **Step 1: Warning block in `NeedsRecipeSection`**
@@ -844,7 +927,7 @@ const stripGenerationKeys = (list) =>
   Object.fromEntries(Object.entries(list).filter(([k]) => !k.startsWith('_')));
 ```
 
-Autosave effect (line ~80) and `handleApprove` (line ~250) both become:
+Autosave effect (line ~80) and `handleApproveAndSend` (PUT at line 251) both become:
 
 ```js
 await api.put(`/drink-plans/${planId}/shopping-list`, {
@@ -863,7 +946,7 @@ In the modal: mirror the pending payload into a ref at schedule time, and add an
 const pendingSaveRef = useRef(null); // set when a debounce is armed, cleared on save
 ```
 
-In the autosave effect, before arming the timer: `pendingSaveRef.current = { edited, guestCount };` and inside the fired timer + after a successful save: `pendingSaveRef.current = null;` (also null it in `handleApprove` after its explicit PUT). Then:
+In the autosave effect, before arming the timer: `pendingSaveRef.current = { edited, guestCount };` and inside the fired timer + after a successful save: `pendingSaveRef.current = null;` (also null it in `handleApproveAndSend` after its explicit PUT). Then:
 
 The modal gains `const toast = useToast();` (import `useToast` from
 `../../context/ToastContext`; the provider is app-level and outlives the modal). Spec
