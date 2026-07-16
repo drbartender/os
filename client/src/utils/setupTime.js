@@ -35,14 +35,16 @@ function parseToMinutes(timeStr) {
 }
 
 /**
- * Subtract `minutes` from a time string and return the result as a 12-hour
- * "h:MM AM/PM" string (time only, no date). Tolerant of "17:00" and "5:00 PM".
+ * Subtract `minutes` from a time string and return the result as a clock time
+ * (time only, no date). Tolerant of "17:00" and "5:00 PM" input.
  * Wraps mod 1440 so e.g. 90 min before 12:30 AM → "11:00 PM".
  * Same semantics/output as the server twin's subtractMinutesFromTime().
  * Returns null on unparseable input.
  *
- * `hour24` is a CLIENT-ONLY display flag (not mirrored server-side): admin
- * pages render 24h ("HH:MM"), staff pages keep the default 12h.
+ * Defaults to 12-hour "h:MM AM/PM"; `hour24: true` opts into "HH:MM".
+ * Admin pages pass hour24; staff pages keep the 12h default. The server twin
+ * mirrors this option (its setupTimeDisplay passes hour24 for admin event
+ * detail, while its staff SMS/email callers keep the 12h default).
  */
 export function subtractMinutesFromTime(timeStr, minutes, { hour24 = false } = {}) {
   const total = parseToMinutes(timeStr);

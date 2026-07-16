@@ -34,18 +34,26 @@ function parseToMinutes(timeStr) {
 }
 
 /**
- * Subtract `minutes` from a time string and return the result as a 12-hour
- * "h:MM AM/PM" string (time only, no date). Tolerant of "17:00" and "5:00 PM".
+ * Subtract `minutes` from a time string and return the result as a clock time
+ * (time only, no date). Tolerant of "17:00" and "5:00 PM" input.
  * Wraps mod 1440 so e.g. 90 min before 12:30 AM → "11:00 PM".
  * Mirrors addHoursToTime() in eventCreation.js (inverse direction).
  * Returns null on unparseable input.
+ *
+ * Defaults to 12-hour "h:MM AM/PM" because every staff-facing caller
+ * (staffShiftHandlers, autoAssign, shifts.approval) drops this string into an
+ * SMS/email beside a raw 12h shift.start_time — flipping the default would
+ * make those reads mixed-format. `hour24: true` opts into "HH:MM" and is used
+ * only by setupTimeDisplay (admin event detail, which is 24h throughout).
+ * Mirrors the client twin's hour24 option.
  */
-function subtractMinutesFromTime(timeStr, minutes) {
+function subtractMinutesFromTime(timeStr, minutes, { hour24 = false } = {}) {
   const total = parseToMinutes(timeStr);
   if (total === null || !Number.isFinite(Number(minutes))) return null;
   const wrapped = (((total - Number(minutes)) % 1440) + 1440) % 1440;
   const newH = Math.floor(wrapped / 60);
   const newM = wrapped % 60;
+  if (hour24) return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
   const hour12 = newH > 12 ? newH - 12 : (newH === 0 ? 12 : newH);
   const ampm = newH >= 12 ? 'PM' : 'AM';
   return `${hour12}:${String(newM).padStart(2, '0')} ${ampm}`;
@@ -63,12 +71,17 @@ function effectiveSetupMinutes(proposal, pkg) {
 
 /**
  * Derived setup clock time for display: service start − effective minutes.
+ * 24-hour: the sole consumer is the admin event detail page (GET
+ * /api/proposals/:id, admin-auth'd), which renders every other time in 24h.
+ * Never reaches a client surface — the public token route omits
+ * setup_minutes_before and this derived field by design.
  * Returns null if there is no parseable start time.
  */
 function setupTimeDisplay(proposal, pkg) {
   return subtractMinutesFromTime(
     proposal?.event_start_time,
-    effectiveSetupMinutes(proposal, pkg)
+    effectiveSetupMinutes(proposal, pkg),
+    { hour24: true }
   );
 }
 
