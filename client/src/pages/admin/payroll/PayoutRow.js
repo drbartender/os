@@ -6,9 +6,6 @@ import { paymentMethodLabel } from '../userDetail/helpers';
 import EventLineItem from './EventLineItem';
 import PayPanel from './PayPanel';
 
-// helpers.js PAYMENT_METHODS gains zelle in lane pr-d; label it locally until then.
-const methodLabel = (m) => (m === 'zelle' ? 'Zelle' : paymentMethodLabel(m));
-
 function preferredHandle(payout) {
   switch (payout.preferred_payment_method) {
     case 'venmo': return payout.venmo_handle || null;
@@ -51,7 +48,7 @@ export default function PayoutRow({
             <span style={{ fontWeight: 600 }}>{payout.contractor_name}</span>
           </EntityLink>
           <span className="tiny muted">
-            {methodLabel(tagMethod) || 'No method'}{tagHandle ? ` · ${tagHandle}` : ''}
+            {paymentMethodLabel(tagMethod) || 'No method'}{tagHandle ? ` · ${tagHandle}` : ''}
           </span>
           <span className="tiny muted">
             {events.length} {events.length === 1 ? 'event' : 'events'} · {Number(hours.toFixed(2))} h

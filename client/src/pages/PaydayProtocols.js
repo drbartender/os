@@ -15,6 +15,7 @@ const PAYMENT_METHODS = [
   { value: 'venmo', label: 'Venmo' },
   { value: 'cashapp', label: 'Cash App' },
   { value: 'paypal', label: 'PayPal' },
+  { value: 'zelle', label: 'Zelle' },
   { value: 'check', label: 'Check' },
   { value: 'direct_deposit', label: 'Direct deposit' },
   { value: 'other', label: 'Other' },
@@ -36,7 +37,7 @@ function migrateLegacyMethod(raw) {
     case 'direct deposit / ach':
     case 'direct deposit':
     case 'ach': return 'direct_deposit';
-    case 'zelle': return ''; // No longer offered — force re-pick
+    case 'zelle': return 'zelle'; // rejoined 2026-07-14 with the payroll redesign
     default: return '';
   }
 }
@@ -65,7 +66,6 @@ export default function PaydayProtocols() {
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [loadError, setLoadError] = useState('');
-  const [legacyNotice, setLegacyNotice] = useState('');
   const [w9File, setW9File] = useState(null);
   const [existingW9, setExistingW9] = useState('');
   const [w9Mode, setW9Mode] = useState('fill'); // 'fill' | 'upload'
@@ -77,6 +77,7 @@ export default function PaydayProtocols() {
     venmo_handle: '',
     cashapp_handle: '',
     paypal_url: '',
+    zelle_handle: '',
     preferred_payment_method: '',
     // Direct deposit (existing — kept)
     routing_number: '',
@@ -105,14 +106,11 @@ export default function PaydayProtocols() {
         venmo_handle: stripVenmo(pay.venmo_handle || (method === 'venmo' ? username : '')),
         cashapp_handle: stripCashapp(pay.cashapp_handle || (method === 'cashapp' ? username : '')),
         paypal_url: pay.paypal_url || (method === 'paypal' ? username : ''),
+        zelle_handle: pay.zelle_handle || (method === 'zelle' ? username : ''),
         preferred_payment_method: method,
         routing_number: pay.routing_number || '',
         account_number: pay.account_number || '',
       }));
-
-      if (rawMethod.toLowerCase() === 'zelle') {
-        setLegacyNotice('Zelle is no longer offered. Please pick a new payroll method below.');
-      }
 
       const existing = pay.w9_filename || '';
       setExistingW9(existing);
@@ -161,6 +159,8 @@ export default function PaydayProtocols() {
       rules.push({ field: 'cashapp_handle', label: 'Cash App handle' });
     if (method === 'paypal')
       rules.push({ field: 'paypal_url', label: 'PayPal URL' });
+    if (method === 'zelle')
+      rules.push({ field: 'zelle_handle', label: 'Zelle email or phone' });
     if (method === 'direct_deposit') {
       rules.push({ field: 'routing_number', label: 'Routing Number' });
       rules.push({ field: 'account_number', label: 'Account Number' });
@@ -184,6 +184,7 @@ export default function PaydayProtocols() {
       data.append('venmo_handle', form.venmo_handle || '');
       data.append('cashapp_handle', form.cashapp_handle || '');
       data.append('paypal_url', form.paypal_url || '');
+      data.append('zelle_handle', form.zelle_handle || '');
       data.append('preferred_payment_method', method);
 
       // Legacy column kept for backward compat with admin UI / payouts —
@@ -192,6 +193,7 @@ export default function PaydayProtocols() {
       if (method === 'venmo')   payment_username = form.venmo_handle;
       if (method === 'cashapp') payment_username = form.cashapp_handle;
       if (method === 'paypal')  payment_username = form.paypal_url;
+      if (method === 'zelle')   payment_username = form.zelle_handle;
       data.append('payment_username', payment_username);
 
       if (method === 'direct_deposit') {
@@ -283,7 +285,6 @@ export default function PaydayProtocols() {
         </p>
 
         {loadError && <div className="alert alert-info">{loadError}</div>}
-        {legacyNotice && <div className="alert alert-info">{legacyNotice}</div>}
 
         <form onSubmit={submit}>
           {/* ── Card A — How we pay you (REQUIRED) ── */}
@@ -354,6 +355,19 @@ export default function PaydayProtocols() {
                   placeholder="paypal.me/yourname"
                 />
                 <p className="form-helper">Either paypal.me/yourname or a full URL.</p>
+              </div>
+            )}
+
+            {method === 'zelle' && (
+              <div className={`form-group${fieldClass('zelle_handle')}`}>
+                <label htmlFor="pp-zelle_handle" className="form-label">Zelle email or phone *</label>
+                <input
+                  id="pp-zelle_handle" name="zelle_handle" type="text"
+                  className={`form-input${inputClass('zelle_handle')}`}
+                  value={form.zelle_handle} onChange={handle}
+                  placeholder="you@example.com or (312) 555-0142"
+                />
+                <p className="form-helper">The email or US mobile number your Zelle account is enrolled with.</p>
               </div>
             )}
 

@@ -15,9 +15,6 @@ const QR_METHODS = ['venmo', 'cashapp'];
 // payroll payload (Bank PII invariant); they have no handle here by design.
 const HANDLE_METHODS = ['venmo', 'cashapp', 'paypal', 'zelle'];
 
-// helpers.js PAYMENT_METHODS gains zelle in lane pr-d; label it locally until then.
-const methodLabel = (m) => (m === 'zelle' ? 'Zelle' : paymentMethodLabel(m));
-
 // pg DATE columns arrive as full ISO strings; keep the calendar date.
 const ymd10 = (v) => (v ? String(v).slice(0, 10) : null);
 
@@ -144,7 +141,7 @@ export default function PayPanel({ payout, period, onPaid, onDrift }) {
     return (
       <div className="pay-panel vstack" style={{ gap: 8 }}>
         <div className="tiny muted">
-          Pays via {methodLabel(preferred) || 'no method on file'}{prefHandle ? ` · ${prefHandle}` : ''}
+          Pays via {paymentMethodLabel(preferred) || 'no method on file'}{prefHandle ? ` · ${prefHandle}` : ''}
         </div>
         {HANDLE_METHODS.includes(preferred) && !prefHandle && noHandleNote}
         <div className="muted">Process period to start paying.</div>
@@ -167,7 +164,7 @@ export default function PayPanel({ payout, period, onPaid, onDrift }) {
             key={m} type="button" className={method === m ? 'active' : ''}
             onClick={() => pickMethod(m)} disabled={saving}
           >
-            {methodLabel(m)}
+            {paymentMethodLabel(m)}
           </button>
         ))}
       </div>

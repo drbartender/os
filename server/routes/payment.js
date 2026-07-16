@@ -14,6 +14,7 @@ const {
   normalizeVenmoHandle,
   normalizeCashappHandle,
   normalizePaypalUrl,
+  normalizeZelleHandle,
 } = require('../utils/tipHandleValidation');
 
 const router = express.Router();
@@ -53,7 +54,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       throw new ValidationError({ preferred_payment_method: 'Payment method is required.' });
     }
 
-    const { venmo_handle, cashapp_handle, paypal_url, preferred_name } = req.body;
+    const { venmo_handle, cashapp_handle, paypal_url, zelle_handle, preferred_name } = req.body;
 
     // Normalize handles BEFORE the method-vs-handle requirement check so
     // (a) bad formats fail loudly with a clear message instead of being silently
@@ -63,12 +64,14 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     const normalizedVenmoHandle = normalizeVenmoHandle(venmo_handle);
     const normalizedCashappHandle = normalizeCashappHandle(cashapp_handle);
     const normalizedPaypalUrl = normalizePaypalUrl(paypal_url);
+    const normalizedZelleHandle = normalizeZelleHandle(zelle_handle);
 
     // Validate payroll method matches handle requirement (per Task 5 spec)
     const methodToHandleField = {
       venmo: { value: normalizedVenmoHandle, name: 'Venmo handle' },
       cashapp: { value: normalizedCashappHandle, name: 'Cash App handle' },
       paypal: { value: normalizedPaypalUrl, name: 'PayPal URL' },
+      zelle: { value: normalizedZelleHandle, name: 'Zelle handle' },
     };
     const reqHandle = methodToHandleField[preferred_payment_method];
     if (reqHandle && !reqHandle.value) {
@@ -172,13 +175,15 @@ router.post('/', auth, asyncHandler(async (req, res) => {
         SET venmo_handle = COALESCE($1, payment_profiles.venmo_handle),
             cashapp_handle = COALESCE($2, payment_profiles.cashapp_handle),
             paypal_url = COALESCE($3, payment_profiles.paypal_url),
+            zelle_handle = COALESCE($4, payment_profiles.zelle_handle),
             tip_page_active = COALESCE(payment_profiles.tip_page_active, TRUE),
             updated_at = NOW()
-        WHERE user_id = $4
+        WHERE user_id = $5
       `, [
         normalizedVenmoHandle,
         normalizedCashappHandle,
         normalizedPaypalUrl,
+        normalizedZelleHandle,
         req.user.id,
       ]);
 
