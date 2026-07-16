@@ -52,10 +52,13 @@ async function loadPeriodWithPayouts(periodRow) {
               pe.card_tip_gross_cents, pe.card_tip_fee_cents, pe.card_tip_net_cents,
               pe.adjustment_cents, pe.adjustment_note, pe.line_total_cents,
               pe.held_state,
-              p.event_date, p.event_type, p.event_type_custom
+              p.event_date, p.event_type, p.event_type_custom,
+              p.event_duration_hours,
+              COALESCE(c.name, s.client_name) AS client_name
          FROM payout_events pe
          JOIN shifts s ON s.id = pe.shift_id
     LEFT JOIN proposals p ON p.id = s.proposal_id
+    LEFT JOIN clients c ON c.id = p.client_id
         WHERE pe.payout_id = ANY($1::int[])
         ORDER BY p.event_date ASC, pe.id ASC`,
       [payoutIds]

@@ -203,7 +203,7 @@ test('rollups: periods list carries additive paid_cents/owed_cents next to the l
   assert.equal(Number(ours.paid_cents), 0);
 });
 
-test('period payload carries zelle_handle and a null payment_reference', async () => {
+test('period payload carries zelle_handle, payment_reference, and event line identity', async () => {
   const r = await req('GET', `/api/admin/payroll/periods/${periodId}`, adminToken);
   assert.equal(r.status, 200);
   const { payouts } = JSON.parse(r.body);
@@ -211,6 +211,13 @@ test('period payload carries zelle_handle and a null payment_reference', async (
   assert.equal(b.zelle_handle, '(214) 555-0138');
   assert.equal(b.preferred_payment_method, 'zelle');
   assert.equal(b.payment_reference, null);
+  const ev = b.events[0];
+  assert.equal(Number(ev.contracted_hours), 5);
+  assert.equal(Number(ev.event_duration_hours), 4);
+  // Fixture proposal has client_id NULL and the shift has no client_name
+  // backstop, so the key must exist but resolve to null.
+  assert.ok('client_name' in ev);
+  assert.equal(ev.client_name, null);
 });
 
 test('reopen an open period > 409', async () => {

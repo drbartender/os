@@ -6,6 +6,10 @@ import StatusChip from '../../../components/adminos/StatusChip';
 import { fmt$fromCents, fmtDate } from '../../../components/adminos/format';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 
+// event_date is a DATE column serialized as a full ISO timestamp; fmtDate
+// only accepts a bare YYYY-MM-DD (same idiom as the other payroll files).
+const ymd10 = (v) => (v ? String(v).slice(0, 10) : null);
+
 export default function EventLineItem({ event, editable, onSaved }) {
   const toast = useToast();
   const [draft, setDraft] = useState({
@@ -66,6 +70,7 @@ export default function EventLineItem({ event, editable, onSaved }) {
   const eventLabel = getEventTypeLabel({
     event_type: event.event_type, event_type_custom: event.event_type_custom,
   });
+  const clientName = (event.client_name || '').trim();
 
   // Serialized PATCH. Returns the response ({ event, payout_total_cents }) or
   // null on error. Callers decide whether to apply it (the adjustment path gates
@@ -127,8 +132,10 @@ export default function EventLineItem({ event, editable, onSaved }) {
       <div className="hstack" style={{ gap: 12, flexWrap: 'wrap' }}>
         <div style={{ minWidth: 160 }}>
           <EntityLink to={event.shift_id ? `/events/shift/${event.shift_id}` : null}>
-            <div className="tiny muted">{fmtDate(event.event_date)}</div>
-            <div style={{ fontWeight: 600 }}>{eventLabel}</div>
+            <div style={{ fontWeight: 600 }}>{clientName || eventLabel}</div>
+            <div className="tiny muted">
+              {clientName ? `${eventLabel} · ${fmtDate(ymd10(event.event_date))}` : fmtDate(ymd10(event.event_date))}
+            </div>
           </EntityLink>
         </div>
         <div className="hstack" style={{ gap: 6, alignItems: 'center' }}>
@@ -160,6 +167,15 @@ export default function EventLineItem({ event, editable, onSaved }) {
           <span className="tiny">Late</span>
         </label>
       </div>
+
+      {event.contracted_hours != null && (
+        <div className="tiny muted">
+          Contracted {Number(event.contracted_hours)}h
+          {event.event_duration_hours != null && (
+            <> · 1h setup + {Number(event.event_duration_hours)}h event + 30m breakdown</>
+          )}
+        </div>
+      )}
 
       <div className="hstack" style={{ gap: 12, flexWrap: 'wrap' }}>
         <div className="tiny muted">Wage <strong>{fmt$fromCents(event.wage_cents)}</strong></div>
