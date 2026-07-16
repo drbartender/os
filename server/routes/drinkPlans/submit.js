@@ -281,7 +281,10 @@ async function handleSubmit(req, res) {
           // override OFF and move the contract by it. Anything this submit did
           // not change sits on both sides and cancels, including the CC-era
           // bundled first bar. Native proposals (no override) keep the plain
-          // catalog recompute, unchanged.
+          // catalog recompute; the only change reaching them is `adjustments`,
+          // which this handler used to drop on the floor (silently erasing an
+          // admin's discount on submit — the same bug's sibling). No prod row
+          // has adjustments without an override, so no live native moves.
           const hasOverride = proposal.total_price_override !== null
             && proposal.total_price_override !== undefined;
           let effectiveOverride = null;
@@ -309,7 +312,18 @@ async function handleSubmit(req, res) {
               addons: allAddonsRes.rows,
               syrupSelections: syrupSels,
             });
-            const extrasDelta = Math.round((catalogAfter.total - catalogBefore.total) * 100) / 100;
+            // Difference the SERVICE portion, not `.total`. The override is a
+            // service-level contract: the engine substitutes it for
+            // calculatedTotal and then layers the client-gratuity line on top
+            // (pricingEngine serviceTotal/total). Differencing `.total` folds
+            // any gratuity movement into the contract, and the final snapshot
+            // then charges that same gratuity AGAIN on top of the new override.
+            // With gratuity_rate = 0 (every override'd row today) the two are
+            // identical; with a rate set, an addon that moves the gratuity
+            // staff basis overcharged by rate x hours and permanently polluted
+            // total_price_override with gratuity dollars.
+            const serviceOf = (s) => Math.round((s.total - (s.gratuity?.total || 0)) * 100) / 100;
+            const extrasDelta = Math.round((serviceOf(catalogAfter) - serviceOf(catalogBefore)) * 100) / 100;
             effectiveOverride = Math.round((Number(proposal.total_price_override) + extrasDelta) * 100) / 100;
           }
 

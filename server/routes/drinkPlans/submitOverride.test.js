@@ -87,18 +87,18 @@ function request(method, path, { body } = {}) {
 }
 
 // Seed one proposal + drink plan. `override` null => native (no negotiated price).
-async function seedProposal({ override, adjustments = [] }) {
+async function seedProposal({ override, adjustments = [], gratuityRate = 0 }) {
   const p = await pool.query(
     `INSERT INTO proposals
        (client_id, event_date, event_start_time, event_duration_hours, event_timezone,
         status, package_id, event_type, guest_count, num_bars, num_bartenders,
         total_price, total_price_override, amount_paid, external_paid,
-        adjustments, autopay_enrolled, pricing_snapshot)
+        adjustments, autopay_enrolled, pricing_snapshot, gratuity_rate, tip_jar)
      VALUES ($1, CURRENT_DATE + 30, '14:00', 4, 'America/Chicago',
              'confirmed', $2, 'wedding-reception', 175, 1, 2,
-             $3, $4, 100, 100, $5, false, '{}'::jsonb)
+             $3, $4, 100, 100, $5, false, '{}'::jsonb, $6, true)
      RETURNING id`,
-    [clientId, pkg.id, override ?? 1000, override, JSON.stringify(adjustments)]
+    [clientId, pkg.id, override ?? 1000, override, JSON.stringify(adjustments), gratuityRate]
   );
   const proposalId = p.rows[0].id;
   const dp = await pool.query(
@@ -260,6 +260,59 @@ test('overridden proposal keeps its visible adjustment lines in the rebuilt brea
     snap.breakdown.some(l => l.label === 'Corporate 3-Night Rate' && l.amount === -100),
     'the discount must render as a negative breakdown line'
   );
+});
+
+test('client-elected gratuity is never folded into the contract by the delta', async (t) => {
+  // The override is a SERVICE-level contract; the engine layers the gratuity
+  // line on top of it. If the delta were differenced from the engine's `.total`
+  // (which includes gratuity), a gratuity move would be baked into the contract
+  // AND charged again by the final snapshot. Caught by the review fleet: an
+  // additional-bartender addon overcharged by rate x hours ($200) and left
+  // gratuity dollars permanently inside total_price_override.
+  // Must use `additional-bartender`: it is the ONLY add-on that moves the
+  // gratuity staff basis (pricingEngine gratuityStaffCountFrom), so it is the
+  // only input that can expose the double-count. A bar rental cannot -- it does
+  // not touch staffing, so its gratuity is equal on both delta legs and cancels
+  // whether the arithmetic is right or wrong. The planner UI does not offer this
+  // add-on, but the public token endpoint honors any active slug, so a crafted
+  // PUT reaches it. Skip rather than pass vacuously if the catalog ever drops it.
+  const addon = (await pool.query(
+    "SELECT slug, rate FROM service_addons WHERE slug = 'additional-bartender' AND is_active = true"
+  )).rows[0];
+  if (!addon) { t.skip('additional-bartender add-on not seeded'); return; }
+
+  const GRAT = 50; // $/staff/hr; the no-jar floor
+  const { proposalId, planToken } = await seedProposal({ override: CONTRACT, gratuityRate: GRAT });
+
+  const res = await request('PUT', `/api/drink-plans/t/${planToken}`, {
+    body: {
+      status: 'submitted',
+      paid_separately: false,
+      selections: { addOns: { 'additional-bartender': { enabled: true } } },
+    },
+  });
+  assert.strictEqual(res.status, 200);
+
+  const row = (await pool.query(
+    'SELECT total_price, total_price_override, pricing_snapshot FROM proposals WHERE id = $1',
+    [proposalId]
+  )).rows[0];
+  const snap = row.pricing_snapshot;
+
+  assert.ok(Number(snap.gratuity.total) > 0, 'the gratuity line is populated (guards the test itself)');
+  assert.ok(Number(row.total_price_override) > CONTRACT, 'the added bartender is actually charged');
+
+  // The contract must move by the addon's SERVICE cost only. Differencing the
+  // engine's `.total` would also fold in the gratuity increase the extra staff
+  // member creates, overcharging by rate x hours and polluting the contract.
+  const gratuityBaked = Number(row.total_price_override) - CONTRACT >= GRAT * 4;
+  assert.ok(!gratuityBaked,
+    `contract moved by $${Number(row.total_price_override) - CONTRACT}, which includes gratuity dollars`);
+
+  // total = contract + gratuity, layered on top exactly once.
+  assert.strictEqual(Number(row.total_price),
+    Math.round((Number(row.total_price_override) + Number(snap.gratuity.total)) * 100) / 100,
+    'gratuity must be layered on the contract exactly once, not baked in and re-added');
 });
 
 test('a submit with no financial extras moves no money', async () => {

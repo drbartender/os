@@ -70,3 +70,10 @@ server/utils/dispatcherDeadLetters.js
 
 # Sole autopay double-charge guard; matched no existing glob (known-bugs B12, 2026-07-14).
 server/utils/autopayDurableCharge.js
+
+# Public, token-gated handler that WRITES total_price + total_price_override and
+# drives the invoice lifecycle off client-supplied selections. It re-priced Jack
+# Van Dyke's CC contract at catalog and overbilled him $627 (2026-07-16) while
+# matching no glob on this list, so the change that broke him scaled to a light
+# look. A client-triggered write to a money column belongs here.
+server/routes/drinkPlans/submit.js

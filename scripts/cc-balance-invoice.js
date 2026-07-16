@@ -36,6 +36,14 @@ const APPLY = args.includes('--apply');
 const onlyIdx = args.indexOf('--only');
 const ONLY = onlyIdx !== -1 ? parseInt(args[onlyIdx + 1], 10) : null;
 
+// `--only` with a missing or malformed value parses to NaN, which is falsy, so
+// the id filter below would silently vanish and --apply would mint EVERY
+// eligible proposal instead of the one asked for. Fail loudly instead.
+if (onlyIdx !== -1 && !(Number.isInteger(ONLY) && ONLY > 0)) {
+  console.error(`--only requires a positive integer proposal id (got: ${args[onlyIdx + 1] ?? '<missing>'})`);
+  process.exit(1);
+}
+
 const usd = (cents) => `$${(cents / 100).toFixed(2)}`;
 const ymd = (d) => (d ? new Date(d).toISOString().slice(0, 10) : 'n/a');
 
