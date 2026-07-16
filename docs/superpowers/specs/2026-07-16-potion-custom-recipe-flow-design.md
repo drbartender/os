@@ -69,7 +69,12 @@ ALTER TABLE mocktails ADD COLUMN IF NOT EXISTS request_aliases TEXT[] DEFAULT '{
 - `matchCustomNames` gains alias awareness: candidates are indexed by normalized name
   AND each normalized `request_aliases` entry. Names index first and win over aliases
   (two-pass build, first-wins preserved within each pass). Matching stays
-  normalized-EXACT; no fuzz.
+  normalized-EXACT with ONE addition (full-fleet finding): match keys strip
+  apostrophes before normalizing, because the shared normalizer maps
+  punctuation to a space ("jennys" vs "Jenny's" would never match, breaking
+  this spec's own cross-plan example). Scoped to the matcher and the client
+  reuse-lookup only; slugs and par-alias resolution keep `normalizeName`
+  untouched. No other fuzz.
 - `loadRecipeCandidates` selects `request_aliases` in both UNION arms AND gains a
   deterministic order: `ORDER BY is_active DESC, created_at ASC, name ASC` (wrap the
   UNION in a subquery selecting those columns). On a normalized-name or alias
@@ -134,7 +139,11 @@ the shopping list modal. "Add recipe" stops navigating.
   draft (create-on-miss keeps the status quo semantics). This also prevents two plans
   seeding the same client string onto two different drafts. An abandoned empty draft
   is inert (candidates require non-empty `ingredients`) and shows as "Empty" in the
-  Recipes tab, which serves as a to-do.
+  Recipes tab, which serves as a to-do. Accepted corner (full-fleet finding):
+  when the reuse lookup matches by NAME (a drink that never carried the client
+  string as an alias), a drawer rename CAN break the match, resurfacing the
+  needsRecipe entry; the failure is admin-visible and the proper fix (an
+  alias-append on reuse) is on the fix-list backlog.
 - **Fold-in on close.** On drawer close, if the recipe now has at least one ingredient
   row (after flush), prompt with the established regenerate confirm (REGEN_CONFIRM
   semantics: regeneration replaces manual edits and returns an approved list to review).
