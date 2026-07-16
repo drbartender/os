@@ -4,7 +4,7 @@ const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { publicReadLimiter } = require('../middleware/rateLimiters');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
-const { validateRecipeRows, assertOverridesResolvable, nextRecipeReview } = require('./potions');
+const { validateRecipeRows, assertOverridesResolvable, nextRecipeReview, sanitizeRequestAliases } = require('./potions');
 const { normalizeName } = require('../utils/potionCatalog');
 
 const router = express.Router();
@@ -147,28 +147,32 @@ router.delete('/categories/:id', auth, requireAdminOrManager, asyncHandler(async
 /** POST /api/mocktails — create mocktail. `id` optional (server slug, one
  *  `-2` retry); recipe rows validated; is_active honored (off-menu drinks). */
 router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { id, name, category_id, emoji, description, sort_order, ingredients, is_active, recipe_review } = req.body;
-  if (!name) throw new ValidationError({ name: 'Name is required.' });
+  const { id, name, category_id, emoji, description, sort_order, ingredients, is_active, recipe_review, request_aliases } = req.body;
+  const trimmedName = String(name || '').trim();
+  if (!trimmedName || trimmedName.length > 255) {
+    throw new ValidationError({ name: 'Name is required (255 characters max).' });
+  }
 
   const { rows: recipeRows } = validateRecipeRows(ingredients);
   const storedRows = recipeRows || [];
   await assertOverridesResolvable(storedRows, pool);
   const review = nextRecipeReview('empty', storedRows, recipe_review) || 'empty';
+  const requestAliases = sanitizeRequestAliases(request_aliases);
 
   const serverSlugged = !id;
-  const baseSlug = serverSlugged ? normalizeName(name).replace(/ /g, '-').slice(0, 100) : String(id);
+  const baseSlug = serverSlugged ? normalizeName(trimmedName).replace(/ /g, '-').slice(0, 100) : String(id);
   if (!baseSlug) throw new ValidationError({ name: 'Name must contain letters or numbers.' });
   const attempts = serverSlugged ? [baseSlug, `${baseSlug}-2`] : [baseSlug];
 
   for (const attemptId of attempts) {
     try {
       const result = await pool.query(
-        `INSERT INTO mocktails (id, name, category_id, emoji, description, sort_order, ingredients, is_active, recipe_review)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        `INSERT INTO mocktails (id, name, category_id, emoji, description, sort_order, ingredients, is_active, recipe_review, request_aliases)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
         [
-          attemptId, name, category_id || null, emoji || null, description || null,
+          attemptId, trimmedName, category_id || null, emoji || null, description || null,
           sort_order || 0, JSON.stringify(storedRows),
-          is_active === false ? false : true, review,
+          is_active === false ? false : true, review, requestAliases,
         ]
       );
       return res.status(201).json(result.rows[0]);
@@ -189,6 +193,14 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
  *  the cocktails router. */
 router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { name, category_id, emoji, description, sort_order, is_active, ingredients, recipe_review } = req.body;
+
+  let trimmedName = null;
+  if (name !== undefined && name !== null) {
+    trimmedName = String(name).trim();
+    if (!trimmedName || trimmedName.length > 255) {
+      throw new ValidationError({ name: 'Name is required (255 characters max).' });
+    }
+  }
 
   const { rows: recipeRows, allArtifacts } = validateRecipeRows(ingredients);
   const effectiveRows = allArtifacts ? null : recipeRows;
@@ -213,7 +225,7 @@ router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
       recipe_review = COALESCE($8, recipe_review)
      WHERE id = $9 RETURNING *`,
     [
-      name || null,
+      trimmedName,
       category_id || null,
       emoji || null,
       description || null,

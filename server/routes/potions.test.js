@@ -96,6 +96,16 @@ after(async () => {
   if (createdCocktailIds.length) {
     await pool.query('DELETE FROM cocktails WHERE id = ANY($1::text[])', [createdCocktailIds]);
   }
+  // Restore the shared plan's seeded customCocktails even if the regenerate
+  // e2e failed mid-test (the row is deleted below, but keep the state clean
+  // for any assertion running between tests on a partial red run).
+  if (planId) {
+    await pool.query(
+      `UPDATE drink_plans SET selections = jsonb_set(COALESCE(selections, '{}'::jsonb), '{customCocktails}', $1::jsonb)
+        WHERE id = $2`,
+      [JSON.stringify(['Margarita', 'Lavender Gin Fizz']), planId]
+    );
+  }
   if (planId) await pool.query('DELETE FROM drink_plans WHERE id = $1', [planId]);
   if (adminId) await pool.query('DELETE FROM users WHERE id = $1', [adminId]);
   await new Promise((resolve) => server.close(resolve));
@@ -262,4 +272,96 @@ test('public GET /api/cocktails excludes recipe_review, keeps ingredients', asyn
 test('unauthenticated potions requests are rejected', async () => {
   const res = await request('GET', '/api/potions/pars', undefined, null);
   assert.equal(res.status, 401);
+});
+
+test('POST /cocktails accepts and sanitizes request_aliases', async () => {
+  const res = await request('POST', '/api/cocktails', {
+    name: 'Alias Sanitize Test Drink',
+    is_active: false,
+    request_aliases: ['  Jenny\'s spicy marg  ', '', 'x'.repeat(300)],
+  });
+  assert.equal(res.status, 201);
+  createdCocktailIds.push(res.body.id);
+  assert.deepEqual(res.body.request_aliases, ["Jenny's spicy marg", 'x'.repeat(200)]);
+
+  // Explicit null means "not sent" (house null-tolerant convention), and
+  // duplicates collapse.
+  const nullish = await request('POST', '/api/cocktails', {
+    name: 'Alias Null Test Drink', is_active: false, request_aliases: null,
+  });
+  assert.equal(nullish.status, 201);
+  createdCocktailIds.push(nullish.body.id);
+  assert.deepEqual(nullish.body.request_aliases, []);
+
+  const dupes = await request('POST', '/api/cocktails', {
+    name: 'Alias Dedup Test Drink', is_active: false, request_aliases: ['same', ' same ', 'same'],
+  });
+  assert.equal(dupes.status, 201);
+  createdCocktailIds.push(dupes.body.id);
+  assert.deepEqual(dupes.body.request_aliases, ['same']);
+});
+
+test('POST /cocktails rejects non-array and oversized request_aliases', async () => {
+  const bad = await request('POST', '/api/cocktails', {
+    name: 'Alias Reject Test Drink', is_active: false, request_aliases: 'not-an-array',
+  });
+  assert.equal(bad.status, 400);
+  const tooMany = await request('POST', '/api/cocktails', {
+    name: 'Alias Reject Test Drink 2', is_active: false,
+    request_aliases: Array.from({ length: 21 }, (_, i) => `a${i}`),
+  });
+  assert.equal(tooMany.status, 400);
+
+  const nonString = await request('POST', '/api/cocktails', {
+    name: 'Alias Reject Test Drink 3', is_active: false,
+    request_aliases: [123],
+  });
+  assert.equal(nonString.status, 400);
+});
+
+test('name validation parity: POST rejects oversized, PUT rejects empty and oversized', async () => {
+  const longName = 'n'.repeat(256);
+  const post = await request('POST', '/api/cocktails', { name: longName, is_active: false });
+  assert.equal(post.status, 400);
+
+  const created = await request('POST', '/api/cocktails', { name: 'Name Rule Test Drink', is_active: false });
+  assert.equal(created.status, 201);
+  createdCocktailIds.push(created.body.id);
+  const emptyRename = await request('PUT', `/api/cocktails/${created.body.id}`, { name: '   ' });
+  assert.equal(emptyRename.status, 400);
+  const longRename = await request('PUT', `/api/cocktails/${created.body.id}`, { name: longName });
+  assert.equal(longRename.status, 400);
+  const okRename = await request('PUT', `/api/cocktails/${created.body.id}`, { name: 'Name Rule Test Drink 2' });
+  assert.equal(okRename.status, 200);
+  assert.equal(okRename.body.name, 'Name Rule Test Drink 2');
+});
+
+test('regenerate: custom request matches via request_aliases after a rename', async () => {
+  const created = await request('POST', '/api/cocktails', {
+    name: "Dallas's test fizz", is_active: false,
+    request_aliases: ["Dallas's test fizz"],
+  });
+  assert.equal(created.status, 201);
+  createdCocktailIds.push(created.body.id);
+
+  const authored = await request('PUT', `/api/cocktails/${created.body.id}`, {
+    ingredients: [{ ingredient: 'vodka', amount: 2, unit: 'oz' }],
+  });
+  assert.equal(authored.status, 200);
+
+  const renamed = await request('PUT', `/api/cocktails/${created.body.id}`, { name: 'Test Fizz Supreme' });
+  assert.equal(renamed.status, 200);
+
+  await pool.query(
+    `UPDATE drink_plans SET selections = jsonb_set(COALESCE(selections, '{}'::jsonb), '{customCocktails}', $1::jsonb)
+      WHERE id = $2`,
+    [JSON.stringify(["dallas's test FIZZ"]), planId]
+  );
+
+  const regen = await request('POST', `/api/drink-plans/${planId}/shopping-list/regenerate`, {
+    guest_count_override: 50,
+  });
+  assert.equal(regen.status, 200);
+  assert.ok(regen.body.list.signatureCocktailNames.includes('Test Fizz Supreme'));
+  assert.deepEqual(regen.body.list.needsRecipe, []);
 });

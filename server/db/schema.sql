@@ -3815,6 +3815,12 @@ ALTER TABLE mocktails DROP CONSTRAINT IF EXISTS mocktails_recipe_review_check;
 ALTER TABLE mocktails ADD CONSTRAINT mocktails_recipe_review_check
   CHECK (recipe_review IN ('empty','draft','reviewed'));
 
+-- Client-request aliases: raw free-text strings a client typed that resolve to
+-- this drink (seeded by the shopping-list Add-recipe flow). Makes custom-drink
+-- matching rename-safe. Client-typed text: NEVER exposed on public GETs.
+ALTER TABLE cocktails ADD COLUMN IF NOT EXISTS request_aliases TEXT[] DEFAULT '{}';
+ALTER TABLE mocktails ADD COLUMN IF NOT EXISTS request_aliases TEXT[] DEFAULT '{}';
+
 -- Seed: liquorBeerWine. Rows 1-13 are PARS_100.liquorBeerWine verbatim (in_full_bar).
 -- Rows 14-17 are the beer style map (style-only). Rows 18-19 SPIRIT_PARS-only
 -- spirits. Rows 20-23 INGREDIENT_MAP-only liquors (alias-resolvable, in no baseline).

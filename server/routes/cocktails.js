@@ -4,7 +4,7 @@ const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { publicReadLimiter } = require('../middleware/rateLimiters');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
-const { validateRecipeRows, assertOverridesResolvable, nextRecipeReview } = require('./potions');
+const { validateRecipeRows, assertOverridesResolvable, nextRecipeReview, sanitizeRequestAliases } = require('./potions');
 const { normalizeName } = require('../utils/potionCatalog');
 
 const router = express.Router();
@@ -151,29 +151,33 @@ router.delete('/categories/:id', auth, requireAdminOrManager, asyncHandler(async
  *  from the name; one `-2` retry on collision). `is_active: false` creates an
  *  off-menu drink — the needs-recipe Add-recipe path (spec §5). */
 router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { id, name, category_id, emoji, description, sort_order, base_spirit, ingredients, upgrade_addon_slugs, is_active, recipe_review } = req.body;
-  if (!name) throw new ValidationError({ name: 'Name is required.' });
+  const { id, name, category_id, emoji, description, sort_order, base_spirit, ingredients, upgrade_addon_slugs, is_active, recipe_review, request_aliases } = req.body;
+  const trimmedName = String(name || '').trim();
+  if (!trimmedName || trimmedName.length > 255) {
+    throw new ValidationError({ name: 'Name is required (255 characters max).' });
+  }
 
   const { rows: recipeRows } = validateRecipeRows(ingredients);
   const storedRows = recipeRows || [];
   await assertOverridesResolvable(storedRows, pool);
   const review = nextRecipeReview('empty', storedRows, recipe_review) || 'empty';
+  const requestAliases = sanitizeRequestAliases(request_aliases);
 
   const serverSlugged = !id;
-  const baseSlug = serverSlugged ? normalizeName(name).replace(/ /g, '-').slice(0, 100) : String(id);
+  const baseSlug = serverSlugged ? normalizeName(trimmedName).replace(/ /g, '-').slice(0, 100) : String(id);
   if (!baseSlug) throw new ValidationError({ name: 'Name must contain letters or numbers.' });
   const attempts = serverSlugged ? [baseSlug, `${baseSlug}-2`] : [baseSlug];
 
   for (const attemptId of attempts) {
     try {
       const result = await pool.query(
-        `INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order, base_spirit, ingredients, upgrade_addon_slugs, is_active, recipe_review)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+        `INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order, base_spirit, ingredients, upgrade_addon_slugs, is_active, recipe_review, request_aliases)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
         [
-          attemptId, name, category_id || null, emoji || null, description || null,
+          attemptId, trimmedName, category_id || null, emoji || null, description || null,
           sort_order || 0, base_spirit || null, JSON.stringify(storedRows),
           Array.isArray(upgrade_addon_slugs) ? upgrade_addon_slugs : [],
-          is_active === false ? false : true, review,
+          is_active === false ? false : true, review, requestAliases,
         ]
       );
       return res.status(201).json(result.rows[0]);
@@ -196,6 +200,14 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
  *  otherwise a recipe write auto-flips empty -> draft only. */
 router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { name, category_id, emoji, description, sort_order, is_active, base_spirit, ingredients, upgrade_addon_slugs, recipe_review } = req.body;
+
+  let trimmedName = null;
+  if (name !== undefined && name !== null) {
+    trimmedName = String(name).trim();
+    if (!trimmedName || trimmedName.length > 255) {
+      throw new ValidationError({ name: 'Name is required (255 characters max).' });
+    }
+  }
 
   const { rows: recipeRows, allArtifacts } = validateRecipeRows(ingredients);
   const effectiveRows = allArtifacts ? null : recipeRows;
@@ -222,7 +234,7 @@ router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
       recipe_review = COALESCE($10, recipe_review)
      WHERE id = $11 RETURNING *`,
     [
-      name || null,
+      trimmedName,
       category_id || null,
       emoji || null,
       description || null,

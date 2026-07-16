@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
 import {
   DndContext,
   closestCenter,
@@ -18,6 +17,8 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import api from '../../utils/api';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
+import { useToast } from '../../context/ToastContext';
+import NeedsRecipeSection from './NeedsRecipeSection';
 
 // Regenerating pulls a fresh list from the server (the live par catalog) and
 // discards manual edits; saving an already-approved list returns it to review.
@@ -25,7 +26,7 @@ import { PUBLIC_SITE_URL } from '../../utils/constants';
 const REGEN_CONFIRM = 'Regenerate replaces your edits, and saving will set the list back to Needs review. Continue?';
 
 export default function ShoppingListModal({ listData, onClose, planId, planToken, initialApproveStatus = 'idle' }) {
-  const navigate = useNavigate();
+  const toast = useToast();
   const [edited, setEdited] = useState(() => deepClone(listData));
   const [guestCount, setGuestCount] = useState(listData.guestCount);
   const [downloading, setDownloading] = useState(false);
@@ -35,8 +36,6 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   const [linkCopied, setLinkCopied] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [regenError, setRegenError] = useState('');
-  const [addingRecipe, setAddingRecipe] = useState(null); // name being added, or null
-  const [addRecipeError, setAddRecipeError] = useState('');
   // Approve state is seeded by the parent (ShoppingListButton already fetched
   // /shopping-list to load the saved list — it passes status here so we don't
   // duplicate the request on mount).
@@ -62,6 +61,16 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
     };
   }
 
+  // Generation-run diagnostics (_unresolvedIngredients, _signatureCocktails,
+  // _syrupSelfProvided) never ride a save; the server strips them too.
+  const stripGenerationKeys = (list) =>
+    Object.fromEntries(Object.entries(list).filter(([k]) => !k.startsWith('_')));
+
+  // Pending debounced save payload: set when a debounce is armed, cleared on a
+  // successful save. The unmount effect below flushes it so closing the modal
+  // within the debounce window never drops the last edit.
+  const pendingSaveRef = useRef(null);
+
   // Auto-save with debounce
   useEffect(() => {
     if (isFirstRender.current) {
@@ -72,15 +81,21 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
 
     setSaveStatus('unsaved');
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    const payload = { edited, guestCount };
+    pendingSaveRef.current = payload;
     saveTimer.current = setTimeout(async () => {
       setSaveStatus('saving');
       try {
         await api.put(`/drink-plans/${planId}/shopping-list`, {
           shopping_list: {
-            ...edited,
+            ...stripGenerationKeys(edited),
             guestCount: parseInt(guestCount, 10) || edited.guestCount,
           },
         });
+        // Identity-guarded clear: an edit made while this PUT was in flight
+        // armed a NEWER payload, and nulling it here would let a fast modal
+        // close drop that edit (the unmount flush would see nothing pending).
+        if (pendingSaveRef.current === payload) pendingSaveRef.current = null;
         setSaveStatus('saved');
         // The server reverts an approved list to pending_review on any edit
         // (drinkPlans.js), hiding it from the client. Re-arm the approve
@@ -100,6 +115,32 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [edited, guestCount, planId]);
+
+  // Unmount: flush a pending debounced save instead of dropping it (fire and
+  // forget; the modal is gone, but the edit must not be). Flushing an APPROVED
+  // list reverts it to review server-side; the toast makes that visible since
+  // the re-approve button unmounted with the modal.
+  useEffect(() => () => {
+    const pending = pendingSaveRef.current;
+    if (!pending || !planId) return;
+    const wasApprovedAtFlush = approveStatusRef.current === 'approved';
+    api.put(`/drink-plans/${planId}/shopping-list`, {
+      shopping_list: {
+        ...stripGenerationKeys(pending.edited),
+        guestCount: parseInt(pending.guestCount, 10) || pending.edited.guestCount,
+      },
+    }).then(() => {
+      if (wasApprovedAtFlush) {
+        toast.info('List saved and returned to review. Re-approve to publish the update to the client.');
+      }
+    }).catch((err) => {
+    console.error('Flush-on-close save failed:', err);
+    // The modal is gone; the toast is the only surface left to say the
+    // final edit did not land.
+    toast.error('Your last shopping-list edit failed to save.');
+  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Regenerate from the server (live par catalog); the client-side generator
   // mirror is retired. Replaces manual edits, so each call site gates it behind
@@ -243,6 +284,11 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
+    // Clear BEFORE the await: this PUT carries the current edited state, so
+    // nothing is pending anymore; clearing after would clobber a payload
+    // armed by an edit made while the PUT was in flight.
+    const approvePayload = { edited, guestCount };
+    pendingSaveRef.current = null;
     setApproveStatus('approving');
     setApproveError('');
     try {
@@ -250,7 +296,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
       // hasn't waited 1.5s for the debounce to fire).
       await api.put(`/drink-plans/${planId}/shopping-list`, {
         shopping_list: {
-          ...edited,
+          ...stripGenerationKeys(edited),
           guestCount: parseInt(guestCount, 10) || edited.guestCount,
         },
       });
@@ -260,22 +306,11 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
       setApproveStatus('approved');
     } catch (err) {
       console.error('Approve failed:', err);
+      // Restore the flush safety net (the save may not have landed), unless
+      // an in-flight edit already armed a newer payload.
+      if (!pendingSaveRef.current) pendingSaveRef.current = approvePayload;
       setApproveStatus('idle');
       setApproveError(err?.message || 'Failed to approve. Try again.');
-    }
-  };
-
-  // Client requested a drink we have no recipe for. Create an off-menu draft
-  // cocktail (server slugs the id) and jump to the Recipes tab to author it.
-  const handleAddRecipe = async (name) => {
-    setAddingRecipe(name);
-    setAddRecipeError('');
-    try {
-      const res = await api.post('/cocktails', { name, is_active: false });
-      navigate(`/potions?tab=recipes&drink=${res.data.id}`);
-    } catch (err) {
-      setAddRecipeError(err?.message || `Could not add "${name}". Try again.`);
-      setAddingRecipe(null);
     }
   };
 
@@ -439,44 +474,12 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           </div>
         )}
 
-        {/* ── Client-requested drinks with no recipe yet ── */}
-        {Array.isArray(edited.needsRecipe) && edited.needsRecipe.length > 0 && (
-          <div style={{
-            margin: '0.75rem 1.25rem 0',
-            backgroundColor: 'var(--bg-2)',
-            border: '1px solid var(--accent-line)',
-            borderRadius: 'var(--radius)',
-            padding: '0.75rem 0.875rem',
-          }}>
-            <p style={{ color: 'var(--ink-1)', fontFamily: 'var(--font-display)', fontSize: '0.9rem', margin: '0 0 0.5rem' }}>
-              Client requested: recipe needed
-            </p>
-            {edited.needsRecipe.map((entry, i) => (
-              <div
-                key={(entry.name || '') + '-' + i}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  gap: '0.75rem', padding: '0.25rem 0',
-                }}
-              >
-                <span style={{ color: 'var(--ink-2)', fontSize: '0.85rem' }}>{entry.name}</span>
-                <button
-                  className="btn btn-sm btn-secondary"
-                  onClick={() => handleAddRecipe(entry.name)}
-                  disabled={addingRecipe !== null}
-                  style={{ whiteSpace: 'nowrap' }}
-                >
-                  {addingRecipe === entry.name ? 'Adding…' : 'Add recipe'}
-                </button>
-              </div>
-            ))}
-            {addRecipeError && (
-              <p style={{ color: 'hsl(var(--danger-h) var(--danger-s) 55%)', fontSize: '0.8rem', margin: '0.5rem 0 0' }}>
-                {addRecipeError}
-              </p>
-            )}
-          </div>
-        )}
+        {/* ── Client-requested drinks with no recipe yet + recipe drawer ── */}
+        <NeedsRecipeSection
+          needsRecipe={edited.needsRecipe}
+          unresolved={edited._unresolvedIngredients}
+          onRegenerate={() => regenerate(guestCount)}
+        />
 
         {/* ── Footer actions ── */}
         <div style={{

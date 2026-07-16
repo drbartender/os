@@ -108,6 +108,22 @@ function nextRecipeReview(current, rows, explicit) {
   return null;
 }
 
+// Client-typed request aliases on drinks (Add-recipe flow). Strings only
+// (no coercion: '[object Object]' must never become an alias), deduped, cap
+// 20 entries post-dedup, 200 chars each (the planner's custom-name cap);
+// undefined/null mean "not sent" (house null-tolerant convention).
+function sanitizeRequestAliases(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.some((s) => typeof s !== 'string')) {
+    throw new ValidationError({ request_aliases: 'Must be an array of at most 20 strings.' });
+  }
+  const clean = [...new Set(value.map((s) => s.trim().slice(0, 200)).filter(Boolean))];
+  if (clean.length > 20) {
+    throw new ValidationError({ request_aliases: 'Must be an array of at most 20 strings.' });
+  }
+  return clean;
+}
+
 // Batch-verify every override_item_id references an existing ACTIVE par row.
 async function assertOverridesResolvable(rows, dbClient) {
   const overrideIds = [...new Set((rows || [])
@@ -345,3 +361,4 @@ module.exports = router;
 module.exports.validateRecipeRows = validateRecipeRows;
 module.exports.assertOverridesResolvable = assertOverridesResolvable;
 module.exports.nextRecipeReview = nextRecipeReview;
+module.exports.sanitizeRequestAliases = sanitizeRequestAliases;

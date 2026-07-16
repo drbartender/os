@@ -105,19 +105,37 @@ async function resolveCocktailIds(cocktailIds, dbClient) {
 // Match client free-text custom-drink requests against drinks that HAVE
 // recipes (normalized EXACT equality only — a fuzzy server-side match could
 // put the wrong bottles on a list). Pure; exported for tests.
-// @returns { matched: [{name, ingredients}], needsRecipe: [{name}] }
+// @returns { matched: [rows carrying {name, ingredients, request_aliases?}],
+//            needsRecipe: [{name}] }
+// Match keys additionally strip apostrophes BEFORE normalizing ("jennys" must
+// hit "Jenny's": the shared normalizer maps punctuation to a space, which
+// would keep them distinct). Scoped to matching only; slugs and par-alias
+// resolution keep normalizeName untouched. Mirrored client-side in
+// NeedsRecipeSection's reuse-before-create lookup.
+function matchKey(s) {
+  return normalizeName(String(s ?? '').replace(/['’]/g, ''));
+}
+
 function matchCustomNames(customStrings, candidateRows) {
   const byNorm = new Map();
+  // Two passes, names first: a real drink name always beats another drink's
+  // client-typed alias; first-wins is preserved within each pass.
   for (const row of candidateRows || []) {
-    const norm = normalizeName(row.name);
+    const norm = matchKey(row.name);
     if (norm && !byNorm.has(norm)) byNorm.set(norm, row);
+  }
+  for (const row of candidateRows || []) {
+    for (const alias of row.request_aliases || []) {
+      const norm = matchKey(alias);
+      if (norm && !byNorm.has(norm)) byNorm.set(norm, row);
+    }
   }
   const matched = [];
   const needsRecipe = [];
   for (const raw of customStrings || []) {
     const name = String(raw || '').trim();
     if (!name) continue;
-    const hit = byNorm.get(normalizeName(name));
+    const hit = byNorm.get(matchKey(name));
     if (hit) matched.push({ name: hit.name, ingredients: hit.ingredients || [] });
     else needsRecipe.push({ name });
   }
@@ -127,13 +145,19 @@ function matchCustomNames(customStrings, candidateRows) {
 // All drinks (both tables, INCLUDING inactive/off-menu) that carry a recipe —
 // the candidate pool for custom-request matching. Off-menu inclusion is the
 // point: a one-off drink added via "Add recipe" stays matchable forever.
+// Deterministic candidate order (spec §1): collisions resolve stably, active
+// beats draft, oldest wins among peers; matchCustomNames is first-wins so
+// this ORDER BY is the tiebreak contract.
 async function loadRecipeCandidates(dbClient) {
   const result = await dbClient.query(
-    `SELECT name, ingredients FROM cocktails
-      WHERE ingredients IS NOT NULL AND ingredients::text <> '[]'
-     UNION ALL
-     SELECT name, ingredients FROM mocktails
-      WHERE ingredients IS NOT NULL AND ingredients::text <> '[]'`
+    `SELECT name, ingredients, request_aliases FROM (
+       SELECT name, ingredients, request_aliases, is_active, created_at, 1 AS src FROM cocktails
+        WHERE ingredients IS NOT NULL AND ingredients::text <> '[]'
+       UNION ALL
+       SELECT name, ingredients, request_aliases, is_active, created_at, 2 AS src FROM mocktails
+        WHERE ingredients IS NOT NULL AND ingredients::text <> '[]'
+     ) candidates
+     ORDER BY is_active DESC NULLS LAST, created_at ASC, name ASC, src ASC`
   );
   return result.rows;
 }

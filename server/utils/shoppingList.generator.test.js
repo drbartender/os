@@ -223,6 +223,63 @@ test('compound free text resolves to the head noun, not the longest flavor alias
   assert.equal(resolveIngredient('cranberry cooler', catalog).item, 'Cranberry Juice');
 });
 
+test('matchCustomNames: request_aliases keep matching after a rename', () => {
+  const { matched, needsRecipe } = matchCustomNames(
+    ["jenny's spicy MARG!!"],
+    [{
+      name: 'Spicy Margarita',
+      ingredients: [{ ingredient: 'tequila', amount: 2, unit: 'oz' }],
+      request_aliases: ["Jenny's spicy marg"],
+    }]
+  );
+  assert.deepEqual(needsRecipe, []);
+  assert.equal(matched.length, 1);
+  assert.equal(matched[0].name, 'Spicy Margarita');
+});
+
+test('matchCustomNames: a drink NAME beats another drink\'s alias', () => {
+  const paloma = { name: 'Paloma', ingredients: [{ ingredient: 'tequila', amount: 2, unit: 'oz' }] };
+  const squatter = {
+    name: 'Grapefruit Thing',
+    ingredients: [{ ingredient: 'vodka', amount: 2, unit: 'oz' }],
+    request_aliases: ['Paloma'],
+  };
+  // Alias-carrying row listed FIRST so a single-pass index would wrongly win.
+  const { matched } = matchCustomNames(['paloma'], [squatter, paloma]);
+  assert.equal(matched[0].name, 'Paloma');
+});
+
+test('matchCustomNames: apostrophe variants match (jennys hits Jenny\'s)', () => {
+  const { matched, needsRecipe } = matchCustomNames(
+    ['jennys spicy marg'],
+    [{
+      name: 'Spicy Margarita',
+      ingredients: [{ ingredient: 'tequila', amount: 2, unit: 'oz' }],
+      request_aliases: ["Jenny's spicy marg"],
+    }]
+  );
+  assert.deepEqual(needsRecipe, []);
+  assert.equal(matched.length, 1);
+  assert.equal(matched[0].name, 'Spicy Margarita');
+});
+
+test('matchCustomNames: duplicate normalized names are first-wins (candidate order is the contract)', () => {
+  const gin = { name: 'Twin Drink', ingredients: [{ ingredient: 'gin', amount: 2, unit: 'oz' }] };
+  const rum = { name: 'TWIN DRINK', ingredients: [{ ingredient: 'rum', amount: 2, unit: 'oz' }] };
+  const { matched } = matchCustomNames(['twin drink'], [gin, rum]);
+  assert.equal(matched.length, 1);
+  assert.equal(matched[0].ingredients[0].ingredient, 'gin');
+});
+
+test('matchCustomNames: rows without request_aliases behave exactly as before', () => {
+  const { matched, needsRecipe } = matchCustomNames(
+    ['Mystery Drink'],
+    [{ name: 'Old Fashioned', ingredients: [{ ingredient: 'bourbon', amount: 2, unit: 'oz' }] }]
+  );
+  assert.deepEqual(matched, []);
+  assert.deepEqual(needsRecipe, [{ name: 'Mystery Drink' }]);
+});
+
 test('planner customs dedup against already-selected drinks (no double count)', async () => {
   const { buildPlannerGeneratorInput } = require('./shoppingListGen');
   const margarita = { id: 'margarita', name: 'Margarita', ingredients: [{ ingredient: 'Blanco Tequila', amount: 2, unit: 'oz' }] };

@@ -101,3 +101,22 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 - Audit leftover: manager iCal in `calendar.js` (last open audit item).
 - Tech debt: `notifications_opt_in` dead column DROP (4 test fixtures still INSERT it); `.form-select` focus padding-right; no-tip-jar badge redness vs last-minute badge; `.staffing-stat strong` ink emphasis.
 - Empty v1 tables (`legacy_cc_raw_imports`, `cc_import_runs`, `cc_import_phase0_failures`) stay as harmless scaffolding. Dev v1 junk SCRUBBED 2026-07-14: 176 v1 proposals (+ shifts/refunds/scheduled messages) and 1,199 v1 clients deleted transactionally with verification; 16 CC-marked clients with real proposals kept; ~1,207 dev `legacy_cc_proposals.client_id` links nulled (no live consumer); 22 `users.cc_id` rows deliberately untouched.
+
+## Potion custom-recipe flow residuals (2026-07-16, full-fleet accepted-not-fixed)
+
+- Reuse-by-NAME rename gap: Add-recipe reusing a drink matched by name (never
+  aliased) loses the match if the admin renames it in the drawer; needsRecipe
+  resurfaces, next click mints a fresh draft. Proper fix: a small alias-append
+  on reuse (server surface; PUT deliberately ignores request_aliases).
+- Reuse-before-create lookup downloads both full admin drink lists (ingredients
+  JSONB included) for a name match; fine at ~43 drinks, wants a lean lookup
+  endpoint as the off-menu pool grows.
+- RecipeEditor renders every par (83) as an option per row; memoize the row
+  component or hoist options if the catalog grows several-fold.
+- `loadRecipeCandidates` awaits serially after the resolveDrinkIds Promise.all
+  in `buildPlannerGeneratorInput` (~one extra Neon round-trip per regenerate).
+- `server/routes/drinkPlans.js` is ~795 lines (soft cap 700); next change in
+  that file should carry the split (per-concern extraction, proposals/ pattern).
+- PantryParsTab.js reads `err.response?.data?.*` (lines ~83/93/129), always
+  undefined under the api.js interceptor, so its toasts degrade to generic
+  copy; same defect class fixed in RecipeEditor. Quick fix on main.

@@ -51,9 +51,17 @@ router.get('/t/:token/shopping-list', requireUuidToken('token', 'This drink plan
       event_date: plan.event_date,
     });
   }
+  // The server-side auto-gen persists underscore-prefixed generation-run
+  // diagnostics at submit time and this route serves the blob wholesale, so
+  // strip them from the RESPONSE only (the stored blob keeps them so the
+  // admin modal's first open still shows the unresolved warning).
+  const publicList = { ...plan.shopping_list };
+  for (const key of Object.keys(publicList)) {
+    if (key.startsWith('_')) delete publicList[key];
+  }
   res.json({
     ready: true,
-    shopping_list: plan.shopping_list,
+    shopping_list: publicList,
     client_name: plan.client_name,
     event_type: plan.event_type,
     event_type_custom: plan.event_type_custom,
@@ -508,6 +516,12 @@ router.put('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async
   const { shopping_list } = req.body;
   if (!shopping_list || typeof shopping_list !== 'object') {
     throw new ValidationError({ shopping_list: 'Invalid shopping list data.' });
+  }
+  // Underscore keys are generation-run diagnostics (built fresh by every
+  // generate/regenerate); never persisted, so stale copies can't outlive
+  // the generation they described.
+  for (const key of Object.keys(shopping_list)) {
+    if (key.startsWith('_')) delete shopping_list[key];
   }
   const result = await pool.query(
     `UPDATE drink_plans
