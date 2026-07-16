@@ -70,7 +70,17 @@ ALTER TABLE mocktails ADD COLUMN IF NOT EXISTS request_aliases TEXT[] DEFAULT '{
   AND each normalized `request_aliases` entry. Names index first and win over aliases
   (two-pass build, first-wins preserved within each pass). Matching stays
   normalized-EXACT; no fuzz.
-- `loadRecipeCandidates` selects `request_aliases` in both UNION arms.
+- `loadRecipeCandidates` selects `request_aliases` in both UNION arms AND gains a
+  deterministic order: `ORDER BY is_active DESC, created_at ASC, name ASC` (wrap the
+  UNION in a subquery selecting those columns). On a normalized-name or alias
+  collision (a draft renamed to an existing drink's name; legacy dupes), an active
+  menu drink beats an off-menu draft, and the oldest wins among peers, so which
+  bottles land on a list is stable and reviewable instead of raw SQL row order
+  (review finding: first-wins over unordered rows was nondeterministic).
+- Name validation parity (review finding): POST and PUT on BOTH drink routers
+  validate `name` whenever it is provided: trimmed non-empty, max 255 chars
+  (`name VARCHAR(255)`); violations throw `ValidationError` instead of today's
+  silent COALESCE keep-old on empty and raw 22001 -> 500 on overflow.
 - `POST /cocktails` and `POST /mocktails` accept an optional `request_aliases` field:
   array, max 20 entries, each trimmed and sliced to 200 chars (matches the planner's
   name cap), empty strings dropped. Admin/manager auth already gates these routes.
@@ -100,18 +110,31 @@ the shopping list modal. "Add recipe" stops navigating.
   (`is_active === false`) in v1: that is exactly the created-from-request case, and it
   keeps accidental live-menu renames off this surface (active drinks keep the static
   name; the Menu tab remains their name editor). Renaming never breaks the client match
-  because of the seeded alias (decision 1).
+  because of the seeded alias (decision 1). Client rules mirror the server (§1): save
+  blocked while the name is empty, input capped at 255 chars.
 - **Drawer.** In the modal, "Add recipe" POSTs the draft as today (now with
   `request_aliases` seeded), then opens a drawer hosting `RecipeEditor` instead of
   navigating. Par catalog is fetched lazily on first drawer open. The
   `needsRecipe` block, drawer, and add-par form live in a new
   `client/src/components/ShoppingList/NeedsRecipeSection.jsx` so
   `ShoppingListModal.jsx` (671 lines) stays under the 700 soft cap. Reuse the existing
-  admin Drawer chrome (as used by `PlansDrawer`); verify stacking above the modal's
-  portal (zIndex 1000).
-- **Create-on-open stays** (status quo semantics): the draft exists the moment the
-  button is clicked. An abandoned empty draft is inert (candidates require non-empty
-  `ingredients`) and shows as "Empty" in the Recipes tab, which serves as a to-do.
+  admin Drawer chrome (as used by `PlansDrawer`). Stacking is a hard requirement, not
+  a check: the Drawer chrome is z-index 51 (scrim 50) vs the modal portal's inline
+  zIndex 1000, so the Drawer MUST render inside the modal's portal subtree (the
+  Drawer component does not portal itself, so mounting the section in the modal JSX
+  suffices); a future refactor that portals it to body would paint it UNDER the
+  modal. First drawer open shows a "Loading catalog..." state while pars fetch.
+- **Reuse before create** (review finding: re-click on a still-visible needsRecipe
+  entry after a declined fold-in or abandoned drawer must not mint `<slug>-2`
+  duplicates, and a third click must not dead-end on ConflictError). Add recipe first
+  matches the requested name (normalized) against the admin drink lists' names AND
+  `request_aliases`, both tables, fetched lazily once per modal session alongside the
+  par catalog. A hit opens the drawer on the existing drink (with its real type;
+  name stays read-only if it is an active drink). Only a true miss POSTs the off-menu
+  draft (create-on-miss keeps the status quo semantics). This also prevents two plans
+  seeding the same client string onto two different drafts. An abandoned empty draft
+  is inert (candidates require non-empty `ingredients`) and shows as "Empty" in the
+  Recipes tab, which serves as a to-do.
 - **Fold-in on close.** On drawer close, if the recipe now has at least one ingredient
   row (after flush), prompt with the established regenerate confirm (REGEN_CONFIRM
   semantics: regeneration replaces manual edits and returns an approved list to review).
@@ -119,7 +142,11 @@ the shopping list modal. "Add recipe" stops navigating.
   moves out of `needsRecipe` and onto `signatureCocktailNames`, and its resolvable
   ingredients merge into the list. On decline, the list stays stale until the next
   regenerate; the `needsRecipe` entry remains visible. If the recipe is still empty,
-  close silently.
+  close silently. Closing the WHOLE modal (its close affordances stay reachable behind
+  the drawer's scrim edge and the drawer intercepts Escape first) with a freshly
+  authored recipe skips the fold-in prompt: accepted for v1; the list stays stale and
+  the needsRecipe entry visible until the next regenerate, and the reuse-before-create
+  rule makes the next Add-recipe click land back on the authored draft.
 - The Recipes-tab deep-link flow (`?tab=recipes&drink=<id>`) keeps working; it is simply
   no longer the Add-recipe destination.
 
@@ -138,6 +165,9 @@ contexts; a secondary "open Pars tab" link remains where `goToPars` is available
   (consult and baseline machinery).
 - `ingredient_aliases` seeded with the recipe row's ingredient text (server sanitizer
   lowercases and caps at 60 chars; that matches how the resolver normalizes).
+  Accepted edge (review finding): ingredient text allows 120 chars, so a 61+ char
+  ingredient's seeded alias is truncated and resolves via the display resolver's
+  substring fallback rather than exact match; real ingredient names run far shorter.
 - Uses the existing `POST /potions/pars` (already validates and slugs; no new server
   surface). On success the parent appends the row to `pars`, the display resolver
   repaints, and the chip flips to the resolved "→ item · size" hint. On slug-collision
@@ -152,12 +182,25 @@ contexts; a secondary "open Pars tab" link remains where `goToPars` is available
   referenced by recipes but missing from the par catalog, and are NOT on the list.
   This catches the silent-wrong-list failure (par renamed or soft-deleted after a recipe
   referenced it) that today only reaches Sentry.
-- Strip on save, both sides: the client omits `_unresolvedIngredients` from the PUT
-  payload; the PUT handler also deletes the key before persisting (defense in depth, and
-  it self-heals historical blobs saved wholesale since 7/11 on their next save).
-- The field is trusted only from a fresh generate/regenerate. A stale saved blob may
-  still carry an old copy until its next save or regenerate; the block reflects the last
-  generation, which is acceptable.
+- Strip on save, both sides, ALL underscore-prefixed keys (review finding):
+  `_unresolvedIngredients` plus the sibling generation-run fields `_signatureCocktails`
+  and `_syrupSelfProvided` (`shoppingList.js:520-521`; verified zero runtime readers of
+  the saved copies). The client omits them from BOTH PUT call sites (the debounced
+  autosave AND the approve path's synchronous save); the PUT handler deletes every
+  `_`-prefixed key before persisting (defense in depth, and it self-heals historical
+  blobs saved wholesale since 7/11 on their next save). `needsRecipe` (no underscore)
+  stays persisted deliberately; the modal, public page, and PDF render it from the
+  saved blob.
+- Public GET hygiene (review finding): the server-side auto-gen at plan submit
+  (`shoppingListGen.js` `autoGenerateShoppingList`, line 235) persists the whole list,
+  underscore keys included, and `GET /t/:token/shopping-list` serves the saved blob
+  wholesale. The public GET deletes `_`-prefixed keys from the RESPONSE only (the
+  stored blob keeps them so the admin modal's first open still shows the warning);
+  client-typed diagnostics never ride public JSON.
+- Decay direction, documented: the auto-gen blob shows the warning on first open; any
+  admin save strips it, so a reopened modal shows no warning until the next regenerate
+  even if the par gap persists. Accepted for v1 (the fold-in flow regenerates
+  naturally; Sentry `unresolved_ingredient` stays the backstop).
 
 ### 5. Fix the modal autosave flush
 
@@ -166,6 +209,13 @@ instead of dropping it (the `RecipesTab` target-bound pattern: bind payload at s
 time, fire on unmount). With the drawer, Add-recipe no longer unmounts the modal, so the
 remaining loss window is closing the modal within 1.5s of an edit; still a real leak,
 still fixed.
+
+Interaction the flush creates (review finding): any PUT to an APPROVED list reverts it
+to `pending_review` server-side, hiding it from the client; an unmount flush does that
+after the modal (and its re-approve button) is gone. Decision: flush anyway (an edit is
+never silently lost), and when the pre-flush status was approved, fire a toast so the
+revert is visible: "List saved and returned to review. Re-approve to publish the update
+to the client." Reopening the modal shows the re-armed Re-approve button as usual.
 
 ## End-to-end flow (after this change)
 
@@ -217,6 +267,9 @@ proposal-side is preview.
 - New `components/ShoppingList/NeedsRecipeSection.jsx` (needsRecipe block + drawer +
   add-par form) keeps `ShoppingListModal.jsx` (671) under the 700 soft cap; the modal
   loses the needsRecipe JSX and `handleAddRecipe` and gains a section mount.
+- `server/routes/drinkPlans.js` is 779 lines, already over the warn-only 700 soft cap;
+  the strip + public-GET hygiene add a handful of lines (hard cap 1000 not in play).
+  Expect the pre-commit warning; no split required by this change.
 
 ## Docs
 
@@ -236,6 +289,9 @@ proposal-side is preview.
 
 ## Rollout
 
-Additive idempotent DDL; server reads guard with `|| '{}'`. Deploy order safe (column
-lands with the same push as the readers; schema.sql applies on boot). `schema.sql` is a
-sensitive path, so the lane gets the full review fleet regardless of size.
+Additive idempotent DDL; JS reads guard with `|| []` (the pg driver returns TEXT[] as a
+JS array, null when absent; the SQL default `'{}'` backfills existing rows so NULLs
+should not occur, and a string literal `'{}'` fallback would be a wrong-typed iterable).
+Deploy order safe (column lands with the same push as the readers; schema.sql applies
+on boot). `schema.sql` is a sensitive path, so the lane gets the full review fleet
+regardless of size.

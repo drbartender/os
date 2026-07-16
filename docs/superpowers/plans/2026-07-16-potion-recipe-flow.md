@@ -59,7 +59,7 @@ lanes:
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: `sanitizeRequestAliases(value) -> string[]` exported from `server/routes/potions.js` (throws `ValidationError` on non-array or >20 entries; trims, slices each to 200 chars, drops empties; `undefined` -> `[]`). `POST /api/cocktails` and `POST /api/mocktails` accept optional `request_aliases: string[]`; the column is returned by both admin GETs automatically (`SELECT c.*` / `m.*`).
+- Produces: `sanitizeRequestAliases(value) -> string[]` exported from `server/routes/potions.js` (throws `ValidationError` on non-array or >20 entries; trims, slices each to 200 chars, drops empties; `undefined` -> `[]`). `POST /api/cocktails` and `POST /api/mocktails` accept optional `request_aliases: string[]`; the column is returned by both admin GETs automatically (`SELECT c.*` / `m.*`). Name validation parity on all four write routes (POST + PUT, both routers): a provided `name` must be trimmed non-empty and <= 255 chars, else `ValidationError` (today: empty rename silently COALESCEs to the old name; 256+ chars is a raw 22001 -> 500).
 
 - [ ] **Step 1: DDL**
 
@@ -118,6 +118,23 @@ test('POST /cocktails rejects non-array and oversized request_aliases', async ()
   });
   assert.equal(tooMany.status, 400);
 });
+
+test('name validation parity: POST rejects oversized, PUT rejects empty and oversized', async () => {
+  const longName = 'n'.repeat(256);
+  const post = await request('POST', '/api/cocktails', { name: longName, is_active: false });
+  assert.equal(post.status, 400);
+
+  const created = await request('POST', '/api/cocktails', { name: 'Name Rule Test Drink', is_active: false });
+  assert.equal(created.status, 201);
+  createdCocktailIds.push(created.body.id);
+  const emptyRename = await request('PUT', `/api/cocktails/${created.body.id}`, { name: '   ' });
+  assert.equal(emptyRename.status, 400);
+  const longRename = await request('PUT', `/api/cocktails/${created.body.id}`, { name: longName });
+  assert.equal(longRename.status, 400);
+  const okRename = await request('PUT', `/api/cocktails/${created.body.id}`, { name: 'Name Rule Test Drink 2' });
+  assert.equal(okRename.status, 200);
+  assert.equal(okRename.body.name, 'Name Rule Test Drink 2');
+});
 ```
 
 - [ ] **Step 4: Run to verify they fail**
@@ -163,6 +180,29 @@ INSERT becomes (column + `$12`):
 ```
 
 with `requestAliases` appended to the params array. Mirror in `server/routes/mocktails.js` POST (line 149): destructure `request_aliases`, import the sanitizer from `'./potions'`, add the column as `$10` with `requestAliases` appended.
+
+- [ ] **Step 6b: Name validation on all four write routes**
+
+In BOTH routers' POST, replace `if (!name) throw new ValidationError({ name: 'Name is required.' });` with:
+
+```js
+  if (!name || !String(name).trim() || String(name).trim().length > 255) {
+    throw new ValidationError({ name: 'Name is required (255 characters max).' });
+  }
+```
+
+In BOTH routers' PUT, immediately after the destructure:
+
+```js
+  if (name !== undefined && name !== null) {
+    const trimmedName = String(name).trim();
+    if (!trimmedName || trimmedName.length > 255) {
+      throw new ValidationError({ name: 'Name is required (255 characters max).' });
+    }
+  }
+```
+
+(No behavior change for requests that omit `name`; the PUT's `name || null` COALESCE path stays.)
 
 - [ ] **Step 7: Run to verify they pass**
 
@@ -219,6 +259,14 @@ test('matchCustomNames: a drink NAME beats another drink\'s alias', () => {
   assert.equal(matched[0].name, 'Paloma');
 });
 
+test('matchCustomNames: duplicate normalized names are first-wins (candidate order is the contract)', () => {
+  const gin = { name: 'Twin Drink', ingredients: [{ ingredient: 'gin', amount: 2, unit: 'oz' }] };
+  const rum = { name: 'TWIN DRINK', ingredients: [{ ingredient: 'rum', amount: 2, unit: 'oz' }] };
+  const { matched } = matchCustomNames(['twin drink'], [gin, rum]);
+  assert.equal(matched.length, 1);
+  assert.equal(matched[0].ingredients[0].ingredient, 'gin');
+});
+
 test('matchCustomNames: rows without request_aliases behave exactly as before', () => {
   const { matched, needsRecipe } = matchCustomNames(
     ['Mystery Drink'],
@@ -256,14 +304,20 @@ function matchCustomNames(customStrings, candidateRows) {
   // (matching loop below unchanged)
 ```
 
-And add the column to BOTH arms of `loadRecipeCandidates` (line 132):
+And rewrite `loadRecipeCandidates` (line 132) to select the column AND pin a
+deterministic candidate order (spec §1: collisions resolve stably, active beats draft,
+oldest wins among peers; matchCustomNames is first-wins so this ORDER BY is the
+tiebreak contract):
 
 ```js
-`SELECT name, ingredients, request_aliases FROM cocktails
-  WHERE ingredients IS NOT NULL AND ingredients::text <> '[]'
- UNION ALL
- SELECT name, ingredients, request_aliases FROM mocktails
-  WHERE ingredients IS NOT NULL AND ingredients::text <> '[]'`
+`SELECT name, ingredients, request_aliases FROM (
+   SELECT name, ingredients, request_aliases, is_active, created_at FROM cocktails
+    WHERE ingredients IS NOT NULL AND ingredients::text <> '[]'
+   UNION ALL
+   SELECT name, ingredients, request_aliases, is_active, created_at FROM mocktails
+    WHERE ingredients IS NOT NULL AND ingredients::text <> '[]'
+ ) candidates
+ ORDER BY is_active DESC, created_at ASC, name ASC`
 ```
 
 - [ ] **Step 4: Run to verify green, plus the parity invariant**
@@ -336,17 +390,39 @@ test('regenerate: custom request matches via request_aliases after a rename', as
 Run: `node -r dotenv/config --test server/routes/potions.test.js`
 Expected: new test FAILS at the `signatureCocktailNames` assert (name renamed away, alias not yet... this passes only once Tasks 1+2 are merged in the lane; if the lane built Tasks 1-2 first, expected PASS. Keep the test either way; it is the rename-safety regression guard.)
 
-- [ ] **Step 3: Strip in the PUT**
+- [ ] **Step 3: Strip in the PUT + public GET hygiene**
 
-`server/routes/drinkPlans.js`, inside the PUT after the type check (line 510):
+`server/routes/drinkPlans.js`, inside the PUT after the type check (line 510). Spec §4:
+ALL underscore-prefixed keys are generation-run diagnostics (`_unresolvedIngredients`,
+`_signatureCocktails`, `_syrupSelfProvided`), none has a runtime reader of the saved
+copy:
 
 ```js
   if (!shopping_list || typeof shopping_list !== 'object') {
     throw new ValidationError({ shopping_list: 'Invalid shopping list data.' });
   }
-  // Generation-time diagnostic only (built fresh by generate/regenerate);
-  // never persisted, so stale copies can't outlive the list they described.
-  delete shopping_list._unresolvedIngredients;
+  // Underscore keys are generation-run diagnostics (built fresh by every
+  // generate/regenerate); never persisted, so stale copies can't outlive
+  // the generation they described.
+  for (const key of Object.keys(shopping_list)) {
+    if (key.startsWith('_')) delete shopping_list[key];
+  }
+```
+
+And in `GET /t/:token/shopping-list` (line 54, the `ready: true` branch): the
+server-side auto-gen persists these keys at submit time and this route serves the blob
+wholesale, so strip them from the RESPONSE only (the stored blob keeps them so the
+admin modal's first open still shows the unresolved warning):
+
+```js
+  const publicList = { ...plan.shopping_list };
+  for (const key of Object.keys(publicList)) {
+    if (key.startsWith('_')) delete publicList[key];
+  }
+  res.json({
+    ready: true,
+    shopping_list: publicList,
+    // (remaining fields unchanged)
 ```
 
 - [ ] **Step 4: Write the strip test**
@@ -354,19 +430,44 @@ Expected: new test FAILS at the `signatureCocktailNames` assert (name renamed aw
 Create `server/routes/drinkPlans.shoppingListStrip.test.js` on the harness pattern of `server/routes/drinkPlans.beo.test.js` (fresh express app, mount `require('./drinkPlans')` at `/api/drink-plans`, real admin JWT, dev DB, cleanup in `after()`):
 
 ```js
-test('PUT shopping-list strips _unresolvedIngredients before persisting', async () => {
+test('PUT shopping-list strips every underscore-prefixed key before persisting', async () => {
   const res = await request('PUT', `/api/drink-plans/${planId}/shopping-list`, {
     shopping_list: {
       guestCount: 50, liquorBeerWine: [], everythingElse: [],
       _unresolvedIngredients: [{ drink: 'X', ingredient: 'y' }],
+      _signatureCocktails: [{ name: 'X' }],
+      _syrupSelfProvided: ['lavender'],
     },
   });
   assert.equal(res.status, 200);
   const { rows } = await pool.query('SELECT shopping_list FROM drink_plans WHERE id = $1', [planId]);
-  assert.equal(rows[0].shopping_list._unresolvedIngredients, undefined);
+  const savedKeys = Object.keys(rows[0].shopping_list).filter((k) => k.startsWith('_'));
+  assert.deepEqual(savedKeys, []);
   assert.equal(rows[0].shopping_list.guestCount, 50);
 });
+
+test('public token GET never serves underscore-prefixed keys', async () => {
+  await pool.query(
+    `UPDATE drink_plans
+       SET shopping_list = $1::jsonb, shopping_list_status = 'approved'
+     WHERE id = $2`,
+    [JSON.stringify({
+      guestCount: 50, liquorBeerWine: [], everythingElse: [],
+      _unresolvedIngredients: [{ drink: 'X', ingredient: 'y' }],
+    }), planId]
+  );
+  const { rows } = await pool.query('SELECT token FROM drink_plans WHERE id = $1', [planId]);
+  const res = await request('GET', `/api/drink-plans/t/${rows[0].token}/shopping-list`, undefined, null);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.ready, true);
+  const servedKeys = Object.keys(res.body.shopping_list).filter((k) => k.startsWith('_'));
+  assert.deepEqual(servedKeys, []);
+});
 ```
+
+(The public GET runs through `publicReadLimiter` and `requireUuidToken`; the harness
+mounts the flat router so both apply. Reset `shopping_list_status` in `after()` along
+with the other cleanup.)
 
 - [ ] **Step 5: Run both suites (one at a time)**
 
@@ -407,9 +508,12 @@ git commit -m "feat(potions): rename-safe regenerate e2e + PUT strips _unresolve
 />
 ```
 
+Also exported: `normalizeName` (named export; NeedsRecipeSection's reuse-before-create
+lookup uses the same normalization the matcher uses).
+
 - [ ] **Step 1: Create `client/src/components/potions/RecipeEditor.js`**
 
-Move VERBATIM from `RecipesTab.js`: `UNITS`, `REVIEW`, `normalizeName`, `buildAliasIndex`, `resolveDisplay`, `rowProblems`, and the whole detail-pane block (rows state, `persist`, `flushPending`, rehydrate-on-selection effect, unmount flush effect, `scheduleSave`, `updateRow`/`addRow`/`deleteRow`, `markReviewed`, the `<div className="card potions-detail">` JSX). Adapt:
+Move VERBATIM from `RecipesTab.js`: `UNITS`, `REVIEW`, `normalizeName` (re-export it: `export { normalizeName }`), `buildAliasIndex`, `resolveDisplay`, `rowProblems`, and the whole detail-pane block (rows state, `persist`, `flushPending`, rehydrate-on-selection effect, unmount flush effect, `scheduleSave`, `updateRow`/`addRow`/`deleteRow`, `markReviewed`, the `<div className="card potions-detail">` JSX). Adapt:
 
 1. Selection is gone: the component receives ONE `drink`; the rehydrate effect keys on `` `${type}:${drink.id}` ``.
 2. `persist` calls `onDrinkChange(res.data)` after `setData`-style merging is removed (the parent owns caches now).
@@ -432,6 +536,7 @@ In the header, replace the static `<div className="potions-detail-name">{drink.n
     className={`input potions-cell potions-name-input ${nameProblem ? 'potions-cell-bad' : ''}`}
     value={nameDraft}
     autoFocus={autoFocusName}
+    maxLength={255}
     onChange={(e) => { setNameDraft(e.target.value); scheduleSave(rowsRef.current); }}
     placeholder="Drink name"
     aria-label="Drink name"
@@ -546,10 +651,10 @@ git commit -m "refactor(potions): extract shared RecipeEditor with name editing 
 `client/src/components/ShoppingList/NeedsRecipeSection.jsx`. It owns everything the modal's needsRecipe block owned, plus the drawer:
 
 ```jsx
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import api from '../../utils/api';
 import Drawer from '../adminos/Drawer';
-import RecipeEditor from '../potions/RecipeEditor';
+import RecipeEditor, { normalizeName } from '../potions/RecipeEditor';
 
 // Client-requested drinks with no recipe yet, plus the drawer that authors the
 // recipe in place (no navigation away from the shopping list). Fold-in happens
@@ -557,10 +662,11 @@ import RecipeEditor from '../potions/RecipeEditor';
 export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenerate }) {
   const [addingRecipe, setAddingRecipe] = useState(null); // name being created, or null
   const [addRecipeError, setAddRecipeError] = useState('');
-  const [drawerDrink, setDrawerDrink] = useState(null);   // created draft row, or null
+  const [drawerTarget, setDrawerTarget] = useState(null); // { drink, type } or null
   const [pars, setPars] = useState(null);                 // lazy: fetched on first drawer open
   const [parsError, setParsError] = useState(false);
   const [rowCount, setRowCount] = useState(0);
+  const drinkListsRef = useRef(null);                     // { cocktails, mocktails } lazy cache
 
   const loadPars = async () => {
     try {
@@ -573,16 +679,48 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
     }
   };
 
+  // Reuse before create (spec §2): the same client string must land on the
+  // SAME draft across re-clicks and across plans, never mint a "<slug>-2"
+  // duplicate or dead-end on ConflictError. Normalized match against names
+  // AND request_aliases of both admin lists.
+  const findExistingDrink = async (name) => {
+    if (!drinkListsRef.current) {
+      const [c, m] = await Promise.all([
+        api.get('/cocktails/admin'),
+        api.get('/mocktails/admin'),
+      ]);
+      drinkListsRef.current = {
+        cocktails: c.data.cocktails || [],
+        mocktails: m.data.mocktails || [],
+      };
+    }
+    const norm = normalizeName(name);
+    for (const type of ['cocktails', 'mocktails']) {
+      for (const drink of drinkListsRef.current[type]) {
+        const names = [drink.name, ...(drink.request_aliases || [])];
+        if (names.some((n) => normalizeName(n) === norm)) return { drink, type };
+      }
+    }
+    return null;
+  };
+
   const handleAddRecipe = async (name) => {
     setAddingRecipe(name);
     setAddRecipeError('');
     try {
+      if (pars === null) loadPars();
+      const existing = await findExistingDrink(name);
+      if (existing) {
+        setRowCount((existing.drink.ingredients || []).length);
+        setDrawerTarget(existing);
+        return;
+      }
       const res = await api.post('/cocktails', {
         name, is_active: false, request_aliases: [name],
       });
-      if (pars === null) loadPars();
+      drinkListsRef.current.cocktails.push(res.data); // future re-clicks reuse it
       setRowCount(0);
-      setDrawerDrink(res.data);
+      setDrawerTarget({ drink: res.data, type: 'cocktails' });
     } catch (err) {
       setAddRecipeError(err?.message || `Could not add "${name}". Try again.`);
     } finally {
@@ -591,19 +729,19 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
   };
 
   const closeDrawer = () => {
-    const drink = drawerDrink;
-    setDrawerDrink(null);
-    if (drink && rowCount > 0 && window.confirm(
-      `Fold "${drink.name}" into the list? Regenerating replaces your manual edits, and saving will set the list back to Needs review.`
+    const target = drawerTarget;
+    setDrawerTarget(null);
+    if (target && rowCount > 0 && window.confirm(
+      `Fold "${target.drink.name}" into the list? Regenerating replaces your manual edits, and saving will set the list back to Needs review.`
     )) {
       onRegenerate();
     }
   };
   // needsRecipe block JSX (moved verbatim from the modal, button wired to
   // handleAddRecipe) + unresolved block (Task 6) + drawer:
-  // <Drawer open={!!drawerDrink} onClose={closeDrawer}
+  // <Drawer open={!!drawerTarget} onClose={closeDrawer}
   //   crumb={<span className="drawer-crumb">Potions · New recipe</span>}>
-  //   {drawerDrink && (
+  //   {drawerTarget && (
   //     pars === null ? <div className="potions-state text-muted">Loading catalog…</div> : (
   //       <>
   //         {parsError && (
@@ -613,8 +751,8 @@ export default function NeedsRecipeSection({ needsRecipe, unresolved, onRegenera
   //           </div>
   //         )}
   //         <RecipeEditor
-  //           drink={drawerDrink} type="cocktails" pars={pars} autoFocusName
-  //           onDrinkChange={(u) => setDrawerDrink((prev) => ({ ...prev, ...u }))}
+  //           drink={drawerTarget.drink} type={drawerTarget.type} pars={pars} autoFocusName
+  //           onDrinkChange={(u) => setDrawerTarget((prev) => (prev ? { ...prev, drink: { ...prev.drink, ...u } } : prev))}
   //           onParsChange={(p) => setPars((prev) => [...(prev || []), p])}
   //           onRowsChange={setRowCount}
   //         />
@@ -695,21 +833,27 @@ Above the needsRecipe list (same container style as the needsRecipe block, amber
 )}
 ```
 
-- [ ] **Step 2: Strip `_unresolvedIngredients` from both PUT payloads in the modal**
+- [ ] **Step 2: Strip underscore keys from both PUT payloads in the modal**
+
+Add one helper near `deepClone`:
+
+```js
+// Generation-run diagnostics (_unresolvedIngredients, _signatureCocktails,
+// _syrupSelfProvided) never ride a save; the server strips them too.
+const stripGenerationKeys = (list) =>
+  Object.fromEntries(Object.entries(list).filter(([k]) => !k.startsWith('_')));
+```
 
 Autosave effect (line ~80) and `handleApprove` (line ~250) both become:
 
 ```js
-const { _unresolvedIngredients, ...persistable } = edited;
 await api.put(`/drink-plans/${planId}/shopping-list`, {
   shopping_list: {
-    ...persistable,
+    ...stripGenerationKeys(edited),
     guestCount: parseInt(guestCount, 10) || edited.guestCount,
   },
 });
 ```
-
-(The server strips too, from Task 3; this keeps the payload honest.)
 
 - [ ] **Step 3: Flush-on-unmount fix**
 
@@ -721,22 +865,35 @@ const pendingSaveRef = useRef(null); // set when a debounce is armed, cleared on
 
 In the autosave effect, before arming the timer: `pendingSaveRef.current = { edited, guestCount };` and inside the fired timer + after a successful save: `pendingSaveRef.current = null;` (also null it in `handleApprove` after its explicit PUT). Then:
 
+The modal gains `const toast = useToast();` (import `useToast` from
+`../../context/ToastContext`; the provider is app-level and outlives the modal). Spec
+§5: flushing an edit to an APPROVED list reverts it to pending_review after the
+re-approve button is gone, so the flush must say so out loud:
+
 ```js
 // Unmount: flush a pending debounced save instead of dropping it (fire and
-// forget; the modal is gone, but the edit must not be).
+// forget; the modal is gone, but the edit must not be). Flushing an APPROVED
+// list reverts it to review server-side; the toast makes that visible since
+// the re-approve button unmounted with the modal.
 useEffect(() => () => {
   const pending = pendingSaveRef.current;
   if (!pending || !planId) return;
-  const { _unresolvedIngredients, ...persistable } = pending.edited;
+  const wasApprovedAtFlush = approveStatusRef.current === 'approved';
   api.put(`/drink-plans/${planId}/shopping-list`, {
     shopping_list: {
-      ...persistable,
+      ...stripGenerationKeys(pending.edited),
       guestCount: parseInt(pending.guestCount, 10) || pending.edited.guestCount,
     },
+  }).then(() => {
+    if (wasApprovedAtFlush) {
+      toast.info('List saved and returned to review. Re-approve to publish the update to the client.');
+    }
   }).catch((err) => console.error('Flush-on-close save failed:', err));
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
 ```
+
+(`toast.info` verified on the ToastContext API, `client/src/context/ToastContext.js:56`.)
 
 - [ ] **Step 4: Build gate + manual verify**
 
