@@ -120,3 +120,19 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 - PantryParsTab.js reads `err.response?.data?.*` (lines ~83/93/129), always
   undefined under the api.js interceptor, so its toasts degrade to generic
   copy; same defect class fixed in RecipeEditor. Quick fix on main.
+- `generateLineItemsFromProposal` is override-blind: it always itemizes from
+  catalog, so any proposal whose `total_price_override` differs from catalog
+  gets an invoice with a correct total sitting over line items that do not add
+  up to it (Shiralee INV-0120: $450 of lines on a $270 invoice). Deliberately
+  NOT fixed alongside the 2026-07-16 drink-plan money fix: every invoice flows
+  through that generator, and an honest reconciling line for the CC events would
+  depend on the "package includes a bar" fact that exists only in the 2024
+  contract PDFs, so it would produce an itemization we would hand-edit anyway.
+  Affects native custom-priced proposals (the Edward Marx set) too. The CC tail
+  is handled by `scripts/cc-balance-invoice.js` instead.
+- The $50 first-bar ghost resurrects on recompute. CC-transferred proposals
+  carry `num_bars >= 1` where the contract bundles the bar, so any snapshot
+  recompute re-adds the package's `first_bar_fee` to the breakdown. Demoted to
+  cosmetic by the 2026-07-16 fix (the override now always pins the total, so it
+  can never reach a charge), but it still reappears as a breakdown line on the
+  proposal page after each admin save.

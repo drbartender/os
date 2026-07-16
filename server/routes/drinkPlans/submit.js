@@ -200,6 +200,18 @@ async function handleSubmit(req, res) {
             triggeredBy: (rawAddons[slug].triggeredBy || []).filter(drinkId => cocktailById.has(drinkId)),
           }));
 
+        // Pre-extras catalog baseline. Captured BEFORE the num_bars increment
+        // and the add-on upsert below, so a negotiated proposal can price the
+        // delta of exactly what the client just added. numBarsAtIntent is the
+        // pre-increment count (the same value computeExtrasBreakdown keys the
+        // first-vs-additional bar fee off). Syrups come off the pre-update
+        // snapshot for the same reason.
+        const preAddonsRes = await client.query(
+          'SELECT sa.* FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id WHERE pa.proposal_id = $1',
+          [proposal.id]
+        );
+        const preSyrups = proposal.pricing_snapshot?.syrups?.selections || [];
+
         // Update num_bars if client added a bar rental from the drink plan
         if (addBarRental) {
           const newNumBars = (proposal.num_bars || 0) + 1;
@@ -258,6 +270,49 @@ async function handleSubmit(req, res) {
           const syrupSels = Array.isArray(rawSyrups)
             ? rawSyrups
             : [...new Set(Object.values(rawSyrups).flat())];
+          const adjustments = proposal.adjustments || [];
+
+          // A total_price_override is a CONTRACT, not a catalog computation:
+          // the engine's serviceTotal REPLACES the whole calculated total with
+          // it. So we can neither drop it (the client's negotiated price
+          // evaporates and they get billed at catalog, which overbilled Jack
+          // Van Dyke by $627) nor pass it through untouched (the extras they
+          // just bought become free). Price the delta at catalog with the
+          // override OFF and move the contract by it. Anything this submit did
+          // not change sits on both sides and cancels, including the CC-era
+          // bundled first bar. Native proposals (no override) keep the plain
+          // catalog recompute, unchanged.
+          const hasOverride = proposal.total_price_override !== null
+            && proposal.total_price_override !== undefined;
+          let effectiveOverride = null;
+
+          if (hasOverride) {
+            const catalogArgs = {
+              pkg,
+              guestCount: proposal.guest_count,
+              durationHours: Number(proposal.event_duration_hours),
+              numBartenders: proposal.num_bartenders,
+              adjustments,
+              totalPriceOverride: null, // price the delta at CATALOG
+              gratuityRate: proposal.gratuity_rate,
+              tipJar: proposal.tip_jar,
+            };
+            const catalogBefore = calculateProposal({
+              ...catalogArgs,
+              numBars: numBarsAtIntent,
+              addons: preAddonsRes.rows,
+              syrupSelections: preSyrups,
+            });
+            const catalogAfter = calculateProposal({
+              ...catalogArgs,
+              numBars: proposal.num_bars ?? 0,
+              addons: allAddonsRes.rows,
+              syrupSelections: syrupSels,
+            });
+            const extrasDelta = Math.round((catalogAfter.total - catalogBefore.total) * 100) / 100;
+            effectiveOverride = Math.round((Number(proposal.total_price_override) + extrasDelta) * 100) / 100;
+          }
+
           const snapshot = calculateProposal({
             pkg,
             guestCount: proposal.guest_count,
@@ -265,12 +320,19 @@ async function handleSubmit(req, res) {
             numBars: proposal.num_bars ?? 0,
             numBartenders: proposal.num_bartenders,
             addons: allAddonsRes.rows,
-            syrupSelections: syrupSels, gratuityRate: proposal.gratuity_rate, tipJar: proposal.tip_jar, // §5 preserve stored gratuity
+            syrupSelections: syrupSels,
+            adjustments,
+            totalPriceOverride: effectiveOverride,
+            gratuityRate: proposal.gratuity_rate, tipJar: proposal.tip_jar, // §5 preserve stored gratuity
           });
 
+          // Write the override alongside the total so the two can never drift
+          // apart again (the stranded-column state that made Jack's row
+          // inconsistent). For a native proposal effectiveOverride is null and
+          // the column is already null, so this is a no-op there.
           await client.query(
-            'UPDATE proposals SET total_price = $1, pricing_snapshot = $2, updated_at = NOW() WHERE id = $3',
-            [snapshot.total, JSON.stringify(snapshot), proposal.id]
+            'UPDATE proposals SET total_price = $1, pricing_snapshot = $2, total_price_override = $4, updated_at = NOW() WHERE id = $3',
+            [snapshot.total, JSON.stringify(snapshot), proposal.id, effectiveOverride]
           );
 
           // F2 (CLAUDE.md cross-cutting: price up -> re-evaluate payment status).
