@@ -66,9 +66,14 @@ const COVER_REQUEST_MAX_HOURS = 336;     // < 14d
 async function loadRequestContextForUpdate(dbClient, requestId) {
   // payout_events links a SHIFT (not a shift_request) to a payout; payouts
   // carry (pay_period_id, contractor_id). To resolve THIS user's pay-period
-  // status for THIS shift we match on (pe.shift_id, po.contractor_id =
-  // sr.user_id). A NULL pay_period_status means no payout has been
-  // assembled yet, which is the common case for upcoming shifts.
+  // state for THIS shift we match on (pe.shift_id, po.contractor_id =
+  // sr.user_id). This MUST be a correlated EXISTS, not a LEFT JOIN chain: on
+  // a multi-staffed accrued shift another staffer's payout_events row also
+  // joins (with NULL period status, since their payout isn't sr.user_id's),
+  // multiplying the result rows so rows[0] could nondeterministically pick
+  // the NULL row and skip the processing/reopened guard. FALSE means no
+  // frozen payout exists for this user+shift, which is the common case for
+  // upcoming shifts.
   const { rows } = await dbClient.query(
     `SELECT sr.id AS request_id,
             sr.user_id,
@@ -90,14 +95,19 @@ async function loadRequestContextForUpdate(dbClient, requestId) {
             s.event_type AS shift_event_type,
             s.event_type_custom AS shift_event_type_custom,
             COALESCE(c.name, s.client_name) AS client_name,
-            pp.status AS pay_period_status
+            EXISTS (
+              SELECT 1
+                FROM payout_events pe
+                JOIN payouts po ON po.id = pe.payout_id
+                JOIN pay_periods pp ON pp.id = po.pay_period_id
+               WHERE pe.shift_id = s.id
+                 AND po.contractor_id = sr.user_id
+                 AND pp.status IN ('processing', 'reopened')
+            ) AS pay_period_frozen
        FROM shift_requests sr
        JOIN shifts s ON s.id = sr.shift_id
        LEFT JOIN proposals p ON p.id = s.proposal_id
        LEFT JOIN clients c ON c.id = p.client_id
-       LEFT JOIN payout_events pe ON pe.shift_id = s.id
-       LEFT JOIN payouts po ON po.id = pe.payout_id AND po.contractor_id = sr.user_id
-       LEFT JOIN pay_periods pp ON pp.id = po.pay_period_id
       WHERE sr.id = $1
       FOR UPDATE OF sr`,
     [requestId]
@@ -236,7 +246,7 @@ router.post('/requests/:requestId/drop', asyncHandler(async (req, res) => {
     if (ctx.dropped_at) {
       throw new ConflictError('This shift was already dropped.', 'already_dropped');
     }
-    if (['processing', 'reopened'].includes(ctx.pay_period_status)) {
+    if (ctx.pay_period_frozen) {
       throw new ConflictError(
         'This shift falls in a pay period that is being processed; contact management.',
         'pay_period_processing'
@@ -372,7 +382,7 @@ router.post('/requests/:requestId/request-cover', asyncHandler(async (req, res) 
     if (ctx.cover_requested_at) {
       throw new ConflictError('Cover was already requested for this shift.', 'already_requested');
     }
-    if (['processing', 'reopened'].includes(ctx.pay_period_status)) {
+    if (ctx.pay_period_frozen) {
       throw new ConflictError(
         'This shift falls in a pay period that is being processed; contact management.',
         'pay_period_processing'
@@ -507,14 +517,19 @@ router.post('/requests/:shiftId/claim-cover', asyncHandler(async (req, res) => {
               s.proposal_id, s.event_type AS shift_event_type,
               s.event_type_custom AS shift_event_type_custom,
               COALESCE(c.name, s.client_name) AS client_name,
-              pp.status AS pay_period_status
+              EXISTS (
+                SELECT 1
+                  FROM payout_events pe
+                  JOIN payouts po ON po.id = pe.payout_id
+                  JOIN pay_periods pp ON pp.id = po.pay_period_id
+                 WHERE pe.shift_id = s.id
+                   AND po.contractor_id = sr.user_id
+                   AND pp.status IN ('processing', 'reopened')
+              ) AS pay_period_frozen
          FROM shift_requests sr
          JOIN shifts s ON s.id = sr.shift_id
          LEFT JOIN proposals p ON p.id = s.proposal_id
          LEFT JOIN clients c ON c.id = p.client_id
-         LEFT JOIN payout_events pe ON pe.shift_id = s.id
-         LEFT JOIN payouts po ON po.id = pe.payout_id AND po.contractor_id = sr.user_id
-         LEFT JOIN pay_periods pp ON pp.id = po.pay_period_id
         WHERE sr.shift_id = $1
           AND sr.cover_requested_at IS NOT NULL
           AND sr.status = 'approved'
@@ -532,7 +547,7 @@ router.post('/requests/:shiftId/claim-cover', asyncHandler(async (req, res) => {
     if (orig.shift_status === 'cancelled') {
       throw new ConflictError('This shift was cancelled.', 'shift_cancelled');
     }
-    if (['processing', 'reopened'].includes(orig.pay_period_status)) {
+    if (orig.pay_period_frozen) {
       throw new ConflictError(
         'This shift falls in a pay period that is being processed; contact management.',
         'pay_period_processing'
@@ -733,15 +748,24 @@ router.post('/requests/:requestId/emergency-drop', asyncHandler(async (req, res)
     if (ctx.dropped_at) {
       throw new ConflictError('This shift was already dropped.', 'already_dropped');
     }
-    // Pay-period guard does NOT apply to emergency drops (spec §6.5): the
-    // event is by definition <72h out, so it cannot be in a processing
-    // period (those run after payday, days after event). The same argument
-    // covers 'reopened' (payroll redesign 2026-07-14): it derives only from
-    // 'processing', so a future shift cannot sit in one either.
+    // Pay-period guard does NOT apply to emergency drops (spec §6.5): with
+    // the started-event block below, the event is always 0-72h in the
+    // FUTURE, so it cannot sit in a processing period (those run after
+    // payday, days after the event). The same argument covers 'reopened'
+    // (payroll redesign 2026-07-14): it derives only from 'processing'.
+    // Without the lower bound, a past event would slip the wrong_mode check
+    // (negative hours < 72) and let a completed shift be dropped mid-pay-run
+    // with the roster flag + hotline SMS firing for an event long over.
 
     hoursOut = hoursToEvent({ event_date: ctx.event_date, start_time: ctx.start_time });
     if (hoursOut === null) {
       throw new ConflictError('Could not determine shift start time.', 'unparseable_shift_time');
+    }
+    if (hoursOut < 0) {
+      throw new ConflictError(
+        'This event has already started. Call the company line instead so we can handle it live.',
+        'event_started'
+      );
     }
     if (hoursOut >= 72) {
       throw new ConflictError(

@@ -345,8 +345,8 @@ test('POST /request-cover > pay_period reopened returns 409 pay_period_processin
 });
 
 test('POST /claim-cover > pay_period reopened returns 409 pay_period_processing', async () => {
-  // claim-cover reads pay_period_status through its OWN context query
-  // (staffShiftActions.js:510), so the drop test does not cover this guard.
+  // claim-cover resolves the frozen-period flag through its OWN context query
+  // (staffShiftActions.js), so the drop test does not cover this guard.
   const { shiftId } = await seedShiftAwaitingCover({ originalUserId: staffUserId });
   const po = await pool.query(
     `INSERT INTO payouts (pay_period_id, contractor_id, total_cents)
@@ -377,12 +377,135 @@ test('POST /claim-cover > pay_period reopened returns 409 pay_period_processing'
   }
 });
 
+test('POST /claim-cover > another staffer\'s payout_events rows cannot mask the frozen-period guard', async () => {
+  // Same nondeterminism class as the drop-path test: a second payout_events
+  // row on the shift (not the original requester's) used to multiply the
+  // claim-cover context join; the EXISTS rewrite must 409 deterministically.
+  const { shiftId } = await seedShiftAwaitingCover({ originalUserId: staffUserId });
+  const poOrig = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, total_cents)
+     VALUES ($1, $2, 0)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET total_cents = EXCLUDED.total_cents
+     RETURNING id`,
+    [payPeriodId, staffUserId]
+  );
+  const poOther = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, total_cents)
+     VALUES ($1, $2, 0)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET total_cents = EXCLUDED.total_cents
+     RETURNING id`,
+    [payPeriodId, otherStaffUserId]
+  );
+  await pool.query(
+    `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents)
+     VALUES ($1, $3, 4, 4, 2500), ($2, $3, 4, 4, 2500)
+     ON CONFLICT (payout_id, shift_id) DO NOTHING`,
+    [poOrig.rows[0].id, poOther.rows[0].id, shiftId]
+  );
+  await pool.query(`UPDATE pay_periods SET status = 'processing' WHERE id = $1`, [payPeriodId]);
+
+  try {
+    const res = await request('POST', `/api/shifts/requests/${shiftId}/claim-cover`, {
+      token: otherStaffToken,
+      body: {},
+    });
+    assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+    assert.strictEqual(res.body.code, 'pay_period_processing');
+  } finally {
+    await pool.query(`UPDATE pay_periods SET status = 'open' WHERE id = $1`, [payPeriodId]);
+    await pool.query(`DELETE FROM payout_events WHERE shift_id = $1`, [shiftId]);
+    await pool.query(
+      `DELETE FROM payouts WHERE pay_period_id = $1 AND contractor_id IN ($2, $3)`,
+      [payPeriodId, staffUserId, otherStaffUserId]
+    );
+  }
+});
+
 test('POST /drop > NULL payout_events passes the pay-period gate', async () => {
   const { requestId } = await seedShiftWithRequest({
     daysFromNow: 20, startTimeStr: '18:00', userId: staffUserId,
   });
   const res = await request('POST', `/api/shifts/requests/${requestId}/drop`, { token: staffToken });
   assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+});
+
+test('POST /drop > another staffer\'s payout_events rows cannot mask the frozen-period guard', async () => {
+  // Multi-staffed accrued shift: the OTHER staffer's payout_events row used to
+  // multiply the context join (their row carries NULL period status because the
+  // payout match is keyed to the acting user), letting rows[0] nondeterministically
+  // pick the NULL row and skip the guard. The correlated-EXISTS rewrite must 409
+  // deterministically.
+  const { requestId, shiftId } = await seedShiftWithRequest({
+    daysFromNow: 20, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const poMine = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, total_cents)
+     VALUES ($1, $2, 0)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET total_cents = EXCLUDED.total_cents
+     RETURNING id`,
+    [payPeriodId, staffUserId]
+  );
+  const poTheirs = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, total_cents)
+     VALUES ($1, $2, 0)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET total_cents = EXCLUDED.total_cents
+     RETURNING id`,
+    [payPeriodId, otherStaffUserId]
+  );
+  await pool.query(
+    `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents)
+     VALUES ($1, $3, 4, 4, 2500), ($2, $3, 4, 4, 2500)
+     ON CONFLICT (payout_id, shift_id) DO NOTHING`,
+    [poMine.rows[0].id, poTheirs.rows[0].id, shiftId]
+  );
+  await pool.query(`UPDATE pay_periods SET status = 'processing' WHERE id = $1`, [payPeriodId]);
+
+  try {
+    const res = await request('POST', `/api/shifts/requests/${requestId}/drop`, { token: staffToken });
+    assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+    assert.strictEqual(res.body.code, 'pay_period_processing');
+  } finally {
+    await pool.query(`UPDATE pay_periods SET status = 'open' WHERE id = $1`, [payPeriodId]);
+    await pool.query(`DELETE FROM payout_events WHERE shift_id = $1`, [shiftId]);
+    await pool.query(
+      `DELETE FROM payouts WHERE pay_period_id = $1 AND contractor_id IN ($2, $3)`,
+      [payPeriodId, staffUserId, otherStaffUserId]
+    );
+  }
+});
+
+test('POST /drop > only another staffer\'s payout in a frozen period does not block this user', async () => {
+  // The guard is per-user: the acting staffer has no payout on this shift, so
+  // the other staffer's frozen payout must not freeze them out.
+  const { requestId, shiftId } = await seedShiftWithRequest({
+    daysFromNow: 20, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const poTheirs = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, total_cents)
+     VALUES ($1, $2, 0)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET total_cents = EXCLUDED.total_cents
+     RETURNING id`,
+    [payPeriodId, otherStaffUserId]
+  );
+  await pool.query(
+    `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents)
+     VALUES ($1, $2, 4, 4, 2500)
+     ON CONFLICT (payout_id, shift_id) DO NOTHING`,
+    [poTheirs.rows[0].id, shiftId]
+  );
+  await pool.query(`UPDATE pay_periods SET status = 'processing' WHERE id = $1`, [payPeriodId]);
+
+  try {
+    const res = await request('POST', `/api/shifts/requests/${requestId}/drop`, { token: staffToken });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  } finally {
+    await pool.query(`UPDATE pay_periods SET status = 'open' WHERE id = $1`, [payPeriodId]);
+    await pool.query(`DELETE FROM payout_events WHERE shift_id = $1`, [shiftId]);
+    await pool.query(
+      `DELETE FROM payouts WHERE pay_period_id = $1 AND contractor_id = $2`,
+      [payPeriodId, otherStaffUserId]
+    );
+  }
 });
 
 test('POST /drop > other approved staffer keeps shifts.status as-is', async () => {
@@ -712,6 +835,21 @@ test('POST /emergency-drop > <72h succeeds, status stays approved, dropped_at + 
   assert.strictEqual(audit.rows[0].actor_type, 'staff');
   assert.strictEqual(audit.rows[0].actor_id, staffUserId);
   assert.strictEqual(audit.rows[0].details.shift_id, shiftId);
+});
+
+test('POST /emergency-drop > past event returns 409 event_started', async () => {
+  // Negative hours-to-event used to slip the "<72h" check, letting a staffer
+  // emergency-drop a completed shift mid-pay-run (roster flag + hotline SMS
+  // for an event already over). Blocked by the lower bound.
+  const { requestId } = await seedShiftWithRequest({
+    daysFromNow: -1, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const res = await request('POST', `/api/shifts/requests/${requestId}/emergency-drop`, {
+    token: staffToken,
+    body: { reason: 'Trying to drop a shift that already happened.' },
+  });
+  assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+  assert.strictEqual(res.body.code, 'event_started');
 });
 
 test('POST /emergency-drop > IDOR: not your shift returns 403', async () => {
