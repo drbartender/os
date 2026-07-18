@@ -414,6 +414,7 @@ dr-bartender/
 │   │   │                       # ClickableRow (table <tr> wrapper: plain click navigates, drag selects/copies text),
 │   │   │                       # RowLink (real-anchor wrapper for a ClickableRow's primary cell: ctrl/cmd/middle-click opens a new tab natively),
 │   │   │                       # EntityLink (quiet inline entity reference: real anchor, inherits color, hover underline; nullish `to` renders children unlinked),
+│   │   │                       # ClientConversation (shared SMS thread + reply pane: used by the Messages inbox and the client detail page),
 │   │   │                       # AddonControls (shared add-on UI controls: quantity stepper + greyed bundle badge, used by ProposalCreate + ProposalDetailEditForm),
 │   │   │                       # admin/SourceBadge (small "Thumbtack" origin badge next to a proposal's client name when source='thumbtack'),
 │   │   │                       # StaffShell + StaffShellWithThemeWiring (staff portal v2 layout shell — bottom tab bar + user pill, outlet for routed pages),

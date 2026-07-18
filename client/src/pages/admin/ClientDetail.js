@@ -12,6 +12,7 @@ import { fmt$, fmt$2dp, fmtDate, fmtDateFull } from '../../components/adminos/fo
 import BackButton from '../../components/adminos/BackButton';
 import ClickableRow from '../../components/ClickableRow';
 import RowLink from '../../components/RowLink';
+import ClientConversation from '../../components/ClientConversation';
 import { proposalStatusMeta } from '../../utils/proposalStatusMap';
 
 const SOURCE = {
@@ -264,6 +265,11 @@ export default function ClientDetail() {
                 </table>
               </div>
             )}
+          </div>
+
+          <div className="card">
+            <div className="card-head"><h3>Messages</h3></div>
+            <ClientConversation clientId={client.id} phone={client.phone} />
           </div>
 
           {client.notes && !editing && (

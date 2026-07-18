@@ -1,18 +1,20 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import useUrlListState from '../../hooks/useUrlListState';
 import EntityLink from '../../components/EntityLink';
+import ClientConversation from '../../components/ClientConversation';
 
 export default function Messages() {
   const toast = useToast();
   const [threads, setThreads] = useState([]);
-  const [selectedClientId, setSelectedClientId] = useState(null);
-  const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [replyText, setReplyText] = useState('');
-  const [replying, setReplying] = useState(false);
-  const messagesRef = useRef(null);
+  // The open thread is a {clientId, nonce, markRead} triple. `nonce` is the
+  // remount key for ClientConversation: bumping it on every open (auto or click)
+  // re-runs the component's load+markRead, so re-clicking an already-open thread
+  // still clears its badge. `markRead` is false only for the bare-visit auto-open
+  // of the newest thread, which must not silently clear an unread count.
+  const [open, setOpen] = useState({ clientId: null, nonce: 0, markRead: false });
   // Selected thread lives in the URL (?client=<id>) so Back from a client
   // profile reopens the same conversation. Empty = the newest-thread default.
   const [listState, setListState] = useUrlListState({ client: '' });
@@ -31,75 +33,24 @@ export default function Messages() {
 
   useEffect(() => { fetchThreads(); }, [fetchThreads]);
 
-  // Open a conversation. markRead is true for an explicit user action (click or
-  // keyboard) and false when we auto-open the newest thread on load, so simply
-  // landing on the page never silently clears an unread badge.
-  const openThread = useCallback(async (clientId, { markRead } = { markRead: true }) => {
-    setSelectedClientId(clientId);
-    try {
-      const res = await api.get(`/sms/conversations/${clientId}`);
-      setMessages(res.data);
-      if (markRead) {
-        await api.put(`/sms/conversations/${clientId}/read`);
-        fetchThreads(true);
-      }
-    } catch (err) {
-      toast.error('Failed to load conversation. Try again.');
-    }
-  }, [toast, fetchThreads]);
-
   const selectThread = (clientId) => {
     setListState({ client: String(clientId) });
-    openThread(clientId, { markRead: true });
+    setOpen(o => ({ clientId, nonce: o.nonce + 1, markRead: true }));
   };
 
-  // Open the thread named in the URL (?client=<id>) after a Back navigation,
-  // else default to the most recent conversation (threads are newest-first) so
-  // the pane opens on the latest message instead of the empty placeholder.
-  // A URL-named thread is a deliberate open (a needs-attention item, a shared
-  // link): mark it read so the item clears (spec 2026-07-14 §1 inclusion
-  // test). The bare-visit auto-open of threads[0] is a convenience and must
-  // NOT silently clear that thread's unread count.
+  // On first load with nothing selected, open the URL-named thread (a deliberate
+  // open, mark read) or fall back to the newest thread (a convenience, do NOT
+  // mark read). threads are newest-received-first from the server.
   useEffect(() => {
-    if (selectedClientId || threads.length === 0) return;
+    if (open.clientId || threads.length === 0) return;
     const fromUrl = listState.client
       ? threads.find(t => String(t.client_id) === listState.client)
       : null;
-    if (fromUrl) openThread(fromUrl.client_id, { markRead: true });
-    else openThread(threads[0].client_id, { markRead: false });
-  }, [threads, selectedClientId, listState.client, openThread]);
+    if (fromUrl) setOpen(o => ({ clientId: fromUrl.client_id, nonce: o.nonce + 1, markRead: true }));
+    else setOpen(o => ({ clientId: threads[0].client_id, nonce: o.nonce + 1, markRead: false }));
+  }, [threads, open.clientId, listState.client]);
 
-  // Keep the newest message in view whenever a conversation loads or grows.
-  useEffect(() => {
-    const el = messagesRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
-
-  const handleReply = async () => {
-    if (!replyText.trim() || !selectedClientId) return;
-    setReplying(true);
-    try {
-      await api.post(`/sms/conversations/${selectedClientId}/reply`, { body: replyText });
-      setReplyText('');
-      toast.success('Reply sent.');
-      const res = await api.get(`/sms/conversations/${selectedClientId}`);
-      setMessages(res.data);
-      // Replying is engagement, so clear any lingering unread badge (covers the
-      // case where the thread was auto-opened and never explicitly clicked).
-      await api.put(`/sms/conversations/${selectedClientId}/read`);
-      fetchThreads(true);
-    } catch (err) {
-      toast.error(err.message || 'Failed to send reply.');
-      try {
-        const res = await api.get(`/sms/conversations/${selectedClientId}`);
-        setMessages(res.data);
-      } catch (_) { /* ignore secondary failure */ }
-    } finally {
-      setReplying(false);
-    }
-  };
-
-  const selectedThread = threads.find(t => t.client_id === selectedClientId);
+  const selectedThread = threads.find(t => t.client_id === open.clientId);
 
   if (loading) return <div className="loading"><div className="spinner" />Loading...</div>;
 
@@ -116,7 +67,7 @@ export default function Messages() {
             {threads.map(thread => (
               <div
                 key={thread.client_id}
-                className={`sms-list-item ${selectedClientId === thread.client_id ? 'sms-list-item-active' : ''}`}
+                className={`sms-list-item ${open.clientId === thread.client_id ? 'sms-list-item-active' : ''}`}
                 role="button"
                 tabIndex={0}
                 onClick={() => selectThread(thread.client_id)}
@@ -144,7 +95,7 @@ export default function Messages() {
           </div>
 
           <div className="sms-thread">
-            {!selectedClientId ? (
+            {!open.clientId ? (
               <div className="sms-placeholder">Select a conversation to view messages.</div>
             ) : (
               <>
@@ -156,37 +107,13 @@ export default function Messages() {
                   </h3>
                   <span className="muted">{selectedThread?.phone}</span>
                 </div>
-
-                <div className="sms-messages" ref={messagesRef}>
-                  {messages.map(msg => (
-                    <div key={msg.id} className={`sms-bubble sms-bubble-${msg.direction}`}>
-                      <div className="sms-bubble-body">{msg.body || '(no text)'}</div>
-                      <div className="sms-bubble-meta">
-                        {msg.direction === 'outbound' ? 'You' : 'Client'}
-                        {' . '}
-                        {new Date(msg.created_at).toLocaleString('en-US', { hour12: false })}
-                        {msg.status === 'failed' && ' . failed to send'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="sms-reply">
-                  <textarea
-                    className="form-input"
-                    value={replyText}
-                    onChange={e => setReplyText(e.target.value)}
-                    placeholder="Type your reply..."
-                    rows={3}
-                  />
-                  <button
-                    className="btn btn-primary"
-                    onClick={handleReply}
-                    disabled={replying || !replyText.trim() || !selectedThread?.phone}
-                  >
-                    {replying ? 'Sending...' : 'Send SMS'}
-                  </button>
-                </div>
+                <ClientConversation
+                  key={open.nonce}
+                  clientId={open.clientId}
+                  phone={selectedThread?.phone}
+                  markReadOnOpen={open.markRead}
+                  onActivity={() => fetchThreads(true)}
+                />
               </>
             )}
           </div>
