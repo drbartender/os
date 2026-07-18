@@ -148,3 +148,15 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
   fixing contract semantics in code about to change is wasted. Ready fix if it
   ever bites: price `catalogAfter` syrups as `preSyrupsPriced ∪ net-new` so
   contracted syrups are fully neutral to the delta. Fold into the planner rework.
+
+## Comms send-modal residuals (2026-07-18, push-review accepted-not-fixed)
+
+- Post-flip total-failure dead-end: if the confirm 500s wholesale AFTER the
+  approve flip but BEFORE any send (dispatch throw outside the per-channel
+  trys), Retry is unreachable and a re-click skips with a misleading
+  "concurrent confirm" reason; recoverable by editing the list (PUT reverts
+  to pending_review). Rare; strictly better than the double-email it replaced.
+- Route-level tests for POST /api/comms/send (T5 debt): subject caps, header
+  hygiene, empty-channel rule, retry guard, partial-failure shape.
+- messageLog proposalId foot-gun: any future admin-alert send that passes
+  meta.proposalId lands on the client-facing Messages card.
