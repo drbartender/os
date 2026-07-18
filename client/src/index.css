@@ -18910,3 +18910,105 @@ html[data-app="admin-os"] .pay-qr-tile {
   flex-wrap: wrap;
 }
 /* end SendModal */
+
+/* ═══════════════ Potions · Recipe card v2 (planner v2 §4.1/§6.1) ═══════════════
+   Batch-pass strip (Recipes tab, design 1a), ingredient typeahead, the
+   enhancement / syrup / flags dossier sections (RecipeEditorSections.js), the
+   in-card tabs (Add-recipe drawer, design 1b), and the Pars cost column. One
+   appended block; tokens only, holds in both admin skins. */
+
+/* Batch-pass strip (1a) */
+.potions-batch-strip {
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: 0.6rem 0.9rem; margin-bottom: 1rem;
+}
+.potions-batch-progress { min-width: 190px; }
+.potions-batch-progress-label {
+  font-size: 0.66rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--ink-4, #7c8593); margin-bottom: 0.35rem;
+}
+.potions-batch-bar { height: 4px; background: var(--bg-3, rgba(0,0,0,0.08)); border-radius: 2px; overflow: hidden; }
+.potions-batch-bar-fill { height: 4px; background: var(--accent, #7fa7e8); border-radius: 2px; transition: width 0.25s ease; }
+.potions-batch-count { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink-2, inherit); }
+.potions-batch-next { color: var(--ink-3, #7c8593); }
+.potions-batch-spacer { flex: 1; min-width: 0.5rem; }
+.potions-batch-unit { font-weight: 600; color: var(--ink-2, inherit); text-transform: none; }
+.potions-batch-dup { width: 170px; max-width: 45vw; }
+.potions-kbd {
+  font-family: var(--font-numeric, monospace); font-size: 0.7rem; opacity: 0.8; margin-left: 0.25rem;
+}
+@media (max-width: 720px) {
+  .potions-batch-spacer { display: none; }
+  .potions-batch-dup { width: 100%; max-width: none; }
+}
+
+/* Ingredient typeahead */
+.potions-ing-cell { position: relative; }
+.potions-suggest {
+  position: absolute; left: 0; right: 0; top: 100%; z-index: 40;
+  background: var(--bg-elev, var(--bg-1, #fff)); border: 1px solid var(--line-2, var(--border, #d0d4da));
+  border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.28); overflow: hidden;
+}
+.potions-suggest-item {
+  display: block; width: 100%; text-align: left; border: none; background: none;
+  font: inherit; color: inherit; cursor: pointer; padding: 0.35rem 0.55rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.potions-suggest-item:hover,
+.potions-suggest-item.active { background: var(--row-hover, rgba(127,167,232,0.16)); }
+.potions-suggest-alias { font-weight: 600; }
+
+/* Par-scaled tag (quiet, never an error) */
+.potions-par-scaled { font-size: 0.66rem; color: var(--ink-4, #7c8593); margin-top: 0.2rem; }
+
+/* Inline add-par form (No-match) */
+.potions-addpar { margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.3rem; }
+
+/* Editor name input */
+.potions-name-input { font-weight: 700; width: 240px; max-width: 60vw; }
+
+/* Stacked-layout section blocks + tabbar (drawer, 1b) */
+.potions-section { padding: 0.75rem 0.9rem; border-top: 1px solid var(--border, #e2e5ea); }
+.potions-section-label {
+  font-size: 0.66rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--ink-4, #7c8593); margin-bottom: 0.55rem;
+}
+.potions-tabbar { padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--border, #e2e5ea); }
+
+/* Enhancements */
+.potions-enh-section { display: flex; flex-direction: column; gap: 0.45rem; }
+.potions-enh-row {
+  display: grid; grid-template-columns: 170px 1fr; gap: 0.35rem 0.8rem; align-items: start;
+  padding: 0.45rem 0.55rem; background: var(--bg-2, rgba(0,0,0,0.03));
+  border: 1px solid var(--border, #e2e5ea); border-radius: 6px;
+}
+@media (max-width: 560px) { .potions-enh-row { grid-template-columns: 1fr; } }
+.potions-enh-toggle { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; padding-top: 3px; }
+.potions-enh-name { font-size: 0.82rem; font-weight: 600; color: var(--ink-1, inherit); }
+.potions-enh-body { min-width: 0; }
+.potions-enh-flavors { display: flex; gap: 0.3rem; margin-top: 0.35rem; flex-wrap: wrap; align-items: center; }
+.potions-enh-flavors-label {
+  font-size: 0.66rem; color: var(--ink-4, #7c8593); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+}
+.potions-flavor-chip {
+  font: inherit; font-size: 0.75rem; cursor: pointer; padding: 0.1rem 0.5rem; border-radius: 999px;
+  border: 1px solid var(--border, #d0d4da); background: none; color: var(--ink-2, inherit);
+}
+.potions-flavor-chip.active { background: var(--accent, #7fa7e8); border-color: var(--accent, #7fa7e8); color: #fff; }
+.potions-enh-add { display: flex; gap: 0.4rem; margin-top: 0.2rem; flex-wrap: wrap; }
+
+/* Flags & syrups */
+.potions-flags-section { display: flex; flex-direction: column; gap: 0.8rem; }
+.potions-flags-syrup { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.potions-flags-label {
+  font-size: 0.66rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--ink-4, #7c8593); width: 130px;
+}
+.potions-syrup-select { width: 190px; max-width: 60vw; }
+.potions-flags-row { display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; }
+.potions-flag { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--ink-1, inherit); cursor: pointer; }
+
+/* Pars cost column */
+.potions-col-cost { width: 84px; text-align: right; }
+.potions-cost-warn { color: var(--warn, #b7791f); margin-top: 0.35rem; font-weight: 600; }
+/* end Potions recipe card v2 */

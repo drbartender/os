@@ -65,6 +65,12 @@ export default function PantryParsTab() {
     return out;
   }, [pars]);
 
+  // Cost coverage: items with no cost set yet (feeds the package margin rail).
+  const missingCost = useMemo(
+    () => (pars || []).filter((r) => r.cost === null || r.cost === undefined || r.cost === '').length,
+    [pars]
+  );
+
   const visible = useCallback((row) => {
     if (previewMode === 'all') return true;
     if (previewMode === 'full_bar') return row.in_full_bar;
@@ -171,7 +177,13 @@ export default function PantryParsTab() {
             <div className="text-muted text-small">
               The generator scales every quantity by the event's guest count. Edit the Qty @ 100 column;
               the projected column previews the scaled order. "Called on" shows when an item joins a list.
+              Cost is the per-unit purchase price in dollars (blank means not costed yet); it feeds the package margin rail.
             </div>
+            {missingCost > 0 && (
+              <div className="potions-cost-warn text-small">
+                {missingCost} item{missingCost === 1 ? '' : 's'} still need a cost.
+              </div>
+            )}
           </div>
           <div className="hstack" style={{ gap: '0.4rem', alignItems: 'center' }}>
             <span className="text-muted text-small">Show</span>
@@ -228,6 +240,7 @@ export default function PantryParsTab() {
                     <th className="potions-col-grip"></th>
                     <th>Item</th>
                     <th>Size</th>
+                    <th className="potions-col-cost">Cost $</th>
                     <th className="potions-col-amount">Qty @ 100</th>
                     <th className="potions-col-amount">@ {guests}</th>
                     <th className="col-desc">Called on</th>
@@ -237,7 +250,7 @@ export default function PantryParsTab() {
                 </thead>
                 <tbody>
                   {shown.length === 0 && (
-                    <tr><td colSpan={8} className="text-muted potions-state">Nothing in this view.</td></tr>
+                    <tr><td colSpan={9} className="text-muted potions-state">Nothing in this view.</td></tr>
                   )}
                   {shown.map((row) => {
                     const fullIndex = sectionRows.indexOf(row);
@@ -268,6 +281,21 @@ export default function PantryParsTab() {
                             onBlur={(e) => {
                               const orig = focusSnapshot.current[`${row.id}:size`];
                               if (e.target.value !== orig) saveCell(row, { size: e.target.value });
+                            }} />
+                        </td>
+                        <td className="potions-col-cost">
+                          <input className="input potions-cell potions-cell-num" value={row.cost ?? ''} aria-label="Unit cost in dollars"
+                            inputMode="decimal" placeholder="—"
+                            onFocus={(e) => { focusSnapshot.current[`${row.id}:cost`] = e.target.value; }}
+                            onChange={(e) => setPars((p) => p.map((r) => (r.id === row.id ? { ...r, cost: e.target.value } : r)))}
+                            onBlur={(e) => {
+                              const orig = focusSnapshot.current[`${row.id}:cost`];
+                              const raw = e.target.value.trim();
+                              if (raw === (orig ?? '').trim()) return;
+                              if (raw === '') { saveCell(row, { cost: null }); return; }
+                              const cost = Number(raw);
+                              if (!Number.isFinite(cost) || cost < 0) { load(); return; } // revert bad input
+                              saveCell(row, { cost });
                             }} />
                         </td>
                         <td className="potions-col-amount">
