@@ -218,6 +218,16 @@ function validateParFields(body, { requireCore }) {
     out[key] = body[key].map((s) => String(s).trim().toLowerCase().slice(0, 60)).filter(Boolean);
   }
   if (body.in_full_bar !== undefined) out.in_full_bar = body.in_full_bar === true;
+  // Planner v2: unit cost in DOLLARS (nullable; feeds the packages margin
+  // sketch only, never a billing path). null = explicit clear.
+  if (body.cost !== undefined) {
+    if (body.cost === null || body.cost === '') out.cost = null;
+    else {
+      const cost = Number(body.cost);
+      if (!Number.isFinite(cost) || cost < 0) fieldErrors.cost = 'Cost must be a number of 0 or more (or empty).';
+      else out.cost = cost;
+    }
+  }
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
   return out;
 }
@@ -239,13 +249,13 @@ router.post('/pars', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   for (const id of attempts) {
     try {
       const result = await pool.query(
-        `INSERT INTO par_items (id, item, size, qty_per_100, section, role, spirit_key, style_key, paired_spirits, ingredient_aliases, in_full_bar, sort_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+        `INSERT INTO par_items (id, item, size, qty_per_100, section, role, spirit_key, style_key, paired_spirits, ingredient_aliases, in_full_bar, sort_order, cost)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
         [
           id, fields.item, fields.size ?? null, fields.qty_per_100, fields.section, fields.role,
           fields.spirit_key ?? null, fields.style_key ?? null,
           fields.paired_spirits ?? [], fields.ingredient_aliases ?? [],
-          fields.in_full_bar ?? false, sortOrder,
+          fields.in_full_bar ?? false, sortOrder, fields.cost ?? null,
         ]
       );
       return res.status(201).json({ par: { ...result.rows[0], used_by: [] } });
@@ -272,8 +282,9 @@ router.put('/pars/:id', auth, requireAdminOrManager, asyncHandler(async (req, re
        paired_spirits    = COALESCE($11::text[], paired_spirits),
        ingredient_aliases = COALESCE($12::text[], ingredient_aliases),
        in_full_bar       = COALESCE($13, in_full_bar),
-       sort_order        = COALESCE($14, sort_order)
-     WHERE id = $15 AND is_active = true
+       sort_order        = COALESCE($14, sort_order),
+       cost              = CASE WHEN $15::boolean THEN $16 ELSE cost END
+     WHERE id = $17 AND is_active = true
      RETURNING *`,
     [
       fields.item ?? null,
@@ -287,6 +298,7 @@ router.put('/pars/:id', auth, requireAdminOrManager, asyncHandler(async (req, re
       fields.ingredient_aliases ?? null,
       fields.in_full_bar ?? null,
       Number.isFinite(Number(req.body?.sort_order)) ? Number(req.body.sort_order) : null,
+      'cost' in fields, fields.cost ?? null,
       req.params.id,
     ]
   );
