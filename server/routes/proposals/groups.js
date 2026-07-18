@@ -5,12 +5,10 @@
 const express = require('express');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
-const { pool } = require('../../db');
-const { NotFoundError, ConflictError } = require('../../utils/errors');
+const { NotFoundError } = require('../../utils/errors');
 const {
   addAlternative, removeAlternative, getGroupForProposal,
 } = require('../../utils/proposalGroups');
-const { sendGroup } = require('../../utils/groupSend');
 
 const router = express.Router();
 
@@ -47,16 +45,33 @@ router.get('/:id/group', auth, requireAdminOrManager, asyncHandler(async (req, r
   return res.json({ grouped: true, ...summary });
 }));
 
-// POST /api/proposals/:id/send-group — send the whole comparison as one email
-// (one compare link), transitioning every draft option to 'sent'. Deferred
-// invoicing + suppressed per-option comms live in sendGroup.
+// POST /api/proposals/:id/send-group — DEPRECATED direct compare send, kept
+// mounted for API compatibility. Delegates to the proposal_send_group comms
+// action (plan P1): ensureSideEffects runs the exact groupSend transaction
+// (FOR UPDATE lock, transition every draft option to 'sent', deferred invoicing,
+// suppressed per-option comms) idempotently; dispatch then sends the single
+// proposalOptionsSent compare email (email only), but only when something was
+// newly sent — mirroring groupSend's dedupe. New UI goes through
+// POST /api/comms/send.
 router.post('/:id/send-group', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const id = parseId(req.params.id);
-  const { rows: [p] } = await pool.query('SELECT group_id FROM proposals WHERE id = $1', [id]);
-  if (!p) throw new NotFoundError('Proposal not found');
-  if (!p.group_id) throw new ConflictError('This proposal is not part of a comparison', 'NOT_GROUPED');
-  const { groupToken, sentCount } = await sendGroup(p.group_id, { actorUserId: req.user.id });
-  res.json({ group_token: groupToken, sent_count: sentCount });
+  const { getAction } = require('../../utils/comms/registry');
+  const action = getAction('proposal_send_group');
+
+  const sideEffects = await action.ensureSideEffects(id, { sentBy: req.user.id });
+  if (!sideEffects.applied) {
+    // Nothing newly sent (already sent / re-click): send no compare email, exactly
+    // as groupSend only emailed when sentIds.length was non-zero.
+    return res.json({ group_token: sideEffects.groupToken, sent_count: 0 });
+  }
+  const results = await action.dispatch(id, undefined, ['email'], { sentBy: req.user.id });
+  res.json({
+    group_token: sideEffects.groupToken,
+    sent_count: sideEffects.sentCount,
+    email: results.email,
+    email_error: results.email_error || null,
+    recipient_email: results.recipient_email || null,
+  });
 }));
 
 module.exports = router;

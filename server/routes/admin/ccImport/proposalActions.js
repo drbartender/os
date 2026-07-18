@@ -26,19 +26,20 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../../../db');
 const { auth, adminOnly } = require('../../../middleware/auth');
 const asyncHandler = require('../../../middleware/asyncHandler');
-const { ValidationError, NotFoundError, ConflictError } = require('../../../utils/errors');
+const { ValidationError, NotFoundError } = require('../../../utils/errors');
 const { logAdminAction } = require('../../../utils/adminAuditLog');
-const { scheduleDrinkPlanNudge } = require('../../../utils/drinkPlanNudge');
 const { accruePayoutsForProposal } = require('../../../utils/payrollAccrual');
 
 const router = express.Router({ mergeParams: true });
 
 // POST /admin/proposals/:id/reenroll-drink-plan-nudge
 //
-// Re-schedules drink-plan nudges (email + SMS, T-21 days, 10:00 event-local) for
-// a proposal that already has a drink plan. Idempotent: scheduleDrinkPlanNudge
-// (via scheduleMessage) no-ops if a pending row for the same recipient already
-// exists, so a double-click can't fan out duplicate sends.
+// DEPRECATED direct re-enroll, kept mounted for API compatibility. Delegates to
+// the drink_plan_nudge_reenroll comms action (plan P1): ensureSideEffects clears
+// the durable suppression and (re)schedules the T-21 email+SMS nudges,
+// idempotently (scheduleMessage no-ops on a pending duplicate). This preserves
+// the legacy SCHEDULE-ONLY behavior: the route deliberately does NOT dispatch an
+// immediate nudge — the modal's immediate-send is opt-in via POST /api/comms/send.
 router.post(
   '/proposals/:id/reenroll-drink-plan-nudge',
   auth,
@@ -47,24 +48,28 @@ router.post(
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id)) throw new ValidationError(undefined, 'id must be an integer');
 
-    const propRes = await pool.query(`SELECT id, client_id FROM proposals WHERE id = $1`, [id]);
-    if (propRes.rowCount === 0) throw new NotFoundError('proposal not found');
+    const { getAction } = require('../../../utils/comms/registry');
+    const action = getAction('drink_plan_nudge_reenroll');
 
-    const planRes = await pool.query(`SELECT 1 FROM drink_plans WHERE proposal_id = $1 LIMIT 1`, [id]);
-    if (planRes.rowCount === 0) throw new ConflictError('no drink plan exists for this proposal');
-
+    let sideEffects;
     try {
-      // Clear the durable suppression first (cc-transfer sets it so automatic
-      // re-enqueues stay silent) — this button IS the deliberate re-enroll.
-      await pool.query('UPDATE drink_plans SET nudge_suppressed = false WHERE proposal_id = $1', [id]);
-      await scheduleDrinkPlanNudge(id, pool);
+      // The action's load() throws NotFoundError (missing proposal) and the
+      // plan-check throws ConflictError (no drink plan) exactly as the legacy
+      // inline guards did.
+      sideEffects = await action.ensureSideEffects(id, { sentBy: req.user.id });
     } catch (err) {
-      Sentry.captureException(err, {
-        tags: { route: req.path, op: 'reenroll_drink_plan_nudge' },
-        extra: { proposalId: id },
-      });
+      // Only capture unexpected failures; the expected 4xx guards (not found,
+      // no plan) pass through cleanly, unlogged, as before.
+      if (!err || !err.statusCode || err.statusCode >= 500) {
+        Sentry.captureException(err, {
+          tags: { route: req.path, op: 'reenroll_drink_plan_nudge' },
+          extra: { proposalId: id },
+        });
+      }
       throw err;
     }
+
+    const propRes = await pool.query(`SELECT client_id FROM proposals WHERE id = $1`, [id]);
 
     await logAdminAction({
       actorUserId: req.user.id,
@@ -74,10 +79,14 @@ router.post(
       // disambiguator for post-incident lookups.
       targetUserId: null,
       action: 'cc_drink_plan_nudge_reenrolled',
-      metadata: { proposal_id: id, client_id: propRes.rows[0].client_id },
+      metadata: { proposal_id: id, client_id: propRes.rows[0] ? propRes.rows[0].client_id : null },
     });
 
-    res.json({ ok: true, message: 'Drink-plan nudges scheduled (or already pending)' });
+    res.json({
+      ok: true,
+      message: 'Drink-plan nudges scheduled (or already pending)',
+      side_effects_applied: sideEffects.applied,
+    });
   })
 );
 

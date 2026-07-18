@@ -27,6 +27,7 @@ import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
 import { venueMapQuery } from '../../components/VenueAddressFields';
 import { STAFF_URL } from '../../utils/constants';
+import SendModal, { describeSendResult } from '../../components/SendModal';
 
 const MenuPNG = lazy(() => import('../../components/MenuPNG/MenuPNG'));
 
@@ -43,7 +44,8 @@ export default function EventDetailPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [editing, setEditing] = useState(false);
-  const [inviting, setInviting] = useState(false);
+  // Which compose-and-send modal is open ('invite' | 'reenroll' | null).
+  const [sendModal, setSendModal] = useState(null);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
 
   // Proposal + shifts refetch — passed to the payment panel `onUpdate` and run
@@ -217,41 +219,24 @@ export default function EventDetailPage() {
               <button
                 type="button"
                 className="btn btn-ghost"
-                disabled={inviting}
-                onClick={async () => {
-                  const who = proposal.client_name || 'the client';
-                  if (!window.confirm(`Email ${who} an invite to their client portal?`)) return;
-                  setInviting(true);
-                  try {
-                    await api.post(`/proposals/${proposal.id}/portal-invite`);
-                    toast.success('Portal invite sent.');
-                  } catch (e) {
-                    toast.error(e.message || 'Failed to send portal invite.');
-                  } finally {
-                    setInviting(false);
-                  }
-                }}
+                disabled={sendModal === 'invite'}
+                onClick={() => setSendModal('invite')}
               >
-                <Icon name="send" size={12} />{inviting ? 'Inviting…' : 'Invite to portal'}
+                <Icon name="send" size={12} />Invite to portal
               </button>
             )}
             {/* cc-imported proposals miss the normal post-conversion nudge schedule
                 (the import happens after T-21). If a drink plan EXISTS, admins
-                can re-enroll the nudges here. The endpoint is idempotent. */}
+                can re-enroll the nudges here. The compose flow re-arms the schedule
+                AND sends one nudge now; the endpoint is idempotent. */}
             {viewer?.role === 'admin' && proposal.cc_id && drinkPlan && (
               <button
                 type="button"
                 className="btn btn-secondary"
-                onClick={async () => {
-                  try {
-                    await api.post(`/admin/proposals/${proposal.id}/reenroll-drink-plan-nudge`);
-                    toast.success('Drink-plan nudges scheduled.');
-                  } catch (e) {
-                    toast.error(`Failed to schedule: ${e?.response?.data?.error || e.message}`);
-                  }
-                }}
+                disabled={sendModal === 'reenroll'}
+                onClick={() => setSendModal('reenroll')}
               >
-                Schedule drink-plan nudges
+                Re-enroll nudges
               </button>
             )}
             {!editing && ['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status) && (
@@ -269,6 +254,39 @@ export default function EventDetailPage() {
           clientName={proposal.client_name}
           onClose={() => setShowCancelDialog(false)}
           onCancelled={() => { loadProposal(); reloadShifts(); }}
+        />
+      )}
+
+      {/* Compose-and-send flows (portal invite + drink-plan nudge re-enroll).
+          SendModal previews the server-resolved recipient/channels; onComplete
+          reports the honest per-channel result via the existing toast. */}
+      {sendModal === 'invite' && (
+        <SendModal
+          action="portal_invite"
+          entityId={proposal.id}
+          title="Send Portal Invite"
+          confirmLabel="Send Invite"
+          onClose={() => setSendModal(null)}
+          onComplete={(results) => {
+            const { hadFailure, message } = describeSendResult(results);
+            if (hadFailure) toast.error(message);
+            else toast.success(message);
+          }}
+        />
+      )}
+      {sendModal === 'reenroll' && (
+        <SendModal
+          action="drink_plan_nudge_reenroll"
+          entityId={proposal.id}
+          title="Re-enroll nudges and send one now"
+          confirmLabel="Re-enroll & Send"
+          onClose={() => setSendModal(null)}
+          onComplete={(results) => {
+            const { hadFailure, message } = describeSendResult(results);
+            const full = `Nudges re-enrolled. ${message}`;
+            if (hadFailure) toast.error(full);
+            else toast.success(full);
+          }}
         />
       )}
 

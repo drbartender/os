@@ -7,6 +7,7 @@ import StatusChip from '../../components/adminos/StatusChip';
 import EntityLink from '../../components/EntityLink';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { proposalStatusMeta } from '../../utils/proposalStatusMap';
+import SendModal, { describeSendResult } from '../../components/SendModal';
 
 // Alternatives panel on ProposalDetail: manage this proposal's option group
 // ("compare your options"). Extracted from ProposalDetail to keep that file
@@ -21,6 +22,7 @@ export default function AlternativesPanel({ proposalId, proposal, group, onChang
   const toast = useToast();
   const [busy, setBusy] = useState('');
   const [copied, setCopied] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
 
   if (!group || !proposal) return null; // group state still loading
 
@@ -62,21 +64,14 @@ export default function AlternativesPanel({ proposalId, proposal, group, onChang
     }
   };
 
-  const sendOptions = async () => {
-    const ok = window.confirm('Send the client ONE email with a side-by-side compare link for all options?');
-    if (!ok) return;
-    setBusy('send');
-    try {
-      const res = await api.post(`/proposals/${proposalId}/send-group`);
-      toast.success(res.data.sent_count > 0
-        ? `Options sent. The client got one compare link covering ${members.length} options.`
-        : 'Nothing new to send. All options were already sent.');
-      onChanged();
-    } catch (err) {
-      toast.error(apiError(err, 'Could not send the options.'));
-    } finally {
-      setBusy('');
-    }
+  // Fires after the SendModal's confirm resolved (any per-channel outcome). A
+  // Cancel never calls this, so the group only refetches on a real send. onChanged
+  // re-reads the server (some members flip to 'sent'); the toast tells the truth.
+  const handleSendComplete = (results) => {
+    const { hadFailure, message } = describeSendResult(results);
+    if (hadFailure) toast.error(message);
+    else toast.success(message);
+    onChanged();
   };
 
   const copyCompareLink = async () => {
@@ -156,14 +151,24 @@ export default function AlternativesPanel({ proposalId, proposal, group, onChang
             </button>
           )}
           {hasDraft && !decided && (
-            <button type="button" className="btn btn-primary btn-sm" disabled={!!busy} onClick={sendOptions}>
-              <Icon name="send" size={12} />{busy === 'send' ? 'Sending…' : 'Send options'}
+            <button type="button" className="btn btn-primary btn-sm" disabled={!!busy || sendOpen} onClick={() => setSendOpen(true)}>
+              <Icon name="send" size={12} />Send options
             </button>
           )}
           <button type="button" className="btn btn-ghost btn-sm" onClick={copyCompareLink}>
             <Icon name={copied ? 'check' : 'copy'} size={12} />{copied ? 'Copied' : 'Copy compare link'}
           </button>
         </div>
+        {sendOpen && (
+          <SendModal
+            action="proposal_send_group"
+            entityId={proposalId}
+            title="Send Compare Link"
+            confirmLabel="Send"
+            onClose={() => setSendOpen(false)}
+            onComplete={handleSendComplete}
+          />
+        )}
       </div>
     </div>
   );

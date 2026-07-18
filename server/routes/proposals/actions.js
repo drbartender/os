@@ -21,8 +21,8 @@ const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const asyncHandler = require('../../middleware/asyncHandler');
-const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../../utils/errors');
-const { PUBLIC_SITE_URL, ADMIN_URL } = require('../../utils/urls');
+const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
+const { ADMIN_URL } = require('../../utils/urls');
 
 const router = express.Router();
 
@@ -86,60 +86,30 @@ router.patch('/:id/balance-due-date', auth, requireAdminOrManager, asyncHandler(
   res.json(result.rows[0]);
 }));
 
-/** POST /api/proposals/:id/send-reminder — admin sends a balance reminder email to the client */
+/** POST /api/proposals/:id/send-reminder — DEPRECATED direct balance reminder,
+ *  kept mounted for API compatibility. Delegates to the payment_reminder comms
+ *  action (plan P1): validate-only side effects (the NO_BALANCE_DUE guard; no
+ *  money column is written), then the default unedited balance-reminder email +
+ *  SMS on the action's default channels, awaited and ledgered by the action
+ *  (per-channel truth, so a failed channel no longer 502s — it returns
+ *  email/sms:'failed' + error). New UI goes through POST /api/comms/send. A
+ *  'reminder_sent' activity row still records it. */
 router.post('/:id/send-reminder', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const proposalId = req.params.id;
-  const { rows } = await pool.query(`
-    SELECT p.id, p.token, p.total_price, p.amount_paid, p.balance_due_date,
-           p.event_type, p.event_type_custom,
-           c.email AS client_email, c.name AS client_name
-    FROM proposals p
-    LEFT JOIN clients c ON c.id = p.client_id
-    WHERE p.id = $1
-  `, [proposalId]);
+  const { getAction } = require('../../utils/comms/registry');
+  const action = getAction('payment_reminder');
+  const proposalId = parseInt(req.params.id, 10);
 
-  if (!rows[0]) throw new NotFoundError('Proposal not found');
-  const proposal = rows[0];
+  await action.ensureSideEffects(proposalId, { sentBy: req.user.id });
+  const results = await action.dispatch(proposalId, undefined, ['email', 'sms'], { sentBy: req.user.id });
 
-  if (!proposal.client_email) {
-    throw new ValidationError({ client: 'Client has no email on file.' });
-  }
-
-  const total = Number(proposal.total_price || 0);
-  const paid = Number(proposal.amount_paid || 0);
-  const balanceDue = total - paid;
-  if (balanceDue <= 0) {
-    throw new ConflictError('Proposal has no outstanding balance.', 'NO_BALANCE_DUE');
-  }
-
-  const eventTypeLabel = getEventTypeLabel({
-    event_type: proposal.event_type,
-    event_type_custom: proposal.event_type_custom,
-  });
-  const proposalUrl = `${PUBLIC_SITE_URL}/proposal/${proposal.token}`;
-  const tpl = emailTemplates.paymentReminderClient({
-    clientName: proposal.client_name,
-    eventTypeLabel,
-    balanceDue: balanceDue.toFixed(2),
-    balanceDueDate: proposal.balance_due_date,
-    proposalUrl,
-  });
-
-  try {
-    await sendEmail({ to: proposal.client_email, ...tpl });
-  } catch (emailErr) {
-    Sentry.captureException(emailErr, { tags: { route: 'proposals/send-reminder' }, extra: { proposalId } });
-    throw new ExternalServiceError('email', emailErr, 'Failed to send reminder email.');
-  }
-
-  // Activity log is best-effort — the email already went out, so a transient
+  // Activity log is best-effort — the send already went out, so a transient
   // INSERT failure must not surface as a 5xx to the admin (which would prompt
   // a retry and double-send the reminder).
   try {
     await pool.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
        VALUES ($1, 'reminder_sent', 'admin', $2, $3)`,
-      [proposalId, req.user.id, JSON.stringify({ to: proposal.client_email, balance_due: balanceDue })]
+      [proposalId, req.user.id, JSON.stringify({ to: results.recipient_email, email: results.email, sms: results.sms })]
     );
   } catch (logErr) {
     Sentry.captureException(logErr, {
@@ -148,7 +118,16 @@ router.post('/:id/send-reminder', auth, requireAdminOrManager, asyncHandler(asyn
     });
   }
 
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    email: results.email,
+    sms: results.sms,
+    email_error: results.email_error || null,
+    sms_error: results.sms_error || null,
+    skip_reasons: results.skip_reasons,
+    recipient_email: results.recipient_email || null,
+    recipient_phone: results.recipient_phone || null,
+  });
 }));
 
 /** POST /api/proposals/:id/record-payment — manually record an outside payment (cash, Venmo, etc.) */

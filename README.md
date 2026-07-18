@@ -270,7 +270,13 @@ dr-bartender/
 │   │   │   ├── registry.js     # Auto-discovers actions/*.js at require time; defines + enforces the action contract (resolveRecipient/buildMessages/ensureSideEffects/dispatch)
 │   │   │   ├── render.js       # renderPartsEmail: HTML-escapes the editable subject/body prose into the branded email shell (fixed heading + cta)
 │   │   │   └── actions/
-│   │   │       └── shoppingListApprove.js # shopping_list_approve action: idempotent approve + approved-snapshot side effect, then per-channel dispatch that owns its message_log writes
+│   │   │       ├── shoppingListApprove.js # shopping_list_approve action: idempotent approve + approved-snapshot side effect, then per-channel dispatch that owns its message_log writes
+│   │   │       ├── proposalSend.js # proposal_send action (compose-first INITIAL send): row-locked draft-to-sent flip + invoice in one transaction, drip enroll post-commit; recipient/messages/dispatch delegated to proposal_resend
+│   │   │       ├── proposalResend.js # proposal_resend action: re-send the proposalSent email + initial-proposal SMS with no status change (validate-only RESENDABLE guard); dispatch owns its message_log writes
+│   │   │       ├── proposalSendGroup.js # proposal_send_group action: EMAIL-ONLY compare send (one proposalOptionsSent link), AB-BA-safe FOR UPDATE draft-to-sent flip with no per-option invoice or comms; idempotent
+│   │   │       ├── portalInvite.js # portal_invite action: email the client their OTP portal link (nothing minted, no token in the link), email default / SMS off by default; no state side effect
+│   │   │       ├── paymentReminder.js # payment_reminder action: balance-due reminder (balance = total_price minus amount_paid, no money written), NO_BALANCE_DUE guard; email + SMS
+│   │   │       └── drinkPlanNudgeReenroll.js # drink_plan_nudge_reenroll action: clears durable nudge suppression + reschedules the T-21 nudges, and dispatches an immediate drink-plan nudge; planner CTA uses the drink-plan token
 │   │   ├── consultRecap.js     # Formats saved consult selections into the post-consult email recap
 │   │   ├── drinkPlanAccess.js  # Pure post-booking drink-plan access guard (fail-safe pre-booking allowlist)
 │   │   ├── drinkPlanNudge.js   # Drink-plan / Potion Planner nudge: email + SMS touch and scheduling
@@ -416,7 +422,7 @@ dr-bartender/
 │   │   │   │                   # InterviewScheduleModal, PackageIncludesModal, DocumentPreviewModal (in-app lightbox for staff docs — W-9/BASSET/resume/headshot), MetricsFilterBar,
 │   │   │   │                   # format, nav, shifts, PresenceStrip (sidebar time-clock strip);
 │   │   │   │                   # drawers/{InvoicesDrawer,ShiftDrawer,PresenceDrawer})
-│   │   │   ├── SendModal/      # Shared compose-and-confirm modal for the comms registry (previews server-resolved recipient + channels, admin edits subject/body, sends with honest per-channel results); used by ShoppingListModal approve
+│   │   │   ├── SendModal/      # Shared compose-and-confirm modal for the comms registry (previews server-resolved recipient + channels, admin edits subject/body, sends with honest per-channel results; sendResult.js exports describeSendResult for per-channel toast copy); used by ShoppingListModal approve + proposal-side sends (initial creation send, resend, compare link, portal invite, balance reminder, drink-plan nudge re-enroll)
 │   │   │   ├── ShoppingList/   # Shopping list editor modal + PDF export + ConsultationForm (generation is server-side via the regenerate endpoint) + NeedsRecipeSection (client-requested-drink recipe drawer: reuse-before-create, inline fold-in via regenerate, unresolved-ingredients warning)
 │   │   │   ├── potions/        # RecipeEditor: shared structured-recipe editor (Recipes tab detail pane + shopping-list Add-recipe drawer; draft name editing, inline add-par, forwardRef flush)
 │   │   │   └── MenuPNG/        # Standard Menu PNG export (html2canvas-driven, lazy-loaded; renders hidden MenuPreview at print scale 768x960 and downloads as 2304x2880 PNG)
@@ -593,7 +599,7 @@ dr-bartender/
 - Notification infrastructure: per-channel daily overlap prevention, delivery-failure channel fallback, multi-admin notification subscriptions.
 
 ### Compose-and-Confirm Client Sends
-- Admin-triggered client sends (starting with shopping-list approval) route through a shared compose-and-confirm modal. The admin reviews the server-resolved recipient and available channels, edits the subject and body before anything goes out, then cancels or sends. A Cancel never touches the client record. On send, each channel returns an honest result (for example email sent, SMS failed) instead of one all-or-nothing status, and every attempt writes a `message_log` row recording the sending admin (`sent_by`) and whether the copy was hand-edited (`body_edited`).
+- Admin-triggered client sends (shopping-list approval plus the proposal-side sends: initial creation send, resend, compare link, portal invite, balance reminder, and drink-plan nudge re-enroll) route through a shared compose-and-confirm modal. The admin reviews the server-resolved recipient and available channels, edits the subject and body before anything goes out, then cancels or sends. A Cancel never touches the client record. The proposal creation cockpit composes the initial send the same way: it always saves the proposal as a draft first, and the modal's confirm performs the draft-to-sent flip plus invoice in one transaction (the `proposal_send` action), so cancelling simply leaves a clean draft. On send, each channel returns an honest result (for example email sent, SMS failed) instead of one all-or-nothing status, and every attempt writes a `message_log` row recording the sending admin (`sent_by`) and whether the copy was hand-edited (`body_edited`).
 
 ### Lead Call Bridge (real-time first-ring)
 - A new in-window (8am-9pm Chicago) Thumbtack lead auto-rings Dallas from the 888 with a spoken briefing (name, event, date/time, guests, city); press 1 bridges to the lead from the 224, press 9 replays, no answer fails over to Zul

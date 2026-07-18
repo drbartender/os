@@ -8,9 +8,6 @@ const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const { createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
 const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
-const { sendEmail } = require('../../utils/email');
-const emailTemplates = require('../../utils/emailTemplates');
-const { PUBLIC_SITE_URL } = require('../../utils/urls');
 
 const router = express.Router();
 
@@ -218,41 +215,22 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
 }));
 
 /**
- * POST /api/proposals/:id/resend — manually re-send the proposal to the client
- * (email + SMS), leaving status untouched. The auto-send fires on the →sent
- * transition; this is the detail-page "Resend" button for when a client says
- * they never saw it. sendProposalSentEmail is best-effort (never throws) and
- * gates the SMS half through shouldSendImmediate, so an opted-out client is not
- * texted. A 'resent' activity row records that it went out again.
+ * POST /api/proposals/:id/resend — DEPRECATED direct resend, kept mounted for
+ * API compatibility. Delegates to the proposal_resend comms action (plan P1):
+ * validate-only side effects (the resendable-status guard; status/timestamps
+ * stay untouched, as before), then the default unedited proposalSent email +
+ * initial-proposal SMS on the action's default channels, awaited and ledgered
+ * by the action (skipLog inside), never fire-and-forget. The action honors the
+ * legacy SMS suppression (opted-out / bad phone -> SMS unavailable). New UI goes
+ * through POST /api/comms/send instead. A 'resent' activity row still records it.
  */
 router.post('/:id/resend', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
-  const pd = await pool.query(`
-    SELECT p.token, p.event_type, p.event_type_custom, p.event_date, p.status,
-           c.id AS client_id, c.name AS client_name, c.email AS client_email,
-           c.phone AS client_phone, c.communication_preferences,
-           c.email_status, c.phone_status
-    FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
-    WHERE p.id = $1`, [req.params.id]);
-  const proposal = pd.rows[0];
-  if (!proposal) throw new NotFoundError('Proposal not found');
-  // Only re-send in the active, already-sent-and-not-yet-paid window. Draft is
-  // not sent yet (use "Send to client"); archived is shelved/cancelled; paid,
-  // confirmed, and completed are past the "review and sign" proposal stage, so
-  // the proposalSent copy would be stale/confusing there. The client mirrors this.
-  const RESENDABLE = ['sent', 'viewed', 'modified', 'accepted'];
-  if (!RESENDABLE.includes(proposal.status)) {
-    throw new ValidationError({}, `This proposal can't be resent from its current status (${proposal.status}).`);
-  }
-  if (!proposal.client_email && !proposal.client_phone) {
-    throw new ValidationError({}, 'No client email or phone on file to resend to.');
-  }
+  const { getAction } = require('../../utils/comms/registry');
+  const action = getAction('proposal_resend');
+  const proposalId = parseInt(req.params.id, 10);
 
-  // Best-effort (never throws): resends the proposalSent email + initial-proposal
-  // SMS, the SMS half suppressed for opted-out clients inside sendProposalSentEmail.
-  await _deps.sendProposalSentEmail(
-    { ...proposal, id: Number(req.params.id) },
-    { actorType: 'admin' },
-  );
+  await action.ensureSideEffects(proposalId, { sentBy: req.user.id });
+  const results = await action.dispatch(proposalId, undefined, ['email', 'sms'], { sentBy: req.user.id });
 
   // The activity log is secondary to the send that already went out — never let
   // a logging blip 500 the request (that would prompt a duplicate resend).
@@ -260,53 +238,56 @@ router.post('/:id/resend', auth, requireAdminOrManager, adminWriteLimiter, async
     await pool.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
        VALUES ($1, 'resent', 'admin', $2, $3)`,
-      [req.params.id, req.user.id, JSON.stringify({ via: 'admin_resend' })]
+      [proposalId, req.user.id, JSON.stringify({ via: 'admin_resend' })]
     );
   } catch (logErr) {
-    console.error('Resend activity-log insert failed (non-blocking) for proposal', req.params.id, logErr.code || logErr.name);
+    console.error('Resend activity-log insert failed (non-blocking) for proposal', proposalId, logErr.code || logErr.name);
   }
 
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    email: results.email,
+    sms: results.sms,
+    email_error: results.email_error || null,
+    sms_error: results.sms_error || null,
+    skip_reasons: results.skip_reasons,
+    recipient_email: results.recipient_email || null,
+    recipient_phone: results.recipient_phone || null,
+  });
 }));
 
 /**
- * POST /api/proposals/:id/portal-invite — email the client their portal link
- * (admin-triggered). Plain invite: the portal sits behind the OTP login
- * (email a one-time code), so no token rides in the email. Email-only per the
- * prefer-email-over-SMS default. A send failure surfaces to the admin (this
- * is a deliberate manual action, not a best-effort side effect); the activity
- * log is secondary and never 500s an already-sent invite.
+ * POST /api/proposals/:id/portal-invite — DEPRECATED direct portal invite, kept
+ * mounted for API compatibility. Delegates to the portal_invite comms action
+ * (plan P1): no state side effect (the OTP portal mints no token), then the
+ * default unedited invite email on the action's default (email-only) channel,
+ * awaited and ledgered by the action. New UI goes through POST /api/comms/send.
+ * The activity log is secondary and never 500s an already-sent invite.
  */
 router.post('/:id/portal-invite', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
-  const pd = await pool.query(`
-    SELECT c.name AS client_name, c.email AS client_email
-    FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
-    WHERE p.id = $1`, [req.params.id]);
-  const row = pd.rows[0];
-  if (!row) throw new NotFoundError('Proposal not found');
-  if (!row.client_email) throw new ValidationError({}, 'No client email on file to invite.');
+  const { getAction } = require('../../utils/comms/registry');
+  const action = getAction('portal_invite');
+  const proposalId = parseInt(req.params.id, 10);
 
-  const tpl = emailTemplates.portalInvite({
-    clientName: row.client_name,
-    portalUrl: `${PUBLIC_SITE_URL}/my-proposals`,
-  });
-  await sendEmail({
-    to: row.client_email,
-    ...tpl,
-    meta: { proposalId: Number(req.params.id), messageType: 'portal_invite' },
-  });
+  await action.ensureSideEffects(proposalId, { sentBy: req.user.id });
+  const results = await action.dispatch(proposalId, undefined, ['email'], { sentBy: req.user.id });
 
   try {
     await pool.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
        VALUES ($1, 'portal_invite_sent', 'admin', $2, $3)`,
-      [req.params.id, req.user.id, JSON.stringify({ via: 'admin_invite' })]
+      [proposalId, req.user.id, JSON.stringify({ via: 'admin_invite' })]
     );
   } catch (logErr) {
-    console.error('Portal-invite activity-log insert failed (non-blocking) for proposal', req.params.id, logErr.code || logErr.name);
+    console.error('Portal-invite activity-log insert failed (non-blocking) for proposal', proposalId, logErr.code || logErr.name);
   }
 
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    email: results.email,
+    email_error: results.email_error || null,
+    recipient_email: results.recipient_email || null,
+  });
 }));
 
 module.exports = router;

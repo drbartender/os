@@ -11,6 +11,7 @@ import {
 import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
 import { useToast } from '../../context/ToastContext';
 import Icon from '../../components/adminos/Icon';
+import SendModal, { describeSendResult } from '../../components/SendModal';
 import { fmt$2dp, fmtDateFull } from '../../components/adminos/format';
 import ClientSection from './proposalCreate/ClientSection';
 import EventSection from './proposalCreate/EventSection';
@@ -80,6 +81,9 @@ export default function ProposalCreate() {
   const [addons, setAddons] = useState([]);
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  // Compose-first send: id of the just-created draft + SendModal visibility.
+  const [createdId, setCreatedId] = useState(null);
+  const [sendOpen, setSendOpen] = useState(false);
   const [saveAsDraft, setSaveAsDraft] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
@@ -269,20 +273,47 @@ export default function ProposalCreate() {
         addon_variants: form.addon_variants,
         // addon_quantities / syrup_selections / class_options /
         // client_provides_glassware ride along in the ...form spread above.
-        // send_now is NOT a form field — it comes from the saveAsDraft toggle.
-        // The server defaults send_now to false (fail-safe), so the cockpit
-        // must send it explicitly: true => create as 'sent' + invoice + email.
-        send_now: !saveAsDraft,
+        // Compose-first (spec 4.4): ALWAYS create as a draft. In send mode the
+        // SendModal opens next and its confirm performs the draft-to-sent flip
+        // + invoice + message (action proposal_send); Cancel leaves a normal
+        // draft. The legacy send_now: true server path remains for API compat
+        // but this cockpit no longer uses it.
+        send_now: false,
       };
       const res = await api.post('/proposals', payload);
-      toast.success('Proposal created!');
-      navigate(`/proposals/${res.data.id}`);
+      if (saveAsDraft) {
+        toast.success('Proposal created!');
+        navigate(`/proposals/${res.data.id}`);
+      } else {
+        setCreatedId(res.data.id);
+        setSendOpen(true);
+      }
     } catch (err) {
       setError(err.message || 'Failed to create proposal.');
       setFieldErrors(err.fieldErrors || {});
     } finally {
       setSubmitting(false);
     }
+  };
+
+  // SendModal outcomes for the compose-first initial send. Cancel keeps the
+  // draft (deliberate: nothing was sent, nothing flipped); confirm reports
+  // per-channel truth. Both paths land on the new proposal's detail page.
+  // NOTE the modal's Done path calls onComplete THEN onClose, so onClose
+  // guards on sendDoneRef to avoid a double toast/navigate.
+  const sendDoneRef = useRef(false);
+  const handleSendComplete = (results) => {
+    sendDoneRef.current = true;
+    const { hadFailure, message } = describeSendResult(results);
+    if (hadFailure) toast.error(message); else toast.success(message);
+    setSendOpen(false);
+    navigate(`/proposals/${createdId}`);
+  };
+  const handleSendCancel = () => {
+    if (sendDoneRef.current) return;
+    setSendOpen(false);
+    toast.success('Saved as draft. Send it any time from the proposal page.');
+    navigate(`/proposals/${createdId}`);
   };
 
   const status = fieldStatus(form);
@@ -405,6 +436,16 @@ export default function ProposalCreate() {
           fieldErrors={fieldErrors}
         />
       </div>
+      {sendOpen && createdId && (
+        <SendModal
+          action="proposal_send"
+          entityId={createdId}
+          title="Send Proposal"
+          confirmLabel="Send Proposal"
+          onClose={handleSendCancel}
+          onComplete={handleSendComplete}
+        />
+      )}
     </form>
   );
 }

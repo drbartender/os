@@ -6,7 +6,7 @@ import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 import NumberStepper from '../../components/NumberStepper';
-import ConfirmModal from '../../components/ConfirmModal';
+import SendModal, { describeSendResult } from '../../components/SendModal';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import StaffPills from '../../components/adminos/StaffPills';
@@ -108,7 +108,6 @@ export default function EventsDashboard() {
   const [createError, setCreateError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [reminderTarget, setReminderTarget] = useState(null);
-  const [sendingReminder, setSendingReminder] = useState(false);
 
   const fetchEvents = useCallback(async () => {
     try {
@@ -476,28 +475,23 @@ export default function EventsDashboard() {
         onClose={drawer.close}
       />
 
-      <ConfirmModal
-        isOpen={!!reminderTarget}
-        title="Send payment reminder?"
-        message={`Send a payment reminder to ${reminderTarget?.client_name || 'the client'}? They'll get an email with a link to pay the balance.`}
-        onCancel={() => { if (!sendingReminder) setReminderTarget(null); }}
-        onConfirm={async () => {
-          if (!reminderTarget?.proposal_id) {
-            setReminderTarget(null);
-            return;
-          }
-          setSendingReminder(true);
-          try {
-            await api.post(`/proposals/${reminderTarget.proposal_id}/send-reminder`);
-            toast.success('Reminder sent.');
-            setReminderTarget(null);
-          } catch (err) {
-            toast.error(err?.message || 'Failed to send reminder.');
-          } finally {
-            setSendingReminder(false);
-          }
-        }}
-      />
+      {/* Compose-first balance reminder: SendModal previews the server-resolved
+          recipient/channels, the admin edits and confirms, and onComplete reports
+          the honest per-channel result. Only rendered for events with a proposal. */}
+      {reminderTarget?.proposal_id && (
+        <SendModal
+          action="payment_reminder"
+          entityId={reminderTarget.proposal_id}
+          title="Send Balance Reminder"
+          confirmLabel="Send Reminder"
+          onClose={() => setReminderTarget(null)}
+          onComplete={(results) => {
+            const { hadFailure, message } = describeSendResult(results);
+            if (hadFailure) toast.error(message);
+            else toast.success(message);
+          }}
+        />
+      )}
     </div>
   );
 }

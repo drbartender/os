@@ -23,6 +23,7 @@ import AddressLink from '../../components/adminos/AddressLink';
 import { venueMapQuery } from '../../components/VenueAddressFields';
 import EntityLink from '../../components/EntityLink';
 import { proposalStatusMeta } from '../../utils/proposalStatusMap';
+import SendModal, { describeSendResult } from '../../components/SendModal';
 
 // Lead call bridge outcome, one read-only line for TT-drafted proposals
 // (spec 2026-07-18 §5.3). Absent lead_call renders nothing at the call site.
@@ -59,8 +60,9 @@ export default function ProposalDetail() {
 
   // Public link copy
   const [linkCopied, setLinkCopied] = useState(false);
-  const [resending, setResending] = useState(false);
-  const [inviting, setInviting] = useState(false);
+  // Which compose-and-send modal is open ('resend' | 'invite' | null). The old
+  // direct-fire resend/invite handlers are gone; these buttons now open SendModal.
+  const [sendModal, setSendModal] = useState(null);
 
   // Drink plan — state stays here because autoAddedMap/cocktailNameById on the
   // Pricing card read drinkPlan.selections.addOns. The card itself is extracted
@@ -206,32 +208,12 @@ export default function ProposalDetail() {
     window.open(`${PUBLIC_SITE_URL}/proposal/${proposal.token}`, '_blank', 'noopener,noreferrer');
   };
 
-  const resendProposal = async () => {
-    const who = proposal.client_name || 'the client';
-    if (!window.confirm(`Resend this proposal to ${who} by email and text?`)) return;
-    setResending(true);
-    try {
-      await api.post(`/proposals/${id}/resend`);
-      toast.success('Proposal resent.');
-    } catch (err) {
-      toast.error(err.message || 'Failed to resend proposal.');
-    } finally {
-      setResending(false);
-    }
-  };
-
-  const invitePortal = async () => {
-    const who = proposal.client_name || 'the client';
-    if (!window.confirm(`Email ${who} an invite to their client portal?`)) return;
-    setInviting(true);
-    try {
-      await api.post(`/proposals/${id}/portal-invite`);
-      toast.success('Portal invite sent.');
-    } catch (err) {
-      toast.error(err.message || 'Failed to send portal invite.');
-    } finally {
-      setInviting(false);
-    }
+  // Both proposal-side sends (resend + portal invite) flow through SendModal now;
+  // onComplete reports the honest per-channel result via the existing toast.
+  const onSendComplete = (results) => {
+    const { hadFailure, message } = describeSendResult(results);
+    if (hadFailure) toast.error(message);
+    else toast.success(message);
   };
 
   const saveNotes = async () => {
@@ -426,13 +408,13 @@ export default function ProposalDetail() {
               </button>
             )}
             {!editing && canResend && (
-              <button type="button" className="btn btn-secondary" onClick={resendProposal} disabled={resending}>
-                <Icon name="send" size={12} />{resending ? 'Resending…' : 'Resend'}
+              <button type="button" className="btn btn-secondary" onClick={() => setSendModal('resend')} disabled={sendModal === 'resend'}>
+                <Icon name="send" size={12} />Resend
               </button>
             )}
             {!editing && proposal.client_email && (
-              <button type="button" className="btn btn-ghost" onClick={invitePortal} disabled={inviting}>
-                <Icon name="send" size={12} />{inviting ? 'Inviting…' : 'Invite to portal'}
+              <button type="button" className="btn btn-ghost" onClick={() => setSendModal('invite')} disabled={sendModal === 'invite'}>
+                <Icon name="send" size={12} />Invite to portal
               </button>
             )}
             {!editing && canMarkAccepted && (
@@ -733,6 +715,30 @@ export default function ProposalDetail() {
           )}
         </div>
       </div>
+
+      {/* Compose-and-send flows (resend + portal invite). SendModal previews the
+          server-resolved recipient/channels, the admin edits and confirms, and
+          onSendComplete reports the honest per-channel result. */}
+      {sendModal === 'resend' && (
+        <SendModal
+          action="proposal_resend"
+          entityId={id}
+          title="Resend Proposal"
+          confirmLabel="Resend"
+          onClose={() => setSendModal(null)}
+          onComplete={onSendComplete}
+        />
+      )}
+      {sendModal === 'invite' && (
+        <SendModal
+          action="portal_invite"
+          entityId={id}
+          title="Send Portal Invite"
+          confirmLabel="Send Invite"
+          onClose={() => setSendModal(null)}
+          onComplete={onSendComplete}
+        />
+      )}
 
       {/* Cancel-event dialog (booked proposals; fix #7). */}
       {showCancelDialog && (
