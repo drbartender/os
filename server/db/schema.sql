@@ -4065,3 +4065,8 @@ INSERT INTO app_settings (key, value) VALUES
   ('margin_labor_rate', '35'),
   ('margin_supplies_per_guest', '1.25')
 ON CONFLICT (key) DO NOTHING;
+
+-- Planner v2 Lab funnel observability (plan pp2-planner task 5): first click
+-- on the celebration screen's Enhancement Lab CTA. Queryable attach-rate:
+-- submitted_at vs lab_cta_clicked_at vs Lab additions.
+ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS lab_cta_clicked_at TIMESTAMPTZ;

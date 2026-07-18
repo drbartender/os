@@ -13,6 +13,7 @@ const { isDrinkPlanPreBooking } = require('../utils/drinkPlanAccess');
 const { uploadFile, getSignedUrl } = require('../utils/storage');
 const { isValidImageUpload } = require('../utils/fileValidation');
 const { handleSubmit } = require('./drinkPlans/submit');
+const { buildHostedCoveragePayload } = require('./drinkPlans/coverageContext');
 const { registerPublicShoppingListRoute, registerAdminShoppingListRoutes } = require('./drinkPlans/shoppingList');
 
 const router = express.Router();
@@ -24,12 +25,23 @@ const router = express.Router();
 // original early position in the router's matching order.
 registerPublicShoppingListRoute(router);
 
+/** POST /api/drink-plans/t/:token/lab-cta — celebration-screen Enhancement
+ *  Lab CTA click marker (attach-rate funnel; first click wins). Public,
+ *  token-gated, write-once, no body. */
+router.post('/t/:token/lab-cta', requireUuidToken('token', 'This drink plan is no longer available'), publicReadLimiter, asyncHandler(async (req, res) => {
+  await pool.query(
+    'UPDATE drink_plans SET lab_cta_clicked_at = COALESCE(lab_cta_clicked_at, NOW()) WHERE token = $1',
+    [req.params.token]
+  );
+  res.json({ success: true });
+}));
+
 /** GET /api/drink-plans/t/:token — fetch plan by token (public) */
 router.get('/t/:token', requireUuidToken('token', 'This drink plan is no longer available'), publicReadLimiter, asyncHandler(async (req, res) => {
   const result = await pool.query(
     `SELECT dp.id, dp.token, dp.client_name, dp.client_email, dp.event_type, dp.event_type_custom, dp.event_date,
             dp.status, dp.serving_type, dp.selections, dp.submitted_at, dp.created_at,
-            dp.proposal_id, dp.exploration_submitted_at,
+            dp.proposal_id, dp.exploration_submitted_at, dp.planner_version,
             p.guest_count, p.num_bartenders, p.num_bars, p.pricing_snapshot,
             p.status AS proposal_status,
             p.token AS proposal_token,
@@ -37,12 +49,15 @@ router.get('/t/:token', requireUuidToken('token', 'This drink plan is no longer 
             p.amount_paid AS proposal_amount_paid,
             p.event_date AS proposal_event_date,
             p.balance_due_date AS proposal_balance_due_date,
+            sp.id                  AS package_id,
             sp.bar_type            AS package_bar_type,
             sp.category            AS package_category,
             sp.slug                AS package_slug,
             sp.name                AS package_name,
             sp.includes            AS package_includes,
-            sp.covered_addon_slugs AS package_covered_addon_slugs
+            sp.covered_addon_slugs AS package_covered_addon_slugs,
+            sp.slot_count          AS package_slot_count,
+            sp.slot_kind           AS package_slot_kind
      FROM drink_plans dp
      LEFT JOIN proposals p ON p.id = dp.proposal_id
      LEFT JOIN service_packages sp ON sp.id = p.package_id
@@ -57,6 +72,12 @@ router.get('/t/:token', requireUuidToken('token', 'This drink plan is no longer 
   // can run a Stripe charge in ConfirmationStep). Return a locked payload.
   if (isDrinkPlanPreBooking(plan.proposal_status)) {
     return res.json({ locked: true, proposalToken: plan.proposal_token });
+  }
+  // Planner v2 hosted payload: per-drink coverage for the two-tier picker.
+  // has_contents:false = the package's contents aren't entered yet, so the v2
+  // client falls back to the legacy hosted flow (content-readiness switch).
+  if (plan.planner_version >= 2 && plan.package_category === 'hosted') {
+    plan.hosted_coverage = await buildHostedCoveragePayload(pool, plan.package_id);
   }
   res.json(plan);
 }));

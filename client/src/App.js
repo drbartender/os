@@ -77,7 +77,7 @@ const ClientLogin = lazy(() => import('./pages/public/ClientLogin'));
 // Application + token-gated client surfaces.
 const Application = lazy(() => import('./pages/Application'));
 const ApplicationStatus = lazy(() => import('./pages/ApplicationStatus'));
-const PotionPlanningLab = lazy(() => import('./pages/plan/PotionPlanningLab'));
+const PlannerRouter = lazy(() => import('./pages/plan/PlannerRouter'));
 const ClientShoppingList = lazy(() => import('./pages/public/ClientShoppingList'));
 const PortalHome = lazy(() => import('./pages/public/portal/PortalHome'));
 
@@ -331,7 +331,7 @@ function PublicWebsiteRoutes() {
         <Route path="/faq" element={<FaqPage />} />
         <Route path="/classes" element={<ClassWizard />} />
         {/* These public token-based routes work on both domains */}
-        <Route path="/plan/:token" element={<PotionPlanningLab />} />
+        <Route path="/plan/:token" element={<PlannerRouter />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
         <Route path="/compare/:token" element={<ProposalCompare />} />
         <Route path="/invoice/:token" element={<InvoicePage />} />
@@ -400,7 +400,7 @@ function HiringRoutes() {
         <Route path="/resources" element={<Navigate to="/account/documents" replace />} />
         <Route path="/my-tip-page" element={<Navigate to="/tip-card" replace />} />
         {/* Public token routes still work */}
-        <Route path="/plan/:token" element={<PotionPlanningLab />} />
+        <Route path="/plan/:token" element={<PlannerRouter />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
         <Route path="/compare/:token" element={<ProposalCompare />} />
         <Route path="/invoice/:token" element={<InvoicePage />} />
@@ -458,7 +458,7 @@ function StaffSiteRoutes() {
         <Route path="/resources" element={<Navigate to="/account/documents" replace />} />
         <Route path="/my-tip-page" element={<Navigate to="/tip-card" replace />} />
         {/* Public token routes */}
-        <Route path="/plan/:token" element={<PotionPlanningLab />} />
+        <Route path="/plan/:token" element={<PlannerRouter />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
         <Route path="/compare/:token" element={<ProposalCompare />} />
         <Route path="/invoice/:token" element={<InvoicePage />} />
@@ -485,7 +485,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={<Navigate to="/register" replace />} />
       {/* Public pages (no auth) */}
-      <Route path="/plan/:token" element={<PotionPlanningLab />} />
+      <Route path="/plan/:token" element={<PlannerRouter />} />
       <Route path="/proposal/:token" element={<ProposalView />} />
       <Route path="/compare/:token" element={<ProposalCompare />} />
       <Route path="/invoice/:token" element={<InvoicePage />} />

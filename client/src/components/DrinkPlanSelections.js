@@ -177,6 +177,25 @@ function NewSelections({ plan, sel, cocktails, mocktails }) {
         {logistics.accessNotes && (
           <p className="text-muted">Event notes: {logistics.accessNotes}</p>
         )}
+        {/* Planner v2 keys (spec 2026-07-18): operationally load-bearing —
+            outdoor bars may need power planning; crowd sizes the list. */}
+        {sel.barPlacement && (
+          <p className="text-muted">Bar placement: {{ indoors: 'Indoors', outdoors: 'Outdoors', unsure: 'Not sure yet' }[sel.barPlacement] || sel.barPlacement}</p>
+        )}
+        {sel.powerAtBar && (
+          <p className="text-muted">Power at the bar: {{ yes: 'Outlet within 50 ft', no: 'No outlet nearby', unsure: 'Not sure yet' }[sel.powerAtBar] || sel.powerAtBar}</p>
+        )}
+        {sel.crowd && ((sel.crowd.drinkers !== null && sel.crowd.drinkers !== undefined) || sel.crowd.profile) && (
+          <p className="text-muted">
+            Crowd: {sel.crowd.drinkers !== null && sel.crowd.drinkers !== undefined ? `${sel.crowd.drinkers} drinkers` : 'drinker count unsure'}
+            {sel.crowd.profile ? ` · ${String(sel.crowd.profile).replace(/_/g, ' ')}` : ''}
+          </p>
+        )}
+        {sel.guestPreferences && Object.keys(sel.guestPreferences).length > 0 && (
+          <p className="text-muted">
+            Guest preferences: {Object.entries(sel.guestPreferences).map(([k, v]) => `${k.replace(/([A-Z])/g, ' $1').toLowerCase()}: ${String(v).replace(/_/g, ' ')}`).join(' · ')}
+          </p>
+        )}
         {/* Backward compat */}
         {logistics.ice && <p className="text-muted">Ice machine: {logistics.ice}</p>}
         {logistics.other && !logistics.accessNotes && <p className="text-muted">Notes: {logistics.other}</p>}

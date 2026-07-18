@@ -635,6 +635,71 @@ function cancellationConfirmation({ clientName, eventTypeLabel = 'event', outcom
   };
 }
 
+
+/**
+ * Planner v2 submission echo (spec 2026-07-18 §3.1): a section appended to the
+ * drink-plan confirmation email listing EVERYTHING the client selected, so
+ * "did you get my info?" can never happen again. Pure — callers resolve drink
+ * names first. Returns { html, text } fragments; html is injected before
+ * </body> of an already-wrapped email.
+ */
+function drinkPlanEchoSection({ selections = {}, cocktailNames = [], mocktailNames = [] }) {
+  const rows = [];
+  const add = (label, value) => { if (value) rows.push([label, value]); };
+
+  add('Cocktails', cocktailNames.join(', '));
+  add('Custom requests', (Array.isArray(selections.customCocktails) ? selections.customCocktails : []).join(', '));
+  add('Mocktails', mocktailNames.join(', '));
+  add('Spirits', (Array.isArray(selections.spirits) ? selections.spirits : []).join(', ')
+    + (selections.spiritsOther ? `, ${selections.spiritsOther}` : ''));
+  const beer = selections.beerFromFullBar || selections.beerFromBeerWine;
+  const wine = selections.wineFromFullBar || selections.wineFromBeerWine;
+  add('Beer', (Array.isArray(beer) ? beer : []).join(', '));
+  add('Wine', (Array.isArray(wine) ? wine : []).join(', '));
+  if (selections.mixersForSpirits !== undefined && selections.mixersForSpirits !== null) {
+    add('Mixers', selections.mixersForSpirits === true ? 'Yes, include mixers'
+      : selections.mixersForSpirits === false ? 'No mixers' : 'Not sure yet, we will figure it out together');
+  }
+  if (selections.crowd) {
+    const profileLabels = {
+      cocktail_forward: 'Cocktail-forward crowd', wine: 'Wine crowd', beer: 'Beer crowd',
+      even: 'An even mix', help: 'Help me decide',
+    };
+    add('Guests who drink', selections.crowd.drinkers === null ? 'Not sure yet' : String(selections.crowd.drinkers));
+    add('Crowd speed', profileLabels[selections.crowd.profile] || null);
+  }
+  const menuLabels = { custom: 'Custom menu card', house: 'Standard menu card', none: 'No printed menu' };
+  add('Menu card', menuLabels[selections.menuStyle] || null);
+  const logistics = selections.logistics || {};
+  if (logistics.dayOfContact && logistics.dayOfContact.name) {
+    add('Day-of contact', `${logistics.dayOfContact.name}${logistics.dayOfContact.phone ? ` (${logistics.dayOfContact.phone})` : ''}`);
+  }
+  add('Parking', logistics.parking ? String(logistics.parking).replace(/_/g, ' ') : null);
+  const placementLabels = { indoors: 'Indoors', outdoors: 'Outdoors', unsure: 'Not sure yet' };
+  add('Bar placement', placementLabels[selections.barPlacement] || null);
+  const powerLabels = { yes: 'Outlet within 50 feet', no: 'No outlet nearby', unsure: 'Not sure yet' };
+  add('Power at the bar', powerLabels[selections.powerAtBar] || null);
+  add('Access notes', logistics.accessNotes || null);
+  add('Anything else', selections.additionalNotes || null);
+
+  if (rows.length === 0) return { html: '', text: '' };
+
+  const html = `
+  <div style="max-width:600px;margin:0 auto;background:${BRAND.white};padding:0 24px 24px;">
+    <h3 style="color:${BRAND.dark};font-size:16px;border-top:1px solid #e5ddd3;padding-top:20px;">Everything we have on file</h3>
+    <table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px;color:${BRAND.primary};">
+      ${rows.map(([label, value]) => `<tr>
+        <td style="padding:4px 12px 4px 0;color:${BRAND.secondary};vertical-align:top;white-space:nowrap;">${esc(label)}</td>
+        <td style="padding:4px 0;">${esc(value)}</td>
+      </tr>`).join('\n      ')}
+    </table>
+    <p style="font-size:12px;color:${BRAND.secondary};">If anything here looks off, just reply to this email and we will fix it.</p>
+  </div>`;
+  const text = ['', 'Everything we have on file:', ...rows.map(([label, value]) => `- ${label}: ${value}`),
+    'If anything here looks off, just reply to this email and we will fix it.'].join('\n');
+  return { html, text };
+}
+
 module.exports = {
   // Shared brand shell pieces, exported for server/utils/comms/render.js (the
   // compose-modal renderer) so it reproduces the exact same wrapper.
@@ -647,6 +712,7 @@ module.exports = {
   drinkPlanNudgeParts,
   drinkPlanLink,
   drinkPlanBalanceUpdate,
+  drinkPlanEchoSection,
   shoppingListReady,
   shoppingListReadyParts,
   postConsultClient,

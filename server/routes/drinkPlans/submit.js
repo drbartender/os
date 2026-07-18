@@ -19,6 +19,8 @@ const { shouldSendImmediate } = require('../../utils/messageSuppression');
 const { NotFoundError, ConflictError } = require('../../utils/errors');
 const { ADMIN_URL, API_URL } = require('../../utils/urls');
 const { triggerShoppingListAutoGen } = require('../../utils/shoppingListGen');
+const { loadHostedCoverageContext, mocktailAddonFor } = require('./coverageContext');
+const { drinkPlanEchoSection } = require('../../utils/lifecycleEmailTemplates');
 
 // Token-gated selections PUT accepts arbitrary JSON. To stop attackers from
 // (a) seeding internal-only keys like `_logoFilename` to pivot the logo proxy
@@ -36,6 +38,13 @@ const ALLOWED_SELECTIONS_KEYS = new Set([
   'customMenuDesign', 'menuStyle', 'menuTheme', 'drinkNaming', 'menuDesignNotes',
   'additionalNotes', 'companyLogo',
   'activeModules', 'exploration',
+  // planner v2 (spec 2026-07-18 §3.1): crowd answers + day-of bar placement/power
+  'crowd', 'barPlacement', 'powerAtBar',
+  // Data-loss bugfix (found 2026-07-18): the legacy hosted wizard has always
+  // written guestPreferences ({balance, naInterest}) but the key was never on
+  // this allow-list, so hosted guest-prefs answers were silently dropped at
+  // save. v2's display-only taste answers reuse the same key.
+  'guestPreferences',
   // legacy fields preserved for back-compat with already-saved plans
   'signatureCocktails', 'barFocus', 'wineStyles', 'beerStyles', 'beerWineBalance',
   'beerWineNotes', 'fullBarNotes', 'logisticsNotes',
@@ -58,10 +67,54 @@ function sanitizeSelections(raw) {
       out.companyLogo = '';
     }
   }
+  // Planner v2 crowd answers: normalize to the pinned contract shape so
+  // garbage from the public token route never reaches the quantity engine.
+  if (out.crowd !== undefined) {
+    const c = (out.crowd && typeof out.crowd === 'object' && !Array.isArray(out.crowd)) ? out.crowd : {};
+    const rawDrinkers = c.drinkers === null || c.drinkers === undefined || c.drinkers === '' ? null : Number(c.drinkers);
+    const drinkers = Number.isFinite(rawDrinkers) ? Math.max(0, Math.round(rawDrinkers)) : null;
+    const profiles = ['cocktail_forward', 'wine', 'beer', 'even', 'help'];
+    out.crowd = {
+      drinkers,
+      unsure: c.unsure === true || drinkers === null,
+      profile: profiles.includes(c.profile) ? c.profile : 'help',
+    };
+  }
+  if (out.barPlacement !== undefined) {
+    out.barPlacement = ['indoors', 'outdoors', 'unsure'].includes(out.barPlacement) ? out.barPlacement : 'unsure';
+  }
+  if (out.powerAtBar !== undefined) {
+    out.powerAtBar = ['yes', 'no', 'unsure'].includes(out.powerAtBar) ? out.powerAtBar : 'unsure';
+  }
   return out;
 }
 
 /** PUT /api/drink-plans/t/:token — save draft or submit (public) */
+
+// Resolve selected drink names and build the confirmation echo section
+// (planner v2). Runs in the post-commit tail; pool is correct there. Never
+// fatal — a failed echo still sends the base confirmation.
+async function buildSelectionsEcho(selections) {
+  try {
+    const sig = Array.isArray(selections?.signatureDrinks) ? selections.signatureDrinks : [];
+    const moc = Array.isArray(selections?.mocktails) ? selections.mocktails : [];
+    const [c, m] = await Promise.all([
+      sig.length ? pool.query('SELECT id, name FROM cocktails WHERE id = ANY($1::text[])', [sig]) : Promise.resolve({ rows: [] }),
+      moc.length ? pool.query('SELECT id, name FROM mocktails WHERE id = ANY($1::text[])', [moc]) : Promise.resolve({ rows: [] }),
+    ]);
+    const cn = new Map(c.rows.map(r => [r.id, r.name]));
+    const mn = new Map(m.rows.map(r => [r.id, r.name]));
+    return drinkPlanEchoSection({
+      selections: selections || {},
+      cocktailNames: sig.map(id => cn.get(id)).filter(Boolean),
+      mocktailNames: moc.map(id => mn.get(id)).filter(Boolean),
+    });
+  } catch (err) {
+    console.error('Selections echo build failed (non-fatal):', err.message);
+    return { html: '', text: '' };
+  }
+}
+
 async function handleSubmit(req, res) {
   const { serving_type, status, paid_separately } = req.body;
   const selections = sanitizeSelections(req.body.selections);
@@ -77,10 +130,14 @@ async function handleSubmit(req, res) {
             dp.client_name, dp.client_email,
             dp.event_type, dp.event_type_custom,
             p.status AS proposal_status,
+            sp.category AS package_category,
+            sp.bar_type AS package_bar_type,
             c.id AS client_id,
+            c.email AS live_client_email, c.name AS live_client_name,
             c.communication_preferences, c.email_status, c.phone_status
      FROM drink_plans dp
      LEFT JOIN proposals p ON p.id = dp.proposal_id
+     LEFT JOIN service_packages sp ON sp.id = p.package_id
      LEFT JOIN clients c ON c.id = p.client_id
      WHERE dp.token = $1`,
     [req.params.token]
@@ -109,10 +166,19 @@ async function handleSubmit(req, res) {
   const rawAddons = selections?.addOns || {};
   const rawAddonSlugs = Object.keys(rawAddons).filter(slug => rawAddons[slug]?.enabled);
   const addBarRental = selections?.logistics?.addBarRental === true;
+  // The Jack rule (planner v2, spec §3.2): on a hosted non-mocktail package,
+  // picked mocktails price via exactly one addon (1 flavor = pre-batched,
+  // 2+ = full Mocktail Bar), derived SERVER-side from the picks — the
+  // client's addOns are never trusted for this pair. Counted up front so a
+  // mocktail-only hosted submit still takes the atomic financial path.
+  const isHostedNonMocktail = existing.rows[0].package_category === 'hosted'
+    && existing.rows[0].package_bar_type !== 'mocktail';
+  const mocktailPickCount = Array.isArray(selections?.mocktails) ? selections.mocktails.length : 0;
+  const hostedMocktailFlipSlug = isHostedNonMocktail ? mocktailAddonFor(mocktailPickCount) : null;
   const hasFinancialSideEffects =
     newStatus === 'submitted'
     && !!existing.rows[0].proposal_id
-    && (rawAddonSlugs.length > 0 || addBarRental);
+    && (rawAddonSlugs.length > 0 || addBarRental || hostedMocktailFlipSlug !== null);
 
   if (hasFinancialSideEffects) {
     // Atomic submit path: plan UPDATE + addons + total + invoice all in one
@@ -170,11 +236,34 @@ async function handleSubmit(req, res) {
         const sigDrinkIds = Array.isArray(selections?.signatureDrinks) ? selections.signatureDrinks : [];
         const cocktailRows = sigDrinkIds.length > 0
           ? (await client.query(
-              'SELECT id, upgrade_addon_slugs FROM cocktails WHERE id = ANY($1::text[])',
+              'SELECT id, upgrade_addon_slugs, ingredients FROM cocktails WHERE id = ANY($1::text[])',
               [sigDrinkIds]
             )).rows
           : [];
         const cocktailById = new Map(cocktailRows.map(r => [r.id, r]));
+        // Planner v2: recipe-derived fence picks (mocktails included) validate
+        // through the coverage engine when the package has structured contents.
+        // Uses the HELD transaction client (one-connection rule).
+        const mocktailPickIds = Array.isArray(selections?.mocktails) ? selections.mocktails : [];
+        const mocktailRows = mocktailPickIds.length > 0
+          ? (await client.query('SELECT id, ingredients FROM mocktails WHERE id = ANY($1::text[])', [mocktailPickIds])).rows
+          : [];
+        const mocktailById = new Map(mocktailRows.map(r => [r.id, r]));
+        // Final Jack-rule slug from RESOLVED picks only — an id that matches
+        // no real mocktail routes us here (conservative) but never bills.
+        const resolvedFlipSlug = isHostedNonMocktail ? mocktailAddonFor(mocktailRows.length) : null;
+        const coverageCtx = isHostedNonMocktail || existing.rows[0].package_category === 'hosted'
+          ? await loadHostedCoverageContext(client, proposal.package_id)
+          : null;
+        const gapSlugCache = new Map();
+        const coverageGapSlugsFor = (drinkRow) => {
+          if (!coverageCtx || !drinkRow) return [];
+          if (!gapSlugCache.has(drinkRow.id)) {
+            const verdict = coverageCtx.classifyDrink(drinkRow);
+            gapSlugCache.set(drinkRow.id, verdict.status === 'fenced' ? verdict.gapAddonSlugs : []);
+          }
+          return gapSlugCache.get(drinkRow.id);
+        };
 
         // For each autoAdded addon, require a still-selected triggering cocktail whose
         // upgrade_addon_slugs includes the slug AND the package does not cover it.
@@ -184,13 +273,29 @@ async function handleSubmit(req, res) {
           if (meta?.autoAdded) {
             const triggers = Array.isArray(meta.triggeredBy) ? meta.triggeredBy : [];
             const validTrigger = triggers.some(drinkId => {
-              const c = cocktailById.get(drinkId);
-              return c && Array.isArray(c.upgrade_addon_slugs) && c.upgrade_addon_slugs.includes(slug);
+              const c = cocktailById.get(drinkId) || mocktailById.get(drinkId);
+              if (!c) return false;
+              if (Array.isArray(c.upgrade_addon_slugs) && c.upgrade_addon_slugs.includes(slug)) return true;
+              // planner v2 fence: the coverage engine says this drink's gap
+              // is priced by this addon on this package
+              return coverageGapSlugsFor(c).includes(slug);
             });
             return validTrigger;
           }
           return true; // user-added addon — honor it
         });
+
+        // Enforce the server-derived mocktail flip: exactly the right one of
+        // the pre-batched/mocktail-bar pair, regardless of what the client sent.
+        if (isHostedNonMocktail) {
+          for (const pairSlug of ['pre-batched-mocktail', 'mocktail-bar']) {
+            const idx = addonSlugs.indexOf(pairSlug);
+            if (pairSlug !== resolvedFlipSlug && idx !== -1) addonSlugs.splice(idx, 1);
+            if (pairSlug === resolvedFlipSlug && idx === -1 && !coveredAddonSlugs.includes(pairSlug)) {
+              addonSlugs.push(pairSlug);
+            }
+          }
+        }
 
         // Build the specialty_upgrades payload for activity-log enrichment.
         const specialtyUpgrades = addonSlugs
@@ -211,6 +316,23 @@ async function handleSubmit(req, res) {
           [proposal.id]
         );
         const preSyrups = proposal.pricing_snapshot?.syrups?.selections || [];
+
+        // Reconcile a PRE-EXISTING opposite-pair mocktail row on the proposal
+        // (security-review + database-review 2026-07-18): the upsert loop only
+        // adds; without this delete an admin-seeded pre-batched row would bill
+        // alongside a newly-flipped mocktail-bar. Ordered AFTER the
+        // preAddonsRes baseline capture so the override path's catalogBefore
+        // still contains the removed row and the delta CREDITS it, and BEFORE
+        // the upsert + total recalc so the post-state sums correctly.
+        if (isHostedNonMocktail) {
+          const staleSlugs = ['pre-batched-mocktail', 'mocktail-bar'].filter(s => s !== resolvedFlipSlug);
+          await client.query(
+            `DELETE FROM proposal_addons
+              WHERE proposal_id = $1
+                AND addon_id IN (SELECT id FROM service_addons WHERE slug = ANY($2::text[]))`,
+            [proposal.id, staleSlugs]
+          );
+        }
 
         // Update num_bars if client added a bar rental from the drink plan
         if (addBarRental) {
@@ -433,8 +555,13 @@ async function handleSubmit(req, res) {
             snapshot,
             amountPaid,
             addonNames,
-            clientName: existing.rows[0]?.client_name || 'Client',
-            clientEmail: existing.rows[0]?.client_email || proposal.client_email,
+            // Live client record first, plan snapshot as fallback (fix-list
+            // 2026-07-18: the old `proposal.client_email` fallback was always
+            // undefined — proposals has no such column — so this path emailed
+            // the stale drink_plans snapshot; Brandon-class stale-recipient
+            // shape. Mirrors the fast path's live c.email resolution.
+            clientName: existing.rows[0]?.live_client_name || existing.rows[0]?.client_name || 'Client',
+            clientEmail: existing.rows[0]?.live_client_email || existing.rows[0]?.client_email,
             // Suppression rules: comm-prefs + email/phone status pulled by the
             // joined `existing` SELECT in Step 3.
             clientForCheck: {
@@ -557,7 +684,14 @@ async function handleSubmit(req, res) {
             balanceDue,
             balanceDueDate: pn.balance_due_date,
           });
-          sendEmail({ to: clientEmail, ...tpl, meta: { proposalId: pn.id, messageType: 'drink_plan_ready' } }).catch(emailErr => console.error('Client drink-plan confirmation email failed:', emailErr));
+          const echo = await buildSelectionsEcho(selections);
+          sendEmail({
+            to: clientEmail,
+            ...tpl,
+            html: echo.html ? tpl.html.replace('</body>', `${echo.html}</body>`) : tpl.html,
+            text: `${tpl.text || ''}${echo.text}`,
+            meta: { proposalId: pn.id, messageType: 'drink_plan_ready' },
+          }).catch(emailErr => console.error('Client drink-plan confirmation email failed:', emailErr));
         }
       }
     }
@@ -705,7 +839,14 @@ async function handleSubmit(req, res) {
             balanceDue: 0,
             balanceDueDate: row.balance_due_date,
           });
-          sendEmail({ to: row.client_email, ...tpl, meta: { proposalId: row.id, messageType: 'drink_plan_ready' } }).catch(e => console.error('Drink-plan submit fast-path email failed:', e));
+          const echo = await buildSelectionsEcho(selections);
+          sendEmail({
+            to: row.client_email,
+            ...tpl,
+            html: echo.html ? tpl.html.replace('</body>', `${echo.html}</body>`) : tpl.html,
+            text: `${tpl.text || ''}${echo.text}`,
+            meta: { proposalId: row.id, messageType: 'drink_plan_ready' },
+          }).catch(e => console.error('Drink-plan submit fast-path email failed:', e));
         }
       }
     } catch (e) {

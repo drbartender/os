@@ -397,8 +397,12 @@ test('overridden proposal: a malformed syrupSelfProvided does not 500', async ()
 test('a submit with no financial extras moves no money', async () => {
   const { proposalId, planToken } = await seedProposal({ override: CONTRACT });
 
+  // Fixture note (planner v2, 2026-07-18): this test previously submitted a
+  // mocktail pick. Under the Jack rule that is now a BILLED extra on hosted
+  // per_guest packages (1 pick = pre-batched, 2+ = Mocktail Bar; covered in
+  // submitPlannerV2.test.js), so the money-free fixture is a menu-card choice.
   const res = await request('PUT', `/api/drink-plans/t/${planToken}`, {
-    body: { status: 'submitted', paid_separately: false, selections: { mocktails: ['shirley-temple-deluxe'] } },
+    body: { status: 'submitted', paid_separately: false, selections: { menuStyle: 'house' } },
   });
   assert.strictEqual(res.status, 200);
 
