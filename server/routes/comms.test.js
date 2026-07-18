@@ -134,8 +134,36 @@ test('hosted package makes the email channel unavailable with an honest reason',
     const r = await getAction('shopping_list_approve').resolveRecipient(planId);
     assert.equal(r.channels.email.available, false);
     assert.match(r.channels.email.unavailable_reason, /Hosted package/);
+    // SMS mirrors every email guard (review finding): a hosted client with a
+    // phone on file must not be textable a shopping list either.
+    assert.equal(r.channels.sms.available, false);
+    assert.match(r.channels.sms.unavailable_reason, /Hosted package/);
   } finally {
     await pool.query('UPDATE proposals SET package_id = NULL WHERE id = $1', [proposalId]);
     await pool.query('DELETE FROM service_packages WHERE id = $1', [pkg.rows[0].id]);
+  }
+});
+
+test('placeholder .invalid email is unavailable at resolve and never reported sent by dispatch', async () => {
+  await pool.query("UPDATE clients SET email = 'comms-placeholder@import.invalid' WHERE id = $1", [clientId]);
+  try {
+    const action = getAction('shopping_list_approve');
+    const r = await action.resolveRecipient(planId);
+    assert.equal(r.channels.email.available, false);
+    assert.match(r.channels.email.unavailable_reason, /Placeholder/);
+    assert.ok(r.warnings.some((w) => /placeholder/i.test(w)));
+
+    // Defense in depth: force-dispatch email anyway (as if a stale modal had
+    // it checked); sendEmail drops .invalid recipients, and dispatch must
+    // report 'skipped', never 'sent', with NO sent ledger row.
+    const results = await action.dispatch(planId, undefined, ['email'], { sentBy: null });
+    assert.notEqual(results.email, 'sent');
+    const { rows } = await pool.query(
+      `SELECT 1 FROM message_log WHERE proposal_id = $1 AND recipient LIKE '%.invalid' AND status = 'sent'`,
+      [proposalId]
+    );
+    assert.equal(rows.length, 0);
+  } finally {
+    await pool.query('UPDATE clients SET email = $1 WHERE id = $2', [TEST_EMAIL, clientId]);
   }
 });

@@ -3970,6 +3970,8 @@ CREATE INDEX IF NOT EXISTS idx_message_log_provider_id ON message_log(provider_i
 -- was hand-edited from the template. NULL sent_by = automated (scheduler) send.
 ALTER TABLE message_log ADD COLUMN IF NOT EXISTS sent_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE message_log ADD COLUMN IF NOT EXISTS body_edited BOOLEAN NOT NULL DEFAULT false;
--- Client-facing shopping list survives admin edits: the public token route
--- serves this last-approved copy while the live list sits in pending_review.
+-- Client-facing shopping list survives admin edits: written at approve time
+-- so the public token route CAN serve this last-approved copy while the live
+-- list sits in pending_review. Write-only until the approved-snapshot lane
+-- lands the serve side + backfill (plan 2026-07-18 comms send modal, lane S1).
 ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS shopping_list_approved_snapshot JSONB;

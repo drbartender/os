@@ -86,18 +86,34 @@ router.post('/send', auth, requireAdminOrManager, adminWriteLimiter, asyncHandle
     }
   }
 
+  const isRetry = body.retry === true;
   const sideEffects = await action.ensureSideEffects(entityId, { sentBy: req.user.id });
-  const results = await action.dispatch(
-    entityId,
-    {
-      email: body.email
-        ? { subject: String(body.email.subject ?? '').trim(), bodyText: String(body.email.body_text ?? '').trim() }
-        : undefined,
-      sms: body.sms ? { body: String(body.sms.body ?? '').trim() } : undefined,
-    },
-    channels,
-    { sentBy: req.user.id }
-  );
+
+  // Dispatch only when this confirm APPLIED the side effect, or when the
+  // client explicitly flags a retry of a failed channel (the one legitimate
+  // applied:false send). A plain confirm that applied nothing is a concurrent
+  // duplicate: the other confirm already sent, so re-sending here would
+  // double-message the client (the old PATCH route only emailed inside the
+  // atomic flip; this preserves that property without breaking Retry).
+  let results;
+  if (!sideEffects.applied && !isRetry && channels.length > 0) {
+    results = { email: 'skipped', sms: 'skipped', skip_reasons: {} };
+    for (const c of channels) {
+      results.skip_reasons[c] = 'Already handled by a concurrent confirm; nothing sent.';
+    }
+  } else {
+    results = await action.dispatch(
+      entityId,
+      {
+        email: body.email
+          ? { subject: String(body.email.subject ?? '').trim(), bodyText: String(body.email.body_text ?? '').trim() }
+          : undefined,
+        sms: body.sms ? { body: String(body.sms.body ?? '').trim() } : undefined,
+      },
+      channels,
+      { sentBy: req.user.id }
+    );
+  }
 
   res.json({
     ok: true,

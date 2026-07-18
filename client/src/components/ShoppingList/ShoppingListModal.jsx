@@ -555,7 +555,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
             confirmLabel="Approve & Send"
             allowNoChannelConfirm
             noChannelConfirmLabel="Approve"
-            noChannelNote="Hosted package: DRB does the shopping, so no client email applies. Approving publishes the list internally."
+            noChannelNote="No send channel applies (the reasons above say why). Approving publishes the list without sending anything."
             onClose={() => setSendOpen(false)}
             onComplete={handleSendComplete}
           />

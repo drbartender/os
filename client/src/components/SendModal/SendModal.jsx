@@ -74,25 +74,48 @@ export default function SendModal({
 
   useEffect(() => { loadPreview(); }, [loadPreview]);
 
-  const doSend = useCallback(async () => {
+  // onlyChannels: null for the compose-phase send (all checked channels);
+  // an array like ['sms'] for the result-phase Retry, which re-submits ONLY
+  // the failed channel (review blocker: re-posting every checked channel
+  // re-sent the already-successful one — side effects are idempotent, sends
+  // are not) and flags the request so the server allows an applied:false
+  // dispatch for it.
+  const doSend = useCallback(async (onlyChannels = null) => {
+    const isRetry = Array.isArray(onlyChannels);
     const channels = [];
     const payload = { action, entity_id: entityId, channels };
-    if (emailChecked) {
+    if (isRetry) payload.retry = true;
+    if (emailChecked && (!isRetry || onlyChannels.includes('email'))) {
       channels.push('email');
       payload.email = { subject: emailSubject, body_text: emailBody };
     }
-    if (smsChecked) {
+    if (smsChecked && (!isRetry || onlyChannels.includes('sms'))) {
       channels.push('sms');
       payload.sms = { body: smsBody };
     }
-    setSubmittedChannels(channels);
+    setSubmittedChannels((prev) => (isRetry ? Array.from(new Set([...prev, ...channels])) : channels));
     setInFlight(true);
     setSendError('');
     try {
-      // Server side effects are idempotent, so re-posting this exact request
-      // (the result-state Retry button) never duplicates an action.
       const res = await api.post('/comms/send', payload);
-      setResults(res.data || {});
+      setResults((prev) => {
+        const next = res.data || {};
+        if (!isRetry || !prev) return next;
+        // Merge: channels NOT in this retry keep their earlier outcome (the
+        // server reports them 'not selected' on the retry request).
+        const merged = { ...prev, ...next };
+        for (const k of ['email', 'sms']) {
+          if (!channels.includes(k)) {
+            merged[k] = prev[k];
+            merged[`${k}_error`] = prev[`${k}_error`];
+            merged.skip_reasons = {
+              ...(merged.skip_reasons || {}),
+              ...(prev.skip_reasons && prev.skip_reasons[k] !== undefined ? { [k]: prev.skip_reasons[k] } : {}),
+            };
+          }
+        }
+        return merged;
+      });
       setPhase('result');
     } catch (err) {
       // A total failure (non-200) leaves us in compose/result with a banner so
@@ -164,7 +187,7 @@ export default function SendModal({
           <button
             type="button"
             className="btn btn-sm btn-secondary"
-            onClick={doSend}
+            onClick={() => doSend([key])}
             disabled={inFlight}
           >
             {inFlight ? 'Retrying...' : 'Retry'}
@@ -216,7 +239,7 @@ export default function SendModal({
         <div className="send-modal-footer">
           <button type="button" className="btn btn-secondary" onClick={onClose} disabled={inFlight}>Cancel</button>
           {allowNoChannelConfirm && (
-            <button type="button" className="btn btn-primary" onClick={doSend} disabled={inFlight}>
+            <button type="button" className="btn btn-primary" onClick={() => doSend()} disabled={inFlight}>
               {inFlight ? 'Working...' : (noChannelConfirmLabel || confirmLabel)}
             </button>
           )}
@@ -337,7 +360,7 @@ export default function SendModal({
           <button type="button" className="btn btn-secondary" onClick={onClose} disabled={inFlight}>
             Cancel
           </button>
-          <button type="button" className="btn btn-primary" onClick={doSend} disabled={!canSend}>
+          <button type="button" className="btn btn-primary" onClick={() => doSend()} disabled={!canSend}>
             {inFlight ? 'Sending...' : confirmLabel}
           </button>
         </div>

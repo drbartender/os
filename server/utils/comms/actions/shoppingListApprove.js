@@ -52,6 +52,9 @@ function resolveFromRow(row) {
   const source = row.live_email ? 'client' : 'snapshot';
   const phone = row.live_phone ? normalizePhone(row.live_phone) : null;
   const isHosted = row.pricing_type === 'per_guest';
+  // RFC-2606 import placeholders (CC import): sendEmail silently drops them,
+  // so offering the channel would report a send that never happens.
+  const isPlaceholder = Boolean(email && String(email).toLowerCase().endsWith('.invalid'));
   const warnings = [];
 
   if (row.live_email && row.snapshot_email && row.live_email !== row.snapshot_email) {
@@ -65,8 +68,13 @@ function resolveFromRow(row) {
     if (typo.suspicious) warnings.push(typo.reason + (typo.suggestion ? ` Did you mean ${typo.suggestion}?` : ''));
   }
   if (!email && !isHosted) warnings.push('No email on file for this client.');
+  if (isPlaceholder && !isHosted) warnings.push('Address is a CC-import placeholder (.invalid); no real email exists for this client.');
   if (row.live_phone && !phone) warnings.push('Phone on file could not be parsed for SMS.');
 
+  const emailAvailable = Boolean(email && row.token && !isHosted && !isPlaceholder);
+  // SMS mirrors every email guard (review finding: a hosted client must not
+  // get a shopping-list text either; the token rides in the SMS body too).
+  const smsAvailable = Boolean(phone && row.token && !isHosted);
   return {
     name: row.client_name || null,
     email,
@@ -75,16 +83,20 @@ function resolveFromRow(row) {
     warnings,
     channels: {
       email: {
-        available: Boolean(email && row.token && !isHosted),
-        default: defaultChannels.email && Boolean(email && row.token && !isHosted),
+        available: emailAvailable,
+        default: defaultChannels.email && emailAvailable,
         unavailable_reason: isHosted
           ? 'Hosted package: DRB does the shopping, no client email applies.'
-          : (!email ? 'No email on file.' : (!row.token ? 'Plan has no share token.' : null)),
+          : (!email ? 'No email on file.'
+            : (isPlaceholder ? 'Placeholder address (.invalid) from the CC import; no real email exists.'
+              : (!row.token ? 'Plan has no share token.' : null))),
       },
       sms: {
-        available: Boolean(phone),
+        available: smsAvailable,
         default: false,
-        unavailable_reason: phone ? null : 'No usable phone on file.',
+        unavailable_reason: isHosted
+          ? 'Hosted package: DRB does the shopping, no client SMS applies.'
+          : (!phone ? 'No usable phone on file.' : (!row.token ? 'Plan has no share token.' : null)),
       },
     },
   };
@@ -190,9 +202,17 @@ async function dispatch(planId, message, channels, ctx = {}) {
         to: recipient.email, subject: rendered.subject, html: rendered.html, text: rendered.text,
         meta: { skipLog: true },
       });
-      results.email = 'sent';
-      if (r && r.id !== 'dev-skipped') {
-        await logClientMessage({ ...entry, status: 'sent', providerId: r.id });
+      if (r && r.id === 'skipped-invalid') {
+        // Defense in depth behind the availability guard: sendEmail dropped a
+        // placeholder recipient, so nothing left the building. Never report
+        // or ledger it as sent (the sent-but-not-sent class this lane kills).
+        results.email = 'skipped';
+        results.skip_reasons.email = 'Placeholder address (.invalid); no email was sent.';
+      } else {
+        results.email = 'sent';
+        if (r && r.id !== 'dev-skipped') {
+          await logClientMessage({ ...entry, status: 'sent', providerId: r.id });
+        }
       }
     } catch (err) {
       results.email = 'failed';
