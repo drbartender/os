@@ -9,7 +9,7 @@ const express = require('express');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { adminWriteLimiter } = require('../middleware/rateLimiters');
 const asyncHandler = require('../middleware/asyncHandler');
-const { ValidationError } = require('../utils/errors');
+const { ValidationError, PermissionError } = require('../utils/errors');
 const { getAction } = require('../utils/comms/registry');
 
 const router = express.Router();
@@ -17,9 +17,16 @@ const router = express.Router();
 // SMS ceiling: 4 GSM segments (spec 4.2). Hard server cap; the modal mirrors it.
 const SMS_MAX_CHARS = 640;
 
-function requireAction(body) {
+function requireAction(body, user) {
   const action = getAction(body.action);
   if (!action) throw new ValidationError({ action: 'Unknown comms action.' });
+  // Per-action role floor: an action ported from an adminOnly legacy route
+  // declares minRole 'admin' so the comms layer cannot widen its access to
+  // managers (e.g. reenroll clears CC-import nudge suppression, an
+  // owner-level protection).
+  if (action.minRole === 'admin' && user.role !== 'admin') {
+    throw new PermissionError('This send requires the admin role.');
+  }
   const entityId = parseInt(body.entity_id, 10);
   if (!Number.isInteger(entityId) || entityId <= 0) {
     throw new ValidationError({ entity_id: 'entity_id must be a positive integer.' });
@@ -29,7 +36,7 @@ function requireAction(body) {
 
 /** POST /api/comms/preview — recipient, warnings, channels, drafted message. */
 router.post('/preview', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { action, entityId } = requireAction(req.body || {});
+  const { action, entityId } = requireAction(req.body || {}, req.user);
   const recipient = await action.resolveRecipient(entityId);
   const messages = await action.buildMessages(entityId);
   res.json({
@@ -51,7 +58,7 @@ router.post('/preview', auth, requireAdminOrManager, asyncHandler(async (req, re
  *  return per-channel truth (spec 4.2 partial-failure contract). */
 router.post('/send', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
   const body = req.body || {};
-  const { action, entityId } = requireAction(body);
+  const { action, entityId } = requireAction(body, req.user);
 
   const channels = Array.isArray(body.channels) ? body.channels.filter((c) => ['email', 'sms'].includes(c)) : [];
   if (channels.length === 0) {

@@ -14,6 +14,8 @@
 //   buildMessages(entityId)    -> { email: {subject, heading, bodyText, cta}, sms: {body} }
 //   ensureSideEffects(entityId, ctx) -> { applied: boolean }   // idempotent; 2nd call no-ops
 //   dispatch(entityId, message, channels, ctx) -> { email, sms, skip_reasons, ... }
+//   minRole      optional 'admin': actions ported from adminOnly legacy routes
+//                declare it so /api/comms cannot widen access to managers
 //   dispatchWithoutSideEffects  optional boolean: true for resend-type actions
 //                whose ensureSideEffects is validate-only (always applied:false);
 //                exempts them from the route's concurrent-confirm dispatch guard
