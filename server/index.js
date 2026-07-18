@@ -558,6 +558,11 @@ async function start() {
       // must run before the dispatcher's first tick.
       require('./utils/beoHandlers').registerBeoHandlers();
 
+      // Enhancement Lab follow-up handler (planner v2): the +36h post-submit
+      // nudge scheduled by drink-plan submit. Synchronous; must run before the
+      // dispatcher's first tick so it can resolve lab_followup rows.
+      require('./utils/labFollowupHandler').registerLabFollowupHandler();
+
       // Scheduled-messages dispatcher — every 5 min, picks up pending rows
       if (enabled('RUN_MESSAGE_DISPATCHER_SCHEDULER')) {
         const wrapped = wrapScheduler('message_dispatcher', 300, dispatchPending);

@@ -19177,3 +19177,60 @@ html[data-app="admin-os"] .pay-qr-tile {
   .potion-app .pp2-header-context { font-size: 0.75rem; }
   .potion-app .pp2-drinkers-row { gap: 0.4rem; }
 }
+
+/* ============================================================
+   Enhancement Lab (pp2-lab-*) — planner v2's selling surface.
+   Rides the .potion-app chalkboard/brass world; content column
+   mirrors .potion-shell. Scoped to .pp2-lab-page.
+   ============================================================ */
+.pp2-lab-page { padding: 28px clamp(20px, 4vw, 40px) 80px; }
+.pp2-lab-page > header, .pp2-lab-page > section, .pp2-lab-page > footer, .pp2-lab-page > .pp2-lab-balance { max-width: 760px; margin-left: auto; margin-right: auto; }
+.pp2-lab-status { max-width: 560px; margin: 12vh auto 0; text-align: center; }
+.pp2-lab-status h2 { font-family: var(--font-display, serif); color: var(--brass-bright); margin-bottom: 0.6rem; }
+.pp2-lab-header { text-align: center; margin-bottom: 1.6rem; }
+.pp2-lab-brand { font-size: 11px; letter-spacing: 0.35em; color: var(--brass); }
+.pp2-lab-header h1 { font-family: var(--font-display, serif); font-size: clamp(1.8rem, 5vw, 2.6rem); margin: 0.35rem 0 0.15rem; color: var(--cream-text); }
+.pp2-lab-tagline { color: var(--brass-bright); font-style: italic; margin: 0 0 0.75rem; }
+.pp2-lab-promise { font-size: 0.92rem; opacity: 0.85; }
+.pp2-lab-lockbar { margin: 0.75rem auto 0; padding: 0.8rem 1rem; border: 1px solid var(--brass); border-radius: 10px; background: rgba(184,146,74,0.08); font-size: 0.95rem; }
+.pp2-lab-lockbar-note { display: block; margin-top: 0.4rem; font-size: 0.85rem; opacity: 0.8; }
+.pp2-lab-balance { margin-bottom: 1.4rem; padding: 0.8rem 1rem; border-radius: 10px; border: 1px solid var(--brass); background: rgba(184,146,74,0.07); font-size: 0.92rem; }
+.pp2-lab-balance.past-due { border-color: #c25b4a; background: rgba(194,91,74,0.12); }
+.pp2-lab-section { margin-bottom: 2rem; }
+.pp2-lab-section h2 { font-family: var(--font-display, serif); font-size: 1.25rem; color: var(--brass-bright); border-bottom: 1px solid rgba(184,146,74,0.35); padding-bottom: 0.4rem; margin-bottom: 0.9rem; }
+.pp2-lab-empty { padding: 1rem; border: 1px dashed rgba(184,146,74,0.4); border-radius: 10px; opacity: 0.8; font-style: italic; }
+.pp2-lab-shelf { margin-bottom: 1.2rem; }
+.pp2-lab-shelf-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; font-weight: 600; }
+.pp2-lab-drink-emoji { font-size: 1.2rem; }
+.pp2-lab-cards { display: flex; flex-direction: column; gap: 0.6rem; }
+.pp2-lab-card { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.8rem; padding: 0.8rem 0.9rem; border: 1px solid rgba(184,146,74,0.35); border-radius: 10px; background: rgba(0,0,0,0.18); }
+.pp2-lab-card.active { border-color: var(--brass-bright); background: rgba(184,146,74,0.12); }
+.pp2-lab-card-body { flex: 1; min-width: 0; }
+.pp2-lab-card-title { font-weight: 600; }
+.pp2-lab-card-pitch { font-size: 0.87rem; opacity: 0.85; margin-top: 0.2rem; }
+.pp2-lab-note { margin-top: 0.35rem; font-size: 0.8rem; color: var(--brass-bright); }
+.pp2-lab-add { flex-shrink: 0; padding: 0.45rem 0.85rem; border-radius: 999px; border: 1px solid var(--brass); background: transparent; color: var(--cream-text); font-size: 0.85rem; cursor: pointer; white-space: nowrap; }
+.pp2-lab-add:hover:not(:disabled) { border-color: var(--brass-bright); background: rgba(184,146,74,0.12); }
+.pp2-lab-add:disabled { opacity: 0.5; cursor: default; }
+.pp2-lab-card.active .pp2-lab-add { background: var(--brass); color: #1c1a16; font-weight: 600; }
+.pp2-lab-flavors { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.5rem; }
+.pp2-lab-chip { padding: 0.25rem 0.6rem; border-radius: 999px; border: 1px solid rgba(184,146,74,0.45); background: transparent; color: var(--cream-text); font-size: 0.78rem; cursor: pointer; }
+.pp2-lab-chip.active { background: var(--brass); color: #1c1a16; font-weight: 600; }
+.pp2-lab-toast-config { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.6rem; }
+.pp2-lab-toast-config label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.82rem; opacity: 0.9; }
+.pp2-lab-toast-config select, .pp2-lab-toast-config input { padding: 0.45rem 0.6rem; border-radius: 8px; border: 1px solid rgba(184,146,74,0.45); background: rgba(0,0,0,0.25); color: var(--cream-text); font-size: 0.9rem; }
+.pp2-lab-ledger ul { list-style: none; margin: 0 0 0.6rem; padding: 0; }
+.pp2-lab-ledger li { display: flex; justify-content: space-between; gap: 1rem; padding: 0.4rem 0; border-bottom: 1px dashed rgba(184,146,74,0.25); font-size: 0.92rem; }
+.pp2-lab-total { display: flex; justify-content: space-between; padding-top: 0.5rem; font-weight: 700; }
+.pp2-lab-line-amount { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pp2-lab-ledger-note { font-size: 0.83rem; opacity: 0.8; margin-top: 0.5rem; }
+.pp2-lab-savestate { margin-top: 0.6rem; font-size: 0.8rem; min-height: 1.1em; opacity: 0.75; }
+.pp2-lab-savestate.error { color: #e08a7a; opacity: 1; }
+.pp2-lab-btn { display: inline-block; margin-top: 1rem; padding: 0.6rem 1.2rem; border: 1px solid var(--brass); border-radius: 999px; color: var(--cream-text); text-decoration: none; }
+.pp2-lab-btn:hover { border-color: var(--brass-bright); background: rgba(184,146,74,0.12); }
+.pp2-lab-footer { text-align: center; margin-top: 3rem; font-size: 0.8rem; opacity: 0.6; }
+.pp2-lab-footer p { margin: 0.15rem 0; }
+@media (max-width: 560px) {
+  .pp2-lab-card { flex-direction: column; }
+  .pp2-lab-add { align-self: stretch; text-align: center; }
+}

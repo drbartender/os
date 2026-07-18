@@ -15,6 +15,7 @@ const { isValidImageUpload } = require('../utils/fileValidation');
 const { handleSubmit } = require('./drinkPlans/submit');
 const { buildHostedCoveragePayload } = require('./drinkPlans/coverageContext');
 const { registerPublicShoppingListRoute, registerAdminShoppingListRoutes } = require('./drinkPlans/shoppingList');
+const { router: labRouter } = require('./drinkPlans/lab');
 
 const router = express.Router();
 
@@ -36,12 +37,18 @@ router.post('/t/:token/lab-cta', requireUuidToken('token', 'This drink plan is n
   res.json({ success: true });
 }));
 
+// GET/PUT /t/:token/lab — the Enhancement Lab (./drinkPlans/lab.js). Its
+// three-segment paths can't shadow (or be shadowed by) the two-segment
+// /t/:token handlers below.
+router.use(labRouter);
+
 /** GET /api/drink-plans/t/:token — fetch plan by token (public) */
 router.get('/t/:token', requireUuidToken('token', 'This drink plan is no longer available'), publicReadLimiter, asyncHandler(async (req, res) => {
   const result = await pool.query(
     `SELECT dp.id, dp.token, dp.client_name, dp.client_email, dp.event_type, dp.event_type_custom, dp.event_date,
             dp.status, dp.serving_type, dp.selections, dp.submitted_at, dp.created_at,
             dp.proposal_id, dp.exploration_submitted_at, dp.planner_version,
+            dp.shopping_list_status, dp.finalized_at,
             p.guest_count, p.num_bartenders, p.num_bars, p.pricing_snapshot,
             p.status AS proposal_status,
             p.token AS proposal_token,
@@ -79,6 +86,13 @@ router.get('/t/:token', requireUuidToken('token', 'This drink plan is no longer 
   if (plan.planner_version >= 2 && plan.package_category === 'hosted') {
     plan.hosted_coverage = await buildHostedCoveragePayload(pool, plan.package_id);
   }
+  // Enhancement Lab gate: the celebration CTA points at /plan/:token/lab only
+  // while the lab window is open (list not yet approved, plan not finalized).
+  // v2 only.
+  plan.lab_enabled = plan.planner_version >= 2 &&
+    plan.shopping_list_status !== 'approved' && !plan.finalized_at;
+  delete plan.shopping_list_status;
+  delete plan.finalized_at;
   res.json(plan);
 }));
 

@@ -126,7 +126,7 @@ test('syrup-only pay-now submit creates ONE unpaid Drink Plan Extras invoice, li
     body: {
       status: 'submitted',
       paid_separately: true,
-      selections: { syrupSelections: { d1: ['blackberry', 'vanilla'] }, syrupSelfProvided: [] },
+      selections: { syrupSelections: { d1: ['blackberry', 'vanilla-bean'] }, syrupSelfProvided: [] },
     },
   });
   assert.strictEqual(res.status, 200);
@@ -156,7 +156,7 @@ test('re-submit is blocked (submit-once gate), so no duplicate extras invoice', 
     body: {
       status: 'submitted',
       paid_separately: true,
-      selections: { syrupSelections: { d1: ['blackberry', 'vanilla'] }, syrupSelfProvided: [] },
+      selections: { syrupSelections: { d1: ['blackberry', 'vanilla-bean'] }, syrupSelfProvided: [] },
     },
   });
   assert.strictEqual(res.status, 409); // already submitted

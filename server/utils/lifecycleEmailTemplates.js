@@ -700,6 +700,40 @@ function drinkPlanEchoSection({ selections = {}, cocktailNames = [], mocktailNam
   return { html, text };
 }
 
+/**
+ * Enhancement Lab follow-up (planner v2). Sent ~36h after a v2 plan submit
+ * when the client has not added anything in the Lab yet. One gentle touch,
+ * invoice-only framing (nothing due today), sciency voice. The dispatcher
+ * gates it on marketing preferences; the handler re-checks the lab window at
+ * fire time. No em dashes.
+ */
+function enhancementLabFollowup({ clientName, eventTypeLabel = 'event', labUrl, drinkNames = [], balanceDue = 0 }) {
+  const first = (clientName || 'there').split(' ')[0];
+  const drinksLine = drinkNames.length > 0
+    ? `Your formulas are filed: ${drinkNames.slice(0, 4).join(', ')}. There is still time to enhance them.`
+    : 'Your formulas are filed. There is still time to enhance them.';
+  const paragraphs = [
+    `Hi ${first},`,
+    `${drinksLine} The Enhancement Lab is open for your ${eventTypeLabel}: housemade syrups, a champagne toast, real glassware. The cabinet of finishing touches.`,
+    'One tap adds them to your event. Anything you pick lands on your final balance, nothing is due today.',
+    balanceDue > 0
+      ? `While you're at it: your remaining balance of $${balanceDue.toLocaleString()} can be settled on your invoice whenever you're ready.`
+      : null,
+    'The lab closes when we finalize your shopping list, so if something catches your eye, now is the moment.',
+    'Questions? Just reply to this email.',
+    'Cheers, Dallas',
+  ].filter(Boolean);
+  const html = wrapEmail(
+    paragraphs.map((p) => `<p>${esc(p)}</p>`).join('\n') +
+    ctaButton(labUrl, 'Enter the Enhancement Lab')
+  );
+  return {
+    subject: 'From the Enhancement Lab',
+    html,
+    text: `${paragraphs.join('\n\n')}\n\nEnter the Enhancement Lab: ${labUrl}`,
+  };
+}
+
 module.exports = {
   // Shared brand shell pieces, exported for server/utils/comms/render.js (the
   // compose-modal renderer) so it reproduces the exact same wrapper.
@@ -726,4 +760,5 @@ module.exports = {
   changeRequestApproved,
   changeRequestDeclined,
   cancellationConfirmation,
+  enhancementLabFollowup,
 };

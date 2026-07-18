@@ -71,6 +71,9 @@ const SYRUP_NAME_LOOKUP = {
   'rose': 'Rose', 'elderflower': 'Elderflower',
   'honey': 'Honey', 'maple': 'Maple', 'salted-caramel': 'Salted Caramel',
   'brown-butter': 'Brown Butter', 'espresso': 'Espresso', 'chocolate': 'Chocolate',
+  // Specialty flavors from client/src/data/syrups.js that were missing here
+  // (found via the Enhancement Lab, which renders these names to clients).
+  'vanilla-bean': 'Vanilla Bean', 'demerara': 'Demerara', 'orgeat': 'Orgeat (Almond)',
 };
 
 // Table allowlist for drink resolution. NEVER interpolate a caller-supplied

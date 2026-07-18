@@ -78,6 +78,7 @@ const ClientLogin = lazy(() => import('./pages/public/ClientLogin'));
 const Application = lazy(() => import('./pages/Application'));
 const ApplicationStatus = lazy(() => import('./pages/ApplicationStatus'));
 const PlannerRouter = lazy(() => import('./pages/plan/PlannerRouter'));
+const EnhancementLab = lazy(() => import('./pages/plan/lab/EnhancementLab'));
 const ClientShoppingList = lazy(() => import('./pages/public/ClientShoppingList'));
 const PortalHome = lazy(() => import('./pages/public/portal/PortalHome'));
 
@@ -332,6 +333,7 @@ function PublicWebsiteRoutes() {
         <Route path="/classes" element={<ClassWizard />} />
         {/* These public token-based routes work on both domains */}
         <Route path="/plan/:token" element={<PlannerRouter />} />
+      <Route path="/plan/:token/lab" element={<EnhancementLab />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
         <Route path="/compare/:token" element={<ProposalCompare />} />
         <Route path="/invoice/:token" element={<InvoicePage />} />
@@ -401,6 +403,7 @@ function HiringRoutes() {
         <Route path="/my-tip-page" element={<Navigate to="/tip-card" replace />} />
         {/* Public token routes still work */}
         <Route path="/plan/:token" element={<PlannerRouter />} />
+      <Route path="/plan/:token/lab" element={<EnhancementLab />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
         <Route path="/compare/:token" element={<ProposalCompare />} />
         <Route path="/invoice/:token" element={<InvoicePage />} />
@@ -459,6 +462,7 @@ function StaffSiteRoutes() {
         <Route path="/my-tip-page" element={<Navigate to="/tip-card" replace />} />
         {/* Public token routes */}
         <Route path="/plan/:token" element={<PlannerRouter />} />
+      <Route path="/plan/:token/lab" element={<EnhancementLab />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
         <Route path="/compare/:token" element={<ProposalCompare />} />
         <Route path="/invoice/:token" element={<InvoicePage />} />
@@ -486,6 +490,7 @@ function AppRoutes() {
       <Route path="/" element={<Navigate to="/register" replace />} />
       {/* Public pages (no auth) */}
       <Route path="/plan/:token" element={<PlannerRouter />} />
+      <Route path="/plan/:token/lab" element={<EnhancementLab />} />
       <Route path="/proposal/:token" element={<ProposalView />} />
       <Route path="/compare/:token" element={<ProposalCompare />} />
       <Route path="/invoice/:token" element={<InvoicePage />} />

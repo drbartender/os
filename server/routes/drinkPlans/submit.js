@@ -19,6 +19,7 @@ const { shouldSendImmediate } = require('../../utils/messageSuppression');
 const { NotFoundError, ConflictError } = require('../../utils/errors');
 const { ADMIN_URL, API_URL } = require('../../utils/urls');
 const { triggerShoppingListAutoGen } = require('../../utils/shoppingListGen');
+const { scheduleMessage } = require('../../utils/messageScheduling');
 const { loadHostedCoverageContext, mocktailAddonFor } = require('./coverageContext');
 const { drinkPlanEchoSection } = require('../../utils/lifecycleEmailTemplates');
 
@@ -112,6 +113,38 @@ async function buildSelectionsEcho(selections) {
   } catch (err) {
     console.error('Selections echo build failed (non-fatal):', err.message);
     return { html: '', text: '' };
+  }
+}
+
+// Enhancement Lab follow-up: one nudge email +36h after a v2 submit (spec
+// §3.3). scheduleMessage is idempotent on its tuple, so nothing here can
+// double-book. There is NO cancel bookkeeping anywhere: every cancel
+// condition (lab addition made, window closed, plan finalized, event inside
+// 72h, marketing opt-out) is re-checked at fire time by labFollowupHandler.
+// Fire-and-forget from the submit tail; a failure never fails the submit.
+async function scheduleLabFollowupAfterSubmit(planId) {
+  if (!planId) return;
+  try {
+    const r = await pool.query(
+      `SELECT dp.planner_version, p.id AS proposal_id, p.client_id
+         FROM drink_plans dp
+         JOIN proposals p ON p.id = dp.proposal_id
+        WHERE dp.id = $1`,
+      [planId]
+    );
+    const row = r.rows[0];
+    if (!row || row.planner_version < 2 || !row.client_id) return;
+    await scheduleMessage({
+      entityType: 'proposal',
+      entityId: row.proposal_id,
+      messageType: 'lab_followup',
+      recipientType: 'client',
+      recipientId: row.client_id,
+      channel: 'email',
+      scheduledFor: new Date(Date.now() + 36 * 60 * 60 * 1000),
+    });
+  } catch (err) {
+    console.error('lab_followup scheduling failed (non-fatal):', err.message);
   }
 }
 
@@ -715,7 +748,10 @@ async function handleSubmit(req, res) {
     // Auto-generate the shopping list now that the plan is submitted. Runs
     // outside the transaction (best-effort, non-fatal) — admin can still
     // generate manually from the modal if this misses.
-    if (newStatus === 'submitted') triggerShoppingListAutoGen(updatedPlan?.id);
+    if (newStatus === 'submitted') {
+      triggerShoppingListAutoGen(updatedPlan?.id);
+      scheduleLabFollowupAfterSubmit(updatedPlan?.id);
+    }
 
     return res.json(updatedPlan);
   }
@@ -873,7 +909,10 @@ async function handleSubmit(req, res) {
   // Fast-path submit (no add-ons) also auto-generates the shopping list draft
   // for admin review. Best-effort — same fail-open contract as the financial
   // branch above.
-  if (newStatus === 'submitted') triggerShoppingListAutoGen(result.rows[0]?.id);
+  if (newStatus === 'submitted') {
+    triggerShoppingListAutoGen(result.rows[0]?.id);
+    scheduleLabFollowupAfterSubmit(result.rows[0]?.id);
+  }
 
   res.json(result.rows[0]);
 }
