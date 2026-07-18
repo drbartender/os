@@ -24,6 +24,24 @@ import { venueMapQuery } from '../../components/VenueAddressFields';
 import EntityLink from '../../components/EntityLink';
 import { proposalStatusMeta } from '../../utils/proposalStatusMap';
 
+// Lead call bridge outcome, one read-only line for TT-drafted proposals
+// (spec 2026-07-18 §5.3). Absent lead_call renders nothing at the call site.
+function leadCallOutcomeLabel(lc) {
+  if (lc.status === 'connected') {
+    const who = lc.answered_by === 'admin' ? 'Dallas' : 'Zul';
+    const secs = lc.bridge_duration_sec;
+    const dur = Number.isInteger(secs)
+      ? `, ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
+      : '';
+    return `connected (${who}${dur})`;
+  }
+  if (lc.status === 'missed') return 'missed';
+  if (lc.status === 'failed') return 'failed';
+  if (lc.status === 'skipped_after_hours') return 'after hours';
+  if (lc.status === 'pending' || lc.status === 'calling_admin' || lc.status === 'calling_va') return 'in progress';
+  return 'not placed';
+}
+
 export default function ProposalDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -496,6 +514,9 @@ export default function ProposalDetail() {
                       ? <a href={`tel:${proposal.client_phone}`}>{formatPhone(proposal.client_phone)}</a>
                       : '—'}</dd>
                     <dt>Source</dt><dd className="muted">{proposal.client_source || '—'}</dd>
+                    {proposal.lead_call && (
+                      <><dt>Lead call</dt><dd className="muted">{leadCallOutcomeLabel(proposal.lead_call)}</dd></>
+                    )}
                   </dl>
                 </div>
               </div>

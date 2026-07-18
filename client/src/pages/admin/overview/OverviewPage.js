@@ -12,7 +12,7 @@ import StripePayoutsTab from '../StripePayoutsTab';
 import NeedsYouStrip from './NeedsYouStrip';
 import { buildPrepItems } from './PrepQueue';
 import {
-  buildStaffingItems, buildClientItems, buildSalesItems, buildMoneyItems, computeTabs,
+  buildStaffingItems, buildClientItems, buildSalesItems, buildLeadCallItems, buildMoneyItems, computeTabs,
 } from './queueItems';
 import PipelineCard from './PipelineCard';
 import MoneyTiles from './MoneyTiles';
@@ -93,6 +93,7 @@ export default function OverviewPage() {
   const [payoutsLoading, setPayoutsLoading] = useState(true);
   const [changeRequests, setChangeRequests] = useState([]);
   const [conversations, setConversations] = useState([]);
+  const [leadCallAttention, setLeadCallAttention] = useState([]);
   const [clientsLoading, setClientsLoading] = useState(true);
 
   const band2Params = useCallback(() => {
@@ -157,6 +158,12 @@ export default function OverviewPage() {
       .then(r => setPayoutBadge(r.data?.summary?.unmatched_count || 0))
       .catch(() => {}) // badge is best-effort; the tab itself surfaces errors
       .finally(() => setPayoutsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    api.get('/admin/lead-call-attention')
+      .then(r => setLeadCallAttention(r.data || []))
+      .catch(() => {}); // best-effort: missed-call items simply stay absent
   }, []);
 
   // Operational fetches — each isolated, no shared loading gate.
@@ -225,10 +232,15 @@ export default function OverviewPage() {
   const prepItems = useMemo(() => buildPrepItems(drinkPlans), [drinkPlans]);
   const clientItems = useMemo(() => buildClientItems(changeRequests, conversations), [changeRequests, conversations]);
   const salesItems = useMemo(() => buildSalesItems(proposals, Date.now()), [proposals]);
+  // Missed lead calls prepend AHEAD of the aging sent-proposal items: array
+  // order IS the display order in NeedsYouStrip, and a missed live lead
+  // outranks a stale send (spec 2026-07-18 §5.2).
+  const leadCallItems = useMemo(() => buildLeadCallItems(leadCallAttention, Date.now()), [leadCallAttention]);
+  const salesTabItems = useMemo(() => [...leadCallItems, ...salesItems], [leadCallItems, salesItems]);
   const moneyItems = useMemo(() => buildMoneyItems(payoutBadge), [payoutBadge]);
   const tabs = useMemo(
-    () => computeTabs({ staffing: staffingItems, prep: prepItems, clients: clientItems, money: moneyItems, sales: salesItems, payrollOverdue, isAdmin }),
-    [staffingItems, prepItems, clientItems, moneyItems, salesItems, payrollOverdue, isAdmin]
+    () => computeTabs({ staffing: staffingItems, prep: prepItems, clients: clientItems, money: moneyItems, sales: salesTabItems, payrollOverdue, isAdmin }),
+    [staffingItems, prepItems, clientItems, moneyItems, salesTabItems, payrollOverdue, isAdmin]
   );
 
   const m = stats.money || EMPTY_STATS.money;

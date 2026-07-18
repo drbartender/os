@@ -17,6 +17,7 @@ function queueItemHref(a) {
   if (a.target === 'event') return `/events/${a.ref}`;
   if (a.target === 'shift') return `/events/shift/${a.ref}`;
   if (a.target === 'proposal') return `/proposals/${a.ref}`;
+  if (a.target === 'client') return `/clients/${a.ref}`;
   if (a.target === 'payouts') return '/dashboard?tab=payouts&show=unmatched';
   if (a.target === 'drink-plan') return `/drink-plans/${a.ref}`;
   if (a.target === 'sms') return `/messages?client=${a.ref}`;
@@ -26,6 +27,7 @@ function queueItemHref(a) {
 const QUEUE_ICON = {
   unstaffed: 'userplus', proposal: 'eye', application: 'pen',
   payouts: 'dollar', prep: 'flask', 'change-request': 'pen', sms: 'chat',
+  'lead-call': 'alert',
 };
 
 const TAB_CAP = 6;

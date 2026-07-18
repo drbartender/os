@@ -78,6 +78,35 @@ export function buildSalesItems(proposals, nowMs) {
     }));
 }
 
+// Lead-call attention rows (spec 2026-07-18 §5.2): missed/failed/skipped
+// chains on still-new leads, from GET /admin/lead-call-attention. Rendered in
+// the Sales tab AHEAD of the aging sent-proposal items (OverviewPage prepends;
+// array order is display order). Targets: proposal when the auto-draft
+// exists, else the client record, else a plain-text row.
+const LEAD_CALL_LABELS = {
+  missed: 'missed call',
+  failed: 'call failed',
+  skipped_after_hours: 'after hours',
+  skipped_unconfigured: 'call misconfigured',
+  skipped_invalid_phone: 'call misconfigured',
+};
+
+export function buildLeadCallItems(rows, nowMs) {
+  return (rows || []).map(r => {
+    const ageMs = Math.max(0, nowMs - Date.parse(r.created_at));
+    const hours = Math.floor(ageMs / 3600e3);
+    const sub = hours < 1 ? 'just now' : hours < 24 ? `${hours}h ago` : `${Math.floor(ageMs / 86400e3)}d ago`;
+    return {
+      id: 'leadcall-' + r.id, type: 'lead-call', priority: 'warn',
+      title: `${r.customer_name || 'Thumbtack lead'} ${LEAD_CALL_LABELS[r.status] || 'missed call'}`,
+      sub,
+      meta: '',
+      target: r.proposal_id ? 'proposal' : (r.client_id ? 'client' : null),
+      ref: r.proposal_id || r.client_id || null,
+    };
+  });
+}
+
 export function buildMoneyItems(payoutBadge) {
   if (!payoutBadge) return [];
   return [{

@@ -42,7 +42,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   // Fetch addons + activity log in parallel — both depend only on proposal id.
   // Cap activity log fetch at 100 entries (most recent) — an old proposal can
   // accumulate hundreds of view/update entries otherwise.
-  const [addons, activity, messageLog] = await Promise.all([
+  const [addons, activity, messageLog, leadCall] = await Promise.all([
     pool.query(
       'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
       [req.params.id]
@@ -52,6 +52,18 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
       [req.params.id]
     ),
     getMessageLogForProposal(req.params.id),
+    // Lead call bridge outcome for TT-drafted proposals (newest lead wins,
+    // matching the budget lateral above). NULL for pre-feature / non-TT
+    // proposals; the detail view renders nothing then.
+    pool.query(
+      `SELECT a.status, a.answered_by, a.bridge_duration_sec, a.created_at
+         FROM lead_call_attempts a
+         JOIN thumbtack_leads l ON l.id = a.lead_id
+        WHERE l.proposal_id = $1
+        ORDER BY a.id DESC
+        LIMIT 1`,
+      [req.params.id]
+    ),
   ]);
 
   // setup_time_display: server-derived clock time (service start − effective
@@ -66,6 +78,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
     addons: addons.rows.map(a => ({ ...a, quantity: a.quantity === null ? null : Number(a.quantity) })),
     activity: activity.rows,
     messageLog,
+    lead_call: leadCall.rows[0] || null,
   });
 }));
 

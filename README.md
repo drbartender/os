@@ -159,6 +159,7 @@ dr-bartender/
 │   │   │   ├── payroll.js      # /payroll — contractor payouts, pay periods, paystub data
 │   │   │   ├── payrollTax.js   # /payroll/contractors/:id/payment-history + /payroll/tax-totals + /payroll/tax-totals/:id/exclude — imported-ledger blends + 1099 year totals (read-only + one boolean PATCH)
 │   │   │   ├── presence.js     # /presence + /presence/state + /presence/leads + /presence/log — time-clock strip + history
+│   │   │   ├── leadCalls.js    # /lead-call-attention — open lead-call bridge attention rows (missed/failed/skipped chains on still-new TT leads, 7-day window) for the overview Sales tab
 │   │   │   └── ccImport/       # Live CC re-trigger endpoints (v1 import/review admin UI removed 2026-07-07)
 │   │   ├── agreement.js        # Contractor agreement + digital signature
 │   │   ├── application.js      # Contractor application form

@@ -52,6 +52,10 @@ const CATEGORY_LABELS = {
     label: 'Stripe payout failures',
     help: 'A payout to the bank account fails.',
   },
+  lead_call: {
+    label: 'Missed lead calls',
+    help: 'Both of you missed a Thumbtack lead call, or a call failed.',
+  },
 };
 
 export default function NotificationSettings() {

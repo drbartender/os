@@ -280,7 +280,7 @@ Regenerate (mounted at `/api/drink-plans` BEFORE the flat router, from `routes/d
 | POST | `/calculate` | Admin | Preview pricing without saving |
 | GET | `/packages` | Admin | List service packages |
 | GET | `/addons` | Admin | List add-ons |
-| GET | `/:id` | Admin | Get single proposal with addons + activity log |
+| GET | `/:id` | Admin | Get single proposal with addons + activity log + `lead_call` (newest lead-call bridge outcome for TT-drafted proposals, null otherwise) |
 | PATCH | `/:id` | Admin | Update event details, recalculate pricing, and re-sync the linked event shift (date/time/location/client) when the proposal has been converted. A draft→sent transition creates the proposal's invoice in the same DB transaction. Accepts an optional `change_request_id` in the body that links the edit to a pending `proposal_change_requests` row: the request is stamped `approved` in the same transaction as the edit, the standard admin edit email is suppressed (the client gets the change-request decision email instead), and the regular money + status reconciliation runs. |
 | PATCH | `/:id/status` | Admin | Update proposal status. On a →sent transition, creates the invoice in-transaction (idempotent on `proposal_id`) and emails the client via `sendProposalSentEmail`. Rate-limited per admin via `adminWriteLimiter` (10/min). |
 | POST | `/:id/resend` | Admin | Re-send the proposal to the client (email + SMS) without changing status, via `sendProposalSentEmail`. Guards against draft; logs a `resent` activity row. Rate-limited via `adminWriteLimiter`. |
@@ -389,6 +389,7 @@ Read-side mirror of Stripe payouts + balance-transaction lines (`server/routes/s
 | POST | `/presence/state` | Admin+Manager (tracked, self only) | Set own presence state (desk/available/away); applies the taking-leads transition rules (away wipes; re-entry resets on for chain users, OFF for the fallback owner). |
 | POST | `/presence/leads` | Admin+Manager (tracked, self only) | Set own taking-leads toggle; rejected while away. The fallback owner's toggle is dibs: it overrides the chain, and both edges fire the dibs ping (`presenceNotify.js`). |
 | GET | `/presence/log` | Admin | Time-clock history: per-user this-week/this-month desk+available totals (Central time, boundary-split) + the 50 most recent intervals. |
+| GET | `/lead-call-attention` | Admin+Manager | Open lead-call bridge attention rows (`lead_call_attempts` in missed/failed/skipped states, younger than 7 days, lead still `new`) joined to customer name + proposal/client ids; feeds the overview Sales tab's missed-call items (`server/routes/admin/leadCalls.js`). |
 
 ### Messages — `/api/messages`
 | Method | Path | Auth | Description |
