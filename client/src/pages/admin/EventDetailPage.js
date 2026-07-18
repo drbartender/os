@@ -464,35 +464,7 @@ export default function EventDetailPage() {
                 </div>
               )}
 
-              {Array.isArray(proposal.activity) && proposal.activity.length > 0 && (
-                <div className="card">
-                  <div className="card-head"><h3>Activity</h3><span className="k">{proposal.activity.length}</span></div>
-                  <div className="card-body">
-                    <div className="vstack" style={{ gap: 10, fontSize: 12.5 }}>
-                      {proposal.activity.slice(0, 12).map((a, i) => (
-                        <div key={i} className="hstack" style={{ alignItems: 'flex-start' }}>
-                          <div className="queue-icon info" style={{ flexShrink: 0 }}>
-                            <Icon name={
-                              a.action === 'payment' ? 'dollar' :
-                              a.action === 'sent' ? 'send' :
-                              a.action === 'viewed' ? 'eye' :
-                              a.action === 'signed' ? 'check' :
-                              'pen'
-                            } size={12} />
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div>{a.action || a.event_type || 'Update'}</div>
-                            {a.metadata && typeof a.metadata === 'object' && (
-                              <div className="tiny muted">{a.metadata.note || a.metadata.message || ''}</div>
-                            )}
-                          </div>
-                          <div className="tiny muted">{a.created_at ? relDay(String(a.created_at).slice(0, 10)) : ''}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
+              <MessageLogCard messages={proposal.messageLog} />
             </>
           )}
         </div>
@@ -538,7 +510,35 @@ export default function EventDetailPage() {
             </Suspense>
           )}
 
-          <MessageLogCard messages={proposal.messageLog} />
+          {Array.isArray(proposal.activity) && proposal.activity.length > 0 && (
+            <div className="card">
+              <div className="card-head"><h3>Activity</h3><span className="k">{proposal.activity.length}</span></div>
+              <div className="card-body">
+                <div className="vstack" style={{ gap: 10, fontSize: 12.5 }}>
+                  {proposal.activity.slice(0, 12).map((a, i) => (
+                    <div key={i} className="hstack" style={{ alignItems: 'flex-start' }}>
+                      <div className="queue-icon info" style={{ flexShrink: 0 }}>
+                        <Icon name={
+                          a.action === 'payment' ? 'dollar' :
+                          a.action === 'sent' ? 'send' :
+                          a.action === 'viewed' ? 'eye' :
+                          a.action === 'signed' ? 'check' :
+                          'pen'
+                        } size={12} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div>{a.action || a.event_type || 'Update'}</div>
+                        {a.metadata && typeof a.metadata === 'object' && (
+                          <div className="tiny muted">{a.metadata.note || a.metadata.message || ''}</div>
+                        )}
+                      </div>
+                      <div className="tiny muted">{a.created_at ? relDay(String(a.created_at).slice(0, 10)) : ''}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
