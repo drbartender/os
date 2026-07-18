@@ -28,6 +28,7 @@ presenceStore.stampByNudgePhone = () => {};
 const { pool } = require('../db');
 const smsRouter = require('./sms');
 const { AppError } = require('../utils/errors');
+const jwt = require('jsonwebtoken');
 
 const ORIG_NODE_ENV = process.env.NODE_ENV;
 const ORIG_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
@@ -38,6 +39,7 @@ function restoreAuthToken() {
 }
 
 let server, baseUrl;
+let adminToken, orderAdminUserId, orderClientA, orderClientB, orderClientC;
 
 // Minimal request helper. Form-urlencodes an object body (Twilio posts
 // application/x-www-form-urlencoded), passes strings through untouched.
@@ -77,9 +79,52 @@ before(async () => {
   server = app.listen(0);
   await new Promise((r) => server.on('listening', r));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  // Admin user + JWT for the authorized /conversations request (beo.test.js shape).
+  const admin = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ('sms-order-admin@example.test', 'x', 'admin', 'approved', 0)
+     RETURNING id, token_version`
+  );
+  orderAdminUserId = admin.rows[0].id;
+  adminToken = jwt.sign(
+    { userId: orderAdminUserId, tokenVersion: admin.rows[0].token_version },
+    process.env.JWT_SECRET, { expiresIn: '1h' }
+  );
+
+  // Three clients with controlled message timelines.
+  const ca = await pool.query("INSERT INTO clients (name, phone) VALUES ('SMS Order A', '3125550301') RETURNING id");
+  const cb = await pool.query("INSERT INTO clients (name, phone) VALUES ('SMS Order B', '3125550302') RETURNING id");
+  const cc = await pool.query("INSERT INTO clients (name, phone) VALUES ('SMS Order C', '3125550303') RETURNING id");
+  orderClientA = ca.rows[0].id;
+  orderClientB = cb.rows[0].id;
+  orderClientC = cc.rows[0].id;
+
+  // A: inbound 10m ago, then an outbound reply 1m ago (most recent ACTIVITY is outbound).
+  await pool.query(
+    `INSERT INTO sms_messages (direction, client_id, recipient_phone, body, message_type, status, created_at) VALUES
+       ('inbound',  $1, '3125550301', 'A first', 'general', 'received', NOW() - INTERVAL '10 minutes'),
+       ('outbound', $1, '3125550301', 'A reply', 'general', 'sent',     NOW() - INTERVAL '1 minute')`,
+    [orderClientA]
+  );
+  // B: inbound 5m ago, no later outbound (most recent inbound overall among A/B).
+  await pool.query(
+    `INSERT INTO sms_messages (direction, client_id, recipient_phone, body, message_type, status, created_at) VALUES
+       ('inbound', $1, '3125550302', 'B waiting', 'general', 'received', NOW() - INTERVAL '5 minutes')`,
+    [orderClientB]
+  );
+  // C: outbound only 2m ago (no inbound → last_inbound_at NULL → sinks).
+  await pool.query(
+    `INSERT INTO sms_messages (direction, client_id, recipient_phone, body, message_type, status, created_at) VALUES
+       ('outbound', $1, '3125550303', 'C outreach', 'general', 'sent', NOW() - INTERVAL '2 minutes')`,
+    [orderClientC]
+  );
 });
 
 after(async () => {
+  await pool.query('DELETE FROM sms_messages WHERE client_id = ANY($1)', [[orderClientA, orderClientB, orderClientC]]);
+  await pool.query('DELETE FROM clients WHERE id = ANY($1)', [[orderClientA, orderClientB, orderClientC]]);
+  await pool.query('DELETE FROM users WHERE id = $1', [orderAdminUserId]);
   process.env.NODE_ENV = ORIG_NODE_ENV;
   restoreAuthToken();
   if (server) await new Promise((r) => server.close(r));
@@ -156,4 +201,45 @@ test('GET /conversations/:clientId without a token is rejected (401)', async () 
 test('POST /conversations/:clientId/reply without a token is rejected (401)', async () => {
   const r = await request('POST', '/api/sms/conversations/1/reply', { body: { body: 'hello' } });
   assert.equal(r.status, 401, r.body);
+});
+
+// ── /conversations ordering (spec 2026-07-18) ────────────────────────────────
+// The inbox orders by each client's most recent INBOUND message, newest first,
+// with outbound-only threads sinking to the bottom (NULLS LAST). A fresh
+// outbound reply must NOT bump a handled thread above one with a more recent
+// inbound message.
+test('GET /conversations orders by newest received; outbound-only sinks last', async () => {
+  const r = await request('GET', '/api/sms/conversations', {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  assert.equal(r.status, 200, r.body);
+  const rows = JSON.parse(r.body);
+
+  // Global ORDER BY contract on live data (robust to other rows and to LIMIT 200):
+  // rows with a non-null last_inbound_at come first, descending; all null
+  // (outbound-only) rows sink to the end. This is exactly what NULLS LAST buys.
+  let seenNull = false, prev = null;
+  for (const row of rows) {
+    if (row.last_inbound_at === null) { seenNull = true; continue; }
+    assert.ok(!seenNull, `a non-null last_inbound_at must not follow a null one (NULLS LAST): ${r.body}`);
+    if (prev !== null) {
+      assert.ok(new Date(row.last_inbound_at) <= new Date(prev), `last_inbound_at must be descending: ${r.body}`);
+    }
+    prev = row.last_inbound_at;
+  }
+
+  // Seeded discriminator (would FAIL under the old `ORDER BY last_message_at DESC`,
+  // which returns [A, C, B]): B (inbound 5m ago) outranks A (inbound 10m ago) even
+  // though A has a newer OUTBOUND reply (1m ago). A and B carry the most recent
+  // inbounds, so they sit at the top of the window regardless of DB scale.
+  const mine = rows
+    .filter(x => [orderClientA, orderClientB, orderClientC].includes(x.client_id))
+    .map(x => x.client_id);
+  assert.ok(mine.includes(orderClientA) && mine.includes(orderClientB), `seeded A and B must appear: ${r.body}`);
+  assert.ok(mine.indexOf(orderClientB) < mine.indexOf(orderClientA),
+    `B (recent inbound) must outrank A (older inbound + newer outbound): ${r.body}`);
+  // C is outbound-only (last_inbound_at NULL): when present it must sink below A.
+  if (mine.includes(orderClientC)) {
+    assert.ok(mine.indexOf(orderClientA) < mine.indexOf(orderClientC), `outbound-only C must sink below A: ${r.body}`);
+  }
 });
