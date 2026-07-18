@@ -18675,3 +18675,238 @@ html[data-app="admin-os"] .pay-qr-tile {
   display: inline-block;
 }
 /* end payroll pay run */
+
+/* ─── SendModal (comms registry compose-and-confirm, spec 4.3) ────────────────
+   Structural rules are global; color comes from admin-os tokens with :root
+   fallbacks so the modal reads correctly in both admin skins and degrades
+   gracefully anywhere else. Overlay sits above ShoppingListModal (z 1000). */
+.send-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 3rem 1rem;
+}
+.send-modal {
+  background: var(--bg-elev, #fcfaf4);
+  color: var(--ink-1, #1a1a1a);
+  border: 1px solid var(--line-2, #e1dbcc);
+  border-radius: var(--radius-lg, 10px);
+  box-shadow: var(--shadow-pop, 0 8px 32px rgba(0, 0, 0, 0.28));
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-ui, var(--font-body));
+}
+.send-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.875rem 1.25rem;
+  border-bottom: 1px solid var(--line-2, #e1dbcc);
+}
+.send-modal-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-family: var(--font-display, inherit);
+  color: var(--ink-1, #1a1a1a);
+}
+.send-modal-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-2, #6b5a4e);
+  font-size: 1.5rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+.send-modal-close:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.send-modal-body {
+  padding: 1.25rem;
+}
+
+/* Loading + preview-error states */
+.send-modal-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1.5rem 0;
+  color: var(--ink-2, #6b5a4e);
+  font-size: 0.9rem;
+}
+.send-modal-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--line-2, #e1dbcc);
+  border-top-color: var(--accent, #1d8c89);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+.send-modal-state-error p {
+  color: var(--ink-1, #1a1a1a);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 0 0 0.75rem;
+}
+
+/* Compose state */
+.send-modal-to {
+  margin: 0 0 0.5rem;
+  font-size: 0.88rem;
+  color: var(--ink-1, #1a1a1a);
+  word-break: break-word;
+}
+.send-modal-source-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--accent-soft, rgba(29, 140, 137, 0.12));
+  color: var(--accent, #1d8c89);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+.send-modal-warnings {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+}
+.send-modal-warning {
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: hsl(var(--warn-h, 38) var(--warn-s, 62%) 40%);
+  padding: 0.15rem 0;
+}
+.send-modal-channel {
+  border-top: 1px solid var(--line-1, #ececec);
+  padding: 0.875rem 0;
+}
+.send-modal-channel-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ink-1, #1a1a1a);
+  cursor: pointer;
+}
+.send-modal-channel-head input {
+  cursor: pointer;
+}
+.send-modal-channel-body {
+  margin-top: 0.625rem;
+}
+.send-modal-field-label {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-3, #7c8593);
+  margin: 0.5rem 0 0.25rem;
+}
+.send-modal-input,
+.send-modal-textarea {
+  width: 100%;
+  border: 1px solid var(--line-2, #e1dbcc);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--bg-3, #fff);
+  color: var(--ink-1, #1a1a1a);
+  font-family: inherit;
+  font-size: 0.88rem;
+  padding: 0.5rem 0.625rem;
+}
+.send-modal-textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+.send-modal-input:focus,
+.send-modal-textarea:focus {
+  outline: 2px solid var(--accent, #1d8c89);
+  outline-offset: 1px;
+}
+.send-modal-fixed-block {
+  margin-top: 0.625rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px dashed var(--line-2, #e1dbcc);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--bg-2, rgba(0, 0, 0, 0.03));
+  color: var(--ink-2, #6b5a4e);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+.send-modal-fixed-caption {
+  margin: 0.3rem 0 0;
+  font-size: 0.72rem;
+  font-style: italic;
+  color: var(--ink-3, #7c8593);
+}
+.send-modal-counter {
+  margin: 0.3rem 0 0;
+  text-align: right;
+  font-size: 0.75rem;
+  color: var(--ink-3, #7c8593);
+}
+.send-modal-counter-over {
+  color: hsl(var(--danger-h, 352) var(--danger-s, 60%) 55%);
+  font-weight: 600;
+}
+.send-modal-unavailable {
+  margin: 0.4rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--ink-3, #7c8593);
+}
+.send-modal-nochannel-note {
+  margin: 0.75rem 0 0;
+  font-size: 0.86rem;
+  color: var(--ink-1, #1a1a1a);
+}
+
+/* Result state */
+.send-modal-result-line {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0 0 0.625rem;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+.send-modal-result-sent {
+  color: hsl(var(--ok-h, 155) var(--ok-s, 40%) 40%);
+}
+.send-modal-result-failed {
+  color: hsl(var(--danger-h, 352) var(--danger-s, 60%) 52%);
+}
+.send-modal-result-skipped {
+  color: var(--ink-3, #7c8593);
+}
+.send-modal-banner-error {
+  margin: 0.5rem 0 0;
+  font-size: 0.84rem;
+  color: hsl(var(--danger-h, 352) var(--danger-s, 60%) 52%);
+}
+
+/* Shared footer */
+.send-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+  flex-wrap: wrap;
+}
+/* end SendModal */

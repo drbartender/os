@@ -283,6 +283,7 @@ app.use('/api/shifts', require('./routes/staffShiftActions'));
 app.use('/api/drink-plans', require('./routes/drinkPlans/regenerate'));
 app.use('/api/drink-plans', require('./routes/drinkPlans'));
 app.use('/api/drink-plans', require('./routes/drinkPlanConsult'));
+app.use('/api/comms', require('./routes/comms'));
 app.use('/api/beo', require('./routes/beo'));
 app.use('/api/cocktails', require('./routes/cocktails'));
 app.use('/api/mocktails', require('./routes/mocktails'));

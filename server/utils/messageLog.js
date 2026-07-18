@@ -18,6 +18,8 @@ function buildEmailLogEntry({ to, subject, meta = {}, result, error }) {
     proposalId: meta.proposalId || null,
     clientId: meta.clientId || null,
     messageType: meta.messageType || 'other',
+    sentBy: meta.sentBy || null,
+    bodyEdited: Boolean(meta.bodyEdited),
   };
 }
 
@@ -37,6 +39,8 @@ function buildSmsLogEntry({ to, body, meta = {}, result, error }) {
     proposalId: meta.proposalId || null,
     clientId: meta.clientId || null,
     messageType: meta.messageType || 'other',
+    sentBy: meta.sentBy || null,
+    bodyEdited: Boolean(meta.bodyEdited),
   };
 }
 
@@ -46,7 +50,7 @@ async function logClientMessage(entry) {
   try {
     if (!entry || entry.skipLog) return;
     let { channel, recipient, subject, status, error, providerId,
-          proposalId, clientId, messageType } = entry;
+          proposalId, clientId, messageType, sentBy, bodyEdited } = entry;
 
     if (!clientId) {
       if (channel === 'email') {
@@ -66,7 +70,13 @@ async function logClientMessage(entry) {
         }
       }
     }
-    if (!clientId) return; // recipient is not a client — not a client ping
+    // A recipient that matches no client is still ledgered when the caller
+    // supplied a proposalId (client_id stays NULL). This is the 7/16 Brandon
+    // Martin fix: his approve email went to a stale address that no longer
+    // matched any client, and this early return swallowed the only record of
+    // the send. The return now applies only to true non-client mail (admin
+    // notifications, marketing) that also carries no proposal.
+    if (!clientId && !proposalId) return;
 
     if (!proposalId) {
       const r = await pool.query(
@@ -79,10 +89,11 @@ async function logClientMessage(entry) {
 
     await pool.query(
       `INSERT INTO message_log
-         (proposal_id, client_id, channel, message_type, recipient, subject, status, error_message, provider_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         (proposal_id, client_id, channel, message_type, recipient, subject, status, error_message, provider_id, sent_by, body_edited)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [proposalId, clientId, channel, messageType || 'other', recipient,
-       subject || null, status, error || null, providerId || null]
+       subject || null, status, error || null, providerId || null,
+       sentBy || null, Boolean(bodyEdited)]
     );
   } catch (e) {
     console.error('[messageLog] log failed (send unaffected):', e.message);

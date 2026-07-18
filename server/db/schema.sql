@@ -3377,7 +3377,7 @@ CREATE TABLE IF NOT EXISTS message_log (
   message_type  TEXT NOT NULL DEFAULT 'other',
   recipient     TEXT NOT NULL,
   subject       TEXT,
-  status        TEXT NOT NULL CHECK (status IN ('sent','failed')),
+  status        TEXT NOT NULL CHECK (status IN ('sent','failed','bounced','complained')),
   error_message TEXT,
   provider_id   TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -3926,3 +3926,22 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS import_source TEXT;
 --   is_default:           never read or written.
 ALTER TABLE users DROP COLUMN IF EXISTS notifications_opt_in;
 ALTER TABLE service_addons DROP COLUMN IF EXISTS is_default;
+
+-- ─── Comms send modal + delivery integrity (spec 2026-07-18, T0) ─────────────
+-- Widen message_log.status for the Resend bounce pipeline. The inline CHECK in
+-- the base CREATE TABLE above is already widened (fresh DBs); this pair
+-- converges existing DBs. Unnamed inline CHECKs auto-name as
+-- message_log_status_check; drop-then-add keeps the pair idempotent per run.
+ALTER TABLE message_log DROP CONSTRAINT IF EXISTS message_log_status_check;
+ALTER TABLE message_log ADD CONSTRAINT message_log_status_check
+  CHECK (status IN ('sent','failed','bounced','complained'));
+-- Webhook matches ledger rows by Resend email id; without this it is a
+-- sequential scan on a growing table.
+CREATE INDEX IF NOT EXISTS idx_message_log_provider_id ON message_log(provider_id);
+-- Compose-and-confirm audit: which admin clicked send, and whether the copy
+-- was hand-edited from the template. NULL sent_by = automated (scheduler) send.
+ALTER TABLE message_log ADD COLUMN IF NOT EXISTS sent_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE message_log ADD COLUMN IF NOT EXISTS body_edited BOOLEAN NOT NULL DEFAULT false;
+-- Client-facing shopping list survives admin edits: the public token route
+-- serves this last-approved copy while the live list sits in pending_review.
+ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS shopping_list_approved_snapshot JSONB;

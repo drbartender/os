@@ -206,7 +206,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/:id/shopping-list-data` | Admin | Shaped data for the legacy client-side generation path (retired by the Potions mirror kill once `ShoppingListButton` moved to the regenerate endpoint) |
 | GET | `/:id/shopping-list` | Admin | Fetch persisted shopping list + `shopping_list_status` |
 | PUT | `/:id/shopping-list` | Admin | Save shopping list edits (auto-saved by the modal while admin edits) |
-| PATCH | `/:id/shopping-list/approve` | Admin | Approve list (flips `shopping_list_status` to `'approved'`) and emails client a link |
+| PATCH | `/:id/shopping-list/approve` | Admin | **Deprecated**, kept mounted for API compatibility: delegates to the `shopping_list_approve` comms action. Runs the action's idempotent side effects (atomic flip of `shopping_list_status` to `'approved'` + approved-snapshot write) then sends the default unedited email on the default channels. New admin sends go through the compose-first `POST /api/comms/send`. |
 | GET | `/:id` | Admin | Fetch single plan by ID (includes `has_consult_selections`, `shopping_list_source`, audit fields) |
 | GET | `/:id/consult` | Admin | Fetch admin-side consult-form payload for re-populating the form |
 | PUT | `/:id/consult` | Admin | Save consult-form payload, regenerate shopping list as `pending_review` (via `drinkPlanConsult.js`) |
@@ -224,6 +224,15 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | DELETE | `/:id/logo` | Admin | Clears `selections.companyLogo` + `_logoFilename` via Postgres jsonb `-` operator. R2 file is not deleted |
 | POST | `/:id/finalize` | Admin | Finalize the BEO: stamps `finalized_at`/`finalized_by` (only when status=`reviewed`, selections non-empty, proposal not archived), schedules T-3 staff nudges for every approved staffer on every non-cancelled shift, writes `beo_finalized` activity log. Locks every mutation route on the plan until Unfinalize. Implemented in `server/utils/beoFinalize.js`, mounted into the drink-plans router. |
 | POST | `/:id/unfinalize` | Admin | Clear `finalized_at`/`finalized_by`, suppress pending nudges (preserves sent), clear every `beo_acknowledged_at` on the proposal's shift_requests, write `beo_unfinalized` activity log. |
+
+The four shopping-list routes above (public `GET /t/:token/shopping-list` and the admin `GET`/`PUT`/`PATCH .../shopping-list[/approve]`) now live in `server/routes/drinkPlans/shoppingList.js`, extracted verbatim from `drinkPlans.js` (which was over the 700-line soft cap) and registered back onto the same router at their original positions.
+
+### Comms — `/api/comms`
+Compose-and-confirm client sends for the comms registry (`server/routes/comms.js`). The recipient is resolved server-side from the live client record; the request can never override the destination. Every admin-click client send routes through here (see Comms registry, below).
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/preview` | Admin/Manager | Live-resolve the recipient + channels for an `{ action, entity_id }` pair and return the drafted (editable) message parts. Non-mutating: nothing is sent or written. |
+| POST | `/send` | Admin/Manager (`adminWriteLimiter`) | Run the action's idempotent side effects, then dispatch the admin's (possibly edited) message on the selected channels. Returns per-channel truth (`sent`/`failed`/`skipped` + skip reasons); each attempt writes a `message_log` row carrying `sent_by` + `body_edited`. Validates non-empty subject/body per selected channel and the 640-char SMS cap; an empty channel list is accepted only when the action genuinely has no channel to offer (side-effects-only confirm). |
 
 ### BEO — `/api/beo`
 | Method | Path | Auth | Description |
@@ -709,6 +718,7 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `shopping_list` (JSONB) — auto-generated at submission, admin-editable, persisted across modal opens
 - `shopping_list_status` VARCHAR(20) CHECK (NULL | `'pending_review'` | `'approved'`) — gates the public `/t/:token/shopping-list` endpoint
 - `shopping_list_approved_at` TIMESTAMPTZ — set when admin approves and sends the list
+- `shopping_list_approved_snapshot` (JSONB) — copy of `shopping_list` captured at approve time, written in the same UPDATE as the approval. The client-facing public token route will serve this last-approved snapshot while later admin edits sit in `pending_review`, so clients never see unreviewed quantities (wired once the approved-snapshot lane lands).
 - `consult_selections` (JSONB) — admin-side consult-form input (parallel to client-side `selections`)
 - `shopping_list_source` VARCHAR(20) CHECK (NULL | `'planner'` | `'consult'`) — flags which input source currently feeds the generator
 - `consult_filled_by_user_id` INTEGER FK → users (admin who saved the consult; SET NULL on user delete)
@@ -962,11 +972,14 @@ Weekly Tue–Mon payroll: `pay_periods` (status open → processing → paid, pl
 - `message_type` TEXT NOT NULL DEFAULT `'other'` — machine label (e.g. `proposal_sent`, `drink_plan_ready`, `shopping_list_ready`, `signed_and_paid`, `payment_received`); friendly display labels live in `client/src/utils/messageTypes.js`
 - `recipient` TEXT NOT NULL — email address or E.164 phone
 - `subject` TEXT — email subject / SMS body preview; the UI label fallback for `'other'` rows
-- `status` TEXT NOT NULL CHECK (`sent`, `failed`) — `sent` means accepted by Resend/Twilio; `failed` means the send threw on our end (quota, bad config, malformed)
+- `status` TEXT NOT NULL CHECK (`sent`, `failed`, `bounced`, `complained`) — `sent` means accepted by Resend/Twilio; `failed` means the send threw on our end (quota, bad config, malformed); `bounced` / `complained` are reserved for the Resend delivery webhook to stamp after the fact
 - `error_message` TEXT — truncated provider/error text on a failed send
-- `provider_id` TEXT — Resend id / Twilio SID, stored for future delivery tracking (intentionally not returned by the read)
+- `provider_id` TEXT — Resend id / Twilio SID, stored for delivery tracking (intentionally not returned by the read)
+- `sent_by` INTEGER FK → users (ON DELETE SET NULL) — the admin who clicked send in the compose-and-confirm modal; NULL means an automated (scheduler) send
+- `body_edited` BOOLEAN NOT NULL DEFAULT false — true when the admin hand-edited the template copy before sending
 - `created_at` TIMESTAMPTZ NOT NULL DEFAULT NOW()
 - Index `idx_message_log_proposal (proposal_id, created_at DESC, id DESC)` serves the newest-first per-proposal read; the `id DESC` tiebreaker keeps ordering deterministic for rows sharing a `created_at`.
+- Index `idx_message_log_provider_id (provider_id)` backs the Resend delivery webhook matching a bounce/complaint event to its ledger row (otherwise a sequential scan on a growing table).
 
 **scheduled_messages** — Unified per-recipient/per-channel scheduled-message tracking for the Automated Communication Foundation. One row per (recipient, channel) for each scheduled touch so multi-recipient touches (e.g. day-before reminder to two bartenders) and partial failures (email sent, SMS failed) are tracked independently.
 - `id` SERIAL PK
@@ -1057,6 +1070,17 @@ Dibs (spec `docs/superpowers/specs/2026-07-06-presence-dibs-design.md`): the fal
   `claimDeadLegAudit`/`releaseDeadLegAudit` in `pendingCall.js`), closing a
   concurrent-callback double-alert; scoped so spend-cap `placed` rows and
   NULL-call_sid rejections are unconstrained.
+
+### Comms registry
+
+`server/utils/comms/` is the compose-first client-send layer behind `POST /api/comms/{preview,send}` (see the Comms route table above). `registry.js` auto-discovers every module in `server/utils/comms/actions/*.js` at require time, so a downstream lane adds a new action as one new file without editing shared code (the lane model forbids cross-lane edits to shared files). Each action satisfies a fixed contract:
+
+- **`resolveRecipient(entityId)`** live-resolves the recipient from the current client record (never a stale drink-plan snapshot when a linked client exists) and returns `{ name, email, phone, source, warnings, channels }`, where `channels.{email,sms}` each carry `available` / `default` / `unavailable_reason`. This is the sole source of the send destination: the request cannot override it.
+- **`buildMessages(entityId)`** returns the editable message parts (`email.{subject, heading, bodyText, cta}`, `sms.body`). Only `subject` and `bodyText` are admin-editable; `heading` and `cta` are fixed by the action so an edit can never break the token link. `render.js` (`renderPartsEmail`) HTML-escapes the edited prose into the branded email shell.
+- **`ensureSideEffects(entityId, ctx)`** performs the action's state change idempotently (for `shopping_list_approve`: the atomic `pending_review` → `approved` flip plus the approved-snapshot write). A second call no-ops, which is what makes a failed-dispatch Retry safe.
+- **`dispatch(entityId, message, channels, ctx)`** owns the ledger. It calls `sendEmail` / `sendSMS` with `meta.skipLog` and writes the `message_log` rows itself (one per attempt, success or failure, carrying `sent_by` + `body_edited`), so a provider throw can never leave a sent-but-unlogged send (the 2026-07-16 Brandon Martin failure).
+
+The first action is `shopping_list_approve` (`actions/shoppingListApprove.js`); the deprecated `PATCH /api/drink-plans/:id/shopping-list/approve` route now delegates to it.
 
 ### Bartender Tip Pages
 

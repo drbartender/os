@@ -650,13 +650,125 @@ function longLeadT30RecapClient({
   };
 }
 
+// ─── Compose-modal "parts" exports (spec 4.1) ───────────────────────────────
+// Editable prose (subject + bodyText) split from the fixed action pieces
+// (heading + cta) for the compose modal. Rendered by server/utils/comms/render.js
+// (renderPartsEmail); the legacy full-HTML templates above keep serving any
+// unconverted caller unchanged. bodyText is plain text: paragraphs separated by
+// a blank line, "Hi {name}," first and "Cheers, Dallas" last. No em dashes.
+
+/** Parts for proposalSent. cta -> the proposal; the planUrl mention (when the
+ *  legacy body carries it) is folded into prose as a plain sentence. */
+function proposalSentParts({ clientName, eventTypeLabel = 'event', proposalUrl, planUrl }) {
+  const name = clientName || 'there';
+  const paragraphs = [
+    `Hi ${name},`,
+    `We've put together a proposal for your ${eventTypeLabel}. Take a look, review the details, and sign when you're ready.`,
+    planUrl
+      ? `We've also created a personalized drink planning questionnaire for your event. Use it to tell us your preferences: signature cocktails, mocktails, beer and wine, and everything in between. Plan your drinks here: ${planUrl}.`
+      : null,
+    'If you have any questions, just reply to this email.',
+    'Cheers, Dallas',
+  ].filter(Boolean);
+  return {
+    subject: `Your Proposal for your ${eventTypeLabel} - Dr. Bartender`,
+    heading: 'Your Proposal is Ready!',
+    bodyText: paragraphs.join('\n\n'),
+    cta: { label: 'View your proposal', url: proposalUrl },
+  };
+}
+
+/** Parts for proposalOptionsSent. cta -> the side-by-side compare page. */
+function proposalOptionsSentParts({ clientName, eventTypeLabel = 'event', compareUrl }) {
+  const name = clientName || 'there';
+  const paragraphs = [
+    `Hi ${name},`,
+    `We've put together a few options for your ${eventTypeLabel} so you can compare them side by side and pick the one that fits best.`,
+    'When you find the one you like, choose it and sign right from that page. If you have any questions, just reply to this email.',
+    'Cheers, Dallas',
+  ];
+  return {
+    subject: `Compare your options for your ${eventTypeLabel} - Dr. Bartender`,
+    heading: 'Your Options Are Ready to Compare',
+    bodyText: paragraphs.join('\n\n'),
+    cta: { label: 'Compare your options', url: compareUrl },
+  };
+}
+
+/**
+ * Parts for paymentReminderClient. Preserves the money meaning exactly: the
+ * dollar figure is rendered with the same `Number(balanceDue).toFixed(2)` the
+ * legacy uses (no new math), and the autopay/manual + last4 conditionals are
+ * reproduced so bodyText matches the case. cta -> pay the balance.
+ */
+function paymentReminderParts({ clientName, eventTypeLabel = 'event', balanceDue, balanceDueDate, proposalUrl, paymentMode = 'manual', last4 }) {
+  const name = clientName || 'there';
+  const dueDate = balanceDueDate
+    ? new Date(balanceDueDate).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' })
+    : 'before your event';
+  const isAutopay = paymentMode === 'autopay';
+  const amount = `$${Number(balanceDue).toFixed(2)}`;
+  const intro = isAutopay
+    ? `Your remaining balance of ${amount} for your ${eventTypeLabel} runs on ${dueDate}.`
+    : `A heads up that your balance of ${amount} for your ${eventTypeLabel} is due on ${dueDate}.`;
+  const cardLine = isAutopay
+    ? (last4
+        ? `Your card ending in ${last4} will be charged automatically. No action needed.`
+        : 'Your card on file will be charged automatically. No action needed.')
+    : null;
+  const footer = isAutopay
+    ? "We'll send a receipt once it's charged. Reply with any questions."
+    : "If you've already taken care of this or have any questions, just reply to this email.";
+  const paragraphs = [
+    `Hi ${name},`,
+    intro,
+    cardLine,
+    footer,
+    'Cheers, Dallas',
+  ].filter(Boolean);
+  const subject = isAutopay
+    ? `Heads up: balance for your ${eventTypeLabel} runs in 3 days`
+    : `Balance due in 3 days for your ${eventTypeLabel}`;
+  return {
+    subject,
+    heading: 'Balance Reminder',
+    bodyText: paragraphs.join('\n\n'),
+    cta: { label: 'View & pay', url: proposalUrl },
+  };
+}
+
+/**
+ * Parts for a client invoice (new; no legacy full-HTML source). amountDue
+ * arrives PREFORMATTED as a display string (e.g. '$450.00') and is emitted
+ * verbatim, never computed here. cta -> pay the invoice.
+ */
+function invoiceReadyParts({ clientName, eventTypeLabel = 'event', amountDue, invoiceUrl }) {
+  const name = clientName || 'there';
+  const paragraphs = [
+    `Hi ${name},`,
+    `Your invoice for your ${eventTypeLabel} is ready. Amount due: ${amountDue}.`,
+    'Reach out with any questions, just reply to this email.',
+    'Cheers, Dallas',
+  ];
+  return {
+    subject: `Invoice for your ${eventTypeLabel}`,
+    heading: 'Your Invoice',
+    bodyText: paragraphs.join('\n\n'),
+    cta: { label: 'View & pay invoice', url: invoiceUrl },
+  };
+}
+
 module.exports = {
   wrapEmail,
   wrapMarketingEmail,
   ctaButton,
   clientOtp,
   proposalSent,
+  proposalSentParts,
   proposalOptionsSent,
+  proposalOptionsSentParts,
+  paymentReminderParts,
+  invoiceReadyParts,
   proposalSignedConfirmation,
   paymentReceivedClient,
   paymentReminderClient,

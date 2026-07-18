@@ -19,6 +19,7 @@ import api from '../../utils/api';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { useToast } from '../../context/ToastContext';
 import NeedsRecipeSection from './NeedsRecipeSection';
+import SendModal from '../SendModal';
 
 // Regenerating pulls a fresh list from the server (the live par catalog) and
 // discards manual edits; saving an already-approved list returns it to review.
@@ -39,8 +40,13 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   // Approve state is seeded by the parent (ShoppingListButton already fetched
   // /shopping-list to load the saved list — it passes status here so we don't
   // duplicate the request on mount).
-  const [approveStatus, setApproveStatus] = useState(initialApproveStatus); // 'idle' | 'approving' | 'approved'
+  const [approveStatus, setApproveStatus] = useState(initialApproveStatus); // 'idle' | 'saving' | 'approved'
   const [approveError, setApproveError] = useState('');
+  // Compose-first send flow: the SendModal handles channel choice, message
+  // edits, and the actual approve+send; lastSend keeps its per-channel result
+  // so the button copy can tell the truth ("Approved, email FAILED").
+  const [sendOpen, setSendOpen] = useState(false);
+  const [lastSend, setLastSend] = useState(null);
   // Set true once the list has been approved and then edited back to review
   // this modal session; it stays true so the re-armed button reads
   // "Re-approve & Send" instead of the first-time "Approve & Send" copy.
@@ -276,10 +282,13 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
     });
   };
 
-  const handleApproveAndSend = async () => {
+  // Compose-first approve (spec 4.4): save the on-screen state synchronously,
+  // then open the SendModal. The status flip and the email both happen on the
+  // modal's confirm (POST /comms/send); Cancel there means nothing happened.
+  const handleOpenSend = async () => {
     if (!planId) return;
-    // Flush any pending auto-save before approving so the version that goes
-    // out matches what admin sees on screen.
+    // Flush any pending auto-save so the version that goes out matches what
+    // admin sees on screen.
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
@@ -289,11 +298,9 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
     // armed by an edit made while the PUT was in flight.
     const approvePayload = { edited, guestCount };
     pendingSaveRef.current = null;
-    setApproveStatus('approving');
+    setApproveStatus('saving');
     setApproveError('');
     try {
-      // First save current state synchronously (in case admin edited and
-      // hasn't waited 1.5s for the debounce to fire).
       await api.put(`/drink-plans/${planId}/shopping-list`, {
         shopping_list: {
           ...stripGenerationKeys(edited),
@@ -301,16 +308,25 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
         },
       });
       setSaveStatus('saved');
-      // Now flip the status to approved + email the client.
-      await api.patch(`/drink-plans/${planId}/shopping-list/approve`);
-      setApproveStatus('approved');
+      setApproveStatus('idle');
+      setSendOpen(true);
     } catch (err) {
-      console.error('Approve failed:', err);
+      console.error('Pre-send save failed:', err);
       // Restore the flush safety net (the save may not have landed), unless
       // an in-flight edit already armed a newer payload.
       if (!pendingSaveRef.current) pendingSaveRef.current = approvePayload;
       setApproveStatus('idle');
-      setApproveError(err?.message || 'Failed to approve. Try again.');
+      setApproveError(err?.message || 'Failed to save before sending. Try again.');
+    }
+  };
+
+  // Fires only after the SendModal's confirm resolved (any outcome). A Cancel
+  // never calls this, so approve state only advances when the server really
+  // flipped the status (side effects are idempotent server-side).
+  const handleSendComplete = (results) => {
+    if (results && results.ok) {
+      setLastSend(results);
+      setApproveStatus('approved');
     }
   };
 
@@ -330,15 +346,25 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   // Approve button copy. Once the list was approved and edited back to review,
   // the re-armed button reads "Re-approve & Send" and its tooltip warns that
   // the client is currently on the pending screen until it is re-sent.
-  const approveLabel = approveStatus === 'approving' ? 'Approving…'
-    : approveStatus === 'approved' ? '✓ Approved & Sent'
+  // Approved copy tells the per-channel truth from the last send (spec 4.6):
+  // an approved list whose email failed or was skipped never reads "& Sent".
+  const approvedLabel = !lastSend ? '✓ Approved & Sent'
+    : lastSend.email === 'sent' ? '✓ Approved & Sent'
+    : lastSend.email === 'failed' ? '✓ Approved, email FAILED'
+    : '✓ Approved (no email)';
+  const approveLabel = approveStatus === 'saving' ? 'Saving…'
+    : approveStatus === 'approved' ? approvedLabel
     : wasApproved ? 'Re-approve & Send'
     : 'Approve & Send to Client';
   const approveTitle = approveStatus === 'approved'
-    ? 'Already approved, client can now see this list'
+    ? (lastSend && lastSend.email === 'failed'
+        ? `Approved, but the email did not go out: ${lastSend.email_error || 'unknown error'}. Reopen to retry.`
+        : lastSend && lastSend.email === 'skipped'
+          ? `Approved. Email skipped: ${(lastSend.skip_reasons && lastSend.skip_reasons.email) || 'no email applies'}.`
+          : 'Already approved, client can now see this list')
     : wasApproved
       ? 'Your edits set this list back to Needs review, so the client sees the pending screen. Re-approve to send them the updated list.'
-      : 'Save current edits, mark approved, and email the client a link';
+      : 'Review the message and recipient, then approve and send';
 
   return createPortal(
     <div style={{
@@ -513,14 +539,27 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           {planId && (
             <button
               className="btn btn-success"
-              onClick={handleApproveAndSend}
-              disabled={approveStatus !== 'idle'}
+              onClick={handleOpenSend}
+              disabled={approveStatus !== 'idle' || sendOpen}
               title={approveTitle}
             >
               {approveLabel}
             </button>
           )}
         </div>
+        {sendOpen && (
+          <SendModal
+            action="shopping_list_approve"
+            entityId={planId}
+            title="Approve & Send Shopping List"
+            confirmLabel="Approve & Send"
+            allowNoChannelConfirm
+            noChannelConfirmLabel="Approve"
+            noChannelNote="Hosted package: DRB does the shopping, so no client email applies. Approving publishes the list internally."
+            onClose={() => setSendOpen(false)}
+            onComplete={handleSendComplete}
+          />
+        )}
       </div>
     </div>,
     document.body

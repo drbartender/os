@@ -1,13 +1,11 @@
 const express = require('express');
 const path = require('path');
-const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { publicReadLimiter, drinkPlanWriteLimiter, logoUploadLimiter, adminWriteLimiter } = require('../middleware/rateLimiters');
 const { requireUuidToken } = require('../utils/tokens');
 
 const { sendEmail } = require('../utils/email');
-const emailTemplates = require('../utils/emailTemplates');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError } = require('../utils/errors');
@@ -17,6 +15,7 @@ const { isDrinkPlanPreBooking } = require('../utils/drinkPlanAccess');
 const { uploadFile, getSignedUrl } = require('../utils/storage');
 const { isValidImageUpload } = require('../utils/fileValidation');
 const { handleSubmit } = require('./drinkPlans/submit');
+const { registerPublicShoppingListRoute, registerAdminShoppingListRoutes } = require('./drinkPlans/shoppingList');
 const { sendAndLogSms } = require('../utils/sms');
 const smsTemplates = require('../utils/smsTemplates');
 const { drinkPlanNudgeEmail } = require('../utils/drinkPlanNudge');
@@ -27,47 +26,10 @@ const router = express.Router();
 
 // ─── Public routes (token-based) ─────────────────────────────────
 
-/** GET /api/drink-plans/t/:token/shopping-list — public shopping list for clients.
- *  Returns the list only when admin has explicitly approved it. While the list
- *  is auto-generated and waiting for review (status='pending_review'), or no
- *  list exists yet, the response stays in the "being prepared" placeholder
- *  state so clients don't see unreviewed quantities. */
-router.get('/t/:token/shopping-list', requireUuidToken('token', 'This drink plan is no longer available'), publicReadLimiter, asyncHandler(async (req, res) => {
-  const result = await pool.query(
-    `SELECT dp.shopping_list, dp.shopping_list_status,
-            dp.client_name, dp.event_type, dp.event_type_custom, dp.event_date, dp.status
-     FROM drink_plans dp WHERE dp.token = $1`,
-    [req.params.token]
-  );
-  if (!result.rows[0]) throw new NotFoundError('This drink plan link is no longer valid');
-  const plan = result.rows[0];
-  const isApproved = plan.shopping_list && plan.shopping_list_status === 'approved';
-  if (!isApproved) {
-    return res.json({
-      ready: false,
-      client_name: plan.client_name,
-      event_type: plan.event_type,
-      event_type_custom: plan.event_type_custom,
-      event_date: plan.event_date,
-    });
-  }
-  // The server-side auto-gen persists underscore-prefixed generation-run
-  // diagnostics at submit time and this route serves the blob wholesale, so
-  // strip them from the RESPONSE only (the stored blob keeps them so the
-  // admin modal's first open still shows the unresolved warning).
-  const publicList = { ...plan.shopping_list };
-  for (const key of Object.keys(publicList)) {
-    if (key.startsWith('_')) delete publicList[key];
-  }
-  res.json({
-    ready: true,
-    shopping_list: publicList,
-    client_name: plan.client_name,
-    event_type: plan.event_type,
-    event_type_custom: plan.event_type_custom,
-    event_date: plan.event_date,
-  });
-}));
+// GET /t/:token/shopping-list — extracted to ./drinkPlans/shoppingList.js.
+// Registered here (before the other /t/:token handlers) to preserve its
+// original early position in the router's matching order.
+registerPublicShoppingListRoute(router);
 
 /** GET /api/drink-plans/t/:token — fetch plan by token (public) */
 router.get('/t/:token', requireUuidToken('token', 'This drink plan is no longer available'), publicReadLimiter, asyncHandler(async (req, res) => {
@@ -366,7 +328,12 @@ router.post('/for-proposal/:proposalId', auth, requireAdminOrManager, asyncHandl
     'SELECT * FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
     [req.params.proposalId]
   );
-  res.json(existing.rows[0]);
+  if (!existing.rows[0]) throw new NotFoundError('Plan not found.');
+  // Keep the (potentially large) approved-snapshot blob off the wire; this
+  // response predates the column and no consumer reads it here (T0
+  // database-review carry-forward).
+  const { shopping_list_approved_snapshot, ...planRow } = existing.rows[0];
+  res.json(planRow);
 }));
 
 /** GET /api/drink-plans/by-proposal/:proposalId — fetch plan by proposal id.
@@ -490,139 +457,16 @@ router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req
     [status, req.params.id]
   );
   if (!result.rows[0]) throw new NotFoundError('Plan not found.');
-  res.json(result.rows[0]);
+  // Snapshot blob stays off the wire (same as the by-proposal create path).
+  const { shopping_list_approved_snapshot, ...statusRow } = result.rows[0];
+  res.json(statusRow);
 }));
 registerFinalizeRoute(router); registerUnfinalizeRoute(router);
-/** GET /api/drink-plans/:id/shopping-list — load saved shopping list */
-router.get('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const result = await pool.query(
-    'SELECT shopping_list, shopping_list_status, shopping_list_approved_at FROM drink_plans WHERE id = $1',
-    [req.params.id]
-  );
-  if (!result.rows[0]) throw new NotFoundError('Plan not found.');
-  res.json({
-    shopping_list: result.rows[0].shopping_list || null,
-    shopping_list_status: result.rows[0].shopping_list_status || null,
-    shopping_list_approved_at: result.rows[0].shopping_list_approved_at || null,
-  });
-}));
-
-/** PUT /api/drink-plans/:id/shopping-list — save/update shopping list. Keeps
- *  the list in `pending_review` until the admin explicitly approves; an admin
- *  re-edit of an already-approved list reverts it to pending so the client
- *  doesn't keep reading stale numbers. */
-router.put('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  await ensureNotFinalized(parseInt(req.params.id, 10));
-  const { shopping_list } = req.body;
-  if (!shopping_list || typeof shopping_list !== 'object') {
-    throw new ValidationError({ shopping_list: 'Invalid shopping list data.' });
-  }
-  // Underscore keys are generation-run diagnostics (built fresh by every
-  // generate/regenerate); never persisted, so stale copies can't outlive
-  // the generation they described.
-  for (const key of Object.keys(shopping_list)) {
-    if (key.startsWith('_')) delete shopping_list[key];
-  }
-  const result = await pool.query(
-    `UPDATE drink_plans
-       SET shopping_list = $1,
-           shopping_list_status = 'pending_review',
-           shopping_list_approved_at = NULL,
-           updated_at = NOW()
-     WHERE id = $2
-     RETURNING id`,
-    [JSON.stringify(shopping_list), req.params.id]
-  );
-  if (!result.rows[0]) throw new NotFoundError('Plan not found.');
-  res.json({ success: true });
-}));
-
-/** PATCH /api/drink-plans/:id/shopping-list/approve — admin approves the list,
- *  flipping it from pending_review → approved. Public client view starts
- *  serving the list now; client gets an email with the link. */
-router.patch('/:id/shopping-list/approve', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  await ensureNotFinalized(parseInt(req.params.id, 10));
-  // Atomic UPDATE: matches at most once. Concurrent admin clicks both pass
-  // the auth check, but only the first transitions pending_review → approved
-  // and gets the row back. Subsequent clicks fall through to the idempotent
-  // success path below — no double-emails to the client.
-  const upd = await pool.query(
-    `UPDATE drink_plans
-       SET shopping_list_status = 'approved',
-           shopping_list_approved_at = NOW(),
-           updated_at = NOW()
-     WHERE id = $1
-       AND shopping_list IS NOT NULL
-       AND shopping_list_status IS DISTINCT FROM 'approved'
-     RETURNING id, token, client_name, client_email, event_type, event_type_custom, event_date, proposal_id`,
-    [req.params.id]
-  );
-
-  if (!upd.rows[0]) {
-    // Either the row doesn't exist, the list is missing, or it was already
-    // approved by another admin click. Distinguish so we surface a useful
-    // error for the no-list case but stay idempotent for the already-approved
-    // case (don't re-email the client).
-    const check = await pool.query(
-      `SELECT shopping_list IS NOT NULL AS has_list, shopping_list_status, shopping_list_approved_at
-       FROM drink_plans WHERE id = $1`,
-      [req.params.id]
-    );
-    if (!check.rows[0]) throw new NotFoundError('Plan not found.');
-    if (!check.rows[0].has_list) {
-      throw new ConflictError('Cannot approve: this plan has no shopping list yet. Generate one first.');
-    }
-    return res.json({
-      success: true,
-      approved_at: check.rows[0].shopping_list_approved_at,
-      alreadyApproved: true,
-    });
-  }
-
-  const plan = upd.rows[0];
-
-  // Hosted events: we do the shopping, not the client — so the
-  // shopping-list-ready email does not apply. BYOB events get the email.
-  const pkgRow = await pool.query(`
-    SELECT sp.pricing_type
-    FROM drink_plans dp
-    LEFT JOIN proposals p ON p.id = dp.proposal_id
-    LEFT JOIN service_packages sp ON sp.id = p.package_id
-    WHERE dp.id = $1
-  `, [plan.id]);
-  const isHosted = pkgRow.rows[0]?.pricing_type === 'per_guest';
-
-  if (isHosted) {
-    console.log(`[shoppingListReady] hosted event, skipping client email for plan ${plan.id}`);
-  } else if (plan.client_email && plan.token) {
-    // Notify the client. Best-effort — never fail the approval if email blows up.
-    const shoppingListUrl = `${PUBLIC_SITE_URL}/shopping-list/${plan.token}`;
-    const eventTypeLabel = getEventTypeLabel({
-      event_type: plan.event_type,
-      event_type_custom: plan.event_type_custom,
-    });
-    const tpl = emailTemplates.shoppingListReady
-      ? emailTemplates.shoppingListReady({
-          clientName: plan.client_name,
-          eventTypeLabel,
-          shoppingListUrl,
-        })
-      : null;
-    if (tpl) {
-      sendEmail({ to: plan.client_email, ...tpl, meta: { proposalId: plan.proposal_id, messageType: 'shopping_list_ready' } }).catch(emailErr => {
-        console.error('Shopping-list-ready email failed:', emailErr);
-        if (process.env.SENTRY_DSN_SERVER) {
-          Sentry.captureException(emailErr, {
-            tags: { route: 'drinkPlans/approveShoppingList', step: 'email' },
-            extra: { planId: plan.id },
-          });
-        }
-      });
-    }
-  }
-
-  res.json({ success: true, approved_at: new Date().toISOString() });
-}));
+// GET /:id/shopping-list, PUT /:id/shopping-list, PATCH /:id/shopping-list/approve
+// — extracted to ./drinkPlans/shoppingList.js. Registered here, immediately
+// after the finalize routes and before POST /:id/logo, to preserve their
+// original position in the router's matching order.
+registerAdminShoppingListRoutes(router);
 
 /** POST /api/drink-plans/:id/logo
  * Admin-authenticated logo upload by plan ID. Same validation + R2 upload +

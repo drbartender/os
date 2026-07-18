@@ -272,6 +272,22 @@ function shoppingListReady({ clientName, eventTypeLabel = 'event', shoppingListU
 }
 
 /**
+ * Compose-modal "parts" for shoppingListReady (spec 4.1): the editable prose
+ * (subject + bodyText) split from the fixed pieces (heading + CTA link).
+ * Rendered by server/utils/comms/render.js; the legacy shoppingListReady
+ * export above keeps serving any unconverted caller unchanged.
+ */
+function shoppingListReadyParts({ clientName, eventTypeLabel = 'event', shoppingListUrl }) {
+  const name = clientName || 'there';
+  return {
+    subject: `Your shopping list for your ${eventTypeLabel}`,
+    heading: 'Your Shopping List is Ready',
+    bodyText: `Hi ${name},\n\nYour shopping list for your ${eventTypeLabel} is ready.\n\nA heads up: best to do the actual shopping in the days leading up to your event so ingredients stay fresh and any unused items stay within most stores' return windows. No need to rush out today.\n\nReach out with any questions, just reply to this email.\n\nCheers, Dallas`,
+    cta: { label: 'View shopping list', url: shoppingListUrl },
+  };
+}
+
+/**
  * Sent when admin clicks "complete" / "save" on consult notes in
  * drink_plans.consult_selections (transition: consult_filled_at NULL to NOW()).
  * Renders a recap of the drinks captured during the consult so the client
@@ -315,6 +331,35 @@ function postConsultClient({
       nextStepLine || null,
       'Cheers, Dallas',
     ].filter(Boolean).join('\n'),
+  };
+}
+
+/**
+ * Compose-modal "parts" for postConsultClient (spec 4.1): the editable prose
+ * (subject + bodyText) split from the fixed heading. postConsultClient has no
+ * CTA button, so cta is null. The structured consult recap becomes one
+ * plain-text line per drink inside bodyText; the BYOB-vs-hosted next-step line
+ * stays an argument-driven conditional exactly as the legacy does.
+ */
+function consultRecapParts({ clientName, eventTypeLabel = 'event', formattedEventDate, drinkRecapLines, nextStepLine }) {
+  const name = clientName || 'there';
+  const list = Array.isArray(drinkRecapLines) ? drinkRecapLines : [];
+  const dateSuffix = formattedEventDate ? ` on ${formattedEventDate}` : '';
+  const recapLines = list.length
+    ? list
+    : ["Your notes are on file; reach out if you'd like the full list."];
+  const paragraphs = [
+    `Hi ${name},`,
+    [`Great talking through your drink plan for your ${eventTypeLabel}${dateSuffix}. Here's what we landed on:`, ...recapLines].join('\n'),
+    ...(nextStepLine ? [nextStepLine] : []),
+    'Let me know if anything needs to change, just reply to this email.',
+    'Cheers, Dallas',
+  ];
+  return {
+    subject: `Drink plan recap for your ${eventTypeLabel}`,
+    heading: 'Drink plan recap',
+    bodyText: paragraphs.join('\n\n'),
+    cta: null,
   };
 }
 
@@ -499,6 +544,61 @@ function portalInvite({ clientName, portalUrl }) {
 }
 
 /**
+ * Compose-modal "parts" for portalInvite (spec 4.1). cta -> the event portal.
+ * Same plain-invite design as the legacy: no token in the URL, OTP login prose
+ * stays in the editable body.
+ */
+function portalInviteParts({ clientName, portalUrl }) {
+  const first = (clientName || 'there').trim().split(/\s+/)[0] || 'there';
+  const paragraphs = [
+    `Hi ${first},`,
+    'Your client portal has your proposals, payments, receipts, and event details together in one place.',
+    "Logging in is easy: enter the email address this message was sent to and we'll send you a one-time code. No password needed.",
+    'Questions? Just reply to this email.',
+    'Cheers, Dallas',
+  ];
+  return {
+    subject: 'Your Dr. Bartender client portal',
+    heading: 'Everything for your event, in one place',
+    bodyText: paragraphs.join('\n\n'),
+    cta: { label: 'Open your event portal', url: portalUrl },
+  };
+}
+
+/**
+ * Compose-modal "parts" for the drink-plan / Potion Planner nudge. The legacy
+ * full-HTML builder is `drinkPlanNudgeEmail` in server/utils/drinkPlanNudge.js;
+ * the parts export lives here per the template-ownership rule. cta -> the Potion
+ * Planner (its URL is the fixed action, so it moves out of the body list and
+ * into the button). The Cal.com phone-consult line renders only when
+ * process.env.CAL_BOOKING_URL is set, reproducing the legacy conditional (whose
+ * handler passes consultUrl = process.env.CAL_BOOKING_URL || null).
+ */
+function drinkPlanNudgeParts({ clientFirstName, eventTypeLabel = 'event', eventDateDisplay, plannerUrl, phone }) {
+  const name = clientFirstName || 'there';
+  const when = eventDateDisplay || 'your event';
+  const consultUrl = process.env.CAL_BOOKING_URL || null;
+  const ways = [
+    `Time to lock in drinks for your ${eventTypeLabel} on ${when}. Three ways to do it:`,
+    '1. Potion Planner: tap the button below, about 5 minutes and easiest.',
+    consultUrl ? `2. Book a 15-minute phone consult: ${consultUrl}.` : null,
+    `${consultUrl ? '3' : '2'}. Call or text us${phone ? ` at ${phone}` : ''} and we'll walk through it together.`,
+  ].filter(Boolean).join('\n');
+  const paragraphs = [
+    `Hi ${name},`,
+    ways,
+    'If you have any questions, just reply to this email.',
+    'Cheers, Dallas',
+  ];
+  return {
+    subject: `Time to lock in drinks for your ${eventTypeLabel} event`,
+    heading: 'Time to lock in drinks',
+    bodyText: paragraphs.join('\n\n'),
+    cta: { label: 'Open the Potion Planner', url: plannerUrl },
+  };
+}
+
+/**
  * Cancellation confirmation (P6, fix #7). Sent to the client when a booked event
  * is cancelled. States the agreement outcome and the refund owed per the
  * agreement. `refundLine` and `outcomeLine` are pre-rendered by the route from the
@@ -536,12 +636,21 @@ function cancellationConfirmation({ clientName, eventTypeLabel = 'event', outcom
 }
 
 module.exports = {
+  // Shared brand shell pieces, exported for server/utils/comms/render.js (the
+  // compose-modal renderer) so it reproduces the exact same wrapper.
+  wrapEmail,
+  ctaButton,
+  BRAND,
   signedAndPaidClient,
   portalInvite,
+  portalInviteParts,
+  drinkPlanNudgeParts,
   drinkPlanLink,
   drinkPlanBalanceUpdate,
   shoppingListReady,
+  shoppingListReadyParts,
   postConsultClient,
+  consultRecapParts,
   lastMinuteStaffingConfirmation,
   emailChangeVerification,
   emailChangeWarning,

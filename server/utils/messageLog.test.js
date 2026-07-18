@@ -105,6 +105,55 @@ test('logClientMessage never throws on a bad entry', async () => {
   await assert.doesNotReject(() => logClientMessage({ channel: 'email', recipient: null, status: 'sent' }));
 });
 
+test('unknown recipient WITH proposalId still logs, client_id NULL (Brandon 7/16 fix)', async () => {
+  // The stale-address case: recipient matches no client row, but the caller
+  // knows the proposal. The ledger row must exist so the send is never
+  // invisible again; client_id stays NULL.
+  await logClientMessage(buildEmailLogEntry({
+    to: 'stale-relay@privaterelay.example', subject: 'list ready',
+    meta: { proposalId, messageType: 'shopping_list_ready' },
+    result: { id: 're_brandon_fix' },
+  }));
+  const rows = await getMessageLogForProposal(proposalId);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].recipient, 'stale-relay@privaterelay.example');
+  const raw = await pool.query('SELECT client_id, provider_id FROM message_log WHERE proposal_id = $1', [proposalId]);
+  assert.equal(raw.rows[0].client_id, null);
+  assert.equal(raw.rows[0].provider_id, 're_brandon_fix');
+});
+
+test('sent_by and body_edited persist through entry and meta paths', async () => {
+  await logClientMessage({
+    channel: 'email', recipient: TEST_EMAIL, clientId, proposalId,
+    status: 'sent', messageType: 'shopping_list_ready', subject: 'edited copy',
+    sentBy: null, bodyEdited: true,
+  });
+  await logClientMessage(buildEmailLogEntry({
+    to: TEST_EMAIL, subject: 'meta path',
+    meta: { proposalId, clientId, messageType: 'other', sentBy: null, bodyEdited: false },
+    result: { id: 're_meta' },
+  }));
+  const raw = await pool.query(
+    'SELECT subject, sent_by, body_edited FROM message_log WHERE proposal_id = $1 ORDER BY id',
+    [proposalId]
+  );
+  assert.equal(raw.rows.length, 2);
+  assert.equal(raw.rows[0].body_edited, true);
+  assert.equal(raw.rows[1].body_edited, false);
+  assert.equal(raw.rows[0].sent_by, null);
+});
+
+test('failed status persists with error message (failure rows are never skipped)', async () => {
+  await logClientMessage(buildEmailLogEntry({
+    to: TEST_EMAIL, subject: 'boom',
+    meta: { proposalId, clientId, messageType: 'shopping_list_ready' },
+    error: new Error('FetchError: network down'),
+  }));
+  const raw = await pool.query('SELECT status, error_message FROM message_log WHERE proposal_id = $1', [proposalId]);
+  assert.equal(raw.rows[0].status, 'failed');
+  assert.match(raw.rows[0].error_message, /network down/);
+});
+
 test('getMessageLogForProposal returns newest first', async () => {
   await logClientMessage({ channel: 'email', recipient: TEST_EMAIL, clientId, proposalId, status: 'sent', messageType: 'first', subject: 'a' });
   await logClientMessage({ channel: 'email', recipient: TEST_EMAIL, clientId, proposalId, status: 'sent', messageType: 'second', subject: 'b' });

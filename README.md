@@ -172,10 +172,12 @@ dr-bartender/
 │   │   │   └── changeRequests.js # Client change-request endpoints (calculate, create, list, cancel)
 │   │   ├── clients.js          # Client CRUD
 │   │   ├── cocktails.js        # Cocktail menu CRUD
+│   │   ├── comms.js            # Compose-and-confirm client sends for the comms registry (POST /preview + /send; recipient resolved server-side)
 │   │   ├── contractor.js       # Contractor profile + file uploads
 │   │   ├── drinkPlans.js       # Client event planning questionnaire
 │   │   ├── drinkPlans/
 │   │   │   ├── regenerate.js   # POST /:id/shopping-list/regenerate (fresh list from live par catalog; returns, never saves)
+│   │   │   ├── shoppingList.js # Shopping-list routes extracted from drinkPlans.js (public token view + admin get/save/approve; approve delegates to the comms action, kept for API compat)
 │   │   │   └── submit.js       # PUT /t/:token submit handler (extracted); creates the "Drink Plan Extras" invoice at submit
 │   │   ├── drinkPlanConsult.js # Admin consult-form routes (alternate input source for shopping lists)
 │   │   ├── messages.js         # SMS messaging to staff
@@ -259,6 +261,11 @@ dr-bartender/
 │   │   ├── channelFallback.js  # Channel-substitution decision for single-channel operational touches (picks the live channel when the registered one's status is 'bad')
 │   │   ├── clientAutomationSuspension.js # Suspends a client's remaining automation when both email_status and phone_status are 'bad' (sets clients.automation_suspended_at, cancels pending scheduled_messages)
 │   │   ├── clientDedup.js      # Find-or-create a client de-duped on email OR phone (name-guarded, backfill-only); the single intake find-or-create
+│   │   ├── comms/              # Compose-first client-send registry (backs POST /api/comms)
+│   │   │   ├── registry.js     # Auto-discovers actions/*.js at require time; defines + enforces the action contract (resolveRecipient/buildMessages/ensureSideEffects/dispatch)
+│   │   │   ├── render.js       # renderPartsEmail: HTML-escapes the editable subject/body prose into the branded email shell (fixed heading + cta)
+│   │   │   └── actions/
+│   │   │       └── shoppingListApprove.js # shopping_list_approve action: idempotent approve + approved-snapshot side effect, then per-channel dispatch that owns its message_log writes
 │   │   ├── consultRecap.js     # Formats saved consult selections into the post-consult email recap
 │   │   ├── drinkPlanAccess.js  # Pure post-booking drink-plan access guard (fail-safe pre-booking allowlist)
 │   │   ├── drinkPlanNudge.js   # Drink-plan / Potion Planner nudge: email + SMS touch and scheduling
@@ -266,6 +273,7 @@ dr-bartender/
 │   │   ├── email.js            # Resend email wrapper (send + batch)
 │   │   ├── emailSequenceScheduler.js # Drip sequence step processor (every 15 min)
 │   │   ├── emailTemplates.js   # Email template helpers (transactional + marketing)
+│   │   ├── emailValidation.js  # Warn-only typo-domain heuristic (flags a domain one edit from a common TLD/provider); client twin kept in manual sync
 │   │   ├── icsCalendar.js      # iCalendar VEVENT renderer for booking-confirmation .ics attachments
 │   │   ├── encryption.js       # AES-256-GCM wrapper for bank PII at rest (fails closed in prod)
 │   │   ├── errors.js           # AppError class hierarchy (ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError, PaymentError)
@@ -363,6 +371,7 @@ dr-bartender/
 │   │   │   ├── buildTipDeepLink.js # Builds Venmo/CashApp deep links + Stripe fallback URL for tip pages
 │   │   │   ├── clientSources.js # Canonical client source list (mirrors schema CHECK + server VALID_SOURCES)
 │   │   │   ├── constants.js    # App-wide constants
+│   │   │   ├── emailValidation.js # Warn-only typo-domain heuristic (manual-sync mirror of server/utils/emailValidation.js)
 │   │   │   ├── eventTypes.js   # Event type id→label resolver (mirrors server)
 │   │   │   ├── formatDelta.js  # Shared change-request dollar-delta formatter (admin queue/card + public portal form)
 │   │   │   ├── formatMoney.js  # Integer-cents → human dollar string (e.g. `1234` → `$12.34`, `123456` → `$1,234.56`); canonical client-side money formatter for staff portal Pay surfaces
@@ -397,6 +406,7 @@ dr-bartender/
 │   │   │   │                   # InterviewScheduleModal, PackageIncludesModal, DocumentPreviewModal (in-app lightbox for staff docs — W-9/BASSET/resume/headshot), MetricsFilterBar,
 │   │   │   │                   # format, nav, shifts, PresenceStrip (sidebar time-clock strip);
 │   │   │   │                   # drawers/{InvoicesDrawer,ShiftDrawer,PresenceDrawer})
+│   │   │   ├── SendModal/      # Shared compose-and-confirm modal for the comms registry (previews server-resolved recipient + channels, admin edits subject/body, sends with honest per-channel results); used by ShoppingListModal approve
 │   │   │   ├── ShoppingList/   # Shopping list editor modal + PDF export + ConsultationForm (generation is server-side via the regenerate endpoint) + NeedsRecipeSection (client-requested-drink recipe drawer: reuse-before-create, inline fold-in via regenerate, unresolved-ingredients warning)
 │   │   │   ├── potions/        # RecipeEditor: shared structured-recipe editor (Recipes tab detail pane + shopping-list Add-recipe drawer; draft name editing, inline add-par, forwardRef flush)
 │   │   │   └── MenuPNG/        # Standard Menu PNG export (html2canvas-driven, lazy-loaded; renders hidden MenuPreview at print scale 768x960 and downloads as 2304x2880 PNG)
@@ -571,6 +581,9 @@ dr-bartender/
 - Two-way SMS: Twilio inbound webhook, STOP/START opt-out, staff CONFIRM/CANT response codes, admin Messages thread UI
 - Client-facing automated SMS: initial-proposal, sign+pay confirmation, unsigned-proposal drip (touches 1/3/5), drink-plan nudge, balance due-today and late-balance reminders, payment-failure alert, event-eve reminder, and reschedule notification, sent via Twilio and logged to sms_messages.
 - Notification infrastructure: per-channel daily overlap prevention, delivery-failure channel fallback, multi-admin notification subscriptions.
+
+### Compose-and-Confirm Client Sends
+- Admin-triggered client sends (starting with shopping-list approval) route through a shared compose-and-confirm modal. The admin reviews the server-resolved recipient and available channels, edits the subject and body before anything goes out, then cancels or sends. A Cancel never touches the client record. On send, each channel returns an honest result (for example email sent, SMS failed) instead of one all-or-nothing status, and every attempt writes a `message_log` row recording the sending admin (`sent_by`) and whether the copy was hand-edited (`body_edited`).
 
 ### Cal.com Consult Booking Integration
 - **Cal.com consult booking integration**: webhook receiver auto-creates clients on first booking, flips consult status on form-submit, surfaces public booking URL in client comms.
