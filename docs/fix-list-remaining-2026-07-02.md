@@ -174,3 +174,12 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
   attention filter after launch week.
 - LEAD_CALL_DAILY_CAP=0 silently means 25 (NaN-guard); the kill switch is the
   only off path. Doc note whenever the env table is next touched.
+
+## Comms send-modal lanes P+N residuals (2026-07-18, post-merge 80da937 + f1d2e88)
+
+- **LIVE BUG, coordinate with pp2-planner lane (it owns submit.js right now):** `server/routes/drinkPlans/submit.js:437` (dispatched ~:560) sends `drink_plan_ready` to the stale `drink_plans.client_email` snapshot; its `proposal.client_email` fallback is always undefined (proposals has no such column). Same Brandon-class stale-recipient shape; the sibling fast-path at ~:671 already resolves live `c.email`. Fix = mirror the fast-path's live resolution. Found by the N3 audit; NOT fixed to avoid conflicting with the active pp2-planner lane.
+- Compare-send toast reads "Text skipped: Compare sends have no text message" (truthful, noisy). Set the sms skip reason to 'not selected' when SMS is not in channels, or gate the toast on submitted channels. (P fleet code-review.)
+- ProposalDetailPaymentPanel double-fetches `/invoices/proposal/:id` (its own list + InvoiceDropdown's self-fetch, keyed together). Lift the fetch and pass the list down. (N fleet code-review.)
+- Deprecated resend-nudge delegation makes 3 DB round-trips (resolve + ensure + dispatch loads) vs legacy 1; archived case is now 409 vs legacy 400. Compat-only route, low traffic; tidy if ever touched. (N fleet.)
+- invoiceSend docblock: "the level the legacy send path had" should reference the nudge route's posture (invoice send is new, no legacy). (N fleet.)
+- paymentReminder/drinkPlanNudge email availability does not require the token although the email body embeds it (937ba35 only added the guard to SMS + placeholder email). Harmless (no-token proposals are rare and the CTA link just dies), tidy with the next comms touch. (Psync report.)
