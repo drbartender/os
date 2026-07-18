@@ -1,7 +1,7 @@
 ---
 spec: docs/superpowers/specs/2026-07-18-potion-planner-v2-design.md
 designs: win-share/'Recipe card design.zip' (recipe card 1a+1b, package editor), 'Planner v2 and enhancement lab.zip', 'Quantity review.zip'
-rev: 2 (design fleet findings incorporated 2026-07-18)
+rev: 3 (pp2-core BUILT + MERGED 2026-07-18, squash 2bf3667; footprint corrected to cocktails/mocktails routers; computeDemand takes counts not weightsCap; classify also returns gapAddonSlugs/missing + no_recipe status)
 lanes:
   - id: pp2-core
     footprint:
@@ -11,8 +11,9 @@ lanes:
       - server/utils/quantityEngine.js             # new, pure: demand model
       - server/utils/quantityEngine.test.js
       - server/scripts/migrateDrinkMeta.js         # one-time: drinkUpgrades.js + DRINK_SYRUP_MAP -> DB
-      - server/routes/potions.js                   # recipes CRUD gains new drink fields
-      - server/routes/potions.test.js
+      - server/routes/potions.js                   # shared dossier-field validators (recipes CRUD lives in cocktails/mocktails)
+      - server/routes/cocktails.js                 # dossier fields on POST/PUT [rev3 footprint fix: real CRUD location]
+      - server/routes/mocktails.js                 # dossier fields on POST/PUT [rev3 footprint fix]
       - server/routes/packages.js                  # new: admin package-contents CRUD + makeability + margin
       - server/routes/packages.test.js
       - server/index.js                            # mount /api/admin/packages
@@ -126,7 +127,7 @@ These names are law across lanes; a lane that wants to deviate stops and surface
 **Engines (pp2-core):**
 - `coverageEngine.classify(drink, packageContents) -> { status: 'covered'|'fenced'|'unmakeable', gapClasses: [], gapPerGuest: number|null }` (pure; addon pricing passed in).
 - **[rev2]** `coverageEngine.mocktailAddonFor(count) -> null | 'pre-batched-mocktail' | 'mocktail-bar'` (0 → null, 1 → pre-batched, 2+ → mocktail-bar). The Jack rule is MONEY logic and lives here; client applies it via the plan payload, submit re-derives server-side and never trusts the client.
-- **[rev2]** `quantityEngine.computeDemand({guestCount, drinkers, profile, hours, pace, splitDefaults, weightsCap}) -> { pours, split, perDrinkPours }` — profile nudges the **settings default split** (45/30/25), NOT even thirds, by at most ±10 points per category. DoD fixture: `cocktail_forward` on 45/30/25 → 55/25/20 (matches the QR canvas hand-math). `drinkers=null` (not sure) falls back to 75% of guest count.
+- **[rev2]** `quantityEngine.computeDemand({guestCount, drinkers, profile, hours, pace, splitDefaults, counts}) -> { pours, split, perDrinkPours }` — profile nudges the **settings default split** (45/30/25), NOT even thirds, by at most ±10 points per category. DoD fixture: `cocktail_forward` on 45/30/25 → 55/25/20 (matches the QR canvas hand-math). `drinkers=null` (not sure) falls back to 75% of guest count.
 
 **Selections keys (pp2-planner adds; allow-list + all consumers):**
 - `crowd: { drinkers: number|null, unsure: boolean, profile: 'cocktail_forward'|'wine'|'beer'|'even'|'help' }`
