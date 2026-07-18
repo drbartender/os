@@ -16,10 +16,10 @@ test('computeExtrasBreakdown: syrup-only equals calculateSyrupCost in cents', as
   const sel = {
     addOns: {},
     logistics: { addBarRental: false },
-    syrupSelections: { d1: ['blackberry', 'vanilla'] },
+    syrupSelections: { d1: ['blackberry', 'vanilla-bean'] },
     syrupSelfProvided: [],
   };
-  const expectSyrupCents = Math.round(calculateSyrupCost(['blackberry', 'vanilla'], 75).total * 100);
+  const expectSyrupCents = Math.round(calculateSyrupCost(['blackberry', 'vanilla-bean'], 75).total * 100);
   const bd = await computeExtrasBreakdown(
     { selections: sel, guestCount: 75, pricingSnapshot: { syrups: { selections: [] } }, numBars: 0 },
     pool
@@ -32,17 +32,36 @@ test('computeExtrasBreakdown: syrup-only equals calculateSyrupCost in cents', as
 
 test('computeExtrasBreakdown: excludes self-provided and already-in-snapshot syrups', async () => {
   const sel = {
-    syrupSelections: { d1: ['blackberry', 'vanilla', 'mint'] },
+    syrupSelections: { d1: ['blackberry', 'vanilla-bean', 'mint'] },
     syrupSelfProvided: ['mint'],
   };
-  // proposal already priced 'blackberry' -> only 'vanilla' is new.
-  const expectSyrupCents = Math.round(calculateSyrupCost(['vanilla'], 40).total * 100);
+  // proposal already priced 'blackberry' -> only 'vanilla-bean' is new.
+  const expectSyrupCents = Math.round(calculateSyrupCost(['vanilla-bean'], 40).total * 100);
   const bd = await computeExtrasBreakdown(
     { selections: sel, guestCount: 40, pricingSnapshot: { syrups: { selections: ['blackberry'] } }, numBars: 0 },
     pool
   );
   assert.equal(bd.syrupCents, expectSyrupCents);
   assert.equal(bd.totalCents, expectSyrupCents);
+});
+
+test('computeExtrasBreakdown: a non-array syrupSelfProvided cannot suppress or crash charges', async () => {
+  // Public token payload. A string would substring-match real ids via .includes
+  // (suppressing charges); an object would throw. Both must be treated as [].
+  const asString = await computeExtrasBreakdown(
+    { selections: { syrupSelections: { d1: ['blackberry'] }, syrupSelfProvided: 'blackberry' },
+      guestCount: 75, pricingSnapshot: { syrups: { selections: [] } }, numBars: 0 },
+    pool
+  );
+  const expected = Math.round(calculateSyrupCost(['blackberry'], 75).total * 100);
+  assert.equal(asString.syrupCents, expected, 'a string self-provided must not suppress the charge');
+
+  const asObject = await computeExtrasBreakdown(
+    { selections: { syrupSelections: { d1: ['blackberry'] }, syrupSelfProvided: {} },
+      guestCount: 75, pricingSnapshot: { syrups: { selections: [] } }, numBars: 0 },
+    pool
+  );
+  assert.equal(asObject.syrupCents, expected, 'an object self-provided must not crash or suppress');
 });
 
 test('computeExtrasBreakdown: per_guest + flat add-ons + first bar rental priced correctly', async () => {

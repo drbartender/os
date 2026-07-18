@@ -128,7 +128,12 @@ const RecipeEditor = forwardRef(function RecipeEditor(
         const trimmedName = String(pendingName || '').trim();
         if (drink.is_active === false && trimmedName && trimmedName !== drink.name) body.name = trimmedName;
         const res = await api.put(`/${type}/${drink.id}`, body);
-        onDrinkChange(res.data);
+        // Pass the BOUND type back so the parent writes the cache under the same
+        // drink type this PUT targeted. Keying off live render state instead lets
+        // a mid-debounce type switch land the write in the wrong list (or, since
+        // cocktail/mocktail ids are independent slugs, merge one drink's data
+        // onto a same-slug drink in the other list).
+        onDrinkChange(res.data, type);
         if (!silent) setSaveState('saved');
         lastPersistOkRef.current = true;
         return true;

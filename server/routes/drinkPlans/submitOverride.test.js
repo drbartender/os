@@ -23,7 +23,7 @@ const express = require('express');
 
 const { pool } = require('../../db');
 const { AppError } = require('../../utils/errors');
-const { calculateProposal } = require('../../utils/pricingEngine');
+const { calculateProposal, calculateSyrupCost } = require('../../utils/pricingEngine');
 const drinkPlansRouter = require('../drinkPlans');
 
 let server;
@@ -313,6 +313,85 @@ test('client-elected gratuity is never folded into the contract by the delta', a
   assert.strictEqual(Number(row.total_price),
     Math.round((Number(row.total_price_override) + Number(snap.gratuity.total)) * 100) / 100,
     'gratuity must be layered on the contract exactly once, not baked in and re-added');
+});
+
+test('overridden proposal: self-provided syrups are excluded from the contract delta', async () => {
+  // Two catalog syrups, one brought by the client. Co-submitted with a bar
+  // rental so the money-recompute path runs (syrups only reach the override
+  // delta when another financial extra triggers it). The self-provided flavor
+  // must not move the contract — the same overbill class as the Jack bug.
+  const { proposalId, planToken } = await seedProposal({ override: CONTRACT });
+
+  const res = await request('PUT', `/api/drink-plans/t/${planToken}`, {
+    body: {
+      status: 'submitted',
+      paid_separately: false,
+      selections: {
+        logistics: { addBarRental: true },
+        syrupSelections: { d1: ['blackberry', 'lavender'] },
+        syrupSelfProvided: ['lavender'],
+      },
+    },
+  });
+  assert.strictEqual(res.status, 200);
+
+  const row = (await pool.query(
+    'SELECT total_price_override FROM proposals WHERE id = $1', [proposalId]
+  )).rows[0];
+
+  // Seed guest_count is 175. Only 'blackberry' is priced; 'lavender' is BYO.
+  const onePricedSyrup = calculateSyrupCost(['blackberry'], 175).total;
+  const bothSyrups = calculateSyrupCost(['blackberry', 'lavender'], 175).total;
+  assert.notStrictEqual(onePricedSyrup, bothSyrups, 'test guard: the two counts must differ');
+
+  const expected = Math.round((CONTRACT + Number(pkg.additional_bar_fee) + onePricedSyrup) * 100) / 100;
+  assert.strictEqual(Number(row.total_price_override), expected,
+    'a self-provided syrup must not be charged into the contract');
+});
+
+test('overridden proposal: self-providing an already-contracted syrup does not shave the contract', async () => {
+  // The syrup is already priced into the contract (snapshot). Marking it
+  // self-provided must be NEUTRAL to the delta, not a client-driven contract
+  // reduction. It sits on both delta legs and is filtered from both.
+  const { proposalId, planToken } = await seedProposal({ override: CONTRACT });
+  await pool.query(
+    'UPDATE proposals SET pricing_snapshot = $1 WHERE id = $2',
+    [JSON.stringify({ syrups: { selections: ['blackberry'] } }), proposalId]
+  );
+
+  const res = await request('PUT', `/api/drink-plans/t/${planToken}`, {
+    body: {
+      status: 'submitted',
+      paid_separately: false,
+      selections: {
+        logistics: { addBarRental: true },
+        syrupSelections: { d1: ['blackberry'] },
+        syrupSelfProvided: ['blackberry'],
+      },
+    },
+  });
+  assert.strictEqual(res.status, 200);
+
+  const row = (await pool.query('SELECT total_price_override FROM proposals WHERE id = $1', [proposalId])).rows[0];
+  assert.strictEqual(Number(row.total_price_override), CONTRACT + Number(pkg.additional_bar_fee),
+    'a self-provided already-contracted syrup must not reduce the negotiated contract');
+});
+
+test('overridden proposal: a malformed syrupSelfProvided does not 500', async () => {
+  // Public token payload: a non-array syrupSelfProvided (e.g. {}) must not throw
+  // on .includes inside the transaction. Bar rental drives the recompute path.
+  const { proposalId, planToken } = await seedProposal({ override: CONTRACT });
+  const res = await request('PUT', `/api/drink-plans/t/${planToken}`, {
+    body: {
+      status: 'submitted',
+      paid_separately: false,
+      selections: { logistics: { addBarRental: true }, syrupSelfProvided: {} },
+    },
+  });
+  assert.strictEqual(res.status, 200, 'a non-array syrupSelfProvided must not crash the submit');
+  const row = (await pool.query('SELECT total_price_override FROM proposals WHERE id = $1', [proposalId])).rows[0];
+  assert.strictEqual(Number(row.total_price_override), CONTRACT + Number(pkg.additional_bar_fee),
+    'no syrups selected -> the bar fee is the only move');
 });
 
 test('a submit with no financial extras moves no money', async () => {

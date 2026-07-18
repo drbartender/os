@@ -88,7 +88,10 @@ async function writeExtrasLineItems(invoiceId, { selections, guestCount, pricing
   const allSyrupIds = Array.isArray(rawSyrups)
     ? rawSyrups
     : [...new Set(Object.values(rawSyrups).flat())];
-  const selfProvided = sel.syrupSelfProvided || [];
+  // Array.isArray guard: a public token payload could send a non-array
+  // syrupSelfProvided — a string would suppress charges via substring .includes,
+  // an object/number would throw.
+  const selfProvided = Array.isArray(sel.syrupSelfProvided) ? sel.syrupSelfProvided : [];
   const proposalSyrups = snap?.syrups?.selections || [];
   const newSyrupIds = allSyrupIds
     .filter((id) => !selfProvided.includes(id))

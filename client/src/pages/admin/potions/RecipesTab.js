@@ -101,9 +101,9 @@ export default function RecipesTab({ focusDrinkId, onConsumeFocus, goToPars }) {
             drink={selected}
             type={drinkType}
             pars={pars}
-            onDrinkChange={(updated) => setData((prev) => ({
+            onDrinkChange={(updated, forType) => setData((prev) => ({
               ...prev,
-              [drinkType]: prev[drinkType].map((d) => (d.id === updated.id ? { ...d, ...updated } : d)),
+              [forType]: prev[forType].map((d) => (d.id === updated.id ? { ...d, ...updated } : d)),
             }))}
             onParsChange={(par) => setPars((prev) => [...prev, par])}
             goToPars={goToPars}

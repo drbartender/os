@@ -136,3 +136,15 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
   cosmetic by the 2026-07-16 fix (the override now always pins the total, so it
   can never reach a charge), but it still reappears as a breakdown line on the
   proposal page after each admin save.
+- Drink-plan submit: deselecting an already-CONTRACTED syrup reduces the
+  negotiated override (`total_price_override`). The delta prices `catalogAfter`
+  from the client's current selection while `catalogBefore` carries the snapshot
+  syrups, so a contracted syrup the client drops (without marking it
+  self-provided) yields a negative delta and shaves the contract — the same
+  "client mutates the negotiated contract" invariant the 2026-07-16 fix protects,
+  opposite direction. Found by codex second-opinion 2026-07-17. DEFERRED (Dallas
+  call): unreachable on live data (0 override'd proposals carry snapshot syrups),
+  reduction-only, and the potion planner + syrup picker are slated for rework —
+  fixing contract semantics in code about to change is wasted. Ready fix if it
+  ever bites: price `catalogAfter` syrups as `preSyrupsPriced ∪ net-new` so
+  contracted syrups are fully neutral to the delta. Fold into the planner rework.

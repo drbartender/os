@@ -267,9 +267,27 @@ async function handleSubmit(req, res) {
 
         if (pkg && proposal.guest_count && proposal.event_duration_hours) {
           const rawSyrups = selections.syrupSelections || {};
-          const syrupSels = Array.isArray(rawSyrups)
+          const allSyrupIds = Array.isArray(rawSyrups)
             ? rawSyrups
             : [...new Set(Object.values(rawSyrups).flat())];
+          // Self-provided syrups are brought by the client and never priced
+          // (matches drinkPlanExtras.js). (calculateSyrupCost additionally drops
+          // any non-catalog id.)
+          // Array.isArray guard: this is a public token payload, so a non-array
+          // syrupSelfProvided (e.g. {}) would otherwise throw on .includes.
+          const selfProvidedSyrups = Array.isArray(selections.syrupSelfProvided)
+            ? selections.syrupSelfProvided
+            : [];
+          const dropSelfProvided = (id) => !selfProvidedSyrups.includes(id);
+          const syrupSels = allSyrupIds.filter(dropSelfProvided);
+          // Filter self-provided out of BOTH delta legs symmetrically. If it were
+          // stripped from `after` only, a client marking an already-CONTRACTED
+          // syrup (one in the snapshot -> priced into catalogBefore) as
+          // self-provided would push a negative delta and shave the negotiated
+          // contract — a client-driven contract mutation on a public route. New
+          // self-provided syrups aren't in preSyrups anyway, so this is a no-op
+          // for them; the net effect is that self-provided is neutral to the delta.
+          const preSyrupsPriced = preSyrups.filter(dropSelfProvided);
           const adjustments = proposal.adjustments || [];
 
           // A total_price_override is a CONTRACT, not a catalog computation:
@@ -304,7 +322,7 @@ async function handleSubmit(req, res) {
               ...catalogArgs,
               numBars: numBarsAtIntent,
               addons: preAddonsRes.rows,
-              syrupSelections: preSyrups,
+              syrupSelections: preSyrupsPriced,
             });
             const catalogAfter = calculateProposal({
               ...catalogArgs,

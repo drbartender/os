@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const {
   calculateProposal, getStaffNoun, gratuityLineAmount, deriveGratuityRate,
   computeGratuityBasis, gratuityBasisFromSnapshot, recomputeSnapshotGratuity,
-  GRATUITY_FLOOR_RATE,
+  GRATUITY_FLOOR_RATE, calculateSyrupCost,
 } = require('./pricingEngine');
 
 const BYOB = {
@@ -60,6 +60,33 @@ test('class package uses the instructor noun; forced surcharge still class-exemp
   assert.strictEqual(snap.staff_noun, 'instructor');
   assert.strictEqual(snap.gratuity.staff_noun, 'instructor');
   assert.ok(!snap.breakdown.some(l => l.label === 'Shared Gratuity'));
+});
+
+// calculateSyrupCost is fed by a PUBLIC token-gated drink-plan submit, and the
+// price is driven purely by count — so it must reject non-catalog ids and dedupe.
+test('calculateSyrupCost prices only real catalog ids', () => {
+  // 2 valid flavors @ <=50 guests = 2 bottles = $75 (3-pack) ... but 2 bottles
+  // is packs=0, singles=2 -> 2 x $30 = $60.
+  assert.strictEqual(calculateSyrupCost(['blackberry', 'lavender'], 40).total, 60);
+});
+
+test('calculateSyrupCost drops junk ids so the bill cannot be inflated', () => {
+  const junk = Array.from({ length: 500 }, (_, i) => `not-a-syrup-${i}`);
+  const cost = calculateSyrupCost(['blackberry', ...junk], 100);
+  assert.strictEqual(cost.count, 1); // only blackberry survives
+});
+
+test('calculateSyrupCost dedupes repeated ids', () => {
+  const once = calculateSyrupCost(['mango'], 100);
+  const thrice = calculateSyrupCost(['mango', 'mango', 'mango'], 100);
+  assert.strictEqual(thrice.total, once.total);
+  assert.strictEqual(thrice.count, 1);
+});
+
+test('calculateSyrupCost handles empty/non-array input', () => {
+  assert.strictEqual(calculateSyrupCost([], 100).total, 0);
+  assert.strictEqual(calculateSyrupCost(null, 100).total, 0);
+  assert.strictEqual(calculateSyrupCost(undefined, 100).total, 0);
 });
 
 test('coexists with the forced Shared Gratuity line', () => {

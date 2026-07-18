@@ -189,16 +189,35 @@ function calculateAddonCost(addon, guestCount, durationHours, staffCount, addonQ
 const SYRUP_PRICE_SINGLE = 30;
 const SYRUP_PRICE_3PACK = 75;
 
+// Valid syrup catalog ids — mirror of client/src/data/syrups.js (SYRUPS[].id),
+// kept in sync manually (same convention as eventTypes.js / setupTime.js twins).
+// The pricing count is driven purely by array length, and this handler is fed by
+// a PUBLIC, token-gated drink-plan submit, so an unvalidated selection lets a
+// client inflate the bill with junk ids (500 junk strings -> ~$25k). Filtering
+// to known ids here protects every syrup-pricing path at once (calculateProposal,
+// invoiceExtras, drinkPlanExtras) since all of them price through this function.
+const SYRUP_IDS = new Set([
+  'blackberry', 'cherry', 'cherry-habanero', 'cinnamon', 'demerara', 'ginger',
+  'grenadine', 'habanero', 'hibiscus', 'honey', 'jalapeno', 'lavender', 'mango',
+  'mint', 'mixed-berry', 'orgeat', 'passion-fruit', 'peach', 'pineapple',
+  'reaper-ghost', 'rosemary', 'strawberry', 'vanilla-bean', 'watermelon',
+]);
+
 function getBottlesPerSyrup(guestCount) {
   if (!guestCount || guestCount <= 50) return 1;
   return Math.ceil(guestCount / 50);
 }
 
 function calculateSyrupCost(syrupSelections, guestCount) {
-  if (!syrupSelections || !Array.isArray(syrupSelections) || syrupSelections.length === 0) {
+  // De-dupe and drop any id not in the catalog before pricing — length is the
+  // price driver, so junk/duplicate ids would otherwise scale the charge.
+  const validSyrups = Array.isArray(syrupSelections)
+    ? [...new Set(syrupSelections)].filter((id) => SYRUP_IDS.has(id))
+    : [];
+  if (validSyrups.length === 0) {
     return { count: 0, bottlesPerFlavor: 1, totalBottles: 0, packs: 0, singles: 0, total: 0 };
   }
-  const count = syrupSelections.length;
+  const count = validSyrups.length;
   const bottlesPerFlavor = getBottlesPerSyrup(guestCount);
   const totalBottles = count * bottlesPerFlavor;
   // 3-pack discount applies to total bottles — every 3 bottles = $75
