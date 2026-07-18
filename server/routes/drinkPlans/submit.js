@@ -128,7 +128,7 @@ async function handleSubmit(req, res) {
   const existing = await pool.query(
     `SELECT dp.id, dp.status, dp.proposal_id, dp.finalized_at,
             dp.client_name, dp.client_email,
-            dp.event_type, dp.event_type_custom,
+            dp.event_type, dp.event_type_custom, dp.planner_version,
             p.status AS proposal_status,
             sp.category AS package_category,
             sp.bar_type AS package_bar_type,
@@ -171,10 +171,18 @@ async function handleSubmit(req, res) {
   // 2+ = full Mocktail Bar), derived SERVER-side from the picks — the
   // client's addOns are never trusted for this pair. Counted up front so a
   // mocktail-only hosted submit still takes the atomic financial path.
+  // VERSION GATE (2026-07-18 push review): the rule applies ONLY to v2 plans —
+  // the flip price is disclosed only by the v2 hosted wizard. Legacy v1 picks
+  // stay informational and the pair slugs bill only as ordinary user-added
+  // addons; version-blind enforcement would bill legacy clients undisclosed
+  // per-guest charges (the 2026-07-16 incident class).
   const isHostedNonMocktail = existing.rows[0].package_category === 'hosted'
     && existing.rows[0].package_bar_type !== 'mocktail';
+  const plannerV2Plan = Number(existing.rows[0].planner_version) >= 2;
   const mocktailPickCount = Array.isArray(selections?.mocktails) ? selections.mocktails.length : 0;
-  const hostedMocktailFlipSlug = isHostedNonMocktail ? mocktailAddonFor(mocktailPickCount) : null;
+  const hostedMocktailFlipSlug = isHostedNonMocktail && plannerV2Plan
+    ? mocktailAddonFor(mocktailPickCount)
+    : null;
   const hasFinancialSideEffects =
     newStatus === 'submitted'
     && !!existing.rows[0].proposal_id
@@ -249,12 +257,16 @@ async function handleSubmit(req, res) {
           ? (await client.query('SELECT id, ingredients FROM mocktails WHERE id = ANY($1::text[])', [mocktailPickIds])).rows
           : [];
         const mocktailById = new Map(mocktailRows.map(r => [r.id, r]));
-        // Final Jack-rule slug from RESOLVED picks only — an id that matches
-        // no real mocktail routes us here (conservative) but never bills.
-        const resolvedFlipSlug = isHostedNonMocktail ? mocktailAddonFor(mocktailRows.length) : null;
-        const coverageCtx = isHostedNonMocktail || existing.rows[0].package_category === 'hosted'
+        const coverageCtx = existing.rows[0].package_category === 'hosted'
           ? await loadHostedCoverageContext(client, proposal.package_id)
           : null;
+        // Enforcement gate: v2 plan AND contents entered (coverageCtx is null
+        // until the package has package_items) — exactly the cohort whose UI
+        // (HostedDrinksV2 fence badges + rate lines) disclosed the flip price
+        // before submit. Final Jack-rule slug from RESOLVED picks only — an id
+        // that matches no real mocktail never bills.
+        const flipEnforced = isHostedNonMocktail && plannerV2Plan && coverageCtx !== null;
+        const resolvedFlipSlug = flipEnforced ? mocktailAddonFor(mocktailRows.length) : null;
         const gapSlugCache = new Map();
         const coverageGapSlugsFor = (drinkRow) => {
           if (!coverageCtx || !drinkRow) return [];
@@ -287,7 +299,7 @@ async function handleSubmit(req, res) {
 
         // Enforce the server-derived mocktail flip: exactly the right one of
         // the pre-batched/mocktail-bar pair, regardless of what the client sent.
-        if (isHostedNonMocktail) {
+        if (flipEnforced) {
           for (const pairSlug of ['pre-batched-mocktail', 'mocktail-bar']) {
             const idx = addonSlugs.indexOf(pairSlug);
             if (pairSlug !== resolvedFlipSlug && idx !== -1) addonSlugs.splice(idx, 1);
@@ -324,7 +336,11 @@ async function handleSubmit(req, res) {
         // preAddonsRes baseline capture so the override path's catalogBefore
         // still contains the removed row and the delta CREDITS it, and BEFORE
         // the upsert + total recalc so the post-state sums correctly.
-        if (isHostedNonMocktail) {
+        // Runs ONLY when a flip actually resolved: on null (no or unresolvable
+        // picks) delete NOTHING — a client submit must never strip or credit
+        // an admin-seeded or previously purchased pair row (2026-07-18 push
+        // review; removal flows through the ordinary addon paths instead).
+        if (flipEnforced && resolvedFlipSlug !== null) {
           const staleSlugs = ['pre-batched-mocktail', 'mocktail-bar'].filter(s => s !== resolvedFlipSlug);
           await client.query(
             `DELETE FROM proposal_addons

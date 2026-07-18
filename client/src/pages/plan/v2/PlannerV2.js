@@ -4,6 +4,7 @@ import { API_BASE_URL as BASE_URL } from '../../../utils/api';
 import FormBanner from '../../../components/FormBanner';
 import { useToast } from '../../../context/ToastContext';
 import { buildQueue, STEP_LABELS, requiredGaps } from './queue';
+import { QUICK_PICKS, hostedActiveModules } from '../data/servingTypes';
 
 // Planner v2 (spec 2026-07-18 §3.1/§3.2): pure information gathering. No
 // payment UI, no upsells; any choice that creates a charge discloses it in
@@ -47,6 +48,17 @@ const DEFAULT_SELECTIONS = {
   logistics: { dayOfContact: { name: '', phone: '' }, parking: '', accessNotes: '', addBarRental: false },
 };
 
+// The admin recap (DrinkPlanSelections) picks its rich render path off
+// selections.activeModules; without it every v2 plan renders as near-empty
+// legacy. Derived, never user-set: hosted from the package bar type, BYOB
+// from the quick pick (custom has none — legacy render is correct there).
+function withActiveModules(sel, pick, isHosted, barType) {
+  const am = isHosted
+    ? hostedActiveModules(barType)
+    : QUICK_PICKS.find((p) => p.key === pick)?.activeModules;
+  return am ? { ...sel, activeModules: am } : sel;
+}
+
 export default function PlannerV2({ token, initialPlan }) {
   const toast = useToast();
   const plan = initialPlan;
@@ -56,7 +68,9 @@ export default function PlannerV2({ token, initialPlan }) {
   const [selections, setSelections] = useState(() => {
     const saved = (plan.status === 'draft' || plan.status === 'submitted') && plan.selections
       ? plan.selections : {};
-    return { ...structuredClone(DEFAULT_SELECTIONS), ...saved };
+    // JSON clone, not structuredClone: iOS Safari < 15.4 lacks it and this is
+    // a public, mobile-heavy surface.
+    return { ...JSON.parse(JSON.stringify(DEFAULT_SELECTIONS)), ...saved };
   });
   const [catalog, setCatalog] = useState({ cocktails: [], cocktailCategories: [], mocktails: [], mocktailCategories: [] });
   const [saving, setSaving] = useState(false);
@@ -114,7 +128,7 @@ export default function PlannerV2({ token, initialPlan }) {
     try {
       await axios.put(`${BASE_URL}/drink-plans/t/${token}`, {
         serving_type: stateRef.current.quickPick,
-        selections: stateRef.current.selections,
+        selections: withActiveModules(stateRef.current.selections, stateRef.current.quickPick, isHosted, plan.package_bar_type),
         status: 'draft',
       });
     } catch (err) {
@@ -123,7 +137,7 @@ export default function PlannerV2({ token, initialPlan }) {
     } finally {
       if (!silent) setSaving(false);
     }
-  }, [token]);
+  }, [token, isHosted, plan.package_bar_type]);
 
   useEffect(() => {
     if (step === 'submitted' || step === 'welcome') return undefined;
@@ -203,7 +217,7 @@ export default function PlannerV2({ token, initialPlan }) {
     try {
       await axios.put(`${BASE_URL}/drink-plans/t/${token}`, {
         serving_type: quickPick,
-        selections,
+        selections: withActiveModules(selections, quickPick, isHosted, plan.package_bar_type),
         status: 'submitted',
       });
       toast.success('Formulas filed! Check your email.');

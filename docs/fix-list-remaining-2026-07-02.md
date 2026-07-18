@@ -198,7 +198,7 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 - Perf quick-wins (performance fleet, optional): narrow coverageContext's SELECT * FROM par_items; hoist DrinksV2 typeahead pool memo; precompute DrinksV2 tab counts.
 - QR lane residuals: per-item admin_set flag rides the public payload (inert); no un-hold UI for admin-set quantities; buffer chips informational only (per-event override deferred by metadata-only scope).
 - Legacy planner drain: delete client/src/pages/plan/steps/ + data/drinkUpgrades.js + DRINK_SYRUP_MAP/pricing exports in data/syrups.js after the last planner_version=1 draft submits (query: SELECT COUNT(*) FROM drink_plans WHERE planner_version=1 AND status IN ('pending','draft')).
-- Rollout runbook (at push): run server/scripts/applyPackageLineup2026.js on PROD (dry-run first) + server/scripts/migrateDrinkMeta.js on PROD; both idempotent, snapshot/skip-guarded. **BEFORE the prod run, do the `includes`-prose item in the push-review section below.**
+- Rollout runbook (at push): run server/scripts/applyPackageLineup2026.js on PROD (dry-run first) + server/scripts/migrateDrinkMeta.js on PROD; both idempotent, snapshot/skip-guarded. **TWO GATES before the lineup script's prod run: (1) the `includes`-prose item in the push-review section below; (2) the recipe pass on the ~40 drafts — package_items existence flips hosted coverage live (coverageContext has no recipe_review filter), so fence charges would derive from unreviewed recipes.** migrateDrinkMeta has no such gate.
 
 ## Push-review residuals (2026-07-18 push gate: fleet + codex/gemini, Claude-verified)
 
@@ -213,10 +213,23 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
   conversation view shows client replies without the outbound touch they answer.
   Dual-write an outbound sms_messages row or move comms SMS onto sendAndLogSms.
   (codex MED, confirmed.)
-- pp2-planner lane obligation: re-backfill planner_version for in-flight drafts when
-  the v2 wizard ships — every draft created between the 7/18 push and that ship gets
-  planner_version=2 while drafting on the legacy wizard, and would flip wizards
-  mid-draft when v2 starts branching on the column. (consistency.)
+- ~~planner_version re-backfill obligation~~ MOOT — the v2 wizard shipped in the SAME
+  push as the column (2438d62 merged mid-gate and rode the 7/18 push), so prod
+  drafts are never mis-versioned. Do NOT run a later re-backfill: it would flip
+  genuine v2 drafts onto the legacy wizard and strand their crowd/day-of answers.
+  Only real residual: stale cached client bundles for minutes post-deploy; dev-DB
+  drafts created 7/18 pre-merge are version-2-on-legacy, dev-only, harmless.
+  (addendum review F4.)
+- pp2-planner addendum residuals (post-gate, by design of the null-no-delete rule):
+  a v2 client who removes all mocktail picks after an admin reset-to-draft leaves
+  the previously-flipped pair addon billed until an admin removes it (client
+  submits never strip pair rows), and the fast path never reconciles pair rows.
+  Admin proposal surface is the reconcile point. (codex C, accepted narrow.)
+- HostedDrinksV2 hardcodes "$2.00 per guest" for the pre-batched fence line while
+  billing uses live service_addons.rate — carry pair rates in the hosted_coverage
+  payload and render from data. (addendum F3.)
+- v2 wizard refresh resets to the Welcome step (answers preserved via autosave);
+  polish: persist/restore step position. (addendum client F3.)
 - Margin sketch (decorative, admin-only): (a) `||` fallbacks treat an explicit 0
   labor-rate/supplies setting or slider value as unset — needs ?? + query-param
   presence checks (gemini); (b) flat-package revenue ignores extra hours while labor

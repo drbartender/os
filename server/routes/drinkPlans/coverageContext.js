@@ -23,11 +23,12 @@ async function loadHostedCoverageContext(db, packageId) {
   );
   if (itemsRes.rows.length === 0) return null;
 
-  const [parsRes, classRes, addonsRes] = await Promise.all([
-    db.query('SELECT * FROM par_items WHERE is_active = true ORDER BY section, sort_order, id'),
-    db.query('SELECT class_key, addon_slug FROM ingredient_class_addons'),
-    db.query('SELECT slug, rate, billing_type FROM service_addons WHERE is_active = true'),
-  ]);
+  // Sequential on purpose: db may be a HELD transaction client (submit's money
+  // path), and pg deprecates — pg@9 will reject — concurrent query() calls on
+  // a single client. The pool-handle callers lose only trivial parallelism.
+  const parsRes = await db.query('SELECT * FROM par_items WHERE is_active = true ORDER BY section, sort_order, id');
+  const classRes = await db.query('SELECT class_key, addon_slug FROM ingredient_class_addons');
+  const addonsRes = await db.query('SELECT slug, rate, billing_type FROM service_addons WHERE is_active = true');
 
   const catalog = buildCatalogSlices(parsRes.rows);
   const eligibleItemIds = new Set(itemsRes.rows.flatMap((r) => r.eligible_item_ids || []));

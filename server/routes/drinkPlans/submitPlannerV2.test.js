@@ -8,6 +8,9 @@ require('dotenv').config();
 //   2. The Jack rule is enforced SERVER-side: on a hosted non-mocktail
 //      package, 2+ picked mocktails bill the Mocktail Bar addon and the
 //      client-sent pre-batched addon is discarded; 1 pick bills pre-batched.
+//   3. The version gate (2026-07-18 push review): the flip applies ONLY to
+//      v2 plans on a package with entered contents — a legacy (v1) plan's
+//      picks stay informational and its user-added pre-batched is honored.
 //
 // Harness per submitExtras.test.js: real router over HTTP against the dev DB,
 // nonce-suffixed rows, full teardown. Run ALONE (shared dev DB):
@@ -91,6 +94,14 @@ before(async () => {
   );
   packageId = pkg.rows[0].id;
 
+  // Contents-readiness: the flip enforces only when package_items exist
+  // (coverageCtx non-null), so seed one row to make this package the
+  // disclosed v2 cohort. Cleaned up by the package delete (FK CASCADE).
+  await pool.query(
+    "INSERT INTO package_items (package_id, category, par_per_100) VALUES ($1, 'Vodka', 2)",
+    [packageId]
+  );
+
   for (let i = 0; i < 2; i += 1) {
     const m = await pool.query(
       `INSERT INTO mocktails (id, name, is_active) VALUES ($1, $2, true) RETURNING id`,
@@ -102,6 +113,12 @@ before(async () => {
   await seedPlan('sanitize');
   await seedPlan('flipTwo');
   await seedPlan('flipOne');
+  await seedPlan('legacyPicksOnly');
+  await seedPlan('legacyAddon');
+  await pool.query(
+    'UPDATE drink_plans SET planner_version = 1 WHERE token IN ($1, $2)',
+    [planTokens.legacyPicksOnly, planTokens.legacyAddon]
+  );
 
   const app = express();
   app.use(express.json());
@@ -216,4 +233,34 @@ test('Jack rule: exactly 1 mocktail bills pre-batched, never the Mocktail Bar', 
   const slugs = addons.rows.map((r) => r.slug);
   assert.ok(slugs.includes('pre-batched-mocktail'), `pre-batched billed (got: ${slugs.join(',')})`);
   assert.ok(!slugs.includes('mocktail-bar'), 'mocktail-bar not billed for a single pick');
+});
+
+test('Version gate: a legacy (v1) plan never gets the flip — picks are informational, user-added pre-batched honored', async () => {
+  // Picks alone: no financial side effects, nothing billed.
+  const resPicks = await request('PUT', `/api/drink-plans/t/${planTokens.legacyPicksOnly}`, {
+    body: { status: 'submitted', selections: { mocktails: mocktailIds } },
+  });
+  assert.strictEqual(resPicks.status, 200, JSON.stringify(resPicks.body));
+  const none = await pool.query(
+    'SELECT sa.slug FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id WHERE pa.proposal_id = $1',
+    [proposalIds[3]]
+  );
+  assert.deepEqual(none.rows, [], 'legacy picks bill nothing');
+
+  // The legacy checkbox path: a deliberate user-added pre-batched is honored
+  // exactly as sent, never flipped to the Mocktail Bar by the pick count.
+  const resAddon = await request('PUT', `/api/drink-plans/t/${planTokens.legacyAddon}`, {
+    body: {
+      status: 'submitted',
+      selections: { mocktails: mocktailIds, addOns: { 'pre-batched-mocktail': { enabled: true } } },
+    },
+  });
+  assert.strictEqual(resAddon.status, 200, JSON.stringify(resAddon.body));
+  const rows = await pool.query(
+    'SELECT sa.slug FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id WHERE pa.proposal_id = $1',
+    [proposalIds[4]]
+  );
+  const slugs = rows.rows.map((r) => r.slug);
+  assert.ok(slugs.includes('pre-batched-mocktail'), `user-added pre-batched honored (got: ${slugs.join(',')})`);
+  assert.ok(!slugs.includes('mocktail-bar'), 'no flip on a v1 plan');
 });
