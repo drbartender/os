@@ -198,4 +198,31 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 - Perf quick-wins (performance fleet, optional): narrow coverageContext's SELECT * FROM par_items; hoist DrinksV2 typeahead pool memo; precompute DrinksV2 tab counts.
 - QR lane residuals: per-item admin_set flag rides the public payload (inert); no un-hold UI for admin-set quantities; buffer chips informational only (per-event override deferred by metadata-only scope).
 - Legacy planner drain: delete client/src/pages/plan/steps/ + data/drinkUpgrades.js + DRINK_SYRUP_MAP/pricing exports in data/syrups.js after the last planner_version=1 draft submits (query: SELECT COUNT(*) FROM drink_plans WHERE planner_version=1 AND status IN ('pending','draft')).
-- Rollout runbook (at push): run server/scripts/applyPackageLineup2026.js on PROD (dry-run first) + server/scripts/migrateDrinkMeta.js on PROD; both idempotent, snapshot/skip-guarded.
+- Rollout runbook (at push): run server/scripts/applyPackageLineup2026.js on PROD (dry-run first) + server/scripts/migrateDrinkMeta.js on PROD; both idempotent, snapshot/skip-guarded. **BEFORE the prod run, do the `includes`-prose item in the push-review section below.**
+
+## Push-review residuals (2026-07-18 push gate: fleet + codex/gemini, Claude-verified)
+
+- **BEFORE applyPackageLineup2026's prod run:** extend the script to UPDATE the changed
+  packages' `service_packages.includes` prose (and refresh the stale seed copy at
+  schema.sql ~602-611). Four public surfaces serve `includes` live (proposals
+  publicToken/getOne/public + clientPortal) and no route can write it, so running the
+  script as-is leaves client-facing proposal/portal copy on the retired lineup
+  (Dewar's/ginger-ale era) while the marketing site shows 2026. (consistency MED.)
+- SMS thread completeness: comms-action SMS (proposalResend etc.) goes out via bare
+  sendSMS + message_log only — never lands in sms_messages, so the Messages/ClientDetail
+  conversation view shows client replies without the outbound touch they answer.
+  Dual-write an outbound sms_messages row or move comms SMS onto sendAndLogSms.
+  (codex MED, confirmed.)
+- pp2-planner lane obligation: re-backfill planner_version for in-flight drafts when
+  the v2 wizard ships — every draft created between the 7/18 push and that ship gets
+  planner_version=2 while drafting on the legacy wizard, and would flip wizards
+  mid-draft when v2 starts branching on the column. (consistency.)
+- Margin sketch (decorative, admin-only): (a) `||` fallbacks treat an explicit 0
+  labor-rate/supplies setting or slider value as unset — needs ?? + query-param
+  presence checks (gemini); (b) flat-package revenue ignores extra hours while labor
+  cost scales with them (codex LOW); (c) PackagesTab fires one margin request per
+  package on tab open, each re-reading all of par_items — fold margin_pct into the
+  list response or add a batch margins endpoint (perf fleet).
+- RecipeEditor small pair (code-review Consider): unit validation dropped from
+  rowProblems (server still rejects bad units; defense-in-depth only);
+  ClientConversation handleReply setState-after-unmount unguarded (React 18 benign).

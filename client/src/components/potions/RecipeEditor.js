@@ -363,10 +363,22 @@ const RecipeEditor = forwardRef(function RecipeEditor(
 
   const markReviewed = useCallback(async () => {
     if (!drink) return false;
+    // Guard HERE, not only on the button: Save & next and Cmd/Ctrl+Enter call
+    // this directly, and a blocked state (incomplete row / blank name) must not
+    // silently drop rows and mark the drink reviewed.
+    const hasProblems = rowsRef.current.some((r) => Object.keys(rowProblems(r)).length > 0);
+    const nameBad = drink.is_active === false && !String(nameDraftRef.current || '').trim();
+    if (hasProblems || nameBad) {
+      setSaveState('blocked');
+      toast.error('Fix highlighted rows first.');
+      return false;
+    }
     // Flush-before-Mark-reviewed (spec §4 concurrency rule): cancel the pending
-    // timer and fold rows + dossier + the explicit review state into ONE PUT.
+    // timer, let a PUT already on the wire land, then fold rows + dossier + the
+    // explicit review state into ONE PUT.
     if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
     pendingRef.current = null;
+    if (inFlightRef.current) await inFlightRef.current;
     const ok = await persist(drink, type, rowsRef.current, nameDraftRef.current, dossierRef.current, { recipe_review: 'reviewed' });
     if (ok) toast.success('Marked reviewed.');
     return ok;

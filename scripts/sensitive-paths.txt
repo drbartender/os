@@ -88,3 +88,13 @@ server/utils/autopayDurableCharge.js
 # matching no glob on this list, so the change that broke him scaled to a light
 # look. A client-triggered write to a money column belongs here.
 server/routes/drinkPlans/submit.js
+
+# Comms registry: drives every admin-initiated external send (email/SMS to
+# clients) plus the invoice draft->sent flip, and renders money copy
+# (invoiceSend amount due). Matched no glob above (server/utils/*Handlers.js
+# does not cross '/'); found at the 2026-07-18 push review, where invoiceSend
+# rendering gross amount_due instead of the remaining balance had scaled to a
+# light look. Same class as the 2026-07-14 explicit-entry gaps.
+server/utils/comms/*.js
+server/utils/comms/actions/*.js
+server/routes/comms.js

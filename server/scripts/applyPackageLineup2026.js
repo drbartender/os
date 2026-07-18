@@ -343,9 +343,13 @@ async function main() {
 
   const summary = { brandedInserted: 0, brandedSkipped: 0, classAddons: 0, classAddonsSkipped: [], slotsSet: [], retired: [], perPackage: {} };
 
-  const client = pool; // single pooled connection is fine for a one-shot script
-  await client.query('BEGIN');
+  // Dedicated client: BEGIN/COMMIT must ride ONE physical connection. pool.query
+  // per-statement only reuses the same connection incidentally — an idle reap
+  // mid-transaction would silently move later writes onto a fresh autocommit
+  // connection, breaking both the rollback and the --dry-run guarantee.
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
     // 1) Branded par rows (ON CONFLICT DO NOTHING — never clobber admin edits).
     for (const b of BRANDED_PARS) {
       const r = await client.query(
@@ -448,6 +452,8 @@ async function main() {
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
+  } finally {
+    client.release();
   }
 
   console.log('\n─── summary ───');

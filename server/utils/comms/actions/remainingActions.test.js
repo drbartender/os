@@ -268,6 +268,21 @@ test('invoiceSend: buildMessages preformats the amount from cents and links the 
   assert.ok(m.email.cta.url.includes('/invoice/'), 'public invoice URL pattern');
 });
 
+test('invoiceSend: partially-paid renders the REMAINING balance; paid is not sendable', async () => {
+  await pool.query('UPDATE invoices SET amount_paid = 20000 WHERE id = $1', [invoiceId]);
+  try {
+    const m = await getAction('invoice_send').buildMessages(invoiceId);
+    assert.ok(m.email.bodyText.includes('$250.00'), 'amount is amount_due - amount_paid, never the gross total');
+    assert.ok(!m.email.bodyText.includes('$450.00'), 'gross total must not appear');
+  } finally {
+    await pool.query('UPDATE invoices SET amount_paid = 0 WHERE id = $1', [invoiceId]);
+  }
+
+  const r = await getAction('invoice_send').resolveRecipient(paidInvoiceId);
+  assert.equal(r.channels.email.available, false, 'paid invoice is not sendable');
+  assert.match(r.channels.email.unavailable_reason, /already paid/i);
+});
+
 test('invoiceSend: ensureSideEffects flips draft->sent once, no-ops on retry, and never touches amounts', async () => {
   await pool.query("UPDATE invoices SET status = 'draft' WHERE id = $1", [invoiceId]);
   const before = await pool.query('SELECT amount_due, amount_paid FROM invoices WHERE id = $1', [invoiceId]);

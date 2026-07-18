@@ -69,7 +69,9 @@ function resolveFromRow(row) {
       ? 'Placeholder address (.invalid) from the CC import; no real email exists.'
       : (!row.token
         ? 'Invoice has no share token.'
-        : (row.status === 'void' ? 'This invoice is void.' : null)));
+        : (row.status === 'void'
+          ? 'This invoice is void.'
+          : (row.status === 'paid' ? 'This invoice is already paid.' : null))));
   const emailAvailable = !emailReason;
 
   return {
@@ -103,11 +105,12 @@ function defaultParts(row) {
     event_type_custom: row.event_type_custom,
   });
   // Invoice amounts are INTEGER CENTS (server/db/schema.sql: invoices.amount_due
-  // INTEGER). The display string uses the same cents/100 -> $X.XX formatting the
-  // client-facing invoice paths use (paymentIntentSucceeded webhook, client
-  // InvoicePage). No new money math: a pure cents/100 render, never a recompute
-  // of what is owed.
-  const amountDue = `$${(Number(row.amount_due) / 100).toFixed(2)}`;
+  // INTEGER). Render the REMAINING balance (amount_due - amount_paid), not the
+  // gross total — a re-send of a partially-paid invoice must never tell the
+  // client the full amount is still due. Same posture as paymentReminder's
+  // balanceDue math; the paid case is blocked upstream in resolveFromRow.
+  const remainingCents = Math.max(0, Number(row.amount_due) - Number(row.amount_paid || 0));
+  const amountDue = `$${(remainingCents / 100).toFixed(2)}`;
   const invoiceUrl = `${PUBLIC_SITE_URL}/invoice/${encodeURIComponent(row.token)}`;
   return {
     email: invoiceReadyParts({

@@ -371,6 +371,7 @@ dr-bartender/
 │   │   └── xmlEscape.js        # Shared TwiML XML escaper (& < >); used by the SMS + voice routes
 │   └── scripts/
 │       ├── applyPackageLineup2026.js # One-time: apply the owner-decided 2026-07-18 package lineup (spec §5) as CONTENT — service_packages flags/slots, package_items rows, missing branded par_items, ingredient_class_addons map. Snapshots prior state for rollback; idempotent; --dry-run. NOT boot-path.
+│       ├── migrateDrinkMeta.js # One-time: fold hardcoded client drink metadata (drinkUpgrades.js enhancements, DRINK_SYRUP_MAP) into cocktails/mocktails dossier columns. Skips drinks with existing dossier data unless --force; --dry-run. NOT boot-path.
 │       ├── backfillExtrasInvoices.js # One-off: create the "Drink Plan Extras" invoice for an abandoned pay-now PI + cancel stale PIs (idempotent, --dry-run)
 │       ├── backfillStripePayouts.js # One-off: full Stripe payout history into the read-side mirror via sweep() (idempotent; aborts in test mode)
 │       ├── backfillTipPages.js # One-shot backfill: ensure every active bartender has a tip page row + Stripe link
@@ -430,7 +431,7 @@ dr-bartender/
 │   │   │   │                   # drawers/{InvoicesDrawer,ShiftDrawer,PresenceDrawer})
 │   │   │   ├── SendModal/      # Shared compose-and-confirm modal for the comms registry (previews server-resolved recipient + channels, admin edits subject/body, sends with honest per-channel results; sendResult.js exports describeSendResult for per-channel toast copy); used by ShoppingListModal approve + proposal-side sends (initial creation send, resend, compare link, portal invite, balance reminder, drink-plan nudge re-enroll)
 │   │   │   ├── ShoppingList/   # Shopping list editor modal + PDF export + ConsultationForm (generation is server-side via the regenerate endpoint) + NeedsRecipeSection (client-requested-drink recipe drawer: reuse-before-create, inline fold-in via regenerate, unresolved-ingredients warning) + DerivationStrip (planner-v2 demand "how we got here" strip + Client-view preview)
-│   │   │   ├── potions/        # RecipeEditor: shared structured-recipe editor (Recipes tab detail pane + shopping-list Add-recipe drawer; draft name editing, inline add-par, forwardRef flush)
+│   │   │   ├── potions/        # RecipeEditor: shared structured-recipe editor (Recipes tab detail pane + shopping-list Add-recipe drawer; draft name editing, inline add-par, forwardRef flush) + RecipeEditorSections (dossier tab sections: enhancements, syrup pairing, flags)
 │   │   │   └── MenuPNG/        # Standard Menu PNG export (html2canvas-driven, lazy-loaded; renders hidden MenuPreview at print scale 768x960 and downloads as 2304x2880 PNG)
 │   │   ├── data/               # Shared data (addonCategories, eventServicesAgreement, eventTypes, menuSamples, packages, syrups)
 │   │   ├── hooks/              # Custom hooks (useDebounce, useDrawerParam + drawerHref, useFormValidation, useWizardHistory, useMetricsFilter, useUrlListState (URL-backed list/tab/filter view state))
