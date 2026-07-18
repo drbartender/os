@@ -8,7 +8,9 @@ lanes:
       - server/routes/sms.js
       - server/routes/sms.test.js
     depends_on: []
-    review: [correctness, sql-ordering, comms-integration]
+    # server/routes/sms.js is on scripts/sensitive-paths.txt, so this lane gets
+    # the full fleet + /second-opinion at push regardless of size.
+    review: [code-review, database-review, security-review, consistency-check]
   - id: sms-client-panel
     summary: Extract a shared ClientConversation component and embed the SMS thread on the client page.
     footprint:
@@ -17,7 +19,7 @@ lanes:
       - client/src/pages/admin/ClientDetail.js
       - README.md
     depends_on: []
-    review: [correctness, react-hooks, ui-parity]
+    review: [code-review, ui-ux-review]
 parallelism: sms-order and sms-client-panel are independent (disjoint files, server vs client) and run in parallel.
 ---
 
@@ -48,6 +50,8 @@ parallelism: sms-order and sms-client-panel are independent (disjoint files, ser
 ## Lane sms-order
 
 One SQL query change plus a DB-backed ordering test. Server only. No client change (the inbox already renders server order and displays `last_message_at`; the added `last_inbound_at` field is ignored by the client).
+
+**Precondition:** the new ordering test makes this suite DB-backed (the existing tests were DB-free). Running it requires `JWT_SECRET` and `DATABASE_URL` in the local `.env` (both are standard and loaded via `node -r dotenv/config`). A missing `JWT_SECRET` makes `jwt.sign` throw in `before` and errors the whole suite.
 
 ### Task 1: Sort the inbox by most recent received message
 
@@ -369,7 +373,19 @@ git commit -m "feat(sms): shared ClientConversation thread+reply component"
 
 - [ ] **Step 1: Replace the thread state and handlers**
 
-In `client/src/pages/admin/Messages.js`, add the import (after the `EntityLink` import on line 5):
+In `client/src/pages/admin/Messages.js`, first fix the React import on line 1: change
+
+```jsx
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+```
+
+to
+
+```jsx
+import React, { useState, useEffect, useCallback } from 'react';
+```
+
+(drop `useRef` — its only consumer, `messagesRef`, is deleted below; `useCallback` stays because `fetchThreads` still uses it. Leaving `useRef` imported would fail `CI=true react-scripts build` on `no-unused-vars`.) Then add the component import (after the `EntityLink` import on line 5):
 
 ```jsx
 import ClientConversation from '../../components/ClientConversation';
@@ -459,11 +475,11 @@ Replace the entire `.sms-thread` block (lines 146-192) with:
 - [ ] **Step 4: Verify the inbox builds clean**
 
 Run: `cd client && CI=true npx react-scripts build`
-Expected: build SUCCEEDS, no unused-variable or exhaustive-deps errors (confirm `messages`, `replyText`, `replying`, `messagesRef`, `openThread` are all gone).
+Expected: build SUCCEEDS, no unused-variable or exhaustive-deps errors (confirm `messages`, `replyText`, `replying`, `messagesRef`, `openThread` are all gone, AND that `useRef` was dropped from the line-1 React import).
 
 - [ ] **Step 5: Manual check in local review**
 
-Start the dev server (Claude-managed background process; restart if server files changed). In the admin app open `/messages`: confirm the list loads newest-received first, clicking a thread shows its bubbles and marks it read (badge clears + list refreshes), sending a reply appends the outbound bubble, and a bare visit auto-opens the newest thread WITHOUT clearing its unread badge until clicked.
+Start the dev server (Claude-managed background process; restart if server files changed). In the admin app open `/messages`: confirm clicking a thread shows its bubbles and marks it read (badge clears + list refreshes), sending a reply appends the outbound bubble, and a bare visit auto-opens the newest thread WITHOUT clearing its unread badge until clicked. (List ordering is Lane sms-order's deliverable and is verified there, not in this lane.)
 
 - [ ] **Step 6: Commit**
 
@@ -503,13 +519,9 @@ In the left-column `vstack` (opens line 219), insert this card immediately AFTER
 
 (Rendering `.sms-messages` / `.sms-reply` directly under `.card`, like the Proposals card renders `.tbl-wrap` directly. `.sms-messages` self-bounds at `max-height: 55vh` with its own scroll, so it needs no extra wrapper. `markReadOnOpen` defaults true: landing on a client's page is a deliberate view, so it clears their unread. `client.phone` falsy disables the reply box with the built-in hint.)
 
-- [ ] **Step 3: Update README folder tree**
+- [ ] **Step 3: Update README component list**
 
-In `README.md`, find the `client/src/components/` listing in the folder-structure tree and add a line for the new component, matching the surrounding format, for example:
-
-```
-│  │  ├─ ClientConversation.js   # Shared SMS thread + reply pane (inbox + client page)
-```
+In `README.md`, the `client/src/components/` node (around lines 398-409) is a single tree entry whose trailing `#` comment is a running prose enumeration of component names (AdminLayout, Layout, ... EntityLink, ...), NOT one box-drawing line per file. Append `ClientConversation` to that enumeration where the shared components are named (do not add a new tree line). Keep the mention short, e.g. `..., EntityLink, ClientConversation (shared SMS thread + reply), ...`.
 
 - [ ] **Step 4: Verify it builds clean**
 
