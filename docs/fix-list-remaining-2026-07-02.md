@@ -177,7 +177,7 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 
 ## Comms send-modal lanes P+N residuals (2026-07-18, post-merge 80da937 + f1d2e88)
 
-- **LIVE BUG, coordinate with pp2-planner lane (it owns submit.js right now):** `server/routes/drinkPlans/submit.js:437` (dispatched ~:560) sends `drink_plan_ready` to the stale `drink_plans.client_email` snapshot; its `proposal.client_email` fallback is always undefined (proposals has no such column). Same Brandon-class stale-recipient shape; the sibling fast-path at ~:671 already resolves live `c.email`. Fix = mirror the fast-path's live resolution. Found by the N3 audit; NOT fixed to avoid conflicting with the active pp2-planner lane.
+- ~~LIVE BUG: submit.js slow-path drink_plan_ready emailed the stale drink_plans.client_email snapshot (dead proposal.client_email fallback)~~ **FOLDED into lane pp2-planner 2026-07-18**: the existing-plan SELECT now JOINs live `c.email`/`c.name` (live first, snapshot fallback), mirroring the fast path. Ships with the lane's squash merge.
 - Compare-send toast reads "Text skipped: Compare sends have no text message" (truthful, noisy). Set the sms skip reason to 'not selected' when SMS is not in channels, or gate the toast on submitted channels. (P fleet code-review.)
 - ProposalDetailPaymentPanel double-fetches `/invoices/proposal/:id` (its own list + InvoiceDropdown's self-fetch, keyed together). Lift the fetch and pass the list down. (N fleet code-review.)
 - Deprecated resend-nudge delegation makes 3 DB round-trips (resolve + ensure + dispatch loads) vs legacy 1; archived case is now 409 vs legacy 400. Compat-only route, low traffic; tidy if ever touched. (N fleet.)
