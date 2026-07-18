@@ -160,3 +160,17 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
   hygiene, empty-channel rule, retry guard, partial-failure shape.
 - messageLog proposalId foot-gun: any future admin-alert send that passes
   meta.proposalId lands on the client-facing Messages card.
+
+## Lead-call bridge residuals (2026-07-18, push-review accepted-not-fixed)
+
+- Cap-trip rows (status 'failed', detail 'cap_tripped') COUNT toward the
+  rolling daily cap, so a flood keeps the cap saturated past the original
+  attempts aging out. Adjudicated intended (fail-closed backstop; gemini
+  flagged, two fleets blessed). Escape hatch if the lockout ever bites a
+  normal day: exclude detail='cap_tripped' from the cap COUNT.
+- 'connected'-but-unbridged rows (lead hangs up <20s after press-1) are
+  terminal-invisible: no reap, no email, not in needs-attention. Spec accepts
+  with a week-one bridge_duration_sec eyeball; make a permanent low-duration
+  attention filter after launch week.
+- LEAD_CALL_DAILY_CAP=0 silently means 25 (NaN-guard); the kill switch is the
+  only off path. Doc note whenever the env table is next touched.

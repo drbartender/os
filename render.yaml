@@ -86,3 +86,7 @@ services:
         value: "1800"
       - key: PENDING_CALL_TTL_SEC
         value: "120"
+      - key: LEAD_CALL_ENABLED
+        sync: false
+      - key: LEAD_CALL_DAILY_CAP
+        value: "25"

@@ -40,6 +40,17 @@ server/routes/emailMarketingWebhook.js
 server/routes/sms.js
 server/routes/thumbtack.js
 
+# Billed-voice surfaces (2026-07-18 push review): outbound Twilio calls cost
+# real money and the webhook routes take attacker-reachable input. Includes
+# the pre-existing Zul-bridge gap (voice.js/telegram.js/utils/sms.js holds
+# placeBridgedCall) alongside the new lead-call bridge.
+server/routes/voiceLeadCall.js
+server/routes/voice.js
+server/routes/telegram.js
+server/utils/leadCallTrigger.js
+server/utils/twilioSignature.js
+server/utils/sms.js
+
 # Auth / guards / limits / the shared error funnel
 server/middleware/auth.js
 server/middleware/rateLimiters.js
