@@ -95,8 +95,14 @@ router.post('/send', auth, requireAdminOrManager, adminWriteLimiter, asyncHandle
   // duplicate: the other confirm already sent, so re-sending here would
   // double-message the client (the old PATCH route only emailed inside the
   // atomic flip; this preserves that property without breaking Retry).
+  // EXCEPTION: resend-type actions (proposal resend, nudges, reminders,
+  // invoice re-send) are validate-only by design; their ensureSideEffects
+  // always returns applied:false because SENDING IS the operation. Those
+  // declare dispatchWithoutSideEffects: true and dispatch on every confirm
+  // (the modal's in-flight lockout + adminWriteLimiter guard double-clicks,
+  // exactly the protection level their legacy routes had).
   let results;
-  if (!sideEffects.applied && !isRetry && channels.length > 0) {
+  if (!action.dispatchWithoutSideEffects && !sideEffects.applied && !isRetry && channels.length > 0) {
     results = { email: 'skipped', sms: 'skipped', skip_reasons: {} };
     for (const c of channels) {
       results.skip_reasons[c] = 'Already handled by a concurrent confirm; nothing sent.';
