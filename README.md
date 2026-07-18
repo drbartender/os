@@ -186,7 +186,8 @@ dr-bartender/
 │   │   ├── messages.js         # SMS messaging to staff
 │   │   ├── mocktails.js        # Mocktail menu CRUD
 │   │   ├── payment.js          # Payment method + W-9 upload
-│   │   ├── potions.js          # Potions bar-program API: par-catalog CRUD/reorder/preview + shared recipe-row validator
+│   │   ├── packages.js         # Admin package-model API (planner v2): package_items contents CRUD, slots, makeability preview, directional margin
+│   │   ├── potions.js          # Potions bar-program API: par-catalog CRUD/reorder/preview + shared recipe-row + dossier-field validators
 │   │   ├── progress.js         # Onboarding step tracking
 │   │   ├── proposals/          # Service proposals (publicToken/compareGroup/public/metadata/lifecycle/crud/getOne/actions/changeRequests/groups/metricsSplit sub-routers)
 │   │   │   ├── index.js        # Composition router
@@ -326,6 +327,8 @@ dr-bartender/
 │   │   ├── sendProposalSentEmail.js # Post-commit best-effort client email when a proposal enters the 'sent' state (never throws)
 │   │   ├── setupTime.js        # Pure back-of-house setup-time math (parse/subtract, effectiveSetupMinutes); client twin
 │   │   ├── potionCatalog.js    # Pure par-catalog slices + ingredient alias resolution (Potions); parity-gated by potionCatalog.test.js
+│   │   ├── coverageEngine.js   # Pure drink-vs-package coverage: classify (covered/fenced/unmakeable/no_recipe) + mocktailAddonFor (the Jack rule)
+│   │   ├── quantityEngine.js   # Pure demand model: computeDemand (drinkers x hours x pace; profile nudges default split max ±10 pts)
 │   │   ├── shoppingList.js     # Shopping-list generator (the ONE generator; consumes potionCatalog slices, legacy-constant fallback); consult-mode branch + buildGeneratorInputFromConsult translator
 │   │   ├── shoppingListAddonCoverage.js # Maps active BYOB-support add-on slugs to the shopping-list items those add-ons cover (computeStripSet); generateShoppingList strips that set
 │   │   ├── shoppingListGen.js  # Shared helpers: loadCatalog, resolveDrinkIds, matchCustomNames, buildPlannerGeneratorInput, buildConsultGeneratorInput, autoGenerateShoppingList

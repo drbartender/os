@@ -4,7 +4,7 @@ const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { publicReadLimiter } = require('../middleware/rateLimiters');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
-const { validateRecipeRows, assertOverridesResolvable, nextRecipeReview, sanitizeRequestAliases } = require('./potions');
+const { validateRecipeRows, assertOverridesResolvable, nextRecipeReview, sanitizeRequestAliases, validateEnhancements, validateSyrupId } = require('./potions');
 const { normalizeName } = require('../utils/potionCatalog');
 
 const router = express.Router();
@@ -151,7 +151,7 @@ router.delete('/categories/:id', auth, requireAdminOrManager, asyncHandler(async
  *  from the name; one `-2` retry on collision). `is_active: false` creates an
  *  off-menu drink — the needs-recipe Add-recipe path (spec §5). */
 router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { id, name, category_id, emoji, description, sort_order, base_spirit, ingredients, upgrade_addon_slugs, is_active, recipe_review, request_aliases } = req.body;
+  const { id, name, category_id, emoji, description, sort_order, base_spirit, ingredients, upgrade_addon_slugs, is_active, recipe_review, request_aliases, enhancements, syrup_id, batchable, hosted_visible } = req.body;
   const trimmedName = String(name || '').trim();
   if (!trimmedName || trimmedName.length > 255) {
     throw new ValidationError({ name: 'Name is required (255 characters max).' });
@@ -162,6 +162,8 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   await assertOverridesResolvable(storedRows, pool);
   const review = nextRecipeReview('empty', storedRows, recipe_review) || 'empty';
   const requestAliases = sanitizeRequestAliases(request_aliases);
+  const enhancementRows = validateEnhancements(enhancements) || [];
+  const syrup = validateSyrupId(syrup_id);
 
   const serverSlugged = !id;
   const baseSlug = serverSlugged ? normalizeName(trimmedName).replace(/ /g, '-').slice(0, 100) : String(id);
@@ -171,13 +173,15 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   for (const attemptId of attempts) {
     try {
       const result = await pool.query(
-        `INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order, base_spirit, ingredients, upgrade_addon_slugs, is_active, recipe_review, request_aliases)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+        `INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order, base_spirit, ingredients, upgrade_addon_slugs, is_active, recipe_review, request_aliases, enhancements, syrup_id, batchable, hosted_visible)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *`,
         [
           attemptId, trimmedName, category_id || null, emoji || null, description || null,
           sort_order || 0, base_spirit || null, JSON.stringify(storedRows),
           Array.isArray(upgrade_addon_slugs) ? upgrade_addon_slugs : [],
           is_active === false ? false : true, review, requestAliases,
+          JSON.stringify(enhancementRows), syrup.value,
+          batchable === true, hosted_visible === false ? false : true,
         ]
       );
       return res.status(201).json(result.rows[0]);
@@ -199,7 +203,9 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
  *  structured recipe. Review transitions: explicit recipe_review (enum) wins;
  *  otherwise a recipe write auto-flips empty -> draft only. */
 router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { name, category_id, emoji, description, sort_order, is_active, base_spirit, ingredients, upgrade_addon_slugs, recipe_review } = req.body;
+  const { name, category_id, emoji, description, sort_order, is_active, base_spirit, ingredients, upgrade_addon_slugs, recipe_review, enhancements, syrup_id, batchable, hosted_visible } = req.body;
+  const enhancementRows = validateEnhancements(enhancements);
+  const syrup = validateSyrupId(syrup_id);
 
   let trimmedName = null;
   if (name !== undefined && name !== null) {
@@ -231,8 +237,12 @@ router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
       base_spirit = COALESCE($7, base_spirit),
       ingredients = COALESCE($8::jsonb, ingredients),
       upgrade_addon_slugs = COALESCE($9::text[], upgrade_addon_slugs),
-      recipe_review = COALESCE($10, recipe_review)
-     WHERE id = $11 RETURNING *`,
+      recipe_review = COALESCE($10, recipe_review),
+      enhancements = COALESCE($11::jsonb, enhancements),
+      syrup_id    = CASE WHEN $12 THEN $13 ELSE syrup_id END,
+      batchable   = COALESCE($14, batchable),
+      hosted_visible = COALESCE($15, hosted_visible)
+     WHERE id = $16 RETURNING *`,
     [
       trimmedName,
       category_id || null,
@@ -244,6 +254,11 @@ router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
       effectiveRows ? JSON.stringify(effectiveRows) : null,
       Array.isArray(upgrade_addon_slugs) ? upgrade_addon_slugs : null,
       review,
+      enhancementRows === null ? null : JSON.stringify(enhancementRows),
+      syrup.provided,
+      syrup.value,
+      typeof batchable === 'boolean' ? batchable : null,
+      typeof hosted_visible === 'boolean' ? hosted_visible : null,
       req.params.id,
     ]
   );

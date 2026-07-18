@@ -261,6 +261,7 @@ app.use('/api/application', require('./routes/application'));
 // general /api/admin router so the agent-secret paths match here first and never
 // hit the admin router's JWT auth (the agent presents no JWT).
 app.use('/api/admin/thumbtack', require('./routes/thumbtackAgent'));
+app.use('/api/admin/packages', require('./routes/packages'));
 app.use('/api/admin', require('./routes/admin'));
 // Admin one-click cover-swap routes (spec section 6.5). Lives at /api/admin
 // so the routing-table audit lines up with the other admin surfaces. JWT

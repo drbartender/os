@@ -253,6 +253,18 @@ Compose-and-confirm client sends for the comms registry (`server/routes/comms.js
 | GET | `/` | No | List active mocktails with categories (same public-column trim as cocktails) |
 | POST | `/` | Admin | Create mocktail (same optional-id slug + recipe validation as cocktails; mocktails now carry `ingredients` + `recipe_review`) |
 
+### Packages (planner v2 package model) — `/api/admin/packages`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/` | Admin | Package ladder (retired included) + package_items counts |
+| GET | `/:id` | Admin | Package + its structured contents rows |
+| PUT | `/:id` | Admin | Slots config (`slot_count`, `slot_kind` hard/featured) + `is_active` only; pricing stays out of this surface |
+| POST | `/:id/items` | Admin | Add a category-par row (`category`, `par_per_100`, `unit`, split-par `eligible_item_ids` verified against par_items) |
+| PUT | `/:id/items/:itemId` | Admin | Update a contents row |
+| DELETE | `/:id/items/:itemId` | Admin | Remove a contents row |
+| GET | `/:id/makeability` | Admin | Every active drink classified against the package via coverageEngine: covered / fenced (+$/guest) / unmakeable / no_recipe |
+| GET | `/:id/margin` | Admin | Directional margin sketch (`?guests&hours&labor&supplies`; knob defaults from app_settings margin_* keys); never bills anyone |
+
 ### Potions (bar program) — `/api/potions`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -712,8 +724,11 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `section`: liquorBeerWine | everythingElse; `role`: spirit | wine | beer | mixer | garnish | supplies
 - Call-on conditions: `in_full_bar` (PARS_100 membership), `spirit_key` (consult chip-grid pull), `style_key` (beer/wine client style pull), `paired_spirits` TEXT[] (matching-mixer triggers), `ingredient_aliases` TEXT[] (generic recipe/free-text names that resolve here)
 - `is_active` soft delete (DELETE blocked while any recipe resolves to the row); seeded 48 rows byte-identical to the legacy constants + 35 alias-only recipe-support rows (seedRecipeDrafts)
+- `cost` NUMERIC(10,2) DOLLARS, nullable (planner v2) — unit cost feeding the packages margin sketch; entered via Pantry & Pars; NULL costs are counted and surfaced as `missing_costs`, never guessed
 
 **cocktails / mocktails recipe columns** — `ingredients` JSONB (ordered structured rows `{ingredient, amount per serving, unit oz|dash|each|splash, note?, override_item_id?}`; legacy plain strings still resolve via aliases) + `recipe_review` (`empty|draft|reviewed`, auto-transition strictly empty->draft on recipe write; explicit `reviewed` only from Mark reviewed) + `request_aliases` TEXT[] (client-typed request strings seeded by the shopping-list Add-recipe flow; makes custom-drink matching rename-safe; NEVER exposed on public GETs). Purchase quantities keep the legacy policy (1 per 25 guests + shared-drink boost); per-serving amounts are display/prep data in v1. Custom-drink candidate matching orders deterministically (`is_active DESC NULLS LAST, created_at ASC, name ASC, src` with cocktails before mocktails) with drink names beating request aliases; match keys strip apostrophes before normalizing ("jennys" hits "Jenny's") while slugs and par-alias resolution keep the shared normalizer. The Add-recipe flow authors recipes in a drawer over the shopping list modal (reuse-before-create by name or alias) and folds them in via regenerate.
+
+**cocktails / mocktails dossier columns (planner v2)** — the recipe card is the single source of truth for everything about a drink: `enhancements` JSONB (rows `{slug, pitch, flavors?[]}`; slug references service_addons; migrated from the old hardcoded `drinkUpgrades.js`/`DRINK_SYRUP_MAP` maps by `server/scripts/migrateDrinkMeta.js`, one-time + idempotent, skips drinks already carrying dossier data unless `--force`), `syrup_id` VARCHAR(100) (single linked housemade syrup; the per-drink variant matrix retired under variants-are-drinks), `batchable` BOOLEAN (hard-slot eligibility for Base Compound-style packages), `hosted_visible` BOOLEAN (per-drink hide switch for the hosted coverage browser). Admin-only surfaces; the public cocktail/mocktail GET column allowlist is unchanged.
 
 **drink_plans** — Client event questionnaire (created only after the client books — Stripe deposit webhook → `createEventShifts` → `createDrinkPlan`, idempotent; never pre-deposit)
 - `token` UUID (public access)
@@ -723,6 +738,7 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `serving_type`, `selections` (JSONB — chosen cocktails/mocktails, syrupSelections, addOns)
 - `selections.addOns` — object keyed by addon slug with metadata (e.g., champagne-toast servingStyle)
 - `status`: pending | draft | submitted | reviewed
+- `planner_version` INTEGER NOT NULL DEFAULT 2 (planner v2 rollout): new tokens render the v2 wizard; every pre-existing row was backfilled to 1 at column add, so in-flight drafts finish on the legacy wizard untouched
 - `shopping_list` (JSONB) — auto-generated at submission, admin-editable, persisted across modal opens
 - `shopping_list_status` VARCHAR(20) CHECK (NULL | `'pending_review'` | `'approved'`) — gates the public `/t/:token/shopping-list` endpoint
 - `shopping_list_approved_at` TIMESTAMPTZ — set when admin approves and sends the list
@@ -746,6 +762,15 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - Rate columns: `base_rate_3hr`, `base_rate_4hr`, `extra_hour_rate` (standard + small-event variants)
 - Staffing: `bartenders_included`, `guests_per_bartender`, `extra_bartender_hourly`
 - Bar fees: `first_bar_fee`, `additional_bar_fee`
+- Slots (planner v2): `slot_count` INTEGER NULL + `slot_kind` CHECK (`hard` | `featured` | NULL) — hard = the picks ARE the bar (Base Compound 2); featured = picks headline the menu, the bar improvises (Clear Reaction 4)
+
+**package_items** (planner v2) — structured package contents; one row per stocked category
+- `package_id` FK -> service_packages (CASCADE), `category` ("Tequila"), `par_per_100` NUMERIC, `unit`, `sort_order`
+- `eligible_item_ids` TEXT[] — SPLIT PARS: the listed par_items share the category volume, so extra "for show" labels never multiply cost
+- Coverage: a drink is in-tier when every recipe ingredient resolves (via potionCatalog aliases) to an item in the package's eligible union — computed by `server/utils/coverageEngine.js`, served by `/api/admin/packages/:id/makeability`
+- Lineup CONTENT (spec 2026-07-18 §5) is applied by the one-time `server/scripts/applyPackageLineup2026.js` (lane pp2-lineup), never by boot-path schema UPDATEs — after seed, admin/DB is canonical
+
+**ingredient_class_addons** (planner v2) — gap pricing map: `class_key` PK (snake_case ingredient class, e.g. `coffee_liqueur`) -> `addon_slug` (the service_addons row that prices the gap per guest). Pricing itself stays in service_addons; an uncovered ingredient with no class mapping makes the drink `unmakeable` rather than silently free
 - `includes` (JSONB array of what's included)
 - `service_packages.covered_addon_slugs TEXT[]` — which add-on slugs the hosted
   package's base price already includes. Used by the Potion Planning Lab to
@@ -951,7 +976,7 @@ Weekly Tue–Mon payroll: `pay_periods` (status open → processing → paid, pl
 - `acknowledged_at` TIMESTAMPTZ — set when the assigned staff member texts CONFIRM for the shift (Comms Phase 2 two-way SMS). Lives on the per-(shift, staff) row, not on `shifts`. Index `idx_shift_requests_user_id` on `user_id` supports the inbound-SMS nearest-approved-shift lookup.
 - `beo_acknowledged_at` TIMESTAMPTZ — BEO read-receipt stamp set by `POST /api/beo/:proposalId/acknowledge`. Independent from `acknowledged_at` (shift CONFIRM); a staffer who has CONFIRMed the shift still must open the BEO to acknowledge it. Cleared on Unfinalize, on re-assign (`POST /:id/assign`), on approve-after-deny re-request, on `PUT /requests/:requestId` deny/approve, and on auto-assign promotion — so a stale ack from a prior cycle never carries forward.
 
-**app_settings** — Configurable settings (auto-assign weights, max distance, etc.)
+**app_settings** — Configurable settings (auto-assign weights, max distance, etc.). Planner v2 adds flat scalar keys (value is TEXT; objects would stringify wrong): `shopping_buffer_spirits/mixers/garnish/supplies`, `pour_pace_per_hour`, `pour_split_cocktails/beer/wine` (quantity-engine knobs) and `margin_labor_rate` / `margin_supplies_per_guest` (packages margin defaults)
 - `key` VARCHAR PK, `value` TEXT, `updated_at`
 
 ### Messaging
@@ -1164,6 +1189,8 @@ Located in `client/src/components/ShoppingList/` (frontend) and `server/utils/sh
 - **`shoppingListPars.js`** (client) — 100-guest baseline quantities (single source of truth for standard bar pars)
 - **`generateShoppingList.js`** (client) — Scales pars by `guestCount / 100`, merges signature cocktail ingredients, boosts shared ingredients
 - **`server/utils/shoppingList.js`** — Server-side mirror of `generateShoppingList.js`, used to auto-generate the initial list at submission time. Adds the consult-mode branch (3-state mixers + spirit chip grid) and the `buildGeneratorInputFromConsult()` translator. Must be kept in sync with the client implementation for planner-side fields.
+- **`server/utils/coverageEngine.js`** — Pure drink-vs-package coverage (planner v2): `classify(drink, {eligibleItemIds, catalog, classAddonMap, addonPricing})` and `mocktailAddonFor(count)` (0 -> null, 1 -> pre-batched-mocktail, 2+ -> mocktail-bar; re-derived server-side at submit, never trusted from the client).
+- **`server/utils/quantityEngine.js`** — Pure demand model (planner v2): `computeDemand({guestCount, drinkers, profile, hours, pace, splitDefaults, counts})`; unknown drinkers fall back to 75% of guests; guest-profile nudges the settings default split (45/30/25) by at most ±10 points; even split within a category.
 - **`server/utils/shoppingListGen.js`** — Shared helpers used by both the planner auto-gen path and the consult routes: `resolveCocktailIds()`, `buildPlannerGeneratorInput()`, `buildConsultGeneratorInput()`, and `autoGenerateShoppingList()` (with its strict no-overwrite guard).
 - **`server/utils/shoppingListAddonCoverage.js`** — Pure helper exporting `computeStripSet()`, which maps a plan's active BYOB-support add-on slugs to the shopping-list item names those add-ons cover. `generateShoppingList()` strips that set from its output as a final pass, so items the client already bought as an upgrade are not re-listed for purchase. `signature-mixers-only` and `the-formula` are deferred (their coverage needs per-cocktail ingredient data not yet populated).
 - **`server/routes/drinkPlanConsult.js`** — Admin consult-form routes (`GET/PUT /:id/consult`, `PATCH /:id/shopping-list-source`). Mounted under `/api/drink-plans` alongside the main router.

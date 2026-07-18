@@ -357,8 +357,56 @@ router.get('/preview', auth, requireAdminOrManager, asyncHandler(async (req, res
   res.json({ list });
 }));
 
+// ─── Shared dossier-field validation (cocktails.js + mocktails.js) ───
+// Recipe card v2 (planner v2 spec §4.1): enhancement assignments live ON the
+// drink. Rows: { slug, pitch?, flavors?[] }. undefined/null = "not provided"
+// (COALESCE keeps stored value); [] = explicit clear.
+function validateEnhancements(value) {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length > 10) {
+    throw new ValidationError({ enhancements: 'Must be an array of at most 10 enhancement rows.' });
+  }
+  return value.map((row, i) => {
+    const label = `enhancements[${i}]`;
+    if (typeof row !== 'object' || row === null) {
+      throw new ValidationError({ [label]: 'Each enhancement must be an object.' });
+    }
+    const slug = String(row.slug || '').trim();
+    if (!slug || slug.length > 100) {
+      throw new ValidationError({ [label]: 'Each enhancement needs a slug (100 characters max).' });
+    }
+    const pitch = row.pitch === undefined || row.pitch === null ? '' : String(row.pitch);
+    if (pitch.length > 300) {
+      throw new ValidationError({ [label]: 'Pitch must be 300 characters or fewer.' });
+    }
+    const clean = { slug, pitch };
+    if (row.flavors !== undefined && row.flavors !== null) {
+      if (!Array.isArray(row.flavors) || row.flavors.length > 6
+          || row.flavors.some((f) => typeof f !== 'string' || !f.trim() || f.length > 30)) {
+        throw new ValidationError({ [label]: 'Flavors must be an array of at most 6 short strings.' });
+      }
+      clean.flavors = row.flavors.map((f) => f.trim());
+    }
+    return clean;
+  });
+}
+
+// syrup_id: a syrup catalog id string, null = explicit clear, undefined = not
+// provided. Returns { provided, value } for the CASE-based UPDATE.
+function validateSyrupId(value) {
+  if (value === undefined) return { provided: false, value: null };
+  if (value === null || value === '') return { provided: true, value: null };
+  const id = String(value).trim();
+  if (!id || id.length > 100) {
+    throw new ValidationError({ syrup_id: 'Syrup id must be 100 characters or fewer.' });
+  }
+  return { provided: true, value: id };
+}
+
 module.exports = router;
 module.exports.validateRecipeRows = validateRecipeRows;
 module.exports.assertOverridesResolvable = assertOverridesResolvable;
 module.exports.nextRecipeReview = nextRecipeReview;
 module.exports.sanitizeRequestAliases = sanitizeRequestAliases;
+module.exports.validateEnhancements = validateEnhancements;
+module.exports.validateSyrupId = validateSyrupId;

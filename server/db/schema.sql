@@ -3975,3 +3975,93 @@ ALTER TABLE message_log ADD COLUMN IF NOT EXISTS body_edited BOOLEAN NOT NULL DE
 -- list sits in pending_review. Write-only until the approved-snapshot lane
 -- lands the serve side + backfill (plan 2026-07-18 comms send modal, lane S1).
 ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS shopping_list_approved_snapshot JSONB;
+
+-- ─── Potion Planner v2: package model + drink dossier (spec 2026-07-18) ──────
+-- STRUCTURE only. Package lineup CONTENT (spec §5) is applied by the one-time
+-- script server/scripts/applyPackageLineup2026.js (lane pp2-lineup), never by
+-- boot-path UPDATEs: after initial seed the admin dashboard / DB is canonical
+-- and a re-running UPDATE would clobber admin edits.
+
+-- Which wizard a drink-plan token renders. New tokens issue at 2 (the v2
+-- planner); every pre-existing row is backfilled 1 so in-flight drafts finish
+-- on the legacy wizard untouched (rollout, spec §7). The backfill guard rides
+-- the column add: only a DB that has never seen the column gets the sweep.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'drink_plans' AND column_name = 'planner_version'
+  ) THEN
+    ALTER TABLE drink_plans ADD COLUMN planner_version INTEGER NOT NULL DEFAULT 2;
+    UPDATE drink_plans SET planner_version = 1;
+  END IF;
+END $$;
+
+-- Drink dossier columns (recipe card v2). enhancements rows:
+--   { "slug": "smoked-cocktail-kit", "pitch": "...", "flavors": ["wood","lemon"] }
+-- slug references service_addons.slug (not FK'd: addons are soft-config).
+-- syrup_id references the client syrup catalog id (string, not FK'd: catalog
+-- lives in client/src/data/syrups.js until a future syrup-table migration).
+ALTER TABLE cocktails ADD COLUMN IF NOT EXISTS enhancements JSONB DEFAULT '[]';
+ALTER TABLE cocktails ADD COLUMN IF NOT EXISTS syrup_id VARCHAR(100);
+ALTER TABLE cocktails ADD COLUMN IF NOT EXISTS batchable BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE cocktails ADD COLUMN IF NOT EXISTS hosted_visible BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE mocktails ADD COLUMN IF NOT EXISTS enhancements JSONB DEFAULT '[]';
+ALTER TABLE mocktails ADD COLUMN IF NOT EXISTS syrup_id VARCHAR(100);
+ALTER TABLE mocktails ADD COLUMN IF NOT EXISTS batchable BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE mocktails ADD COLUMN IF NOT EXISTS hosted_visible BOOLEAN NOT NULL DEFAULT true;
+
+-- Par-item unit cost in DOLLARS (margin math is directional, never accounting).
+ALTER TABLE par_items ADD COLUMN IF NOT EXISTS cost NUMERIC(10,2);
+
+-- Structured package contents: one row per stocked category ("Tequila: 4
+-- bottles per 100 guests"), with SPLIT PARS — eligible_item_ids share the
+-- category volume, so listing two tequilas is showmanship, never double cost.
+CREATE TABLE IF NOT EXISTS package_items (
+  id SERIAL PRIMARY KEY,
+  package_id INTEGER NOT NULL REFERENCES service_packages(id) ON DELETE CASCADE,
+  category VARCHAR(100) NOT NULL,
+  par_per_100 NUMERIC(10,2) NOT NULL CHECK (par_per_100 >= 0),
+  unit VARCHAR(50) DEFAULT 'btl',
+  eligible_item_ids TEXT[] NOT NULL DEFAULT '{}',
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_package_items_package ON package_items(package_id);
+
+DROP TRIGGER IF EXISTS update_package_items_updated_at ON package_items;
+CREATE TRIGGER update_package_items_updated_at BEFORE UPDATE ON package_items
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Signature slots: hard (Base Compound: the 2 batched picks ARE the bar) vs
+-- featured (Clear Reaction: 4 headline the menu, the bar improvises beyond).
+ALTER TABLE service_packages ADD COLUMN IF NOT EXISTS slot_count INTEGER;
+ALTER TABLE service_packages ADD COLUMN IF NOT EXISTS slot_kind VARCHAR(20);
+ALTER TABLE service_packages DROP CONSTRAINT IF EXISTS service_packages_slot_kind_check;
+ALTER TABLE service_packages ADD CONSTRAINT service_packages_slot_kind_check
+  CHECK (slot_kind IS NULL OR slot_kind IN ('hard', 'featured'));
+
+-- Gap pricing map: an uncovered ingredient class -> the service_addons row
+-- that prices it per guest. Pricing itself stays in service_addons; this
+-- only maps classes to it (coverageEngine.classify consumes both).
+CREATE TABLE IF NOT EXISTS ingredient_class_addons (
+  class_key VARCHAR(100) PRIMARY KEY,
+  addon_slug VARCHAR(100) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Quantity-engine knobs (flat scalar keys: app_settings.value is TEXT and the
+-- settings PUT String()-coerces; objects would store "[object Object]").
+INSERT INTO app_settings (key, value) VALUES
+  ('shopping_buffer_spirits', '1.25'),
+  ('shopping_buffer_mixers', '1.4'),
+  ('shopping_buffer_garnish', '1.5'),
+  ('shopping_buffer_supplies', '1.25'),
+  ('pour_pace_per_hour', '1.0'),
+  ('pour_split_cocktails', '45'),
+  ('pour_split_beer', '30'),
+  ('pour_split_wine', '25'),
+  ('margin_labor_rate', '35'),
+  ('margin_supplies_per_guest', '1.25')
+ON CONFLICT (key) DO NOTHING;
