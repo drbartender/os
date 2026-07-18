@@ -122,6 +122,8 @@ Copy `.env.example` and fill in values. All variables:
 | `VA_CALL_PER_MIN_CAP` | No | Max triggers accepted per minute (default 5). |
 | `VA_CALL_TIME_LIMIT_SEC` | No | Per-call hard `timeLimit` on both legs (default 1800 = 30 min). |
 | `PENDING_CALL_TTL_SEC` | No | Confirm-before-dial pending-record TTL in seconds (default 120). |
+| `LEAD_CALL_ENABLED` | No | Lead call bridge kill switch: `false` disables the new-lead auto-call trigger entirely (redeploy-free). Default on. |
+| `LEAD_CALL_DAILY_CAP` | No | Max lead-call attempt chains opened per rolling 24h (default 25; toll-fraud backstop). |
 
 The frontend uses one build-time variable set in `client/.env.production`:
 - `REACT_APP_API_URL` — absolute URL to the backend (e.g., `https://os-g7oa.onrender.com`)
@@ -232,7 +234,8 @@ dr-bartender/
 │   │   ├── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
 │   │   ├── thumbtackAgent.js   # Thumbtack email-harvester API (/api/admin/thumbtack): pending-harvest, email-harvested, harvest-failed, rearm. Driven by the box-only agent in thumbtack-agent/
 │   │   ├── venues.js           # Google Places venue search proxy
-│   │   └── voice.js            # Zul VA-calling Twilio Voice webhooks: POST /inbound (forward 224 → VA_CELL), /bridge (look up target by CallSid → Dial 224→target), /status (failed-leg → Telegram notice). isValidTwilioRequest gate + text/xml
+│   │   ├── voice.js            # Zul VA-calling Twilio Voice webhooks: POST /inbound (forward 224 → VA_CELL), /bridge (look up target by CallSid → Dial 224→target), /status (failed-leg → Telegram notice). Signature gate via utils/twilioSignature + text/xml
+│   │   └── voiceLeadCall.js    # Lead call bridge Twilio webhooks (/api/voice/lead): /answer (Gather-wrapped spoken briefing), /digit (press-1 → Dial lead from the 224, press-9 replay), /status (claim-guarded chain advance). Signature FAIL-CLOSED in every env
 │   ├── utils/
 │   │   ├── adminAuditLog.js    # logAdminAction(...) — durable record of admin actions (rotate-token, regenerate-stripe). Best-effort; failures go to Sentry, never block the underlying op
 │   │   ├── adminNotifications.js # notifyAdminCategory(...) — multi-admin notification fan-out by category (joins users.notification_preferences + contractor_profiles for SMS)
@@ -304,6 +307,8 @@ dr-bartender/
 │   │   ├── refundSweepScheduler.js # Stale-pending-refund reconciler (sweepStalePendingRefunds): rows `pending` >30 min w/ NULL stripe_refund_id are matched against stripe.refunds.list (by metadata row-id, then unique amount) → adopt via applyRefundReconciliation, or mark failed if the refund never reached Stripe (gated by RUN_REFUND_PENDING_SWEEP_SCHEDULER)
 │   │   ├── shiftReap.js        # reapShiftsForProposal: soft-cancels a proposal's shifts, denies open shift_requests, suppresses shift-level pending scheduled_messages + BEO nudges, returns per-shift approved/bartender user ids. Extracted from the cancel flow; shared by cancel AND the archive endpoint (M-1 refund-reap)
 │   │   ├── cancellationMath.js # Pure cancellation-refund math (computeCancellationRefund; all CENTS): >14d excess-less-5%-fee + full gratuity, <=14d gratuity-only, DRB full refund
+│   │   ├── leadCallBriefing.js # Pure spoken-briefing builder for the lead call bridge (buildLeadBriefing: name/category/Chicago date/guests/city, TTS-friendly, escaping owned by the TwiML layer)
+│   │   ├── leadCallTrigger.js  # Lead call bridge trigger + chain driver: triggerLeadCall (webhook post-commit tail: window/config/phone-validation/atomic-24h-cap gates, never throws), advanceChain (claim-then-call ring order ADMIN_PHONE → VA_CELL), sendChainEmail (one lead_call admin email per chain)
 │   │   ├── metricsQueries.js   # Pure metrics filter parsing + SQL builders (resolveFilters, dateClause, qMoney, qWinRate, etc.)
 │   │   ├── orientationData.js  # Assembles the booking/receipt/planner payload for the orientation email
 │   │   ├── pendingCall.js      # VA-calling DB helpers: upsertPending, claimForDial (conditional UPDATE claim-then-call), attachCallSid, lookupTargetByCallSid, countPlacedSince (daily/per-min cap), recordAudit, pruneVaCallingRows
@@ -343,6 +348,7 @@ dr-bartender/
 │   │   ├── presenceStore.js    # Presence DB layer: strip payload + lead pointer, transactional transitions/toggle, log totals, id-scoped applyAutoFlip, stampByNudgePhone
 │   │   ├── tipPaymentLinks.js  # Creates/regenerates Stripe Payment Links for bartender tip pages
 │   │   ├── tokens.js           # Canonical public-token shape validation: UUID_RE, isUuid, requireUuidToken(param, message) middleware (404s a non-UUID :token before the DB so it can't cast-throw 22P02 -> 500)
+│   │   ├── twilioSignature.js  # Shared isValidTwilioRequest (Twilio webhook signature check); policy on failure stays per-router (voice.js dev-allows, voiceLeadCall.js fails closed everywhere)
 │   │   ├── urls.js             # Canonical PUBLIC_SITE_URL / ADMIN_URL / STAFF_URL / API_URL resolvers
 │   │   ├── usPhone.js          # US/NANP phone validation: toUsE164, isUsE164 (normalizePhone + strict +1 NANP gate, rejects intl + 900/976) — primary VA-calling toll-fraud control
 │   │   ├── vaCallingScheduler.js # VA-calling scheduler body: pruneVaCallingRows + checkTelegramWebhookHealth (re-runs setTelegramWebhook + emails admin when the webhook is unset or recently errored)
@@ -584,6 +590,11 @@ dr-bartender/
 
 ### Compose-and-Confirm Client Sends
 - Admin-triggered client sends (starting with shopping-list approval) route through a shared compose-and-confirm modal. The admin reviews the server-resolved recipient and available channels, edits the subject and body before anything goes out, then cancels or sends. A Cancel never touches the client record. On send, each channel returns an honest result (for example email sent, SMS failed) instead of one all-or-nothing status, and every attempt writes a `message_log` row recording the sending admin (`sent_by`) and whether the copy was hand-edited (`body_edited`).
+
+### Lead Call Bridge (real-time first-ring)
+- A new in-window (8am-9pm Chicago) Thumbtack lead auto-rings Dallas from the 888 with a spoken briefing (name, event, date/time, guests, city); press 1 bridges to the lead from the 224, press 9 replays, no answer fails over to Zul
+- Missed/failed chains email the `lead_call` category and land in the follow-up log (`lead_call_attempts`); a 20-second bridge floor keeps relay refusals from marking a lead contacted
+- Kill switch `LEAD_CALL_ENABLED=false`; rolling-24h `LEAD_CALL_DAILY_CAP`; lead legs only ever dial `toUsE164`-validated US numbers; overnight leads log only (the auto-draft proposal already answered in-platform)
 
 ### Cal.com Consult Booking Integration
 - **Cal.com consult booking integration**: webhook receiver auto-creates clients on first booking, flips consult status on form-submit, surfaces public booking URL in client comms.

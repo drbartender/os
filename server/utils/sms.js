@@ -54,9 +54,12 @@ async function sendSMS({ to, body, meta }) {
  * @param {string} opts.url            - bridge TwiML URL (/api/voice/bridge)
  * @param {string} opts.statusCallback - status webhook URL (/api/voice/status)
  * @param {number} opts.timeLimit      - per-call cap in seconds
+ * @param {number} [opts.timeout]      - ring seconds before no-answer (Twilio
+ *   default 60). Generic agent-leg use (lead-call bridge dials ADMIN_PHONE /
+ *   VA_CELL with a short ring so failover stays fast); omitted for legacy callers.
  * @returns {Promise<{sid: string}>}   - Twilio call resource, or a dev-skipped stub
  */
-async function placeBridgedCall({ to, callerId, url, statusCallback, timeLimit }) {
+async function placeBridgedCall({ to, callerId, url, statusCallback, timeLimit, timeout }) {
   if (!to) throw new Error('placeBridgedCall recipient (VA_CELL) is required');
   const { client: activeClient, notificationsEnabled: notifEnabled } = _deps;
   if (!activeClient || !notifEnabled()) {
@@ -65,7 +68,10 @@ async function placeBridgedCall({ to, callerId, url, statusCallback, timeLimit }
     console.log(`[DEV] Bridged call skipped (${why}) → ...${String(to).slice(-4)} | url: ${url}`);
     return { sid: `dev-skipped-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` };
   }
-  const call = await activeClient.calls.create({ from: callerId, to, url, statusCallback, timeLimit });
+  const call = await activeClient.calls.create({
+    from: callerId, to, url, statusCallback, timeLimit,
+    ...(timeout ? { timeout } : {}),
+  });
   console.log(`Bridged call placed: ${call.sid} → ...${String(to).slice(-4)}`);
   return call;
 }

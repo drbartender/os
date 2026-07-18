@@ -1818,6 +1818,33 @@ CREATE TABLE IF NOT EXISTS thumbtack_reviews (
 CREATE INDEX IF NOT EXISTS idx_thumbtack_reviews_negotiation
   ON thumbtack_reviews(negotiation_id);
 
+-- Lead call bridge (spec 2026-07-18): one row per Thumbtack lead, created by the
+-- webhook post-commit tail. The row IS the call-chain state machine and the call
+-- log. lead_id UNIQUE is the at-most-once guard under Thumbtack webhook retries.
+CREATE TABLE IF NOT EXISTS lead_call_attempts (
+  id             BIGSERIAL PRIMARY KEY,
+  lead_id        INTEGER NOT NULL UNIQUE REFERENCES thumbtack_leads(id) ON DELETE CASCADE,
+  status         TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending','calling_admin','calling_va',
+                                     'connected','missed','skipped_after_hours',
+                                     'skipped_unconfigured','skipped_invalid_phone',
+                                     'failed')),
+  answered_by    TEXT CHECK (answered_by IN ('admin','va')),
+  admin_call_sid TEXT,
+  va_call_sid    TEXT,
+  admin_call_status TEXT,   -- raw Twilio final status of the admin leg (per-leg disposition survives chain advance)
+  va_call_status    TEXT,
+  bridge_started_at   TIMESTAMPTZ,
+  bridge_duration_sec INTEGER,
+  detail         TEXT,          -- terse machine note: twilio error code, skip reason, 'stale_reaped', 'cap_tripped'
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- The rolling-24h cap count and the needs-attention query both filter on these.
+CREATE INDEX IF NOT EXISTS idx_lead_call_attempts_status_created
+  ON lead_call_attempts(status, created_at);
+
 -- Extend proposal_payments.payment_type CHECK to accept drink-plan payment kinds.
 -- The Stripe webhook inserts payment_type='drink_plan_extras' or 'drink_plan_with_balance'
 -- for Potion Planning Lab payments; the original constraint only allowed deposit/balance/full,
@@ -2478,7 +2505,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_preferences JSONB
     "routine_admin": true,
     "routine_thumbtack": true,
     "routine_hiring": true,
-    "routine_finance": true
+    "routine_finance": true,
+    "lead_call": true
   }'::jsonb;
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS communication_preferences JSONB

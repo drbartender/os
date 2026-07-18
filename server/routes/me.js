@@ -29,6 +29,7 @@ const NOTIFICATION_CATEGORIES = [
   'routine_hiring',
   'routine_finance',
   'stripe_payout_failed',
+  'lead_call',
 ];
 const NOTIFICATION_CATEGORY_SET = new Set(NOTIFICATION_CATEGORIES);
 

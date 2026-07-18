@@ -39,3 +39,13 @@ test('applyNotificationPrefPatch > rejects an empty patch', () => {
 after(async () => {
   await pool.end();
 });
+
+test('applyNotificationPrefPatch > lead_call is a PATCHable category (lead-call bridge)', () => {
+  const merged = applyNotificationPrefPatch({}, { lead_call: false });
+  assert.equal(merged.lead_call, false);
+});
+
+test('NOTIFICATION_CATEGORIES > lists lead_call for the settings screen', () => {
+  const { NOTIFICATION_CATEGORIES } = require('./me');
+  assert.ok(NOTIFICATION_CATEGORIES.includes('lead_call'));
+});

@@ -307,6 +307,7 @@ app.use('/api/public/feedback', require('./routes/publicFeedback'));
 app.use('/api/thumbtack', require('./routes/thumbtack'));
 app.use('/api/sms', require('./routes/sms'));
 app.use('/api/telegram', require('./routes/telegram'));
+app.use('/api/voice/lead', require('./routes/voiceLeadCall')); // more specific mount first
 app.use('/api/voice', require('./routes/voice'));
 app.use('/api/invoices', require('./routes/invoices'));
 

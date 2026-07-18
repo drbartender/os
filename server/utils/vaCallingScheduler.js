@@ -24,12 +24,16 @@
 const telegram = require('./telegram');
 const pendingCall = require('./pendingCall');
 const adminNotifications = require('./adminNotifications');
+const leadCallTrigger = require('./leadCallTrigger');
+const { pool } = require('../db');
 
 let deps = {
   getTelegramWebhookInfo: (...a) => telegram.getTelegramWebhookInfo(...a),
   setTelegramWebhook: (...a) => telegram.setTelegramWebhook(...a),
   pruneVaCallingRows: (...a) => pendingCall.pruneVaCallingRows(...a),
   notifyAdminCategory: (...a) => adminNotifications.notifyAdminCategory(...a),
+  sendLeadCallChainEmail: (...a) => leadCallTrigger.sendChainEmail(...a),
+  pool,
 };
 
 function __setDeps(overrides) {
@@ -60,10 +64,43 @@ function extractResult(info) {
   return info && typeof info === 'object' ? info : {};
 }
 
+// A lead-call chain stranded mid-flight (crash between insert and placement,
+// an undelivered Twilio status callback, a Twilio-side hang) would otherwise
+// sit in pending/calling_* forever and the lead would be silently lost.
+// 30 minutes is comfortably past both the 25s agent rings and the failover
+// hop; a legitimately connected bridge is NEVER reaped ('connected' excluded,
+// it runs to its own timeLimit). Guarded UPDATE: each reaped row surfaces
+// through the standard failed-chain email + needs-attention path.
+const LEAD_CALL_STALE_MINUTES = 30;
+
+async function reapStaleLeadCallAttempts() {
+  const reaped = await deps.pool.query(
+    `UPDATE lead_call_attempts
+     SET status = 'failed', detail = 'stale_reaped', updated_at = NOW()
+     WHERE status IN ('pending', 'calling_admin', 'calling_va')
+       AND created_at < NOW() - INTERVAL '${LEAD_CALL_STALE_MINUTES} minutes'
+     RETURNING id`
+  );
+  for (const row of reaped.rows) {
+    // Claim winner by construction (the UPDATE above is the claim).
+    await deps.sendLeadCallChainEmail({ attemptId: Number(row.id), reason: 'call failed' });
+  }
+  return reaped.rowCount;
+}
+
 // Delegates to Task 5's pendingCall.pruneVaCallingRows(); re-exposed as the
-// single VA-calling prune entry point for index.js.
+// single VA-calling prune entry point for index.js. The lead-call stale reap
+// rides the same hourly pass (spec 2026-07-18 section 4.5); its failure must
+// not mask the prune (and vice versa), so it is guarded separately.
 async function pruneVaCallingRows() {
-  return deps.pruneVaCallingRows();
+  const n = await deps.pruneVaCallingRows();
+  try {
+    const reaped = await reapStaleLeadCallAttempts();
+    if (reaped > 0) console.log(`[vaCallingScheduler] reaped ${reaped} stale lead-call attempt(s)`);
+  } catch (err) {
+    console.error('[vaCallingScheduler] lead-call stale reap failed:', err.message);
+  }
+  return n;
 }
 
 async function checkTelegramWebhookHealth() {
@@ -112,4 +149,4 @@ async function checkTelegramWebhookHealth() {
   return { healthy: false, reset: true, setResult };
 }
 
-module.exports = { pruneVaCallingRows, checkTelegramWebhookHealth, __setDeps };
+module.exports = { pruneVaCallingRows, reapStaleLeadCallAttempts, checkTelegramWebhookHealth, __setDeps };

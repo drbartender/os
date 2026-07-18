@@ -69,6 +69,33 @@ test('placeBridgedCall > with a stubbed client and notifications on, passes thro
   });
 });
 
+test('placeBridgedCall > optional timeout reaches calls.create; omitted timeout stays omitted', async () => {
+  let captured = null;
+  __setSmsDeps({
+    client: { calls: { create: async (opts) => { captured = opts; return { sid: 'CA_test_456' }; } } },
+    notificationsEnabled: () => true,
+  });
+
+  await placeBridgedCall({
+    to: '+15551234567',
+    callerId: '+18885550000',
+    url: 'https://example.test/api/voice/lead/answer',
+    statusCallback: 'https://example.test/api/voice/lead/status',
+    timeLimit: 1800,
+    timeout: 25,
+  });
+  assert.strictEqual(captured.timeout, 25);
+
+  await placeBridgedCall({
+    to: '+15551234567',
+    callerId: '+18885550000',
+    url: 'u',
+    statusCallback: 's',
+    timeLimit: 1800,
+  });
+  assert.strictEqual('timeout' in captured, false, 'omitted timeout must not appear in calls.create opts');
+});
+
 test('placeBridgedCall > throws when `to` is missing (mirrors sendSMS)', async () => {
   await assert.rejects(
     () => placeBridgedCall({ callerId: '+12242220082', url: 'u', statusCallback: 's', timeLimit: 1800 }),

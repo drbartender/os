@@ -78,4 +78,21 @@ function chicagoYmdOf(value) {
   return `${y}-${m}-${d}`;
 }
 
-module.exports = { eventLocalToUtc, chicagoTodayYmd, chicagoYmdOf };
+/**
+ * The wall-clock hour (0-23) in America/Chicago of a given instant.
+ * DST-safe and server-tz-independent, same Intl pattern as chicagoYmdOf.
+ * Used for business-hours window checks (e.g. the lead-call 8am-9pm gate).
+ *
+ * @param {Date} [now] instant to read; defaults to the current time
+ * @returns {number} 0-23
+ */
+function chicagoHourNow(now = new Date()) {
+  const part = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    hour: 'numeric',
+    hourCycle: 'h23',
+  }).formatToParts(now).find((p) => p.type === 'hour').value;
+  return Number(part);
+}
+
+module.exports = { eventLocalToUtc, chicagoTodayYmd, chicagoYmdOf, chicagoHourNow };

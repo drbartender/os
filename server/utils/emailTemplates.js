@@ -498,6 +498,34 @@ function newThumbtackLeadAdmin({ customerName, customerPhone, category, descript
   };
 }
 
+// ─── Lead call bridge: missed / failed chain alert ───────────────
+
+function missedLeadCallAdmin({ customerName, category, eventDate, guestCount, locationCity, reason, adminUrl, proposalUrl }) {
+  const name = esc(customerName || 'Thumbtack lead');
+  const why = esc(reason || 'missed');
+  const dateStr = eventDate ? new Date(eventDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/Chicago' }) : 'Not specified';
+  const cta = proposalUrl ? ctaButton(proposalUrl, 'Open Proposal') : (adminUrl ? ctaButton(adminUrl, 'View Client') : '');
+
+  return {
+    subject: `Lead call ${why}: ${esc(customerName || 'Thumbtack lead')}`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Lead call ${why}</h2>
+      <p style="background:#fff3cd;border:1px solid #ffc107;padding:12px;border-radius:6px;font-weight:bold;">
+        Nobody connected with this Thumbtack lead by phone. Call them back when you can; the auto-draft proposal already went out.
+      </p>
+      <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:120px;">Name</td><td style="padding:8px 12px;">${name}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Category</td><td style="padding:8px 12px;">${esc(category || 'N/A')}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Event Date</td><td style="padding:8px 12px;">${esc(dateStr)}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Guests</td><td style="padding:8px 12px;">${guestCount ? esc(String(guestCount)) : 'N/A'}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">City</td><td style="padding:8px 12px;">${esc(locationCity || 'N/A')}</td></tr>
+      </table>
+      ${cta}
+    `),
+    text: `Lead call ${reason || 'missed'}: ${customerName || 'Thumbtack lead'}. ${category || 'N/A'}, ${dateStr}, ${guestCount || 'N/A'} guests, ${locationCity || 'N/A'}. Call them back when you can.${proposalUrl ? ` Proposal: ${proposalUrl}` : ''}${!proposalUrl && adminUrl ? ` Client: ${adminUrl}` : ''}`,
+  };
+}
+
 function newThumbtackReviewAdmin({ reviewerName, rating, reviewText }) {
   const name = esc(reviewerName || 'A customer');
   const stars = rating !== null && rating !== undefined ? '★'.repeat(Math.round(rating)) + '☆'.repeat(5 - Math.round(rating)) : 'N/A';
@@ -787,6 +815,7 @@ module.exports = {
   ...require('./staffHiringEmailTemplates'),
   abandonedQuote,
   newThumbtackLeadAdmin,
+  missedLeadCallAdmin,
   newThumbtackReviewAdmin,
   // Tip-page feedback
   tipFeedbackAdminNotification,

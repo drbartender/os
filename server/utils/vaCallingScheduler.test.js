@@ -3,7 +3,7 @@ const { test, before, after, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const scheduler = require('./vaCallingScheduler');
-const { checkTelegramWebhookHealth, pruneVaCallingRows, __setDeps } = scheduler;
+const { checkTelegramWebhookHealth, pruneVaCallingRows, reapStaleLeadCallAttempts, __setDeps } = scheduler;
 
 // Sentinel ids so the DB prune test never touches real rows on the shared dev DB.
 const U_EXPIRED = 999000801;
@@ -169,4 +169,52 @@ test('pruneVaCallingRows: deletes expired/old rows, leaves fresh rows', async ()
     [AUDIT_TRIGGER]
   );
   assert.equal(audit.rows[0].n, 0, 'old call_audit pruned');
+});
+
+// ─── lead-call stale reaper (spec 2026-07-18 §4.5) ───────────────
+
+test('reapStaleLeadCallAttempts: reaps only stale non-terminal rows, never connected, emails each', async () => {
+  const RUN = `vcs-reap-${Date.now()}`;
+  const emails = [];
+  __setDeps({ pool, sendLeadCallChainEmail: async (args) => { emails.push(args); } });
+
+  const mkLead = async (i) => (await pool.query(
+    `INSERT INTO thumbtack_leads (negotiation_id, customer_name, customer_phone, raw_payload)
+     VALUES ($1, 'Reap Test', '+17735550100', '{}'::jsonb) RETURNING id`, [`${RUN}-${i}`]
+  )).rows[0].id;
+  const mkAttempt = async (leadId, status, ageMinutes) => (await pool.query(
+    `INSERT INTO lead_call_attempts (lead_id, status, created_at)
+     VALUES ($1, $2, NOW() - ($3 || ' minutes')::interval) RETURNING id`, [leadId, status, ageMinutes]
+  )).rows[0].id;
+
+  try {
+    const stalePending = await mkAttempt(await mkLead('p'), 'pending', 45);
+    const staleAdmin = await mkAttempt(await mkLead('a'), 'calling_admin', 45);
+    const staleVa = await mkAttempt(await mkLead('v'), 'calling_va', 45);
+    const freshAdmin = await mkAttempt(await mkLead('f'), 'calling_admin', 10);
+    const staleConnected = await mkAttempt(await mkLead('c'), 'connected', 45);
+    const staleMissed = await mkAttempt(await mkLead('m'), 'missed', 45);
+
+    const reapedHere = [stalePending, staleAdmin, staleVa].map(Number);
+    await reapStaleLeadCallAttempts();
+
+    const rows = await pool.query(
+      `SELECT id, status, detail FROM lead_call_attempts WHERE id = ANY($1)`,
+      [[stalePending, staleAdmin, staleVa, freshAdmin, staleConnected, staleMissed]]
+    );
+    const byId = Object.fromEntries(rows.rows.map(r => [Number(r.id), r]));
+    for (const id of reapedHere) {
+      assert.equal(byId[id].status, 'failed', `stale row ${id} reaped`);
+      assert.equal(byId[id].detail, 'stale_reaped');
+    }
+    assert.equal(byId[Number(freshAdmin)].status, 'calling_admin', 'fresh row untouched (30-minute floor)');
+    assert.equal(byId[Number(staleConnected)].status, 'connected', 'a live bridge is NEVER reaped');
+    assert.equal(byId[Number(staleMissed)].status, 'missed', 'terminal rows untouched');
+
+    const emailedIds = emails.map(e => e.attemptId).filter(id => reapedHere.includes(id));
+    assert.equal(emailedIds.length, 3, 'one email per reaped row (of this run)');
+    assert.ok(emails.filter(e => reapedHere.includes(e.attemptId)).every(e => e.reason === 'call failed'));
+  } finally {
+    await pool.query(`DELETE FROM thumbtack_leads WHERE negotiation_id LIKE $1`, [`${RUN}-%`]);
+  }
 });

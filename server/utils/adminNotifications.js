@@ -19,6 +19,7 @@ const VALID_CATEGORIES = new Set([
   'routine_hiring',
   'routine_finance',
   'stripe_payout_failed',
+  'lead_call',
 ]);
 
 /**

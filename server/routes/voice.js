@@ -1,7 +1,7 @@
 const express = require('express');
-const twilio = require('twilio');
 const Sentry = require('@sentry/node');
 const { xmlEscape } = require('../utils/xmlEscape');
+const { isValidTwilioRequest } = require('../utils/twilioSignature');
 const { lookupTargetByCallSid, claimDeadLegAudit, releaseDeadLegAudit } = require('../utils/pendingCall');
 const { sendTelegramMessage } = require('../utils/telegram');
 
@@ -31,25 +31,9 @@ const inboundForwardLimiter = rateLimit({
   },
 });
 
-/**
- * Verify an inbound request is genuinely from Twilio. Copied verbatim from
- * server/routes/sms.js (isValidTwilioRequest, lines 30-42): validateRequest
- * hashes the public URL + sorted POST params with the account auth token.
- * Any throw is treated as "invalid".
- */
-function isValidTwilioRequest(req) {
-  try {
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-    if (!authToken) return false;
-    const signature = req.headers['x-twilio-signature'];
-    if (!signature) return false;
-    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-    return twilio.validateRequest(authToken, signature, url, req.body || {});
-  } catch (err) {
-    console.warn('[voice] signature verification threw:', err.message);
-    return false;
-  }
-}
+// isValidTwilioRequest moved to server/utils/twilioSignature.js so the
+// lead-call webhooks (voiceLeadCall.js) share the check without importing a
+// router. Policy on failure stays here (passesSignature: prod 403, dev allow).
 
 // Dependency-injection seam for tests (mirrors server/utils/sms.js:57-58
 // __setSmsDeps). Lets unit tests stub the signature gate + DB/Telegram calls

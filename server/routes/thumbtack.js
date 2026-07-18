@@ -8,11 +8,12 @@ const { ADMIN_URL } = require('../utils/urls');
 const { findOrCreateClient } = require('../utils/clientDedup');
 const { safeEqual } = require('../utils/secrets');
 const { createDraftProposalFromLead } = require('../utils/thumbtackProposalDraft');
+const { triggerLeadCall } = require('../utils/leadCallTrigger');
 
 // Test seam: lets thumbtack.test.js stub the draft builder to throw and prove
 // the webhook still 200s with the lead persisted, and count notifyAdminCategory
 // calls to prove the in-flight-duplicate heal gate does not double-notify.
-let _deps = { createDraftProposalFromLead, notifyAdminCategory };
+let _deps = { createDraftProposalFromLead, notifyAdminCategory, triggerLeadCall };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 const asyncHandler = require('../middleware/asyncHandler');
 
@@ -296,7 +297,7 @@ function parseReview(body) {
 // proposal + admin notification. Extracted so the duplicate-heal path (a
 // crash-after-commit strand) can re-run the exact same steps. Never throws; each
 // step is independently guarded. Returns the draft proposalId (or null).
-async function runPostCommitSteps({ lead, clientId }) {
+async function runPostCommitSteps({ lead, clientId, leadId }) {
   // Auto-create a Core Reaction draft proposal (best-effort). A failure here must
   // NOT surface to the webhook. Idempotent on the lead's existing proposal_id.
   let proposalId = null;
@@ -340,6 +341,21 @@ async function runPostCommitSteps({ lead, clientId }) {
       });
     }
     console.error('Thumbtack admin notification failed (non-blocking):', emailErr);
+  }
+
+  // Lead call bridge (non-blocking): open the ring chain for this lead.
+  // triggerLeadCall is internally never-throw and at-most-once per lead
+  // (lead_call_attempts.lead_id UNIQUE), so the heal path re-running this is
+  // safe; the belt here keeps a require-time regression from 500ing the tail.
+  try {
+    await _deps.triggerLeadCall({ lead, leadId });
+  } catch (callErr) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(callErr, {
+        tags: { webhook: 'thumbtack', step: 'lead-call' },
+      });
+    }
+    console.error('Thumbtack lead-call trigger failed (non-blocking):', callErr);
   }
 
   return proposalId;
@@ -414,7 +430,7 @@ router.post('/leads', asyncHandler(async (req, res) => {
         // nothing below touches dbClient; runPostCommitSteps takes no client.
         dbClient.release();
         released = true;
-        await runPostCommitSteps({ lead, clientId: row.client_id });
+        await runPostCommitSteps({ lead, clientId: row.client_id, leadId: row.id });
         return res.status(200).json({ status: 'healed' });
       }
       console.log(`Thumbtack lead ${lead.negotiationId} already exists — skipping`);
@@ -432,14 +448,16 @@ router.post('/leads', asyncHandler(async (req, res) => {
       });
     }
 
-    // Insert the Thumbtack lead
-    await dbClient.query(
+    // Insert the Thumbtack lead. RETURNING id feeds the lead-call trigger in the
+    // post-commit tail (lead_call_attempts.lead_id FK).
+    const leadInsert = await dbClient.query(
       `INSERT INTO thumbtack_leads (
         negotiation_id, client_id, customer_id, customer_name, customer_phone,
         category, description, location_city, location_state, location_zip,
         location_address, event_date, event_duration, guest_count, lead_type,
         lead_price, charge_state, budget_min, budget_max, budget_raw, raw_payload
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+      RETURNING id`,
       [
         lead.negotiationId, clientId, lead.customerId, truncate(lead.customerName, 255),
         truncate(lead.customerPhone, 50), truncate(lead.category, 255), truncate(lead.description),
@@ -450,6 +468,7 @@ router.post('/leads', asyncHandler(async (req, res) => {
         JSON.stringify(body),
       ]
     );
+    const leadRowId = leadInsert.rows[0].id;
 
     // Thumbtack never sends the customer email. If this client has no email yet,
     // flag it for the email harvester to fill in. Guarded so it only flips
@@ -476,7 +495,7 @@ router.post('/leads', asyncHandler(async (req, res) => {
 
     // Post-commit side effects (best-effort draft + admin notification). A
     // failure here must NOT roll back lead capture or 500 the webhook.
-    await runPostCommitSteps({ lead, clientId });
+    await runPostCommitSteps({ lead, clientId, leadId: leadRowId });
 
     res.status(200).json({ status: 'ok' });
   } catch (err) {

@@ -307,3 +307,5 @@ See `.env.example` for the full list. Key ones:
 | `RUN_PRESENCE_SCHEDULER` | Optional. Set to `false` to disable the presence stale-desk nudge / auto-flip sweep. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `VA_CALL_DAILY_CAP` / `VA_CALL_PER_MIN_CAP` | Toll-fraud spend caps: max calls placed per rolling 24h (default 40, DB-backed by counting `call_audit`) and max triggers accepted per minute (default 5). On trip the bot tells Zul and no call is placed. |
 | `VA_CALL_TIME_LIMIT_SEC` / `PENDING_CALL_TTL_SEC` | Per-call hard `timeLimit` on both call legs (default 1800 = 30 min) and confirm-before-dial pending-record TTL (default 120s). |
+| `LEAD_CALL_ENABLED` | Lead call bridge kill switch: `false` disables the new-Thumbtack-lead auto-call trigger entirely (redeploy-free, `HARVESTER_ENABLED` precedent). Default on — set `false` in Render BEFORE the feature's first deploy (ship dark until the live relay test passes). |
+| `LEAD_CALL_DAILY_CAP` | Max lead-call attempt chains opened per rolling 24h (default 25). Toll-fraud backstop for the lead call bridge; normal volume is ~2-3 leads/day. |

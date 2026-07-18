@@ -517,3 +517,59 @@ after(async () => {
   await new Promise(r => server.close(r));
   await pool.end();
 });
+
+// ─── Lead call bridge wiring (post-commit tail step 3) ───────────
+
+test('lead-call trigger: normal path passes the inserted row id; a trigger throw still 200s', async () => {
+  const calls = [];
+  thumbtackRouter.__setDeps({
+    createDraftProposalFromLead: async () => null,
+    triggerLeadCall: async (args) => { calls.push(args); },
+  });
+  const neg = `test-leadcall-${Date.now()}`;
+  created.negotiationIds.push(neg);
+  const res = await postLead(neg);
+  assert.equal(res.status, 200);
+  const row = await pool.query('SELECT id, client_id FROM thumbtack_leads WHERE negotiation_id = $1', [neg]);
+  if (row.rows[0].client_id) created.clientIds.push(row.rows[0].client_id);
+  assert.equal(calls.length, 1, 'trigger fires once per captured lead');
+  assert.equal(calls[0].leadId, row.rows[0].id, 'the inserted PK is threaded through');
+  assert.ok(calls[0].lead && calls[0].lead.customerPhone, 'the parsed lead rides along');
+
+  thumbtackRouter.__setDeps({ triggerLeadCall: async () => { throw new Error('boom'); } });
+  const neg2 = `test-leadcall2-${Date.now()}`;
+  created.negotiationIds.push(neg2);
+  const res2 = await postLead(neg2);
+  assert.equal(res2.status, 200);
+  assert.equal(res2.body.status, 'ok', 'a trigger throw never changes webhook semantics');
+  const row2 = await pool.query('SELECT id, client_id FROM thumbtack_leads WHERE negotiation_id = $1', [neg2]);
+  assert.ok(row2.rows[0], 'lead persisted despite the trigger throw');
+  if (row2.rows[0].client_id) created.clientIds.push(row2.rows[0].client_id);
+  thumbtackRouter.__setDeps({ triggerLeadCall: require('../utils/leadCallTrigger').triggerLeadCall });
+});
+
+test('lead-call trigger: the heal path passes the existing row id', async () => {
+  const calls = [];
+  thumbtackRouter.__setDeps({
+    createDraftProposalFromLead: async () => null,
+    triggerLeadCall: async (args) => { calls.push(args); },
+  });
+  const neg = `test-leadcall-heal-${Date.now()}`;
+  created.negotiationIds.push(neg);
+  await postLead(neg);
+  const l1 = await pool.query('SELECT id, client_id FROM thumbtack_leads WHERE negotiation_id = $1', [neg]);
+  const leadRowId = l1.rows[0].id;
+  if (l1.rows[0].client_id) created.clientIds.push(l1.rows[0].client_id);
+
+  // Backdate outside the in-flight window so redelivery is heal-eligible.
+  await pool.query("UPDATE thumbtack_leads SET created_at = NOW() - INTERVAL '20 minutes' WHERE negotiation_id = $1", [neg]);
+  calls.length = 0;
+  thumbtackRouter.__setDeps({ createDraftProposalFromLead }); // real builder so the heal completes
+  const second = await postLead(neg);
+  assert.equal(second.body.status, 'healed');
+  const l2 = await pool.query('SELECT proposal_id FROM thumbtack_leads WHERE negotiation_id = $1', [neg]);
+  if (l2.rows[0].proposal_id) created.proposalIds.push(l2.rows[0].proposal_id);
+  assert.equal(calls.length, 1, 'heal re-fires the trigger');
+  assert.equal(calls[0].leadId, leadRowId, 'heal threads the existing row id');
+  thumbtackRouter.__setDeps({ triggerLeadCall: require('../utils/leadCallTrigger').triggerLeadCall });
+});

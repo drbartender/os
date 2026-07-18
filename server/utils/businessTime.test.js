@@ -1,6 +1,6 @@
 const { test, mock } = require('node:test');
 const assert = require('node:assert/strict');
-const { eventLocalToUtc, chicagoTodayYmd } = require('./businessTime');
+const { eventLocalToUtc, chicagoTodayYmd, chicagoHourNow } = require('./businessTime');
 
 // ─── eventLocalToUtc ─────────────────────────────────────────────
 // Pure: a calendar date + Chicago wall-clock time -> the correct UTC instant,
@@ -75,4 +75,26 @@ test('chicagoTodayYmd > daytime after fall-back returns the same UTC day (CST)',
   } finally {
     mock.timers.reset();
   }
+});
+
+// ─── chicagoHourNow ──────────────────────────────────────────────
+// The lead-call window gate reads this; DST correctness is load-bearing
+// (a fixed UTC offset would shift the window an hour twice a year).
+
+test('chicagoHourNow > standard time (CST, UTC-6): 03:30Z is 21:30 Chicago', () => {
+  assert.equal(chicagoHourNow(new Date('2026-01-15T03:30:00Z')), 21);
+});
+
+test('chicagoHourNow > daylight time (CDT, UTC-5): 13:30Z is 08:30 Chicago', () => {
+  assert.equal(chicagoHourNow(new Date('2026-06-15T13:30:00Z')), 8);
+});
+
+test('chicagoHourNow > midnight hour renders as 0 (h23, never 24)', () => {
+  // 06:10Z in July is 01:10 CDT; 05:10Z is 00:10 CDT.
+  assert.equal(chicagoHourNow(new Date('2026-06-15T05:10:00Z')), 0);
+});
+
+test('chicagoHourNow > no-arg form returns an integer hour in range', () => {
+  const h = chicagoHourNow();
+  assert.ok(Number.isInteger(h) && h >= 0 && h <= 23);
 });

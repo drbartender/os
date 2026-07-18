@@ -416,6 +416,13 @@ Read-side mirror of Stripe payouts + balance-transaction lines (`server/routes/s
 | POST | `/bridge` | Twilio signature | Fetched when Zul answers her leg. Looks up the target by `CallSid` from `pending_call` (never from a request param); returns `<Dial answerOnBridge="true" callerId="+12242220082" timeLimit="…"><Number>+1TARGET</Number></Dial>`, or a `<Say>…</Say><Hangup/>` when no target is found. |
 | POST | `/status` | Twilio signature | Twilio call-status callback. On a failed/unanswered leg (`no-answer`/`busy`/`failed`/`canceled`) messages Zul via Telegram ("That call didn't connect, resend the number to retry.") + records `call_audit`. Always empty 200/204. |
 
+### Lead Call Bridge — Twilio Voice — `/api/voice/lead`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/answer` | Twilio signature (fail-closed in EVERY env) | Agent leg answered (Dallas/Zul). Returns `<Gather numDigits="1" timeout="10">` wrapping the spoken lead briefing (`buildLeadBriefing`, xml-escaped), one automatic repeat, then `<Hangup/>`. Missing/terminal/malformed attempt → apology TwiML, never 500. Query: `attempt`, `leg` (admin\|va), `play`. |
+| POST | `/digit` | Twilio signature (fail-closed in EVERY env) | Gather action. `1`: guarded claim to `connected` then `<Dial answerOnBridge="true" callerId="VOICE_CALLER_ID"><Number>toUsE164(lead phone)</Number></Dial>` (the 224 shown to the lead; stale/duplicate press → apology). `9`: replay via `<Redirect>` (max 3 plays). Other: `<Hangup/>`. |
+| POST | `/status` | Twilio signature (fail-closed in EVERY env) | Status callback for all legs, at-least-once tolerant. Admin-leg terminal → record disposition + `advanceChain` (claims `calling_va`, winner dials Zul). VA-leg terminal → guarded `missed` + one `lead_call` admin email. Lead-leg terminal → `bridge_duration_sec` (defensive parse) and flips `thumbtack_leads.status` to `contacted` only at ≥20s bridge (relay-refusal floor). Non-terminal/unknown statuses ignored. |
+
 ### VA Calling — Telegram Trigger — `/api/telegram`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -1242,6 +1249,15 @@ Admin entry points: "Shopping List" button on Drink Plan Detail (visible wheneve
 - `lead_type`, `lead_price`, `charge_state` — Thumbtack billing info
 - `status`: new | contacted | converted | lost
 - `raw_payload` JSONB — full original webhook body
+
+**lead_call_attempts** — Lead call bridge: one row per lead, the ring-chain state machine AND the call log (spec 2026-07-18)
+- `id` BIGSERIAL PK, `lead_id` INTEGER UNIQUE FK → thumbtack_leads (`ON DELETE CASCADE`) — the UNIQUE is the at-most-once guard under webhook retries
+- `status`: pending | calling_admin | calling_va | connected | missed | skipped_after_hours | skipped_unconfigured | skipped_invalid_phone | failed
+- `answered_by` (admin | va), `admin_call_sid` / `va_call_sid`, `admin_call_status` / `va_call_status` (raw Twilio per-leg dispositions; survive chain advance)
+- `bridge_started_at`, `bridge_duration_sec` (lead-leg CallDuration; ≥20s flips the lead to `contacted`)
+- `detail` TEXT — terse machine note: twilio error code, skip reason, `stale_reaped`, `cap_tripped`
+- Index `idx_lead_call_attempts_status_created` (status, created_at) serves the rolling-24h cap count and the needs-attention query
+- Writers: `leadCallTrigger.js` (open/skip/cap + claim-then-call chain driver), `voiceLeadCall.js` (press-1 claim, status advances), `vaCallingScheduler.js` (30-min stale reap → failed/`stale_reaped`)
 
 **thumbtack_messages** — Messages from Thumbtack conversation threads
 - `id` SERIAL PK, `message_id` VARCHAR UNIQUE
