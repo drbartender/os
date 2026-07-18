@@ -47,3 +47,6 @@ client/.claude/
 
 # Claude agent memory written by subagents launched with a nested CWD (ui-ux-reviewer etc.)
 client/src/.claude/
+
+# One-time lineup script rollback snapshots (runtime rollback artifacts, not source)
+server/scripts/lineup-snapshot-*.json

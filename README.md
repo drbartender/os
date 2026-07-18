@@ -369,6 +369,7 @@ dr-bartender/
 │   │   ├── webhookEventsPruneScheduler.js # Hourly prune of `webhook_events` to a 30-day window (gated by RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER)
 │   │   └── xmlEscape.js        # Shared TwiML XML escaper (& < >); used by the SMS + voice routes
 │   └── scripts/
+│       ├── applyPackageLineup2026.js # One-time: apply the owner-decided 2026-07-18 package lineup (spec §5) as CONTENT — service_packages flags/slots, package_items rows, missing branded par_items, ingredient_class_addons map. Snapshots prior state for rollback; idempotent; --dry-run. NOT boot-path.
 │       ├── backfillExtrasInvoices.js # One-off: create the "Drink Plan Extras" invoice for an abandoned pay-now PI + cancel stale PIs (idempotent, --dry-run)
 │       ├── backfillStripePayouts.js # One-off: full Stripe payout history into the read-side mirror via sweep() (idempotent; aborts in test mode)
 │       ├── backfillTipPages.js # One-shot backfill: ensure every active bartender has a tip page row + Stripe link

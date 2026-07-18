@@ -68,7 +68,6 @@ export const PACKAGES = [
           'Bacardi Superior Rum – Light-bodied, mix-friendly, and a tropical workhorse.',
           'Jim Beam Bourbon – Warm, familiar, and built for high-volume mixing. America\'s top-selling bourbon for a reason.',
           'Margaritaville Tequila – Crisp and citrusy, great for sours and spritzes.',
-          'Dewar\'s Scotch – A smooth blend with notes of honey and smoke, good for sipping or mixing.',
         ],
       },
       {
@@ -86,6 +85,7 @@ export const PACKAGES = [
           'Coke, Diet Coke, and Sprite – The carbonated backbone of most casual cocktails.',
           'Soda Water & Tonic – For lifting, stretching, and expanding spirit flavor profiles.',
           'Cranberry, Orange & Pineapple Juices – Tart and sweet staples, useful in everything from brunch bombs to nightcap hacks.',
+          'Simple Syrup & Bitters – Sweet balance and aromatic depth, so an Old Fashioned comes together right.',
         ],
       },
       {
@@ -112,7 +112,6 @@ export const PACKAGES = [
           'Bacardi Superior Rum – Crystal clear and ready to disappear into every tropical recipe you throw at it.',
           'Jim Beam Bourbon – Classic Kentucky profile: approachable, warm, and bourbon-purist approved.',
           '1800 Blanco Tequila – Crisp, clean, and balanced, smooth enough for sipping, sharp enough for margaritas.',
-          'Johnnie Walker Red Scotch – Peat light, smoke soft. A beginner\'s blend that still plays well in cocktails.',
         ],
       },
       {
@@ -120,7 +119,7 @@ export const PACKAGES = [
         items: [
           'Yuengling Lager – Amber, easy-drinking, and secretly America\'s oldest brewery.',
           'Miller Lite & Michelob Ultra – Crowd favorites with a reputation for going the distance.',
-          'Two Red Wines & Two White Wines – Handpicked to suit the event\'s setting, food, and flavor profile.',
+          'One Red Wine & One White Wine – Handpicked to suit the event\'s setting, food, and flavor profile.',
           'Sparkling Wine – For bubbles, toasts, or the guests who just like a little fizz.',
         ],
       },
@@ -128,7 +127,7 @@ export const PACKAGES = [
         heading: 'Mixers & Modifiers',
         items: [
           'Coke, Diet Coke, and Sprite – Your foundational fizz trio.',
-          'Ginger Ale, Club Soda, Tonic – Balanced carbonation with attitude.',
+          'Club Soda & Tonic – Balanced carbonation with attitude.',
           'Orange Juice, Cranberry Juice, Pineapple Juice – The sweet acids that do all the heavy lifting.',
           'Simple Syrup, Lemon Juice, Lime Juice, Bitters – Core modifiers for balancing, brightening, or deepening flavor.',
         ],
@@ -170,8 +169,9 @@ export const PACKAGES = [
         heading: 'Mixers & Modifiers',
         items: [
           'Coke, Diet Coke, Sprite – Just the essentials.',
-          'Ginger Ale, Soda, Tonic – Versatile bases for the spirits in play.',
+          'Soda & Tonic – Versatile bases for the spirits in play.',
           'Orange, Cranberry & Pineapple Juices – Sweet-tart fundamentals for builds that need a punch.',
+          'Lemon Juice & Lime Juice – Fresh citrus for margaritas, sours, and anything that needs a bright edge.',
           'Simple Syrup & Bitters – Sweet balance meets subtle depth. Cocktail chemistry in microdoses.',
         ],
       },
@@ -200,7 +200,7 @@ export const PACKAGES = [
           'Appleton Estate Rum – Bold, aged Jamaican rum with earthy depth and molasses firepower.',
           'Casamigos Tequila – Sleek, modern agave spirit with a soft vanilla finish.',
           'Milagro Reposado Tequila – Aged agave with soft oak and caramel notes. Smooth, balanced, and built for refined palates.',
-          'Bulleit Bourbon – Spicy, oaky, and engineered for bold classic builds.',
+          'Maker\'s Mark Bourbon – Wheated and soft, a mellow, rounded backbone for Old Fashioneds and whiskey sours.',
           'Jameson Irish Whiskey – Triple-distilled crowd-pleaser with honeyed grain and just a touch of green apple.',
           'Monkey Shoulder Scotch – A mellow, malty blend with enough backbone to hold its own in a Rob Roy or rusty nail.',
         ],
@@ -266,36 +266,6 @@ export const PACKAGES = [
     serviceIncludes: SERVICE_INCLUDES,
   },
   {
-    id: 'the-refined-reaction',
-    name: 'The Refined Reaction',
-    category: 'beer-wine',
-    tagline: 'Polished. Sophisticated. Still streamlined.',
-    description: 'A polished experiment in crowd-pleasing sophistication. Still streamlined, but with a noticeable bump in quality, perfect for weddings, cocktail hours, and milestone celebrations.',
-    sections: [
-      {
-        heading: 'Beer',
-        items: [
-          'Stella Artois – Belgian crispness with a refined finish.',
-          'Corona Extra – Refreshing, smooth, and sunshine in a bottle (lime optional, but encouraged).',
-        ],
-      },
-      {
-        heading: 'Wine',
-        items: [
-          'One Red & One White – Thoughtfully selected for balance, body, and universal appeal.',
-          'Sparkling Wine – A celebratory control variable: bubbles guaranteed.',
-        ],
-      },
-      {
-        heading: 'Non-Alcoholic',
-        items: [
-          'Bottled Water – Simple, pure, and refreshingly straightforward.',
-        ],
-      },
-    ],
-    serviceIncludes: SERVICE_INCLUDES,
-  },
-  {
     id: 'the-carbon-suspension',
     name: 'The Carbon Suspension',
     category: 'beer-wine',
@@ -314,7 +284,7 @@ export const PACKAGES = [
       {
         heading: 'Wine',
         items: [
-          'Two Red Wines & Two White Wines – We\'ll select easy-drinking varietals that play well with food and avoid polarizing the guest list.',
+          'One Red Wine & One White Wine – We\'ll select easy-drinking varietals that play well with food and avoid polarizing the guest list.',
         ],
       },
       {
