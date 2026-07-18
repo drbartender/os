@@ -276,7 +276,10 @@ dr-bartender/
 │   │   │       ├── proposalSendGroup.js # proposal_send_group action: EMAIL-ONLY compare send (one proposalOptionsSent link), AB-BA-safe FOR UPDATE draft-to-sent flip with no per-option invoice or comms; idempotent
 │   │   │       ├── portalInvite.js # portal_invite action: email the client their OTP portal link (nothing minted, no token in the link), email default / SMS off by default; no state side effect
 │   │   │       ├── paymentReminder.js # payment_reminder action: balance-due reminder (balance = total_price minus amount_paid, no money written), NO_BALANCE_DUE guard; email + SMS
-│   │   │       └── drinkPlanNudgeReenroll.js # drink_plan_nudge_reenroll action: clears durable nudge suppression + reschedules the T-21 nudges, and dispatches an immediate drink-plan nudge; planner CTA uses the drink-plan token
+│   │   │       ├── drinkPlanNudgeReenroll.js # drink_plan_nudge_reenroll action (minRole admin): clears durable nudge suppression + reschedules the T-21 nudges, and dispatches an immediate drink-plan nudge; planner CTA uses the drink-plan token
+│   │   │       ├── drinkPlanNudge.js   # drink_plan_nudge action: admin manual resend of the Potion Planner link (email + SMS), entityId = drink-plan id; backs the deprecated POST /:id/resend-nudge
+│   │   │       ├── consultRecap.js     # consult_recap action: post-consult client recap email (email only), fired from the consult-save flow; live-resolves recipient (fixes the stale dp.client_email bug)
+│   │   │       └── invoiceSend.js      # invoice_send action: draft->sent status flip + invoice-ready email (entityId = invoice id), email only
 │   │   ├── consultRecap.js     # Formats saved consult selections into the post-consult email recap
 │   │   ├── drinkPlanAccess.js  # Pure post-booking drink-plan access guard (fail-safe pre-booking allowlist)
 │   │   ├── drinkPlanNudge.js   # Drink-plan / Potion Planner nudge: email + SMS touch and scheduling

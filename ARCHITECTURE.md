@@ -213,7 +213,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | PATCH | `/:id/shopping-list-source` | Admin | Flip active source between `planner` and `consult`, regenerate from chosen source (via `drinkPlanConsult.js`) |
 | PATCH | `/:id/notes` | Admin | Update admin notes |
 | PATCH | `/:id/status` | Admin | Update plan status |
-| POST | `/:id/resend-nudge` | Admin | Re-send the Potion Planner invite (email + SMS) to the client. Admin override: sends even if the plan is already filled (skips archived events; SMS gated on opt-out via `shouldSendImmediate`). Links use the drink-plan token. |
+| POST | `/:id/resend-nudge` | Admin | **Deprecated direct send**, kept mounted for API compatibility: delegates to the `drink_plan_nudge` comms action. Re-sends the Potion Planner invite (email + SMS) to the client; admin override sends even if the plan is already filled (skips archived events; SMS gated on opt-out via the action's channel availability). Links use the drink-plan token. New admin sends go through the compose-first `POST /api/comms/send` (the `DrinkPlanDetail` "Resend planner link" button opens the SendModal). |
 | DELETE | `/:id` | Admin | Delete a plan |
 | GET | `/t/:token` | Public | Fetch questionnaire by token (JOINs proposal for guest_count, num_bartenders, pricing_snapshot). Returns a locked payload `{ locked: true, proposalToken }` when the linked proposal is pre-deposit, so a stale emailed `/plan/:token` link renders a lock screen instead of the wizard (`isDrinkPlanPreBooking` allowlist, fails safe) |
 | PUT | `/t/:token` | Public | Save draft or submit selections (on submit: processes addOns into proposal_addons, recalculates pricing, sends admin email, auto-generates pending_review shopping list) |
@@ -1113,7 +1113,12 @@ Dibs (spec `docs/superpowers/specs/2026-07-06-presence-dibs-design.md`): the fal
 - **`ensureSideEffects(entityId, ctx)`** performs the action's state change idempotently (for `shopping_list_approve`: the atomic `pending_review` → `approved` flip plus the approved-snapshot write). A second call no-ops, which is what makes a failed-dispatch Retry safe.
 - **`dispatch(entityId, message, channels, ctx)`** owns the ledger. It calls `sendEmail` / `sendSMS` with `meta.skipLog` and writes the `message_log` rows itself (one per attempt, success or failure, carrying `sent_by` + `body_edited`), so a provider throw can never leave a sent-but-unlogged send (the 2026-07-16 Brandon Martin failure).
 
-The first action is `shopping_list_approve` (`actions/shoppingListApprove.js`); the deprecated `PATCH /api/drink-plans/:id/shopping-list/approve` route now delegates to it.
+The registry ships four actions:
+
+- **`shopping_list_approve`** (`actions/shoppingListApprove.js`): idempotent approve (`pending_review` → `approved` + approved-snapshot write) then per-channel dispatch. The deprecated `PATCH /api/drink-plans/:id/shopping-list/approve` route delegates to it; the `ShoppingListModal` "Approve & Send" button opens the SendModal.
+- **`drink_plan_nudge`** (`actions/drinkPlanNudge.js`): admin manual resend of the Potion Planner link (email + SMS), entityId = the drink-plan id. The deprecated `POST /api/drink-plans/:id/resend-nudge` route delegates to it; the `DrinkPlanDetail` "Resend planner link" button opens the SendModal. Unlike the scheduled T-21 nudge it does not suppress on an already-filled plan.
+- **`consult_recap`** (`actions/consultRecap.js`): the post-consult client recap email (email only), fired server-side from the consult-save flow. It live-resolves the recipient via the proposal join, fixing the legacy stale `dp.client_email` recipient bug (Brandon Martin); no UI surface of its own.
+- **`invoice_send`** (`actions/invoiceSend.js`): draft→sent status flip + invoice-ready email (entityId = invoice id), email only. The `ProposalDetailPaymentPanel` opens the SendModal from a per-invoice Send/Resend affordance on draft and sent-unpaid invoices.
 
 The proposal-side sends add six more actions, each ported from a now-deprecated direct route that stays mounted and delegates for API compatibility:
 

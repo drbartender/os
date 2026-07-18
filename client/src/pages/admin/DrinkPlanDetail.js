@@ -13,6 +13,7 @@ import StatusChip from '../../components/adminos/StatusChip';
 import { fmtDateFull } from '../../components/adminos/format';
 import BackButton from '../../components/adminos/BackButton';
 import EntityLink from '../../components/EntityLink';
+import SendModal, { describeSendResult } from '../../components/SendModal';
 
 const ConsultationForm = lazy(() => import('../../components/ShoppingList/ConsultationForm'));
 
@@ -38,7 +39,7 @@ export default function DrinkPlanDetail() {
   const [copyMessage, setCopyMessage] = useState('');
   const [consultOpen, setConsultOpen] = useState(false);
   const [sourceSwitching, setSourceSwitching] = useState(false);
-  const [resendingNudge, setResendingNudge] = useState(false);
+  const [nudgeSendOpen, setNudgeSendOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,18 +134,13 @@ export default function DrinkPlanDetail() {
     });
   };
 
-  const resendNudge = async () => {
-    const who = plan.client_name || 'the client';
-    if (!window.confirm(`Resend the Potion Planner link to ${who} by email and text?`)) return;
-    setResendingNudge(true);
-    try {
-      await api.post(`/drink-plans/${id}/resend-nudge`);
-      toast.success('Planner link resent.');
-    } catch (err) {
-      toast.error(err.message || 'Failed to resend planner link.');
-    } finally {
-      setResendingNudge(false);
-    }
+  // Compose-first nudge (spec 4.4): the SendModal owns the confirm, channel
+  // choice, message edits, and the actual POST /comms/send (action
+  // drink_plan_nudge, entityId = this drink plan). onComplete tells the
+  // per-channel truth so a partial failure never reads as a clean "resent".
+  const handleNudgeComplete = (results) => {
+    const { level, message } = describeSendResult(results);
+    toast[level](message);
   };
 
   if (loading) return <div className="page"><div className="muted">Loading drink plan…</div></div>;
@@ -208,8 +204,8 @@ export default function DrinkPlanDetail() {
             <button type="button" className="btn btn-secondary" onClick={copyLink}>
               <Icon name={copyMessage ? 'check' : 'copy'} size={12} />{copyMessage || 'Copy link'}
             </button>
-            <button type="button" className="btn btn-secondary" onClick={resendNudge} disabled={resendingNudge}>
-              <Icon name="send" size={12} />{resendingNudge ? 'Resending…' : 'Resend planner link'}
+            <button type="button" className="btn btn-secondary" onClick={() => setNudgeSendOpen(true)}>
+              <Icon name="send" size={12} />Resend planner link
             </button>
             {plan.status === 'submitted' && (
               <button type="button" className="btn btn-primary" onClick={markReviewed}>
@@ -311,6 +307,17 @@ export default function DrinkPlanDetail() {
             planContext={{ guest_count: plan.guest_count }}
           />
         </Suspense>
+      )}
+
+      {nudgeSendOpen && (
+        <SendModal
+          action="drink_plan_nudge"
+          entityId={id}
+          title="Send Drink Plan Nudge"
+          confirmLabel="Send Nudge"
+          onClose={() => setNudgeSendOpen(false)}
+          onComplete={handleNudgeComplete}
+        />
       )}
     </div>
   );

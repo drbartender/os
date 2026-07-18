@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import InvoiceDropdown from '../../components/InvoiceDropdown';
+import SendModal, { describeSendResult } from '../../components/SendModal';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmt$2dp } from '../../components/adminos/format';
@@ -57,6 +58,23 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
   const [newInvoiceAmount, setNewInvoiceAmount] = useState('');
   const [newInvoiceDueDate, setNewInvoiceDueDate] = useState('');
   const [creatingInvoice, setCreatingInvoice] = useState(false);
+  // Own copy of the invoice list, just to drive the per-invoice Send/Resend
+  // affordance. Keyed on the same invoiceRefreshKey the create flow and the
+  // InvoiceDropdown use, so a send (draft -> sent) re-reads and re-labels here.
+  const [invoices, setInvoices] = useState([]);
+  const [sendInvoice, setSendInvoice] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    api.get(`/invoices/proposal/${proposal.id}`)
+      .then(res => { if (alive) setInvoices(res.data.invoices || []); })
+      .catch(() => { /* non-fatal: the send-invoice actions just won't render */ });
+    return () => { alive = false; };
+  }, [proposal.id, invoiceRefreshKey]);
+
+  // Draft invoices offer "Send invoice"; sent-but-unpaid offer "Resend". Paid,
+  // partially paid, and void invoices are never (re)sent from here.
+  const sendableInvoices = invoices.filter(inv => inv.status === 'draft' || inv.status === 'sent');
 
   // Refund
   const [showRefund, setShowRefund] = useState(false);
@@ -297,6 +315,24 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
         {/* Invoices */}
         <div style={{ marginTop: 14 }}>
           <InvoiceDropdown proposalId={proposal.id} key={invoiceRefreshKey} />
+          {sendableInvoices.length > 0 && (
+            <div className="vstack" style={{ gap: 6, marginTop: 8 }}>
+              {sendableInvoices.map(inv => (
+                <div key={inv.id} className="hstack"
+                  style={{ gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span className="tiny muted"
+                    style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {inv.invoice_number} · {inv.label}
+                  </span>
+                  <button type="button" className="btn btn-ghost btn-sm"
+                    style={{ whiteSpace: 'nowrap' }}
+                    onClick={() => setSendInvoice(inv)}>
+                    <Icon name="send" size={11} />{inv.status === 'draft' ? 'Send invoice' : 'Resend'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           {!showCreateInvoice ? (
             <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 8 }}
               onClick={() => setShowCreateInvoice(true)}>
@@ -483,6 +519,21 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
           </div>
         )}
       </div>
+
+      {sendInvoice && (
+        <SendModal
+          action="invoice_send"
+          entityId={sendInvoice.id}
+          title="Send Invoice"
+          confirmLabel="Send Invoice"
+          onClose={() => setSendInvoice(null)}
+          onComplete={(results) => {
+            const { level, message } = describeSendResult(results);
+            toast[level](message);
+            setInvoiceRefreshKey(k => k + 1);
+          }}
+        />
+      )}
     </div>
   );
 }
