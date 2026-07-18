@@ -10,6 +10,77 @@ const LOGO_SRC = process.env.PUBLIC_URL + '/shopping-list-logo.png';
 
 const BASE_URL = process.env.REACT_APP_API_URL || '';
 
+// ─── Plain-language quantity phrasing (shared with the admin modal) ──────────
+// The admin modal's Client-view preview imports these so the copy the client
+// reads is 1:1 with what the admin previews before approving. Pure, derived
+// ONLY from {item, size, qty} so it works for every plan (legacy + v2) without
+// needing the demand derivation. No em dashes (client-facing copy rule).
+
+// Verbatim padding reassurance from spec §3.4 (do not reword).
+export const PADDING_SENTENCE =
+  'Quantities are rounded up so you never run out. Unopened bottles can be returned.';
+
+const BOTTLE_SIZES = { '1.75L': 'bottle', '750mL': 'bottle', '1L': 'bottle' };
+
+function plural(n, word) { return n === 1 ? word : `${word}s`; }
+
+// Turn a raw list row into a plain-language line the client reads naturally.
+// Returns { main, note }: `main` carries the quantity + item; `note` is a small
+// unit count where the container size makes it derivable (a pack), else ''.
+export function describeClientLine(item) {
+  const name = String(item.item || '').trim();
+  const size = String(item.size || '').trim();
+  const qty = Math.max(0, Number(item.qty) || 0);
+  let qtyText;
+  let note = '';
+  // A comma separates a multi-word container phrase from the item name
+  // ("2 × 1.75L bottles, Tito's Vodka"); a bare count reads better with a plain
+  // space ("17 Limes").
+  let comma = true;
+  const packMatch = size.match(/^(\d+)\s*(?:pk|pack)$/i);
+  if (size === '' || size === 'ea.') {
+    qtyText = `${qty}`;
+    comma = false;
+  } else if (size === '1G') {
+    qtyText = `${qty} ${plural(qty, 'gallon')}`;
+    comma = false;
+  } else if (size === 'lbs') {
+    qtyText = `${qty} lbs`;
+    comma = false;
+  } else if (size === 'box') {
+    qtyText = `${qty} ${plural(qty, 'box')}`;
+    comma = false;
+  } else if (size === 'bunch') {
+    qtyText = `${qty} ${plural(qty, 'bunch')}`;
+    comma = false;
+  } else if (size === '500') {
+    qtyText = `${qty} ${plural(qty, 'sleeve')} of 500`;
+  } else if (packMatch) {
+    const per = parseInt(packMatch[1], 10);
+    qtyText = `${qty} × ${per}-${plural(qty, 'pack')}`;
+    note = `${qty * per} total`;
+  } else if (BOTTLE_SIZES[size]) {
+    qtyText = `${qty} × ${size} ${plural(qty, BOTTLE_SIZES[size])}`;
+  } else {
+    qtyText = `${qty} × ${size}`;
+  }
+  return { main: `${qtyText}${comma ? ',' : ''} ${name}`, note };
+}
+
+// Specialty items (house syrups, craft/local beer) can be hard to find on a
+// normal grocery run; give the client a short, calm find-it note. Returns null
+// for ordinary items.
+export function specialtyNote(item) {
+  const n = String(item.item || '').toLowerCase();
+  if (n.includes('syrup')) {
+    return 'Specialty item. A well-stocked grocery or an online retailer will have it.';
+  }
+  if (n.includes('craft') || n.includes('local')) {
+    return 'Ask your neighborhood bottle shop for a fresh local option.';
+  }
+  return null;
+}
+
 export default function ClientShoppingList() {
   const { token } = useParams();
   const [data, setData] = useState(null);
@@ -114,43 +185,34 @@ export default function ClientShoppingList() {
     const uncheckedItems = items.filter(i => !checked[itemKey(section, i)]);
     const checkedItems = items.filter(i => checked[itemKey(section, i)]);
 
+    const renderRow = (item, i, isChecked) => {
+      const { main, note } = describeClientLine(item);
+      const spec = specialtyNote(item);
+      const hint = [note, spec].filter(Boolean).join(' · ');
+      return (
+        <div
+          key={itemKey(section, item) + (isChecked ? '-checked-' : '-') + i}
+          onClick={() => toggleItem(itemKey(section, item))}
+          style={isChecked ? { ...styles.itemRow, backgroundColor: 'rgba(18,22,28,0.4)' } : styles.itemRow}
+        >
+          <div style={styles.checkbox}>
+            {isChecked ? <div style={styles.checkboxChecked}>✓</div> : <div style={styles.checkboxEmpty} />}
+          </div>
+          <div style={{ flex: 1, textDecoration: isChecked ? 'line-through' : 'none' }}>
+            <span style={styles.itemName}>{main}</span>
+            {hint && <div style={styles.itemHint}>{hint}</div>}
+          </div>
+        </div>
+      );
+    };
+
     return (
       <div style={{ marginBottom: '1.5rem' }}>
         <div style={styles.sectionHeader}>{title}</div>
-        {uncheckedItems.map((item, i) => (
-          <div
-            key={itemKey(section, item) + '-' + i}
-            onClick={() => toggleItem(itemKey(section, item))}
-            style={styles.itemRow}
-          >
-            <div style={styles.checkbox}>
-              <div style={styles.checkboxEmpty} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <span style={styles.itemName}>{item.item}</span>
-              {item.size && <span style={styles.itemSize}> · {item.size}</span>}
-            </div>
-            <span style={styles.itemQty}>{item.qty}</span>
-          </div>
-        ))}
+        {uncheckedItems.map((item, i) => renderRow(item, i, false))}
         {checkedItems.length > 0 && (
           <div style={{ opacity: 0.5, marginTop: '0.25rem' }}>
-            {checkedItems.map((item, i) => (
-              <div
-                key={itemKey(section, item) + '-checked-' + i}
-                onClick={() => toggleItem(itemKey(section, item))}
-                style={{ ...styles.itemRow, backgroundColor: 'rgba(18,22,28,0.4)' }}
-              >
-                <div style={styles.checkbox}>
-                  <div style={styles.checkboxChecked}>✓</div>
-                </div>
-                <div style={{ flex: 1, textDecoration: 'line-through' }}>
-                  <span style={styles.itemName}>{item.item}</span>
-                  {item.size && <span style={styles.itemSize}> · {item.size}</span>}
-                </div>
-                <span style={{ ...styles.itemQty, textDecoration: 'line-through' }}>{item.qty}</span>
-              </div>
-            ))}
+            {checkedItems.map((item, i) => renderRow(item, i, true))}
           </div>
         )}
       </div>
@@ -209,6 +271,9 @@ export default function ClientShoppingList() {
             {data.event_date && <span>{fmtDateOnly(data.event_date)}</span>}
           </div>
         </div>
+
+        {/* Padding reassurance (spec §3.4, verbatim) */}
+        <p style={styles.paddingNote}>{PADDING_SENTENCE}</p>
 
         {/* Progress bar */}
         <div style={styles.progressContainer}>
@@ -410,9 +475,26 @@ const styles = {
     fontSize: '0.92rem',
     fontWeight: '600',
   },
+  itemHint: {
+    fontSize: '0.72rem',
+    color: '#2FA7A0',
+    fontStyle: 'italic',
+    marginTop: '0.15rem',
+  },
   itemSize: {
     fontSize: '0.8rem',
     color: '#2FA7A0',
+  },
+  paddingNote: {
+    fontSize: '0.82rem',
+    color: '#C8BfA8',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    lineHeight: 1.5,
+    margin: '0.25rem 1.25rem 0.75rem',
+    padding: '0.6rem 0.75rem',
+    borderTop: '1px solid rgba(29,140,137,0.25)',
+    borderBottom: '1px solid rgba(29,140,137,0.25)',
   },
   itemQty: {
     fontSize: '1rem',

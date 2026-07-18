@@ -5,6 +5,7 @@
 
 const { generateShoppingList, buildGeneratorInputFromConsult } = require('./shoppingList');
 const { buildCatalogSlices, normalizeName } = require('./potionCatalog');
+const { computeDemand } = require('./quantityEngine');
 
 // Load the live par catalog and derive slices. Returns null on ANY failure
 // (empty table, missing table mid-deploy, transient DB error) so the pure
@@ -162,6 +163,192 @@ async function loadRecipeCandidates(dbClient) {
   return result.rows;
 }
 
+// ─── Quantity-review derivation metadata (pp2-quantity-review) ───────────────
+// The derivation block is DISPLAY METADATA for the admin quantity-review strip:
+// it shows how the demand model reads the crowd answers (drinkers x hours x pace
+// -> pours, gently-nudged category split, per-role buffer policy). Per the plan
+// lane's conservative v1 scope, demand informs ONLY this display block; it does
+// NOT alter the existing par-scaled purchase quantities. It is attached under the
+// underscore key `_derivation` so it (1) is stripped from the public token
+// response by the existing underscore filter, and (2) is re-derived on every
+// generate/regenerate (a generation-run diagnostic, like _unresolvedIngredients),
+// never persisted through the modal's PUT save.
+//
+// ABSENT-SAFE: when the plan never answered the crowd question (every legacy
+// plan, every consult plan), buildDerivationForPlan returns null, no block is
+// attached, and the generated list is byte-identical to the pre-lane output.
+
+const DERIVATION_SETTING_KEYS = [
+  'pour_split_cocktails', 'pour_split_beer', 'pour_split_wine',
+  'pour_pace_per_hour',
+  'shopping_buffer_spirits', 'shopping_buffer_mixers',
+  'shopping_buffer_garnish', 'shopping_buffer_supplies',
+];
+
+const CATEGORY_LABELS = { cocktails: 'Cocktails', beer: 'Beer', wine: 'Wine' };
+const CATEGORY_KEYS = ['cocktails', 'beer', 'wine'];
+
+function settingNum(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+// Pure. Build the derivation display block from the crowd answers, event hours,
+// and settings, or return null when the crowd question was never answered.
+// Quantities are NOT touched here — this is metadata only.
+function buildDerivation({ crowd, guestCount, hours, settings = {}, counts = {} }) {
+  if (!crowd || typeof crowd !== 'object') return null;
+  const splitDefaults = {
+    cocktails: settingNum(settings.pour_split_cocktails, 45),
+    beer: settingNum(settings.pour_split_beer, 30),
+    wine: settingNum(settings.pour_split_wine, 25),
+  };
+  const pace = settingNum(settings.pour_pace_per_hour, 1.0);
+  const buffers = {
+    spirits: settingNum(settings.shopping_buffer_spirits, 1.25),
+    mixers: settingNum(settings.shopping_buffer_mixers, 1.4),
+    garnish: settingNum(settings.shopping_buffer_garnish, 1.5),
+    supplies: settingNum(settings.shopping_buffer_supplies, 1.25),
+  };
+  // "not sure" (crowd.unsure) or a null drinker count both mean the engine
+  // falls back to its 75%-of-guests estimate.
+  const drinkersInput = crowd.unsure || crowd.drinkers === null || crowd.drinkers === undefined
+    ? null
+    : Number(crowd.drinkers);
+  const demand = computeDemand({
+    guestCount, drinkers: drinkersInput, profile: crowd.profile,
+    hours, pace, splitDefaults, counts,
+  });
+  const perCategory = CATEGORY_KEYS.map((cat) => {
+    const pct = Math.round(demand.splitPct[cat]);
+    const pours = demand.split[cat];
+    return {
+      category: cat,
+      label: CATEGORY_LABELS[cat],
+      pct,
+      pours,
+      // perDrinkPours is null when nothing in that category was selected.
+      perDrink: demand.perDrinkPours[cat] === null ? null : Math.round(demand.perDrinkPours[cat] * 10) / 10,
+      text: `${pct}% of ${demand.pours} pours ≈ ${pours} ${cat}`,
+    };
+  });
+  return {
+    drinkers: demand.drinkers,
+    estimated: drinkersInput === null,   // true when the 75% fallback was used
+    profile: crowd.profile || null,
+    guestCount: Math.max(0, Number(guestCount) || 0),
+    hours: Math.max(0, Number(hours) || 0),
+    pace,
+    pours: demand.pours,
+    splitPct: {
+      cocktails: Math.round(demand.splitPct.cocktails),
+      beer: Math.round(demand.splitPct.beer),
+      wine: Math.round(demand.splitPct.wine),
+    },
+    split: demand.split,
+    perCategory,
+    buffers,
+  };
+}
+
+// Best-effort per-category selected-drink counts for the even per-drink split
+// display ("44 pours each"). Missing/zero counts just drop the per-drink line.
+function deriveCategoryCounts(plan, sel) {
+  const isFullBar = (plan.serving_type || 'full_bar') === 'full_bar';
+  const beer = isFullBar ? sel.beerFromFullBar : sel.beerFromBeerWine;
+  const wine = isFullBar ? sel.wineFromFullBar : sel.wineFromBeerWine;
+  const countStyles = (arr, skip) => (Array.isArray(arr)
+    ? arr.filter((v) => v && !skip.includes(v)).length : 0);
+  return {
+    cocktails: Array.isArray(sel.signatureDrinks) ? sel.signatureDrinks.length : 0,
+    beer: countStyles(beer, ['None']),
+    wine: countStyles(wine, ['None', 'Other']),
+  };
+}
+
+// Load only the derivation-relevant flat settings keys. Never throws — a read
+// failure degrades to engine defaults (buildDerivation coerces missing keys).
+async function loadDerivationSettings(dbClient) {
+  try {
+    const r = await dbClient.query(
+      'SELECT key, value FROM app_settings WHERE key = ANY($1::text[])',
+      [DERIVATION_SETTING_KEYS]
+    );
+    const out = {};
+    for (const row of r.rows) out[row.key] = row.value;
+    return out;
+  } catch (err) {
+    return {};
+  }
+}
+
+// DB-aware wrapper: derive the quantity-review metadata for a plan row, or null
+// when the crowd question was never answered (absent-safe). Caller must have
+// joined `proposals` for guest_count + event_duration_hours. Never throws:
+// generation must never fail because derivation could not be computed.
+async function buildDerivationForPlan(plan, dbClient) {
+  try {
+    const sel = plan.selections || {};
+    if (!sel.crowd || typeof sel.crowd !== 'object') return null;
+    const settings = await loadDerivationSettings(dbClient);
+    return buildDerivation({
+      crowd: sel.crowd,
+      guestCount: plan.guest_count,
+      hours: plan.event_duration_hours,
+      settings,
+      counts: deriveCategoryCounts(plan, sel),
+    });
+  } catch (err) {
+    return null;
+  }
+}
+
+// ─── Admin-set quantity holds (pp2-quantity-review) ──────────────────────────
+// An admin's deliberate quantity override on a line is marked `admin_set: true`
+// (set by the review modal's edit path). A regenerate pulls a FRESH list from
+// the live catalog; without a hold it would silently clobber those overrides.
+// applyAdminSetHolds merges the saved admin-set lines onto the fresh list:
+//   - a matching fresh line (same item name + size) keeps the held qty + marker;
+//   - an admin-set line with no fresh match (admin-added, or dropped from the
+//     fresh gen) is appended so it survives.
+// Blank-name holds are skipped so a never-filled-in "+ Add Item" row is not
+// re-appended forever. Pure; mutates and returns the fresh list (which the
+// regenerate path builds new each call, so in-place mutation is safe).
+
+function holdKey(item) {
+  return `${String(item.item || '').trim().toLowerCase()}|${String(item.size || '').trim().toLowerCase()}`;
+}
+
+function applyAdminSetHolds(freshList, currentList) {
+  if (!freshList || typeof freshList !== 'object') return freshList;
+  if (!currentList || typeof currentList !== 'object') return freshList;
+  for (const section of ['liquorBeerWine', 'everythingElse']) {
+    const heldMap = new Map();
+    for (const item of (Array.isArray(currentList[section]) ? currentList[section] : [])) {
+      if (item && item.admin_set && String(item.item || '').trim()) {
+        heldMap.set(holdKey(item), item);
+      }
+    }
+    if (heldMap.size === 0) continue;
+    const fresh = Array.isArray(freshList[section]) ? freshList[section] : [];
+    const matched = new Set();
+    for (const line of fresh) {
+      const k = holdKey(line);
+      const held = heldMap.get(k);
+      if (held) {
+        line.qty = held.qty;
+        line.admin_set = true;
+        matched.add(k);
+      }
+    }
+    for (const [k, held] of heldMap) {
+      if (!matched.has(k)) fresh.push({ ...held, admin_set: true });
+    }
+    freshList[section] = fresh;
+  }
+  return freshList;
+}
+
 // Build generateShoppingList input from a plan row's planner-side selections.
 // Caller must have already joined `proposals` for `guest_count`.
 async function buildPlannerGeneratorInput(plan, dbClient) {
@@ -260,7 +447,7 @@ async function autoGenerateShoppingList(planId, dbClient) {
   const planRes = await dbClient.query(
     `SELECT dp.id, dp.serving_type, dp.selections, dp.client_name, dp.event_date,
             dp.admin_notes, dp.shopping_list IS NOT NULL AS has_list,
-            p.guest_count
+            p.guest_count, p.event_duration_hours
      FROM drink_plans dp
      LEFT JOIN proposals p ON p.id = dp.proposal_id
      WHERE dp.id = $1`,
@@ -276,6 +463,12 @@ async function autoGenerateShoppingList(planId, dbClient) {
   const input = await buildPlannerGeneratorInput(plan, dbClient);
   const list = generateShoppingList(input, catalog);
   reportUnresolvedIngredients(list, 'auto_gen_shopping_list');
+  // Attach the quantity-review derivation metadata when the crowd question was
+  // answered (v2 plans). Null for every legacy/consult plan -> no _derivation
+  // key -> list byte-identical to the pre-lane output. Metadata only; the
+  // par-scaled purchase quantities above are untouched.
+  const derivation = await buildDerivationForPlan(plan, dbClient);
+  if (derivation) list._derivation = derivation;
 
   await dbClient.query(
     `UPDATE drink_plans
@@ -318,4 +511,7 @@ module.exports = {
   buildConsultGeneratorInput,
   autoGenerateShoppingList,
   triggerShoppingListAutoGen,
+  buildDerivation,
+  buildDerivationForPlan,
+  applyAdminSetHolds,
 };

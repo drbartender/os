@@ -20,6 +20,20 @@ import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { useToast } from '../../context/ToastContext';
 import NeedsRecipeSection from './NeedsRecipeSection';
 import SendModal from '../SendModal';
+import DerivationStrip, { ClientPreview } from './DerivationStrip';
+
+// Editor / Client-view segmented toggle button styling. Active reads as an
+// accent-soft pill; inactive is quiet. Skin-safe (no hard-coded contrast pair).
+const segBtn = (active) => ({
+  background: active ? 'var(--accent-soft)' : 'transparent',
+  color: active ? 'var(--accent)' : 'var(--ink-3)',
+  border: 'none',
+  padding: '0.3rem 0.75rem',
+  fontSize: '0.78rem',
+  fontWeight: active ? 600 : 400,
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+});
 
 // Regenerating pulls a fresh list from the server (the live par catalog) and
 // discards manual edits; saving an already-approved list returns it to review.
@@ -37,6 +51,12 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   const [linkCopied, setLinkCopied] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [regenError, setRegenError] = useState('');
+  // 'edit' shows the editable instrumented list; 'preview' shows exactly the
+  // plain-language copy the client reads at /shopping-list/:token.
+  const [mode, setMode] = useState('edit');
+  // Set after a regenerate that held one or more admin-set quantities, so the
+  // hold (HARD REQ #2) is visible instead of silent. Cleared on the next regen.
+  const [heldNotice, setHeldNotice] = useState(null);
   // Approve state is seeded by the parent (ShoppingListButton already fetched
   // /shopping-list to load the saved list — it passes status here so we don't
   // duplicate the request on mount).
@@ -166,6 +186,13 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
       setEdited(deepClone(fresh));
       if (n > 0) setGuestCount(n);
       setUndoStack([]);
+      // Surface any admin-set quantities the server held onto the fresh list
+      // (applyAdminSetHolds marks them admin_set) so the hold is not silent.
+      const held = [...(fresh.liquorBeerWine || []), ...(fresh.everythingElse || [])]
+        .filter(i => i.admin_set);
+      setHeldNotice(held.length > 0
+        ? { count: held.length, names: held.map(i => `${i.item} (${i.qty})`) }
+        : null);
     } catch (err) {
       setRegenError(err?.message || 'Failed to regenerate. Try again.');
     } finally {
@@ -189,7 +216,13 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   const updateItem = (section, index, field, value) => {
     setEdited(prev => {
       const next = deepClone(prev);
-      next[section][index] = { ...next[section][index], [field]: field === 'qty' ? (parseInt(value, 10) || 0) : value };
+      const row = { ...next[section][index], [field]: field === 'qty' ? (parseInt(value, 10) || 0) : value };
+      // A hand-set quantity is deliberate admin judgment: mark it so a later
+      // regenerate HOLDS it instead of clobbering it (server applyAdminSetHolds
+      // reads this `admin_set` flag; it rides the saved blob, not a _underscore
+      // diagnostic). Only quantity edits set the marker (HARD REQ #2).
+      if (field === 'qty') row.admin_set = true;
+      next[section][index] = row;
       return next;
     });
   };
@@ -407,6 +440,15 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
               </p>
             )}
           </div>
+          <div style={{
+            display: 'inline-flex',
+            border: '1px solid var(--line-2)',
+            borderRadius: 'var(--radius-sm)',
+            overflow: 'hidden',
+          }}>
+            <button onClick={() => setMode('edit')} style={segBtn(mode === 'edit')}>Editor</button>
+            <button onClick={() => setMode('preview')} style={segBtn(mode === 'preview')}>Client view</button>
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <label style={{ color: 'var(--ink-2)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>Guests:</label>
             <input
@@ -451,13 +493,36 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           }}>×</button>
         </div>
 
-        {/* ── Two-column editable body ── */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: '1.5rem',
-          padding: '1.25rem',
-        }}>
+        {/* ── Editor: derivation strip + editable body ── */}
+        {mode === 'edit' && (
+          <>
+            <DerivationStrip derivation={edited._derivation} />
+            {heldNotice && (
+              <div style={{
+                margin: '1rem 1.25rem 0',
+                background: 'var(--accent-soft)',
+                border: '1px solid var(--accent-line)',
+                borderRadius: 'var(--radius)',
+                padding: '0.55rem 0.875rem',
+                display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap',
+              }}>
+                <span className="chip accent"><span className="chip-dot" />Regenerated</span>
+                <span style={{ fontSize: 12, color: 'var(--ink-2)' }}>
+                  Fresh list pulled from the live par catalog.{' '}
+                  <span style={{ color: 'var(--ink-1)', fontWeight: 600 }}>
+                    {heldNotice.count} admin-set {heldNotice.count === 1 ? 'quantity was' : 'quantities were'} held:
+                  </span>{' '}
+                  {heldNotice.names.join(', ')}.
+                </span>
+              </div>
+            )}
+            {/* ── Two-column editable body ── */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '1.5rem',
+              padding: '1.25rem',
+            }}>
           <EditableSection
             title="Liquor · Beer · Wine"
             items={edited.liquorBeerWine}
@@ -500,12 +565,25 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           </div>
         )}
 
-        {/* ── Client-requested drinks with no recipe yet + recipe drawer ── */}
-        <NeedsRecipeSection
-          needsRecipe={edited.needsRecipe}
-          unresolved={edited._unresolvedIngredients}
-          onRegenerate={() => regenerate(guestCount)}
-        />
+            {/* ── Client-requested drinks with no recipe yet + recipe drawer ── */}
+            <NeedsRecipeSection
+              needsRecipe={edited.needsRecipe}
+              unresolved={edited._unresolvedIngredients}
+              onRegenerate={() => regenerate(guestCount)}
+            />
+          </>
+        )}
+
+        {/* ── Client-view preview (1:1 copy with the public page) ── */}
+        {mode === 'preview' && (
+          <ClientPreview
+            list={edited}
+            clientName={edited.clientName}
+            guestCount={parseInt(guestCount, 10) || edited.guestCount}
+            eventDate={edited.eventDate}
+            approved={approveStatus === 'approved'}
+          />
+        )}
 
         {/* ── Footer actions ── */}
         <div style={{
@@ -518,14 +596,21 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           flexWrap: 'wrap',
           alignItems: 'center',
         }}>
+          {/* Approve consequence line, states the Enhancement Lab window closes.
+              The Lab ships in a later lane; the sentence is forward-true now. */}
+          <div style={{ marginRight: 'auto', maxWidth: 440, fontSize: '0.75rem', color: 'var(--ink-3)', lineHeight: 1.45 }}>
+            {approveStatus === 'approved'
+              ? 'Published. The client link is live and their Enhancement Lab window is closed. Any edit returns this list to Needs review and hides it from the client.'
+              : 'Approving publishes this list to the client and closes their Enhancement Lab window.'}
+          </div>
           {pdfError && (
-            <span style={{ color: 'hsl(var(--danger-h) var(--danger-s) 55%)', fontSize: '0.82rem', marginRight: 'auto' }}>{pdfError}</span>
+            <span style={{ color: 'hsl(var(--danger-h) var(--danger-s) 55%)', fontSize: '0.82rem' }}>{pdfError}</span>
           )}
           {approveError && (
-            <span style={{ color: 'hsl(var(--danger-h) var(--danger-s) 55%)', fontSize: '0.82rem', marginRight: 'auto' }}>{approveError}</span>
+            <span style={{ color: 'hsl(var(--danger-h) var(--danger-s) 55%)', fontSize: '0.82rem' }}>{approveError}</span>
           )}
           {regenError && (
-            <span style={{ color: 'hsl(var(--danger-h) var(--danger-s) 55%)', fontSize: '0.82rem', marginRight: 'auto' }}>{regenError}</span>
+            <span style={{ color: 'hsl(var(--danger-h) var(--danger-s) 55%)', fontSize: '0.82rem' }}>{regenError}</span>
           )}
           {planToken && (
             <button className="btn btn-sm btn-secondary" onClick={handleShareLink}>
@@ -675,18 +760,27 @@ function SortableRow({ row, index, onUpdate, onRemove }) {
         min="0"
         value={row.qty}
         onChange={e => onUpdate(index, 'qty', e.target.value)}
-        style={rowInput({ textAlign: 'center', color: 'var(--accent)', fontWeight: 'bold' })}
+        style={rowInput({
+          textAlign: 'center', color: 'var(--accent)', fontWeight: 'bold',
+          ...(row.admin_set ? { backgroundColor: 'var(--accent-soft)', borderRadius: 4 } : {}),
+        })}
+        title={row.admin_set ? 'Admin-set quantity, held on regenerate' : undefined}
       />
       <input
         value={row.size}
         onChange={e => onUpdate(index, 'size', e.target.value)}
         style={rowInput({ color: 'var(--ink-3)', fontSize: '0.78rem' })}
       />
-      <input
-        value={row.item}
-        onChange={e => onUpdate(index, 'item', e.target.value)}
-        style={rowInput({ fontWeight: '600', color: 'var(--ink-1)' })}
-      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+        <input
+          value={row.item}
+          onChange={e => onUpdate(index, 'item', e.target.value)}
+          style={rowInput({ fontWeight: '600', color: 'var(--ink-1)', flex: 1, minWidth: 0, width: 'auto' })}
+        />
+        {row.admin_set && (
+          <span className="chip accent" style={{ height: 16, fontSize: '9.5px', padding: '0 5px', whiteSpace: 'nowrap' }}>set</span>
+        )}
+      </div>
       <button
         onClick={() => onRemove(index)}
         style={{

@@ -23,6 +23,8 @@ const {
   reportUnresolvedIngredients,
   buildPlannerGeneratorInput,
   buildConsultGeneratorInput,
+  buildDerivationForPlan,
+  applyAdminSetHolds,
 } = require('../../utils/shoppingListGen');
 
 const router = express.Router();
@@ -49,7 +51,7 @@ router.post('/:id/shopping-list/regenerate', auth, requireAdminOrManager, asyncH
   const catalog = await loadCatalog(pool);
 
   const planResult = await pool.query(
-    `SELECT dp.*, p.guest_count AS proposal_guest_count
+    `SELECT dp.*, p.guest_count AS proposal_guest_count, p.event_duration_hours
        FROM drink_plans dp
        LEFT JOIN proposals p ON p.id = dp.proposal_id
       WHERE dp.id = $1`,
@@ -70,6 +72,17 @@ router.post('/:id/shopping-list/regenerate', auth, requireAdminOrManager, asyncH
     : await buildPlannerGeneratorInput(plan, pool);
   const list = generateShoppingList(input, catalog);
   reportUnresolvedIngredients(list, 'regenerate');
+
+  // Hold admin-set quantity overrides from the currently-saved list so a
+  // regenerate never silently clobbers the admin's deliberate judgment
+  // (pp2-quantity-review HARD REQ #2). No-op when the saved list carries no
+  // admin_set lines (every pre-lane list).
+  applyAdminSetHolds(list, plan.shopping_list);
+
+  // Attach the quantity-review derivation metadata (v2 crowd plans only; null
+  // -> no key -> unchanged output). Metadata only; quantities untouched.
+  const derivation = await buildDerivationForPlan(plan, pool);
+  if (derivation) list._derivation = derivation;
 
   res.json({ list });
 }));

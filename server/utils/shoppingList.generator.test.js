@@ -11,11 +11,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { SEED_ROWS, SNAPSHOTS, runFixtures } = require('./potionCatalog.test.js');
+const { SEED_ROWS, SNAPSHOTS, runFixtures, stripIds } = require('./potionCatalog.test.js');
 const { buildCatalogSlices } = require('./potionCatalog');
 const { generateShoppingList } = require('./shoppingList');
 const {
   loadCatalog, matchCustomNames, resolveDrinkIds, reportUnresolvedIngredients,
+  buildPlannerGeneratorInput, buildDerivation, buildDerivationForPlan, applyAdminSetHolds,
 } = require('./shoppingListGen');
 
 const catalog = buildCatalogSlices(SEED_ROWS);
@@ -304,4 +305,195 @@ test('planner customs dedup against already-selected drinks (no double count)', 
   // Margarita appears ONCE (selected wins; free-typed duplicate dropped).
   assert.deepEqual(names, ['Margarita', 'Paper Plane']);
   assert.deepEqual(input.needsRecipe, [{ name: 'Lavender Gin Fizz' }]);
+});
+
+// ─── pp2-quantity-review: derivation metadata + admin-set holds ──────────────
+
+// The submit-time auto-gen list-build path, replicated exactly (build input ->
+// generate -> conditionally attach _derivation). Proves the derivation is
+// attached the same way the real autoGenerateShoppingList does it, without
+// needing a live DB for the UPDATE.
+async function buildListWithDerivation(plan, db) {
+  const input = await buildPlannerGeneratorInput(plan, db);
+  const list = generateShoppingList(input, catalog);
+  const derivation = await buildDerivationForPlan(plan, db);
+  if (derivation) list._derivation = derivation;
+  return { list, input };
+}
+
+// A fake DB that serves the drink-resolution + settings queries the build path
+// makes. No custom drinks here, so only the settings query actually fires.
+function fakeDb(settingsRows = SETTINGS_ROWS) {
+  return {
+    query: async (sql) => {
+      if (sql.includes('FROM cocktails WHERE id')) return { rows: [] };
+      if (sql.includes('FROM mocktails WHERE id')) return { rows: [] };
+      if (sql.includes('FROM app_settings')) return { rows: settingsRows };
+      if (sql.includes('UNION ALL')) return { rows: [] };
+      throw new Error('unexpected query: ' + sql);
+    },
+  };
+}
+
+const SETTINGS_ROWS = [
+  { key: 'pour_split_cocktails', value: '45' },
+  { key: 'pour_split_beer', value: '30' },
+  { key: 'pour_split_wine', value: '25' },
+  { key: 'pour_pace_per_hour', value: '1.0' },
+  { key: 'shopping_buffer_spirits', value: '1.25' },
+  { key: 'shopping_buffer_mixers', value: '1.4' },
+  { key: 'shopping_buffer_garnish', value: '1.5' },
+  { key: 'shopping_buffer_supplies', value: '1.25' },
+];
+
+const LEGACY_PLAN = {
+  client_name: 'Legacy Co', guest_count: 100, event_date: null, admin_notes: '',
+  serving_type: 'full_bar', event_duration_hours: 4,
+  // NO `crowd` key — every legacy plan + every consult plan.
+  selections: { signatureDrinks: [], mocktails: [], customCocktails: [] },
+};
+
+test('ABSENT-SAFE: a plan without selections.crowd generates a byte-identical list (no derivation)', async () => {
+  const db = fakeDb();
+  // Baseline: the unchanged pure generator on the same input.
+  const input = await buildPlannerGeneratorInput(LEGACY_PLAN, db);
+  const baseline = generateShoppingList(input, catalog);
+
+  // The full auto-gen build path (with the conditional derivation attach).
+  const { list } = await buildListWithDerivation(LEGACY_PLAN, db);
+
+  assert.equal(await buildDerivationForPlan(LEGACY_PLAN, db), null,
+    'no crowd -> no derivation');
+  assert.ok(!('_derivation' in list), 'no _derivation key attached');
+  // stripIds normalizes the generator's inherent per-call random _id UUIDs
+  // (the same normalization the snapshot suite uses); everything else must be
+  // byte-identical to the unchanged pure generator's output.
+  assert.deepEqual(stripIds(list), stripIds(baseline),
+    'crowd-absent list is byte-identical to the unchanged pure generator output');
+});
+
+test('derivation is metadata only: identical crowd/no-crowd purchase quantities', async () => {
+  const db = fakeDb();
+  const crowdPlan = {
+    ...LEGACY_PLAN,
+    selections: {
+      ...LEGACY_PLAN.selections,
+      crowd: { drinkers: 60, unsure: false, profile: 'cocktail_forward' },
+    },
+  };
+  const { list: withCrowd } = await buildListWithDerivation(crowdPlan, db);
+  const { list: withoutCrowd } = await buildListWithDerivation(LEGACY_PLAN, db);
+
+  assert.ok(withCrowd._derivation, 'crowd plan carries a derivation block');
+  // The purchase quantities are IDENTICAL with and without the crowd answer:
+  // demand drives display, never the par-scaled quantity math (v1 conservative
+  // scope). stripIds normalizes the generator's per-call random row _ids (two
+  // independent generate() calls mint fresh UUIDs); everything else must match.
+  assert.deepEqual(stripIds(withCrowd).liquorBeerWine, stripIds(withoutCrowd).liquorBeerWine);
+  assert.deepEqual(stripIds(withCrowd).everythingElse, stripIds(withoutCrowd).everythingElse);
+});
+
+test('buildDerivation reproduces the quantity-review canvas hand-math', () => {
+  // Canvas: 100 guests, 60 drinkers, 4h, pace 1.0, cocktail_forward on 45/30/25
+  // -> 240 pours, 55/25/20 split, cocktails 132 / beer 60 / wine 48.
+  const d = buildDerivation({
+    crowd: { drinkers: 60, unsure: false, profile: 'cocktail_forward' },
+    guestCount: 100,
+    hours: 4,
+    settings: {
+      pour_split_cocktails: '45', pour_split_beer: '30', pour_split_wine: '25',
+      pour_pace_per_hour: '1.0',
+      shopping_buffer_spirits: '1.25', shopping_buffer_mixers: '1.4',
+      shopping_buffer_garnish: '1.5', shopping_buffer_supplies: '1.25',
+    },
+  });
+  assert.equal(d.drinkers, 60);
+  assert.equal(d.estimated, false);
+  assert.equal(d.pours, 240);
+  assert.deepEqual(d.splitPct, { cocktails: 55, beer: 25, wine: 20 });
+  assert.deepEqual(d.split, { cocktails: 132, beer: 60, wine: 48 });
+  assert.deepEqual(d.buffers, { spirits: 1.25, mixers: 1.4, garnish: 1.5, supplies: 1.25 });
+  assert.equal(d.perCategory[0].text, '55% of 240 pours ≈ 132 cocktails');
+});
+
+test('buildDerivation: "not sure" drinkers uses the 75% fallback and flags estimated', () => {
+  const d = buildDerivation({
+    crowd: { drinkers: null, unsure: true, profile: 'even' },
+    guestCount: 100, hours: 4, settings: {},
+  });
+  assert.equal(d.drinkers, 75, '75% of 100 guests');
+  assert.equal(d.estimated, true);
+  assert.equal(d.pours, 300);
+});
+
+test('buildDerivation returns null when the crowd question was never answered', () => {
+  assert.equal(buildDerivation({ crowd: null, guestCount: 100, hours: 4 }), null);
+  assert.equal(buildDerivation({ crowd: undefined, guestCount: 100, hours: 4 }), null);
+});
+
+test('buildDerivationForPlan tolerates a settings read failure (engine defaults)', async () => {
+  const db = {
+    query: async (sql) => {
+      if (sql.includes('FROM app_settings')) throw new Error('db down');
+      return { rows: [] };
+    },
+  };
+  const plan = {
+    guest_count: 100, event_duration_hours: 4, serving_type: 'full_bar',
+    selections: { crowd: { drinkers: 60, unsure: false, profile: 'cocktail_forward' } },
+  };
+  const d = await buildDerivationForPlan(plan, db);
+  // Defaults (45/30/25, pace 1.0) still produce the canvas numbers.
+  assert.equal(d.pours, 240);
+  assert.deepEqual(d.split, { cocktails: 132, beer: 60, wine: 48 });
+});
+
+test('applyAdminSetHolds: matched line keeps the held qty + marker, others regenerate', () => {
+  const fresh = {
+    liquorBeerWine: [
+      { _id: 'a', item: "Tito's Vodka", size: '1.75L', qty: 2 },
+      { _id: 'b', item: 'Bacardi Rum', size: '1.75L', qty: 2 },
+    ],
+    everythingElse: [
+      { _id: 'c', item: 'Limes', size: 'ea.', qty: 17 },
+    ],
+  };
+  const saved = {
+    liquorBeerWine: [
+      { _id: 'x', item: "Tito's Vodka", size: '1.75L', qty: 3, admin_set: true },
+      { _id: 'y', item: 'Bacardi Rum', size: '1.75L', qty: 9 }, // not admin_set -> not held
+    ],
+    everythingElse: [
+      { _id: 'z', item: 'Limes', size: 'ea.', qty: 20, admin_set: true },
+    ],
+  };
+  const out = applyAdminSetHolds(fresh, saved);
+  const vodka = out.liquorBeerWine.find(i => i.item === "Tito's Vodka");
+  const rum = out.liquorBeerWine.find(i => i.item === 'Bacardi Rum');
+  const limes = out.everythingElse.find(i => i.item === 'Limes');
+  assert.equal(vodka.qty, 3, 'admin-set qty held');
+  assert.equal(vodka.admin_set, true, 'marker carried');
+  assert.equal(rum.qty, 2, 'non-admin-set line takes the fresh qty (not held)');
+  assert.equal(limes.qty, 20, 'admin-set garnish held');
+});
+
+test('applyAdminSetHolds: an admin-added line with no fresh match is appended (survives)', () => {
+  const fresh = { liquorBeerWine: [{ _id: 'a', item: 'Vodka', size: '1.75L', qty: 2 }], everythingElse: [] };
+  const saved = {
+    liquorBeerWine: [{ _id: 'x', item: 'Elderflower Liqueur', size: '750mL', qty: 2, admin_set: true }],
+    everythingElse: [{ _id: 'y', item: '', size: '', qty: 1, admin_set: true }], // blank -> skipped
+  };
+  const out = applyAdminSetHolds(fresh, saved);
+  assert.ok(out.liquorBeerWine.some(i => i.item === 'Elderflower Liqueur' && i.admin_set),
+    'admin-added line survives the regenerate');
+  assert.equal(out.everythingElse.length, 0, 'blank admin-set row is not re-appended');
+});
+
+test('applyAdminSetHolds: no-op when the saved list carries no admin_set lines', () => {
+  const fresh = { liquorBeerWine: [{ _id: 'a', item: 'Vodka', size: '1.75L', qty: 4 }], everythingElse: [] };
+  const saved = { liquorBeerWine: [{ _id: 'x', item: 'Vodka', size: '1.75L', qty: 9 }], everythingElse: [] };
+  const out = applyAdminSetHolds(fresh, saved);
+  assert.equal(out.liquorBeerWine[0].qty, 4, 'fresh qty untouched when nothing is held');
+  // null/absent saved list is also a no-op.
+  assert.deepEqual(applyAdminSetHolds(fresh, null), fresh);
 });
