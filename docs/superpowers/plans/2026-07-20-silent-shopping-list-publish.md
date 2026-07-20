@@ -39,7 +39,7 @@ lanes:
     review_fleet: [security-review, database-review, code-review, consistency-check]
 ```
 
-Single lane. `comms.js` / the send path is money-adjacent (the invoice-flip guard lives on the same endpoint), so it draws the full fleet at review.
+Single lane. The full fleet is earned by Task 1: `comms.js` / the send path is money-adjacent (the invoice-flip guard lives on the same endpoint) → security-review + code-review; Task 2's SQL → database-review; Task 3 → code-review; Task 4 (docs) needs none. The fleet fires once at merge against main's HEAD; it is not per-task boilerplate.
 
 ---
 
@@ -81,7 +81,7 @@ const commsRouter = require('./comms');
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const CLIENT_EMAIL = `silent-pub-${NONCE}@example.test`;
 let server, baseUrl, adminToken;
-let clientId, proposalId, planId, invoiceId;
+let clientId, proposalId, planId, planApprovedId, invoiceId;
 
 function request(method, path, { token, body } = {}) {
   return new Promise((resolve, reject) => {
@@ -142,11 +142,27 @@ before(async () => {
     [CLIENT_EMAIL, proposalId]
   );
   planId = dp.rows[0].id;
+  // A second plan ALREADY approved (snapshot set) — an independent fixture for
+  // the ever_approved GET and the already-approved no-op test, so neither leans
+  // on test 1 having mutated planId.
+  const dpa = await pool.query(
+    `INSERT INTO drink_plans (client_name, client_email, event_type, event_date, proposal_id,
+                              shopping_list, shopping_list_status, shopping_list_approved_at,
+                              shopping_list_approved_snapshot)
+     VALUES ('Silent Pub', $1, 'wedding-reception', CURRENT_DATE + INTERVAL '21 days', $2,
+             '{"guestCount": 50, "liquorBeerWine": [], "everythingElse": []}'::jsonb,
+             'approved', NOW(),
+             '{"guestCount": 50, "liquorBeerWine": [], "everythingElse": []}'::jsonb)
+     RETURNING id`,
+    [CLIENT_EMAIL, proposalId]
+  );
+  planApprovedId = dpa.rows[0].id;
   // A DRAFT invoice for the ordering guard (invoice_send does NOT opt into silent).
+  // invoice_number is VARCHAR(20); NONCE alone is ~20 chars, so keep it short.
   const inv = await pool.query(
     `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status)
      VALUES ($1, $2, 'Balance', 6000, 0, 'draft') RETURNING id`,
-    [proposalId, `SILENT-${NONCE}`]
+    [proposalId, `INV-${NONCE.slice(-12)}`]
   );
   invoiceId = inv.rows[0].id;
 
@@ -170,7 +186,7 @@ before(async () => {
 after(async () => {
   await pool.query('DELETE FROM message_log WHERE proposal_id = $1', [proposalId]);
   await pool.query('DELETE FROM invoices WHERE id = $1', [invoiceId]);
-  await pool.query('DELETE FROM drink_plans WHERE id = $1', [planId]);
+  await pool.query('DELETE FROM drink_plans WHERE proposal_id = $1', [proposalId]);
   await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
   await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
   await pool.query('DELETE FROM users WHERE email = $1', [`silent-pub-admin-${NONCE}@example.com`]);
@@ -193,6 +209,23 @@ test('silent publish flips pending_review -> approved and sends nothing', async 
     'SELECT COUNT(*)::int AS n FROM message_log WHERE proposal_id = $1', [proposalId]
   )).rows[0].n;
   assert.strictEqual(logged, 0); // nothing sent, nothing ledgered
+});
+
+test('silent publish on an already-approved list is a no-op (stays approved, sends nothing)', async () => {
+  const before = (await pool.query(
+    'SELECT shopping_list_approved_at FROM drink_plans WHERE id = $1', [planApprovedId]
+  )).rows[0];
+  const res = await request('POST', '/api/comms/send', {
+    token: adminToken,
+    body: { action: 'shopping_list_approve', entity_id: planApprovedId, channels: [], silent: true },
+  });
+  assert.strictEqual(res.status, 200);
+  const after = (await pool.query(
+    'SELECT shopping_list_status, shopping_list_approved_at FROM drink_plans WHERE id = $1', [planApprovedId]
+  )).rows[0];
+  assert.strictEqual(after.shopping_list_status, 'approved');
+  // Idempotent: ensureSideEffects returned applied:false, so approved_at is untouched.
+  assert.deepStrictEqual(after.shopping_list_approved_at, before.shopping_list_approved_at);
 });
 
 test('silent rejected for an action without allowSilent, and the invoice stays draft', async () => {
@@ -297,7 +330,7 @@ Note: this replaces the old `if (channels.length === 0) {` line with `} else if 
 - [ ] **Step 6: Run the test file to verify it passes**
 
 Run: `cd server && node -r dotenv/config --test routes/comms.silent.test.js`
-Expected: PASS, all 5 tests. (Notifications are gated off in dev, so no real email fires regardless.)
+Expected: PASS, all 6 tests. (Notifications are gated off in dev, so no real email fires regardless.)
 
 - [ ] **Step 7: Commit**
 
@@ -336,11 +369,11 @@ In the `before()` app setup, add the mount alongside the comms mount:
   app.use('/api/drink-plans', drinkPlansRouter);
 ```
 
-Add this test AFTER the "silent publish flips ... approved" test (order matters — it relies on `planId` being approved, which sets the snapshot):
+Add this test. It uses the independent `planApprovedId` fixture (seeded already-approved in `before()`), so it does not depend on any other test's mutations:
 
 ```javascript
 test('GET shopping-list reports ever_approved once a snapshot exists', async () => {
-  const res = await request('GET', `/api/drink-plans/${planId}/shopping-list`, { token: adminToken });
+  const res = await request('GET', `/api/drink-plans/${planApprovedId}/shopping-list`, { token: adminToken });
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.ever_approved, true);
 });
@@ -376,7 +409,7 @@ In `server/routes/drinkPlans/shoppingList.js`, the GET handler (lines 80-91). Up
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `cd server && node -r dotenv/config --test routes/comms.silent.test.js`
-Expected: PASS, all 6 tests.
+Expected: PASS, all 7 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -400,6 +433,8 @@ quiet-publish confirmation."
 **Interfaces:**
 - Consumes: `GET /api/drink-plans/:id/shopping-list` `ever_approved` (Task 2); `POST /api/comms/send { action:'shopping_list_approve', entity_id, channels:[], silent:true }` (Task 1).
 - Produces: no downstream consumer (leaf UI).
+
+**Note on file size:** `ShoppingListModal.jsx` is already ~807 lines, over the 700-line soft cap. This task adds ~55 lines, keeping it under the 1000-line hard cap, so the pre-commit ratchet allows the commit but prints a soft-cap warning — expected, not an error. A split is out of scope for this feature (it would be an unrelated refactor); leave it.
 
 - [ ] **Step 1: Pass `initialEverApproved` from the button**
 
@@ -455,7 +490,7 @@ Add the derived flag near the other label derivations (just before `approvedLabe
 
 - [ ] **Step 3: Make the approve label tell the truth after a silent publish**
 
-Replace the `approvedLabel` definition (currently lines 384-388) so a silent publish reads honestly instead of "& Sent":
+Replace the `approvedLabel` definition (currently lines 384-387) so a silent publish reads honestly instead of "& Sent":
 
 ```javascript
   const approvedLabel = lastPublishSilent ? '✓ Updated, not sent'
@@ -602,11 +637,11 @@ email went out; first-ever publish gets a confirm (no link, Lab closes)."
 ## Task 4: Docs — ARCHITECTURE.md
 
 **Files:**
-- Modify: `ARCHITECTURE.md` (the `POST /send` contract section ~:237 and the action-contract section ~:1113-1120)
+- Modify: `ARCHITECTURE.md` (the `POST /send` contract section ~:239 and the comms action-contract bullet list ~:1115-1122)
 
-- [ ] **Step 1: Document the `silent` flag and `allowSilent`**
+- [ ] **Step 1: Confirm the anchors, then document `silent` and `allowSilent`**
 
-In the `POST /api/comms/send` contract description, add a sentence: that the body accepts an optional `silent: true` (with `channels: []`) which applies the action's side effects and sends nothing, and is only honored for actions that declare `allowSilent`. In the action-contract list, add `allowSilent` alongside `minRole` / `dispatchWithoutSideEffects` with a one-line description. Match the surrounding prose style; no em dashes.
+First `grep -n "POST /api/comms/send\|resolveRecipient" ARCHITECTURE.md` to relocate both sections (line numbers drift). In the `POST /api/comms/send` contract description, add a sentence: the body accepts an optional `silent: true` (with `channels: []`) which applies the action's side effects and sends nothing, honored only for actions that declare `allowSilent`. In the comms action-contract bullet list (which currently documents `resolveRecipient` / `buildMessages` / `ensureSideEffects` / `dispatch` only — `minRole` and `dispatchWithoutSideEffects` are not listed there), add `allowSilent` as its own new bullet with a one-line description. Match the surrounding prose style; no em dashes.
 
 - [ ] **Step 2: Commit**
 
@@ -622,11 +657,11 @@ git commit -m "docs: document silent-publish flag on /api/comms/send"
 **Spec coverage:**
 - Server request contract (strict `=== true`, order before `ensureSideEffects`, 3 rejections, skip guard) → Task 1, Step 5. ✔
 - Opt-in flag on shopping-list action + registry comment → Task 1, Steps 3-4. ✔
-- Downstream behavior unchanged (dispatch no-op, side effects, Lab close, queue clear) → relies on existing code; asserted by Task 1 Step 1 test 1. ✔
+- Downstream behavior unchanged (dispatch no-op, side effects, Lab close, queue clear) → relies on existing code; the pending→approved flip is asserted by Task 1 test 1, and the already-approved no-op edge (spec "Downstream behavior") by the dedicated no-op test on `planApprovedId`. ✔
 - Audit trail (no actor, accepted) → no code; documented as non-goal, nothing to build. ✔
 - `ever_approved` durable signal → Task 2. ✔
 - Client: reuse `approveStatus='approved'` + `lastPublishSilent`; button label truth; confirm on first publish; `entity_id` wire key; `api.post`; error copy names the hidden-list consequence; no double-submit → Task 3. ✔
-- Tests: 4 route tests + guard-still-rejects + ordering pin (invoice stays draft) → Task 1 Step 1. Note: the spec tentatively placed the guard-still-rejects test in `comms.test.js`, but that file is action-level and the guard is route-level, so all five live in the new route file `comms.silent.test.js`. ✔
+- Tests: silent-flip + already-approved no-op + ordering pin (invoice stays draft) + silent-with-channels + silent-with-retry + guard-still-rejects (Task 1, 6 tests) and the `ever_approved` GET (Task 2, 7th) → all in the new route file `comms.silent.test.js`. Note: the spec tentatively placed the guard-still-rejects test in `comms.test.js`, but that file is action-level and the guard is route-level, so it lives in the route file with the rest. ✔
 - Docs (ARCHITECTURE.md) → Task 4. ✔
 
 **Placeholder scan:** none — every step carries real code or an exact command.
