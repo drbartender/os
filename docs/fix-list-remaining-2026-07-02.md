@@ -243,13 +243,27 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 
 ## Push-review residuals (2026-07-20 push gate: fleet + codex/gemini, Claude-verified)
 
-**Shipped in the fix commit (for the record):** Enhancement Lab is now OFF-LEDGER
-(`proposalMoneyShared.OFF_LEDGER_INVOICE_LABELS`): the webhook skips the
-amount_paid roll-up on lab-invoice payments, refunds skip the symmetric
-decrement, and the Balance lockedTotal excludes the label. ANY future
-"invoice-only, never touches the contract" label MUST be added to that constant
-or paying it forgives the contract by its amount. Lab PUT allowlist = offered
-surface only; syrups validate against the drink's own dossier pairing.
+**SUPERSEDED 2026-07-20 (same day, lane pp2-lab-fold2):** the off-ledger lab
+model below was replaced by Dallas's fold decision — lab additions now fold
+into total_price via proposal_addons + `utils/proposalExtrasFold.js` (the
+submit path's reprice core, extracted and shared), the open Balance invoice
+absorbs them with itemized lines, and only a nothing-owed event gets ONE open
+itemized 'Enhancement Lab' invoice at the uninvoiced remainder.
+`OFF_LEDGER_INVOICE_LABELS` is now EMPTY; the webhook/refund/lockedTotal
+machinery stays wired for a future genuinely-additive label (that rule still
+holds: any such label MUST be added to the constant). Lab PUT allowlist =
+offered surface (now also minus package-covered slugs); syrup dossier pairing
+kept. AT PUSH: re-run `SELECT count(*) FROM invoices WHERE label='Enhancement
+Lab'` on prod — it was 0 at rework time, and any invoice minted in the interim
+old-model window is auto-zeroed by the first lab reconcile while a Balance
+absorbs, but a PAID one would need manual reconcile (payment never rolled into
+amount_paid under the old model). OWNER CONFIRM (security advisory, low): a
+refund on a paid lab invoice reverses the money but does NOT remove the item
+from total_price (Additional Services precedent; removal is the lab's own
+remove path) — confirm that is the intended shape.
+(Historical record of the superseded model:) Enhancement Lab was briefly
+OFF-LEDGER: webhook skipped the amount_paid roll-up, refunds skipped the
+decrement, Balance lockedTotal excluded the label.
 
 **Deferred:**
 - Lead-call: a VA leg Twilio PLACED but reports terminal CallStatus='failed'
@@ -257,9 +271,9 @@ surface only; syrups validate against the drink's own dossier pairing.
   no alert, not in the attention feed. Option: treat agent-leg 'failed' as
   fault-class, or include va/admin_call_status='failed' in the feed WHERE.
   (security advisory.)
-- Lab off-ledger gates have no dedicated webhook/refund test — fold an
-  'Enhancement Lab' payment + refund case into the next stripe.webhook.test.js
-  touch. (This push: verified by re-review + money smoke staying green.)
+- ~~Lab off-ledger gates webhook/refund test~~ MOOT under the fold (off-ledger
+  set now empty; lab payments/refunds ride the standard contract paths their
+  existing suites cover).
 - Lab desired-state edges (admin-visible, self-harm only): partial-pay then
   remove-additions leaves the open invoice overpaid (refund owed); removing
   already-paid additions leaves the locked paid invoice standing. Sentry warn
