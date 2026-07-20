@@ -11418,23 +11418,16 @@ html[data-app="admin-os"][data-skin="light"] .tag {
   color: var(--ink-2);
 }
 
-/* -- Staff pills ----------------------------------------------------------- */
-html[data-app="admin-os"][data-skin="light"] .staff-pill {
-  border-radius: 0;
-  height: 3px; width: 18px;
-  background: var(--line-2);
-  border: 0;
-}
-html[data-app="admin-os"][data-skin="light"] .staff-pill.filled { background: var(--ms-emerald); }
-html[data-app="admin-os"][data-skin="light"] .staff-pill.pending { background: var(--ms-camel); }
-html[data-app="admin-os"][data-skin="light"] .staff-count {
-  font-family: var(--font-numeric);
+/* -- Staffing cell --------------------------------------------------------- */
+html[data-app="admin-os"][data-skin="light"] .staffing-cell {
   font-weight: 400;
   font-size: 13px;
-  color: var(--ink-2);
-  font-feature-settings: "tnum";
 }
-html[data-app="admin-os"][data-skin="light"] .staff-count.short { color: var(--ms-bordeaux); font-style: italic; }
+html[data-app="admin-os"][data-skin="light"] .staffing-full { color: var(--ms-emerald); }
+html[data-app="admin-os"][data-skin="light"] .staffing-open {
+  color: var(--ms-bordeaux);
+  font-weight: 600;
+}
 
 /* -- Progress bar ---------------------------------------------------------- */
 html[data-app="admin-os"][data-skin="light"] .bar { background: var(--line-1); border-radius: 0; height: 2px; }
@@ -12674,26 +12667,25 @@ html[data-app="admin-os"] .tag {
   border: 1px solid var(--line-1);
 }
 
-/* staffing pill row — shows per-position fill */
-html[data-app="admin-os"] .staff-pills {
-  display: inline-flex;
-  gap: 3px;
-  align-items: center;
-}
-html[data-app="admin-os"] .staff-pill {
-  width: 14px; height: 6px;
-  border-radius: 2px;
-  background: var(--line-2);
-}
-html[data-app="admin-os"] .staff-pill.filled { background: hsl(var(--ok-h) var(--ok-s) 52%); }
-html[data-app="admin-os"] .staff-pill.pending { background: hsl(var(--warn-h) var(--warn-s) 55%); }
-html[data-app="admin-os"] .staff-count {
+/* staffing cell — confirmed/needed, with the shortfall carrying the warning */
+html[data-app="admin-os"] .staffing-cell {
   font-family: var(--font-numeric);
   font-size: 11.5px;
-  color: var(--ink-2);
-  margin-left: 4px;
+  font-feature-settings: "tnum";
 }
-html[data-app="admin-os"] .staff-count.short { color: hsl(var(--warn-h) var(--warn-s) 58%); font-weight: 600; }
+html[data-app="admin-os"] .staffing-ratio,
+html[data-app="admin-os"] .staffing-none { color: var(--ink-2); }
+html[data-app="admin-os"] .staffing-full { color: hsl(var(--ok-h) var(--ok-s) 52%); }
+html[data-app="admin-os"] .staffing-open {
+  color: hsl(var(--danger-h) var(--danger-s) 58%);
+  font-weight: 600;
+}
+html[data-app="admin-os"] .staffing-open-muted { color: var(--ink-3); }
+/* past or cancelled: history, not a task */
+html[data-app="admin-os"] .staffing-cell.staffing-inactive,
+html[data-app="admin-os"] .staffing-inactive .staffing-ratio,
+html[data-app="admin-os"] .staffing-inactive .staffing-full,
+html[data-app="admin-os"] .staffing-inactive .staffing-none { color: var(--ink-3); }
 
 /* progress bar */
 html[data-app="admin-os"] .bar {

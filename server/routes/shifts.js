@@ -56,6 +56,7 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
         COALESCE(c.email, s.client_email) AS client_email,
         rc.request_count,
         rc.approved_count,
+        rc.pending_count,
         abr.approved_by_role
       FROM shifts s
       LEFT JOIN users u ON u.id = s.created_by
@@ -63,7 +64,8 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
       LEFT JOIN clients c ON c.id = p.client_id
       LEFT JOIN LATERAL (
         SELECT COUNT(*) FILTER (WHERE sr.status != 'denied') AS request_count,
-               COUNT(*) FILTER (WHERE sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
+               COUNT(*) FILTER (WHERE sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count,
+               COUNT(*) FILTER (WHERE sr.status = 'pending') AS pending_count
         FROM shift_requests sr WHERE sr.shift_id = s.id
       ) rc ON true
       LEFT JOIN LATERAL (

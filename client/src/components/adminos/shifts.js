@@ -109,53 +109,6 @@ export function remainingByRole(s) {
   return computeRemaining(roster, approvedByRole);
 }
 
-// Returns the count of pending (requested-but-not-yet-approved) bartenders.
-export function pendingCount(s) {
-  const needed = parsePositionsCount(s);
-  const filled = approvedCount(s);
-  return Math.min(Math.max(0, needed - filled), Number(s?.request_count || 0));
-}
-
-// Builds the positions[] array StaffPills consumes — one entry per slot, with
-// the real role label per slot (from `positions_needed`), labelled approved →
-// pending → open within each role. Approved counts come from the
-// `approved_by_role` aggregate when present; pending is filled best-effort into
-// the remaining open slots (the aggregate carries no per-role pending breakdown).
-export function shiftPositions(s) {
-  const roster = parsePositionsNeeded(s?.positions_needed);
-  // Legacy/manual rows with no canonical roster fall back to a single open slot.
-  const slots = roster.length ? roster : ['Bartender'];
-
-  let approvedByRole = parseApprovedByRole(s?.approved_by_role);
-  if (Object.keys(approvedByRole).length === 0) {
-    const flat = approvedCount(s);
-    if (flat > 0) approvedByRole = { [slots[0]]: flat };
-  }
-  // Per-role approved budget we still need to "spend" onto slots in order.
-  const approvedLeft = { ...approvedByRole };
-
-  // First pass: mark approved slots role-by-role.
-  const marked = slots.map((role) => {
-    if ((approvedLeft[role] || 0) > 0) {
-      approvedLeft[role] -= 1;
-      return { role, name: 'Filled', status: 'approved' };
-    }
-    return { role, name: null, status: null };
-  });
-
-  // Second pass: distribute pending requests into the remaining open slots in
-  // display order (no per-role pending breakdown exists in the aggregate).
-  let pendingLeft = pendingCount(s);
-  for (const slot of marked) {
-    if (pendingLeft <= 0) break;
-    if (slot.status === null) {
-      slot.status = 'pending';
-      pendingLeft -= 1;
-    }
-  }
-  return marked;
-}
-
 // Shared event-status chip — used on Dashboard, EventsDashboard, drawers, and
 // EventDetailPage. Accepts both shift-row shape (`proposal_status`,
 // `proposal_total`, `proposal_amount_paid`) and proposal-row shape (`status`,

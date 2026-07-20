@@ -427,7 +427,7 @@ dr-bartender/
 │   │   │   ├── staff/          # Staff portal redesign shared components (Placeholder; ShiftCard; TeamRosterCard; DropCoverModal; BeoSections; PayoutEventRow; LogisticsTag; RoleRankPicker; RequestSheet)
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
 │   │   │   │                   # GlobalSearchButton (search-bar-shaped button that opens the ⌘K command palette; header + toolbar),
-│   │   │   │                   # StatusChip, StaffPills, RainbowDefs, Toolbar, Icon, KebabMenu, SortableTh (clickable sort headers), AddressLink,
+│   │   │   │                   # StatusChip, StaffingCell (events-list staffing column: confirmed/needed with a red shortfall, plus a requests-vs-waitlist chip), RainbowDefs, Toolbar, Icon, KebabMenu, SortableTh (clickable sort headers), AddressLink,
 │   │   │   │                   # InterviewScheduleModal, PackageIncludesModal, DocumentPreviewModal (in-app lightbox for staff docs — W-9/BASSET/resume/headshot), MetricsFilterBar,
 │   │   │   │                   # format, nav, shifts, PresenceStrip (sidebar time-clock strip);
 │   │   │   │                   # drawers/{InvoicesDrawer,ShiftDrawer,PresenceDrawer})

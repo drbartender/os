@@ -9,7 +9,7 @@ import NumberStepper from '../../components/NumberStepper';
 import SendModal, { describeSendResult } from '../../components/SendModal';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
-import StaffPills from '../../components/adminos/StaffPills';
+import StaffingCell from '../../components/adminos/StaffingCell';
 import ClickableRow from '../../components/ClickableRow';
 import RowLink from '../../components/RowLink';
 import Toolbar from '../../components/adminos/Toolbar';
@@ -21,7 +21,7 @@ import EntityLink from '../../components/EntityLink';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
 import { fmt$, fmtDate, fmtTimeRange24, dayDiff } from '../../components/adminos/format';
-import { shiftPositions, parsePositionsCount, approvedCount, eventStatusChip, remainingByRole, SHIFT_EQUIPMENT_OPTIONS, parseEquipmentArray } from '../../components/adminos/shifts';
+import { parsePositionsCount, approvedCount, eventStatusChip, SHIFT_EQUIPMENT_OPTIONS, parseEquipmentArray } from '../../components/adminos/shifts';
 import { ROLES } from '../../utils/staffingRoles';
 
 // value stays 12h ("7:00 PM") — it is stored raw into shifts.start_time and read
@@ -507,18 +507,6 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
   const guestCount = e.guest_count || e.proposal_guest_count;
   const fullyPaid = total > 0 && paid >= total;
 
-  // Pending requests beyond the open slots are effectively a waitlist. The admin
-  // /shifts feed carries request_count + approved_count (not a per-role waitlist),
-  // so this is the count of requests that cannot fill an open slot.
-  const remaining = remainingByRole(e);
-  const openSlots = Object.values(remaining).reduce((sum, n) => sum + Math.max(0, n), 0);
-  // A roster-less legacy row yields remaining {} (openSlots 0), which would count
-  // every normal pending request as waitlisted. Without a roster we cannot classify
-  // a waitlist, so report none rather than over-report.
-  const waitlistCount = Object.keys(remaining).length === 0
-    ? 0
-    : Math.max(0, Number(e.request_count || 0) - approvedCount(e) - openSlots);
-
   const kebabItems = useMemo(() => [
     {
       label: 'Assign Staff',
@@ -553,14 +541,7 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
       </td>
       <td className="muted">{(typeof e.location === 'string' && e.location.trim()) || '—'}</td>
       <td className="num">{guestCount || '—'}</td>
-      <td>
-        <div className="vstack" style={{ gap: 4, alignItems: 'flex-start' }}>
-          <StaffPills positions={shiftPositions(e)} />
-          {waitlistCount > 0 && (
-            <StatusChip kind="neutral">{waitlistCount} on waitlist</StatusChip>
-          )}
-        </div>
-      </td>
+      <td><StaffingCell event={e} /></td>
       <td>{e.proposal_id ? eventStatusChip(e) : <StatusChip kind="neutral">Manual</StatusChip>}</td>
       <td className="num">{total > 0 ? <strong>{fmt$(total)}</strong> : '—'}</td>
       <td className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : 'var(--ink-3)' }}>
