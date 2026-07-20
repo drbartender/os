@@ -240,3 +240,41 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 - RecipeEditor small pair (code-review Consider): unit validation dropped from
   rowProblems (server still rejects bad units; defense-in-depth only);
   ClientConversation handleReply setState-after-unmount unguarded (React 18 benign).
+
+## Push-review residuals (2026-07-20 push gate: fleet + codex/gemini, Claude-verified)
+
+**Shipped in the fix commit (for the record):** Enhancement Lab is now OFF-LEDGER
+(`proposalMoneyShared.OFF_LEDGER_INVOICE_LABELS`): the webhook skips the
+amount_paid roll-up on lab-invoice payments, refunds skip the symmetric
+decrement, and the Balance lockedTotal excludes the label. ANY future
+"invoice-only, never touches the contract" label MUST be added to that constant
+or paying it forgives the contract by its amount. Lab PUT allowlist = offered
+surface only; syrups validate against the drink's own dossier pairing.
+
+**Deferred:**
+- Lead-call: a VA leg Twilio PLACED but reports terminal CallStatus='failed'
+  (carrier/route failure; known PH-route quirk) classifies as quiet 'missed' —
+  no alert, not in the attention feed. Option: treat agent-leg 'failed' as
+  fault-class, or include va/admin_call_status='failed' in the feed WHERE.
+  (security advisory.)
+- Lab off-ledger gates have no dedicated webhook/refund test — fold an
+  'Enhancement Lab' payment + refund case into the next stripe.webhook.test.js
+  touch. (This push: verified by re-review + money smoke staying green.)
+- Lab desired-state edges (admin-visible, self-harm only): partial-pay then
+  remove-additions leaves the open invoice overpaid (refund owed); removing
+  already-paid additions leaves the locked paid invoice standing. Sentry warn
+  now fires when the post-commit list refresh loses to an approval race.
+- Lab invoice find-or-create has no DB unique constraint (plan-row lock covers
+  the realistic path); optional partial unique index on
+  invoices(proposal_id) WHERE label='Enhancement Lab' AND status IN
+  ('sent','partially_paid'). (database advisory.)
+- Multi-invoice lab delta builds line items from the CUMULATIVE breakdown with
+  drift absorbed into the last line — rare pay-add-add path can render an odd/
+  negative final line; amount_due stays correct. (database/codex, display only.)
+- Lab GET serves the full shelf payload even in not_ready/locked states (client
+  gates rendering; same token audience — API-payload tightening only).
+- EnhancementLab debounced save timer not cleared on SPA unmount (React 18
+  benign); lab GET could fold computeExtrasBreakdown into its Promise.all
+  (one serial round-trip on a public page). (perf quick-win.)
+- admin/leadCalls attention query has no LIMIT (near-empty at steady state;
+  add LIMIT 200 someday for a Twilio-outage worst case).

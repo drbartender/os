@@ -11,7 +11,7 @@
  */
 
 const { reconcileProposalPaymentStatus } = require('./proposalStatus');
-const { CONTRACT_LABELS } = require('./proposalMoneyShared');
+const { CONTRACT_LABELS, OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
 
 function fmtUSD(cents) {
   return '$' + (cents / 100).toFixed(2);
@@ -179,6 +179,7 @@ async function applyRefundReconciliation(
   // they do NOT shrink total_price. CONTRACT_LABELS is the shared constant
   // (./proposalMoneyShared), same classification payrollAccrual uses.
   let nonContractCents = 0;
+  let offLedgerCents = 0;
   if (paymentId !== null && paymentId !== undefined) {
     const links = await dbClient.query(
       `SELECT ip.invoice_id,
@@ -199,6 +200,11 @@ async function applyRefundReconciliation(
       remaining -= take;
       if (!CONTRACT_LABELS.includes(link.invoice_label)) {
         nonContractCents += take; // extra scope — must not shrink total_price
+      }
+      if (OFF_LEDGER_INVOICE_LABELS.includes(link.invoice_label)) {
+        // These dollars never entered proposals.amount_paid (the webhook's
+        // off-ledger skip), so their refund must not leave it either.
+        offLedgerCents += take;
       }
       // Negative linkage row keeps Σ invoice_payments.amount == amount_paid.
       // refund_id stamps WHICH refund this reversal belongs to, so the public
@@ -227,11 +233,15 @@ async function applyRefundReconciliation(
     }
   }
 
-  // amount_paid ALWAYS drops by the full refund (every refunded dollar was
-  // money the client paid). total_price drops ONLY by the contract portion
-  // (Approach A) — extra-scope refunds leave the base contract total intact.
-  // Exact NUMERIC division ($/100.0); GREATEST clamps ≥ 0.
+  // amount_paid drops by the refund MINUS the off-ledger portion: every
+  // refunded dollar was money the client paid, but off-ledger invoice dollars
+  // (Enhancement Lab) were never rolled INTO amount_paid, so reversing them
+  // here would make the contract look less paid than it is. total_price drops
+  // ONLY by the contract portion (Approach A) — extra-scope refunds leave the
+  // base contract total intact. Exact NUMERIC division ($/100.0); GREATEST
+  // clamps ≥ 0.
   const contractCents = amountCents - nonContractCents;
+  const paidDropCents = amountCents - offLedgerCents;
   // Floor at 0 to match the SQL GREATEST clamp below (and planRefund's pending
   // preview). Without this the audit figure written to total_price_after could
   // go negative while the real total_price column is clamped at 0, so refund
@@ -243,7 +253,7 @@ async function applyRefundReconciliation(
             amount_paid = GREATEST(amount_paid - ($2 / 100.0), 0)
       WHERE id = $3
       RETURNING total_price, amount_paid`,
-    [contractCents, amountCents, proposalId]
+    [contractCents, paidDropCents, proposalId]
   );
 
   // Keep status ⟷ money consistent. A refund is the sole money-OUT path;

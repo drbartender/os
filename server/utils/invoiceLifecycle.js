@@ -4,6 +4,7 @@
 
 const { toCents, db } = require('./invoiceShared');
 const { generateLineItemsFromProposal, writeLineItems } = require('./invoiceLineItems');
+const { OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
 
 // The invoice-label literals written below ('Deposit' / 'Balance' /
 // 'Full Payment') are the origin of the contract-total classification. The
@@ -105,10 +106,14 @@ async function refreshUnlockedInvoices(proposalId, dbClient) {
       [proposalId]
     ),
     client.query(
+      // Off-ledger labels (Enhancement Lab) are excluded: their amounts have
+      // no total_price entry, so counting a locked one here would shrink the
+      // Balance invoice by money the contract never contained (2026-07-20).
       `SELECT COALESCE(SUM(amount_due), 0) AS locked_total
          FROM invoices
-        WHERE proposal_id = $1 AND locked = true AND status != 'void'`,
-      [proposalId]
+        WHERE proposal_id = $1 AND locked = true AND status != 'void'
+          AND NOT (label = ANY($2::text[]))`,
+      [proposalId, OFF_LEDGER_INVOICE_LABELS]
     ),
     client.query(
       `SELECT id, label FROM invoices

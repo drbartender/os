@@ -9,6 +9,7 @@ const { getBookingWindow } = require('../../utils/bookingWindow');
 const { notifyLastMinuteBooking } = require('../../utils/lastMinuteAlert');
 const { createInvoiceOnSend, createBalanceInvoice, linkPaymentToInvoice, createDrinkPlanExtrasInvoice, findExtrasInvoice, findOpenInvoiceForBalance } = require('../../utils/invoiceHelpers');
 const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
+const { OFF_LEDGER_INVOICE_LABELS } = require('../../utils/proposalMoneyShared');
 const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
 const { sendPaymentNotifications } = require('../../utils/stripePaymentNotifications');
@@ -206,18 +207,33 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             // Mirrors the drink_plan_extras branch. Idempotent: this whole block
             // is inside isFirstDelivery (gated by the proposal_payments ON CONFLICT
             // insert), so a Stripe retry never re-increments.
-            const paidDollars = intent.amount / 100;
-            const upd = await dbClient.query(`
-              UPDATE proposals
-              SET amount_paid = COALESCE(amount_paid, 0) + $1
-              WHERE id = $2
-              RETURNING amount_paid, total_price
-            `, [paidDollars, proposalId]);
-            if (upd.rows[0] && Number(upd.rows[0].amount_paid) >= Number(upd.rows[0].total_price)) {
-              await dbClient.query(
-                "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')",
-                [proposalId]
-              );
+            // OFF-LEDGER EXCEPTION (2026-07-20 push review): an invoice whose
+            // label is in OFF_LEDGER_INVOICE_LABELS (Enhancement Lab) has NO
+            // total_price entry by spec, so rolling its payment into
+            // amount_paid would forgive the contract by that amount (autopay
+            // charges total - paid; the Balance refresh subtracts locked
+            // invoices). Skip the roll-up and promotion; the proposal_payments
+            // row + the invoice linking below remain the money record.
+            const paidInvoiceId = Number(intent.metadata?.invoice_id) || null;
+            let offLedger = false;
+            if (paidInvoiceId) {
+              const labelRes = await dbClient.query('SELECT label FROM invoices WHERE id = $1', [paidInvoiceId]);
+              offLedger = OFF_LEDGER_INVOICE_LABELS.includes(labelRes.rows[0]?.label);
+            }
+            if (!offLedger) {
+              const paidDollars = intent.amount / 100;
+              const upd = await dbClient.query(`
+                UPDATE proposals
+                SET amount_paid = COALESCE(amount_paid, 0) + $1
+                WHERE id = $2
+                RETURNING amount_paid, total_price
+              `, [paidDollars, proposalId]);
+              if (upd.rows[0] && Number(upd.rows[0].amount_paid) >= Number(upd.rows[0].total_price)) {
+                await dbClient.query(
+                  "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')",
+                  [proposalId]
+                );
+              }
             }
           } else {
             // deposit — additive + DERIVED status (mirror the full branch): credit what

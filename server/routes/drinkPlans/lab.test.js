@@ -107,6 +107,7 @@ before(async () => {
   await seedPlan('open');
   await seedPlan('locked', { shoppingListStatus: 'approved' });
   await seedPlan('money');
+  await seedPlan('guard');
 
   const app = express();
   app.use(express.json());
@@ -291,4 +292,27 @@ test('submit schedules the +36h lab_followup row', async () => {
   assert.equal(rows.rows[0].channel, 'email');
   const hoursOut = (new Date(rows.rows[0].scheduled_for) - Date.now()) / 3600000;
   assert.ok(hoursOut > 35 && hoursOut < 37, `scheduled ~36h out (got ${hoursOut.toFixed(1)}h)`);
+});
+
+test('lab PUT rejects addons outside the offered surface (2026-07-20 allowlist)', async () => {
+  const ab = await pool.query(
+    "SELECT slug FROM service_addons WHERE slug = 'additional-bartender' AND is_active = true"
+  );
+  assert.ok(ab.rows[0], 'dev DB has the additional-bartender addon');
+  const p = await request('PUT', `/api/drink-plans/t/${planTokens.guard}/lab`, {
+    body: { addOns: { 'additional-bartender': {} } },
+  });
+  assert.equal(p.status, 400, JSON.stringify(p.body));
+  const invoices = await labInvoices(proposalIds[4]);
+  assert.equal(invoices.filter((i) => i.label === 'Enhancement Lab').length, 0, 'nothing minted');
+});
+
+test('lab PUT drops a syrup that is not the drink\'s own pairing', async () => {
+  const p = await request('PUT', `/api/drink-plans/t/${planTokens.guard}/lab`, {
+    body: { labSyrupSelections: { [cocktailId]: ['orgeat'] } },
+  });
+  assert.equal(p.status, 200, JSON.stringify(p.body));
+  assert.deepEqual(p.body.lab_additions.labSyrupSelections, {}, 'non-pairing syrup dropped');
+  const invoices = await labInvoices(proposalIds[4]);
+  assert.equal(invoices.filter((i) => i.label === 'Enhancement Lab').length, 0, 'nothing minted');
 });

@@ -10,6 +10,7 @@
 // line for what DRB shops and preps. Lab additions push the list back to
 // pending_review (admin re-approves).
 const express = require('express');
+const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { publicReadLimiter, drinkPlanWriteLimiter } = require('../../middleware/rateLimiters');
 const { requireUuidToken } = require('../../utils/tokens');
@@ -197,22 +198,26 @@ function sanitizeLabAddOns(raw, validSlugs) {
   return clean;
 }
 
-function sanitizeLabSyrups(raw, allowedDrinkIds) {
+function sanitizeLabSyrups(raw, offeredSyrupByDrink) {
   if (raw === undefined || raw === null) return {};
   if (typeof raw !== 'object' || Array.isArray(raw)) {
     throw new ValidationError({ labSyrupSelections: 'Must be a map of drink id to syrup ids.' });
   }
   const clean = {};
   for (const [drinkId, ids] of Object.entries(raw).slice(0, 30)) {
-    if (!allowedDrinkIds.has(drinkId)) continue; // silently drop non-submitted drinks
-    if (!Array.isArray(ids)) continue;
-    // Valid = the pricing engine prices it above $0 (its own catalog check).
-    // SYRUP_NAME_LOOKUP alone is too loose: it still carries legacy aliases
-    // that would bill $0 while flipping the client's list line off.
-    const valid = [...new Set(ids.filter((id) =>
-      typeof id === 'string' && SYRUP_NAME_LOOKUP[id] && calculateSyrupCost([id], 1).total > 0
-    ))];
-    if (valid.length > 0) clean[drinkId] = valid.slice(0, 6);
+    // Only the drink's OWN dossier syrup is offered (mirrors the GET). A
+    // non-submitted drink or any other catalog syrup is silently dropped —
+    // otherwise a token holder could bill/prep the wrong syrup while the
+    // drink's real pairing line stays on the client's shopping list
+    // (2026-07-20 push review). The pricing-engine check keeps the
+    // $0-legacy-alias guard: an unpriceable syrup would bill nothing while
+    // still flipping the client's list line off.
+    const offered = offeredSyrupByDrink.get(drinkId);
+    if (!offered || !Array.isArray(ids) || !ids.includes(offered)) continue;
+    const valid = SYRUP_NAME_LOOKUP[offered] && calculateSyrupCost([offered], 1).total > 0
+      ? [offered]
+      : [];
+    if (valid.length > 0) clean[drinkId] = valid;
   }
   return clean;
 }
@@ -254,7 +259,7 @@ async function refreshListAfterLabChange(planId) {
       }
     }
 
-    await pool.query(
+    const upd = await pool.query(
       `UPDATE drink_plans
           SET shopping_list = $1::jsonb,
               shopping_list_status = 'pending_review',
@@ -263,6 +268,12 @@ async function refreshListAfterLabChange(planId) {
           AND shopping_list_status IS DISTINCT FROM 'approved'`,
       [JSON.stringify(list), planId]
     );
+    if (upd.rowCount === 0) {
+      // The list was approved between the lab COMMIT and this refresh: the
+      // just-billed additions never reached the approved list. Surface it so
+      // the admin re-stages by hand (accepted narrow race, fix-list).
+      Sentry.captureMessage(`lab_list_refresh_blocked_by_approval (plan ${planId})`, 'warning');
+    }
   } catch (err) {
     console.error('Lab list refresh failed (non-fatal):', err.message);
   }
@@ -295,16 +306,41 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
     }
     planId = plan.id;
 
-    const addonRows = await client.query('SELECT slug FROM service_addons WHERE is_active = true');
-    const validSlugs = new Set(addonRows.rows.map((r) => r.slug));
     const sel = plan.selections || {};
-    const submittedDrinkIds = new Set([
-      ...(Array.isArray(sel.signatureDrinks) ? sel.signatureDrinks : []),
-      ...(Array.isArray(sel.mocktails) ? sel.mocktails : []),
-    ]);
+    const sigIds = Array.isArray(sel.signatureDrinks) ? sel.signatureDrinks : [];
+    const mocIds = Array.isArray(sel.mocktails) ? sel.mocktails : [];
 
-    const labAddOns = sanitizeLabAddOns(req.body?.addOns, validSlugs);
-    const labSyrups = sanitizeLabSyrups(req.body?.labSyrupSelections, submittedDrinkIds);
+    // Allowlist = the OFFERED surface, mirroring the GET exactly: the event
+    // shelf for this package category plus the submitted drinks' dossier
+    // enhancement slugs, intersected with active service_addons. Anything
+    // wider on a PUBLIC token endpoint that mints invoices lets a token
+    // holder bill arbitrary addons — e.g. additional-bartender flat at its
+    // base rate, bypassing the hosted-ratio/hourly pricing paths (2026-07-20
+    // push review). Sequential queries: this is the HELD transaction client.
+    const drinkRows = [];
+    if (sigIds.length) {
+      const r = await client.query('SELECT id, enhancements, syrup_id FROM cocktails WHERE id = ANY($1::text[])', [sigIds]);
+      drinkRows.push(...r.rows);
+    }
+    if (mocIds.length) {
+      const r = await client.query('SELECT id, enhancements, syrup_id FROM mocktails WHERE id = ANY($1::text[])', [mocIds]);
+      drinkRows.push(...r.rows);
+    }
+    const activeRows = await client.query('SELECT slug FROM service_addons WHERE is_active = true');
+    const activeSlugs = new Set(activeRows.rows.map((r) => r.slug));
+    const shelfSlugs = plan.package_category === 'hosted'
+      ? [...EVENT_ADDON_SLUGS, ...HOSTED_EVENT_ADDON_SLUGS]
+      : EVENT_ADDON_SLUGS;
+    const offeredSlugs = new Set(shelfSlugs.filter((s) => activeSlugs.has(s)));
+    for (const row of drinkRows) {
+      for (const e of (Array.isArray(row.enhancements) ? row.enhancements : [])) {
+        if (e && typeof e.slug === 'string' && activeSlugs.has(e.slug)) offeredSlugs.add(e.slug);
+      }
+    }
+    const offeredSyrupByDrink = new Map(drinkRows.map((r) => [r.id, r.syrup_id || null]));
+
+    const labAddOns = sanitizeLabAddOns(req.body?.addOns, offeredSlugs);
+    const labSyrups = sanitizeLabSyrups(req.body?.labSyrupSelections, offeredSyrupByDrink);
 
     // Rebuild selections: keep every non-lab addOns entry untouched; replace
     // the lab-added set wholesale with the desired state.
@@ -334,9 +370,11 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
     // drift from what the card was charged. Planner-time charges (fence picks,
     // submit extras) live on their invoices and are excluded here by
     // construction. refreshUnlockedInvoices skips non-standard labels, so
-    // proposal edits can't rewrite this invoice; once paid it locks, joins
-    // lockedTotal, and the Balance invoice stays consistent like every other
-    // paid invoice.
+    // proposal edits can't rewrite this invoice. The label is OFF-LEDGER
+    // (proposalMoneyShared.OFF_LEDGER_INVOICE_LABELS): its amounts have no
+    // total_price entry, the webhook skips the amount_paid roll-up when it is
+    // paid, and the Balance lockedTotal excludes it — lab dollars never
+    // shrink what the contract still owes (2026-07-20 push review).
     let responseBreakdown = null;
     if (plan.proposal_id) {
       const labOnlySelections = {

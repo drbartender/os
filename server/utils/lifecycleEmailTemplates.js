@@ -717,7 +717,7 @@ function enhancementLabFollowup({ clientName, eventTypeLabel = 'event', labUrl, 
     `${drinksLine} The Enhancement Lab is open for your ${eventTypeLabel}: housemade syrups, a champagne toast, real glassware. The cabinet of finishing touches.`,
     'One tap adds them to your event. Anything you pick lands on your final balance, nothing is due today.',
     balanceDue > 0
-      ? `While you're at it: your remaining balance of $${balanceDue.toLocaleString()} can be settled on your invoice whenever you're ready.`
+      ? `While you're at it: your remaining balance of $${balanceDue.toLocaleString('en-US', { minimumFractionDigits: Number.isInteger(balanceDue) ? 0 : 2, maximumFractionDigits: 2 })} can be settled on your invoice whenever you're ready.`
       : null,
     'The lab closes when we finalize your shopping list, so if something catches your eye, now is the moment.',
     'Questions? Just reply to this email.',

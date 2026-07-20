@@ -9,12 +9,22 @@ import React from 'react';
  * client has tapped, with the invoice-only promise line and save status.
  */
 
-const money = (n) => `$${Number(n || 0).toLocaleString()}`;
+// Whole dollars stay clean ($1,900); fractional amounts always carry two
+// decimals so $1,900.50 never renders as "$1,900.5".
+const money = (n) => {
+  const v = Number(n || 0);
+  return `$${v.toLocaleString('en-US', {
+    minimumFractionDigits: Number.isInteger(v) ? 0 : 2,
+    maximumFractionDigits: 2,
+  })}`;
+};
 
 export function BalanceBanner({ balance }) {
   if (!balance || !(balance.due > 0)) return null;
+  // Local-noon construction: a date-only ISO string parsed raw is UTC
+  // midnight, which renders as the PRIOR day in Chicago.
   const dueDate = balance.due_date
-    ? new Date(balance.due_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
+    ? new Date(`${String(balance.due_date).slice(0, 10)}T12:00:00`).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
     : null;
   if (balance.past_due) {
     return (
