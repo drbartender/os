@@ -165,7 +165,7 @@ router.get('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
 
 const META_STRING_FIELDS = ['servingStyle', 'toastTime'];
 
-function sanitizeLabAddOns(raw, validSlugs) {
+function sanitizeLabAddOns(raw, validSlugs, storedLabSlugs = new Set()) {
   if (raw === undefined || raw === null) return {};
   if (typeof raw !== 'object' || Array.isArray(raw)) {
     throw new ValidationError({ addOns: 'addOns must be an object keyed by addon slug.' });
@@ -175,6 +175,14 @@ function sanitizeLabAddOns(raw, validSlugs) {
   const clean = {};
   for (const [slug, meta] of entries) {
     if (!validSlugs.has(slug) || JACK_PAIR.includes(slug)) {
+      // A previously-stored lab addition whose slug drifted OUT of the offered
+      // surface (package category flip, dossier edit, drink removed post-
+      // submit) is silently DROPPED: the client can no longer render or untick
+      // its card, so throwing would brick every subsequent save (re-verify F1,
+      // 2026-07-20). The desired-state reconcile then removes it and the
+      // invoice refreshes down. A never-stored non-offered slug is the actual
+      // attack surface: reject.
+      if (storedLabSlugs.has(slug)) continue;
       throw new ValidationError({ addOns: `Unknown or non-lab addon: ${String(slug).slice(0, 60)}` });
     }
     const entry = { enabled: true, labAdded: true };
@@ -339,7 +347,12 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
     }
     const offeredSyrupByDrink = new Map(drinkRows.map((r) => [r.id, r.syrup_id || null]));
 
-    const labAddOns = sanitizeLabAddOns(req.body?.addOns, offeredSlugs);
+    const storedLabSlugs = new Set(
+      Object.entries(sel.addOns || {})
+        .filter(([, m]) => m && m.labAdded === true)
+        .map(([s]) => s)
+    );
+    const labAddOns = sanitizeLabAddOns(req.body?.addOns, offeredSlugs, storedLabSlugs);
     const labSyrups = sanitizeLabSyrups(req.body?.labSyrupSelections, offeredSyrupByDrink);
 
     // Rebuild selections: keep every non-lab addOns entry untouched; replace

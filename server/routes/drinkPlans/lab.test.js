@@ -307,6 +307,18 @@ test('lab PUT rejects addons outside the offered surface (2026-07-20 allowlist)'
   assert.equal(invoices.filter((i) => i.label === 'Enhancement Lab').length, 0, 'nothing minted');
 });
 
+test('lab PUT silently drops a stored lab addition that drifted out of the offered surface', async () => {
+  await pool.query(
+    `UPDATE drink_plans SET selections = jsonb_set(selections, '{addOns,zero-proof-spirits}', '{"enabled":true,"labAdded":true}') WHERE id = $1`,
+    [planIds.guard]
+  );
+  const p = await request('PUT', `/api/drink-plans/t/${planTokens.guard}/lab`, {
+    body: { addOns: { 'zero-proof-spirits': {} } },
+  });
+  assert.equal(p.status, 200, JSON.stringify(p.body));
+  assert.equal(p.body.lab_additions.addOns['zero-proof-spirits'], undefined, 'drifted slug dropped, not bricked');
+});
+
 test('lab PUT drops a syrup that is not the drink\'s own pairing', async () => {
   const p = await request('PUT', `/api/drink-plans/t/${planTokens.guard}/lab`, {
     body: { labSyrupSelections: { [cocktailId]: ['orgeat'] } },

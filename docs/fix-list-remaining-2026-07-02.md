@@ -278,3 +278,9 @@ surface only; syrups validate against the drink's own dossier pairing.
   (one serial round-trip on a public page). (perf quick-win.)
 - admin/leadCalls attention query has no LIMIT (near-empty at steady state;
   add LIMIT 200 someday for a Twilio-outage worst case).
+- planRefund's EXCEEDS_AMOUNT_PAID guard compares against on-ledger amount_paid,
+  which excludes lab dollars — a panel refund of a paid lab charge larger than
+  the on-ledger paid figure is rejected even though it is fully refundable.
+  Workaround: Stripe-dashboard refund (chargeRefunded reconciles the off-ledger
+  netting correctly). Fix: include the target payment's off-ledger-linked cents
+  in the guard's basis. (re-verify F2, fail-closed.)
