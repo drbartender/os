@@ -235,11 +235,14 @@ async function applyRefundReconciliation(
 
   // amount_paid drops by the refund MINUS the off-ledger portion: every
   // refunded dollar was money the client paid, but off-ledger invoice dollars
-  // (Enhancement Lab) were never rolled INTO amount_paid, so reversing them
-  // here would make the contract look less paid than it is. total_price drops
-  // ONLY by the contract portion (Approach A) — extra-scope refunds leave the
-  // base contract total intact. Exact NUMERIC division ($/100.0); GREATEST
-  // clamps ≥ 0.
+  // were never rolled INTO amount_paid, so reversing them here would make the
+  // contract look less paid than it is. OFF_LEDGER_INVOICE_LABELS is
+  // CURRENTLY EMPTY (Enhancement Lab money folds into total_price/amount_paid
+  // since 2026-07-20, so its refunds reverse symmetrically like Additional
+  // Services); the subtraction stays wired for a future additive label.
+  // total_price drops ONLY by the contract portion (Approach A) — extra-scope
+  // refunds leave the base contract total intact. Exact NUMERIC division
+  // ($/100.0); GREATEST clamps ≥ 0.
   const contractCents = amountCents - nonContractCents;
   const paidDropCents = amountCents - offLedgerCents;
   // Floor at 0 to match the SQL GREATEST clamp below (and planRefund's pending

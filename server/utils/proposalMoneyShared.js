@@ -24,14 +24,17 @@ function safeAddonQty(raw) {
 const CONTRACT_LABELS = Object.freeze(['Deposit', 'Balance', 'Full Payment']);
 
 // Labels whose invoice amounts live entirely OUTSIDE proposals.total_price
-// (additive upsells; spec-mandated "invoice-only, never touches the
-// contract"). Their payments must never roll into proposals.amount_paid, and
-// their locked invoices never join the Balance lockedTotal — otherwise paying
-// one forgives the contract by its amount: autopay charges total - paid, and
-// the Balance refresh subtracts locked invoices (2026-07-20 push review,
-// Enhancement Lab). Distinct from "non-contract scope" in refundHelpers,
-// which is merely ∉ CONTRACT_LABELS — 'Additional Services' and 'Drink Plan
-// Extras' amounts ARE inside total_price/amount_paid and do not belong here.
-const OFF_LEDGER_INVOICE_LABELS = Object.freeze(['Enhancement Lab']);
+// (additive upsells; "invoice-only, never touches the contract"). Their
+// payments must never roll into proposals.amount_paid, and their locked
+// invoices never join the Balance lockedTotal — otherwise paying one forgives
+// the contract by its amount. CURRENTLY EMPTY: 'Enhancement Lab' left this
+// set on 2026-07-20 when lab additions switched to folding into total_price
+// (owner decision — additions join the balance and the final invoice), which
+// makes lab invoices ordinary contract money. The consumer machinery
+// (webhook roll-up skip, refund skip, lockedTotal exclusion) is kept wired
+// and degrades to a no-op on the empty list — add a label here ONLY for a
+// future genuinely-additive invoice type. Distinct from "non-contract scope"
+// in refundHelpers, which is merely ∉ CONTRACT_LABELS.
+const OFF_LEDGER_INVOICE_LABELS = Object.freeze([]);
 
 module.exports = { MAX_ADDON_QTY, safeAddonQty, CONTRACT_LABELS, OFF_LEDGER_INVOICE_LABELS };

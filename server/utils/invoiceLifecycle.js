@@ -106,13 +106,16 @@ async function refreshUnlockedInvoices(proposalId, dbClient) {
       [proposalId]
     ),
     client.query(
-      // Off-ledger labels (Enhancement Lab) are excluded: their amounts have
-      // no total_price entry, so counting a locked one here would shrink the
-      // Balance invoice by money the contract never contained (2026-07-20).
+      // Off-ledger labels are excluded: their amounts have no total_price
+      // entry, so counting a locked one here would shrink the Balance invoice
+      // by money the contract never contained (2026-07-20). COALESCE keeps a
+      // NULL-label invoice counted (NULL = ANY(...) is NULL, and NOT NULL
+      // would silently drop the row); the set is currently empty (lab money
+      // folds into the contract since the same day), making this a no-op.
       `SELECT COALESCE(SUM(amount_due), 0) AS locked_total
          FROM invoices
         WHERE proposal_id = $1 AND locked = true AND status != 'void'
-          AND NOT (label = ANY($2::text[]))`,
+          AND NOT (COALESCE(label, '') = ANY($2::text[]))`,
       [proposalId, OFF_LEDGER_INVOICE_LABELS]
     ),
     client.query(

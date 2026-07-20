@@ -1,9 +1,13 @@
 // The Enhancement Lab (planner v2, spec 2026-07-18 §3.3): the ONE selling
 // surface. GET serves the shelves (submitted drinks + their enhancement
-// dossiers + event extras + balance state); PUT reconciles the client's
-// lab additions into the plan and refreshes the "Drink Plan Extras" invoice
-// through the battle-tested drinkPlanExtras/invoiceExtras path. INVOICE-ONLY:
-// no Stripe, no card fields, nothing here takes payment.
+// dossiers + event extras + balance state); PUT reconciles the client's lab
+// additions and FOLDS them into the proposal balance (2026-07-20 owner
+// decision): lab-owned proposal_addons rows + the submit path's contract-safe
+// reprice (utils/proposalExtrasFold), then the open Balance invoice absorbs
+// the new total with each lab item as its own line. Only when nothing is
+// owed does a separate itemized 'Enhancement Lab' invoice carry the
+// remainder. NO PAYMENT UI: no Stripe, no card fields, nothing here takes
+// payment — the money lands on the client's balance paperwork.
 //
 // Window: opens once the plan is submitted; closes when the shopping list is
 // approved (shopping_list_status = 'approved') — that approval is the freeze
@@ -16,9 +20,9 @@ const { publicReadLimiter, drinkPlanWriteLimiter } = require('../../middleware/r
 const { requireUuidToken } = require('../../utils/tokens');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
-const { computeExtrasBreakdown } = require('../../utils/drinkPlanExtras');
 const { calculateSyrupCost } = require('../../utils/pricingEngine');
-const { createInvoice, writeExtrasLineItems } = require('../../utils/invoiceHelpers');
+const { createInvoice, writeLineItems, refreshUnlockedInvoices } = require('../../utils/invoiceHelpers');
+const { foldExtrasIntoProposal } = require('../../utils/proposalExtrasFold');
 const { generateShoppingList } = require('../../utils/shoppingList');
 const {
   loadCatalog,
@@ -45,7 +49,8 @@ const PLAN_SELECT = `
          p.guest_count, p.num_bars, p.pricing_snapshot, p.event_date AS proposal_event_date,
          p.total_price AS proposal_total_price, p.amount_paid AS proposal_amount_paid,
          p.balance_due_date, p.event_duration_hours,
-         sp.category AS package_category
+         sp.category AS package_category,
+         sp.covered_addon_slugs AS package_covered_addon_slugs
     FROM drink_plans dp
     LEFT JOIN proposals p ON p.id = dp.proposal_id
     LEFT JOIN service_packages sp ON sp.id = p.package_id
@@ -66,6 +71,65 @@ function labAdditionsOf(selections) {
     if (meta && meta.labAdded === true) addOns[slug] = meta;
   }
   return { addOns, labSyrupSelections: selections?.labSyrupSelections || {} };
+}
+
+function coveredSlugsOf(plan) {
+  return new Set(Array.isArray(plan.package_covered_addon_slugs) ? plan.package_covered_addon_slugs : []);
+}
+
+/** DISPLAY pricing of lab additions (integer cents): catalog addon rates plus
+ *  the lab syrup SET priced together (pack discount, shared-flavor dedup).
+ *  The ledger and running total render from this; the BILLED amount is the
+ *  proposal fold (foldExtrasIntoProposal), which prices the same inputs at
+ *  catalog — identical on native proposals, and on an override'd contract the
+ *  fold moves the contract by this same catalog delta. */
+function priceLabAdditions({ addonRows, labSyrupIds, guestCount }) {
+  let addonTotal = 0;
+  for (const addon of addonRows) {
+    const rate = Number(addon.rate) || 0;
+    addonTotal += addon.billing_type === 'per_guest' ? rate * (guestCount || 1) : rate;
+  }
+  const syrupTotal = calculateSyrupCost(labSyrupIds, guestCount || 1).total;
+  return {
+    addonCents: Math.round(addonTotal * 100),
+    syrupCents: Math.round(syrupTotal * 100),
+    totalCents: Math.round((addonTotal + syrupTotal) * 100),
+  };
+}
+
+/** Itemized line items for the nothing-owed-case lab invoice: each addon its
+ *  own line, syrups one set-priced line labeled exactly like the Balance
+ *  invoice's syrup line so the same charge never renders under two names.
+ *  Lines are drift-folded to amount_due by the caller. */
+function buildLabLineItems({ addonRows, labSyrupIds, guestCount }) {
+  const items = [];
+  for (const addon of addonRows) {
+    const rate = Number(addon.rate) || 0;
+    const isPerGuest = addon.billing_type === 'per_guest';
+    const qty = isPerGuest ? (guestCount || 1) : 1;
+    const lineCents = Math.round(rate * qty * 100);
+    items.push({
+      description: isPerGuest ? `${addon.name} (${qty} guests)` : addon.name,
+      quantity: qty,
+      unit_price: Math.round(rate * 100),
+      line_total: lineCents,
+      source_type: 'addon',
+      source_id: addon.id,
+    });
+  }
+  const syrupCost = calculateSyrupCost(labSyrupIds, guestCount || 1);
+  if (syrupCost.total > 0) {
+    const cents = Math.round(syrupCost.total * 100);
+    items.push({
+      description: 'Signature Syrups',
+      quantity: 1,
+      unit_price: cents,
+      line_total: cents,
+      source_type: 'fee',
+      source_id: null,
+    });
+  }
+  return items;
 }
 
 function balanceOf(plan) {
@@ -100,7 +164,7 @@ router.get('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
   ]);
 
   // Per-drink housemade-syrup upsell price, computed server-side so the page
-  // shows exactly what computeExtrasBreakdown will bill (single money source).
+  // shows exactly what the fold bills (calculateSyrupCost, same engine).
   // A syrup_id the pricing engine can't price (legacy alias, admin typo in the
   // recipe editor) is never offered: a $0 upsell would bill nothing while
   // still flipping the client's shopping-list line off.
@@ -123,26 +187,24 @@ router.get('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
   };
 
   const isHosted = plan.package_category === 'hosted';
-  const eventSlugs = isHosted ? [...EVENT_ADDON_SLUGS, ...HOSTED_EVENT_ADDON_SLUGS] : EVENT_ADDON_SLUGS;
+  // Never offer what the package already covers (a covered addon must not be
+  // billable, mirroring the submit path's coveredAddonSlugs skip) or the
+  // Jack pair (mocktail PICKS price those at submit, never the lab).
+  const covered = coveredSlugsOf(plan);
+  const offerable = addonRows.rows.filter((a) => !JACK_PAIR.includes(a.slug) && !covered.has(a.slug));
+  const eventSlugs = (isHosted ? [...EVENT_ADDON_SLUGS, ...HOSTED_EVENT_ADDON_SLUGS] : EVENT_ADDON_SLUGS)
+    .filter((s) => !covered.has(s));
 
-  // Server-exact pricing of the STORED lab additions (integer cents), so the
-  // page's running total always equals what the invoice bills — the client
-  // must never re-derive pack discounts or shared-flavor dedup on its own.
+  // Server-exact DISPLAY pricing of the STORED lab additions (integer cents),
+  // so the page's running total matches the folded charge — the client never
+  // re-derives pack discounts or shared-flavor dedup on its own.
   const storedAdditions = labAdditionsOf(sel);
-  let labBreakdown = null;
-  if (plan.proposal_id) {
-    labBreakdown = await computeExtrasBreakdown({
-      selections: {
-        addOns: storedAdditions.addOns,
-        syrupSelections: storedAdditions.labSyrupSelections,
-        syrupSelfProvided: [],
-        logistics: {},
-      },
-      guestCount: plan.guest_count,
-      pricingSnapshot: plan.pricing_snapshot,
-      numBars: plan.num_bars,
-    });
-  }
+  const storedSlugs = Object.keys(storedAdditions.addOns);
+  const labBreakdown = priceLabAdditions({
+    addonRows: addonRows.rows.filter((a) => storedSlugs.includes(a.slug)),
+    labSyrupIds: [...new Set(Object.values(storedAdditions.labSyrupSelections).flat())],
+    guestCount: plan.guest_count,
+  });
 
   res.json({
     state,
@@ -154,7 +216,7 @@ router.get('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
       ...cocktailRows.rows.map((r) => drink(r, 'cocktails')),
       ...mocktailRows.rows.map((r) => drink(r, 'mocktails')),
     ],
-    addon_pricing: addonRows.rows.filter((a) => !JACK_PAIR.includes(a.slug)),
+    addon_pricing: offerable,
     event_addon_slugs: eventSlugs,
     lab_additions: storedAdditions,
     lab_breakdown: labBreakdown,
@@ -336,13 +398,16 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
     }
     const activeRows = await client.query('SELECT slug FROM service_addons WHERE is_active = true');
     const activeSlugs = new Set(activeRows.rows.map((r) => r.slug));
+    // Package-covered addons are un-billable AND un-addable, mirroring the
+    // GET's offer filter and the submit path's coveredAddonSlugs skip.
+    const covered = coveredSlugsOf(plan);
     const shelfSlugs = plan.package_category === 'hosted'
       ? [...EVENT_ADDON_SLUGS, ...HOSTED_EVENT_ADDON_SLUGS]
       : EVENT_ADDON_SLUGS;
-    const offeredSlugs = new Set(shelfSlugs.filter((s) => activeSlugs.has(s)));
+    const offeredSlugs = new Set(shelfSlugs.filter((s) => activeSlugs.has(s) && !covered.has(s)));
     for (const row of drinkRows) {
       for (const e of (Array.isArray(row.enhancements) ? row.enhancements : [])) {
-        if (e && typeof e.slug === 'string' && activeSlugs.has(e.slug)) offeredSlugs.add(e.slug);
+        if (e && typeof e.slug === 'string' && activeSlugs.has(e.slug) && !covered.has(e.slug)) offeredSlugs.add(e.slug);
       }
     }
     const offeredSyrupByDrink = new Map(drinkRows.map((r) => [r.id, r.syrup_id || null]));
@@ -376,82 +441,227 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
       [JSON.stringify(nextSelections), plan.id]
     );
 
-    // Money: the cumulative LAB-ONLY breakdown funds its OWN 'Enhancement Lab'
-    // invoice (single money source: computeExtrasBreakdown). It is deliberately
-    // NOT the 'Drink Plan Extras' invoice — that label is welded to the submit
-    // pay-now Stripe charge (webhook dedup, comp/void reconcile) and must never
-    // drift from what the card was charged. Planner-time charges (fence picks,
-    // submit extras) live on their invoices and are excluded here by
-    // construction. refreshUnlockedInvoices skips non-standard labels, so
-    // proposal edits can't rewrite this invoice. The label is OFF-LEDGER
-    // (proposalMoneyShared.OFF_LEDGER_INVOICE_LABELS): its amounts have no
-    // total_price entry, the webhook skips the amount_paid roll-up when it is
-    // paid, and the Balance lockedTotal excludes it — lab dollars never
-    // shrink what the contract still owes (2026-07-20 push review).
+    // Money: lab additions FOLD INTO THE PROPOSAL — lab-owned proposal_addons
+    // rows, contract-safe reprice (foldExtrasIntoProposal, the exact submit-
+    // path sequence), payment-status re-eval, then rebill. The open Balance
+    // invoice absorbs the new total and re-renders line items (each lab addon
+    // its own line, syrups a Signature Syrups line). Only when the client
+    // owes nothing (every balance-bearing invoice locked) does a separate
+    // itemized 'Enhancement Lab' invoice carry the remainder — owner rule,
+    // 2026-07-20. That invoice is ordinary CONTRACT money (its items are in
+    // total_price), which is why 'Enhancement Lab' left
+    // OFF_LEDGER_INVOICE_LABELS in this same change. Nothing here ever takes
+    // payment.
     let responseBreakdown = null;
+    let responseBalance = null;
     if (plan.proposal_id) {
-      const labOnlySelections = {
-        addOns: Object.fromEntries(
-          Object.entries(nextAddOns).filter(([, meta]) => meta && meta.labAdded === true)
-        ),
-        syrupSelections: labSyrups,
-        syrupSelfProvided: [],
-        logistics: {},
-      };
-      const breakdown = await computeExtrasBreakdown({
-        selections: labOnlySelections,
-        guestCount: plan.guest_count,
-        pricingSnapshot: plan.pricing_snapshot,
-        numBars: plan.num_bars,
-      }, client);
-      responseBreakdown = breakdown;
+      // Same lock order as the submit financial path: drink_plans row, then
+      // proposals FOR UPDATE, then invoice-row locks via the rebill helpers.
+      const propRes = await client.query('SELECT * FROM proposals WHERE id = $1 FOR UPDATE', [plan.proposal_id]);
+      const proposal = propRes.rows[0];
+      const pkg = proposal?.package_id
+        ? (await client.query('SELECT * FROM service_packages WHERE id = $1', [proposal.package_id])).rows[0]
+        : null;
+      // Fail closed: additions we cannot reprice are refused, never absorbed
+      // unbilled. (400 so the page shows the save-error state, not the
+      // locked screen — 409 is reserved for the window.)
+      if (!proposal || !pkg || !proposal.guest_count || !proposal.event_duration_hours) {
+        await client.query('ROLLBACK');
+        throw new ValidationError({
+          addOns: "We can't price enhancements for this event online yet. Reply to your confirmation email and we'll take care of it.",
+        });
+      }
 
-      // Find-or-refresh scoped to the lab label. Settled (paid/locked) lab
-      // invoices are subtracted so a pay-then-add-more client gets a fresh
-      // delta invoice, never a mutated paid one and never a double-bill.
-      // FOR UPDATE: the lab invoice is independently payable (public invoice
-      // link → Stripe webhook → linkPaymentToInvoice flips it paid+locked
-      // under its own row lock). Locking the read here makes read→decide→
-      // update atomic against that writer, and the belt-and-braces guard on
-      // the UPDATE below means even a missed case can never mutate a
-      // paid/locked invoice (database-review fleet finding, 2026-07-18).
-      const labInvRes = await client.query(
-        `SELECT id, status, locked, amount_paid FROM invoices
-          WHERE proposal_id = $1 AND label = 'Enhancement Lab' AND status <> 'void'
-          ORDER BY id DESC
-          FOR UPDATE`,
-        [plan.proposal_id]
-      );
-      const openInv = labInvRes.rows.find(
+      // Lab-owned proposal_addons reconcile. Lab-owned NOW = entries the
+      // selections rebuild accepted as labAdded (a slug colliding with a
+      // planner/admin-owned entry was skipped there, so it can NEVER reach
+      // the upsert and reset a negotiated quantity/line_total — fleet
+      // finding, 2026-07-20). Lab-owned BEFORE = labAdded flags in the
+      // stored selections; removed = before − now.
+      const prevLabSlugs = Object.entries(sel.addOns || {})
+        .filter(([, m]) => m && m.labAdded === true)
+        .map(([s]) => s);
+      const ownedNextSlugs = Object.entries(nextAddOns)
+        .filter(([, m]) => m && m.labAdded === true)
+        .map(([s]) => s);
+      const removedSlugs = prevLabSlugs.filter((s) => !ownedNextSlugs.includes(s));
+
+      const addonsBefore = (await client.query(
+        'SELECT sa.* FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id WHERE pa.proposal_id = $1',
+        [proposal.id]
+      )).rows;
+
+      if (removedSlugs.length > 0) {
+        await client.query(
+          `DELETE FROM proposal_addons
+            WHERE proposal_id = $1
+              AND addon_id IN (SELECT id FROM service_addons WHERE slug = ANY($2::text[]))`,
+          [proposal.id, removedSlugs]
+        );
+      }
+      const labAddonRows = ownedNextSlugs.length > 0
+        ? (await client.query('SELECT * FROM service_addons WHERE slug = ANY($1) AND is_active = true', [ownedNextSlugs])).rows
+        : [];
+      for (const addon of labAddonRows) {
+        const rate = Number(addon.rate);
+        let quantity = 1;
+        let lineTotal = rate;
+        if (addon.billing_type === 'per_guest') {
+          quantity = proposal.guest_count || 1;
+          lineTotal = rate * quantity;
+        }
+        await client.query(`
+          INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          ON CONFLICT (proposal_id, addon_id) DO UPDATE SET
+            quantity = EXCLUDED.quantity,
+            line_total = EXCLUDED.line_total
+        `, [proposal.id, addon.id, addon.name, addon.billing_type, rate, quantity, lineTotal]);
+      }
+      const addonsAfter = (await client.query(
+        'SELECT sa.* FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id WHERE pa.proposal_id = $1',
+        [proposal.id]
+      )).rows;
+
+      // Syrup legs, symmetric (submit-path convention): before = the priced
+      // snapshot set; after = legacy planner picks (none on v2 plans) plus
+      // the lab set; self-provided filtered from both sides.
+      const selfProvided = Array.isArray(sel.syrupSelfProvided) ? sel.syrupSelfProvided : [];
+      const dropSelfProvided = (id) => !selfProvided.includes(id);
+      const v1Raw = sel.syrupSelections || {};
+      const v1Syrups = (Array.isArray(v1Raw) ? v1Raw : [...new Set(Object.values(v1Raw).flat())])
+        .filter(dropSelfProvided);
+      const labSyrupIds = [...new Set(Object.values(labSyrups).flat())];
+      const syrupsBefore = (proposal.pricing_snapshot?.syrups?.selections || []).filter(dropSelfProvided);
+      const syrupsAfter = [...new Set([...v1Syrups, ...labSyrupIds])];
+
+      const { snapshot } = await foldExtrasIntoProposal({
+        client,
+        proposal,
+        pkg,
+        addonsBefore,
+        addonsAfter,
+        syrupsBefore,
+        syrupsAfter,
+        numBarsBefore: proposal.num_bars ?? 0,
+        numBarsAfter: proposal.num_bars ?? 0,
+        statusChangeReason: 'enhancement_lab_reconciled',
+      });
+
+      // Rebill. The Balance/Full Payment refresh absorbs the fold. Then the
+      // lab invoice reconciles under FOR UPDATE (it is independently payable;
+      // a webhook can pay+lock it mid-reconcile — 2026-07-18 fleet finding):
+      //   - absorbing invoice exists → any standing open lab invoice zeroes
+      //     (its money now rides the Balance; also migrates any invoice
+      //     minted under the pre-fold off-ledger model, and closes the
+      //     post-refund-unlock coexistence corner);
+      //   - nothing absorbs but locked invoices exist (the fully-paid case) →
+      //     ONE open itemized lab invoice find-or-refreshed to the UNINVOICED
+      //     remainder: total − external − lockedTotal − other open invoices
+      //     that already carry contract money. Subtracting the open others
+      //     (Deposit, Additional Services, manual) is what prevents billing a
+      //     standing unpaid Additional Services invoice twice (fleet HIGH,
+      //     2026-07-20). 'Drink Plan Extras' is excluded from that
+      //     subtraction: pay-now extras are additive money that never enters
+      //     total_price.
+      await refreshUnlockedInvoices(proposal.id, client);
+      const [absorbing, lockedAgg, unlockedOthers, labInvRes] = await Promise.all([
+        client.query(
+          `SELECT id FROM invoices
+            WHERE proposal_id = $1 AND locked = false AND status != 'void'
+              AND label IN ('Balance', 'Full Payment')
+            LIMIT 1`,
+          [proposal.id]
+        ),
+        client.query(
+          `SELECT COALESCE(SUM(amount_due), 0) AS locked_total,
+                  COUNT(*)::int AS locked_count
+             FROM invoices
+            WHERE proposal_id = $1 AND locked = true AND status != 'void'`,
+          [proposal.id]
+        ),
+        client.query(
+          `SELECT COALESCE(SUM(amount_due), 0) AS open_total
+             FROM invoices
+            WHERE proposal_id = $1 AND locked = false AND status != 'void'
+              AND COALESCE(label, '') NOT IN ('Drink Plan Extras', 'Enhancement Lab')`,
+          [proposal.id]
+        ),
+        client.query(
+          `SELECT id, status, locked FROM invoices
+            WHERE proposal_id = $1 AND label = 'Enhancement Lab' AND status <> 'void'
+            ORDER BY id DESC
+            FOR UPDATE`,
+          [proposal.id]
+        ),
+      ]);
+      const openLabInv = labInvRes.rows.find(
         (r) => (r.status === 'sent' || r.status === 'partially_paid') && !r.locked
       );
-      const settledCents = labInvRes.rows
-        .filter((r) => !openInv || r.id !== openInv.id)
-        .reduce((sum, r) => sum + (Number(r.amount_paid) || 0), 0);
-      const dueCents = Math.max(0, breakdown.totalCents - settledCents);
-
-      const lineItemState = {
-        selections: labOnlySelections,
-        guestCount: plan.guest_count,
-        pricingSnapshot: plan.pricing_snapshot,
-        numBars: plan.num_bars,
-      };
-      if (openInv) {
-        const upd = await client.query(
-          `UPDATE invoices SET amount_due = $1, updated_at = NOW()
-            WHERE id = $2 AND locked = false AND status IN ('sent', 'partially_paid')`,
-          [dueCents, openInv.id]
-        );
-        if (upd.rowCount > 0) {
-          await writeExtrasLineItems(openInv.id, { ...lineItemState, totalCents: dueCents }, client);
+      const guardedLabUpdate = (cents, invId) => client.query(
+        `UPDATE invoices SET amount_due = $1, updated_at = NOW()
+          WHERE id = $2 AND locked = false AND status IN ('sent', 'partially_paid')`,
+        [cents, invId]
+      );
+      if (absorbing.rows.length > 0) {
+        if (openLabInv) {
+          const upd = await guardedLabUpdate(0, openLabInv.id);
+          if (upd.rowCount > 0) await writeLineItems(openLabInv.id, [], client);
         }
-      } else if (dueCents > 0) {
-        const inv = await createInvoice(
-          { proposalId: plan.proposal_id, label: 'Enhancement Lab', amountDueCents: dueCents, status: 'sent', dueDate: null },
-          client
-        );
-        await writeExtrasLineItems(inv.id, { ...lineItemState, totalCents: dueCents }, client);
+      } else if (lockedAgg.rows[0].locked_count > 0) {
+        const totalCents = Math.round(Number(snapshot.total) * 100);
+        const externalCents = Math.round(Number(proposal.external_paid || 0) * 100);
+        const remainderCents = Math.max(0,
+          totalCents - externalCents - Number(lockedAgg.rows[0].locked_total) - Number(unlockedOthers.rows[0].open_total));
+
+        const lines = buildLabLineItems({ addonRows: labAddonRows, labSyrupIds, guestCount: proposal.guest_count });
+        // Drift-fold so lines always sum to amount_due (ledger invariant).
+        const foldLinesTo = (cents) => {
+          const sum = lines.reduce((s, li) => s + li.line_total, 0);
+          const drift = cents - sum;
+          if (drift !== 0 && lines.length > 0) {
+            const last = lines[lines.length - 1];
+            last.line_total += drift;
+            last.unit_price = last.quantity > 1 ? Math.round(last.line_total / last.quantity) : last.line_total;
+          }
+          return lines;
+        };
+        if (openLabInv) {
+          const upd = await guardedLabUpdate(remainderCents, openLabInv.id);
+          if (upd.rowCount > 0) {
+            await writeLineItems(openLabInv.id, foldLinesTo(remainderCents), client);
+          }
+        } else if (remainderCents > 0) {
+          const inv = await createInvoice(
+            { proposalId: proposal.id, label: 'Enhancement Lab', amountDueCents: remainderCents, status: 'sent', dueDate: null },
+            client
+          );
+          await writeLineItems(inv.id, foldLinesTo(remainderCents), client);
+        }
       }
+
+      await client.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
+         VALUES ($1, 'enhancement_lab_updated', 'client', $2)`,
+        [proposal.id, JSON.stringify({
+          added: ownedNextSlugs,
+          removed: removedSlugs,
+          syrups: labSyrupIds,
+          new_total: snapshot.total,
+        })]
+      );
+
+      responseBreakdown = priceLabAdditions({ addonRows: labAddonRows, labSyrupIds, guestCount: proposal.guest_count });
+      const paid = Number(proposal.amount_paid) || 0;
+      const due = Math.max(0, Math.round((Number(snapshot.total) - paid) * 100) / 100);
+      const dueDate = proposal.balance_due_date || null;
+      responseBalance = {
+        total: Number(snapshot.total),
+        paid,
+        due,
+        due_date: dueDate,
+        past_due: !!(due > 0 && dueDate && new Date(dueDate) < new Date()),
+      };
     }
 
     await client.query('COMMIT');
@@ -460,6 +670,7 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
       success: true,
       lab_additions: { addOns: Object.fromEntries(Object.entries(nextAddOns).filter(([, m]) => m?.labAdded)), labSyrupSelections: labSyrups },
       lab_breakdown: responseBreakdown,
+      balance: responseBalance,
     });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch (_) { /* already rolled back */ }

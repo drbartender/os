@@ -5,10 +5,12 @@ require('dotenv').config();
 //      list → locked (GET) + 409 (PUT).
 //   2. GET payload: submitted plan serves drinks with syrup pricing and the
 //      active addon price list; the plan GET carries lab_enabled correctly.
-//   3. PUT money: lab additions mint/refresh an 'Enhancement Lab' invoice at
-//      exactly computeExtrasBreakdown's total; a pre-existing 'Drink Plan
-//      Extras' invoice is NEVER touched; planner-owned addOns survive the
-//      reconcile; removing everything refreshes the invoice to $0.
+//   3. PUT money (fold model, 2026-07-20): additions fold into the proposal
+//      total and the open Balance invoice absorbs them with itemized lines;
+//      a legacy open 'Enhancement Lab' invoice zeroes when a Balance absorbs;
+//      the fully-paid case carries the UNINVOICED remainder on one itemized
+//      lab invoice (a standing unpaid Additional Services invoice is never
+//      double-billed); paid-in-full status demotes when new money is owed.
 //   4. Submit schedules the +36h lab_followup row (idempotent tuple).
 //
 // Harness per submitPlannerV2.test.js: real router over HTTP against the dev
@@ -28,6 +30,7 @@ const drinkPlansRouter = require('../drinkPlans');
 let server;
 let baseUrl;
 let clientId;
+let packageId;
 const proposalIds = [];
 const planTokens = {};
 const planIds = {};
@@ -57,15 +60,15 @@ function request(method, path, { body } = {}) {
   });
 }
 
-async function seedPlan(key, { status = 'submitted', shoppingListStatus = null } = {}) {
+async function seedPlan(key, { status = 'submitted', shoppingListStatus = null, proposalStatus = 'deposit_paid' } = {}) {
   const p = await pool.query(
     `INSERT INTO proposals
-       (client_id, event_date, event_start_time, event_duration_hours, event_timezone,
+       (client_id, package_id, event_date, event_start_time, event_duration_hours, event_timezone,
         status, event_type, guest_count, num_bars, total_price, amount_paid, pricing_snapshot)
-     VALUES ($1, CURRENT_DATE + 30, '18:00', 4, 'America/Chicago',
-             'deposit_paid', 'birthday-party', 80, 0, 2000, 100, '{}'::jsonb)
+     VALUES ($1, $2, CURRENT_DATE + 30, '18:00', 4, 'America/Chicago',
+             $3, 'birthday-party', 80, 0, 2000, 100, '{}'::jsonb)
      RETURNING id`,
-    [clientId]
+    [clientId, packageId, proposalStatus]
   );
   proposalIds.push(p.rows[0].id);
   const dp = await pool.query(
@@ -103,11 +106,26 @@ before(async () => {
     [cocktailId, `PP2L Cocktail ${NONCE}`]
   );
 
+  // Real package so the fold can reprice (the fail-closed gate refuses
+  // additions on an unpriceable proposal). Same proven shape as
+  // submitPlannerV2.test.js. Hosted -> the guard tests' drifted slug must be
+  // one that is NOT on the hosted shelf and NOT in the drink's dossier.
+  const pkg = await pool.query(
+    `INSERT INTO service_packages (slug, name, category, pricing_type, base_rate_4hr, base_rate_4hr_small,
+        min_guests, guests_per_bartender, bar_type, includes)
+     VALUES ($1, 'PP2 Lab Test', 'hosted', 'per_guest', 28, 33, 50, 100, 'full_bar', '[]')
+     RETURNING id`,
+    [`pp2-lab-${NONCE}`]
+  );
+  packageId = pkg.rows[0].id;
+
   await seedPlan('draft', { status: 'draft' });
   await seedPlan('open');
   await seedPlan('locked', { shoppingListStatus: 'approved' });
   await seedPlan('money');
   await seedPlan('guard');
+  await seedPlan('paidfull', { proposalStatus: 'balance_paid' });
+  await seedPlan('asvc', { proposalStatus: 'balance_paid' });
 
   const app = express();
   app.use(express.json());
@@ -141,6 +159,7 @@ after(async () => {
     await pool.query('DELETE FROM proposals WHERE id=$1', [pid]);
   }
   if (cocktailId) await pool.query('DELETE FROM cocktails WHERE id=$1', [cocktailId]);
+  if (packageId) await pool.query('DELETE FROM service_packages WHERE id=$1', [packageId]);
   if (clientId) await pool.query('DELETE FROM clients WHERE id=$1', [clientId]);
   await new Promise((resolve) => server.close(resolve));
   await pool.end();
@@ -184,23 +203,44 @@ test('open plan: GET serves drinks with syrup pricing; plan GET lab_enabled=true
   assert.equal(plan.body.lab_enabled, true);
 });
 
-test('PUT bills an Enhancement Lab invoice, never touches Drink Plan Extras, and reconciles', async () => {
-  const proposalId = proposalIds[3]; // 'money' plan
-  // Pre-existing pay-now extras invoice: must be untouched by every lab PUT.
-  await pool.query(
-    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status, locked)
-     VALUES ($1, $2, 'Drink Plan Extras', 9000, 9000, 'paid', true)`,
-    [proposalId, `T-${NONCE.slice(-14)}`]
-  );
-
+async function toastPricing() {
   const toast = await pool.query(
     "SELECT rate, billing_type FROM service_addons WHERE slug = 'champagne-toast' AND is_active = true"
   );
   assert.ok(toast.rows[0], 'dev DB has the champagne-toast addon');
-  const toastRate = Number(toast.rows[0].rate);
-  const toastTotal = toast.rows[0].billing_type === 'per_guest' ? toastRate * 80 : toastRate;
+  const rate = Number(toast.rows[0].rate);
+  return toast.rows[0].billing_type === 'per_guest' ? rate * 80 : rate;
+}
+
+test('additions fold into the balance: total rises, Balance absorbs with itemized lines, legacy lab invoice zeroes', async () => {
+  const proposalId = proposalIds[3]; // 'money' plan
+  // Locked paid Deposit + open Balance + a paid pay-now extras invoice that
+  // must never be touched + a LEGACY open 'Enhancement Lab' invoice from the
+  // pre-fold off-ledger model that must ZERO once the Balance absorbs.
+  await pool.query(
+    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status, locked)
+     VALUES ($1, $2, 'Deposit', 10000, 10000, 'paid', true),
+            ($1, $3, 'Balance', 0, 0, 'sent', false),
+            ($1, $4, 'Drink Plan Extras', 9000, 9000, 'paid', true),
+            ($1, $5, 'Enhancement Lab', 5000, 0, 'sent', false)`,
+    [proposalId, `TA${NONCE.slice(-12)}`, `TB${NONCE.slice(-12)}`, `TC${NONCE.slice(-12)}`, `TL${NONCE.slice(-12)}`]
+  );
+
+  // Empty reconcile first: total_price becomes the engine's catalog baseline
+  // (the seed's placeholder 2000 is not an engine number), so the addition
+  // delta below is exact.
+  const p0 = await request('PUT', `/api/drink-plans/t/${planTokens.money}/lab`, {
+    body: { addOns: {}, labSyrupSelections: {} },
+  });
+  assert.equal(p0.status, 200, JSON.stringify(p0.body));
+  const baseline = Number((await pool.query('SELECT total_price FROM proposals WHERE id=$1', [proposalId])).rows[0].total_price);
+  // The legacy off-ledger-model invoice zeroed on the very first reconcile.
+  const legacy = (await labInvoices(proposalId)).find((i) => i.label === 'Enhancement Lab');
+  assert.equal(Number(legacy.amount_due), 0, 'legacy open lab invoice zeroed while a Balance absorbs');
+
+  const toastTotal = await toastPricing();
   const syrupTotal = calculateSyrupCost(['jalapeno'], 80).total;
-  const expectedCents = Math.round((toastTotal + syrupTotal) * 100);
+  const addedDollars = toastTotal + syrupTotal;
 
   const p = await request('PUT', `/api/drink-plans/t/${planTokens.money}/lab`, {
     body: {
@@ -208,16 +248,35 @@ test('PUT bills an Enhancement Lab invoice, never touches Drink Plan Extras, and
       labSyrupSelections: { [cocktailId]: ['jalapeno'] },
     },
   });
-  assert.equal(p.status, 200);
-  assert.ok(p.body.lab_additions.addOns['champagne-toast'].labAdded === undefined
-    || p.body.lab_additions.addOns['champagne-toast'].labAdded === true);
+  assert.equal(p.status, 200, JSON.stringify(p.body));
+  assert.equal(p.body.lab_breakdown.totalCents, Math.round(addedDollars * 100));
+  assert.equal(p.body.balance.total, baseline + addedDollars, 'PUT reports the folded balance');
 
-  let invoices = await labInvoices(proposalId);
-  const extras = invoices.find((i) => i.label === 'Drink Plan Extras');
-  const lab = invoices.find((i) => i.label === 'Enhancement Lab');
-  assert.equal(Number(extras.amount_due), 9000, 'extras invoice untouched');
-  assert.ok(lab, 'Enhancement Lab invoice minted');
-  assert.equal(Number(lab.amount_due), expectedCents);
+  // Proposal total rose by exactly the additions; addon landed in proposal_addons.
+  const prop = (await pool.query('SELECT total_price FROM proposals WHERE id=$1', [proposalId])).rows[0];
+  assert.equal(Number(prop.total_price), baseline + addedDollars);
+  const pa = await pool.query(
+    `SELECT pa.addon_name FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id
+      WHERE pa.proposal_id = $1 AND sa.slug = 'champagne-toast'`,
+    [proposalId]
+  );
+  assert.equal(pa.rows.length, 1, 'lab addon upserted into proposal_addons');
+
+  // Balance invoice absorbed it: amount_due = total − lockedTotal (Deposit
+  // 10000 + Extras 9000 both locked), with the lab items as their own lines.
+  const invoices = await labInvoices(proposalId);
+  const balanceInv = invoices.find((i) => i.label === 'Balance');
+  const newTotalCents = Math.round((baseline + addedDollars) * 100);
+  assert.equal(Number(balanceInv.amount_due), newTotalCents - 10000 - 9000);
+  assert.equal(Number(invoices.find((i) => i.label === 'Drink Plan Extras').amount_due), 9000, 'extras invoice untouched');
+  assert.equal(Number(invoices.find((i) => i.label === 'Enhancement Lab').amount_due), 0, 'no separate lab billing while a balance is owed');
+  const lines = await pool.query(
+    'SELECT description FROM invoice_line_items WHERE invoice_id = $1',
+    [balanceInv.id]
+  );
+  const descs = lines.rows.map((r) => r.description);
+  assert.ok(descs.some((d) => d.includes('Champagne Toast')), `toast has its own line (${descs.join(' | ')})`);
+  assert.ok(descs.some((d) => d.includes('Signature Syrups')), 'syrups have their own line');
 
   // Selections: lab entries landed with labAdded, planner-owned addon survived.
   const sel = (await pool.query('SELECT selections FROM drink_plans WHERE id=$1', [planIds.money])).rows[0].selections;
@@ -226,45 +285,112 @@ test('PUT bills an Enhancement Lab invoice, never touches Drink Plan Extras, and
   assert.equal(sel.addOns['photo-booth-nonsense'].enabled, true, 'planner-owned addon untouched');
   assert.deepEqual(sel.labSyrupSelections[cocktailId], ['jalapeno']);
 
-  // Reconcile to empty: lab invoice refreshes to $0, planner addon still there.
+  // Reconcile to empty: total and Balance walk back down; addon row removed.
   const p2 = await request('PUT', `/api/drink-plans/t/${planTokens.money}/lab`, {
     body: { addOns: {}, labSyrupSelections: {} },
   });
   assert.equal(p2.status, 200);
-  invoices = await labInvoices(proposalId);
-  assert.equal(Number(invoices.find((i) => i.label === 'Enhancement Lab').amount_due), 0);
-  assert.equal(Number(invoices.find((i) => i.label === 'Drink Plan Extras').amount_due), 9000);
+  const prop2 = (await pool.query('SELECT total_price FROM proposals WHERE id=$1', [proposalId])).rows[0];
+  assert.equal(Number(prop2.total_price), baseline);
+  const balance2 = (await labInvoices(proposalId)).find((i) => i.label === 'Balance');
+  assert.equal(Number(balance2.amount_due), Math.round(baseline * 100) - 10000 - 9000);
+  const pa2 = await pool.query('SELECT id FROM proposal_addons WHERE proposal_id = $1', [proposalId]);
+  assert.equal(pa2.rows.length, 0, 'lab addon row removed on reconcile');
   const sel2 = (await pool.query('SELECT selections FROM drink_plans WHERE id=$1', [planIds.money])).rows[0].selections;
   assert.equal(sel2.addOns['champagne-toast'], undefined);
   assert.equal(sel2.addOns['photo-booth-nonsense'].enabled, true);
 });
 
-test('pay-then-add: paid+locked lab invoice is never mutated; delta invoice minted', async () => {
-  const proposalId = proposalIds[3]; // 'money' plan, lab invoice currently open at $0
+test('fully paid: itemized Enhancement Lab invoice carries the remainder; paid-in-full demoted', async () => {
+  const proposalId = proposalIds[5]; // 'paidfull' plan
+  // Baseline the total, then mark the event fully paid with everything locked.
+  const p0 = await request('PUT', `/api/drink-plans/t/${planTokens.paidfull}/lab`, {
+    body: { addOns: {}, labSyrupSelections: {} },
+  });
+  assert.equal(p0.status, 200, JSON.stringify(p0.body));
+  const baseline = Number((await pool.query('SELECT total_price FROM proposals WHERE id=$1', [proposalId])).rows[0].total_price);
+  const baselineCents = Math.round(baseline * 100);
   await pool.query(
-    `UPDATE invoices SET amount_due = 6000, amount_paid = 6000, status = 'paid', locked = true
-      WHERE proposal_id = $1 AND label = 'Enhancement Lab'`,
+    "UPDATE proposals SET amount_paid = total_price, status = 'balance_paid' WHERE id = $1",
     [proposalId]
   );
-
-  const toast = await pool.query(
-    "SELECT rate, billing_type FROM service_addons WHERE slug = 'champagne-toast' AND is_active = true"
+  await pool.query(
+    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status, locked)
+     VALUES ($1, $2, 'Balance', $3, $3, 'paid', true)`,
+    [proposalId, `TD${NONCE.slice(-12)}`, baselineCents]
   );
-  const toastRate = Number(toast.rows[0].rate);
-  const toastCents = Math.round((toast.rows[0].billing_type === 'per_guest' ? toastRate * 80 : toastRate) * 100);
 
-  const p = await request('PUT', `/api/drink-plans/t/${planTokens.money}/lab`, {
+  const toastTotal = await toastPricing();
+  const p = await request('PUT', `/api/drink-plans/t/${planTokens.paidfull}/lab`, {
     body: { addOns: { 'champagne-toast': {} }, labSyrupSelections: {} },
   });
-  assert.equal(p.status, 200);
+  assert.equal(p.status, 200, JSON.stringify(p.body));
+
+  // Paid-in-full flag re-evaluated (CLAUDE.md cross-cutting law).
+  const prop = (await pool.query('SELECT status, total_price FROM proposals WHERE id=$1', [proposalId])).rows[0];
+  assert.equal(prop.status, 'deposit_paid', 'balance_paid demoted when new money is owed');
+  assert.equal(Number(prop.total_price), baseline + toastTotal);
+
+  // Separate itemized invoice for exactly the remainder.
+  const invoices = await labInvoices(proposalId);
+  const labInv = invoices.find((i) => i.label === 'Enhancement Lab');
+  assert.ok(labInv, 'Enhancement Lab invoice minted only in the fully-paid case');
+  assert.equal(Number(labInv.amount_due), Math.round(toastTotal * 100));
+  const lines = await pool.query('SELECT description, line_total FROM invoice_line_items WHERE invoice_id = $1', [labInv.id]);
+  assert.ok(lines.rows.some((r) => r.description.includes('Champagne Toast')), 'itemized, not a generic line');
+  const lineSum = lines.rows.reduce((s, r) => s + Number(r.line_total), 0);
+  assert.equal(lineSum, Number(labInv.amount_due), 'lines sum to amount_due');
+
+  // Removal refreshes the same invoice back to $0 — never a second one.
+  const p2 = await request('PUT', `/api/drink-plans/t/${planTokens.paidfull}/lab`, {
+    body: { addOns: {}, labSyrupSelections: {} },
+  });
+  assert.equal(p2.status, 200);
+  const labs2 = (await labInvoices(proposalId)).filter((i) => i.label === 'Enhancement Lab');
+  assert.equal(labs2.length, 1);
+  assert.equal(Number(labs2[0].amount_due), 0);
+});
+
+test('fully paid + standing unpaid Additional Services: lab remainder never double-bills it', async () => {
+  const proposalId = proposalIds[6]; // 'asvc' plan
+  const p0 = await request('PUT', `/api/drink-plans/t/${planTokens.asvc}/lab`, {
+    body: { addOns: {}, labSyrupSelections: {} },
+  });
+  assert.equal(p0.status, 200, JSON.stringify(p0.body));
+  const baseline = Number((await pool.query('SELECT total_price FROM proposals WHERE id=$1', [proposalId])).rows[0].total_price);
+  const baselineCents = Math.round(baseline * 100);
+  // Fully paid on the ORIGINAL contract; then an admin edit added a $50
+  // surcharge that already stands on an UNLOCKED Additional Services invoice
+  // (its amount is inside total_price — the exact double-bill shape the
+  // fleet flagged). Modeled as an `adjustments` surcharge so the fold's
+  // engine recompute PRESERVES it (a raw total_price bump would evaporate).
+  await pool.query(
+    `UPDATE proposals SET amount_paid = total_price, status = 'balance_paid',
+        total_price = total_price + 50,
+        adjustments = '[{"type":"surcharge","amount":50,"label":"Admin edit"}]'::jsonb
+      WHERE id = $1`,
+    [proposalId]
+  );
+  await pool.query(
+    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status, locked)
+     VALUES ($1, $2, 'Balance', $3, $3, 'paid', true),
+            ($1, $4, 'Additional Services', 5000, 0, 'sent', false)`,
+    [proposalId, `TE${NONCE.slice(-12)}`, baselineCents, `TF${NONCE.slice(-12)}`]
+  );
+
+  const toastTotal = await toastPricing();
+  const p = await request('PUT', `/api/drink-plans/t/${planTokens.asvc}/lab`, {
+    body: { addOns: { 'champagne-toast': {} }, labSyrupSelections: {} },
+  });
+  assert.equal(p.status, 200, JSON.stringify(p.body));
 
   const invoices = await labInvoices(proposalId);
-  const labs = invoices.filter((i) => i.label === 'Enhancement Lab');
-  assert.equal(labs.length, 2, 'paid invoice kept, delta invoice minted');
-  const paid = labs.find((i) => i.status === 'paid');
-  const open = labs.find((i) => i.status === 'sent');
-  assert.equal(Number(paid.amount_due), 6000, 'paid+locked invoice untouched');
-  assert.equal(Number(open.amount_due), toastCents - 6000, 'delta = cumulative minus settled');
+  const labInv = invoices.find((i) => i.label === 'Enhancement Lab');
+  const asvcInv = invoices.find((i) => i.label === 'Additional Services');
+  assert.equal(Number(asvcInv.amount_due), 5000, 'Additional Services invoice untouched');
+  assert.ok(labInv, 'lab remainder invoice minted');
+  assert.equal(Number(labInv.amount_due), Math.round(toastTotal * 100),
+    'remainder subtracts the open Additional Services carrier — the $50 is never billed twice');
 });
 
 test('unknown addon slug is rejected', async () => {
@@ -308,15 +434,19 @@ test('lab PUT rejects addons outside the offered surface (2026-07-20 allowlist)'
 });
 
 test('lab PUT silently drops a stored lab addition that drifted out of the offered surface', async () => {
+  // smoked-cocktail-kit is active but neither on the event shelf nor in the
+  // guard drink's (empty) dossier — a stored addition for it is "drifted".
+  // (zero-proof-spirits joined the offered shelf when the seeds gained a
+  // hosted package, so it no longer drifts.)
   await pool.query(
-    `UPDATE drink_plans SET selections = jsonb_set(selections, '{addOns,zero-proof-spirits}', '{"enabled":true,"labAdded":true}') WHERE id = $1`,
+    `UPDATE drink_plans SET selections = jsonb_set(selections, '{addOns,smoked-cocktail-kit}', '{"enabled":true,"labAdded":true}') WHERE id = $1`,
     [planIds.guard]
   );
   const p = await request('PUT', `/api/drink-plans/t/${planTokens.guard}/lab`, {
-    body: { addOns: { 'zero-proof-spirits': {} } },
+    body: { addOns: { 'smoked-cocktail-kit': {} } },
   });
   assert.equal(p.status, 200, JSON.stringify(p.body));
-  assert.equal(p.body.lab_additions.addOns['zero-proof-spirits'], undefined, 'drifted slug dropped, not bricked');
+  assert.equal(p.body.lab_additions.addOns['smoked-cocktail-kit'], undefined, 'drifted slug dropped, not bricked');
 });
 
 test('lab PUT drops a syrup that is not the drink\'s own pairing', async () => {

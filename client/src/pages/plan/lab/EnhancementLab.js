@@ -56,6 +56,9 @@ export default function EnhancementLab() {
       .then((res) => {
         setSaveState('saved');
         if (res.data?.lab_breakdown) setServerBreakdown(res.data.lab_breakdown);
+        // Additions fold into the event balance server-side; keep the banner
+        // honest without a refetch.
+        if (res.data?.balance) setLab((prev) => (prev ? { ...prev, balance: res.data.balance } : prev));
         // Only clean if nothing changed while the save was in flight; a newer
         // change already has its own debounce pending.
         if (latestAdditions.current === sent) setDirty(false);

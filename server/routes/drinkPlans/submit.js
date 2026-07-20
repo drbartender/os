@@ -7,9 +7,8 @@
 
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
-const { calculateProposal } = require('../../utils/pricingEngine');
 const { refreshUnlockedInvoices, findOrRefreshExtrasInvoice, findExtrasInvoice, voidExtrasInvoiceWithReconcile, createAdditionalInvoiceIfNeeded } = require('../../utils/invoiceHelpers');
-const { reconcileProposalPaymentStatus } = require('../../utils/proposalStatus');
+const { foldExtrasIntoProposal } = require('../../utils/proposalExtrasFold');
 const { computeExtrasBreakdown } = require('../../utils/drinkPlanExtras');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
@@ -459,113 +458,25 @@ async function handleSubmit(req, res) {
           // self-provided syrups aren't in preSyrups anyway, so this is a no-op
           // for them; the net effect is that self-provided is neutral to the delta.
           const preSyrupsPriced = preSyrups.filter(dropSelfProvided);
-          const adjustments = proposal.adjustments || [];
 
-          // A total_price_override is a CONTRACT, not a catalog computation:
-          // the engine's serviceTotal REPLACES the whole calculated total with
-          // it. So we can neither drop it (the client's negotiated price
-          // evaporates and they get billed at catalog, which overbilled Jack
-          // Van Dyke by $627) nor pass it through untouched (the extras they
-          // just bought become free). Price the delta at catalog with the
-          // override OFF and move the contract by it. Anything this submit did
-          // not change sits on both sides and cancels, including the CC-era
-          // bundled first bar. Native proposals (no override) keep the plain
-          // catalog recompute; the only change reaching them is `adjustments`,
-          // which this handler used to drop on the floor (silently erasing an
-          // admin's discount on submit — the same bug's sibling). No prod row
-          // has adjustments without an override, so no live native moves.
-          const hasOverride = proposal.total_price_override !== null
-            && proposal.total_price_override !== undefined;
-          let effectiveOverride = null;
-
-          if (hasOverride) {
-            const catalogArgs = {
-              pkg,
-              guestCount: proposal.guest_count,
-              durationHours: Number(proposal.event_duration_hours),
-              numBartenders: proposal.num_bartenders,
-              adjustments,
-              totalPriceOverride: null, // price the delta at CATALOG
-              gratuityRate: proposal.gratuity_rate,
-              tipJar: proposal.tip_jar,
-            };
-            const catalogBefore = calculateProposal({
-              ...catalogArgs,
-              numBars: numBarsAtIntent,
-              addons: preAddonsRes.rows,
-              syrupSelections: preSyrupsPriced,
-            });
-            const catalogAfter = calculateProposal({
-              ...catalogArgs,
-              numBars: proposal.num_bars ?? 0,
-              addons: allAddonsRes.rows,
-              syrupSelections: syrupSels,
-            });
-            // Difference the SERVICE portion, not `.total`. The override is a
-            // service-level contract: the engine substitutes it for
-            // calculatedTotal and then layers the client-gratuity line on top
-            // (pricingEngine serviceTotal/total). Differencing `.total` folds
-            // any gratuity movement into the contract, and the final snapshot
-            // then charges that same gratuity AGAIN on top of the new override.
-            // With gratuity_rate = 0 (every override'd row today) the two are
-            // identical; with a rate set, an addon that moves the gratuity
-            // staff basis overcharged by rate x hours and permanently polluted
-            // total_price_override with gratuity dollars.
-            const serviceOf = (s) => Math.round((s.total - (s.gratuity?.total || 0)) * 100) / 100;
-            const extrasDelta = Math.round((serviceOf(catalogAfter) - serviceOf(catalogBefore)) * 100) / 100;
-            effectiveOverride = Math.round((Number(proposal.total_price_override) + extrasDelta) * 100) / 100;
-          }
-
-          const snapshot = calculateProposal({
+          // Contract-safe reprice + payment-status re-eval. The override-delta
+          // math (Jack Van Dyke lesson), snapshot recompute, total/override
+          // write, and F2 balance_paid demotion moved VERBATIM to
+          // utils/proposalExtrasFold.js so the Enhancement Lab folds through
+          // the exact same sequence (one money path, two callers). Mutates
+          // proposal.status in memory on demotion, as before.
+          const { snapshot } = await foldExtrasIntoProposal({
+            client,
+            proposal,
             pkg,
-            guestCount: proposal.guest_count,
-            durationHours: Number(proposal.event_duration_hours),
-            numBars: proposal.num_bars ?? 0,
-            numBartenders: proposal.num_bartenders,
-            addons: allAddonsRes.rows,
-            syrupSelections: syrupSels,
-            adjustments,
-            totalPriceOverride: effectiveOverride,
-            gratuityRate: proposal.gratuity_rate, tipJar: proposal.tip_jar, // §5 preserve stored gratuity
+            addonsBefore: preAddonsRes.rows,
+            addonsAfter: allAddonsRes.rows,
+            syrupsBefore: preSyrupsPriced,
+            syrupsAfter: syrupSels,
+            numBarsBefore: numBarsAtIntent,
+            numBarsAfter: proposal.num_bars ?? 0,
+            statusChangeReason: 'drink_plan_extras_reconciled',
           });
-
-          // Write the override alongside the total so the two can never drift
-          // apart again (the stranded-column state that made Jack's row
-          // inconsistent). For a native proposal effectiveOverride is null and
-          // the column is already null, so this is a no-op there.
-          await client.query(
-            'UPDATE proposals SET total_price = $1, pricing_snapshot = $2, total_price_override = $4, updated_at = NOW() WHERE id = $3',
-            [snapshot.total, JSON.stringify(snapshot), proposal.id, effectiveOverride]
-          );
-
-          // F2 (CLAUDE.md cross-cutting: price up -> re-evaluate payment status).
-          // The extras just raised total_price; a fully-paid proposal that now
-          // owes must not keep showing "Paid in Full". Mirror crud.js: demote
-          // balance_paid -> deposit_paid and disarm autopay only on the
-          // was-fully-paid transition. reconcile is pure; the UPDATE uses the
-          // SAME tx client (one-connection rule). Keep proposal.status honest in
-          // memory so the post-commit notification below reports the real state.
-          const rec = reconcileProposalPaymentStatus({
-            status: proposal.status, amountPaid: proposal.amount_paid, totalPrice: snapshot.total,
-          });
-          if (rec.changed) {
-            const priorStatus = proposal.status;
-            await client.query(
-              rec.autopayDisarmed
-                ? 'UPDATE proposals SET status = $1, autopay_enrolled = false, autopay_status = NULL WHERE id = $2'
-                : 'UPDATE proposals SET status = $1 WHERE id = $2',
-              [rec.status, proposal.id]
-            );
-            proposal.status = rec.status;
-            await client.query(
-              `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
-               VALUES ($1, 'status_changed', 'client', $2)`,
-              [proposal.id, JSON.stringify({
-                from: priorStatus, to: rec.status,
-                reason: 'drink_plan_extras_reconciled', new_total: snapshot.total,
-              })]
-            );
-          }
 
           await client.query(
             `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)

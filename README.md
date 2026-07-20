@@ -180,7 +180,7 @@ dr-bartender/
 │   │   ├── drinkPlans.js       # Client event planning questionnaire
 │   │   ├── drinkPlans/
 │   │   │   ├── coverageContext.js # Hosted-coverage loader (planner v2): package eligible-item union + class map + classify per drink; pool-or-held-client handle
-│   │   │   ├── lab.js          # Enhancement Lab (planner v2): GET/PUT /t/:token/lab shelves + additions reconcile; funds the 'Enhancement Lab' invoice, refreshes the shopping list post-commit
+│   │   │   ├── lab.js          # Enhancement Lab (planner v2): GET/PUT /t/:token/lab shelves + additions reconcile; folds additions into the proposal balance (proposalExtrasFold), Balance invoice absorbs; refreshes the shopping list post-commit
 │   │   │   ├── regenerate.js   # POST /:id/shopping-list/regenerate (fresh list from live par catalog; returns, never saves)
 │   │   │   ├── shoppingList.js # Shopping-list routes extracted from drinkPlans.js (public token view + admin get/save/approve; approve delegates to the comms action, kept for API compat)
 │   │   │   └── submit.js       # PUT /t/:token submit handler (extracted); creates the "Drink Plan Extras" invoice at submit
@@ -262,6 +262,7 @@ dr-bartender/
 │   │   ├── ccWrapUpEmailTemplate.js # wrap-up email subject + html + text renderer (v1 importer deleted; template retained for the drain-only handler below)
 │   │   ├── ccWrapUpHandler.js  # post_event_wrap_up_email dispatcher handler, registered at boot in server/index.js (enqueue endpoint deleted with v1; retained to drain scheduled rows)
 │   │   ├── labFollowupHandler.js # lab_followup dispatcher handler (planner v2): +36h post-submit Enhancement Lab nudge; every cancel condition checked at fire time (additions made, window closed, event <72h, marketing opt-out); registered at boot in server/index.js
+│   │   ├── proposalExtrasFold.js # Contract-safe extras fold (extracted verbatim from the submit financial path): override moves by catalog delta, snapshot reprice, total/override write, paid-in-full re-eval; shared by drink-plan submit + the Enhancement Lab
 │   │   ├── payrollGuards.js    # isLegacyCcParticipant (per-proposal stub check, used by payrollAccrual); isLegacyCcStubUser kept for parity
 │   │   ├── payrollDeferredRetry.js # Re-runs placement for tips that deferred while the open pay period was frozen (single-flight, attempt-capped); fired off the response path after a successful accrual and from the admin Retry button
 │   │   ├── changeRequests.js   # Client-portal change-request helpers: edit-window classifier, field allowlist, proposed-state preview + diff + price preview, and the reaper that auto-cancels pending requests on archive/complete

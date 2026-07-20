@@ -207,13 +207,13 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             // Mirrors the drink_plan_extras branch. Idempotent: this whole block
             // is inside isFirstDelivery (gated by the proposal_payments ON CONFLICT
             // insert), so a Stripe retry never re-increments.
-            // OFF-LEDGER EXCEPTION (2026-07-20 push review): an invoice whose
-            // label is in OFF_LEDGER_INVOICE_LABELS (Enhancement Lab) has NO
-            // total_price entry by spec, so rolling its payment into
-            // amount_paid would forgive the contract by that amount (autopay
-            // charges total - paid; the Balance refresh subtracts locked
-            // invoices). Skip the roll-up and promotion; the proposal_payments
-            // row + the invoice linking below remain the money record.
+            // OFF-LEDGER EXCEPTION: an invoice whose label is in
+            // OFF_LEDGER_INVOICE_LABELS has NO total_price entry, so rolling
+            // its payment into amount_paid would forgive the contract by that
+            // amount. The set is CURRENTLY EMPTY (Enhancement Lab money folds
+            // into total_price since 2026-07-20, so its payments roll up like
+            // any contract invoice); the branch stays wired for a future
+            // genuinely-additive label.
             const paidInvoiceId = Number(intent.metadata?.invoice_id) || null;
             let offLedger = false;
             if (paidInvoiceId) {
