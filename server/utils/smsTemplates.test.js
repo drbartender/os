@@ -80,19 +80,18 @@ test('paymentFailureSms > says it did not go through, includes link', () => {
   assertNoEmDash(s, 'paymentFailureSms');
 });
 
-test('eventEveSms > names bartender, time, location, phone, setup minutes', () => {
+test('eventEveSms > names bartender, time, location, phone, arrival range', () => {
   const s = t.eventEveSms({
     startTime: '6:00 PM CDT',
     location: '123 Main St',
     bartenderName: 'Sam',
     bartenderPhone: '+13125550000',
-    setupMinutes: 60,
   });
   assert.match(s, /Sam/);
   assert.match(s, /6:00 PM CDT/);
   assert.match(s, /123 Main St/);
   assert.match(s, /\+13125550000/);
-  assert.match(s, /60 minutes/);
+  assert.match(s, /30 to 90 minutes before your start time/);
   assertNoEmDash(s, 'eventEveSms');
 });
 
@@ -102,10 +101,32 @@ test('eventEveSms > omits the bartender clause when no bartender assigned', () =
     location: '123 Main St',
     bartenderName: null,
     bartenderPhone: null,
-    setupMinutes: 60,
   });
   assert.ok(!s.includes('direct number'), 'phone clause should be omitted');
   assert.match(s, /6:00 PM CDT/);
+  assert.match(s, /30 to 90 minutes before your start time/);
+});
+
+// Regression guard. This SMS used to render the proposal's derived setup
+// minutes, which committed us day-of to an exact arrival the crew then had to
+// beat. Arrival must stay the published range on every client surface; the
+// derived value is back-of-house only (server/utils/setupTime.js). A caller
+// re-adding a setupMinutes arg must not be able to put a number back in.
+test('eventEveSms > never renders a derived setup-minutes value', () => {
+  for (const setupMinutes of [60, 90, 45, null, undefined]) {
+    const s = t.eventEveSms({
+      startTime: '6:00 PM CDT',
+      location: '123 Main St',
+      bartenderName: 'Sam',
+      bartenderPhone: null,
+      setupMinutes,
+    });
+    assert.match(s, /30 to 90 minutes before your start time/);
+    // Strip the sanctioned range phrase first, then assert no OTHER minute
+    // count survives (a naive /90 minutes/ check would match the range itself).
+    const rest = s.replace('30 to 90 minutes', '');
+    assert.ok(!/\d+\s*minutes/.test(rest), `leaked "${setupMinutes} minutes"`);
+  }
 });
 
 test('rescheduleSms > gives the new details', () => {

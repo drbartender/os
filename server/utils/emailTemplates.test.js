@@ -35,7 +35,7 @@ test('signedAndPaidClient: full orientation includes booking + receipt + planner
       'Drink plan: pick yours any time, ideally before [date]',
       'Balance: auto-charges on June 1',
       'Bartender assignment: about 14 days before the event',
-      'Day-of: your bartender arrives 60 minutes early to set up',
+      'Day-of: your bartender arrives 30 to 90 minutes before your start time to set up',
     ],
   });
   assert.match(t.subject, /You're booked/i);

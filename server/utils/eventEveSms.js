@@ -22,7 +22,6 @@ const { SuppressMessageError } = require('./errors');
 const { sendAndLogSms } = require('./sms');
 const smsTemplates = require('./smsTemplates');
 const { resolveEventTimezone } = require('./eventTimezone');
-const { effectiveSetupMinutes } = require('./setupTime');
 
 /**
  * Parse an event-local wall-clock start time string ('18:00' or '6:00 PM')
@@ -127,7 +126,7 @@ async function handleEventEve({ entity }) {
   const proposalId = entity.id;
   const { rows } = await pool.query(
     `SELECT p.id, p.status, p.event_date, p.event_start_time, p.event_location,
-            p.event_timezone, p.setup_minutes_before, p.pricing_snapshot,
+            p.event_timezone,
             c.id AS client_id, c.name AS client_name, c.phone AS client_phone,
             c.communication_preferences AS comm_prefs, c.phone_status
        FROM proposals p
@@ -144,16 +143,14 @@ async function handleEventEve({ entity }) {
   if (prefs.sms_enabled === false) throw new SuppressMessageError('sms_opted_out');
 
   const bartender = await resolveBartender(proposalId);
-  const setupMinutes = effectiveSetupMinutes(
-    { setup_minutes_before: ctx.setup_minutes_before, pricing_snapshot: ctx.pricing_snapshot },
-    null
-  );
+  // No setup minutes passed: the template states the published 30-to-90 range
+  // instead of this proposal's derived arrival. effectiveSetupMinutes stays
+  // back-of-house (setupTime.js) and is deliberately NOT read here.
   const body = smsTemplates.eventEveSms({
     startTime: formatStartTimeLocal(ctx),
     location: ctx.event_location,
     bartenderName: bartender.name,
     bartenderPhone: bartender.phone,
-    setupMinutes,
   });
   await sendAndLogSms({
     to: ctx.client_phone,

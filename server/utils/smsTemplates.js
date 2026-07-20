@@ -66,20 +66,25 @@ function paymentFailureSms({ eventDate, link }) {
 }
 
 // ─── 3.12 Event-eve SMS ──────────────────────────────────────────
-function eventEveSms({ startTime, location, bartenderName, bartenderPhone, setupMinutes }) {
-  // Spec 3.12: name the bartender, time, location, their phone, and the
-  // actual scheduled setup minutes. When no bartender is assigned yet, omit
-  // the bartender name + phone clauses gracefully.
+function eventEveSms({ startTime, location, bartenderName, bartenderPhone }) {
+  // Spec 3.12: name the bartender, time, location, and their phone. When no
+  // bartender is assigned yet, omit the bartender name + phone clauses
+  // gracefully.
+  //
+  // Arrival is stated as the PUBLISHED RANGE (30 to 90 minutes), never the
+  // proposal's derived setup minutes. The exact crew arrival time is
+  // back-of-house (see setupTime.js) and committing to it day-of boxes the
+  // lead bartender in: real arrival flexes with build size, traffic, and
+  // venue access. The range matches the FAQ and Method page verbatim.
   const time = startTime || 'your start time';
   const loc = location || 'your venue';
-  const setup = Number.isFinite(Number(setupMinutes)) ? Number(setupMinutes) : 60;
   if (bartenderName) {
     const phoneClause = bartenderPhone
       ? ` Their direct number is ${bartenderPhone} if you need them.`
       : '';
-    return `Hi, Dallas here. Your bartender tomorrow at ${time}, ${loc} is ${bartenderName}.${phoneClause} They'll arrive ${setup} minutes before your start time to set up. Let me know if you have any questions or need any changes.`;
+    return `Hi, Dallas here. Your bartender tomorrow at ${time}, ${loc} is ${bartenderName}.${phoneClause} They'll arrive 30 to 90 minutes before your start time to set up. Let me know if you have any questions or need any changes.`;
   }
-  return `Hi, Dallas here. Your event is tomorrow at ${time}, ${loc}. Your bartender will arrive ${setup} minutes before your start time to set up. Let me know if you have any questions or need any changes.`;
+  return `Hi, Dallas here. Your event is tomorrow at ${time}, ${loc}. Your bartender will arrive 30 to 90 minutes before your start time to set up. Let me know if you have any questions or need any changes.`;
 }
 
 // ─── 3.13 Reschedule SMS ─────────────────────────────────────────

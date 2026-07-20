@@ -33,11 +33,11 @@ const STEPS = [
     n: 'III',
     kicker: 'Step Three · The Big Experiment',
     t: 'The night, run tight.',
-    body: 'On the day, we arrive 30–60 minutes early (up to 90 for larger builds), build the bar, and run a tight, smiling, well-lit shift. You meet your guests; we pour. Tear-down is on us.',
+    body: 'On the day, we arrive 30–90 minutes early depending on the size of the build, set up the bar, and run a tight, smiling, well-lit shift. You meet your guests; we pour. Tear-down is on us.',
     photo: '/images/marketing/method-event-bar.jpg',
     alt: 'Dr. Bartender bartenders running a built bar at an event',
     bullets: [
-      'Arrive 30–60 min early · setup included',
+      'Arrive 30–90 min early · setup included',
       'BASSET-trained · general + liquor liability',
       'Tear-down · take everything with us',
     ],
@@ -49,7 +49,7 @@ const TIMELINE = [
   ['Day 1–2', 'You sign and pay deposit on Stripe. Date locked.'],
   ['T-30 days', 'Potion Planner opens. Build menu, swap drinks, finalize headcount.'],
   ['T-7 days', 'Final menu locked. Shopping list (BYOB) sent. Setup logistics confirmed.'],
-  ['Event day', 'Arrive 30–60 minutes early, up to 90 for larger builds. Bar built. Doors open. We pour.'],
+  ['Event day', 'Arrive 30–90 minutes early depending on the build. Bar built. Doors open. We pour.'],
   ['+1 day', 'Final invoice reflects the hours and add-ons you actually used, up or down. Photo gallery if you opt in.'],
 ];
 

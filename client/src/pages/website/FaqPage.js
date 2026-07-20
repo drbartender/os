@@ -127,7 +127,7 @@ const FAQ_CATEGORIES = [
     items: [
       {
         q: 'What time do bartenders arrive?',
-        a: 'Typically 30–60 minutes before your event start time, and up to 90 for larger or hosted builds that need more setup.',
+        a: 'Typically 30–90 minutes before your event start time, depending on the size of the build. Larger or hosted bars need the extra lead time.',
       },
       {
         q: 'Can you accommodate dietary restrictions or allergies?',

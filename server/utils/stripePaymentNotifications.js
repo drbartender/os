@@ -85,7 +85,10 @@ async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
               formattedBalanceDueDate: payload.balance.formattedBalanceDueDate,
             };
 
-            const setupMin = payload.setupMinutesBefore;
+            // Arrival is the published 30-to-90 range, NOT
+            // payload.setupMinutesBefore. The derived per-proposal arrival is
+            // back-of-house (setupTime.js); stating it here commits us in
+            // writing at booking time to a minute count the crew has to beat.
             const timelineLines = [
               payload.potionPlannerUrl
                 ? 'Drink plan: pick yours any time'
@@ -94,7 +97,7 @@ async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
                 ? 'Balance: paid in full'
                 : `Balance: ${payload.balance.dueLabel}${payload.balance.formattedBalanceDueDate ? ` ${payload.balance.formattedBalanceDueDate}` : ''}`,
               'Bartender assignment: about 14 days before the event',
-              `Day-of: your bartender arrives ${setupMin} minutes before your start time to set up`,
+              'Day-of: your bartender arrives 30 to 90 minutes before your start time to set up',
             ];
 
             const attachments = [];
