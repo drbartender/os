@@ -26,6 +26,7 @@ export default function ShoppingListButton({
   // Initial Approve & Send button state — passed to modal so it doesn't have
   // to re-fetch the same /shopping-list endpoint on mount.
   const [initialApproveStatus, setInitialApproveStatus] = useState('idle');
+  const [initialEverApproved, setInitialEverApproved] = useState(false);
 
   const handleClick = async () => {
     setLoading(true);
@@ -38,6 +39,7 @@ export default function ShoppingListButton({
       // Snapshot the approve state up front so the modal can render the
       // correct button label without an extra round-trip.
       setInitialApproveStatus(savedRes.data.shopping_list_status === 'approved' ? 'approved' : 'idle');
+      setInitialEverApproved(savedRes.data.ever_approved === true);
 
       if (saved) {
         // Use the saved list directly.
@@ -141,6 +143,7 @@ export default function ShoppingListButton({
             planId={planId}
             planToken={planToken}
             initialApproveStatus={initialApproveStatus}
+            initialEverApproved={initialEverApproved}
           />
         </Suspense>
       )}

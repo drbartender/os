@@ -40,7 +40,7 @@ const segBtn = (active) => ({
 // This copy gates every regenerate entry point (Reset + guest-count change).
 const REGEN_CONFIRM = 'Regenerate replaces your edits, and saving will set the list back to Needs review. Continue?';
 
-export default function ShoppingListModal({ listData, onClose, planId, planToken, initialApproveStatus = 'idle' }) {
+export default function ShoppingListModal({ listData, onClose, planId, planToken, initialApproveStatus = 'idle', initialEverApproved = false }) {
   const toast = useToast();
   const [edited, setEdited] = useState(() => deepClone(listData));
   const [guestCount, setGuestCount] = useState(listData.guestCount);
@@ -67,6 +67,10 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   // so the button copy can tell the truth ("Approved, email FAILED").
   const [sendOpen, setSendOpen] = useState(false);
   const [lastSend, setLastSend] = useState(null);
+  // True after a successful silent publish; cleared whenever a normal send
+  // records a lastSend. Keeps the approve button from ever claiming a silent
+  // publish was emailed.
+  const [lastPublishSilent, setLastPublishSilent] = useState(false);
   // Set true once the list has been approved and then edited back to review
   // this modal session; it stays true so the re-armed button reads
   // "Re-approve & Send" instead of the first-time "Approve & Send" copy.
@@ -359,7 +363,59 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   const handleSendComplete = (results) => {
     if (results && results.ok) {
       setLastSend(results);
+      setLastPublishSilent(false);
       setApproveStatus('approved');
+    }
+  };
+
+  // Silent publish ("Update Client's Copy" / "Publish Quietly"): flush the
+  // on-screen edits, then approve with zero channels so the client's live link
+  // updates without an email. Reuses approveStatus='approved' on success so the
+  // next edit re-arms the buttons via the existing auto-save branch. Holds
+  // 'saving' across BOTH requests (no double-submit window) and never opens the
+  // SendModal.
+  const handleSilentPublish = async () => {
+    if (!planId) return;
+    if (!hasBeenPublished) {
+      // First-ever publish with no notification also closes the client's Lab.
+      const ok = window.confirm(
+        'Publish this list to the client without notifying them? They will not get a link, and their Enhancement Lab will close.'
+      );
+      if (!ok) return;
+    }
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    const publishPayload = { edited, guestCount };
+    pendingSaveRef.current = null;
+    setApproveStatus('saving');
+    setApproveError('');
+    try {
+      await api.put(`/drink-plans/${planId}/shopping-list`, {
+        shopping_list: {
+          ...stripGenerationKeys(edited),
+          guestCount: parseInt(guestCount, 10) || edited.guestCount,
+        },
+      });
+      setSaveStatus('saved');
+      await api.post('/comms/send', {
+        action: 'shopping_list_approve',
+        entity_id: planId,
+        channels: [],
+        silent: true,
+      });
+      setLastSend(null);
+      setLastPublishSilent(true);
+      setApproveStatus('approved');
+    } catch (err) {
+      console.error('Silent publish failed:', err);
+      // The PUT above already reverted the list to pending_review (any edit
+      // does), so on failure the client's page is showing the pending screen.
+      // Re-enable the button (idle) and say so; clicking again retries.
+      if (!pendingSaveRef.current) pendingSaveRef.current = publishPayload;
+      setApproveStatus('idle');
+      setApproveError(err?.message || 'Publish failed. The list is not live for the client right now. Click to retry.');
     }
   };
 
@@ -381,7 +437,11 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   // the client is currently on the pending screen until it is re-sent.
   // Approved copy tells the per-channel truth from the last send (spec 4.6):
   // an approved list whose email failed or was skipped never reads "& Sent".
-  const approvedLabel = !lastSend ? '✓ Approved & Sent'
+  // Has the client ever seen this list? Durable prior-approval (snapshot) OR
+  // approved-then-edited this session OR a silent publish this session.
+  const hasBeenPublished = initialEverApproved || wasApproved || lastPublishSilent;
+  const approvedLabel = lastPublishSilent ? '✓ Updated, not sent'
+    : !lastSend ? '✓ Approved & Sent'
     : lastSend.email === 'sent' ? '✓ Approved & Sent'
     : lastSend.email === 'failed' ? '✓ Approved, email FAILED'
     : '✓ Approved (no email)';
@@ -599,7 +659,9 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           {/* Approve consequence line, states the Enhancement Lab window closes.
               The Lab ships in a later lane; the sentence is forward-true now. */}
           <div style={{ marginRight: 'auto', maxWidth: 440, fontSize: '0.75rem', color: 'var(--ink-3)', lineHeight: 1.45 }}>
-            {approveStatus === 'approved'
+            {approveStatus === 'approved' && lastPublishSilent
+              ? 'Updated quietly. The client link is live with the new version and their Enhancement Lab window is closed. They were not notified.'
+              : approveStatus === 'approved'
               ? 'Published. The client link is live and their Enhancement Lab window is closed. Any edit returns this list to Needs review and hides it from the client.'
               : 'Approving publishes this list to the client and closes their Enhancement Lab window.'}
           </div>
@@ -621,6 +683,19 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           <button className="btn" onClick={handleDownload} disabled={downloading}>
             {downloading ? 'Generating PDF...' : 'Download PDF'}
           </button>
+          {planId && (
+            <button
+              className="btn btn-secondary"
+              onClick={handleSilentPublish}
+              disabled={approveStatus !== 'idle' || sendOpen}
+              title="Update the client's live shopping-list link without emailing them."
+            >
+              {approveStatus === 'saving' ? 'Publishing…'
+                : (approveStatus === 'approved' && lastPublishSilent) ? '✓ Updated'
+                : hasBeenPublished ? "Update Client's Copy"
+                : 'Publish Quietly'}
+            </button>
+          )}
           {planId && (
             <button
               className="btn btn-success"

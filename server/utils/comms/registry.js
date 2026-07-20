@@ -19,6 +19,9 @@
 //   dispatchWithoutSideEffects  optional boolean: true for resend-type actions
 //                whose ensureSideEffects is validate-only (always applied:false);
 //                exempts them from the route's concurrent-confirm dispatch guard
+//   allowSilent   optional boolean: true lets POST /api/comms/send accept
+//                { silent: true, channels: [] } for this action — apply side
+//                effects, send nothing. Absent/false: silent is rejected.
 const fs = require('fs');
 const path = require('path');
 

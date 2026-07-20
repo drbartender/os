@@ -235,7 +235,7 @@ Compose-and-confirm client sends for the comms registry (`server/routes/comms.js
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/preview` | Admin/Manager | Live-resolve the recipient + channels for an `{ action, entity_id }` pair and return the drafted (editable) message parts. Non-mutating: nothing is sent or written. |
-| POST | `/send` | Admin/Manager (`adminWriteLimiter`) | Run the action's idempotent side effects, then dispatch the admin's (possibly edited) message on the selected channels. Returns per-channel truth (`sent`/`failed`/`skipped` + skip reasons); each attempt writes a `message_log` row carrying `sent_by` + `body_edited`. Validates non-empty subject/body per selected channel and the 640-char SMS cap; an empty channel list is accepted only when the action genuinely has no channel to offer (side-effects-only confirm). |
+| POST | `/send` | Admin/Manager (`adminWriteLimiter`) | Run the action's idempotent side effects, then dispatch the admin's (possibly edited) message on the selected channels. Returns per-channel truth (`sent`/`failed`/`skipped` + skip reasons); each attempt writes a `message_log` row carrying `sent_by` + `body_edited`. Validates non-empty subject/body per selected channel and the 640-char SMS cap; an empty channel list is accepted only when the action genuinely has no channel to offer (side-effects-only confirm). An optional `silent: true` (with `channels: []`) applies the action's side effects and sends nothing, honored only for actions that declare `allowSilent` (currently `shopping_list_approve`, for the editor's quiet re-publish); it is validated before `ensureSideEffects`, so a rejected silent request never flips a side effect. |
 
 ### BEO — `/api/beo`
 | Method | Path | Auth | Description |
@@ -1116,6 +1116,7 @@ Dibs (spec `docs/superpowers/specs/2026-07-06-presence-dibs-design.md`): the fal
 - **`buildMessages(entityId)`** returns the editable message parts (`email.{subject, heading, bodyText, cta}`, `sms.body`). Only `subject` and `bodyText` are admin-editable; `heading` and `cta` are fixed by the action so an edit can never break the token link. `render.js` (`renderPartsEmail`) HTML-escapes the edited prose into the branded email shell.
 - **`ensureSideEffects(entityId, ctx)`** performs the action's state change idempotently (for `shopping_list_approve`: the atomic `pending_review` → `approved` flip plus the approved-snapshot write). A second call no-ops, which is what makes a failed-dispatch Retry safe.
 - **`dispatch(entityId, message, channels, ctx)`** owns the ledger. It calls `sendEmail` / `sendSMS` with `meta.skipLog` and writes the `message_log` rows itself (one per attempt, success or failure, carrying `sent_by` + `body_edited`), so a provider throw can never leave a sent-but-unlogged send (the 2026-07-16 Brandon Martin failure).
+- **`allowSilent`** (optional boolean) lets `POST /api/comms/send` accept `{ silent: true, channels: [] }` for this action: run `ensureSideEffects` and send nothing (a zero-channel `dispatch`). Only `shopping_list_approve` declares it, powering the shopping-list editor's quiet re-publish (update the client's live link without emailing). Absent or false, a `silent` request is rejected.
 
 The registry ships four actions:
 

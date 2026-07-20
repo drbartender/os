@@ -248,6 +248,6 @@ async function dispatch(planId, message, channels, ctx = {}) {
 }
 
 module.exports = {
-  key, messageType, defaultChannels,
+  key, messageType, defaultChannels, allowSilent: true,
   resolveRecipient, buildMessages, ensureSideEffects, dispatch,
 };

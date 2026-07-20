@@ -79,7 +79,9 @@ function registerAdminShoppingListRoutes(router) {
   /** GET /api/drink-plans/:id/shopping-list — load saved shopping list */
   router.get('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     const result = await pool.query(
-      'SELECT shopping_list, shopping_list_status, shopping_list_approved_at FROM drink_plans WHERE id = $1',
+      `SELECT shopping_list, shopping_list_status, shopping_list_approved_at,
+              shopping_list_approved_snapshot IS NOT NULL AS ever_approved
+         FROM drink_plans WHERE id = $1`,
       [req.params.id]
     );
     if (!result.rows[0]) throw new NotFoundError('Plan not found.');
@@ -87,6 +89,7 @@ function registerAdminShoppingListRoutes(router) {
       shopping_list: result.rows[0].shopping_list || null,
       shopping_list_status: result.rows[0].shopping_list_status || null,
       shopping_list_approved_at: result.rows[0].shopping_list_approved_at || null,
+      ever_approved: result.rows[0].ever_approved === true,
     });
   }));
 

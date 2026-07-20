@@ -61,7 +61,21 @@ router.post('/send', auth, requireAdminOrManager, adminWriteLimiter, asyncHandle
   const { action, entityId } = requireAction(body, req.user);
 
   const channels = Array.isArray(body.channels) ? body.channels.filter((c) => ['email', 'sms'].includes(c)) : [];
-  if (channels.length === 0) {
+  const silent = body.silent === true;
+  if (silent) {
+    // Silent publish: apply side effects, send nothing. Validated HERE, before
+    // ensureSideEffects (below), so a rejected silent request can never flip a
+    // money side effect (e.g. invoice draft->sent) and then 400.
+    if (!action.allowSilent) {
+      throw new ValidationError({ silent: 'This action cannot be published without sending.' });
+    }
+    if (channels.length > 0) {
+      throw new ValidationError({ channels: 'A silent publish cannot select channels.' });
+    }
+    if (body.retry === true) {
+      throw new ValidationError({ retry: 'A silent publish cannot be a retry.' });
+    }
+  } else if (channels.length === 0) {
     // Side-effects-only confirm (spec 4.6, hosted approve): an empty channel
     // list is legal ONLY when the action genuinely has no channel to offer.
     // When a channel IS available, an empty selection is an accidental no-op
