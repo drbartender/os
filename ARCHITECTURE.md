@@ -404,7 +404,7 @@ Read-side mirror of Stripe payouts + balance-transaction lines (`server/routes/s
 | POST | `/presence/state` | Admin+Manager (tracked, self only) | Set own presence state (desk/available/away); applies the taking-leads transition rules (away wipes; re-entry resets on for chain users, OFF for the fallback owner). |
 | POST | `/presence/leads` | Admin+Manager (tracked, self only) | Set own taking-leads toggle; rejected while away. The fallback owner's toggle is dibs: it overrides the chain, and both edges fire the dibs ping (`presenceNotify.js`). |
 | GET | `/presence/log` | Admin | Time-clock history: per-user this-week/this-month desk+available totals (Central time, boundary-split) + the 50 most recent intervals. |
-| GET | `/lead-call-attention` | Admin+Manager | Open lead-call bridge attention rows (`lead_call_attempts` in missed/failed/skipped states, younger than 7 days, lead still `new`) joined to customer name + proposal/client ids; feeds the overview Sales tab's missed-call items (`server/routes/admin/leadCalls.js`). |
+| GET | `/lead-call-attention` | Admin+Manager | Lead-call bridge FAULT rows (`lead_call_attempts` in `failed`/`skipped_unconfigured`/`skipped_invalid_phone`, younger than 7 days, lead still `new`) joined to customer name + proposal/client ids; feeds the overview Sales tab. Missed and after-hours chains are deliberate non-items (2026-07-20): log-only, no alert (`server/routes/admin/leadCalls.js`). |
 
 ### Messages — `/api/messages`
 | Method | Path | Auth | Description |
@@ -437,7 +437,7 @@ Read-side mirror of Stripe payouts + balance-transaction lines (`server/routes/s
 |---|---|---|---|
 | POST | `/answer` | Twilio signature (fail-closed in EVERY env) | Agent leg answered (Dallas/Zul). Returns `<Gather numDigits="1" timeout="10">` wrapping the spoken lead briefing (`buildLeadBriefing`, xml-escaped), one automatic repeat, then `<Hangup/>`. Missing/terminal/malformed attempt → apology TwiML, never 500. Query: `attempt`, `leg` (admin\|va), `play`. |
 | POST | `/digit` | Twilio signature (fail-closed in EVERY env) | Gather action. `1`: guarded claim to `connected` then `<Dial answerOnBridge="true" callerId="VOICE_CALLER_ID"><Number>toUsE164(lead phone)</Number></Dial>` (the 224 shown to the lead; stale/duplicate press → apology). `9`: replay via `<Redirect>` (max 3 plays). Other: `<Hangup/>`. |
-| POST | `/status` | Twilio signature (fail-closed in EVERY env) | Status callback for all legs, at-least-once tolerant. Admin-leg terminal → record disposition + `advanceChain` (claims `calling_va`, winner dials Zul). VA-leg terminal → guarded `missed` + one `lead_call` admin email. Lead-leg terminal → `bridge_duration_sec` (defensive parse) and flips `thumbtack_leads.status` to `contacted` only at ≥20s bridge (relay-refusal floor). Non-terminal/unknown statuses ignored. |
+| POST | `/status` | Twilio signature (fail-closed in EVERY env) | Status callback for all legs, at-least-once tolerant. Admin-leg terminal → record disposition + `advanceChain` (claims `calling_va`, winner dials Zul). VA-leg terminal → guarded `missed` (log state, NO alert since 2026-07-20; only chain failures email, via advanceChain/reaper). Lead-leg terminal → `bridge_duration_sec` (defensive parse) and flips `thumbtack_leads.status` to `contacted` only at ≥20s bridge (relay-refusal floor). Non-terminal/unknown statuses ignored. |
 
 ### VA Calling — Telegram Trigger — `/api/telegram`
 | Method | Path | Auth | Description |

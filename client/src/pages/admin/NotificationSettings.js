@@ -53,8 +53,8 @@ const CATEGORY_LABELS = {
     help: 'A payout to the bank account fails.',
   },
   lead_call: {
-    label: 'Missed lead calls',
-    help: 'Both of you missed a Thumbtack lead call, or a call failed.',
+    label: 'Lead call failures',
+    help: 'The lead call bridge could not place calls (Twilio failure, bad config, or the daily cap tripped). Missed calls do not alert.',
   },
 };
 

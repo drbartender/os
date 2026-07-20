@@ -104,25 +104,31 @@ after(async () => {
   await pool.end();
 });
 
-test('returns open attention rows with the join fields, newest first', async () => {
-  const missedId = await makeAttempt(await makeLead('missed'), 'missed');
-  const afterHoursId = await makeAttempt(await makeLead('ah'), 'skipped_after_hours', 1);
+test('returns open FAULT rows with the join fields, newest first (2026-07-20: faults only)', async () => {
+  const failedId = await makeAttempt(await makeLead('failed'), 'failed', 0, 'cap_tripped');
+  const badPhoneId = await makeAttempt(await makeLead('badphone'), 'skipped_invalid_phone', 1, 'no_phone');
   const res = await get('/api/admin/lead-call-attention', adminToken);
   assert.equal(res.status, 200);
   const mine = res.body.filter((r) => (r.customer_name || '').startsWith('Attention Lead'));
-  assert.deepEqual(mine.map((r) => Number(r.id)), [missedId, afterHoursId], 'newest first');
+  assert.deepEqual(mine.map((r) => Number(r.id)), [failedId, badPhoneId], 'newest first');
   const row = mine[0];
   for (const k of ['id', 'status', 'detail', 'created_at', 'customer_name', 'proposal_id', 'client_id']) {
     assert.ok(k in row, `field ${k}`);
   }
 });
 
-test('excludes connected chains, stale rows past 7 days, and non-new leads', async () => {
+test('excludes missed, after-hours, connected, stale rows past 7 days, and non-new leads', async () => {
+  // Missed and after-hours are deliberate NON-items (2026-07-20 per Dallas):
+  // the moment has passed; follow-up rides the normal email/SMS pipeline.
+  await makeAttempt(await makeLead('missed'), 'missed');
+  await makeAttempt(await makeLead('ah'), 'skipped_after_hours');
   await makeAttempt(await makeLead('conn'), 'connected');
-  await makeAttempt(await makeLead('old'), 'missed', 8);
-  await makeAttempt(await makeLead('contacted', 'contacted'), 'missed');
+  await makeAttempt(await makeLead('old'), 'failed', 8);
+  await makeAttempt(await makeLead('contacted', 'contacted'), 'failed');
   const res = await get('/api/admin/lead-call-attention', adminToken);
   const names = res.body.map((r) => r.customer_name);
+  assert.ok(!names.includes('Attention Lead missed'), 'missed is not an attention item');
+  assert.ok(!names.includes('Attention Lead ah'), 'after-hours is not an attention item');
   assert.ok(!names.includes('Attention Lead conn'), 'connected excluded');
   assert.ok(!names.includes('Attention Lead old'), '7-day cutoff');
   assert.ok(!names.includes('Attention Lead contacted'), 'lead no longer new clears the item');

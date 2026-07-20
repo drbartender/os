@@ -502,7 +502,7 @@ function newThumbtackLeadAdmin({ customerName, customerPhone, category, descript
 
 function missedLeadCallAdmin({ customerName, category, eventDate, guestCount, locationCity, reason, adminUrl, proposalUrl }) {
   const name = esc(customerName || 'Thumbtack lead');
-  const why = esc(reason || 'missed');
+  const why = esc(reason || 'call failed');
   const dateStr = eventDate ? new Date(eventDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/Chicago' }) : 'Not specified';
   const cta = proposalUrl ? ctaButton(proposalUrl, 'Open Proposal') : (adminUrl ? ctaButton(adminUrl, 'View Client') : '');
 
@@ -511,7 +511,7 @@ function missedLeadCallAdmin({ customerName, category, eventDate, guestCount, lo
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Lead call ${why}</h2>
       <p style="background:#fff3cd;border:1px solid #ffc107;padding:12px;border-radius:6px;font-weight:bold;">
-        Nobody connected with this Thumbtack lead by phone. Call them back when you can; the auto-draft proposal already went out.
+        The lead call bridge could not complete calls for this lead. Check the system if this repeats; the auto-draft proposal already went out.
       </p>
       <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:120px;">Name</td><td style="padding:8px 12px;">${name}</td></tr>
@@ -522,7 +522,7 @@ function missedLeadCallAdmin({ customerName, category, eventDate, guestCount, lo
       </table>
       ${cta}
     `),
-    text: `Lead call ${reason || 'missed'}: ${customerName || 'Thumbtack lead'}. ${category || 'N/A'}, ${dateStr}, ${guestCount || 'N/A'} guests, ${locationCity || 'N/A'}. Call them back when you can.${proposalUrl ? ` Proposal: ${proposalUrl}` : ''}${!proposalUrl && adminUrl ? ` Client: ${adminUrl}` : ''}`,
+    text: `Lead call ${reason || 'call failed'}: ${customerName || 'Thumbtack lead'}. ${category || 'N/A'}, ${dateStr}, ${guestCount || 'N/A'} guests, ${locationCity || 'N/A'}. The bridge could not complete calls for this lead; check the system if this repeats.${proposalUrl ? ` Proposal: ${proposalUrl}` : ''}${!proposalUrl && adminUrl ? ` Client: ${adminUrl}` : ''}`,
   };
 }
 

@@ -78,15 +78,16 @@ export function buildSalesItems(proposals, nowMs) {
     }));
 }
 
-// Lead-call attention rows (spec 2026-07-18 §5.2): missed/failed/skipped
-// chains on still-new leads, from GET /admin/lead-call-attention. Rendered in
-// the Sales tab AHEAD of the aging sent-proposal items (OverviewPage prepends;
-// array order is display order). Targets: proposal when the auto-draft
-// exists, else the client record, else a plain-text row.
+// Lead-call attention rows from GET /admin/lead-call-attention. NARROWED
+// 2026-07-20: only system-fault chains surface (the machine could not place
+// calls); missed and after-hours are deliberate non-items (the moment has
+// passed; follow-up rides the normal email/SMS pipeline), so at healthy
+// steady state this list is empty. Rendered in the Sales tab AHEAD of the
+// aging sent-proposal items (OverviewPage prepends; array order is display
+// order). Targets: proposal when the auto-draft exists, else the client
+// record, else a plain-text row.
 const LEAD_CALL_LABELS = {
-  missed: 'missed call',
   failed: 'call failed',
-  skipped_after_hours: 'after hours',
   skipped_unconfigured: 'call misconfigured',
   skipped_invalid_phone: 'call misconfigured',
 };
@@ -98,7 +99,7 @@ export function buildLeadCallItems(rows, nowMs) {
     const sub = hours < 1 ? 'just now' : hours < 24 ? `${hours}h ago` : `${Math.floor(ageMs / 86400e3)}d ago`;
     return {
       id: 'leadcall-' + r.id, type: 'lead-call', priority: 'warn',
-      title: `${r.customer_name || 'Thumbtack lead'} ${LEAD_CALL_LABELS[r.status] || 'missed call'}`,
+      title: `${r.customer_name || 'Thumbtack lead'} ${LEAD_CALL_LABELS[r.status] || 'call failed'}`,
       sub,
       meta: '',
       target: r.proposal_id ? 'proposal' : (r.client_id ? 'client' : null),

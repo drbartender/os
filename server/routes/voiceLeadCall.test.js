@@ -202,15 +202,16 @@ test('/status admin terminal records the disposition and advances the chain', as
   assert.deepEqual(advanceCalls, [{ attemptId, fromLeg: 'admin' }]);
 });
 
-test('/status va terminal marks missed and emails exactly once under a duplicated callback', async () => {
+test('/status va terminal marks missed quietly: NO email, duplicated callback still a no-op', async () => {
+  // 2026-07-20 design change: missed is a log state, not an alert (the
+  // moment has passed; follow-up is the normal email/SMS pipeline).
   const attemptId = await makeAttempt(await makeLead('missed'), 'calling_va');
   await post(`/api/voice/lead/status?attempt=${attemptId}&leg=va`, { CallStatus: 'no-answer' });
   await post(`/api/voice/lead/status?attempt=${attemptId}&leg=va`, { CallStatus: 'no-answer' });
   const row = await attemptRow(attemptId);
   assert.equal(row.status, 'missed');
   assert.equal(row.va_call_status, 'no-answer');
-  assert.equal(emailCalls.length, 1, 'at-least-once delivery must email exactly once');
-  assert.deepEqual(emailCalls[0], { attemptId, reason: 'missed' });
+  assert.equal(emailCalls.length, 0, 'a missed chain never emails');
 });
 
 test('/status va terminal after a press-1 leaves connected untouched (race: first writer wins)', async () => {

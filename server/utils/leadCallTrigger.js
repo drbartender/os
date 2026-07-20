@@ -192,9 +192,12 @@ async function advanceChain({ attemptId, fromLeg, viaCreateFailure = false }) {
 
   // Chain exhausted (no next leg configured, or the VA leg itself failed to
   // place). Missed = a leg rang out; failed = the chain died placing calls.
+  // Only FAILURES alert (2026-07-20 per Dallas): a missed lead needs no
+  // callback, so it logs quietly; a chain that could not even dial is a
+  // system fault and emails.
   const finalStatus = viaCreateFailure ? 'failed' : 'missed';
-  if (await claim(attemptId, fromStatus, finalStatus)) {
-    await sendChainEmail({ attemptId, reason: viaCreateFailure ? 'call failed' : 'missed' });
+  if (await claim(attemptId, fromStatus, finalStatus) && viaCreateFailure) {
+    await sendChainEmail({ attemptId, reason: 'call failed' });
   }
 }
 

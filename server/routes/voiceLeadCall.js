@@ -22,7 +22,7 @@ const Sentry = require('@sentry/node');
 const { xmlEscape } = require('../utils/xmlEscape');
 const { isValidTwilioRequest } = require('../utils/twilioSignature');
 const { pool } = require('../db');
-const { advanceChain, sendChainEmail } = require('../utils/leadCallTrigger');
+const { advanceChain } = require('../utils/leadCallTrigger');
 const { buildLeadBriefing } = require('../utils/leadCallBriefing');
 const { toUsE164 } = require('../utils/usPhone');
 const { API_URL } = require('../utils/urls');
@@ -42,7 +42,7 @@ function timeLimitSec() {
 }
 
 // Dependency-injection seam for tests (mirrors voice.js __setVoiceDeps).
-let _deps = { isValidTwilioRequest, pool, advanceChain, sendChainEmail };
+let _deps = { isValidTwilioRequest, pool, advanceChain };
 function __setLeadVoiceDeps(d) { _deps = { ..._deps, ...d }; }
 router.__setLeadVoiceDeps = __setLeadVoiceDeps;
 
@@ -249,14 +249,14 @@ router.post('/status', async (req, res) => {
     if (leg === 'admin') {
       await _deps.advanceChain({ attemptId, fromLeg: 'admin' });
     } else {
-      const missed = await _deps.pool.query(
+      // Missed is a terminal log state, NOT an alert (2026-07-20 per Dallas:
+      // the moment has passed; follow-up is the normal email/SMS pipeline).
+      // Only chain FAILURES email, via advanceChain/reaper.
+      await _deps.pool.query(
         `UPDATE lead_call_attempts SET status = 'missed', updated_at = NOW()
          WHERE id = $1 AND status = 'calling_va'`,
         [attemptId]
       );
-      if (missed.rowCount === 1) {
-        await _deps.sendChainEmail({ attemptId, reason: 'missed' });
-      }
     }
     sendTwiml(res, '<Response/>');
   } catch (err) {

@@ -217,7 +217,7 @@ test('advanceChain from admin terminal claims the VA leg exactly once under a du
   assert.equal(placed.length, 2, 'admin leg + exactly one VA leg');
 });
 
-test('admin terminal with no VA configured ends missed with one email', async () => {
+test('admin terminal with no VA configured ends missed quietly (no email; 2026-07-20 change)', async () => {
   const leadId = await makeLead('novacell');
   await triggerLeadCall({ lead: { customerPhone: '+17735550100' }, leadId });
   const attemptId = (await attemptFor(leadId)).id;
@@ -230,8 +230,7 @@ test('admin terminal with no VA configured ends missed with one email', async ()
   }
   const row = await attemptFor(leadId);
   assert.equal(row.status, 'missed');
-  assert.equal(emails.length, 1);
-  assert.ok(emails[0].subject.includes('missed'));
+  assert.equal(emails.length, 0, 'missed is a log state, never an alert');
 });
 
 test('two truly concurrent triggers for the SAME lead open one chain and dial once', async () => {

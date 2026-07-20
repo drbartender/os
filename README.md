@@ -159,7 +159,7 @@ dr-bartender/
 │   │   │   ├── payroll.js      # /payroll — contractor payouts, pay periods, paystub data
 │   │   │   ├── payrollTax.js   # /payroll/contractors/:id/payment-history + /payroll/tax-totals + /payroll/tax-totals/:id/exclude — imported-ledger blends + 1099 year totals (read-only + one boolean PATCH)
 │   │   │   ├── presence.js     # /presence + /presence/state + /presence/leads + /presence/log — time-clock strip + history
-│   │   │   ├── leadCalls.js    # /lead-call-attention — open lead-call bridge attention rows (missed/failed/skipped chains on still-new TT leads, 7-day window) for the overview Sales tab
+│   │   │   ├── leadCalls.js    # /lead-call-attention — lead-call bridge FAULT rows only (failed / misconfigured chains on still-new TT leads, 7-day window) for the overview Sales tab; missed + after-hours are deliberate non-items (2026-07-20)
 │   │   │   └── ccImport/       # Live CC re-trigger endpoints (v1 import/review admin UI removed 2026-07-07)
 │   │   ├── agreement.js        # Contractor agreement + digital signature
 │   │   ├── application.js      # Contractor application form
@@ -612,7 +612,7 @@ dr-bartender/
 
 ### Lead Call Bridge (real-time first-ring)
 - A new in-window (8am-9pm Chicago) Thumbtack lead auto-rings Dallas from the 888 with a spoken briefing (name, event, date/time, guests, city); press 1 bridges to the lead from the 224, press 9 replays, no answer fails over to Zul
-- Missed/failed chains email the `lead_call` category and land in the follow-up log (`lead_call_attempts`); a 20-second bridge floor keeps relay refusals from marking a lead contacted
+- Only chain FAILURES alert (email via the `lead_call` category + Sales-tab item); missed and after-hours chains log quietly in `lead_call_attempts` (the moment has passed; follow-up rides the normal email/SMS pipeline). A 20-second bridge floor keeps relay refusals from marking a lead contacted
 - Kill switch `LEAD_CALL_ENABLED=false`; rolling-24h `LEAD_CALL_DAILY_CAP`; lead legs only ever dial `toUsE164`-validated US numbers; overnight leads log only (the auto-draft proposal already answered in-platform)
 
 ### Cal.com Consult Booking Integration
