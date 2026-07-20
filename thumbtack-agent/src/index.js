@@ -119,11 +119,33 @@ async function main() {
   const counters = { today: 0, day: new Date().getUTCDate() };
 
   let stop = false;
-  const shutdown = async () => { stop = true; try { await ctx.close(); } catch { /* ignore */ } process.exit(0); };
+  let shuttingDown = false;
+  const shutdown = async () => { shuttingDown = true; stop = true; try { await ctx.close(); } catch { /* ignore */ } process.exit(0); };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
+  // Self-heal a dead browser. If Chrome exits (crash, OOM, or an external Chrome opening
+  // this same profile and stealing the singleton lock), the persistent context is
+  // permanently unusable: every newPage() throws "Target ... has been closed" forever
+  // while the poll loop keeps logging "no pending leads", so the agent looks healthy but
+  // harvests nothing until a human restarts it. This silently ate real leads more than once.
+  // Exit non-zero the instant the browser drops; systemd (Restart=on-failure, RestartSec)
+  // relaunches a fresh browser. Firing on 'close'/'disconnected' recovers even while idle,
+  // so the browser never sits dead between leads.
+  const bailDeadBrowser = (why) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log(`browser lost (${why}); exiting for systemd restart`);
+    process.exit(1);
+  };
+  ctx.on('close', () => bailDeadBrowser('context closed'));
+  const startupBrowser = ctx.browser();
+  if (startupBrowser) startupBrowser.on('disconnected', () => bailDeadBrowser('browser disconnected'));
+
   while (!stop) {
+    // Belt-and-suspenders: catch a browser that dropped without emitting close/disconnected.
+    const liveBrowser = ctx.browser();
+    if (liveBrowser && !liveBrowser.isConnected()) bailDeadBrowser('browser not connected at poll start');
     const day = new Date().getUTCDate();
     if (day !== counters.day) { counters.today = 0; counters.day = day; } // reset at UTC midnight
 
@@ -141,11 +163,17 @@ async function main() {
         await sleep(Math.max(CFG.pollIntervalMs, 15 * 60 * 1000));
         continue;
       }
+      // A closed/disconnected browser surfaces here (e.g. ctx.newPage after Chrome died).
+      // Restart rather than loop a permanently-dead context.
+      if (/target.*closed|has been closed|browser.*disconnected|browsercontext\./i.test(err.message || '')) {
+        bailDeadBrowser(err.message);
+      }
       log(`poll error: ${err.message}`);
     }
     if (CFG.dryRun) break; // one pass, then exit
     await sleep(CFG.pollIntervalMs);
   }
+  shuttingDown = true; // suppress the close-handler's restart on our own clean shutdown
   await ctx.close().catch(() => {});
 }
 
