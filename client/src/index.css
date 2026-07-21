@@ -54,8 +54,16 @@
   /* Brand accents — names preserved, values are now teal/brass/plum */
   --amber: #1D8C89;               /* Deep Apothecary Teal */
   --amber-light: #2FA7A0;          /* Luminous Teal */
+  --amber-deep: #1A807D;           /* Teal darkened for SOLID FILLS carrying white text
+                                    * (4.7:1). Public surfaces only — admin and staff
+                                    * buttons keep --amber. */
   --brass: #B8924A;                /* Antique Brass — fine details, hairlines, frames */
   --brass-bright: #D6AE65;         /* Highlight brass — hover details */
+  --brass-ink: #785D26;            /* Brass darkened for TEXT on parchment (4.6:1 on the
+                                    * darkest card stop). --brass itself stays put: it is
+                                    * chrome (hairlines, frames, borders) and reads 6.3:1
+                                    * as text on the chalkboard. Only swap it in where
+                                    * brass is text on a light card. */
   --plum: #6B4D7A;                 /* Dusty Plum — secondary depth, hover only */
 
   /* States */
@@ -8114,6 +8122,56 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 
 @media (max-width: 480px) {
   .lab-notebook-body h2 { font-size: 1.3rem; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PUBLIC-SURFACE CONTRAST CORRECTIONS
+   Scoped to .ws-shell (PublicLayout), so admin and staff are untouched.
+   Placed after all website + wizard rules so source order cannot undercut
+   these; each override is one step darker than the brand value, not a
+   different hue. Measured against the surface each element actually sits on.
+   ═══════════════════════════════════════════════════════════ */
+
+/* Brass as TEXT on a parchment card ran 2.0-2.9:1. Every one of these sits
+ * inside .card, so the card scope is what separates "brass text on paper"
+ * from brass chrome and brass on the chalkboard, both of which stay as-is. */
+.ws-shell .card .pill,
+.ws-shell .card .ws-faq-num,
+.ws-shell .card .ws-faq-toggle,
+.ws-shell .card .ws-pkg-tagline,
+.ws-shell .card .ws-pkg-section-head,
+.ws-shell .card .ws-press-service-alllink,
+.ws-shell .card .ws-press-service-leaders .leader-label {
+  color: var(--brass-ink);
+}
+
+/* Specimen tag: paper text on a brass fill, 2.3:1. Darkening the fill keeps
+ * the tag reading as brass while the label clears 5:1. */
+.ws-shell .specimen-card-tag {
+  background: var(--brass-ink);
+}
+
+/* Primary actions: cream on teal was 3.3:1. White on the deeper teal is 4.7:1
+ * and a far smaller shift than darkening enough to rescue the cream. Hover
+ * (--warm-brown) is untouched and clears 10:1. */
+.ws-shell .btn-primary,
+.ws-shell .wz-stepper-cell.active {
+  background: var(--amber-deep);
+  color: #FFFFFF;
+}
+.ws-shell .ws-nav-cta {
+  background: var(--amber-deep);
+  color: #FFFFFF !important;   /* base rule sets cream !important */
+}
+/* The roman numeral is dimmed to 0.85, which alone would hold it at 3.9:1. */
+.ws-shell .wz-stepper-cell.active .wz-stepper-roman {
+  opacity: 1;
+}
+
+/* Teal link on a parchment wizard card, 3.0:1. --warm-brown is the same hue
+ * one step deeper (7.9:1) and already the color of the sentence around it. */
+.ws-shell .wz-card .wz-class-link a {
+  color: var(--warm-brown);
 }
 
 /* === CLIENT PORTAL === */
