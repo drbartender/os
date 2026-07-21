@@ -5116,15 +5116,16 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   font-size: 13px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--warm-brown);
+  color: var(--brass);
 }
 
 .ws-pkg-group-blurb {
   margin: 12px auto 0;
   max-width: 560px;
   font-size: 15px;
-  color: var(--text-muted);
+  color: var(--text-muted-dark);
 }
+/* On parchment cards, the blurb reverts to muted dark — readable on light */
 .card .ws-pkg-group-blurb { color: var(--text-muted); }
 
 .ws-pkg-grid {
