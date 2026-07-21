@@ -33,6 +33,41 @@
 const { calculateProposal } = require('./pricingEngine');
 const { reconcileProposalPaymentStatus } = require('./proposalStatus');
 
+// SQL to load reprice-ready addon rows: service_addons catalog columns PLUS the
+// per-proposal quantity. The bare `SELECT sa.*` this replaced dropped
+// pa.quantity, so calculateProposal priced every per_hour addon
+// (additional-bartender, banquet-server, barback) as quantity 1 — silently
+// under-billing a native proposal's total_price the instant it repriced
+// (found by the cross-LLM push review, 2026-07-20; prod has live proposals
+// with these at quantity up to 6). service_addons has no `quantity` column, so
+// the alias is unambiguous.
+const REPRICE_ADDON_SQL =
+  'SELECT sa.*, pa.quantity AS pa_quantity FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id WHERE pa.proposal_id = $1';
+
+/**
+ * Attach the engine-facing `quantity` to each reprice addon row.
+ * proposal_addons.quantity means DIFFERENT things per billing_type: the real
+ * unit count for per_hour/flat/etc., but guest_count for per_guest /
+ * per_guest_timed (which calculateProposal recomputes from guestCount — passing
+ * the stored value there would square the guests). So the stored count is
+ * applied ONLY for the billing types the engine treats as a genuine multiplier.
+ * @param {Array} rows  rows from REPRICE_ADDON_SQL
+ * @returns {Array} rows calculateProposal can price correctly
+ */
+function withRepriceQuantities(rows) {
+  return (rows || []).map((r) => {
+    const usesStoredCount = r.billing_type !== 'per_guest' && r.billing_type !== 'per_guest_timed';
+    const { pa_quantity, ...addon } = r;
+    return usesStoredCount ? { ...addon, quantity: Number(pa_quantity) || 1 } : addon;
+  });
+}
+
+/** Load reprice-ready addon rows for a proposal on the given client. */
+async function loadRepriceAddons(client, proposalId) {
+  const res = await client.query(REPRICE_ADDON_SQL, [proposalId]);
+  return withRepriceQuantities(res.rows);
+}
+
 async function foldExtrasIntoProposal({
   client,
   proposal,
@@ -156,4 +191,4 @@ async function foldExtrasIntoProposal({
   return { snapshot, statusChanged: rec.changed };
 }
 
-module.exports = { foldExtrasIntoProposal };
+module.exports = { foldExtrasIntoProposal, loadRepriceAddons, withRepriceQuantities };

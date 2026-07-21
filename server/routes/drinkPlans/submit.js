@@ -8,7 +8,7 @@
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { refreshUnlockedInvoices, findOrRefreshExtrasInvoice, findExtrasInvoice, voidExtrasInvoiceWithReconcile, createAdditionalInvoiceIfNeeded } = require('../../utils/invoiceHelpers');
-const { foldExtrasIntoProposal } = require('../../utils/proposalExtrasFold');
+const { foldExtrasIntoProposal, loadRepriceAddons } = require('../../utils/proposalExtrasFold');
 const { computeExtrasBreakdown } = require('../../utils/drinkPlanExtras');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
@@ -355,10 +355,11 @@ async function handleSubmit(req, res) {
         // pre-increment count (the same value computeExtrasBreakdown keys the
         // first-vs-additional bar fee off). Syrups come off the pre-update
         // snapshot for the same reason.
-        const preAddonsRes = await client.query(
-          'SELECT sa.* FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id WHERE pa.proposal_id = $1',
-          [proposal.id]
-        );
+        // Reprice-ready rows (carry pa.quantity so per_hour addons —
+        // additional-bartender/banquet-server/barback — keep their real count;
+        // bare sa.* dropped it and under-priced them as quantity 1). Shared
+        // with the Enhancement Lab via loadRepriceAddons.
+        const preAddonsRes = { rows: await loadRepriceAddons(client, proposal.id) };
         const preSyrups = proposal.pricing_snapshot?.syrups?.selections || [];
 
         // Reconcile a PRE-EXISTING opposite-pair mocktail row on the proposal
@@ -427,11 +428,9 @@ async function handleSubmit(req, res) {
           }
         });
 
-        // Recalculate proposal total with all addons (existing + new)
-        const allAddonsRes = await client.query(
-          'SELECT sa.* FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id WHERE pa.proposal_id = $1',
-          [proposal.id]
-        );
+        // Recalculate proposal total with all addons (existing + new).
+        // Reprice-ready rows (pa.quantity preserved) — see preAddonsRes above.
+        const allAddonsRes = { rows: await loadRepriceAddons(client, proposal.id) };
         const pkgRes = await client.query('SELECT * FROM service_packages WHERE id = $1', [proposal.package_id]);
         const pkg = pkgRes.rows[0];
 

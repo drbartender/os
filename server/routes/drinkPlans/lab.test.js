@@ -24,7 +24,8 @@ const express = require('express');
 
 const { pool } = require('../../db');
 const { AppError } = require('../../utils/errors');
-const { calculateSyrupCost } = require('../../utils/pricingEngine');
+const { calculateSyrupCost, calculateProposal } = require('../../utils/pricingEngine');
+const { withRepriceQuantities } = require('../../utils/proposalExtrasFold');
 const drinkPlansRouter = require('../drinkPlans');
 
 let server;
@@ -126,6 +127,9 @@ before(async () => {
   await seedPlan('guard');
   await seedPlan('paidfull', { proposalStatus: 'balance_paid' });
   await seedPlan('asvc', { proposalStatus: 'balance_paid' });
+  await seedPlan('qty');   // per_hour multi-quantity addon preservation
+  await seedPlan('extras'); // fully-paid + locked Drink Plan Extras remainder
+  await seedPlan('prebook', { proposalStatus: 'sent' }); // pre-deposit gate
 
   const app = express();
   app.use(express.json());
@@ -211,6 +215,58 @@ async function toastPricing() {
   const rate = Number(toast.rows[0].rate);
   return toast.rows[0].billing_type === 'per_guest' ? rate * 80 : rate;
 }
+
+test('empty reconcile preserves total_price even with a multi-quantity per_hour addon (reprice fidelity)', async () => {
+  const proposalId = proposalIds[7]; // 'qty' plan
+  // A per_hour addon at quantity 3 (banquet-server: bartenders bring the
+  // hosted 1:100 ratio in, so a plain per_hour addon isolates the bug). The
+  // bare `sa.*` reprice dropped pa.quantity → this would reprice as quantity 1
+  // and shave 2 servers off total_price on the first (even empty) lab save.
+  const svc = await pool.query(
+    "SELECT * FROM service_addons WHERE slug = 'banquet-server' AND is_active = true"
+  );
+  assert.ok(svc.rows[0], 'dev DB has the banquet-server addon');
+  const rate = Number(svc.rows[0].rate);
+  await pool.query(
+    `INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
+     VALUES ($1, $2, $3, $4, $5, 3, $6)`,
+    [proposalId, svc.rows[0].id, svc.rows[0].name, svc.rows[0].billing_type, rate, rate * 4 * 3]
+  );
+  const pkg = (await pool.query('SELECT * FROM service_packages WHERE id = $1', [packageId])).rows[0];
+  const prop = (await pool.query('SELECT * FROM proposals WHERE id = $1', [proposalId])).rows[0];
+  // Ground-truth total WITH 3 servers (what the fix must preserve).
+  const expected = calculateProposal({
+    pkg,
+    guestCount: prop.guest_count,
+    durationHours: Number(prop.event_duration_hours),
+    numBars: prop.num_bars ?? 0,
+    numBartenders: prop.num_bartenders,
+    addons: withRepriceQuantities([{ ...svc.rows[0], pa_quantity: 3 }]),
+    syrupSelections: [],
+    adjustments: prop.adjustments || [],
+    totalPriceOverride: null,
+    gratuityRate: prop.gratuity_rate,
+    tipJar: prop.tip_jar,
+  }).total;
+  await pool.query('UPDATE proposals SET total_price = $1 WHERE id = $2', [expected, proposalId]);
+
+  const p = await request('PUT', `/api/drink-plans/t/${planTokens.qty}/lab`, {
+    body: { addOns: {}, labSyrupSelections: {} },
+  });
+  assert.equal(p.status, 200, JSON.stringify(p.body));
+  const after = Number((await pool.query('SELECT total_price FROM proposals WHERE id = $1', [proposalId])).rows[0].total_price);
+  assert.equal(after, expected, 'empty reconcile must not shave the 3-server (per_hour qty>1) addon');
+});
+
+test('pre-deposit proposal: lab is not_ready (GET) and 409 (PUT) — never folds an unsigned contract', async () => {
+  const g = await request('GET', `/api/drink-plans/t/${planTokens.prebook}/lab`);
+  assert.equal(g.status, 200);
+  assert.equal(g.body.state, 'not_ready');
+  const p = await request('PUT', `/api/drink-plans/t/${planTokens.prebook}/lab`, {
+    body: { addOns: { 'champagne-toast': {} } },
+  });
+  assert.equal(p.status, 409, JSON.stringify(p.body));
+});
 
 test('additions fold into the balance: total rises, Balance absorbs with itemized lines, legacy lab invoice zeroes', async () => {
   const proposalId = proposalIds[3]; // 'money' plan
@@ -391,6 +447,40 @@ test('fully paid + standing unpaid Additional Services: lab remainder never doub
   assert.ok(labInv, 'lab remainder invoice minted');
   assert.equal(Number(labInv.amount_due), Math.round(toastTotal * 100),
     'remainder subtracts the open Additional Services carrier — the $50 is never billed twice');
+});
+
+test('fully paid + paid Drink Plan Extras: lab remainder ignores the pay-now extras (never under-bills)', async () => {
+  const proposalId = proposalIds[8]; // 'extras' plan
+  const p0 = await request('PUT', `/api/drink-plans/t/${planTokens.extras}/lab`, {
+    body: { addOns: {}, labSyrupSelections: {} },
+  });
+  assert.equal(p0.status, 200, JSON.stringify(p0.body));
+  const baseline = Number((await pool.query('SELECT total_price FROM proposals WHERE id=$1', [proposalId])).rows[0].total_price);
+  const baselineCents = Math.round(baseline * 100);
+  await pool.query(
+    "UPDATE proposals SET amount_paid = total_price, status = 'balance_paid' WHERE id = $1",
+    [proposalId]
+  );
+  // Fully paid on the contract, PLUS a paid pay-now 'Drink Plan Extras' whose
+  // $90 is NOT in total_price. It is locked, so it lands in the naive
+  // lockedTotal — subtracting it would shrink the remainder and under-bill (or
+  // mint nothing). The fix excludes it from the lab lockedTotal.
+  await pool.query(
+    `INSERT INTO invoices (proposal_id, invoice_number, label, amount_due, amount_paid, status, locked)
+     VALUES ($1, $2, 'Balance', $3, $3, 'paid', true),
+            ($1, $4, 'Drink Plan Extras', 9000, 9000, 'paid', true)`,
+    [proposalId, `TG${NONCE.slice(-12)}`, baselineCents, `TH${NONCE.slice(-12)}`]
+  );
+
+  const toastTotal = await toastPricing();
+  const p = await request('PUT', `/api/drink-plans/t/${planTokens.extras}/lab`, {
+    body: { addOns: { 'champagne-toast': {} }, labSyrupSelections: {} },
+  });
+  assert.equal(p.status, 200, JSON.stringify(p.body));
+  const labInv = (await labInvoices(proposalId)).find((i) => i.label === 'Enhancement Lab');
+  assert.ok(labInv, 'lab remainder invoice minted despite the paid extras invoice');
+  assert.equal(Number(labInv.amount_due), Math.round(toastTotal * 100),
+    'remainder ignores the $90 pay-now extras (not total_price money) — bills exactly the toast');
 });
 
 test('unknown addon slug is rejected', async () => {

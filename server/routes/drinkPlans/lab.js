@@ -22,7 +22,7 @@ const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
 const { calculateSyrupCost } = require('../../utils/pricingEngine');
 const { createInvoice, writeLineItems, refreshUnlockedInvoices } = require('../../utils/invoiceHelpers');
-const { foldExtrasIntoProposal } = require('../../utils/proposalExtrasFold');
+const { foldExtrasIntoProposal, loadRepriceAddons } = require('../../utils/proposalExtrasFold');
 const { generateShoppingList } = require('../../utils/shoppingList');
 const {
   loadCatalog,
@@ -32,6 +32,7 @@ const {
   SYRUP_NAME_LOOKUP,
 } = require('../../utils/shoppingListGen');
 const { normalizeName } = require('../../utils/potionCatalog');
+const { isDrinkPlanPreBooking } = require('../../utils/drinkPlanAccess');
 
 const router = express.Router();
 
@@ -48,7 +49,7 @@ const PLAN_SELECT = `
          dp.shopping_list, dp.shopping_list_status, dp.shopping_list_source, dp.proposal_id,
          p.guest_count, p.num_bars, p.pricing_snapshot, p.event_date AS proposal_event_date,
          p.total_price AS proposal_total_price, p.amount_paid AS proposal_amount_paid,
-         p.balance_due_date, p.event_duration_hours,
+         p.balance_due_date, p.event_duration_hours, p.status AS proposal_status,
          sp.category AS package_category,
          sp.covered_addon_slugs AS package_covered_addon_slugs
     FROM drink_plans dp
@@ -60,6 +61,10 @@ function labState(plan) {
   // v2 only: legacy (v1) plans never see the lab, even by direct URL — their
   // wizard has its own syrup/upsell mechanics and never disclosed lab pricing.
   if (plan.planner_version < 2) return 'not_ready';
+  // Pre-booking gate, mirroring GET /t/:token (cross-LLM push review,
+  // 2026-07-20): before the deposit the lab must not exist — folding here
+  // would mutate an UNSIGNED proposal's contract from a public token.
+  if (plan.proposal_id && isDrinkPlanPreBooking(plan.proposal_status)) return 'not_ready';
   if (plan.status !== 'submitted' && plan.status !== 'reviewed') return 'not_ready';
   if (plan.finalized_at || plan.shopping_list_status === 'approved') return 'locked';
   return 'open';
@@ -75,6 +80,17 @@ function labAdditionsOf(selections) {
 
 function coveredSlugsOf(plan) {
   return new Set(Array.isArray(plan.package_covered_addon_slugs) ? plan.package_covered_addon_slugs : []);
+}
+
+/** Syrups the CONTRACT already owns: priced into the proposal snapshot at sale
+ *  time and NOT lab-added (stored lab ids are subtracted back out). These are
+ *  never offered and never accepted as lab syrups — if a client could lab-add
+ *  a contract syrup it would become lab-owned, and a later removal would shave
+ *  that syrup out of total_price (cross-LLM push review, 2026-07-20). */
+function contractSyrupSet(plan, selections) {
+  const labIds = new Set(Object.values(selections?.labSyrupSelections || {}).flat());
+  const snapIds = plan.pricing_snapshot?.syrups?.selections || [];
+  return new Set(snapIds.filter((id) => !labIds.has(id)));
 }
 
 /** DISPLAY pricing of lab additions (integer cents): catalog addon rates plus
@@ -170,6 +186,8 @@ router.get('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
   // still flipping the client's shopping-list line off.
   const syrupPriceFor = (syrupId) =>
     syrupId ? calculateSyrupCost([syrupId], plan.guest_count || 1).total : 0;
+  // Never offer a syrup the contract already owns (see contractSyrupSet).
+  const contractSyrups = contractSyrupSet(plan, sel);
 
   const drink = (row, table) => {
     const syrupPrice = syrupPriceFor(row.syrup_id);
@@ -180,7 +198,7 @@ router.get('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
       emoji: row.emoji,
       description: row.description,
       enhancements: Array.isArray(row.enhancements) ? row.enhancements : [],
-      syrup: row.syrup_id && syrupPrice > 0
+      syrup: row.syrup_id && syrupPrice > 0 && !contractSyrups.has(row.syrup_id)
         ? { id: row.syrup_id, name: SYRUP_NAME_LOOKUP[row.syrup_id] || row.syrup_id, price: syrupPrice }
         : null,
     };
@@ -410,7 +428,12 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
         if (e && typeof e.slug === 'string' && activeSlugs.has(e.slug) && !covered.has(e.slug)) offeredSlugs.add(e.slug);
       }
     }
-    const offeredSyrupByDrink = new Map(drinkRows.map((r) => [r.id, r.syrup_id || null]));
+    // A drink's dossier syrup is offered UNLESS the contract already owns it
+    // (mirrors the GET; keeps a contract syrup from ever becoming lab-owned).
+    const contractSyrups = contractSyrupSet(plan, sel);
+    const offeredSyrupByDrink = new Map(
+      drinkRows.map((r) => [r.id, r.syrup_id && !contractSyrups.has(r.syrup_id) ? r.syrup_id : null])
+    );
 
     const storedLabSlugs = new Set(
       Object.entries(sel.addOns || {})
@@ -486,10 +509,7 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
         .map(([s]) => s);
       const removedSlugs = prevLabSlugs.filter((s) => !ownedNextSlugs.includes(s));
 
-      const addonsBefore = (await client.query(
-        'SELECT sa.* FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id WHERE pa.proposal_id = $1',
-        [proposal.id]
-      )).rows;
+      const addonsBefore = await loadRepriceAddons(client, proposal.id);
 
       if (removedSlugs.length > 0) {
         await client.query(
@@ -518,22 +538,29 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
             line_total = EXCLUDED.line_total
         `, [proposal.id, addon.id, addon.name, addon.billing_type, rate, quantity, lineTotal]);
       }
-      const addonsAfter = (await client.query(
-        'SELECT sa.* FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id WHERE pa.proposal_id = $1',
-        [proposal.id]
-      )).rows;
+      const addonsAfter = await loadRepriceAddons(client, proposal.id);
 
-      // Syrup legs, symmetric (submit-path convention): before = the priced
-      // snapshot set; after = legacy planner picks (none on v2 plans) plus
-      // the lab set; self-provided filtered from both sides.
+      // Syrup legs — the lab ADDS syrups on top of the contract; it must not
+      // shave the contract's own syrups. CONTRACT syrups = the priced snapshot
+      // set MINUS the ids the lab already owns (a prior fold writes lab syrups
+      // into the snapshot, so they can't be told apart later without this
+      // subtraction). before = contract ∪ prior-lab (= the whole snapshot, what
+      // total_price reflects); after = contract ∪ THIS PUT's lab set. So an
+      // empty reconcile reproduces the snapshot exactly (no shift), a lab add
+      // adds only the new id, and a lab removal drops only a lab-owned id —
+      // never a contract syrup. v1 planner syrups don't exist on v2 plans (the
+      // only cohort that reaches the lab), so there is no legacy leg.
+      // Reachability today: 0 v2 proposals carry contract syrups, but this
+      // keeps the fold faithful if one ever does (cross-LLM push review,
+      // 2026-07-20). Self-provided filtered from both sides.
       const selfProvided = Array.isArray(sel.syrupSelfProvided) ? sel.syrupSelfProvided : [];
       const dropSelfProvided = (id) => !selfProvided.includes(id);
-      const v1Raw = sel.syrupSelections || {};
-      const v1Syrups = (Array.isArray(v1Raw) ? v1Raw : [...new Set(Object.values(v1Raw).flat())])
-        .filter(dropSelfProvided);
+      const storedLabSyrupIds = new Set(Object.values(sel.labSyrupSelections || {}).flat());
+      const snapSyrups = (proposal.pricing_snapshot?.syrups?.selections || []).filter(dropSelfProvided);
+      const contractSyrups = snapSyrups.filter((id) => !storedLabSyrupIds.has(id));
       const labSyrupIds = [...new Set(Object.values(labSyrups).flat())];
-      const syrupsBefore = (proposal.pricing_snapshot?.syrups?.selections || []).filter(dropSelfProvided);
-      const syrupsAfter = [...new Set([...v1Syrups, ...labSyrupIds])];
+      const syrupsBefore = snapSyrups;
+      const syrupsAfter = [...new Set([...contractSyrups, ...labSyrupIds])];
 
       const { snapshot } = await foldExtrasIntoProposal({
         client,
@@ -557,13 +584,17 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
       //     post-refund-unlock coexistence corner);
       //   - nothing absorbs but locked invoices exist (the fully-paid case) →
       //     ONE open itemized lab invoice find-or-refreshed to the UNINVOICED
-      //     remainder: total − external − lockedTotal − other open invoices
-      //     that already carry contract money. Subtracting the open others
-      //     (Deposit, Additional Services, manual) is what prevents billing a
-      //     standing unpaid Additional Services invoice twice (fleet HIGH,
-      //     2026-07-20). 'Drink Plan Extras' is excluded from that
-      //     subtraction: pay-now extras are additive money that never enters
-      //     total_price.
+      //     remainder: total − external − lockedContract − other open invoices
+      //     that already carry contract money. Both the locked AND open
+      //     subtractions EXCLUDE 'Drink Plan Extras': pay-now extras are
+      //     additive money that never enters total_price, so counting a paid
+      //     (locked) or open one would shrink the remainder by money the
+      //     contract never contained and under-bill the lab (cross-LLM push
+      //     review, 2026-07-20). Subtracting the open others (Deposit,
+      //     Additional Services, manual) also prevents billing a standing
+      //     unpaid Additional Services invoice twice (fleet HIGH). A locked
+      //     'Enhancement Lab' from a prior paid round IS contract money now
+      //     (its items are in total_price), so it stays counted.
       await refreshUnlockedInvoices(proposal.id, client);
       const [absorbing, lockedAgg, unlockedOthers, labInvRes] = await Promise.all([
         client.query(
@@ -577,7 +608,8 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
           `SELECT COALESCE(SUM(amount_due), 0) AS locked_total,
                   COUNT(*)::int AS locked_count
              FROM invoices
-            WHERE proposal_id = $1 AND locked = true AND status != 'void'`,
+            WHERE proposal_id = $1 AND locked = true AND status != 'void'
+              AND COALESCE(label, '') <> 'Drink Plan Extras'`,
           [proposal.id]
         ),
         client.query(
