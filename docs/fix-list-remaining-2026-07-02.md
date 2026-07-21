@@ -265,6 +265,12 @@ remove path) — confirm that is the intended shape.
 OFF-LEDGER: webhook skipped the amount_paid roll-up, refunds skipped the
 decrement, Balance lockedTotal excluded the label.
 
+**Balance-fold PUSHED LIVE 2026-07-20 (6aa9a62, all 5 batch commits deployed; both gates green: money smoke 12 suites + client build).** The cross-LLM push review (codex+gemini) caught a prod-reachable money bug the Claude fleet missed: the fold loaded addon rows via bare `SELECT sa.*`, dropping `proposal_addons.quantity`, so per_hour addons (additional-bartender/banquet-server/barback — live at qty up to 6) repriced as qty 1 and would shave total_price on the first lab save of a native proposal. Fixed via shared `loadRepriceAddons` in submit + lab (+ remainder excludes pay-now Drink Plan Extras, pre-booking gate, contract-syrup preservation); fix commit re-reviewed 3/3 PASS. Deploy re-check ran: 0 'Enhancement Lab' invoices in prod, so the off-ledger→fold model switch had zero rows to migrate.
+
+**Deferred (lab balance-fold follow-ups):**
+- Offer-side snapshot race (security Low): the PUT builds `offeredSyrupByDrink`/`contractSyrupSet` from `plan.pricing_snapshot` (read under `FOR UPDATE OF dp` only) while the fold syrup legs use the freshly `FOR UPDATE`'d `proposal.pricing_snapshot`. A concurrent contract-syrup write in the sub-ms window could let that syrup be offered+accepted as lab-owned, re-opening the add-then-remove shave on a later PUT. 0 v2 proposals carry contract syrups today; closing it means moving syrup sanitization past the proposal lock (handler restructure) — not worth it for a zero-exposure race.
+- Owner confirm (from 598987d): a refund on a paid lab invoice reverses the money but does NOT remove the item from total_price (Additional Services precedent; removal is the lab's own path). Confirm that's the intended shape.
+- submit.js at 830 lines / lab.js at 721 lines (both over the 700 soft cap) — plan a split on next substantial touch.
 **Deferred:**
 - Lead-call: a VA leg Twilio PLACED but reports terminal CallStatus='failed'
   (carrier/route failure; known PH-route quirk) classifies as quiet 'missed' —
