@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import useUrlListState from '../../hooks/useUrlListState';
@@ -15,6 +15,15 @@ export default function EmailConversations() {
   // Selected thread lives in the URL (?thread=<leadId>) so Back from a lead
   // profile reopens the same conversation.
   const [listState, setListState] = useUrlListState({ thread: '' });
+  const messagesRef = useRef(null);
+
+  // The pane renders oldest-first, so pin it to the newest message on open and
+  // after a reply. Without this every conversation opens at the top of its
+  // history and the current exchange is a scroll away.
+  useLayoutEffect(() => {
+    const el = messagesRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages]);
 
   const fetchThreads = useCallback(async () => {
     setLoading(true);
@@ -138,7 +147,7 @@ export default function EmailConversations() {
                   </button>
                 </div>
 
-                <div className="em-convo-messages">
+                <div className="em-convo-messages" ref={messagesRef}>
                   {messages.map(msg => (
                     <div key={msg.id} className={`em-message em-message-${msg.direction}`}>
                       <div className="em-message-header">

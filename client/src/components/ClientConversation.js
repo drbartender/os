@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import api from '../utils/api';
 import { useToast } from '../context/ToastContext';
 
@@ -44,10 +44,19 @@ export default function ClientConversation({ clientId, phone, markReadOnOpen = t
   }, [clientId]);
 
   // Keep the newest message in view whenever the thread loads or grows.
-  useEffect(() => {
+  // `loading` is a dependency, not just `messages`: on a deliberate open the
+  // mark-read await sits between setMessages and setLoading(false), so those
+  // land in two separate commits. A messages-only effect therefore fired on the
+  // commit that still rendered the "Loading messages..." placeholder (nothing to
+  // scroll yet) and never re-fired on the commit that actually painted the
+  // bubbles, leaving every clicked thread parked at the top of its history.
+  // Layout effect so the pin happens before paint rather than flashing the
+  // oldest messages first.
+  useLayoutEffect(() => {
+    if (loading) return;
     const el = messagesRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, loading]);
 
   const handleReply = async () => {
     if (!replyText.trim() || !clientId) return;
