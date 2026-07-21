@@ -69,9 +69,24 @@ notify: [
 ]
 ```
 
-An absent or empty `notify` array sends nothing. A notice type present in the array that the
-save does not actually trigger is a `ValidationError`, so a stale form cannot send a
-reschedule notice on a save that rescheduled nothing.
+An absent or empty `notify` array sends nothing.
+
+A notice type present in the array that the save does not trigger is handled by strictness
+class, and the two classes differ for a reason:
+
+- `event_details_changed` **carries supplied text**, so a mismatch is a `ValidationError`. Text
+  composed against one set of changes must never be sent against a different set. A stale form
+  cannot send a reschedule notice on a save that rescheduled nothing.
+- `gratuity_increase` carries no text, so a mismatch is a silent no-op, reported in the response
+  as skipped. This is forced by timing: the gratuity notice depends on the new pricing snapshot,
+  which only exists mid-transaction after the pricing engine runs (`crud.js:490-501`). Preflight
+  cannot know it fires without re-marshalling every pricing input, which is most of what the
+  PATCH does. So preflight predicts it conservatively (staffing inputs changed on a proposal
+  that is paid for gratuity purposes) and the save is the authority.
+
+The accepted cost is an occasional popup that turns out to send nothing. The alternative,
+duplicating the pricing marshalling in a read-only endpoint, is a far worse trade on a money
+path.
 
 Validation happens in two places for a reason. **Structural** checks (known type, no duplicate
 types, required text present, caps respected) run before `BEGIN`, so a malformed request never
@@ -137,7 +152,11 @@ It is read-only. It writes nothing and commits nothing.
 
 The save path recomputes its own notice set and validates the submitted `notify` list against
 it. Preflight is a convenience for the UI, never the authority. A save whose conditions changed
-between preflight and submit rejects rather than sending a message built from stale facts.
+between preflight and submit rejects (composable notices) or skips (fixed-template notices)
+rather than sending a message built from stale facts.
+
+For `event_details_changed` the two paths call the identical functions and must always agree.
+For `gratuity_increase` preflight is an advisory prediction, per the strictness note above.
 
 The `draft` is the reason this endpoint exists rather than a client-side rule check. See below.
 
@@ -156,6 +175,23 @@ rides along on the save.
 The accepted trade: this is a second piece of compose UI alongside SendModal rather than one
 shared component. Forcing them together means either breaking SendModal's entity-driven
 contract or degrading the message.
+
+### Forced change: the event-details email becomes a parts email
+
+`emailTemplates.rescheduleNotificationClient` returns pre-rendered `{ subject, html, text }`
+with the old-versus-new details baked into a styled `<ul>`. `renderPartsEmail`, the shared
+editable-body renderer used by `shoppingListApprove.js:194`, takes
+`{ subject, heading, bodyText, cta }`. They are not compatible.
+
+Keeping the bespoke template while calling the body editable would send the admin's text as
+plaintext only, while every real mail client rendered the untouched HTML. The admin would review
+one message and the client would receive a different one, which is the exact failure this
+feature exists to eliminate.
+
+So the event-details notice renders through `renderPartsEmail`. `buildEventDetailsDraft`
+composes the old-versus-new facts into prose paragraphs, and what the admin reads in the popup
+is what sends. The styled detail list is lost; the facts are not. WYSIWYG on a client-facing
+message is worth more than the list markup.
 
 ### What suppression must never touch
 
@@ -280,18 +316,19 @@ Server, `node:test`, one suite at a time against the dev DB (`node -r dotenv/con
    not the template default.
 3. An `event_details_changed` notice with no supplied text is a 400 **and the proposal is not
    saved**.
-4. A `notify` entry whose type the save does not trigger (for example
-   `event_details_changed` on a save that changed only the guest count) is a 400, and the
-   transaction rolls back, so nothing is saved and nothing is sent.
-5. `notify-preflight` and the save agree: a table-driven case per reschedulable field plus a
-   non-booked status, asserting both paths compute the same notice set.
-6. A supplied SMS body over 640 characters is rejected the same way `comms.js` rejects it.
-7. A suppressed recipient (unsubscribed, `email_status = 'bad'`) reports skipped with a reason
+4. An `event_details_changed` entry on a save that changed only the guest count is a 400, and
+   the transaction rolls back, so nothing is saved and nothing is sent.
+5. A `gratuity_increase` entry on a save where the gratuity did not rise saves normally, sends
+   nothing, and reports the notice as skipped with a reason. Not a 400.
+6. `notify-preflight` and the save agree on `event_details_changed`: a table-driven case per
+   reschedulable field plus a non-booked status, asserting both paths compute the same answer.
+7. A supplied SMS body over 640 characters is rejected the same way `comms.js` rejects it.
+8. A suppressed recipient (unsubscribed, `email_status = 'bad'`) reports skipped with a reason
    even when the notice was requested.
-8. Record payment with `notify_client: false` sends no client receipt but still fires
+9. Record payment with `notify_client: false` sends no client receipt but still fires
    `notifyAdminCategory`.
-9. A save that triggers both notices at once sends both, and the response reports per-channel
-   truth for each.
+10. A save that triggers both notices at once sends both, and the response reports per-channel
+    truth for each.
 
 Existing tests that assert the reschedule email fires on a bare PATCH must be updated to pass
 the flag. No assertion gets weakened to make a test pass; if a test breaks in a way that is not
