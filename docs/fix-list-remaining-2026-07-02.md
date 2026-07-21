@@ -304,3 +304,21 @@ decrement, Balance lockedTotal excluded the label.
   Workaround: Stripe-dashboard refund (chargeRefunded reconciles the off-ledger
   netting correctly). Fix: include the target payment's off-ledger-linked cents
   in the guard's basis. (re-verify F2, fail-closed.)
+
+---
+
+## Payment history in the admin UI (added 2026-07-21)
+
+There is no way to see individual payments on a proposal. The payment panel shows totals only
+(amount paid, balance due); `proposal_payments` rows are never listed and no endpoint returns
+them. Surfaced while speccing [notify-client confirmation](superpowers/specs/2026-07-21-notify-client-confirmation-design.md),
+where a per-payment "Send receipt" action had nowhere to live and was cut for that reason.
+
+Shape: a `GET /api/proposals/:id/payments` plus a compact table in `ProposalDetailPaymentPanel.js`
+(date, amount, type, method, status). Natural home for a per-payment Send receipt action and for
+refund attribution, which today is also invisible per-payment.
+
+Ride-along when this is built: `actions.js:286` re-reads the just-inserted payment via
+`SELECT id FROM proposal_payments WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 1`
+instead of `RETURNING id` on the INSERT. Under concurrent inserts that links the wrong payment
+row to the invoice.
