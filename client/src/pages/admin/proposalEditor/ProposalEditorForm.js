@@ -18,6 +18,7 @@ import { initialFormFromProposal, recoverAddonQuantities } from './formState';
 import { buildProposalPatchBody } from './patchBody';
 import { buildRepriceSummary } from './repriceSummary';
 import RepriceConfirmModal from './RepriceConfirmModal';
+import NotifyConfirmModal from '../../../components/comms/NotifyConfirmModal';
 import PackageSection from './PackageSection';
 
 // Read-only audit copy for proposals.gratuity_rate_change_origin (NULL when the
@@ -66,6 +67,10 @@ export default function ProposalEditorForm({
   // Booked-event reprice confirmation. Non-null = modal open, holding the
   // buildRepriceSummary output the modal renders.
   const [repriceSummary, setRepriceSummary] = useState(null);
+  // Notify-confirm chain state (reprice confirm -> preflight -> notify popup -> one save)
+  const [pendingNotices, setPendingNotices] = useState([]);
+  const [pendingBody, setPendingBody] = useState(null);
+  const [notifyBusy, setNotifyBusy] = useState(false);
 
   // Explicit bartender-count override detection (push-review money finding):
   // stored num_bartenders equals the computed actual, so it is an admin
@@ -311,7 +316,24 @@ export default function ProposalEditorForm({
   const hasLegacyAddon = (snap?.addons || []).some(a => a.slug === 'additional-bartender' && Number(a.line_total) === 0);
   const showLegacyBartenderBanner = pkgIsHosted && (hasLegacyStaffing || hasLegacyAddon);
 
-  const doSave = async () => {
+  // The one PATCH body, built once per save chain so notify-preflight and the
+  // PATCH itself can never see different payloads (the shared builder is the
+  // single payload source for both mounts — see patchBody.js).
+  const buildBody = () => buildProposalPatchBody(editForm, {
+    gratuityDirty,
+    // Retired package (absent from the active catalog): keep the stored
+    // class semantics instead of silently clearing class_options.
+    isClassPackage: selectedPkg ? selectedPkg.bar_type === 'class' : proposal.class_options != null,
+    numBartendersOverride,
+    changeRequestId: changeRequest?.id, // preflight's CR gate rides on this key
+    staffNotify: showStaffNotifyToggles
+      ? { enabled: notifyStaff, sms: notifyStaffSms, email: notifyStaffEmail }
+      : null,
+  });
+
+  // Client-contact PUT lives INSIDE the confirmed save (after every popup
+  // decision): Cancel anywhere in the chain must mean nothing happened at all.
+  const doSave = async (patchBody, notify) => {
     setError('');
     setFieldErrors({});
     setSaving(true);
@@ -325,26 +347,79 @@ export default function ProposalEditorForm({
           source: editForm.client_source,
         });
       }
-      // Update proposal — the shared builder is the single payload source for
-      // both mounts (see patchBody.js for why this is load-bearing).
-      const res = await api.patch(`/proposals/${proposal.id}`, buildProposalPatchBody(editForm, {
-        gratuityDirty,
-        // Retired package (absent from the active catalog): keep the stored
-        // class semantics instead of silently clearing class_options.
-        isClassPackage: selectedPkg ? selectedPkg.bar_type === 'class' : proposal.class_options != null,
-        numBartendersOverride,
-        changeRequestId: changeRequest?.id,
-        staffNotify: showStaffNotifyToggles
-          ? { enabled: notifyStaff, sms: notifyStaffSms, email: notifyStaffEmail }
-          : null,
-      }));
+      const res = await api.patch(`/proposals/${proposal.id}`, { ...patchBody, notify });
       toast.success(showStaffNotifyToggles ? 'Event updated.' : 'Proposal updated.');
+      // Per-channel truth (notify-client contract): failures and real skips
+      // surface; "not selected" and never-offered channels stay silent.
+      (res.data.notifications || []).forEach((n) => {
+        if (n.email === 'failed') toast.error(`Saved, but the email failed: ${n.email_error || 'unknown error'}`);
+        if (n.sms === 'failed') toast.error(`Saved, but the text failed: ${n.sms_error || 'unknown error'}`);
+        ['email', 'sms'].forEach((ch) => {
+          if (n[ch] === 'skipped' && n.skip_reasons?.[ch] && n.skip_reasons[ch] !== 'not selected') {
+            toast.info(`Saved. ${ch === 'email' ? 'Email' : 'Text'} not sent: ${n.skip_reasons[ch]}`);
+          }
+        });
+      });
       onSaved?.(res.data);
+      return true;
     } catch (err) {
-      setError(err.message || 'Failed to save changes.');
-      setFieldErrors(err.fieldErrors || {});
+      // The notify-contract 400s key their real reason on fields this form
+      // never renders (notify / subject / body_text / sms_body), and
+      // ValidationError's message is the generic banner line — append those
+      // reasons to the banner so a stale-popup rejection is explained.
+      const fe = err.fieldErrors || {};
+      const unrendered = ['notify', 'subject', 'body_text', 'sms_body']
+        .map((k) => fe[k]).filter(Boolean);
+      setError([err.message || 'Failed to save changes.', ...unrendered].join(' '));
+      setFieldErrors(fe);
+      return false;
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Between the reprice confirm and the actual save: ask the server whether
+  // saving these edits would message the client, and what it would say. A
+  // preflight failure BLOCKS the save — silently degrading to a quiet save
+  // would suppress a wanted send with no decision made.
+  const proceedToNotify = async () => {
+    setError('');
+    setSaving(true);
+    try {
+      const patchBody = buildBody();
+      const pre = await api.post(`/proposals/${proposal.id}/notify-preflight`, patchBody);
+      const notices = pre.data.notices || [];
+      if (notices.length > 0) {
+        setSaving(false);
+        setPendingBody(patchBody);
+        setPendingNotices(notices);
+        return;
+      }
+      await doSave(patchBody, []);
+    } catch (err) {
+      setSaving(false);
+      setError(err.message || 'Could not check notifications; nothing was saved.');
+      setFieldErrors(err.fieldErrors || {});
+    }
+  };
+
+  const settleNotify = async (notify) => {
+    setNotifyBusy(true);
+    try {
+      const ok = await doSave(pendingBody, notify);
+      // Close ONLY on success: a failed save keeps the popup (and the admin's
+      // composed text) alive, with the error banner explaining why. Cancel
+      // remains the deliberate way out.
+      if (ok) {
+        setPendingNotices([]);
+        setPendingBody(null);
+      } else {
+        // The banner sits behind the overlay; the toast is what the admin
+        // actually sees while the popup stays open.
+        toast.error('Save failed; nothing was saved or sent. Your message is kept — fix and retry, or cancel.');
+      }
+    } finally {
+      setNotifyBusy(false);
     }
   };
 
@@ -366,7 +441,7 @@ export default function ProposalEditorForm({
       newTotal: (!previewStale && editPreview) ? editPreview.total : null,
     });
     if (summary) { setRepriceSummary(summary); return; }
-    doSave();
+    proceedToNotify();
   };
 
   const handleCancel = () => {
@@ -680,7 +755,7 @@ export default function ProposalEditorForm({
 
         <FormBanner error={error} fieldErrors={fieldErrors} />
         <div className="hstack" style={{ gap: 8, marginTop: 12 }}>
-          <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || !catalogReady} title={catalogReady ? undefined : 'Loading pricing catalog...'}>
+          <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || !catalogReady || pendingNotices.length > 0} title={catalogReady ? undefined : 'Loading pricing catalog...'}>
             {saving ? 'Saving…' : 'Save changes'}
           </button>
           <button type="button" className="btn btn-ghost" onClick={handleCancel}>Cancel</button>
@@ -697,9 +772,19 @@ export default function ProposalEditorForm({
       <RepriceConfirmModal
         isOpen={repriceSummary != null}
         summary={repriceSummary}
-        onConfirm={() => { setRepriceSummary(null); doSave(); }}
+        onConfirm={() => { setRepriceSummary(null); proceedToNotify(); }}
         onCancel={() => setRepriceSummary(null)}
       />
+      {pendingNotices.length > 0 && (
+        <NotifyConfirmModal
+          notices={pendingNotices}
+          primary="quiet"
+          busy={notifyBusy}
+          onCancel={() => { if (!notifyBusy) { setPendingNotices([]); setPendingBody(null); } }}
+          onQuiet={() => settleNotify([])}
+          onSend={(notify) => settleNotify(notify)}
+        />
+      )}
     </div>
   );
 }

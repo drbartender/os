@@ -3,6 +3,8 @@ import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import InvoiceDropdown from '../../components/InvoiceDropdown';
 import SendModal, { describeSendResult } from '../../components/SendModal';
+import NotifyConfirmModal from '../../components/comms/NotifyConfirmModal';
+import isPlaceholderEmail from '../../utils/isPlaceholderEmail';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmt$2dp } from '../../components/adminos/format';
@@ -46,6 +48,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
 
   // Record outside payment
   const [showRecordPayment, setShowRecordPayment] = useState(false);
+  const [receiptPrompt, setReceiptPrompt] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [paymentPaidInFull, setPaymentPaidInFull] = useState(false);
@@ -191,20 +194,37 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
     });
   };
 
-  const recordPayment = async () => {
+  // Receipt is OPT-IN (notify-client contract, 2026-07-22): recording a
+  // payment asks first. A real usable email = popup (Send receipt primary);
+  // no email or a CC-import .invalid placeholder = record quietly, no popup.
+  const clientEmailUsable = Boolean(proposal.client_email) && !isPlaceholderEmail(proposal.client_email);
+
+  const recordPayment = () => {
     if (!paymentPaidInFull && (!paymentAmount || Number(paymentAmount) <= 0)) {
       toast.error('Please enter a valid amount.');
       return;
     }
+    if (!clientEmailUsable) { doRecordPayment(false); return; }
+    setReceiptPrompt(true);
+  };
+
+  // The popup stays mounted and busy through the POST (matches the editor's
+  // pattern) and closes on completion; double-click is locked out by busy.
+  const doRecordPayment = async (notifyClient) => {
     setRecordingPayment(true);
     try {
-      await api.post(`/proposals/${proposal.id}/record-payment`, {
+      const res = await api.post(`/proposals/${proposal.id}/record-payment`, {
         amount: paymentPaidInFull ? undefined : Number(paymentAmount),
         paid_in_full: paymentPaidInFull,
         method: paymentMethod,
+        notify_client: notifyClient,
       });
       const amountStr = fmt$2dp(paymentPaidInFull ? balanceDue : Number(paymentAmount));
       toast.success(`Payment of ${amountStr} recorded.`);
+      (res.data.notifications || []).forEach((n) => {
+        if (n.email === 'failed') toast.error(`Recorded, but the receipt failed to send: ${n.email_error || 'unknown error'}`);
+        else if (n.email === 'skipped' && n.skip_reasons?.email) toast.info(`Recorded. Receipt not sent: ${n.skip_reasons.email}`);
+      });
       setShowRecordPayment(false);
       setPaymentAmount('');
       setPaymentPaidInFull(false);
@@ -212,6 +232,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
     } catch (err) {
       toast.error(err.message || 'Failed to record payment.');
     } finally {
+      setReceiptPrompt(false);
       setRecordingPayment(false);
     }
   };
@@ -532,6 +553,27 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
             toast[level](message);
             setInvoiceRefreshKey(k => k + 1);
           }}
+        />
+      )}
+      {receiptPrompt && (
+        <NotifyConfirmModal
+          title="Email a receipt?"
+          notices={[{
+            type: 'payment_receipt',
+            reasons: [`Receipt for ${fmt$2dp(paymentPaidInFull ? balanceDue : Number(paymentAmount))}`],
+            composable: false,
+            recipient: { name: proposal.client_name, email: proposal.client_email, phone: null },
+            channels: { email: { available: true, default: true }, sms: { available: false } },
+            autopay_notice: null,
+            draft: null,
+          }]}
+          primary="send"
+          sendLabel="Send receipt"
+          quietLabel="Don't send"
+          busy={recordingPayment}
+          onCancel={() => setReceiptPrompt(false)}
+          onQuiet={() => doRecordPayment(false)}
+          onSend={() => doRecordPayment(true)}
         />
       )}
     </div>

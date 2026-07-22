@@ -417,9 +417,11 @@ dr-bartender/
 │   │   │   ├── proposalRules.js # Shared client proposal business rules (bundle/addon/guardrail logic); CJS twin at server/utils/proposalRules.js
 │   │   │   ├── servingLabels.js # Serving-type display labels (SERVING_LABEL + servingLabel); shared by DrinkPlansDashboard + Potions PlansDrawer
 │   │   │   ├── setupTime.js    # Back-of-house setup-time formatting (twin of server/utils/setupTime.js)
+│   │   │   ├── isPlaceholderEmail.js # Mirror of server emailValidation.isPlaceholderEmail (CC-import .invalid = no email; keep in sync)
 │   │   │   ├── timeOptions.js  # Time option generator + 12h formatter + input parser
 │   │   │   └── tipCardMarks.js # Derives printable QR-card payment marks from saved handles (Stripe link + handles → mark list)
 │   │   ├── components/         # AdminLayout, Layout, PublicLayout,
+│   │   │                       # comms/NotifyConfirmModal (confirm-before-messaging popup: edit saves quiet-primary, receipts send-primary),
 │   │   │                       # InvoiceDropdown, SignaturePad, FileUpload, DrinkPlanCard,
 │   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, MenuSamplesModal,
 │   │   │                       # AudienceSelector, SequenceStepEditor, CampaignMetricsBar, SyrupPicker,
@@ -514,6 +516,12 @@ dr-bartender/
 | `npm run lane:status` | List open lanes (worktrees) and flag stale ones (48h no-commit, 15+ main commits since cut, or a sensitive path landed on main since cut); run at session start and in the push sweep |
 
 ## Key Features
+
+### Notify-Client Confirmation (2026-07-22)
+- Admin edits and recorded payments no longer message the client on their own: a confirmation names exactly what would go out (recipient, channels, the drafted old-vs-new message, and the projected auto-charge/balance-due date when a date move shifts it)
+- Quiet is the default on event edits (the usual case is a personal reply already sent); Send-receipt is the default on recorded payments; refund notices follow in a later lane
+- Reviewed text is what sends (WYSIWYG through the shared parts renderer); per-channel truth comes back on the response, and failures plus real skips surface as toasts (a clean send stays quiet behind the normal success toast)
+- Suppression prefs, hard bounces, and CC-import placeholder addresses win over an explicit Send, reported as skipped, never silently dropped
 
 ### Potions (Bar Program)
 - One admin home at `/potions` for the drink program: Menu (published catalog), Recipes (structured per-serving formulas per drink), Pars (the single par catalog with per-item call-on conditions), plus a client-plans review drawer
