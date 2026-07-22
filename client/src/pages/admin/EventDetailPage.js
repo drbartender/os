@@ -21,7 +21,7 @@ import { fmtDate, fmtDateFull, fmtTime24, fmtTimeRange24, relDay } from '../../c
 import { parsePositionsCount, approvedCount, remainingByRole } from '../../components/adminos/shifts';
 import { parsePositionsNeeded, rosterCounts, isEventFullyStaffed } from '../../utils/staffingRoles';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
-import EventEditForm from './EventEditForm';
+import ProposalEditorForm from './proposalEditor/ProposalEditorForm';
 import CancelEventDialog from './CancelEventDialog';
 import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
@@ -293,8 +293,10 @@ export default function EventDetailPage() {
       <div className="event-detail-grid">
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
           {editing ? (
-            <EventEditForm
+            <ProposalEditorForm
               proposal={proposal}
+              showStaffNotifyToggles
+              title="Edit event"
               onSaved={() => {
                 setEditing(false);
                 setLoading(true);

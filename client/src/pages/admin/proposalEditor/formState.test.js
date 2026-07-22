@@ -1,4 +1,4 @@
-import { recoverAddonQuantities } from './ProposalDetailEditForm';
+import { recoverAddonQuantities } from './formState';
 
 // recoverAddonQuantities inverts pricingEngine's count→quantity transforms to
 // recover the raw 1–10 stepper count for a loaded proposal's add-ons. These

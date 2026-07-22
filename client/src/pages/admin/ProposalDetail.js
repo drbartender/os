@@ -13,7 +13,7 @@ import DrinkPlanCard from '../../components/DrinkPlanCard';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmtDateFull, fmtDateTime, fmtTime24 } from '../../components/adminos/format';
-import ProposalDetailEditForm from './ProposalDetailEditForm';
+import ProposalEditorForm from './proposalEditor/ProposalEditorForm';
 import ProposalChangeRequestCard from './ProposalChangeRequestCard';
 import AlternativesPanel from './AlternativesPanel';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
@@ -463,7 +463,7 @@ export default function ProposalDetail() {
                   change-request card.
                 </div>
               )}
-              <ProposalDetailEditForm
+              <ProposalEditorForm
                 proposal={proposal}
                 changeRequest={pendingCr}
                 onSaved={() => {

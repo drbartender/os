@@ -135,7 +135,7 @@ export default function ProposalCreate() {
 
   // Live pricing preview — debounced 400ms so typing a guest count from
   // "5" → "50" is one round-trip, not five. Mirrors the pattern in
-  // ProposalDetailEditForm.
+  // ProposalEditorForm.
   useEffect(() => {
     if (!form.package_id) { setPreview(null); return; }
     // Top Shelf is custom-priced — the admin follows up manually, so there's
@@ -233,7 +233,7 @@ export default function ProposalCreate() {
   // local UI-visibility concern (e.g. The Clear Reaction hides mocktail-bar +
   // pre-batched-mocktail, which it already includes). Kept out of the shared
   // filterAddons so it doesn't leak into the public quote wizard. Mirrors the
-  // same filter in ProposalDetailEditForm.
+  // same filter in ProposalEditorForm.
   const { visibleAddons: filteredAddons, isIncludedMap, isUnavailableMap } = useMemo(() => {
     const result = filterAddons({
       addons,

@@ -1,38 +1,50 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import api from '../../utils/api';
-import { useToast } from '../../context/ToastContext';
-import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
-import VenueAddressFields from '../../components/VenueAddressFields';
-import EntityLink from '../../components/EntityLink';
-import SyrupPicker from '../../components/SyrupPicker';
-import ConfirmModal from '../../components/ConfirmModal';
-import FormBanner from '../../components/FormBanner';
-import FieldError from '../../components/FieldError';
-import TimePicker from '../../components/TimePicker';
-import NumberStepper from '../../components/NumberStepper';
-import PricingBreakdown from '../../components/PricingBreakdown';
-import Icon from '../../components/adminos/Icon';
-import { AddonQtyStepper, clampAddonQty } from '../../components/AddonControls';
-import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
-import { isQuantityCapable } from '../../utils/proposalRules';
-import { formatSetupTime } from '../../utils/setupTime';
+import api from '../../../utils/api';
+import { useToast } from '../../../context/ToastContext';
+import { formatPhoneInput, stripPhone } from '../../../utils/formatPhone';
+import VenueAddressFields from '../../../components/VenueAddressFields';
+import EntityLink from '../../../components/EntityLink';
+import ConfirmModal from '../../../components/ConfirmModal';
+import FormBanner from '../../../components/FormBanner';
+import FieldError from '../../../components/FieldError';
+import TimePicker from '../../../components/TimePicker';
+import NumberStepper from '../../../components/NumberStepper';
+import PricingBreakdown from '../../../components/PricingBreakdown';
+import Icon from '../../../components/adminos/Icon';
+import { clampAddonQty } from '../../../components/AddonControls';
+import { PACKAGE_EXCLUDED_ADDONS } from '../../../data/addonCategories';
+import { formatSetupTime } from '../../../utils/setupTime';
+import { initialFormFromProposal, recoverAddonQuantities } from './formState';
+import { buildProposalPatchBody } from './patchBody';
+import { buildRepriceSummary } from './repriceSummary';
+import RepriceConfirmModal from './RepriceConfirmModal';
+import PackageSection from './PackageSection';
 
 // Read-only audit copy for proposals.gratuity_rate_change_origin (NULL when the
 // rate was never touched, so the line is hidden). Admin-only: this component is
-// only mounted inside the admin proposal detail (auth + requireAdminOrManager).
+// only mounted inside the admin app (auth + requireAdminOrManager).
 const GRATUITY_ORIGIN_LABELS = {
   admin: 'Rate set by admin',
   staffing: 'Adjusted by staffing change',
 };
 
-// Self-contained edit form for ProposalDetail. Owns:
+// The ONE proposal/event editor, mounted by ProposalDetail (title "Edit
+// proposal", changeRequest support) and EventDetailPage (title "Edit event",
+// showStaffNotifyToggles). Owns:
 //  - editForm state, dirty tracking, leave-confirm modal, beforeunload guard
 //  - package & addon catalog fetch
 //  - debounced live pricing preview
+//  - the booked-event reprice confirmation (buildRepriceSummary gate)
 //
+// Both mounts build their PATCH body through buildProposalPatchBody so the two
+// surfaces cannot drift (the old EventEditForm drifted: it omitted
+// addon_quantities and the server reset quantities to 1 on save).
 // Parent passes the current proposal and callbacks. After a successful save
 // onSaved() is fired so the parent can reload and exit edit mode.
-export default function ProposalDetailEditForm({ proposal, changeRequest, onSaved, onCancel }) {
+export default function ProposalEditorForm({
+  proposal, changeRequest, showStaffNotifyToggles = false,
+  title = 'Edit proposal', onSaved, onCancel,
+}) {
   const toast = useToast();
   const [packages, setPackages] = useState([]);
   const [addons, setAddons] = useState([]);
@@ -43,6 +55,23 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
   const [fieldErrors, setFieldErrors] = useState({});
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const initialRef = useRef(JSON.stringify(initialFormFromProposal(proposal)));
+  // Booked-event reprice confirmation. Non-null = modal open, holding the
+  // buildRepriceSummary output the modal renders.
+  const [repriceSummary, setRepriceSummary] = useState(null);
+  // True while the debounced /calculate preview lags the form (a pricing input
+  // changed and the response has not landed). handleSave treats a stale
+  // preview like a missing one, so a Save clicked inside the 400ms debounce
+  // window cannot compare against an outdated total and silently skip the
+  // booked-event confirmation (spec: a booked event never reprices silently).
+  const [previewStale, setPreviewStale] = useState(true);
+
+  // Transient per-edit staff-notification toggles (event mount only; Phase 4a).
+  // Not part of `editForm` (they never persist and must not trip the dirty
+  // guard); they ride exactly one PATCH. All default off; sub-toggles are
+  // gated by the parent. Moved verbatim in behavior from EventEditForm.
+  const [notifyStaff, setNotifyStaff] = useState(false);
+  const [notifyStaffSms, setNotifyStaffSms] = useState(false);
+  const [notifyStaffEmail, setNotifyStaffEmail] = useState(false);
 
   // Whether the admin actually touched the gratuity controls this session. When
   // untouched, the edit/preview must NOT send tip_jar/gratuity_total — otherwise
@@ -110,6 +139,10 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
       setEditPreview(null);
       return;
     }
+    // A pricing input just changed (this effect's deps are exactly the pricing
+    // inputs): the current preview no longer reflects the form until the
+    // response below lands.
+    setPreviewStale(true);
     const timer = setTimeout(() => {
       api.post('/proposals/calculate', {
         package_id: Number(editForm.package_id),
@@ -129,7 +162,7 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
           ? { tip_jar: editForm.tip_jar !== false, gratuity_total: editForm.gratuity_total }
           : { tip_jar: storedTipJar, gratuity_rate: storedGratuityRate }),
       })
-        .then(res => { setEditPreview(res.data); setError(''); })
+        .then(res => { setEditPreview(res.data); setPreviewStale(false); setError(''); })
         .catch(err => {
           setEditPreview(null);
           setError(err?.message || 'Pricing preview unavailable.');
@@ -223,76 +256,8 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
     setEditForm(f => ({ ...f, adjustments: f.adjustments.filter((_, idx) => idx !== i) }));
   };
 
-  const handleSave = async () => {
-    if (!editForm.package_id) {
-      setError('Please select a package.');
-      setFieldErrors({ package_id: 'Please select a package' });
-      return;
-    }
-    setError('');
-    setFieldErrors({});
-    setSaving(true);
-    try {
-      // Update client record if linked
-      if (proposal.client_id) {
-        await api.put(`/clients/${proposal.client_id}`, {
-          name: editForm.client_name,
-          email: editForm.client_email,
-          phone: editForm.client_phone,
-          source: editForm.client_source,
-        });
-      }
-      // Update proposal
-      const res = await api.patch(`/proposals/${proposal.id}`, {
-        event_date: editForm.event_date,
-        event_start_time: editForm.event_start_time,
-        event_duration_hours: Number(editForm.event_duration_hours),
-        venue_name: editForm.venue_name,
-        venue_street: editForm.venue_street,
-        venue_city: editForm.venue_city,
-        venue_state: editForm.venue_state,
-        venue_zip: editForm.venue_zip,
-        guest_count: Number(editForm.guest_count),
-        package_id: Number(editForm.package_id),
-        num_bars: Number(editForm.num_bars) || 0,
-        addon_ids: (editForm.addon_ids || []).map(Number),
-        addon_variants: editForm.addon_variants || {},
-        addon_quantities: editForm.addon_quantities || {},
-        syrup_selections: editForm.syrup_selections || [],
-        adjustments: editForm.adjustments || [],
-        total_price_override: editForm.total_price_override,
-        // Persist the gratuity dollar ONLY when the admin edited it; otherwise omit
-        // both so the server preserves the stored rate and rescales the dollar by
-        // the new staffing (crud.js gratuity branch). Prevents an unrelated edit
-        // from silently shifting the client-elected rate. See gratuityDirty.
-        ...(gratuityDirty ? { tip_jar: editForm.tip_jar !== false, gratuity_total: editForm.gratuity_total } : {}),
-        client_provides_glassware: !!editForm.client_provides_glassware,
-        // Top Shelf is class-only — only send class_options for a class package
-        // so switching to a non-class package can't trip the server-side guard.
-        class_options: selectedPkg?.bar_type === 'class' ? editForm.class_options : null,
-        // Blank → explicit null (reset to package default); else a number.
-        // Server uses the undefined/null sentinel — sending null is the reset.
-        setup_minutes_before: editForm.setup_minutes_before === '' || editForm.setup_minutes_before == null
-          ? null
-          : Number(editForm.setup_minutes_before),
-        change_request_id: changeRequest?.id,
-      });
-      toast.success('Proposal updated.');
-      onSaved?.(res.data);
-    } catch (err) {
-      setError(err.message || 'Failed to save changes.');
-      setFieldErrors(err.fieldErrors || {});
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleCancel = () => {
-    if (isDirty) setShowLeaveConfirm(true);
-    else onCancel?.();
-  };
-
-  // Derived state
+  // Derived state. Declared ABOVE doSave so the save payload can read
+  // selectedPkg (class-options gating).
   const selectedPkg = packages.find(p => p.id === Number(editForm.package_id));
   const filteredAddons = addons.filter(a => {
     if (a.applies_to !== 'all' && (!selectedPkg || a.applies_to !== selectedPkg.category)) return false;
@@ -311,10 +276,70 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
   const hasLegacyAddon = (snap?.addons || []).some(a => a.slug === 'additional-bartender' && Number(a.line_total) === 0);
   const showLegacyBartenderBanner = pkgIsHosted && (hasLegacyStaffing || hasLegacyAddon);
 
+  const doSave = async () => {
+    setError('');
+    setFieldErrors({});
+    setSaving(true);
+    try {
+      // Update client record if linked
+      if (proposal.client_id) {
+        await api.put(`/clients/${proposal.client_id}`, {
+          name: editForm.client_name,
+          email: editForm.client_email,
+          phone: editForm.client_phone,
+          source: editForm.client_source,
+        });
+      }
+      // Update proposal — the shared builder is the single payload source for
+      // both mounts (see patchBody.js for why this is load-bearing).
+      const res = await api.patch(`/proposals/${proposal.id}`, buildProposalPatchBody(editForm, {
+        gratuityDirty,
+        isClassPackage: selectedPkg?.bar_type === 'class',
+        changeRequestId: changeRequest?.id,
+        staffNotify: showStaffNotifyToggles
+          ? { enabled: notifyStaff, sms: notifyStaffSms, email: notifyStaffEmail }
+          : null,
+      }));
+      toast.success(showStaffNotifyToggles ? 'Event updated.' : 'Proposal updated.');
+      onSaved?.(res.data);
+    } catch (err) {
+      setError(err.message || 'Failed to save changes.');
+      setFieldErrors(err.fieldErrors || {});
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSave = () => {
+    if (!editForm.package_id) {
+      setError('Please select a package.');
+      setFieldErrors({ package_id: 'Please select a package' });
+      return;
+    }
+    // Booked + price moved = confirm first. buildRepriceSummary returns null
+    // for every other case, so unbooked proposals and pure logistics edits
+    // save exactly as before.
+    const summary = buildRepriceSummary({
+      status: proposal.status,
+      totalPrice: proposal.total_price,
+      amountPaid: proposal.amount_paid,
+      // Stale preview = unknown total: fall into the generic-confirm branch
+      // rather than comparing against an outdated number (see previewStale).
+      newTotal: (!previewStale && editPreview) ? editPreview.total : null,
+    });
+    if (summary) { setRepriceSummary(summary); return; }
+    doSave();
+  };
+
+  const handleCancel = () => {
+    if (isDirty) setShowLeaveConfirm(true);
+    else onCancel?.();
+  };
+
   return (
     <div className="card">
       <div className="card-head">
-        <h3>Edit proposal</h3>
+        <h3>{title}</h3>
         <span className="k">Internal</span>
       </div>
       <div className="card-body">
@@ -418,6 +443,9 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
                   {clock
                     ? <>Crew arrives <strong>{clock}</strong>{editForm.setup_minutes_before === '' || editForm.setup_minutes_before == null ? ` (default ${pkgIsHosted ? 90 : 60} min)` : ''} · back-of-house only</>
                     : <>Blank uses the package default ({pkgIsHosted ? 90 : 60} min) · back-of-house only</>}
+                  {/* Caveat carried over from the old EventEditForm: the PATCH
+                      re-syncs setup only for single-shift events. */}
+                  {showStaffNotifyToggles && <> · single-shift events only (multi-shift events are edited per shift)</>}
                 </div>
               );
             })()}
@@ -437,171 +465,19 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
           </div>
         </div>
 
-        {/* Package */}
-        <div className="meta-k" style={{ marginBottom: 8 }}>Package</div>
-        <div style={{ display: 'grid', gap: 6, marginBottom: 16 }}>
-          {packages.map(pkg => {
-            const checked = Number(editForm.package_id) === pkg.id;
-            return (
-              <label key={pkg.id} style={{
-                display: 'flex', alignItems: 'flex-start', gap: 10,
-                padding: '10px 12px', borderRadius: 4, cursor: 'pointer',
-                border: checked ? '1px solid var(--ink-1)' : '1px solid var(--line-1)',
-                background: checked ? 'var(--bg-2)' : 'transparent',
-              }}>
-                <input type="radio" name="edit-package" value={pkg.id} checked={checked}
-                  onChange={(e) => {
-                    update('package_id', e.target.value);
-                    update('addon_ids', []);
-                    update('addon_variants', {});
-                  }}
-                  style={{ marginTop: 3 }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>{pkg.name}</div>
-                  {pkg.description && <div className="tiny muted" style={{ marginTop: 2 }}>{pkg.description}</div>}
-                  <div className="tiny muted" style={{ marginTop: 4 }}>
-                    {pkg.pricing_type === 'per_guest' ? (
-                      <>
-                        ${Number(pkg.base_rate_4hr)}/guest (50+)
-                        {pkg.base_rate_4hr_small && <> · ${Number(pkg.base_rate_4hr_small)}/guest ({'<'}50)</>}
-                        {pkg.extra_hour_rate && <> · +${Number(pkg.extra_hour_rate)}/guest/hr extra</>}
-                      </>
-                    ) : (
-                      <>
-                        {pkg.base_rate_3hr && <>${Number(pkg.base_rate_3hr)}/3hr · </>}
-                        {pkg.base_rate_4hr && <>${Number(pkg.base_rate_4hr)}/4hr</>}
-                        {pkg.extra_hour_rate && <> · +${Number(pkg.extra_hour_rate)}/hr extra</>}
-                      </>
-                    )}
-                  </div>
-                </div>
-              </label>
-            );
-          })}
-        </div>
-
-        {/* Add-ons */}
-        {filteredAddons.length > 0 && (
-          <>
-            <div className="meta-k" style={{ marginBottom: 8 }}>Add-ons</div>
-            <div style={{ display: 'grid', gap: 4, marginBottom: 16 }}>
-              {filteredAddons.map(addon => {
-                const isBanquet = /banquet/i.test(addon.name || '');
-                const checked = editForm.addon_ids.includes(addon.id);
-                return (
-                  <React.Fragment key={addon.id}>
-                    <label style={{
-                      display: 'flex', alignItems: 'flex-start', gap: 10,
-                      padding: '8px 10px', borderRadius: 4, cursor: 'pointer',
-                      border: checked ? '1px solid var(--ink-1)' : '1px solid transparent',
-                      background: checked ? 'var(--bg-2)' : 'transparent',
-                    }}>
-                      <input type="checkbox" checked={checked} onChange={() => toggleAddon(addon.id)}
-                        style={{ marginTop: 3 }} />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 500, fontSize: 13 }}>
-                          {addon.name}
-                          {isBanquet && <span className="tiny muted" style={{ marginLeft: 6 }}>(4hr min)</span>}
-                        </div>
-                        <div className="tiny muted">
-                          {addon.billing_type === 'per_guest' && `$${Number(addon.rate)}/guest`}
-                          {addon.billing_type === 'per_guest_timed' && `$${Number(addon.rate)}/guest (4hr) + $${Number(addon.extra_hour_rate)}/guest/hr after`}
-                          {addon.billing_type === 'per_hour' && `$${Number(addon.rate)}/hr${isBanquet ? ' · 4hr min' : ''}`}
-                          {addon.billing_type === 'flat' && `$${Number(addon.rate)} flat`}
-                        </div>
-                      </div>
-                    </label>
-                    {addon.slug === 'champagne-toast' && checked && (
-                      <label style={{
-                        display: 'flex', alignItems: 'center', gap: 8, marginLeft: 36,
-                        padding: '4px 8px', cursor: 'pointer', fontSize: 12.5,
-                      }}>
-                        <input type="checkbox"
-                          checked={(editForm.addon_variants || {})[String(addon.id)] === 'non-alcoholic-bubbles'}
-                          onChange={e => setEditForm(f => ({
-                            ...f,
-                            addon_variants: {
-                              ...f.addon_variants,
-                              [String(addon.id)]: e.target.checked ? 'non-alcoholic-bubbles' : undefined,
-                            },
-                          }))} />
-                        Non-alcoholic bubbles
-                      </label>
-                    )}
-                    {/* Quantity stepper — quantity-capable add-ons only (extra
-                        bartenders, barback, etc.). A sibling div (not nested in
-                        the row <label>) so the +/− buttons don't toggle the
-                        checkbox. */}
-                    {isQuantityCapable(addon) && checked && (
-                      <div style={{
-                        display: 'flex', alignItems: 'center', marginLeft: 36,
-                        padding: '4px 8px', fontSize: 12.5, color: 'var(--ink-2)',
-                      }}>
-                        <span>Quantity</span>
-                        <AddonQtyStepper
-                          value={(editForm.addon_quantities || {})[addon.id]}
-                          onChange={(n) => setAddonQty(addon.id, n)}
-                        />
-                      </div>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </div>
-          </>
-        )}
-
-        {/* Glassware — gates Flavor Blaster validity in the server rule check */}
-        <div style={{ marginBottom: 16 }}>
-          <label className="hstack" style={{ gap: 8, fontSize: 12.5, cursor: 'pointer' }}>
-            <input type="checkbox"
-              checked={!!editForm.client_provides_glassware}
-              onChange={e => update('client_provides_glassware', e.target.checked)} />
-            Client provides their own glassware
-          </label>
-        </div>
-
-        {/* Class options — class packages only */}
-        {selectedPkg?.bar_type === 'class' && (
-          <>
-            <div className="meta-k" style={{ marginBottom: 8 }}>Class options</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
-              <div>
-                <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Spirit focus</label>
-                <select className="select" style={{ width: '100%' }}
-                  value={editForm.class_options?.spirit_category || ''}
-                  onChange={e => update('class_options', {
-                    ...editForm.class_options,
-                    spirit_category: e.target.value || null,
-                  })}>
-                  <option value="">Not specified</option>
-                  <option value="whiskey_bourbon">Whiskey / Bourbon</option>
-                  <option value="tequila_mezcal">Tequila / Mezcal</option>
-                </select>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-                <label className="hstack" style={{ gap: 8, fontSize: 12.5, cursor: 'pointer', paddingBottom: 6 }}>
-                  <input type="checkbox"
-                    checked={editForm.class_options?.top_shelf_requested === true}
-                    onChange={e => update('class_options', {
-                      ...editForm.class_options,
-                      top_shelf_requested: e.target.checked,
-                    })} />
-                  Top Shelf
-                </label>
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* Syrups */}
-        <div className="meta-k" style={{ marginBottom: 8 }}>Handcrafted syrups</div>
-        <div style={{ marginBottom: 16 }}>
-          <SyrupPicker
-            selected={editForm.syrup_selections || []}
-            onChange={(syrups) => update('syrup_selections', syrups)}
-            compact />
-        </div>
+        <PackageSection
+          editForm={editForm}
+          packages={packages}
+          filteredAddons={filteredAddons}
+          selectedPkg={selectedPkg}
+          update={update}
+          toggleAddon={toggleAddon}
+          setAddonQty={setAddonQty}
+          setVariant={(addonId, variant) => setEditForm(f => ({
+            ...f,
+            addon_variants: { ...f.addon_variants, [String(addonId)]: variant },
+          }))}
+        />
 
         {/* Adjustments */}
         <div className="meta-k" style={{ marginBottom: 8 }}>Price adjustments</div>
@@ -713,6 +589,57 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
           </div>
         )}
 
+        {showStaffNotifyToggles && (
+          <div style={{ paddingTop: 12, borderTop: '1px solid var(--line-1)', marginBottom: 12 }}>
+            {/* Staff notification — transient per-edit toggle (Phase 4a). Only
+                takes effect when this save is a reschedule (date/time/location
+                change). Both channel sub-toggles default off. */}
+            <div className="meta-k" style={{ marginBottom: 8, marginTop: 8 }}>Notify assigned staff</div>
+            <div style={{ marginBottom: 16 }}>
+              <label className="hstack" style={{ gap: 6, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={notifyStaff}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setNotifyStaff(on);
+                    if (!on) { setNotifyStaffSms(false); setNotifyStaffEmail(false); }
+                  }}
+                />
+                <span>Notify assigned staff if this save reschedules the event</span>
+              </label>
+              <div
+                style={{
+                  display: 'flex', gap: 16, marginTop: 6, marginLeft: 22,
+                  opacity: notifyStaff ? 1 : 0.5,
+                }}
+              >
+                <label className="hstack" style={{ gap: 6, cursor: notifyStaff ? 'pointer' : 'default' }}>
+                  <input
+                    type="checkbox"
+                    disabled={!notifyStaff}
+                    checked={notifyStaffSms}
+                    onChange={(e) => setNotifyStaffSms(e.target.checked)}
+                  />
+                  <span>Text (SMS)</span>
+                </label>
+                <label className="hstack" style={{ gap: 6, cursor: notifyStaff ? 'pointer' : 'default' }}>
+                  <input
+                    type="checkbox"
+                    disabled={!notifyStaff}
+                    checked={notifyStaffEmail}
+                    onChange={(e) => setNotifyStaffEmail(e.target.checked)}
+                  />
+                  <span>Email</span>
+                </label>
+              </div>
+              <div className="tiny muted" style={{ marginTop: 4, marginLeft: 22 }}>
+                Staff are notified only when the date, time, or location actually changes.
+              </div>
+            </div>
+          </div>
+        )}
+
         <FormBanner error={error} fieldErrors={fieldErrors} />
         <div className="hstack" style={{ gap: 8, marginTop: 12 }}>
           <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
@@ -728,119 +655,13 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
         message="You have unsaved changes. Leave without saving?"
         onConfirm={() => { setShowLeaveConfirm(false); onCancel?.(); }}
         onCancel={() => setShowLeaveConfirm(false)} />
+
+      <RepriceConfirmModal
+        isOpen={repriceSummary != null}
+        summary={repriceSummary}
+        onConfirm={() => { setRepriceSummary(null); doSave(); }}
+        onCancel={() => setRepriceSummary(null)}
+      />
     </div>
   );
-}
-
-export function initialFormFromProposal(p) {
-  const currentAddonIds = (p.addons || []).map(a => a.addon_id);
-  const currentAddonVariants = {};
-  (p.addons || []).forEach(a => {
-    if (a.variant) currentAddonVariants[String(a.addon_id)] = a.variant;
-  });
-  const snapshot = p.pricing_snapshot || {};
-  return {
-    client_name: p.client_name || '',
-    client_email: p.client_email || '',
-    client_phone: p.client_phone || '',
-    client_source: p.client_source || 'thumbtack',
-    client_provides_glassware: !!p.client_provides_glassware,
-    class_options: p.class_options || null,
-    event_date: p.event_date ? p.event_date.slice(0, 10) : '',
-    event_start_time: p.event_start_time || '',
-    event_duration_hours: Number(p.event_duration_hours) || 4,
-    venue_name: p.venue_name || '',
-    venue_street: p.venue_street || '',
-    venue_city: p.venue_city || '',
-    venue_state: p.venue_state || '',
-    venue_zip: p.venue_zip || '',
-    guest_count: p.guest_count || 50,
-    package_id: p.package_id || '',
-    num_bars: p.num_bars || 0,
-    addon_ids: currentAddonIds,
-    addon_variants: currentAddonVariants,
-    // Raw 1–10 stepper counts for quantity-capable add-ons. Seeded empty here
-    // and filled by recoverAddonQuantities() once the add-on catalog loads —
-    // the persisted proposal_addons.quantity is a TRANSFORMED value (hours ×
-    // count for per_hour, guest count for per_guest), so recovering the raw
-    // stepper count needs the catalog row's slug/billing_type/minimum_hours.
-    addon_quantities: {},
-    syrup_selections: snapshot.syrups?.selections || [],
-    adjustments: p.adjustments || [],
-    total_price_override: p.total_price_override ?? null,
-    tip_jar: snapshot.gratuity?.tip_jar !== false,
-    gratuity_total: Number(snapshot.gratuity?.total) || 0,
-    // '' = "use the package-derived default" (server resolves null → 90 hosted /
-    // 60 else). A number is an explicit override. Inherited by EventEditForm.
-    setup_minutes_before: p.setup_minutes_before ?? '',
-  };
-}
-
-// Recover the raw 1–10 stepper count for each quantity-capable add-on on a
-// loaded proposal. proposal_addons.quantity is NOT the raw count — pricingEngine
-// transforms it on the way in:
-//   - additional-bartender : persisted quantity = durationHours × count
-//   - per_hour (barback,
-//     banquet-server)      : persisted quantity = effectiveHours × count,
-//                            effectiveHours = max(durationHours, minimum_hours)
-//   - per_guest (pre-batched
-//     -mocktail)           : persisted quantity = guestCount; the count is
-//                            folded into line_total only (= guestCount×rate×count)
-// The inversion is anchored to PERSISTED row data (row.rate, row.quantity — the
-// values frozen at proposal-creation time), NOT the live catalog row. Catalog
-// rates drift (pre-batched-mocktail went $1.50 → $2.00 in prod); dividing by the
-// current catalog rate would recover a wrong count and silently re-price the
-// proposal on save. The catalog row is still consulted only for slug /
-// billing_type / minimum_hours (minimum_hours is not persisted on
-// proposal_addons — a low-probability residual, see the per_hour branch).
-// `proposalAddons` are the proposal_addons rows; `catalog` is the
-// /proposals/addons response. Returns an addon_quantities map keyed by addon id
-// (number) → recovered count, clamped to 1–10. Addons whose count can't be
-// recovered (missing/zero divisors) are omitted (stepper defaults 1).
-export function recoverAddonQuantities(proposalAddons, catalog, { durationHours }) {
-  const out = {};
-  const byId = new Map((catalog || []).map(a => [a.id, a]));
-  const dh = Number(durationHours) || 0;
-  (proposalAddons || []).forEach(row => {
-    const addon = byId.get(row.addon_id);
-    if (!addon || !isQuantityCapable(addon)) return;
-    const persistedQty = Number(row.quantity);
-    const lineTotal = Number(row.line_total);
-    let count;
-    if (addon.slug === 'additional-bartender') {
-      // persisted quantity = durationHours × count. recoverAddonQuantities runs
-      // once at form-load, so dh still equals the proposal's persisted duration
-      // — no rate divisor here, so no catalog drift.
-      count = dh > 0 ? persistedQty / dh : null;
-    } else if (addon.billing_type === 'per_hour') {
-      // persisted quantity = effectiveHours × count. dh is still the persisted
-      // duration (form-load). minimum_hours is NOT persisted on proposal_addons,
-      // so it must come from the catalog row — an unavoidable, low-probability
-      // residual (minimum_hours rarely changes). No rate divisor here.
-      const effectiveHours = Math.max(dh, Number(addon.minimum_hours) || 0);
-      count = effectiveHours > 0 ? persistedQty / effectiveHours : null;
-    } else if (addon.billing_type === 'per_guest') {
-      // persisted line_total = quantity × rate × count, where persisted quantity
-      // IS the creation-time guestCount. Invert with the row's own persisted
-      // rate + quantity — never the live catalog rate (catalog rates drift) and
-      // never the form's current guest_count.
-      const rowRate = Number(row.rate);
-      count = (persistedQty > 0 && rowRate > 0) ? lineTotal / (persistedQty * rowRate) : null;
-    } else if (addon.billing_type === 'per_guest_timed') {
-      // per_guest_timed recovery is intentionally unimplemented: its line_total
-      // carries an extra-hours term (guestCount × extra_hour_rate × extraHours)
-      // on top of the per_guest base, so the per_guest inversion above does not
-      // hold. Dead today — no quantity-capable addon uses per_guest_timed — so
-      // return null (stepper defaults to 1, visibly unhandled, never re-prices).
-      count = null;
-    } else {
-      // flat / per_staff / per_100_guests — persisted quantity IS the raw count.
-      count = persistedQty;
-    }
-    if (count == null || !Number.isFinite(count)) return;
-    const rounded = Math.round(count);
-    if (rounded < 1) return;
-    out[addon.id] = Math.min(10, Math.max(1, rounded));
-  });
-  return out;
 }

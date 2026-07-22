@@ -1,8 +1,9 @@
 import React from 'react';
 
 // Shared add-on controls — used by the admin proposal cockpit (ProposalCreate)
-// and the proposal edit form (ProposalDetailEditForm). Extracted verbatim from
-// ProposalCreate so the two surfaces stay byte-identical; no behavior change.
+// and the shared proposal/event editor (ProposalEditorForm + its
+// PackageSection). Extracted verbatim from ProposalCreate so the surfaces stay
+// byte-identical; no behavior change.
 
 // Clamp a stepper value into the supported 1–10 quantity range. The cockpit and
 // the edit form both bound addon_quantities with this — keep it the single
