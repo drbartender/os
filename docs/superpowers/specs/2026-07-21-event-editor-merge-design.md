@@ -89,11 +89,12 @@ Pure logistics edits (no price movement) save without a modal, as today.
 Unbooked proposals never see the modal regardless of price movement (repricing
 is the normal quoting workflow).
 
-If the live pricing preview is unavailable at save time (calculate call
-failed), the modal still appears for a booked event, with no numbers and a
-single generic line: saving will reprice on the server and the total may
-change. A booked event never reprices silently just because the preview
-broke.
+If the live pricing preview is unavailable or not yet recomputed at save time
+(calculate call failed, or a pricing edit is still inside the debounce
+window), the modal still appears for a booked event, with no numbers and a
+single generic line: live pricing is not current, saving will reprice on the
+server and the total may change. A booked event never reprices silently just
+because the preview broke or lagged.
 
 Modal content, assembled entirely from data already in hand (stored proposal
 row + live preview), no extra fetches:
@@ -104,8 +105,12 @@ row + live preview), no extra fetches:
 - Consequence lines, only those that will actually fire, derived from the
   same rules the server applies:
   - increase while `balance_paid`: will drop back to deposit paid, autopay
-    unenrolled, an Additional Services invoice created for the increase
-  - increase while `deposit_paid`/`confirmed`: invoice line only
+    unenrolled, plus the billing line below
+  - any increase: the increase will be billed to the client (an unlocked
+    Balance/Full Payment invoice absorbs it on rebuild; an Additional
+    Services invoice is only minted when invoices are locked, per
+    invoiceLifecycle). The modal states both mechanisms in one line rather
+    than promising an invoice the server may not create.
   - decrease below amount paid: client becomes overpaid by $X, a refund is
     likely owed (server flags overpayment; it never moves money on its own)
   - always, when repricing: unlocked invoices are rebuilt at the new
