@@ -47,6 +47,10 @@ lanes:
       - README.md
     depends_on: []
     review: full-fleet          # schema.sql sensitive + auth-model change
+    # Fleet, matched to the batch: security-review (read-auth ungating, phone
+    # redaction, menu-print IDOR + R2 proxy), database-review (schema add +
+    # shifts LATERALs + feed join), consistency-check (beo_* identifier freeze),
+    # code-review, performance-review.
   - id: event-details-staff-ui
     footprint:
       - client/src/pages/staff/ShiftDetail.js
@@ -101,9 +105,9 @@ ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_not_required BOOLEAN NOT NUL
 
 Run from repo root:
 ```bash
-node -r dotenv/config -e "const{pool}=require('./server/db');(async()=>{await pool.query(\"ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_print_key TEXT\");await pool.query(\"ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_not_required BOOLEAN NOT NULL DEFAULT FALSE\");console.log('ok');process.exit(0)})()"
+node -r dotenv/config -e "const{pool}=require('./server/db');(async()=>{await pool.query(\"ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_print_key TEXT\");await pool.query(\"ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_not_required BOOLEAN NOT NULL DEFAULT FALSE\");const r=await pool.query(\"SELECT column_name,data_type,column_default FROM information_schema.columns WHERE table_name='proposals' AND column_name LIKE 'menu_%' ORDER BY column_name\");console.log(r.rows);process.exit(0)})()"
 ```
-Expected: `ok`
+Expected: two rows, `menu_not_required` (`boolean`, default `false`) and `menu_print_key` (`text`, default null). The printed rows ARE the checkpoint; do not proceed on a bare success with no rows.
 
 - [ ] **Step 3: Document in ARCHITECTURE.md** (proposals schema bullet list: add the two columns with one-line purpose each)
 
@@ -163,7 +167,9 @@ test('payload carries shifts array and menu_print tri-state', async () => {
 });
 ```
 
-Keep unchanged: nonexistent proposal 404, acknowledge tests, logo tests, phone-gating roster tests for the assigned viewer.
+Also UPDATE the existing case `staff on cancelled shift 403` (beo.test.js:363-368): under the loosened auth a proposal whose shifts are all cancelled returns 404 for staff, so its assertion flips from 403 to 404.
+
+Keep unchanged: nonexistent proposal 404, acknowledge tests, phone-gating roster tests for the assigned viewer. (The file has no logo tests despite its header comment; nothing to preserve there.)
 
 - [ ] **Step 2: Run the suite to verify the new cases fail**
 
@@ -211,9 +217,19 @@ const shiftsRow = await pool.query(
           s.positions_needed, s.equipment_required, s.supply_run_required,
           s.setup_minutes_before,
           abr.approved_by_role,
+          cov.cover_requested_at, cov.cover_for_first_initial,
           my.id AS my_request_id, my.status AS my_request_status, my.position AS my_position,
           my.requested_positions AS my_requested_positions
      FROM shifts s
+     LEFT JOIN LATERAL (
+       SELECT csr.cover_requested_at,
+              UPPER(LEFT(TRIM(COALESCE(cp2.preferred_name, '?')), 1)) AS cover_for_first_initial
+         FROM shift_requests csr
+         LEFT JOIN contractor_profiles cp2 ON cp2.user_id = csr.user_id
+        WHERE csr.shift_id = s.id AND csr.cover_requested_at IS NOT NULL
+          AND csr.status = 'approved' AND csr.dropped_at IS NULL
+        ORDER BY csr.cover_requested_at ASC LIMIT 1
+     ) cov ON true
      LEFT JOIN LATERAL (
        SELECT COALESCE(jsonb_object_agg(position, c), '{}'::jsonb) AS approved_by_role
          FROM (SELECT position, COUNT(*) c FROM shift_requests
@@ -254,6 +270,7 @@ menu_print: p.menu_print_key
 - [ ] **Step 4: Rewire `server/routes/beo.js`**
 
 - Delete the old `authorize()` and the GET body; import `{ authorizeEventRead, buildEventDetailsPayload }`.
+- KEEP each route's `parseInt` + `Number.isFinite` guard lines (beo.js:50-51 and siblings). Dropping them sends NaN to pg and 500s with 22P02 (the UUID token-guard class of bug). Belt-and-suspenders: `authorizeEventRead` also opens with `if (!Number.isFinite(proposalId)) throw new NotFoundError('Event not found.');`
 - `GET /:proposalId` → `await authorizeEventRead(req, proposalId); res.json(await buildEventDetailsPayload(req, proposalId));`
 - `GET /:proposalId/logo` and `POST /:proposalId/acknowledge` swap `authorize(` for `authorizeEventRead(` (acknowledge stays effectively assigned-only via its UPDATE predicates and the manager staffed check; add a comment saying so).
 - Update the file-head comment block: read auth is any-staff-on-staffable-event, contact fields are redacted for non-assigned viewers.
@@ -305,13 +322,15 @@ test('proposal-less legacy shift returns shift-only payload', async () => {
   assert.equal(res.body.shifts.length, 1);
 });
 
-test('menu-print download: 404 when no file, 403-free (404) for probing, 200 attachment for assigned', async () => {
+test('menu-print download auth: 404 when no file, 403 for unassigned staff', async () => {
   const none = await get(`/api/shifts/${shiftId}/menu-print`, staffToken);
   assert.equal(none.status, 404); // no key uploaded on fixture
-  // after setting menu_print_key on the fixture proposal to a known R2 key path:
+  // after UPDATE proposals SET menu_print_key = 'menu-print/<id>/test.pdf' on the fixture:
   const un = await get(`/api/shifts/${shiftId}/menu-print`, otherStaffToken);
   assert.equal(un.status, 403); // unassigned staffer may NOT download
 });
+// Deliberate coverage stance: the 200 path proxies live R2 (getSignedUrl + fetch),
+// so it is NOT asserted in node:test. It is covered by the Task 6/9 manual checks.
 ```
 
 - [ ] **Step 2: Run to verify failure** (`node -r dotenv/config --test server/routes/eventDetails.test.js` → cannot find module / 404s)
@@ -369,7 +388,8 @@ router.get('/:shiftId/event-details', auth, beoReadLimiter, asyncHandler(async (
         end_time: shift.end_time, location: shift.location, guest_count: shift.guest_count,
         positions_needed: shift.positions_needed, equipment_required: shift.equipment_required,
         supply_run_required: shift.supply_run_required, setup_minutes_before: shift.setup_minutes_before,
-        approved_by_role: {}, my_request_id: mine?.id || null,
+        approved_by_role: {}, cover_requested_at: null, cover_for_first_initial: null,
+        my_request_id: mine?.id || null,
         my_request_status: mine?.status || null, my_position: mine?.position || null,
         my_requested_positions: mine?.requested_positions || null,
       }],
@@ -459,6 +479,7 @@ Cases:
 ```js
 // upload PDF magic → 200 {menu_print:{status:'ready'}}; DB key LIKE 'menu-print/<id>/%.pdf'; menu_not_required reset to false
 // upload a text buffer → 400 ValidationError (fieldErrors.file)
+// oversize upload (MAX_FILE_SIZE + 1 bytes of valid-PDF-magic padding) → non-200 (express-fileupload global limit; accept 400 or 413)
 // PATCH not_required:true with no file → 200 {status:'not_required'}
 // PATCH not_required:true while a key exists → 409 ConflictError
 // DELETE → 200 {status:'pending'}; key NULL in DB
@@ -552,12 +573,12 @@ module.exports = router;
 
 Run: `node -r dotenv/config --test server/routes/proposals/menuPrint.test.js` → PASS
 
-- [ ] **Step 5: Verify `GET /api/proposals/:id` (getOne.js) returns the two new columns.** If its SELECT is explicit, add `p.menu_print_key, p.menu_not_required`; if `p.*`, no change. Admin UI (lane 3) reads them from the proposal payload.
+- [ ] **Step 5: Confirm the proposal payload carries the new columns.** Verified at plan-review time: `getOne.js` selects `p.*`, so `menu_print_key` / `menu_not_required` ride along with NO edit to getOne.js (do not touch it; it is outside this lane's footprint). Just spot-check with a curl or the test harness that `GET /api/proposals/:id` includes both fields.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add server/routes/proposals/menuPrint.js server/routes/proposals/menuPrint.test.js server/routes/proposals/index.js server/routes/proposals/getOne.js ARCHITECTURE.md README.md
+git add server/routes/proposals/menuPrint.js server/routes/proposals/menuPrint.test.js server/routes/proposals/index.js ARCHITECTURE.md README.md
 git commit -m "feat(admin): menu print file upload/flag/remove routes"
 ```
 
@@ -588,23 +609,32 @@ return `Event details ready from Dr. Bartender: ${truncated} on ${eventDateLocal
 
 Update the function's doc comment (BEO → event details). Function name and callers unchanged.
 
-- [ ] **Step 3: Update smsTemplates.test.js expectation, run suite**
+- [ ] **Step 3: Assert the new feed column.** `server/routes/shifts.withdraw.test.js` is the suite that actually drives `GET /api/shifts` (staffShiftHandlers.test.js does NOT touch the feed). Add one assertion to an existing feed-reading case there:
+
+```js
+assert.ok('package_pricing_type' in feedRow, 'staff feed row carries package_pricing_type');
+```
+
+Run: `node -r dotenv/config --test server/routes/shifts.withdraw.test.js`
+Expected: PASS with the new assertion.
+
+- [ ] **Step 4: Commit the feed change**
+
+```bash
+git add server/routes/shifts.queries.js server/routes/shifts.withdraw.test.js
+git commit -m "feat(staff): package_pricing_type on the open-shifts feed"
+```
+
+- [ ] **Step 5: Update smsTemplates.test.js expectation, run suite**
 
 Run: `node -r dotenv/config --test server/utils/smsTemplates.test.js` → PASS
+Also re-run `node -r dotenv/config --test server/routes/beo.test.js` → PASS (lane-neighbor check).
 
-- [ ] **Step 4: Re-run the neighbor suites touched by this lane** (one at a time):
-
-```bash
-node -r dotenv/config --test server/routes/beo.test.js
-node -r dotenv/config --test server/utils/staffShiftHandlers.test.js
-```
-Expected: PASS (staffShiftHandlers exercises the feed path).
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit the copy reword separately** (independent feature, separately revertable)
 
 ```bash
-git add server/routes/shifts.queries.js server/utils/smsTemplates.js server/utils/smsTemplates.test.js
-git commit -m "feat(staff): hosted pricing_type on open-shifts feed; event-details SMS copy"
+git add server/utils/smsTemplates.js server/utils/smsTemplates.test.js
+git commit -m "copy(sms): BEO nudge says event details"
 ```
 
 ---
@@ -663,8 +693,21 @@ Every prior `shiftRow` read switches to `myShift` (date, times, setup, position 
 - [ ] **Step 2: Add the new brief cards to BeoSections.js**
 
 ```jsx
+// Local parser: shifts.equipment_required is TEXT holding a JSON array ('[]').
+// (LogisticsTag has a private parseEquipment; it is not exported, so define here.)
+function safeParseArray(raw) {
+  if (Array.isArray(raw)) return raw.filter((t) => typeof t === 'string' && t.trim());
+  if (typeof raw !== 'string') return [];
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((t) => typeof t === 'string' && t.trim()) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function EquipmentCard({ equipment, supplyRun }) {
-  const list = Array.isArray(equipment) ? equipment : safeParseArray(equipment);
+  const list = safeParseArray(equipment);
   if (list.length === 0 && !supplyRun) return null;
   return (
     <div className="sp-card tight">
@@ -691,18 +734,25 @@ export function RolesCard({ positionsNeeded, approvedByRole }) { /* pills reusin
 export function BarMenuCard({ menuPrint, shiftId }) {
   const [downloading, setDownloading] = React.useState(false);
   if (!menuPrint) return null;
+  const [downloadError, setDownloadError] = React.useState(null);
   async function download() {
     setDownloading(true);
+    setDownloadError(null);
     try {
       const res = await api.get(`/shifts/${shiftId}/menu-print`, { responseType: 'blob' });
+      // Server sends Content-Disposition with the right extension; honor it.
+      const cd = res.headers?.['content-disposition'] || '';
+      const m = cd.match(/filename="([^"]+)"/);
       const url = URL.createObjectURL(res.data);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'bar-menu.pdf';
+      a.download = m ? m[1] : 'bar-menu.pdf';
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+    } catch (err) {
+      setDownloadError(err?.message || 'Could not download the menu file.');
     } finally {
       setDownloading(false);
     }
@@ -715,6 +765,7 @@ export function BarMenuCard({ menuPrint, shiftId }) {
           <button type="button" className="sp-btn sp-btn-sm" onClick={download} disabled={downloading}>
             {downloading ? 'Downloading…' : 'Download print file'}
           </button>
+          {downloadError && <div className="sp-modal-error">{downloadError}</div>}
           <div style={{ fontSize: 12.5, color: 'var(--sp-ink-2)', marginTop: 6, lineHeight: 1.55 }}>
             Print the menu and bring it framed (frames will be stocked at the Pilsen storage
             unit). The menu and frame stay with the client after the event. You get a flat $5
@@ -766,7 +817,7 @@ export function BarMenuCard({ menuPrint, shiftId }) {
 
 `viewerState` derivation in ShiftDetail: `viewer.is_assigned` → assigned; `myShift.my_request_status === 'pending'` → pending or waitlisted (classify with `classifyRequest` exactly like ShiftsPage's PendingRow, lines ~570-577); else browsing. `fullyStaffed`/`coverNeeded` from `myShift` roster math + payload cover flags. Withdraw calls `DELETE /shifts/requests/${myShift.my_request_id}` then refetch. Request opens RequestSheet with a row assembled from `myShift` + `package_pricing_type: beo.package?.pricing_type`; on submitted, refetch. Cover claim posts `/shifts/requests/${shiftId}/claim-cover` (same handler code as ShiftsPage `claimCover`).
 
-- [ ] **Step 4: Rewire the ShiftDetail render.** Section title "Event details" replaces "Banquet Event Order". Card order in the brief: meta grid, EquipmentCard, RolesCard, GratuityTipsCard (moves up, before drinks), then drinks/addons/logistics/custom menu/notes/consult (all now unconditioned on assignment). Assigned-only block: Call client button (only when `client.phone` non-null), TeamRosterCard, ShoppingListCard, BarMenuCard, and EventActionArea (always rendered; it branches internally). Chips: `Details confirmed` / `Awaiting your confirm` / `Details not finalized yet`. Pre-finalize banner copy: "Plan still being finalized. You will confirm the event details once the lead locks the plan." Confirm bar copy: "Confirm you've read the event details." / button "Confirm details". Toast: "Event details confirmed. The lead has been notified."
+- [ ] **Step 4: Rewire the ShiftDetail render.** Section title "Event details" replaces "Banquet Event Order". Card order in the brief: meta grid, EquipmentCard, RolesCard, GratuityTipsCard (moves up, before drinks), then drinks/addons/logistics/custom menu/notes/consult (all now unconditioned on assignment). Assigned-only block: Call client button (only when `client.phone` non-null), TeamRosterCard, ShoppingListCard, BarMenuCard, and EventActionArea (always rendered; it branches internally). Chips: `Details confirmed` / `Awaiting your confirm` / `Details not finalized yet`. Pre-finalize banner copy, exactly per spec: "Details still being finalized. Confirm unlocks once the lead finalizes the plan." Confirm bar copy: "Confirm you've read the event details." / button "Confirm details". Toast: "Event details confirmed. The lead has been notified."
 
 - [ ] **Step 5: Verify net line counts.** `wc -l client/src/pages/staff/ShiftDetail.js` must be BELOW 804. Run `npm run check:filesize` → no new RED.
 
@@ -775,7 +826,11 @@ export function BarMenuCard({ menuPrint, shiftId }) {
 ```bash
 cd client && CI=true npx react-scripts build
 ```
-Expected: green. Then local dev run: as a staff dev JWT, open an Available shift → full brief renders with Request bar; open an assigned shift → extras + confirm bar.
+Expected: green. Then local dev run. The dev server is a Claude-managed background process with NO auto-reload: restart it first so lane 1's new endpoints are live. Manual checks, each with its expected outcome:
+
+- Staff dev JWT NOT on the event: full brief renders (date, equipment, roles, gratuity card, drinks); Request bar shows; the Call client button is ABSENT (client.phone is null server-side); Bar menu card absent.
+- Same staffer after requesting: pending bar with Withdraw; waitlist variant when every picked role is full (classifyRequest math).
+- Assigned staff dev JWT: Call client visible, roster phones visible, Bar menu card downloads the uploaded fixture file, confirm bar gated on finalize exactly as before.
 
 - [ ] **Step 7: Commit**
 
@@ -848,7 +903,7 @@ git commit -m "feat(staff): hosted-event warning + acknowledgment in RequestShee
 - [ ] **Step 1: Apply the rewords**
 
 - HomePage: `Confirm the {nextShift.client_name || 'event'} event details`
-- ShiftCard chips: `Details confirmed` / `Details to confirm`
+- ShiftCard chips: `Details confirmed` / `Details to confirm` (ShiftsPage's Mine tab renders these THROUGH ShiftCard, so no ShiftsPage.js edit is needed for chips; its footprint entry exists only in case the Task 6 wiring touches it)
 - NotificationsSection: label `Event details ready to confirm`, sub `Event details are locked and waiting for my confirm.`; reminder sub `Auto SMS if I have not confirmed upcoming event details.`; critical-path explainer: `Critical-path messages (event details finalized, schedule changes, payday) can't be fully muted.` (ids `beo_finalized` / `beo_reminder_t3` and `CRITICAL_CATEGORIES` untouched)
 
 - [ ] **Step 2: Sweep for leftovers**
@@ -958,7 +1013,7 @@ export default function AdminMenuPrintBlock({ proposalId, menuPrintKey, menuNotR
 ```bash
 cd client && CI=true npx react-scripts build
 ```
-Manual: upload a PDF on a dev event, see Uploaded badge; staff side (assigned dev JWT) shows Download; Remove reverts to Not posted; toggle flips to No menu needed.
+Manual (restart the Claude-managed dev server first; no auto-reload): upload a PDF on a dev event, see Uploaded badge; staff side (assigned dev JWT) shows Download and the file round-trips; Remove reverts to Not posted; toggle flips to No menu needed; PATCH-while-file-exists shows the 409 message inline.
 
 - [ ] **Step 4: Commit**
 
@@ -968,6 +1023,10 @@ git commit -m "feat(admin): bar menu print upload block + event details link lab
 ```
 
 ---
+
+## Design-fleet review (2026-07-22)
+
+plan-fidelity, plan-decomposition, plan-feasibility all completed with explicit verdicts. Both blockers fixed in place: the `shifts[]` cover-flags producer/consumer gap (cover LATERAL added to the Task 2 query + legacy branch), and the getOne.js footprint trip (dissolved: getOne selects `p.*`, so Task 4 no longer edits it). All feasibility warnings folded: cancelled-shift test flips 403→404, NaN guards explicitly retained, `safeParseArray` defined, feed assertion moved to shifts.withdraw.test.js, oversize upload case added, spec copy restored verbatim, dev-server restart added to manual checks, download error handling + Content-Disposition filename honored, lane-1 fleet agents named. Accepted as-is: Task 3 keeps the event-details endpoint and download proxy in one checkpoint commit (both live in one file, and lane checkpoints squash to a single commit on main, so the revert unit is the lane either way).
 
 ## Self-review notes (done at plan time)
 
