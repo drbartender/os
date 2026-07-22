@@ -91,8 +91,20 @@ export default function CancelEventDialog({ proposalId, clientName, onClose, onC
       const idempotency_key = (window.crypto && window.crypto.randomUUID)
         ? window.crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      const res = await api.post(`/proposals/${proposalId}/cancel/refund`, { idempotency_key });
+      // The step-1 suppress checkbox governs BOTH cancel-flow emails: one
+      // visible decision covers the cancellation notice and the refund notice.
+      const res = await api.post(`/proposals/${proposalId}/cancel/refund`, {
+        idempotency_key,
+        suppress_client_email: suppressEmail,
+      });
       setRefunded(res.data);
+      // Per-channel truth parity with the refund panel: with no Retry by
+      // design, a failed/suppressed notice needs a visible cue so the admin
+      // can email manually.
+      (res.data.notifications || []).forEach((n) => {
+        if (n.email === 'failed') toast.error(`Refund issued, but the client notice failed to send: ${n.email_error || 'unknown error'}`);
+        else if (n.email === 'skipped' && n.skip_reasons?.email) toast.info(`Refund issued. Notice not sent: ${n.skip_reasons.email}`);
+      });
       if (res.data.shortfall_cents > 0) {
         // ToastContext has no warning method; the durable surface is the
         // persistent client-alert-warning in the done-step render below.
@@ -212,7 +224,7 @@ export default function CancelEventDialog({ proposalId, clientName, onClose, onC
                   </label>
                   <label className="hstack" style={{ gap: 8, cursor: 'pointer' }}>
                     <input type="checkbox" checked={suppressEmail} onChange={(e) => setSuppressEmail(e.target.checked)} />
-                    <span className="tiny">Do not email the client</span>
+                    <span className="tiny">Do not email the client (covers the cancellation notice and the refund notice)</span>
                   </label>
                   <label className="hstack" style={{ gap: 8, cursor: 'pointer' }}>
                     <input type="checkbox" checked={suppressStaff} onChange={(e) => setSuppressStaff(e.target.checked)} />

@@ -466,6 +466,12 @@ router.post('/:id/cancel/refund', auth, adminOnly, adminWriteLimiter, asyncHandl
   const stripe = getStripe();
   if (!stripe) throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
   const { idempotency_key } = req.body || {};
+  // One visible decision covers the whole cancel flow: the dialog's existing
+  // suppress checkbox now governs this refund email too (notify-client
+  // contract, 2026-07-22). Inherited polarity: absent/false = SEND, matching
+  // the cancellation-email flag it extends (cancel.js:237), NOT the
+  // notify_client family's fail-quiet default.
+  const suppressClientEmail = req.body?.suppress_client_email === true;
   if (!idempotency_key || typeof idempotency_key !== 'string') {
     throw new AppError('Missing idempotency key. Reopen the refund and retry.', 400, 'MISSING_IDEMPOTENCY_KEY');
   }
@@ -638,12 +644,15 @@ router.post('/:id/cancel/refund', auth, adminOnly, adminWriteLimiter, asyncHandl
 
   // Notification tail runs AFTER the client is released. One aggregate refund
   // notification (gated on any applied to avoid a duplicate with the
-  // charge.refunded webhook backstop).
-  if (anyApplied && refundedCents > 0) {
-    await sendRefundClientNotification({ proposalId: req.params.id, amountCents: refundedCents, source: 'cancel_refund' });
+  // charge.refunded webhook backstop), now also honoring the dialog's
+  // suppress checkbox.
+  const notifications = [];
+  if (anyApplied && refundedCents > 0 && !suppressClientEmail) {
+    const r = await sendRefundClientNotification({ proposalId: req.params.id, amountCents: refundedCents, source: 'cancel_refund' });
+    notifications.push({ type: 'refund_notice', sms: null, ...r });
   }
 
-  res.json({ refunded_cents: refundedCents, already_refunded_cents: alreadyRefunded, shortfall_cents: shortfallCents, charges: perCharge });
+  res.json({ refunded_cents: refundedCents, already_refunded_cents: alreadyRefunded, shortfall_cents: shortfallCents, charges: perCharge, notifications });
 }));
 
 module.exports = router;

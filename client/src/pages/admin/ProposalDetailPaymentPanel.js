@@ -49,6 +49,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
   // Record outside payment
   const [showRecordPayment, setShowRecordPayment] = useState(false);
   const [receiptPrompt, setReceiptPrompt] = useState(false);
+  const [refundNoticePrompt, setRefundNoticePrompt] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [paymentPaidInFull, setPaymentPaidInFull] = useState(false);
@@ -116,15 +117,27 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
     setShowRefund(true);
   };
 
-  const issueRefund = async () => {
+  // Refund notice is OPT-IN, same shape as the receipt (notify-client
+  // contract, 2026-07-22): usable email = ask first; none/placeholder = quiet.
+  const issueRefund = () => {
     if (!refundAmount || Number(refundAmount) <= 0) { toast.error('Enter a valid amount.'); return; }
     if (!refundReason.trim()) { toast.error('A reason is required.'); return; }
+    if (!clientEmailUsable) { doIssueRefund(false); return; }
+    setRefundNoticePrompt(true);
+  };
+
+  const doIssueRefund = async (notifyClient) => {
     setIssuingRefund(true);
     try {
       const res = await api.post(`/stripe/refund/${proposal.id}`, {
         amount: Number(refundAmount),
         reason: refundReason.trim(),
         idempotency_key: refundKey,
+        notify_client: notifyClient,
+      });
+      (res.data.notifications || []).forEach((n) => {
+        if (n.email === 'failed') toast.error(`Refunded, but the notice failed to send: ${n.email_error || 'unknown error'}`);
+        else if (n.email === 'skipped' && n.skip_reasons?.email) toast.info(`Refunded. Notice not sent: ${n.skip_reasons.email}`);
       });
       toast.success(`Refunded ${fmt$2dp(res.data.refunded / 100)}.`);
       setShowRefund(false);
@@ -142,6 +155,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
     } catch (err) {
       toast.error(err.message || 'Refund failed.');
     } finally {
+      setRefundNoticePrompt(false);
       setIssuingRefund(false);
     }
   };
@@ -553,6 +567,27 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
             toast[level](message);
             setInvoiceRefreshKey(k => k + 1);
           }}
+        />
+      )}
+      {refundNoticePrompt && (
+        <NotifyConfirmModal
+          title="Email a refund notice?"
+          notices={[{
+            type: 'refund_notice',
+            reasons: [`Refund of ${fmt$2dp(Number(refundAmount) || 0)}`],
+            composable: false,
+            recipient: { name: proposal.client_name, email: proposal.client_email, phone: null },
+            channels: { email: { available: true, default: true }, sms: { available: false } },
+            autopay_notice: null,
+            draft: null,
+          }]}
+          primary="send"
+          sendLabel="Send notice"
+          quietLabel="Don't send"
+          busy={issuingRefund}
+          onCancel={() => { if (!issuingRefund) setRefundNoticePrompt(false); }}
+          onQuiet={() => doIssueRefund(false)}
+          onSend={() => doIssueRefund(true)}
         />
       )}
       {receiptPrompt && (

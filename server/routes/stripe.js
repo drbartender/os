@@ -430,7 +430,7 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   if (!stripe) throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
 
   const proposalId = req.params.id;
-  const { amount, reason, idempotency_key } = req.body;
+  const { amount, reason, idempotency_key, notify_client } = req.body;
   const cleanReason = String(reason || '').trim();
   if (!cleanReason) throw new AppError('A refund reason is required.', 400, 'REASON_REQUIRED');
   if (!idempotency_key || typeof idempotency_key !== 'string') {
@@ -515,14 +515,30 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
     [proposalId]
   );
 
-  // Refund client notification: non-blocking, gated on recon.applied to avoid
-  // a double-send between this in-app route and the charge.refunded webhook.
-  if (recon?.applied) {
+  // Refund client notification: non-blocking, gated on recon.applied (to
+  // avoid a double-send between this route and the charge.refunded webhook,
+  // whose backstop only notifies when IT applies the reconciliation) AND —
+  // notify-client contract, 2026-07-22 — on the admin's explicit opt-in.
+  // Absent/false = no email (fail-quiet, same as record-payment's receipt).
+  const notifications = [];
+  if (recon?.applied && notify_client === true) {
     const { sendRefundClientNotification } = require('../utils/refundClientNotify');
-    await sendRefundClientNotification({
+    const r = await sendRefundClientNotification({
       proposalId,
       amountCents: plan.amountCents,
       source: 'in_app_route',
+    });
+    notifications.push({ type: 'refund_notice', sms: null, ...r });
+  } else if (notify_client === true && !recon?.applied) {
+    // Explicit yes but a concurrent reconciliation (webhook) already applied:
+    // that path already notified; never double-send, but say why.
+    notifications.push({
+      type: 'refund_notice', email: 'skipped', sms: null,
+      // recon not applied = another reconciliation path (webhook race, an
+      // idempotent retry of an earlier apply, or the stale-pending sweeper)
+      // owns this refund; each of those notifies only when IT applies, so
+      // sending here would risk a double.
+      skip_reasons: { email: 'Another reconciliation path owns this refund and its client notice; nothing was sent here to avoid a double.' },
     });
   }
 
@@ -530,6 +546,7 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
     refunded: plan.amountCents,
     total_price: Number(after.rows[0].total_price),
     amount_paid: Number(after.rows[0].amount_paid),
+    notifications,
   });
 }));
 

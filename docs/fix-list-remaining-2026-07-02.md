@@ -304,3 +304,34 @@ row to the invoice.
 - proposalEditor: blank guest_count previews at 50 but PATCHes 0; add client-side required validation.
 - repriceSummary: already-overpaid + price-increase edge shows consequence lines the server will not perform (copy precision).
 - leadCallTrigger: reply_stale/reply_confirmed_late fault rows consume LEAD_CALL_DAILY_CAP headroom (status 'failed' counts as non-skipped); irrelevant at current volume, revisit if cap ever tightens.
+
+---
+
+## Notify-client confirmation residuals (added 2026-07-22)
+
+Shipped across three lanes (notify-server / notify-client / notify-refunds); spec + plan under
+docs/superpowers/{specs,plans}/2026-07-21-notify-client-confirmation*. Deferred with reasons:
+
+- **"Do not contact" toggle on the client admin page** writing `communication_preferences`
+  (no UI exists today; only the marketing unsubscribe writes those fields). Luva's row is set
+  by hand post-deploy (ops step in the plan); the toggle converts that class of rule to
+  something visible and reversible on screen.
+- **PATCH /api/proposals/:id has no adminWriteLimiter** while now carrying admin-composed
+  client sends; the comms send path and even the read-only notify-preflight are throttled
+  10/min. Deferred from the lane because bolting a limiter onto the busiest admin endpoint
+  risks every existing edit flow and the rate-limiter-bound test debt (TST-3) for a threat
+  that needs valid admin credentials. Decide deliberately: add the limiter (and budget the
+  tests) or record the parity gap as accepted. (security-review, lane fleet 2026-07-22.)
+- **Provider idempotency keys (Resend `Idempotency-Key`, Twilio)** are the precondition for
+  any future failed-send Retry; without them a timeout-ambiguous retry can double-send. No
+  Retry exists by design (spec: rejected alternatives).
+- **`server/utils/groupSend.js` is require-dead** (superseded by the proposalSendGroup comms
+  action); delete when convenient.
+- **`emailTemplates.rescheduleNotificationClient` is orphaned** (the reviewed-text send
+  renders via renderPartsEmail); delete or mark deprecated so nobody resurrects the
+  pre-rendered-HTML path the spec rejected.
+- **ProposalEditorForm.js at ~790 lines** (soft cap 700): plan a split on the next
+  substantial touch.
+- **Suppression skip-reasons surface enum tokens** ("Suppressed: channel_disabled.") in admin
+  toasts, on both the receipt path (actions.js) and the refund path (refundClientNotify.js).
+  Map to human copy at the source, both call sites together. (code-review, lane-3 fleet.)
