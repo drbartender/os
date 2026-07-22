@@ -8,10 +8,15 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-# A GNOME/RDP desktop login injects WAYLAND_DISPLAY/DISPLAY/XAUTHORITY into the
-# systemd user manager; Chrome then attaches to the (dead-after-logout) Wayland
-# compositor instead of xvfb-run's virtual display and hangs at launch. Scrub them.
-UnsetEnvironment=WAYLAND_DISPLAY DISPLAY XAUTHORITY GNOME_SETUP_DISPLAY
+# A GNOME/RDP desktop login imports its session env into the systemd user
+# manager; Chrome then attaches to the (idle-after-disconnect) Wayland
+# compositor instead of xvfb-run's virtual display and hangs at launch. Even
+# with WAYLAND_DISPLAY scrubbed, XDG_SESSION_TYPE=wayland makes Chrome's ozone
+# auto-detection find mutter's socket in XDG_RUNTIME_DIR and hang at zygote
+# stage (observed live 2026-07-22). Scrub the session vars AND pin ozone to
+# X11 so Chrome always targets the Xvfb display.
+UnsetEnvironment=WAYLAND_DISPLAY DISPLAY XAUTHORITY GNOME_SETUP_DISPLAY XDG_SESSION_TYPE
+Environment=OZONE_PLATFORM=x11
 # Adjust these paths at deploy (Task 12). node lives under nvm; xvfb-run gives the
 # headful Chrome a virtual display on the headless box.
 WorkingDirectory=/home/drbartender/projects/os/thumbtack-agent
