@@ -416,7 +416,7 @@ export default function ProposalEditorForm({
       } else {
         // The banner sits behind the overlay; the toast is what the admin
         // actually sees while the popup stays open.
-        toast.error('Save failed; nothing was saved or sent. Your message is kept — fix and retry, or cancel.');
+        toast.error('Save failed; nothing was saved or sent. Your message is kept. Fix and retry, or cancel.');
       }
     } finally {
       setNotifyBusy(false);
