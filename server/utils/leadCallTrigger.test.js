@@ -344,11 +344,21 @@ test('enqueue failure falls back to the direct trigger: the reply path cannot lo
 });
 
 test('skipWindowCheck bypasses ONLY the window gate', async () => {
-  // After-hours + skipWindowCheck: the chain still opens.
+  // After-hours + skipWindowCheck: the chain still opens (22:00 = past the
+  // 21:00 window but inside the promise clock clamp).
   const leadId = await makeLead('swc-open');
-  __setDeps({ chicagoHourNow: () => 23 });
+  __setDeps({ chicagoHourNow: () => 22 });
   await triggerLeadCall({ lead: { customerPhone: '+17735550100' }, leadId, skipWindowCheck: true });
   assert.equal((await attemptFor(leadId)).status, 'calling_admin');
+
+  // Absurd hours are clamped even with the bypass (no 1am promise-keeping).
+  const clamped = await makeLead('swc-clamped');
+  __setDeps({ chicagoHourNow: () => 1 });
+  await triggerLeadCall({ lead: { customerPhone: '+17735550100' }, leadId: clamped, skipWindowCheck: true });
+  const row = await attemptFor(clamped);
+  assert.equal(row.status, 'skipped_after_hours');
+  assert.equal(row.detail, 'promise_clock_clamp');
+  __setDeps({ chicagoHourNow: () => 22 });
 
   // Kill switch still wins even with the flag set.
   const killed = await makeLead('swc-killed');

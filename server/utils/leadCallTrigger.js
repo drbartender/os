@@ -223,6 +223,16 @@ async function triggerLeadCall({ lead, leadId, skipWindowCheck = false }) {
         await insertRow(leadId, 'skipped_after_hours', null);
         return;
       }
+    } else {
+      // Promise-keeping bypasses the 8-21 window (a reply confirmed at 9:02pm
+      // on an 8:58pm lead still calls), but never absurd hours: the freshness
+      // bound is age-relative, and an outage spanning window close could
+      // otherwise ring at 1am (push-review finding). Hard clock clamp.
+      const hour = _deps.chicagoHourNow();
+      if (hour >= 23 || hour < 7) {
+        await insertRow(leadId, 'skipped_after_hours', 'promise_clock_clamp');
+        return;
+      }
     }
 
     if (!process.env.ADMIN_PHONE && !process.env.VA_CELL) {

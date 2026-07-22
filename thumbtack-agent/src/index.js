@@ -347,7 +347,12 @@ async function pollReplies(ctx, counters, sentMemory) {
   // on jobs this process has already decided not to work.
   if (!underCap(counters.repliesToday, CFG.replyDailyCap)) return;
 
-  const { status, body } = await api('GET', `/api/admin/thumbtack/pending-first-replies?limit=${CFG.replyBatchLimit}`);
+  // Never lease more than the remaining cap slots (push-review finding: with
+  // one slot left, a limit-3 offer would lease-and-strand two jobs, burning
+  // their attempts toward the failed flip without ever opening Thumbtack).
+  const remaining = Math.max(1, CFG.replyDailyCap - counters.repliesToday);
+  const batch = Math.min(CFG.replyBatchLimit, remaining);
+  const { status, body } = await api('GET', `/api/admin/thumbtack/pending-first-replies?limit=${batch}`);
   if (status !== 200 || !Array.isArray(body)) { log(`pending-first-replies returned ${status}; skipping`); return; }
   if (body.length === 0) return; // quiet: this polls every 25s
   log(`${body.length} pending first repl${body.length === 1 ? 'y' : 'ies'}`);

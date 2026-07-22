@@ -64,7 +64,8 @@ before(async () => {
   // earlier suite failed to clean up; clean them and rerun.
   const pre = await pool.query(
     `SELECT COUNT(*)::int AS n FROM thumbtack_leads l
-     WHERE ((l.first_reply_status = 'pending' AND l.first_reply_template = 'day')
+     WHERE ((l.first_reply_template = 'day' AND l.first_reply_status IN ('pending','sent','failed'))
+            OR l.first_reply_status = 'pending'
             OR (l.first_reply_status = 'not_needed' AND l.created_at > NOW() - INTERVAL '60 minutes'))
        AND NOT EXISTS (SELECT 1 FROM lead_call_attempts a WHERE a.lead_id = l.id)`
   );

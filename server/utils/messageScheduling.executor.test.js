@@ -1,4 +1,7 @@
 require('dotenv').config();
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('messageScheduling.executor.test.js refuses to run against production');
+}
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
