@@ -109,3 +109,20 @@ server/routes/comms.js
 server/routes/proposals/crud.js
 server/routes/proposals/actions.js
 server/utils/rescheduleProposal.js
+
+# Same contract, the halves the entries above missed (push review, 2026-07-22).
+# The refund side moves money AND emails the client, and the two shared
+# primitives are what every one of the four trigger sites runs through, so a
+# change to either silently re-aims all four. cancel.js additionally issues
+# Stripe refunds directly.
+server/routes/proposals/cancel.js
+server/utils/refundClientNotify.js
+server/routes/proposals/notifyPreflight.js
+server/utils/clientNotices.js
+
+# drinkPlans split fallout (push review, 2026-07-22). submit.js is listed above
+# and is a token-gated PUBLIC route, but the fs-split lane moved its untrusted-
+# input sanitizing and its client-send out into these siblings. Sensitivity
+# follows the code, not the filename it used to live in.
+server/routes/drinkPlans/submitSanitize.js
+server/routes/drinkPlans/submitNotify.js
