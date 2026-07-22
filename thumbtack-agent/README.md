@@ -17,6 +17,36 @@ It is **read-only on Thumbtack**: it only opens the page, never submits the form
 human-paced (jittered delays, `DAILY_CAP`) and has a dual kill-switch (the server
 returns `[]` when disabled; `HARVESTER_ENABLED=false` idles the agent).
 
+## Auto first-reply queue (2026-07-21)
+
+The same loop now also sends Dallas's saved `day`/`night` Quick Replies on new
+leads (respond-then-ring: the server fires the lead call only after the reply
+is confirmed). Flow per job: open the lead page (`REPLY_LEAD_URL_TEMPLATE`,
+env-tunable), click Quick Reply, pick the template whose visible label equals
+the offered `day`/`night` (case-insensitive, exact), Send, verify, then POST
+`first-reply-sent`. Definitive failures (`template_not_found`,
+`lead_not_found`, `quick_reply_unavailable`, `send_unverified`) POST
+`first-reply-failed` and are terminal; transient trouble stays silent and the
+server lease re-offers (offer-side attempts cap bounds it at 3).
+
+Cadence: the loop ticks every `REPLY_POLL_INTERVAL_MS` (25s); the harvest poll
+piggybacks every Nth tick (`src/cadence.js`, unit-tested) so its ~5-minute pace
+is unchanged. Replies draw from their own `REPLY_DAILY_CAP`.
+
+Kill switch lives server-side: `TT_AUTOREPLY_ENABLED` not `'true'` means the
+offer endpoint returns `[]` and this agent idles the reply side; no local flag.
+
+DOUBLE-SEND GUARD (three layers): (1) the negotiation id is journaled to
+`first-reply-sent.journal` in the profile dir immediately BEFORE Send is
+clicked, and a re-offered journaled id is resolved by re-POSTing the report,
+never by driving the UI again (survives restarts and lost reports); (2)
+everything from the click onward is caught, so a post-click throw reports
+`send_unverified` (terminal) instead of releasing the lease; (3) post-send
+reports retry 3x and only 2xx counts as delivered. Fail direction: at worst
+one reply is claimed sent without landing on TT; a reply can never go out
+twice. Dry-run does not even poll the reply queue (the offer GET itself
+leases and burns an attempt server-side).
+
 ## Setup (on the box)
 
 ```sh

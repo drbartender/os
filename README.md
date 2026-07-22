@@ -242,7 +242,7 @@ dr-bartender/
 │   │   ├── publicTip.js        # Public tip-page lookup + post-tip feedback (token-gated)
 │   │   ├── publicFeedback.js   # Post-event feedback router (5-star sentiment routing)
 │   │   ├── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
-│   │   ├── thumbtackAgent.js   # Thumbtack email-harvester API (/api/admin/thumbtack): pending-harvest, email-harvested, harvest-failed, rearm. Driven by the box-only agent in thumbtack-agent/
+│   │   ├── thumbtackAgent.js   # Thumbtack box-agent API (/api/admin/thumbtack): email-harvest queue (pending-harvest/email-harvested/harvest-failed/rearm) + auto first-reply queue (pending-first-replies/first-reply-sent/first-reply-failed). Driven by the box-only agent in thumbtack-agent/ (one loop, 25s reply tick, harvest piggyback every Nth tick)
 │   │   ├── venues.js           # Google Places venue search proxy
 │   │   ├── voice.js            # Zul VA-calling Twilio Voice webhooks: POST /inbound (forward 224 → VA_CELL), /bridge (look up target by CallSid → Dial 224→target), /status (failed-leg → Telegram notice). Signature gate via utils/twilioSignature + text/xml
 │   │   └── voiceLeadCall.js    # Lead call bridge Twilio webhooks (/api/voice/lead): /answer (Gather-wrapped spoken briefing), /digit (press-1 → Dial lead from the 224, press-9 replay), /status (claim-guarded chain advance). Signature FAIL-CLOSED in every env
