@@ -93,14 +93,20 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
  *  server-side so the AssignToEventModal can render without fetching ~500 rows.
  *  Uses the same `positions_needed::jsonb` pattern as admin.js badge-counts;
  *  the schema migration normalized every row to a valid JSON array, so the
- *  cast is safe in practice. */
+ *  cast is safe in practice.
+ *
+ *  approved_by_role mirrors the aggregate on the admin GET / feed above (same
+ *  filters, so it always agrees with approved_count). The modal needs per-role
+ *  fill, not just a flat count, to preselect the position of an actually-open
+ *  slot on a mixed roster. */
 router.get('/unstaffed-upcoming', auth, requireStaffing, asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT s.id, s.event_date, s.start_time, s.end_time, s.location, s.guest_count,
            s.event_type, s.event_type_custom, s.positions_needed, s.proposal_id,
            COALESCE(c.name, s.client_name) AS client_name,
            rc.request_count,
-           rc.approved_count
+           rc.approved_count,
+           abr.approved_by_role
     FROM shifts s
     LEFT JOIN proposals p ON p.id = s.proposal_id
     LEFT JOIN clients c ON c.id = p.client_id
@@ -109,6 +115,13 @@ router.get('/unstaffed-upcoming', auth, requireStaffing, asyncHandler(async (req
              COUNT(*) FILTER (WHERE sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
       FROM shift_requests sr WHERE sr.shift_id = s.id
     ) rc ON true
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(jsonb_object_agg(position, c), '{}'::jsonb) AS approved_by_role
+      FROM (SELECT position, COUNT(*) c FROM shift_requests
+            WHERE shift_id = s.id AND status = 'approved' AND dropped_at IS NULL
+              AND position IS NOT NULL
+            GROUP BY position) g
+    ) abr ON true
     WHERE s.status = 'open'
       AND s.event_date >= CURRENT_DATE
       AND s.positions_needed IS JSON ARRAY

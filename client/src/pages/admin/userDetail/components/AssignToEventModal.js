@@ -5,7 +5,15 @@ import EntityLink from '../../../../components/EntityLink';
 import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
 import { fmtDate, fmtTime24, relDay } from '../../../../components/adminos/format';
-import { parsePositions } from '../helpers';
+import { remainingByRole } from '../../../../components/adminos/shifts';
+import { parsePositionsNeeded, defaultAssignRole } from '../../../../utils/staffingRoles';
+
+// The role a row preselects: the first open slot walking Bartender, Banquet
+// Server, Barback. Needs the feed's `approved_by_role` aggregate to tell a
+// filled bartender slot from a filled barback one.
+function defaultRoleFor(shift) {
+  return defaultAssignRole(parsePositionsNeeded(shift?.positions_needed), remainingByRole(shift));
+}
 
 export default function AssignToEventModal({ userId, staffName, onClose, onAssigned, toast }) {
   const [shifts, setShifts] = useState([]);
@@ -37,9 +45,10 @@ export default function AssignToEventModal({ userId, staffName, onClose, onAssig
   }).sort((a, b) => (a.event_date || '').localeCompare(b.event_date || ''));
 
   const assignToShift = async (shift) => {
-    const positions = parsePositions(shift.positions_needed);
-    const fallbackPosition = positions[0] || 'Bartender';
-    const position = positionByShift[shift.id] || fallbackPosition;
+    // Money seam: this POSTs the `position` payroll keys on. An explicit pick from
+    // the row's select wins; otherwise the preselected default, which is the same
+    // canonical role the row's button label showed.
+    const position = positionByShift[shift.id] || defaultRoleFor(shift);
     setAssigning(shift.id);
     try {
       await api.post(`/shifts/${shift.id}/assign`, {
@@ -119,13 +128,13 @@ export default function AssignToEventModal({ userId, staffName, onClose, onAssig
           ) : (
             <div className="vstack" style={{ gap: 8 }}>
               {filtered.map(s => {
-                const positions = parsePositions(s.positions_needed);
-                const needed = positions.length || Number(s.bartenders_needed || 1);
+                const roster = parsePositionsNeeded(s.positions_needed);
+                const needed = roster.length || Number(s.bartenders_needed || 1);
                 const filled = Number(s.approved_count || 0);
                 const open = Math.max(0, needed - filled);
                 const isAssigned = assigned[s.id];
-                const positionOptions = positions.length ? Array.from(new Set(positions)) : ['Bartender'];
-                const selectedPosition = positionByShift[s.id] || positionOptions[0];
+                const positionOptions = Array.from(new Set(roster));
+                const selectedPosition = positionByShift[s.id] || defaultRoleFor(s);
 
                 return (
                   <div

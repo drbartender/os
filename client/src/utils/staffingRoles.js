@@ -3,6 +3,10 @@
 // eventTypes.js). The exact label 'Bartender' is load-bearing for payroll on
 // the server; here it drives per-role fill, the request picker, and waitlist
 // classification.
+//
+// ONE DELIBERATE ASYMMETRY: `defaultAssignRole` (and ASSIGN_ROLE_PREFERENCE)
+// live here only. Do NOT "sync" them onto the server. See the comment on the
+// function for why.
 
 export const ROLES = {
   BARTENDER: 'Bartender',
@@ -72,4 +76,37 @@ export function classifyRequest(requestedPositions, remaining) {
 
 export function isEventFullyStaffed(remaining) {
   return Object.values(remaining).every((n) => n <= 0);
+}
+
+// Preference order for the assign-picker default. Its own constant rather than
+// a reuse of CANONICAL_LABELS: that list's order is incidental, this one is a
+// product decision (Bartender first; Banquet Server before Barback).
+export const ASSIGN_ROLE_PREFERENCE = [
+  ROLES.BARTENDER,
+  ROLES.BANQUET_SERVER,
+  ROLES.BARBACK,
+];
+
+// The role an admin-facing assign picker preselects for a shift. Walks the
+// preference order and returns the first role with an open slot; if every role
+// is full it returns the first preferred role the roster actually holds (the
+// caller's over-fill confirm still gates the write); an empty or legacy roster
+// falls back to 'Bartender'.
+//
+// CLIENT-ONLY BY DESIGN — do not mirror this onto the server. `position` is the
+// column payroll's tip split keys on, and the server deliberately refuses to
+// default it: POST /shifts/:id/assign 400s without an explicit canonical role
+// (server/routes/shifts.approval.js). This preselects a VISIBLE, changeable
+// value in a dropdown, so a human still sees the role before it is written.
+// A server-side defaultAssignRole would turn that into a silent write.
+export function defaultAssignRole(roster, remaining = {}) {
+  const open = remaining && typeof remaining === 'object' ? remaining : {};
+  for (const role of ASSIGN_ROLE_PREFERENCE) {
+    if ((open[role] || 0) > 0) return role;
+  }
+  const rosterRoles = new Set(Array.isArray(roster) ? roster : []);
+  for (const role of ASSIGN_ROLE_PREFERENCE) {
+    if (rosterRoles.has(role)) return role;
+  }
+  return ROLES.BARTENDER;
 }

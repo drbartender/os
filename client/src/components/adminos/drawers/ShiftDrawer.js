@@ -9,6 +9,7 @@ import {
   classifyRequest,
   isEventFullyStaffed,
   canonicalizeRole,
+  defaultAssignRole,
   CANONICAL_LABELS,
 } from '../../../utils/staffingRoles';
 import Drawer from '../Drawer';
@@ -30,10 +31,13 @@ import EntityLink from '../../EntityLink';
 // transport_acknowledged_at, and the requester's reliable_transportation.
 //
 // Money seam: approval/assignment writes the `position` column that payroll keys
-// on. position is resolved from the request's ranked requested_positions against
-// per-role remaining; it is NEVER defaulted to 'Bartender'. When the only open
-// slot is a role the staffer did not rank, the admin must pick a canonical role
-// and that override is sent.
+// on. On an APPROVAL it is resolved from the request's ranked requested_positions
+// against per-role remaining; when the only open slot is a role the staffer did
+// not rank, the admin must pick a canonical role and that override is sent. The
+// MANUAL-ASSIGN picker preselects a role (defaultAssignRole: first open slot in
+// Bartender / Banquet Server / Barback order) — a visible, changeable dropdown
+// value, never a silent one. The server still refuses a request with no explicit
+// position, which is what keeps an unseen role out of payroll.
 //
 // Actions:
 //   - Approve request → POST /shifts/:id/assign  { user_id, position }
@@ -69,6 +73,10 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
   const [showPicker, setShowPicker] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedStaff, setSelectedStaff] = useState(null);
+  // The admin's EXPLICIT manual-assign role choice. '' means "untouched, use the
+  // computed default" — see pickerRole below. Storing the override rather than
+  // the effective value is what lets the default track a shift reload while the
+  // picker is open without ever clobbering a hand-picked role.
   const [pickerPosition, setPickerPosition] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -160,6 +168,10 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
     () => roster.length > 0 && isEventFullyStaffed(remaining),
     [roster, remaining]
   );
+
+  // The role the manual-assign picker shows. An explicit pick wins; otherwise the
+  // computed default, which re-derives whenever the shift reloads.
+  const pickerRole = pickerPosition || defaultAssignRole(roster, remaining);
 
   // The event needs transport coordination (gear haul or supply run), which gates
   // whether the requester's transportation flag is shown for waitlisted rows.
@@ -265,8 +277,10 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
 
   const handleManualAssign = async () => {
     if (!selectedStaff) return;
-    // The admin must pick a canonical role; position is never defaulted.
-    const role = canonicalizeRole(pickerPosition);
+    // pickerRole is always a canonical label (an explicit pick from the select,
+    // or defaultAssignRole's output). Re-canonicalizing is belt-and-braces: the
+    // request body must never carry a non-canonical position to the money seam.
+    const role = canonicalizeRole(pickerRole);
     if (!role) {
       toast.error('Pick a position before assigning.');
       return;
@@ -642,10 +656,9 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
                 >
                   <select
                     className="select"
-                    value={pickerPosition}
+                    value={pickerRole}
                     onChange={e => setPickerPosition(e.target.value)}
                   >
-                    <option value="">Position…</option>
                     {assignableRoles.map(role => (
                       <option key={role} value={role}>{role}</option>
                     ))}
@@ -653,10 +666,10 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
                   <button
                     type="button"
                     className="btn btn-primary btn-sm"
-                    disabled={busy || !pickerPosition}
+                    disabled={busy}
                     onClick={handleManualAssign}
                   >
-                    {busy ? 'Assigning…' : 'Assign'}
+                    {busy ? 'Assigning…' : `Assign as ${pickerRole}`}
                   </button>
                   <button
                     type="button"

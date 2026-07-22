@@ -53,13 +53,8 @@ export function initialsOf(name, email) {
   return src.split(/\s+/).map(s => s[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
 }
 
-export function parsePositions(raw) {
-  if (Array.isArray(raw)) return raw.map(p => typeof p === 'string' ? p : (p?.position || 'Bartender'));
-  if (typeof raw === 'string') {
-    try {
-      const arr = JSON.parse(raw);
-      return Array.isArray(arr) ? arr.map(p => typeof p === 'string' ? p : (p?.position || 'Bartender')) : [];
-    } catch { return []; }
-  }
-  return [];
-}
+// parsePositions lived here and was AssignToEventModal's only consumer. It is
+// gone deliberately: it mapped a {position, count: 2} roster entry to a single
+// label (under-counting "needed") and never canonicalized, so a lowercase
+// `bartender` row produced a duplicate option. Use parsePositionsNeeded from
+// utils/staffingRoles, which every other staffing surface already shares.
