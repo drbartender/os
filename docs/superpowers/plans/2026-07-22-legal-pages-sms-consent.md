@@ -2,7 +2,20 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship a public Privacy Policy and Terms of Use, wire the footer to them, and capture recorded SMS consent on the quote wizard and staff application so the Twilio A2P campaign can be submitted against real URLs.
+> **Revision 2 (2026-07-22), as built.** Narrowed to clients only. Staff SMS
+> consent already exists as `agreements.sms_consent` and is the gate
+> `server/routes/messages.js` enforces; Twilio has already approved staff SMS.
+> Tasks 5 and 9 (staff application) were **dropped** and
+> `server/routes/application.js` is byte-identical to main. The two lanes
+> collapsed into one (`legal-consent-data`) once the scope shrank, and
+> `sms_consent_log` carries no `user_id` column. Two deviations from the
+> as-written plan, both forced by the code: `consentFieldsFromBody` accepts the
+> string `'true'` as well as the boolean (a strict `=== true` check would drop
+> any multipart caller), and the consent write is ordered *before* the
+> `prefRow` read in `public.js` because that snapshot feeds
+> `sendProposalSentEmail`'s channel decision.
+
+**Goal:** Ship a public Privacy Policy and Terms of Use, wire the footer to them, and capture recorded SMS consent on the quote wizard so the Twilio A2P campaign can be submitted against real URLs.
 
 **Architecture:** The exact consent sentence is defined once per side (client constant for display, server map for the audit record) and a node test asserts the two agree, so the string a reviewer reads on `/privacy` and the string a user clicks can never drift. Submitting a form writes the existing `communication_preferences.sms_enabled` boolean plus an `sms_opt_in_at` stamp using the same jsonb pattern `smsInbound.js` already uses for STOP/START, and appends a row to a new append-only `sms_consent_log` table which is what gets handed to a carrier.
 

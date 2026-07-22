@@ -1,10 +1,34 @@
 # Public legal pages and SMS consent capture (design)
 
 Date: 2026-07-22
-Status: approved in brainstorm (section-by-section)
+Status: approved in brainstorm (section-by-section); **Revision 2, narrowed to
+clients only, 2026-07-22**
 Driver: Twilio A2P campaign submission. The campaign form requires a publicly
 reachable opt-in surface and a privacy policy URL carrying the mobile-data
 sharing language. Neither exists today.
+
+> **Revision 2 (2026-07-22). Staff is out of scope; this spec is clients only.**
+>
+> Two things surfaced during the build:
+>
+> 1. **Staff SMS consent already exists and is load-bearing.**
+>    `client/src/pages/Agreement.js:261` has an `sms_consent` checkbox on the
+>    contractor agreement, stored as `agreements.sms_consent`, and
+>    `server/routes/messages.js:24` and `:90` gate admin-to-staff SMS on it. A
+>    second checkbox writing `users.communication_preferences.sms_enabled`
+>    would have been a *different* gate: ticking it would not have made anyone
+>    reachable, unticking it would not have stopped a send, and the two records
+>    could disagree.
+> 2. **Twilio has already approved SMS for staff**, so there is no submission
+>    pressure on that surface at all.
+>
+> Everything below that describes a staff checkbox, a staff consent string, a
+> `staff_application` source form, or a `user_id` column on `sms_consent_log`
+> is superseded. The shipped scope is: the two legal pages, the footer, and
+> the client quote-wizard checkbox. `server/routes/application.js` is
+> untouched. The agreement's own consent copy is *not* A2P-shaped (no
+> frequency, rates, STOP/HELP, or links); fixing that is deliberately deferred,
+> not done here.
 
 ## Problem
 
