@@ -713,7 +713,7 @@ Note `selectedPkg` is declared AFTER `handleSave` in the current file (line 296)
 
 - [ ] **Step 3: Write the import-smoke test**
 
-The `CI=true` build lints unmounted files but never webpack-resolves their imports (CRA's ESLint config has no `import/no-unresolved`), so a wrong `../` depth would stay invisible until the Task 5 mount swap. This test forces jest to resolve and parse the whole module graph now.
+CRA's build only lints and resolves modules in the webpack graph, so unmounted files are entirely invisible to the Task 4 build gate: a wrong `../` depth (or any parse error) would stay hidden until the Task 5 mount swap. This test forces jest to resolve and parse the whole editor module graph now. (A forgotten unused-import prune still only surfaces at Task 5's build gate; that is acceptable, it is pre-merge.)
 
 Create `client/src/pages/admin/proposalEditor/ProposalEditorForm.smoke.test.js`:
 
@@ -794,7 +794,7 @@ In `EventDetailPage.js`: replace `import EventEditForm from './EventEditForm';` 
 grep -rn "from './ProposalDetailEditForm'\|from './EventEditForm'" client/src --include=*.js
 ```
 
-Expected: exactly one hit, `ProposalDetailEditForm.test.js` importing its own module under test (both deleted together in Task 7). Any hit in a mounted page is a failure.
+Expected: exactly two hits, both in files this lane deletes in Task 7: `ProposalDetailEditForm.test.js:1` (importing its own module under test) and `EventEditForm.js:11` (importing `initialFormFromProposal`; unmounted dead code after this swap). Any hit in a mounted page is a failure.
 
 - [ ] **Step 4: Build gate**
 
