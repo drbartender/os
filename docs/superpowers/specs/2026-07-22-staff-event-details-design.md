@@ -31,7 +31,7 @@ New route `GET /api/shifts/:shiftId/event-details` (auth, any staff/admin/manage
 
 Payload = the existing BEO payload built by a builder function extracted from `server/routes/beo.js`, plus:
 
-- `shifts`: every non-cancelled shift on the proposal: `id, event_date, start_time, end_time, positions_needed, approved_by_role, equipment_required, setup_minutes_before`, cover flags, and the viewer's own `my_request_id / my_request_status / my_position` for the addressed shift.
+- `shifts`: every non-cancelled shift on the proposal: `id, event_date, start_time, end_time, location, guest_count, positions_needed, approved_by_role, equipment_required, supply_run_required, setup_minutes_before`, cover flags, and the viewer's own `my_request_id / my_request_status / my_position` per shift.
 - `menu_print`: `{ status: 'ready' | 'not_required' | 'pending' }` derived from the new proposal columns (never the R2 key itself).
 - `viewer`: gains `is_assigned` (approved + active on this proposal) alongside `is_admin`, `is_acknowledged`.
 - `package` gains nothing new; `pricing_type` is already selected (drives the hosted warning).
@@ -51,8 +51,8 @@ Schema (`schema.sql`, idempotent):
 
 Routes (admin/manager, on the proposals router):
 
-- `POST /api/proposals/:id/menu-print`: file upload via express-fileupload, magic-byte validated (PDF, PNG, JPG), size capped by `MAX_FILE_SIZE`, stored in R2 under `menu-print/<proposalId>/<uuid>.<ext>`. Replaces any prior key (best-effort delete of the old object). Uploading a file clears `menu_not_required`.
-- `DELETE /api/proposals/:id/menu-print`: clears the key (best-effort R2 delete).
+- `POST /api/proposals/:id/menu-print`: file upload via express-fileupload, magic-byte validated (PDF, PNG, JPG), size capped by `MAX_FILE_SIZE`, stored in R2 under `menu-print/<proposalId>/<uuid>.<ext>`. Replaces any prior key; the old R2 object is orphaned, matching the drink-plan logo pattern (no delete util exists in storage.js). Uploading a file clears `menu_not_required`.
+- `DELETE /api/proposals/:id/menu-print`: clears the key (R2 object orphaned, same pattern).
 - `PATCH /api/proposals/:id/menu-print`: body `{ not_required: boolean }` to flip the no-menu flag. Setting true while a file exists is rejected (delete the file first) to keep the tri-state unambiguous.
 
 Staff download: `GET /api/shifts/:shiftId/menu-print` (auth). Allowed for admin/manager, or a staffer with an approved active shift_request on the shift's proposal. Proxies R2 through a signed URL exactly like the BEO logo proxy (timeout, content-type passthrough) with `Content-Disposition: attachment`.
@@ -71,7 +71,7 @@ Tier 1, the brief (every staff viewer):
 
 - Header: client name, event type, package. No-tip-jar banner stays above the fold.
 - Meta grid as today (date, service time, be there by, guests, venue + Get directions, dress code, load-in).
-- New equipment card: `equipment_required` list from the shift, plus the bar-kit line (standard kit includes the small handled cooler, see Decisions).
+- New equipment card: `equipment_required` list and the supply-run flag from the shift, plus the bar-kit line (standard kit includes the small handled cooler, see Decisions).
 - Roles + fill pills (Bartender 2/2 etc.) from `positions_needed` / `approved_by_role`.
 - Gratuity and tips card moves up into the brief (host gratuity prepaid + tip jar): earnings-relevant before requesting.
 - Drinks (signature, custom, mocktails), addons, client logistics, custom menu (with logo), notes from the lead, notes from the client, consult card: all visible to every staff viewer.
@@ -120,6 +120,7 @@ When the event's package `pricing_type` is `per_guest` (hosted), the sheet shows
 ## Edge cases and errors
 
 - Shift cancelled or missing: 404 with the existing friendly copy.
+- Legacy manual shifts with no proposal_id: the endpoint returns a shift-only payload (proposal null, client name from the shift row, menu_print null) so the brief still renders instead of 404ing a requestable shift.
 - Menu upload: reject wrong magic bytes and oversize; admin sees inline error.
 - Menu download by non-assigned staff: 403 (button never renders for them).
 - Acknowledge by non-assigned staff: unchanged ConflictError path.
