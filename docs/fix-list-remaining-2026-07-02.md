@@ -193,7 +193,7 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 - pp2 lane branches await the -D nod (worktrees removed; shared-file tails make the byte-diff check inapplicable): pp2-recipe-card, pp2-package-editor, pp2-lineup, pp2-quantity-review, pp2-planner (+ pp2-core already deleted).
 
 **Tech-debt / small residuals:**
-- server/routes/drinkPlans/submit.js at 865 lines (soft cap 700): split by the established per-concern pattern on next touch (pp2-lab will touch this area — good moment).
+- ~~server/routes/drinkPlans/submit.js at 865 lines (soft cap 700): split by the established per-concern pattern on next touch~~ **DONE 2026-07-22** (lane fs-split-drinkplans): submitSanitize.js + submitNotify.js extracted; submit.js 830→599.
 - Jack-rule corner (code-review low): on hosted non-mocktail packages, a client submit with zero resolved mocktails clears BOTH pair rows, so an admin-seeded Mocktail Bar addon would be removed by a client submit. Consistent with picks-are-authoritative design; revisit if admins start seeding mocktail addons.
 - Perf quick-wins (performance fleet, optional): narrow coverageContext's SELECT * FROM par_items; hoist DrinksV2 typeahead pool memo; precompute DrinksV2 tab counts.
 - QR lane residuals: per-item admin_set flag rides the public payload (inert); no un-hold UI for admin-set quantities; buffer chips informational only (per-event override deferred by metadata-only scope).
@@ -270,7 +270,7 @@ decrement, Balance lockedTotal excluded the label.
 **Deferred (lab balance-fold follow-ups):**
 - Offer-side snapshot race (security Low): the PUT builds `offeredSyrupByDrink`/`contractSyrupSet` from `plan.pricing_snapshot` (read under `FOR UPDATE OF dp` only) while the fold syrup legs use the freshly `FOR UPDATE`'d `proposal.pricing_snapshot`. A concurrent contract-syrup write in the sub-ms window could let that syrup be offered+accepted as lab-owned, re-opening the add-then-remove shave on a later PUT. 0 v2 proposals carry contract syrups today; closing it means moving syrup sanitization past the proposal lock (handler restructure) — not worth it for a zero-exposure race.
 - Owner confirm (from 598987d): a refund on a paid lab invoice reverses the money but does NOT remove the item from total_price (Additional Services precedent; removal is the lab's own path) — under discussion with Dallas 2026-07-21.
-- submit.js at 830 lines / lab.js at 721 lines (both over the 700 soft cap) — plan a split on next substantial touch.
+- ~~submit.js at 830 lines / lab.js at 721 lines (both over the 700 soft cap) — plan a split on next substantial touch~~ **DONE 2026-07-22** (lane fs-split-drinkplans, behavior-inert moves, 31/31 suites green): submit.js 830→599 (+submitSanitize.js, submitNotify.js), lab.js 721→488 (+labHelpers.js, labListRefresh.js). Both money transactions untouched.
 - Lab GET serves the full shelf payload even in not_ready/locked states (client gates rendering; same token audience — API-payload tightening only). (low.)
 - Lab invoice find-or-create has no DB unique constraint (plan-row FOR UPDATE covers the realistic path; only the fully-paid branch mints one); optional partial unique index on invoices(proposal_id) WHERE label='Enhancement Lab' AND status IN ('sent','partially_paid'). (database advisory, low.)
 - EnhancementLab debounced save timer not cleared on SPA route-change unmount — a pending 500ms save can fire one stray idempotent PUT after unmount (the pagehide flush already covers tab-close). React 18 benign; trivial.
