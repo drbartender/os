@@ -2,29 +2,32 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Stop admin edits from messaging the client on their own. Put a confirmation in front of the reschedule notice, the gratuity-increase notice, and the payment receipt, and default the quiet path on edits.
+> **Revision 2 (2026-07-22).** Full rewrite after the 6-agent design fleet + 3-agent Fable
+> review. Gratuity notice removed from the popup (stays automatic, gains suppression);
+> refund endpoints added as lane 3; every mechanical blocker from the reviews corrected
+> (polymorphic `scheduled_messages`, `ValidationError.fieldErrors`, seam-based send
+> assertions, `composeVenueLocation` reuse, middleware paths, wrapper deletion).
 
-**Architecture:** Notice detection moves out of `crud.js` into one shared module, `server/utils/clientNotices.js`, which both a new read-only preflight endpoint and the PATCH itself call. Nothing sends unless the request names the notice. The reschedule message is composed at preflight (it renders old-vs-new, and the old values do not survive the save) and the reviewed text rides along on the PATCH. A single React modal serves both edit forms and the payment panel.
+**Goal:** Admin edits stop messaging clients on their own. A confirmation popup fronts the reschedule notice, the payment receipt, and the refund notices; quiet is the default on edits, Send is the default on money receipts; three bare client sends join the suppression gate.
 
-**Tech Stack:** Node.js 26 / Express 4, React 18 (CRA), Postgres (raw SQL via `pg`), `node:test` for server tests.
+**Architecture:** One shared detection module (`clientNotices.js`) plus helpers exported from `rescheduleProposal.js` guarantee preflight and save literally share their code. The reschedule draft is composed at preflight (old values die at save), carries no staleable money lines except the deterministic projected balance-due date, and renders through `renderPartsEmail` for WYSIWYG. A single `NotifyConfirmModal` serves the edit forms, the payment panel, and (lane 3) the refund panel.
 
-**Spec:** `docs/superpowers/specs/2026-07-21-notify-client-confirmation-design.md`
+**Tech Stack:** Node.js 26 / Express 4, React 18 (CRA), Postgres (raw SQL via `pg`), `node:test`.
+
+**Spec:** `docs/superpowers/specs/2026-07-21-notify-client-confirmation-design.md` (revised 2026-07-22)
 
 ## Global Constraints
 
-- **Suppression gates the send ONLY.** `rescheduleProposalInTx` (`crud.js:632`) re-anchors pending scheduled messages and recomputes `balance_due_date`. That call stays unconditional. Never put it behind a notify check.
-- Also never gated by `notify`: `runRescheduleStaffHooks` (`crud.js:782`), `notifyAdminCategory` on a recorded payment (`actions.js:323`), the invoice refresh, `recomputeNewYearHelloForProposal`.
-- **Fail-quiet.** Absent or empty `notify` sends nothing. Never fall back to the built-in template.
-- Strictness differs by notice type: a requested-but-untriggered `event_details_changed` is a `ValidationError`; a requested-but-untriggered `gratuity_increase` is a silent skip reported in the response.
-- The send stays best-effort and post-commit. A Resend or Twilio throw must never 500 a PATCH whose transaction already committed (`crud.js:706-709` says why).
-- `shouldSendImmediate` still wins. An explicit Send does not override an unsubscribe or a hard bounce.
-- Wire keys are snake_case (`notify_client`, `body_text`, `entity_id`).
-- Client-visible server errors throw `ValidationError`/`AppError` subclasses, never `res.status(400).json(...)`.
-- Client API calls go through `client/src/utils/api.js`, never raw fetch/axios.
-- No new DB column, no schema migration, no new env var.
-- Server test suites run one at a time against the shared dev DB: `node -r dotenv/config --test <file>`.
-- Verify client changes with `CI=true npx react-scripts build` from `client/`.
-- No em dashes in any client-facing copy.
+- **Suppression gates the send ONLY.** `rescheduleProposalInTx` (`crud.js:632`) stays unconditional: re-anchoring + `balance_due_date` recompute are correctness, not communication. Never behind a notify check.
+- Also never gated: `runRescheduleStaffHooks` (`crud.js:782`), `notifyAdminCategory` (`actions.js:324`), the gratuity disclosure email, `recomputeNewYearHelloForProposal`, the invoice refresh.
+- **Fail-quiet:** absent/empty `notify` (or `notify_client` absent/false) sends nothing. No template fallback ever.
+- `shouldSendImmediate` wins over an explicit Send; suppressed = `skipped` + reason. `.invalid` placeholders are never `sent`.
+- Sends are best-effort, post-commit; a provider throw never 500s a committed transaction.
+- **Test law:** dev gates real sends (`sendEmail` returns `dev-skipped` before any ledger write), so send assertions run at the dependency seam (`__setDeps` pattern), never against `message_log`. `ValidationError` text lives in `.fieldErrors`, never `.message`. `scheduled_messages` is polymorphic: `entity_type = 'proposal' AND entity_id = $1`. `clients.email_status` is `NOT NULL DEFAULT 'ok'`; fixtures restore `'ok'`.
+- Wire keys snake_case; errors via `AppError` subclasses; client API via `utils/api.js`; no new DB column, schema migration, or env var.
+- Server suites one at a time: `node -r dotenv/config --test <file>`. Client gate: `cd client && CI=true npx react-scripts build`.
+- No em dashes in client-facing copy.
+- File-size ratchet: `crud.js` is at 868 lines (soft cap 700, hard 1000, growth blocked at 1000). Net additions there must stay lean; the detection/validation logic lives in `clientNotices.js`, not `crud.js`.
 
 ## Lane map
 
@@ -34,12 +37,18 @@ lanes:
     footprint:
       - server/utils/clientNotices.js
       - server/utils/rescheduleProposal.js
+      - server/utils/rescheduleProposal.test.js
+      - server/utils/venueAddress.js
+      - server/utils/emailValidation.js
       - server/routes/proposals/notifyPreflight.js
       - server/routes/proposals/index.js
       - server/routes/proposals/crud.js
+      - server/routes/proposals/crud.test.js
       - server/routes/proposals/actions.js
       - server/routes/proposals/notifyClient.test.js
+      - scripts/sensitive-paths.txt
       - ARCHITECTURE.md
+      - README.md
     depends_on: []
     review_fleet: [security-review, database-review, code-review, consistency-check]
   - id: notify-client
@@ -51,406 +60,402 @@ lanes:
       - README.md
     depends_on: [notify-server]
     review_fleet: [code-review, consistency-check]
+  - id: notify-refunds
+    footprint:
+      - server/routes/stripe.js
+      - server/routes/proposals/cancel.js
+      - server/routes/proposals/cancel.test.js
+      - server/utils/refundClientNotify.js
+      - server/routes/proposals/notifyRefunds.test.js
+      - client/src/pages/admin/ProposalDetailPaymentPanel.js
+      - client/src/pages/admin/CancelEventDialog.js
+      - client/src/pages/admin/CancelEventDialog.test.js
+      - docs/fix-list-remaining-2026-07-02.md
+      - ARCHITECTURE.md
+    depends_on: [notify-client]
+    review_fleet: [security-review, database-review, code-review, consistency-check]
 ```
 
-Two lanes, serialized. `notify-server` touches `proposals/crud.js` and `proposals/actions.js`, both on `scripts/sensitive-paths.txt`, so it earns the full fleet plus `/second-opinion` at push. Keeping it separate means the money-path change is reviewed and merged before any UI is built on top of it. `notify-client` is presentation only and gets the lighter pair.
+Three serialized lanes. Lane 1 carries the money/comms contract and earns the full fleet; it also adds `crud.js`, `actions.js`, and `rescheduleProposal.js` to `scripts/sensitive-paths.txt` (they are NOT on it today, verified via `sensitive-match.js`), so the push-time gates fire for real from then on. Lane 2 is presentation. Lane 3 touches refund money paths (recently hardened, 2026-07 payment-accounting work): full fleet again, minimal diffs. Lanes 2 and 3 both touch `ProposalDetailPaymentPanel.js`; serialization makes that safe. **Do not push lane 1 to prod without lane 2** (merge is not deploy): the server alone leaves reschedule notices off with no UI to opt in.
 
 ---
 
 # Lane: notify-server
 
-## Task 1: Shared notice detection module
+## Task 1: Shared helpers + detection module
 
 **Files:**
+- Modify: `server/utils/emailValidation.js` (add `isPlaceholderEmail`)
+- Modify: `server/utils/venueAddress.js` (add `resolvePendingLocation`)
+- Modify: `server/utils/rescheduleProposal.js` (export `RESCHEDULABLE_FIELDS`, `reschedulableStatusOk`, `computeProjectedBalanceDue`)
+- Modify: `server/routes/proposals/crud.js` (use `resolvePendingLocation`; behavior-inert refactor)
 - Create: `server/utils/clientNotices.js`
 - Create: `server/routes/proposals/notifyClient.test.js` (grows through Tasks 1, 3, 4, 5)
 
 **Interfaces:**
-- Consumes: `hasReschedulableChange` from `server/utils/rescheduleProposal.js` (already exported, `:598`), `BOOKED_SET` from `server/utils/proposalStatus.js`.
+- Consumes: `hasReschedulableChange` (`rescheduleProposal.js`, exported at `:599`), `BOOKED_SET` (`proposalStatus.js:73`), `composeVenueLocation` (`venueAddress.js:21`, already imported by `crud.js:8`).
 - Produces:
-  - `NOTICE_EVENT_DETAILS = 'event_details_changed'`, `NOTICE_GRATUITY = 'gratuity_increase'`
-  - `eventDetailsNoticeApplies({ old, updated, status }) -> boolean`
-  - `gratuityNoticeApplies({ oldGratuityTotal, newGratuityTotal, isPaidForGratuity, gratuityOrigin }) -> boolean`
-  - `gratuityNoticePossible({ old, body, status }) -> boolean` (preflight's conservative prediction)
-  - `validateNotifyList(notify) -> [{ type, channels, email, sms }]` (structural only; throws `ValidationError`)
+  - `isPlaceholderEmail(email) -> boolean` (emailValidation.js)
+  - `resolvePendingLocation(old, body) -> string|null` (venueAddress.js): the exact merge-and-compose `crud.js:341-350` does today
+  - `RESCHEDULABLE_FIELDS = ['event_date','event_start_time','event_location']`, `reschedulableStatusOk(status) -> boolean`, `computeProjectedBalanceDue(oldEventDate, oldBalanceDue, newEventDate) -> 'YYYY-MM-DD'|null` (rescheduleProposal.js)
+  - `NOTICE_EVENT_DETAILS = 'event_details_changed'`, `eventDetailsNoticeApplies({ old, updated, status }) -> boolean`, `validateNotifyList(notify) -> normalized[]` (clientNotices.js)
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing unit tests**
 
 Create `server/routes/proposals/notifyClient.test.js`:
 
 ```javascript
 'use strict';
 
-// Notice detection + the notify contract on PATCH /api/proposals/:id and
-// POST /api/proposals/:id/record-payment.
-// Runs ALONE against the shared dev DB: node -r dotenv/config --test.
+// Notice detection + the notify contract. Runs ALONE against the shared dev DB:
+// node -r dotenv/config --test server/routes/proposals/notifyClient.test.js
 require('dotenv').config();
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
+const { isPlaceholderEmail } = require('../../utils/emailValidation');
+const { resolvePendingLocation } = require('../../utils/venueAddress');
 const {
-  NOTICE_EVENT_DETAILS,
-  NOTICE_GRATUITY,
-  eventDetailsNoticeApplies,
-  gratuityNoticeApplies,
-  validateNotifyList,
+  RESCHEDULABLE_FIELDS, reschedulableStatusOk, computeProjectedBalanceDue,
+} = require('../../utils/rescheduleProposal');
+const {
+  NOTICE_EVENT_DETAILS, eventDetailsNoticeApplies, validateNotifyList,
 } = require('../../utils/clientNotices');
 
-test('eventDetailsNoticeApplies: booked + location change fires', () => {
-  assert.equal(eventDetailsNoticeApplies({
-    old: { event_date: '2026-09-01', event_start_time: '18:00', event_location: 'The Ivy Room' },
-    updated: { event_date: '2026-09-01', event_start_time: '18:00', event_location: '2700 W Chicago Ave' },
-    status: 'deposit_paid',
-  }), true);
+// ValidationError puts field text in .fieldErrors, NEVER .message (errors.js:11-15).
+// Every throws-assertion in this file matches on fieldErrors.
+function throwsField(fn, field, re) {
+  assert.throws(fn, (err) => {
+    assert.equal(err.name, 'ValidationError');
+    assert.match(String(err.fieldErrors?.[field] ?? ''), re);
+    return true;
+  });
+}
+
+test('isPlaceholderEmail: .invalid is a placeholder, real mail is not', () => {
+  assert.equal(isPlaceholderEmail('jane@ccimport.invalid'), true);
+  assert.equal(isPlaceholderEmail('JANE@CCIMPORT.INVALID  '), true);
+  assert.equal(isPlaceholderEmail('jane@gmail.com'), false);
+  assert.equal(isPlaceholderEmail(null), false);
 });
 
-test('eventDetailsNoticeApplies: unbooked status never fires', () => {
-  assert.equal(eventDetailsNoticeApplies({
-    old: { event_date: '2026-09-01', event_start_time: '18:00', event_location: 'A' },
-    updated: { event_date: '2026-10-01', event_start_time: '18:00', event_location: 'A' },
-    status: 'sent',
-  }), false);
+test('resolvePendingLocation: venue parts merge over the stored row like the save does', () => {
+  const old = { venue_name: 'The Ivy Room', venue_street: null, venue_city: 'Chicago', venue_state: 'IL', venue_zip: null, event_location: 'The Ivy Room, Chicago, IL' };
+  // Street-only edit: merged with stored name/city/state (crud.js mergedVenue semantics).
+  const loc = resolvePendingLocation(old, { venue_street: '2700 W Chicago Ave' });
+  assert.match(loc, /2700 W Chicago Ave/);
+  assert.match(loc, /The Ivy Room/);
+  // No venue keys in the body: null (caller falls back to body.event_location ?? old).
+  assert.equal(resolvePendingLocation(old, { guest_count: 50 }), null);
 });
 
-test('eventDetailsNoticeApplies: archived never fires', () => {
-  assert.equal(eventDetailsNoticeApplies({
-    old: { event_date: '2026-09-01', event_start_time: '18:00', event_location: 'A' },
-    updated: { event_date: '2026-10-01', event_start_time: '18:00', event_location: 'A' },
-    status: 'archived',
-  }), false);
+test('reschedulableStatusOk mirrors the InTx gate', () => {
+  assert.equal(reschedulableStatusOk('deposit_paid'), true);
+  assert.equal(reschedulableStatusOk('sent'), false);
+  assert.equal(reschedulableStatusOk('archived'), false);
+  assert.equal(reschedulableStatusOk(undefined), false);
 });
 
-test('eventDetailsNoticeApplies: a non-reschedulable edit does not fire', () => {
-  assert.equal(eventDetailsNoticeApplies({
-    old: { event_date: '2026-09-01', event_start_time: '18:00', event_location: 'A' },
-    updated: { event_date: '2026-09-01', event_start_time: '18:00', event_location: 'A' },
-    status: 'deposit_paid',
-  }), false);
+test('computeProjectedBalanceDue preserves the existing offset', () => {
+  assert.equal(computeProjectedBalanceDue('2026-09-01', '2026-08-18', '2026-09-15'), '2026-09-01');
+  assert.equal(computeProjectedBalanceDue('2026-09-01', null, '2026-09-15'), null);
+  assert.equal(computeProjectedBalanceDue('2026-09-01', '2026-08-18', '2026-09-01'), null); // date unchanged
 });
 
-test('gratuityNoticeApplies: only on a staffing-driven increase', () => {
-  const base = { isPaidForGratuity: true, gratuityOrigin: 'package' };
-  assert.equal(gratuityNoticeApplies({ ...base, oldGratuityTotal: 450, newGratuityTotal: 600 }), true);
-  assert.equal(gratuityNoticeApplies({ ...base, oldGratuityTotal: 600, newGratuityTotal: 450 }), false);
-  assert.equal(gratuityNoticeApplies({ ...base, oldGratuityTotal: 450, newGratuityTotal: 450 }), false);
-  assert.equal(gratuityNoticeApplies({ ...base, gratuityOrigin: 'admin', oldGratuityTotal: 450, newGratuityTotal: 600 }), false);
-  assert.equal(gratuityNoticeApplies({ ...base, isPaidForGratuity: false, oldGratuityTotal: 450, newGratuityTotal: 600 }), false);
+test('eventDetailsNoticeApplies: booked + reschedulable change only', () => {
+  const old = { event_date: '2026-09-01', event_start_time: '18:00', event_location: 'A' };
+  assert.equal(eventDetailsNoticeApplies({ old, updated: { ...old, event_location: 'B' }, status: 'deposit_paid' }), true);
+  assert.equal(eventDetailsNoticeApplies({ old, updated: { ...old, event_location: 'B' }, status: 'sent' }), false);
+  assert.equal(eventDetailsNoticeApplies({ old, updated: { ...old }, status: 'deposit_paid' }), false);
 });
 
-test('validateNotifyList: absent or empty is an empty list, not an error', () => {
+test('validateNotifyList: absent/empty is [], junk shapes reject on fieldErrors', () => {
   assert.deepEqual(validateNotifyList(undefined), []);
   assert.deepEqual(validateNotifyList([]), []);
-});
-
-test('validateNotifyList: unknown type rejects', () => {
-  assert.throws(() => validateNotifyList([{ type: 'nope', channels: ['email'] }]), /Unknown notice type/);
-});
-
-test('validateNotifyList: duplicate type rejects', () => {
-  assert.throws(() => validateNotifyList([
+  throwsField(() => validateNotifyList('nope'), 'notify', /array/);
+  throwsField(() => validateNotifyList([{ type: 'gratuity_increase', channels: ['email'] }]), 'notify', /Unknown notice type/);
+  throwsField(() => validateNotifyList([
     { type: NOTICE_EVENT_DETAILS, channels: ['email'], email: { subject: 's', body_text: 'b' } },
     { type: NOTICE_EVENT_DETAILS, channels: ['email'], email: { subject: 's', body_text: 'b' } },
-  ]), /Duplicate notice type/);
+  ]), 'notify', /Duplicate/);
+  throwsField(() => validateNotifyList([{ type: NOTICE_EVENT_DETAILS, channels: [] }]), 'channels', /at least one/);
 });
 
-test('validateNotifyList: event_details_changed with an email channel needs text', () => {
-  assert.throws(() => validateNotifyList([{ type: NOTICE_EVENT_DETAILS, channels: ['email'] }]), /Subject cannot be empty/);
-});
-
-test('validateNotifyList: subject CR/LF stripped and capped like comms.js', () => {
+test('validateNotifyList: text rules mirror comms.js caps', () => {
   const out = validateNotifyList([{
-    type: NOTICE_EVENT_DETAILS,
-    channels: ['email'],
+    type: NOTICE_EVENT_DETAILS, channels: ['email'],
     email: { subject: 'New\r\ndate', body_text: 'body' },
   }]);
   assert.equal(out[0].email.subject, 'New date');
-  assert.throws(() => validateNotifyList([{
-    type: NOTICE_EVENT_DETAILS, channels: ['email'],
-    email: { subject: 'x'.repeat(301), body_text: 'b' },
-  }]), /over the 300 character cap/);
-});
-
-test('validateNotifyList: SMS over 640 chars rejects', () => {
-  assert.throws(() => validateNotifyList([{
-    type: NOTICE_EVENT_DETAILS, channels: ['sms'], sms: { body: 'x'.repeat(641) },
-  }]), /over the 640 character cap/);
-});
-
-test('validateNotifyList: gratuity_increase rejects supplied text', () => {
-  assert.throws(() => validateNotifyList([{
-    type: NOTICE_GRATUITY, channels: ['email'], email: { subject: 's', body_text: 'b' },
-  }]), /does not accept a custom message/);
+  throwsField(() => validateNotifyList([{ type: NOTICE_EVENT_DETAILS, channels: ['email'] }]), 'subject', /empty/i);
+  throwsField(() => validateNotifyList([{ type: NOTICE_EVENT_DETAILS, channels: ['email'], email: { subject: 'x'.repeat(301), body_text: 'b' } }]), 'subject', /300/);
+  throwsField(() => validateNotifyList([{ type: NOTICE_EVENT_DETAILS, channels: ['sms'], sms: { body: 'x'.repeat(641) } }]), 'sms_body', /640/);
+  throwsField(() => validateNotifyList([{ type: NOTICE_EVENT_DETAILS, channels: ['sms'], sms: { body: '  ' } }]), 'sms_body', /empty/i);
 });
 ```
 
-- [ ] **Step 2: Run it to make sure it fails**
+- [ ] **Step 2: Run to verify failure**
 
 Run: `node -r dotenv/config --test server/routes/proposals/notifyClient.test.js`
-Expected: FAIL, `Cannot find module '../../utils/clientNotices'`.
+Expected: FAIL, `isPlaceholderEmail` not exported / `clientNotices` not found.
 
-- [ ] **Step 3: Write the module**
+- [ ] **Step 3: Implement the helpers**
 
-Create `server/utils/clientNotices.js`:
+`server/utils/emailValidation.js`: add above `module.exports`:
+
+```javascript
+/**
+ * RFC-2606 .invalid placeholders from the CC import are not addresses:
+ * sendEmail drops them silently (email.js) and nothing is logged. Every NEW
+ * availability check or send gate uses this ONE predicate; the older inline
+ * copies (comms actions, email.js) can migrate opportunistically.
+ */
+function isPlaceholderEmail(email) {
+  return Boolean(email && String(email).toLowerCase().trim().endsWith('.invalid'));
+}
+```
+
+Export: `module.exports = { checkEmailDomain, isPlaceholderEmail };`
+
+`server/utils/venueAddress.js`: add `resolvePendingLocation(old, body)` by MOVING the
+merge-and-compose logic from `crud.js:332-350` (the `venueProvided` check over the five
+`venue_*` keys, the `mergedVenue` body-value-`??`-stored-row merge, the `composeVenueLocation`
+call). Returns the composed string when any venue key is present in `body`, else `null`.
+Then edit `crud.js:332-350` to call it (keep `validateVenue` where it is; only the
+composition moves). This is behavior-inert for the save; run Step 5's regression suites to
+prove it.
+
+`server/utils/rescheduleProposal.js`: export three things.
+
+```javascript
+// The one list of fields whose change means "the client's event moved".
+// hasReschedulableChange and preflight's reasons both derive from THIS.
+const RESCHEDULABLE_FIELDS = ['event_date', 'event_start_time', 'event_location'];
+
+/** The status gate for the reschedule notice, shared by the in-tx path and
+ *  the read-only preflight so they can never drift. */
+function reschedulableStatusOk(status) {
+  return Boolean(status) && status !== 'archived' && BOOKED_SET.has(status);
+}
+
+/** Pure projection of the balance-due shift the save will perform
+ *  (offset-preserving, mirrors the in-tx recompute). Null when the event date
+ *  is not moving or there is no due date to move. */
+function computeProjectedBalanceDue(oldEventDate, oldBalanceDue, newEventDate) {
+  const oldYmd = toCalendarYmd(oldEventDate);
+  const newYmd = toCalendarYmd(newEventDate);
+  const dueYmd = toCalendarYmd(oldBalanceDue);
+  if (!oldYmd || !newYmd || !dueYmd || oldYmd === newYmd) return null;
+  const offsetDays = Math.round((Date.parse(dueYmd + 'T00:00:00Z') - Date.parse(oldYmd + 'T00:00:00Z')) / 86400000);
+  return new Date(Date.parse(newYmd + 'T00:00:00Z') + offsetDays * 86400000).toISOString().slice(0, 10);
+}
+```
+
+Refactor `hasReschedulableChange` to iterate `RESCHEDULABLE_FIELDS` (it already compares
+exactly these three), replace the inline gate at `:412` with `if (!reschedulableStatusOk(status))`,
+and have the in-tx balance recompute (`:432-461`) call `computeProjectedBalanceDue` so the
+projection and the write are one function. Add all three to `module.exports` (`:596-601`).
+
+`server/utils/clientNotices.js` (new):
 
 ```javascript
 'use strict';
 
-// Which client notices a proposal edit triggers, and structural validation of
-// the caller's opt-in list. ONE module so the read-only preflight endpoint and
-// the PATCH itself can never drift on the question "would this send?".
+// Which client notice a proposal edit triggers + structural validation of the
+// caller's opt-in list. ONE module so the read-only preflight and the PATCH
+// can never drift on "would this send?".
 //
-// Suppression gates the SEND only. Nothing here decides whether pending
-// messages get re-anchored or whether balance_due_date moves; those are
-// correctness, not communication, and stay unconditional in crud.js.
-const { hasReschedulableChange } = require('./rescheduleProposal');
-const { BOOKED_SET } = require('./proposalStatus');
+// Exactly one notice type exists. The gratuity disclosure was deliberately
+// REMOVED from this contract (2026-07-22): it is a billing disclosure, stays
+// automatic in crud.js, and gained only the suppression gate. Do not re-add it
+// here without re-reading the spec's reversal note.
+const { hasReschedulableChange, reschedulableStatusOk } = require('./rescheduleProposal');
 const { ValidationError } = require('./errors');
 
 const NOTICE_EVENT_DETAILS = 'event_details_changed';
-const NOTICE_GRATUITY = 'gratuity_increase';
 
-// Mirrors the caps enforced on the shared comms path (server/routes/comms.js:18,
-// :94). Duplicated as constants, not as logic: both paths must reject the same
-// inputs, and a divergence here is a review finding.
+// Mirrors comms.js's inline (non-exported) rules; a divergence is a review finding.
 const SUBJECT_MAX = 300;
 const SMS_MAX_CHARS = 640;
+const CHANNELS = ['email', 'sms'];
 
-// Composable = the caller supplies the text, because the template renders
-// old-vs-new and those values do not survive the save. Non-composable notices
-// use their built-in template and reject supplied text outright.
-const NOTICE_META = {
-  [NOTICE_EVENT_DETAILS]: { composable: true, allowedChannels: ['email', 'sms'] },
-  [NOTICE_GRATUITY]: { composable: false, allowedChannels: ['email'] },
-};
-
-/**
- * Does this edit trigger the event-details notice? Delegates the field list and
- * the status gate to the same helpers the send path uses
- * (rescheduleProposal.js:64, :412) so a new reschedulable field lands in both
- * places or neither.
- */
 function eventDetailsNoticeApplies({ old, updated, status }) {
-  if (!status || status === 'archived' || !BOOKED_SET.has(status)) return false;
-  return hasReschedulableChange(old, updated);
-}
-
-/**
- * Does this edit trigger the gratuity notice? Same condition as crud.js:498-501:
- * a staffing-driven move (not an admin override) that raised the amount on a
- * proposal already paid for gratuity purposes.
- */
-function gratuityNoticeApplies({ oldGratuityTotal, newGratuityTotal, isPaidForGratuity, gratuityOrigin }) {
-  if (!isPaidForGratuity) return false;
-  if (gratuityOrigin === 'admin') return false;
-  return Number(newGratuityTotal) > Number(oldGratuityTotal);
-}
-
-/**
- * Preflight's conservative prediction for the gratuity notice.
- *
- * The real answer needs the post-pricing-engine snapshot, which only exists
- * mid-transaction. Re-marshalling every pricing input in a read-only endpoint
- * would duplicate most of the PATCH on a money path, so preflight instead asks
- * the cheap question: could this edit move staffing on a proposal that is paid?
- * The save recomputes and silently skips the notice if it did not actually fire.
- *
- * False positives are acceptable (a popup that sends nothing). False negatives
- * are not, so err toward true.
- */
-function gratuityNoticePossible({ old, body, status }) {
-  if (!status || status === 'archived' || !BOOKED_SET.has(status)) return false;
-  if (!(Number(old.amount_paid) > 0)) return false;
-  const staffingInputs = ['num_bartenders', 'num_bars', 'guest_count', 'addon_ids', 'addon_quantities', 'event_duration_hours'];
-  return staffingInputs.some((k) => body[k] !== undefined);
+  return reschedulableStatusOk(status) && hasReschedulableChange(old, updated);
 }
 
 function cleanSubject(raw) {
   const subject = String(raw ?? '').replace(/[\r\n]+/g, ' ').trim();
   if (!subject) throw new ValidationError({ subject: 'Subject cannot be empty.' });
-  if (subject.length > SUBJECT_MAX) {
-    throw new ValidationError({ subject: `Subject is over the ${SUBJECT_MAX} character cap.` });
-  }
+  if (subject.length > SUBJECT_MAX) throw new ValidationError({ subject: `Subject is over the ${SUBJECT_MAX} character cap.` });
   return subject;
 }
 
-/**
- * Structural validation of the caller's notify list. Runs BEFORE any
- * transaction opens, so a malformed request never reaches BEGIN. Does NOT check
- * whether the save actually triggers these notices; that is a trigger check and
- * happens where the notice set is computed (mid-transaction for gratuity).
- *
- * Returns a normalized list. Throws ValidationError on anything malformed.
- */
+/** Structural checks only; runs BEFORE pool.connect(). Trigger checks live
+ *  where shouldSendEmail is computed. Returns normalized entries. */
 function validateNotifyList(notify) {
   if (notify === undefined || notify === null) return [];
   if (!Array.isArray(notify)) throw new ValidationError({ notify: 'notify must be an array.' });
-
   const seen = new Set();
   return notify.map((entry) => {
     if (!entry || typeof entry !== 'object') throw new ValidationError({ notify: 'Each notice must be an object.' });
-    const meta = NOTICE_META[entry.type];
-    if (!meta) throw new ValidationError({ notify: `Unknown notice type: ${entry.type}` });
+    if (entry.type !== NOTICE_EVENT_DETAILS) throw new ValidationError({ notify: `Unknown notice type: ${entry && entry.type}` });
     if (seen.has(entry.type)) throw new ValidationError({ notify: `Duplicate notice type: ${entry.type}` });
     seen.add(entry.type);
-
-    const channels = Array.isArray(entry.channels)
-      ? entry.channels.filter((c) => meta.allowedChannels.includes(c))
-      : [];
-    if (channels.length === 0) {
-      throw new ValidationError({ channels: `${entry.type} needs at least one channel.` });
-    }
-
+    const channels = Array.isArray(entry.channels) ? entry.channels.filter((c) => CHANNELS.includes(c)) : [];
+    if (channels.length === 0) throw new ValidationError({ channels: `${entry.type} needs at least one channel.` });
     const out = { type: entry.type, channels };
-
-    if (!meta.composable) {
-      if (entry.email || entry.sms) {
-        throw new ValidationError({ notify: `${entry.type} does not accept a custom message.` });
-      }
-      return out;
-    }
-
     if (channels.includes('email')) {
-      out.email = {
-        subject: cleanSubject(entry.email?.subject),
-        bodyText: String(entry.email?.body_text ?? '').trim(),
-      };
+      out.email = { subject: cleanSubject(entry.email?.subject), bodyText: String(entry.email?.body_text ?? '').trim() };
       if (!out.email.bodyText) throw new ValidationError({ body_text: 'Message cannot be empty.' });
     }
     if (channels.includes('sms')) {
       const body = String(entry.sms?.body ?? '').trim();
       if (!body) throw new ValidationError({ sms_body: 'SMS message cannot be empty.' });
-      if (body.length > SMS_MAX_CHARS) {
-        throw new ValidationError({ sms_body: `SMS message is over the ${SMS_MAX_CHARS} character cap.` });
-      }
+      if (body.length > SMS_MAX_CHARS) throw new ValidationError({ sms_body: `SMS message is over the ${SMS_MAX_CHARS} character cap.` });
       out.sms = { body };
     }
     return out;
   });
 }
 
-module.exports = {
-  NOTICE_EVENT_DETAILS,
-  NOTICE_GRATUITY,
-  NOTICE_META,
-  eventDetailsNoticeApplies,
-  gratuityNoticeApplies,
-  gratuityNoticePossible,
-  validateNotifyList,
-};
+module.exports = { NOTICE_EVENT_DETAILS, eventDetailsNoticeApplies, validateNotifyList };
 ```
 
-- [ ] **Step 4: Run the tests and make sure they pass**
+- [ ] **Step 4: Run the new tests**
 
 Run: `node -r dotenv/config --test server/routes/proposals/notifyClient.test.js`
-Expected: PASS, 12 tests.
+Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Regression: the crud refactor is inert and the InTx gate refactor holds**
 
 ```bash
-git add server/utils/clientNotices.js server/routes/proposals/notifyClient.test.js
-git commit -m "feat(notify): shared client-notice detection + notify-list validation"
+node -r dotenv/config --test server/utils/rescheduleProposal.test.js
+node -r dotenv/config --test server/routes/proposals/crud.test.js
+```
+Expected: both pass exactly as before this task (known pre-existing failure: `crud.test.js`
+Case 8, rate-limiter bucket exhaustion, tech-debt TST-3; it fails before and after, and is
+not this lane's problem).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add server/utils/emailValidation.js server/utils/venueAddress.js server/utils/rescheduleProposal.js server/utils/clientNotices.js server/routes/proposals/crud.js server/routes/proposals/notifyClient.test.js
+git commit -m "feat(notify): shared notice detection, placeholder + venue + projection helpers"
 ```
 
 ---
 
-## Task 2: `sendRescheduleEmail` accepts supplied text
+## Task 2: `sendRescheduleEmail` takes reviewed text; `buildEventDetailsDraft`; wrapper tail deleted
 
 **Files:**
-- Modify: `server/utils/rescheduleProposal.js:197` (signature), `:301-320` (email half), `:324-350` (SMS half)
+- Modify: `server/utils/rescheduleProposal.js:197-352` (send), `:549-594` (wrapper), exports
+- Modify: `server/utils/rescheduleProposal.test.js` (wrapper email cases)
+- Modify: `server/utils/smsTemplates.js:91-93` (email clause becomes conditional)
 
 **Interfaces:**
-- Consumes: nothing new.
-- Produces: `sendRescheduleEmail({ proposalId, old, updated, channels, message })` where `channels` is `['email'|'sms']` (required, no default) and `message` is `{ email: {subject, bodyText}, sms: {body} }` (required for each selected channel). Returns `{ email, sms, email_error, sms_error, skip_reasons }`, the same per-channel shape `comms.js` returns.
+- Consumes: `renderPartsEmail` (`server/utils/comms/render.js:15`, `{ subject, heading, bodyText, cta }`), `isPlaceholderEmail`, `computeProjectedBalanceDue` (Task 1).
+- Produces:
+  - `buildEventDetailsDraft({ old, updated, ctx }) -> { email: { subject, body_text }, sms: { body }, projected_balance_due, autopay_notice }` where `ctx` is the joined proposal+client row (the same 15-column SELECT shape `sendRescheduleEmail` loads at `:198-211`).
+  - `sendRescheduleEmail({ proposalId, old, updated, channels, message }) -> { email, sms, email_error, sms_error, skip_reasons }`. `channels` and `message` REQUIRED; no template fallback.
 
-The old no-argument behavior (build from template, send both channels) is removed, not kept as a fallback. There is exactly one composition path, and it is the caller's.
+- [ ] **Step 1: Extract the formatting closures to module scope**
 
-- [ ] **Step 1: Change the signature and gate each channel on the caller's selection**
+`fmtDate` and `fmtTime` are currently closures over `tz` inside `sendRescheduleEmail`
+(`:246-289`). Lift them to module functions taking `tz` as the first argument; the send and
+the draft builder both call them. Pure motion, no logic change.
 
-In `server/utils/rescheduleProposal.js`, change line 197 from:
-
-```javascript
-async function sendRescheduleEmail({ proposalId, old, updated }) {
-```
-
-to:
+- [ ] **Step 2: Write `buildEventDetailsDraft`**
 
 ```javascript
 /**
- * Sends the event-details notice on the caller's selected channels using the
- * caller's reviewed text. Composition happens upstream (notify-preflight)
- * because this template renders old-vs-new and the old values do not survive
- * the save; see the spec's "Why the draft is built at preflight".
- *
- * `channels` and `message` are REQUIRED. There is no template fallback: a
- * caller that did not compose did not intend to send.
+ * Composes the event-details notice from the OLD row + pending edits, at
+ * preflight time (the old values do not survive the save). Money-free by
+ * design (spec: draft content): the only quoted consequence is the projected
+ * balance-due shift, which is deterministic (computeProjectedBalanceDue is the
+ * SAME function the save's in-tx recompute uses).
  */
+function buildEventDetailsDraft({ old, updated, ctx }) {
+  const tz = resolveEventTimezone(ctx);
+  const firstName = (ctx.client_name || '').trim().split(/\s+/)[0] || 'there';
+
+  const dateChanged = (toCalendarYmd(old.event_date) || '') !== (toCalendarYmd(updated.event_date) || '');
+  const timeChanged = String(old.event_start_time ?? '').trim() !== String(updated.event_start_time ?? '').trim();
+  const locationChanged = String(old.event_location ?? '').trim() !== String(updated.event_location ?? '').trim();
+
+  const lines = [];
+  if (dateChanged) lines.push(`Date: ${fmtDate(tz, old.event_date)} is now ${fmtDate(tz, updated.event_date)}`);
+  if (timeChanged) lines.push(`Start time: ${fmtTime(tz, old.event_date, old.event_start_time)} is now ${fmtTime(tz, updated.event_date, updated.event_start_time)}`);
+  if (locationChanged) lines.push(`Location: ${old.event_location || 'TBD'} is now ${updated.event_location || 'TBD'}`);
+
+  const projected = computeProjectedBalanceDue(old.event_date, old.balance_due_date, updated.event_date);
+  let dueLine = null;
+  let autopayNotice = null;
+  if (projected) {
+    const projectedLocal = fmtDate(tz, projected);
+    dueLine = ctx.autopay_enrolled
+      ? `Your card will auto-charge the remaining balance on ${projectedLocal}.`
+      : `Your balance due date moves to ${projectedLocal}.`;
+    autopayNotice = dueLine;
+    const daysOut = Math.round((Date.parse(projected + 'T00:00:00Z') - Date.now()) / 86400000);
+    if (daysOut <= 3) autopayNotice += ' That is inside the reminder window, so this notice may be their only warning.';
+  }
+
+  const proposalUrl = ctx.token ? `${PUBLIC_SITE_URL}/proposal/${ctx.token}` : null;
+  const body_text = [
+    `Hi ${firstName},`,
+    'Your event details have been updated. Here is what changed:',
+    lines.join('\n'),
+    dueLine,
+    proposalUrl ? `You can see your full current details and balance anytime here: ${proposalUrl}` : null,
+    'Let me know if you have any questions.',
+  ].filter(Boolean).join('\n\n');
+
+  const emailSelectedHint = Boolean(ctx.client_email) && !isPlaceholderEmail(ctx.client_email);
+  const sms = smsTemplates.rescheduleSms({
+    newDate: updated.event_date, newStartTime: updated.event_start_time,
+    newLocation: updated.event_location, includeEmailClause: emailSelectedHint,
+  });
+
+  return {
+    email: { subject: 'Updated details for your event', body_text },
+    sms: { body: sms },
+    projected_balance_due: projected,
+    autopay_notice: autopayNotice,
+  };
+}
+```
+
+Check the exact proposal-URL path pattern against an existing token URL (grep
+`PUBLIC_SITE_URL` in `rescheduleProposal.js`/`emailTemplates.js`) and match it; do not invent
+a route. Export `buildEventDetailsDraft`.
+
+`smsTemplates.js`: `rescheduleSms` gains an `includeEmailClause` option (default true for
+back-compat); when false, drop the "Full updated confirmation in your email." sentence.
+
+- [ ] **Step 3: Rework `sendRescheduleEmail`**
+
+New signature and per-channel truth:
+
+```javascript
 async function sendRescheduleEmail({ proposalId, old, updated, channels, message }) {
   const wantEmail = Array.isArray(channels) && channels.includes('email');
   const wantSms = Array.isArray(channels) && channels.includes('sms');
-  const results = { email: 'skipped', sms: 'skipped', skip_reasons: {} };
+  const results = { email: wantEmail ? null : 'skipped', sms: wantSms ? null : 'skipped', skip_reasons: {} };
   if (!wantEmail) results.skip_reasons.email = 'not selected';
   if (!wantSms) results.skip_reasons.sms = 'not selected';
+  if (!wantEmail && !wantSms) return results;
 ```
 
-- [ ] **Step 2: Replace the "both channels have no destination" throw with a skip**
+Keep the existing ctx SELECT (`:198-211`) and the two `shouldSendImmediate` checks
+(`:229-238`). Replace the no-destination throw (`:217-219`) and the both-suppressed bare
+return (`:239-242`) with `skip_reasons` entries + `return results` (this function now runs
+behind an explicit admin Send; reporting beats throwing).
 
-Immediately after, replace the block at the old `:217-219`:
-
-```javascript
-  if (!ctx.client_email && !ctx.client_phone) {
-    throw new Error(`rescheduleProposal: proposal ${proposalId} client has no email and no phone`);
-  }
-```
-
-with:
+Email half: gate on `wantEmail && emailCheck.ok && ctx.client_email && !isPlaceholderEmail(ctx.client_email)`;
+render the REVIEWED text (WYSIWYG; the bespoke `rescheduleNotificationClient` template is
+deliberately not called, see spec):
 
 ```javascript
-  if (!ctx.client_email && !ctx.client_phone) {
-    // No destination at all. Report it rather than throwing: this now runs
-    // behind an explicit admin Send, and the response carries per-channel truth.
-    if (wantEmail) results.skip_reasons.email = 'No email on file for this client.';
-    if (wantSms) results.skip_reasons.sms = 'No usable phone on file.';
-    return results;
-  }
-```
-
-- [ ] **Step 3: Gate the suppression early-return the same way**
-
-Replace the old `:239-242`:
-
-```javascript
-  if (!emailCheck.ok && !smsCheck.ok) {
-    console.log(`[rescheduleNotification] both channels suppressed for proposal ${proposalId}: email=${emailCheck.reason} sms=${smsCheck.reason}`);
-    return;
-  }
-```
-
-with:
-
-```javascript
-  if (!emailCheck.ok && !smsCheck.ok) {
-    console.log(`[rescheduleNotification] both channels suppressed for proposal ${proposalId}: email=${emailCheck.reason} sms=${smsCheck.reason}`);
-    if (wantEmail) results.skip_reasons.email = emailCheck.reason;
-    if (wantSms) results.skip_reasons.sms = smsCheck.reason;
-    return results;
-  }
-```
-
-- [ ] **Step 4: Send the supplied text, and record per-channel truth**
-
-Replace the email half (old `:301-320`, the `if (emailCheck.ok && ctx.client_email) {` block) with:
-
-```javascript
-  if (wantEmail && emailCheck.ok && ctx.client_email) {
-    // WYSIWYG: the admin's reviewed text IS the email body. renderPartsEmail is
-    // the same editable-body renderer shoppingListApprove.js:194 uses.
-    //
-    // We deliberately do NOT call emailTemplates.rescheduleNotificationClient
-    // here. It returns pre-rendered { subject, html, text } with the old-vs-new
-    // details baked into a styled <ul>, so an edited body would reach only the
-    // plaintext while every real mail client rendered the untouched HTML. The
-    // admin would approve one message and the client would get another. The
-    // old-vs-new facts now live in the drafted prose (buildEventDetailsDraft).
     const { renderPartsEmail } = require('./comms/render');
     const rendered = renderPartsEmail({
       subject: message.email.subject,
@@ -460,54 +465,56 @@ Replace the email half (old `:301-320`, the `if (emailCheck.ok && ctx.client_ema
     });
     try {
       await sendEmail({
-        to: ctx.client_email,
-        subject: rendered.subject,
-        html: rendered.html,
-        text: rendered.text,
+        to: ctx.client_email, subject: rendered.subject, html: rendered.html, text: rendered.text,
+        meta: { proposalId: ctx.id, clientId: ctx.client_id || null, messageType: 'reschedule' },
       });
       results.email = 'sent';
     } catch (err) {
       results.email = 'failed';
       results.email_error = err.message || 'Email send failed.';
     }
-  } else if (wantEmail) {
-    results.skip_reasons.email = emailCheck.ok ? 'No email on file for this client.' : emailCheck.reason;
-  }
 ```
 
-**Note for the implementer:** `emailTemplates.rescheduleNotificationClient` becomes unused by this path. Leave it in place, do not delete it, and check `grep -rn "rescheduleNotificationClient" server` for other callers before assuming it is dead.
+(Verify `sendEmail`'s `meta` key names against `email.js` before writing; mirror an existing
+caller.) When gated off, set `results.email = 'skipped'` with the specific reason
+(suppression reason / no email / placeholder reason).
 
-Replace the SMS half's send with the supplied body:
+SMS half: same shape. Read the current block (`:326-351`) first and PRESERVE the existing
+`sendAndLogSms` argument shape exactly (it passes `messageType: 'reschedule'` and
+`recipientName`), swapping only the body for `message.sms.body`, keeping the existing
+`Sentry.captureException` in the catch, and recording `results.sms = 'sent' | 'failed'`.
 
-```javascript
-  if (wantSms && smsCheck.ok && ctx.client_phone) {
-    try {
-      const { sendAndLogSms } = require('./sms');
-      await sendAndLogSms({ to: ctx.client_phone, body: message.sms.body, clientId: ctx.client_id, proposalId: ctx.id });
-      results.sms = 'sent';
-    } catch (err) {
-      results.sms = 'failed';
-      results.sms_error = err.message || 'SMS send failed.';
-    }
-  } else if (wantSms) {
-    results.skip_reasons.sms = smsCheck.ok ? 'No usable phone on file.' : smsCheck.reason;
-  }
+`return results;` at the end.
 
-  return results;
-```
+- [ ] **Step 4: Delete the wrapper's email tail**
 
-**Note for the implementer:** read the existing SMS half at `:324-350` first and preserve its exact `sendAndLogSms` argument shape and its message-type logging. Only the body source and the result recording change.
+`rescheduleProposal()` (`:549-594`) is test-only (verified: sole caller is
+`rescheduleProposal.test.js:19`; crud.js imports only `rescheduleProposalInTx` +
+`sendRescheduleEmail`). Under the new signature its `:584` call would silently no-op. Delete
+the post-commit email block (`:578-593`), leaving the wrapper as the tx + reanchor
+convenience; update its doc comment (`:366-380`) to say sending is the caller's job now.
 
-- [ ] **Step 5: Verify nothing else calls the old signature**
+Update `rescheduleProposal.test.js`: the wrapper cases asserting `emailCalls.length === 1`
+(around `:209` and `:361`) become assertions that the wrapper performs the re-anchor and due
+date move WITHOUT sending (whatever stub captured `emailCalls` now expects zero). Do not
+delete the re-anchor assertions; they are the wrapper's remaining contract.
 
-Run: `grep -rn "sendRescheduleEmail" server --include=*.js | grep -v "\.test\."`
-Expected: exactly two hits, the definition/export in `rescheduleProposal.js` and the import in `crud.js:15`. The `crud.js` call site is updated in Task 4.
+- [ ] **Step 5: Verify no production caller is left behind**
 
-- [ ] **Step 6: Commit**
+Run: `grep -rn "sendRescheduleEmail" server --include=*.js | grep -v test`
+Expected: hits only inside `rescheduleProposal.js` (definition, doc comment, export) and in
+`crud.js` (`:15` import, the call site Task 4 rewrites). No other file.
+
+- [ ] **Step 6: Run the suite**
+
+Run: `node -r dotenv/config --test server/utils/rescheduleProposal.test.js`
+Expected: PASS with the updated wrapper expectations.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add server/utils/rescheduleProposal.js
-git commit -m "feat(notify): sendRescheduleEmail takes explicit channels + reviewed text"
+git add server/utils/rescheduleProposal.js server/utils/rescheduleProposal.test.js server/utils/smsTemplates.js
+git commit -m "feat(notify): reviewed-text reschedule send + preflight draft builder; wrapper email tail removed"
 ```
 
 ---
@@ -516,102 +523,141 @@ git commit -m "feat(notify): sendRescheduleEmail takes explicit channels + revie
 
 **Files:**
 - Create: `server/routes/proposals/notifyPreflight.js`
-- Modify: `server/routes/proposals/index.js` (mount before `crud`)
-- Modify: `server/routes/proposals/notifyClient.test.js` (append)
+- Modify: `server/routes/proposals/index.js` (mount above `crud`)
+- Modify: `server/routes/proposals/notifyClient.test.js` (append route tests)
 
 **Interfaces:**
-- Consumes: `eventDetailsNoticeApplies`, `gratuityNoticePossible`, `NOTICE_*` from Task 1.
-- Produces: `POST /api/proposals/:id/notify-preflight` returning `{ notices: [...] }` per the spec's shape.
+- Consumes: Task 1's `eventDetailsNoticeApplies` + `RESCHEDULABLE_FIELDS` + `resolvePendingLocation` + `isPlaceholderEmail`; Task 2's `buildEventDetailsDraft`.
+- Produces: `POST /api/proposals/:id/notify-preflight` returning `{ notices: [...] }` (spec shape, incl. `autopay_notice`). Zero notices when `change_request_id` is present.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing route tests**
 
-Append to `server/routes/proposals/notifyClient.test.js`. Copy the `request()` helper, `before`, and `after` blocks verbatim from `server/routes/comms.silent.test.js:22-60` (the express + node:http harness; there is no supertest in this repo), seeding a client, a `deposit_paid` proposal with `event_location = 'The Ivy Room'`, and an admin JWT.
+Append to `notifyClient.test.js` a route harness modeled on `server/routes/comms.silent.test.js`
+**in full**: the `request()` helper, the express app assembly INCLUDING the AppError error
+middleware (`comms.silent.test.js:112-120`; without it every 400 assertion sees a 500), the
+`before` seeding (admin JWT; a client with real email + phone; a `deposit_paid` proposal with
+`event_location`, `event_date`, `balance_due_date`, a token, and at least one pending
+`scheduled_messages` row seeded the way `rescheduleProposal.test.js` seeds one), and the
+`after` teardown. Mount `require('./index')` (the proposals composition router) at
+`/api/proposals`.
 
 ```javascript
-test('preflight: location change on a booked proposal returns the event-details notice with a draft', async () => {
+test('preflight: location change on a booked proposal returns the notice with a draft', async () => {
   const res = await request('POST', `/api/proposals/${proposalId}/notify-preflight`, {
-    token: adminToken,
-    body: { event_location: '2700 W Chicago Ave' },
+    token: adminToken, body: { event_location: '2700 W Chicago Ave' },
   });
   assert.equal(res.status, 200);
-  const notice = res.body.notices.find(n => n.type === 'event_details_changed');
-  assert.ok(notice, 'expected an event_details_changed notice');
-  assert.equal(notice.composable, true);
-  assert.ok(notice.draft.email.subject.length > 0);
-  assert.ok(notice.draft.sms.body.length > 0);
-  assert.ok(notice.reasons.some(r => r.includes('event_location')));
+  const n = res.body.notices.find((x) => x.type === 'event_details_changed');
+  assert.ok(n);
+  assert.match(n.draft.email.body_text, /2700 W Chicago Ave/);
+  assert.doesNotMatch(n.draft.email.body_text, /\$\d/, 'draft must carry no dollar figures');
+  assert.ok(n.reasons.some((r) => r.includes('event_location')));
 });
 
-test('preflight: an unrelated edit returns no notices', async () => {
+test('preflight: venue-parts-only edit resolves the same location the save would', async () => {
   const res = await request('POST', `/api/proposals/${proposalId}/notify-preflight`, {
-    token: adminToken,
-    body: { guest_count: 90 },
+    token: adminToken, body: { venue_street: '123 Elm St' },
   });
   assert.equal(res.status, 200);
-  assert.equal(res.body.notices.filter(n => n.type === 'event_details_changed').length, 0);
+  assert.equal(res.body.notices.length, 1, 'a street-only edit changes event_location at save time');
 });
 
-test('preflight writes nothing', async () => {
+test('preflight: date move quotes the projected due date, not the stored one', async () => {
+  const res = await request('POST', `/api/proposals/${proposalId}/notify-preflight`, {
+    token: adminToken, body: { event_date: '2026-12-01' },
+  });
+  const n = res.body.notices[0];
+  assert.ok(n.autopay_notice || /balance due date moves/i.test(n.draft.email.body_text));
+});
+
+test('preflight: change_request_id present -> zero notices', async () => {
+  const res = await request('POST', `/api/proposals/${proposalId}/notify-preflight`, {
+    token: adminToken, body: { event_location: 'Elsewhere', change_request_id: 999999 },
+  });
+  assert.deepEqual(res.body.notices, []);
+});
+
+test('preflight: unrelated edit -> zero notices; unbooked proposal -> zero notices', async () => {
+  const a = await request('POST', `/api/proposals/${proposalId}/notify-preflight`, {
+    token: adminToken, body: { guest_count: 90 },
+  });
+  assert.deepEqual(a.body.notices, []);
+  const b = await request('POST', `/api/proposals/${sentProposalId}/notify-preflight`, {
+    token: adminToken, body: { event_location: 'Elsewhere' },
+  });
+  assert.deepEqual(b.body.notices, []);
+});
+
+test('preflight: .invalid email is unavailable; writes nothing; auth required', async () => {
+  const res = await request('POST', `/api/proposals/${placeholderProposalId}/notify-preflight`, {
+    token: adminToken, body: { event_location: 'Elsewhere' },
+  });
+  const n = res.body.notices[0];
+  assert.equal(n.channels.email.available, false);
+  assert.match(n.channels.email.unavailable_reason, /placeholder/i);
+
   const before = await pool.query('SELECT event_location, updated_at FROM proposals WHERE id = $1', [proposalId]);
-  await request('POST', `/api/proposals/${proposalId}/notify-preflight`, {
-    token: adminToken, body: { event_location: 'Somewhere Else' },
-  });
+  await request('POST', `/api/proposals/${proposalId}/notify-preflight`, { token: adminToken, body: { event_location: 'X' } });
   const after = await pool.query('SELECT event_location, updated_at FROM proposals WHERE id = $1', [proposalId]);
-  assert.deepEqual(before.rows[0], after.rows[0]);
-});
+  assert.deepEqual(after.rows[0], before.rows[0]);
 
-test('preflight requires admin or manager', async () => {
-  const res = await request('POST', `/api/proposals/${proposalId}/notify-preflight`, {
-    body: { event_location: 'X' },
-  });
-  assert.equal(res.status, 401);
+  const noAuth = await request('POST', `/api/proposals/${proposalId}/notify-preflight`, { body: {} });
+  assert.equal(noAuth.status, 401);
 });
 ```
 
-- [ ] **Step 2: Run it to make sure it fails**
+Fixtures: `sentProposalId` (status `sent`), `placeholderProposalId` (client email
+`x-${NONCE}@ccimport.invalid`), all cleaned in `after`.
+
+- [ ] **Step 2: Run to verify failure**
 
 Run: `node -r dotenv/config --test server/routes/proposals/notifyClient.test.js`
-Expected: FAIL with 404 on the preflight path.
+Expected: new tests FAIL with 404.
 
-- [ ] **Step 3: Write the route**
+- [ ] **Step 3: Implement the route**
 
-Create `server/routes/proposals/notifyPreflight.js`:
+Create `server/routes/proposals/notifyPreflight.js`. Import paths mirror `crud.js`
+(`crud.js:4` and `:16` are the reference): `../../middleware/auth`,
+`../../middleware/asyncHandler`; the rate limiter import mirrors `cancel.js`'s
+`adminWriteLimiter` import.
 
 ```javascript
 'use strict';
 
-// POST /api/proposals/:id/notify-preflight — read-only. Answers "would saving
-// these edits message the client, and what would it say?" so the admin form can
-// put a confirmation in front of the save.
-//
-// READ ONLY. It opens no transaction and writes nothing. The save recomputes
-// its own notice set and is the authority; this endpoint exists so the UI can
-// ask without guessing, and so the reschedule draft can be composed while the
-// OLD field values still exist.
+// POST /api/proposals/:id/notify-preflight — READ-ONLY. "Would saving these
+// edits message the client, and what would it say?" No transaction, no writes.
+// The PATCH recomputes its own answer via the SAME functions and is the
+// authority; this exists so the form can ask before saving, and so the draft
+// can be composed while the OLD field values still exist.
 const express = require('express');
 const { pool } = require('../../db');
-const { auth, requireAdminOrManager } = require('../middleware/auth');
-const asyncHandler = require('../middleware/asyncHandler');
+const { auth, requireAdminOrManager } = require('../../middleware/auth');
+const { adminWriteLimiter } = require('../../middleware/rateLimiters');
+const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../../utils/errors');
+const { eventDetailsNoticeApplies } = require('../../utils/clientNotices');
 const {
-  NOTICE_EVENT_DETAILS,
-  NOTICE_GRATUITY,
-  eventDetailsNoticeApplies,
-  gratuityNoticePossible,
-} = require('../../utils/clientNotices');
-const { buildEventDetailsDraft } = require('../../utils/rescheduleProposal');
+  RESCHEDULABLE_FIELDS, buildEventDetailsDraft,
+} = require('../../utils/rescheduleProposal');
+const { resolvePendingLocation } = require('../../utils/venueAddress');
+const { isPlaceholderEmail } = require('../../utils/emailValidation');
 const { normalizePhone } = require('../../utils/sms');
 
 const router = express.Router();
 
-const RESCHEDULABLE = ['event_date', 'event_start_time', 'event_location'];
-
-router.post('/:id/notify-preflight', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+router.post('/:id/notify-preflight', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id) || id <= 0) throw new ValidationError({ id: 'Invalid proposal id.' });
+  const body = req.body || {};
+
+  // Change-request saves have their own client email (crud.js change-approved
+  // path) and the save suppresses the reschedule send on them (crud.js `&&
+  // !change_request_id`). Zero notices = no popup = the one coherent answer.
+  if (body.change_request_id) return res.json({ notices: [] });
 
   const { rows } = await pool.query(
-    `SELECT p.*, c.name AS client_name, c.email AS client_email, c.phone AS client_phone
+    `SELECT p.*, c.id AS client_id, c.name AS client_name, c.email AS client_email, c.phone AS client_phone,
+            c.communication_preferences, c.email_status, c.phone_status
        FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
       WHERE p.id = $1`,
     [id]
@@ -619,340 +665,231 @@ router.post('/:id/notify-preflight', auth, requireAdminOrManager, asyncHandler(a
   const old = rows[0];
   if (!old) throw new NotFoundError('Proposal not found');
 
-  const body = req.body || {};
-  // Merge the pending edits over the stored row so the comparison sees exactly
-  // what the save will see. COALESCE semantics: an undefined field is unchanged.
+  // Prospective row: undefined body field = unchanged (the PATCH's COALESCE
+  // semantics). Location goes through the SAME merge-and-compose the save uses.
   const updated = { ...old };
-  for (const f of RESCHEDULABLE) {
-    if (body[f] !== undefined) updated[f] = body[f];
-  }
-  // The venue fields compose into event_location the same way crud.js does; when
-  // the form sends venue parts instead of event_location, reuse that composition
-  // rather than reimplementing it. See crud.js's $17 location argument.
-  if (body.event_location === undefined && body.venue_name !== undefined) {
-    const { composeEventLocation } = require('../../utils/venue');
-    updated.event_location = composeEventLocation(body);
-  }
-
-  const phone = old.client_phone ? normalizePhone(old.client_phone) : null;
-  const recipient = { name: old.client_name || null, email: old.client_email || null, phone };
-  const channels = {
-    email: {
-      available: Boolean(old.client_email),
-      default: Boolean(old.client_email),
-      unavailable_reason: old.client_email ? null : 'No email on file.',
-    },
-    sms: {
-      available: Boolean(phone),
-      default: Boolean(phone),
-      unavailable_reason: phone ? null : 'No usable phone on file.',
-    },
-  };
+  for (const f of RESCHEDULABLE_FIELDS) if (body[f] !== undefined) updated[f] = body[f];
+  const composed = resolvePendingLocation(old, body);
+  if (composed !== null) updated.event_location = composed;
 
   const notices = [];
-
   if (eventDetailsNoticeApplies({ old, updated, status: old.status })) {
-    const reasons = RESCHEDULABLE
-      .filter((f) => String(old[f] ?? '').trim() !== String(updated[f] ?? '').trim())
-      .map((f) => `${f} changed`);
+    const placeholder = isPlaceholderEmail(old.client_email);
+    const phone = old.client_phone ? normalizePhone(old.client_phone) : null;
+    const draft = buildEventDetailsDraft({ old, updated, ctx: old });
     notices.push({
-      type: NOTICE_EVENT_DETAILS,
-      reasons,
+      type: 'event_details_changed',
+      reasons: RESCHEDULABLE_FIELDS
+        .filter((f) => String(old[f] ?? '').trim() !== String(updated[f] ?? '').trim())
+        .map((f) => `${f} changed`),
       composable: true,
-      recipient,
-      channels,
-      draft: await buildEventDetailsDraft({ proposalId: id, old, updated }),
+      recipient: { name: old.client_name || null, email: old.client_email || null, phone },
+      channels: {
+        email: {
+          available: Boolean(old.client_email) && !placeholder,
+          default: Boolean(old.client_email) && !placeholder,
+          unavailable_reason: !old.client_email ? 'No email on file.'
+            : placeholder ? 'Placeholder address (.invalid) from the CC import; no real email exists.' : null,
+        },
+        sms: {
+          available: Boolean(phone),
+          default: Boolean(phone),
+          unavailable_reason: phone ? null : 'No usable phone on file.',
+        },
+      },
+      autopay_notice: draft.autopay_notice,
+      draft: { email: draft.email, sms: draft.sms },
     });
   }
-
-  if (gratuityNoticePossible({ old, body, status: old.status })) {
-    notices.push({
-      type: NOTICE_GRATUITY,
-      reasons: ['staffing may raise the gratuity total'],
-      composable: false,
-      recipient,
-      channels: { email: channels.email, sms: { available: false, default: false, unavailable_reason: 'This notice is email only.' } },
-      draft: null,
-    });
-  }
-
   res.json({ notices });
 }));
 
 module.exports = router;
 ```
 
-**Note for the implementer:** two helpers are referenced that may not exist yet.
-
-1. `buildEventDetailsDraft({ proposalId, old, updated })` in `rescheduleProposal.js`. Reuse the timezone resolution and the `fmtDate` / `fmtTime` helpers already inside `sendRescheduleEmail` (extract them to module scope), and compose prose rather than calling `rescheduleNotificationClient` (see Task 2 for why). It must return `{ email: { subject, body_text }, sms: { body } }`. The SMS half keeps using `smsTemplates.rescheduleSms({ newDate, newStartTime, newLocation })`. Suggested body, with only the lines whose field actually changed:
-
-```javascript
-const lines = [];
-if (dateChanged) lines.push(`Date: ${fmtDate(old.event_date)} is now ${fmtDate(updated.event_date)}`);
-if (timeChanged) lines.push(`Start time: ${fmtTime(old.event_date, old.event_start_time)} is now ${fmtTime(updated.event_date, updated.event_start_time)}`);
-if (locationChanged) lines.push(`Location: ${old.event_location || 'TBD'} is now ${updated.event_location || 'TBD'}`);
-
-const body_text = [
-  `Hi ${firstName || 'there'},`,
-  'Your event details have been updated. Here is what changed:',
-  lines.join('\n'),
-  `Everything else stays the same: ${ctx.package_name || 'your package'} for ${ctx.guest_count} guests, total $${totalFormatted}.`,
-  balanceDueDateLocal ? `${ctx.autopay_enrolled ? 'Your balance auto-charges' : 'Your balance is due'} on ${balanceDueDateLocal}.` : null,
-  'Let me know if you have any questions.',
-].filter(Boolean).join('\n\n');
-```
-
-`renderPartsEmail` splits on blank lines into paragraphs, which is why the joins above use `\n\n` between blocks and `\n` within the changed-field list. Subject stays `'Updated details for your event'`.
-2. `composeEventLocation` in a venue util. Check `server/utils/venue.js` (or wherever `validateVenue` lives, imported by `crud.js`) for the existing composition. If `crud.js` composes the location inline for its `$17` argument, extract that expression into the shared util and have `crud.js` call it, so the two paths cannot drift. Do not reimplement the concatenation.
+Note on `ctx: old`: `buildEventDetailsDraft` reads `client_name`, `client_email`,
+`client_id`, `token`, `autopay_enrolled`, `balance_due_date`, and the timezone fields; the
+`p.*` + client join supplies all of them. Verify `resolveEventTimezone`'s expected field
+names against its definition while wiring.
 
 - [ ] **Step 4: Mount it**
 
-In `server/routes/proposals/index.js`, add above the `crud` line:
+`server/routes/proposals/index.js`, above the `crud` line:
+`router.use('/', require('./notifyPreflight'));`
 
-```javascript
-router.use('/', require('./notifyPreflight'));
-```
-
-It is a POST on a specific suffix path, so it does not collide with `getOne`'s greedy `GET /:id`, but keep it above `crud` for readability.
-
-- [ ] **Step 5: Run the tests and make sure they pass**
+- [ ] **Step 5: Run, expect green**
 
 Run: `node -r dotenv/config --test server/routes/proposals/notifyClient.test.js`
-Expected: PASS, all tests including the four new ones.
+Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add server/routes/proposals/notifyPreflight.js server/routes/proposals/index.js server/utils/rescheduleProposal.js server/routes/proposals/notifyClient.test.js
-git commit -m "feat(notify): read-only notify-preflight endpoint + shared draft builder"
+git add server/routes/proposals/notifyPreflight.js server/routes/proposals/index.js server/routes/proposals/notifyClient.test.js
+git commit -m "feat(notify): read-only notify-preflight (deterministic, CR-aware, placeholder-aware)"
 ```
 
 ---
 
-## Task 4: PATCH `notify` contract
+## Task 4: PATCH `notify` contract + gratuity suppression gate
 
 **Files:**
-- Modify: `server/routes/proposals/crud.js:299-312` (body), `:328` (hoist), `:490-501` (gratuity trigger), `:625-640` (re-anchor, unchanged), `:710-760` (both sends), `:826` (response)
+- Modify: `server/routes/proposals/crud.js` (destructure `:303-311`; validation before `pool.connect()` at `:312`; trigger check after `:637`; send block `:710-726`; gratuity block `:731-755`; response `:827`; `_deps` at `:31`)
 - Modify: `server/routes/proposals/notifyClient.test.js` (append)
+- Modify: `server/routes/proposals/crud.test.js` (update reschedule-email expectations)
 
 **Interfaces:**
-- Consumes: `validateNotifyList`, `gratuityNoticeApplies`, `NOTICE_*` from Task 1; `sendRescheduleEmail` from Task 2.
-- Produces: `PATCH /api/proposals/:id` accepting `notify: [...]` and returning `notifications: [...]` alongside the proposal.
+- Consumes: `validateNotifyList`, `NOTICE_EVENT_DETAILS` (Task 1); `sendRescheduleEmail` (Task 2); `shouldSendImmediate`; `isPlaceholderEmail`.
+- Produces: `PATCH /api/proposals/:id` accepting `notify` and returning `{ ...proposalRow, notifications: [...] }`.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `server/routes/proposals/notifyClient.test.js`:
+Append to `notifyClient.test.js`. Send assertions run at the seam: add `sendRescheduleEmail`
+to crud's `_deps` (Step 3) and stub it here via `crud.__setDeps`; stub failure/skip shapes as
+needed. Suppression tests restore `email_status = 'ok'` (NOT NULL column).
 
 ```javascript
-test('LOAD-BEARING: a date change with no notify list sends nothing but still re-anchors', async () => {
+const crudModule = require('./crud');
+
+test('LOAD-BEARING: date change with no notify list sends nothing but still re-anchors + moves balance_due_date', async () => {
+  const calls = [];
+  crudModule.__setDeps({ sendRescheduleEmail: async (a) => { calls.push(a); return { email: 'sent', sms: 'skipped', skip_reasons: {} }; } });
   const before = await pool.query(
-    "SELECT id, scheduled_for FROM scheduled_messages WHERE proposal_id = $1 AND status = 'pending' ORDER BY id",
+    "SELECT id, scheduled_for FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1 AND status = 'pending' ORDER BY id",
     [proposalId]
   );
-  assert.ok(before.rows.length > 0, 'fixture needs at least one pending scheduled message');
-  const oldBalanceDue = (await pool.query('SELECT balance_due_date FROM proposals WHERE id = $1', [proposalId])).rows[0].balance_due_date;
+  assert.ok(before.rows.length > 0, 'fixture needs a pending scheduled message');
+  const oldDue = (await pool.query('SELECT balance_due_date FROM proposals WHERE id = $1', [proposalId])).rows[0].balance_due_date;
 
-  const res = await request('PATCH', `/api/proposals/${proposalId}`, {
-    token: adminToken,
-    body: { event_date: '2026-10-15' },
-  });
+  const res = await request('PATCH', `/api/proposals/${proposalId}`, { token: adminToken, body: { event_date: '2026-10-15' } });
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.notifications, []);
+  assert.equal(calls.length, 0);
 
   const after = await pool.query(
-    "SELECT id, scheduled_for FROM scheduled_messages WHERE proposal_id = $1 AND status = 'pending' ORDER BY id",
+    "SELECT id, scheduled_for FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1 AND status = 'pending' ORDER BY id",
     [proposalId]
   );
-  const moved = after.rows.some((r, i) => String(r.scheduled_for) !== String(before.rows[i].scheduled_for));
-  assert.ok(moved, 're-anchoring must run even when nothing is sent');
-
-  const newBalanceDue = (await pool.query('SELECT balance_due_date FROM proposals WHERE id = $1', [proposalId])).rows[0].balance_due_date;
-  assert.notEqual(String(newBalanceDue), String(oldBalanceDue), 'balance_due_date must move with the event date');
+  assert.ok(after.rows.some((r, i) => String(r.scheduled_for) !== String(before.rows[i].scheduled_for)), 're-anchor must run');
+  const newDue = (await pool.query('SELECT balance_due_date FROM proposals WHERE id = $1', [proposalId])).rows[0].balance_due_date;
+  assert.notEqual(String(newDue), String(oldDue));
 });
 
-test('event_details_changed with no supplied text is a 400 and saves nothing', async () => {
-  const before = (await pool.query('SELECT event_location FROM proposals WHERE id = $1', [proposalId])).rows[0].event_location;
+test('the reviewed text reaches the send seam verbatim', async () => {
+  const calls = [];
+  crudModule.__setDeps({ sendRescheduleEmail: async (a) => { calls.push(a); return { email: 'sent', sms: 'skipped', skip_reasons: {} }; } });
   const res = await request('PATCH', `/api/proposals/${proposalId}`, {
+    token: adminToken,
+    body: {
+      event_location: 'Reviewed Venue',
+      notify: [{ type: 'event_details_changed', channels: ['email'], email: { subject: 'S-REVIEWED', body_text: 'B-REVIEWED' } }],
+    },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].message.email.subject, 'S-REVIEWED');
+  assert.deepEqual(calls[0].channels, ['email']);
+  assert.equal(res.body.notifications[0].email, 'sent');
+});
+
+test('notice without text: 400, nothing saved; notice on untriggering save: 400, rolled back', async () => {
+  const beforeLoc = (await pool.query('SELECT event_location FROM proposals WHERE id = $1', [proposalId])).rows[0].event_location;
+  const a = await request('PATCH', `/api/proposals/${proposalId}`, {
     token: adminToken,
     body: { event_location: 'Rejected Venue', notify: [{ type: 'event_details_changed', channels: ['email'] }] },
   });
-  assert.equal(res.status, 400);
-  const after = (await pool.query('SELECT event_location FROM proposals WHERE id = $1', [proposalId])).rows[0].event_location;
-  assert.equal(after, before, 'a rejected notify list must not commit the edit');
-});
+  assert.equal(a.status, 400);
+  assert.equal((await pool.query('SELECT event_location FROM proposals WHERE id = $1', [proposalId])).rows[0].event_location, beforeLoc);
 
-test('event_details_changed on a save that changed nothing reschedulable is a 400 and rolls back', async () => {
-  const before = (await pool.query('SELECT guest_count FROM proposals WHERE id = $1', [proposalId])).rows[0].guest_count;
-  const res = await request('PATCH', `/api/proposals/${proposalId}`, {
+  const beforeGuests = (await pool.query('SELECT guest_count FROM proposals WHERE id = $1', [proposalId])).rows[0].guest_count;
+  const b = await request('PATCH', `/api/proposals/${proposalId}`, {
     token: adminToken,
-    body: {
-      guest_count: Number(before) + 5,
-      notify: [{ type: 'event_details_changed', channels: ['email'], email: { subject: 's', body_text: 'b' } }],
-    },
+    body: { guest_count: Number(beforeGuests) + 5, notify: [{ type: 'event_details_changed', channels: ['email'], email: { subject: 's', body_text: 'b' } }] },
   });
-  assert.equal(res.status, 400);
-  const after = (await pool.query('SELECT guest_count FROM proposals WHERE id = $1', [proposalId])).rows[0].guest_count;
-  assert.equal(String(after), String(before), 'trigger mismatch must roll the transaction back');
+  assert.equal(b.status, 400);
+  assert.equal(String((await pool.query('SELECT guest_count FROM proposals WHERE id = $1', [proposalId])).rows[0].guest_count), String(beforeGuests));
 });
 
-test('gratuity_increase that did not fire saves normally and reports skipped', async () => {
-  const res = await request('PATCH', `/api/proposals/${proposalId}`, {
-    token: adminToken,
-    body: { guest_count: 77, notify: [{ type: 'gratuity_increase', channels: ['email'] }] },
-  });
-  assert.equal(res.status, 200);
-  const entry = res.body.notifications.find(n => n.type === 'gratuity_increase');
-  assert.ok(entry, 'the notice must be reported, not dropped');
-  assert.equal(entry.email, 'skipped');
-  assert.ok(entry.skip_reasons.email);
-});
-
-// Spec test 2: what the admin reviewed is what the client receives.
-test('the reviewed text is what sends, not the template default', async () => {
-  const marker = `REVIEWED-${Date.now()}`;
-  const res = await request('PATCH', `/api/proposals/${proposalId}`, {
-    token: adminToken,
-    body: {
-      event_location: 'Reviewed Text Venue',
-      notify: [{
-        type: 'event_details_changed', channels: ['email'],
-        email: { subject: `Subject ${marker}`, body_text: `Body ${marker}` },
-      }],
-    },
-  });
-  assert.equal(res.status, 200);
-  assert.equal(res.body.notifications.find(n => n.type === 'event_details_changed').email, 'sent');
-  const logged = await pool.query(
-    'SELECT subject FROM message_log WHERE proposal_id = $1 ORDER BY id DESC LIMIT 1',
-    [proposalId]
-  );
-  assert.match(logged.rows[0].subject, new RegExp(marker), 'the ledger must record the reviewed subject');
-});
-
-// Spec test 8: an explicit Send never overrides a suppression rule.
-test('a suppressed recipient reports skipped even when the notice was requested', async () => {
-  await pool.query("UPDATE clients SET email_status = 'bad' WHERE id = $1", [clientId]);
+test('suppressed recipient reports skipped even when requested', async () => {
+  // Real sendRescheduleEmail path decides suppression; stub only sendEmail's seam
+  // via the deps default (restore the real fn), and flip prefs instead.
+  crudModule.__setDeps({ sendRescheduleEmail: require('../../utils/rescheduleProposal').sendRescheduleEmail });
+  await pool.query(`UPDATE clients SET communication_preferences = '{"email_enabled": false}'::jsonb WHERE id = $1`, [clientId]);
   try {
     const res = await request('PATCH', `/api/proposals/${proposalId}`, {
       token: adminToken,
-      body: {
-        event_location: 'Suppression Test Venue',
-        notify: [{ type: 'event_details_changed', channels: ['email'], email: { subject: 's', body_text: 'b' } }],
-      },
+      body: { event_location: 'Suppression Venue', notify: [{ type: 'event_details_changed', channels: ['email'], email: { subject: 's', body_text: 'b' } }] },
     });
     assert.equal(res.status, 200);
-    const entry = res.body.notifications.find(n => n.type === 'event_details_changed');
+    const entry = res.body.notifications[0];
     assert.equal(entry.email, 'skipped');
-    assert.ok(entry.skip_reasons.email, 'the reason must be reported, not silent');
+    assert.ok(entry.skip_reasons.email);
   } finally {
-    await pool.query("UPDATE clients SET email_status = NULL WHERE id = $1", [clientId]);
+    await pool.query(`UPDATE clients SET communication_preferences = '{}'::jsonb WHERE id = $1`, [clientId]);
   }
 });
 
-// Spec test 10: one save, both notices.
-test('a save that triggers both notices sends both and reports each', async () => {
-  const res = await request('PATCH', `/api/proposals/${bothNoticesProposalId}`, {
-    token: adminToken,
-    body: {
-      event_location: 'Both Notices Venue',
-      num_bartenders: 3,
-      notify: [
-        { type: 'event_details_changed', channels: ['email'], email: { subject: 's', body_text: 'b' } },
-        { type: 'gratuity_increase', channels: ['email'] },
-      ],
-    },
+test('gratuity disclosure regression pin: fires automatically, no notify list involved', async () => {
+  // Paid booking + staffing rise. Assert at the sendEmail seam or on the
+  // response NOT carrying a gratuity entry while the email path executes:
+  // stub sendEmail via a module seam if crud exposes one for it, else assert
+  // the row-level effects (gratuity origin stamped 'staffing') and that
+  // notifications[] stays []. The disclosure must NOT appear in notifications.
+  const res = await request('PATCH', `/api/proposals/${paidStaffedProposalId}`, {
+    token: adminToken, body: { num_bartenders: 3 },
   });
   assert.equal(res.status, 200);
-  assert.ok(res.body.notifications.find(n => n.type === 'event_details_changed'));
-  assert.ok(res.body.notifications.find(n => n.type === 'gratuity_increase'));
+  assert.deepEqual(res.body.notifications, []);
 });
 ```
 
-**Note for the implementer:** `bothNoticesProposalId` needs a fixture that is paid enough for `isPaidForGratuity` and whose bartender count genuinely raises the gratuity total. Read the `isPaidForGratuity` derivation in `crud.js` before seeding, and if the fixture cannot be made to fire both notices reliably, say so rather than loosening the assertion to `>= 1`.
-
-- [ ] **Step 2: Run them to make sure they fail**
+- [ ] **Step 2: Run to verify failure**
 
 Run: `node -r dotenv/config --test server/routes/proposals/notifyClient.test.js`
-Expected: FAIL. The load-bearing test fails because a bare PATCH still sends; the 400 tests fail with 200.
+Expected: FAIL (bare PATCH still auto-sends; 400 cases return 200).
 
-- [ ] **Step 3: Accept and validate the list before `BEGIN`**
+- [ ] **Step 3: Wire the contract in `crud.js`**
 
-Add `notify` to the body destructure at `crud.js:308-310`, next to the existing staff flags:
+(a) Imports: add `validateNotifyList`, `NOTICE_EVENT_DETAILS` from `../../utils/clientNotices`.
+Add `sendRescheduleEmail` to the deps seam at `:31`:
+`let _deps = { createInvoiceOnSend, sendProposalSentEmail, sendRescheduleEmail };` and change
+the call site to `_deps.sendRescheduleEmail(...)`.
+
+(b) Destructure `notify` next to the staff flags (`:308-310`), then validate BEFORE
+`pool.connect()` (`:312`):
 
 ```javascript
-    notify_assigned_staff, notify_staff_sms, notify_staff_email,
-    notify,
-    change_request_id
-  } = req.body;
-
-  // Structural validation BEFORE pool.connect()/BEGIN: a malformed notify list
-  // must never open a transaction. Trigger validation (does this save actually
-  // fire these notices?) happens below, where the notice set is computed.
+  // Structural validation before any connection is checked out: a malformed
+  // notify list never opens a transaction. Trigger validation happens where
+  // shouldSendEmail is computed, inside the tx.
   const requestedNotices = validateNotifyList(notify);
-  const requestedByType = new Map(requestedNotices.map((n) => [n.type, n]));
+  const eventNotice = requestedNotices.find((n) => n.type === NOTICE_EVENT_DETAILS) || null;
 ```
 
-Add the import at the top of the file, next to the `rescheduleProposal` import at `:15`:
+(c) Trigger check, immediately after `shouldSendRescheduleEmail` is assigned (`:637`); also
+collapse the no-op `catch (rescheduleErr) { throw rescheduleErr; }` (`:638-640`) while here:
 
 ```javascript
-const {
-  NOTICE_EVENT_DETAILS, NOTICE_GRATUITY,
-  validateNotifyList, gratuityNoticeApplies,
-} = require('../../utils/clientNotices');
-```
-
-- [ ] **Step 4: Replace the automatic gratuity flag with a requested-and-triggered check**
-
-At `crud.js:498-501`, keep the `gratuityOrigin` stamp exactly as it is and change only the notify decision:
-
-```javascript
-    if (isPaidForGratuity && gratuityOrigin !== 'admin' && newGratuityTotal !== oldGratuityTotal) {
-      gratuityOrigin = 'staffing';
-      // The stamp above is bookkeeping and always runs. The notice is opt-in:
-      // it fires only when the caller asked AND the rise actually happened.
-      gratuityNoticeTriggered = gratuityNoticeApplies({
-        oldGratuityTotal, newGratuityTotal, isPaidForGratuity, gratuityOrigin,
-      });
-    }
-```
-
-Rename the hoisted flag at `:330` from `let notifyStaffingGratuity = false;` to `let gratuityNoticeTriggered = false;`.
-
-- [ ] **Step 5: Enforce the event-details trigger match inside the transaction**
-
-`crud.js:632` stays **exactly as it is**. Do not touch the `rescheduleProposalInTx` call. Immediately after it, add the trigger check:
-
-```javascript
-      shouldSendRescheduleEmail = rescheduleResult.shouldSendEmail;
-    } catch (rescheduleErr) {
-      throw rescheduleErr;
-    }
-
-    // Trigger match for the composable notice. Supplied text was composed
+    // Trigger match for the composable notice: supplied text was composed
     // against a specific set of changes; sending it against a different set
-    // would tell the client something untrue. Throwing here rolls back.
-    if (requestedByType.has(NOTICE_EVENT_DETAILS) && !shouldSendRescheduleEmail) {
+    // (or on a change-request save, which has its own client email) is a
+    // rejected request, and the throw rolls the whole edit back.
+    if (eventNotice && (!shouldSendRescheduleEmail || change_request_id)) {
       throw new ValidationError({
-        notify: 'This save does not change the event date, time, or location, so that notice cannot be sent.',
+        notify: 'This save does not change the event date, time, or location for a direct notice, so that message cannot be sent.',
       });
     }
 ```
 
-- [ ] **Step 6: Gate both sends on the request and collect per-channel truth**
-
-Replace the send block at `:710-725` with:
+(d) Replace the auto-send block (`:710-726`) with the gated send + per-channel collection:
 
 ```javascript
     const notifications = [];
-
-    // COMMIT already succeeded above. Both sends are best-effort and
-    // post-commit: a provider failure must NEVER 500 a PATCH whose transaction
-    // already committed. The response reports what actually happened per
-    // channel instead of swallowing it.
-    const eventNotice = requestedByType.get(NOTICE_EVENT_DETAILS);
+    // COMMIT succeeded above. Best-effort, post-commit: a provider failure
+    // must never 500 a PATCH whose transaction committed.
     if (eventNotice && shouldSendRescheduleEmail && !change_request_id) {
       try {
-        const r = await sendRescheduleEmail({
+        const r = await _deps.sendRescheduleEmail({
           proposalId: parseInt(req.params.id, 10),
           old,
           updated: updatedRow.rows[0],
@@ -962,211 +899,178 @@ Replace the send block at `:710-725` with:
         notifications.push({ type: NOTICE_EVENT_DETAILS, ...r });
       } catch (emailErr) {
         if (process.env.SENTRY_DSN_SERVER) {
-          Sentry.captureException(emailErr, {
-            tags: { route: 'proposals/update', issue: 'event-details-notice' },
-            extra: { proposalId: req.params.id },
-          });
+          Sentry.captureException(emailErr, { tags: { route: 'proposals/update', issue: 'event-details-notice' }, extra: { proposalId: req.params.id } });
         }
-        console.error('Event-details notice failed (non-blocking, DB already committed):', emailErr);
-        notifications.push({
-          type: NOTICE_EVENT_DETAILS, email: 'failed', sms: 'failed',
-          email_error: emailErr.message, skip_reasons: {},
-        });
+        console.error('Event-details notice failed (non-blocking, DB committed):', emailErr);
+        notifications.push({ type: NOTICE_EVENT_DETAILS, email: eventNotice.channels.includes('email') ? 'failed' : 'skipped', sms: eventNotice.channels.includes('sms') ? 'failed' : 'skipped', email_error: emailErr.message, skip_reasons: {} });
       }
     }
 ```
 
-Replace the gratuity send at `:731` with the same shape. The requested-but-untriggered case is a skip, not an error:
+(e) Gratuity block (`:731-755`): the trigger at `:499-502` and the `notifyStaffingGratuity`
+flag are UNCHANGED (no rename; the disclosure stays automatic). Two edits only: the client
+row fetch adds `c.communication_preferences, c.email_status`, and the send is wrapped:
 
 ```javascript
-    const gratuityNotice = requestedByType.get(NOTICE_GRATUITY);
-    if (gratuityNotice && !gratuityNoticeTriggered) {
-      notifications.push({
-        type: NOTICE_GRATUITY, email: 'skipped', sms: null,
-        skip_reasons: { email: 'The gratuity total did not increase on this save.' },
-      });
-    } else if (gratuityNotice && gratuityNoticeTriggered) {
-      try {
-        const full = await pool.query(
-          `SELECT p.total_price, p.pricing_snapshot, c.email AS client_email, c.name AS client_name
-             FROM proposals p LEFT JOIN clients c ON c.id = p.client_id WHERE p.id = $1`,
-          [req.params.id]
-        );
-        const row = full.rows[0];
-        if (row && row.client_email) {
-          await sendEmail({
-            to: row.client_email,
-            ...emailTemplates.gratuityStaffingChange({
-              name: row.client_name,
-              newTotal: Number(row.total_price),
-              gratuity: (row.pricing_snapshot && row.pricing_snapshot.gratuity) || null,
-            }),
-          });
-          notifications.push({ type: NOTICE_GRATUITY, email: 'sent', sms: null, skip_reasons: {} });
+        const gate = await shouldSendImmediate({
+          proposal: { id: req.params.id, status: updatedRow.rows[0].status },
+          client: row, channel: 'email',
+        });
+        if (row && row.client_email && !isPlaceholderEmail(row.client_email) && gate.ok) {
+          await sendEmail({ /* existing call, unchanged */ });
         } else {
-          notifications.push({
-            type: NOTICE_GRATUITY, email: 'skipped', sms: null,
-            skip_reasons: { email: 'No email on file for this client.' },
-          });
+          console.log(`[gratuityDisclosure] suppressed for proposal ${req.params.id}: ${gate.ok ? 'no usable email' : gate.reason}`);
         }
-      } catch (mailErr) {
-        if (process.env.SENTRY_DSN_SERVER) {
-          Sentry.captureException(mailErr, { tags: { route: 'proposals/update', issue: 'gratuity-staffing-email' } });
-        }
-        console.error('Gratuity staffing-change email failed (non-blocking):', mailErr);
-        notifications.push({
-          type: NOTICE_GRATUITY, email: 'failed', sms: null,
-          email_error: mailErr.message || 'Email send failed.', skip_reasons: {},
-        });
-      }
-    }
 ```
 
-This is the existing block from `crud.js:731-754` with the `if (notifyStaffingGratuity)` wrapper replaced and result recording added. The query, the template call, and the Sentry tag are unchanged.
+(imports for `shouldSendImmediate` / `isPlaceholderEmail` at top). The disclosure never
+appears in `notifications`; it is not part of the opt-in contract.
 
-- [ ] **Step 7: Return the notifications**
+(f) Response (`:827`): `res.json({ ...updatedRow.rows[0], notifications });`
+(spread preserves every existing key; both live callers discard the body and reload, and
+`crud.test.js`/`crud.demotion.test.js` read top-level fields, which survive).
 
-Change the response at `:826` from:
+- [ ] **Step 4: Update `crud.test.js` expectations**
 
-```javascript
-    res.json(updatedRow.rows[0]);
-```
+Cases asserting the reschedule email fires on a bare PATCH now assert the opposite (or pass a
+`notify` list where the send is the point). Do not weaken unrelated assertions. Known
+pre-existing failure: Case 8 (rate-limiter, TST-3): failing before = failing after, not a
+blocker; anything else unexplained is a stop-and-report finding.
 
-to:
-
-```javascript
-    res.json({ ...updatedRow.rows[0], notifications });
-```
-
-**Note for the implementer:** this widens the PATCH response. Check both client callers (`EventEditForm.js:83`, `ProposalDetailEditForm.js:246`) still read the proposal fields off the top level. They do, because the spread keeps every existing key. Do not nest the proposal under a new key.
-
-- [ ] **Step 8: Fix the tests this breaks**
-
-Run: `node -r dotenv/config --test server/routes/proposals/crud.test.js`
-
-Any assertion that a bare PATCH sends the reschedule email now fails by design. Update those cases to pass a `notify` list. Do not weaken an assertion to make it pass; if a failure is not explained by the new contract, stop and report it.
-
-- [ ] **Step 9: Run everything and make sure it passes**
+- [ ] **Step 5: Run everything**
 
 ```bash
 node -r dotenv/config --test server/routes/proposals/notifyClient.test.js
 node -r dotenv/config --test server/routes/proposals/crud.test.js
 node -r dotenv/config --test server/routes/proposals/crud.demotion.test.js
+node -r dotenv/config --test server/utils/rescheduleProposal.test.js
 ```
-Expected: PASS on all three.
+Expected: PASS (modulo the pre-existing Case 8).
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add server/routes/proposals/crud.js server/routes/proposals/notifyClient.test.js server/routes/proposals/crud.test.js
-git commit -m "feat(notify): PATCH /proposals/:id sends only what the caller names"
+git add server/routes/proposals/crud.js server/routes/proposals/crud.test.js server/routes/proposals/notifyClient.test.js
+git commit -m "feat(notify): PATCH sends only what the caller names; gratuity disclosure gains suppression gate"
 ```
 
 ---
 
-## Task 5: Record payment `notify_client`
+## Task 5: Record-payment `notify_client`
 
 **Files:**
-- Modify: `server/routes/proposals/actions.js:134` (body), `:307-330` (the notification block)
+- Modify: `server/routes/proposals/actions.js` (destructure `:135`; notification block `:307-330`; response `:366`)
 - Modify: `server/routes/proposals/notifyClient.test.js` (append)
 
 **Interfaces:**
-- Produces: `POST /api/proposals/:id/record-payment` accepting `notify_client: true|false` and returning `notifications: [...]`.
+- Produces: `POST /api/proposals/:id/record-payment` accepting `notify_client` and returning `notifications` (`payment_receipt` entry when attempted).
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
+
+Seed two separate receipt-eligible proposals (record-payment mutates status; shared fixtures
+go order-dependent), one of them on a client with a `.invalid` email. Assertions are
+response-contract based (dev env never writes `message_log`; that absence is NOT the
+assertion).
 
 ```javascript
-test('record-payment with notify_client false sends no receipt but still alerts the admin', async () => {
-  const calls = [];
-  // Capture rather than mock the module: assert on the response contract and on
-  // the message_log, which is the durable record of what actually went out.
-  const res = await request('POST', `/api/proposals/${payProposalId}/record-payment`, {
-    token: adminToken,
-    body: { amount: 100, paid_in_full: false, method: 'cash', notify_client: false },
+test('record-payment notify_client=false: no receipt entry, payment recorded', async () => {
+  const res = await request('POST', `/api/proposals/${payProposalA}/record-payment`, {
+    token: adminToken, body: { amount: 100, paid_in_full: false, method: 'cash', notify_client: false },
   });
   assert.equal(res.status, 200);
   assert.deepEqual(res.body.notifications, []);
-  const logged = await pool.query(
-    "SELECT COUNT(*)::int AS c FROM message_log WHERE proposal_id = $1 AND message_type LIKE 'payment%'",
-    [payProposalId]
-  );
-  assert.equal(logged.rows[0].c, 0, 'no client receipt may be logged');
-  assert.equal(calls.length, 0);
 });
 
-test('record-payment with notify_client true sends the receipt', async () => {
-  const res = await request('POST', `/api/proposals/${payProposalId2}/record-payment`, {
-    token: adminToken,
-    body: { amount: 100, paid_in_full: false, method: 'cash', notify_client: true },
+test('record-payment notify_client=true: receipt attempted and reported', async () => {
+  const res = await request('POST', `/api/proposals/${payProposalB}/record-payment`, {
+    token: adminToken, body: { amount: 100, paid_in_full: false, method: 'cash', notify_client: true },
   });
   assert.equal(res.status, 200);
-  const entry = res.body.notifications.find(n => n.type === 'payment_receipt');
+  const entry = res.body.notifications.find((n) => n.type === 'payment_receipt');
   assert.ok(entry);
-  assert.ok(['sent', 'skipped'].includes(entry.email));
+  assert.equal(entry.email, 'sent'); // dev-skip still resolves; 'sent' is the non-throw path
+});
+
+test('record-payment notify_client=true on a .invalid client: skipped, never sent', async () => {
+  const res = await request('POST', `/api/proposals/${payProposalInvalid}/record-payment`, {
+    token: adminToken, body: { amount: 50, paid_in_full: false, method: 'cash', notify_client: true },
+  });
+  const entry = res.body.notifications.find((n) => n.type === 'payment_receipt');
+  assert.equal(entry.email, 'skipped');
+  assert.match(entry.skip_reasons.email, /placeholder/i);
+});
+
+test('record-payment notify_client=true on a prefs-suppressed client: skipped with reason', async () => {
+  await pool.query(`UPDATE clients SET communication_preferences = '{"email_enabled": false}'::jsonb WHERE id = $1`, [payClientB]);
+  try {
+    const res = await request('POST', `/api/proposals/${payProposalB2}/record-payment`, {
+      token: adminToken, body: { amount: 25, paid_in_full: false, method: 'cash', notify_client: true },
+    });
+    const entry = res.body.notifications.find((n) => n.type === 'payment_receipt');
+    assert.equal(entry.email, 'skipped');
+  } finally {
+    await pool.query(`UPDATE clients SET communication_preferences = '{}'::jsonb WHERE id = $1`, [payClientB]);
+  }
 });
 ```
 
-**Note for the implementer:** seed `payProposalId` and `payProposalId2` as separate `deposit_paid`-eligible proposals in `before`, because record-payment mutates status and a shared fixture would make the second test order-dependent. Confirm the message-type prefix by reading what `emailTemplates.paymentReceivedClient` logs through `sendEmail`; adjust the `LIKE` if it differs.
+Dev-gating caveat on the `'sent'` assertion: `sendEmail` resolves `{ id: 'dev-skipped' }`
+locally, so the route's non-throw path reports `sent`. That is the same convention
+`comms.js` dispatch uses in dev. The suppression/placeholder tests are the ones proving the
+gates; do not try to prove provider delivery locally.
 
-- [ ] **Step 2: Run it to make sure it fails**
+- [ ] **Step 2: Run to verify failure**
 
-Run: `node -r dotenv/config --test server/routes/proposals/notifyClient.test.js`
-Expected: FAIL, a receipt is logged even with `notify_client: false`.
+Expected: FAIL (`notifications` undefined; receipt fires regardless).
 
-- [ ] **Step 3: Gate the client half only**
+- [ ] **Step 3: Implement**
 
-At `actions.js:134` add `notify_client` to the destructure:
+`actions.js:135`: `const { amount, paid_in_full, method, notify_client } = req.body;`
+
+The client-facing half of the block at `:307-330` becomes opt-in; the admin half is untouched.
+The payData SELECT adds `c.id AS client_id, c.communication_preferences, c.email_status` to
+its join. Then:
 
 ```javascript
-  const { amount, paid_in_full, method, notify_client } = req.body;
-```
-
-At `:307-330`, split the block so the admin notice is never gated:
-
-```javascript
-  // Email notifications for payment (non-blocking)
   const notifications = [];
   try {
-    const payData = await pool.query(/* unchanged */);
-    const pd = payData.rows[0];
-    const amountFormatted = appliedAmount.toFixed(2);
-    const payType = isFullyPaid ? 'full payment' : 'deposit';
-    const eventTypeLabel = getEventTypeLabel({ event_type: pd?.event_type, event_type_custom: pd?.event_type_custom });
+    /* payData fetch, amountFormatted, payType, eventTypeLabel: unchanged */
 
-    // Client receipt: opt-in. Recording a payment is a bookkeeping act; the
-    // client-facing receipt is a separate decision the admin makes at the
-    // moment of recording (spec: no later-send path).
+    // Client receipt: opt-in (spec: recording a payment is bookkeeping; the
+    // receipt is a separate decision made at the moment of recording).
     if (notify_client === true) {
-      if (pd?.client_email) {
+      const gate = await shouldSendImmediate({
+        proposal: { id: proposal.id, status: newStatus }, client: pd, channel: 'email',
+      });
+      if (!pd?.client_email || isPlaceholderEmail(pd.client_email)) {
+        notifications.push({ type: 'payment_receipt', email: 'skipped', sms: null,
+          skip_reasons: { email: pd?.client_email ? 'Placeholder address (.invalid) from the CC import; no real email exists.' : 'No email on file for this client.' } });
+      } else if (!gate.ok) {
+        notifications.push({ type: 'payment_receipt', email: 'skipped', sms: null,
+          skip_reasons: { email: `Suppressed: ${gate.reason}.` } });
+      } else {
         try {
           const tpl = emailTemplates.paymentReceivedClient({ clientName: pd.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType });
-          await sendEmail({ to: pd.client_email, ...tpl });
+          await sendEmail({ to: pd.client_email, ...tpl, meta: { proposalId: proposal.id, clientId: pd.client_id || null, messageType: 'payment_received' } });
           notifications.push({ type: 'payment_receipt', email: 'sent', sms: null, skip_reasons: {} });
         } catch (rcptErr) {
           notifications.push({ type: 'payment_receipt', email: 'failed', sms: null, email_error: rcptErr.message, skip_reasons: {} });
         }
-      } else {
-        notifications.push({
-          type: 'payment_receipt', email: 'skipped', sms: null,
-          skip_reasons: { email: 'No email on file for this client.' },
-        });
       }
     }
 
-    // Admin notice: NEVER gated. This is internal routine_finance reporting,
-    // not a client touch.
+    // Admin routine_finance notice: NEVER gated (unchanged).
     const tpl2 = emailTemplates.paymentReceivedAdmin({ /* unchanged */ });
-    await notifyAdminCategory({ category: 'routine_finance', subject: tpl2.subject, emailHtml: tpl2.html, emailText: tpl2.text });
-  } catch (emailErr) {
-    /* unchanged */
-  }
+    await notifyAdminCategory({ /* unchanged */ });
+  } catch (emailErr) { /* unchanged */ }
 ```
 
-- [ ] **Step 4: Return the notifications**
+(Verify `newStatus` / `pd` variable names against the real block and match them; verify
+`sendEmail`'s meta contract as in Task 2.) Response: the record-payment `res.json` at `:366`
+(NOT the byte-identical one at `:22`, which belongs to another handler) spreads
+`notifications` in.
 
-Find the `res.json(...)` at the end of the handler and spread `notifications` into it the same way Task 4 did, keeping every existing key at the top level.
-
-- [ ] **Step 5: Run the tests and make sure they pass**
+- [ ] **Step 4: Run**
 
 ```bash
 node -r dotenv/config --test server/routes/proposals/notifyClient.test.js
@@ -1174,198 +1078,107 @@ node -r dotenv/config --test server/routes/proposals/recordPayment.statusGuard.t
 node -r dotenv/config --test server/routes/proposals/recordPayment.invoiceCap.test.js
 node -r dotenv/config --test server/routes/proposals/recordPayment.staleRead.test.js
 ```
-Expected: PASS on all four.
+Expected: all PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add server/routes/proposals/actions.js server/routes/proposals/notifyClient.test.js
-git commit -m "feat(notify): record-payment receipt is opt-in; admin alert never gated"
+git commit -m "feat(notify): opt-in receipt with suppression + placeholder gates; admin alert untouched"
 ```
 
 ---
 
-## Task 6: Docs
+## Task 6: Sensitive paths + docs
 
 **Files:**
-- Modify: `ARCHITECTURE.md` (API route table)
+- Modify: `scripts/sensitive-paths.txt`
+- Modify: `ARCHITECTURE.md`, `README.md`
 
-- [ ] **Step 1: Add the new route**
+- [ ] **Step 1: Make the review posture real**
 
-Add `POST /api/proposals/:id/notify-preflight` to the proposals section of the route table, described as "read-only; which client notices a pending edit would trigger, plus the drafted event-details message".
+Append to `scripts/sensitive-paths.txt` (match the file's existing pattern style, one per line):
+`server/routes/proposals/crud.js`, `server/routes/proposals/actions.js`,
+`server/utils/rescheduleProposal.js`. Verify:
+`node scripts/sensitive-match.js server/routes/proposals/crud.js server/routes/proposals/actions.js server/utils/rescheduleProposal.js`
+Expected: all three echo back.
 
-- [ ] **Step 2: Note the contract change**
+- [ ] **Step 2: Docs**
 
-In the same section, note that `PATCH /api/proposals/:id` and `POST /api/proposals/:id/record-payment` send client notifications only when the request names them (`notify` list / `notify_client`), and that both return a `notifications` array of per-channel results.
+ARCHITECTURE.md proposals route table: add `POST /:id/notify-preflight` (read-only, which
+notices a pending edit would trigger + drafted message); annotate `PATCH /:id` and
+`POST /:id/record-payment` with the opt-in notify contract and the `notifications` response
+array. README: folder-tree entries for `clientNotices.js` and `notifyPreflight.js` at the
+granularity the tree already uses.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add ARCHITECTURE.md
-git commit -m "docs: notify-preflight route + opt-in client notification contract"
+git add scripts/sensitive-paths.txt ARCHITECTURE.md README.md
+git commit -m "chore(notify): proposals money paths join sensitive list; route docs"
 ```
 
 ---
 
 # Lane: notify-client
 
-## Task 7: The confirmation modal
+## Task 7: `NotifyConfirmModal`
 
 **Files:**
-- Create: `client/src/components/comms/NotifyConfirmModal.jsx`
+- Create: `client/src/components/comms/NotifyConfirmModal.jsx` (new directory)
 
 **Interfaces:**
 - Produces:
 
 ```javascript
 <NotifyConfirmModal
-  notices={notices}          // preflight's array; [] never renders
-  primary="quiet"            // 'quiet' on edits, 'send' on payments
-  sendLabel="Send the update"
-  quietLabel="Don't send"
-  onCancel={() => {}}
-  onQuiet={() => {}}         // caller saves with an empty notify list
-  onSend={(notify) => {}}    // notify: the array to put on the request
+  notices={notices}            // preflight's array (or a synthesized fixed-template notice)
+  primary="quiet" | "send"
+  title="Notify the client?"   // payment mode passes "Email a receipt?"
+  sendLabel / quietLabel
+  busy={bool}                  // in-flight lockout: all buttons disabled, Esc/backdrop inert
+  onCancel / onQuiet / onSend(notifyList)
 />
 ```
 
 - [ ] **Step 1: Write the component**
 
-Create `client/src/components/comms/NotifyConfirmModal.jsx`. Follow the portal + overlay pattern in `client/src/components/ShoppingList/ShoppingListModal.jsx:462-470`.
+Portal + overlay pattern from `ShoppingListModal.jsx:462-470`. Requirements, all from the
+spec (generic from day one; nothing hardcodes a notice type):
 
-```jsx
-import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
+- One block per notice. `composable: true` renders editable subject/body (+ SMS textarea when
+  offered) with live counters mirroring the server caps (subject 300, SMS 640) and Send
+  disabled while over-cap. `composable: false` renders `reasons` prose plus "This message is
+  not editable."
+- `autopay_notice`, when present, renders as a highlighted line in the block.
+- Recipient line labeled "Current contact on file:" (preflight reads the stored row).
+- Channel checkboxes only for `available` channels, checked per `default`.
+- Buttons: Cancel / quiet / send; `primary` styles which of quiet/send is `btn-success` and
+  ALSO orders them (primary rightmost), so the edit popup and the payment popup never put the
+  sending action in the same reflex position.
+- `busy` disables all three buttons, Escape, and backdrop dismissal.
+- Escape + backdrop = `onCancel`, never `onQuiet`.
+- `onSend` builds the notify list: composable notices contribute
+  `{ type, channels, email?: { subject, body_text }, sms?: { body } }` from the edited
+  drafts; fixed-template notices contribute nothing to the wire (their caller interprets
+  Send as its own boolean); a notice with all channels unchecked is omitted, and Send is
+  disabled when every notice ends up empty.
 
-// Confirmation shown when a save would message the client. One block per
-// notice; composable notices are editable, fixed-template ones are described.
-//
-// Escape and backdrop are CANCEL, never quiet-save. Dismissing must not
-// silently commit an edit the admin was still deciding about.
-export default function NotifyConfirmModal({
-  notices, primary = 'quiet',
-  sendLabel = 'Send the update', quietLabel = "Don't send",
-  onCancel, onQuiet, onSend,
-}) {
-  const [drafts, setDrafts] = useState(() => notices.map((n) => ({
-    type: n.type,
-    channels: Object.entries(n.channels || {})
-      .filter(([, c]) => c.available && c.default)
-      .map(([k]) => k),
-    subject: n.draft?.email?.subject || '',
-    bodyText: n.draft?.email?.body_text || '',
-    smsBody: n.draft?.sms?.body || '',
-  })));
+- [ ] **Step 2: Note the checkpoint honesty rule**
 
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onCancel(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onCancel]);
-
-  if (!notices || notices.length === 0) return null;
-
-  const update = (i, patch) => setDrafts((d) => d.map((x, j) => (j === i ? { ...x, ...patch } : x)));
-  const toggleChannel = (i, ch) => update(i, {
-    channels: drafts[i].channels.includes(ch)
-      ? drafts[i].channels.filter((c) => c !== ch)
-      : [...drafts[i].channels, ch],
-  });
-
-  const anyChannel = drafts.some((d) => d.channels.length > 0);
-
-  const buildNotify = () => drafts
-    .filter((d) => d.channels.length > 0)
-    .map((d) => {
-      const notice = notices.find((n) => n.type === d.type);
-      if (!notice.composable) return { type: d.type, channels: d.channels };
-      const out = { type: d.type, channels: d.channels };
-      if (d.channels.includes('email')) out.email = { subject: d.subject, body_text: d.bodyText };
-      if (d.channels.includes('sms')) out.sms = { body: d.smsBody };
-      return out;
-    });
-
-  return createPortal(
-    <div
-      style={{ position: 'fixed', inset: 0, zIndex: 1000, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', paddingTop: 'calc(60px + 1.5rem)' }}
-      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
-    >
-      <div style={{ backgroundColor: 'var(--bg-elev)', width: '100%', maxWidth: 640, borderRadius: 8, padding: '1.25rem', margin: '0 auto 1.5rem' }}>
-        <h3 style={{ fontFamily: 'var(--font-display)', marginBottom: '0.75rem' }}>
-          Notify the client?
-        </h3>
-
-        {notices.map((n, i) => (
-          <div key={n.type} style={{ borderTop: i > 0 ? '1px solid var(--line-2)' : 'none', paddingTop: i > 0 ? '1rem' : 0, marginBottom: '1rem' }}>
-            <div className="text-small text-muted" style={{ marginBottom: '0.5rem' }}>
-              {n.reasons.join(', ')}. Goes to {n.recipient.name || 'the client'}
-              {n.recipient.email ? ` (${n.recipient.email})` : ''}.
-            </div>
-
-            <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem' }}>
-              {['email', 'sms'].map((ch) => n.channels[ch]?.available && (
-                <label key={ch} className="text-small" style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-                  <input type="checkbox" checked={drafts[i].channels.includes(ch)} onChange={() => toggleChannel(i, ch)} />
-                  {ch === 'email' ? 'Email' : 'Text'}
-                </label>
-              ))}
-            </div>
-
-            {n.composable ? (
-              <>
-                {drafts[i].channels.includes('email') && (
-                  <>
-                    <input className="form-input mb-1" value={drafts[i].subject}
-                      onChange={(e) => update(i, { subject: e.target.value })} placeholder="Subject" />
-                    <textarea className="form-input mb-1" rows={6} value={drafts[i].bodyText}
-                      onChange={(e) => update(i, { bodyText: e.target.value })} />
-                  </>
-                )}
-                {drafts[i].channels.includes('sms') && (
-                  <>
-                    <textarea className="form-input" rows={3} value={drafts[i].smsBody}
-                      onChange={(e) => update(i, { smsBody: e.target.value })} />
-                    <div className="text-small text-muted">{drafts[i].smsBody.length} / 640</div>
-                  </>
-                )}
-              </>
-            ) : (
-              <div className="text-small">
-                The client will be emailed that their gratuity total went up. This message is not editable.
-              </div>
-            )}
-          </div>
-        ))}
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
-          <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>
-          <button
-            className={primary === 'quiet' ? 'btn btn-success' : 'btn btn-secondary'}
-            onClick={onQuiet}
-          >{quietLabel}</button>
-          <button
-            className={primary === 'send' ? 'btn btn-success' : 'btn'}
-            disabled={!anyChannel}
-            onClick={() => onSend(buildNotify())}
-          >{sendLabel}</button>
-        </div>
-      </div>
-    </div>,
-    document.body
-  );
-}
-```
-
-- [ ] **Step 2: Verify it compiles under the CI lint gate**
+CRA's lint gate only checks modules webpack reaches; an unimported component compiles
+trivially. So this task's build run is a syntax check only; the REAL verification is Task 8's
+build + manual pass, which is why Tasks 7 and 8 merge as one reviewable unit and this commit
+never lands alone on main (lane squash guarantees that).
 
 Run: `cd client && CI=true npx react-scripts build`
-Expected: build succeeds with no warnings-as-errors.
+Expected: succeeds.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add client/src/components/comms/NotifyConfirmModal.jsx
-git commit -m "feat(notify): shared client-notification confirmation modal"
+git commit -m "feat(notify): shared confirmation modal (generic notices, caps, busy lockout)"
 ```
 
 ---
@@ -1373,36 +1186,38 @@ git commit -m "feat(notify): shared client-notification confirmation modal"
 ## Task 8: Wire both edit forms
 
 **Files:**
-- Modify: `client/src/pages/admin/EventEditForm.js:70-110`
-- Modify: `client/src/pages/admin/ProposalDetailEditForm.js:235-275`
+- Modify: `client/src/pages/admin/EventEditForm.js` (save flow at `:70-113`)
+- Modify: `client/src/pages/admin/ProposalDetailEditForm.js` (save flow at `:235-279`)
 
-- [ ] **Step 1: Extract the PATCH body, then preflight before saving**
-
-Both forms build their PATCH body inline. In each, hoist it into a variable, then run preflight first. `EventEditForm.js`:
+- [ ] **Step 1: Restructure the save flow (both forms; ProposalDetailEditForm uses `editForm`/its own callback names; match each file's existing names)**
 
 ```javascript
   const [pendingNotices, setPendingNotices] = useState([]);
   const [pendingBody, setPendingBody] = useState(null);
+  const [notifyBusy, setNotifyBusy] = useState(false);
 
-  const buildPatchBody = () => ({
-    event_date: form.event_date,
-    /* ... every existing key, unchanged ... */
-    notify_assigned_staff: notifyStaff,
-    /* ... */
-  });
+  // The full PATCH body, extracted verbatim from the current inline api.patch call
+  // (every existing key unchanged, INCLUDING change_request_id where the form
+  // sends it: preflight needs it to suppress the popup on CR approvals).
+  const buildPatchBody = () => ({ /* existing body */ });
 
+  // Client-contact PUT moved INSIDE the confirmed save: Cancel must mean
+  // "nothing happened at all," and today's PUT-before-PATCH breaks that.
   const doSave = async (patchBody, notify) => {
     if (proposal.client_id) {
-      await api.put(`/clients/${proposal.client_id}`, {
-        name: form.client_name, email: form.client_email,
-        phone: form.client_phone, source: form.client_source,
-      });
+      await api.put(`/clients/${proposal.client_id}`, { name: ..., email: ..., phone: ..., source: ... });
     }
     const res = await api.patch(`/proposals/${proposal.id}`, { ...patchBody, notify });
     (res.data.notifications || []).forEach((n) => {
       if (n.email === 'failed') toast.error(`Saved, but the email failed: ${n.email_error || 'unknown error'}`);
-      else if (n.sms === 'failed') toast.error(`Saved, but the text failed: ${n.sms_error || 'unknown error'}`);
-      else if (n.email === 'skipped' && n.skip_reasons?.email) toast.info(`Saved. Email not sent: ${n.skip_reasons.email}`);
+      if (n.sms === 'failed') toast.error(`Saved, but the text failed: ${n.sms_error || 'unknown error'}`);
+      // 'skipped' toasts ONLY for a channel the admin actually selected:
+      // "not selected" and never-offered channels stay silent.
+      ['email', 'sms'].forEach((ch) => {
+        if (n[ch] === 'skipped' && n.skip_reasons?.[ch] && n.skip_reasons[ch] !== 'not selected') {
+          toast.info(`Saved. ${ch === 'email' ? 'Email' : 'Text'} not sent: ${n.skip_reasons[ch]}`);
+        }
+      });
     });
     return res;
   };
@@ -1414,95 +1229,92 @@ Both forms build their PATCH body inline. In each, hoist it into a variable, the
       const patchBody = buildPatchBody();
       const pre = await api.post(`/proposals/${proposal.id}/notify-preflight`, patchBody);
       const notices = pre.data.notices || [];
-      if (notices.length > 0) {
-        setPendingBody(patchBody);
-        setPendingNotices(notices);
-        setSaving(false);
-        return;                       // the modal drives the rest
-      }
+      if (notices.length > 0) { setPendingBody(patchBody); setPendingNotices(notices); return; }
       const res = await doSave(patchBody, []);
       onSaved?.(res.data);
     } catch (err) {
-      /* existing error handling, unchanged */
-    } finally {
-      setSaving(false);
-    }
+      // Preflight failure blocks the save (never silently degrade to a quiet
+      // save: that would suppress a wanted send with no decision made).
+      if (err.fieldErrors) setFieldErrors(err.fieldErrors);
+      setError(err.message || 'Save failed.');
+    } finally { setSaving(false); }
+  };
+
+  const settle = (fn) => async (...a) => {
+    setNotifyBusy(true);
+    try {
+      const res = await fn(...a);
+      setPendingNotices([]); setPendingBody(null);
+      onSaved?.(res.data);
+    } catch (err) {
+      if (err.fieldErrors) setFieldErrors(err.fieldErrors);
+      setError(err.message || 'Save failed.');
+      setPendingNotices([]); setPendingBody(null);
+    } finally { setNotifyBusy(false); }
   };
 ```
 
-- [ ] **Step 2: Render the modal**
-
-At the end of each form's JSX:
+Render:
 
 ```jsx
       {pendingNotices.length > 0 && (
         <NotifyConfirmModal
           notices={pendingNotices}
           primary="quiet"
-          onCancel={() => { setPendingNotices([]); setPendingBody(null); }}
-          onQuiet={async () => {
-            setSaving(true);
-            try {
-              const res = await doSave(pendingBody, []);
-              setPendingNotices([]); setPendingBody(null);
-              onSaved?.(res.data);
-            } catch (err) { setError(err.message || 'Save failed.'); }
-            finally { setSaving(false); }
-          }}
-          onSend={async (notify) => {
-            setSaving(true);
-            try {
-              const res = await doSave(pendingBody, notify);
-              setPendingNotices([]); setPendingBody(null);
-              onSaved?.(res.data);
-            } catch (err) { setError(err.message || 'Save failed.'); }
-            finally { setSaving(false); }
-          }}
+          busy={notifyBusy}
+          onCancel={() => { if (!notifyBusy) { setPendingNotices([]); setPendingBody(null); } }}
+          onQuiet={settle(() => doSave(pendingBody, []))}
+          onSend={settle((notify) => doSave(pendingBody, notify))}
         />
       )}
 ```
 
-Import it at the top: `import NotifyConfirmModal from '../../components/comms/NotifyConfirmModal';`
+Import: `import NotifyConfirmModal from '../../components/comms/NotifyConfirmModal';`
 
-**Note for the implementer:** `ProposalDetailEditForm.js` uses `editForm` where `EventEditForm.js` uses `form`, and its own `onSaved`/state names. Read each file and match its existing names. Do not rename anything.
+Check each form's `error`/`fieldErrors` state names and its `api.js` error shape (whether
+`fieldErrors` is surfaced on the thrown error) and adapt; the requirement is that a 400 from
+a stale popup shows the server's field text, not a bare "Save failed."
 
-- [ ] **Step 3: Verify the build**
+- [ ] **Step 2: Build gate**
 
 Run: `cd client && CI=true npx react-scripts build`
-Expected: succeeds.
+Expected: succeeds, no warnings-as-errors.
 
-- [ ] **Step 4: Manual check**
+- [ ] **Step 3: Manual pass (dev server; this is the lane's behavioral checkpoint)**
 
-Start the dev server. On a `deposit_paid` proposal, change only the guest count and save: no popup. Change the venue and save: popup appears with the drafted message. Press Escape: nothing saved, the venue is unchanged. Reopen, change the venue, click Don't send: saved, no message. Confirm in the DB that `scheduled_messages.scheduled_for` still moved if you also changed the date.
+On a `deposit_paid` proposal: guest-count-only save = no popup. Venue edit = popup with
+draft; the draft contains no dollar figures. Escape = nothing saved (verify the venue AND the
+client-contact fields are unchanged in the DB: the PUT must not have fired). Don't send =
+saved, no message, no noise toast. Date change on an autopay-enrolled booking = popup shows
+the auto-charge line with the projected date. Save with a pending change request = NO popup.
+Confirm `scheduled_messages.scheduled_for` moved after a quiet date change
+(`entity_type='proposal' AND entity_id=<id>`).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add client/src/pages/admin/EventEditForm.js client/src/pages/admin/ProposalDetailEditForm.js
-git commit -m "feat(notify): confirm before an edit messages the client"
+git commit -m "feat(notify): edit forms confirm before messaging; Cancel now means nothing happened"
 ```
 
 ---
 
-## Task 9: Wire record payment
+## Task 9: Record-payment prompt
 
 **Files:**
-- Modify: `client/src/pages/admin/ProposalDetailPaymentPanel.js:194-217`
+- Modify: `client/src/pages/admin/ProposalDetailPaymentPanel.js` (`recordPayment` at `:194-217`)
 - Modify: `README.md` (Key Features)
 
-- [ ] **Step 1: Ask before posting**
-
-Replace `recordPayment` with a two-step flow. There is no preflight call here: the receipt fires whenever the client has an email, which the panel already knows from `proposal`.
+- [ ] **Step 1: Two-step record flow**
 
 ```javascript
   const [receiptPrompt, setReceiptPrompt] = useState(false);
 
+  const clientEmailUsable = Boolean(proposal.client_email) && !String(proposal.client_email).toLowerCase().trim().endsWith('.invalid');
+
   const recordPayment = () => {
-    if (!paymentPaidInFull && (!paymentAmount || Number(paymentAmount) <= 0)) {
-      toast.error('Please enter a valid amount.');
-      return;
-    }
-    if (!proposal.client_email) { doRecordPayment(false); return; }
+    if (!paymentPaidInFull && (!paymentAmount || Number(paymentAmount) <= 0)) { toast.error('Please enter a valid amount.'); return; }
+    if (!clientEmailUsable) { doRecordPayment(false); return; }
     setReceiptPrompt(true);
   };
 
@@ -1512,44 +1324,44 @@ Replace `recordPayment` with a two-step flow. There is no preflight call here: t
     try {
       const res = await api.post(`/proposals/${proposal.id}/record-payment`, {
         amount: paymentPaidInFull ? undefined : Number(paymentAmount),
-        paid_in_full: paymentPaidInFull,
-        method: paymentMethod,
+        paid_in_full: paymentPaidInFull, method: paymentMethod,
         notify_client: notifyClient,
       });
-      const amountStr = fmt$2dp(paymentPaidInFull ? balanceDue : Number(paymentAmount));
-      toast.success(`Payment of ${amountStr} recorded.`);
+      toast.success(`Payment of ${fmt$2dp(paymentPaidInFull ? balanceDue : Number(paymentAmount))} recorded.`);
       (res.data.notifications || []).forEach((n) => {
-        if (n.email === 'failed') toast.error(`Recorded, but the receipt failed to send: ${n.email_error || 'unknown error'}`);
+        if (n.email === 'failed') toast.error(`Recorded, but the receipt failed: ${n.email_error || 'unknown error'}`);
         else if (n.email === 'skipped' && n.skip_reasons?.email) toast.info(`Recorded. Receipt not sent: ${n.skip_reasons.email}`);
       });
-      setShowRecordPayment(false);
-      setPaymentAmount('');
-      setPaymentPaidInFull(false);
+      setShowRecordPayment(false); setPaymentAmount(''); setPaymentPaidInFull(false);
       onUpdate?.();
-    } catch (err) {
-      toast.error(err.message || 'Failed to record payment.');
-    } finally {
-      setRecordingPayment(false);
-    }
+    } catch (err) { toast.error(err.message || 'Failed to record payment.'); }
+    finally { setRecordingPayment(false); }
   };
 ```
 
-- [ ] **Step 2: Render the prompt with Send as primary**
+`proposal.client_email` must exist on the panel's data. It is on the `getOne` payload
+(`getOne.js:19`); verify the panel's `proposal` prop carries it, and if not, thread it from
+the parent that fetched `getOne`.
+
+Render (note `primary="send"` and the distinct title; fixed-template notice, no draft):
 
 ```jsx
       {receiptPrompt && (
         <NotifyConfirmModal
+          title="Email a receipt?"
           notices={[{
             type: 'payment_receipt',
-            reasons: [`Receipt for ${fmt$2dp(paymentPaidInFull ? balanceDue : Number(paymentAmount))}`],
+            reasons: [`Receipt for ${fmt$2dp(paymentPaidInFull ? balanceDue : Number(paymentAmount))} (the receipt shows the applied amount if the server caps it)`],
             composable: false,
             recipient: { name: proposal.client_name, email: proposal.client_email, phone: null },
             channels: { email: { available: true, default: true }, sms: { available: false } },
+            autopay_notice: null,
             draft: null,
           }]}
           primary="send"
           sendLabel="Send receipt"
           quietLabel="Don't send"
+          busy={recordingPayment}
           onCancel={() => setReceiptPrompt(false)}
           onQuiet={() => doRecordPayment(false)}
           onSend={() => doRecordPayment(true)}
@@ -1557,32 +1369,148 @@ Replace `recordPayment` with a two-step flow. There is no preflight call here: t
       )}
 ```
 
-**Note for the implementer:** the modal's fixed-template branch hardcodes gratuity copy. Change that branch to render `notices[i].reasons` plus a generic "This message is not editable." line so it serves both notice types honestly, and update Task 7's component accordingly.
+Import NotifyConfirmModal (this file has no import from Task 8).
 
-- [ ] **Step 3: Update README**
+- [ ] **Step 2: README Key Features line**
 
-Add to Key Features: admin edits and recorded payments no longer message the client on their own; a confirmation names what would go out and defaults to quiet on edits, to sending on receipts.
+Admin edits and recorded payments no longer message the client on their own; a confirmation
+names what would go out, quiet by default on edits, send-receipt by default on payments.
 
-- [ ] **Step 4: Verify the build**
+- [ ] **Step 3: Build + manual pass**
 
-Run: `cd client && CI=true npx react-scripts build`
-Expected: succeeds.
+`cd client && CI=true npx react-scripts build`, then dev server: record a payment on a client
+with a real email (popup, distinct title, Send primary); on a `.invalid` client (no popup,
+payment recorded, no receipt entry); Cancel (no payment posted).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add client/src/pages/admin/ProposalDetailPaymentPanel.js client/src/components/comms/NotifyConfirmModal.jsx README.md
-git commit -m "feat(notify): confirm before a recorded payment emails a receipt"
+git add client/src/pages/admin/ProposalDetailPaymentPanel.js README.md
+git commit -m "feat(notify): receipt prompt on record payment (send-primary, placeholder-aware)"
 ```
 
 ---
 
-## Post-merge verification
+# Lane: notify-refunds
 
-Before either lane merges, confirm by hand against the dev DB, because the load-bearing property is a negative and negatives are easy to fake in a test:
+## Task 10: Refund endpoints opt in
 
-1. Move an event date on a booked proposal with Don't send. Then query
-   `SELECT message_type, scheduled_for FROM scheduled_messages WHERE proposal_id = $1 AND status = 'pending'`
-   and confirm every row re-anchored to the new date, and that `balance_due_date` moved with it.
-2. Confirm `message_log` has no new client row for that save.
-3. Repeat with Send and confirm exactly one row per selected channel, carrying the edited text.
+**Files:**
+- Modify: `server/routes/stripe.js:519-527` (in-app refund notify)
+- Modify: `server/routes/proposals/cancel.js:641-644` (cancel-refund notify)
+- Modify: `server/utils/refundClientNotify.js` (suppression + placeholder gates, result return)
+- Create: `server/routes/proposals/notifyRefunds.test.js`
+- Modify: `server/routes/proposals/cancel.test.js` (only if existing cases assert the refund email)
+
+**Interfaces:**
+- `POST /api/stripe/refund/:id` accepts `notify_client: true | false` (absent = false, fail-quiet like every other surface in this project; the UI sends it explicitly every time).
+- `POST /api/proposals/:id/cancel/refund` reads `suppress_client_email` from its body, same key its parent dialog already posts for the cancellation email.
+- `sendRefundClientNotification(...)` returns `{ email: 'sent'|'failed'|'skipped', skip_reasons }` and gains the `shouldSendImmediate` + `isPlaceholderEmail` gates; its SELECT adds `communication_preferences, email_status`.
+
+- [ ] **Step 1: Read before writing**
+
+Read `.claude/seam-sweep-2026-07-02.md` (standing instruction before webhook/refund work),
+then `stripe.js:428-540`, `cancel.js:465-650`, `refundClientNotify.js` in full. The refund
+math is untouched; ONLY the notify tail changes. Note the dedupe architecture: the webhook
+backstop (`chargeRefunded.js:68`) and sweeper (`refundSweepScheduler.js:31`) notify only when
+THEY apply the reconciliation, so gating the in-app notify cannot resurrect a duplicate from
+them.
+
+- [ ] **Step 2: Failing tests**
+
+`notifyRefunds.test.js`, same harness pattern: an in-app refund request with
+`notify_client: false` performs the refund (assert the `proposal_refunds` row lands) and
+returns `notifications: []`; with `notify_client: true` on a suppressed/placeholder client it
+reports `skipped` + reason; `cancel/refund` with `suppress_client_email: true` returns no
+notification entry. Stripe calls stubbed the way the existing refund tests stub them (read
+`invoices.refunds.test.js` for the incumbent pattern; if live-mode stubbing is not viable at
+the route level, gate-level unit tests on `refundClientNotify` + a route test of the
+`notify_client:false` path are the acceptable floor, stated in the test file header).
+
+- [ ] **Step 3: Implement**
+
+`refundClientNotify.js`: add the two gates around the existing `sendEmail` (placeholder →
+skipped with the CC-import reason; `shouldSendImmediate` not ok → skipped with the reason);
+return the result object; never throw for a skip. `stripe.js`: call it only when
+`req.body.notify_client === true`, spread the entry into a `notifications` array on the
+response. `cancel.js`: call it only when the persisted cancel flow's `suppress_client_email`
+is not true (thread the flag from the archive step's body the same way `:237` reads it; if
+the refund endpoint is a separate request, the dialog passes the checkbox value in ITS body
+too, one source of truth in the dialog's state).
+
+- [ ] **Step 4: Run**
+
+```bash
+node -r dotenv/config --test server/routes/proposals/notifyRefunds.test.js
+node -r dotenv/config --test server/routes/proposals/cancel.test.js
+node -r dotenv/config --test server/routes/invoices.refunds.test.js
+```
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/routes/stripe.js server/routes/proposals/cancel.js server/utils/refundClientNotify.js server/routes/proposals/notifyRefunds.test.js server/routes/proposals/cancel.test.js
+git commit -m "feat(notify): refund notices opt-in with suppression + placeholder gates"
+```
+
+---
+
+## Task 11: Refund UI + fix-list + ops tail
+
+**Files:**
+- Modify: `client/src/pages/admin/ProposalDetailPaymentPanel.js` (refund submit at `:121`)
+- Modify: `client/src/pages/admin/CancelEventDialog.js` (`:94` refund call; checkbox copy)
+- Modify: `client/src/pages/admin/CancelEventDialog.test.js` (if copy/flow assertions exist)
+- Modify: `docs/fix-list-remaining-2026-07-02.md`, `ARCHITECTURE.md`
+
+- [ ] **Step 1: Refund panel confirm**
+
+Mirror Task 9 exactly: `NotifyConfirmModal` with `title="Email a refund notice?"`,
+`primary="send"`, fixed-template notice showing the refund amount and recipient,
+placeholder/no-email bypass posting `notify_client: false`. The confirmed choice rides the
+existing `api.post('/stripe/refund/...')` body.
+
+- [ ] **Step 2: Cancel dialog**
+
+The existing suppress checkbox's label extends to say it covers the refund email too (e.g.
+"Don't email the client about this cancellation or its refund"), and `CancelEventDialog.js:94`
+adds the checkbox's current value to the `cancel/refund` body. No second checkbox: one
+decision, whole flow.
+
+- [ ] **Step 3: Fix-list + ARCHITECTURE + ops**
+
+Fix-list entries: (1) "do not contact" toggle on the client admin page writing
+`communication_preferences` (no UI exists today; Luva's row is set by hand, see ops step);
+(2) provider idempotency keys as the precondition for any future failed-send Retry;
+(3) `utils/groupSend.js` is require-dead, delete when convenient.
+ARCHITECTURE: annotate the two refund routes' new flags.
+
+**Ops step (owner approved 2026-07-22), after this lane is LIVE in prod:** on the prod Neon
+`production` branch, set Luva's client row
+`communication_preferences = '{"email_enabled": false, "sms_enabled": false}'::jsonb`,
+verify by reading it back, and note it in the session log. This is what converts the
+"never message Luva" rule from memory into mechanism.
+
+- [ ] **Step 4: Build + manual + commit**
+
+`cd client && CI=true npx react-scripts build`; manual: refund popup appears with Send
+primary; cancel dialog's one checkbox suppresses both emails.
+
+```bash
+git add client/src/pages/admin/ProposalDetailPaymentPanel.js client/src/pages/admin/CancelEventDialog.js client/src/pages/admin/CancelEventDialog.test.js docs/fix-list-remaining-2026-07-02.md ARCHITECTURE.md
+git commit -m "feat(notify): refund confirm UI; cancel dialog one-checkbox comms decision"
+```
+
+---
+
+## Post-merge verification (before push)
+
+1. Quiet date move on a booked proposal: every pending `scheduled_messages` row
+   (`entity_type='proposal' AND entity_id=$1`) re-anchored, `balance_due_date` moved, zero
+   client messages.
+2. Send path: exactly the reviewed text arrives (dev seam log), per-channel truth in the
+   response.
+3. Gratuity disclosure still fires automatically on a staffing rise for a paid, non-suppressed
+   client.
+4. `node scripts/lane:status` clean; push order note: lanes 1+2 ship together.

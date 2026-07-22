@@ -1,7 +1,8 @@
 # Notify-Client Confirmation
 
-Date: 2026-07-21
-Status: approved section-by-section, ready for plan
+Date: 2026-07-21 (revised 2026-07-22 after the design fleet + Fable review; all four owner
+decisions folded in)
+Status: approved, ready for plan
 
 ## Problem
 
@@ -21,92 +22,99 @@ emailed every one of those clients a receipt for a payment they made months ago.
 
 ## Inventory
 
-Every admin action that sends to a client as a side effect, as of this spec:
+Every admin action that reaches a client as a side effect, from a full sweep of every
+`sendEmail`/`sendSMS`/`sendAndLogSms` call site traced back to its trigger (2026-07-22):
+
+**In scope, gets the confirmation:**
 
 | # | Trigger | Sends | Code |
 |---|---------|-------|------|
 | 1 | Proposal PATCH changing `event_date`, `event_start_time`, or `event_location` on a booked proposal | Email **and** SMS | `rescheduleProposal.js:64` (field list), `:412` (status gate), `crud.js:710` (call) |
-| 2 | Proposal PATCH where a staffing change raises the gratuity total | Email | `crud.js:498-501` (trigger), `crud.js:731` (send) |
-| 3 | Recording an outside payment | Email receipt | `actions.js:319-322` |
-| 4 | Approving a change request | Email | `crud.js:809` |
+| 2 | Recording an outside payment | Email receipt | `actions.js:319-322` |
+| 3 | In-app refund (`POST /api/stripe/refund/:id`) | Refund-notice email | `stripe.js:519-527` via `refundClientNotify.js` |
+| 4 | Cancel-flow refund step (`POST /api/proposals/:id/cancel/refund`) | Refund-notice email | `cancel.js:641-644` |
 
-Item 4 is already explicit: it only fires when the caller passes `change_request_id`, so it
-is a deliberate act and is out of scope. Items 1, 2, and 3 fire with no way to decline.
+Item 4 is doubly inconsistent today: the cancel dialog already asks about its cancellation
+email (`suppress_client_email`, `cancel.js:237`, checkbox in `CancelEventDialog.js`) but not
+about the refund email one step later. That existing checkbox is also the in-codebase
+precedent for this whole pattern: a visible per-send decision at the moment of the action.
 
-Everything else that reaches a client is either genuinely explicit (the SendModal comms
-actions, proposal send, invoice send) or scheduled (reminders, nudges, drips). Those are not
-in scope.
+Suppressing the refund notices is safe against their backstops: the `charge.refunded`
+webhook (`chargeRefunded.js:68`) and the stale-pending sweeper (`refundSweepScheduler.js:31`)
+only notify when THEY apply the reconciliation, which they do not when the in-app route did.
+
+**Reclassified, stays automatic (owner decision 2026-07-22):**
+
+| Trigger | Why it stays automatic |
+|---|---|
+| Staffing-driven gratuity increase on a paid booking (`crud.js:499-502` trigger, `:731` send) | This is a billing disclosure, not a courtesy. The rise flows into `total_price` and the post-commit invoice cascade mints or grows a payable invoice that sends **no email of its own** (`invoiceLifecycle.js:337-346`), so this email is the only thing that tells the client they owe more, and on an autopay booking, the only warning their card will be charged more. With quiet-as-default plus the no-later-send rule, gating it would make "billed more, never told" the default outcome of a staffing edit. It also was never part of the owner's complaint. It gains the suppression gate (below) and nothing else changes. |
+
+**Considered and excluded, documented so nobody rediscovers them as misses:**
+
+- **Change-request approve AND decline** (`crud.js:809`, `changeRequests.js:83-87`): both fire
+  only on a deliberate decision act on a request the client filed, where a reply is expected.
+- **Last-minute staffing confirmation** (Touch 2.2, `lastMinuteStaffingConfirmation.js:159/:187`):
+  one-shot by construction (atomic `last_minute_hold` true-to-false flip), a designed product
+  touch of the last-minute flow, and co-triggered by the auto-assign scheduler, so a popup could
+  gate only one of its triggers and the behavior would become incoherent.
+- **Admin charge-balance** (`stripe.js:282`): the receipt arrives via the `payment_intent.succeeded`
+  webhook, which also serves autopay and client checkout. Real money left the client's card; a
+  receipt is the correct artifact.
+- **Status flip to `sent`** (`lifecycle.js:139-158`, deliberately no dedupe): today reachable only
+  through the explicit "Send to client" button, so it is fine, but the exposure is API-shaped: any
+  future bookkeeping tool that flips status to `sent` re-emails the full proposal. Landmine noted
+  for the next tool builder.
+
+Everything else that reaches a client is verifiably explicit-send (SendModal comms actions),
+client-initiated, scheduled, or webhook-triggered.
 
 ## Scope
 
-In scope: put a confirmation in front of items 1, 2, and 3, and move the send decision from
-the server to the caller.
+In scope: put a confirmation in front of inventory items 1-4, move the send decision from the
+server to the caller, and add the suppression gate to the three bare client sends (receipt,
+gratuity, refund notice).
 
-Out of scope: any change to what the messages say (except as forced by composition timing,
-see "Why not SendModal"), to the scheduled-message system, to item 4, to the SendModal comms
-path, and to which fields count as reschedulable.
+Out of scope: the scheduled-message system, the change-request decision emails, the SendModal
+comms path, which fields count as reschedulable, and any change to message content beyond what
+composition timing forces (see the draft-content section).
 
 ## Server
 
 ### Request contract
 
-Both endpoints stop deciding on their own and require the caller to opt in.
-
-A single save can trigger more than one notice: changing the venue and adding a bartender in
-one edit fires both the reschedule notice and the gratuity notice. So the contract is a list,
-not a boolean plus one message.
-
-`PATCH /api/proposals/:id` gains `notify`:
+`PATCH /api/proposals/:id` gains `notify`, an array with today exactly one legal entry type.
+The array wire shape survives (a future composable notice slots in without a contract break),
+but the machinery behind multiple types was deliberately deleted with the gratuity
+reclassification:
 
 ```
 notify: [
   { type: 'event_details_changed',
     channels: ['email', 'sms'],         // subset; omitted channels are not sent
     email: { subject, body_text },      // required when 'email' in channels
-    sms:   { body } },                  // required when 'sms' in channels
-  { type: 'gratuity_increase',
-    channels: ['email'] }               // fixed template, no supplied text
+    sms:   { body } }                   // required when 'sms' in channels
 ]
 ```
 
-An absent or empty `notify` array sends nothing.
+An absent or empty `notify` array sends nothing. A requested notice the save does not trigger
+is a `ValidationError` and the transaction rolls back: the text was composed against a specific
+set of changes and must never send against a different one. There is exactly one strictness
+rule now; the two-class split died with the gratuity notice.
 
-A notice type present in the array that the save does not trigger is handled by strictness
-class, and the two classes differ for a reason:
+Structural validation (known type, no duplicate, required text, caps) runs before
+`pool.connect()`, so a malformed request never checks out a connection. The trigger check runs
+inside the transaction where `shouldSendEmail` is computed, and a mismatch throws and rolls
+back. Nothing saved, nothing sent, in both cases.
 
-- `event_details_changed` **carries supplied text**, so a mismatch is a `ValidationError`. Text
-  composed against one set of changes must never be sent against a different set. A stale form
-  cannot send a reschedule notice on a save that rescheduled nothing.
-- `gratuity_increase` carries no text, so a mismatch is a silent no-op, reported in the response
-  as skipped. This is forced by timing: the gratuity notice depends on the new pricing snapshot,
-  which only exists mid-transaction after the pricing engine runs (`crud.js:490-501`). Preflight
-  cannot know it fires without re-marshalling every pricing input, which is most of what the
-  PATCH does. So preflight predicts it conservatively (staffing inputs changed on a proposal
-  that is paid for gratuity purposes) and the save is the authority.
+`POST /api/proposals/:id/record-payment` gains `notify_client: true | false`. The receipt body
+is fixed (`emailTemplates.paymentReceivedClient`), nothing to compose, no list needed.
 
-The accepted cost is an occasional popup that turns out to send nothing. The alternative,
-duplicating the pricing marshalling in a read-only endpoint, is a far worse trade on a money
-path.
+`POST /api/stripe/refund/:id` gains `notify_client: true | false` the same way (fixed template,
+`refundClientNotify.js`). `POST /api/proposals/:id/cancel/refund` reads the same
+`suppress_client_email` flag its parent dialog already collects, so the one checkbox governs
+both emails of the cancel flow.
 
-Validation happens in two places for a reason. **Structural** checks (known type, no duplicate
-types, required text present, caps respected) run before `BEGIN`, so a malformed request never
-opens a transaction. **Trigger** checks run where the notice set is computed, which for
-`gratuity_increase` is necessarily mid-transaction, after the pricing engine produces the new
-snapshot (`crud.js:490-501`). A trigger mismatch throws inside the transaction and rolls back.
-Either way the outcome is the same and is the one that matters: nothing saved, nothing sent.
-
-Two notice types exist, and they differ in whether the caller composes the text:
-
-| Type | Template | Channels | Composable |
-|---|---|---|---|
-| `event_details_changed` | renders old vs new, so it must be composed at preflight | email, sms | yes, `email` and `sms` required |
-| `gratuity_increase` | `emailTemplates.gratuityStaffingChange`, fixed | email | no, supplied text is rejected |
-
-`POST /api/proposals/:id/record-payment` gains `notify_client: true | false` only. The receipt
-body is fixed (`emailTemplates.paymentReceivedClient`), so there is nothing to compose and no
-list is needed.
-
-This follows the convention the route already uses for the staff side:
+This follows the convention the PATCH already uses for the staff side:
 `notify_assigned_staff`, `notify_staff_sms`, `notify_staff_email` (`crud.js:308`).
 
 **Absent, empty, or false means nothing is sent.** Fail-quiet is deliberate. Any caller that
@@ -115,13 +123,22 @@ is silent by default rather than accidentally messaging a real client. The cost 
 notification is a phone call; the cost of an unwanted one is a client asking why they got a
 robotic message about a change they already discussed.
 
-An `event_details_changed` notice with no `email`/`sms` text is a `ValidationError`, not a
-fallback to the built-in template. There is exactly one composition path.
+An `event_details_changed` notice with no supplied text is a `ValidationError`, never a
+fallback to a built-in template. There is exactly one composition path.
+
+**The change-request seam.** `ProposalDetailEditForm` always sends `change_request_id` when one
+is pending, and the save already suppresses the direct reschedule send on that path
+(`crud.js:710`, `&& !change_request_id`) because the change-approved email (`crud.js:807-824`)
+is that flow's one client touch. The contract keeps that rule coherent end to end: when
+`change_request_id` is present, preflight returns zero notices (no popup) and the save treats
+`event_details_changed` as untriggerable (a requested one is the same `ValidationError`). One
+rule, both sides, and the popup can never appear on a path where Send would do nothing.
 
 ### Preflight
 
-`POST /api/proposals/:id/notify-preflight`, admin/manager, takes the same pending-edit body
-shape the PATCH takes and returns:
+`POST /api/proposals/:id/notify-preflight`, `auth` + `requireAdminOrManager` +
+`adminWriteLimiter` (the read-only `cancel/preview` sibling carries one), integer-guarded
+`:id`. Takes the same pending-edit body shape the PATCH takes and returns:
 
 ```
 {
@@ -131,112 +148,146 @@ shape the PATCH takes and returns:
       composable: true,
       recipient: { name, email, phone },
       channels: { email: {available, default, unavailable_reason}, sms: {...} },
-      draft: { email: {subject, body_text}, sms: {body} } },
-    { type: 'gratuity_increase',
-      reasons: ['gratuity rose from $450.00 to $600.00'],
-      composable: false,
-      recipient: {...}, channels: {...}, draft: null }
+      autopay_notice: 'Their card auto-charges on August 3.' | null,
+      draft: { email: {subject, body_text}, sms: {body} } }
   ]
 }
 ```
 
-An empty `notices` array means the save sends nothing and the form should not prompt.
+An empty `notices` array means the save sends nothing and the form must not prompt.
 
-It **must** compute the triggered notices by calling the same `hasReschedulableChange` and the same
-`BOOKED_SET` status gate the save path calls (`rescheduleProposal.js:64`, `:412`), plus the
-same gratuity comparison as `crud.js:498-501`. No reimplementation, no parallel copy of the
-field list. When someone adds a fourth reschedulable field, both paths change together or
-neither does.
+Determinism is the whole point, and with the gratuity notice gone it is total: preflight and
+the save call the identical functions and must always agree.
 
-It is read-only. It writes nothing and commits nothing.
+- The field decision is `hasReschedulableChange` (`rescheduleProposal.js:64`, already exported)
+  and the status gate is the same `archived`/`BOOKED_SET` predicate, extracted so a read-only
+  endpoint can call it (the current copy sits inside the transactional
+  `rescheduleProposalInTx`).
+- The reschedulable field list is exported from `rescheduleProposal.js` and `reasons` derives
+  from it; no second copy of the list exists anywhere.
+- **The prospective row is built by the same code the save uses.** The live incident that
+  started this project was a venue edit, and venue edits arrive as `venue_*` parts, not as
+  `event_location`: the save merges body parts over the stored row and composes via
+  `composeVenueLocation` (`crud.js:341-350`, helper already in `venueAddress.js:21`). That
+  merge-and-compose block is extracted to a shared `resolvePendingLocation(old, body)` and
+  called from both `crud.js` and preflight. Without this, preflight and the save disagree on
+  the exact field the feature was built for.
 
-The save path recomputes its own notice set and validates the submitted `notify` list against
-it. Preflight is a convenience for the UI, never the authority. A save whose conditions changed
-between preflight and submit rejects (composable notices) or skips (fixed-template notices)
-rather than sending a message built from stale facts.
+It is read-only: no transaction, no writes. The save recomputes its own answer and is the
+authority; preflight is a convenience for the UI.
 
-For `event_details_changed` the two paths call the identical functions and must always agree.
-For `gratuity_increase` preflight is an advisory prediction, per the strictness note above.
+### Draft content (owner decision 2026-07-22: no stale money lines)
 
-The `draft` is the reason this endpoint exists rather than a client-side rule check. See below.
+The current template quotes package, guest count, total, and balance due date. Composed at
+preflight, every one of those can be wrong by the time Send works: the save itself moves
+`balance_due_date` whenever the date moves (`rescheduleProposal.js:432-461`), the same PATCH
+can re-price, and it can even disarm autopay. Compose-at-save was rejected because it destroys
+WYSIWYG; recompose-and-diff was rejected because a mismatch has no good resolution.
+
+So the drafted email is: greeting; one old-to-new line per field that actually changed;
+**the projected date consequence, which IS deterministic**; a link to the live proposal page
+(`PUBLIC_SITE_URL` token URL) for everything else; sign-off. No total, no package line, no
+guest count, and no blanket "everything else stays the same" (the body is editable; Dallas
+adds that sentence himself when it is true).
+
+The projected date consequence: the balance-due shift preserves the existing offset between
+event date and due date, a pure function of the old row plus the pending edit. When the due
+date will move, the draft quotes the projected new date, phrased "your card will auto-charge
+on X" for autopay-enrolled bookings and "your balance due date moves to X" otherwise, and the
+popup surfaces the same fact as `autopay_notice` so the admin sees the money consequence even
+when sending quietly. When the projected date lands within 3 days or in the past, the notice
+says that too; that is the case with effectively zero automatic warning (the T-3 reminder may
+already have fired or may race the charge).
+
+The SMS draft keeps `smsTemplates.rescheduleSms` content, except its closing "Full updated
+confirmation in your email" clause renders only when the email channel is available and
+selected; for an email-less client that default would be a lie.
 
 ### Why the draft is built at preflight, and why not SendModal
 
-The reschedule email renders old-versus-new: `oldDateLocal`, `oldStartTimeLocal`,
-`oldLocation` against `newDateLocal` and friends (`rescheduleProposal.js:305-315`). Those old
-values exist only before the save commits.
+The reschedule message renders old-versus-new, and the old values exist only before the save
+commits. `SendModal` composes by fetching an entity's current state after the fact
+(`POST /api/comms/preview`), which would silently drop the "was Aug 3" half of every message.
+So composition happens at preflight, where the stored row and the pending edits are both in
+hand, and the reviewed text rides the save.
 
-`SendModal` composes by fetching an entity's current state after the fact
-(`POST /api/comms/preview` with an `entity_id`). Routing this through it would silently drop
-the "was Aug 3" half of every message. That is a worse email, so the composition happens at
-preflight, where both the stored row and the pending edits are in hand, and the reviewed text
-rides along on the save.
+The accepted trade: a second piece of compose UI alongside SendModal. Forcing them together
+means either breaking SendModal's entity-driven contract or degrading the message.
 
-The accepted trade: this is a second piece of compose UI alongside SendModal rather than one
-shared component. Forcing them together means either breaking SendModal's entity-driven
-contract or degrading the message.
+### The event-details email becomes a parts email
 
-### Forced change: the event-details email becomes a parts email
+`emailTemplates.rescheduleNotificationClient` returns pre-rendered `{ subject, html, text }`.
+`renderPartsEmail` (`comms/render.js`, the editable-body renderer `shoppingListApprove.js:194`
+uses) takes `{ subject, heading, bodyText, cta }`. They are incompatible: keeping the bespoke
+template while calling the body editable would send the admin's text as plaintext while every
+real mail client rendered the untouched HTML. The admin would review one message and the
+client would receive another, the exact failure this feature exists to eliminate.
 
-`emailTemplates.rescheduleNotificationClient` returns pre-rendered `{ subject, html, text }`
-with the old-versus-new details baked into a styled `<ul>`. `renderPartsEmail`, the shared
-editable-body renderer used by `shoppingListApprove.js:194`, takes
-`{ subject, heading, bodyText, cta }`. They are not compatible.
+So the send renders the reviewed subject and body through `renderPartsEmail`. The old template
+function stays in place (verify remaining callers before ever deleting it).
 
-Keeping the bespoke template while calling the body editable would send the admin's text as
-plaintext only, while every real mail client rendered the untouched HTML. The admin would review
-one message and the client would receive a different one, which is the exact failure this
-feature exists to eliminate.
+### Placeholder addresses are not addresses
 
-So the event-details notice renders through `renderPartsEmail`. `buildEventDetailsDraft`
-composes the old-versus-new facts into prose paragraphs, and what the admin reads in the popup
-is what sends. The styled detail list is lost; the facts are not. WYSIWYG on a client-facing
-message is worth more than the list markup.
+CC-imported clients carry RFC-2606 `.invalid` placeholder emails. `sendEmail` drops them
+silently, returns `{ id: 'skipped-invalid' }`, and writes no ledger row (`email.js:52-90`). A
+design that reported those as "sent" would lie to the exact cohort that motivated the project.
+
+Rule, applied via one shared `isPlaceholderEmail(email)` helper (new, in `emailValidation.js`;
+this is roughly the seventh copy of the predicate in the codebase, so new code uses the helper
+and retrofitting old copies is optional):
+
+- Preflight channel availability: a placeholder means email unavailable, with the CC-import
+  reason string.
+- The send paths (reschedule, receipt, refund): same predicate as defense in depth, reported
+  `skipped` with the reason; additionally map a `skipped-invalid` return to `skipped`, never
+  `sent`.
+- The record-payment panel gate: a placeholder counts as no-email, so no popup, post with
+  `notify_client: false`.
 
 ### What suppression must never touch
 
-`rescheduleProposalInTx` (`crud.js:632`) does two separate jobs in one call. It re-anchors
-every pending scheduled message and recomputes `balance_due_date` from the preserved offset,
-and it returns `shouldSendEmail`. The re-anchoring is correctness, not communication: a moved
-event with stale reminder anchors will fire its balance reminder against the old date.
+`rescheduleProposalInTx` (`crud.js:632`) does two separate jobs. It re-anchors every pending
+scheduled message and recomputes `balance_due_date`, and it returns `shouldSendEmail`. The
+re-anchoring is correctness, not communication. The `notify` list gates **only** the send; the
+`rescheduleProposalInTx` call is unconditional and stays exactly where it is, on its own line.
 
-The `notify` list gates **only** the send. The `rescheduleProposalInTx` call is unconditional
-and stays exactly where it is. The two concerns stay on separate lines in the handler so a
-future edit cannot conflate them.
+Also never gated by `notify`: `runRescheduleStaffHooks` (`crud.js:782`) and its staff flags,
+`notifyAdminCategory` on a recorded payment (`actions.js:324`), the gratuity disclosure email
+(reclassified above), `recomputeNewYearHelloForProposal`, the invoice refresh, and every other
+post-commit cascade.
 
-Also unaffected by `notify`:
+### Suppression parity (owner decision 2026-07-22)
 
-- `runRescheduleStaffHooks` (`crud.js:782`) and its own `notify_assigned_staff` flags. Staff
-  notification is a separate decision from client notification.
-- `notifyAdminCategory` on a recorded payment (`actions.js:323`). That is an internal
-  routine_finance notice to Dallas, not a client touch.
-- `recomputeNewYearHelloForProposal`, the invoice refresh, and every other post-commit
-  cascade.
+`shouldSendImmediate` (`messageSuppression.js`) is the one gate: archived proposal, per-channel
+`communication_preferences`, `email_status`/`phone_status` bad-contact. Every scheduled send
+and most immediate sends already consult it. Three client sends do not: the payment receipt,
+the gratuity disclosure, and the refund notice are bare `sendEmail` calls today.
 
-### Existing suppression still wins
+All three join the gate. An explicit Send never overrides it: a suppressed channel reports
+`skipped` with the reason. This is what makes a do-not-contact client mechanically safe
+instead of memory-safe.
 
-`sendRescheduleEmail` gates each channel on `shouldSendImmediate`
-(`rescheduleProposal.js:229-242`): communication preferences, `email_status`, `phone_status`.
-Choosing Send does not override an unsubscribe or a hard bounce. When a channel is suppressed,
-the response reports it as skipped with the reason rather than as sent.
+**Ops step, owner-approved:** after deploy, set
+`communication_preferences = {"email_enabled": false, "sms_enabled": false}` on Luva's client
+row (prod, Neon). No admin UI exists for these fields (only the marketing unsubscribe writes
+them); a "do not contact" toggle on the client page goes to the fix list.
 
 ### Supplied text validation
 
-Supplied text on an `event_details_changed` notice goes through the same rules `comms.js`
-enforces, reusing that code rather
-than a second implementation:
+Same rules the comms route enforces: subject CR/LF-stripped, trimmed, non-empty, 300 cap; SMS
+trimmed, non-empty, 640 cap; channels filtered to `['email','sms']`. Honesty note: those rules
+live inline in the `/send` handler (`comms.js:88-108`) and are not exported, so this feature
+carries its own copy of the two cap constants and the strip logic, with a comment binding them
+to `comms.js`. Extracting a shared validator would widen a sensitive-path lane for two
+constants; a divergence is a review finding either way.
 
-- Subject: CR/LF stripped, trimmed, non-empty, 300 character cap (`comms.js:88-101`).
-- SMS body: trimmed, non-empty, 640 character cap (`comms.js:17`, `:102-108`).
-- Channels filtered to `['email', 'sms']` (`comms.js:63`).
-
-A channel listed in a notice's `channels` whose recipient is unavailable is skipped with a
-reason, never silently dropped.
+A channel listed in a notice whose recipient is unavailable is skipped with a reason, never
+silently dropped.
 
 ### Response contract
 
-Both endpoints return per-channel truth alongside the updated record, one entry per notice
-attempted (record-payment returns at most one, keyed `payment_receipt`):
+Every gated endpoint returns per-channel truth alongside its existing payload, one entry per
+notice attempted (`event_details_changed`, `payment_receipt`, `refund_notice`):
 
 ```
 notifications: [
@@ -247,129 +298,164 @@ notifications: [
 ]
 ```
 
-An empty array means nothing was attempted, which is the normal Don't-send outcome.
+Empty array = nothing attempted, the normal quiet outcome. Existing top-level response keys
+are preserved (the PATCH spreads `notifications` beside the proposal row; both current client
+callers discard the response body and reload, verified).
 
-The send stays best-effort and post-commit, exactly as today (`crud.js:710-725`): a Resend or
-Twilio failure must never 500 a PATCH whose transaction already committed. But it stops being
-invisible. Today a thrown provider error is logged to Sentry and swallowed, and the admin sees
-a clean success. With this contract the form can say "saved, email failed" instead of showing a
-green check over a message that never left.
+Sends stay best-effort and post-commit: a provider failure must never 500 a request whose
+transaction committed. But it stops being invisible; the form says "saved, email failed"
+instead of showing a green check over a message that never left.
+
+### No later-send path, and no Retry either
+
+There is deliberately no way to send one of these messages after declining (owner rule). A
+**failed** send is also not retryable from the popup, decided after review: a retry endpoint
+that accepts composed text post-save is structurally the banned later-send path, and with no
+idempotency keys at Resend or Twilio anywhere in this codebase, a retry on an ambiguous
+timeout can double-send, which for this owner is worse than zero (zero has a recovery: Dallas
+texts the client, which is his dominant flow anyway). The failure toast plus Sentry is the
+recovery. If a real retry is ever wanted, the precondition is provider idempotency keys; fix
+list.
 
 ## Client
 
-Three call sites: `EventEditForm.js:83` and `ProposalDetailEditForm.js:246` (both PATCH), and
-`ProposalDetailPaymentPanel.js:201` (record payment).
+Call sites: `EventEditForm.js` and `ProposalDetailEditForm.js` (PATCH),
+`ProposalDetailPaymentPanel.js` (record payment at `:201`, in-app refund at `:121`),
+`CancelEventDialog.js` (cancel-refund at `:94`).
 
 ### Event edit
 
-On Save, the form calls `notify-preflight` first. If `notices` is empty, the save proceeds with
-no popup and nothing on screen changes. Fix a guest count or swap a package on an unsigned quote
-and you never see this feature.
+On Save, the form calls preflight with the same body it will PATCH (including
+`change_request_id` when present, so the server can suppress correctly). Empty `notices`:
+save proceeds, no popup, nothing changes on screen. Fix a guest count or edit an unsigned
+quote and you never see this feature.
 
-Otherwise a review popup opens, one block per notice. A composable notice shows the recipient,
-what changed, the drafted subject and body (editable), and a checkbox per available channel
-defaulted per `defaultChannels`. A non-composable notice shows the recipient and a one-line
-description of what will be sent. In the common case there is exactly one block.
+Otherwise the popup shows the recipient (labeled "current contact on file", since preflight
+reads the stored row while the same form may be editing the contact), what changed, the
+`autopay_notice` line when present, the drafted subject and body (editable, with the 300/640
+caps mirrored live client-side), and a checkbox per available channel.
 
 - **Don't send** (primary): saves with an empty `notify` list.
-- **Send the update**: saves with a `notify` entry per notice, carrying the reviewed text.
-- **Cancel**: no save.
+- **Send the update**: saves with the reviewed text.
+- **Cancel**: nothing happens at all.
 
-Send is all-or-nothing across the blocks. Per-notice opt-in is not worth the interface weight
-for a case that will be rare.
+For Cancel to be true, the client-contact `PUT /clients/:id` that both forms fire today
+**before** the PATCH moves inside the confirmed-save path, after the popup decision. Escape
+and backdrop click are Cancel, never quiet-save, and are inert while a save is in flight.
+Buttons carry an in-flight lockout (double-click = double-message otherwise; neither endpoint
+has a rate limiter today).
 
-Don't send is primary because the usual case is that Dallas has already replied to the client
-personally.
+Toast rules: `failed` toasts an error with the provider message; `skipped` toasts only when
+the channel was actually requested (a client with no email must not produce "Email not sent"
+noise on every save); a rejected save surfaces `fieldErrors`, not a generic "Save failed."
 
-The popup is dismissible by Escape and by backdrop click, both equivalent to Cancel, not to
-Don't send. Dismissing must never silently save.
+### Record payment, in-app refund, cancel-refund
 
-### Record payment
+Record payment: popup after the amount is entered, before the POST. States recipient and
+amount, with the caveat that the receipt shows the server-applied amount (the server caps
+against the locked ledger, so an over-entry is applied capped).
 
-The popup opens after the amount is entered, before the POST. There is nothing to compose, so
-it states the recipient and the amount and offers:
-
-- **Send receipt** (primary): posts with `notify_client: true`.
-- **Don't send**: posts with `notify_client: false`.
+- **Send receipt** (primary): posts `notify_client: true`.
+- **Don't send**: posts `notify_client: false`.
 - **Cancel**: no post.
 
-Send receipt is primary here, the opposite of the edit popup, because Dallas will usually want
-the receipt to go. Declining should be the deliberate act, not the easy one.
+Send is primary here, opposite of the edit popup, because the receipt is usually wanted;
+declining should be the deliberate act. Because the two popups invert the primary action, the
+payment mode is visually distinct (its own title, "Email a receipt?", amount and recipient
+prominent) so muscle memory from the edit popup cannot land on Send by reflex.
 
-When the client has no email on file, no popup appears and the payment posts with
-`notify_client: false`.
+No email on file, or a `.invalid` placeholder: no popup, post with `notify_client: false`.
 
-### No later-send path
-
-There is deliberately no way to send one of these messages after declining. The rule is that if
-it is not sent at the moment of the change, it is not sent. This is why no pending-notification
-record, marker badge, or old-value snapshot exists anywhere in this design.
+In-app refund: same shape as record payment (fixed template, Send primary). Cancel-refund:
+no new popup; the existing `suppress_client_email` checkbox in `CancelEventDialog` governs the
+refund email too, so one visible decision covers the whole cancel flow.
 
 ## Testing
 
-Server, `node:test`, one suite at a time against the dev DB (`node -r dotenv/config`):
+Server, `node:test`, one suite at a time against the dev DB (`node -r dotenv/config`).
+Environment law: dev gates real sends (`SEND_NOTIFICATIONS`), `sendEmail` returns
+`dev-skipped` before any ledger write, so **send assertions run at the dependency seam**
+(extend `crud.js`'s existing `__setDeps` pattern to stub `sendRescheduleEmail`; stub
+`sendEmail` where a route calls it directly), never against `message_log`. `ValidationError`
+carries its text in `.fieldErrors`, never `.message`; assertions match on `fieldErrors`.
+`scheduled_messages` is polymorphic: query by `entity_type = 'proposal' AND entity_id`.
+`clients.email_status` is `NOT NULL DEFAULT 'ok'`; fixtures restore `'ok'`, never NULL.
 
 1. A PATCH that moves `event_date` with no `notify` list sends nothing AND still re-anchors
-   every pending scheduled message and recomputes `balance_due_date`. This is the load-bearing
-   test of the whole spec.
-2. A PATCH with an `event_details_changed` notice and reviewed text sends exactly that text,
-   not the template default.
-3. An `event_details_changed` notice with no supplied text is a 400 **and the proposal is not
-   saved**.
-4. An `event_details_changed` entry on a save that changed only the guest count is a 400, and
-   the transaction rolls back, so nothing is saved and nothing is sent.
-5. A `gratuity_increase` entry on a save where the gratuity did not rise saves normally, sends
-   nothing, and reports the notice as skipped with a reason. Not a 400.
-6. `notify-preflight` and the save agree on `event_details_changed`: a table-driven case per
-   reschedulable field plus a non-booked status, asserting both paths compute the same answer.
-7. A supplied SMS body over 640 characters is rejected the same way `comms.js` rejects it.
-8. A suppressed recipient (unsubscribed, `email_status = 'bad'`) reports skipped with a reason
-   even when the notice was requested.
-9. Record payment with `notify_client: false` sends no client receipt but still fires
-   `notifyAdminCategory`.
-10. A save that triggers both notices at once sends both, and the response reports per-channel
-    truth for each.
+   every pending scheduled message and recomputes `balance_due_date`. Load-bearing.
+2. A PATCH with a notice and reviewed text passes exactly that text to the send seam, not the
+   template default.
+3. A notice with no supplied text is a 400 and the proposal is not saved.
+4. A notice on a save that changed nothing reschedulable is a 400, transaction rolled back.
+5. A save carrying `change_request_id`: preflight returns zero notices, and a requested
+   `event_details_changed` on that save is a 400.
+6. Preflight and save agree: table-driven, one case per reschedulable field (including a
+   venue-parts-only edit, exercising `resolvePendingLocation`) plus a non-booked status.
+7. A 641-character SMS body is rejected; a 301-character subject is rejected.
+8. A suppressed recipient (prefs disabled, or `email_status = 'bad'`) reports `skipped` with
+   the reason even when requested, on the reschedule, receipt, AND refund paths.
+9. A `.invalid` recipient reports `skipped`, never `sent`, on receipt and reschedule paths.
+10. Record payment with `notify_client: false` sends no receipt and still calls
+    `notifyAdminCategory`; with `true` it sends. Both asserted at the seam.
+11. The gratuity disclosure still fires automatically on a staffing-driven rise with no
+    `notify` list present (regression pin for the reclassification), and is blocked by
+    suppression prefs.
+12. In-app refund with `notify_client: false` refunds without the client email; cancel-refund
+    honors `suppress_client_email`.
 
-Existing tests that assert the reschedule email fires on a bare PATCH must be updated to pass
-the flag. No assertion gets weakened to make a test pass; if a test breaks in a way that is not
-explained by the new contract, that is a finding, not a fixture problem.
+Existing suites: tests asserting the reschedule email on a bare PATCH update to the new
+contract; `rescheduleProposal.test.js`'s wrapper-email cases are ported when the wrapper's
+email tail is deleted (below). No assertion is weakened; an unexplained failure is a finding.
 
-Client: `CI=true react-scripts build` is the lint gate (`.husky/pre-push` runs it since
-`client/` changes).
+Client: `CI=true react-scripts build` is the lint gate. Note the modal-only commit is not
+actually exercised by the build until a form imports it, so the modal and its first consumer
+are verified together.
+
+## Cleanups forced by the review
+
+- The exported `rescheduleProposal()` wrapper (`rescheduleProposal.js:549`) is test-only
+  (verified: no webhook, scheduler, or route calls it; Cal.com has no send path). Under the
+  new send signature its email tail would silently no-op, so the tail is deleted and the
+  wrapper kept as the tx-plus-reanchor convenience, tests updated.
+- `utils/groupSend.js` has zero requires anywhere (superseded by the `proposalSendGroup`
+  comms action): fix-list candidate for deletion, not touched here.
 
 ## Review posture
 
-`proposals/crud.js`, `proposals/actions.js`, and the comms validators are on
-`scripts/sensitive-paths.txt`. Full review fleet per lane before merge, plus the push-time
-sensitive-path re-review and `/second-opinion` cross-LLM pass. Money-path smoke gate fires
-(`server/` changed).
+Correction from the first draft, verified: `proposals/crud.js` and `proposals/actions.js` are
+**not** on `scripts/sensitive-paths.txt` (`sensitive-match.js` returns only `comms.js` and
+`emailTemplates.js` for this footprint). They carry money math and now carry client-send
+contracts, so this project **adds** `server/routes/proposals/crud.js`,
+`server/routes/proposals/actions.js`, and `server/utils/rescheduleProposal.js` to the list,
+making the intended posture real: full fleet per lane, push-time sensitive re-review,
+`/second-opinion`, and the money smoke gate (`server/` changed). Until that lands, the lane
+map's declared fleet is the trigger, not the path matcher.
 
 ## Decisions and rejected alternatives
 
-**Rejected: a "notify client" checkbox on each edit form.** Puts the decision in front of you
-on every save including the hundreds that would never have sent anything, and each form grows
-its own copy of the rule.
+**Reversed after review: the gratuity notice was in the popup.** The first approved draft had
+it as a second, non-composable notice type with its own strictness class and a conservative
+preflight predictor. Review killed it twice over: the predictor keyed on fields both forms
+send on every save, so the popup would have appeared on essentially every save of every paid
+booking (fatigue that un-solves the original problem), and quiet-as-default plus no-later-send
+made silent billing the default outcome. Owner reversed it 2026-07-22; the email stays
+automatic and the strictness machinery is deleted.
 
-**Rejected: mirroring the reschedulable-field rule in React.** Guarantees eventual drift
-between what the form thinks will send and what the server sends. The preflight round trip on a
-form submit is cheap; a phantom popup or a silent send is not.
+**Rejected: a "notify client" checkbox on each edit form.** The decision would appear on every
+save, and each form grows its own copy of the rule.
 
-**Rejected: routing the notify path through SendModal.** Would drop the old-versus-new content
-from the message. See "Why the draft is built at preflight".
+**Rejected: mirroring the reschedulable-field rule in React.** Guarantees drift. The preflight
+round trip on a form submit is cheap; a phantom popup or a silent send is not.
 
-**Rejected: a pending-notification marker.** An earlier draft had declining record what the
-client had not been told, shown as a badge on the proposal page with a Notify button. Cut
-because the dominant case is that Dallas already told them personally, so the badge would be
-wrong most of the time and would train him to ignore it. Also cut the underlying old-value
-snapshot table.
+**Rejected: routing the notify path through SendModal.** Drops the old-versus-new content.
 
-**Rejected: a Send receipt button on the payment row.** There is no payment history in the
-admin UI. `proposal_payments` rows are never listed and no endpoint returns them, so this
-button would drag a payment-history feature into a project about notification control. Logged
-to the fix list as its own item. Mitigated by making Send receipt the primary button.
+**Rejected: a pending-notification marker.** The dominant case is that Dallas already told the
+client personally, so the badge would cry wolf and train him to ignore it.
 
-**Deferred, noted not fixed:** `actions.js:286` re-reads the just-inserted payment via
-`SELECT id FROM proposal_payments WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 1`
-instead of `RETURNING id` on the INSERT. Under concurrent inserts that can link the wrong
-payment to the invoice. It is adjacent to this work but not caused by it and not needed by it,
-so it goes to the fix list rather than riding along.
+**Rejected: a Send receipt button on the payment row.** No payment history exists in the admin
+UI; logged to the fix list as its own project, with the `actions.js:286` `RETURNING id` race
+as a ride-along there.
+
+**Rejected: Retry on a failed send.** Structurally the banned later-send path, and without
+provider idempotency keys a timeout-ambiguous retry can double-send. Visibility (failure toast
+plus per-channel truth) is the fix; personal follow-up is the recovery.
