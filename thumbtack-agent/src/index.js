@@ -34,7 +34,7 @@ const CFG = {
   // Deterministic per-negotiation lead page (priceEstimateUrl precedent). The
   // template is env-tunable so the live test can correct the path without a
   // code change; {id} is replaced with the negotiation id.
-  replyLeadUrlTemplate: process.env.REPLY_LEAD_URL_TEMPLATE || 'https://www.thumbtack.com/pro/inbox/{id}',
+  replyLeadUrlTemplate: process.env.REPLY_LEAD_URL_TEMPLATE || 'https://www.thumbtack.com/pro-inbox/messages/{id}',
   minDelayMs: int(process.env.MIN_DELAY_MS, 8000),
   maxDelayMs: int(process.env.MAX_DELAY_MS, 25000),
   dailyCap: int(process.env.DAILY_CAP, 40),
