@@ -269,41 +269,17 @@ decrement, Balance lockedTotal excluded the label.
 
 **Deferred (lab balance-fold follow-ups):**
 - Offer-side snapshot race (security Low): the PUT builds `offeredSyrupByDrink`/`contractSyrupSet` from `plan.pricing_snapshot` (read under `FOR UPDATE OF dp` only) while the fold syrup legs use the freshly `FOR UPDATE`'d `proposal.pricing_snapshot`. A concurrent contract-syrup write in the sub-ms window could let that syrup be offered+accepted as lab-owned, re-opening the add-then-remove shave on a later PUT. 0 v2 proposals carry contract syrups today; closing it means moving syrup sanitization past the proposal lock (handler restructure) — not worth it for a zero-exposure race.
-- Owner confirm (from 598987d): a refund on a paid lab invoice reverses the money but does NOT remove the item from total_price (Additional Services precedent; removal is the lab's own path). Confirm that's the intended shape.
+- Owner confirm (from 598987d): a refund on a paid lab invoice reverses the money but does NOT remove the item from total_price (Additional Services precedent; removal is the lab's own path) — under discussion with Dallas 2026-07-21.
 - submit.js at 830 lines / lab.js at 721 lines (both over the 700 soft cap) — plan a split on next substantial touch.
-**Deferred:**
-- Lead-call: a VA leg Twilio PLACED but reports terminal CallStatus='failed'
-  (carrier/route failure; known PH-route quirk) classifies as quiet 'missed' —
-  no alert, not in the attention feed. Option: treat agent-leg 'failed' as
-  fault-class, or include va/admin_call_status='failed' in the feed WHERE.
-  (security advisory.)
-- ~~Lab off-ledger gates webhook/refund test~~ MOOT under the fold (off-ledger
-  set now empty; lab payments/refunds ride the standard contract paths their
-  existing suites cover).
-- Lab desired-state edges (admin-visible, self-harm only): partial-pay then
-  remove-additions leaves the open invoice overpaid (refund owed); removing
-  already-paid additions leaves the locked paid invoice standing. Sentry warn
-  now fires when the post-commit list refresh loses to an approval race.
-- Lab invoice find-or-create has no DB unique constraint (plan-row lock covers
-  the realistic path); optional partial unique index on
-  invoices(proposal_id) WHERE label='Enhancement Lab' AND status IN
-  ('sent','partially_paid'). (database advisory.)
-- Multi-invoice lab delta builds line items from the CUMULATIVE breakdown with
-  drift absorbed into the last line — rare pay-add-add path can render an odd/
-  negative final line; amount_due stays correct. (database/codex, display only.)
-- Lab GET serves the full shelf payload even in not_ready/locked states (client
-  gates rendering; same token audience — API-payload tightening only).
-- EnhancementLab debounced save timer not cleared on SPA unmount (React 18
-  benign); lab GET could fold computeExtrasBreakdown into its Promise.all
-  (one serial round-trip on a public page). (perf quick-win.)
-- admin/leadCalls attention query has no LIMIT (near-empty at steady state;
-  add LIMIT 200 someday for a Twilio-outage worst case).
-- planRefund's EXCEEDS_AMOUNT_PAID guard compares against on-ledger amount_paid,
-  which excludes lab dollars — a panel refund of a paid lab charge larger than
-  the on-ledger paid figure is rejected even though it is fully refundable.
-  Workaround: Stripe-dashboard refund (chargeRefunded reconciles the off-ledger
-  netting correctly). Fix: include the target payment's off-ledger-linked cents
-  in the guard's basis. (re-verify F2, fail-closed.)
+- Lab GET serves the full shelf payload even in not_ready/locked states (client gates rendering; same token audience — API-payload tightening only). (low.)
+- Lab invoice find-or-create has no DB unique constraint (plan-row FOR UPDATE covers the realistic path; only the fully-paid branch mints one); optional partial unique index on invoices(proposal_id) WHERE label='Enhancement Lab' AND status IN ('sent','partially_paid'). (database advisory, low.)
+- EnhancementLab debounced save timer not cleared on SPA route-change unmount — a pending 500ms save can fire one stray idempotent PUT after unmount (the pagehide flush already covers tab-close). React 18 benign; trivial.
+
+**CLEARED 2026-07-21 — verified moot under the balance-fold (removed from deferred):** off-ledger webhook/refund test (OFF_LEDGER set is empty; lab money rides the standard contract paths their suites cover); planRefund's `EXCEEDS_AMOUNT_PAID` guard "excludes lab dollars" (lab payments now roll into `amount_paid`, so the guard already includes them — verified refundHelpers.js:59 + empty OFF_LEDGER); multi-invoice lab delta negative-final-line (the fold prices the CURRENT additions via buildLabLineItems, not a cumulative breakdown, so remainder ≈ line sum and foldLinesTo can't go negative in the fully-paid branch); GET `computeExtrasBreakdown` round-trip (replaced by sync `priceLabAdditions`, 0 occurrences); desired-state overpay edges (removing paid additions now flows through general proposal-overpay + `reconcileProposalPaymentStatus`, not a lab-specific gap; the approval-race Sentry warn shipped at lab.js:363).
+
+**Deferred (non-lab):**
+- Lead-call: a VA leg Twilio PLACED but reports terminal CallStatus='failed' (carrier/route failure; known PH-route quirk) classifies as quiet 'missed' — no alert, not in the attention feed. Option: treat agent-leg 'failed' as fault-class, or include va/admin_call_status='failed' in the feed WHERE. (security advisory.)
+- admin/leadCalls attention query has no LIMIT (near-empty at steady state; add LIMIT 200 someday for a Twilio-outage worst case).
 
 ---
 
