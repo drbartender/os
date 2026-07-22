@@ -145,7 +145,8 @@ dr-bartender/
 ├── server/
 │   ├── index.js                # Express app setup, middleware, route mounting
 │   ├── data/
-│   │   └── contractorAgreement.js # Versioned v2 legal text (clauses, acknowledgments, effective date)
+│   │   ├── contractorAgreement.js # Versioned v2 legal text (clauses, acknowledgments, effective date)
+│   │   └── smsConsentCopy.js   # Canonical client SMS consent sentence keyed by version (A2P 10DLC). Append-only: an old version stays forever so historical sms_consent_log rows keep resolving. Mirrored by client/src/constants/smsConsent.js; utils/smsConsent.test.js fails on drift
 │   ├── db/
 │   │   ├── index.js            # PostgreSQL pool connection + schema initialization
 │   │   ├── schema.sql          # Full DDL: tables, triggers, constraints, seed data
@@ -365,6 +366,7 @@ dr-bartender/
 │   │   ├── sms.js              # Twilio SMS wrapper
 │   │   ├── smsDeliveryStatus.js # Twilio delivery-failure handler — flags bad phone numbers (sets clients.phone_status='bad') on hard SMS failures
 │   │   ├── smsEventDate.js     # Shared SMS event-date formatter (Date or string to "June 12", null when missing)
+│   │   ├── smsConsent.js      # recordSmsConsent(...) — client SMS consent capture (A2P 10DLC): flips clients.communication_preferences.sms_enabled + stamps sms_opt_in/out_at, appends the append-only sms_consent_log proof row. Writes ONLY to a client row the same submit created (public form, unauthenticated); never lifts a prior STOP
 │   │   ├── smsInbound.js       # Inbound-SMS processing: keyword/response-code detection, sender lookup, orchestrator
 │   │   ├── smsTemplates.js     # Client-facing automated SMS body templates
 │   │   ├── staffShiftHandlers.js # Staff-shift SMS: day-before reminder, post-event thank-you, schedule-change/cancel notices
@@ -409,6 +411,8 @@ dr-bartender/
 │   │   │   ├── PaletteContext.js    # openPalette() for any admin surface; provided by AdminLayout
 │   │   │   ├── ToastContext.js      # ToastProvider + useToast() hook
 │   │   │   └── UserPrefsContext.js  # Per-user admin OS prefs (skin/density/sidebar) — strips on logout
+│   │   ├── constants/
+│   │   │   └── smsConsent.js   # The SMS consent sentence, split LEAD + TAIL so the checkbox can link the tail while /privacy renders it as prose. Single source for the wizard checkbox AND the privacy page
 │   │   ├── utils/
 │   │   │   ├── api.js          # Axios instance with JWT interceptor
 │   │   │   ├── buildTipDeepLink.js # Builds Venmo/CashApp deep links + Stripe fallback URL for tip pages
@@ -472,7 +476,7 @@ dr-bartender/
 │   │   │   ├── proposal/       # ProposalView (public client-facing) — split into proposalView/ folder (parent + ProposalHeader + ProposalPricingBreakdown + SignAndPaySection + PaymentForm + AgreementText markdown-lite renderer + helpers + styles) + compare/ (ProposalCompare thin wrapper for the option-group page at /compare/:token + PackageMatrix aligned live-priced compare grid, also exported as ExplorePackagesSection = the in-proposal "explore packages for your event" section)
 │   │   │   ├── public/         # Client portal (ClientLogin, ClientShoppingList, Blog, BlogPost) + tip flow (TipPage with TipPage.atoms.jsx + TipPage.css, TipPageThanks post-tip feedback)
 │   │   │   │   └── portal/     # Client Portal v2 — PortalHome (landing), EventCommandCenter (focus shell), OverviewWidgets, ArchiveList, ShareButton, EmptyStates, ChangeRequestForm (request-a-change form with live price preview), money/nextUp/constants helpers + tabs/ (OverviewTab, PrescriptionTab, PotionTab, ReceiptsTab, ChangeRequestBanner pending/decided status banner on the Prescription tab)
-│   │   │   └── website/        # Public website (HomePage, ServicesPage, PackagesPage, MethodPage, AboutPage, FaqPage, QuotePage, ClassWizard, quoteWizard/ — split QuoteWizard with steps/extras/ (AddonTile + BundlePicker + AddonAccordion) for the Extras step redesign)
+│   │   │   └── website/        # Public website (HomePage, ServicesPage, PackagesPage, MethodPage, AboutPage, FaqPage, QuotePage, ClassWizard, quoteWizard/ — split QuoteWizard with steps/extras/ (AddonTile + BundlePicker + AddonAccordion) for the Extras step redesign; legal/ — LegalLayout + PrivacyPage + TermsPage at /privacy + /terms, the URLs submitted for Twilio A2P campaign review)
 │   │   ├── images/             # Brand assets
 │   │   └── index.css           # Global styles
 │   ├── vercel.json             # SPA rewrite rule for Vercel
@@ -525,6 +529,14 @@ dr-bartender/
 | `npm run lane:status` | List open lanes (worktrees) and flag stale ones (48h no-commit, 15+ main commits since cut, or a sensitive path landed on main since cut); run at session start and in the push sweep |
 
 ## Key Features
+
+### Public Legal Pages + Client SMS Consent (2026-07-22)
+- `/privacy` and `/terms` are real pages with real footer links; `/privacy` is the URL submitted to Twilio for A2P 10DLC campaign review, and it quotes the consent sentence verbatim from the same constant the checkbox renders
+- Terms governs USE OF THE SITE only. Booking, cancellation, and refund terms live in the signed Event Services Agreement, which controls on conflict, so the public page can never drift into contradicting an executed contract
+- The quote wizard carries an SMS consent checkbox, unchecked by default and never a condition of booking. Consent is never persisted in a saved draft, so a restored quote can never come back pre-ticked
+- Every answer writes an append-only `sms_consent_log` row (timestamp, the exact text agreed to, source form, IP) alongside the existing `communication_preferences` flag. That log is the artifact handed to a carrier or a claimant
+- The public form may only write to a client row the same submit created, and never lifts an inbound STOP for that row or for any row sharing the number. Existing clients keep whatever preference they already had
+- Event-eve reminders are now an SMS + email pair, so a client who declines texts still gets the day-before bartender, arrival window, and location
 
 ### Notify-Client Confirmation (2026-07-22)
 - Admin edits and recorded payments no longer message the client on their own: a confirmation names exactly what would go out (recipient, channels, the drafted old-vs-new message, and the projected auto-charge/balance-due date when a date move shifts it)

@@ -16,11 +16,17 @@ const { validatePhone } = require('./phone');
  *
  * Runs inside the caller's transaction — pass the caller's pg client.
  *
+ * `created` distinguishes "this call inserted the row" from "this call resolved
+ * an existing one". Callers on unauthenticated surfaces need that distinction:
+ * resolving a stranger's row by email proves nothing about the submitter, so a
+ * public form may write to a row it CREATED but must not mutate one it merely
+ * matched. See recordSmsConsent in utils/smsConsent.js.
+ *
  * @param {import('pg').PoolClient} db
  * @param {{name:string,email?:string|null,phone?:string|null,source?:string,notes?:string|null}} args
- * @returns {Promise<number>} clients.id
+ * @returns {Promise<{id:number, created:boolean}>}
  */
-async function findOrCreateClient(db, { name, email, phone, source = 'direct', notes = null }) {
+async function findOrCreateClientDetailed(db, { name, email, phone, source = 'direct', notes = null }) {
   const cleanName = String(name || '').trim();
   if (!cleanName) throw new Error('findOrCreateClient: name is required');
   const cleanEmail = email && String(email).trim() ? String(email).trim().toLowerCase() : null;
@@ -35,7 +41,7 @@ async function findOrCreateClient(db, { name, email, phone, source = 'direct', n
     // proves nothing about an email. Letting an attacker-supplied phone COALESCE
     // onto a victim's email-matched row would redirect their BEO/payment SMS.
     // Email is trusted only to RESOLVE the row, never to mutate it.
-    if (r.rows[0]) return r.rows[0].id;
+    if (r.rows[0]) return { id: r.rows[0].id, created: false };
   }
 
   if (phone10) {
@@ -57,7 +63,7 @@ async function findOrCreateClient(db, { name, email, phone, source = 'direct', n
       if (cleanEmail) {
         await db.query('UPDATE clients SET email = COALESCE(email, $2) WHERE id = $1', [winnerId, cleanEmail]);
       }
-      return winnerId;
+      return { id: winnerId, created: false };
     }
   }
 
@@ -69,16 +75,25 @@ async function findOrCreateClient(db, { name, email, phone, source = 'direct', n
       [cleanName, cleanEmail, phone || null, source, notes]
     );
     await db.query('RELEASE SAVEPOINT foc_insert');
-    return created.rows[0].id;
+    return { id: created.rows[0].id, created: true };
   } catch (err) {
     if (err.code === '23505' && cleanEmail) {
       await db.query('ROLLBACK TO SAVEPOINT foc_insert');
       const re = await db.query('SELECT id FROM clients WHERE LOWER(email) = $1 LIMIT 1', [cleanEmail]);
-      if (re.rows[0]) return re.rows[0].id;
+      if (re.rows[0]) return { id: re.rows[0].id, created: false };
     }
     try { await db.query('ROLLBACK TO SAVEPOINT foc_insert'); } catch (_) { /* already rolled back */ }
     throw err;
   }
 }
 
-module.exports = { findOrCreateClient };
+/**
+ * Back-compat wrapper: the id alone, which is all most callers want.
+ * @returns {Promise<number>} clients.id
+ */
+async function findOrCreateClient(db, args) {
+  const { id } = await findOrCreateClientDetailed(db, args);
+  return id;
+}
+
+module.exports = { findOrCreateClient, findOrCreateClientDetailed };

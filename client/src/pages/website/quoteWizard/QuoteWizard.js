@@ -6,6 +6,7 @@ import { ADDON_CATEGORIES } from '../../../data/addonCategories';
 import useFormValidation from '../../../hooks/useFormValidation';
 import useWizardHistory from '../../../hooks/useWizardHistory';
 import EVENT_TYPES from '../../../data/eventTypes';
+import { SMS_CONSENT_VERSION } from '../../../constants/smsConsent';
 import {
   stripIncludedAddons,
   isIncludedByBundle,
@@ -26,6 +27,19 @@ import ReviewStep from './steps/ReviewStep';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 const DRAFT_KEY = 'drb_quote_draft';
+
+// SMS consent is deliberately NOT persisted in any draft, local or server.
+// A consent checkbox must be an affirmative act in the session that submits it:
+// restoring a ticked box would re-assert consent the user never gave this time,
+// and because a restored draft can resume PAST the contact step (and the
+// ?resume= link is emailed, so the resumer may not even be the same person), it
+// could be submitted without ever being shown. A stored tick also carries no
+// copy version, so after a version bump it would claim agreement to text the
+// user never saw.
+function stripConsent(f) {
+  const { sms_consent, ...rest } = f || {};
+  return rest;
+}
 
 export default function QuoteWizard() {
   const navigate = useNavigate();
@@ -71,6 +85,9 @@ export default function QuoteWizard() {
     client_name: '',
     client_email: '',
     client_phone: '',
+    // Unchecked by default is a compliance requirement, not a style choice.
+    // Never seed this true, and never add it to a validation rule set.
+    sms_consent: false,
     client_provides_glassware: false,
   };
 
@@ -131,7 +148,7 @@ export default function QuoteWizard() {
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (data && data.form_state) {
-            setForm(f => ({ ...f, ...data.form_state }));
+            setForm(f => ({ ...f, ...stripConsent(data.form_state), sms_consent: false }));
             replaceStep(data.current_step || 0);
             draftTokenRef.current = data.token;
             setHasDraftToken(true);
@@ -150,7 +167,7 @@ export default function QuoteWizard() {
         if (saved) {
           const { form: savedForm, step: savedStep, token } = JSON.parse(saved);
           if (savedForm) {
-            setForm(f => ({ ...f, ...savedForm }));
+            setForm(f => ({ ...f, ...stripConsent(savedForm), sms_consent: false }));
             replaceStep(savedStep || 0);
             if (token) {
               draftTokenRef.current = token;
@@ -171,7 +188,7 @@ export default function QuoteWizard() {
   const saveDraftLocal = useCallback((currentForm, currentStep, token) => {
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify({
-        form: currentForm,
+        form: stripConsent(currentForm),
         step: currentStep,
         token: token || null,
       }));
@@ -187,7 +204,7 @@ export default function QuoteWizard() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          form_state: formRef.current,
+          form_state: stripConsent(formRef.current),
           current_step: stepRef.current,
         }),
       });
@@ -215,7 +232,7 @@ export default function QuoteWizard() {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              form_state: formRef.current,
+              form_state: stripConsent(formRef.current),
               current_step: stepRef.current,
             }),
             keepalive: true,
@@ -478,7 +495,7 @@ export default function QuoteWizard() {
               guest_count: Number(form.guest_count) || null,
               event_date: form.event_date || null,
               source: 'quote_wizard',
-              form_state: form,
+              form_state: stripConsent(form),
               current_step: nextStep,
             }),
           });
@@ -533,6 +550,13 @@ export default function QuoteWizard() {
           client_name: form.client_name.trim(),
           client_email: form.client_email.trim(),
           client_phone: form.client_phone || null,
+          // A2P 10DLC consent from the contact step. Deliberately NOT sent on
+          // capture-lead: that endpoint writes email_leads / quote_drafts and
+          // never creates a clients row, so there is no subject to consent for.
+          // stripConsent keeps it out of the draft payloads too, so this submit
+          // is the only place it travels.
+          sms_consent: !!form.sms_consent,
+          sms_consent_version: SMS_CONSENT_VERSION,
           event_type: form.event_type === 'Other' ? (form.event_type_custom.trim() || 'Other') : form.event_type || null,
           event_type_category: form.event_type_category || null,
           event_type_custom: form.event_type === 'Other' ? (form.event_type_custom.trim() || null) : null,

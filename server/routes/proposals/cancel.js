@@ -49,6 +49,7 @@ const COMMS_LABELS = {
   balance_late_t1_sms: 'Late balance SMS',
   balance_late_t3_sms: 'Late balance SMS',
   event_eve: 'Event-eve reminder SMS',
+  event_eve_email: 'Event-eve reminder email',
   shift_reminder: 'Staff shift reminder',
   staff_thank_you: 'Staff thank-you',
 };

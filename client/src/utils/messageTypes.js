@@ -13,6 +13,7 @@ const LABELS = {
   balance_due_today: 'Balance due reminder',
   event_week_reminder: 'Event week reminder',
   event_eve: 'Event eve reminder',
+  event_eve_email: 'Event eve reminder (email)',
   reschedule: 'Reschedule notice',
   review_request: 'Review request',
 };

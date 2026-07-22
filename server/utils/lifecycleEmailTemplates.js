@@ -272,6 +272,41 @@ function shoppingListReady({ clientName, eventTypeLabel = 'event', shoppingListU
 }
 
 /**
+ * Event-eve EMAIL — the twin of smsTemplates.eventEveSms, sent at the same
+ * T-24h instant. It exists so a client who declines SMS still gets the
+ * day-before details: before this twin, event_eve was the only client touch
+ * with no email half, so an SMS opt-out silently dropped it entirely.
+ *
+ * Content mirrors the SMS deliberately, including the PUBLISHED 30-to-90 minute
+ * arrival range rather than the proposal's derived setup minutes (see
+ * setupTime.js and the note on eventEveSms).
+ */
+function eventEveEmail({ clientName, startTime, location, bartenderName, bartenderPhone }) {
+  const name = clientName || 'there';
+  const time = startTime || 'your start time';
+  const loc = location || 'your venue';
+  const bartenderHtml = bartenderName
+    ? `<p>Your bartender is <strong>${esc(bartenderName)}</strong>.${bartenderPhone ? ` Their direct number is ${esc(bartenderPhone)} if you need them.` : ''}</p>`
+    : '';
+  const bartenderText = bartenderName
+    ? `Your bartender is ${bartenderName}.${bartenderPhone ? ` Their direct number is ${bartenderPhone} if you need them.` : ''}\n\n`
+    : '';
+  return {
+    subject: 'Your event is tomorrow',
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">See You Tomorrow</h2>
+      <p>Hi ${esc(name)},</p>
+      <p>Your event is tomorrow at <strong>${esc(time)}</strong>, ${esc(loc)}.</p>
+      ${bartenderHtml}
+      <p>Your bartender will arrive 30 to 90 minutes before your start time to set up.</p>
+      <p style="font-size:14px;color:${BRAND.secondary};">Let me know if you have any questions or need any changes, just reply to this email.</p>
+      <p>Cheers, Dallas</p>
+    `),
+    text: `Hi ${name},\n\nYour event is tomorrow at ${time}, ${loc}.\n\n${bartenderText}Your bartender will arrive 30 to 90 minutes before your start time to set up.\n\nLet me know if you have any questions or need any changes.\n\nCheers, Dallas`,
+  };
+}
+
+/**
  * Compose-modal "parts" for shoppingListReady (spec 4.1): the editable prose
  * (subject + bodyText) split from the fixed pieces (heading + CTA link).
  * Rendered by server/utils/comms/render.js; the legacy shoppingListReady
@@ -748,6 +783,7 @@ module.exports = {
   drinkPlanBalanceUpdate,
   drinkPlanEchoSection,
   shoppingListReady,
+  eventEveEmail,
   shoppingListReadyParts,
   postConsultClient,
   consultRecapParts,

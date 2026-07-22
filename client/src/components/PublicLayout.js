@@ -200,7 +200,8 @@ export default function PublicLayout({ children }) {
           <div className="ws-footer-bottom">
             <span>&copy; {new Date().getFullYear()} Dr. Bartender LLC</span>
             <span className="ws-footer-bottom-right">
-              Privacy &middot; Terms &middot; Accessibility &middot;{' '}
+              <Link to="/privacy">Privacy</Link> &middot;{' '}
+              <Link to="/terms">Terms</Link> &middot;{' '}
               <em>I'm the Dr. in Dr. Bartender.</em>
             </span>
           </div>

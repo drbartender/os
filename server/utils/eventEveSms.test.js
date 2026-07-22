@@ -56,18 +56,42 @@ test('computeEventEveSendAt > returns the event start instant minus 24h in event
   assert.strictEqual(sendAt.toISOString(), '2026-08-14T23:00:00.000Z');
 });
 
-test('scheduleEventEve > inserts one event_eve sms row', async () => {
+test('scheduleEventEve > inserts the sms row AND its email twin at the same instant', async () => {
+  // The twin exists so a client who declines SMS still gets the day-before
+  // details. Both halves are multiChannel, so whichever channel is dead
+  // suppresses and the other delivers; neither is ever substituted into a
+  // duplicate of the other.
   _clearHandlersForTest();
   registerEventEveHandler();
   await scheduleEventEve(proposalId);
   const { rows } = await pool.query(
-    `SELECT message_type, channel FROM scheduled_messages
-     WHERE entity_type='proposal' AND entity_id=$1`,
+    `SELECT message_type, channel, scheduled_for FROM scheduled_messages
+     WHERE entity_type='proposal' AND entity_id=$1
+     ORDER BY message_type`,
     [proposalId]
   );
-  assert.strictEqual(rows.length, 1);
-  assert.strictEqual(rows[0].message_type, 'event_eve');
-  assert.strictEqual(rows[0].channel, 'sms');
+  assert.strictEqual(rows.length, 2);
+  assert.deepStrictEqual(
+    rows.map(r => [r.message_type, r.channel]),
+    [['event_eve', 'sms'], ['event_eve_email', 'email']]
+  );
+  assert.strictEqual(
+    new Date(rows[0].scheduled_for).getTime(),
+    new Date(rows[1].scheduled_for).getTime(),
+    'both halves fire at the same T-24h instant'
+  );
+});
+
+test('registerEventEveHandler > both halves are multiChannel', () => {
+  _clearHandlersForTest();
+  registerEventEveHandler();
+  for (const type of ['event_eve', 'event_eve_email']) {
+    const meta = getHandlerMeta(type);
+    assert.ok(meta, `${type} is registered`);
+    assert.strictEqual(meta.multiChannel, true, `${type} must be multiChannel`);
+    assert.strictEqual(meta.cooldownExempt, true);
+    assert.strictEqual(meta.priority, 1);
+  }
 });
 
 test('scheduleEventEve > re-run deletes the stale pending row and re-inserts (reschedule path)', async () => {
@@ -115,6 +139,49 @@ test('event_eve handler > sends an SMS even with no bartender assigned', async (
     [proposalId]
   );
   assert.strictEqual(rows[0].status, 'sent');
+  __setSmsDeps({ sendSMS: require('./sms')._realSendSMS });
+});
+
+test('event_eve pair > an SMS-declining client still gets the email half', async () => {
+  // The regression this twin exists to prevent. Before it, sms_enabled:false
+  // (now the default for any client who leaves the consent box unchecked)
+  // dropped the day-before message entirely: the SMS half suppressed and there
+  // was nothing else to deliver.
+  _clearHandlersForTest();
+  registerEventEveHandler();
+  const { __setSmsDeps } = require('./sms');
+  __setSmsDeps({
+    sendSMS: () => Promise.reject(new Error('SMS must not be attempted for an opted-out client')),
+  });
+
+  await pool.query(
+    `UPDATE clients SET communication_preferences =
+       jsonb_set(communication_preferences, '{sms_enabled}', 'false'::jsonb)
+     WHERE id = $1`, [clientId]);
+
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'event_eve', 'client', $2, 'sms', NOW() - INTERVAL '1 minute'),
+            ($1, 'proposal', 'event_eve_email', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [proposalId, clientId]
+  );
+  await dispatchPending();
+
+  const { rows } = await pool.query(
+    `SELECT message_type, status FROM scheduled_messages
+      WHERE entity_id=$1 AND message_type IN ('event_eve','event_eve_email')
+      ORDER BY message_type`,
+    [proposalId]
+  );
+  const byType = Object.fromEntries(rows.map(r => [r.message_type, r.status]));
+  assert.strictEqual(byType.event_eve, 'suppressed', 'SMS half correctly stands down');
+  assert.strictEqual(byType.event_eve_email, 'sent', 'email half still delivers the details');
+
+  // restore
+  await pool.query(
+    `UPDATE clients SET communication_preferences =
+       jsonb_set(communication_preferences, '{sms_enabled}', 'true'::jsonb)
+     WHERE id = $1`, [clientId]);
   __setSmsDeps({ sendSMS: require('./sms')._realSendSMS });
 });
 

@@ -62,6 +62,8 @@ const ServicesPage = lazy(() => import('./pages/website/ServicesPage'));
 const PackagesPage = lazy(() => import('./pages/website/PackagesPage'));
 const MethodPage = lazy(() => import('./pages/website/MethodPage'));
 const AboutPage = lazy(() => import('./pages/website/AboutPage'));
+const PrivacyPage = lazy(() => import('./pages/website/legal/PrivacyPage'));
+const TermsPage = lazy(() => import('./pages/website/legal/TermsPage'));
 const Blog = lazy(() => import('./pages/public/Blog'));
 const BlogPost = lazy(() => import('./pages/public/BlogPost'));
 const HiringLanding = lazy(() => import('./pages/HiringLanding'));
@@ -331,6 +333,8 @@ function PublicWebsiteRoutes() {
         <Route path="/quote" element={<QuotePage />} />
         <Route path="/faq" element={<FaqPage />} />
         <Route path="/classes" element={<ClassWizard />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/terms" element={<TermsPage />} />
         {/* These public token-based routes work on both domains */}
         <Route path="/plan/:token" element={<PlannerRouter />} />
       <Route path="/plan/:token/lab" element={<EnhancementLab />} />
@@ -510,6 +514,8 @@ function AppRoutes() {
       <Route path="/classes" element={<ClassWizard />} />
       <Route path="/labnotes" element={<Blog />} />
       <Route path="/labnotes/:slug" element={<BlogPost />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
+      <Route path="/terms" element={<TermsPage />} />
       {/* Client portal */}
       <Route path="/client-login" element={<ClientLogin />} />
       <Route path="/my-proposals" element={<PortalHome />} />

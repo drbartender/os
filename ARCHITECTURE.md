@@ -634,6 +634,8 @@ _(tips/tip-feedback rows in `server/routes/admin/contractorTipPage.js`; the stub
 | `/quote` | `QuotePage` → `QuoteWizard` | Multi-step instant quote builder |
 | `/faq` | `FaqPage` | Frequently asked questions |
 | `/classes` | `ClassWizard` | Cocktail class booking wizard |
+| `/privacy` | `PrivacyPage` | Privacy policy. The URL submitted to Twilio for A2P campaign review: it quotes the quote-wizard consent sentence verbatim (rendered from the shared constant) and carries the mobile-data sharing paragraph carriers look for |
+| `/terms` | `TermsPage` | Website terms of use. Deliberately silent on booking, cancellation, refunds, and alcohol: the signed Event Services Agreement governs those and controls on conflict |
 | GET | `/api/files/:filename` | Admin | Redirect to R2 signed URL for file download |
 
 ## Database Schema
@@ -956,6 +958,15 @@ Weekly Tue–Mon payroll: `pay_periods` (status open → processing → paid, pl
 - `email_harvest_status` (`not_needed` | `pending` | `harvested` | `failed`), `email_harvest_attempted_at` (lease + cooldown timestamp), `email_harvest_attempts` (failure counter for the retry cap) — track the Thumbtack email-harvest flow for email-less leads. Partial index `idx_clients_email_harvest_pending` powers the agent's `pending-harvest` queue.
 - **OTP login** (`/api/client-auth`): `auth_token` (bcrypt hash of the 6-digit code), `auth_token_expires_at`, `auth_token_attempts` (per-account brute-force ceiling). `token_version` — manual session-revocation lever embedded in the OTP-issued JWT and checked in `clientAuth` middleware (mirrors `users.token_version`); bumping it kills a client's outstanding 7-day sessions without rotating `JWT_SECRET`. No automatic trigger today (login is OTP-only, no password to reset).
 - **Intake de-duplication:** every intake path (Thumbtack webhook, admin `POST /proposals`, public quote wizard, BEO/shifts create) resolves clients through `findOrCreateClient` (`server/utils/clientDedup.js`), which matches on email OR normalized phone (name-guarded on phone-only matches) and backfills NULL fields only — never overwriting an existing identity, so the unauthenticated wizard is safe.
+
+**sms_consent_log** — Append-only client SMS consent audit (A2P 10DLC, 2026-07-22)
+- `client_id` (FK, ON DELETE SET NULL), `phone`, `consented`, `copy_version`, `copy_text`, `source_form`, `ip`, `user_agent`, `created_at`
+- **Ownership rule (load-bearing).** The endpoint is unauthenticated and `findOrCreateClient` resolves an existing row by email ALONE, so knowing a stranger's email is enough to be handed their row. `recordSmsConsent` therefore writes only when the same submit CREATED the client (`findOrCreateClientDetailed` returns `{id, created}`). Without that, anyone could flip a real client's SMS on or off and forge a row in the log we would hand a carrier. Two further predicates on the UPDATE close the gap between owning a ROW and owning a NUMBER (creating a fresh row with someone else's phone passes the `created` gate): it refuses the row if it carries `sms_opt_out_at`, and it refuses if ANY client row holding the same normalized phone carries one. So no web form lifts an inbound STOP, per row or per number, and existing clients stay grandfathered on the preference they already had.
+- Written by `POST /api/proposals/public/submit` when the quote wizard's consent checkbox is present in the body, via `recordSmsConsent` (`server/utils/smsConsent.js`), inside the submit transaction. `communication_preferences.sms_enabled` + an `sms_opt_in_at` / `sms_opt_out_at` stamp are written in the same call, reusing the exact jsonb shape `smsInbound.js` writes on STOP/START.
+- `copy_text` is always resolved server-side from `server/data/smsConsentCopy.js` by version — never taken from the request body. The client posts only `sms_consent` and `sms_consent_version`. The consent sentence itself is defined once per side (`client/src/constants/smsConsent.js` for display, the server map for the record) and `server/utils/smsConsent.test.js` fails if they drift.
+- The log records consent *changes*, not page submits: a repeat submit with the same answer and version appends nothing.
+- Read by nothing at runtime. It exists to answer a carrier or a claimant, which is why `phone` survives client deletion and why the phone index is the primary one.
+- **Clients only.** Staff SMS consent is `agreements.sms_consent`, the gate `server/routes/messages.js` enforces on staff sends, and is separately approved with Twilio. It deliberately does not write here; two consent records for one person would be able to disagree.
 
 ### Menu
 
@@ -1557,7 +1568,8 @@ The Check Cherry import landed several skip gates and best-effort hooks across t
 - **Shared helpers**: `server/utils/xmlEscape.js` (TwiML `& < >` escaper, shared by the SMS and voice TwiML routes) and `server/utils/usPhone.js` (`toUsE164`/`isUsE164`: `normalizePhone` + strict `^\+1[2-9]\d{9}$` NANP gate, rejecting international numbers and 900/976 premium codes — the VA-calling toll-fraud control).
 - **Telegram side-channel** (VA calling): `server/utils/telegram.js` is a raw-`fetch` Bot API wrapper (no new dep, Node 18 global `fetch`): `sendTelegramMessage` / `sendTelegramAudio`/`setTelegramWebhook`/`getTelegramWebhookInfo`, plus `verifyTelegramSecret` (constant-time `secret_token` header check over SHA-256 digests) and `isNewUpdate` (de-dupes Telegram retries via `telegram_update.update_id` `ON CONFLICT DO NOTHING`). Sends gate on `notificationsEnabled()` exactly like `sendSMS`.
 - **Used for**: Admin-initiated SMS to staff (general messages, shift invitations), shift approval notifications
-- **Consent**: Collected during agreement signing (`sms_consent` flag) — only consented staff appear as eligible recipients
+- **Consent (staff)**: Collected during agreement signing (`agreements.sms_consent`) — only consented staff appear as eligible recipients (`server/routes/messages.js` gates on it). Separate from client consent, which lives in `clients.communication_preferences` + `sms_consent_log`; the two are deliberately never conflated.
+- **Event-eve is a PAIR**: `event_eve` (sms) and `event_eve_email` (email) are scheduled together at the same T-24h instant, both registered `multiChannel: true` so the substitution step never turns one into a duplicate of the other. Whichever channel is unhealthy suppresses and its twin delivers. The email half exists because `sms_enabled: false` now also means "declined the quote-wizard consent box", the expected default for a new client; before the twin, that silently dropped the day-before message carrying the bartender's name, phone, and arrival window.
 - **Logging**: All inbound + outbound messages logged to `sms_messages` table with delivery status tracking
 
 ### Zul VA Calling (Telegram trigger + Twilio Voice bridge)

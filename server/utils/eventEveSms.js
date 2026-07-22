@@ -1,25 +1,34 @@
 /**
- * Event-eve SMS — a full SMS-only touch (spec 3.12). T-24h from the event
- * START time, in the event timezone. This timing is NOT the 10:00-event-local
- * convention of computeScheduledFor, so the touch registers with
- * offsetFromEventDate: null (the generic reschedule cascade skips it) and
- * computes its own send instant via computeEventEveSendAt.
+ * Event-eve reminder — a PAIR of touches (spec 3.12) at T-24h from the event
+ * START time, in the event timezone: an SMS and its email twin, scheduled
+ * together and registered multiChannel so whichever channel is unhealthy
+ * suppresses while the other delivers. It was SMS-only until the quote-wizard
+ * consent checkbox made `sms_enabled: false` the expected default for a new
+ * client, at which point an SMS-only touch silently dropped the day-before
+ * bartender and arrival details for anyone who declined.
+ *
+ * This timing is NOT the 10:00-event-local convention of computeScheduledFor,
+ * so both halves register with offsetFromEventDate: null (the generic
+ * reschedule cascade skips them) and compute their send instant via
+ * computeEventEveSendAt.
  *
  * Cooldown-exempt: priority 1, cooldownExempt true (inert until Phase 4b — the
  * event-eve SMS must fire on its exact day regardless of the daily-cooldown
  * rule, per spec 7.4).
  *
- * Reschedule: because the row has a null offset, reanchorPendingMessages leaves
- * it alone. scheduleEventEve is therefore written to DELETE any stale pending
- * event_eve row and re-INSERT at the recomputed instant; rescheduleProposalInTx
- * already re-invokes schedulePreEventReminders after its reanchor pass, and
- * schedulePreEventReminders calls scheduleEventEve — so a reschedule does move
- * this row.
+ * Reschedule: because the rows have a null offset, reanchorPendingMessages
+ * leaves them alone. scheduleEventEve is therefore written to DELETE any stale
+ * pending row of EITHER type and re-INSERT both at the recomputed instant;
+ * rescheduleProposalInTx already re-invokes schedulePreEventReminders after its
+ * reanchor pass, and schedulePreEventReminders calls scheduleEventEve — so a
+ * reschedule does move both rows.
  */
 const { pool } = require('../db');
 const { registerHandler } = require('./scheduledMessageDispatcher');
 const { SuppressMessageError } = require('./errors');
 const { sendAndLogSms } = require('./sms');
+const { sendEmail } = require('./email');
+const emailTemplates = require('./emailTemplates');
 const smsTemplates = require('./smsTemplates');
 const { resolveEventTimezone } = require('./eventTimezone');
 
@@ -161,18 +170,85 @@ async function handleEventEve({ entity }) {
   });
 }
 
+/**
+ * Handler: event_eve_email. The email twin of handleEventEve, sent at the same
+ * T-24h instant.
+ *
+ * Why it exists: event_eve was the only client-facing touch with no email half.
+ * `sms_enabled: false` used to mean "this person texted STOP", where dropping
+ * the message was at least defensible. Since the quote wizard's consent
+ * checkbox, it also means "did not tick a box that regulation requires be
+ * unchecked" — the expected default for a new client. Without this twin, those
+ * clients silently lost the day-before message carrying their bartender's name,
+ * phone, and arrival window.
+ *
+ * Both halves register multiChannel: true, so the dispatcher never substitutes
+ * one for the other: whichever channel is dead simply suppresses and the twin
+ * delivers. This half suppresses on EMAIL health only; an SMS opt-out is
+ * exactly the case it is here to cover.
+ */
+async function handleEventEveEmail({ entity }) {
+  const proposalId = entity.id;
+  const { rows } = await pool.query(
+    `SELECT p.id, p.status, p.event_date, p.event_start_time, p.event_location,
+            p.event_timezone,
+            c.id AS client_id, c.name AS client_name, c.email AS client_email,
+            c.communication_preferences AS comm_prefs, c.email_status
+       FROM proposals p
+       LEFT JOIN clients c ON c.id = p.client_id
+      WHERE p.id = $1`,
+    [proposalId]
+  );
+  const ctx = rows[0];
+  if (!ctx) throw new Error(`event_eve_email: proposal ${proposalId} not found`);
+  if (ctx.status === 'archived') throw new Error('event_eve_email: proposal archived');
+  if (!ctx.client_email) throw new SuppressMessageError('client_no_email');
+  if (ctx.email_status === 'bad') throw new SuppressMessageError('email_status_bad');
+  const prefs = ctx.comm_prefs || {};
+  if (prefs.email_enabled === false) throw new SuppressMessageError('email_opted_out');
+
+  const bartender = await resolveBartender(proposalId);
+  const tpl = emailTemplates.eventEveEmail({
+    clientName: ctx.client_name,
+    startTime: formatStartTimeLocal(ctx),
+    location: ctx.event_location,
+    bartenderName: bartender.name,
+    bartenderPhone: bartender.phone,
+  });
+  // meta is what puts this send in the client's message log and attributes it to
+  // the proposal. Without it the email logs as 'other' with no proposalId, so
+  // the SMS half would appear in the proposal timeline and its twin would not.
+  await sendEmail({
+    to: ctx.client_email,
+    ...tpl,
+    meta: { proposalId, clientId: ctx.client_id, messageType: 'event_eve_email' },
+  });
+}
+
 function registerEventEveHandler() {
+  // multiChannel on BOTH halves: the pair is the touch, and the substitution
+  // step must never turn one into a duplicate of the other.
   registerHandler('event_eve', handleEventEve, {
     offsetFromEventDate: null,
     anchor: 'event_date',
     category: 'operational',
     priority: 1,
     cooldownExempt: true,
+    multiChannel: true,
+  });
+  registerHandler('event_eve_email', handleEventEveEmail, {
+    offsetFromEventDate: null,
+    anchor: 'event_date',
+    category: 'operational',
+    priority: 1,
+    cooldownExempt: true,
+    multiChannel: true,
   });
 }
 
 /**
- * Insert (or, on reschedule, re-insert) the event_eve scheduled_messages row.
+ * Insert (or, on reschedule, re-insert) BOTH event-eve scheduled_messages rows:
+ * the SMS and its email twin, at the same instant.
  * @param {number|string} proposalId
  * @param {{ query: Function }} [executor] - pg client or pool; defaults to pool.
  */
@@ -194,7 +270,7 @@ async function scheduleEventEve(proposalId, executor) {
     await exec.query(
       `DELETE FROM scheduled_messages
         WHERE entity_type = 'proposal' AND entity_id = $1
-          AND message_type = 'event_eve' AND status = 'pending'`,
+          AND message_type IN ('event_eve', 'event_eve_email') AND status = 'pending'`,
       [proposalId]
     );
     return;
@@ -203,7 +279,7 @@ async function scheduleEventEve(proposalId, executor) {
   await exec.query(
     `DELETE FROM scheduled_messages
       WHERE entity_type = 'proposal' AND entity_id = $1
-        AND message_type = 'event_eve' AND status = 'pending'`,
+        AND message_type IN ('event_eve', 'event_eve_email') AND status = 'pending'`,
     [proposalId]
   );
   // Delete pending-only (NOT 'processing'): a mid-send row is a live dispatcher
@@ -228,12 +304,25 @@ async function scheduleEventEve(proposalId, executor) {
      DO NOTHING`,
     [Number(proposalId), proposal.client_id, sendAt]
   );
+  // The email twin, same instant. Scheduled unconditionally rather than only
+  // when SMS looks unusable: preferences can change between now and T-24h, and
+  // each half decides at send time whether its own channel is healthy.
+  await exec.query(
+    `INSERT INTO scheduled_messages
+       (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'event_eve_email', 'client', $2, 'email', $3)
+     ON CONFLICT (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)
+       WHERE status = 'pending'
+     DO NOTHING`,
+    [Number(proposalId), proposal.client_id, sendAt]
+  );
 }
 
 module.exports = {
   registerEventEveHandler,
   scheduleEventEve,
   handleEventEve, // exported for the archived-guard test (P6.5)
+  handleEventEveEmail,
   computeEventEveSendAt,
   formatStartTimeLocal,
   resolveBartender,

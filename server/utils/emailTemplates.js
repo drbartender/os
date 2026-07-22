@@ -831,6 +831,7 @@ module.exports = {
   drinkPlanLink: lifecycle.drinkPlanLink,
   drinkPlanBalanceUpdate: lifecycle.drinkPlanBalanceUpdate,
   shoppingListReady: lifecycle.shoppingListReady,
+  eventEveEmail: lifecycle.eventEveEmail,
   postConsultClient: lifecycle.postConsultClient,
   lastMinuteStaffingConfirmation: lifecycle.lastMinuteStaffingConfirmation,
   gratuityStaffingChange: lifecycle.gratuityStaffingChange,

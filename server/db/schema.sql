@@ -4126,3 +4126,33 @@ ON CONFLICT (key) DO NOTHING;
 -- on the celebration screen's Enhancement Lab CTA. Queryable attach-rate:
 -- submitted_at vs lab_cta_clicked_at vs Lab additions.
 ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS lab_cta_clicked_at TIMESTAMPTZ;
+
+-- ─── Client SMS consent audit (A2P 10DLC, 2026-07-22) ────────────
+-- Append-only proof of opt-in. communication_preferences.sms_enabled is what
+-- the comms system reads; THIS is what gets handed to a carrier or a claimant.
+-- client_id is ON DELETE SET NULL and phone is retained, so deleting the
+-- client never destroys the compliance record. copy_text is resolved
+-- server-side from server/data/smsConsentCopy.js, never from the request body.
+--
+-- CLIENTS ONLY. Staff SMS consent is agreements.sms_consent (the gate
+-- server/routes/messages.js already enforces) and is separately approved with
+-- Twilio; it deliberately does not write here.
+-- See docs/superpowers/specs/2026-07-22-legal-pages-sms-consent-design.md
+CREATE TABLE IF NOT EXISTS sms_consent_log (
+  id BIGSERIAL PRIMARY KEY,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  phone TEXT NOT NULL,
+  consented BOOLEAN NOT NULL,
+  copy_version TEXT NOT NULL,
+  copy_text TEXT NOT NULL,
+  source_form TEXT NOT NULL,
+  ip TEXT,
+  user_agent TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- A carrier dispute arrives as a phone number, so that is the lookup that matters.
+CREATE INDEX IF NOT EXISTS idx_sms_consent_log_phone_created_at
+  ON sms_consent_log(phone, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sms_consent_log_client
+  ON sms_consent_log(client_id, created_at DESC);

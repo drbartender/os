@@ -13,8 +13,9 @@ const { composeVenueLocation, validateVenue, normalizeVenueState } = require('..
 const { validateProposalRules, stripIncludedAddons } = require('../../utils/proposalRules');
 const { createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
-const { findOrCreateClient } = require('../../utils/clientDedup');
+const { findOrCreateClientDetailed } = require('../../utils/clientDedup');
 const { safeAddonQty } = require('../../utils/proposalMoneyShared');
+const { recordSmsConsent, consentFieldsFromBody, requestMeta } = require('../../utils/smsConsent');
 
 const router = express.Router();
 
@@ -239,7 +240,8 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     addon_quantities, syrup_selections,
     event_type, event_type_category, event_type_custom,
     client_provides_glassware,
-    class_options
+    class_options,
+    sms_consent, sms_consent_version
   } = req.body;
 
   const fieldErrors = {};
@@ -272,9 +274,50 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     // UNAUTHENTICATED: findOrCreateClient backfills NULL fields only and never
     // overwrites an existing client's name/email/phone, so a stranger who
     // guesses an email cannot rewrite a real client's identity.
-    const finalClientId = await findOrCreateClient(dbClient, {
+    // `created` gates the SMS consent write below: a submitter proves nothing
+    // about a row they did not create on this unauthenticated endpoint.
+    const { id: finalClientId, created: clientIsNew } = await findOrCreateClientDetailed(dbClient, {
       name: client_name, email: client_email, phone: client_phone, source: 'website',
     });
+    // Recorded SMS consent from the quote wizard checkbox (A2P 10DLC).
+    // Inside the transaction on purpose: a consent record that outlived a
+    // rolled-back proposal would claim an opt-in that never happened. Absent
+    // fields mean an older cached bundle, which leaves the existing preference
+    // alone. Ordered BEFORE the prefRow read below because that snapshot feeds
+    // sendProposalSentEmail's channel decision; reading it first would send the
+    // confirmation against the preference this submit just replaced.
+    const consent = consentFieldsFromBody({ sms_consent, sms_consent_version });
+    if (consent) {
+      const meta = requestMeta(req);
+      const outcome = await recordSmsConsent(dbClient, {
+        clientId: finalClientId,
+        subjectIsNew: clientIsNew,
+        phone: client_phone || '',
+        consented: consent.consented,
+        version: consent.version,
+        sourceForm: 'quote_wizard',
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+      });
+      // A ticked box that recorded nothing is invisible to everyone otherwise:
+      // the client saw a successful submit and we hold no proof. The version
+      // case is the one that bites in practice (Vercel ships the new bundle
+      // before Render ships the new server, so the browser can post a version
+      // this process does not know yet).
+      //
+      // Only the anomalies are reported. 'existing_client' and 'unchanged' are
+      // the ordinary outcomes for any returning client, so reporting them would
+      // fire on routine submits and bury the cases worth reading.
+      const NOTABLE = new Set(['unknown_version', 'prior_opt_out', 'no_phone']);
+      if (consent.consented && !outcome.logged && NOTABLE.has(outcome.reason)) {
+        Sentry.captureMessage('sms consent not recorded', {
+          level: outcome.reason === 'unknown_version' ? 'warning' : 'info',
+          tags: { route: 'proposals/public/submit', reason: outcome.reason },
+          extra: { clientId: finalClientId, version: consent.version },
+        });
+      }
+    }
+
     const prefRow = await dbClient.query(
       'SELECT communication_preferences, email_status, phone_status FROM clients WHERE id = $1',
       [finalClientId]
@@ -315,7 +358,9 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     // Authoritative rule gate — re-checks every rule the wizard UI enforces
     // (a stale tab / scripted POST bypasses the client). Skipped for Top Shelf
     // (no pricing inputs yet). A thrown ValidationError triggers the catch →
-    // ROLLBACK below; harmless since only SELECTs have run so far.
+    // ROLLBACK below, and that rollback is now load-bearing: the consent write
+    // above is a real mutation, not a SELECT, so an early throw here must not
+    // leave an opt-in recorded against a proposal that was never created.
     if (!isTopShelfClass) {
       validateProposalRules({
         pkg: pkgResult.rows[0],
