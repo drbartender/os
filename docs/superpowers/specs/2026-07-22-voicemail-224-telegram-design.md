@@ -1,7 +1,10 @@
 # Voicemail on the 224 line, delivered to Telegram (design)
 
 Date: 2026-07-22
-Revision: 3 (rev 2 folded in the `/review-spec` fleet: spec-grounding, spec-gaps,
+Revision: 4 (rev 4 corrects two rules the per-lane review overturned during the
+build: the gated-send path writes no status rather than 'skipped', and the prune
+keys on whether audio still exists in Twilio rather than on terminality. Rev 2
+folded in the `/review-spec` fleet: spec-grounding, spec-gaps,
 spec-risk; rev 3 corrects three things the `/review-plan` fleet caught in the
 spec itself: media retrieval is an authenticated GET and not an SDK call, the
 ledger needs an `attempts` column, and `CLAUDE.md` lives at `.claude/CLAUDE.md`)
@@ -238,10 +241,14 @@ Fail-closed signature check, then, in order:
      archive. A delete that itself fails is logged and ignored; the row already
      records delivery so nothing re-sends, and a stray recording costs cents.
    - `skipped === true` (gated off or no bot token): **not** a failure and
-     **not** a success. Set `status='skipped'`, keep the recording, log, and do
-     not page Sentry. `SEND_NOTIFICATIONS=false` is a documented production
-     configuration (`CLAUDE.md:263`), and treating it as failure would mean a
-     released claim, an undeleted recording, and Sentry noise on every call.
+     **not** a success. Keep the recording, log, do not page Sentry, and write
+     **no status at all** so the row stays `recorded` and therefore inside the
+     sweep's retry window. Revision 3 said to set `status='skipped'`; the
+     per-lane review proved that parks the row outside BOTH the sweep filter and
+     the prune, stranding client audio in Twilio permanently even after the
+     config is fixed. `SEND_NOTIFICATIONS=false` is a documented production
+     configuration (`.claude/CLAUDE.md:263`), and the rollout procedure walks
+     through the bootstrap-mode version of this exact state.
    - anything else: failure. Set `status='failed'`, keep the recording, send the
      text-only fallback naming the caller's number, and capture to Sentry.
      Losing the audio must not also lose the fact that someone called.
@@ -289,9 +296,15 @@ CREATE INDEX IF NOT EXISTS idx_voicemail_delivery_created_at
 
 Pruned as a fourth batched delete inside `pendingCall.js:145`
 `pruneVaCallingRows`, under the same `RETENTION_DAYS` and `PRUNE_BATCH_SIZE`
-constants. The prune only removes terminal rows (`delivered`, `skipped`,
-`empty`); a `failed` or stuck `recorded` row stays visible rather than being
-quietly swept away.
+constants.
+
+The prune predicate is **not** "terminal statuses" (revision 3 said that, and it
+was wrong in both directions). It is **"no recording left in Twilio"**: prune
+`delivered` and `empty` (recording deleted) plus `missed` (the caller hung up
+during the greeting, so no recording was ever made, and excluding it grew the
+table without bound while holding caller PII past retention). Retain `recorded`,
+`failed`, and `skipped`, because each means audio is still sitting in the
+console and the row is the only pointer to it.
 
 ## Guardrails
 
