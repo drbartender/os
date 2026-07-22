@@ -112,7 +112,10 @@ is fixed (`emailTemplates.paymentReceivedClient`), nothing to compose, no list n
 `POST /api/stripe/refund/:id` gains `notify_client: true | false` the same way (fixed template,
 `refundClientNotify.js`). `POST /api/proposals/:id/cancel/refund` reads the same
 `suppress_client_email` flag its parent dialog already collects, so the one checkbox governs
-both emails of the cancel flow.
+both emails of the cancel flow. Polarity note: `suppress_client_email` is inverted relative to
+the fail-quiet rule below (absent means the cancel-refund email SENDS); that inversion is
+inherited from the existing cancel contract on purpose, one flag with one meaning across the
+dialog, and the fail-quiet paragraph applies to the `notify`/`notify_client` family only.
 
 This follows the convention the PATCH already uses for the staff side:
 `notify_assigned_staff`, `notify_staff_sms`, `notify_staff_email` (`crud.js:308`).
@@ -126,7 +129,7 @@ robotic message about a change they already discussed.
 An `event_details_changed` notice with no supplied text is a `ValidationError`, never a
 fallback to a built-in template. There is exactly one composition path.
 
-**The change-request seam.** `ProposalDetailEditForm` always sends `change_request_id` when one
+**The change-request seam.** The shared proposal editor always sends `change_request_id` when one
 is pending, and the save already suppresses the direct reschedule send on that path
 (`crud.js:710`, `&& !change_request_id`) because the change-approved email (`crud.js:807-824`)
 is that flow's one client touch. The contract keeps that rule coherent end to end: when
@@ -199,9 +202,10 @@ when sending quietly. When the projected date lands within 3 days or in the past
 says that too; that is the case with effectively zero automatic warning (the T-3 reminder may
 already have fired or may race the charge).
 
-The SMS draft keeps `smsTemplates.rescheduleSms` content, except its closing "Full updated
-confirmation in your email" clause renders only when the email channel is available and
-selected; for an email-less client that default would be a lie.
+The SMS draft keeps `smsTemplates.rescheduleSms` content, except the notify draft always
+omits its closing "Full updated confirmation in your email" clause: channel selection happens
+after composition, so any email promise in the default text can become a lie the moment the
+admin unchecks email. The body is editable; Dallas adds the pointer when it is true.
 
 ### Why the draft is built at preflight, and why not SendModal
 
@@ -319,9 +323,16 @@ list.
 
 ## Client
 
-Call sites: `EventEditForm.js` and `ProposalDetailEditForm.js` (PATCH),
+Call sites (post event-editor merge `ca231dd`, 2026-07-21: the two legacy edit forms no
+longer exist): the shared `proposalEditor/ProposalEditorForm.js` (one save flow, mounted by
+BOTH Proposal Detail and Event Detail; PATCH via the single `patchBody.js` builder),
 `ProposalDetailPaymentPanel.js` (record payment at `:201`, in-app refund at `:121`),
 `CancelEventDialog.js` (cancel-refund at `:94`).
+
+The editor already runs one pre-save confirm, the reprice modal (booked + total moved). The
+notify decision chains AFTER it: reprice confirm (when applicable), then preflight, then the
+notify popup, then one save. Worst case two modals in sequence on a booked, re-priced,
+rescheduled save; each is answering a different question (money, then communication).
 
 ### Event edit
 
