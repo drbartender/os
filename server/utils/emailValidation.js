@@ -72,4 +72,15 @@ function checkEmailDomain(email) {
   return clean;
 }
 
-module.exports = { checkEmailDomain };
+/**
+ * RFC-2606 .invalid placeholders from the CC import are not addresses:
+ * sendEmail drops them silently (email.js) and nothing is logged. Every NEW
+ * availability check or send gate uses this ONE predicate; the older inline
+ * copies (comms actions, email.js) can migrate opportunistically.
+ * Mirrored client-side in client/src/utils/isPlaceholderEmail.js.
+ */
+function isPlaceholderEmail(email) {
+  return Boolean(email && String(email).toLowerCase().trim().endsWith('.invalid'));
+}
+
+module.exports = { checkEmailDomain, isPlaceholderEmail };

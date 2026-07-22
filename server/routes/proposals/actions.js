@@ -12,6 +12,14 @@ const { createEventShifts } = require('../../utils/eventCreation');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { notifyAdminCategory } = require('../../utils/adminNotifications');
+const { shouldSendImmediate } = require('../../utils/messageSuppression');
+const { isPlaceholderEmail } = require('../../utils/emailValidation');
+
+// Dependency seam for tests (mirrors crud.js's __setDeps): stub sendEmail /
+// notifyAdminCategory to assert the receipt is opt-in while the admin
+// routine_finance notice is NEVER gated.
+let _deps = { sendEmail, notifyAdminCategory };
+function __setDeps(d) { _deps = { ..._deps, ...d }; }
 const { linkPaymentToInvoice, createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { commitGroupChoice, sweepClientAlternatives } = require('../../utils/proposalGroupCommit');
 const { voidUnpaidProposalInvoice, cancelOpenInvoiceIntents } = require('../../utils/invoiceVoid');
@@ -132,7 +140,7 @@ router.post('/:id/send-reminder', auth, requireAdminOrManager, asyncHandler(asyn
 
 /** POST /api/proposals/:id/record-payment — manually record an outside payment (cash, Venmo, etc.) */
 router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { amount, paid_in_full, method } = req.body;
+  const { amount, paid_in_full, method, notify_client } = req.body;
 
   // Fast-fail + lock-gating snapshot ONLY (non-transactional). The authoritative
   // money math is re-derived from a locked re-read INSIDE the tx below (M7), so a
@@ -305,9 +313,12 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
   }
 
   // Email notifications for payment (non-blocking)
+  const notifications = [];
   try {
     const payData = await pool.query(`
-      SELECT p.event_type, p.event_type_custom, c.name AS client_name, c.email AS client_email
+      SELECT p.event_type, p.event_type_custom,
+             c.id AS client_id, c.name AS client_name, c.email AS client_email,
+             c.communication_preferences, c.email_status, c.phone_status
       FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
       WHERE p.id = $1
     `, [proposal.id]);
@@ -316,17 +327,62 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     const payType = isFullyPaid ? 'full payment' : 'deposit';
     const eventTypeLabel = getEventTypeLabel({ event_type: pd?.event_type, event_type_custom: pd?.event_type_custom });
 
-    if (pd?.client_email) {
-      const tpl = emailTemplates.paymentReceivedClient({ clientName: pd.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType });
-      await sendEmail({ to: pd.client_email, ...tpl });
+    // Client receipt: OPT-IN (notify-client contract, 2026-07-22). Recording
+    // a payment is bookkeeping; the receipt is a separate decision made at
+    // the moment of recording — the CC-import backfill is why. Suppression
+    // and placeholder gates apply even to an explicit yes.
+    if (notify_client === true) {
+      if (!pd?.client_email || isPlaceholderEmail(pd.client_email)) {
+        notifications.push({
+          type: 'payment_receipt', email: 'skipped', sms: null,
+          skip_reasons: { email: pd?.client_email ? 'Placeholder address (.invalid) from the CC import; no real email exists.' : 'No email on file for this client.' },
+        });
+      } else {
+        const gate = await shouldSendImmediate({
+          proposal: { id: proposal.id, status: newStatus }, client: pd, channel: 'email',
+        });
+        if (!gate.ok) {
+          notifications.push({
+            type: 'payment_receipt', email: 'skipped', sms: null,
+            skip_reasons: { email: `Suppressed: ${gate.reason}.` },
+          });
+        } else {
+          try {
+            const tpl = emailTemplates.paymentReceivedClient({ clientName: pd.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType });
+            const r = await _deps.sendEmail({
+              to: pd.client_email, ...tpl,
+              meta: { proposalId: proposal.id, clientId: pd.client_id || null, messageType: 'payment_received' },
+            });
+            if (r && r.id === 'skipped-invalid') {
+              // Defense in depth behind the placeholder gate above.
+              notifications.push({ type: 'payment_receipt', email: 'skipped', sms: null, skip_reasons: { email: 'Placeholder address (.invalid); no email was sent.' } });
+            } else {
+              notifications.push({ type: 'payment_receipt', email: 'sent', sms: null, skip_reasons: {} });
+            }
+          } catch (rcptErr) {
+            notifications.push({ type: 'payment_receipt', email: 'failed', sms: null, email_error: rcptErr.message || 'Email send failed.', skip_reasons: {} });
+          }
+        }
+      }
     }
+
+    // Admin routine_finance notice: NEVER gated by notify_client — internal
+    // reporting to Dallas, not a client touch.
     const tpl2 = emailTemplates.paymentReceivedAdmin({ clientName: pd?.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType, proposalId: proposal.id, adminUrl: `${ADMIN_URL}/proposals/${proposal.id}` });
-    await notifyAdminCategory({ category: 'routine_finance', subject: tpl2.subject, emailHtml: tpl2.html, emailText: tpl2.text });
+    await _deps.notifyAdminCategory({ category: 'routine_finance', subject: tpl2.subject, emailHtml: tpl2.html, emailText: tpl2.text });
   } catch (emailErr) {
     if (process.env.SENTRY_DSN_SERVER) {
       Sentry.captureException(emailErr, { tags: { route: 'proposals/payment', issue: 'email' } });
     }
     console.error('Payment email failed (non-blocking):', emailErr);
+    // An explicit notify_client:true must never yield an EMPTY notifications
+    // array on an internal failure — the contract says "entry when attempted".
+    if (notify_client === true && !notifications.some((n) => n.type === 'payment_receipt')) {
+      notifications.push({
+        type: 'payment_receipt', email: 'failed', sms: null,
+        email_error: 'Internal error before the send; see server logs.', skip_reasons: {},
+      });
+    }
   }
 
   // Plan 2d: an admin-recorded outside payment moves the proposal to a paid
@@ -363,7 +419,7 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     }
   }
 
-  res.json({ success: true, status: newStatus, amount_paid: newAmountPaid });
+  res.json({ success: true, status: newStatus, amount_paid: newAmountPaid, notifications });
 }));
 
 // Statuses an admin may archive from; mirrors the lifecycle state machine's
@@ -494,3 +550,4 @@ router.post('/:id/archive', auth, requireAdminOrManager, asyncHandler(async (req
 }));
 
 module.exports = router;
+module.exports.__setDeps = __setDeps;

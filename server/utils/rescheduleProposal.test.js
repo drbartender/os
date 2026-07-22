@@ -206,7 +206,11 @@ test('reanchorPendingMessages > SKIP_REANCHOR_TYPES protects post_event_wrap_up_
 });
 
 // ── rescheduleProposal ──
-test('rescheduleProposal > sends the reschedule email and re-anchors pending rows', async () => {
+// Notify-client contract (2026-07-22): the wrapper's email tail was DELETED.
+// Sending requires caller-composed text (buildEventDetailsDraft), which a tx
+// convenience cannot have; the wrapper now re-anchors + recomputes only and
+// returns { shouldSendEmail } so the caller can decide.
+test('rescheduleProposal > re-anchors pending rows, sends NOTHING, and reports shouldSendEmail', async () => {
   await pool.query(
     `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_location, event_timezone, created_at, total_price)
      VALUES ($1, $2, 'deposit_paid', '2026-09-15', '18:00', 'New Venue', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
@@ -225,12 +229,10 @@ test('rescheduleProposal > sends the reschedule email and re-anchors pending row
   const updated = {
     event_date: '2026-09-15', event_start_time: '18:00', event_location: 'New Venue',
   };
-  await rescheduleProposal({ proposalId: TEST_PROPOSAL_ID, old, updated });
+  const result = await rescheduleProposal({ proposalId: TEST_PROPOSAL_ID, old, updated });
 
-  assert.strictEqual(emailCalls.length, 1);
-  const callArg = emailCalls[0];
-  assert.strictEqual(callArg.to, 'rs@example.com');
-  assert.strictEqual(callArg.subject, 'Updated details for your event');
+  assert.strictEqual(emailCalls.length, 0, 'the wrapper must never send on its own');
+  assert.strictEqual(result.shouldSendEmail, true, 'the caller is told a notice is warranted');
 
   const { rows } = await pool.query(
     `SELECT scheduled_for FROM scheduled_messages
@@ -358,7 +360,7 @@ test('rescheduleProposal > skips entirely when proposal is archived', async () =
   assert.strictEqual(emailCalls.length, 0);
 });
 
-test('rescheduleProposal > commits DB changes and sends only SMS when client has email=NULL but a phone', async () => {
+test('rescheduleProposal > commits DB changes and sends nothing even when only a phone exists', async () => {
   await pool.query(
     `INSERT INTO clients (id, name, email, phone) VALUES (-3, 'No Email', NULL, '+15555555555')
      ON CONFLICT (id) DO NOTHING`
@@ -380,10 +382,11 @@ test('rescheduleProposal > commits DB changes and sends only SMS when client has
 
   const old = { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'X' };
   const updated = { event_date: '2026-09-15', event_start_time: '18:00', event_location: 'Y' };
-  await rescheduleProposal({ proposalId: TEST_PROPOSAL_ID, old, updated });
+  const result = await rescheduleProposal({ proposalId: TEST_PROPOSAL_ID, old, updated });
 
   assert.strictEqual(emailCalls.length, 0);
-  assert.strictEqual(smsCalls, 1, 'the reschedule SMS should fire when only a phone is present');
+  assert.strictEqual(smsCalls, 0, 'the wrapper must never SMS on its own (notify-client contract)');
+  assert.strictEqual(result.shouldSendEmail, true);
 
   const { rows } = await pool.query(
     `SELECT scheduled_for FROM scheduled_messages

@@ -115,4 +115,29 @@ function validateVenue(v = {}, opts = {}) {
   return e;
 }
 
-module.exports = { VENUE_STATES, composeVenueLocation, composeVenueMapQuery, isVenueComplete, validateVenue, normalizeVenueState };
+/**
+ * The prospective event_location a proposal PATCH will produce for a pending
+ * edit: body venue parts merged over the stored row, state canonicalized, then
+ * composed — EXACTLY the crud.js save-path semantics (moved here so the
+ * read-only notify-preflight and the save can never drift on location; the
+ * live incident that motivated the notify project was a venue edit).
+ *
+ * Returns null when the body carries no venue key at all (caller falls back to
+ * body.event_location ?? stored value). Validation stays at the route.
+ */
+function resolvePendingLocation(old, body = {}) {
+  const venueProvided = ['venue_name', 'venue_street', 'venue_city', 'venue_state', 'venue_zip']
+    .some((k) => body[k] !== undefined);
+  if (!venueProvided) return null;
+  return composeVenueLocation({
+    venue_name:   body.venue_name   ?? old.venue_name,
+    venue_street: body.venue_street ?? old.venue_street,
+    venue_city:   body.venue_city   ?? old.venue_city,
+    // Normalize the merged value so the recomposed event_location can never
+    // trail the canonicalized column by one save.
+    venue_state:  normalizeVenueState(body.venue_state ?? old.venue_state),
+    venue_zip:    body.venue_zip    ?? old.venue_zip,
+  });
+}
+
+module.exports = { VENUE_STATES, composeVenueLocation, composeVenueMapQuery, isVenueComplete, validateVenue, normalizeVenueState, resolvePendingLocation };

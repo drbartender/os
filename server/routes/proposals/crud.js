@@ -5,7 +5,7 @@ const { auth, requireAdminOrManager, adminOnly } = require('../../middleware/aut
 const { calculateProposal, deriveGratuityRate, computeGratuityBasis } = require('../../utils/pricingEngine');
 const { reconcileProposalPaymentStatus } = require('../../utils/proposalStatus');
 const { createEventShifts, syncShiftsFromProposal } = require('../../utils/eventCreation');
-const { composeVenueLocation, validateVenue, normalizeVenueState } = require('../../utils/venueAddress');
+const { validateVenue, normalizeVenueState, resolvePendingLocation } = require('../../utils/venueAddress');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded } = require('../../utils/invoiceHelpers');
@@ -13,6 +13,9 @@ const { getEventTypeLabel } = require('../../utils/eventTypes');
 const { validateProposalRules, stripIncludedAddons } = require('../../utils/proposalRules');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
 const { rescheduleProposalInTx, sendRescheduleEmail } = require('../../utils/rescheduleProposal');
+const { validateNotifyList, NOTICE_EVENT_DETAILS } = require('../../utils/clientNotices');
+const { shouldSendImmediate } = require('../../utils/messageSuppression');
+const { isPlaceholderEmail } = require('../../utils/emailValidation');
 const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../../utils/errors');
@@ -28,7 +31,7 @@ const router = express.Router();
 // runs AFTER commit. Tests stub these via __setDeps to (a) assert the email
 // fires exactly once per send and (b) force createInvoiceOnSend to throw and
 // verify the txn rolls back.
-let _deps = { createInvoiceOnSend, sendProposalSentEmail };
+let _deps = { createInvoiceOnSend, sendProposalSentEmail, sendRescheduleEmail };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
 const TOTAL_PRICE_OVERRIDE_MAX = 1_000_000;
@@ -306,8 +309,16 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     class_options, client_provides_glassware,
     tip_jar, gratuity_total,
     notify_assigned_staff, notify_staff_sms, notify_staff_email,
+    notify,
     change_request_id
   } = req.body;
+
+  // Structural validation BEFORE any connection is checked out: a malformed
+  // notify list never opens a transaction. Trigger validation (does this save
+  // actually fire the notice?) happens below, where shouldSendEmail is
+  // computed. Absent/empty = nothing sends (fail-quiet by design).
+  const requestedNotices = validateNotifyList(notify);
+  const eventNotice = requestedNotices.find((n) => n.type === NOTICE_EVENT_DETAILS) || null;
 
   const dbClient = await pool.connect();
   try {
@@ -338,19 +349,12 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       );
       if (Object.keys(venueErrors).length > 0) throw new ValidationError(venueErrors);
     }
-    const mergedVenue = {
-      venue_name:   venue_name   ?? old.venue_name,
-      venue_street: venue_street ?? old.venue_street,
-      venue_city:   venue_city   ?? old.venue_city,
-      // Normalize the merged value so the recomposed event_location can never
-      // trail the canonicalized column by one save (abbrev healed in the
-      // column write below, but composed from the raw merge here).
-      venue_state:  normalizeVenueState(venue_state ?? old.venue_state),
-      venue_zip:    venue_zip    ?? old.venue_zip,
-    };
-    const recomposedLocation = venueProvided
-      ? composeVenueLocation(mergedVenue)
-      : null;
+    // Merge-and-compose moved to the shared resolvePendingLocation so the
+    // read-only notify-preflight computes the SAME prospective location this
+    // save writes (returns null when no venue key is present in the body).
+    const recomposedLocation = resolvePendingLocation(old, {
+      venue_name, venue_street, venue_city, venue_state, venue_zip,
+    });
 
     const pkgId = package_id || old.package_id;
     const pkgResult = await dbClient.query('SELECT * FROM service_packages WHERE id = $1', [pkgId]);
@@ -643,6 +647,18 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       throw rescheduleErr;
     }
 
+    // Trigger match for the composable notice: the supplied text was composed
+    // against a specific set of changes; sending it against a different set
+    // (or on a change-request save, whose one client touch is the
+    // change-approved email) is a rejected request. Throwing here rolls the
+    // whole edit back — nothing saved, nothing sent. Mirrors preflight's
+    // change_request_id zero-notices rule so both sides stay one rule.
+    if (eventNotice && (!shouldSendRescheduleEmail || change_request_id)) {
+      throw new ValidationError({
+        notify: 'This save does not change the event date, time, or location for a direct notice, so that message cannot be sent.',
+      });
+    }
+
     // Change-request approve linkage (spec 5.2). Validate the request belongs to
     // this proposal and is pending; stamp approved atomically with the edit. A
     // bad id is logged and skipped, never failing the edit.
@@ -711,36 +727,64 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // the outer catch (which would 500 the PATCH response even though the DB
     // committed successfully). A Resend failure happens after the DB is
     // already consistent; admin can manually re-send.
-    if (shouldSendRescheduleEmail && !change_request_id) {
+    const notifications = [];
+    if (eventNotice && shouldSendRescheduleEmail && !change_request_id) {
       try {
-        await sendRescheduleEmail({
+        const r = await _deps.sendRescheduleEmail({
           proposalId: parseInt(req.params.id, 10),
-          old,
-          updated: updatedRow.rows[0],
+          channels: eventNotice.channels,
+          message: { email: eventNotice.email, sms: eventNotice.sms },
         });
+        notifications.push({ type: NOTICE_EVENT_DETAILS, ...r });
       } catch (emailErr) {
         if (process.env.SENTRY_DSN_SERVER) {
           Sentry.captureException(emailErr, {
-            tags: { route: 'proposals/update', issue: 'reschedule-email' },
+            tags: { route: 'proposals/update', issue: 'event-details-notice' },
             extra: { proposalId: req.params.id },
           });
         }
-        console.error('Reschedule email failed (non-blocking, DB already committed):', emailErr);
+        console.error('Event-details notice failed (non-blocking, DB already committed):', emailErr);
+        // Error keys attach ONLY to channels that were actually selected and
+        // are being reported failed; a skipped channel never carries an error.
+        const wantEmail = eventNotice.channels.includes('email');
+        const wantSms = eventNotice.channels.includes('sms');
+        notifications.push({
+          type: NOTICE_EVENT_DETAILS,
+          email: wantEmail ? 'failed' : 'skipped',
+          sms: wantSms ? 'failed' : 'skipped',
+          ...(wantEmail ? { email_error: emailErr.message } : {}),
+          ...(wantSms ? { sms_error: emailErr.message } : {}),
+          skip_reasons: {},
+        });
       }
     }
 
     // Staffing-driven gratuity change (§7): the crew grew, so the gratuity total
     // rose at the SAME rate the client agreed to. Notify by email (not SMS),
     // best-effort, post-commit — a failure must NEVER 500 the committed PATCH.
+    //
+    // DELIBERATELY AUTOMATIC, not part of the notify opt-in (owner decision
+    // 2026-07-22): this is a billing disclosure — the invoice cascade above
+    // mints/grows a payable invoice with no email of its own, so this is the
+    // only thing telling the client they owe more. Only the suppression gate
+    // (prefs/bounce/placeholder) applies; see the notify-client spec reversal
+    // note before ever folding this into the popup.
     if (notifyStaffingGratuity) {
       try {
         const full = await pool.query(
-          `SELECT p.total_price, p.pricing_snapshot, c.email AS client_email, c.name AS client_name
+          `SELECT p.total_price, p.pricing_snapshot, p.status AS current_status,
+                  c.email AS client_email, c.name AS client_name,
+                  c.communication_preferences, c.email_status, c.phone_status
              FROM proposals p LEFT JOIN clients c ON c.id = p.client_id WHERE p.id = $1`,
           [req.params.id]
         );
         const row = full.rows[0];
-        if (row && row.client_email) {
+        const gate = row ? await shouldSendImmediate({
+          proposal: { id: req.params.id, status: row.current_status },
+          client: row,
+          channel: 'email',
+        }) : { ok: false, reason: 'bad_contact' };
+        if (row && row.client_email && !isPlaceholderEmail(row.client_email) && gate.ok) {
           await sendEmail({
             to: row.client_email,
             ...emailTemplates.gratuityStaffingChange({
@@ -749,6 +793,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
               gratuity: (row.pricing_snapshot && row.pricing_snapshot.gratuity) || null,
             }),
           });
+        } else {
+          console.log(`[gratuityDisclosure] suppressed for proposal ${req.params.id}: ${!row || !row.client_email ? 'no email on file' : isPlaceholderEmail(row.client_email) ? 'placeholder address' : gate.reason}`);
         }
       } catch (mailErr) {
         if (process.env.SENTRY_DSN_SERVER) {
@@ -828,7 +874,9 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     }
 
     // Return updated proposal (from the UPDATE ... RETURNING * above)
-    res.json(updatedRow.rows[0]);
+    // Spread keeps every existing top-level key (tests and callers read the
+    // row fields directly); notifications carries per-channel send truth.
+    res.json({ ...updatedRow.rows[0], notifications });
   } catch (err) {
     try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
     throw err;

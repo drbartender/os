@@ -98,3 +98,14 @@ server/routes/drinkPlans/submit.js
 server/utils/comms/*.js
 server/utils/comms/actions/*.js
 server/routes/comms.js
+
+# Notify-client contract (2026-07-22): the proposal PATCH + record-payment now
+# carry the client-send opt-in (notify list / notify_client) alongside their
+# existing money math, and rescheduleProposal owns re-anchoring + the
+# balance-due recompute + the reviewed-text send. All three were previously
+# unlisted (the spec's review posture assumed otherwise; verified false at the
+# rev-2 verification), so the money paths carrying most of this project scaled
+# to a light look. Explicit entries:
+server/routes/proposals/crud.js
+server/routes/proposals/actions.js
+server/utils/rescheduleProposal.js

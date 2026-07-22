@@ -206,6 +206,7 @@ dr-bartender/
 │   │   │   ├── lifecycle.js    # Proposal status state machine (PATCH /:id/status)
 │   │   │   ├── crud.js         # admin CRUD (list / create / update / archive)
 │   │   │   ├── getOne.js       # GET /:id single-proposal read (carved out of crud.js; greedy `/:id`, mounted last)
+│   │   │   ├── notifyPreflight.js # POST /:id/notify-preflight — read-only: which client notices a pending edit would trigger + the drafted message
 │   │   │   ├── actions.js      # Per-proposal admin actions: notes, create-shift, balance-due-date, send-reminder, record-payment (carved out of crud.js)
 │   │   │   ├── cancel.js       # Cancel booked events (fix #7): /:id/cancel/preview, /:id/cancel, /:id/cancel/refund — archive + shift-cancel + comms-delete + invoice-void + idempotent tip clawback + agreement refund
 │   │   │   └── changeRequests.js # Admin change-request endpoints (queue, per-proposal list, decline)
@@ -276,6 +277,7 @@ dr-bartender/
 │   │   ├── channelFallback.js  # Channel-substitution decision for single-channel operational touches (picks the live channel when the registered one's status is 'bad')
 │   │   ├── clientAutomationSuspension.js # Suspends a client's remaining automation when both email_status and phone_status are 'bad' (sets clients.automation_suspended_at, cancels pending scheduled_messages)
 │   │   ├── clientDedup.js      # Find-or-create a client de-duped on email OR phone (name-guarded, backfill-only); the single intake find-or-create
+│   │   ├── clientNotices.js    # Notify-client contract: notice detection (event_details_changed) + notify-list validation shared by PATCH and preflight
 │   │   ├── comms/              # Compose-first client-send registry (backs POST /api/comms)
 │   │   │   ├── registry.js     # Auto-discovers actions/*.js at require time; defines + enforces the action contract (resolveRecipient/buildMessages/ensureSideEffects/dispatch)
 │   │   │   ├── render.js       # renderPartsEmail: HTML-escapes the editable subject/body prose into the branded email shell (fixed heading + cta)
@@ -376,7 +378,7 @@ dr-bartender/
 │   │   ├── urls.js             # Canonical PUBLIC_SITE_URL / ADMIN_URL / STAFF_URL / API_URL resolvers
 │   │   ├── usPhone.js          # US/NANP phone validation: toUsE164, isUsE164 (normalizePhone + strict +1 NANP gate, rejects intl + 900/976) — primary VA-calling toll-fraud control
 │   │   ├── vaCallingScheduler.js # VA-calling scheduler body: pruneVaCallingRows + checkTelegramWebhookHealth (re-runs setTelegramWebhook + emails admin when the webhook is unset or recently errored)
-│   │   ├── venueAddress.js     # Compose/validate structured venue address; derives event_location & shifts.location
+│   │   ├── venueAddress.js     # Compose/validate structured venue address; derives event_location & shifts.location; resolvePendingLocation shared by the PATCH + notify-preflight
 │   │   ├── webhookEventsPruneScheduler.js # Hourly prune of `webhook_events` to a 30-day window (gated by RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER)
 │   │   └── xmlEscape.js        # Shared TwiML XML escaper (& < >); used by the SMS + voice routes
 │   └── scripts/

@@ -88,8 +88,12 @@ function eventEveSms({ startTime, location, bartenderName, bartenderPhone }) {
 }
 
 // ─── 3.13 Reschedule SMS ─────────────────────────────────────────
-function rescheduleSms({ newDate, newStartTime, newLocation }) {
-  return `Hi, Dallas here. Your event has been updated. New details: ${dt(newDate)} at ${newStartTime || 'a new time'}, ${newLocation || 'the same location'}. Full updated confirmation in your email. Let me know if you have any questions.`;
+function rescheduleSms({ newDate, newStartTime, newLocation, includeEmailClause = true }) {
+  // includeEmailClause=false: the notify-confirm draft omits the email promise
+  // because channel selection happens after composition (an SMS-only send must
+  // never promise an email that is not coming). Default true for back-compat.
+  const emailClause = includeEmailClause ? ' Full updated confirmation in your email.' : '';
+  return `Hi, Dallas here. Your event has been updated. New details: ${dt(newDate)} at ${newStartTime || 'a new time'}, ${newLocation || 'the same location'}.${emailClause} Let me know if you have any questions.`;
 }
 
 // ═════════════════════════════════════════════════════════════════

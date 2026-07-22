@@ -1,7 +1,6 @@
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');
-const emailTemplates = require('./emailTemplates');
 const { resolveEventTimezone, formatEventLocalTime } = require('./eventTimezone');
 const { getHandlerMeta } = require('./scheduledMessageDispatcher');
 const { shouldSendImmediate } = require('./messageSuppression');
@@ -61,15 +60,65 @@ function toCalendarYmd(value) {
  * toCalendarYmd so a Date and an equivalent string compare equal. The other
  * two are stored as text, compared trimmed.
  */
-function hasReschedulableChange(oldRow, newRow) {
-  const eventDateChanged = (toCalendarYmd(oldRow.event_date) || '') !== (toCalendarYmd(newRow.event_date) || '');
-  const textFields = ['event_start_time', 'event_location'];
-  const textChanged = textFields.some((f) => {
+// The one list of fields whose change means "the client's event moved".
+// hasReschedulableChange and notify-preflight's reasons both derive from THIS;
+// a fourth reschedulable field is added here and nowhere else.
+const RESCHEDULABLE_FIELDS = ['event_date', 'event_start_time', 'event_location'];
+
+/**
+ * The changed subset of RESCHEDULABLE_FIELDS, with the type-aware comparison
+ * (event_date is a pg Date, compared as a calendar date; the others as
+ * trimmed text). hasReschedulableChange and notify-preflight's `reasons` both
+ * derive from THIS so a reason can never claim a field the trigger ignored.
+ */
+function changedReschedulableFields(oldRow, newRow) {
+  return RESCHEDULABLE_FIELDS.filter((f) => {
+    if (f === 'event_date') {
+      return (toCalendarYmd(oldRow.event_date) || '') !== (toCalendarYmd(newRow.event_date) || '');
+    }
     const oldVal = (oldRow[f] === null || oldRow[f] === undefined) ? '' : String(oldRow[f]).trim();
     const newVal = (newRow[f] === null || newRow[f] === undefined) ? '' : String(newRow[f]).trim();
     return oldVal !== newVal;
   });
-  return eventDateChanged || textChanged;
+}
+
+function hasReschedulableChange(oldRow, newRow) {
+  return changedReschedulableFields(oldRow, newRow).length > 0;
+}
+
+/**
+ * The status gate for the reschedule notice, shared by the in-tx path and the
+ * read-only notify-preflight so the two can never drift. Only meaningful for
+ * proposals at or past deposit_paid; archived never notifies.
+ */
+function reschedulableStatusOk(status) {
+  return Boolean(status) && status !== 'archived' && BOOKED_SET.has(status);
+}
+
+/**
+ * Pure projection of the balance-due shift a date move performs. Mirrors BOTH
+ * in-tx branches (offset-preserving when a due date exists; the codebase
+ * default event_date - 14d when none does) — and the in-tx recompute calls
+ * THIS function, so the preflight draft's promised date and the committed
+ * value are one computation. Null when the event date is not moving.
+ */
+function computeProjectedBalanceDue(oldEventDate, oldBalanceDue, newEventDate) {
+  const oldYmd = toCalendarYmd(oldEventDate);
+  const newYmd = toCalendarYmd(newEventDate);
+  if (!oldYmd || !newYmd || oldYmd === newYmd) return null;
+  const newEventMs = new Date(newYmd + 'T00:00:00Z').getTime();
+  // Junk input (preflight feeds raw body values) must yield "no projection",
+  // never a RangeError 500: new Date(NaN).toISOString() throws.
+  if (!Number.isFinite(newEventMs)) return null;
+  const dueYmd = toCalendarYmd(oldBalanceDue);
+  if (!dueYmd) {
+    return new Date(newEventMs - 14 * 86400000).toISOString().slice(0, 10);
+  }
+  const oldEventMs = new Date(oldYmd + 'T00:00:00Z').getTime();
+  const oldBalanceMs = new Date(dueYmd + 'T00:00:00Z').getTime();
+  if (!Number.isFinite(oldEventMs) || !Number.isFinite(oldBalanceMs)) return null;
+  const offsetDays = Math.round((oldBalanceMs - oldEventMs) / 86400000); // typically -14
+  return new Date(newEventMs + offsetDays * 86400000).toISOString().slice(0, 10);
 }
 
 /**
@@ -179,43 +228,164 @@ async function reanchorPendingMessages(client, proposalId) {
 }
 
 /**
- * Send the reschedule notification email immediately. SMS deferred to Phase 3
- * per spec section 10.
- *
- * Runs AFTER the DB transaction commits (Gemini Finding 2). The DB-side
- * reschedule is atomic; the email is fired non-blockingly afterwards because
- * an email failure should not roll back the proposal UPDATE.
- *
- * Inputs:
- *   - `old`: the proposal row BEFORE the PATCH (must include event_date,
- *     event_start_time, event_location)
- *   - `updated`: the proposal row AFTER the PATCH (same shape; new values)
- *
- * Both rows should be the full proposal row from the PATCH handler — the
- * function only reads the three reschedulable fields plus client linkage.
+ * Event-local date formatting for the notice draft and send. Module scope
+ * (tz-first) so buildEventDetailsDraft and sendRescheduleEmail share them.
  */
-async function sendRescheduleEmail({ proposalId, old, updated }) {
+function fmtDate(tz, d) {
+  if (!d) return 'TBD';
+  const ymd = toCalendarYmd(d);
+  if (!ymd) return 'TBD';
+  const parsed = new Date(ymd + 'T12:00:00Z');
+  if (Number.isNaN(parsed.getTime())) return 'TBD';
+  return formatEventLocalTime(parsed, tz, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+// IMPORTANT: event_start_time is wall-clock event-local time stored as a
+// string (e.g., '18:00' or '6:00 PM'). We must NOT parse it as UTC and then
+// format in event TZ — that round-trip shifts the displayed time by the TZ
+// offset (e.g., Chicago 18:00 → displays as 1:00 PM CDT). Instead we
+// string-format the literal time and append the TZ abbreviation pulled
+// from the event_date in the resolved zone.
+function fmtTime(tz, date, time) {
+  if (!time || !date) return 'TBD';
+  const raw = String(time).trim();
+  let time12 = raw;
+  const hhmm = /^(\d{1,2}):(\d{2})$/.exec(raw);
+  if (hhmm) {
+    const h = Number(hhmm[1]);
+    const m = Number(hhmm[2]);
+    if (Number.isFinite(h) && Number.isFinite(m)) {
+      const hour12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      time12 = `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+    }
+  }
+  let tzAbbrev = '';
+  try {
+    const dateStr = toCalendarYmd(date) || '';
+    const refMs = Date.parse(`${dateStr}T12:00:00Z`);
+    if (Number.isFinite(refMs)) {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        timeZoneName: 'short',
+      }).formatToParts(new Date(refMs));
+      const tzPart = parts.find((p) => p.type === 'timeZoneName');
+      if (tzPart && tzPart.value) tzAbbrev = ` ${tzPart.value}`;
+    }
+  } catch (_e) { /* leave empty */ }
+  return `${time12}${tzAbbrev}`;
+}
+
+/**
+ * Composes the event-details notice from the OLD row + pending edits, at
+ * preflight time (the old values do not survive the save). Money-free by
+ * design (spec: draft content): the only quoted consequence is the projected
+ * balance-due shift, which is deterministic because computeProjectedBalanceDue
+ * is the SAME function the save's in-tx recompute calls.
+ *
+ * `ctx` is the joined proposal+client row (preflight's SELECT or this module's
+ * own load): client_name/client_email/token/autopay_enrolled/balance_due_date
+ * plus the timezone fields resolveEventTimezone reads.
+ */
+function buildEventDetailsDraft({ old, updated, ctx }) {
+  const { proposalUrl } = require('./urls');
+  const tz = resolveEventTimezone(ctx);
+  const firstName = (ctx.client_name || '').trim().split(/\s+/)[0] || 'there';
+
+  // The changed-field set comes from the canonical comparator so the draft's
+  // lines and the trigger can never drift (same function, both sides).
+  const changed = new Set(changedReschedulableFields(old, updated));
+  const lines = [];
+  if (changed.has('event_date')) lines.push(`Date: ${fmtDate(tz, old.event_date)} is now ${fmtDate(tz, updated.event_date)}`);
+  if (changed.has('event_start_time')) lines.push(`Start time: ${fmtTime(tz, old.event_date, old.event_start_time)} is now ${fmtTime(tz, updated.event_date, updated.event_start_time)}`);
+  if (changed.has('event_location')) lines.push(`Location: ${old.event_location || 'TBD'} is now ${updated.event_location || 'TBD'}`);
+
+  const projected = computeProjectedBalanceDue(old.event_date, old.balance_due_date, updated.event_date);
+  let dueLine = null;
+  let autopayNotice = null;
+  if (projected) {
+    const projectedLocal = fmtDate(tz, projected);
+    dueLine = ctx.autopay_enrolled
+      ? `Your card will auto-charge the remaining balance on ${projectedLocal}.`
+      : `Your balance due date moves to ${projectedLocal}.`;
+    autopayNotice = dueLine;
+    const daysOut = Math.round((Date.parse(projected + 'T00:00:00Z') - Date.now()) / 86400000);
+    if (daysOut <= 3) {
+      autopayNotice += ' That is inside the reminder window, so this notice may be their only warning.';
+    }
+  }
+
+  const link = ctx.token ? proposalUrl(ctx.token) : null;
+  const body_text = [
+    `Hi ${firstName},`,
+    'Your event details have been updated. Here is what changed:',
+    lines.join('\n'),
+    dueLine,
+    link ? `You can see your full current details and balance anytime here: ${link}` : null,
+    'Let me know if you have any questions.',
+  ].filter(Boolean).join('\n\n');
+
+  // rescheduleSms's dt() is a raw passthrough, so pass PRE-FORMATTED strings
+  // exactly like the send path always has. includeEmailClause is ALWAYS false
+  // in the notify draft: channel selection happens after composition, so the
+  // default text never promises an email (the admin can add the pointer).
+  const smsTemplates = require('./smsTemplates');
+  const smsBody = smsTemplates.rescheduleSms({
+    newDate: fmtDate(tz, updated.event_date || ctx.event_date),
+    newStartTime: fmtTime(tz, updated.event_date || ctx.event_date, updated.event_start_time || ctx.event_start_time),
+    newLocation: updated.event_location || ctx.event_location || '',
+    includeEmailClause: false,
+  });
+
+  return {
+    email: { subject: 'Updated details for your event', body_text },
+    sms: { body: smsBody },
+    projected_balance_due: projected,
+    autopay_notice: autopayNotice,
+  };
+}
+
+/**
+ * Sends the event-details notice on the caller's selected channels with the
+ * caller's REVIEWED text. Composition happens upstream (notify-preflight /
+ * buildEventDetailsDraft) because the message renders old-vs-new and the old
+ * values do not survive the save. There is NO template fallback: a caller
+ * that did not compose did not intend to send.
+ *
+ * Runs AFTER the DB transaction commits; a provider failure is reported in
+ * the per-channel result, never thrown past the caller's collection.
+ *
+ * @returns {{ email, sms, email_error, sms_error, skip_reasons }}
+ */
+async function sendRescheduleEmail({ proposalId, channels, message }) {
+  const wantEmail = Array.isArray(channels) && channels.includes('email');
+  const wantSms = Array.isArray(channels) && channels.includes('sms');
+  const results = { email: 'skipped', sms: 'skipped', skip_reasons: {} };
+  if (!wantEmail) results.skip_reasons.email = 'not selected';
+  if (!wantSms) results.skip_reasons.sms = 'not selected';
+  if (!wantEmail && !wantSms) return results;
+
+  // The message text is caller-composed now, so this loads ONLY recipient
+  // resolution + suppression inputs (the old template-context columns and the
+  // package join are gone with the template).
   const { rows } = await pool.query(
-    `SELECT p.id, p.token, p.status, p.event_date, p.event_start_time, p.event_location,
-            p.event_timezone, p.guest_count, p.total_price, p.balance_due_date,
-            p.autopay_enrolled,
+    `SELECT p.id, p.status,
             c.id AS client_id, c.name AS client_name, c.email AS client_email,
             c.phone AS client_phone,
-            c.communication_preferences, c.email_status, c.phone_status,
-            sp.name AS package_name
+            c.communication_preferences, c.email_status, c.phone_status
        FROM proposals p
        LEFT JOIN clients c ON c.id = p.client_id
-       LEFT JOIN service_packages sp ON sp.id = p.package_id
       WHERE p.id = $1`,
     [proposalId]
   );
   const ctx = rows[0];
   if (!ctx) throw new Error(`rescheduleProposal: proposal ${proposalId} not found`);
-  // Phase 3: the reschedule touch is email + SMS. Only bail when BOTH channels
-  // have no destination; otherwise proceed and let each channel's
-  // shouldSendImmediate gate decide.
+  // No destination at all: report it rather than throwing. This now runs
+  // behind an explicit admin Send, and the response carries per-channel truth.
   if (!ctx.client_email && !ctx.client_phone) {
-    throw new Error(`rescheduleProposal: proposal ${proposalId} client has no email and no phone`);
+    if (wantEmail) results.skip_reasons.email = 'No email on file for this client.';
+    if (wantSms) results.skip_reasons.sms = 'No usable phone on file.';
+    return results;
   }
 
   // Gemini Finding 3: respect suppression rules on this immediate send.
@@ -238,117 +408,98 @@ async function sendRescheduleEmail({ proposalId, old, updated }) {
   });
   if (!emailCheck.ok && !smsCheck.ok) {
     console.log(`[rescheduleNotification] both channels suppressed for proposal ${proposalId}: email=${emailCheck.reason} sms=${smsCheck.reason}`);
-    return;
+    if (wantEmail) results.skip_reasons.email = `Suppressed: ${emailCheck.reason}.`;
+    if (wantSms) results.skip_reasons.sms = `Suppressed: ${smsCheck.reason}.`;
+    return results;
   }
 
-  const tz = resolveEventTimezone(ctx);
+  const { isPlaceholderEmail } = require('./emailValidation');
 
-  const fmtDate = (d) => {
-    if (!d) return 'TBD';
-    const ymd = toCalendarYmd(d);
-    if (!ymd) return 'TBD';
-    const parsed = new Date(ymd + 'T12:00:00Z');
-    if (Number.isNaN(parsed.getTime())) return 'TBD';
-    return formatEventLocalTime(parsed, tz, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-  };
-  // IMPORTANT: event_start_time is wall-clock event-local time stored as a
-  // string (e.g., '18:00' or '6:00 PM'). We must NOT parse it as UTC and then
-  // format in event TZ — that round-trip shifts the displayed time by the TZ
-  // offset (e.g., Chicago 18:00 → displays as 1:00 PM CDT). Instead we
-  // string-format the literal time and append the TZ abbreviation pulled
-  // from the event_date in the resolved zone.
-  const fmtTime = (date, time) => {
-    if (!time || !date) return 'TBD';
-    const raw = String(time).trim();
-    let time12 = raw;
-    const hhmm = /^(\d{1,2}):(\d{2})$/.exec(raw);
-    if (hhmm) {
-      const h = Number(hhmm[1]);
-      const m = Number(hhmm[2]);
-      if (Number.isFinite(h) && Number.isFinite(m)) {
-        const hour12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
-        const ampm = h >= 12 ? 'PM' : 'AM';
-        time12 = `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+  // ── Email half: the admin's REVIEWED text IS the email body, rendered
+  // through renderPartsEmail (the same editable-body renderer the comms
+  // actions use) so what was read in the popup is what sends. The bespoke
+  // rescheduleNotificationClient template is deliberately not called here:
+  // it returns pre-rendered HTML, so an edited body would reach plaintext
+  // only while mail clients rendered the untouched original. ──
+  if (wantEmail) {
+    if (!ctx.client_email) {
+      results.skip_reasons.email = 'No email on file for this client.';
+    } else if (isPlaceholderEmail(ctx.client_email)) {
+      results.skip_reasons.email = 'Placeholder address (.invalid) from the CC import; no real email exists.';
+    } else if (!emailCheck.ok) {
+      console.log(`[rescheduleNotification] email suppressed for proposal ${proposalId}: ${emailCheck.reason}`);
+      results.skip_reasons.email = `Suppressed: ${emailCheck.reason}.`;
+    } else {
+      const { renderPartsEmail } = require('./comms/render');
+      const rendered = renderPartsEmail({
+        subject: message.email.subject,
+        heading: 'Updated details for your event',
+        bodyText: message.email.bodyText,
+        cta: null,
+      });
+      try {
+        const r = await sendEmail({
+          to: ctx.client_email,
+          subject: rendered.subject,
+          html: rendered.html,
+          text: rendered.text,
+          meta: { proposalId: ctx.id, clientId: ctx.client_id || null, messageType: 'reschedule' },
+        });
+        // Defense in depth behind the placeholder gate above: sendEmail's own
+        // .invalid drop returns 'skipped-invalid' and must NEVER read as sent.
+        if (r && r.id === 'skipped-invalid') {
+          results.email = 'skipped';
+          results.skip_reasons.email = 'Placeholder address (.invalid); no email was sent.';
+        } else {
+          results.email = 'sent';
+        }
+      } catch (err) {
+        results.email = 'failed';
+        results.email_error = err.message || 'Email send failed.';
       }
     }
-    let tzAbbrev = '';
-    try {
-      const dateStr = toCalendarYmd(date) || '';
-      const refMs = Date.parse(`${dateStr}T12:00:00Z`);
-      if (Number.isFinite(refMs)) {
-        const parts = new Intl.DateTimeFormat('en-US', {
-          timeZone: tz,
-          timeZoneName: 'short',
-        }).formatToParts(new Date(refMs));
-        const tzPart = parts.find((p) => p.type === 'timeZoneName');
-        if (tzPart && tzPart.value) tzAbbrev = ` ${tzPart.value}`;
+  }
+
+  // ── SMS half — own try/catch so an SMS failure is reported per-channel and
+  // never aborts a caller that also asked for email. ──
+  if (wantSms) {
+    if (!ctx.client_phone) {
+      results.skip_reasons.sms = 'No usable phone on file.';
+    } else if (!smsCheck.ok) {
+      console.log(`[rescheduleNotification] SMS suppressed for proposal ${proposalId}: ${smsCheck.reason}`);
+      results.skip_reasons.sms = `Suppressed: ${smsCheck.reason}.`;
+    } else {
+      try {
+        const { sendAndLogSms } = require('./sms');
+        const smsResult = await sendAndLogSms({
+          to: ctx.client_phone,
+          body: message.sms.body,
+          clientId: ctx.client_id || null,
+          messageType: 'reschedule',
+          recipientName: ctx.client_name || null,
+        });
+        // sendAndLogSms returns { sid: null, status: 'skipped' } WITHOUT
+        // throwing when the stored phone fails normalizePhone — that must
+        // never read as 'sent' (per-channel truth is the whole contract).
+        if (smsResult && smsResult.status === 'skipped') {
+          results.sms = 'skipped';
+          results.skip_reasons.sms = 'Phone on file could not be parsed for SMS.';
+        } else {
+          results.sms = 'sent';
+        }
+      } catch (smsErr) {
+        Sentry.captureException(smsErr, {
+          tags: { component: 'rescheduleProposal', step: 'reschedule_sms' },
+          extra: { proposalId },
+        });
+        console.error('[rescheduleNotification] SMS failed (non-blocking):', smsErr.message);
+        results.sms = 'failed';
+        results.sms_error = smsErr.message || 'SMS send failed.';
       }
-    } catch (_e) { /* leave empty */ }
-    return `${time12}${tzAbbrev}`;
-  };
-
-  const totalNumber = Number(ctx.total_price ?? 0);
-  const totalFormatted = totalNumber.toFixed(2);
-
-  const balanceDueYmd = toCalendarYmd(ctx.balance_due_date);
-  const balanceDueParsed = balanceDueYmd ? new Date(balanceDueYmd + 'T12:00:00Z') : null;
-  const balanceDueDateLocal = (balanceDueParsed && !Number.isNaN(balanceDueParsed.getTime()))
-    ? formatEventLocalTime(balanceDueParsed, tz, { month: 'long', day: 'numeric', year: 'numeric' })
-    : '';
-
-  const firstName = (ctx.client_name || '').trim().split(/\s+/)[0] || null;
-
-  // ── Email half ──
-  if (emailCheck.ok && ctx.client_email) {
-    const tpl = emailTemplates.rescheduleNotificationClient({
-      clientName: ctx.client_name,
-      clientFirstName: firstName,
-      oldDateLocal: fmtDate(old.event_date),
-      oldStartTimeLocal: fmtTime(old.event_date, old.event_start_time),
-      oldLocation: old.event_location || '',
-      newDateLocal: fmtDate(updated.event_date || ctx.event_date),
-      newStartTimeLocal: fmtTime(updated.event_date || ctx.event_date, updated.event_start_time || ctx.event_start_time),
-      newLocation: updated.event_location || ctx.event_location || '',
-      packageName: ctx.package_name || '',
-      guestCount: ctx.guest_count,
-      totalFormatted,
-      balanceDueDateLocal,
-      autopayEnrolled: !!ctx.autopay_enrolled,
-    });
-    await sendEmail({ to: ctx.client_email, ...tpl });
-  } else if (!emailCheck.ok) {
-    console.log(`[rescheduleNotification] email suppressed for proposal ${proposalId}: ${emailCheck.reason}`);
-  }
-
-  // ── SMS half (Phase 3, spec 3.13) — own try/catch so an SMS failure does
-  // not throw into the caller (rescheduleProposal already wraps the email
-  // send best-effort post-commit; the SMS gets the same posture). ──
-  if (smsCheck.ok && ctx.client_phone) {
-    try {
-      const { sendAndLogSms } = require('./sms');
-      const smsTemplates = require('./smsTemplates');
-      const body = smsTemplates.rescheduleSms({
-        newDate: fmtDate(updated.event_date || ctx.event_date),
-        newStartTime: fmtTime(updated.event_date || ctx.event_date, updated.event_start_time || ctx.event_start_time),
-        newLocation: updated.event_location || ctx.event_location || '',
-      });
-      await sendAndLogSms({
-        to: ctx.client_phone,
-        body,
-        clientId: ctx.client_id || null,
-        messageType: 'reschedule',
-        recipientName: ctx.client_name || null,
-      });
-    } catch (smsErr) {
-      Sentry.captureException(smsErr, {
-        tags: { component: 'rescheduleProposal', step: 'reschedule_sms' },
-        extra: { proposalId },
-      });
-      console.error('[rescheduleNotification] SMS failed (non-blocking):', smsErr.message);
     }
-  } else if (!smsCheck.ok) {
-    console.log(`[rescheduleNotification] SMS suppressed for proposal ${proposalId}: ${smsCheck.reason}`);
   }
+
+  return results;
 }
 
 /**
@@ -371,8 +522,10 @@ async function sendRescheduleEmail({ proposalId, old, updated }) {
  *   } finally {
  *     client.release();
  *   }
- *   // Post-commit, fire the email non-blockingly:
- *   sendRescheduleEmail({ proposalId, old, updated }).catch((sentry + log));
+ *   // Post-commit, SENDING IS THE CALLER'S JOB (notify-client contract,
+ *   // 2026-07-22): compose via buildEventDetailsDraft/notify-preflight and
+ *   // call sendRescheduleEmail({ proposalId, channels, message }) only when
+ *   // the admin opted in. There is no template fallback.
  *
  * This split keeps the DB state consistent under all failure modes:
  *   - If anything before COMMIT throws → ROLLBACK; no email, no DB change
@@ -409,7 +562,7 @@ async function rescheduleProposalInTx(client, { proposalId, old, updated }) {
   // Pre-sign+pay date/time edits don't need a reschedule email — the proposal
   // hasn't been sent yet (or has been sent but not signed, in which case the
   // next status-driven email replaces it).
-  if (status === 'archived' || !BOOKED_SET.has(status)) return { shouldSendEmail: false };
+  if (!reschedulableStatusOk(status)) return { shouldSendEmail: false };
 
   // Gemini Finding 4 (SUGGESTION) + Pre-execution Finding B3: when event_date
   // shifts, recompute balance_due_date by preserving the ORIGINAL offset
@@ -429,36 +582,15 @@ async function rescheduleProposalInTx(client, { proposalId, old, updated }) {
   //
   // Runs BEFORE reanchorPendingMessages so the dispatcher metadata lookup
   // for balance-anchored handlers sees the new balance_due_date.
-  const oldEventDateStr = toCalendarYmd(old.event_date);
-  const newEventDateStr = toCalendarYmd(updated.event_date);
-  if (oldEventDateStr && newEventDateStr && oldEventDateStr !== newEventDateStr) {
-    const oldBalanceDueStr = toCalendarYmd(old.balance_due_date);
-    if (oldBalanceDueStr) {
-      // Preserve the existing offset (in days) between OLD event_date and
-      // OLD balance_due_date. Default codebase rule is event_date - 14, but
-      // an admin may have set a different lead via PATCH
-      // /proposals/:id/balance-due.
-      const oldEventMs = new Date(oldEventDateStr + 'T00:00:00Z').getTime();
-      const oldBalanceMs = new Date(oldBalanceDueStr + 'T00:00:00Z').getTime();
-      const offsetDays = Math.round((oldBalanceMs - oldEventMs) / 86400000); // typically -14
-      const newEventMs = new Date(newEventDateStr + 'T00:00:00Z').getTime();
-      const newBalanceMs = newEventMs + offsetDays * 86400000;
-      const newBalanceIso = new Date(newBalanceMs).toISOString().slice(0, 10);
-      await client.query(
-        'UPDATE proposals SET balance_due_date = $1 WHERE id = $2',
-        [newBalanceIso, proposalId]
-      );
-    } else {
-      // No balance_due_date set on the old row (rare — pre-deposit reschedule
-      // that somehow reached this code path, or a custom flow). Apply the
-      // codebase default rule: event_date - 14 days.
-      const newEventMs = new Date(newEventDateStr + 'T00:00:00Z').getTime();
-      const newBalanceIso = new Date(newEventMs - 14 * 86400000).toISOString().slice(0, 10);
-      await client.query(
-        'UPDATE proposals SET balance_due_date = $1 WHERE id = $2',
-        [newBalanceIso, proposalId]
-      );
-    }
+  // Both branches (offset-preserving / default -14d) live in
+  // computeProjectedBalanceDue — the SAME function notify-preflight uses to
+  // quote the new date in the draft, so the promise and the write cannot drift.
+  const projectedBalanceDue = computeProjectedBalanceDue(old.event_date, old.balance_due_date, updated.event_date);
+  if (projectedBalanceDue) {
+    await client.query(
+      'UPDATE proposals SET balance_due_date = $1 WHERE id = $2',
+      [projectedBalanceDue, proposalId]
+    );
   }
 
   await reanchorPendingMessages(client, proposalId);
@@ -575,22 +707,12 @@ async function rescheduleProposal({ proposalId, old, updated }) {
     client.release();
   }
 
-  // Email runs OUTSIDE the transaction so a Resend failure can't roll back
-  // the DB changes. Email send is not idempotent-safe — better ordering is
-  // DB commits first, then email; on email failure the DB is still consistent
-  // and admin can re-send manually.
-  if (shouldSendEmail) {
-    try {
-      await sendRescheduleEmail({ proposalId, old: hydratedOld, updated });
-    } catch (emailErr) {
-      Sentry.captureException(emailErr, {
-        tags: { component: 'rescheduleProposal', step: 'post_commit_email' },
-        extra: { proposalId },
-      });
-      console.error('[rescheduleProposal] post-commit email failed (non-fatal):', emailErr.message);
-      // Don't rethrow — DB is consistent, admin can manually resend.
-    }
-  }
+  // Email tail DELETED (notify-client contract, 2026-07-22): sending now
+  // requires caller-composed text, which a tx-convenience wrapper cannot have.
+  // This wrapper performs the reanchor + balance recompute ONLY; the caller
+  // decides whether and what to send. shouldSendEmail is returned so a caller
+  // can make that decision.
+  return { shouldSendEmail };
 }
 
 module.exports = {
@@ -600,4 +722,9 @@ module.exports = {
   reanchorPendingMessages,
   computeReanchoredScheduledFor,
   sendRescheduleEmail,
+  buildEventDetailsDraft,
+  RESCHEDULABLE_FIELDS,
+  changedReschedulableFields,
+  reschedulableStatusOk,
+  computeProjectedBalanceDue,
 };
