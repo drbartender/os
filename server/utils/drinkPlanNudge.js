@@ -229,16 +229,21 @@ async function scheduleDrinkPlanNudge(proposalId, executor) {
 
   const scheduledFor = computeScheduledFor('drink_plan_nudge', proposal);
   // Both rows share the same send instant; scheduleMessage is idempotent.
+  // `exec` MUST ride through to scheduleMessage: when the reschedule cascade
+  // calls this inside the proposal-PATCH transaction, an insert on a bare pool
+  // connection blocks on this transaction's own uncommitted scheduled_messages
+  // tuples and self-deadlocks while holding the proposal row lock (live wedge,
+  // 2026-07-21). Same rule insertIfMissing documents in preEventScheduling.js.
   await scheduleMessage({
     entityType: 'proposal', entityId: Number(proposalId),
     messageType: 'drink_plan_nudge', recipientType: 'client', recipientId: proposal.client_id,
     channel: 'email', scheduledFor,
-  });
+  }, exec);
   await scheduleMessage({
     entityType: 'proposal', entityId: Number(proposalId),
     messageType: 'drink_plan_nudge_sms', recipientType: 'client', recipientId: proposal.client_id,
     channel: 'sms', scheduledFor,
-  });
+  }, exec);
 }
 
 module.exports = {

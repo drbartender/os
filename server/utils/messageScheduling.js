@@ -25,6 +25,15 @@ const VALID_CHANNELS = new Set(['email', 'sms', 'push']);
  * @param {number} args.recipientId
  * @param {'email'|'sms'} args.channel
  * @param {Date|string} args.scheduledFor
+ * @param {{ query: Function }} [executor] - pg client or pool; defaults to pool.
+ *   REQUIRED whenever the caller holds a pooled client mid-transaction (the
+ *   one-connection-per-request invariant): running this INSERT on a bare pool
+ *   connection from inside a transaction self-deadlocks when the caller's
+ *   uncommitted work touched the same scheduled_messages tuple — the second
+ *   connection blocks on the first transaction's tuple lock while the first
+ *   awaits the second's completion. Postgres cannot detect it (the cycle runs
+ *   through the app). Bitten live 2026-07-21: PATCH /proposals/:id reschedule
+ *   cascade wedged forever holding the proposal row lock.
  * @returns {Promise<{id: number, status: string} | null>}
  */
 async function scheduleMessage({
@@ -35,7 +44,8 @@ async function scheduleMessage({
   recipientId,
   channel,
   scheduledFor,
-}) {
+}, executor) {
+  const exec = executor || pool;
   if (!VALID_ENTITY_TYPES.has(entityType)) {
     throw new Error(`scheduleMessage: invalid entityType '${entityType}'`);
   }
@@ -52,7 +62,7 @@ async function scheduleMessage({
     throw new Error('scheduleMessage: entityId and recipientId must be integers');
   }
 
-  const result = await pool.query(
+  const result = await exec.query(
     `INSERT INTO scheduled_messages
        (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
