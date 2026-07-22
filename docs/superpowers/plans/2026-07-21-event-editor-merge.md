@@ -9,6 +9,7 @@ lanes:
       - client/src/pages/admin/proposalEditor/patchBody.test.js
       - client/src/pages/admin/proposalEditor/repriceSummary.js     # NEW pure modal-decision + copy assembly
       - client/src/pages/admin/proposalEditor/repriceSummary.test.js
+      - client/src/pages/admin/proposalEditor/ProposalEditorForm.smoke.test.js # import-smoke: forces path resolution pre-mount
       - client/src/pages/admin/proposalEditor/RepriceConfirmModal.js # NEW presentational modal
       - client/src/pages/admin/proposalEditor/PackageSection.js     # moved Package/Add-ons/Glassware/Class/Syrups block
       - client/src/pages/admin/proposalEditor/ProposalEditorForm.js # the shared editor, both mounts
@@ -17,7 +18,9 @@ lanes:
       - client/src/pages/admin/EventEditForm.js                     # DELETED (event mount uses ProposalEditorForm)
       - client/src/pages/admin/ProposalDetail.js                    # import swap only
       - client/src/pages/admin/EventDetailPage.js                   # mount swap only
-      - README.md                                                   # folder tree
+      - client/src/pages/admin/ProposalCreate.js                    # comment retarget only (references deleted file)
+      - client/src/components/AddonControls.js                      # comment retarget only (references deleted file)
+      - README.md                                                   # stale AddonControls line + proposalEditor mention
     blockedBy: []
     review: full-fleet   # client-only diff, but the form drives PATCH /proposals/:id (money path)
 ---
@@ -54,12 +57,12 @@ lanes:
 - Create: `client/src/pages/admin/proposalEditor/patchBody.js`
 - Create: `client/src/pages/admin/proposalEditor/patchBody.test.js`
 
-Old files are NOT deleted yet (Task 4 does that); until then the moved helpers exist in two places, which is fine because nothing imports the new module until Task 3/4.
+Old files are NOT deleted until Task 7 (after live verification proves the extraction); until then the moved helpers exist in two places, which is fine because nothing imports the new module until Task 4.
 
 **Interfaces:**
 - Consumes: nothing new. `formState.js` content is a verbatim move of `initialFormFromProposal` (currently `ProposalDetailEditForm.js:735-777`) and `recoverAddonQuantities` with its comment block (currently `ProposalDetailEditForm.js:778-846`).
 - Produces:
-  - `formState.js`: `export function initialFormFromProposal(p)`, `export function recoverAddonQuantities(proposalAddons, catalog, { durationHours, guestCount })` (exact current signatures).
+  - `formState.js`: `export function initialFormFromProposal(p)`, `export function recoverAddonQuantities(proposalAddons, catalog, { durationHours })` (exact current signatures; note the destructured options take `durationHours` ONLY. The existing tests pass `guestCount` too and the function ignores it. Do NOT "fix" the function to accept it; that breaks byte-parity).
   - `patchBody.js`: `export function buildProposalPatchBody(form, { gratuityDirty = false, isClassPackage = false, changeRequestId, staffNotify = null })` returning the exact `PATCH /proposals/:id` body object. `staffNotify` is `null` (proposal mount: keys omitted entirely) or `{ enabled, sms, email }` booleans (event mount: `notify_assigned_staff: enabled`, `notify_staff_sms: enabled && sms`, `notify_staff_email: enabled && email`).
 
 - [ ] **Step 1: Move the form-state helpers**
@@ -69,9 +72,12 @@ Create `client/src/pages/admin/proposalEditor/formState.js`:
 ```js
 // Shared form-state builders for the proposal/event editor (ProposalEditorForm).
 // Moved verbatim from ProposalDetailEditForm.js so both mounts seed identically.
+import { isQuantityCapable } from '../../../utils/proposalRules';
 ```
 
-Then append, byte-for-byte, `ProposalDetailEditForm.js` lines 735-846: the full `initialFormFromProposal` function and the full `recoverAddonQuantities` function including the multi-line comment between them. No edits to the moved code.
+(The import is REQUIRED: `recoverAddonQuantities` calls `isQuantityCapable` at old line 806, and its import lived at old line 17, outside the moved range. Without it every non-empty-input test throws `ReferenceError`.)
+
+Then append, byte-for-byte, `ProposalDetailEditForm.js` lines 735-846: the full `initialFormFromProposal` function and the full `recoverAddonQuantities` function including the multi-line comment between them. Exactly ONE permitted edit to the moved code: the comment at old line 774 saying "Inherited by EventEditForm" becomes "Used by both editor mounts" (EventEditForm is deleted by this lane). Everything else byte-identical.
 
 Copy `client/src/pages/admin/ProposalDetailEditForm.test.js` to `client/src/pages/admin/proposalEditor/formState.test.js` changing ONLY the import line:
 
@@ -534,7 +540,7 @@ git commit -m "lane(event-editor-merge): reprice confirmation modal component"
 - Create: `client/src/pages/admin/proposalEditor/PackageSection.js`
 - Create: `client/src/pages/admin/proposalEditor/ProposalEditorForm.js`
 
-Old files still not deleted; both editors coexist until Task 5 swaps the mounts. The build must pass with both present.
+Old files still not deleted (Task 7, after verification); both editors coexist from here through Task 6. The build must pass with both present.
 
 **Interfaces:**
 - Consumes: `initialFormFromProposal`, `recoverAddonQuantities` from `./formState`; `buildProposalPatchBody` from `./patchBody`; `buildRepriceSummary`, `BOOKED_STATUSES` from `./repriceSummary`; `RepriceConfirmModal` from `./RepriceConfirmModal`; existing shared components (`PricingBreakdown`, `VenueAddressFields`, `ConfirmModal`, `FormBanner`, `FieldError`, `TimePicker`, `NumberStepper`, `AddonControls`) exactly as `ProposalDetailEditForm` imports them today (adjust relative paths one level deeper: `../../../` becomes `../../../` from `pages/admin/proposalEditor/` = `../../components/...` becomes `../../../components/...`).
@@ -549,13 +555,15 @@ Move `ProposalDetailEditForm.js` lines 440-605 (the JSX from the `{/* Package */
 ```js
 import React from 'react';
 import { AddonQtyStepper } from '../../../components/AddonControls';
+import SyrupPicker from '../../../components/SyrupPicker';
+import { isQuantityCapable } from '../../../utils/proposalRules';
 
 // Package, Add-ons, Glassware, Class options, and Syrups sections of the
 // proposal/event editor. Moved verbatim from ProposalDetailEditForm so
 // ProposalEditorForm stays under the file-size cap. Pure render: all state
 // lives in the parent and arrives through the callbacks.
 export default function PackageSection({
-  editForm, packages, filteredAddons, pkgIsHosted,
+  editForm, packages, filteredAddons,
   update, toggleAddon, setAddonQty, setVariant,
 }) {
   return (
@@ -565,6 +573,8 @@ export default function PackageSection({
   );
 }
 ```
+
+All three non-React imports are REQUIRED by the moved JSX: `SyrupPicker` (used at old :600), `isQuantityCapable` (old :535), `AddonQtyStepper` (quantity steppers). Note there is NO `pkgIsHosted` prop: the moved 440-605 block never references it (its only use, the setup-time placeholder, stays in the parent form).
 
 (The implementer moves the real JSX; the plan does not duplicate 165 lines here. Byte-parity rule applies: any change beyond the `setVariant` substitution and `React.Fragment` housekeeping is a defect.)
 
@@ -579,7 +589,15 @@ import { initialFormFromProposal, recoverAddonQuantities } from './formState';
 import { buildProposalPatchBody } from './patchBody';
 import { buildRepriceSummary } from './repriceSummary';
 import RepriceConfirmModal from './RepriceConfirmModal';
+import PackageSection from './PackageSection';
 ```
+
+Then PRUNE the imports whose only uses moved into `PackageSection`, or the
+`CI=true` build fails on `no-unused-vars`: delete the `SyrupPicker` import
+(old :7) and the `isQuantityCapable` import (old :17), and narrow the
+AddonControls import (old :15) from `{ AddonQtyStepper, clampAddonQty }` to
+`{ clampAddonQty }` (only `clampAddonQty`, used by `setAddonQty` at old :206,
+remains in the parent).
 
 2. **Signature and new state:**
 
@@ -660,7 +678,6 @@ Note `selectedPkg` is declared AFTER `handleSave` in the current file (line 296)
           editForm={editForm}
           packages={packages}
           filteredAddons={filteredAddons}
-          pkgIsHosted={pkgIsHosted}
           update={update}
           toggleAddon={toggleAddon}
           setAddonQty={setAddonQty}
@@ -671,7 +688,7 @@ Note `selectedPkg` is declared AFTER `handleSave` in the current file (line 296)
         />
 ```
 
-5. **Staff-notify toggles.** Immediately before the `<FormBanner .../>` line, insert the toggle block moved verbatim from `EventEditForm.js` (the `notifyStaff` parent checkbox and the two sub-checkboxes, currently `EventEditForm.js` lines ~236-271), wrapped:
+5. **Staff-notify toggles.** Immediately before the `<FormBanner .../>` line, insert the toggle block moved verbatim from `EventEditForm.js` lines ~234-275: the `meta-k` section header ("Notify assigned staff", :234), the `notifyStaff` parent checkbox, the two sub-checkboxes, AND the trailing explanatory helper text (:273-275). Wrapped:
 
 ```js
         {showStaffNotifyToggles && (
@@ -694,29 +711,53 @@ Note `selectedPkg` is declared AFTER `handleSave` in the current file (line 296)
       />
 ```
 
-- [ ] **Step 3: Verify build + size cap**
+- [ ] **Step 3: Write the import-smoke test**
 
-Run: `cd client && CI=true npx react-scripts build && wc -l src/pages/admin/proposalEditor/ProposalEditorForm.js`
-Expected: build passes; line count under 700.
+The `CI=true` build lints unmounted files but never webpack-resolves their imports (CRA's ESLint config has no `import/no-unresolved`), so a wrong `../` depth would stay invisible until the Task 5 mount swap. This test forces jest to resolve and parse the whole module graph now.
 
-- [ ] **Step 4: Commit**
+Create `client/src/pages/admin/proposalEditor/ProposalEditorForm.smoke.test.js`:
+
+```js
+// Import-smoke only: forces module resolution + parse of the full editor
+// graph while it is not yet mounted anywhere. Catches wrong ../ depths that
+// the CI build cannot see pre-mount. No rendering.
+jest.mock('../../../utils/api', () => ({
+  __esModule: true,
+  default: { get: jest.fn(), post: jest.fn(), put: jest.fn(), patch: jest.fn() },
+}));
+
+it('editor module graph resolves', () => {
+  expect(require('./ProposalEditorForm').default).toEqual(expect.any(Function));
+  expect(require('./PackageSection').default).toEqual(expect.any(Function));
+  expect(require('./RepriceConfirmModal').default).toEqual(expect.any(Function));
+});
+```
+
+- [ ] **Step 4: Verify smoke + build + size cap**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false --testPathPattern=proposalEditor && CI=true npx react-scripts build && wc -l src/pages/admin/proposalEditor/ProposalEditorForm.js`
+Expected: all suites pass (incl. smoke); build passes; line count under 700.
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add client/src/pages/admin/proposalEditor/PackageSection.js client/src/pages/admin/proposalEditor/ProposalEditorForm.js
+git add client/src/pages/admin/proposalEditor/PackageSection.js client/src/pages/admin/proposalEditor/ProposalEditorForm.js client/src/pages/admin/proposalEditor/ProposalEditorForm.smoke.test.js
 git commit -m "lane(event-editor-merge): shared ProposalEditorForm + PackageSection"
 ```
 
+- [ ] **Step 6: Mid-lane review checkpoint (money-path builder now wired)**
+
+Before the destructive swap, dispatch `code-review` + `consistency-check` review agents on the lane diff so far (`git diff main...HEAD`), focus: `doSave`/`handleSave` split, `buildProposalPatchBody` call-site options, byte-parity of moved sections against the old files (which still exist for comparison). Iron rule applies: a non-completing or verdict-less agent is not a pass. Fix findings before Task 5.
+
 ---
 
-### Task 5: Swap both mounts, delete the old editors, README
+### Task 5: Swap both mounts (old editors stay on disk until verification passes)
 
 **Files:**
 - Modify: `client/src/pages/admin/ProposalDetail.js` (lines 16, 452)
 - Modify: `client/src/pages/admin/EventDetailPage.js` (lines 24, 296)
-- Delete: `client/src/pages/admin/ProposalDetailEditForm.js`
-- Delete: `client/src/pages/admin/ProposalDetailEditForm.test.js`
-- Delete: `client/src/pages/admin/EventEditForm.js`
-- Modify: `README.md` (folder tree: remove the two deleted files, add `proposalEditor/`)
+
+Deletions deliberately DEFERRED to Task 7: the old editors remain on disk as the byte-parity reference until Task 6's live verification proves the extraction. They are complete, self-consistent components, so leaving them unmounted passes lint and build exactly as today.
 
 **Interfaces:**
 - Consumes: `ProposalEditorForm` prop surface from Task 4.
@@ -747,36 +788,31 @@ In `EventDetailPage.js`: replace `import EventEditForm from './EventEditForm';` 
             />
 ```
 
-- [ ] **Step 3: Delete the old editors and confirm nothing still imports them**
+- [ ] **Step 3: Confirm no runtime import of the old editors remains**
 
 ```bash
-git rm client/src/pages/admin/ProposalDetailEditForm.js client/src/pages/admin/ProposalDetailEditForm.test.js client/src/pages/admin/EventEditForm.js
-grep -rn "ProposalDetailEditForm\|EventEditForm" client/src --include=*.js
+grep -rn "from './ProposalDetailEditForm'\|from './EventEditForm'" client/src --include=*.js
 ```
 
-Expected grep output: comment-only references in `ProposalCreate.js` (lines 138, 236) and `AddonControls.js` (historical notes). Update those three comments to say `ProposalEditorForm`. Any remaining IMPORT of the deleted files is a failure.
+Expected: exactly one hit, `ProposalDetailEditForm.test.js` importing its own module under test (both deleted together in Task 7). Any hit in a mounted page is a failure.
 
-- [ ] **Step 4: README folder tree**
+- [ ] **Step 4: Build gate**
 
-In `README.md`'s client folder tree: remove `ProposalDetailEditForm.js` and `EventEditForm.js` entries, add `proposalEditor/ (shared proposal/event editor: form, sections, reprice modal)`.
+Run: `cd client && CI=true npx react-scripts build`
+Expected: build clean.
 
-- [ ] **Step 5: Full gates**
-
-Run: `cd client && CI=true npx react-scripts test --watchAll=false --testPathPattern=proposalEditor && CI=true npx react-scripts build`
-Expected: all suites pass; build clean.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add client/src/pages/admin/ProposalDetail.js client/src/pages/admin/EventDetailPage.js client/src/pages/admin/ProposalCreate.js client/src/components/AddonControls.js README.md
-git commit -m "lane(event-editor-merge): swap both mounts to ProposalEditorForm, delete old editors"
+git add client/src/pages/admin/ProposalDetail.js client/src/pages/admin/EventDetailPage.js
+git commit -m "lane(event-editor-merge): swap both mounts to ProposalEditorForm"
 ```
-
-(The `git rm` from Step 3 is already staged.)
 
 ---
 
-### Task 6: Manual verification on the dev DB (lane exit gate)
+### Task 6: Manual verification on the dev DB
+
+Runs with the old editors still on disk: if any step fails, diff the new form's behavior against the old file directly instead of archaeology.
 
 **Files:** none (verification only).
 
@@ -794,8 +830,54 @@ git commit -m "lane(event-editor-merge): swap both mounts to ProposalEditorForm,
 
 ---
 
+### Task 7: Delete the old editors, retarget stale references, README (lane exit gate)
+
+Only runs after Task 6 passed in full. The old editors have now been proven redundant by live verification, not assumed so.
+
+**Files:**
+- Delete: `client/src/pages/admin/ProposalDetailEditForm.js`
+- Delete: `client/src/pages/admin/ProposalDetailEditForm.test.js`
+- Delete: `client/src/pages/admin/EventEditForm.js`
+- Modify: `client/src/pages/admin/ProposalCreate.js` (comments at lines 138, 236 only)
+- Modify: `client/src/components/AddonControls.js` (comment at line 4 only)
+- Modify: `README.md`
+
+**Interfaces:**
+- Consumes: nothing new.
+- Produces: nothing; cleanup.
+
+- [ ] **Step 1: Delete and sweep**
+
+```bash
+git rm client/src/pages/admin/ProposalDetailEditForm.js client/src/pages/admin/ProposalDetailEditForm.test.js client/src/pages/admin/EventEditForm.js
+grep -rn "ProposalDetailEditForm\|EventEditForm" client/src --include=*.js
+```
+
+Expected grep output: comment-only references in `ProposalCreate.js` (lines 138, 236) and `AddonControls.js` (line 4). Update those three comments to say `ProposalEditorForm` (comment text only, zero code changes in either file). Any remaining IMPORT of the deleted files is a failure.
+
+- [ ] **Step 2: README**
+
+`README.md` has no folder-tree entries for the deleted files (admin pages are a prose blob at :446). The real stale reference is line 424: "AddonControls ... used by ProposalCreate + ProposalDetailEditForm". Update it to name `ProposalEditorForm`, and add `proposalEditor/` (shared proposal/event editor: form, sections, reprice modal) to the admin-pages blob at :446.
+
+- [ ] **Step 3: Full gates**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false --testPathPattern=proposalEditor && CI=true npx react-scripts build`
+Expected: all proposalEditor suites pass (the deleted old test suite is gone, its coverage lives in `formState.test.js`); build clean.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add client/src/pages/admin/ProposalCreate.js client/src/components/AddonControls.js README.md
+git commit -m "lane(event-editor-merge): delete superseded editors, retarget stale references"
+```
+
+(The `git rm` from Step 1 is already staged.)
+
+---
+
 ## Self-Review
 
-- **Spec coverage:** one editor two mounts (Tasks 4-5), addon_quantities structural fix (Task 1 + Task 6 Step 3), reprice modal rules incl. unbooked/unmoved/unknown branches (Tasks 2-3, Task 6), staff toggles event-only (Task 4 Step 2.2/2.5), EventEditForm deleted (Task 5), file-size cap (Task 4 Step 3), README (Task 5 Step 4), no server changes (footprint), full-fleet review (front-matter). Search changes: correctly absent (out of scope).
-- **Placeholder scan:** two deliberate verbatim-move directives (PackageSection JSX, staff-toggle JSX) reference exact source line ranges rather than duplicating 200 lines; both carry the byte-parity rule. All new code is complete.
+- **Spec coverage:** one editor two mounts (Tasks 4-5), addon_quantities structural fix (Task 1 + Task 6 Step 3), reprice modal rules incl. unbooked/unmoved/unknown branches (Tasks 2-3, Task 6; unknown-preview branch speced 2026-07-21 amendment), staff toggles event-only (Task 4 Step 2.5), EventEditForm deleted (Task 7), file-size cap (Task 4 Step 4), README (Task 7 Step 2), no server changes (footprint), full-fleet review (front-matter) plus mid-lane checkpoint (Task 4 Step 6). Search changes: correctly absent (out of scope).
+- **Placeholder scan:** two deliberate verbatim-move directives (PackageSection JSX, staff-toggle JSX) reference exact source line ranges rather than duplicating 200 lines; both carry the byte-parity rule and now name every import the moved code needs. All new code is complete.
 - **Type consistency:** `buildProposalPatchBody(form, {gratuityDirty, isClassPackage, changeRequestId, staffNotify})` matches between Task 1 tests, Task 1 impl, and Task 4 call site. `buildRepriceSummary({status, totalPrice, amountPaid, newTotal})` matches Tasks 2 and 4. `RepriceConfirmModal {isOpen, summary, onConfirm, onCancel}` matches Tasks 3 and 4. `ProposalEditorForm` prop surface matches Tasks 4 and 5.
+- **Plan-fleet findings folded in (2026-07-21):** all 4 blockers (PackageSection/formState imports, ProposalEditorForm import pruning + `pkgIsHosted` removal, footprint additions), all 5 warnings (delete deferred to Task 7 post-verification, import-smoke test, README retarget, staff-toggle range 234-275, `guestCount` phantom flagged), 2 suggestions (mid-lane review checkpoint, stale comment trim). The `unknown` modal branch is retained and now speced.

@@ -89,6 +89,12 @@ Pure logistics edits (no price movement) save without a modal, as today.
 Unbooked proposals never see the modal regardless of price movement (repricing
 is the normal quoting workflow).
 
+If the live pricing preview is unavailable at save time (calculate call
+failed), the modal still appears for a booked event, with no numbers and a
+single generic line: saving will reprice on the server and the total may
+change. A booked event never reprices silently just because the preview
+broke.
+
 Modal content, assembled entirely from data already in hand (stored proposal
 row + live preview), no extra fetches:
 
