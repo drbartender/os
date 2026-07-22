@@ -2,7 +2,7 @@
 // venue composition + addon insert, so the manual create route and the
 // Thumbtack auto-draft util can never drift. Pricing, status transitions,
 // invoices, and emails are the CALLER's job — this only writes the row(s).
-const { composeVenueLocation } = require('./venueAddress');
+const { composeVenueLocation, normalizeVenueState } = require('./venueAddress');
 
 /**
  * @param {object} dbClient  a connected pg client INSIDE an open transaction
@@ -17,7 +17,7 @@ async function insertProposalRecord(dbClient, f) {
   // (The INSERT below stores the unprefixed values straight into the columns.)
   const composedLocation = composeVenueLocation({
     venue_name: v.name, venue_street: v.street, venue_city: v.city,
-    venue_state: v.state, venue_zip: v.zip,
+    venue_state: normalizeVenueState(v.state), venue_zip: v.zip,
   }) || f.eventLocationFallback || null;
   const snapshotJson = f.pricingSnapshot ? JSON.stringify(f.pricingSnapshot) : '{}';
 

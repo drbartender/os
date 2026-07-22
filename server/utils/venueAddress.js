@@ -5,6 +5,29 @@
 // kept in sync manually (same pattern as eventTypes.js). Edit both together.
 
 const VENUE_STATES = ['Illinois', 'Indiana', 'Michigan', 'Minnesota', 'Wisconsin'];
+
+// Postal codes for the service area. Legacy writers (CC import, older Places
+// short_name fallbacks) stored 'IL'-style abbreviations, which the strict
+// VENUE_STATES check then rejected on EVERY subsequent admin save of those
+// rows ("Select a valid state" with a value the system itself wrote; 11 booked
+// prod events were un-editable this way, found 2026-07-21).
+const STATE_CODE_TO_NAME = { IL: 'Illinois', IN: 'Indiana', MI: 'Michigan', MN: 'Minnesota', WI: 'Wisconsin' };
+
+/**
+ * Canonicalize a state input: full names (any case) and service-area postal
+ * abbreviations map to the canonical VENUE_STATES entry; anything else returns
+ * trimmed as-is so validateVenue still rejects genuine garbage. null/undefined
+ * pass through untouched — COALESCE writers rely on "absent = keep stored".
+ */
+function normalizeVenueState(raw) {
+  if (raw === null || raw === undefined) return raw;
+  const v = String(raw).trim();
+  if (!v) return v;
+  const byCode = STATE_CODE_TO_NAME[v.toUpperCase()];
+  if (byCode) return byCode;
+  const byName = VENUE_STATES.find((st) => st.toLowerCase() === v.toLowerCase());
+  return byName || v;
+}
 // Linear-time: fully anchored, fixed-length quantifiers, no ambiguous
 // backtracking — the detect-unsafe-regex heuristic flags the optional group
 // as a false positive here.
@@ -73,7 +96,10 @@ function validateVenue(v = {}, opts = {}) {
   const name = s(v.venue_name);
   const street = s(v.venue_street);
   const city = s(v.venue_city);
-  const state = s(v.venue_state);
+  // Validate the CANONICAL form: legacy 'IL'-style rows must not be rejected
+  // on unrelated edits. Writers normalize at persist; this keeps the validator
+  // in agreement even for a writer that misses it.
+  const state = normalizeVenueState(s(v.venue_state));
   const zip = s(v.venue_zip);
 
   if (requireStreet && !street) e.venue_street = 'Street address is required';
@@ -89,4 +115,4 @@ function validateVenue(v = {}, opts = {}) {
   return e;
 }
 
-module.exports = { VENUE_STATES, composeVenueLocation, composeVenueMapQuery, isVenueComplete, validateVenue };
+module.exports = { VENUE_STATES, composeVenueLocation, composeVenueMapQuery, isVenueComplete, validateVenue, normalizeVenueState };

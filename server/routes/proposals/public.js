@@ -9,7 +9,7 @@ const { ADMIN_URL } = require('../../utils/urls');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../../utils/errors');
-const { composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
+const { composeVenueLocation, validateVenue, normalizeVenueState } = require('../../utils/venueAddress');
 const { validateProposalRules, stripIncludedAddons } = require('../../utils/proposalRules');
 const { createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
@@ -370,7 +370,7 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       numBartenders, snapshotJson, totalPrice, proposalStatus,
       event_type || null, event_type_category || null, event_type_custom || null,
       cleanClassOptions ? JSON.stringify(cleanClassOptions) : null,
-      (venue_name || '').trim() || null, (venue_city || '').trim() || null, (venue_state || '').trim() || null,
+      (venue_name || '').trim() || null, (venue_city || '').trim() || null, normalizeVenueState((venue_state || '').trim()) || null,
       (venue_street || '').trim() || null, (venue_zip || '').trim() || null,
       !!client_provides_glassware
     ]);

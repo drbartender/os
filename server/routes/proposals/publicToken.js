@@ -10,7 +10,7 @@ const { getEventTypeLabel } = require('../../utils/eventTypes');
 const { getBookingWindow } = require('../../utils/bookingWindow');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
-const { isVenueComplete, composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
+const { isVenueComplete, composeVenueLocation, validateVenue, normalizeVenueState } = require('../../utils/venueAddress');
 const { KNOWN_AGREEMENT_VERSIONS, LEGACY_AGREEMENT_VERSION } = require('../../utils/agreementVersions');
 const { findThumbtackProxyLead } = require('../../utils/smsInbound');
 const { validatePhone } = require('../../utils/phone');
@@ -286,7 +286,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     venueToPersist ? (vStr(venue_name) || null) : null,
     venueToPersist ? vStr(venue_street) : null,
     venueToPersist ? vStr(venue_city) : null,
-    venueToPersist ? vStr(venue_state) : null,
+    venueToPersist ? normalizeVenueState(vStr(venue_state)) : null,
     venueToPersist ? (vStr(venue_zip) || null) : null,
     venueToPersist ? composedLocation : null,
   ]);

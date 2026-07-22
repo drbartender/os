@@ -5,7 +5,7 @@ const { auth, requireAdminOrManager, adminOnly } = require('../../middleware/aut
 const { calculateProposal, deriveGratuityRate, computeGratuityBasis } = require('../../utils/pricingEngine');
 const { reconcileProposalPaymentStatus } = require('../../utils/proposalStatus');
 const { createEventShifts, syncShiftsFromProposal } = require('../../utils/eventCreation');
-const { composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
+const { composeVenueLocation, validateVenue, normalizeVenueState } = require('../../utils/venueAddress');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded } = require('../../utils/invoiceHelpers');
@@ -533,7 +533,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       JSON.stringify(adj), tpo ?? null,
       recomposedLocation,
       venue_name ?? null, venue_street ?? null, venue_city ?? null,
-      venue_state ?? null, venue_zip ?? null,
+      // Canonicalize on the way in so a legacy 'IL' row heals on its next save.
+      normalizeVenueState(venue_state) ?? null, venue_zip ?? null,
       setupMinutes ?? null,
       resolvedGlassware, cleanClassOptions ? JSON.stringify(cleanClassOptions) : null,
       persistTipJar, resolvedGratuityRate, gratuityOrigin

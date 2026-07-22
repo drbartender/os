@@ -2,7 +2,7 @@ const { EVENT_TYPES } = require('./eventTypes');
 const { pool } = require('../db');
 const { calculateProposal } = require('./pricingEngine');
 const { insertProposalRecord } = require('./proposalInsert');
-const { VENUE_STATES } = require('./venueAddress');
+const { VENUE_STATES, normalizeVenueState: canonicalizeState } = require('./venueAddress');
 
 const CORE_REACTION_SLUG = 'the-core-reaction';
 
@@ -16,12 +16,13 @@ const EVENT_TZ = 'America/Chicago';
 // null so the admin edit form's state dropdown isn't poisoned (a non-allowlisted
 // value makes validateVenue reject EVERY subsequent edit on the draft). The raw
 // location is kept in admin_notes so the operator still sees the lead's area.
-const STATE_CODE_TO_NAME = { IL: 'Illinois', IN: 'Indiana', MI: 'Michigan', MN: 'Minnesota', WI: 'Wisconsin' };
+// Canonicalization lives in venueAddress.normalizeVenueState (shared with the
+// admin/public write paths); this wrapper keeps the TT-specific rule that an
+// out-of-area or unrecognized state stays null rather than persisting as-is.
 function normalizeVenueState(raw) {
   if (!raw) return null;
-  const v = String(raw).trim();
-  if (VENUE_STATES.includes(v)) return v;
-  return STATE_CODE_TO_NAME[v.toUpperCase()] || null;
+  const v = canonicalizeState(String(raw).trim());
+  return VENUE_STATES.includes(v) ? v : null;
 }
 
 // Ordered, specific-before-generic; first substring hit wins. Every id MUST
