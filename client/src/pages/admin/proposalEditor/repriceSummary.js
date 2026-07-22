@@ -4,7 +4,10 @@
 // It never becomes a second decision-maker: the server transaction is
 // byte-identical whether or not the modal was shown.
 
-export const BOOKED_STATUSES = ['deposit_paid', 'balance_paid', 'confirmed'];
+// completed included (push-review finding): the server still reprices and
+// bills deltas on completed events (Additional Services invoice), so they
+// get the same confirmation gate.
+export const BOOKED_STATUSES = ['deposit_paid', 'balance_paid', 'confirmed', 'completed'];
 
 const usd = (n) => '$' + Number(n).toLocaleString('en-US', {
   minimumFractionDigits: 2, maximumFractionDigits: 2,

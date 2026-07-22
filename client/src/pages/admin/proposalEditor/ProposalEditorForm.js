@@ -50,6 +50,14 @@ export default function ProposalEditorForm({
   const [addons, setAddons] = useState([]);
   const [editForm, setEditForm] = useState(() => initialFormFromProposal(proposal));
   const [editPreview, setEditPreview] = useState(null);
+  // Save stays locked until the package/addon catalog is in hand: a pre-load
+  // save would PATCH empty addon_quantities (server defaults them to 1) and
+  // misdetect class packages (push-review money finding).
+  const [catalogReady, setCatalogReady] = useState(false);
+  // Monotonic guard: an out-of-order /calculate response must never clear
+  // previewStale for a form it no longer describes (defeats the booked-event
+  // reprice gate; push-review finding).
+  const calcSeqRef = useRef(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
@@ -107,6 +115,7 @@ export default function ProposalEditorForm({
       const baseline = JSON.parse(initialRef.current);
       initialRef.current = JSON.stringify({ ...baseline, addon_quantities: recovered });
       setEditForm(f => ({ ...f, addon_quantities: { ...recovered, ...f.addon_quantities } }));
+      setCatalogReady(true);
     }).catch(() => {
       toast.error('Failed to load packages. Try refreshing.');
       setError('Failed to load packages/addons. Please try again.');
@@ -143,12 +152,14 @@ export default function ProposalEditorForm({
     // inputs): the current preview no longer reflects the form until the
     // response below lands.
     setPreviewStale(true);
+    const seq = ++calcSeqRef.current;
     const timer = setTimeout(() => {
       api.post('/proposals/calculate', {
         package_id: Number(editForm.package_id),
         guest_count: Number(editForm.guest_count) || 50,
         duration_hours: Number(editForm.event_duration_hours) || 4,
         num_bars: Number(editForm.num_bars) || 0,
+        ...(numBartendersOverride != null ? { num_bartenders: numBartendersOverride } : {}),
         addon_ids: (editForm.addon_ids || []).map(Number),
         addon_variants: editForm.addon_variants || {},
         addon_quantities: editForm.addon_quantities || {},
@@ -162,8 +173,12 @@ export default function ProposalEditorForm({
           ? { tip_jar: editForm.tip_jar !== false, gratuity_total: editForm.gratuity_total }
           : { tip_jar: storedTipJar, gratuity_rate: storedGratuityRate }),
       })
-        .then(res => { setEditPreview(res.data); setPreviewStale(false); setError(''); })
+        .then(res => {
+          if (seq !== calcSeqRef.current) return; // stale response: a newer edit owns the preview
+          setEditPreview(res.data); setPreviewStale(false); setError('');
+        })
         .catch(err => {
+          if (seq !== calcSeqRef.current) return;
           setEditPreview(null);
           setError(err?.message || 'Pricing preview unavailable.');
         });
@@ -185,6 +200,7 @@ export default function ProposalEditorForm({
     gratuityDirty,
     storedTipJar,
     storedGratuityRate,
+    numBartendersOverride,
   ]);
 
   const isDirty = useMemo(
@@ -259,6 +275,23 @@ export default function ProposalEditorForm({
   // Derived state. Declared ABOVE doSave so the save payload can read
   // selectedPkg (class-options gating).
   const selectedPkg = packages.find(p => p.id === Number(editForm.package_id));
+
+  // Explicit bartender-count override detection (push-review money finding):
+  // stored num_bartenders equals the computed actual, so it is an admin
+  // override only when it differs from what the ORIGINAL inputs required.
+  // It must round-trip through preview AND PATCH or any editor save silently
+  // drops charged over-ratio bartenders. A retired original package (absent
+  // from the active catalog) makes detection impossible: fall back to not
+  // sending (the server recomputes, matching pre-editor behavior).
+  const numBartendersOverride = useMemo(() => {
+    const stored = Number(proposal.num_bartenders);
+    if (!stored) return null;
+    const originalPkg = packages.find(p => p.id === Number(proposal.package_id));
+    if (!originalPkg) return null;
+    const per = Number(originalPkg.guests_per_bartender) || 100;
+    const required = Math.max(1, Math.ceil((Number(proposal.guest_count) || 0) / per));
+    return stored !== required ? stored : null;
+  }, [packages, proposal]);
   const filteredAddons = addons.filter(a => {
     if (a.applies_to !== 'all' && (!selectedPkg || a.applies_to !== selectedPkg.category)) return false;
     const excluded = selectedPkg && PACKAGE_EXCLUDED_ADDONS[selectedPkg.slug];
@@ -294,7 +327,10 @@ export default function ProposalEditorForm({
       // both mounts (see patchBody.js for why this is load-bearing).
       const res = await api.patch(`/proposals/${proposal.id}`, buildProposalPatchBody(editForm, {
         gratuityDirty,
-        isClassPackage: selectedPkg?.bar_type === 'class',
+        // Retired package (absent from the active catalog): keep the stored
+        // class semantics instead of silently clearing class_options.
+        isClassPackage: selectedPkg ? selectedPkg.bar_type === 'class' : proposal.class_options != null,
+        numBartendersOverride,
         changeRequestId: changeRequest?.id,
         staffNotify: showStaffNotifyToggles
           ? { enabled: notifyStaff, sms: notifyStaffSms, email: notifyStaffEmail }
@@ -642,7 +678,7 @@ export default function ProposalEditorForm({
 
         <FormBanner error={error} fieldErrors={fieldErrors} />
         <div className="hstack" style={{ gap: 8, marginTop: 12 }}>
-          <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+          <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving || !catalogReady} title={catalogReady ? undefined : 'Loading pricing catalog...'}>
             {saving ? 'Saving…' : 'Save changes'}
           </button>
           <button type="button" className="btn btn-ghost" onClick={handleCancel}>Cancel</button>

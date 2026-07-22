@@ -2,11 +2,19 @@ import { buildRepriceSummary, BOOKED_STATUSES } from './repriceSummary';
 
 describe('buildRepriceSummary', () => {
   it('exports the booked statuses the modal gates on', () => {
-    expect(BOOKED_STATUSES).toEqual(['deposit_paid', 'balance_paid', 'confirmed']);
+    expect(BOOKED_STATUSES).toEqual(['deposit_paid', 'balance_paid', 'confirmed', 'completed']);
+  });
+
+  it('gates completed events like any booked status', () => {
+    const s = buildRepriceSummary({ status: 'completed', totalPrice: '1000', amountPaid: '1000', newTotal: 1500 });
+    expect(s).not.toBeNull();
+    expect(s.delta).toBe(500);
   });
 
   it('returns null for unbooked statuses even when price moves', () => {
-    for (const status of ['draft', 'sent', 'viewed', 'accepted', 'completed', 'archived']) {
+    // completed moved to the BOOKED set (push-review finding: the server
+    // bills price deltas on completed events via Additional Services).
+    for (const status of ['draft', 'sent', 'viewed', 'accepted', 'archived']) {
       expect(buildRepriceSummary({ status, totalPrice: '1000', amountPaid: '0', newTotal: 1500 })).toBeNull();
     }
   });

@@ -10,6 +10,7 @@ export function buildProposalPatchBody(form, {
   isClassPackage = false,
   changeRequestId,
   staffNotify = null,
+  numBartendersOverride = null,
 } = {}) {
   const body = {
     event_date: form.event_date,
@@ -23,6 +24,12 @@ export function buildProposalPatchBody(form, {
     guest_count: Number(form.guest_count),
     package_id: Number(form.package_id),
     num_bars: Number(form.num_bars) || 0,
+    // Present ONLY for a detected admin override: absent means the server
+    // recomputes staffing from the ratio (crud.js calculateStaffing). Sending
+    // the stored actual unconditionally would PIN staffing across guest-count
+    // changes; omitting a real override silently drops charged over-ratio
+    // bartenders (push-review money finding).
+    ...(numBartendersOverride != null ? { num_bartenders: Number(numBartendersOverride) } : {}),
     addon_ids: (form.addon_ids || []).map(Number),
     addon_variants: form.addon_variants || {},
     addon_quantities: form.addon_quantities || {},
