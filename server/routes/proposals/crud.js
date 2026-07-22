@@ -342,7 +342,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       venue_name:   venue_name   ?? old.venue_name,
       venue_street: venue_street ?? old.venue_street,
       venue_city:   venue_city   ?? old.venue_city,
-      venue_state:  venue_state  ?? old.venue_state,
+      // Normalize the merged value so the recomposed event_location can never
+      // trail the canonicalized column by one save (abbrev healed in the
+      // column write below, but composed from the raw merge here).
+      venue_state:  normalizeVenueState(venue_state ?? old.venue_state),
       venue_zip:    venue_zip    ?? old.venue_zip,
     };
     const recomposedLocation = venueProvided

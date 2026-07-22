@@ -37,7 +37,10 @@ async function insertProposalRecord(dbClient, f) {
     f.status, f.sentAt || null, f.classOptions ? JSON.stringify(f.classOptions) : null,
     !!f.clientProvidesGlassware,
     f.eventType || null, f.eventTypeCategory || null, f.eventTypeCustom || null,
-    v.name || null, v.street || null, v.city || null, v.state || null, v.zip || null,
+    // Canonicalize at the persist boundary (same rule as the composed
+    // event_location above): the column must never hold 'IL' while the
+    // composed string says 'Illinois'.
+    v.name || null, v.street || null, v.city || null, normalizeVenueState(v.state) || null, v.zip || null,
     f.source || null, f.adminNotes || null,
   ]);
   const proposal = result.rows[0];
