@@ -139,8 +139,15 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
   );
   const neededByRole = useMemo(() => rosterCounts(roster), [roster]);
 
+  // `dropped_at` is load-bearing here, not tidying. An EMERGENCY drop
+  // (staffShiftActions.js) sets dropped_at and deliberately LEAVES status
+  // 'approved', and GET /shifts/detail/:id returns every request row unfiltered,
+  // so a bare status check counts a staffer who already bailed as filling their
+  // slot. That under-reports `remaining`, which now feeds the assign picker's
+  // default role — the exact <72h replacement case the picker exists for. Every
+  // server-side aggregate pairs these two conditions; so does this.
   const approvedReqs = useMemo(
-    () => requests.filter(r => r.status === 'approved'),
+    () => requests.filter(r => r.status === 'approved' && !r.dropped_at),
     [requests]
   );
   const pendingReqs = useMemo(
@@ -195,10 +202,12 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
   const totalNeeded = roster.length;
   const totalApproved = approvedReqs.length;
 
-  // ----- Money seam: approve / manual assign -----
-  // Resolves the canonical position for an approval. Returns { position } when
+  // ----- Money seam: approve -----
+  // Resolves the canonical position for an APPROVAL. Returns { position } when
   // resolvable (a ranked role is open, OR the admin chose an explicit override),
-  // or { error } when neither is available. NEVER defaults to 'Bartender'.
+  // or { error } when neither is available. Approval never defaults: the role
+  // comes from what the staffer actually ranked, or from a deliberate override.
+  // (Manual assign is the other path, and it DOES preselect — see pickerRole.)
   const resolveApprovalPosition = useCallback((classified) => {
     const override = overrideRole[classified.req.id];
     if (override) {

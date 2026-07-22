@@ -6,7 +6,7 @@ import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
 import { fmtDate, fmtTime24, relDay } from '../../../../components/adminos/format';
 import { remainingByRole } from '../../../../components/adminos/shifts';
-import { parsePositionsNeeded, defaultAssignRole } from '../../../../utils/staffingRoles';
+import { parsePositionsNeeded, defaultAssignRole, CANONICAL_LABELS } from '../../../../utils/staffingRoles';
 
 // The role a row preselects: the first open slot walking Bartender, Banquet
 // Server, Barback. Needs the feed's `approved_by_role` aggregate to tell a
@@ -133,7 +133,12 @@ export default function AssignToEventModal({ userId, staffName, onClose, onAssig
                 const filled = Number(s.approved_count || 0);
                 const open = Math.max(0, needed - filled);
                 const isAssigned = assigned[s.id];
-                const positionOptions = Array.from(new Set(roster));
+                // Same fallback as ShiftDrawer: a roster that canonicalizes to
+                // nothing (POST /shifts stores positions_needed verbatim, so a
+                // hand-typed "Bar Back" survives) must still offer all three
+                // roles. Without it there is no select at all and the row would
+                // silently POST the 'Bartender' fallback — tip-pool eligible.
+                const positionOptions = roster.length ? Array.from(new Set(roster)) : CANONICAL_LABELS;
                 const selectedPosition = positionByShift[s.id] || defaultRoleFor(s);
 
                 return (

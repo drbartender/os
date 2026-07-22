@@ -95,10 +95,20 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
  *  the schema migration normalized every row to a valid JSON array, so the
  *  cast is safe in practice.
  *
- *  approved_by_role mirrors the aggregate on the admin GET / feed above (same
- *  filters, so it always agrees with approved_count). The modal needs per-role
- *  fill, not just a flat count, to preselect the position of an actually-open
- *  slot on a mixed roster. */
+ *  approved_by_role mirrors the aggregate on the admin GET / feed above. The
+ *  modal needs per-role fill, not just a flat count, to preselect the position
+ *  of an actually-open slot on a mixed roster.
+ *
+ *  It sums to approved_count for every row every write path can produce, but
+ *  not by construction: approved_count does not filter `position IS NOT NULL`.
+ *  An approved-and-active row with a NULL position would be counted there and
+ *  dropped here. No such row exists (every approve path stamps a canonical
+ *  role) and no CHECK enforces it, so treat a mismatch as a data alarm.
+ *
+ *  `AND position IS NOT NULL` is a CRASH GUARD, not tidying: jsonb_object_agg
+ *  throws on a NULL key, and the surrounding COALESCE cannot catch it because
+ *  the aggregate raises before returning. Drop that filter and one NULL-position
+ *  approved row 500s this whole endpoint. Same in all copies of this aggregate. */
 router.get('/unstaffed-upcoming', auth, requireStaffing, asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT s.id, s.event_date, s.start_time, s.end_time, s.location, s.guest_count,
