@@ -439,6 +439,8 @@ Read-side mirror of Stripe payouts + balance-transaction lines (`server/routes/s
 | POST | `/digit` | Twilio signature (fail-closed in EVERY env) | Gather action. `1`: guarded claim to `connected` then `<Dial answerOnBridge="true" callerId="VOICE_CALLER_ID"><Number>toUsE164(lead phone)</Number></Dial>` (the 224 shown to the lead; stale/duplicate press → apology). `9`: replay via `<Redirect>` (max 3 plays). Other: `<Hangup/>`. |
 | POST | `/status` | Twilio signature (fail-closed in EVERY env) | Status callback for all legs, at-least-once tolerant. Admin-leg terminal → record disposition + `advanceChain` (claims `calling_va`, winner dials Zul). VA-leg terminal → guarded `missed` (log state, NO alert since 2026-07-20; only chain failures email, via advanceChain/reaper). Lead-leg terminal → `bridge_duration_sec` (defensive parse) and flips `thumbtack_leads.status` to `contacted` only at ≥20s bridge (relay-refusal floor). Non-terminal/unknown statuses ignored. |
 
+Respond-then-ring (spec 2026-07-21): with `TT_AUTOREPLY_ENABLED='true'` the webhook tail queues the TT quick reply INSTEAD of dialing; the chain then starts from `first-reply-sent` (or the 60s fallback sweep at +3 min) via `triggerLeadCall({ skipWindowCheck: true })`, bounded by `FIRST_REPLY_CALL_MAX_AGE_MINUTES`. Flag off = the tail dials directly, exactly the pre-feature flow.
+
 ### VA Calling — Telegram Trigger — `/api/telegram`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -528,6 +530,9 @@ Agent + admin-paste surface for filling the customer email Thumbtack never sends
 | GET | `/pending-harvest` | Agent secret | Work queue: up to N `{negotiation_id}` for pending, email-null, past-cooldown clients with a non-terminal lead; atomically leases each (`FOR UPDATE SKIP LOCKED`). `HARVESTER_ENABLED=false` → `[]` |
 | POST | `/email-harvested` | Agent secret OR admin JWT | Set `clients.email` + status `harvested`. Agent may only write a pending+null client; admin (manual paste) may override any status. UNIQUE-email collision → `failed`+alert (agent) or recoverable 409 (admin), never a merge or stamp. Rejects pro-domain / `ADMIN_EMAIL` / active `users.email`. After commit, re-arms suppressed `client_no_email` drip touches |
 | POST | `/harvest-failed` | Agent secret | Outcome report: `session_expired` (alert, no count), `ambiguous` (failed), `render_timeout`/`navigation_error`/`lead_not_found` (bump `email_harvest_attempts`, fail at `MAX_HARVEST_ATTEMPTS`) |
+| GET | `/pending-first-replies` | Agent secret | Auto first-reply offer queue: leased `pending` reply jobs (lease stamps `first_reply_attempted_at` AND bumps `first_reply_attempts`; cap flips to `failed` un-offered; day rows downgrade to `night` while `LEAD_CALL_ENABLED='false'`; night rows withheld on a 2-14 min per-row jitter; rows past the call freshness bound never offered). `[]` unless `TT_AUTOREPLY_ENABLED='true'`. Returns negotiation_id, customer_name, first_reply_template, created_at. |
+| POST | `/first-reply-sent` | Agent secret | Reply confirmation: guarded `pending`→`sent` flip (RETURNING the trigger inputs); a `day` flip younger than `FIRST_REPLY_CALL_MAX_AGE_MINUTES` fires `triggerLeadCall` with `skipWindowCheck` (respond-then-ring); staler inserts a `failed`/`reply_confirmed_late` fault row. DB template is the source of truth, never the posted body. |
+| POST | `/first-reply-failed` | Agent secret | Definitive reply failure (`template_not_found`/`lead_not_found`/`quick_reply_unavailable`/`send_unverified`/`ambiguous_lead`): guarded `pending`→`failed`; reason logged, not stored; no email. |
 | POST | `/rearm` | Admin JWT | Put a `failed` lead back in the queue (status `pending`, attempts 0, cooldown cleared) |
 
 ### Cal.com Integration — `/api/calcom`
@@ -1296,6 +1301,7 @@ Admin entry points: "Shopping List" button on Drink Plan Detail (visible wheneve
 - `budget_min` / `budget_max` INTEGER (whole dollars), `budget_raw` TEXT — stated budget parsed from the lead Q&A at webhook time (forward-only, no backfill; `budget_max` NULL = no cap known, never flags)
 - `lead_type`, `lead_price`, `charge_state` — Thumbtack billing info
 - `status`: new | contacted | converted | lost
+- `first_reply_status`: not_needed | pending | sent | failed, `first_reply_template` (day | night), `first_reply_attempted_at` (lease), `first_reply_attempts` (offer-side bump), `first_reply_sent_at` — TT auto first-reply queue (spec 2026-07-21); partial index `idx_thumbtack_leads_first_reply_pending` powers the agent offer + 60s sweep
 - `raw_payload` JSONB — full original webhook body
 
 **lead_call_attempts** — Lead call bridge: one row per lead, the ring-chain state machine AND the call log (spec 2026-07-18)
@@ -1303,9 +1309,9 @@ Admin entry points: "Shopping List" button on Drink Plan Detail (visible wheneve
 - `status`: pending | calling_admin | calling_va | connected | missed | skipped_after_hours | skipped_unconfigured | skipped_invalid_phone | failed
 - `answered_by` (admin | va), `admin_call_sid` / `va_call_sid`, `admin_call_status` / `va_call_status` (raw Twilio per-leg dispositions; survive chain advance)
 - `bridge_started_at`, `bridge_duration_sec` (lead-leg CallDuration; ≥20s flips the lead to `contacted`)
-- `detail` TEXT — terse machine note: twilio error code, skip reason, `stale_reaped`, `cap_tripped`
+- `detail` TEXT — terse machine note: twilio error code, skip reason, `stale_reaped`, `cap_tripped`, `reply_confirmed_late` (day reply confirmed past the freshness bound, call withheld), `reply_stale` (day lead aged out with no call; first-reply sweep fault mark)
 - Index `idx_lead_call_attempts_status_created` (status, created_at) serves the rolling-24h cap count and the needs-attention query
-- Writers: `leadCallTrigger.js` (open/skip/cap + claim-then-call chain driver), `voiceLeadCall.js` (press-1 claim, status advances), `vaCallingScheduler.js` (30-min stale reap → failed/`stale_reaped`)
+- Writers: `leadCallTrigger.js` (open/skip/cap + claim-then-call chain driver; enqueue-time skip rows), `voiceLeadCall.js` (press-1 claim, status advances), `vaCallingScheduler.js` (30-min stale reap → failed/`stale_reaped`), `thumbtackAgent.js` (first-reply callbacks: stale-confirm/failed-stale fault rows + day-call fire), `firstReplySweepScheduler.js` (Arm B `reply_stale` fault rows)
 
 **thumbtack_messages** — Messages from Thumbtack conversation threads
 - `id` SERIAL PK, `message_id` VARCHAR UNIQUE

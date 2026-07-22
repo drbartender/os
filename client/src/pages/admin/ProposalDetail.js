@@ -43,6 +43,20 @@ function leadCallOutcomeLabel(lc) {
   return 'not placed';
 }
 
+// Auto first-reply outcome, same shape as the lead call line. Absent
+// first_reply (non-TT / not_needed) renders nothing at the call site.
+function firstReplyLabel(fr) {
+  if (fr.status === 'sent') {
+    if (!fr.sent_at) return `sent (${fr.template})`;
+    const time = new Date(fr.sent_at).toLocaleTimeString('en-US', {
+      hour: 'numeric', minute: '2-digit', timeZone: 'America/Chicago',
+    });
+    return `sent (${fr.template}, ${time})`;
+  }
+  if (fr.status === 'pending') return 'pending';
+  return 'failed';
+}
+
 export default function ProposalDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -498,6 +512,9 @@ export default function ProposalDetail() {
                     <dt>Source</dt><dd className="muted">{proposal.client_source || '—'}</dd>
                     {proposal.lead_call && (
                       <><dt>Lead call</dt><dd className="muted">{leadCallOutcomeLabel(proposal.lead_call)}</dd></>
+                    )}
+                    {proposal.first_reply && (
+                      <><dt>First reply</dt><dd className="muted">{firstReplyLabel(proposal.first_reply)}</dd></>
                     )}
                   </dl>
                 </div>

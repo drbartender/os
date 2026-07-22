@@ -8,12 +8,12 @@ const { ADMIN_URL } = require('../utils/urls');
 const { findOrCreateClient } = require('../utils/clientDedup');
 const { safeEqual } = require('../utils/secrets');
 const { createDraftProposalFromLead } = require('../utils/thumbtackProposalDraft');
-const { triggerLeadCall } = require('../utils/leadCallTrigger');
+const { triggerLeadCall, enqueueFirstReply } = require('../utils/leadCallTrigger');
 
 // Test seam: lets thumbtack.test.js stub the draft builder to throw and prove
 // the webhook still 200s with the lead persisted, and count notifyAdminCategory
 // calls to prove the in-flight-duplicate heal gate does not double-notify.
-let _deps = { createDraftProposalFromLead, notifyAdminCategory, triggerLeadCall };
+let _deps = { createDraftProposalFromLead, notifyAdminCategory, triggerLeadCall, enqueueFirstReply };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 const asyncHandler = require('../middleware/asyncHandler');
 
@@ -343,12 +343,18 @@ async function runPostCommitSteps({ lead, clientId, leadId }) {
     console.error('Thumbtack admin notification failed (non-blocking):', emailErr);
   }
 
-  // Lead call bridge (non-blocking): open the ring chain for this lead.
-  // triggerLeadCall is internally never-throw and at-most-once per lead
-  // (lead_call_attempts.lead_id UNIQUE), so the heal path re-running this is
-  // safe; the belt here keeps a require-time regression from 500ing the tail.
+  // Lead call bridge (non-blocking): open the ring chain for this lead, or,
+  // with auto first-reply on, queue the TT quick reply instead (the call
+  // then fires respond-then-ring from the reply-sent callback / sweep; spec
+  // 2026-07-21 section 4.2). Both callees are internally never-throw and
+  // at-most-once per lead, so the heal path re-running this is safe; the
+  // belt here keeps a require-time regression from 500ing the tail.
   try {
-    await _deps.triggerLeadCall({ lead, leadId });
+    if (process.env.TT_AUTOREPLY_ENABLED === 'true') {
+      await _deps.enqueueFirstReply({ lead, leadId });
+    } else {
+      await _deps.triggerLeadCall({ lead, leadId });
+    }
   } catch (callErr) {
     if (process.env.SENTRY_DSN_SERVER) {
       Sentry.captureException(callErr, {

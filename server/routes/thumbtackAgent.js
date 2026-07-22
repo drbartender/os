@@ -8,18 +8,26 @@ const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { AppError, ValidationError } = require('../utils/errors');
 const { logAdminAction } = require('../utils/adminAuditLog');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
+const { triggerLeadCall } = require('../utils/leadCallTrigger');
 
-// Dedicated router for the Thumbtack email-harvester agent + the admin manual-paste
-// fallback. Mounted at /api/admin/thumbtack in server/index.js, BEFORE the general
-// /api/admin router, so the agent-secret paths never hit that router's JWT auth.
+// Test seam (thumbtack.js precedent): the replies suite stubs triggerLeadCall to
+// prove the sent-callback constructs the camelCase lead shape, without dialing.
+let _deps = { triggerLeadCall };
+function __setDeps(d) { _deps = { ..._deps, ...d }; }
+
+// Dedicated router for the Thumbtack box agent (email-harvest + auto first-reply
+// work queues) + the admin manual-paste fallback. Mounted at /api/admin/thumbtack
+// in server/index.js, BEFORE the general /api/admin router, so the agent-secret
+// paths never hit that router's JWT auth.
 // This is intentionally NOT the webhook router (which applies router.use(verifyWebhook)
 // and warns-and-allows in dev); the agent auth fails closed in every environment.
 const router = express.Router();
 
-// Tighter than the public webhook (30/min): this is a single-box poller plus the
-// admin paste UI, not high-volume inbound. The agent runs human-paced with jittered
-// delays, so a real batch stays well under this; a burst is a signal, not normal.
-const agentLimiter = rateLimit({ windowMs: 60 * 1000, max: 20, message: { error: 'Too many requests' } });
+// Single-box poller plus the admin paste UI, not high-volume inbound. The agent runs
+// human-paced with jittered delays, so a real batch stays well under this; a burst
+// is a signal, not normal.
+// 40/min: headroom for the 25s reply poll + the harvest poll + callback drains.
+const agentLimiter = rateLimit({ windowMs: 60 * 1000, max: 40, message: { error: 'Too many requests' } });
 router.use(agentLimiter);
 
 function logAgentAuthFailure(req) {
@@ -461,7 +469,208 @@ router.post('/harvest-failed', agentSecretOnly, asyncHandler(async (req, res) =>
   return res.status(200).json({ status: 'pending', attempts });
 }));
 
+// ─── TT auto first-reply work queue (spec 2026-07-21) ─────────────────────────
+
+// Offer cap: the OFFER itself bumps first_reply_attempts (deliberate divergence
+// from the harvest lease, where only failure reports count), so a dead-then-
+// flapping agent is bounded with no failure report ever arriving. Offer number
+// MAX_FIRST_REPLY_ATTEMPTS + 1 flips the row to 'failed' instead of offering.
+const MAX_FIRST_REPLY_ATTEMPTS = parseInt(process.env.MAX_FIRST_REPLY_ATTEMPTS, 10) > 0
+  ? parseInt(process.env.MAX_FIRST_REPLY_ATTEMPTS, 10) : 3;
+// Lease cooldown before an unconfirmed reply job is re-offered. Parameterized
+// ::interval (the HARVEST_COOLDOWN pattern), never interpolated.
+const FIRST_REPLY_COOLDOWN = process.env.FIRST_REPLY_COOLDOWN_INTERVAL || '10 minutes';
+// Freshness bound on callback-fired calls: a day lead confirmed later than this
+// gets a reply_confirmed_late fault row, never a surprise late call.
+const FIRST_REPLY_CALL_MAX_AGE_MINUTES = parseInt(process.env.FIRST_REPLY_CALL_MAX_AGE_MINUTES, 10) > 0
+  ? parseInt(process.env.FIRST_REPLY_CALL_MAX_AGE_MINUTES, 10) : 240;
+// Untrusted ids echo into log lines; strip anything that could forge entries.
+const logId = (s) => String(s).replace(/[^\w-]/g, '').slice(0, 64);
+const FIRST_REPLY_TEMPLATES = new Set(['day', 'night']);
+const FIRST_REPLY_FAIL_REASONS = new Set([
+  'template_not_found', 'lead_not_found', 'quick_reply_unavailable', 'send_unverified', 'ambiguous_lead',
+]);
+
+// GET /api/admin/thumbtack/pending-first-replies?limit=N  (agent-secret only)
+// Reply work queue. ONE writable CTE (the pending-harvest shape): pick pending,
+// past-cooldown rows FOR UPDATE SKIP LOCKED; the UPDATE stamps the lease AND
+// bumps the attempts counter in the same statement. Offer-side rules:
+//   - night rows are withheld until created_at + (2 + id % 13) minutes, so 3am
+//     replies land minutes-spread instead of a constant 25s after every lead;
+//     day rows offer immediately (call ordering dominates);
+//   - a day row offered while LEAD_CALL_ENABLED='false' is downgraded to night
+//     IN the DB before offering (never promise a call we will not place);
+//   - rows at the attempts cap flip to 'failed', and the final SELECT filters
+//     to rows still 'pending', so a cap-flipped row is NEVER handed to the agent;
+//   - rows older than the call freshness bound are never offered (a weeks-old
+//     "expect my call" reply after a flag-off/on cycle would be worse than no
+//     reply); the 60s sweep retires such strands to 'failed'.
+// Kill switch: anything but TT_AUTOREPLY_ENABLED='true' returns [] (feature
+// ships dark; default OFF, unlike HARVESTER_ENABLED's default ON).
+router.get('/pending-first-replies', agentSecretOnly, asyncHandler(async (req, res) => {
+  if (process.env.TT_AUTOREPLY_ENABLED !== 'true') return res.json([]);
+  const requested = parseInt(req.query.limit, 10);
+  const limit = Math.min(
+    Number.isFinite(requested) && requested > 0 ? requested : PENDING_DEFAULT_LIMIT,
+    PENDING_MAX_LIMIT
+  );
+  const callsKilled = process.env.LEAD_CALL_ENABLED === 'false';
+
+  const { rows } = await pool.query(
+    `WITH picked AS (
+       SELECT id, first_reply_attempts, first_reply_template
+         FROM thumbtack_leads
+        WHERE first_reply_status = 'pending'
+          AND (first_reply_attempted_at IS NULL
+               OR first_reply_attempted_at < now() - $1::interval)
+          AND (first_reply_template = 'day'
+               OR created_at + ((2 + id % 13) * interval '1 minute') <= now())
+          AND created_at > now() - make_interval(mins => $5)
+        ORDER BY first_reply_attempted_at NULLS FIRST, id
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED
+     ),
+     leased AS (
+       UPDATE thumbtack_leads tl
+          SET first_reply_attempted_at = now(),
+              first_reply_attempts = tl.first_reply_attempts + 1,
+              first_reply_status = CASE WHEN picked.first_reply_attempts >= $3::int
+                                        THEN 'failed' ELSE tl.first_reply_status END,
+              first_reply_template = CASE WHEN $4::boolean AND picked.first_reply_template = 'day'
+                                          THEN 'night' ELSE tl.first_reply_template END
+         FROM picked
+        WHERE tl.id = picked.id
+        RETURNING tl.negotiation_id, tl.customer_name, tl.first_reply_template,
+                  tl.created_at, tl.first_reply_status
+     )
+     SELECT negotiation_id, customer_name, first_reply_template, created_at
+       FROM leased
+      WHERE first_reply_status = 'pending'
+      ORDER BY created_at`,
+    [FIRST_REPLY_COOLDOWN, limit, MAX_FIRST_REPLY_ATTEMPTS, callsKilled, FIRST_REPLY_CALL_MAX_AGE_MINUTES]
+  );
+
+  res.json(rows);
+}));
+
+// POST /api/admin/thumbtack/first-reply-sent  { negotiation_id, template }
+// Agent-secret only. Guarded pending->sent flip; the flip WINNER with a DB
+// template of 'day' fires the promised call via skipWindowCheck (the window was
+// judged at lead arrival; kill switch, config, phone validation, and the cap
+// still apply inside the trigger). The DB first_reply_template is the source of
+// truth: the posted template is logged on mismatch, never trusted, so a forged
+// body cannot influence the dial decision.
+router.post('/first-reply-sent', agentSecretOnly, asyncHandler(async (req, res) => {
+  const negotiationId = String(req.body?.negotiation_id || '').trim();
+  const template = String(req.body?.template || '').trim();
+  if (!negotiationId) throw new ValidationError(null, 'negotiation_id is required');
+  if (!FIRST_REPLY_TEMPLATES.has(template)) throw new ValidationError(null, 'invalid template');
+
+  const upd = await pool.query(
+    `UPDATE thumbtack_leads
+        SET first_reply_status = 'sent', first_reply_sent_at = NOW()
+      WHERE negotiation_id = $1 AND first_reply_status = 'pending'
+      RETURNING id, customer_phone, first_reply_template, created_at`,
+    [negotiationId]
+  );
+  if (upd.rowCount === 0) {
+    // Duplicate report, or the row already flipped (failed/sent). Absorb.
+    console.log(`[first-reply] sent ${logId(negotiationId)} -> noop (not pending)`);
+    return res.status(200).json({ status: 'noop' });
+  }
+
+  const row = upd.rows[0];
+  if (row.first_reply_template !== template) {
+    console.warn(`[first-reply] sent ${logId(negotiationId)}: posted template "${template}" != DB "${row.first_reply_template}" (DB wins)`);
+  }
+
+  if (row.first_reply_template === 'day') {
+    const ageMs = Date.now() - new Date(row.created_at).getTime();
+    if (ageMs < FIRST_REPLY_CALL_MAX_AGE_MINUTES * 60 * 1000) {
+      // Lead-shape law: the trigger reads camelCase lead.customerPhone; construct
+      // it explicitly from the snake_case row (a raw row would silently kill
+      // every day call as skipped_invalid_phone). triggerLeadCall never throws.
+      await _deps.triggerLeadCall({
+        lead: { customerPhone: row.customer_phone },
+        leadId: Number(row.id),
+        skipWindowCheck: true,
+      });
+    } else {
+      // Promise expired (spec 4.4.4): fault row, no surprise late call. The
+      // reply itself still counts as sent (response rate banked).
+      await pool.query(
+        `INSERT INTO lead_call_attempts (lead_id, status, detail)
+         VALUES ($1, 'failed', 'reply_confirmed_late')
+         ON CONFLICT (lead_id) DO NOTHING`,
+        [row.id]
+      );
+      console.log(`[first-reply] sent ${logId(negotiationId)} -> confirmed late, call withheld`);
+    }
+  }
+
+  console.log(`[first-reply] sent ${logId(negotiationId)} -> sent (${row.first_reply_template})`);
+  return res.status(200).json({ status: 'ok' });
+}));
+
+// POST /api/admin/thumbtack/first-reply-failed  { negotiation_id, reason }
+// Agent-secret only. Definitive agent failures flip pending->failed. The reason
+// is validated and logged, NOT stored: no reason column in v1 (spec 4.6 surfaces
+// status only). Transient troubles are never reported; the lease cooldown
+// re-offers and the offer-side attempts cap bounds them. No email.
+//
+// DAY leads still get their promised call (fleet blocker fix): a fast
+// definitive failure (~1-2 min) would otherwise land BEFORE the sweep's +3-min
+// fallback, and once the row leaves 'pending' every call path is blind to it.
+// The reply failed; the call must not die with it.
+router.post('/first-reply-failed', agentSecretOnly, asyncHandler(async (req, res) => {
+  const negotiationId = String(req.body?.negotiation_id || '').trim();
+  const reason = String(req.body?.reason || '').trim();
+  if (!negotiationId) throw new ValidationError(null, 'negotiation_id is required');
+  if (!FIRST_REPLY_FAIL_REASONS.has(reason)) throw new ValidationError(null, 'invalid reason');
+
+  const upd = await pool.query(
+    `UPDATE thumbtack_leads SET first_reply_status = 'failed'
+      WHERE negotiation_id = $1 AND first_reply_status = 'pending'
+      RETURNING id, customer_phone, first_reply_template, created_at`,
+    [negotiationId]
+  );
+  if (upd.rowCount === 0) {
+    console.log(`[first-reply] failed ${logId(negotiationId)} -> noop (not pending, reason ${reason})`);
+    return res.status(200).json({ status: 'noop' });
+  }
+
+  const row = upd.rows[0];
+  if (row.first_reply_template === 'day') {
+    const ageMs = Date.now() - new Date(row.created_at).getTime();
+    if (ageMs < FIRST_REPLY_CALL_MAX_AGE_MINUTES * 60 * 1000) {
+      // Lead-shape law: construct the camelCase lead from the snake_case row.
+      await _deps.triggerLeadCall({
+        lead: { customerPhone: row.customer_phone },
+        leadId: Number(row.id),
+        skipWindowCheck: true,
+      });
+    } else {
+      await pool.query(
+        `INSERT INTO lead_call_attempts (lead_id, status, detail)
+         VALUES ($1, 'failed', 'reply_stale')
+         ON CONFLICT (lead_id) DO NOTHING`,
+        [row.id]
+      );
+    }
+  }
+
+  console.log(`[first-reply] failed ${logId(negotiationId)} -> failed (reason ${reason})`);
+  if (process.env.SENTRY_DSN_SERVER) {
+    Sentry.captureMessage(`Thumbtack first reply failed ${negotiationId}`, {
+      level: 'warning',
+      tags: { component: 'thumbtack-first-reply', reason },
+    });
+  }
+  return res.status(200).json({ status: 'ok' });
+}));
+
 module.exports = router;
 module.exports.agentSecretOnly = agentSecretOnly;
 module.exports.agentOrAdmin = agentOrAdmin;
 module.exports.verifyAgentSecret = verifyAgentSecret;
+module.exports.__setDeps = __setDeps;

@@ -1845,6 +1845,33 @@ CREATE TABLE IF NOT EXISTS lead_call_attempts (
 CREATE INDEX IF NOT EXISTS idx_lead_call_attempts_status_created
   ON lead_call_attempts(status, created_at);
 
+-- TT auto first-reply (spec 2026-07-21): reply-queue state on the lead row,
+-- mirroring the clients.email_harvest_* lease pattern. Divergence by design:
+-- the OFFER bumps first_reply_attempts (not just failure reports), so a
+-- dead-then-flapping agent cannot re-offer a stale lead forever.
+ALTER TABLE thumbtack_leads ADD COLUMN IF NOT EXISTS first_reply_status TEXT NOT NULL DEFAULT 'not_needed';
+ALTER TABLE thumbtack_leads ADD COLUMN IF NOT EXISTS first_reply_template TEXT;
+ALTER TABLE thumbtack_leads ADD COLUMN IF NOT EXISTS first_reply_attempted_at TIMESTAMPTZ; -- lease/cooldown timestamp
+ALTER TABLE thumbtack_leads ADD COLUMN IF NOT EXISTS first_reply_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE thumbtack_leads ADD COLUMN IF NOT EXISTS first_reply_sent_at TIMESTAMPTZ;
+
+DO $$ BEGIN
+  ALTER TABLE thumbtack_leads DROP CONSTRAINT IF EXISTS thumbtack_leads_first_reply_status_check;
+  ALTER TABLE thumbtack_leads ADD CONSTRAINT thumbtack_leads_first_reply_status_check
+    CHECK (first_reply_status IN ('not_needed','pending','sent','failed'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE thumbtack_leads DROP CONSTRAINT IF EXISTS thumbtack_leads_first_reply_template_check;
+  ALTER TABLE thumbtack_leads ADD CONSTRAINT thumbtack_leads_first_reply_template_check
+    CHECK (first_reply_template IS NULL OR first_reply_template IN ('day','night'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- Powers the agent's pending-first-replies queue + the 60s fallback sweep.
+CREATE INDEX IF NOT EXISTS idx_thumbtack_leads_first_reply_pending
+  ON thumbtack_leads(first_reply_attempted_at)
+  WHERE first_reply_status = 'pending';
+
 -- Extend proposal_payments.payment_type CHECK to accept drink-plan payment kinds.
 -- The Stripe webhook inserts payment_type='drink_plan_extras' or 'drink_plan_with_balance'
 -- for Potion Planning Lab payments; the original constraint only allowed deposit/balance/full,

@@ -42,7 +42,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   // Fetch addons + activity log in parallel — both depend only on proposal id.
   // Cap activity log fetch at 100 entries (most recent) — an old proposal can
   // accumulate hundreds of view/update entries otherwise.
-  const [addons, activity, messageLog, leadCall] = await Promise.all([
+  const [addons, activity, messageLog, leadCall, firstReply] = await Promise.all([
     pool.query(
       'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
       [req.params.id]
@@ -64,7 +64,20 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
         LIMIT 1`,
       [req.params.id]
     ),
+    // Auto first-reply outcome for TT-drafted proposals (newest lead wins,
+    // matching the laterals above). `not_needed` collapses to null below —
+    // the detail view renders a line only when a reply was actually queued.
+    pool.query(
+      `SELECT l.first_reply_status, l.first_reply_template, l.first_reply_sent_at
+         FROM thumbtack_leads l
+        WHERE l.proposal_id = $1
+        ORDER BY l.id DESC
+        LIMIT 1`,
+      [req.params.id]
+    ),
   ]);
+
+  const fr = firstReply.rows[0];
 
   // setup_time_display: server-derived clock time (service start − effective
   // minutes) for back-of-house display. Raw setup_minutes_before already flows
@@ -79,6 +92,11 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
     activity: activity.rows,
     messageLog,
     lead_call: leadCall.rows[0] || null,
+    first_reply: (!fr || fr.first_reply_status === 'not_needed') ? null : {
+      status: fr.first_reply_status,
+      template: fr.first_reply_template,
+      sent_at: fr.first_reply_sent_at,
+    },
   });
 }));
 

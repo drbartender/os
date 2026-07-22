@@ -124,6 +124,12 @@ Copy `.env.example` and fill in values. All variables:
 | `PENDING_CALL_TTL_SEC` | No | Confirm-before-dial pending-record TTL in seconds (default 120). |
 | `LEAD_CALL_ENABLED` | No | Lead call bridge kill switch: `false` disables the new-lead auto-call trigger entirely (redeploy-free). Default on. |
 | `LEAD_CALL_DAILY_CAP` | No | Max lead-call attempt chains opened per rolling 24h (default 25; toll-fraud backstop). |
+| `TT_AUTOREPLY_ENABLED` | No | TT auto first-reply master switch, default OFF (`'true'` enables): quick replies via the harvester box, day-lead calls fire respond-then-ring. Does NOT gate the fallback sweep. |
+| `FIRST_REPLY_FALLBACK_MINUTES` | No | Unconfirmed day reply falls back to the call past this (default 3). |
+| `FIRST_REPLY_CALL_MAX_AGE_MINUTES` | No | Freshness bound on callback/sweep calls (default 240; the call promise expires). |
+| `RUN_FIRST_REPLY_FALLBACK_SCHEDULER` | No | `false` disables the 60s first-reply sweep. Default on; `RUN_SCHEDULERS` wins. |
+| `MAX_FIRST_REPLY_ATTEMPTS` | No | Offer-side attempts cap before a reply flips to `failed` (default 3). |
+| `FIRST_REPLY_COOLDOWN_INTERVAL` | No | Reply lease re-offer interval (default `'10 minutes'`). |
 
 The frontend uses one build-time variable set in `client/.env.production`:
 - `REACT_APP_API_URL` — absolute URL to the backend (e.g., `https://os-g7oa.onrender.com`)
@@ -323,7 +329,8 @@ dr-bartender/
 │   │   ├── shiftReap.js        # reapShiftsForProposal: soft-cancels a proposal's shifts, denies open shift_requests, suppresses shift-level pending scheduled_messages + BEO nudges, returns per-shift approved/bartender user ids. Extracted from the cancel flow; shared by cancel AND the archive endpoint (M-1 refund-reap)
 │   │   ├── cancellationMath.js # Pure cancellation-refund math (computeCancellationRefund; all CENTS): >14d excess-less-5%-fee + full gratuity, <=14d gratuity-only, DRB full refund
 │   │   ├── leadCallBriefing.js # Pure spoken-briefing builder for the lead call bridge (buildLeadBriefing: name/category/Chicago date/guests/city, TTS-friendly, escaping owned by the TwiML layer)
-│   │   ├── leadCallTrigger.js  # Lead call bridge trigger + chain driver: triggerLeadCall (webhook post-commit tail: window/config/phone-validation/atomic-24h-cap gates, never throws), advanceChain (claim-then-call ring order ADMIN_PHONE → VA_CELL), sendChainEmail (one lead_call admin email per chain)
+│   │   ├── leadCallTrigger.js  # Lead call bridge trigger + chain driver: triggerLeadCall (window/config/phone-validation/atomic-24h-cap gates, never throws; skipWindowCheck for reply-callback/sweep call sites), enqueueFirstReply (auto first-reply queue: gate-order template decision, winner-only skip rows, throw falls back to the direct call), advanceChain (claim-then-call ring order ADMIN_PHONE → VA_CELL), sendChainEmail (one lead_call admin email per chain)
+│   │   ├── firstReplySweepScheduler.js # 60s first-reply sweep: Arm A day-call fallback (+3 min, LIMIT 3, any reply state with no attempt row), Arm B retirement (stale pending → failed, both templates) + reply_stale fault rows + enqueue-crash heal (60 min, flag-gated)
 │   │   ├── metricsQueries.js   # Pure metrics filter parsing + SQL builders (resolveFilters, dateClause, qMoney, qWinRate, etc.)
 │   │   ├── orientationData.js  # Assembles the booking/receipt/planner payload for the orientation email
 │   │   ├── pendingCall.js      # VA-calling DB helpers: upsertPending, claimForDial (conditional UPDATE claim-then-call), attachCallSid, lookupTargetByCallSid, countPlacedSince (daily/per-min cap), recordAudit, pruneVaCallingRows
@@ -614,7 +621,8 @@ dr-bartender/
 ### Lead Call Bridge (real-time first-ring)
 - A new in-window (8am-9pm Chicago) Thumbtack lead auto-rings Dallas from the 888 with a spoken briefing (name, event, date/time, guests, city); press 1 bridges to the lead from the 224, press 9 replays, no answer fails over to Zul
 - Only chain FAILURES alert (email via the `lead_call` category + Sales-tab item); missed and after-hours chains log quietly in `lead_call_attempts` (the moment has passed; follow-up rides the normal email/SMS pipeline). A 20-second bridge floor keeps relay refusals from marking a lead contacted
-- Kill switch `LEAD_CALL_ENABLED=false`; rolling-24h `LEAD_CALL_DAILY_CAP`; lead legs only ever dial `toUsE164`-validated US numbers; overnight leads log only (the auto-draft proposal already answered in-platform)
+- Auto first-reply (`TT_AUTOREPLY_ENABLED`, default off): every lead gets the saved `day`/`night` Thumbtack quick reply sent through the harvester box within ~30s; day replies promise the call and the phone chain fires only after the reply is confirmed (respond-then-ring), with a 3-minute fallback so a stuck browser never loses a lead; night and after-hours leads get an on-platform reply too, so the TT response rate covers 100% of leads
+- Kill switch `LEAD_CALL_ENABLED=false`; rolling-24h `LEAD_CALL_DAILY_CAP`; lead legs only ever dial `toUsE164`-validated US numbers; overnight leads get the night quick reply (auto first-reply) and log without a call
 
 ### Cal.com Consult Booking Integration
 - **Cal.com consult booking integration**: webhook receiver auto-creates clients on first booking, flips consult status on form-submit, surfaces public booking URL in client comms.

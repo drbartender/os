@@ -205,16 +205,24 @@ async function advanceChain({ attemptId, fromLeg, viaCreateFailure = false }) {
  * Post-commit tail entry: open (or skip) the call chain for a just-captured
  * lead. At-most-once per lead across TT webhook retries and the heal path
  * (lead_id UNIQUE + ON CONFLICT DO NOTHING). Never throws.
+ *
+ * skipWindowCheck (spec 2026-07-21 section 4.4): the first-reply callback
+ * and fallback sweep fire this AFTER the window was already decided at lead
+ * arrival (a day reply promised a call), so ONLY the window gate is
+ * bypassed. Kill switch, config, phone validation, and the cap all still
+ * apply. Callers own the freshness bound; the webhook tail never sets this.
  */
-async function triggerLeadCall({ lead, leadId }) {
+async function triggerLeadCall({ lead, leadId, skipWindowCheck = false }) {
   try {
     if (process.env.LEAD_CALL_ENABLED === 'false') return;
     if (!leadId) return;
 
-    const hour = _deps.chicagoHourNow();
-    if (hour < CALL_WINDOW_START_HOUR || hour >= CALL_WINDOW_END_HOUR) {
-      await insertRow(leadId, 'skipped_after_hours', null);
-      return;
+    if (!skipWindowCheck) {
+      const hour = _deps.chicagoHourNow();
+      if (hour < CALL_WINDOW_START_HOUR || hour >= CALL_WINDOW_END_HOUR) {
+        await insertRow(leadId, 'skipped_after_hours', null);
+        return;
+      }
     }
 
     if (!process.env.ADMIN_PHONE && !process.env.VA_CELL) {
@@ -282,10 +290,71 @@ async function triggerLeadCall({ lead, leadId }) {
   }
 }
 
+/**
+ * TT auto first-reply enqueue (spec 2026-07-21 section 4.2). The webhook
+ * tail calls this INSTEAD of triggerLeadCall when TT_AUTOREPLY_ENABLED is
+ * on. Walks the trigger's gates IN ITS EXACT ORDER to pick the template:
+ * the FIRST failing gate also inserts the same skip row the direct trigger
+ * would have, so the call log stays byte-identical to the direct path
+ * (calls-disabled inserts nothing, matching the kill switch's semantics).
+ * All gates pass = 'day' (a call is promised); anything else = 'night'.
+ *
+ * Fallback law (spec 4.2.3): ANY internal failure is answered with the
+ * direct triggerLeadCall, so the reply path can never lose a call. Never
+ * throws (tail law); bare pool.query only.
+ */
+async function enqueueFirstReply({ lead, leadId }) {
+  try {
+    if (!leadId) return;
+
+    // Decide first, SIDE-EFFECT-FREE: the skip row belongs to the enqueue
+    // WINNER only. A duplicate webhook retry that lands in a different
+    // window must be a total no-op; if it walked the gates with inserts, a
+    // late retry could plant a skipped_after_hours row on an already-queued
+    // day lead, and that row would block the promised call forever.
+    let template = 'day';
+    let skipStatus = null;
+    let skipDetail = null;
+    if (process.env.LEAD_CALL_ENABLED === 'false') {
+      template = 'night'; // kill switch inserts nothing, matching the trigger
+    } else {
+      const hour = _deps.chicagoHourNow();
+      const rawPhone = lead && lead.customerPhone;
+      if (hour < CALL_WINDOW_START_HOUR || hour >= CALL_WINDOW_END_HOUR) {
+        template = 'night';
+        skipStatus = 'skipped_after_hours';
+      } else if (!process.env.ADMIN_PHONE && !process.env.VA_CELL) {
+        template = 'night';
+        skipStatus = 'skipped_unconfigured';
+      } else if (!rawPhone || !toUsE164(rawPhone)) {
+        template = 'night';
+        skipStatus = 'skipped_invalid_phone';
+        skipDetail = rawPhone ? 'invalid_phone' : 'no_phone';
+      }
+    }
+
+    // Guarded enqueue: at-most-once under webhook retries and the heal path.
+    const enq = await _deps.pool.query(
+      `UPDATE thumbtack_leads
+       SET first_reply_status = 'pending', first_reply_template = $2
+       WHERE id = $1 AND first_reply_status = 'not_needed'`,
+      [leadId, template]
+    );
+    if (enq.rowCount === 1 && skipStatus) {
+      await insertRow(leadId, skipStatus, skipDetail);
+    }
+  } catch (err) {
+    captureError(err, 'enqueue-first-reply');
+    // Worst case = today's behavior: the call fires without a reply.
+    await triggerLeadCall({ lead, leadId });
+  }
+}
+
 module.exports = {
   triggerLeadCall,
   advanceChain,
   sendChainEmail,
+  enqueueFirstReply,
   __setDeps,
   CALL_WINDOW_START_HOUR,
   CALL_WINDOW_END_HOUR,

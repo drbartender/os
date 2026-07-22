@@ -527,6 +527,26 @@ async function start() {
         clearHealthRow('presence');
       }
 
+      // TT first-reply fallback + hygiene sweep (spec 2026-07-21 section 4.5):
+      // Arm A backstops the promised day call at +3 min, Arm B turns strands
+      // into visible fault rows. Deliberately NOT gated by TT_AUTOREPLY_ENABLED:
+      // after a rollback flip the sweep must keep draining in-flight leads.
+      if (enabled('RUN_FIRST_REPLY_FALLBACK_SCHEDULER')) {
+        const { runFirstReplySweep } = require('./utils/firstReplySweepScheduler');
+        const wrapped = wrapScheduler('first_reply_sweep', 60, async () => {
+          const c = await runFirstReplySweep();
+          if (c.calledBack > 0 || c.retired > 0 || c.staleMarked > 0 || c.reEnqueued > 0) {
+            console.log(
+              `[first_reply_sweep] calledBack=${c.calledBack} retired=${c.retired} staleMarked=${c.staleMarked} reEnqueued=${c.reEnqueued}`
+            );
+          }
+        });
+        setTimeout(wrapped, 15000); // 60s cadence: first run soon after boot, off the other stagger slots
+        setInterval(wrapped, 60000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('first_reply_sweep');
+      }
+
       // Pre-event reminder handlers (event_week_reminder, long_lead_t30_recap).
       // Must register before the dispatcher's first tick so it can resolve them.
       require('./utils/preEventHandlers').registerAll();

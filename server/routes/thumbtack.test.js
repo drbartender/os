@@ -573,3 +573,42 @@ test('lead-call trigger: the heal path passes the existing row id', async () => 
   assert.equal(calls[0].leadId, leadRowId, 'heal threads the existing row id');
   thumbtackRouter.__setDeps({ triggerLeadCall: require('../utils/leadCallTrigger').triggerLeadCall });
 });
+
+// ─── Auto first-reply tail fork (TT_AUTOREPLY_ENABLED) ───────────
+
+test('tail fork: flag off fires the direct trigger; flag on fires the enqueue instead', async () => {
+  const triggers = [];
+  const enqueues = [];
+  thumbtackRouter.__setDeps({
+    createDraftProposalFromLead: async () => null,
+    triggerLeadCall: async (args) => { triggers.push(args); },
+    enqueueFirstReply: async (args) => { enqueues.push(args); },
+  });
+
+  delete process.env.TT_AUTOREPLY_ENABLED;
+  const negOff = `test-fork-off-${Date.now()}`;
+  created.negotiationIds.push(negOff);
+  await postLead(negOff);
+  const offRow = await pool.query('SELECT id, client_id, first_reply_status FROM thumbtack_leads WHERE negotiation_id = $1', [negOff]);
+  if (offRow.rows[0].client_id) created.clientIds.push(offRow.rows[0].client_id);
+  assert.equal(triggers.length, 1, 'flag off: direct trigger fired');
+  assert.equal(enqueues.length, 0);
+  assert.equal(offRow.rows[0].first_reply_status, 'not_needed', 'flag off: reply columns untouched');
+
+  process.env.TT_AUTOREPLY_ENABLED = 'true';
+  const negOn = `test-fork-on-${Date.now()}`;
+  created.negotiationIds.push(negOn);
+  try {
+    await postLead(negOn);
+  } finally {
+    delete process.env.TT_AUTOREPLY_ENABLED;
+  }
+  const onRow = await pool.query('SELECT id, client_id FROM thumbtack_leads WHERE negotiation_id = $1', [negOn]);
+  if (onRow.rows[0].client_id) created.clientIds.push(onRow.rows[0].client_id);
+  assert.equal(triggers.length, 1, 'flag on: direct trigger NOT fired');
+  assert.equal(enqueues.length, 1, 'flag on: enqueue fired');
+  assert.equal(enqueues[0].leadId, onRow.rows[0].id, 'enqueue got the threaded PK');
+  assert.ok(enqueues[0].lead && enqueues[0].lead.customerPhone, 'enqueue got the parsed lead');
+  thumbtackRouter.__setDeps({ triggerLeadCall: require('../utils/leadCallTrigger').triggerLeadCall,
+                              enqueueFirstReply: require('../utils/leadCallTrigger').enqueueFirstReply });
+});

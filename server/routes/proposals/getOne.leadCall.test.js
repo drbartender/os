@@ -116,3 +116,42 @@ test('lead_call is null for a proposal with no lead call chain', async () => {
   assert.equal(res.status, 200);
   assert.equal(res.body.lead_call, null);
 });
+
+test('first_reply carries status/template/sent_at for a sent reply', async () => {
+  const proposalId = await makeProposal();
+  const sentAt = '2026-07-20T20:14:00.000Z';
+  await pool.query(
+    `INSERT INTO thumbtack_leads (negotiation_id, customer_name, customer_phone, proposal_id, raw_payload,
+                                  first_reply_status, first_reply_template, first_reply_sent_at)
+     VALUES ($1, 'GetOne FR Sent', '+17735550101', $2, '{}'::jsonb, 'sent', 'day', $3)`,
+    [`${RUN}-fr-sent`, proposalId, sentAt]
+  );
+
+  const res = await get(`/api/proposals/${proposalId}`, adminToken);
+  assert.equal(res.status, 200);
+  assert.ok(res.body.first_reply, 'field present');
+  assert.equal(res.body.first_reply.status, 'sent');
+  assert.equal(res.body.first_reply.template, 'day');
+  assert.equal(Date.parse(res.body.first_reply.sent_at), Date.parse(sentAt));
+});
+
+test('first_reply is null when the lead never needed a reply', async () => {
+  const proposalId = await makeProposal();
+  await pool.query(
+    `INSERT INTO thumbtack_leads (negotiation_id, customer_name, customer_phone, proposal_id, raw_payload,
+                                  first_reply_status)
+     VALUES ($1, 'GetOne FR NotNeeded', '+17735550102', $2, '{}'::jsonb, 'not_needed')`,
+    [`${RUN}-fr-nn`, proposalId]
+  );
+
+  const res = await get(`/api/proposals/${proposalId}`, adminToken);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.first_reply, null);
+});
+
+test('first_reply is null for a proposal with no lead row', async () => {
+  const proposalId = await makeProposal();
+  const res = await get(`/api/proposals/${proposalId}`, adminToken);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.first_reply, null);
+});

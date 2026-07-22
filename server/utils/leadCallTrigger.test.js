@@ -253,3 +253,116 @@ test('triggerLeadCall never throws to the webhook tail, even on a dead pool', as
     triggerLeadCall({ lead: { customerPhone: '+17735550100' }, leadId: 999999999 })
   );
 });
+
+// ─── enqueueFirstReply + skipWindowCheck (TT auto first-reply) ───
+
+const { enqueueFirstReply } = require('./leadCallTrigger');
+
+async function replyStateFor(leadId) {
+  const r = await pool.query(
+    'SELECT first_reply_status, first_reply_template FROM thumbtack_leads WHERE id = $1', [leadId]
+  );
+  return r.rows[0];
+}
+
+test('enqueue decision matrix: gate order picks the template and the parity skip row', async () => {
+  const day = await makeLead('enq-day');
+  await enqueueFirstReply({ lead: { customerPhone: '+17735550100' }, leadId: day });
+  assert.deepEqual(await replyStateFor(day), { first_reply_status: 'pending', first_reply_template: 'day' });
+  assert.equal(await attemptFor(day), null, 'day lead opens no chain at enqueue');
+
+  const night = await makeLead('enq-night');
+  __setDeps({ chicagoHourNow: () => 22 });
+  await enqueueFirstReply({ lead: { customerPhone: '+17735550100' }, leadId: night });
+  __setDeps({ chicagoHourNow: () => 12 });
+  assert.equal((await replyStateFor(night)).first_reply_template, 'night');
+  assert.equal((await attemptFor(night)).status, 'skipped_after_hours');
+
+  const killed = await makeLead('enq-killed');
+  process.env.LEAD_CALL_ENABLED = 'false';
+  try {
+    await enqueueFirstReply({ lead: { customerPhone: '+17735550100' }, leadId: killed });
+  } finally {
+    delete process.env.LEAD_CALL_ENABLED;
+  }
+  assert.equal((await replyStateFor(killed)).first_reply_template, 'night');
+  assert.equal(await attemptFor(killed), null, 'calls-disabled inserts nothing, like the kill switch');
+
+  const uncfg = await makeLead('enq-uncfg');
+  delete process.env.ADMIN_PHONE;
+  delete process.env.VA_CELL;
+  try {
+    await enqueueFirstReply({ lead: { customerPhone: '+17735550100' }, leadId: uncfg });
+  } finally {
+    process.env.ADMIN_PHONE = '+13125550100';
+    process.env.VA_CELL = '+639171234567';
+  }
+  assert.equal((await attemptFor(uncfg)).status, 'skipped_unconfigured');
+  assert.equal((await replyStateFor(uncfg)).first_reply_template, 'night');
+
+  const bad = await makeLead('enq-bad', '+442071234567');
+  await enqueueFirstReply({ lead: { customerPhone: '+442071234567' }, leadId: bad });
+  const badRow = await attemptFor(bad);
+  assert.equal(badRow.status, 'skipped_invalid_phone');
+  assert.equal(badRow.detail, 'invalid_phone');
+  assert.equal((await replyStateFor(bad)).first_reply_template, 'night');
+});
+
+test('enqueue retry in a different window is a TOTAL no-op (no skip row, template sticks)', async () => {
+  const leadId = await makeLead('enq-dup');
+  await enqueueFirstReply({ lead: { customerPhone: '+17735550100' }, leadId });
+  assert.equal((await replyStateFor(leadId)).first_reply_template, 'day');
+
+  // Late webhook retry after the window closed: the loser must not plant a
+  // skip row that would block the promised call.
+  __setDeps({ chicagoHourNow: () => 22 });
+  await enqueueFirstReply({ lead: { customerPhone: '+17735550100' }, leadId });
+  __setDeps({ chicagoHourNow: () => 12 });
+  assert.equal((await replyStateFor(leadId)).first_reply_template, 'day', 'first decision sticks');
+  assert.equal(await attemptFor(leadId), null, 'retry planted no attempt row');
+});
+
+test('enqueue failure falls back to the direct trigger: the reply path cannot lose the call', async () => {
+  const leadId = await makeLead('enq-fallback');
+  const realQuery = pool.query.bind(pool);
+  __setDeps({
+    pool: {
+      query: async (sql, params) => {
+        if (typeof sql === 'string' && sql.includes('first_reply_status')) {
+          throw new Error('db blip on the enqueue UPDATE');
+        }
+        return realQuery(sql, params);
+      },
+    },
+  });
+  await enqueueFirstReply({ lead: { customerPhone: '+17735550100' }, leadId });
+  __setDeps({ pool });
+  const row = await attemptFor(leadId);
+  assert.ok(row, 'direct trigger opened a chain despite the dead enqueue');
+  assert.equal(row.status, 'calling_admin');
+  assert.equal((await replyStateFor(leadId)).first_reply_status, 'not_needed', 'no reply queued');
+});
+
+test('skipWindowCheck bypasses ONLY the window gate', async () => {
+  // After-hours + skipWindowCheck: the chain still opens.
+  const leadId = await makeLead('swc-open');
+  __setDeps({ chicagoHourNow: () => 23 });
+  await triggerLeadCall({ lead: { customerPhone: '+17735550100' }, leadId, skipWindowCheck: true });
+  assert.equal((await attemptFor(leadId)).status, 'calling_admin');
+
+  // Kill switch still wins even with the flag set.
+  const killed = await makeLead('swc-killed');
+  process.env.LEAD_CALL_ENABLED = 'false';
+  try {
+    await triggerLeadCall({ lead: { customerPhone: '+17735550100' }, leadId: killed, skipWindowCheck: true });
+  } finally {
+    delete process.env.LEAD_CALL_ENABLED;
+  }
+  assert.equal(await attemptFor(killed), null);
+
+  // Phone validation still wins even with the flag set.
+  const bad = await makeLead('swc-bad', '+442071234567');
+  await triggerLeadCall({ lead: { customerPhone: '+442071234567' }, leadId: bad, skipWindowCheck: true });
+  assert.equal((await attemptFor(bad)).status, 'skipped_invalid_phone');
+  __setDeps({ chicagoHourNow: () => 12 });
+});
