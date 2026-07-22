@@ -8,6 +8,10 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+# A GNOME/RDP desktop login injects WAYLAND_DISPLAY/DISPLAY/XAUTHORITY into the
+# systemd user manager; Chrome then attaches to the (dead-after-logout) Wayland
+# compositor instead of xvfb-run's virtual display and hangs at launch. Scrub them.
+UnsetEnvironment=WAYLAND_DISPLAY DISPLAY XAUTHORITY GNOME_SETUP_DISPLAY
 # Adjust these paths at deploy (Task 12). node lives under nvm; xvfb-run gives the
 # headful Chrome a virtual display on the headless box.
 WorkingDirectory=/home/drbartender/projects/os/thumbtack-agent
