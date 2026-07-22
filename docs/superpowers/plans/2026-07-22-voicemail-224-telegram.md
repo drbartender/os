@@ -24,6 +24,9 @@
 - Webhook handlers return TwiML or a bare status code and never throw `AppError`, matching `voice.js` and `voiceLeadCall.js`.
 - Log every branch with the existing last-4 redaction idiom (`String(x).slice(-4)`).
 - Server suites run one at a time against the shared dev DB: `node -r dotenv/config --test <file>`.
+- **There is no repo-root `CLAUDE.md`.** It lives at `.claude/CLAUDE.md`. A `git add CLAUDE.md` fails with "pathspec did not match any files", and editing the real file while the footprint declares the wrong path aborts the lane on footprint drift.
+- **Schema is applied by `initDb()`**, not by a standalone script. `server/db/applySchema.js` does not exist.
+- `FormData` and `Blob` are **not** in the server globals allowlist in `eslint.config.mjs`, and `no-undef` is an error enforced by `.husky/pre-commit`. Task 3 adds them; without that, the multipart upload cannot be committed.
 - Line cites were verified 2026-07-22. Where a cite and the code disagree by a line or two, trust the described content, not the number.
 
 ## Lane map
@@ -33,6 +36,7 @@ lanes:
   - id: voicemail-224
     footprint:
       - server/db/schema.sql
+      - server/db/schema.vaCalling.test.js
       - server/utils/voicemail.js
       - server/utils/voicemail.test.js
       - server/utils/telegram.js
@@ -40,12 +44,14 @@ lanes:
       - server/routes/voice.js
       - server/routes/voice.test.js
       - server/utils/pendingCall.js
+      - server/utils/pendingCall.test.js
       - server/utils/vaCallingScheduler.js
       - server/utils/vaCallingScheduler.test.js
       - server/index.js
+      - eslint.config.mjs
       - scripts/sensitive-paths.txt
       - .env.example
-      - CLAUDE.md
+      - .claude/CLAUDE.md
       - README.md
       - ARCHITECTURE.md
     depends_on: []
@@ -56,7 +62,19 @@ lanes:
 
 Full review fleet regardless of size: `server/routes/voice.js`, `server/routes/telegram.js`, `server/utils/sms.js`, and `server/utils/twilioSignature.js` are already on `scripts/sensitive-paths.txt:47-52`, and Task 7 adds `server/utils/telegram.js` and `server/utils/voicemail.js` to it. This is a billed-voice path, so `/second-opinion` runs alongside the fleet at push.
 
-**Task order:** 1 → 2 → 3 → 4 → 5 → 6 → 7. Tasks 1 through 3 are leaf modules with no route wiring; 4 and 5 are the handlers; 6 is maintenance; 7 is documentation.
+**Task order:** 1 → 2 → 3 → 4 → 5 → 6a → 6b → 7. Tasks 1 through 3 are leaf modules with no route wiring; 4 and 5 are the handlers; 6a and 6b are maintenance; 7 is documentation.
+
+**Task 4 and Task 5 ship together or not at all.** Task 4 emits a `recordingStatusCallback` pointing at the route Task 5 creates, so Task 4 alone leaves a live `<Record>` aimed at a 404. `VOICEMAIL_ENABLED` defaulting off means that is harmless in production, but do not revert Task 5 without reverting Task 4.
+
+**Per-task review checkpoints.** The lane-level fleet still runs at merge; these are the mid-build checks, scoped to what each batch actually changes rather than one fleet per task:
+
+| After | Agent | Why |
+|---|---|---|
+| Task 1 | `database-review` | The CHECK enum against the six statuses actually written, the PK-as-dedup-claim, the index, and the prune interaction. |
+| Task 2 | `security-review` | The SSRF gate and the `TWILIO_AUTH_TOKEN` basic-auth handling. Smallest, sharpest scope in the lane. |
+| Task 5 | `security-review` + `code-review` | Both handlers together, not separately: they share `_deps` and one file. |
+| Task 6b | `database-review` | The sweep and prune SQL. |
+| Task 7 | `consistency-check` | Docs against the code that actually landed. |
 
 ---
 
@@ -67,7 +85,9 @@ Full review fleet regardless of size: `server/routes/voice.js`, `server/routes/t
 The table plus the four DB functions the handlers need. Everything downstream imports these, so it lands first.
 
 **Files:**
-- Modify: `server/db/schema.sql` (append after the `telegram_update` block, currently ending ~line 3595)
+- Modify: `server/db/schema.sql` (append after the `telegram_update` block, which ends at line 3595; the "Proposal option groups" divider is at 3597)
+- Modify: `server/db/schema.vaCalling.test.js`
+- Modify: `scripts/sensitive-paths.txt`
 - Create: `server/utils/voicemail.js`
 - Create: `server/utils/voicemail.test.js`
 
@@ -117,10 +137,58 @@ CREATE INDEX IF NOT EXISTS idx_voicemail_delivery_created_at
 
 - [ ] **Step 2: Apply the schema to the dev DB**
 
-Run: `node -r dotenv/config server/db/applySchema.js` if that script exists; otherwise pipe the new block through `psql "$DATABASE_URL"`.
-Expected: no error, statements are idempotent so a re-run is safe.
+There is no `applySchema.js`. Schema is applied by `initDb()` in `server/db/index.js`, which runs on server boot (README.md:666).
 
-Verify: `psql "$DATABASE_URL" -c "\d voicemail_delivery"` lists all eight columns.
+Run: `node -r dotenv/config -e "require('./server/db').initDb().then(() => process.exit(0))"`
+Expected: exits 0. The statements are idempotent, so a re-run is safe.
+
+Verify: `psql "$DATABASE_URL" -c "\d voicemail_delivery"` lists all nine columns (`call_sid`, `from_e164`, `recording_sid`, `duration_sec`, `status`, `attempts`, `delivered_at`, `created_at`) plus the index.
+
+- [ ] **Step 2b: Extend `server/db/schema.vaCalling.test.js`**
+
+This is not optional and it is easy to miss. That suite slices `schema.sql` from the `-- Zul VA Calling` marker (line 3526) to EOF and executes the slice in its `before()`, so the new DDL is already inside its scope the moment Step 1 lands. Add assertions in the file's existing style (a content assertion against the sliced SQL, plus an `information_schema` catalog assertion):
+
+```js
+test('voicemail_delivery is declared idempotently with the six statuses', () => {
+  assert.match(vaCallingSql, /CREATE TABLE IF NOT EXISTS voicemail_delivery/);
+  assert.match(vaCallingSql, /CHECK \(status IN \('missed','recorded','delivered','skipped','failed','empty'\)\)/);
+  assert.match(vaCallingSql, /CREATE INDEX IF NOT EXISTS idx_voicemail_delivery_created_at/);
+});
+
+test('voicemail_delivery exists with the expected columns', async () => {
+  const { rows } = await pool.query(
+    `SELECT column_name, is_nullable FROM information_schema.columns
+      WHERE table_name = 'voicemail_delivery' ORDER BY column_name`
+  );
+  const names = rows.map((r) => r.column_name);
+  assert.deepEqual(names, [
+    'attempts', 'call_sid', 'created_at', 'delivered_at',
+    'duration_sec', 'from_e164', 'recording_sid', 'status',
+  ]);
+  assert.equal(rows.find((r) => r.column_name === 'attempts').is_nullable, 'NO');
+});
+```
+
+Match the existing file's variable names for the sliced SQL and its pool handling rather than inventing new ones.
+
+Run: `node -r dotenv/config --test server/db/schema.vaCalling.test.js`
+Expected: PASS, including the pre-existing assertions.
+
+- [ ] **Step 2c: Register the new files as sensitive**
+
+This lands in Task 1, not at the end, so `voicemail.js` and `telegram.js` are sensitive-matched for the whole build rather than only at push. In `scripts/sensitive-paths.txt`, inside the billed-voice block (currently ending at `server/utils/sms.js`, line 52), add:
+
+```
+server/utils/telegram.js
+server/utils/voicemail.js
+```
+
+`scripts/sensitive-match.js` anchors globs so they never cross `/`, and no existing `server/utils/*` glob matches either file.
+
+Verify (this is a real red/green, the matcher is CLI-runnable and grep-style exit-coded):
+
+Run: `node scripts/sensitive-match.js server/utils/voicemail.js server/utils/telegram.js`
+Expected: before the edit, exit 1 and no output. After, exit 0 and both paths printed.
 
 - [ ] **Step 3: Write the failing test**
 
@@ -270,7 +338,7 @@ async function claimDelivery({ callSid, recordingSid, durationSec }) {
             duration_sec = $2,
             attempts = attempts + 1
       WHERE call_sid = $3
-        AND status IN ('missed', 'recorded', 'failed')
+        AND status IN ('missed', 'recorded')
       RETURNING from_e164`,
     [recordingSid, Number.isFinite(durationSec) ? durationSec : null, callSid]
   );
@@ -297,7 +365,7 @@ module.exports = {
 };
 ```
 
-Note the `claimDelivery` status guard includes `'failed'`: that is what lets Task 6's sweep retry a failed delivery. A `'delivered'`, `'skipped'`, or `'empty'` row is terminal and returns null.
+The status guard is exactly `('missed','recorded')`. It deliberately does **not** include `'failed'`: Task 6b's sweep queries `voicemail_delivery` directly and never calls `claimDelivery`, so widening it would buy nothing and would let a late duplicate webhook re-enter delivery on a row the sweep already owns, double-uploading the audio. Everything else is terminal and returns null.
 
 - [ ] **Step 6: Run the test to confirm it passes**
 
@@ -307,7 +375,9 @@ Expected: PASS, 6 tests.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add server/db/schema.sql server/utils/voicemail.js server/utils/voicemail.test.js
+git add server/db/schema.sql server/db/schema.vaCalling.test.js \
+        server/utils/voicemail.js server/utils/voicemail.test.js \
+        scripts/sensitive-paths.txt
 git commit -m "feat(voicemail): voicemail_delivery ledger + claim helpers"
 ```
 
@@ -431,7 +501,7 @@ const client = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
   : null;
 ```
 
-Extend the deps object:
+**Replace** the existing `let _deps = { pool };` declaration from Task 1 (do not paste a second `let _deps`, which is a duplicate-declaration `SyntaxError`):
 
 ```js
 let _deps = {
@@ -441,6 +511,8 @@ let _deps = {
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
 };
 ```
+
+The media fetch is a plain authenticated GET, not an SDK call. `client.recordings(sid).fetch()` returns the recording's metadata, not its audio bytes, so there is no SDK path to the mp3. The SDK client is used for the delete below, where it is the right tool. (Spec revision 3 corrects this; revision 2 said to use the SDK for both.)
 
 Then add the functions before `module.exports`:
 
@@ -529,6 +601,7 @@ git commit -m "feat(voicemail): Twilio media fetch/delete with constructed URLs"
 ### Task 3: `sendTelegramAudio`, and a timeout on every Bot API call
 
 **Files:**
+- Modify: `eslint.config.mjs`
 - Modify: `server/utils/telegram.js`
 - Modify: `server/utils/telegram.test.js`
 
@@ -537,65 +610,94 @@ git commit -m "feat(voicemail): Twilio media fetch/delete with constructed URLs"
 
 The timeout matters beyond this feature: `sendTelegramMessage` currently uses a bare `fetch` with no timeout, and Task 4 calls it on a path where a hung Bot API would otherwise hold a live caller in dead air. Adding it here also bounds the existing VA-calling sends, which is a behavior change the review fleet should see.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1a: Unblock the lint first**
 
-Append to `server/utils/telegram.test.js`:
+`eslint.config.mjs` lists `fetch`, `AbortSignal`, `TextEncoder`, and `URL` in the `server/**/*.js` globals, but **not** `FormData` or `Blob`. `no-undef` is `"error"` and `.husky/pre-commit` runs `npx lint-staged` into eslint, so the upload code below cannot be committed until both are added. Add them alongside the existing entries.
+
+Verify: `npx eslint server/utils/telegram.js`
+Expected: 0 problems. Before the config edit, the same command reports `'FormData' is not defined` and `'Blob' is not defined`.
+
+- [ ] **Step 1b: Write the failing tests**
+
+`server/utils/telegram.test.js:4-10` destructures named exports and has **no** `telegram` binding, so `telegram.sendTelegramAudio(...)` would throw `ReferenceError`. Add `sendTelegramAudio` to that destructure and call the functions bare. The file's convention is `try { ... } finally { __setTelegramDeps({ fetch: globalThis.fetch }); restoreEnv(); }` (see `telegram.test.js:71-78`, `:125-126`, `:146-147`); match it so injected deps and `TELEGRAM_BOT_TOKEN` do not leak into later tests.
+
+Append to `server/utils/telegram.test.js`, in that style:
 
 ```js
 test('sendTelegramAudio returns skipped when notifications are gated off', async () => {
-  process.env.TELEGRAM_BOT_TOKEN = 'tok';
-  telegram.__setTelegramDeps({
-    notificationsEnabled: () => false,
-    fetch: async () => { throw new Error('must not be called'); },
-  });
-  const result = await telegram.sendTelegramAudio(123, Buffer.from('x'), { caption: 'c' });
-  assert.equal(result.ok, false);
-  assert.equal(result.skipped, true);
+  const restoreEnv = setEnv({ TELEGRAM_BOT_TOKEN: 'tok' });
+  try {
+    __setTelegramDeps({
+      notificationsEnabled: () => false,
+      fetch: async () => { throw new Error('must not be called'); },
+    });
+    const result = await sendTelegramAudio(123, Buffer.from('x'), { caption: 'c' });
+    assert.equal(result.ok, false);
+    assert.equal(result.skipped, true);
+  } finally {
+    __setTelegramDeps({ fetch: (...a) => globalThis.fetch(...a), notificationsEnabled });
+    restoreEnv();
+  }
 });
 
 test('sendTelegramAudio posts multipart and returns the Bot API envelope', async () => {
-  process.env.TELEGRAM_BOT_TOKEN = 'tok';
+  const restoreEnv = setEnv({ TELEGRAM_BOT_TOKEN: 'tok' });
   let seen = null;
-  telegram.__setTelegramDeps({
-    notificationsEnabled: () => true,
-    fetch: async (url, opts) => {
-      seen = { url, body: opts.body, hasSignal: Boolean(opts.signal) };
-      return { json: async () => ({ ok: true, result: { message_id: 9 } }) };
-    },
-  });
-  const result = await telegram.sendTelegramAudio(123, Buffer.from('ID3'), { caption: 'from +13125550147' });
-  assert.equal(result.ok, true);
-  assert.match(seen.url, /\/bottok\/sendAudio$/);
-  assert.ok(seen.body instanceof FormData);
-  assert.equal(seen.body.get('chat_id'), '123');
-  assert.equal(seen.body.get('caption'), 'from +13125550147');
-  assert.ok(seen.hasSignal, 'the Bot API call must be bounded by a timeout');
+  try {
+    __setTelegramDeps({
+      notificationsEnabled: () => true,
+      fetch: async (url, opts) => {
+        seen = { url, body: opts.body, hasSignal: Boolean(opts.signal) };
+        return { json: async () => ({ ok: true, result: { message_id: 9 } }) };
+      },
+    });
+    const result = await sendTelegramAudio(123, Buffer.from('ID3'), { caption: 'from +13125550147' });
+    assert.equal(result.ok, true);
+    assert.match(seen.url, /\/bottok\/sendAudio$/);
+    assert.ok(seen.body instanceof FormData);
+    assert.equal(seen.body.get('chat_id'), '123');
+    assert.equal(seen.body.get('caption'), 'from +13125550147');
+    assert.ok(seen.hasSignal, 'the Bot API call must be bounded by a timeout');
+  } finally {
+    __setTelegramDeps({ fetch: (...a) => globalThis.fetch(...a), notificationsEnabled });
+    restoreEnv();
+  }
 });
 
 test('sendTelegramAudio never throws on a network error', async () => {
-  process.env.TELEGRAM_BOT_TOKEN = 'tok';
-  telegram.__setTelegramDeps({
-    notificationsEnabled: () => true,
-    fetch: async () => { throw new Error('socket hang up'); },
-  });
-  const result = await telegram.sendTelegramAudio(123, Buffer.from('x'), {});
-  assert.equal(result.ok, false);
-  assert.match(result.error, /socket hang up/);
+  const restoreEnv = setEnv({ TELEGRAM_BOT_TOKEN: 'tok' });
+  try {
+    __setTelegramDeps({
+      notificationsEnabled: () => true,
+      fetch: async () => { throw new Error('socket hang up'); },
+    });
+    const result = await sendTelegramAudio(123, Buffer.from('x'), {});
+    assert.equal(result.ok, false);
+    assert.match(result.error, /socket hang up/);
+  } finally {
+    __setTelegramDeps({ fetch: (...a) => globalThis.fetch(...a), notificationsEnabled });
+    restoreEnv();
+  }
 });
 
 test('sendTelegramMessage passes an abort signal', async () => {
-  process.env.TELEGRAM_BOT_TOKEN = 'tok';
+  const restoreEnv = setEnv({ TELEGRAM_BOT_TOKEN: 'tok' });
   let hasSignal = false;
-  telegram.__setTelegramDeps({
-    notificationsEnabled: () => true,
-    fetch: async (url, opts) => { hasSignal = Boolean(opts.signal); return { json: async () => ({ ok: true }) }; },
-  });
-  await telegram.sendTelegramMessage(123, 'hi');
-  assert.ok(hasSignal);
+  try {
+    __setTelegramDeps({
+      notificationsEnabled: () => true,
+      fetch: async (url, opts) => { hasSignal = Boolean(opts.signal); return { json: async () => ({ ok: true }) }; },
+    });
+    await sendTelegramMessage(123, 'hi');
+    assert.ok(hasSignal);
+  } finally {
+    __setTelegramDeps({ fetch: (...a) => globalThis.fetch(...a), notificationsEnabled });
+    restoreEnv();
+  }
 });
 ```
 
-If `server/utils/telegram.test.js` does not already require the module as `telegram` and reset deps per test, match whatever the existing file does rather than restructuring it.
+`setEnv` / `restoreEnv` and the deps-restore idiom above are whatever the existing file already uses (`telegram.test.js:71-78`). Match the real helper names in that file rather than introducing these if they differ.
 
 - [ ] **Step 2: Run to confirm failure**
 
@@ -671,9 +773,11 @@ Expected: PASS, including the pre-existing tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/utils/telegram.js server/utils/telegram.test.js
+git add eslint.config.mjs server/utils/telegram.js server/utils/telegram.test.js
 git commit -m "feat(telegram): sendTelegramAudio + bounded Bot API sends"
 ```
+
+This commit deliberately carries two things: the new function, and an `AbortSignal` timeout on the already-shipped `sendTelegramMessage`. They are one revert unit on purpose. The timeout exists *because* Task 4 calls `sendTelegramMessage` from a live caller's webhook, so reverting it independently would silently reintroduce the dead-air failure mode.
 
 ---
 
@@ -738,15 +842,25 @@ test('a missed call returns the greeting and Record, and pings twice', async () 
   assert.doesNotMatch(calls.telegram[0].text, /\+13125550147/);
 });
 
-test('a blocked caller records but sends only the prose message', async () => {
+test('a blocked caller records, stores NULL, and sends only the prose message', async () => {
   for (const From of ['', '+266696687']) {
-    calls.telegram.length = 0;
+    calls.telegram.length = 0; calls.claims.length = 0;
     const res = await post('/api/voice/inbound/missed', { DialCallStatus: 'no-answer', CallSid: `CA5${From}`, From });
     assert.match(res.text, /<Record/);
     await new Promise((r) => setTimeout(r, 20));
+    assert.equal(calls.claims[0].fromE164, null, 'a blocked caller must be stored as NULL');
     assert.equal(calls.telegram.length, 1);
     assert.doesNotMatch(calls.telegram[0].text, /\+12242220082/, 'never fall back to VOICE_CALLER_ID');
   }
+});
+
+test('a non-NANP caller is named in the prose and gets no bare-number message', async () => {
+  const res = await post('/api/voice/inbound/missed', { DialCallStatus: 'no-answer', CallSid: 'CA5b', From: '+442071838750' });
+  assert.match(res.text, /<Record/);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(calls.telegram.length, 1, 'the bridge cannot dial it, so no copy-paste message');
+  assert.match(calls.telegram[0].text, /\+442071838750/, 'she must still learn who called');
+  assert.doesNotMatch(calls.telegram[0].text, /Number follows/);
 });
 
 test('a lost claim (Twilio redelivery) pings nobody', async () => {
@@ -798,6 +912,10 @@ Add near the top:
 const { API_URL } = require('../utils/urls');
 const voicemail = require('../utils/voicemail');
 
+// Same four values as DEAD_STATUSES at voice.js:11, kept as a separate constant
+// on purpose: that one reads Twilio's CallStatus on an outbound leg, this one
+// reads DialCallStatus on an inbound dial. Merging them would couple two
+// unrelated webhooks to one list.
 const MISSED_STATUSES = new Set(['no-answer', 'busy', 'failed', 'canceled']);
 // Twilio's anonymous-caller sentinel, plus the string forms some carriers send.
 const ANONYMOUS_FROM = new Set(['+266696687', 'anonymous', 'restricted', 'unavailable']);
@@ -806,11 +924,18 @@ const HANGUP_TWIML = '<Response><Hangup/></Response>';
 // Own limiter: the /inbound flood cap above is route-level middleware on
 // /inbound only, and server/index.js mounts no global /api limiter, so these
 // endpoints would otherwise be unthrottled.
+//
+// Keyed by CallSid, NOT globally. These two endpoints are only reachable as a
+// consequence of an inbound call that already passed the global 30/min cap at
+// /inbound, and the real spend controls are that cap plus VM_DAILY_CAP. A
+// global key here would instead make one busy minute starve the delivery
+// webhook of a DIFFERENT call, dropping a voicemail that was already paid for.
+// Per-CallSid bounds webhook redelivery storms, which is the actual threat.
 const voicemailWebhookLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: parseInt(process.env.VA_INBOUND_PER_MIN_CAP, 10) || 30,
-  keyGenerator: () => 'global',
-  handler: (req, res) => res.set('Content-Type', 'text/xml').send(`${XML_DECL}${HANGUP_TWIML}`),
+  max: 10,
+  keyGenerator: (req) => String((req.body && req.body.CallSid) || 'unknown'),
+  handler: (req, res) => res.status(429).end(),
 });
 
 function voicemailEnabled() { return process.env.VOICEMAIL_ENABLED === 'true'; }
@@ -855,7 +980,7 @@ function chicagoTime(d = new Date()) {
 }
 ```
 
-Register the new deps in `_deps` and keep the existing ones:
+**Replace** the existing `let _deps = { ... }` at `server/routes/voice.js:41` with the version below (pasting a second `let _deps` is a duplicate-declaration `SyntaxError`). Note `router.__setVoiceDeps` merges rather than replaces (`{ ..._deps, ...d }`), so per-test overrides layer over the `beforeEach` baseline:
 
 ```js
 let _deps = {
@@ -966,15 +1091,25 @@ function pingMissed(fromE164) {
   const allowed = process.env.TELEGRAM_ALLOWED_USER_ID;
   if (!allowed) return;
   const when = chicagoTime();
-  const prose = fromE164
-    ? `Missed call on the business line, ${when}. Number follows, send it back to me to call them.`
-    : `Missed call on the business line, ${when}. Caller ID was withheld.`;
+
+  // Three branches, not two. The bridge can only dial NANP numbers, so only a
+  // NANP caller gets the bare-number second message. A non-NANP caller still
+  // has to be NAMED somewhere, otherwise the prose promises a number that never
+  // arrives and she never learns who called.
+  const isNanp = Boolean(fromE164) && /^\+1[2-9]\d{9}$/.test(fromE164);
+  let prose;
+  if (isNanp) {
+    prose = `Missed call on the business line, ${when}. Number follows, send it back to me to call them.`;
+  } else if (fromE164) {
+    prose = `Missed call on the business line, ${when}, from ${fromE164}. That is not a US number, so I cannot dial it for you.`;
+  } else {
+    prose = `Missed call on the business line, ${when}. Caller ID was withheld.`;
+  }
+
   Promise.resolve()
     .then(async () => {
       await _deps.sendTelegramMessage(allowed, prose);
-      if (fromE164 && /^\+1[2-9]\d{9}$/.test(fromE164)) {
-        await _deps.sendTelegramMessage(allowed, fromE164);
-      }
+      if (isNanp) await _deps.sendTelegramMessage(allowed, fromE164);
     })
     .catch((err) => console.error(`[voice/missed] ping failed: ${err.message}`));
 }
@@ -1016,7 +1151,11 @@ Extend the `beforeEach` deps:
     sendTelegramAudio: async (chatId, buf, opts) => { calls.audio.push({ chatId, len: buf.length, opts }); return { ok: true }; },
 ```
 
-(add `deliveryClaims: [], marks: [], fetches: [], deletes: [], audio: []` to the reset object), then:
+(add `deliveryClaims: [], marks: [], fetches: [], deletes: [], audio: [], sentry: []` to the reset object).
+
+The skipped-versus-failed distinction is the whole point of the three-outcome contract, and the only observable difference between them is whether Sentry is paged. So Sentry must be injectable too. Add to the module's `_deps` a `captureMessage: (...a) => Sentry.captureMessage(...a)` and a `captureException: (...a) => Sentry.captureException(...a)`, route the two new handlers' Sentry calls through them, and stub both in `beforeEach` with `(msg) => { calls.sentry.push(msg); }`. Leave the pre-existing handlers' direct `Sentry` calls alone.
+
+Then:
 
 ```js
 const GOOD_RE = 'RE' + 'a1b2c3d4'.repeat(4);
@@ -1089,7 +1228,7 @@ test('a short or unparseable recording is dropped and deleted, never uploaded', 
   }
 });
 
-test('a gated (skipped) send keeps the recording and does not mark delivered', async () => {
+test('a gated (skipped) send keeps the recording and never pages Sentry', async () => {
   router.__setVoiceDeps({ sendTelegramAudio: async () => ({ ok: false, skipped: true }) });
   await post('/api/voice/inbound/voicemail', {
     RecordingStatus: 'completed', RecordingSid: GOOD_RE, CallSid: 'CB7', RecordingDuration: '14',
@@ -1097,9 +1236,10 @@ test('a gated (skipped) send keeps the recording and does not mark delivered', a
   await settle();
   assert.equal(calls.deletes.length, 0, 'a skipped send must never delete the only copy');
   assert.equal(calls.marks.at(-1).status, 'skipped');
+  assert.equal(calls.sentry.length, 0, 'SEND_NOTIFICATIONS=false is a config, not an incident');
 });
 
-test('a failed send keeps the recording and sends the text fallback', async () => {
+test('a failed send keeps the recording, sends the fallback, and pages Sentry', async () => {
   router.__setVoiceDeps({ sendTelegramAudio: async () => ({ ok: false, description: 'Bad Request' }) });
   await post('/api/voice/inbound/voicemail', {
     RecordingStatus: 'completed', RecordingSid: GOOD_RE, CallSid: 'CB8', RecordingDuration: '14',
@@ -1108,6 +1248,7 @@ test('a failed send keeps the recording and sends the text fallback', async () =
   assert.equal(calls.deletes.length, 0);
   assert.equal(calls.marks.at(-1).status, 'failed');
   assert.ok(calls.telegram.some((m) => /\+13125550147/.test(m.text)), 'she still learns who called');
+  assert.equal(calls.sentry.length, 1, 'this one IS an incident');
 });
 
 test('a media fetch failure keeps the recording and sends the text fallback', async () => {
@@ -1262,7 +1403,11 @@ Expected: PASS.
 
 - [ ] **Step 5: Check file size**
 
-Run: `node scripts/check-file-size.js` (or `npm run check:filesize`) and confirm `server/routes/voice.js` is reported green. It starts at 192 lines and should land near 420, inside the 700 soft cap.
+Run: `npm run check:filesize`
+
+Do **not** run `node scripts/check-file-size.js` with no arguments: that invokes `runStaged()` (`scripts/check-file-size.js:181-184`) and at this point nothing is staged, so it reports nothing and looks like a pass.
+
+Expected: `server/routes/voice.js` appears in neither the RED nor the YELLOW list. The report only prints problems, so "green" means absent from both, not an affirmative line. It starts at 192 lines and lands near 460, comfortably under the 700 soft cap.
 
 - [ ] **Step 6: Commit**
 
@@ -1273,19 +1418,13 @@ git commit -m "feat(voicemail): recording delivery handler with explicit success
 
 ---
 
-### Task 6: Prune the ledger and sweep undelivered voicemails
+### Task 6a: Prune the ledger
+
+Retention only. Split from the sweep because they are two logical features with two different revert stories, and because `pendingCall.test.js` already covers `pruneVaCallingRows` and gives this half a real red/green of its own.
 
 **Files:**
 - Modify: `server/utils/pendingCall.js`
-- Modify: `server/utils/vaCallingScheduler.js`
-- Modify: `server/utils/vaCallingScheduler.test.js`
-- Modify: `server/index.js`
-
-**Interfaces:**
-- Consumes: `claimDelivery`, `markDelivery`, `fetchRecordingMp3`, `deleteRecording` (Tasks 1 and 2); `sendTelegramAudio` (Task 3).
-- Produces: `reapUndeliveredVoicemails() => Promise<number>` exported from `vaCallingScheduler`.
-
-This is what covers a process death between the delivery claim and the upload. Twilio does not redeliver a recording callback it already answered with a 2xx, so without this a crashed delivery is a silent permanent loss.
+- Modify: `server/utils/pendingCall.test.js`
 
 - [ ] **Step 1: Extend the prune in `server/utils/pendingCall.js`**
 
@@ -1306,6 +1445,62 @@ Add a fourth `batchedDelete` inside `pruneVaCallingRows`, after the `telegram_up
     [String(RETENTION_DAYS), PRUNE_BATCH_SIZE]
   );
 ```
+
+- [ ] **Step 2: Cover it in `server/utils/pendingCall.test.js`**
+
+That file already has two `pruneVaCallingRows` tests (around `:138` and `:147`). Add a third in the same style, using the same test-row conventions the file already uses:
+
+```js
+test('pruneVaCallingRows removes terminal voicemail rows and keeps failed ones', async () => {
+  const old = `CApruneold${'0'.repeat(22)}`;
+  const stuck = `CAprunestuck${'0'.repeat(20)}`;
+  await pool.query(
+    `INSERT INTO voicemail_delivery (call_sid, status, created_at)
+     VALUES ($1, 'delivered', NOW() - INTERVAL '400 days'),
+            ($2, 'failed',    NOW() - INTERVAL '400 days')`,
+    [old, stuck]
+  );
+  await pendingCall.pruneVaCallingRows();
+  const { rows } = await pool.query(
+    'SELECT call_sid FROM voicemail_delivery WHERE call_sid IN ($1, $2)', [old, stuck]
+  );
+  assert.deepEqual(rows.map((r) => r.call_sid), [stuck], 'a failed row survives retention on purpose');
+  await pool.query('DELETE FROM voicemail_delivery WHERE call_sid IN ($1, $2)', [old, stuck]);
+});
+```
+
+Adjust the interval so it exceeds whatever `RETENTION_DAYS` currently is.
+
+- [ ] **Step 3: Run it**
+
+Run: `node -r dotenv/config --test server/utils/pendingCall.test.js`
+Expected: PASS, including the two pre-existing prune tests.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add server/utils/pendingCall.js server/utils/pendingCall.test.js
+git commit -m "feat(voicemail): prune terminal ledger rows on the VA-calling sweep"
+```
+
+---
+
+### Task 6b: Sweep undelivered voicemails
+
+**Files:**
+- Modify: `server/utils/vaCallingScheduler.js`
+- Modify: `server/utils/vaCallingScheduler.test.js`
+- Modify: `server/index.js`
+
+**Interfaces:**
+- Consumes: `markDelivery`, `fetchRecordingMp3`, `deleteRecording` (Tasks 1 and 2); `sendTelegramAudio`, `sendTelegramMessage` (Task 3).
+- Produces: `reapUndeliveredVoicemails() => Promise<number>` exported from `vaCallingScheduler`.
+
+This is what covers a process death between the delivery claim and the upload. Twilio does not redeliver a recording callback it already answered with a 2xx, so without this a crashed delivery is a silent permanent loss.
+
+- [ ] **Step 1: Extend the test file's `afterEach` reset first**
+
+`server/utils/vaCallingScheduler.test.js:29-36` restores only `getTelegramWebhookInfo`, `setTelegramWebhook`, `pruneVaCallingRows`, and `notifyAdminCategory`. `__setDeps` merges, so the stub `pool` and the five new stubs below would leak into every later test in the file. Add `pool` and the five voicemail deps to that reset object before writing any new test. This is the exact leak the existing `afterEach` comment exists to prevent.
 
 - [ ] **Step 2: Write the failing sweep test**
 
@@ -1335,6 +1530,7 @@ test('reapUndeliveredVoicemails retries a stuck row and deletes on success', asy
 });
 
 test('reapUndeliveredVoicemails alerts once at the attempt ceiling and stops retrying', async () => {
+  process.env.TELEGRAM_ALLOWED_USER_ID = '5550001'; // must be set per-test, never inherited
   const seen = { audio: [], marked: [], deleted: [], messages: [] };
   scheduler.__setDeps({
     pool: { query: async (sql) => {
@@ -1359,6 +1555,7 @@ test('reapUndeliveredVoicemails alerts once at the attempt ceiling and stops ret
 Match the existing file's harness for requiring the module and resetting deps.
 
 - [ ] **Step 3: Run to confirm failure**
+
 
 Run: `node -r dotenv/config --test server/utils/vaCallingScheduler.test.js`
 Expected: FAIL, `scheduler.reapUndeliveredVoicemails is not a function`.
@@ -1454,9 +1651,20 @@ The attempt bump is a standalone UPDATE rather than a side effect of `claimDeliv
 
 - [ ] **Step 5: Wire it into `server/index.js`**
 
-In the VA-calling scheduler block (around `server/index.js:497-503`), import and call it beside `pruneVaCallingRows`, guarded separately so one failure cannot mask the other, matching the existing `reapStaleLeadCallAttempts` treatment.
+The cited precedent needs care: `reapStaleLeadCallAttempts` is guarded *inside* `vaCallingScheduler.pruneVaCallingRows()`, not in `index.js`. Follow that same shape rather than adding a new scheduler entry, because `server/index.js:495-518` wraps each job in `wrapScheduler(<name>, <sec>, fn)` and the disable branch at `:515-518` calls `clearHealthRow` per name, so a new `wrapScheduler` name would also need a matching `clearHealthRow(...)` in the `else` or it silently leaves a stale health row.
 
-- [ ] **Step 6: Run both suites**
+Concretely: call `reapUndeliveredVoicemails()` from inside the existing VA-calling wrapped job, in its own `try/catch`, so a sweep failure cannot mask the prune and vice versa. No new `wrapScheduler` name, no `clearHealthRow` change, no `index.js` structural edit beyond that one call site.
+
+- [ ] **Step 6: Verify the wiring actually runs**
+
+Neither unit suite loads `index.js`, so the wiring is untested by Steps 3 and 7. Prove it by hand:
+
+Run: `RUN_SCHEDULERS=true NODE_ENV=development node -r dotenv/config server/index.js` and watch startup.
+Expected: the VA-calling scheduler line appears in the boot log and no unhandled rejection follows it. Stop the process once you see it.
+
+This matters more than the usual wiring check: this sweep is the only rescue for a crash between the delivery claim and the upload, so a silently unwired sweep means a class of voicemail is lost with every test still green.
+
+- [ ] **Step 7: Run both suites**
 
 Run, one at a time:
 ```
@@ -1465,36 +1673,26 @@ node -r dotenv/config --test server/utils/voicemail.test.js
 ```
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add server/utils/pendingCall.js server/utils/vaCallingScheduler.js server/utils/vaCallingScheduler.test.js server/index.js
-git commit -m "feat(voicemail): ledger prune + undelivered redelivery sweep"
+git add server/utils/vaCallingScheduler.js server/utils/vaCallingScheduler.test.js server/index.js
+git commit -m "feat(voicemail): redelivery sweep for undelivered voicemails"
 ```
 
 ---
 
-### Task 7: Sensitive paths, env registration, and documentation
+### Task 7: Env registration and documentation
+
+`scripts/sensitive-paths.txt` moved to Task 1 so the two new files are sensitive-matched for the whole build rather than only at push.
 
 **Files:**
-- Modify: `scripts/sensitive-paths.txt`
 - Modify: `.env.example`
-- Modify: `CLAUDE.md`
+- Modify: `.claude/CLAUDE.md` (there is **no** repo-root `CLAUDE.md`; `git add CLAUDE.md` fails)
 - Modify: `README.md`
 - Modify: `ARCHITECTURE.md`
 
-- [ ] **Step 1: Register the new sensitive files**
-
-In `scripts/sensitive-paths.txt`, inside the billed-voice block (currently ending at `server/utils/sms.js`, line 52), add:
-
-```
-server/utils/telegram.js
-server/utils/voicemail.js
-```
-
-`scripts/sensitive-match.js` anchors globs so they never cross `/`, and no existing `server/utils/*` glob matches either file, so without this two of the files this lane touches would be invisible to review-scaling, conflict-escalation, and auto-pull disqualification.
-
-- [ ] **Step 2: Add the env vars to `.env.example`**
+- [ ] **Step 1: Add the env vars to `.env.example`**
 
 Near the existing `VOICE_CALLER_ID` / `VA_CELL` block (lines 217-222):
 
@@ -1513,39 +1711,50 @@ VA_INBOUND_PER_MIN_CAP=30
 
 `VA_INBOUND_PER_MIN_CAP` is not new; `server/routes/voice.js:22` claims it is "registered in the env docs" and it never was, and this lane promotes it to a primary spend guardrail.
 
-- [ ] **Step 3: Update `CLAUDE.md`**
+- [ ] **Step 2: Update `.claude/CLAUDE.md`**
 
-Add three rows to the Environment Variables table with the wording from the spec's env table, plus a `VA_INBOUND_PER_MIN_CAP` row. Then correct the `RUN_VA_CALLING_SCHEDULER` row (currently `CLAUDE.md:306`), which describes the job as an "hourly prune of `pending_call`/`call_audit`/`telegram_update` + Telegram webhook heartbeat": it now also prunes `voicemail_delivery` and runs the undelivered-voicemail sweep.
+Add three rows to the Environment Variables table with the wording from the spec's env table, plus a `VA_INBOUND_PER_MIN_CAP` row. Then correct the `RUN_VA_CALLING_SCHEDULER` row (`.claude/CLAUDE.md:306`), which describes the job as an "hourly prune of `pending_call`/`call_audit`/`telegram_update` + Telegram webhook heartbeat": it now also prunes `voicemail_delivery` and runs the undelivered-voicemail sweep.
 
-- [ ] **Step 4: Update `README.md`**
+- [ ] **Step 3: Update `README.md`**
 
-Environment Variables table gets the same rows (it already carries `VOICE_CALLER_ID` and `VA_CELL`). Folder tree gets `server/utils/voicemail.js`. The `voice.js` tree entry near `README.md:252` enumerates the route's endpoints and needs the two new ones.
+Environment Variables table gets all four rows, `VA_INBOUND_PER_MIN_CAP` included (it already carries `VOICE_CALLER_ID:117` and `VA_CELL:118`). Folder tree gets `server/utils/voicemail.js`. The `voice.js` tree entry near `README.md:252` enumerates the route's endpoints and needs the two new ones.
 
-- [ ] **Step 5: Update `ARCHITECTURE.md`**
+- [ ] **Step 4: Update `ARCHITECTURE.md`**
+
+Six targets, not five. The VA-calling Database Schema block is easy to miss because the generic "add the new table" instruction does not point at it.
 
 - API route table: `POST /api/voice/inbound/missed` and `POST /api/voice/inbound/voicemail`.
 - Database Schema section: `voicemail_delivery`.
-- **Correct the stale inbound-flow line (`ARCHITECTURE.md:1555`)**, which reads "unanswered → PH-carrier voicemail (missed-inbound capture deferred to v2)". Carrier voicemail is off on `VA_CELL` (owner-confirmed 2026-07-22), and missed-inbound capture is this feature. Replace with the real flow: unanswered dial routes to `/api/voice/inbound/missed`, which pings Zul and records a voicemail delivered to the same Telegram chat.
-- Helper modules line (`:1558`): add `server/utils/voicemail.js`.
-- Tables line (`:1559`): add `voicemail_delivery`.
-- Toll-fraud guards list (`:1556`): add the `VM_DAILY_CAP` recording cap and the fail-closed signature policy on the two new webhooks.
+- **The VA-calling block at `:1106-1112`**, which enumerates `pending_call` / `call_audit` / `telegram_update` as the tables "Pruned by vaCallingScheduler". That enumeration goes stale the moment Task 6a adds a fourth table.
+- **Correct the stale inbound-flow line (`:1555`)**, which reads "unanswered → PH-carrier voicemail (missed-inbound capture deferred to v2)". Carrier voicemail is off on `VA_CELL` (owner-confirmed 2026-07-22), and missed-inbound capture is this feature. Replace with the real flow: unanswered dial routes to `/api/voice/inbound/missed`, which pings Zul and records a voicemail delivered to the same Telegram chat.
+- Toll-fraud guards list (`:1557`, not 1556, which is "Status feedback"): add the `VM_DAILY_CAP` recording cap and the fail-closed signature policy on the two new webhooks.
+- Helper modules (`:1558`) add `server/utils/voicemail.js`; Tables (`:1559`) add `voicemail_delivery`.
 
-- [ ] **Step 6: Verify docs consistency**
+- [ ] **Step 5: Verify docs consistency**
 
-Run: `git diff --stat` and confirm all five files are modified. Re-read the spec's Documentation section and check each bullet has a corresponding edit.
-
-- [ ] **Step 7: Commit**
+`git diff --stat` proves files were touched, not that content is right, so grep for the specific facts instead:
 
 ```bash
-git add scripts/sensitive-paths.txt .env.example CLAUDE.md README.md ARCHITECTURE.md
-git commit -m "docs(voicemail): env registration, sensitive paths, architecture correction"
+grep -n "voicemail_delivery" ARCHITECTURE.md | head
+grep -n "VM_DAILY_CAP\|VOICEMAIL_ENABLED\|VM_MAX_LENGTH_SEC\|VA_INBOUND_PER_MIN_CAP" .claude/CLAUDE.md README.md .env.example
+grep -n "PH-carrier voicemail" ARCHITECTURE.md
+```
+
+Expected: the first two print hits in every named file; the third prints **nothing**, which is how you know the stale line is gone.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add .env.example .claude/CLAUDE.md README.md ARCHITECTURE.md
+git commit -m "docs(voicemail): env registration + architecture correction"
 ```
 
 ---
 
 ## Before the lane merges
 
-- [ ] Run every touched suite one at a time: `server/utils/voicemail.test.js`, `server/utils/telegram.test.js`, `server/routes/voice.test.js`, `server/utils/vaCallingScheduler.test.js`.
+- [ ] Run every touched suite one at a time (they share the dev DB): `server/db/schema.vaCalling.test.js`, `server/utils/voicemail.test.js`, `server/utils/telegram.test.js`, `server/routes/voice.test.js`, `server/utils/pendingCall.test.js`, `server/utils/vaCallingScheduler.test.js`.
+- [ ] `npx eslint server/` clean, and `npm run check:filesize` shows `server/routes/voice.js` in neither the RED nor YELLOW list.
 - [ ] **Resolve the open item.** Confirm against current Twilio documentation whether a `<Dial action>` URL is requested when the *caller* hangs up mid-ring. The "ping on every missed call" decision depends on it. If it is not, bring it back for a decision rather than papering over it.
 - [ ] Listen to `Polly.Joanna-Neural` reading the greeting and confirm it is acceptable, or swap the voice name.
 - [ ] Full review fleet (`security-review`, `database-review`, `code-review`, `consistency-check`) plus `/second-opinion`, since this is a billed-voice path.

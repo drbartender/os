@@ -1,7 +1,10 @@
 # Voicemail on the 224 line, delivered to Telegram (design)
 
 Date: 2026-07-22
-Revision: 2 (folds in the `/review-spec` fleet: spec-grounding, spec-gaps, spec-risk)
+Revision: 3 (rev 2 folded in the `/review-spec` fleet: spec-grounding, spec-gaps,
+spec-risk; rev 3 corrects three things the `/review-plan` fleet caught in the
+spec itself: media retrieval is an authenticated GET and not an SDK call, the
+ledger needs an `attempts` column, and `CLAUDE.md` lives at `.claude/CLAUDE.md`)
 Status: approved in brainstorm (section-by-section)
 Driver: a client who calls the 224 while Zul is away is hung up on. There is no
 voicemail, no record the call happened, and no way for her to learn she missed
@@ -214,11 +217,15 @@ Fail-closed signature check, then, in order:
    treat absent or `NaN` as empty rather than falling through to an upload.
    Under 2 seconds is a robocall or a hangup on the beep: mark the row `empty`,
    delete the recording, done. She already has the ping with the number.
-4. **Fetch.** `GET` the constructed `.mp3` URL via the existing Twilio SDK
-   client rather than a hand-built request, with an explicit timeout. A 404
-   immediately after the callback is a known race, so the fetch gets a small
-   bounded retry with backoff. Permanent failures (401, 403, a persistent 404)
-   and transient ones are distinguished in the log line.
+4. **Fetch.** `GET` the constructed `.mp3` URL with the account's basic auth and
+   an explicit timeout. Revision 2 said to use the Twilio SDK client here; that
+   was wrong and is corrected in revision 3. The SDK's `recordings(sid).fetch()`
+   returns the recording's metadata, not its audio bytes, so retrieving media is
+   necessarily a plain authenticated HTTP GET. The SDK is still used for the
+   delete in step 6, where it is the right tool. A 404 immediately after the
+   callback is a known race, so the fetch gets a small bounded retry with
+   backoff. Permanent failures (401, 403, a persistent 404) and transient ones
+   are distinguished in the log line.
 5. **Upload.** Multipart `sendAudio` to the bot. Node 26 has `FormData` and
    `Blob` natively, so this is a plain `fetch` with no new dependency and no
    transcoding. Caption carries the caller's number, the time in
@@ -269,6 +276,7 @@ CREATE TABLE IF NOT EXISTS voicemail_delivery (
   duration_sec  INTEGER,
   status        TEXT NOT NULL DEFAULT 'missed'
                   CHECK (status IN ('missed','recorded','delivered','skipped','failed','empty')),
+  attempts      INTEGER NOT NULL DEFAULT 0,
   delivered_at  TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -329,7 +337,14 @@ spec promotes it to a primary spend guardrail.
   ledger claim and status transitions, and the daily-cap count.
 - `server/utils/pendingCall.js`: fourth batched delete in `pruneVaCallingRows`.
 - `server/utils/vaCallingScheduler.js`: the orphan sweep.
-- `server/db/schema.sql`: the `voicemail_delivery` table and index.
+- `server/index.js`: scheduler wiring for the sweep.
+- `server/db/schema.sql`: the `voicemail_delivery` table and index. Note
+  `server/db/schema.vaCalling.test.js` slices this file from the `-- Zul VA
+  Calling` marker to EOF and applies it, so the new DDL lands inside that
+  suite's scope and that suite must be extended and run.
+- `eslint.config.mjs`: `FormData` and `Blob` are not in the server globals
+  allowlist and `no-undef` is an error, so the multipart upload would fail the
+  pre-commit lint without this.
 - `scripts/sensitive-paths.txt`: add `server/utils/telegram.js` and
   `server/utils/voicemail.js`. Neither matches an existing glob, so without this
   two of the files this change touches would be invisible to review-scaling,
@@ -364,8 +379,9 @@ so adding `action=` does not break them.
 
 ## Documentation
 
-- `CLAUDE.md`: env table gains the three new vars plus `VA_INBOUND_PER_MIN_CAP`;
-  the `RUN_VA_CALLING_SCHEDULER` row at `CLAUDE.md:306` currently describes the
+- `.claude/CLAUDE.md` (there is no repo-root `CLAUDE.md`): env table gains the
+  three new vars plus `VA_INBOUND_PER_MIN_CAP`;
+  the `RUN_VA_CALLING_SCHEDULER` row at `.claude/CLAUDE.md:306` describes the
   prune as covering `pending_call`/`call_audit`/`telegram_update` and needs the
   fourth table plus the orphan sweep.
 - `.env.example`: the three new vars, near the existing `TELEGRAM_*` (200-213),
