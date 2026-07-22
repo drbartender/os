@@ -221,12 +221,24 @@ async function sendQuickReplyOnPage(page, templateLabel, markSendCommitted) {
   // longer template name). Page-scoped until the live test pins the picker
   // container; the exact-match anchor keeps a wrong pick fail-closed.
   const exact = new RegExp(`^\\s*${escapeRegex(templateLabel)}\\s*$`, 'i');
-  const option = page
+  let option = page
     .locator('button, [role="menuitem"], [role="option"], [role="listitem"], li, label')
     .filter({ hasText: exact })
     .first();
-  const optVisible = await option.waitFor({ state: 'visible', timeout: UI_STEP_TIMEOUT_MS })
+  let optVisible = await option.waitFor({ state: 'visible', timeout: UI_STEP_TIMEOUT_MS })
     .then(() => true).catch(() => false);
+  if (!optVisible) {
+    // Live-pinned 2026-07-22: the Quick-replies picker renders each saved
+    // template as an <a> wrapping title + preview in one node, so nothing in
+    // the list above ever carries the bare label. Match the innermost element
+    // whose ENTIRE text is the label (the entry title); the click bubbles to
+    // the anchor. Exact-match keeps a wrong pick fail-closed, and a live scan
+    // found the two picker titles as the only whole-text label matches on the
+    // page.
+    option = page.getByText(exact).first();
+    optVisible = await option.waitFor({ state: 'visible', timeout: UI_STEP_TIMEOUT_MS })
+      .then(() => true).catch(() => false);
+  }
   if (!optVisible) {
     // Close the picker without sending anything before reporting.
     await page.keyboard.press('Escape').catch(() => {});
