@@ -66,6 +66,24 @@ export default function ProposalEditorForm({
   // Booked-event reprice confirmation. Non-null = modal open, holding the
   // buildRepriceSummary output the modal renders.
   const [repriceSummary, setRepriceSummary] = useState(null);
+
+  // Explicit bartender-count override detection (push-review money finding):
+  // stored num_bartenders equals the computed actual, so it is an admin
+  // override only when it differs from what the ORIGINAL inputs required.
+  // It must round-trip through preview AND PATCH or any editor save silently
+  // drops charged over-ratio bartenders. A retired original package (absent
+  // from the active catalog) makes detection impossible: fall back to not
+  // sending (the server recomputes, matching pre-editor behavior).
+  const numBartendersOverride = useMemo(() => {
+    const stored = Number(proposal.num_bartenders);
+    if (!stored) return null;
+    const originalPkg = packages.find(p => p.id === Number(proposal.package_id));
+    if (!originalPkg) return null;
+    const per = Number(originalPkg.guests_per_bartender) || 100;
+    const required = Math.max(1, Math.ceil((Number(proposal.guest_count) || 0) / per));
+    return stored !== required ? stored : null;
+  }, [packages, proposal]);
+
   // True while the debounced /calculate preview lags the form (a pricing input
   // changed and the response has not landed). handleSave treats a stale
   // preview like a missing one, so a Save clicked inside the 400ms debounce
@@ -276,22 +294,6 @@ export default function ProposalEditorForm({
   // selectedPkg (class-options gating).
   const selectedPkg = packages.find(p => p.id === Number(editForm.package_id));
 
-  // Explicit bartender-count override detection (push-review money finding):
-  // stored num_bartenders equals the computed actual, so it is an admin
-  // override only when it differs from what the ORIGINAL inputs required.
-  // It must round-trip through preview AND PATCH or any editor save silently
-  // drops charged over-ratio bartenders. A retired original package (absent
-  // from the active catalog) makes detection impossible: fall back to not
-  // sending (the server recomputes, matching pre-editor behavior).
-  const numBartendersOverride = useMemo(() => {
-    const stored = Number(proposal.num_bartenders);
-    if (!stored) return null;
-    const originalPkg = packages.find(p => p.id === Number(proposal.package_id));
-    if (!originalPkg) return null;
-    const per = Number(originalPkg.guests_per_bartender) || 100;
-    const required = Math.max(1, Math.ceil((Number(proposal.guest_count) || 0) / per));
-    return stored !== required ? stored : null;
-  }, [packages, proposal]);
   const filteredAddons = addons.filter(a => {
     if (a.applies_to !== 'all' && (!selectedPkg || a.applies_to !== selectedPkg.category)) return false;
     const excluded = selectedPkg && PACKAGE_EXCLUDED_ADDONS[selectedPkg.slug];
