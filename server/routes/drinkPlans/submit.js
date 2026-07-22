@@ -1,152 +1,28 @@
 'use strict';
 
 // PUT /api/drink-plans/t/:token submit handler, extracted from drinkPlans.js
-// (which was over the 1000-line hard cap). Behavior-inert extraction: this is
-// the exact handler body, its sanitizeSelections helper, and every import it
-// used. Mounted in drinkPlans.js behind requireUuidToken + drinkPlanWriteLimiter.
+// (which was over the 1000-line hard cap). Mounted in drinkPlans.js behind
+// requireUuidToken + drinkPlanWriteLimiter. Per-concern siblings (2026-07-22
+// split, behavior-inert moves): submitSanitize.js owns the selections
+// allow-list + sanitizer; submitNotify.js owns the post-commit comms tail.
+// The two money transactions live HERE, untouched.
 
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { refreshUnlockedInvoices, findOrRefreshExtrasInvoice, findExtrasInvoice, voidExtrasInvoiceWithReconcile, createAdditionalInvoiceIfNeeded } = require('../../utils/invoiceHelpers');
 const { foldExtrasIntoProposal, loadRepriceAddons } = require('../../utils/proposalExtrasFold');
 const { computeExtrasBreakdown } = require('../../utils/drinkPlanExtras');
-const { sendEmail } = require('../../utils/email');
-const emailTemplates = require('../../utils/emailTemplates');
-const { notifyAdminCategory } = require('../../utils/adminNotifications');
-const { getEventTypeLabel } = require('../../utils/eventTypes');
-const { shouldSendImmediate } = require('../../utils/messageSuppression');
 const { NotFoundError, ConflictError } = require('../../utils/errors');
-const { ADMIN_URL, API_URL } = require('../../utils/urls');
 const { triggerShoppingListAutoGen } = require('../../utils/shoppingListGen');
-const { scheduleMessage } = require('../../utils/messageScheduling');
 const { loadHostedCoverageContext, mocktailAddonFor } = require('./coverageContext');
-const { drinkPlanEchoSection } = require('../../utils/lifecycleEmailTemplates');
-
-// Token-gated selections PUT accepts arbitrary JSON. To stop attackers from
-// (a) seeding internal-only keys like `_logoFilename` to pivot the logo proxy
-// into reading any R2 object, or (b) writing a `javascript:` URL into
-// `companyLogo` that the admin "Download original" link would then execute,
-// every PUT goes through this sanitizer first.
-const ALLOWED_SELECTIONS_KEYS = new Set([
-  'signatureDrinks', 'signatureDrinkSpirits', 'customCocktails',
-  'mixersForSignatureDrinks', 'mocktails', 'mocktailNotes',
-  'spirits', 'spiritsOther', 'mixersForSpirits',
-  'beerFromFullBar', 'wineFromFullBar', 'wineOtherFullBar', 'beerWineBalanceFullBar',
-  'beerFromBeerWine', 'wineFromBeerWine', 'wineOtherBeerWine', 'beerWineBalanceBeerWine',
-  'syrupSelections', 'syrupSelfProvided',
-  'addOns', 'logistics',
-  'customMenuDesign', 'menuStyle', 'menuTheme', 'drinkNaming', 'menuDesignNotes',
-  'additionalNotes', 'companyLogo',
-  'activeModules', 'exploration',
-  // planner v2 (spec 2026-07-18 §3.1): crowd answers + day-of bar placement/power
-  'crowd', 'barPlacement', 'powerAtBar',
-  // Data-loss bugfix (found 2026-07-18): the legacy hosted wizard has always
-  // written guestPreferences ({balance, naInterest}) but the key was never on
-  // this allow-list, so hosted guest-prefs answers were silently dropped at
-  // save. v2's display-only taste answers reuse the same key.
-  'guestPreferences',
-  // legacy fields preserved for back-compat with already-saved plans
-  'signatureCocktails', 'barFocus', 'wineStyles', 'beerStyles', 'beerWineBalance',
-  'beerWineNotes', 'fullBarNotes', 'logisticsNotes',
-]);
-
-function sanitizeSelections(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const out = {};
-  for (const key of Object.keys(raw)) {
-    if (!ALLOWED_SELECTIONS_KEYS.has(key)) continue; // drop unknown keys, including _logoFilename
-    out[key] = raw[key];
-  }
-  // companyLogo must be either empty or a path served by THIS API. Reject
-  // `javascript:`, `data:`, or any cross-origin URL — the admin event-detail
-  // page renders `<a href={companyLogo}>Download original</a>`, which would
-  // otherwise execute attacker-controlled script in an admin session.
-  if (out.companyLogo !== undefined) {
-    const cl = typeof out.companyLogo === 'string' ? out.companyLogo : '';
-    if (cl && !cl.startsWith('/api/drink-plans/t/') && !cl.startsWith(`${API_URL}/api/drink-plans/t/`)) {
-      out.companyLogo = '';
-    }
-  }
-  // Planner v2 crowd answers: normalize to the pinned contract shape so
-  // garbage from the public token route never reaches the quantity engine.
-  if (out.crowd !== undefined) {
-    const c = (out.crowd && typeof out.crowd === 'object' && !Array.isArray(out.crowd)) ? out.crowd : {};
-    const rawDrinkers = c.drinkers === null || c.drinkers === undefined || c.drinkers === '' ? null : Number(c.drinkers);
-    const drinkers = Number.isFinite(rawDrinkers) ? Math.max(0, Math.round(rawDrinkers)) : null;
-    const profiles = ['cocktail_forward', 'wine', 'beer', 'even', 'help'];
-    out.crowd = {
-      drinkers,
-      unsure: c.unsure === true || drinkers === null,
-      profile: profiles.includes(c.profile) ? c.profile : 'help',
-    };
-  }
-  if (out.barPlacement !== undefined) {
-    out.barPlacement = ['indoors', 'outdoors', 'unsure'].includes(out.barPlacement) ? out.barPlacement : 'unsure';
-  }
-  if (out.powerAtBar !== undefined) {
-    out.powerAtBar = ['yes', 'no', 'unsure'].includes(out.powerAtBar) ? out.powerAtBar : 'unsure';
-  }
-  return out;
-}
+const { sanitizeSelections } = require('./submitSanitize');
+const {
+  scheduleLabFollowupAfterSubmit,
+  sendFinancialSubmitNotifications,
+  sendFastPathConfirmation,
+} = require('./submitNotify');
 
 /** PUT /api/drink-plans/t/:token — save draft or submit (public) */
-
-// Resolve selected drink names and build the confirmation echo section
-// (planner v2). Runs in the post-commit tail; pool is correct there. Never
-// fatal — a failed echo still sends the base confirmation.
-async function buildSelectionsEcho(selections) {
-  try {
-    const sig = Array.isArray(selections?.signatureDrinks) ? selections.signatureDrinks : [];
-    const moc = Array.isArray(selections?.mocktails) ? selections.mocktails : [];
-    const [c, m] = await Promise.all([
-      sig.length ? pool.query('SELECT id, name FROM cocktails WHERE id = ANY($1::text[])', [sig]) : Promise.resolve({ rows: [] }),
-      moc.length ? pool.query('SELECT id, name FROM mocktails WHERE id = ANY($1::text[])', [moc]) : Promise.resolve({ rows: [] }),
-    ]);
-    const cn = new Map(c.rows.map(r => [r.id, r.name]));
-    const mn = new Map(m.rows.map(r => [r.id, r.name]));
-    return drinkPlanEchoSection({
-      selections: selections || {},
-      cocktailNames: sig.map(id => cn.get(id)).filter(Boolean),
-      mocktailNames: moc.map(id => mn.get(id)).filter(Boolean),
-    });
-  } catch (err) {
-    console.error('Selections echo build failed (non-fatal):', err.message);
-    return { html: '', text: '' };
-  }
-}
-
-// Enhancement Lab follow-up: one nudge email +36h after a v2 submit (spec
-// §3.3). scheduleMessage is idempotent on its tuple, so nothing here can
-// double-book. There is NO cancel bookkeeping anywhere: every cancel
-// condition (lab addition made, window closed, plan finalized, event inside
-// 72h, marketing opt-out) is re-checked at fire time by labFollowupHandler.
-// Fire-and-forget from the submit tail; a failure never fails the submit.
-async function scheduleLabFollowupAfterSubmit(planId) {
-  if (!planId) return;
-  try {
-    const r = await pool.query(
-      `SELECT dp.planner_version, p.id AS proposal_id, p.client_id
-         FROM drink_plans dp
-         JOIN proposals p ON p.id = dp.proposal_id
-        WHERE dp.id = $1`,
-      [planId]
-    );
-    const row = r.rows[0];
-    if (!row || row.planner_version < 2 || !row.client_id) return;
-    await scheduleMessage({
-      entityType: 'proposal',
-      entityId: row.proposal_id,
-      messageType: 'lab_followup',
-      recipientType: 'client',
-      recipientId: row.client_id,
-      channel: 'email',
-      scheduledFor: new Date(Date.now() + 36 * 60 * 60 * 1000),
-    });
-  } catch (err) {
-    console.error('lab_followup scheduling failed (non-fatal):', err.message);
-  }
-}
-
 async function handleSubmit(req, res) {
   const { serving_type, status, paid_separately } = req.body;
   const selections = sanitizeSelections(req.body.selections);
@@ -595,64 +471,11 @@ async function handleSubmit(req, res) {
       client.release();
     }
 
-    // Post-commit notifications (best-effort; logged but never block response).
+    // Post-commit notifications (best-effort; logged but never block
+    // response). Moved verbatim to submitNotify.js in the per-concern split;
+    // still awaited here so response ordering is unchanged.
     if (pendingNotifications) {
-      const { proposal: pn, snapshot, amountPaid, addonNames, clientName, clientEmail } = pendingNotifications;
-      // Admin heads-up stays throttled to balance-changing submits — a
-      // zero-impact addon submit (all package-covered) doesn't warrant a ping.
-      if (pendingNotifications.balanceChanged) {
-        const daysUntil = pn.event_date
-          ? Math.ceil((new Date(pn.event_date) - new Date()) / (1000 * 60 * 60 * 24))
-          : null;
-        const isUrgent = daysUntil !== null && daysUntil <= 14;
-        const dpSubject = `${isUrgent ? 'Urgent: ' : ''}Drink plan submitted with add-ons, ${clientName}`;
-        const dpHtml = `<p><strong>${clientName}</strong> submitted their drink plan.</p>
-                 <p><strong>Add-ons selected:</strong> ${addonNames.join(', ')}</p>
-                 <p><strong>New total:</strong> $${snapshot.total.toFixed(2)}</p>
-                 <p><strong>Amount paid:</strong> $${amountPaid.toFixed(2)}</p>
-                 <p><strong>Balance due:</strong> $${(snapshot.total - amountPaid).toFixed(2)}</p>
-                 ${isUrgent ? `<p style="color: red;"><strong>Event is in ${daysUntil} days.</strong></p>` : ''}
-                 <p><a href="${ADMIN_URL}/proposals/${pn.id}">View Proposal</a></p>`;
-        const dpText = `${clientName} submitted their drink plan with add-ons: ${addonNames.join(', ')}. New total $${snapshot.total.toFixed(2)}, balance due $${(snapshot.total - amountPaid).toFixed(2)}. ${ADMIN_URL}/proposals/${pn.id}`;
-        notifyAdminCategory({ category: 'routine_admin', subject: dpSubject, emailHtml: dpHtml, emailText: dpText })
-          .catch(emailErr => console.error('Admin notification failed:', emailErr));
-      }
-      if (clientEmail) {
-        // Always-fire drink-plan-submitted confirmation. Balance language is
-        // conditional on `balanceChanged`; the BYOB-vs-Hosted warning is driven
-        // by `barOption`. Respect suppression rules on the immediate send.
-        const { barOption, balanceChanged, clientForCheck } = pendingNotifications;
-        const sendCheck = await shouldSendImmediate({
-          proposal: { id: pn.id, status: pn.status || 'deposit_paid' },
-          client: clientForCheck,
-          channel: 'email',
-        });
-        if (!sendCheck.ok) {
-          console.log(`[drinkPlanSubmit] suppressed for proposal ${pn.id}: ${sendCheck.reason}`);
-        } else {
-          const extrasAmount = balanceChanged ? snapshot.total - pn.prevTotal : 0;
-          const balanceDue = balanceChanged ? snapshot.total - amountPaid : 0;
-          const tpl = emailTemplates.drinkPlanBalanceUpdate({
-            clientName,
-            eventTypeLabel: getEventTypeLabel({ event_type: pn.event_type, event_type_custom: pn.event_type_custom }),
-            barOption,
-            balanceChanged,
-            extrasAmount,
-            newTotal: snapshot.total,
-            amountPaid,
-            balanceDue,
-            balanceDueDate: pn.balance_due_date,
-          });
-          const echo = await buildSelectionsEcho(selections);
-          sendEmail({
-            to: clientEmail,
-            ...tpl,
-            html: echo.html ? tpl.html.replace('</body>', `${echo.html}</body>`) : tpl.html,
-            text: `${tpl.text || ''}${echo.text}`,
-            meta: { proposalId: pn.id, messageType: 'drink_plan_ready' },
-          }).catch(emailErr => console.error('Client drink-plan confirmation email failed:', emailErr));
-        }
-      }
+      await sendFinancialSubmitNotifications(pendingNotifications, selections);
     }
 
     // Auto-generate the shopping list now that the plan is submitted. Runs
@@ -755,65 +578,11 @@ async function handleSubmit(req, res) {
     return res.json({ status: 'submitted', skipped: true });
   }
 
-  // Always-fire drink-plan-submitted confirmation. Spec section 3.8: fires on
-  // every submission, with conditional balance language (false here: the fast
-  // path runs when no addons were added, so no balance shift).
+  // Always-fire drink-plan-submitted confirmation (spec section 3.8; balance
+  // language false on this path — no addons, so no balance shift). Moved
+  // verbatim to submitNotify.js; still awaited so ordering is unchanged.
   if (newStatus === 'submitted' && result.rows[0]?.id) {
-    try {
-      const r = await pool.query(`
-        SELECT p.id, p.status AS proposal_status,
-               p.event_type, p.event_type_custom, p.balance_due_date,
-               p.total_price, p.amount_paid,
-               c.name AS client_name, c.email AS client_email,
-               c.communication_preferences, c.email_status, c.phone_status,
-               sp.pricing_type AS package_pricing_type
-        FROM drink_plans dp
-        LEFT JOIN proposals p ON p.id = dp.proposal_id
-        LEFT JOIN clients c ON c.id = p.client_id
-        LEFT JOIN service_packages sp ON sp.id = p.package_id
-        WHERE dp.id = $1
-        LIMIT 1
-      `, [result.rows[0].id]);
-      if (r.rows[0]?.client_email) {
-        const row = r.rows[0];
-        // Respect suppression rules on the immediate send.
-        const sendCheck = await shouldSendImmediate({
-          proposal: { id: row.id, status: row.proposal_status || 'deposit_paid' },
-          client: {
-            communication_preferences: row.communication_preferences,
-            email_status: row.email_status,
-            phone_status: row.phone_status,
-          },
-          channel: 'email',
-        });
-        if (!sendCheck.ok) {
-          console.log(`[drinkPlanSubmitFastPath] suppressed for plan ${result.rows[0].id}: ${sendCheck.reason}`);
-        } else {
-          const barOption = row.package_pricing_type === 'per_guest' ? 'hosted' : 'byob';
-          const tpl = emailTemplates.drinkPlanBalanceUpdate({
-            clientName: row.client_name || 'Client',
-            eventTypeLabel: getEventTypeLabel({ event_type: row.event_type, event_type_custom: row.event_type_custom }),
-            barOption,
-            balanceChanged: false,
-            extrasAmount: 0,
-            newTotal: Number(row.total_price) || 0,
-            amountPaid: Number(row.amount_paid) || 0,
-            balanceDue: 0,
-            balanceDueDate: row.balance_due_date,
-          });
-          const echo = await buildSelectionsEcho(selections);
-          sendEmail({
-            to: row.client_email,
-            ...tpl,
-            html: echo.html ? tpl.html.replace('</body>', `${echo.html}</body>`) : tpl.html,
-            text: `${tpl.text || ''}${echo.text}`,
-            meta: { proposalId: row.id, messageType: 'drink_plan_ready' },
-          }).catch(e => console.error('Drink-plan submit fast-path email failed:', e));
-        }
-      }
-    } catch (e) {
-      console.error('Drink-plan submit fast-path notification lookup failed (non-fatal):', e);
-    }
+    await sendFastPathConfirmation(result.rows[0].id, selections);
   }
 
   // Fast-path submit (no add-ons) also auto-generates the shopping list draft

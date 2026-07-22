@@ -187,9 +187,13 @@ dr-bartender/
 │   │   ├── drinkPlans/
 │   │   │   ├── coverageContext.js # Hosted-coverage loader (planner v2): package eligible-item union + class map + classify per drink; pool-or-held-client handle
 │   │   │   ├── lab.js          # Enhancement Lab (planner v2): GET/PUT /t/:token/lab shelves + additions reconcile; folds additions into the proposal balance (proposalExtrasFold), Balance invoice absorbs; refreshes the shopping list post-commit
+│   │   │   ├── labHelpers.js   # Lab shared layer (extracted from lab.js): window/state, display pricing, line items, PUT sanitizers
+│   │   │   ├── labListRefresh.js # Post-commit shopping-list rebuild after a lab change (extracted from lab.js)
 │   │   │   ├── regenerate.js   # POST /:id/shopping-list/regenerate (fresh list from live par catalog; returns, never saves)
 │   │   │   ├── shoppingList.js # Shopping-list routes extracted from drinkPlans.js (public token view + admin get/save/approve; approve delegates to the comms action, kept for API compat)
-│   │   │   └── submit.js       # PUT /t/:token submit handler (extracted); creates the "Drink Plan Extras" invoice at submit
+│   │   │   ├── submit.js       # PUT /t/:token submit handler (extracted); creates the "Drink Plan Extras" invoice at submit
+│   │   │   ├── submitNotify.js # Post-commit submit comms (extracted from submit.js): confirmation emails, admin heads-up, lab follow-up scheduling
+│   │   │   └── submitSanitize.js # Selections allow-list + sanitizer for the public submit PUT (extracted from submit.js)
 │   │   ├── drinkPlanConsult.js # Admin consult-form routes (alternate input source for shopping lists)
 │   │   ├── messages.js         # SMS messaging to staff
 │   │   ├── mocktails.js        # Mocktail menu CRUD

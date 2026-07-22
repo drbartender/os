@@ -230,6 +230,8 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 
 The four shopping-list routes above (public `GET /t/:token/shopping-list` and the admin `GET`/`PUT`/`PATCH .../shopping-list[/approve]`) now live in `server/routes/drinkPlans/shoppingList.js`, extracted verbatim from `drinkPlans.js` (which was over the 700-line soft cap) and registered back onto the same router at their original positions.
 
+The submit and lab files carry the same per-concern split (2026-07-22, behavior-inert moves; routes and exports unchanged): `submitSanitize.js` owns the selections allow-list + sanitizer and `submitNotify.js` owns the post-commit comms tail (confirmation emails, admin heads-up, lab follow-up scheduling), while `submit.js` keeps both money transactions; `labHelpers.js` owns the lab's shared state/pricing/sanitizer layer and `labListRefresh.js` the post-commit shopping-list rebuild, while `lab.js` keeps the GET shelves and the PUT money fold.
+
 ### Comms — `/api/comms`
 Compose-and-confirm client sends for the comms registry (`server/routes/comms.js`). The recipient is resolved server-side from the live client record; the request can never override the destination. Every admin-click client send routes through here (see Comms registry, below).
 | Method | Path | Auth | Description |

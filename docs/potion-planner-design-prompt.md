@@ -38,7 +38,7 @@ The planner becomes pure, fun information gathering: **zero dollar signs except 
 
 ## Grounding (current implementation)
 
-Orchestrator `client/src/pages/plan/PotionPlanningLab.js` (998 lines): fetch, autosave (Next + silent 30s + beforeunload keepalive), browser-back interception, progress, legacy-draft shims. All of that machinery survives. Step files live in `client/src/pages/plan/steps/`; the file map, selections allow-list contract, and arrival paths are unchanged from before and documented in git history of this file and in the spec. Key contract: `drink_plans.selections` JSONB behind `ALLOWED_SELECTIONS_KEYS` (`server/routes/drinkPlans/submit.js:28-42`), additive-only, every consumer updated in the same change (generator, admin display, menu extractor, drink_names enrichment). New keys this redesign introduces (crowd answers, bar placement, power) follow that rule.
+Orchestrator `client/src/pages/plan/PotionPlanningLab.js` (998 lines): fetch, autosave (Next + silent 30s + beforeunload keepalive), browser-back interception, progress, legacy-draft shims. All of that machinery survives. Step files live in `client/src/pages/plan/steps/`; the file map, selections allow-list contract, and arrival paths are unchanged from before and documented in git history of this file and in the spec. Key contract: `drink_plans.selections` JSONB behind `ALLOWED_SELECTIONS_KEYS` (`server/routes/drinkPlans/submitSanitize.js`), additive-only, every consumer updated in the same change (generator, admin display, menu extractor, drink_names enrichment). New keys this redesign introduces (crowd answers, bar placement, power) follow that rule.
 
 ## What must not change (hard)
 
