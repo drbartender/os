@@ -335,6 +335,68 @@ test('assign: legacy "Server" canonicalizes to Banquet Server', async () => {
   assert.equal(r.body.position, 'Banquet Server');
 });
 
+// Re-assigning someone who dropped MUST clear the drop markers. Every reader of
+// this table — approved_count, approved_by_role, and payrollAccrual's
+// `status='approved' AND dropped_at IS NULL` — treats a set dropped_at as "not
+// on this shift", so flipping status back alone produced a staffer who looked
+// assigned to the admin, was invisible to the roster math, and was paid nothing.
+// Both drop shapes are covered: clean drop sets status='denied' + dropped_at,
+// emergency drop leaves status='approved' + dropped_at.
+for (const [label, dropStatus, emergency] of [
+  ['clean-dropped (denied)', 'denied', false],
+  ['emergency-dropped (still approved)', 'approved', true],
+]) {
+  test(`assign: re-assigning a ${label} staffer clears dropped_at`, async () => {
+    const shiftId = await mkShift({ positions: ['Bartender', 'Bartender'] });
+    await pool.query(
+      `INSERT INTO shift_requests (shift_id, user_id, status, position, dropped_at, drop_reason, drop_emergency)
+       VALUES ($1, $2, $3, 'Bartender', NOW(), 'car trouble', $4)`,
+      [shiftId, s1Id, dropStatus, emergency]
+    );
+
+    const r = await req('POST', `/api/shifts/${shiftId}/assign`, {
+      token: adminToken, body: { user_id: s1Id, position: 'Bartender' },
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+
+    const row = await pool.query(
+      'SELECT status, position, dropped_at, drop_reason, drop_emergency FROM shift_requests WHERE shift_id = $1 AND user_id = $2',
+      [shiftId, s1Id]
+    );
+    assert.equal(row.rows[0].status, 'approved');
+    assert.equal(row.rows[0].position, 'Bartender');
+    assert.equal(row.rows[0].dropped_at, null, 'dropped_at cleared — otherwise payroll skips them');
+    assert.equal(row.rows[0].drop_reason, null, 'stale drop reason cleared');
+    assert.equal(row.rows[0].drop_emergency, false, 'emergency flag cleared');
+
+    // The row must now be visible to the same predicate payrollAccrual uses.
+    const payrollView = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM shift_requests
+        WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL`,
+      [shiftId]
+    );
+    assert.equal(payrollView.rows[0].c, 1, 'counted as active staffing');
+  });
+}
+
+test('PUT approve: re-promoting a dropped request also clears the drop markers', async () => {
+  const shiftId = await mkShift({ positions: ['Bartender', 'Bartender'] });
+  const ins = await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, requested_positions, dropped_at, drop_reason)
+     VALUES ($1, $2, 'denied', 'Bartender', '["Bartender"]', NOW(), 'sick') RETURNING id`,
+    [shiftId, s1Id]
+  );
+  const r = await req('PUT', `/api/shifts/requests/${ins.rows[0].id}`, {
+    token: adminToken, body: { status: 'approved' },
+  });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+
+  const row = await pool.query('SELECT status, dropped_at, drop_reason FROM shift_requests WHERE id = $1', [ins.rows[0].id]);
+  assert.equal(row.rows[0].status, 'approved');
+  assert.equal(row.rows[0].dropped_at, null);
+  assert.equal(row.rows[0].drop_reason, null);
+});
+
 // ─── auth guards (requireStaffing) ────────────────────────────────
 
 test('auth: a plain staff token cannot assign (403)', async () => {

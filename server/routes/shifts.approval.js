@@ -225,6 +225,15 @@ async function assignShiftHandler(req, res) {
   // Insert or update the shift request as approved.
   // BEO: clear any stale ack unconditionally — admin re-approving means a
   // fresh assignment cycle; the prior ack (if any) was for the previous one.
+  //
+  // The drop markers clear for the same reason, and it is a MONEY fix, not
+  // hygiene: a clean drop leaves status='denied' + dropped_at, an emergency drop
+  // leaves status='approved' + dropped_at, and every downstream reader —
+  // approved_count, approved_by_role, and payrollAccrual.js's
+  // `status='approved' AND dropped_at IS NULL` — treats a set dropped_at as
+  // "not on this shift". Flipping status back without clearing it produced a
+  // staffer who is assigned in the admin's eyes, invisible to the roster math,
+  // and PAID NOTHING for a shift they worked.
   const result = await pool.query(`
     INSERT INTO shift_requests (shift_id, user_id, position, status)
     VALUES ($1, $2, $3, 'approved')
@@ -232,6 +241,9 @@ async function assignShiftHandler(req, res) {
       SET status = 'approved',
           position = $3,
           beo_acknowledged_at = NULL,
+          dropped_at = NULL,
+          drop_reason = NULL,
+          drop_emergency = false,
           updated_at = NOW()
     RETURNING *
   `, [req.params.id, user_id, role]);
@@ -419,8 +431,15 @@ async function approveOrDenyRequestHandler(req, res) {
       if (!resolvedRole) {
         throw new ValidationError({ position: 'Cannot resolve a role for this approval — pick a role or open a slot.' });
       }
+      // Drop markers clear here for the same reason as the /assign upsert: this
+      // handler takes any request id with no status guard, so re-promoting a
+      // dropped row without clearing dropped_at hides the staffer from the
+      // roster math and from payroll. (The cover-swap branch above is exempt —
+      // the claimer's row is a fresh request, never a dropped one.)
       result = await pool.query(
-        `UPDATE shift_requests SET status = 'approved', position = $2, beo_acknowledged_at = NULL
+        `UPDATE shift_requests
+            SET status = 'approved', position = $2, beo_acknowledged_at = NULL,
+                dropped_at = NULL, drop_reason = NULL, drop_emergency = false
           WHERE id = $1 RETURNING *`,
         [req.params.requestId, resolvedRole]
       );
