@@ -144,7 +144,20 @@ async function requestShiftHandler(req, res) {
           notes = $4,
           status = 'pending',
           transport_acknowledged_at = CASE WHEN $5 THEN NOW() ELSE NULL END,
-          beo_acknowledged_at = CASE WHEN shift_requests.status = 'denied' THEN NULL ELSE shift_requests.beo_acknowledged_at END
+          beo_acknowledged_at = CASE WHEN shift_requests.status = 'denied' THEN NULL ELSE shift_requests.beo_acknowledged_at END,
+          -- ROOT CAUSE of the drop-marker leak. A staffer who dropped and then
+          -- re-requests lands back in 'pending' — and autoAssign selects purely
+          -- on status='pending' (autoAssign.js:172, no dropped_at filter), then
+          -- approves without clearing it. That path is a SCHEDULER: nobody is
+          -- watching, and the staffer works the shift and is paid $0 because
+          -- payrollAccrual keys on status='approved' AND dropped_at IS NULL.
+          -- Clearing here fixes it at the source for every downstream approver.
+          -- Mirrors the cover-claim upsert (staffShiftActions.js), which has
+          -- always cleared these three; this path was the odd one out.
+          dropped_at = NULL,
+          drop_reason = NULL,
+          drop_emergency = false,
+          cover_requested_at = NULL
     RETURNING *
   `, [req.params.id, req.user.id, JSON.stringify(roles), notes || null, transportRequired && transport_acknowledged === true]);
 
@@ -244,6 +257,10 @@ async function assignShiftHandler(req, res) {
           dropped_at = NULL,
           drop_reason = NULL,
           drop_emergency = false,
+          -- Also the pending cover request: the staffer is back on the shift, so
+          -- leaving cover_requested_at set would keep advertising their slot in
+          -- the cover marketplace for a teammate to claim out from under them.
+          cover_requested_at = NULL,
           updated_at = NOW()
     RETURNING *
   `, [req.params.id, user_id, role]);
@@ -439,7 +456,8 @@ async function approveOrDenyRequestHandler(req, res) {
       result = await pool.query(
         `UPDATE shift_requests
             SET status = 'approved', position = $2, beo_acknowledged_at = NULL,
-                dropped_at = NULL, drop_reason = NULL, drop_emergency = false
+                dropped_at = NULL, drop_reason = NULL, drop_emergency = false,
+                cover_requested_at = NULL
           WHERE id = $1 RETURNING *`,
         [req.params.requestId, resolvedRole]
       );

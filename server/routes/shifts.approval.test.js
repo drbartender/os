@@ -379,6 +379,66 @@ for (const [label, dropStatus, emergency] of [
   });
 }
 
+// ROOT CAUSE test. autoAssign selects purely on status='pending' with NO
+// dropped_at filter (autoAssign.js:172) and approves without clearing it, so a
+// stale dropped_at surviving a re-request means the SCHEDULER silently seats a
+// staffer who is then invisible to payroll. Nobody is watching that path.
+test('request: re-requesting after a drop clears the drop markers, so autoAssign cannot seat a payroll-invisible staffer', async () => {
+  const shiftId = await mkShift({ positions: ['Bartender', 'Bartender'] });
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, dropped_at, drop_reason, drop_emergency, cover_requested_at)
+     VALUES ($1, $2, 'denied', 'Bartender', NOW(), 'car trouble', true, NOW())`,
+    [shiftId, s1Id]
+  );
+
+  const r = await req('POST', `/api/shifts/${shiftId}/request`, {
+    token: s1Token, body: { requested_positions: ['Bartender'] },
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+
+  const row = await pool.query(
+    'SELECT status, dropped_at, drop_reason, drop_emergency, cover_requested_at FROM shift_requests WHERE shift_id = $1 AND user_id = $2',
+    [shiftId, s1Id]
+  );
+  assert.equal(row.rows[0].status, 'pending');
+  assert.equal(row.rows[0].dropped_at, null, 'a pending row must never carry a stale dropped_at');
+  assert.equal(row.rows[0].drop_reason, null);
+  assert.equal(row.rows[0].drop_emergency, false);
+  assert.equal(row.rows[0].cover_requested_at, null, 'their slot is no longer advertised for cover');
+
+  // Simulate exactly what autoAssign's claim UPDATE does, then assert the row is
+  // visible to payrollAccrual's predicate.
+  await pool.query(
+    `UPDATE shift_requests SET status = 'approved', position = 'Bartender', beo_acknowledged_at = NULL
+      WHERE shift_id = $1 AND user_id = $2 AND status = 'pending'`,
+    [shiftId, s1Id]
+  );
+  const payrollView = await pool.query(
+    `SELECT COUNT(*)::int AS c FROM shift_requests
+      WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL`,
+    [shiftId]
+  );
+  assert.equal(payrollView.rows[0].c, 1, 'auto-assigned staffer is payroll-visible');
+});
+
+test('assign: re-assigning also clears a pending cover request', async () => {
+  const shiftId = await mkShift({ positions: ['Bartender', 'Bartender'] });
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, dropped_at, cover_requested_at)
+     VALUES ($1, $2, 'approved', 'Bartender', NOW(), NOW())`,
+    [shiftId, s1Id]
+  );
+  const r = await req('POST', `/api/shifts/${shiftId}/assign`, {
+    token: adminToken, body: { user_id: s1Id, position: 'Bartender' },
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  const row = await pool.query(
+    'SELECT cover_requested_at FROM shift_requests WHERE shift_id = $1 AND user_id = $2',
+    [shiftId, s1Id]
+  );
+  assert.equal(row.rows[0].cover_requested_at, null, 'slot no longer advertised for cover');
+});
+
 test('PUT approve: re-promoting a dropped request also clears the drop markers', async () => {
   const shiftId = await mkShift({ positions: ['Bartender', 'Bartender'] });
   const ins = await pool.query(
