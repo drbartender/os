@@ -84,13 +84,15 @@ Unit tests cover every row of the worked-cases table plus a non-canonical / malf
 
 ### 2. `ShiftDrawer` manual-assign picker
 
-- Preselect `pickerPosition` from `defaultAssignRole(roster, remaining)` when the picker is
-  opened, and recompute it if the shift reloads while the picker is still open. A hand-picked
-  role always wins: a `pickerPositionTouched` flag is set by the select's `onChange` and
-  suppresses recomputation, and it resets whenever the picker is opened, closed, or the
-  drawer unmounts (the same places that already reset `pickerPosition` to `''`).
+- Redefine `pickerPosition` as the admin's **explicit override**, `''` meaning untouched, and
+  derive what the select shows: `pickerRole = pickerPosition || defaultAssignRole(roster, remaining)`.
+  A hand-picked role wins; an untouched picker re-derives its default whenever the shift
+  reloads. (Built this way rather than with a preselect effect plus a "touched" flag: same
+  semantics, no new state, and no first-frame window where the select holds `''`.) The three
+  existing `setPickerPosition('')` resets need no change; they now clear the override.
 - Drop the empty `Position…` option; the select always holds a real role.
-- The Assign button is no longer gated on `!pickerPosition`, only on `busy`.
+- The Assign button is no longer gated on `!pickerPosition`, only on `busy`, and its label
+  reads `Assign as {role}` so the role being written is stated, not just selected.
 - `handleManualAssign` keeps `canonicalizeRole` + its "Pick a position before assigning."
   guard as a belt-and-braces check. It should be unreachable now, not deleted.
 - The over-fill confirm is unchanged.
@@ -111,6 +113,9 @@ is always present in the list.
 - Keep the current rule that the select renders only when the roster holds more than one
   distinct role. With one role there is nothing to choose, and the `Assign as {role}` button
   label already states what will be written.
+- `parsePositions` in `userDetail/helpers.js` becomes dead once this is its last consumer.
+  Delete it, leaving a comment pointing at `parsePositionsNeeded`, so the buggy version is
+  not picked back up by the next surface that needs a roster.
 
 ### 4. `GET /shifts/unstaffed-upcoming` gains `approved_by_role`
 
