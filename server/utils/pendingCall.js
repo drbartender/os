@@ -176,6 +176,38 @@ async function pruneVaCallingRows() {
     [String(RETENTION_DAYS), PRUNE_BATCH_SIZE]
   );
 
+  // voicemail_delivery: prune only rows with NO recording left in Twilio.
+  //
+  //   'delivered' / 'empty' — the recording was deleted, nothing to point at.
+  //   'missed'              — the caller hung up during the greeting and never
+  //                           recorded, so recordingStatusCallback never fired
+  //                           and recording_sid is still NULL. These are the
+  //                           MOST COMMON outcome; excluding them let the table
+  //                           grow without bound and held from_e164 (caller PII)
+  //                           past the RETENTION_DAYS lifetime bound.
+  //
+  // 'recorded' and 'failed' are retained past retention on purpose: each means
+  // audio is STILL sitting in the Twilio console undelivered, and the row is the
+  // only surviving pointer to it.
+  //
+  // 'skipped' is also retained, but note it is currently UNWRITABLE: the two
+  // paths that used to write it (bootstrap mode, and a gated send) now leave the
+  // row at 'recorded' so the sweep can still redeliver it once the config is
+  // fixed. Writing 'skipped' put rows outside BOTH this prune and the sweep
+  // filter, stranding client audio forever. It stays in the retained list and in
+  // the CHECK constraint so that a future writer of that status inherits the
+  // safe behavior rather than the bug.
+  total += await batchedDelete(
+    `DELETE FROM voicemail_delivery
+      WHERE ctid IN (
+        SELECT ctid FROM voicemail_delivery
+        WHERE created_at < NOW() - ($1 || ' days')::interval
+          AND status IN ('delivered', 'empty', 'missed')
+        LIMIT $2
+      )`,
+    [String(RETENTION_DAYS), PRUNE_BATCH_SIZE]
+  );
+
   return total;
 }
 

@@ -4,6 +4,19 @@ const { notificationsEnabled } = require('./notificationsEnabled');
 
 const TELEGRAM_API = 'https://api.telegram.org';
 
+// Bot API calls are bounded so a hung Telegram cannot pin a request or a
+// scheduler tick indefinitely. (The missed-call ping is fired AFTER the TwiML
+// response, so no caller is ever waiting on it; the bound is general hygiene,
+// not a caller-facing fix.) The scheduler-driven webhook helpers below are
+// deliberately left unbounded: nobody is waiting on those.
+//
+// sendAudio gets its own, much larger budget: it uploads the whole recording,
+// which at VM_MAX_LENGTH_SEC=300 is roughly 2 MB. Timing that out mid-upload
+// would mark a delivered voicemail 'failed' and redeliver it on the next sweep,
+// so the ceiling has to be well clear of a realistic upload.
+const TELEGRAM_TIMEOUT_MS = 8000;
+const TELEGRAM_UPLOAD_TIMEOUT_MS = 120000;
+
 // Dependency seam for tests (mirror server/utils/sms.js:57-58). Inject `fetch`,
 // `pool`, and/or `notificationsEnabled`; the arrow wrapper keeps global fetch
 // callable without `this`.
@@ -37,6 +50,7 @@ async function sendTelegramMessage(chatId, text) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text }),
+      signal: AbortSignal.timeout(TELEGRAM_TIMEOUT_MS),
     });
     const data = await res.json().catch(() => ({ ok: false }));
     if (!data.ok) {
@@ -117,8 +131,51 @@ async function isNewUpdate(updateId) {
   return result.rowCount === 1;
 }
 
+/**
+ * Send an audio file (a voicemail mp3) to a chat. Same three-outcome contract as
+ * sendTelegramMessage, and the same gating: no token or gated notifications
+ * means log and skip, never a network call. Never throws.
+ *
+ * sendAudio (not sendVoice) because Twilio hands us mp3 and sendVoice wants
+ * OGG/OPUS; sendAudio plays inline in the chat with no transcoding on our side.
+ *
+ * @param {number|string} chatId
+ * @param {Buffer} audioBuffer
+ * @param {{filename?: string, caption?: string}} [opts]
+ * @returns {Promise<object>} Bot API JSON, or { ok:false, skipped:true } when gated.
+ */
+async function sendTelegramAudio(chatId, audioBuffer, opts = {}) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || !_deps.notificationsEnabled()) {
+    const why = !token ? 'TELEGRAM_BOT_TOKEN not set' : 'notifications gated off';
+    const bytes = audioBuffer ? audioBuffer.length : 0;
+    console.log(`[DEV] Telegram audio skipped (${why}) → chat ${last4(chatId)} | ${bytes} bytes`);
+    return { ok: false, skipped: true };
+  }
+  try {
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    if (opts.caption) form.append('caption', opts.caption);
+    form.append('audio', new Blob([audioBuffer], { type: 'audio/mpeg' }), opts.filename || 'voicemail.mp3');
+    const res = await _deps.fetch(`${TELEGRAM_API}/bot${token}/sendAudio`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(TELEGRAM_UPLOAD_TIMEOUT_MS),
+    });
+    const data = await res.json().catch(() => ({ ok: false }));
+    if (!data.ok) {
+      console.error(`[telegram] sendAudio failed → chat ${last4(chatId)}: ${data.description || res.status}`);
+    }
+    return data;
+  } catch (err) {
+    console.error(`[telegram] sendAudio error → chat ${last4(chatId)}: ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
 module.exports = {
   sendTelegramMessage,
+  sendTelegramAudio,
   setTelegramWebhook,
   getTelegramWebhookInfo,
   verifyTelegramSecret,

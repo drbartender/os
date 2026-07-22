@@ -174,3 +174,59 @@ test('pruneVaCallingRows keeps an in-flight dialing row but prunes expired-confi
   assert.equal(exp.rows.length, 0, 'expired awaiting_confirm row is pruned');
   assert.equal(stale.rows.length, 0, '3-hour-old dialing row is pruned by the 2h backstop');
 });
+
+test('pruneVaCallingRows removes terminal voicemail rows and keeps undelivered ones', async () => {
+  // RETENTION_DAYS is 30; 400 days is comfortably past it either way.
+  const delivered = `CAvmprune-${NONCE}-delivered`;
+  const stuck = `CAvmprune-${NONCE}-failed`;
+  await pool.query(
+    `INSERT INTO voicemail_delivery (call_sid, status, created_at)
+     VALUES ($1, 'delivered', NOW() - INTERVAL '400 days'),
+            ($2, 'failed',    NOW() - INTERVAL '400 days')`,
+    [delivered, stuck]
+  );
+  try {
+    await pruneVaCallingRows();
+    const { rows } = await pool.query(
+      'SELECT call_sid FROM voicemail_delivery WHERE call_sid IN ($1, $2)',
+      [delivered, stuck]
+    );
+    assert.deepEqual(
+      rows.map((r) => r.call_sid),
+      [stuck],
+      'a failed row survives retention: it is the only pointer to audio still in Twilio'
+    );
+  } finally {
+    await pool.query('DELETE FROM voicemail_delivery WHERE call_sid IN ($1, $2)', [delivered, stuck]);
+  }
+});
+
+test('pruneVaCallingRows prunes aged missed rows but never a skipped one', async () => {
+  // 'missed' is the most common outcome (caller hangs up during the greeting,
+  // so recordingStatusCallback never fires and recording_sid stays NULL). Not
+  // pruning it grew the table without bound and held caller PII past retention.
+  // 'skipped' is the opposite: the recording was deliberately RETAINED in
+  // Twilio, so the row is the only pointer to it.
+  const missed = `CAvmprune-${NONCE}-missed`;
+  const skipped = `CAvmprune-${NONCE}-skipped`;
+  await pool.query(
+    `INSERT INTO voicemail_delivery (call_sid, status, recording_sid, created_at)
+     VALUES ($1, 'missed',  NULL,             NOW() - INTERVAL '400 days'),
+            ($2, 'skipped', 'RE' || repeat('a', 32), NOW() - INTERVAL '400 days')`,
+    [missed, skipped]
+  );
+  try {
+    await pruneVaCallingRows();
+    const { rows } = await pool.query(
+      'SELECT call_sid FROM voicemail_delivery WHERE call_sid IN ($1, $2)',
+      [missed, skipped]
+    );
+    assert.deepEqual(
+      rows.map((r) => r.call_sid),
+      [skipped],
+      'skipped means the audio is still in the console; pruning it erases the only pointer'
+    );
+  } finally {
+    await pool.query('DELETE FROM voicemail_delivery WHERE call_sid IN ($1, $2)', [missed, skipped]);
+  }
+});

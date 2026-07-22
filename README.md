@@ -116,7 +116,7 @@ Copy `.env.example` and fill in values. All variables:
 | `TELEGRAM_ALLOWED_USER_ID` | Bootstrap | Numeric Telegram user id of Zul. Leave UNSET on first deploy for bootstrap mode (webhook echoes the sender's id, dials nothing); then set + redeploy. |
 | `VOICE_CALLER_ID` | For VA calling | The 224 US voice line in strict E.164 (`+12242220082`) — outbound caller ID + inbound number. |
 | `VA_CELL` | For VA calling | Zul's cell, strict E.164 (`+63…`), the bridge target. Never normalized, never committed. |
-| `RUN_VA_CALLING_SCHEDULER` | No | `false` disables the VA-calling prune + Telegram webhook-heartbeat scheduler. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
+| `RUN_VA_CALLING_SCHEDULER` | No | `false` disables the VA-calling prune, the undelivered-voicemail redelivery sweep, and the Telegram webhook-heartbeat scheduler. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. Note the sweep is the ONLY retry for a voicemail stranded between claim and upload. |
 | `RUN_PRESENCE_SCHEDULER` | No | `false` disables the presence stale-desk nudge / auto-flip sweep (15 min). Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `VA_CALL_DAILY_CAP` | No | Max calls placed per rolling 24h (default 40, DB-backed via `call_audit`). |
 | `VA_CALL_PER_MIN_CAP` | No | Max triggers accepted per minute (default 5). |
@@ -124,6 +124,10 @@ Copy `.env.example` and fill in values. All variables:
 | `PENDING_CALL_TTL_SEC` | No | Confirm-before-dial pending-record TTL in seconds (default 120). |
 | `LEAD_CALL_ENABLED` | No | Lead call bridge kill switch: `false` disables the new-lead auto-call trigger entirely (redeploy-free). Default on. |
 | `LEAD_CALL_DAILY_CAP` | No | Max lead-call attempt chains opened per rolling 24h (default 25; toll-fraud backstop). |
+| `VOICEMAIL_ENABLED` | No | 224-inbound voicemail master switch. **Default OFF**; only `'true'` enables. Off restores pre-feature behavior exactly (no ping, no recording). |
+| `VM_MAX_LENGTH_SEC` | No | Max voicemail recording length in seconds (default 120, clamped 30..300). |
+| `VM_DAILY_CAP` | No | Max voicemail-path calls per rolling 24h (default 50, counted from `voicemail_delivery`). Inbound analog of `VA_CALL_DAILY_CAP`. |
+| `VA_INBOUND_PER_MIN_CAP` | No | Global inbound-call flood cap per minute (default 30) on `POST /api/voice/inbound` only. The voicemail webhooks have their own per-`CallSid` limiter that does not read this. |
 | `TT_AUTOREPLY_ENABLED` | No | TT auto first-reply master switch, default OFF (`'true'` enables): quick replies via the harvester box, day-lead calls fire respond-then-ring. Does NOT gate the fallback sweep. |
 | `FIRST_REPLY_FALLBACK_MINUTES` | No | Unconfirmed day reply falls back to the call past this (default 3). |
 | `FIRST_REPLY_CALL_MAX_AGE_MINUTES` | No | Freshness bound on callback/sweep calls (default 240; the call promise expires). |
@@ -249,7 +253,7 @@ dr-bartender/
 │   │   ├── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
 │   │   ├── thumbtackAgent.js   # Thumbtack box-agent API (/api/admin/thumbtack): email-harvest queue (pending-harvest/email-harvested/harvest-failed/rearm) + auto first-reply queue (pending-first-replies/first-reply-sent/first-reply-failed). Driven by the box-only agent in thumbtack-agent/ (one loop, 25s reply tick, harvest piggyback every Nth tick)
 │   │   ├── venues.js           # Google Places venue search proxy
-│   │   ├── voice.js            # Zul VA-calling Twilio Voice webhooks: POST /inbound (forward 224 → VA_CELL), /bridge (look up target by CallSid → Dial 224→target), /status (failed-leg → Telegram notice). Signature gate via utils/twilioSignature + text/xml
+│   │   ├── voice.js            # Zul VA-calling Twilio Voice webhooks: POST /inbound (forward 224 → VA_CELL), /bridge (look up target by CallSid → Dial 224→target), /status (failed-leg → Telegram notice), /inbound/missed (<Dial> action: ping Zul + greeting/<Record>), /inbound/voicemail (recordingStatusCallback: upload mp3 to Telegram, then delete from Twilio). The two voicemail routes fail CLOSED on signature in every environment
 │   │   └── voiceLeadCall.js    # Lead call bridge Twilio webhooks (/api/voice/lead): /answer (Gather-wrapped spoken briefing), /digit (press-1 → Dial lead from the 224, press-9 replay), /status (claim-guarded chain advance). Signature FAIL-CLOSED in every env
 │   ├── utils/
 │   │   ├── adminAuditLog.js    # logAdminAction(...) — durable record of admin actions (rotate-token, regenerate-stripe). Best-effort; failures go to Sentry, never block the underlying op
@@ -367,7 +371,7 @@ dr-bartender/
 │   │   ├── storage.js          # Cloudflare R2 upload + signed URL helpers
 │   │   ├── stripeClient.js     # Central Stripe client factory (test-mode toggle, fail-closed)
 │   │   ├── stripePayoutSync.js # Read-side Stripe payout mirror sync: idempotent syncPayout/syncPendingTransactions upserts, matchLine reconciliation, sweep (bootstrap + heal + re-match), atomic failed-payout alert (spec 2026-07-01)
-│   │   ├── telegram.js         # Telegram Bot API wrapper (VA calling): sendTelegramMessage/setTelegramWebhook/getTelegramWebhookInfo (raw fetch, no dep), verifyTelegramSecret (constant-time), isNewUpdate (update_id de-dupe)
+│   │   ├── telegram.js         # Telegram Bot API wrapper (VA calling): sendTelegramMessage/setTelegramWebhook/getTelegramWebhookInfo (raw fetch, no dep), verifyTelegramSecret (constant-time), isNewUpdate (update_id de-dupe), sendTelegramAudio (multipart voicemail mp3 upload, 120s timeout vs 8s for messages)
 │   │   ├── thumbtackProposalDraft.js # Thumbtack auto-draft builder (createDraftProposalFromLead) + pure field mappers (event-type keyword map, ET date/time split, admin-notes block)
 │   │   ├── tipHandleValidation.js # Validates + normalizes venmo/cashapp handles + paypal.me URLs before persist
 │   │   ├── tipPageLifecycle.js # Tip page activate/deactivate transitions on hire/onboarding/offboard
@@ -381,7 +385,8 @@ dr-bartender/
 │   │   ├── twilioSignature.js  # Shared isValidTwilioRequest (Twilio webhook signature check); policy on failure stays per-router (voice.js dev-allows, voiceLeadCall.js fails closed everywhere)
 │   │   ├── urls.js             # Canonical PUBLIC_SITE_URL / ADMIN_URL / STAFF_URL / API_URL resolvers
 │   │   ├── usPhone.js          # US/NANP phone validation: toUsE164, isUsE164 (normalizePhone + strict +1 NANP gate, rejects intl + 900/976) — primary VA-calling toll-fraud control
-│   │   ├── vaCallingScheduler.js # VA-calling scheduler body: pruneVaCallingRows + checkTelegramWebhookHealth (re-runs setTelegramWebhook + emails admin when the webhook is unset or recently errored)
+│   │   ├── vaCallingScheduler.js # VA-calling scheduler body: pruneVaCallingRows + reapUndeliveredVoicemails (redelivers a voicemail stuck between claim and upload; Twilio never retries a 2xx'd recording callback) + checkTelegramWebhookHealth (re-runs setTelegramWebhook + emails admin when the webhook is unset or recently errored)
+│   │   ├── voicemail.js        # 224-inbound voicemail: voicemail_delivery ledger (claimMissedCall = the ping's dedup claim, claimDelivery, markDelivery, countVoicemailsSince = VM_DAILY_CAP window) + Twilio media (recordingMediaUrl CONSTRUCTED from account SID + a ^RE[0-9a-f]{32}$ SID, never the webhook body's RecordingUrl; fetchRecordingMp3, deleteRecording)
 │   │   ├── venueAddress.js     # Compose/validate structured venue address; derives event_location & shifts.location; resolvePendingLocation shared by the PATCH + notify-preflight
 │   │   ├── webhookEventsPruneScheduler.js # Hourly prune of `webhook_events` to a 30-day window (gated by RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER)
 │   │   └── xmlEscape.js        # Shared TwiML XML escaper (& < >); used by the SMS + voice routes

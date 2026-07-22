@@ -3594,6 +3594,35 @@ CREATE TABLE IF NOT EXISTS telegram_update (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- voicemail_delivery: 224-inbound voicemail ledger (spec 2026-07-22). One row
+-- per MISSED inbound call, inserted by /api/voice/inbound/missed. It is three
+-- things at once, which is why it is a table and not a cache:
+--   1. the missed-call ping's dedup claim. PK on call_sid means a Twilio
+--      <Dial action> redelivery loses the INSERT and cannot double-ping.
+--   2. the VM_DAILY_CAP spend window (rows in the last 24h). The inbound side
+--      had no daily cap because a missed call used to cost nothing after ring
+--      timeout; it now costs greeting + up to VM_MAX_LENGTH_SEC of recording.
+--   3. the delivery ledger. The Twilio recording is DELETED after a confirmed
+--      Telegram upload, so this row is the only surviving business record that
+--      a client called.
+-- from_e164 is NULL for a blocked/anonymous caller. attempts bounds the
+-- scheduler's redelivery sweep.
+CREATE TABLE IF NOT EXISTS voicemail_delivery (
+  call_sid      TEXT PRIMARY KEY,
+  from_e164     TEXT,
+  recording_sid TEXT,
+  duration_sec  INTEGER,
+  status        TEXT NOT NULL DEFAULT 'missed'
+                  CHECK (status IN ('missed','recorded','delivered','skipped','failed','empty')),
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  delivered_at  TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- created_at is both the VM_DAILY_CAP window filter and the prune key (mirrors
+-- idx_call_audit_created_at above).
+CREATE INDEX IF NOT EXISTS idx_voicemail_delivery_created_at
+  ON voicemail_delivery (created_at);
+
 -- ── Proposal option groups ("compare your options") ──────────────────────────
 -- A group bundles two or three sibling proposal "options" behind one public
 -- /compare/:token link. Each option stays a full proposals row; the group owns

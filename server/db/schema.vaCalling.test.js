@@ -69,6 +69,7 @@ before(async () => {
 after(async () => {
   if (!HAS_DB || !pool) return;
   await pool.query("DELETE FROM call_audit WHERE call_sid LIKE 'TEST_B11_%' OR triggered_by = -999011");
+  await pool.query("DELETE FROM voicemail_delivery WHERE call_sid LIKE 'TEST_VM_%'");
   await pool.end();
 });
 
@@ -177,4 +178,66 @@ dbTest('telegram_update update_id is the primary key', async () => {
   );
   assert.equal(rows.length, 1);
   assert.equal(rows[0].column_name, 'update_id');
+});
+
+// ── voicemail_delivery (spec 2026-07-22) ────────────────────────────────────
+// This block lives here rather than in its own suite because vaCallingDdl()
+// slices schema.sql from the '-- Zul VA Calling' marker to EOF, so the
+// voicemail DDL is already inside the region this suite applies (twice, to
+// prove idempotency). A new suite would apply it a third time for no gain.
+
+test('schema.sql declares voicemail_delivery idempotently with the six statuses', () => {
+  assert.match(schemaSql, /CREATE TABLE IF NOT EXISTS voicemail_delivery \(/);
+  assert.match(schemaSql, /call_sid\s+TEXT PRIMARY KEY/);
+  assert.match(
+    schemaSql,
+    /CHECK \(status IN \('missed','recorded','delivered','skipped','failed','empty'\)\)/
+  );
+  assert.match(schemaSql, /attempts\s+INTEGER NOT NULL DEFAULT 0/);
+  assert.match(
+    schemaSql,
+    /CREATE INDEX IF NOT EXISTS idx_voicemail_delivery_created_at[\s\S]*?ON voicemail_delivery \(created_at\)/
+  );
+});
+
+dbTest('voicemail_delivery exists with the expected columns', async () => {
+  const { rows } = await pool.query(
+    `SELECT column_name, data_type, is_nullable
+       FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'voicemail_delivery'
+      ORDER BY column_name`
+  );
+  assert.deepEqual(rows.map((r) => r.column_name), [
+    'attempts', 'call_sid', 'created_at', 'delivered_at',
+    'duration_sec', 'from_e164', 'recording_sid', 'status',
+  ]);
+  const byName = Object.fromEntries(rows.map((r) => [r.column_name, r]));
+  assert.equal(byName.call_sid.is_nullable, 'NO');
+  assert.equal(byName.attempts.is_nullable, 'NO');
+  assert.equal(byName.status.is_nullable, 'NO');
+  // NULL from_e164 is how a blocked/anonymous caller is recorded.
+  assert.equal(byName.from_e164.is_nullable, 'YES');
+  assert.equal(byName.delivered_at.data_type, 'timestamp with time zone');
+});
+
+dbTest('voicemail_delivery call_sid is the primary key (the ping dedup claim)', async () => {
+  const { rows } = await pool.query(
+    `SELECT kcu.column_name
+       FROM information_schema.table_constraints tc
+       JOIN information_schema.key_column_usage kcu
+         ON tc.constraint_name = kcu.constraint_name
+      WHERE tc.table_name = 'voicemail_delivery'
+        AND tc.constraint_type = 'PRIMARY KEY'`
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].column_name, 'call_sid');
+});
+
+dbTest('the voicemail_delivery status CHECK rejects an out-of-domain value', async () => {
+  await assert.rejects(
+    () => pool.query(
+      "INSERT INTO voicemail_delivery (call_sid, status) VALUES ('TEST_VM_bad', 'banana')"
+    ),
+    /violates check constraint/i
+  );
 });

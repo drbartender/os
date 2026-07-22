@@ -491,16 +491,40 @@ async function start() {
       // VA calling maintenance (spec §Components-7 + §Security-9): hourly prune
       // of expired pending_call + aged-out call_audit/telegram_update rows, plus
       // a ~6h Telegram webhook heartbeat (re-arms a silently-disabled webhook so
-      // outbound calling is never dead-until-noticed).
+      // outbound calling is never dead-until-noticed). The prune also covers
+      // voicemail_delivery, and the same wrapped job runs the undelivered-
+      // voicemail redelivery sweep.
       if (enabled('RUN_VA_CALLING_SCHEDULER')) {
         const {
           pruneVaCallingRows,
+          reapUndeliveredVoicemails,
           checkTelegramWebhookHealth,
         } = require('./utils/vaCallingScheduler');
 
         const wrappedPrune = wrapScheduler('va_calling_prune', 3600, async () => {
-          const n = await pruneVaCallingRows();
-          if (n > 0) console.log(`[va_calling_prune] deleted ${n} expired/old rows`);
+          // Voicemail redelivery rides the same wrapped job (no new health-row
+          // name to register/clear). BOTH halves are individually guarded and
+          // the error is re-raised at the end, so wrapScheduler still reports
+          // the failure while neither half can silently cancel the other. The
+          // sweep is the ONLY retry for a voicemail stranded between claim and
+          // upload, so letting a prune throw skip it would quietly disable
+          // voicemail recovery for as long as the prune stayed broken.
+          let firstErr = null;
+          try {
+            const n = await pruneVaCallingRows();
+            if (n > 0) console.log(`[va_calling_prune] deleted ${n} expired/old rows`);
+          } catch (err) {
+            firstErr = err;
+            console.error('[va_calling_prune] failed:', err.message);
+          }
+          try {
+            const recovered = await reapUndeliveredVoicemails();
+            if (recovered > 0) console.log(`[vm-sweep] redelivered ${recovered} voicemail(s)`);
+          } catch (err) {
+            if (!firstErr) firstErr = err;
+            console.error('[vm-sweep] failed:', err.message);
+          }
+          if (firstErr) throw firstErr;
         });
         setTimeout(wrappedPrune, 210000); // stagger off the other prune jobs
         setInterval(wrappedPrune, 60 * 60 * 1000);

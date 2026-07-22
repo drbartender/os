@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   verifyTelegramSecret,
   sendTelegramMessage,
+  sendTelegramAudio,
   setTelegramWebhook,
   isNewUpdate,
   __setTelegramDeps,
@@ -167,5 +168,90 @@ test('isNewUpdate > true on first insert, false on conflict', async () => {
     assert.deepStrictEqual(calls[0].params, [555]);
   } finally {
     __setTelegramDeps({ pool: require('../db').pool });
+  }
+});
+
+// ── sendTelegramAudio (voicemail delivery, spec 2026-07-22) ─────────────────
+
+test('sendTelegramAudio > skips (no fetch) when gated off', async () => {
+  process.env.TELEGRAM_BOT_TOKEN = 'BOTTOK123';
+  process.env.SEND_NOTIFICATIONS = 'false';
+  let called = 0;
+  __setTelegramDeps({
+    notificationsEnabled: () => false,
+    fetch: async () => { called += 1; return { json: async () => ({ ok: true }) }; },
+  });
+  try {
+    const res = await sendTelegramAudio(123456789, Buffer.from('ID3'), { caption: 'c' });
+    assert.deepStrictEqual(res, { ok: false, skipped: true });
+    assert.strictEqual(called, 0, 'a gated send must never hit the network');
+  } finally {
+    __setTelegramDeps({
+      fetch: (...a) => globalThis.fetch(...a),
+      notificationsEnabled: require('./notificationsEnabled').notificationsEnabled,
+    });
+    restoreEnv();
+  }
+});
+
+test('sendTelegramAudio > posts bounded multipart and returns the Bot API envelope', async () => {
+  process.env.TELEGRAM_BOT_TOKEN = 'BOTTOK123';
+  process.env.SEND_NOTIFICATIONS = 'true';
+  let seen = null;
+  __setTelegramDeps({
+    notificationsEnabled: () => true,
+    fetch: async (url, opts) => {
+      seen = { url, body: opts.body, hasSignal: Boolean(opts.signal) };
+      return { json: async () => ({ ok: true, result: { message_id: 9 } }) };
+    },
+  });
+  try {
+    const res = await sendTelegramAudio(123456789, Buffer.from('ID3'), { caption: 'Voicemail from +13125550147' });
+    assert.strictEqual(res.ok, true);
+    assert.match(seen.url, /\/botBOTTOK123\/sendAudio$/);
+    assert.ok(seen.body instanceof FormData);
+    assert.strictEqual(seen.body.get('chat_id'), '123456789');
+    assert.strictEqual(seen.body.get('caption'), 'Voicemail from +13125550147');
+    assert.ok(seen.hasSignal, 'the Bot API call must be bounded by a timeout');
+  } finally {
+    __setTelegramDeps({ fetch: (...a) => globalThis.fetch(...a) });
+    restoreEnv();
+  }
+});
+
+test('sendTelegramAudio > never throws on a network error', async () => {
+  process.env.TELEGRAM_BOT_TOKEN = 'BOTTOK123';
+  process.env.SEND_NOTIFICATIONS = 'true';
+  __setTelegramDeps({
+    notificationsEnabled: () => true,
+    fetch: async () => { throw new Error('socket hang up'); },
+  });
+  try {
+    const res = await sendTelegramAudio(123456789, Buffer.from('ID3'), {});
+    assert.strictEqual(res.ok, false);
+    assert.match(res.error, /socket hang up/);
+  } finally {
+    __setTelegramDeps({ fetch: (...a) => globalThis.fetch(...a) });
+    restoreEnv();
+  }
+});
+
+test('sendTelegramMessage > bounds the Bot API call with an abort signal', async () => {
+  // The ping fires AFTER the TwiML response, so no caller waits on this. The
+  // bound is general hygiene: a hung Bot API must not pin a request or a
+  // scheduler tick indefinitely.
+  process.env.TELEGRAM_BOT_TOKEN = 'BOTTOK123';
+  process.env.SEND_NOTIFICATIONS = 'true';
+  let hasSignal = false;
+  __setTelegramDeps({
+    notificationsEnabled: () => true,
+    fetch: async (url, opts) => { hasSignal = Boolean(opts.signal); return { json: async () => ({ ok: true }) }; },
+  });
+  try {
+    await sendTelegramMessage(123456789, 'hi');
+    assert.ok(hasSignal);
+  } finally {
+    __setTelegramDeps({ fetch: (...a) => globalThis.fetch(...a) });
+    restoreEnv();
   }
 });

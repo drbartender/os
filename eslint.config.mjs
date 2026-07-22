@@ -35,6 +35,10 @@ export default [
         TextDecoder: "readonly",
         AbortSignal: "readonly",
         structuredClone: "readonly",
+        // Node 26 web globals used by the voicemail audio upload
+        // (server/utils/telegram.js sendTelegramAudio posts multipart).
+        FormData: "readonly",
+        Blob: "readonly",
       },
     },
     rules: {

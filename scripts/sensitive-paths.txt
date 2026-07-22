@@ -50,6 +50,17 @@ server/routes/telegram.js
 server/utils/leadCallTrigger.js
 server/utils/twilioSignature.js
 server/utils/sms.js
+# 224-inbound voicemail (2026-07-22): telegram.js carries the audio upload and
+# every Bot API send; voicemail.js constructs the authenticated Twilio media
+# URLs and issues the destructive recording delete. Neither matched an existing
+# glob (server/utils/* globs never cross '/'), so both were invisible to
+# review-scaling until listed explicitly.
+server/utils/telegram.js
+server/utils/voicemail.js
+# pendingCall.js owns the VA-calling claim-then-call primitives, the DB-backed
+# outbound spend-cap count, and the voicemail ledger prune. Matched no glob for
+# the same reason as the two above.
+server/utils/pendingCall.js
 
 # Auth / guards / limits / the shared error funnel
 server/middleware/auth.js
