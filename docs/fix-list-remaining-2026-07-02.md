@@ -298,3 +298,9 @@ Ride-along when this is built: `actions.js:286` re-reads the just-inserted payme
 `SELECT id FROM proposal_payments WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 1`
 instead of `RETURNING id` on the INSERT. Under concurrent inserts that links the wrong payment
 row to the invoice.
+
+## Push-review residuals (2026-07-22, unverified suggestions, deferred)
+- googlePlaces.js: out-of-area guard + pick() shortText fallback not routed through normalizeVenueState (two spots; Places flow only).
+- proposalEditor: blank guest_count previews at 50 but PATCHes 0; add client-side required validation.
+- repriceSummary: already-overpaid + price-increase edge shows consequence lines the server will not perform (copy precision).
+- leadCallTrigger: reply_stale/reply_confirmed_late fault rows consume LEAD_CALL_DAILY_CAP headroom (status 'failed' counts as non-skipped); irrelevant at current volume, revisit if cap ever tightens.
