@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const {
   detectOptKeyword,
+  detectHelpKeyword,
   detectResponseCode,
   lookupSender,
   recordInboundMessage,
@@ -38,6 +39,20 @@ test('detectOptKeyword > returns null for non-keyword text', () => {
   assert.strictEqual(detectOptKeyword(null), null);
 });
 
+test('detectHelpKeyword > recognizes HELP and INFO, case-insensitive, whole-body', () => {
+  for (const word of ['HELP', 'help', '  Help ', 'INFO', 'info', ' Info']) {
+    assert.strictEqual(detectHelpKeyword(word), 'help', `expected help for "${word}"`);
+  }
+});
+
+test('detectHelpKeyword > returns null for free-form text and other keywords', () => {
+  assert.strictEqual(detectHelpKeyword('help me reschedule'), null);
+  assert.strictEqual(detectHelpKeyword('need info please'), null);
+  assert.strictEqual(detectHelpKeyword('stop'), null);
+  assert.strictEqual(detectHelpKeyword(''), null);
+  assert.strictEqual(detectHelpKeyword(null), null);
+});
+
 test('detectResponseCode > recognizes CONFIRM, case-insensitive, whole-word', () => {
   for (const word of ['CONFIRM', 'confirm', ' Confirm ']) {
     assert.strictEqual(detectResponseCode(word), 'confirm');
@@ -67,6 +82,7 @@ before(async () => {
   await pool.query("DELETE FROM contractor_profiles WHERE phone = '(312) 555-0149'");
   await pool.query("DELETE FROM users WHERE email = 'sms-lookup-staff@example.com'");
   await pool.query("DELETE FROM clients WHERE email = 'sms-lookup-client@example.com'");
+  await pool.query("DELETE FROM sms_messages WHERE twilio_sid LIKE 'SMtest_help_%'");
 
   const c = await pool.query(
     `INSERT INTO clients (name, email, phone) VALUES ('SMS Lookup Client', 'sms-lookup-client@example.com', '3125550148')
@@ -424,6 +440,55 @@ test('processInboundSms > a retried relay MessageSid is a duplicate no-op', asyn
   const second = await processInboundSms({ from: '+18392750001', body: 'echo', twilioSid: 'SMtest_relay_dup' });
   assert.strictEqual(second.outcome, 'duplicate');
   await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_relay_dup'");
+});
+
+test('processInboundSms > HELP from a client returns the compliance reply and takes no other action', async () => {
+  try {
+    const result = await processInboundSms({ from: '+13125550148', body: 'HELP', twilioSid: 'SMtest_help_client' });
+    assert.strictEqual(result.outcome, 'help');
+    assert.match(result.reply, /^Dr\. Bartender:/);
+    assert.match(result.reply, /Reply STOP to opt out/);
+    assert.match(result.reply, /contact@drbartender\.com/);
+    // HELP must never flip a preference — it answers regardless of opt state.
+    const r = await pool.query('SELECT communication_preferences FROM clients WHERE id = $1', [lsClientId]);
+    assert.notStrictEqual(r.rows[0].communication_preferences?.sms_enabled, false, 'HELP must not opt the client out');
+    // recorded with the help audit tag
+    const row = await pool.query("SELECT metadata FROM sms_messages WHERE twilio_sid = 'SMtest_help_client'");
+    assert.strictEqual(row.rows[0].metadata.help_keyword, true);
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_help_client'");
+  }
+});
+
+test('processInboundSms > HELP (as INFO) from staff replies with the compliance copy, not the freeform-admin path', async () => {
+  try {
+    const result = await processInboundSms({ from: '+13125550149', body: 'info', twilioSid: 'SMtest_help_staff' });
+    assert.strictEqual(result.outcome, 'help');
+    assert.match(result.reply, /Reply STOP to opt out/);
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_help_staff'");
+  }
+});
+
+test('processInboundSms > HELP from an unknown number replies without an unknown-sender alert', async () => {
+  try {
+    const result = await processInboundSms({ from: '+19998887777', body: 'HELP', twilioSid: 'SMtest_help_unknown' });
+    assert.strictEqual(result.outcome, 'help');
+    assert.match(result.reply, /contact@drbartender\.com/);
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_help_unknown'");
+  }
+});
+
+test('processInboundSms > a retried HELP MessageSid is a duplicate no-op', async () => {
+  try {
+    const first = await processInboundSms({ from: '+13125550148', body: 'HELP', twilioSid: 'SMtest_help_dup' });
+    assert.strictEqual(first.outcome, 'help');
+    const second = await processInboundSms({ from: '+13125550148', body: 'HELP', twilioSid: 'SMtest_help_dup' });
+    assert.strictEqual(second.outcome, 'duplicate');
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_help_dup'");
+  }
 });
 
 test('processInboundSms > a stranded (processed=false) opt-out re-applies on Twilio retry, then settles (audit F1b heal)', async () => {

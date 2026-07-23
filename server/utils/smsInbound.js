@@ -9,6 +9,8 @@ const { getEventTypeLabel } = require('./eventTypes');
 
 const STOP_WORDS = new Set(['stop', 'unsubscribe', 'end', 'cancel', 'quit']);
 const START_WORDS = new Set(['start', 'unstop', 'yes']);
+// The two default HELP keywords a Twilio Advanced Opt-Out HELP response answers.
+const HELP_WORDS = new Set(['help', 'info']);
 
 // Shared "talk to a human" line for replies where this automated number cannot
 // act. The 312 line is the company Google Voice number staffed by Dallas/Zul.
@@ -17,6 +19,11 @@ const AMBIGUOUS_RESPONSE_REPLY = `Dr. Bartender: we couldn't match this text to 
 const NO_CONFIRM_SHIFT_REPLY = `Dr. Bartender: we did not find an upcoming shift to confirm for you. Please ${HUMAN_CONTACT_LINE} if that seems wrong.`;
 const NO_CANT_SHIFT_REPLY = `Dr. Bartender: we did not find an upcoming shift to release for you. Please ${HUMAN_CONTACT_LINE} if that seems wrong.`;
 const FREEFORM_STAFF_REPLY = `Dr. Bartender: this number is automated. For anything else, please ${HUMAN_CONTACT_LINE}.`;
+// Carrier/CTIA-shaped HELP reply: brand, message scope, rate disclosure, opt-out
+// keyword, and a support contact. Sent in code (not via Twilio Advanced Opt-Out)
+// so the promise the client SMS consent copy makes ("HELP for help") does not
+// depend on a console toggle.
+const HELP_REPLY = 'Dr. Bartender: we text about your quote, booking, payments, and event details. Msg & data rates may apply. Reply STOP to opt out. Help: contact@drbartender.com';
 
 /**
  * Classify a message body as an opt-out / opt-in keyword.
@@ -32,6 +39,20 @@ function detectOptKeyword(body) {
   if (STOP_WORDS.has(word)) return 'stop';
   if (START_WORDS.has(word)) return 'start';
   return null;
+}
+
+/**
+ * Classify a message body as a HELP/INFO info request. Whole-body match only,
+ * same discipline as detectOptKeyword ("help me" is free-form, not HELP). We
+ * answer these in code rather than relying on Twilio Advanced Opt-Out, because
+ * the client SMS consent copy promises "HELP for help".
+ *
+ * @param {string} body
+ * @returns {'help'|null}
+ */
+function detectHelpKeyword(body) {
+  if (!body || typeof body !== 'string') return null;
+  return HELP_WORDS.has(body.trim().toLowerCase()) ? 'help' : null;
 }
 
 /**
@@ -595,6 +616,19 @@ async function processInboundSms({ from, body, twilioSid }) {
     return settle(twilioSid, { outcome: `opt_${optKeyword}`, reply: null });
   }
 
+  // HELP/INFO — a mandated info reply, handled before sender-type branching for
+  // any sender and answered even after an opt-out. Twilio does not auto-reply to
+  // HELP unless Advanced Opt-Out is enabled console-side, so we send our own copy
+  // via TwiML (the route renders `reply`). Recorded + deduped like STOP/START; it
+  // never changes an opt preference.
+  const helpKeyword = detectHelpKeyword(text);
+  if (helpKeyword) {
+    const clientId = sender.type === 'client' ? sender.client.id : null;
+    const proceed = await recordAndShouldProcess({ fromPhone: from, body: text, clientId, twilioSid, metadata: { help_keyword: true } });
+    if (!proceed) return { outcome: 'duplicate', reply: null };
+    return settle(twilioSid, { outcome: 'help', reply: HELP_REPLY });
+  }
+
   // Record the message (client_id set only for a client sender). Heal-aware: an
   // unsettled prior record (stranded by a failed side-effect) is re-processed.
   const clientId = sender.type === 'client' ? sender.client.id : null;
@@ -676,6 +710,7 @@ async function processInboundSms({ from, body, twilioSid }) {
 
 module.exports = {
   detectOptKeyword,
+  detectHelpKeyword,
   detectResponseCode,
   lookupSender,
   findStaffCandidatesByPhone,

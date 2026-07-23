@@ -422,7 +422,7 @@ Read-side mirror of Stripe payouts + balance-transaction lines (`server/routes/s
 ### Two-Way SMS — `/api/sms`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/inbound` | Twilio signature | Twilio inbound-SMS webhook (signature-verified, no JWT) — handles STOP/START opt-out and staff CONFIRM/CANT response codes |
+| POST | `/inbound` | Twilio signature | Twilio inbound-SMS webhook (signature-verified, no JWT) — handles STOP/START opt-out, HELP/INFO info replies, and staff CONFIRM/CANT response codes |
 | GET | `/conversations` | Admin/Manager | List SMS conversations, one row per client with an unread inbound count |
 | GET | `/conversations/:clientId` | Admin/Manager | Full SMS thread for a client |
 | POST | `/conversations/:clientId/reply` | Admin/Manager | Send an outbound SMS reply to a client |
