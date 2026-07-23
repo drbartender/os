@@ -135,7 +135,7 @@ async function recordSmsConsent(db, {
        -- the write. Uses the same normalized form as idx_clients_phone_normalized.
        AND NOT EXISTS (
          SELECT 1 FROM clients v
-          WHERE RIGHT(REGEXP_REPLACE(COALESCE(v.phone, ''), '\\D', '', 'g'), 10) = $3
+          WHERE RIGHT(REGEXP_REPLACE(v.phone, '\\D', '', 'g'), 10) = $3
             AND v.communication_preferences->'sms_opt_out_at' IS NOT NULL
        )`,
     [clientId, JSON.stringify(consented), phone10]

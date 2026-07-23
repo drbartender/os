@@ -248,14 +248,69 @@ test('public submit > cannot flip an EXISTING client\'s SMS preference', async (
   assert.equal(log.rows[0].phone, ctx.phone, 'the attacker phone never landed in the log');
 });
 
-test('public submit > omitting consent fields leaves the client default untouched', async () => {
+test('public submit > a NEW client with no consent field is left SMS-off (no recorded opt-in)', async () => {
+  // Fail-safe: a brand-new client (nothing to "grandfather") whose submit
+  // recorded no affirmative opt-in must not be left at the clients column
+  // default of sms_enabled:true, because the initial-proposal SMS gate
+  // (messageSuppression.shouldSendImmediate) and sendAndLogSms trust that flag as
+  // the sole opt-out enforcement. Soft-off only: no sms_opt_out_at stamp, since
+  // an absent box is not a STOP.
   const ctx = freshCtx();
   const res = await request('POST', '/api/proposals/public/submit', submitBody(ctx));
   assert.equal(res.status, 201, res.raw);
 
   const client = await clientFor(ctx.email, res.body.token);
-  assert.equal(client.p.sms_enabled, true, 'grandfathered default');
-  assert.equal(client.p.sms_opt_in_at, undefined, 'no stamp without an answer');
+  assert.equal(client.p.sms_enabled, false, 'no recorded opt-in => SMS off');
+  assert.equal(client.p.sms_opt_in_at, undefined, 'no opt-in stamp without an answer');
+  assert.equal(client.p.sms_opt_out_at, undefined, 'soft off, not a hard STOP');
+
+  const log = await pool.query('SELECT id FROM sms_consent_log WHERE client_id = $1', [client.id]);
+  assert.equal(log.rows.length, 0, 'nothing to log without an answer');
+});
+
+test('public submit > a NEW client whose number is under a prior STOP is left SMS-off', async () => {
+  // The compliance case codex caught. A number opts out on one row; then a fresh
+  // submit with a DIFFERENT identity (so dedup creates a new row) ticks the box.
+  // recordSmsConsent detects the per-number STOP and records nothing, so without
+  // the fail-safe the new row would sit at the default sms_enabled:true and the
+  // initial-proposal SMS would text a number under an active STOP.
+  const stopper = freshCtx();
+  const optOut = await request('POST', '/api/proposals/public/submit', submitBody(stopper, {
+    sms_consent: false, sms_consent_version: SMS_CONSENT_VERSION,
+  }));
+  assert.equal(optOut.status, 201, optOut.raw);
+  const stopClient = await clientFor(stopper.email, optOut.body.token);
+  assert.equal(stopClient.p.sms_enabled, false);
+  assert.ok(stopClient.p.sms_opt_out_at, 'the number is now under a STOP');
+
+  const impostor = freshCtx();
+  const res = await request('POST', '/api/proposals/public/submit', submitBody(impostor, {
+    client_name: 'Someone Else',
+    client_phone: stopper.phone,
+    sms_consent: true, sms_consent_version: SMS_CONSENT_VERSION,
+  }));
+  assert.equal(res.status, 201, res.raw);
+  const newClient = await clientFor(impostor.email, res.body.token);
+  assert.notEqual(newClient.id, stopClient.id, 'a distinct row was created');
+  assert.equal(newClient.p.sms_enabled, false, 'a STOPped number stays SMS-off on the new row');
+
+  const log = await pool.query('SELECT id FROM sms_consent_log WHERE client_id = $1', [newClient.id]);
+  assert.equal(log.rows.length, 0, 'no opt-in recorded against a STOPped number');
+});
+
+test('public submit > a NEW client with an unknown consent version is left SMS-off', async () => {
+  // Version skew (Vercel ships the new bundle before Render ships the server):
+  // the box was ticked but we cannot say to what, so nothing is recorded. The
+  // client must not be left SMS-on with no provable opt-in.
+  const ctx = freshCtx();
+  const res = await request('POST', '/api/proposals/public/submit', submitBody(ctx, {
+    sms_consent: true, sms_consent_version: 'v-does-not-exist',
+  }));
+  assert.equal(res.status, 201, res.raw);
+
+  const client = await clientFor(ctx.email, res.body.token);
+  assert.equal(client.p.sms_enabled, false, 'unrecordable consent => SMS off');
+  assert.equal(client.p.sms_opt_out_at, undefined, 'soft off, not a hard STOP');
 
   const log = await pool.query('SELECT id FROM sms_consent_log WHERE client_id = $1', [client.id]);
   assert.equal(log.rows.length, 0);

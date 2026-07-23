@@ -287,6 +287,11 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     // sendProposalSentEmail's channel decision; reading it first would send the
     // confirmation against the preference this submit just replaced.
     const consent = consentFieldsFromBody({ sms_consent, sms_consent_version });
+    // Did THIS submit record an affirmative SMS opt-in? Only that keeps a new
+    // client SMS-on (see the fail-safe write after this block). recordSmsConsent
+    // sets sms_enabled=true only when consented AND it actually wrote the row
+    // (applied), so prior_opt_out / unknown_version / no_phone all leave it false.
+    let smsOptInApplied = false;
     if (consent) {
       const meta = requestMeta(req);
       const outcome = await recordSmsConsent(dbClient, {
@@ -299,6 +304,7 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
         ip: meta.ip,
         userAgent: meta.userAgent,
       });
+      smsOptInApplied = consent.consented === true && outcome.applied === true;
       // A ticked box that recorded nothing is invisible to everyone otherwise:
       // the client saw a successful submit and we hold no proof. The version
       // case is the one that bites in practice (Vercel ships the new bundle
@@ -316,6 +322,30 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
           extra: { clientId: finalClientId, version: consent.version },
         });
       }
+    }
+
+    // Fail-safe SMS default for a NEWLY CREATED wizard client. The clients column
+    // default is sms_enabled:true, and the initial-proposal SMS gate
+    // (messageSuppression.shouldSendImmediate) plus sendAndLogSms trust that flag
+    // as the SOLE opt-out enforcement (there is no separate per-number STOP check
+    // on the send path). recordSmsConsent writes the flag only on its opt-in and
+    // explicit-decline paths; on prior_opt_out, unknown_version, or an absent
+    // consent field it writes nothing, which would leave a brand-new client
+    // SMS-on with no recorded opt-in, and in the prior_opt_out case that texts a
+    // number under an active STOP. So a new wizard client is SMS-off unless this
+    // submit recorded an affirmative opt-in. Existing clients are untouched (the
+    // ownership rule). Soft-off only: no sms_opt_out_at stamp, since the absence
+    // of an opt-in is not a STOP.
+    if (clientIsNew && !smsOptInApplied) {
+      await dbClient.query(
+        `UPDATE clients
+            SET communication_preferences = jsonb_set(
+                  COALESCE(communication_preferences, '{}'::jsonb),
+                  '{sms_enabled}', 'false'::jsonb)
+          WHERE id = $1
+            AND (communication_preferences->>'sms_enabled') IS DISTINCT FROM 'false'`,
+        [finalClientId]
+      );
     }
 
     const prefRow = await dbClient.query(
