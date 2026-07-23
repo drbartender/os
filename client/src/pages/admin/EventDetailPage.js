@@ -196,11 +196,15 @@ export default function EventDetailPage() {
             )}
             <div className="muted" style={{ fontSize: 13 }}>
               {fmtDateFull(proposal.event_date && String(proposal.event_date).slice(0, 10))}
-              {timeRange && ` · ${timeRange}`}
               {/* Back-of-house setup time (server-derived; never on public surfaces) */}
               {proposal.setup_time_display && ` · setup ${proposal.setup_time_display}`}
-              {proposal.event_location && <>{' · '}<AddressLink address={proposal.event_location} mapQuery={venueMapQuery(proposal)} /></>}
+              {timeRange && ` · service ${timeRange}`}
             </div>
+            {proposal.event_location && (
+              <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
+                <AddressLink address={proposal.event_location} mapQuery={venueMapQuery(proposal)} />
+              </div>
+            )}
             {contactBits.length > 0 && (
               <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
                 {contactBits.join(' · ')}
