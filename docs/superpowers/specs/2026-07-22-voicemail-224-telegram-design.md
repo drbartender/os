@@ -1,7 +1,10 @@
 # Voicemail on the 224 line, delivered to Telegram (design)
 
 Date: 2026-07-22
-Revision: 4 (rev 4 corrects two rules the per-lane review overturned during the
+Revision: 5 (rev 5 records that the build-time docs check of the open item came
+back inconclusive, since Twilio does not document the caller-hangup-mid-ring
+case, and splits the live-test step meant to cover it into a true mid-ring call.
+Rev 4 corrects two rules the per-lane review overturned during the
 build: the gated-send path writes no status rather than 'skipped', and the prune
 keys on whether audio still exists in Twilio rather than on terminality. Rev 2
 folded in the `/review-spec` fleet: spec-grounding, spec-gaps,
@@ -417,6 +420,15 @@ against current Twilio docs and a live test call before the feature is
 considered done. If there is a hole there, it comes back for a decision rather
 than getting papered over. This is also why the feature ships dark.
 
+Docs check, 2026-07-22: inconclusive. Twilio's official `<Dial>` reference and
+support do not document which `DialCallStatus`, if any, a caller-hangup-mid-ring
+produces, so this cannot be closed from the docs and rests entirely on the live
+test (Rollout step 5). The merged code is robust to the answer either way: a
+`no-answer` or `canceled` result is in `MISSED_STATUSES` and pings; a `completed`
+result is correctly not pinged, since it is indistinguishable from an answered
+call and the caller left no voicemail. The only unresolved case is the callback
+not firing at all, which step 5 now exercises directly.
+
 ## Rollout and live test
 
 There is no local or staging path: dev fails closed on signature now, Twilio can
@@ -432,10 +444,19 @@ production, against Zul's real chat, with real deletion. Procedure:
    out, leaves a short message.
 4. Confirm: ping arrives with a copy-pasteable number, audio arrives and plays,
    the row reads `delivered`, and the recording is gone from the Twilio console.
-5. Second call: ring out, hang up during the greeting without recording. Confirm
-   the ping still arrives. This is the open item above.
-6. Third call: answer it. Confirm no ping and no recording.
-7. Listen to the synthetic greeting and decide whether to keep it or record one.
+5. **The open item.** Call the 224 and hang up at roughly 5 seconds, while it is
+   still ringing, well before the 20 second timeout. Watch whether `POST
+   /api/voice/inbound/missed` is requested at all, and with what `DialCallStatus`.
+   A status in `MISSED_STATUSES` (`no-answer`/`busy`/`failed`/`canceled`) means a
+   ping arrives and the "ping on every missed call" decision holds; `completed`
+   means no ping, which is correct and not a bug; no request at all means the
+   mid-ring case never notifies and it comes back for a decision.
+6. Ring-out, no message: call, let it ring the full timeout so the greeting
+   plays, then hang up during the greeting without recording. Confirm the ping
+   still arrives. This is the `no-answer` path, and it is what surfaces a missed
+   lead even when no voicemail is left.
+7. Answer a call. Confirm no ping and no recording.
+8. Listen to the synthetic greeting and decide whether to keep it or record one.
 
 ## Out of scope
 
