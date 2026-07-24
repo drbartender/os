@@ -456,28 +456,11 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   // charge — a pending row means a refund may already be in flight at Stripe
   // (reconcile failed, webhook will adopt it), and Stripe's cap only blocks
   // doubles that exceed the charge, not a repeated PARTIAL amount.
-  const payRes = await pool.query(
-    `SELECT pp.id,
-            pp.stripe_payment_intent_id,
-            pp.amount
-              - COALESCE((SELECT SUM(pr.amount) FROM proposal_refunds pr
-                           WHERE pr.payment_id = pp.id AND pr.status IN ('succeeded', 'pending')), 0)
-              AS "remainingCents"
-       FROM proposal_payments pp
-      WHERE pp.proposal_id = $1
-        AND pp.status = 'succeeded'
-        AND pp.stripe_payment_intent_id IS NOT NULL
-        AND pp.payment_type IN ('deposit', 'balance', 'full', 'invoice')`,
-    [proposalId]
-  );
-
-  const { planRefund } = require('../utils/refundHelpers');
+  // Shared with the cancel-line flow (extracted verbatim 2026-07-24): one
+  // source of truth for per-charge refund headroom.
+  const { planRefund, loadPaymentsWithRemaining } = require('../utils/refundHelpers');
   const plan = planRefund({
-    paymentsWithRemaining: payRes.rows.map(r => ({
-      id: r.id,
-      stripe_payment_intent_id: r.stripe_payment_intent_id,
-      remainingCents: Number(r.remainingCents),
-    })),
+    paymentsWithRemaining: await loadPaymentsWithRemaining(proposalId),
     requestedDollars: amount,
     amountPaidDollars: Number(proposal.amount_paid),
     totalPriceDollars: Number(proposal.total_price),

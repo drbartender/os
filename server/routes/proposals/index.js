@@ -16,6 +16,7 @@ router.use('/', require('./metadata'));
 router.use('/', require('./lifecycle'));
 router.use('/', require('./actions'));
 router.use('/', require('./cancel'));
+router.use('/', require('./cancelLineItem')); // line-item cancel: /:id/cancel-line*
 router.use('/', require('./changeRequests'));
 router.use('/', require('./groups'));
 router.use('/', require('./notifyPreflight'));

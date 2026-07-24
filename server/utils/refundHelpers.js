@@ -10,11 +10,78 @@
  * for the proposals columns.
  */
 
+const { pool } = require('../db');
 const { reconcileProposalPaymentStatus } = require('./proposalStatus');
 const { CONTRACT_LABELS, OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
 
 function fmtUSD(cents) {
   return '$' + (cents / 100).toFixed(2);
+}
+
+/**
+ * Load a proposal's refundable charges with cents still refundable per charge.
+ * EXACT extraction of the inline SQL that lived in routes/stripe.js POST
+ * /refund/:id (2026-07-24, cancel-line) so the admin panel and the cancel-line
+ * flow share one source of money truth. Semantics unchanged: succeeded,
+ * intent-bearing payments on the standard rails ('deposit','balance','full',
+ * 'invoice'; the drink_plan_* rails stay excluded), remaining = amount minus
+ * succeeded AND pending refunds (a pending row may already be in flight at
+ * Stripe, so it conservatively blocks headroom).
+ *
+ * @param {number} proposalId
+ * @param {object} [dbClient]  held tx client, or the shared pool
+ * @returns {Promise<{id:number, stripe_payment_intent_id:string, remainingCents:number}[]>}
+ */
+async function loadPaymentsWithRemaining(proposalId, dbClient = pool) {
+  const res = await dbClient.query(
+    `SELECT pp.id,
+            pp.stripe_payment_intent_id,
+            pp.amount
+              - COALESCE((SELECT SUM(pr.amount) FROM proposal_refunds pr
+                           WHERE pr.payment_id = pp.id AND pr.status IN ('succeeded', 'pending')), 0)
+              AS "remainingCents"
+       FROM proposal_payments pp
+      WHERE pp.proposal_id = $1
+        AND pp.status = 'succeeded'
+        AND pp.stripe_payment_intent_id IS NOT NULL
+        AND pp.payment_type IN ('deposit', 'balance', 'full', 'invoice')`,
+    [proposalId]
+  );
+  return res.rows.map((r) => ({
+    id: r.id,
+    stripe_payment_intent_id: r.stripe_payment_intent_id,
+    remainingCents: Number(r.remainingCents),
+  }));
+}
+
+/**
+ * Split an overpayment across refundable charges, largest remaining first.
+ * PURE. A single refund never spans a Stripe charge (the EXCEEDS_SINGLE_CHARGE
+ * rule), so an overpayment bigger than any one charge becomes sequential
+ * per-charge splits. Cents left after all charge headroom are external/CC
+ * money (Zelle, CC transfer) with no Stripe charge behind them: returned by
+ * hand, reported as manualReturnCents, never fired through Stripe.
+ *
+ * @param {object} args
+ * @param {{id:number, stripe_payment_intent_id:string, remainingCents:number}[]} args.paymentsWithRemaining
+ * @param {number} args.overpaymentCents
+ * @returns {{splits:{paymentId:number, paymentIntentId:string, amountCents:number}[],
+ *            stripeRefundableCents:number, manualReturnCents:number}}
+ */
+function planOverpaymentSplits({ paymentsWithRemaining, overpaymentCents }) {
+  const splits = [];
+  let needed = Math.max(0, Math.trunc(Number(overpaymentCents) || 0));
+  const candidates = (paymentsWithRemaining || [])
+    .filter((p) => p.remainingCents > 0 && p.stripe_payment_intent_id)
+    .sort((a, b) => b.remainingCents - a.remainingCents);
+  for (const p of candidates) {
+    if (needed <= 0) break;
+    const take = Math.min(needed, p.remainingCents);
+    splits.push({ paymentId: p.id, paymentIntentId: p.stripe_payment_intent_id, amountCents: take });
+    needed -= take;
+  }
+  const stripeRefundableCents = splits.reduce((s, x) => s + x.amountCents, 0);
+  return { splits, stripeRefundableCents, manualReturnCents: needed };
 }
 
 /**
@@ -110,7 +177,7 @@ function planRefund({ paymentsWithRemaining, requestedDollars, amountPaidDollars
  * @returns {Promise<{applied:boolean}>}     applied=false → was already done
  */
 async function applyRefundReconciliation(
-  { proposalId, stripeRefundId, paymentIntentId, paymentId, amountCents, reason, issuedBy },
+  { proposalId, stripeRefundId, paymentIntentId, paymentId, amountCents, reason, issuedBy, totalScope = null },
   dbClient
 ) {
   // Serialize ALL refund reconciliation for this proposal on the proposals
@@ -142,12 +209,19 @@ async function applyRefundReconciliation(
   // provisional value (= totalBefore) to satisfy NOT NULL; overwrite later.
   let refundRowId;
   const pending = await dbClient.query(
-    `SELECT id FROM proposal_refunds
+    `SELECT id, total_scope FROM proposal_refunds
       WHERE stripe_payment_intent_id = $1 AND amount = $2
         AND status = 'pending' AND stripe_refund_id IS NULL
       ORDER BY created_at ASC LIMIT 1`,
     [paymentIntentId, amountCents]
   );
+  // total_price rule for THIS refund. The row is the source of truth (the
+  // charge.refunded webhook and the stale-pending sweeper adopt pending rows
+  // with no memory of the issuing caller); the param covers a direct call from
+  // refundExecute before adoption; 'contract' is the historical default.
+  const scope = (pending.rows[0] && pending.rows[0].total_scope)
+    || totalScope
+    || 'contract';
   if (pending.rows[0]) {
     refundRowId = pending.rows[0].id;
     await dbClient.query(
@@ -160,11 +234,11 @@ async function applyRefundReconciliation(
     const ins = await dbClient.query(
       `INSERT INTO proposal_refunds
          (proposal_id, payment_id, stripe_payment_intent_id, stripe_refund_id,
-          amount, reason, total_price_before, total_price_after, issued_by, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$7,$8,'succeeded')
+          amount, reason, total_price_before, total_price_after, issued_by, status, total_scope)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$7,$8,'succeeded',$9)
        RETURNING id`,
       [proposalId, paymentId, paymentIntentId, stripeRefundId, amountCents,
-       reason, totalBefore, issuedBy]
+       reason, totalBefore, issuedBy, scope]
     );
     refundRowId = ins.rows[0].id;
   }
@@ -184,11 +258,12 @@ async function applyRefundReconciliation(
     const links = await dbClient.query(
       `SELECT ip.invoice_id,
               i.label AS invoice_label,
+              i.locked AS invoice_locked,
               SUM(ip.amount)::int AS net_applied
          FROM invoice_payments ip
          JOIN invoices i ON i.id = ip.invoice_id
         WHERE ip.payment_id = $1
-        GROUP BY ip.invoice_id, i.label
+        GROUP BY ip.invoice_id, i.label, i.locked
        HAVING SUM(ip.amount) > 0
         ORDER BY ip.invoice_id ASC`,
       [paymentId]
@@ -215,16 +290,34 @@ async function applyRefundReconciliation(
         'INSERT INTO invoice_payments (invoice_id, payment_id, amount, refund_id) VALUES ($1,$2,$3,$4)',
         [link.invoice_id, paymentId, -take, refundRowId]
       );
-      // Drop amount_due AND amount_paid by `take` so a fully-paid invoice
-      // stays paid at the corrected figure (no phantom unpaid line).
-      const upd = await dbClient.query(
-        `UPDATE invoices
-            SET amount_paid = GREATEST(amount_paid - $1, 0),
-                amount_due  = GREATEST(amount_due  - $1, 0)
-          WHERE id = $2
-          RETURNING amount_due, amount_paid`,
-        [take, link.invoice_id]
-      );
+      // Contract scope: drop amount_due AND amount_paid by `take` so a
+      // fully-paid invoice stays paid at the corrected figure (no phantom
+      // unpaid line). Overpayment scope splits by the invoice's lock:
+      //   - UNLOCKED: amount_paid only. refreshUnlockedInvoices already
+      //     rebuilt this invoice's demand at the new total inside the cancel
+      //     transaction; dropping amount_due again would mint phantom credit.
+      //   - LOCKED: both, exactly like contract scope. The refresh never
+      //     touches a locked invoice, so nothing else corrects its demand;
+      //     paid-only would leave due > paid and flip a settled locked
+      //     invoice to a client-visible partially_paid phantom balance
+      //     (merge-fleet code-review, 2026-07-24).
+      const dropDue = scope !== 'overpayment' || link.invoice_locked === true;
+      const upd = dropDue
+        ? await dbClient.query(
+            `UPDATE invoices
+                SET amount_paid = GREATEST(amount_paid - $1, 0),
+                    amount_due  = GREATEST(amount_due  - $1, 0)
+              WHERE id = $2
+              RETURNING amount_due, amount_paid`,
+            [take, link.invoice_id]
+          )
+        : await dbClient.query(
+            `UPDATE invoices
+                SET amount_paid = GREATEST(amount_paid - $1, 0)
+              WHERE id = $2
+              RETURNING amount_due, amount_paid`,
+            [take, link.invoice_id]
+          );
       if (upd.rows[0]) {
         const inv = upd.rows[0];
         const newStatus = inv.amount_paid >= inv.amount_due ? 'paid' : 'partially_paid';
@@ -243,7 +336,12 @@ async function applyRefundReconciliation(
   // total_price drops ONLY by the contract portion (Approach A) — extra-scope
   // refunds leave the base contract total intact. Exact NUMERIC division
   // ($/100.0); GREATEST clamps ≥ 0.
-  const contractCents = amountCents - nonContractCents;
+  // Overpayment scope (cancel-line, 2026-07-24): the fold already lowered
+  // total_price to the corrected figure BEFORE this refund fired; treating the
+  // contract-linked portion as a total_price drop here would lower it twice
+  // (a $200 removal ending $400 lower). Scope-zero the contract portion so the
+  // total stands; amount_paid still drops by the full refunded amount.
+  const contractCents = scope === 'overpayment' ? 0 : amountCents - nonContractCents;
   const paidDropCents = amountCents - offLedgerCents;
   // Floor at 0 to match the SQL GREATEST clamp below (and planRefund's pending
   // preview). Without this the audit figure written to total_price_after could
@@ -331,4 +429,10 @@ async function applyRefundReconciliation(
   return { applied: true };
 }
 
-module.exports = { planRefund, fmtUSD, applyRefundReconciliation };
+module.exports = {
+  planRefund,
+  fmtUSD,
+  applyRefundReconciliation,
+  loadPaymentsWithRemaining,
+  planOverpaymentSplits,
+};

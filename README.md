@@ -219,6 +219,7 @@ dr-bartender/
 │   │   │   ├── notifyPreflight.js # POST /:id/notify-preflight — read-only: which client notices a pending edit would trigger + the drafted message
 │   │   │   ├── actions.js      # Per-proposal admin actions: notes, create-shift, balance-due-date, send-reminder, record-payment (carved out of crud.js)
 │   │   │   ├── cancel.js       # Cancel booked events (fix #7): /:id/cancel/preview, /:id/cancel, /:id/cancel/refund — archive + shift-cancel + comms-delete + invoice-void + idempotent tip clawback + agreement refund
+│   │   │   ├── cancelLineItem.js # Cancel line item: /:id/cancel-line/targets|preview|(execute) — one-motion removal + post-commit overpayment-scoped refunds (mounted before getOne)
 │   │   │   └── changeRequests.js # Admin change-request endpoints (queue, per-proposal list, decline)
 │   │   ├── shifts.js           # Shift scheduling
 │   │   ├── shifts.queries.js   # Extracted SQL projections/queries for shifts.js
@@ -337,6 +338,9 @@ dr-bartender/
 │   │   ├── messageSuppression.js # shouldSendImmediate(...): shared archive / comm-prefs / bad-contact gate for immediate-send paths
 │   │   ├── refundHelpers.js    # Partial-refund planner (planRefund) + idempotent reconciliation (applyRefundReconciliation, incl. status⟷money + autopay-disarm)
 │   │   ├── refundExecute.js    # Shared one-charge refund orchestration (pending row → stripe.refunds.create → applyRefundReconciliation → cleanup); used by the admin refund route AND the cancel-event refund endpoint — the only place stripe.refunds.create is called. Ambiguous Stripe errors (connection/API) leave the row `pending` (not `failed`) so the sweeper can reconcile it against Stripe
+│   │   ├── lineItemCancel.js   # Cancel-line core: target registry (addon/bar/syrup/extra-bartender/adjustment/gratuity), applyLineItemCancel (per-kind mutation → fold → invoice refresh/delta-reconcile → shift sync), preview = same core in a rolled-back tx
+│   │   ├── gratuityStaffNotice.js # Mandatory staff "you can set out a tip jar" email on gratuity removal/below-floor shrink (approved non-dropped roster; email-only by cost rule)
+│   │   ├── lineItemRemovedNotify.js # Client notice for a no-refund line-item removal (notify-toggle gated; mirrors refundClientNotify gates)
 │   │   ├── refundSweepScheduler.js # Stale-pending-refund reconciler (sweepStalePendingRefunds): rows `pending` >30 min w/ NULL stripe_refund_id are matched against stripe.refunds.list (by metadata row-id, then unique amount) → adopt via applyRefundReconciliation, or mark failed if the refund never reached Stripe (gated by RUN_REFUND_PENDING_SWEEP_SCHEDULER)
 │   │   ├── shiftReap.js        # reapShiftsForProposal: soft-cancels a proposal's shifts, denies open shift_requests, suppresses shift-level pending scheduled_messages + BEO nudges, returns per-shift approved/bartender user ids. Extracted from the cancel flow; shared by cancel AND the archive endpoint (M-1 refund-reap)
 │   │   ├── cancellationMath.js # Pure cancellation-refund math (computeCancellationRefund; all CENTS): >14d excess-less-5%-fee + full gratuity, <=14d gratuity-only, DRB full refund

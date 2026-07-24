@@ -24,8 +24,20 @@
  * @param {Array}  args.syrupsAfter   syrup id array (self-provided filtered)
  * @param {number} args.numBarsBefore pre-change bar count
  * @param {number} args.numBarsAfter  post-change bar count
+ * @param {number} [args.numBartendersBefore] pre-change bartender count; omit
+ *                 (with After) to use proposal.num_bartenders on both legs
+ * @param {number} [args.numBartendersAfter]  post-change bartender count
+ * @param {Array}  [args.adjustmentsBefore]   pre-change adjustments; omit
+ *                 (with After) to use proposal.adjustments on both legs
+ * @param {Array}  [args.adjustmentsAfter]    post-change adjustments
  * @param {string} args.statusChangeReason activity-log reason on a demotion
  * @returns {Promise<{snapshot: object, statusChanged: boolean}>}
+ *
+ * Leg contract (cancel-line, 2026-07-24): callers changing staffing or
+ * adjustments pass BOTH legs AND persist the new num_bartenders/adjustments
+ * column values themselves; the fold writes only total_price /
+ * pricing_snapshot / total_price_override. The final snapshot always prices
+ * at the After legs.
  */
 
 'use strict';
@@ -78,9 +90,16 @@ async function foldExtrasIntoProposal({
   syrupsAfter,
   numBarsBefore,
   numBarsAfter,
+  numBartendersBefore = null,
+  numBartendersAfter = null,
+  adjustmentsBefore = null,
+  adjustmentsAfter = null,
   statusChangeReason,
 }) {
-  const adjustments = proposal.adjustments || [];
+  const adjBefore = adjustmentsBefore ?? (proposal.adjustments || []);
+  const adjAfter = adjustmentsAfter ?? (proposal.adjustments || []);
+  const bartendersBefore = numBartendersBefore ?? proposal.num_bartenders;
+  const bartendersAfter = numBartendersAfter ?? proposal.num_bartenders;
 
   // A total_price_override is a CONTRACT, not a catalog computation:
   // the engine's serviceTotal REPLACES the whole calculated total with
@@ -104,20 +123,22 @@ async function foldExtrasIntoProposal({
       pkg,
       guestCount: proposal.guest_count,
       durationHours: Number(proposal.event_duration_hours),
-      numBartenders: proposal.num_bartenders,
-      adjustments,
       totalPriceOverride: null, // price the delta at CATALOG
       gratuityRate: proposal.gratuity_rate,
       tipJar: proposal.tip_jar,
     };
     const catalogBefore = calculateProposal({
       ...catalogArgs,
+      numBartenders: bartendersBefore,
+      adjustments: adjBefore,
       numBars: numBarsBefore,
       addons: addonsBefore,
       syrupSelections: syrupsBefore,
     });
     const catalogAfter = calculateProposal({
       ...catalogArgs,
+      numBartenders: bartendersAfter,
+      adjustments: adjAfter,
       numBars: numBarsAfter,
       addons: addonsAfter,
       syrupSelections: syrupsAfter,
@@ -142,10 +163,10 @@ async function foldExtrasIntoProposal({
     guestCount: proposal.guest_count,
     durationHours: Number(proposal.event_duration_hours),
     numBars: numBarsAfter,
-    numBartenders: proposal.num_bartenders,
+    numBartenders: bartendersAfter,
     addons: addonsAfter,
     syrupSelections: syrupsAfter,
-    adjustments,
+    adjustments: adjAfter,
     totalPriceOverride: effectiveOverride,
     gratuityRate: proposal.gratuity_rate, tipJar: proposal.tip_jar, // §5 preserve stored gratuity
   });

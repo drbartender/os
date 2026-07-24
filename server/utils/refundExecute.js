@@ -31,6 +31,9 @@
  * @param {number} a.totalPriceBeforeDollars proposals.total_price snapshot (dollars)
  * @param {number} a.totalPriceAfterDollars  worst-case preview (dollars); recon overwrites
  * @param {number|null} [a.gratuityCents]   gratuity portion attributed to this refund (cents)
+ * @param {string} [a.totalScope]           'contract' (default: Approach A, refund lowers
+ *                                          total_price) or 'overpayment' (cancel-line: the fold
+ *                                          already corrected total_price; refund must not re-lower)
  * @returns {Promise<{refund:object, recon:{applied:boolean}, refundRowId:number}>}
  */
 const Sentry = require('@sentry/node');
@@ -41,19 +44,20 @@ const { applyRefundReconciliation } = require('./refundHelpers');
 async function refundExecute({
   stripe, proposalId, paymentId, paymentIntentId, amountCents, reason,
   issuedBy, idempotencyKey, totalPriceBeforeDollars, totalPriceAfterDollars,
-  gratuityCents = null,
+  gratuityCents = null, totalScope = 'contract',
 }) {
   // 1. Pending row BEFORE Stripe. gratuity_cents (nullable) records the gratuity
   //    portion of THIS refund for audit; the existing admin route passes null,
-  //    so its behavior is unchanged (column stays NULL).
+  //    so its behavior is unchanged (column stays NULL). total_scope rides the
+  //    row so webhook/sweeper adoption applies the same total_price rule.
   const pendRes = await pool.query(
     `INSERT INTO proposal_refunds
        (proposal_id, payment_id, stripe_payment_intent_id, amount, reason,
-        total_price_before, total_price_after, issued_by, status, gratuity_cents)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9)
+        total_price_before, total_price_after, issued_by, status, gratuity_cents, total_scope)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10)
      RETURNING id`,
     [proposalId, paymentId, paymentIntentId, amountCents, reason,
-     totalPriceBeforeDollars, totalPriceAfterDollars, issuedBy, gratuityCents]
+     totalPriceBeforeDollars, totalPriceAfterDollars, issuedBy, gratuityCents, totalScope]
   );
   const pendingRowId = pendRes.rows[0].id;
 
@@ -114,6 +118,7 @@ async function refundExecute({
         amountCents,
         reason,
         issuedBy,
+        totalScope,
       },
       dbClient
     );

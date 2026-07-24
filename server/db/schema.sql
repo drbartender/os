@@ -1099,6 +1099,21 @@ END $$;
 -- (auditable + excluded from contract-revenue adjustments downstream).
 ALTER TABLE proposal_refunds ADD COLUMN IF NOT EXISTS gratuity_cents INTEGER;
 
+-- Cancel-line-item refunds (2026-07-24): 'overpayment' refunds return money the
+-- client overpaid AFTER the fold already corrected total_price, so reconciliation
+-- must not re-lower the total (double-lower). Durable on the row because the
+-- charge.refunded webhook and the stale-pending sweeper adopt pending rows in a
+-- later process with no memory of the issuing caller.
+ALTER TABLE proposal_refunds ADD COLUMN IF NOT EXISTS total_scope TEXT NOT NULL DEFAULT 'contract';
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'proposal_refunds_total_scope_check'
+  ) THEN
+    ALTER TABLE proposal_refunds ADD CONSTRAINT proposal_refunds_total_scope_check
+      CHECK (total_scope IN ('contract', 'overpayment'));
+  END IF;
+END $$;
+
 -- Shifts
 CREATE INDEX IF NOT EXISTS idx_shifts_event_date ON shifts(event_date);
 CREATE INDEX IF NOT EXISTS idx_shifts_status ON shifts(status);
