@@ -45,6 +45,18 @@ function post(path, form) {
   });
 }
 
+function get(path) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(`${_baseUrl}${path}`, { method: 'GET' }, (res) => {
+      let bytes = 0;
+      res.on('data', (c) => { bytes += c.length; });
+      res.on('end', () => resolve({ status: res.statusCode, contentType: res.headers['content-type'], bytes }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 // Reset injected deps to a permissive baseline before each test.
 let calls;
 beforeEach(() => {
@@ -59,6 +71,7 @@ beforeEach(() => {
   process.env.VOICEMAIL_ENABLED = 'true';
   process.env.VM_MAX_LENGTH_SEC = '120';
   process.env.VM_DAILY_CAP = '50';
+  delete process.env.VM_GREETING_URL;
   router.__setVoiceDeps({
     isValidTwilioRequest: () => true,
     // Voicemail baseline (spec 2026-07-22): claim wins, cap clear, delivery
@@ -338,7 +351,8 @@ test('/inbound/missed takes the cheap branch on an unrecognized DialCallStatus',
 
 test('/inbound/missed returns the greeting and Record, and pings twice', async () => {
   const res = await post('/api/voice/inbound/missed', { DialCallStatus: 'no-answer', CallSid: cs('CA4'), From: '+13125550147' });
-  assert.match(res.text, /This is Zul/);
+  assert.match(res.text, /<Play>[^<]*\/api\/voice\/greeting\.mp3<\/Play>/, 'default greeting plays the recorded mp3');
+  assert.doesNotMatch(res.text, /<Say/, 'default greeting is the recording, not the synthetic voice');
   assert.match(res.text, /<Record[^>]*maxLength="120"/);
   assert.match(res.text, /recordingStatusCallback="[^"]*\/api\/voice\/inbound\/voicemail"/);
   assert.doesNotMatch(res.text, /<Record[^>]*\saction=/, 'Record must NOT carry an action attribute');
@@ -346,6 +360,29 @@ test('/inbound/missed returns the greeting and Record, and pings twice', async (
   assert.strictEqual(calls.telegram.length, 2);
   assert.strictEqual(calls.telegram[1].text, '+13125550147', 'the number must be alone in its own message');
   assert.doesNotMatch(calls.telegram[0].text, /\+13125550147/, 'stray digits would break toUsE164 on copy-paste');
+});
+
+test('GET /greeting.mp3 serves the recorded greeting as audio, unauthenticated', async () => {
+  const res = await get('/api/voice/greeting.mp3');
+  assert.strictEqual(res.status, 200);
+  assert.match(res.contentType || '', /audio\/mpeg/);
+  assert.ok(res.bytes > 1000, `expected real audio bytes, got ${res.bytes}`);
+});
+
+test('/inbound/missed <Play>s VM_GREETING_URL when set to an override URL', async () => {
+  process.env.VM_GREETING_URL = 'https://cdn.example.com/greet.mp3';
+  const res = await post('/api/voice/inbound/missed', { DialCallStatus: 'no-answer', CallSid: cs('CAgreet1'), From: '+13125550147' });
+  await settle();
+  assert.match(res.text, /<Play>https:\/\/cdn\.example\.com\/greet\.mp3<\/Play>/);
+  assert.doesNotMatch(res.text, /\/api\/voice\/greeting\.mp3/, 'the override replaces the bundled default');
+});
+
+test('/inbound/missed falls back to the Polly <Say> when VM_GREETING_URL=say', async () => {
+  process.env.VM_GREETING_URL = 'say';
+  const res = await post('/api/voice/inbound/missed', { DialCallStatus: 'no-answer', CallSid: cs('CAgreet2'), From: '+13125550147' });
+  await settle();
+  assert.match(res.text, /<Say voice="Polly\.Joanna-Neural">[^<]*This is Zul[^<]*<\/Say>/);
+  assert.doesNotMatch(res.text, /<Play>/, 'the say kill-switch emits no Play');
 });
 
 test('/inbound/missed on a blocked caller records, stores NULL, and sends only prose', async () => {

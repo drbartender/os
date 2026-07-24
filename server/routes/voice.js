@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const Sentry = require('@sentry/node');
 const { xmlEscape } = require('../utils/xmlEscape');
 const { isValidTwilioRequest } = require('../utils/twilioSignature');
@@ -121,6 +122,23 @@ function vmDailyCap() {
   return Number.isFinite(n) && n > 0 ? n : 50;
 }
 
+// The voicemail greeting the caller hears. Default is Zul's recorded mp3, served
+// by the public GET /greeting.mp3 route below (bundled at
+// server/assets/voicemail-greeting.mp3). VM_GREETING_URL overrides the source
+// WITHOUT a redeploy: set it to a full https URL to <Play> a different recording,
+// or to the literal 'say' to fall back to the Polly synthetic voice, the
+// known-good kill switch if a recording ever regresses.
+const GREETING_TEXT = "Thanks for calling Dr. Bartender. This is Zul. I'm not available right now. Please leave your name, your number, and the date of your event, and I'll call you right back.";
+
+function greetingVerb() {
+  const override = (process.env.VM_GREETING_URL || '').trim();
+  if (override.toLowerCase() === 'say') {
+    return `<Say voice="Polly.Joanna-Neural">${xmlEscape(GREETING_TEXT)}</Say>`;
+  }
+  const url = override || `${API_URL}/api/voice/greeting.mp3`;
+  return `<Play>${xmlEscape(url)}</Play>`;
+}
+
 // Sentry emission on signature failure is throttled INDEPENDENTLY of the rate
 // limiter. The limiter cannot cap it: its key is the caller-supplied CallSid,
 // and while a malformed one collapses into a shared bucket, a well-formed
@@ -235,6 +253,21 @@ router.post('/inbound', inboundForwardLimiter, (req, res) => {
     res,
     `<Response><Dial timeout="20" action="${xmlEscape(API_URL)}/api/voice/inbound/missed" method="POST" callerId="${xmlEscape(caller)}" timeLimit="${timeLimitSec()}"><Number>${xmlEscape(vaCell)}</Number></Dial></Response>`
   );
+});
+
+/**
+ * GET /api/voice/greeting.mp3 — the recorded voicemail greeting, served to Twilio
+ * as the <Play> source for the missed-call handler. PUBLIC and unauthenticated by
+ * necessity: Twilio fetches it with no credentials and no signature. It is a
+ * static bundled asset (server/assets/voicemail-greeting.mp3) with no DB, no
+ * caller input, and no side effects, so there is nothing to gate.
+ */
+router.get('/greeting.mp3', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.type('audio/mpeg');
+  res.sendFile(path.join(__dirname, '..', 'assets', 'voicemail-greeting.mp3'), (err) => {
+    if (err && !res.headersSent) res.status(500).end();
+  });
 });
 
 /**
@@ -396,11 +429,10 @@ router.post('/inbound/missed', voicemailWebhookLimiter, async (req, res) => {
     return;
   }
 
-  const greeting = "Thanks for calling Dr. Bartender. This is Zul. I'm not available right now. Please leave your name, your number, and the date of your event, and I'll call you right back.";
   sendTwiml(
     res,
     '<Response>'
-    + `<Say voice="Polly.Joanna-Neural">${xmlEscape(greeting)}</Say>`
+    + greetingVerb()
     + `<Record maxLength="${vmMaxLengthSec()}" playBeep="true" trim="trim-silence" finishOnKey="#"`
     + ` recordingStatusCallback="${xmlEscape(API_URL)}/api/voice/inbound/voicemail"`
     + ' recordingStatusCallbackMethod="POST" recordingStatusCallbackEvent="completed"/>'

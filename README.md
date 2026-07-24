@@ -144,6 +144,7 @@ The frontend uses one build-time variable set in `client/.env.production`:
 dr-bartender/
 ├── server/
 │   ├── index.js                # Express app setup, middleware, route mounting
+│   ├── assets/                 # Static bundled assets served to third parties (voicemail-greeting.mp3 → Twilio <Play> via GET /api/voice/greeting.mp3)
 │   ├── data/
 │   │   ├── contractorAgreement.js # Versioned v2 legal text (clauses, acknowledgments, effective date)
 │   │   └── smsConsentCopy.js   # Canonical client SMS consent sentence keyed by version (A2P 10DLC). Append-only: an old version stays forever so historical sms_consent_log rows keep resolving. Mirrored by client/src/constants/smsConsent.js; utils/smsConsent.test.js fails on drift
@@ -254,7 +255,7 @@ dr-bartender/
 │   │   ├── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
 │   │   ├── thumbtackAgent.js   # Thumbtack box-agent API (/api/admin/thumbtack): email-harvest queue (pending-harvest/email-harvested/harvest-failed/rearm) + auto first-reply queue (pending-first-replies/first-reply-sent/first-reply-failed). Driven by the box-only agent in thumbtack-agent/ (one loop, 25s reply tick, harvest piggyback every Nth tick)
 │   │   ├── venues.js           # Google Places venue search proxy
-│   │   ├── voice.js            # Zul VA-calling Twilio Voice webhooks: POST /inbound (forward 224 → VA_CELL), /bridge (look up target by CallSid → Dial 224→target), /status (failed-leg → Telegram notice), /inbound/missed (<Dial> action: ping Zul + greeting/<Record>), /inbound/voicemail (recordingStatusCallback: upload mp3 to Telegram, then delete from Twilio). The two voicemail routes fail CLOSED on signature in every environment
+│   │   ├── voice.js            # Zul VA-calling Twilio Voice webhooks: POST /inbound (forward 224 → VA_CELL), /bridge (look up target by CallSid → Dial 224→target), /status (failed-leg → Telegram notice), /inbound/missed (<Dial> action: ping Zul + greeting/<Record>), /inbound/voicemail (recordingStatusCallback: upload mp3 to Telegram, then delete from Twilio), GET /greeting.mp3 (PUBLIC, unauthenticated: serves the bundled greeting mp3 that /inbound/missed <Play>s; overridable via VM_GREETING_URL). The two voicemail routes fail CLOSED on signature in every environment
 │   │   └── voiceLeadCall.js    # Lead call bridge Twilio webhooks (/api/voice/lead): /answer (Gather-wrapped spoken briefing), /digit (press-1 → Dial lead from the 224, press-9 replay), /status (claim-guarded chain advance). Signature FAIL-CLOSED in every env
 │   ├── utils/
 │   │   ├── adminAuditLog.js    # logAdminAction(...) — durable record of admin actions (rotate-token, regenerate-stripe). Best-effort; failures go to Sentry, never block the underlying op
