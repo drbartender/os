@@ -2,7 +2,7 @@
 lanes:
   - id: cancel-line-server
     footprint:
-      - schema.sql
+      - server/db/schema.sql
       - server/utils/proposalExtrasFold.js
       - server/utils/proposalExtrasFold.legs.test.js
       - server/utils/refundHelpers.js
@@ -12,7 +12,7 @@ lanes:
       - server/utils/lineItemCancel.js
       - server/utils/lineItemCancel.test.js
       - server/utils/gratuityStaffNotice.js
-      - server/utils/emailTemplates.js
+      - server/utils/lineItemRemovedNotify.js
       - server/routes/stripe.js
       - server/routes/proposals/cancelLineItem.js
       - server/routes/proposals/cancelLineItem.test.js
@@ -39,7 +39,7 @@ lanes:
 
 **Goal:** One admin act that removes any client-visible priced line from a booked proposal, reprices the contract safely, and refunds exactly the resulting overpayment, behind a server-computed two-step confirm.
 
-**Architecture:** A new core module (`server/utils/lineItemCancel.js`) with a per-kind target registry composes existing seams: `foldExtrasIntoProposal` (extended with staffing and adjustments legs), `refreshUnlockedInvoices`, `syncShiftsFromProposal`, and the `planRefund`/`refundExecute` chain (extended with a durable `total_scope` so overpayment refunds do not re-lower `total_price`). Preview and execute run the SAME core function; preview wraps it in a rolled-back transaction. Refunds fire post-commit, sequentially per charge, with the sweeper/webhook backstops unchanged. Spec: `docs/superpowers/specs/2026-07-22-cancel-line-item-design.md`.
+**Architecture:** A new core module (`server/utils/lineItemCancel.js`) with a per-kind target registry composes existing seams: `foldExtrasIntoProposal` (extended with staffing and adjustments legs), `refreshUnlockedInvoices`, `syncShiftsFromProposal`, and the `planRefund`/`refundExecute` chain (extended with a durable `total_scope` so overpayment refunds do not re-lower `total_price`). Preview and execute run the SAME core function; preview wraps it in a rolled-back transaction. Refunds fire post-commit, sequentially per charge, with the sweeper/webhook backstops unchanged. Spec: `docs/superpowers/specs/2026-07-22-cancel-line-item-design.md`. Plan-review fleet ran 2026-07-23; all findings folded in (see "Review-fleet resolutions" at the end).
 
 **Tech Stack:** Node/Express, raw SQL via `pg`, node:test against the shared dev DB, Stripe via the `getStripe` DI seam, React admin client (axios `utils/api.js`).
 
@@ -48,14 +48,21 @@ lanes:
 - Proposals money is NUMERIC DOLLARS (`total_price`, `amount_paid`, `external_paid`, `proposal_addons`); invoices, `proposal_payments`, `proposal_refunds`, Stripe are INTEGER CENTS. Convert with `toCents()` (`server/utils/invoiceShared.js:21`) / `cents / 100`.
 - One pooled connection per request: inside a `pool.connect()` transaction every query goes through the held `client`; release BEFORE any post-commit tail that uses helpers (CLAUDE.md).
 - All Stripe calls via `server/utils/stripeClient.js` `getStripe()`; tests stub the seam (`require('../../utils/stripeClient').getStripe = () => fakeStripe` BEFORE requiring the router).
-- Throw `AppError` subclasses; never `res.status(...)` for errors.
+- Throw `AppError` subclasses; never `res.status(...)` for errors. `asyncHandler` lives at `server/middleware/asyncHandler` (NOT utils; cancel.js:19 is the import to copy).
 - New proposals sub-route file MUST mount ABOVE `router.use('/', require('./getOne'))` in `server/routes/proposals/index.js` or `GET /:id` shadows it.
-- Schema changes idempotent (`ADD COLUMN IF NOT EXISTS`).
-- File-size soft cap 700 lines. `refundHelpers.js` (~334) and `refundExecute.js` (~152) have headroom; keep `lineItemCancel.js` under 700 (split `computeCancelTargets` into a sibling if it threatens the cap).
+- The schema file is `server/db/schema.sql` (repo has no root-level schema.sql). Schema changes idempotent (`ADD COLUMN IF NOT EXISTS`).
+- File-size soft cap 700 lines. `refundHelpers.js` and `refundExecute.js` have headroom; keep `lineItemCancel.js` under 700 (split `computeCancelTargets` into a sibling if it threatens the cap). `emailTemplates.js` is already over the soft cap: the two new email templates live INSIDE their notice modules, `emailTemplates.js` is not touched.
 - Tests: co-located `*.test.js`, node:test, run ALONE against the shared dev DB. From the lane worktree (no `.env` there): `node --env-file=/home/drbartender/projects/os/.env --test <file>` (Node 26). Nonce-suffixed seed rows, full FK-ordered teardown, `await pool.end()` in `after()`.
 - No em dashes in any client-visible copy.
-- Hosted-package bartender rule: included 1:100 bartenders are $0 and never cancellable; only over-ratio bartenders carry price. Never lower staffing below `staffing.required`.
+- Hosted-package bartender rule: included 1:100 bartenders are $0 and never cancellable; only over-ratio bartenders carry price. Staffing floor everywhere in this feature: `Math.max(staffing.required, staffing.included)` (never below required, never into included $0 heads).
 - Statuses: `'cancelled'` does not exist; archived+`archive_reason`. Eligibility here = status NOT IN (`'archived'`, `'completed'`).
+
+## In-lane review cadence (server lane)
+
+Per the execution-review cadence rule, specialized agents fire at checkpoints, not only at merge:
+- After Task 2 (schema + reconciliation branch): `database-review` on the diff.
+- After Task 8 (routes + refund firing): `security-review` + `code-review` on Tasks 4-8.
+- Merge gate: full fleet on the whole lane, as declared in front-matter.
 
 ---
 
@@ -112,6 +119,7 @@ test('adjustments leg moves the override by the removed adjustment', async () =>
     const row = (await client.query('SELECT total_price, total_price_override FROM proposals WHERE id = $1', [proposalId])).rows[0];
     assert.equal(Number(row.total_price_override), 1900); // 2000 - 100 surcharge
     assert.equal(Number(row.total_price), Number(snapshot.total));
+    assert.deepEqual(snapshot.adjustments, []);           // final snapshot uses the After leg
     await client.query('ROLLBACK');
   } finally { client.release(); }
 });
@@ -129,8 +137,6 @@ test('omitting the new params preserves existing behavior', async () => {
   // before/after legs; assert total_price_override is unchanged (2000).
 });
 ```
-
-Also update the proposal row's `adjustments` column to `[]` before the adjustments-leg fold call in test 1? NO: the fold reads legs from params now; the test passes `adjustmentsAfter: []` and the FINAL snapshot must also use the After leg. Assert `snapshot.adjustments` deep-equals `[]` in test 1 to pin that.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -201,7 +207,7 @@ git commit -m "feat(cancel-line): fold gains staffing + adjustments before/after
 ### Task 2: Durable refund scope (`proposal_refunds.total_scope`)
 
 **Files:**
-- Modify: `schema.sql` (near the `proposal_refunds` table, ~:1057-1100)
+- Modify: `server/db/schema.sql` (near the `proposal_refunds` table, ~:1057-1100)
 - Modify: `server/utils/refundHelpers.js` (`applyRefundReconciliation`, :112-302)
 - Modify: `server/utils/refundExecute.js` (params :41-45, pending INSERT :49-58)
 - Test: `server/utils/refundHelpers.scope.test.js` (new)
@@ -214,7 +220,7 @@ git commit -m "feat(cancel-line): fold gains staffing + adjustments before/after
 
 - [ ] **Step 1: Schema**
 
-Append to `schema.sql` in the migrations region (idempotent):
+Append to `server/db/schema.sql` in the migrations region (idempotent):
 
 ```sql
 -- Cancel-line-item refunds (2026-07-23): 'overpayment' refunds return money the
@@ -224,7 +230,7 @@ Append to `schema.sql` in the migrations region (idempotent):
 ALTER TABLE proposal_refunds ADD COLUMN IF NOT EXISTS total_scope TEXT NOT NULL DEFAULT 'contract';
 ```
 
-Apply to the dev DB: run the statement via psql/Neon on the dev branch before running tests.
+Apply to the shared dev DB NOW, before any test run in this task or later ones: Claude runs the ALTER via the Neon MCP `run_sql` against the dev branch the os `.env` `DATABASE_URL` points at (fallback: psql with that URL). Prod picks the statement up through the normal idempotent schema apply at deploy. Verify: `SELECT column_name FROM information_schema.columns WHERE table_name = 'proposal_refunds' AND column_name = 'total_scope'` returns one row.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -235,7 +241,8 @@ Apply to the dev DB: run the statement via psql/Neon on the dev branch before ru
 // amount_due 70000, amount_paid 100000, status 'paid'; one proposal_payments
 // row amount 100000 'succeeded' intent 'pi_scope_1'; invoice_payments link
 // +100000. Then a pending proposal_refunds row amount 20000,
-// total_scope 'overpayment', stripe_payment_intent_id 'pi_scope_1'.
+// total_scope 'overpayment', stripe_payment_intent_id 'pi_scope_1'
+// (INSERT includes non-null total_price_before/total_price_after: 800/800).
 
 test('overpayment scope: amount_paid drops, total_price and invoice amount_due untouched', async () => {
   const dbClient = await pool.connect();
@@ -270,22 +277,28 @@ test('webhook-style adoption honors the stored row scope', async () => {
   // WITHOUT params.totalScope (as chargeRefunded does). Assert total_price
   // untouched: the row, not the caller, is the source of truth.
 });
+
+test('idempotent replay + tip clawback no-op (spec: gratuity rides existing clawback)', async () => {
+  // Call applyRefundReconciliation a second time with the same stripeRefundId:
+  // recon.applied === false, no double drop. Then
+  // await clawbackTipByPaymentIntent('pi_scope_1', 20000): resolves without
+  // touching payout_events (no tips row exists for this intent).
+});
 ```
 
 - [ ] **Step 3: Run to verify failure**
 
 Run: `node --env-file=/home/drbartender/projects/os/.env --test server/utils/refundHelpers.scope.test.js`
-Expected: FAIL on test 1 and 3 (`total_price` drops to 600).
+Expected: FAIL on tests 1 and 3 (`total_price` drops to 600).
 
 - [ ] **Step 4: Implement**
 
-`refundExecute.js`: add `totalScope = 'contract'` to the params; pending INSERT gains the column:
+`refundExecute.js`: add `totalScope = 'contract'` to the destructured params. **Extend the CURRENT pending INSERT at :49-58 in place; do NOT retype it.** The existing statement binds nine values including the NOT NULL `total_price_before` and `total_price_after` (server/db/schema.sql:1065-1066, `NUMERIC(10,2) NOT NULL`, no default); dropping either breaks EVERY refund path at insert time. The change is append-only:
 
-```js
-      `INSERT INTO proposal_refunds
-         (proposal_id, payment_id, stripe_payment_intent_id, amount, reason,
-          issued_by, status, gratuity_cents, total_scope)
-       VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8) RETURNING id`,
+```
+  columns:  ... existing nine ... , total_scope
+  values:   ... existing $1..$N ..., $N+1
+  params:   [...existing bindings..., totalScope]
 ```
 
 Pass `totalScope` through to `applyRefundReconciliation`.
@@ -331,9 +344,13 @@ Expected: all PASS (default scope preserves every existing path).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add schema.sql server/utils/refundHelpers.js server/utils/refundExecute.js server/utils/refundHelpers.scope.test.js
+git add server/db/schema.sql server/utils/refundHelpers.js server/utils/refundExecute.js server/utils/refundHelpers.scope.test.js
 git commit -m "feat(cancel-line): durable total_scope on refunds; overpayment scope skips total_price re-lower"
 ```
+
+- [ ] **Step 7: Checkpoint review**
+
+Run the `database-review` agent on this task's diff (schema + reconciliation). Findings fixed before proceeding.
 
 ### Task 3: Overpayment split planner + shared payments query
 
@@ -344,7 +361,7 @@ git commit -m "feat(cancel-line): durable total_scope on refunds; overpayment sc
 
 **Interfaces:**
 - Produces:
-  - `loadPaymentsWithRemaining(proposalId, dbClient)` → `[{ id, stripe_payment_intent_id, remainingCents }]`. EXACT extraction of the SQL at stripe.js:459-472 (succeeded payments, non-null intent, `payment_type IN ('deposit','balance','full','invoice')`, remaining = amount minus succeeded+pending refunds). `dbClient` optional, defaults to `pool`.
+  - `loadPaymentsWithRemaining(proposalId, dbClient)` → `[{ id, stripe_payment_intent_id, remainingCents }]`. EXACT extraction of the SQL at stripe.js:459-472 (succeeded payments, non-null intent, `payment_type IN ('deposit','balance','full','invoice')`, remaining = amount minus succeeded+pending refunds). `dbClient` optional, defaults to `pool`. This is the ONLY stripe.js edit in the feature: a minimal, behavior-identical extraction so the cancel route and the panel share one source of money truth instead of duplicating the SQL; the spec's "no change to panel refund behavior" fence is honored by the Step 4 regression runs.
   - `planOverpaymentSplits({ paymentsWithRemaining, overpaymentCents })` → `{ splits: [{ paymentId, paymentIntentId, amountCents }], stripeRefundableCents, manualReturnCents }`. PURE. Largest-remaining-first (same tie-break instinct as `planRefund`), greedy `min(needed, remaining)` per charge, never spans a charge in one split. `manualReturnCents` = overpayment left after all charge headroom (external/CC money): returned by hand, never via Stripe.
 
 - [ ] **Step 1: Write the failing test (pure, no DB)**
@@ -434,19 +451,22 @@ git add server/utils/refundHelpers.js server/utils/refundHelpers.splits.test.js 
 git commit -m "feat(cancel-line): pure overpayment split planner + shared payments-with-remaining loader"
 ```
 
-### Task 4: Core module part 1: target parsing and target enumeration
+### Task 4: Core module part 1: target parsing, seed factory, target enumeration
 
 **Files:**
 - Create: `server/utils/lineItemCancel.js`
-- Test: `server/utils/lineItemCancel.test.js` (new; grows in Task 5)
+- Test: `server/utils/lineItemCancel.test.js` (new; the `seedProposal` factory is DEFINED HERE and extended in Task 5)
 
 **Interfaces:**
 - Produces:
   - `parseCancelTarget(str)` → `{ kind, key }` or throws `ValidationError`. Kinds: `addon` (key = slug), `bar`, `syrup` (key = catalog id), `extra-bartender`, `adjustment` (key = integer index), `gratuity`, `package`.
   - `CANCEL_BLOCKED_STATUSES = ['archived', 'completed']`
   - `computeCancelTargets(dbClient, proposalId)` → `{ eligible: bool, targets: [...] }`. Target entry: `{ target, label, amount, quantity?, count?, rate?, labOwned?, cancellable, reason? }`. `amount` is the stored snapshot's dollar figure for display; the true money delta always comes from preview.
+  - Staffing floor helper used by BOTH Task 4 and Task 5: `removableBartenders({ pkg, guestCount, actual })` = `Math.max(0, actual - Math.max(required, included))` where `required = Math.max(1, Math.ceil(guestCount / (pkg.guests_per_bartender || 100)))` and `included = isHostedPackage(pkg) ? Math.max(Number(pkg.bartenders_included || 1), required) : Number(pkg.bartenders_included || 1)` (the exact formulas at pricingEngine.js:118-152; comment cites them). `extra-bartender` count and the removal cap are the SAME number by construction, so the UI can never offer a removal the floor rejects.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Define `seedProposal` + write the failing tests**
+
+`seedProposal(opts)` (local to the test file; pattern: `cancel.test.js:95` `seedBooked`): inserts client, proposal (hosted pkg from catalog, guest_count 80, duration 4, `num_bars`, `num_bartenders`, `adjustments`, `gratuity_rate`, `tip_jar`, `total_price_override`, `status`, `amount_paid`, a REAL engine snapshot built by calling `calculateProposal` in the seed so the stored total is honest), addon rows via `INSERT INTO proposal_addons ...` (from the engine's addonResults), optional `drink_plans` row with `labAdded` selections, optional invoices/payments. All money assertions computed from the ENGINE at catalog (a `catalogAt` helper like Task 1's), never hardcoded dollars. Nonce + FK-ordered teardown.
 
 ```js
 test('parseCancelTarget accepts every kind and rejects junk', () => {
@@ -463,10 +483,9 @@ test('parseCancelTarget accepts every kind and rejects junk', () => {
 });
 
 test('computeCancelTargets enumerates every client-visible line', async () => {
-  // Seed (Task 5 seedProposal helper, defined below): override'd proposal with
-  // num_bars 2, one flat addon qty 2, one lab-added addon, snapshot syrups
-  // ['jalapeno'], num_bartenders = required + 1, one discount adjustment,
-  // gratuity_rate 25.
+  // seedProposal: override'd, num_bars 2, one flat addon qty 2, one lab-added
+  // addon, snapshot syrups ['jalapeno'], num_bartenders = floor + 1 (floor =
+  // max(required, included)), one discount adjustment, gratuity_rate 25.
   const { eligible, targets } = await computeCancelTargets(pool, proposalId);
   assert.equal(eligible, true);
   const byTarget = Object.fromEntries(targets.map((t) => [t.target, t]));
@@ -476,9 +495,14 @@ test('computeCancelTargets enumerates every client-visible line', async () => {
   assert.equal(byTarget['addon:photo-booth'].quantity, 2);
   assert.equal(byTarget['addon:champagne-toast'].labOwned, true);
   assert.ok(byTarget['syrup:jalapeno']);
-  assert.equal(byTarget['extra-bartender'].count, 1);
+  assert.equal(byTarget['extra-bartender'].count, 1);   // removableBartenders()
   assert.ok(byTarget['adjustment:0']);
   assert.equal(byTarget['gratuity'].rate, 25);
+});
+
+test('hosted proposal at included staffing offers NO extra-bartender target', async () => {
+  // seedProposal with num_bartenders = max(required, included): assert no
+  // 'extra-bartender' entry exists (included $0 heads are not cancel targets).
 });
 
 test('computeCancelTargets: archived proposal is ineligible', async () => {
@@ -524,7 +548,7 @@ function parseCancelTarget(str) {
 1. Load proposal + `service_packages` (LEFT JOIN); `NotFoundError` if missing; `eligible = !CANCEL_BLOCKED_STATUSES.includes(status)`; if ineligible return `{ eligible: false, targets: [] }`.
 2. Load addon rows: `SELECT pa.id, pa.addon_id, pa.addon_name, pa.billing_type, pa.quantity, pa.line_total, sa.slug FROM proposal_addons pa LEFT JOIN service_addons sa ON sa.id = pa.addon_id WHERE pa.proposal_id = $1 ORDER BY pa.id`.
 3. Load lab ownership: `SELECT selections FROM drink_plans WHERE proposal_id = $1 ORDER BY id DESC LIMIT 1`; `labSlugs` = keys of `selections.addOns` where `meta.labAdded === true`.
-4. Emit, in this order (mirrors the breakdown): `package` (label = pkg name, amount = `snap.package.base_cost`, `cancellable: false, reason: 'event_cancel'`); `bar` when `num_bars > 0` and `Number(snap.bar_rental?.total || 0) > 0` (quantity = num_bars); one entry per addon row (`addon:<slug>`; orphaned rows as in the test; `quantity` exposed only when `billing_type` is not `per_guest`/`per_guest_timed`/`per_staff` AND stored quantity > 1, mirroring `withRepriceQuantities`); one `syrup:<id>` per `snap.syrups.selections` entry (amount null: syrup pricing is pack math, per-syrup delta is preview's job); `extra-bartender` when `Number(snap.staffing?.extra || 0) > 0` (count = extra, amount = snap.staffing.total); `adjustment:<idx>` per adjustments entry (label per the engine's fallback: `adj.label || (adj.type === 'discount' ? 'Discount' : 'Surcharge')`, amount signed negative for discounts); `gratuity` when `Number(gratuity_rate) > 0` (rate, amount = snap.gratuity?.total).
+4. Emit, in this order (mirrors the breakdown): `package` (label = pkg name, amount = `snap.package.base_cost`, `cancellable: false, reason: 'event_cancel'`); `bar` when `num_bars > 0` and `Number(snap.bar_rental?.total || 0) > 0` (quantity = num_bars); one entry per addon row (`addon:<slug>`; orphaned rows as in the test; `quantity` exposed only when `billing_type` is not `per_guest`/`per_guest_timed`/`per_staff` AND stored quantity > 1, mirroring `withRepriceQuantities`); one `syrup:<id>` per `snap.syrups.selections` entry (amount null: syrup pricing is pack math, per-syrup delta is preview's job); `extra-bartender` when `removableBartenders(...) > 0` (count = that number, amount = snap.staffing.total); `adjustment:<idx>` per adjustments entry (label per the engine's fallback: `adj.label || (adj.type === 'discount' ? 'Discount' : 'Surcharge')`, amount signed negative for discounts); `gratuity` when `Number(gratuity_rate) > 0` (rate, amount = snap.gratuity?.total).
 5. Every emitted entry defaults `cancellable: true` unless stated otherwise.
 
 - [ ] **Step 4: Run to pass**: `node --env-file=/home/drbartender/projects/os/.env --test server/utils/lineItemCancel.test.js`
@@ -539,7 +563,7 @@ git commit -m "feat(cancel-line): target parsing + cancellable-line enumeration"
 
 **Files:**
 - Modify: `server/utils/lineItemCancel.js`
-- Test: `server/utils/lineItemCancel.test.js` (extend)
+- Test: `server/utils/lineItemCancel.test.js` (extend the Task 4 file and its `seedProposal`)
 
 **Interfaces:**
 - Consumes: Task 1 fold legs; `loadRepriceAddons`/`withRepriceQuantities`; `refreshUnlockedInvoices`, `createAdditionalInvoiceIfNeeded`, `writeLineItems`, `syncShiftsFromProposal`; `reconcileProposalPaymentStatus` (via the fold); the tolerant snapshot reader `readSnapshot` (grep `readSnapshot` — payrollAccrual.js:299 imports it; use the same module).
@@ -565,11 +589,9 @@ async function applyLineItemCancel(client, {
 }
 ```
 
-MUST run inside the caller's transaction; takes its own `SELECT * FROM proposals WHERE id = $1 FOR UPDATE` as the first statement (mirrors the fold contract). Throws `ConflictError('...', 'STALE_PREVIEW')` when `expectFingerprint` mismatches, `ConflictError('...', 'NOT_CANCELLABLE')` on blocked status, `ValidationError` on bad targets/params, `ConflictError('...', 'PACKAGE_IS_EVENT_CANCEL')` for `package`.
+MUST run inside the caller's transaction; takes its own `SELECT * FROM proposals WHERE id = $1 FOR UPDATE` as the first statement (mirrors the fold contract). Throws `ConflictError('...', 'STALE_PREVIEW')` when `expectFingerprint` mismatches, `ConflictError('...', 'NOT_CANCELLABLE')` on blocked status, `ValidationError` on bad targets/params, `ConflictError('...', 'PACKAGE_IS_EVENT_CANCEL')` for `package`, `ConflictError('...', 'AT_STAFFING_FLOOR')` when no bartender is removable.
 
-- [ ] **Step 1: Define the shared seed helper + write the failing per-kind tests**
-
-Add a local `seedProposal(opts)` factory to the test file (pattern: `cancel.test.js:95` `seedBooked`): inserts client, proposal (hosted pkg from catalog, guest_count 80, duration 4, `num_bars`, `num_bartenders`, `adjustments`, `gratuity_rate`, `tip_jar`, `total_price_override`, `status`, `amount_paid`, a REAL engine snapshot built by calling `calculateProposal` in the seed so stored total is honest), addon rows via `INSERT INTO proposal_addons ... (from the engine's addonResults)`, optional `drink_plans` row with `labAdded` selections, optional invoices/payments. All money assertions computed from the ENGINE at catalog (the `catalogAt` helper from Task 1), never hardcoded dollars.
+- [ ] **Step 1: Extend `seedProposal` + write the failing per-kind tests**
 
 Tests, each opening its own tx and ROLLBACKing (except where noted), every one asserting `total_price === snapshot.total` and `total_price_override` moved by exactly the engine's catalog service delta on override'd seeds:
 
@@ -581,9 +603,10 @@ test('addon partial removal lowers quantity; snapshot line and row line_total ag
 test('quantity param rejected for per_guest and per_staff addons', ...);   // ValidationError
 test('bar removal drops num_bars and prices via additional_bar_fee', ...); // 2 -> 1: delta = -additional_bar_fee
 test('syrup removal prunes snapshot selections and prices the pack delta', ...);
-test('extra-bartender removal floors at staffing.required', ...);
-  // actual required+2, remove 5 -> newActual === required; assert
-  // proposals.num_bartenders === required and snapshot.staffing.extra shrank.
+test('extra-bartender removal floors at max(required, included)', ...);
+  // actual = floor + 2, remove 5 -> newActual === floor; assert
+  // proposals.num_bartenders === floor and snapshot.staffing.extra shrank;
+  // then a proposal AT the floor: throws AT_STAFFING_FLOOR.
 test('extra-bartender removal on a proposal with approved heads sets staffingWarning', ...);
   // seed shift + approved shift_requests > desired; assert warning shape.
 test('adjustment removal of a discount RAISES the total', ...);
@@ -641,19 +664,19 @@ if (expectFingerprint && (
 if (t.kind === 'package')
   throw new ConflictError('Removing the package is an event cancellation. Use the cancel-event flow.', 'PACKAGE_IS_EVENT_CANCEL');
 const pkg = (await client.query('SELECT * FROM service_packages WHERE id = $1', [proposal.package_id])).rows[0];
-const snapBefore = readSnapshot(proposal.pricing_snapshot);   // reuse the tolerant reader used by payrollAccrual
+const snapBefore = readSnapshot(proposal.pricing_snapshot);
 const oldTotal = Number(proposal.total_price) || 0;
 ```
 
 2. Capture Before legs: `addonsBefore = await loadRepriceAddons(client, proposalId)`; `syrupsBefore = snapBefore?.syrups?.selections || []`; `numBarsBefore = proposal.num_bars ?? 0`; `bartendersBefore = proposal.num_bartenders`; `adjustmentsBefore = proposal.adjustments || []`. Defaults for After = same references.
 
 3. Per-kind mutation (switch on `t.kind`); each branch sets its After leg(s), performs its own column/row writes, and sets `removedLabel`:
-   - **addon**: find the row by slug (`JOIN service_addons`); `NotFoundError` if absent. Resolve stored reprice qty exactly as `withRepriceQuantities` does; `removeN = quantity == null ? all : validated positive int ≤ all`; reject `quantity` when billing_type is `per_guest`/`per_guest_timed`/`per_staff`. Full: `DELETE FROM proposal_addons WHERE id = $1`. Partial: `UPDATE proposal_addons SET quantity = $1 WHERE id = $2` (line_total synced in step 6). Lab cleanup when the slug is `labAdded` in the newest `drink_plans.selections`: `SELECT id, selections, shopping_list_status FROM drink_plans WHERE proposal_id = $1 ORDER BY id DESC LIMIT 1 FOR UPDATE`, delete `selections.addOns[slug]`, write back with `UPDATE drink_plans SET selections = $1::jsonb, updated_at = NOW() WHERE id = $2`; set `labCleaned = true, labPlanId = plan.id`. (Full removal only; a partial-quantity removal of a lab item keeps the selection.) `addonsAfter = await loadRepriceAddons(client, proposalId)`.
+   - **addon**: find the row by slug (`JOIN service_addons`); `NotFoundError` if absent. Resolve stored reprice qty exactly as `withRepriceQuantities` does; `removeN = quantity == null ? all : validated positive int ≤ all`; reject `quantity` when billing_type is `per_guest`/`per_guest_timed`/`per_staff`. Full: `DELETE FROM proposal_addons WHERE id = $1`. Partial: `UPDATE proposal_addons SET quantity = $1 WHERE id = $2` (line_total synced in step 5b). Lab cleanup when the slug is `labAdded` in the newest `drink_plans.selections`: `SELECT id, selections, shopping_list_status FROM drink_plans WHERE proposal_id = $1 ORDER BY id DESC LIMIT 1 FOR UPDATE`, delete `selections.addOns[slug]`, write back with `UPDATE drink_plans SET selections = $1::jsonb, updated_at = NOW() WHERE id = $2`; set `labCleaned = true, labPlanId = plan.id`. (Full removal only; a partial-quantity removal of a lab item keeps the selection.) `addonsAfter = await loadRepriceAddons(client, proposalId)`.
    - **bar**: `n = quantity == null ? numBarsBefore : validated 1..numBarsBefore`; `numBarsAfter = numBarsBefore - n`; `UPDATE proposals SET num_bars = $1 WHERE id = $2`; mutate `proposal.num_bars` in memory.
    - **syrup**: key must be in `syrupsBefore` else `NotFoundError`. `syrupsAfter = syrupsBefore.filter((s) => s !== t.key)`. Lab cleanup: if the id appears in `selections.labSyrupSelections` values, remove it from every drink's array (drop empty arrays), write back as above, `labCleaned = true`.
-   - **extra-bartender**: `staffing = snapBefore?.staffing`; recompute `required` from the engine (`calculateProposal` is pure; call `calculateStaffing` indirectly by pricing a throwaway? NO: `required = Math.max(1, Math.ceil(guest_count / (pkg.guests_per_bartender || 100)))`, the exact formula at pricingEngine.js:118-152, duplicated here with a comment pointing at it). `actual = proposal.num_bartenders ?? required`; `if (actual <= required) throw new ConflictError('No removable bartenders above the required staffing.', 'AT_REQUIRED_MINIMUM')`. `n = quantity == null ? actual - required : validated 1..(actual - required)`; `after = actual - n`. `UPDATE proposals SET num_bartenders = $1`; mutate in memory; `bartendersAfter = after`. Compute `staffingWarning`: desired roster bartender count vs `SELECT COUNT(*) FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id WHERE s.proposal_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL AND (sr.position IS NULL OR LOWER(TRIM(sr.position)) = 'bartender')`; warn when approved > desired.
+   - **extra-bartender**: `removable = removableBartenders({ pkg, guestCount: proposal.guest_count, actual })` where `actual = proposal.num_bartenders ?? required` (Task 4 helper: floor is `Math.max(required, included)`, so included $0 heads are never removable and the count matches what the targets endpoint advertised). `if (removable <= 0) throw new ConflictError('No removable bartenders above the package staffing.', 'AT_STAFFING_FLOOR')`. `n = quantity == null ? removable : validated 1..removable`; `after = actual - n`. `UPDATE proposals SET num_bartenders = $1`; mutate in memory; `bartendersAfter = after`. Compute `staffingWarning`: desired roster bartender count vs `SELECT COUNT(*) FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id WHERE s.proposal_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL AND (sr.position IS NULL OR LOWER(TRIM(sr.position)) = 'bartender')`; warn when approved > desired.
    - **adjustment**: bounds-check idx against `adjustmentsBefore`; `adjustmentsAfter = adjustmentsBefore.filter((_, i) => i !== t.key)`; `UPDATE proposals SET adjustments = $1::jsonb`; mutate in memory; `removedLabel` per the engine fallback.
-   - **gratuity**: `rate = Number(proposal.gratuity_rate) || 0`; `target = newRate == null ? 0 : Number(newRate)`; validate `Number.isFinite`, `>= 0`, `< rate` (equal or raise rejected: this flow only removes or lowers). `tipJarAfter = target >= 50 ? proposal.tip_jar : true`; `staffNotice = target < 50` (removal or below-floor shrink) AND NOT (`proposal.tip_jar === true && target > 0 && ...`) — simply: `staffNotice = target < 50`. Except: when the jar was already on AND the prior rate was already 0 nothing changed (guarded by `target < rate`). `UPDATE proposals SET gratuity_rate = $1, tip_jar = $2, gratuity_rate_change_origin = 'admin' WHERE id = $3`; mutate both in memory (the fold's final snapshot reads them). Legs unchanged (serviceOf strips the client gratuity line, so the override never moves on a gratuity change; assert this in the tests).
+   - **gratuity**: `rate = Number(proposal.gratuity_rate) || 0`; `target = newRate == null ? 0 : Number(newRate)`; validate `Number.isFinite`, `>= 0`, `< rate` (equal or raise rejected: this flow only removes or lowers). `tipJarAfter = target >= 50 ? proposal.tip_jar : true`; `staffNotice = target < 50` (removal or below-floor shrink). `UPDATE proposals SET gratuity_rate = $1, tip_jar = $2, gratuity_rate_change_origin = 'admin' WHERE id = $3`; mutate both in memory (the fold's final snapshot reads them). Legs unchanged (serviceOf strips the client gratuity line, so the override never moves on a gratuity change; assert this in the tests).
 
 4. Fold:
 
@@ -676,8 +699,6 @@ const { snapshot, statusChanged } = await foldExtrasIntoProposal({
 
 7. `deltaInvoicesAdjusted = await reconcileOpenDeltaInvoices(client, proposal, snapshot);` (below). Skip when the total ROSE (nothing was cancelled money-wise; step 6b owns increases).
 
-Note on payroll (spec's extra-bartender sentence, verified during planning): `accruePayoutsForProposal` runs only for `status === 'completed'` events (payrollAccrual.js:143-145), and completed proposals are NOT cancellable here (`CANCEL_BLOCKED_STATUSES`). So there are never accrued lines to reconcile at cancel time; completion-time accrual reads the live roster and lands correct on its own. The roster side is `syncShiftsFromProposal`'s shrink-cap (never below approved heads, `staffing_shrink_capped` logged), surfaced to the admin as `staffingWarning` in the preview.
-
 8. `await syncShiftsFromProposal(proposalId, client);` (always; it no-ops on multi-shift and non-staffing changes).
 
 9. Activity log (same INSERT shape as crud.js:623):
@@ -693,7 +714,11 @@ await client.query(
   })]);
 ```
 
+(Refund IDs cannot exist yet: refunds fire post-commit. Task 8's execute route writes the follow-up `line_item_cancel_refunded` row carrying them, per the spec's audit requirement.)
+
 10. Result: `overpaymentCents = Math.max(0, Math.round(fingerprint.amount_paid * 100) - Math.round(Number(snapshot.total) * 100))`; `lockedInvoices` from `SELECT id, label, amount_due FROM invoices WHERE proposal_id = $1 AND locked = true AND status NOT IN ('void') ORDER BY id`; `newStatus = proposal.status` (the fold mutated it in memory on demotion).
+
+Note on payroll (spec's extra-bartender sentence, verified during planning and confirmed by the plan fleet): `accruePayoutsForProposal` runs only for `status === 'completed'` events (payrollAccrual.js:143-145), and completed proposals are NOT cancellable here (`CANCEL_BLOCKED_STATUSES`). So there are never accrued lines to reconcile at cancel time; completion-time accrual reads the live roster and lands correct on its own. Dallas confirmed this reading at plan review (2026-07-23). The roster side is `syncShiftsFromProposal`'s shrink-cap (never below approved heads, `staffing_shrink_capped` logged), surfaced as `staffingWarning` in the preview.
 
 `reconcileOpenDeltaInvoices(client, proposal, snapshot)` — module-local, mirrors lab.js:365-440 arithmetic with the same guarded update:
 
@@ -725,7 +750,69 @@ git add server/utils/lineItemCancel.js server/utils/lineItemCancel.test.js
 git commit -m "feat(cancel-line): applyLineItemCancel core: per-kind mutations, fold, invoice + lab + shift seams"
 ```
 
-### Task 6: Routes: targets, preview, execute (+ refund firing, notices)
+### Task 6: Gratuity staff notice
+
+**Files:**
+- Create: `server/utils/gratuityStaffNotice.js` (template lives IN this module; `emailTemplates.js` is over the soft cap and is not touched)
+- Test: one direct unit test appended to `server/utils/lineItemCancel.test.js` (route-level coverage lands in Task 8)
+
+**Interfaces:**
+- Produces: `sendGratuityRemovedStaffNotice({ proposalId, newRate })` → `{ sent: n, failed: n }`. Exposes `__setDeps({ sendEmail })` for tests (the `refundNotify.__setDeps` convention).
+
+- [ ] **Step 1: Implement (small module, ~100 lines)**
+
+Recipient query: the exact approved-non-dropped roster join from `staffShiftHandlers.js:542-554` (copy it verbatim with a comment citing the source; recipients are the same people a reschedule notice reaches). Email only: SMS deliberately skipped (cost rule; the BEO page is the durable record and already renders tip-jar status via `GratuityTipsCard`, verified `beo.js:250-252` → `ShiftDetail.js:356-362, 500-505`). Template as a module-local function:
+
+```js
+function gratuityRemovedStaffNotice({ staffName, eventLabel, eventDate, newRate }) => {
+  subject: `Tip jar update for ${eventLabel}`,
+  text/html: newRate > 0
+    ? `The client's prepaid gratuity for this event was lowered to $${newRate}/staff/hr. You are welcome to set out a tip jar at this event.`
+    : `The client's prepaid gratuity for this event was removed. You are welcome to set out a tip jar at this event.`,
+  // plus the standard event date/time block other staff emails carry
+}
+```
+
+After the send loop, write the activity row:
+
+```js
+INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+VALUES ($1, 'gratuity_removed_staff_notified', 'system', NULL,
+        jsonb: { new_rate, recipients: [...user ids...], failed: n })
+```
+
+Zero recipients (nobody approved yet) is a clean no-op returning `{ sent: 0, failed: 0 }` and still logs the activity row with `recipients: []`: future assignees learn from the BEO page, which reads live `tip_jar`.
+
+- [ ] **Step 2: Unit test** (stub `sendEmail` via `__setDeps`; seed proposal + shift + 2 approved + 1 dropped `shift_requests`; assert 2 sends, dropped excluded, activity row written). Run: `node --env-file=/home/drbartender/projects/os/.env --test server/utils/lineItemCancel.test.js` → PASS.
+- [ ] **Step 3: Commit**
+
+```bash
+git add server/utils/gratuityStaffNotice.js server/utils/lineItemCancel.test.js
+git commit -m "feat(cancel-line): mandatory staff tip-jar notice on gratuity removal"
+```
+
+### Task 7: Client removal notice module
+
+**Files:**
+- Create: `server/utils/lineItemRemovedNotify.js` (template lives IN this module)
+
+**Interfaces:**
+- Produces: `sendLineItemRemovedNotice({ proposalId, removedLabel, newTotal })`, `__setDeps({ sendEmail })`.
+
+Spec note (confirmed by Dallas at plan review): the spec's "nothing new is invented" refers to the notify-toggle MACHINERY (NotifyConfirmModal + `notify_client` param + send gates), which this module rides unchanged. The email template itself is necessarily new: no removal email exists.
+
+- [ ] **Step 1: Implement**
+
+Mirror `refundClientNotify.js`'s structure and gates (client email present + not placeholder + not archived; `__setDeps` seam). Module-local template `lineItemRemovedNotice`: subject `Your event total was updated`, body: `We removed ${removedLabel} from your event at your request. Your updated total is ${fmt dollars}.` plus the standard balance line when a balance remains. No em dashes. (Refund-case comms stay the existing refund notice; this fires only when no refund was owed.)
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add server/utils/lineItemRemovedNotify.js
+git commit -m "feat(cancel-line): client removal notice (no-refund path)"
+```
+
+### Task 8: Routes: targets, preview, execute (+ refund firing, notices)
 
 **Files:**
 - Create: `server/routes/proposals/cancelLineItem.js`
@@ -733,7 +820,7 @@ git commit -m "feat(cancel-line): applyLineItemCancel core: per-kind mutations, 
 - Test: `server/routes/proposals/cancelLineItem.test.js` (new)
 
 **Interfaces:**
-- Consumes: Tasks 1-5; `getStripe`, `refundExecute`, `loadPaymentsWithRemaining`, `planOverpaymentSplits`, `sendRefundClientNotification`, `refreshListAfterLabChange`, Task 7's `sendGratuityRemovedStaffNotice`, Task 8's removal-notice template.
+- Consumes: Tasks 1-7 (both notice modules now exist); `getStripe`, `refundExecute`, `loadPaymentsWithRemaining`, `planOverpaymentSplits`, `sendRefundClientNotification`, `refreshListAfterLabChange`.
 - Produces (the UI lane's contract):
   - `GET /api/proposals/:id/cancel-line/targets` (auth, requireAdminOrManager) → `{ eligible, targets }` from `computeCancelTargets`.
   - `POST /api/proposals/:id/cancel-line/preview` (auth, adminOnly, adminWriteLimiter) body `{ target, quantity?, new_rate? }` → 
@@ -751,8 +838,8 @@ git commit -m "feat(cancel-line): applyLineItemCancel core: per-kind mutations, 
       "lab_cleanup": false,
       "fingerprint": { "updated_at": "...", "amount_paid": 2000, "total_price": 2000 } }
     ```
-    (dollars unless suffixed `_cents`; `gratuity`/`staffing_warning` null for other kinds)
-  - `POST /api/proposals/:id/cancel-line` (auth, adminOnly, adminWriteLimiter) body `{ target, quantity?, new_rate?, reason, idempotency_key, notify_client, fingerprint }` → `{ removed: true, removed_label, new_total, new_status, refunds: [{ payment_id, amount_cents, status: 'succeeded'|'failed'|'unconfirmed' }], refund_incomplete: bool, manual_return_cents, notifications: [...] }`. Errors: 400 `REASON_REQUIRED`/`MISSING_IDEMPOTENCY_KEY`/validation, 409 `STALE_PREVIEW`/`NOT_CANCELLABLE`/`PACKAGE_IS_EVENT_CANCEL`/`AT_REQUIRED_MINIMUM`.
+    (dollars unless suffixed `_cents`; `gratuity`/`staffing_warning` null for other kinds; `new_balance_due = max(0, new_total - amount_paid)`)
+  - `POST /api/proposals/:id/cancel-line` (auth, adminOnly, adminWriteLimiter) body `{ target, quantity?, new_rate?, reason, idempotency_key, notify_client, fingerprint }` → `{ removed: true, removed_label, new_total, new_status, refunds: [{ payment_id, amount_cents, status: 'succeeded'|'failed'|'unconfirmed' }], refund_incomplete: bool, manual_return_cents, notifications: [...] }`. Errors: 400 `REASON_REQUIRED`/`MISSING_IDEMPOTENCY_KEY`/`MISSING_FINGERPRINT`/validation, 409 `STALE_PREVIEW`/`NOT_CANCELLABLE`/`PACKAGE_IS_EVENT_CANCEL`/`AT_STAFFING_FLOOR`.
 
 - [ ] **Step 1: Write the failing route tests**
 
@@ -773,17 +860,23 @@ test('execute removes, commits, then refunds the overpayment with scope overpaym
   // response.refunds[0].status 'succeeded'.
 });
 test('execute splits across two charges sequentially', ...);  // seedFullChargeGeometry-style 2 intents
+test('execute writes the refund audit row with refund IDs', async () => {
+  // After the refund loop: proposal_activity_log has action
+  // 'line_item_cancel_refunded' with details.refund_row_ids matching the
+  // proposal_refunds ids and details.amount_cents summing the splits.
+});
 test('stripe failure leaves the removal standing and flags refund_incomplete', async () => {
   // refundFailRig.failOnCallN = 1: assert row deleted + total lowered +
   // amount_paid UNCHANGED + refunds[0].status 'failed' + refund_incomplete true;
-  // proposal reads overpaid (the panel chip is the retry path).
+  // proposal reads overpaid (the panel chip is the retry path); the audit row
+  // records incomplete: true.
 });
 test('stale fingerprint 409s and changes nothing', ...);
 test('partly paid removal fires no refund, just lowers the balance', ...);
 test('external-paid remainder reported, only card portion fired', ...);
 test('gratuity execute fires the staff notice and logs it', ...);
-  // __setDeps-stub or DI the notice module; assert recipients from approved
-  // non-dropped shift_requests; activity row 'gratuity_removed_staff_notified'.
+  // __setDeps-stub the notice module's sendEmail; assert recipients from
+  // approved non-dropped shift_requests; activity row present.
 test('notify_client true + refund sends the refund notice; removal-only sends the removal notice', ...);
 test('lab-added removal triggers the shopping-list refresh post-commit', ...);
   // stub labListRefresh via require-cache injection; assert called with plan id.
@@ -798,6 +891,7 @@ test('lab replay after cancel does not resurrect the item (spec seam test)', asy
 });
 test('manager role can read targets but cannot POST preview/execute (403)', ...);
 test('reason and idempotency_key required', ...);
+test('GET /:id still returns the proposal (mount order not shadowed)', ...);
 ```
 
 - [ ] **Step 2: Run to fail**, **Step 3: Implement the router**
@@ -811,11 +905,10 @@ test('reason and idempotency_key required', ...);
 const express = require('express');
 const router = express.Router();
 const { pool } = require('../../db');
-const { auth } = require('../../middleware/auth');           // match cancel.js's exact imports
-// Middleware imports: copy the import block VERBATIM from
-// server/routes/proposals/cancel.js (same auth/adminOnly/requireAdminOrManager/
-// adminWriteLimiter modules and paths; do not guess new paths).
-const asyncHandler = require('../../utils/asyncHandler');
+// Middleware + asyncHandler imports: copy the import block VERBATIM from
+// server/routes/proposals/cancel.js (asyncHandler is
+// ../../middleware/asyncHandler, NOT utils; same auth/adminOnly/
+// requireAdminOrManager/adminWriteLimiter modules and paths; do not guess).
 const { AppError, ConflictError } = require('../../utils/errors');
 const { getStripe } = require('../../utils/stripeClient');
 const { refundExecute } = require('../../utils/refundExecute');
@@ -824,7 +917,7 @@ const { computeCancelTargets, applyLineItemCancel } = require('../../utils/lineI
 const { sendRefundClientNotification } = require('../../utils/refundClientNotify');
 const { refreshListAfterLabChange } = require('../drinkPlans/labListRefresh');
 const { sendGratuityRemovedStaffNotice } = require('../../utils/gratuityStaffNotice');
-const { sendLineItemRemovedNotice } = require('../../utils/lineItemRemovedNotify');   // Task 8
+const { sendLineItemRemovedNotice } = require('../../utils/lineItemRemovedNotify');
 
 router.get('/:id/cancel-line/targets', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   res.json(await computeCancelTargets(pool, req.params.id));
@@ -832,7 +925,6 @@ router.get('/:id/cancel-line/targets', auth, requireAdminOrManager, asyncHandler
 
 async function runCore(req, { expectFingerprint = null } = {}) {
   const client = await pool.connect();
-  let committed = false;
   try {
     await client.query('BEGIN');
     const result = await applyLineItemCancel(client, {
@@ -888,9 +980,22 @@ for (let i = 0; i < plan.splits.length; i++) {
 }
 ```
 
+3b. Refund audit row (spec: "refund IDs when money moved"), best-effort on `pool` (client already released), only when `plan.splits.length > 0`:
+
+```js
+await pool.query(
+  `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+   VALUES ($1, 'line_item_cancel_refunded', 'admin', $2, $3)`,
+  [req.params.id, req.user.id, JSON.stringify({
+    refund_row_ids: refunds.filter((r) => r.refund_row_id).map((r) => r.refund_row_id),
+    amount_cents: refunds.filter((r) => r.status === 'succeeded').reduce((s, r) => s + r.amount_cents, 0),
+    incomplete: refundIncomplete,
+  })]).catch((e) => Sentry.captureException(e));
+```
+
 4. Notices, all best-effort with Sentry capture, never failing the response:
    - `result.gratuity?.staffNotice` → `await sendGratuityRemovedStaffNotice({ proposalId: req.params.id, newRate: result.gratuity.newRate })`.
-   - Refund fired and succeeded and `notify_client === true` → `sendRefundClientNotification({ proposalId: req.params.id, amountCents: refunds succeeded sum, source: 'cancel_line' })`.
+   - Refund fired and succeeded and `notify_client === true` → `sendRefundClientNotification({ proposalId: req.params.id, amountCents: <succeeded sum>, source: 'cancel_line' })`.
    - No splits and `notify_client === true` → `sendLineItemRemovedNotice({ proposalId, removedLabel: result.removedLabel, newTotal: result.newTotal })`.
    - `result.labCleaned` → `setImmediate(() => refreshListAfterLabChange(result.labPlanId))`.
 5. Respond per the interface.
@@ -901,8 +1006,6 @@ Mount in `server/routes/proposals/index.js` with the other sub-routers, ABOVE th
 router.use('/', require('./cancelLineItem'));   // line-item cancel: /:id/cancel-line/*
 ```
 
-(Static path segments after `/:id/` are safe from the greedy `GET /:id` only if mounted above getOne; verify by hitting `GET /:id` in the test suite and asserting it still returns the proposal.)
-
 - [ ] **Step 4: Run to pass**: `node --env-file=/home/drbartender/projects/os/.env --test server/routes/proposals/cancelLineItem.test.js`
 - [ ] **Step 5: Commit**
 
@@ -911,73 +1014,30 @@ git add server/routes/proposals/cancelLineItem.js server/routes/proposals/cancel
 git commit -m "feat(cancel-line): targets/preview/execute routes with post-commit scoped refunds"
 ```
 
-### Task 7: Gratuity staff notice
+- [ ] **Step 6: Checkpoint review**
+
+Run `security-review` + `code-review` agents on Tasks 4-8 (the money core + routes). Findings fixed before proceeding.
+
+### Task 9: Housekeeping (docs, fix-list, smoke list)
 
 **Files:**
-- Create: `server/utils/gratuityStaffNotice.js`
-- Modify: `server/utils/emailTemplates.js` (one new template)
-- Test: covered by Task 6's route test plus one direct unit test appended to `server/utils/lineItemCancel.test.js`
+- Modify: `scripts/money-smoke-list.txt`, `docs/fix-list-remaining-2026-07-02.md`, `README.md`, `ARCHITECTURE.md`
 
-**Interfaces:**
-- Produces: `sendGratuityRemovedStaffNotice({ proposalId, newRate })` → `{ sent: n, failed: n }`. Exposes `__setDeps({ sendEmail })` for tests (the `refundNotify.__setDeps` convention).
-
-- [ ] **Step 1: Implement (small module, ~90 lines)**
-
-Recipient query: the exact approved-non-dropped roster join from `staffShiftHandlers.js:542-554` (copy it verbatim with a comment citing the source; recipients are the same people a reschedule notice reaches). Email only: SMS deliberately skipped (cost rule; the BEO page is the durable record and already renders tip-jar status via `GratuityTipsCard`). Template added to `emailTemplates.js`:
-
-```js
-gratuityRemovedStaffNotice({ staffName, eventLabel, eventDate, newRate }) => {
-  subject: `Tip jar update for ${eventLabel}`,
-  text/html: newRate > 0
-    ? `The client's prepaid gratuity for this event was lowered to $${newRate}/staff/hr. You are welcome to set out a tip jar at this event.`
-    : `The client's prepaid gratuity for this event was removed. You are welcome to set out a tip jar at this event.`,
-  // plus the standard event date/time block other staff emails carry
-}
-```
-
-After the send loop, write the activity row:
-
-```js
-INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
-VALUES ($1, 'gratuity_removed_staff_notified', 'system', NULL,
-        jsonb: { new_rate, recipients: [...user ids...], failed: n })
-```
-
-Zero recipients (nobody approved yet) is a clean no-op returning `{ sent: 0, failed: 0 }` and still logs the activity row with `recipients: []`: future assignees learn from the BEO page, which reads live `tip_jar` (verified: `beo.js:250-252` → `ShiftDetail.js:356-362, 500-505`).
-
-- [ ] **Step 2: Unit test** (stub `sendEmail` via `__setDeps`; seed proposal + shift + 2 approved + 1 dropped `shift_requests`; assert 2 sends, dropped excluded, activity row written). Run: `node --env-file=/home/drbartender/projects/os/.env --test server/utils/lineItemCancel.test.js` → PASS.
-- [ ] **Step 3: Commit**
-
-```bash
-git add server/utils/gratuityStaffNotice.js server/utils/emailTemplates.js server/utils/lineItemCancel.test.js
-git commit -m "feat(cancel-line): mandatory staff tip-jar notice on gratuity removal"
-```
-
-### Task 8: Client removal notice + housekeeping (docs, fix-list, smoke list)
-
-**Files:**
-- Create: `server/utils/lineItemRemovedNotify.js`
-- Modify: `server/utils/emailTemplates.js`, `scripts/money-smoke-list.txt`, `docs/fix-list-remaining-2026-07-02.md`, `README.md`, `ARCHITECTURE.md`
-
-- [ ] **Step 1: Removal notice module**
-
-`sendLineItemRemovedNotice({ proposalId, removedLabel, newTotal })` mirrors `refundClientNotify.js`'s structure and gates (client email present + not placeholder + not archived; `__setDeps` seam). Template `lineItemRemovedNotice`: subject `Your event total was updated`, body: `We removed ${removedLabel} from your event at your request. Your updated total is ${fmt dollars}.` plus the standard balance line when a balance remains. No em dashes. (Refund-case comms stay the existing refund notice; this fires only when no refund was owed.)
-
-- [ ] **Step 2: Housekeeping edits**
+- [ ] **Step 1: Edits**
 
 - `scripts/money-smoke-list.txt`: append `server/utils/refundHelpers.scope.test.js`, `server/utils/lineItemCancel.test.js`, `server/routes/proposals/cancelLineItem.test.js`.
 - `docs/fix-list-remaining-2026-07-02.md` line ~272: mark the 598987d owner-confirm item RESOLVED: `RESOLVED 2026-07-23 by the cancel-line-item feature (docs/superpowers/specs/2026-07-22-cancel-line-item-design.md): admin cancel removes the item AND settles the money in one act.`
-- `README.md`: folder-tree entries for the new util/route files.
+- `README.md`: folder-tree entries for the new util/route files (`lineItemCancel.js`, `gratuityStaffNotice.js`, `lineItemRemovedNotify.js`, `proposals/cancelLineItem.js`).
 - `ARCHITECTURE.md`: route table rows for the three endpoints; schema note for `proposal_refunds.total_scope`.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 2: Commit**
 
 ```bash
-git add server/utils/lineItemRemovedNotify.js server/utils/emailTemplates.js scripts/money-smoke-list.txt docs/fix-list-remaining-2026-07-02.md README.md ARCHITECTURE.md
-git commit -m "feat(cancel-line): removal client notice + docs/fix-list/smoke housekeeping"
+git add scripts/money-smoke-list.txt docs/fix-list-remaining-2026-07-02.md README.md ARCHITECTURE.md
+git commit -m "docs(cancel-line): smoke list, fix-list resolution, README/ARCHITECTURE entries"
 ```
 
-### Task 8b (lane gate): full server verification
+### Task 10 (lane gate): full server verification
 
 - [ ] Run every touched/reached suite ONE AT A TIME (shared dev DB): `proposalExtrasFold.legs`, `refundHelpers`, `refundHelpers.scope`, `refundHelpers.splits`, `lineItemCancel`, `cancelLineItem`, `cancel`, `stripe.webhook`, `stripeWebhook.guards`, `refundSweepScheduler`, `notifyRefunds`, `lab`, `submitOverride`, `submitReconcile`, `submitExtras`, `invoiceLifecycle.external`. All PASS before the lane is offered for merge review.
 
@@ -985,13 +1045,13 @@ git commit -m "feat(cancel-line): removal client notice + docs/fix-list/smoke ho
 
 ## Lane cancel-line-ui (depends: cancel-line-server)
 
-### Task 9: `CancelLineDialog`
+### Task 11: `CancelLineDialog`
 
 **Files:**
 - Create: `client/src/pages/admin/CancelLineDialog.js`
 
 **Interfaces:**
-- Consumes: the Task 6 response shapes verbatim.
+- Consumes: the Task 8 response shapes verbatim.
 - Produces: `<CancelLineDialog proposalId target label onClose onDone />`. `onDone()` = parent refetches the proposal.
 
 - [ ] **Step 1: Implement (model: `CancelEventDialog.js`, same OVERLAY/card/btn classes; NotifyConfirmModal chaining: `ProposalDetailPaymentPanel.js:572-592`)**
@@ -1006,6 +1066,11 @@ Structure (~230 lines):
 // - quantity targets (targets entry has quantity > 1): "Remove how many?"
 //   stepper defaulting to all.
 // - everything else goes straight to loadPreview.
+// Idempotency key minted at open with the panel's guarded pattern
+// (ProposalDetailPaymentPanel.js:113-114):
+//   window.crypto && window.crypto.randomUUID
+//     ? window.crypto.randomUUID()
+//     : `${Date.now()}-${Math.random()}`
 const loadPreview = async () => {
   const res = await api.post(`/proposals/${proposalId}/cancel-line/preview`,
     { target, quantity, new_rate: newRate });
@@ -1017,7 +1082,7 @@ const loadPreview = async () => {
 //     + when manual_return_cents > 0 a warn row "Return {manual} manually
 //     (paid outside Stripe)"
 //   - else new_balance_due row: "Client now owes {new_balance_due}"
-//   Conditional rows: locked_invoices ("A locked invoice for X stands and
+//   Conditional rows: locked_invoices ("A locked invoice for $X stands and
 //   won't be rebuilt"), delta_invoices_adjusted, staffing_warning ("N approved
 //   bartenders exceed the new roster; resolve assignments by hand"),
 //   gratuity.staff_notice ("Staff will be notified they can set out a tip
@@ -1033,7 +1098,7 @@ const doExecute = async (notifyClient) => {
   try {
     const res = await api.post(`/proposals/${proposalId}/cancel-line`, {
       target, quantity, new_rate: newRate, reason: reason.trim(),
-      idempotency_key: idemKey,            // crypto.randomUUID() minted at open
+      idempotency_key: idemKey,
       notify_client: notifyClient, fingerprint: preview.fingerprint,
     });
     setResult(res.data); setStep('done');   // done view: what happened, incl.
@@ -1048,14 +1113,19 @@ const doExecute = async (notifyClient) => {
 
 Escape/overlay-click close on non-busy states; api error convention (`err.message`, `err.code`).
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Client build gate**
+
+Run: `cd client && CI=true npx react-scripts build`
+Expected: build succeeds with zero ESLint warnings (CI-fatal otherwise).
+
+- [ ] **Step 3: Commit**
 
 ```bash
 git add client/src/pages/admin/CancelLineDialog.js
 git commit -m "feat(cancel-line): admin preview/confirm dialog"
 ```
 
-### Task 10: Breakdown affordance + ProposalDetail wiring
+### Task 12: Breakdown affordance + ProposalDetail wiring
 
 **Files:**
 - Modify: `client/src/components/PricingBreakdown.js`
@@ -1063,7 +1133,7 @@ git commit -m "feat(cancel-line): admin preview/confirm dialog"
 
 - [ ] **Step 1: PricingBreakdown optional cancel column**
 
-New optional props `cancelTargets` (array from the targets endpoint) and `onCancelLine(targetEntry)`. Matching is by label, the codebase's established line-identity convention (`recomputeSnapshotGratuity` matches `GRATUITY_LABEL` the same way): build `const byLabel = new Map()` from `cancelTargets` using each entry's `label`, and for breakdown rows try exact label match first, then a `startsWith` match for parameterized labels (`Bar Rental (`, addon-name-prefixed lines). When a row matches an entry, render a right-aligned ✕ button (`aria-label` = `Remove ${label}`); `cancellable: false` entries render nothing (package handled below; orphaned rows get `title="Edit this in the proposal editor"` on a disabled ✕). The package row's entry (`reason: 'event_cancel'`) DOES render the ✕ but `onCancelLine` receives it and the page routes to the cancel-event flow. Unmatched cancellable entries (label drift on an old snapshot) are collected by the page, not the component: pass-through prop `onUnmatched(entries)` is out of scope; instead the page renders any unmatched entries as a small "Other removable items" row under the table with the same ✕ handler, so no target is ever unreachable.
+New optional props `cancelTargets` (array from the targets endpoint) and `onCancelLine(targetEntry)`. Matching is by label, the codebase's established line-identity convention (`recomputeSnapshotGratuity` matches `GRATUITY_LABEL` the same way): build `const byLabel = new Map()` from `cancelTargets` using each entry's `label`, and for breakdown rows try exact label match first, then a `startsWith` match for parameterized labels (`Bar Rental (`, addon-name-prefixed lines). When a row matches an entry, render a right-aligned ✕ button (`aria-label` = `Remove ${label}`); `cancellable: false` entries render nothing (package handled below; orphaned rows get `title="Edit this in the proposal editor"` on a disabled ✕). The package row's entry (`reason: 'event_cancel'`) DOES render the ✕ but `onCancelLine` receives it and the page routes to the cancel-event flow. Unmatched cancellable entries (label drift on an old snapshot) are rendered by the page as a small "Other removable items" row under the table with the same ✕ handler, so no target is ever unreachable.
 
 - [ ] **Step 2: ProposalDetail wiring**
 
@@ -1071,19 +1141,24 @@ New optional props `cancelTargets` (array from the targets endpoint) and `onCanc
 - `onCancelLine(entry)`: `entry.target === 'package'` → open the existing cancel-event dialog (the same state/handler the page already uses for CancelEventDialog); else `setCancelLine(entry)` → render `<CancelLineDialog proposalId={id} target={entry.target} label={entry.label} onClose={...} onDone={() => { refetch proposal + targets }} />`.
 - Pass `cancelTargets={cancelTargets} onCancelLine={onCancelLine}` to the `<PricingBreakdown>` at :599. Non-admin/ineligible renders exactly as today (props undefined).
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Client build gate**
+
+Run: `cd client && CI=true npx react-scripts build`
+Expected: build succeeds with zero ESLint warnings.
+
+- [ ] **Step 4: Commit**
 
 ```bash
 git add client/src/components/PricingBreakdown.js client/src/pages/admin/ProposalDetail.js
 git commit -m "feat(cancel-line): per-line cancel affordance on the proposal pricing card"
 ```
 
-### Task 11: EventDetailPage wiring + client gate
+### Task 13: EventDetailPage wiring + client gate
 
 **Files:**
 - Modify: `client/src/pages/admin/EventDetailPage.js` (pricing card :424-467)
 
-- [ ] **Step 1:** Same wiring as Task 10 (targets fetch keyed off `derived` proposal id, `<PricingBreakdown snapshot={snapshot} cancelTargets onCancelLine>` at :435, CancelLineDialog mount, package → the page's cancel-event entry point).
+- [ ] **Step 1:** Same wiring as Task 12 (targets fetch keyed off `derived` proposal id, `<PricingBreakdown snapshot={snapshot} cancelTargets onCancelLine>` at :435, CancelLineDialog mount, package → the page's cancel-event entry point).
 - [ ] **Step 2: Client build gate**
 
 Run: `cd client && CI=true npx react-scripts build`
@@ -1110,4 +1185,8 @@ Dev DB + Stripe test mode (`STRIPE_TEST_MODE_UNTIL`), dev server restarted:
 
 ## Review scaling
 
-Money path end to end. Both lanes get the full review fleet at merge, max effort; push-time sensitive-path fleet + `/second-opinion` per CLAUDE.md. Sensitive files touched: `refundHelpers.js`, `refundExecute.js`, `proposalExtrasFold.js`, `stripe.js`, `schema.sql`.
+Money path end to end. In-lane checkpoints as declared at the top (`database-review` after Task 2; `security-review` + `code-review` after Task 8). Both lanes get the full review fleet at merge, max effort; push-time sensitive-path fleet + `/second-opinion` per CLAUDE.md. Sensitive files touched: `refundHelpers.js`, `refundExecute.js`, `proposalExtrasFold.js`, `stripe.js`, `server/db/schema.sql`.
+
+## Review-fleet resolutions (2026-07-23)
+
+All plan-fleet findings folded in: lane footprint fixed (`lineItemRemovedNotify.js` added, `server/db/schema.sql` corrected); refundExecute INSERT made append-only to preserve the NOT NULL `total_price_before/after` columns; notice modules (Tasks 6-7) reordered ahead of the routes task (was a forward dependency); `seedProposal` moved to Task 4; staffing floor unified at `max(required, included)` in targets and apply; post-refund audit row added (Task 8 step 3b); dev-DB schema application owner named (Claude via Neon MCP, Task 2 step 1); asyncHandler path corrected to `server/middleware/asyncHandler`; client build gate added to every UI task; templates moved into notice modules (emailTemplates.js untouched, over soft cap); in-lane review checkpoints declared; hosted-included no-target test and clawback no-op test added; guarded randomUUID pattern adopted. Confirmed by Dallas: the payroll-accrual no-op reading (spec premise was wrong) and the necessarily-new removal-notice template riding existing toggle machinery.
