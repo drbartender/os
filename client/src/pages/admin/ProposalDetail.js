@@ -2,13 +2,15 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { interpolatePackageIncludes } from '../../utils/packageIncludes';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { formatPhone } from '../../utils/formatPhone';
 import { getPackageItems } from '../../data/packages';
 import { SYRUPS } from '../../data/syrups';
-import PricingBreakdown from '../../components/PricingBreakdown';
+import PricingBreakdown, { matchCancelTargets } from '../../components/PricingBreakdown';
+import CancelLineDialog from './CancelLineDialog';
 import DrinkPlanCard from '../../components/DrinkPlanCard';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
@@ -61,6 +63,7 @@ export default function ProposalDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
+  const { user: viewer } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [proposal, setProposal] = useState(null);
@@ -98,6 +101,10 @@ export default function ProposalDetail() {
   // Cancel-event dialog (booked proposals only; fix #7).
   const [showCancelDialog, setShowCancelDialog] = useState(false);
 
+  // Cancel-line: per-line removal targets + the open dialog's target entry.
+  const [cancelTargets, setCancelTargets] = useState(null);
+  const [cancelLineEntry, setCancelLineEntry] = useState(null);
+
   // Change-request review state. openCr = any pending request (drives the
   // direct-edit warning). pendingCr = the request being applied via the deep-link.
   // appliedCrId is captured ONCE at mount: the cleanup effect below strips
@@ -122,6 +129,30 @@ export default function ProposalDetail() {
   }, [id, navigate, toast]);
 
   useEffect(() => { loadProposal(); }, [loadProposal]);
+
+  // Cancellable-line targets (server-enumerated). Silently absent on error or
+  // ineligible status; the breakdown just renders without the affordance.
+  // Admin-gated in the UI too: preview/execute are adminOnly server-side, so a
+  // manager must never see a remove button they cannot use.
+  const proposalStatus = proposal?.status;
+  const isAdmin = viewer?.role === 'admin';
+  const loadCancelTargets = useCallback(() => {
+    if (!isAdmin || !proposalStatus || ['archived', 'completed'].includes(proposalStatus)) {
+      setCancelTargets(null);
+      return;
+    }
+    api.get(`/proposals/${id}/cancel-line/targets`)
+      .then(r => setCancelTargets(r.data.eligible ? r.data.targets : null))
+      .catch(() => setCancelTargets(null));
+  }, [id, proposalStatus, isAdmin]);
+  useEffect(() => { loadCancelTargets(); }, [loadCancelTargets]);
+
+  // Package row hands off to the existing cancel-event flow; every other
+  // target opens the cancel-line dialog.
+  const onCancelLine = useCallback((entry) => {
+    if (entry.target === 'package') setShowCancelDialog(true);
+    else setCancelLineEntry(entry);
+  }, []);
 
   // Option-group state for the Alternatives panel. Falls back to solo on any
   // error so the normal Send flow is never blocked by group-fetch trouble.
@@ -596,7 +627,21 @@ export default function ProposalDetail() {
                   )}
                 </div>
                 <div className="card-body">
-                  <PricingBreakdown snapshot={snapshot} />
+                  <PricingBreakdown snapshot={snapshot} cancelTargets={cancelTargets} onCancelLine={onCancelLine} />
+
+                  {/* Cancellable targets with no matching breakdown row (per-syrup
+                      targets; label drift on an old snapshot) stay reachable here. */}
+                  {cancelTargets && matchCancelTargets(snapshot, cancelTargets).unmatched.length > 0 && (
+                    <div className="hstack" style={{ flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                      <span className="tiny muted">Other removable items:</span>
+                      {matchCancelTargets(snapshot, cancelTargets).unmatched.map((e) => (
+                        <button key={e.target} type="button" className="btn btn-ghost btn-sm"
+                          onClick={() => onCancelLine(e)}>
+                          ✕ {e.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Auto-added specialty upgrades */}
                   {Object.keys(autoAddedMap).length > 0 && (
@@ -764,6 +809,18 @@ export default function ProposalDetail() {
           clientName={proposal.client_name}
           onClose={() => setShowCancelDialog(false)}
           onCancelled={() => { loadProposal(); }}
+        />
+      )}
+
+      {/* Cancel-line dialog: one-motion line-item removal + refund. */}
+      {cancelLineEntry && (
+        <CancelLineDialog
+          proposalId={id}
+          entry={cancelLineEntry}
+          clientEmail={proposal.client_email}
+          clientName={proposal.client_name}
+          onClose={() => setCancelLineEntry(null)}
+          onDone={() => { loadProposal(); loadCancelTargets(); }}
         />
       )}
 

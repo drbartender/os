@@ -10,7 +10,8 @@ import useDrawerParam, { drawerHref } from '../../hooks/useDrawerParam';
 import EntityLink from '../../components/EntityLink';
 import { getPackageItems } from '../../data/packages';
 import { SYRUPS } from '../../data/syrups';
-import PricingBreakdown from '../../components/PricingBreakdown';
+import PricingBreakdown, { matchCancelTargets } from '../../components/PricingBreakdown';
+import CancelLineDialog from './CancelLineDialog';
 import DrinkPlanCard from '../../components/DrinkPlanCard';
 import MessageLogCard from './eventDetail/MessageLogCard';
 import EventDetailPlanLogo from './EventDetailPlanLogo';
@@ -47,6 +48,9 @@ export default function EventDetailPage() {
   // Which compose-and-send modal is open ('invite' | 'reenroll' | null).
   const [sendModal, setSendModal] = useState(null);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
+  // Cancel-line: per-line removal targets + the open dialog's target entry.
+  const [cancelTargets, setCancelTargets] = useState(null);
+  const [cancelLineEntry, setCancelLineEntry] = useState(null);
 
   // Proposal + shifts refetch — passed to the payment panel `onUpdate` and run
   // after an event edit (date/time/location/contact changes re-sync the linked
@@ -80,6 +84,30 @@ export default function EventDetailPage() {
       .then(r => setShifts(Array.isArray(r.data) ? r.data : []))
       .catch(() => {});
   }, [id]);
+
+  // Cancellable-line targets (server-enumerated). Silently absent on error or
+  // ineligible status; the breakdown just renders without the affordance.
+  // Admin-gated in the UI too: preview/execute are adminOnly server-side, so a
+  // manager must never see a remove button they cannot use.
+  const proposalStatus = proposal?.status;
+  const isAdmin = viewer?.role === 'admin';
+  const loadCancelTargets = useCallback(() => {
+    if (!isAdmin || !proposalStatus || ['archived', 'completed'].includes(proposalStatus)) {
+      setCancelTargets(null);
+      return;
+    }
+    api.get(`/proposals/${id}/cancel-line/targets`)
+      .then(r => setCancelTargets(r.data.eligible ? r.data.targets : null))
+      .catch(() => setCancelTargets(null));
+  }, [id, proposalStatus, isAdmin]);
+  useEffect(() => { loadCancelTargets(); }, [loadCancelTargets]);
+
+  // Package row hands off to the existing cancel-event flow; every other
+  // target opens the cancel-line dialog.
+  const onCancelLine = useCallback((entry) => {
+    if (entry.target === 'package') setShowCancelDialog(true);
+    else setCancelLineEntry(entry);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -261,6 +289,19 @@ export default function EventDetailPage() {
         />
       )}
 
+      {/* Cancel-line dialog: one-motion line-item removal + refund. A staffing
+          removal re-syncs shifts server-side, so shifts reload too. */}
+      {cancelLineEntry && (
+        <CancelLineDialog
+          proposalId={id}
+          entry={cancelLineEntry}
+          clientEmail={proposal.client_email}
+          clientName={proposal.client_name}
+          onClose={() => setCancelLineEntry(null)}
+          onDone={() => { loadProposal(); reloadShifts(); loadCancelTargets(); }}
+        />
+      )}
+
       {/* Compose-and-send flows (portal invite + drink-plan nudge re-enroll).
           SendModal previews the server-resolved recipient/channels; onComplete
           reports the honest per-channel result via the existing toast. */}
@@ -436,7 +477,21 @@ export default function EventDetailPage() {
                     )}
                   </div>
                   <div className="card-body">
-                    <PricingBreakdown snapshot={snapshot} />
+                    <PricingBreakdown snapshot={snapshot} cancelTargets={cancelTargets} onCancelLine={onCancelLine} />
+
+                    {/* Cancellable targets with no matching breakdown row (per-syrup
+                        targets; label drift on an old snapshot) stay reachable here. */}
+                    {cancelTargets && matchCancelTargets(snapshot, cancelTargets).unmatched.length > 0 && (
+                      <div className="hstack" style={{ flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                        <span className="tiny muted">Other removable items:</span>
+                        {matchCancelTargets(snapshot, cancelTargets).unmatched.map((e) => (
+                          <button key={e.target} type="button" className="btn btn-ghost btn-sm"
+                            onClick={() => onCancelLine(e)}>
+                            ✕ {e.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
 
                     {snapshot?.syrups?.selections?.length > 0 && (
                       <div className="tiny muted" style={{ marginTop: 10 }}>
