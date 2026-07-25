@@ -335,3 +335,30 @@ docs/superpowers/{specs,plans}/2026-07-21-notify-client-confirmation*. Deferred 
 - **Suppression skip-reasons surface enum tokens** ("Suppressed: channel_disabled.") in admin
   toasts, on both the receipt path (actions.js) and the refund path (refundClientNotify.js).
   Map to human copy at the source, both call sites together. (code-review, lane-3 fleet.)
+
+---
+
+## Coverage language in signed documents (added 2026-07-25)
+
+Surfaced while speccing [on-site service extension](superpowers/specs/2026-07-25-service-extension-design.md).
+That spec puts the insurance sentence on the client's extension terms screen and in the
+staffer's decline text, but both only reach someone who already came to the system. The client
+who was always going to hand a bartender $60 in cash never opens either one. The place to catch
+that case is upstream, in documents both sides agree to before anyone is negotiating in a
+kitchen at 10pm.
+
+Three copy changes, each to a document a real person signs or receives. Not code, and each
+wants Dallas's eyes before it ships:
+
+- **Event services agreement** (master contract at sign-and-pay, shipped 2026-06-05): state that
+  bar service runs to the contracted end time, that additional service time is arranged through
+  Dr. Bartender, and that service arranged privately with a bartender is not covered by DRB's
+  $2 million liquor liability policy.
+- **Pre-event client email**: one sentence of the same, arriving before the event rather than
+  during it.
+- **Contractor agreement**: the staff-side mirror. Serving past the contracted end time without
+  a system greenlight is not DRB work and is not covered by DRB insurance, and bartenders may
+  not accept payment directly from a client for service time.
+
+Blocked on: Dallas confirming the coverage position with the broker in writing. The exact
+wording should follow that answer rather than lead it.
