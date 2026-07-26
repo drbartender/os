@@ -1,7 +1,11 @@
 # Phone System Redesign: real-feeling numbers, one smart voicemail, AI triage (design)
 
 Date: 2026-07-26
-Revision: 1
+Revision: 2 (rev 2: the 224 numbers do NOT have SMS/A2P approval yet, so client
+SMS STAYS on the 888 for now. The voice + smart-voicemail redesign proceeds as
+Phase 1 with no SMS dependency; moving client SMS to 1922 and retiring the 888
+becomes Phase 2, gated on the 224 numbers getting A2P approval. Until then, both
+client texts and the VM-transcript texts send from the 888.)
 Status: approved in brainstorm (section-by-section)
 
 Driver: the phone footprint grew organically and now feels like a robot, not a
@@ -50,11 +54,11 @@ is the robot we are avoiding.
 
 | Number | Role | Notes |
 |---|---|---|
-| **`+12242221922` (Twilio)** | **PRIMARY, "Dallas."** The business number. Client texts come from here ("hey it's Dallas"). Inbound calls route to Dallas via the 312. Replaces the 888 for SMS. | Becomes `TWILIO_PHONE_NUMBER`. Website "call/text us" points here. |
+| **`+12242221922` (Twilio)** | **PRIMARY for VOICE now, "Dallas."** Inbound calls route to Dallas via the 312. Becomes the primary SMS line ("hey it's Dallas") only in Phase 2, once the 224s have A2P approval. | Voice-first. `TWILIO_PHONE_NUMBER` repoints here in Phase 2, NOT now. |
 | **`+12242220082` (Twilio)** | **"Zul."** The line clients who have been emailing Zul call. Bridge to Zul + smart voicemail. | Unchanged wiring plus the shared voicemail flow below. Stays `VOICE_CALLER_ID` for Zul's outbound. |
-| **`+13125889401` (Google Voice)** | **Dallas's phone routing layer + his voicemail inbox.** The 1922's calls funnel through it to reach Dallas, keeping his 970 private. VM transcripts are texted here. | GV, so it stays "dumb" by nature. That is fine: its job is to ring Dallas and receive texts on his phone. |
+| **`+13125889401` (Google Voice)** | **Dallas's phone routing layer + his voicemail inbox.** The 1922's calls funnel through it to reach Dallas, keeping his 970 private. VM transcripts are texted here (sent FROM the 888 for now, the only A2P-approved sender). | GV, so it stays "dumb" by nature. Its job is to ring Dallas and receive texts on his phone. |
 | **970 (personal cell)** | Private. Never exposed to a client, never given out. | Reachable only internally (Twilio may dial it; callers only ever see 1922). |
-| **888 toll-free** | **Retired.** | After client SMS moves to 1922 and A2P re-registers. |
+| **888 toll-free** | **Stays the client SMS line for now.** The 224s have no SMS approval yet, so this is the sole approved sender. Retired only in Phase 2, after 224 A2P clears and client SMS cuts over to 1922. | Voice redesign (Phase 1) does not touch it. |
 
 Nobody memorizes the digits, per the owner, so no port of the 312 is needed. The
 only aesthetic constraint honored: local, ours, and no toll-free anywhere.
@@ -124,9 +128,10 @@ The recording callback (`/inbound/voicemail`) is extended. In order:
    tag. The tag is advisory so a human can eyeball it; nothing weird-but-wanted
    is ever hidden.
 5. **Deliver per line:**
-   - **Dallas's line (1922):** an SMS to the 312 containing the caller number,
-     the tag, the transcript, and a private listen-link (section 5). Google Voice
-     receives SMS, so it lands on his phone; confirm in testing.
+   - **Dallas's line (1922):** an SMS (sent from the 888 for now, the only
+     approved sender; from 1922 after Phase 2) to the 312 containing the caller
+     number, the tag, the transcript, and a private listen-link (section 5).
+     Google Voice receives SMS, so it lands on his phone; confirm in testing.
    - **Zul's line (0082):** her Telegram as today (audio inline via
      `sendTelegramAudio`) PLUS the transcript, summary, and tag added to the
      message. The listen-link may also be included.
@@ -224,7 +229,7 @@ number (the message is never lost because the AI hiccuped).
 
 | Variable | Change |
 |---|---|
-| `TWILIO_PHONE_NUMBER` | Repoint from the 888 to `+12242221922`. |
+| `TWILIO_PHONE_NUMBER` | STAYS the 888 for now (the 224s lack SMS approval). Repoints to `+12242221922` in Phase 2, after 224 A2P clears. |
 | `VOICE_CALLER_ID` | Stays `+12242220082` (Zul's line / her outbound caller ID). |
 | `VM_TEXT_DESTINATION` (new) | The 312, where Dallas's line VM transcripts are texted. |
 | `VM_PRIMARY_DIAL_TARGET` (new) | What 1922 inbound dials to reach Dallas (the 312, or his 970 if GV interception forces the fallback). |
@@ -250,6 +255,14 @@ number (the message is never lost because the AI hiccuped).
 
 ## Ops and rollout
 
+**Phasing (rev 2):** the 224 numbers have no SMS/A2P approval yet, so this splits
+in two. **Phase 1 (now):** the entire voice + smart-voicemail experience, which
+has no dependency on SMS approval (1922 voice routing, the shared VM + escalation
+flow, transcription + tag, storage + listen-link + purge, per-line greetings).
+VM-transcript texts and client texts both keep sending from the 888 in Phase 1.
+**Phase 2 (gated on 224 A2P approval, not started):** move client SMS off the 888
+to 1922 and retire the 888.
+
 This is part code, part Twilio/GV console configuration, part carrier paperwork.
 Sequence, shipping dark and verifying with live calls at each gate (the
 `VOICEMAIL_ENABLED` precedent):
@@ -261,11 +274,13 @@ Sequence, shipping dark and verifying with live calls at each gate (the
    forwards to Dallas's phone, and confirm it receives SMS.
 3. **Code:** the shared smart-voicemail flow, transcription + tag, R2 store +
    listen page + purge, per-line delivery, `deleteFile`.
-4. **Client SMS move:** repoint `TWILIO_PHONE_NUMBER` to 1922 and
-   **re-register A2P 10DLC** for it. The 888 campaign is mid-review right now, so
-   this is a fast-follow, not a blocker; keep sending on the 888 until the 1922
-   campaign clears, then cut over and retire the 888.
-5. **Website:** `COMPANY_PHONE_TEL` and any public "call/text us" to the 1922.
+4. **[PHASE 2, gated on 224 A2P approval] Client SMS move:** once the 224
+   SMS/A2P registration is filed AND approved, repoint `TWILIO_PHONE_NUMBER` to
+   1922, cut client texts over, and retire the 888. Not started until that
+   approval exists; the 224 numbers cannot send client SMS today, which is why
+   Phase 1 keeps the 888.
+5. **Website:** point the voice "call us" (`COMPANY_PHONE_TEL`) to 1922 now; any
+   "text us" number stays the 888 until Phase 2.
 6. **Greetings:** record Dallas's greeting; keep Zul's.
 7. **Live tests:** primary inbound rings Dallas and misses to smart VM (proves GV
    does not intercept); press-1 escalation reaches the other person with a
@@ -287,9 +302,11 @@ Sequence, shipping dark and verifying with live calls at each gate (the
 ## Decisions locked in brainstorm
 
 1. Real by BEING human, not an AI voice agent. AI stays behind the curtain.
-2. 1922 is the primary business number (voice + text), replacing the 888.
-3. 0082 stays Zul's client line. 312 is Dallas's routing layer + VM-text inbox.
-   970 stays private. 888 is retired.
+2. 1922 is the primary business number: VOICE now, SMS in Phase 2. Client SMS
+   stays on the 888 until the 224 numbers get A2P approval (a hard external gate).
+3. 0082 stays Zul's client line. 312 is Dallas's routing layer + VM-text inbox
+   (texts sent from the 888 for now). 970 stays private. 888 is retired only in
+   Phase 2.
 4. One reusable smart-voicemail-plus-escalation flow on BOTH lines; press 1 rings
    the OTHER person with a whisper; no answer returns to voicemail.
 5. Voicemails are transcribed and AI-tagged; NOTHING is suppressed (tag only).
@@ -305,3 +322,6 @@ Sequence, shipping dark and verifying with live calls at each gate (the
   phone? Confirm before cutting his delivery to it.
 - Transcription provider choice (Whisper vs Deepgram vs other), finalized in the
   plan against cost and quality.
+- **Phase 2 gate:** file the 224 SMS/A2P 10DLC registration. Phase 2 (moving
+  client SMS to 1922 and retiring the 888) cannot start until it is APPROVED. Not
+  yet filed as of 2026-07-26.
