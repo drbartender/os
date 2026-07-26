@@ -134,6 +134,7 @@ export default function CancelLineDialog({ proposalId, entry, clientEmail, clien
   );
 
   return (
+    <>
     <div style={OVERLAY} onClick={() => !busy && onClose()}>
       <div className="card" style={{ width: '100%', maxWidth: 520, maxHeight: '85vh', overflow: 'auto' }}
         onClick={(e) => e.stopPropagation()}>
@@ -204,7 +205,7 @@ export default function CancelLineDialog({ proposalId, entry, clientEmail, clien
               <div className="vstack" style={{ gap: 6 }}>
                 {previewRow('Current total', fmt$2dp(preview.old_total))}
                 {previewRow('New total', fmt$2dp(preview.new_total), true)}
-                {previewRow('Change', `${delta > 0 ? '+' : ''}${fmt$2dp(delta)}`)}
+                {previewRow('Change', `${delta > 0 ? '+' : delta < 0 ? '-' : ''}${fmt$2dp(Math.abs(delta))}`)}
                 {previewRow('Paid so far', fmt$2dp(preview.amount_paid))}
               </div>
 
@@ -294,7 +295,13 @@ export default function CancelLineDialog({ proposalId, entry, clientEmail, clien
           )}
         </div>
       </div>
+    </div>
 
+    {/* OUTSIDE the overlay div: NotifyConfirmModal portals its DOM to
+        document.body, but React synthetic events bubble through the COMPONENT
+        tree, so nesting it inside the overlay let the Send/Don't-send click
+        reach the overlay's click-to-close and unmount the dialog mid-execute
+        (the done view never showed — caught in the 2026-07-26 browser walk). */}
       {notifyPrompt && (
         <NotifyConfirmModal
           title="Email the client about this change?"
@@ -318,6 +325,6 @@ export default function CancelLineDialog({ proposalId, entry, clientEmail, clien
           onSend={() => doExecute(true)}
         />
       )}
-    </div>
+    </>
   );
 }
