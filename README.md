@@ -333,6 +333,7 @@ dr-bartender/
 │   │   ├── lifecycleEmailTemplates.js # Lifecycle email templates split out of emailTemplates.js
 │   │   ├── staffHiringEmailTemplates.js # Staff/hiring/application email templates split out of emailTemplates.js (re-exported by it for backwards compat)
 │   │   ├── messageLog.js      # Append-only client-message ledger: pure builders + logClientMessage (fire-and-forget, never throws) + getMessageLogForProposal; written at the sendEmail/sendSMS choke points, read on GET /proposals/:id
+│   │   ├── onboardingPromotion.js # promoteOnboardingIfEligible — the onboarding_status -> 'approved' gate (in_progress needs an applications row; pre_hired is not evidence)
 │   │   ├── onboardingProgress.js # ensureOnboardingProgress — lazy progress-row seed for legacy accounts (step writes are UPDATE-only)
 │   │   ├── messageScheduling.js # scheduleMessage(...): idempotent insert of a future touch into the scheduled_messages table
 │   │   ├── messageSuppression.js # shouldSendImmediate(...): shared archive / comm-prefs / bad-contact gate for immediate-send paths

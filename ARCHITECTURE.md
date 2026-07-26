@@ -159,7 +159,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/` | Yes | Get payment profile |
-| POST | `/` | Yes | Save payment method, W-9 upload, marks onboarding complete |
+| POST | `/` | Yes | Save payment method, W-9 upload, marks onboarding complete. **Promotion gate (spec 2026-07-22):** the `onboarding_status -> 'approved'` flip runs through `promoteOnboardingIfEligible` (`server/utils/onboardingPromotion.js`). `hired` / `submitted` / `reviewed` always promote (admin-conferred or payment-import set); `in_progress` promotes ONLY when an `applications` row exists. Everything else is a no-op, including an already-`approved` re-submit. |
 
 ### Application — `/api/application`
 | Method | Path | Auth | Description |
@@ -650,7 +650,7 @@ _(tips/tip-feedback rows in `server/routes/admin/contractorTipPage.js`; the stub
 - `id` SERIAL PK
 - `email` UNIQUE, `password_hash`
 - `role`: staff | admin | manager
-- `onboarding_status`: in_progress | applied | interviewing | hired | rejected | submitted | reviewed | approved | deactivated
+- `onboarding_status`: in_progress | applied | interviewing | hired | rejected | submitted | reviewed | approved | deactivated | suspended. **`in_progress` is ambiguous by construction** and this matters for auth: it is BOTH the public default written by `POST /api/auth/register` (self-registered, has not applied) AND the admin-only `interviewing -> in_progress` onboarding stage. The disambiguator is an `applications` row — `POST /application` requires `in_progress` and moves the status off it in the same transaction, so holding a row while still `in_progress` is only reachable via the admin move. `promoteOnboardingIfEligible` relies on exactly that (spec 2026-07-22-onboarding-promotion-gate). `requireOnboarded` admits only `submitted` / `reviewed` / `approved` plus admin/manager, so `in_progress` never clears it directly.
 - `can_hire`, `can_staff` (boolean permission flags)
 - `notification_preferences` JSONB — per-category admin alert toggles (`urgent_booking`, `urgent_consult`, `urgent_staffing`, `urgent_client_reply`, `payment_failure`, `feedback`, `system_error`, `routine_admin`, `routine_thumbtack`, `routine_hiring`, `routine_finance`), all default true. Drives the Automated Communication system's per-admin routing.
 - `communication_preferences` JSONB — `{sms_enabled, email_enabled, marketing_enabled}` (defaults true). Channel-level on/off shared by admin alerts and staff notifications.

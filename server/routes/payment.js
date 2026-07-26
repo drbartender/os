@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
+const { promoteOnboardingIfEligible } = require('../utils/onboardingPromotion');
 const { auth } = require('../middleware/auth');
 const { isValidUpload } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
@@ -148,11 +149,29 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       // mid-onboarding. Already-approved → no-op (idempotent re-submit).
       // Rejected/deactivated → blocked at the auth middleware before reaching here.
       // Prevents a user from re-elevating themselves after an admin demotion to
-      // an off-funnel state.
-      await client.query(
-        "UPDATE users SET onboarding_status='approved' WHERE id=$1 AND onboarding_status IN ('hired','in_progress','submitted','reviewed')",
-        [req.user.id]
-      );
+      // an off-funnel state, and (spec 2026-07-22) prevents a self-registered
+      // account from promoting itself at all. The rule and the reasoning live in
+      // server/utils/onboardingPromotion.js so this route and its tests share one
+      // definition. Passes `client` so it joins this transaction.
+      const promotedRows = await promoteOnboardingIfEligible(client, req.user.id);
+      // A refused promotion used to be impossible for anyone who got this far,
+      // so nothing downstream reports it: the route still 200s and the client
+      // still says "You're All Set". Leave a breadcrumb so a genuinely stuck
+      // person is findable instead of silently bounced back to /apply.
+      if (promotedRows === 0) {
+        const cur = await client.query('SELECT onboarding_status FROM users WHERE id=$1', [req.user.id]);
+        const priorStatus = cur.rows[0] && cur.rows[0].onboarding_status;
+        if (priorStatus !== 'approved') {
+          console.warn(`[payment] onboarding promotion skipped user=${req.user.id} status=${priorStatus}`);
+          try {
+            Sentry.captureMessage('Onboarding promotion skipped', {
+              level: 'warning',
+              tags: { event: 'promotion_skipped' },
+              extra: { user_id: req.user.id, onboarding_status: priorStatus },
+            });
+          } catch (_) { /* never let telemetry break onboarding */ }
+        }
+      }
 
       // New for tip page (2026-05-08): persist payment handles + payroll preference
       step = 'upsert_tip_handles';
