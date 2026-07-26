@@ -227,11 +227,22 @@ git commit -m "feat(uploads): accept HEIC and Word docs for onboarding documents
   - `DOWNSCALE_THRESHOLD_BYTES: number`
   - `MAX_IMAGE_EDGE: number`
   - `IMAGE_QUALITY: number`
-  - `ACCEPT_ATTR: string`
+  - `UPLOAD_KINDS: { document: string[], narrow: string[] }`
+  - `DEFAULT_KIND: 'narrow'`
+  - `acceptFor(kind: string) -> string`
   - `formatBytes(n: number) -> string`
   - `extOf(name: string) -> string`
   - `isImageName(name: string) -> boolean`
-  - `checkFile(file: {name: string, size: number}) -> { ok: true } | { ok: false, message: string }`
+  - `checkFile(file: {name: string, size: number}, kind?: string) -> { ok: true } | { ok: false, message: string }`
+
+**Why `kind` exists.** The accepted extension set must match whichever server
+validator the destination route uses, or the client waves a file through that the
+server then rejects, which is the original bug wearing a different hat.
+`PaydayProtocols.js:527` renders `FileUpload` with no `accept` prop for the W-9,
+and `payment.js:91` validates that upload with the narrow `isValidUpload`. So the
+**default is `narrow`**, and only the resume and alcohol certification opt into
+`document`. The two sets mirror `isValidUpload` and `isValidOnboardingDocument`
+exactly.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -239,7 +250,7 @@ Create `client/src/utils/uploadLimits.test.js`:
 
 ```js
 import {
-  MAX_UPLOAD_BYTES, formatBytes, extOf, isImageName, checkFile,
+  MAX_UPLOAD_BYTES, formatBytes, extOf, isImageName, checkFile, acceptFor,
 } from './uploadLimits';
 
 const f = (name, size) => ({ name, size });
@@ -275,17 +286,40 @@ describe('isImageName', () => {
   });
 });
 
+describe('kinds mirror the server validators', () => {
+  it('defaults to the narrow set, matching isValidUpload', () => {
+    expect(checkFile(f('w9.pdf', 1000))).toEqual({ ok: true });
+    expect(checkFile(f('w9.docx', 1000)).ok).toBe(false);
+    expect(checkFile(f('w9.heic', 1000)).ok).toBe(false);
+  });
+
+  it('accepts Word and HEIC only under the document kind', () => {
+    expect(checkFile(f('resume.docx', 1000), 'document')).toEqual({ ok: true });
+    expect(checkFile(f('cert.heic', 1000), 'document')).toEqual({ ok: true });
+  });
+
+  it('acceptFor emits an attribute string per kind', () => {
+    expect(acceptFor('document')).toContain('.docx');
+    expect(acceptFor('narrow')).not.toContain('.docx');
+    expect(acceptFor(undefined)).toBe(acceptFor('narrow'));
+  });
+
+  it('an unknown kind falls back to narrow rather than accepting everything', () => {
+    expect(checkFile(f('resume.docx', 1000), 'bogus').ok).toBe(false);
+  });
+});
+
 describe('checkFile', () => {
   it('accepts a normal PDF', () => {
     expect(checkFile(f('resume.pdf', 900 * 1024))).toEqual({ ok: true });
   });
 
-  it('accepts a Word document', () => {
-    expect(checkFile(f('resume.docx', 40 * 1024))).toEqual({ ok: true });
+  it('accepts a Word document under the document kind', () => {
+    expect(checkFile(f('resume.docx', 40 * 1024), 'document')).toEqual({ ok: true });
   });
 
   it('rejects an unsupported type by naming what works', () => {
-    const r = checkFile(f('resume.pages', 1000));
+    const r = checkFile(f('resume.pages', 1000), 'document');
     expect(r.ok).toBe(false);
     expect(r.message).toMatch(/PDF/);
     expect(r.message).toMatch(/\.pages/);
@@ -342,13 +376,34 @@ export const MAX_IMAGE_EDGE = 2000;
 export const IMAGE_QUALITY = 0.85;
 
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'];
-const DOC_EXTS = ['.pdf', '.doc', '.docx'];
-const ALLOWED_EXTS = [...DOC_EXTS, ...IMAGE_EXTS];
 
-// The file input's accept attribute. Wide on purpose: a narrow accept greys
-// files out in the iOS Files picker with no explanation, which reads to the
-// user as the page being broken.
-export const ACCEPT_ATTR = ALLOWED_EXTS.join(',');
+// Each kind MUST mirror the server validator used by its destination route. A
+// client that accepts more than the server does just relocates the original bug:
+// the user picks a file, waits through an upload, and gets rejected at the end.
+//
+//   narrow   -> server/utils/fileValidation.js isValidUpload
+//               (W-9 via payment.js:91, headshots, blog, staff portal)
+//   document -> server/utils/fileValidation.js isValidOnboardingDocument
+//               (resume and alcohol certification only)
+export const UPLOAD_KINDS = {
+  narrow: ['.pdf', '.jpg', '.jpeg', '.png', '.webp'],
+  document: ['.pdf', '.doc', '.docx', ...IMAGE_EXTS],
+};
+
+// Default to the narrow set. A field must opt IN to the wider one, so a new
+// FileUpload added later cannot silently outrun its server validator.
+export const DEFAULT_KIND = 'narrow';
+
+function extsFor(kind) {
+  return UPLOAD_KINDS[kind] || UPLOAD_KINDS[DEFAULT_KIND];
+}
+
+// The file input's accept attribute for a given kind. Kept as wide as the
+// server allows, because a too-narrow accept greys files out in the iOS Files
+// picker with no explanation, which reads to the user as a broken page.
+export function acceptFor(kind) {
+  return extsFor(kind).join(',');
+}
 
 export function extOf(name) {
   if (typeof name !== 'string') return '';
@@ -369,16 +424,17 @@ export function formatBytes(n) {
   return `${Math.round(n / 1024)}KB`;
 }
 
-export function checkFile(file) {
+export function checkFile(file, kind = DEFAULT_KIND) {
   if (!file) return { ok: false, message: 'No file selected.' };
   if (!file.size) return { ok: false, message: 'That file is empty. Try picking it again.' };
 
+  const allowed = extsFor(kind);
   const ext = extOf(file.name);
-  if (!ALLOWED_EXTS.includes(ext)) {
-    return {
-      ok: false,
-      message: `We cannot read ${ext || 'that file type'}. Use a PDF, a Word document, or a photo (JPG, PNG, HEIC).`,
-    };
+  if (!allowed.includes(ext)) {
+    const wording = allowed.includes('.docx')
+      ? 'Use a PDF, a Word document, or a photo (JPG, PNG, HEIC).'
+      : 'Use a PDF or a photo (JPG, PNG).';
+    return { ok: false, message: `We cannot read ${ext || 'that file type'}. ${wording}` };
   }
 
   if (file.size > MAX_UPLOAD_BYTES) {
@@ -495,8 +551,8 @@ git commit -m "feat(uploads): downscale oversized images in the browser"
 - Test: `client/src/components/FileUpload.test.js` (create)
 
 **Interfaces:**
-- Consumes: `checkFile`, `ACCEPT_ATTR` from `../utils/uploadLimits`; `downscaleImage` from `../utils/downscaleImage`.
-- Produces: unchanged public props (`label`, `name`, `accept`, `helper`, `onChange`, `currentFile`, `camera`). `onChange(name, file)` still fires only for accepted files. Rejections render inline and never call `onChange`.
+- Consumes: `checkFile`, `acceptFor`, `DEFAULT_KIND` from `../utils/uploadLimits`; `downscaleImage` from `../utils/downscaleImage`.
+- Produces: existing props unchanged (`label`, `name`, `accept`, `helper`, `onChange`, `currentFile`, `camera`), plus one new optional prop `kind` defaulting to `DEFAULT_KIND` (`'narrow'`). `onChange(name, file)` still fires only for accepted files. Rejections render inline and never call `onChange`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -521,9 +577,11 @@ function makeFile(name, size, type = 'application/pdf') {
 
 function setup(props = {}) {
   const onChange = jest.fn();
-  render(<FileUpload label="Upload Your Resume" name="resume" onChange={onChange} {...props} />);
+  render(<FileUpload label="Upload Your Resume" name="resume" kind="document" onChange={onChange} {...props} />);
   return { onChange, input: document.querySelector('input[type="file"]') };
 }
+
+beforeEach(() => { jest.clearAllMocks(); });
 
 it('accepts a normal file and reports it upward', async () => {
   const { onChange, input } = setup();
@@ -580,6 +638,20 @@ it('accepts an image that only fits after downscaling', async () => {
   await waitFor(() => expect(onChange).toHaveBeenCalled());
   expect(screen.queryByText(/the limit is/i)).not.toBeInTheDocument();
 });
+
+// Regression guard. PaydayProtocols renders the W-9 field with no `kind`, and
+// payment.js:91 validates it with the narrow isValidUpload. If the default ever
+// widens, a .docx W-9 passes here and is rejected only after a full upload,
+// which is the exact failure this component exists to prevent.
+it('defaults to the narrow kind so the W-9 field matches its server validator', async () => {
+  const onChange = jest.fn();
+  render(<FileUpload label="Upload Your Signed W-9" name="w9" onChange={onChange} />);
+  const input = document.querySelectorAll('input[type="file"]')[0];
+
+  fireEvent.change(input, { target: { files: [makeFile('w9.docx', 40 * 1024)] } });
+  expect(await screen.findByText(/we cannot read \.docx/i)).toBeInTheDocument();
+  expect(onChange).not.toHaveBeenCalled();
+});
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -593,8 +665,14 @@ In `client/src/components/FileUpload.js`, replace the import block at the top wi
 
 ```js
 import React, { useId, useState } from 'react';
-import { checkFile, ACCEPT_ATTR } from '../utils/uploadLimits';
+import { checkFile, acceptFor, DEFAULT_KIND } from '../utils/uploadLimits';
 import downscaleImage from '../utils/downscaleImage';
+```
+
+Add `kind` to the destructured props, defaulting to the narrow set:
+
+```js
+export default function FileUpload({ label, name, accept, helper, onChange, currentFile, camera, kind = DEFAULT_KIND }) {
 ```
 
 Add error state inside the component, immediately after the two `useId()` lines:
@@ -610,12 +688,16 @@ Replace `handleChange` with:
   // an oversized file upload for a full minute and then reported a bare
   // "network error", blaming the user's connection for our limit.
   async function handleChange(e) {
-    const picked = e.target.files[0];
-    e.target.value = ''; // Allow re-picking the same file after a rejection.
+    const input = e.target;
+    const picked = input.files[0];
+    // Allow re-picking the same file after a rejection. jsdom rejects this
+    // assignment in some versions, and it is a convenience, not a correctness
+    // requirement, so a failure here must not break the pick.
+    try { input.value = ''; } catch (err) { /* jsdom */ }
     if (!picked) return;
 
     const file = await downscaleImage(picked);
-    const verdict = checkFile(file);
+    const verdict = checkFile(file, kind);
     if (!verdict.ok) {
       setError(verdict.message);
       return;
@@ -633,18 +715,32 @@ Render the error in both return branches. In the camera branch, insert immediate
 
 In the default branch, insert the identical line immediately after its `{helper && ...}` line.
 
-Finally, widen both fallback accepts. In the camera branch change `accept={accept || 'image/*'}` to `accept={accept || ACCEPT_ATTR}`, and in the default branch change `accept={accept || '.pdf,.jpg,.jpeg,.png'}` to `accept={accept || ACCEPT_ATTR}`. Leave the dedicated camera-capture input on `accept="image/*"` with `capture="user"`, since that one opens the camera rather than a file picker.
+Finally, drive both fallback accepts from the kind. In the camera branch change `accept={accept || 'image/*'}` to `accept={accept || acceptFor(kind)}`, and in the default branch change `accept={accept || '.pdf,.jpg,.jpeg,.png'}` to `accept={accept || acceptFor(kind)}`. Leave the dedicated camera-capture input on `accept="image/*"` with `capture="user"`, since that one opens the camera rather than a file picker.
 
-Update the default-branch hint text from `PDF, JPG, PNG accepted` to `PDF, Word, or photo`.
+Change the default-branch hint text from the hardcoded `PDF, JPG, PNG accepted` to a kind-derived line, so it can never disagree with what the field actually takes:
+
+```jsx
+            <div className="file-upload-text">
+              {kind === 'document' ? 'PDF, Word, or photo' : 'PDF or photo'}
+            </div>
+```
+
+- [ ] **Step 3b: Opt the two document fields in**
+
+Only the resume and alcohol certification use the wider set. Everything else keeps the default.
+
+In `client/src/pages/Application.js`, add `kind="document"` to the resume `FileUpload` (line 616) and the BASSET `FileUpload` (line 631). **Do not add it to the headshot**, which stays narrow so it remains a renderable image, matching the `isValidUpload` check left in place at `application.js:103`.
+
+In `client/src/pages/ContractorProfile.js`, add `kind="document"` to the `alcohol_certification` (line 299) and `resume` (line 306) `FileUpload`s. Leave the `headshot` (line 313) alone.
+
+Touch nothing in `client/src/pages/PaydayProtocols.js`. The W-9 field at line 527 inherits the narrow default, which is what `payment.js:91` enforces.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts test --testPathPattern=FileUpload`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Confirm the callers still build**
-
-`FileUpload` is used by `Application.js`, `ContractorProfile.js`, and `PaydayProtocols.js`. The props are unchanged, so this is a compile check.
 
 Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build`
 Expected: build succeeds.
@@ -652,7 +748,7 @@ Expected: build succeeds.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add client/src/components/FileUpload.js client/src/components/FileUpload.test.js
+git add client/src/components/FileUpload.js client/src/components/FileUpload.test.js client/src/pages/Application.js client/src/pages/ContractorProfile.js
 git commit -m "feat(uploads): validate and downscale at pick time, not after upload"
 ```
 
@@ -701,8 +797,17 @@ app.use(fileUpload({
 
 - [ ] **Step 2: Verify the server boots**
 
-Run: `cd /home/drbartender/projects/os && node -e "require('./server/index.js')" & sleep 4; curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5000/api/health; kill %1`
-Expected: a 2xx status, confirming the middleware config is valid. If port 5000 is already held by the dev server, stop that first (see the dev-server note in README) rather than assuming a failure.
+The dev server is a Claude-managed background process and holds port 5000. **Stop it first**, or this step reports a port collision that looks like a config failure. `/api/health` exists at `server/index.js:320`.
+
+```bash
+cd /home/drbartender/projects/os
+lsof -ti:5000 | xargs -r kill    # stop the dev server
+node -e "require('./server/index.js')" & sleep 4
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5000/api/health
+kill %1
+```
+
+Expected: `200`. Restart the dev server afterwards.
 
 - [ ] **Step 3: Commit**
 
@@ -1037,11 +1142,13 @@ git commit -m "feat(onboarding): server-side draft endpoints for the long forms"
 
 **Interfaces:**
 - Consumes: `GET`/`PUT`/`DELETE /progress/draft/:formKey` from Task B2, via `client/src/utils/api.js`.
-- Produces: `useFormDraft(formKey, form, applyDraft) -> { restoredAt: string | null, clearDraft: () => Promise<void>, ready: boolean }`
+- Produces: `useFormDraft(formKey, form, applyDraft, opts?) -> { restoredAt: string | null, clearDraft: () => Promise<void>, ready: boolean }`
   - `form` is the current form state object, watched for changes.
-  - `applyDraft(data)` is called once on mount if a stored draft exists.
+  - `applyDraft(data)` is called once on mount if a stored draft holds real content.
+  - `opts.enabled` (default `true`) defers the draft load until the caller says go. Used by ContractorProfile to sequence behind its own profile fetch.
   - `ready` is false until the initial load settles, so the debounced save never fires before the restore.
   - `clearDraft()` is called by the form on successful submit.
+- Also produces: `hasContent(data: object) -> boolean`, exported for its own test.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1073,6 +1180,13 @@ function Harness({ initial = { city: '' } }) {
   );
 }
 
+// Mirrors ContractorProfile: the draft load waits on the page's own fetch.
+function Gated({ enabled }) {
+  const [form, setForm] = useState({ phone: '' });
+  useFormDraft('contractor_profile', form, d => setForm(f => ({ ...f, ...d })), { enabled });
+  return <div data-testid="phone">{form.phone}</div>;
+}
+
 beforeEach(() => {
   jest.useFakeTimers();
   api.get.mockReset();
@@ -1095,6 +1209,40 @@ it('leaves the form alone when there is no draft', async () => {
   await waitFor(() => expect(screen.getByTestId('ready')).toHaveTextContent('true'));
   expect(screen.getByTestId('city')).toHaveTextContent('');
   expect(screen.getByTestId('restored')).toHaveTextContent('');
+});
+
+it('does not announce a restore for a draft of empty fields', async () => {
+  api.get.mockResolvedValue({ data: { data: { city: '', name: '' }, updated_at: '2026-07-23T20:00:00Z' } });
+  render(<Harness />);
+  await waitFor(() => expect(screen.getByTestId('ready')).toHaveTextContent('true'));
+  expect(screen.getByTestId('restored')).toHaveTextContent('');
+});
+
+it('never saves an untouched form', async () => {
+  api.get.mockResolvedValue({ data: { data: null } });
+  render(<Harness />);
+  await waitFor(() => expect(screen.getByTestId('ready')).toHaveTextContent('true'));
+  await act(async () => { jest.advanceTimersByTime(10000); });
+  expect(api.put).not.toHaveBeenCalled();
+});
+
+it('does not save when an edit returns the form to its starting value', async () => {
+  api.get.mockResolvedValue({ data: { data: null } });
+  render(<Harness initial={{ city: 'Chicago' }} />);
+  await waitFor(() => expect(screen.getByTestId('ready')).toHaveTextContent('true'));
+  act(() => { screen.getByText('type').click(); }); // sets city back to 'Chicago'
+  await act(async () => { jest.advanceTimersByTime(1500); });
+  expect(api.put).not.toHaveBeenCalled();
+});
+
+it('does not fetch until enabled', async () => {
+  api.get.mockResolvedValue({ data: { data: null } });
+  const { rerender } = render(<Gated enabled={false} />);
+  await act(async () => {});
+  expect(api.get).not.toHaveBeenCalled();
+
+  rerender(<Gated enabled={true} />);
+  await waitFor(() => expect(api.get).toHaveBeenCalledWith('/progress/draft/contractor_profile'));
 });
 
 it('does not save before the initial load settles', async () => {
@@ -1174,22 +1322,42 @@ const DEBOUNCE_MS = 1500;
  * interrupt someone who is mid-form: the submit is what matters, this is a
  * safety net under it.
  */
-export default function useFormDraft(formKey, form, applyDraft) {
+// A stored draft counts as real only if it holds at least one answer. An object
+// of empty strings is what an untouched form serialises to, and announcing a
+// restore for that is worse than saying nothing.
+export function hasContent(data) {
+  if (!data || typeof data !== 'object') return false;
+  return Object.values(data).some(v => {
+    if (v === '' || v === null || v === undefined || v === false) return false;
+    if (Array.isArray(v)) return v.length > 0;
+    if (typeof v === 'object') return Object.keys(v).length > 0;
+    return true;
+  });
+}
+
+export default function useFormDraft(formKey, form, applyDraft, { enabled = true } = {}) {
   const [ready, setReady] = useState(false);
   const [restoredAt, setRestoredAt] = useState(null);
   const applyRef = useRef(applyDraft);
   const clearedRef = useRef(false);
+  const baselineRef = useRef(null);
   applyRef.current = applyDraft;
 
-  // Load once on mount. `ready` gates the save effect so the restore itself
-  // cannot trigger a save that overwrites the draft with empty fields.
+  // Load once, and not before `enabled`.
+  //
+  // `enabled` exists for ContractorProfile, which independently fetches saved
+  // profile data on mount. Two unsequenced fetches race, and whichever lands
+  // last wins, so a slow /contractor response would silently clobber a restored
+  // draft. Gating the draft load on the profile load makes the overlay order
+  // deterministic instead of a coin flip.
   useEffect(() => {
+    if (!enabled) return undefined;
     let cancelled = false;
     api.get(`/progress/draft/${formKey}`)
       .then(res => {
         if (cancelled) return;
         const { data, updated_at } = res.data || {};
-        if (data && Object.keys(data).length > 0) {
+        if (hasContent(data)) {
           applyRef.current(data);
           setRestoredAt(updated_at || null);
         }
@@ -1197,10 +1365,22 @@ export default function useFormDraft(formKey, form, applyDraft) {
       .catch(() => { /* no draft is not an error worth showing */ })
       .finally(() => { if (!cancelled) setReady(true); });
     return () => { cancelled = true; };
-  }, [formKey]);
+  }, [formKey, enabled]);
 
+  // Save only what the user actually changed.
+  //
+  // Without the baseline, this effect fires the moment `ready` flips and
+  // persists the untouched initial form. That empty row then reads back as a
+  // real draft on the next visit and the page announces "we saved your answers
+  // from 3:42 PM" to someone who never typed a character.
   useEffect(() => {
     if (!ready || clearedRef.current) return undefined;
+    const serialized = JSON.stringify(form);
+    if (baselineRef.current === null) {
+      baselineRef.current = serialized;   // First pass after load: adopt, do not save.
+      return undefined;
+    }
+    if (serialized === baselineRef.current) return undefined;  // Edited back to where it started.
     const t = setTimeout(() => {
       api.put(`/progress/draft/${formKey}`, { data: form }).catch(() => {});
     }, DEBOUNCE_MS);
@@ -1278,14 +1458,24 @@ Render the restore notice at the top of the form, immediately inside `<form onSu
 
 - [ ] **Step 2: Wire ContractorProfile.js**
 
-Add the same import. After that page's `files` state, add:
+Add the same import. This page independently fetches saved profile data from `GET /contractor` on mount, so the draft load must be **sequenced behind it, not merely declared after it.** Two unsequenced fetches race, and whichever resolves last wins: a slow `/contractor` response would silently overwrite a restored draft with older saved data.
+
+Add a flag that the existing profile-loading effect sets when it settles:
 
 ```js
-  const { restoredAt, clearDraft } = useFormDraft('contractor_profile', form, draft =>
-    setForm(f => ({ ...f, ...draft })));
+  const [profileLoaded, setProfileLoaded] = useState(false);
 ```
 
-**Ordering matters here.** This page loads existing profile data from `GET /contractor` on mount. The draft is written after that load by definition, so on conflict the draft wins. The hook's `applyDraft` merges over current state, so as long as the `useFormDraft` call sits after the profile-loading effect in source order, the later-resolving draft correctly overwrites. Verify this by hand in Step 4.
+In that effect's promise chain, add `.finally(() => setProfileLoaded(true));` so it flips on both success and failure. A failed profile fetch must not strand the draft forever.
+
+Then gate the hook on it:
+
+```js
+  // enabled: the draft is an overlay on top of saved profile data, so it must
+  // load second. Deterministic ordering, not a race we hope resolves our way.
+  const { restoredAt, clearDraft } = useFormDraft('contractor_profile', form,
+    draft => setForm(f => ({ ...f, ...draft })), { enabled: profileLoaded });
+```
 
 Call `await clearDraft();` after the successful profile POST, and render the same restore notice at the top of its form.
 
@@ -1315,7 +1505,7 @@ git commit -m "feat(onboarding): autosave the application and contractor profile
 
 ## Lane C: Files stop blocking submit
 
-Lane C touches `client/src/pages/Application.js`, which Lane B also modifies. **Sequence Lane C after Lane B**, or build both as a single lane. Do not run them as parallel worktrees into the same file.
+**All three lanes touch `client/src/pages/Application.js`** (A4 step 3b adds `kind`, B4 adds the draft hook, C1 removes the file rules), and A and B both touch `ContractorProfile.js`. **Run them strictly in order A, then B, then C, in a single lane or three sequential ones. Never as parallel worktrees.**
 
 ### Task C1: Drop the hard file requirement at submit
 
@@ -1369,7 +1559,6 @@ Add this notice immediately above the resume `FileUpload` block (line 615):
               You can submit without these and add them later, but we do need both
               on file before your first shift.
             </div>
-          </div>
 ```
 
 Update the BASSET helper text from `"BASSET, TIPS, ServSafe, or equivalent. Required for all positions."` to `"BASSET, TIPS, ServSafe, or equivalent. Needed before your first shift."`
@@ -1392,18 +1581,26 @@ git commit -m "feat(onboarding): let the application submit with documents outst
 
 ### Task C2: Surface outstanding documents to the admin
 
-`GET /admin/applications` already returns `resume_file_url`, `basset_file_url`, `headshot_file_url` and `onboarding_status` (see `server/routes/admin/applications.js:72-83`), and `OverviewPage.js:225` already derives `newApplications` from that same fetched list. So this needs no server change: derive the count the same way.
+**This must not be derived from `/admin/applications`.** That endpoint INNER JOINs `applications` (`server/routes/admin/applications.js:85`), so anyone without an application row never appears in it. That is exactly the cohort this count exists to catch: direct hires who were sent the link and never got through the form. A safety net built on that list has a hole shaped precisely like the person who fell through it.
+
+The count therefore comes from the server, off `users` with LEFT JOINs, so a missing row counts as missing rather than vanishing.
+
+Note also that both documents live in two places: a resume is `applications.resume_file_url` or `contractor_profiles.resume_file_url`, and the certification is `applications.basset_file_url` or `contractor_profiles.alcohol_certification_file_url`. Either satisfies the requirement, so the predicate coalesces across both.
 
 **Trimmed from the spec.** The spec named three admin surfaces: the needs-attention strip, a badge on `AdminUserDetail`, and a count in the `/hiring/summary` KPI strip. This task builds only the first. `AdminUserDetail` already renders the document links, so their absence is visible there without a badge, and a third KPI counting the same people the needs-attention item already names is duplicate signal on the same screen. One surface that is actually actionable beats three that dilute each other. If the single item proves too quiet in practice, the KPI is a small follow-up.
 
 **Files:**
+- Modify: `server/routes/admin/hiring.js:18-61`
 - Modify: `client/src/pages/admin/overview/queueItems.js:26-47`
 - Modify: `client/src/pages/admin/overview/OverviewPage.js:225-231`
+- Modify: `client/src/pages/admin/overview/NeedsYouStrip.js:29-33`
 - Test: `client/src/pages/admin/overview/queueItems.test.js`
 
 **Interfaces:**
-- Consumes: the `applications` array already fetched by `OverviewPage`.
-- Produces: `buildStaffingItems(unstaffed, newApplications, missingDocs)` gains a third parameter, `missingDocs: number`. Existing callers that pass two arguments still work, treating it as zero.
+- Consumes: nothing from earlier tasks.
+- Produces:
+  - `GET /api/admin/hiring/summary` gains a `missing_documents: number` field alongside its existing four.
+  - `buildStaffingItems(unstaffed, newApplications, missingDocs)` gains a third parameter, `missingDocs: number`. Existing two-argument callers still work, treating it as zero.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1464,42 +1661,101 @@ Add an icon for the new type to the `QUEUE_ICON` map in `client/src/pages/admin/
   'documents': 'pen',
 ```
 
-- [ ] **Step 4: Feed it from OverviewPage**
+- [ ] **Step 4: Add the server-side count**
 
-In `client/src/pages/admin/overview/OverviewPage.js`, add below the `newApplications` memo at line 225:
-
-```js
-  // Onboarding no longer blocks on a resume or certification upload, so track
-  // who still owes one. Anyone past the applicant stage with a null file URL.
-  const missingDocs = useMemo(() =>
-    Array.isArray(applications)
-      ? applications.filter(a =>
-          ['in_progress', 'hired', 'submitted', 'reviewed', 'approved'].includes(a.onboarding_status)
-          && (!a.resume_file_url || !a.basset_file_url)).length
-      : 0, [applications]);
-```
-
-Change line 231 to pass it through:
+In `server/routes/admin/hiring.js`, add a fifth query to the `Promise.all` in `GET /hiring/summary` (line 19):
 
 ```js
-  const staffingItems = useMemo(() => buildStaffingItems(unstaffed, newApplications, missingDocs),
-    [unstaffed, newApplications, missingDocs]);
+    // Recruits who still owe a resume or an alcohol certification.
+    //
+    // LEFT JOINs, deliberately. The sibling queries in this handler INNER JOIN
+    // applications, which is correct for funnel stats but would hide exactly
+    // the people this count is for: direct hires who never completed the
+    // application. A missing row means missing documents, not an absent person.
+    //
+    // Either storage location satisfies the requirement, hence the COALESCE:
+    // the application carries basset_file_url, the contractor profile carries
+    // alcohol_certification_file_url, and a resume can live on either.
+    pool.query(`
+      SELECT COUNT(*) FROM users u
+      LEFT JOIN applications a ON a.user_id = u.id
+      LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+      WHERE u.role IN ('staff', 'manager')
+        AND u.onboarding_status IN ('in_progress', 'hired', 'submitted', 'reviewed', 'approved')
+        AND (
+          COALESCE(cp.resume_file_url, a.resume_file_url) IS NULL
+          OR COALESCE(cp.alcohol_certification_file_url, a.basset_file_url) IS NULL
+        )
+    `),
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+Destructure it as `missingDocs` in the array on line 19, and add to the response object:
+
+```js
+    missing_documents: parseInt(missingDocs.rows[0].count, 10),
+```
+
+- [ ] **Step 5: Feed it from OverviewPage**
+
+`OverviewPage` does not fetch `/admin/hiring/summary` today. Add it beside the existing `/admin/applications` fetch (line 208-215), following that block's admin-only guard and swallowed-catch pattern exactly, since managers get a 403 here and must simply see no item:
+
+```js
+  const [hiringSummary, setHiringSummary] = useState(null);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    let cancelled = false;
+    api.get('/admin/hiring/summary')
+      .then(r => { if (!cancelled) setHiringSummary(r.data); })
+      .catch(() => {}); // managers 403 here; the item simply stays absent
+    return () => { cancelled = true; };
+  }, [isAdmin]);
+```
+
+Then pass it through at line 231:
+
+```js
+  const staffingItems = useMemo(
+    () => buildStaffingItems(unstaffed, newApplications, hiringSummary?.missing_documents || 0),
+    [unstaffed, newApplications, hiringSummary]);
+```
+
+- [ ] **Step 6: Verify the count against production data**
+
+The whole point of this task is catching people the applications list hides, so prove it does. Run against the prod branch read-only:
+
+```bash
+node -r dotenv/config -e "
+require('./server/db').pool.query(\`
+  SELECT u.id, u.email, u.onboarding_status,
+         (a.user_id IS NULL) AS no_application_row
+  FROM users u
+  LEFT JOIN applications a ON a.user_id = u.id
+  LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+  WHERE u.role IN ('staff','manager')
+    AND u.onboarding_status IN ('in_progress','hired','submitted','reviewed','approved')
+    AND (COALESCE(cp.resume_file_url, a.resume_file_url) IS NULL
+      OR COALESCE(cp.alcohol_certification_file_url, a.basset_file_url) IS NULL)
+  ORDER BY u.id DESC LIMIT 20\`)
+.then(r=>{console.table(r.rows);process.exit(0)})"
+```
+
+Expected: users 241, 242 and 243 all appear with `no_application_row = true`. If they do not, the LEFT JOIN has been written as an INNER JOIN somewhere and the count is worthless.
+
+- [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts test --testPathPattern=queueItems`
 Expected: PASS, including the four pre-existing `buildStaffingItems` cases.
 
-- [ ] **Step 6: Verify the build**
+- [ ] **Step 8: Verify the build**
 
 Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build`
 Expected: build succeeds.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add client/src/pages/admin/overview/queueItems.js client/src/pages/admin/overview/queueItems.test.js client/src/pages/admin/overview/OverviewPage.js client/src/pages/admin/overview/NeedsYouStrip.js
+git add server/routes/admin/hiring.js client/src/pages/admin/overview/queueItems.js client/src/pages/admin/overview/queueItems.test.js client/src/pages/admin/overview/OverviewPage.js client/src/pages/admin/overview/NeedsYouStrip.js
 git commit -m "feat(hiring): surface recruits missing documents in needs-attention"
 ```
 
@@ -1586,4 +1842,8 @@ Run `/second-opinion` on Lane A alongside the fleet.
 
 ## Open item carried from the spec
 
-The recruit who triggered this was unblocked by being sent directly to `/welcome`, which skips the application. She will finish onboarding with no `positions_interested`, no availability, no `comfortable_working_alone` answer, and no BASSET on file. Collect that from her separately once this ships. Task C2's missing-documents count will catch the BASSET half automatically; the rest of the application data will not appear and needs a manual follow-up.
+The recruit who triggered this was unblocked by being sent directly to `/welcome`, which skips the application. She will finish onboarding with no `positions_interested`, no availability, no `comfortable_working_alone` answer, and no BASSET on file.
+
+Task C2's count catches the missing documents, and only because it is built on LEFT JOINs against `users`. An earlier draft of this plan derived it from `/admin/applications`, which INNER JOINs and would have rendered her invisible to the very safety net written in response to her. That is the reason the join style in C2 Step 4 is load-bearing rather than incidental, and why Step 6 verifies users 241, 242 and 243 actually appear.
+
+**The application answers are a separate problem and no task here recovers them.** Positions, availability, working alone, tools, and experience will simply be absent. Collect them from her by hand after her first shift.
