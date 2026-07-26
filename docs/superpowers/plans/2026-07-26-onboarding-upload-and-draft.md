@@ -729,11 +729,36 @@ Change the default-branch hint text from the hardcoded `PDF, JPG, PNG accepted` 
 
 Only the resume and alcohol certification use the wider set. Everything else keeps the default.
 
-In `client/src/pages/Application.js`, add `kind="document"` to the resume `FileUpload` (line 616) and the BASSET `FileUpload` (line 631). **Do not add it to the headshot**, which stays narrow so it remains a renderable image, matching the `isValidUpload` check left in place at `application.js:103`.
+**Locate each field by its `name` prop, not by line number.** Lane B inserts lines into both of these files before Lane C runs, so any line number written here is stale by the time it is read. An earlier revision of this plan cited a line that turned out to sit inside the headshot block, which would have widened the one field that must stay narrow.
 
-In `client/src/pages/ContractorProfile.js`, add `kind="document"` to the `alcohol_certification` (line 299) and `resume` (line 306) `FileUpload`s. Leave the `headshot` (line 313) alone.
+In `client/src/pages/Application.js`, add `kind="document"` to exactly the two `FileUpload` elements whose props are `name="resume"` and `name="basset"`:
 
-Touch nothing in `client/src/pages/PaydayProtocols.js`. The W-9 field at line 527 inherits the narrow default, which is what `payment.js:91` enforces.
+```bash
+grep -n 'name="resume"\|name="headshot"\|name="basset"' client/src/pages/Application.js
+```
+
+**Do not add it to `name="headshot"`.** That field stays narrow so it remains a renderable image, matching the `isValidUpload` check deliberately left in place at `server/routes/application.js:103`. Note the headshot also passes an explicit `accept=".jpg,.jpeg,.png"`, so a stray `kind="document"` there would widen `checkFile` while leaving `accept` narrow: an inconsistency the server would then reject after upload, which is the precise failure this whole lane exists to remove.
+
+While you are in that block, fix the resume field's stale per-field helper, which still reads `"PDF, JPEG, or PNG accepted."` even though the field now takes Word and HEIC:
+
+```jsx
+                helper="PDF, Word document, or a photo."
+```
+
+In `client/src/pages/ContractorProfile.js`, same rule: `kind="document"` on `name="alcohol_certification"` and `name="resume"`, and **not** on `name="headshot"`.
+
+Touch nothing in `client/src/pages/PaydayProtocols.js`. Its `name="w9"` field inherits the narrow default, which is exactly what `payment.js:91` enforces.
+
+- [ ] **Step 3c: Confirm the opt-in landed on the right three fields**
+
+```bash
+cd /home/drbartender/projects/os
+grep -n 'name="resume"\|name="headshot"\|name="basset"\|name="alcohol_certification"\|name="w9"' -B 2 -A 2 \
+  client/src/pages/Application.js client/src/pages/ContractorProfile.js client/src/pages/PaydayProtocols.js \
+  | grep -E 'name=|kind='
+```
+
+Expected: exactly four `kind="document"` occurrences. Two in `Application.js` (`resume`, `basset`) and two in `ContractorProfile.js` (`alcohol_certification`, `resume`). Zero on either `headshot` and zero on `w9`.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -924,13 +949,20 @@ const progressRouter = require('./progress');
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 let server, base, userId, otherId, token, otherToken;
 
+// NOTE: both details below are load-bearing and were wrong in an earlier
+// revision of this plan, which failed every authenticated case:
+//   1. auth.js reads decoded.userId / decoded.tokenVersion, NOT id / token_version.
+//   2. AppError exposes statusCode, NOT status. res.status(undefined) throws.
+// Both mirror server/routes/staffPortal.test.js:129 and :218 exactly.
 function app() {
   const a = express();
   a.use(express.json({ limit: '1mb' }));
   a.use('/api/progress', progressRouter);
   a.use((err, req, res, _next) => {
     if (err instanceof AppError) {
-      return res.status(err.status).json({ error: err.message, fieldErrors: err.fieldErrors });
+      const body = { error: err.message, code: err.code };
+      if (err.fieldErrors) body.fieldErrors = err.fieldErrors;
+      return res.status(err.statusCode).json(body);
     }
     res.status(500).json({ error: 'server error' });
   });
@@ -965,7 +997,11 @@ async function makeUser(tag) {
     [`draft-test-${tag}-${NONCE}@example.com`, hash]
   );
   const id = r.rows[0].id;
-  return { id, token: jwt.sign({ id, role: 'staff', token_version: 0 }, process.env.JWT_SECRET) };
+  // Keys MUST be userId / tokenVersion. See server/middleware/auth.js:41,46.
+  return {
+    id,
+    token: jwt.sign({ userId: id, tokenVersion: 0 }, process.env.JWT_SECRET, { expiresIn: '1h' }),
+  };
 }
 
 before(async () => {
@@ -1142,9 +1178,9 @@ git commit -m "feat(onboarding): server-side draft endpoints for the long forms"
 
 **Interfaces:**
 - Consumes: `GET`/`PUT`/`DELETE /progress/draft/:formKey` from Task B2, via `client/src/utils/api.js`.
-- Produces: `useFormDraft(formKey, form, applyDraft, opts?) -> { restoredAt: string | null, clearDraft: () => Promise<void>, ready: boolean }`
-  - `form` is the current form state object, watched for changes.
-  - `applyDraft(data)` is called once on mount if a stored draft holds real content.
+- Produces: `useFormDraft(formKey, snapshot, applyDraft, opts?) -> { restoredAt: string | null, clearDraft: () => Promise<void>, ready: boolean }`
+  - `snapshot` is **any serializable object representing everything the form should preserve**, not necessarily one `useState`. `Application.js` keeps `positions`, `experienceTypes`, `tools`, and `equipment` in four separate `useState` hooks outside `form` (lines 113-116), and `positions` is a **required** field. A hook that drafted only `form` would restore the text answers and silently drop every checkbox section, which is a half-working version of the one feature this lane exists to deliver. The caller decides what goes in the snapshot; the hook just persists it.
+  - `applyDraft(data)` is called once on mount if a stored draft holds real content. It receives the snapshot shape back and is responsible for splitting it across whatever state it came from.
   - `opts.enabled` (default `true`) defers the draft load until the caller says go. Used by ContractorProfile to sequence behind its own profile fetch.
   - `ready` is false until the initial load settles, so the debounced save never fires before the restore.
   - `clearDraft()` is called by the form on successful submit.
@@ -1335,7 +1371,11 @@ export function hasContent(data) {
   });
 }
 
-export default function useFormDraft(formKey, form, applyDraft, { enabled = true } = {}) {
+// `snapshot` is whatever the caller wants preserved, as one serializable object.
+// It is deliberately not "the form state hook": Application.js spreads its
+// answers across five useState hooks, and drafting only one of them would
+// restore the typed answers while losing every checkbox.
+export default function useFormDraft(formKey, snapshot, applyDraft, { enabled = true } = {}) {
   const [ready, setReady] = useState(false);
   const [restoredAt, setRestoredAt] = useState(null);
   const applyRef = useRef(applyDraft);
@@ -1375,17 +1415,17 @@ export default function useFormDraft(formKey, form, applyDraft, { enabled = true
   // from 3:42 PM" to someone who never typed a character.
   useEffect(() => {
     if (!ready || clearedRef.current) return undefined;
-    const serialized = JSON.stringify(form);
+    const serialized = JSON.stringify(snapshot);
     if (baselineRef.current === null) {
       baselineRef.current = serialized;   // First pass after load: adopt, do not save.
       return undefined;
     }
     if (serialized === baselineRef.current) return undefined;  // Edited back to where it started.
     const t = setTimeout(() => {
-      api.put(`/progress/draft/${formKey}`, { data: form }).catch(() => {});
+      api.put(`/progress/draft/${formKey}`, { data: snapshot }).catch(() => {});
     }, DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [ready, formKey, form]);
+  }, [ready, formKey, snapshot]);
 
   const clearDraft = useCallback(async () => {
     clearedRef.current = true;
@@ -1430,15 +1470,31 @@ Add the import beside the other hook imports:
 import useFormDraft from '../hooks/useFormDraft';
 ```
 
-After the `files` state declaration (line 96), add:
+This page spreads its answers across **five** state hooks, not one: `form`, plus `positions`, `experienceTypes`, `tools`, and `equipment` (lines 113-116). `positions` is a required field. Drafting only `form` would restore the typed answers and silently drop every checkbox section, so the snapshot has to carry all five.
+
+Add below the `equipment` state declaration (line 116), after the four checkbox hooks exist:
 
 ```js
-  // Draft covers form fields only. Files are not serialisable to the draft
-  // table, and they do not need to be: they are the last section, and React
+  // Everything worth preserving, as one object. Memoised so the hook's change
+  // detection compares content rather than a fresh object identity per render.
+  //
+  // Files are deliberately absent: a File is not serialisable to the draft
+  // table, and they do not need to be. They are the last section, and React
   // holds them across a failed submit. Only a page reload loses them.
-  const { restoredAt, clearDraft } = useFormDraft('application', form, draft =>
-    setForm(f => ({ ...f, ...draft })));
+  const draftSnapshot = useMemo(
+    () => ({ form, positions, experienceTypes, tools, equipment }),
+    [form, positions, experienceTypes, tools, equipment]);
+
+  const { restoredAt, clearDraft } = useFormDraft('application', draftSnapshot, draft => {
+    if (draft.form) setForm(f => ({ ...f, ...draft.form }));
+    if (draft.positions) setPositions(p => ({ ...p, ...draft.positions }));
+    if (draft.experienceTypes) setExperienceTypes(t => ({ ...t, ...draft.experienceTypes }));
+    if (draft.tools) setTools(t => ({ ...t, ...draft.tools }));
+    if (draft.equipment) setEquipment(e => ({ ...e, ...draft.equipment }));
+  });
 ```
+
+Add `useMemo` to the existing React import if it is not already there.
 
 Immediately after the successful `api.post('/application', data)` call (line 211) and before the navigation, add:
 
@@ -1489,7 +1545,7 @@ Expected: `Application.js` stays under the 700-line soft cap warning threshold o
 
 - [ ] **Step 4: Manual check**
 
-- [ ] Fill three sections of the application, wait two seconds, hard-reload the page, and confirm the answers come back with the restore notice showing.
+- [ ] Fill three sections of the application **including at least one position checkbox, one bar tool, and one equipment box**, wait two seconds, hard-reload, and confirm every one of them comes back, not just the typed fields. This is the specific regression the five-hook snapshot exists to prevent.
 - [ ] Fill part of the form on one browser, open the same account in a second browser, and confirm the draft appears there. This is the device-switch case that localStorage would not have covered.
 - [ ] Submit the form successfully, then reload, and confirm no stale draft is restored.
 - [ ] On the contractor profile, confirm existing saved profile data still loads correctly when no draft exists.
@@ -1505,106 +1561,256 @@ git commit -m "feat(onboarding): autosave the application and contractor profile
 
 ## Lane C: Files stop blocking submit
 
-**All three lanes touch `client/src/pages/Application.js`** (A4 step 3b adds `kind`, B4 adds the draft hook, C1 removes the file rules), and A and B both touch `ContractorProfile.js`. **Run them strictly in order A, then B, then C, in a single lane or three sequential ones. Never as parallel worktrees.**
+**All three lanes touch `client/src/pages/Application.js`** (A4 step 3b adds `kind`, B4 adds the draft snapshot, C3 removes the file rules), and A and B both touch `ContractorProfile.js`. **Run them strictly in order A, then B, then C, in a single lane or three sequential ones. Never as parallel worktrees.**
 
-### Task C1: Drop the hard file requirement at submit
+**Order inside Lane C is load-bearing.** The safety nets get built before the guard comes down, not after. C3 is the task that lets a recruit submit with documents missing; C1 and C2 are what make that visible to you and to them. Building C3 first, even for an afternoon, means recruits can submit into a hole nothing reports. C1 declares no dependency on either sibling, so this ordering costs nothing.
+
+### Task C1: One predicate, two surfaces
+
+The recruit's "you still owe us X" banner and the admin's "N bartenders missing documents" count answer the same question. If they compute it separately they will disagree, and the disagreement is not hypothetical: `GET /api/contractor` only falls back to application data while the profile has no `preferred_name` (`server/routes/contractor.js:31-42`), and `POST /contractor` never copies application file URLs forward (it preserves only existing `contractor_profiles` URLs, lines 145-149). A recruit who uploaded a resume on the application and then saved their profile would be told "we still need your resume" while the admin count marked them complete.
+
+So the predicate lives in exactly one place and both surfaces import it.
+
+Note both documents have two possible homes. A resume is `applications.resume_file_url` or `contractor_profiles.resume_file_url`; the certification is `applications.basset_file_url` or `contractor_profiles.alcohol_certification_file_url`. Either satisfies the requirement, so the predicate coalesces across both.
 
 **Files:**
-- Modify: `server/routes/application.js:124-128`
-- Modify: `client/src/pages/Application.js:161-162`
+- Create: `server/utils/outstandingDocuments.js`
+- Test: `server/utils/outstandingDocuments.test.js`
 
 **Interfaces:**
-- Consumes: nothing.
-- Produces: `POST /api/application` now succeeds with `resume` and `basset` absent. Every other required field is unchanged.
+- Consumes: nothing from earlier tasks.
+- Produces:
+  - `DOC_JOINS: string`: the `LEFT JOIN` clauses both queries share, aliasing `applications` as `a` and `contractor_profiles` as `cp`.
+  - `RESUME_MISSING: string`, `CERT_MISSING: string`: SQL boolean fragments.
+  - `ONBOARDED_STATUSES: string[]`
+  - `outstandingFor(userId) -> Promise<string[]>`: human-readable labels for one user, e.g. `['resume', 'alcohol certification']`, empty when nothing is owed.
+  - `countOutstanding() -> Promise<number>`: how many workers owe at least one document.
 
-- [ ] **Step 1: Remove the server-side block**
+- [ ] **Step 1: Write the failing test**
 
-Delete these four lines at `server/routes/application.js:125-128`:
-
-```js
-  const fileFieldErrors = {};
-  if (!resume_url) fileFieldErrors.resume = 'Please upload your resume';
-  if (!basset_url) fileFieldErrors.basset = 'Please upload your BASSET / alcohol certification';
-  if (Object.keys(fileFieldErrors).length > 0) throw new ValidationError(fileFieldErrors);
-```
-
-Replace with:
+Create `server/utils/outstandingDocuments.test.js`:
 
 ```js
-  // Files are collected, not required at submit. A file upload is the only
-  // field on this form the user cannot reliably complete: it depends on their
-  // connection, their phone's camera resolution, and what format their resume
-  // happens to be in. Blocking on it strands people who are otherwise done
-  // (incident 2026-07-23). Outstanding documents are derived from the null
-  // *_file_url columns and surfaced to the admin instead.
+require('dotenv').config();
+
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const bcrypt = require('bcryptjs');
+
+const { pool } = require('../db');
+const { outstandingFor, countOutstanding } = require('./outstandingDocuments');
+
+const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+const ids = {};
+
+async function mkUser(tag, status = 'in_progress') {
+  const hash = await bcrypt.hash('x', 4);
+  const r = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1, $2, 'staff', $3, 0) RETURNING id`,
+    [`odoc-${tag}-${NONCE}@example.com`, hash, status]
+  );
+  return r.rows[0].id;
+}
+
+before(async () => {
+  await pool.query("DELETE FROM users WHERE email LIKE 'odoc-%'");
+
+  // Owes both, and has NO application row at all. This is the direct-hire case
+  // the whole count exists for, and the case an INNER JOIN would silently drop.
+  ids.bare = await mkUser('bare');
+
+  // Owes nothing, both documents on the APPLICATION only.
+  ids.viaApp = await mkUser('viaapp');
+  await pool.query(
+    `INSERT INTO applications (user_id, full_name, resume_file_url, basset_file_url)
+     VALUES ($1, 'Via App', '/files/r.pdf', '/files/b.pdf')`, [ids.viaApp]);
+
+  // Owes nothing, both documents on the CONTRACTOR PROFILE only. This is the
+  // pair that diverged when the two surfaces computed the predicate separately.
+  ids.viaProfile = await mkUser('viaprofile');
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, preferred_name, resume_file_url, alcohol_certification_file_url)
+     VALUES ($1, 'Via Profile', '/files/r.pdf', '/files/c.pdf')`, [ids.viaProfile]);
+
+  // Owes the certification only: resume on the application, nothing else.
+  ids.halfway = await mkUser('halfway');
+  await pool.query(
+    `INSERT INTO applications (user_id, full_name, resume_file_url) VALUES ($1, 'Halfway', '/files/r.pdf')`,
+    [ids.halfway]);
+
+  // Owes both but is deactivated, so must not be counted.
+  ids.gone = await mkUser('gone', 'deactivated');
+});
+
+after(async () => {
+  await pool.query('DELETE FROM users WHERE email LIKE $1', [`odoc-%${NONCE}@example.com`]);
+  await pool.end();
+});
+
+test('a user with no application row owes both documents', async () => {
+  assert.deepEqual(await outstandingFor(ids.bare), ['resume', 'alcohol certification']);
+});
+
+test('documents on the application satisfy the requirement', async () => {
+  assert.deepEqual(await outstandingFor(ids.viaApp), []);
+});
+
+test('documents on the contractor profile satisfy the requirement', async () => {
+  assert.deepEqual(await outstandingFor(ids.viaProfile), []);
+});
+
+test('a partially complete user owes only what is actually missing', async () => {
+  assert.deepEqual(await outstandingFor(ids.halfway), ['alcohol certification']);
+});
+
+test('the count includes the no-application-row user', async () => {
+  const n = await countOutstanding();
+  assert.ok(n >= 2, `expected the bare and halfway fixtures to be counted, got ${n}`);
+});
+
+test('the count and the per-user answer never disagree', async () => {
+  // The whole point of the shared predicate. Every fixture that reports
+  // outstanding documents must be inside the count, and vice versa.
+  for (const id of [ids.bare, ids.halfway]) {
+    assert.ok((await outstandingFor(id)).length > 0);
+  }
+  for (const id of [ids.viaApp, ids.viaProfile]) {
+    assert.equal((await outstandingFor(id)).length, 0);
+  }
+});
+
+test('off-funnel users are excluded', async () => {
+  assert.deepEqual(await outstandingFor(ids.gone), [],
+    'a deactivated user is not "owing" anything; they are not onboarding');
+});
 ```
 
-- [ ] **Step 2: Remove the matching client-side rules**
+- [ ] **Step 2: Run the test to verify it fails**
 
-In `client/src/pages/Application.js`, delete these two entries from the `rules` array at lines 161-162:
+Run: `cd /home/drbartender/projects/os && node -r dotenv/config --test server/utils/outstandingDocuments.test.js`
+Expected: FAIL, `Cannot find module './outstandingDocuments'`.
+
+- [ ] **Step 3: Implement**
+
+Create `server/utils/outstandingDocuments.js`:
 
 ```js
-      { field: 'resume', label: 'Resume', test: () => !!files.resume },
-      { field: 'basset', label: 'BASSET Certification', test: () => !!files.basset },
+const { pool } = require('../db');
+
+// Which documents a worker still owes, defined ONCE.
+//
+// Two surfaces ask this question: the recruit's own "you still owe us X" notice
+// and the admin's "N bartenders missing documents" count. Computing it in two
+// places produced contradictory answers, because GET /api/contractor only falls
+// back to application data while the profile has no preferred_name
+// (server/routes/contractor.js:31-42) and POST /contractor never copies
+// application file URLs forward. Someone who uploaded a resume on the
+// application and then saved their profile was told they still owed it while
+// the admin count said they were complete.
+//
+// LEFT JOINs, deliberately. The sibling queries in admin/hiring.js INNER JOIN
+// applications, which is right for funnel stats but would hide exactly the
+// people this exists for: direct hires who never completed the application. A
+// missing row means missing documents, not an absent person.
+
+const ONBOARDED_STATUSES = ['in_progress', 'hired', 'submitted', 'reviewed', 'approved'];
+
+const DOC_JOINS = `
+  LEFT JOIN applications a ON a.user_id = u.id
+  LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+`;
+
+// Either storage location satisfies the requirement.
+const RESUME_MISSING = 'COALESCE(cp.resume_file_url, a.resume_file_url) IS NULL';
+const CERT_MISSING = 'COALESCE(cp.alcohol_certification_file_url, a.basset_file_url) IS NULL';
+
+const IN_FUNNEL = `u.role IN ('staff', 'manager') AND u.onboarding_status = ANY($1)`;
+
+async function outstandingFor(userId) {
+  const result = await pool.query(`
+    SELECT ${RESUME_MISSING} AS needs_resume,
+           ${CERT_MISSING}   AS needs_cert
+    FROM users u ${DOC_JOINS}
+    WHERE u.id = $2 AND ${IN_FUNNEL}
+  `, [ONBOARDED_STATUSES, userId]);
+
+  const row = result.rows[0];
+  if (!row) return [];   // Not in the funnel: owes nothing by definition.
+
+  const owed = [];
+  if (row.needs_resume) owed.push('resume');
+  if (row.needs_cert) owed.push('alcohol certification');
+  return owed;
+}
+
+async function countOutstanding() {
+  const result = await pool.query(`
+    SELECT COUNT(*) FROM users u ${DOC_JOINS}
+    WHERE ${IN_FUNNEL} AND (${RESUME_MISSING} OR ${CERT_MISSING})
+  `, [ONBOARDED_STATUSES]);
+  return parseInt(result.rows[0].count, 10);
+}
+
+module.exports = {
+  outstandingFor, countOutstanding,
+  DOC_JOINS, RESUME_MISSING, CERT_MISSING, ONBOARDED_STATUSES,
+};
 ```
 
-- [ ] **Step 3: Soften the labels and add the notice**
+- [ ] **Step 4: Run the test to verify it passes**
 
-Change the resume `FileUpload` label from `"Upload Your Resume *"` to `"Upload Your Resume"` and the BASSET label from `"Upload Your BASSET / Alcohol Certification *"` to `"Upload Your BASSET / Alcohol Certification"`.
+Run: `cd /home/drbartender/projects/os && node -r dotenv/config --test server/utils/outstandingDocuments.test.js`
+Expected: PASS, 7 tests.
 
-Add this notice immediately above the resume `FileUpload` block (line 615):
+- [ ] **Step 5: Verify against real production data**
 
-```jsx
-            <div className="alert alert-info" role="status">
-              You can submit without these and add them later, but we do need both
-              on file before your first shift.
-            </div>
+The count exists to catch people the applications list hides, so prove it does against the real thing. `node -r dotenv/config` reads the local `.env` and hits the **dev** branch, so it cannot answer this. Use the Neon MCP against project `round-tooth-34649976`, branch `br-noisy-frog-ad99sa6l` (`production`), read-only:
+
+```sql
+SELECT u.id, u.email, u.onboarding_status, (a.user_id IS NULL) AS no_application_row
+FROM users u
+LEFT JOIN applications a ON a.user_id = u.id
+LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+WHERE u.role IN ('staff','manager')
+  AND u.onboarding_status IN ('in_progress','hired','submitted','reviewed','approved')
+  AND (COALESCE(cp.resume_file_url, a.resume_file_url) IS NULL
+    OR COALESCE(cp.alcohol_certification_file_url, a.basset_file_url) IS NULL)
+ORDER BY u.id DESC LIMIT 20;
 ```
 
-Update the BASSET helper text from `"BASSET, TIPS, ServSafe, or equivalent. Required for all positions."` to `"BASSET, TIPS, ServSafe, or equivalent. Needed before your first shift."`
+Expected: users **241, 242 and 243** all appear, each with `no_application_row = true`. Those three are the incident cohort. If they are absent, a join has been written as `INNER` and the count is worthless for the exact case it was built for.
 
-- [ ] **Step 4: Verify**
-
-Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build`
-Expected: build succeeds.
-
-Manually submit the application with no files attached and confirm it succeeds and routes onward to `/welcome`.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add server/routes/application.js client/src/pages/Application.js
-git commit -m "feat(onboarding): let the application submit with documents outstanding"
+git add server/utils/outstandingDocuments.js server/utils/outstandingDocuments.test.js
+git commit -m "feat(onboarding): single shared predicate for outstanding documents"
 ```
 
 ---
 
 ### Task C2: Surface outstanding documents to the admin
 
-**This must not be derived from `/admin/applications`.** That endpoint INNER JOINs `applications` (`server/routes/admin/applications.js:85`), so anyone without an application row never appears in it. That is exactly the cohort this count exists to catch: direct hires who were sent the link and never got through the form. A safety net built on that list has a hole shaped precisely like the person who fell through it.
-
-The count therefore comes from the server, off `users` with LEFT JOINs, so a missing row counts as missing rather than vanishing.
-
-Note also that both documents live in two places: a resume is `applications.resume_file_url` or `contractor_profiles.resume_file_url`, and the certification is `applications.basset_file_url` or `contractor_profiles.alcohol_certification_file_url`. Either satisfies the requirement, so the predicate coalesces across both.
-
-**Trimmed from the spec.** The spec named three admin surfaces: the needs-attention strip, a badge on `AdminUserDetail`, and a count in the `/hiring/summary` KPI strip. This task builds only the first. `AdminUserDetail` already renders the document links, so their absence is visible there without a badge, and a third KPI counting the same people the needs-attention item already names is duplicate signal on the same screen. One surface that is actually actionable beats three that dilute each other. If the single item proves too quiet in practice, the KPI is a small follow-up.
+**Trimmed from the spec, needs Dallas's sign-off.** The spec named three admin surfaces: the needs-attention strip, a badge on `AdminUserDetail`, and a count in the `/hiring/summary` KPI strip. This task builds the strip and the summary field that feeds it, and drops the `AdminUserDetail` badge. That page already renders the document links, so their absence is visible there without a badge. The spec is marked approved and still says three, so this is the plan re-deciding a settled item: confirm the trim rather than inherit it. If it stands, add the badge to `docs/fix-list-remaining-2026-07-02.md` so the deferral survives the squash merge.
 
 **Files:**
 - Modify: `server/routes/admin/hiring.js:18-61`
 - Modify: `client/src/pages/admin/overview/queueItems.js:26-47`
-- Modify: `client/src/pages/admin/overview/OverviewPage.js:225-231`
-- Modify: `client/src/pages/admin/overview/NeedsYouStrip.js:29-33`
+- Modify: `client/src/pages/admin/overview/OverviewPage.js`
+- Modify: `client/src/pages/admin/overview/NeedsYouStrip.js` (the `QUEUE_ICON` map, currently lines 27-31)
 - Test: `client/src/pages/admin/overview/queueItems.test.js`
 
 **Interfaces:**
-- Consumes: nothing from earlier tasks.
+- Consumes: `countOutstanding` from Task C1.
 - Produces:
   - `GET /api/admin/hiring/summary` gains a `missing_documents: number` field alongside its existing four.
   - `buildStaffingItems(unstaffed, newApplications, missingDocs)` gains a third parameter, `missingDocs: number`. Existing two-argument callers still work, treating it as zero.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing client test**
 
-Append to `client/src/pages/admin/overview/queueItems.test.js`, inside the existing `describe('buildStaffingItems', ...)` block:
+Append to `client/src/pages/admin/overview/queueItems.test.js`, inside the existing `describe('buildStaffingItems', ...)` block. That file uses `test()` for its three existing cases; match whichever of `test`/`it` the surrounding block already uses.
 
 ```js
   it('adds a missing-documents item when any recruit owes files', () => {
@@ -1630,12 +1836,12 @@ Append to `client/src/pages/admin/overview/queueItems.test.js`, inside the exist
   });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 2: Run it to verify it fails**
 
 Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts test --testPathPattern=queueItems`
 Expected: FAIL, no item of type `documents`.
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 3: Implement the queue item**
 
 In `client/src/pages/admin/overview/queueItems.js`, change the signature at line 26 and append the new item before the `return`:
 
@@ -1655,49 +1861,66 @@ export function buildStaffingItems(unstaffed, newApplications, missingDocs = 0) 
   return items;
 ```
 
-Add an icon for the new type to the `QUEUE_ICON` map in `client/src/pages/admin/overview/NeedsYouStrip.js:29-33`:
+Add an icon for the new type to the `QUEUE_ICON` map in `NeedsYouStrip.js`. Locate it by content, not line number:
 
 ```js
-  'documents': 'pen',
+  documents: 'pen',
 ```
 
-- [ ] **Step 4: Add the server-side count**
+- [ ] **Step 4: Run the client test to verify it passes**
 
-In `server/routes/admin/hiring.js`, add a fifth query to the `Promise.all` in `GET /hiring/summary` (line 19):
+Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts test --testPathPattern=queueItems`
+Expected: PASS, including the three pre-existing `buildStaffingItems` cases.
+
+- [ ] **Step 5: Add the server count**
+
+In `server/routes/admin/hiring.js`, import the shared helper:
 
 ```js
-    // Recruits who still owe a resume or an alcohol certification.
-    //
-    // LEFT JOINs, deliberately. The sibling queries in this handler INNER JOIN
-    // applications, which is correct for funnel stats but would hide exactly
-    // the people this count is for: direct hires who never completed the
-    // application. A missing row means missing documents, not an absent person.
-    //
-    // Either storage location satisfies the requirement, hence the COALESCE:
-    // the application carries basset_file_url, the contractor profile carries
-    // alcohol_certification_file_url, and a resume can live on either.
-    pool.query(`
-      SELECT COUNT(*) FROM users u
-      LEFT JOIN applications a ON a.user_id = u.id
-      LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
-      WHERE u.role IN ('staff', 'manager')
-        AND u.onboarding_status IN ('in_progress', 'hired', 'submitted', 'reviewed', 'approved')
-        AND (
-          COALESCE(cp.resume_file_url, a.resume_file_url) IS NULL
-          OR COALESCE(cp.alcohol_certification_file_url, a.basset_file_url) IS NULL
-        )
-    `),
+const { countOutstanding } = require('../../utils/outstandingDocuments');
 ```
 
-Destructure it as `missingDocs` in the array on line 19, and add to the response object:
+The handler destructures a **4-element** array from `Promise.all` today:
 
 ```js
-    missing_documents: parseInt(missingDocs.rows[0].count, 10),
+  const [newApps, needSchedule, stalled, inPipeline] = await Promise.all([
 ```
 
-- [ ] **Step 5: Feed it from OverviewPage**
+Add a fifth entry at the END of the array and a matching fifth name at the END of the destructure, so the existing positional bindings cannot shift:
 
-`OverviewPage` does not fetch `/admin/hiring/summary` today. Add it beside the existing `/admin/applications` fetch (line 208-215), following that block's admin-only guard and swallowed-catch pattern exactly, since managers get a 403 here and must simply see no item:
+```js
+  const [newApps, needSchedule, stalled, inPipeline, missingDocs] = await Promise.all([
+    // ... the four existing pool.query(...) calls, unchanged ...
+    countOutstanding(),
+  ]);
+```
+
+`countOutstanding()` returns a number, not a pg result, so add it to the response directly:
+
+```js
+    missing_documents: missingDocs,
+```
+
+- [ ] **Step 6: Verify the endpoint actually returns it**
+
+Positional destructuring is exactly the kind of edit that silently returns the wrong number while every unit test stays green, so hit the real route. Get an admin token from the dev database and call it:
+
+```bash
+cd /home/drbartender/projects/os
+TOKEN=$(node -r dotenv/config -e "
+const jwt=require('jsonwebtoken');
+require('./server/db').pool.query(\"SELECT id, token_version FROM users WHERE role='admin' ORDER BY id LIMIT 1\")
+ .then(r=>{const u=r.rows[0];
+   console.log(jwt.sign({userId:u.id,tokenVersion:u.token_version},process.env.JWT_SECRET,{expiresIn:'1h'}));
+   process.exit(0)})")
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:5000/api/admin/hiring/summary | python3 -m json.tool
+```
+
+Expected: all five keys present, and `new_apps_7d`, `need_to_schedule`, `stalled`, `in_pipeline` hold the **same values they did before this change**. Capture them before editing so you can compare. A shifted destructure shows up here as scrambled numbers and nowhere else.
+
+- [ ] **Step 7: Feed it to the overview page**
+
+`OverviewPage` does not fetch `/admin/hiring/summary` today. Add it beside the existing `/admin/applications` fetch (around line 208-215), following that block's admin-only guard and swallowed-catch pattern exactly, since managers get a 403 here and must simply see no item:
 
 ```js
   const [hiringSummary, setHiringSummary] = useState(null);
@@ -1712,7 +1935,7 @@ Destructure it as `missingDocs` in the array on line 19, and add to the response
   }, [isAdmin]);
 ```
 
-Then pass it through at line 231:
+Then pass it through where `staffingItems` is built:
 
 ```js
   const staffingItems = useMemo(
@@ -1720,37 +1943,12 @@ Then pass it through at line 231:
     [unstaffed, newApplications, hiringSummary]);
 ```
 
-- [ ] **Step 6: Verify the count against production data**
-
-The whole point of this task is catching people the applications list hides, so prove it does. Run against the prod branch read-only:
-
-```bash
-node -r dotenv/config -e "
-require('./server/db').pool.query(\`
-  SELECT u.id, u.email, u.onboarding_status,
-         (a.user_id IS NULL) AS no_application_row
-  FROM users u
-  LEFT JOIN applications a ON a.user_id = u.id
-  LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
-  WHERE u.role IN ('staff','manager')
-    AND u.onboarding_status IN ('in_progress','hired','submitted','reviewed','approved')
-    AND (COALESCE(cp.resume_file_url, a.resume_file_url) IS NULL
-      OR COALESCE(cp.alcohol_certification_file_url, a.basset_file_url) IS NULL)
-  ORDER BY u.id DESC LIMIT 20\`)
-.then(r=>{console.table(r.rows);process.exit(0)})"
-```
-
-Expected: users 241, 242 and 243 all appear with `no_application_row = true`. If they do not, the LEFT JOIN has been written as an INNER JOIN somewhere and the count is worthless.
-
-- [ ] **Step 7: Run the tests to verify they pass**
-
-Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts test --testPathPattern=queueItems`
-Expected: PASS, including the four pre-existing `buildStaffingItems` cases.
-
-- [ ] **Step 8: Verify the build**
+- [ ] **Step 8: Verify it reaches the screen**
 
 Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build`
 Expected: build succeeds.
+
+Then load `/` on the admin app as an admin and confirm the row **"N bartenders missing documents"** appears in the Needs-attention card's staffing tab, with an icon rather than a blank square. Click it and confirm it navigates to `/hiring`. Unit tests cover the builder in isolation; nothing else proves the fetch, the memo, the icon, and the row all line up.
 
 - [ ] **Step 9: Commit**
 
@@ -1761,89 +1959,160 @@ git commit -m "feat(hiring): surface recruits missing documents in needs-attenti
 
 ---
 
-### Task C3: Give the recruit a way back
+### Task C3: Tell the recruit, then stop blocking them
 
-Someone who submits with files outstanding needs somewhere to finish them. The contractor profile page already carries all three uploads as optional fields, so this is a link, not a new page.
+Both halves land together on purpose. The notice is what makes it safe to drop the requirement, so they share a commit rather than leaving a window where submission is unguarded and unreported.
 
 **Files:**
-- Modify: `client/src/pages/Welcome.js`
+- Modify: `server/routes/progress.js` (extend `GET /`)
+- Modify: `server/routes/application.js` (remove the file gate)
+- Modify: `client/src/pages/Application.js` (remove the matching rules, add the notice)
+- Modify: `client/src/pages/Welcome.js` (show what is outstanding)
 
 **Interfaces:**
-- Consumes: `GET /api/contractor` (existing).
-- Produces: nothing consumed by later tasks.
+- Consumes: `outstandingFor` from Task C1.
+- Produces: `GET /api/progress` response gains `documents_outstanding: string[]`.
 
-- [ ] **Step 1: Implement**
+- [ ] **Step 1: Expose the recruit's own outstanding list**
 
-In `client/src/pages/Welcome.js`, add to the imports:
-
-```js
-import { useEffect, useState } from 'react';
-```
-
-(merge into the existing `React, { useState }` import rather than duplicating it)
-
-Add inside the component, after the `loading` state:
+In `server/routes/progress.js`, import the shared helper and extend the existing `GET /` handler. It currently returns the `onboarding_progress` row or `{}`:
 
 ```js
-  const [owed, setOwed] = useState([]);
-
-  // Documents are collected rather than required at submit, so tell the recruit
-  // plainly what is still outstanding instead of letting it go quiet.
-  useEffect(() => {
-    api.get('/contractor')
-      .then(r => {
-        const p = r.data || {};
-        const missing = [];
-        if (!p.resume_file_url) missing.push('resume');
-        if (!p.alcohol_certification_file_url) missing.push('alcohol certification');
-        setOwed(missing);
-      })
-      .catch(() => setOwed([]));
-  }, []);
+const { outstandingFor } = require('../utils/outstandingDocuments');
 ```
 
-Render above the existing `alert alert-info` block:
+```js
+router.get('/', auth, asyncHandler(async (req, res) => {
+  const [result, documentsOutstanding] = await Promise.all([
+    pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [req.user.id]),
+    outstandingFor(req.user.id),
+  ]);
+  res.json({ ...(result.rows[0] || {}), documents_outstanding: documentsOutstanding });
+}));
+```
+
+This is the same predicate the admin count uses, so the two surfaces cannot drift.
+
+- [ ] **Step 2: Remove the server-side block**
+
+Delete these four lines at `server/routes/application.js:125-128`:
+
+```js
+  const fileFieldErrors = {};
+  if (!resume_url) fileFieldErrors.resume = 'Please upload your resume';
+  if (!basset_url) fileFieldErrors.basset = 'Please upload your BASSET / alcohol certification';
+  if (Object.keys(fileFieldErrors).length > 0) throw new ValidationError(fileFieldErrors);
+```
+
+Replace with:
+
+```js
+  // Files are collected, not required at submit. A file upload is the only
+  // field on this form the user cannot reliably complete: it depends on their
+  // connection, their phone's camera resolution, and what format their resume
+  // happens to be in. Blocking on it strands people who are otherwise done
+  // (incident 2026-07-23). What is still owed is derived by
+  // server/utils/outstandingDocuments.js and surfaced to both the recruit and
+  // the admin, so nothing goes quiet.
+```
+
+- [ ] **Step 3: Remove the matching client rules and soften the labels**
+
+**Locate by content, not line number.** Lane B inserted lines above these. In `client/src/pages/Application.js`, delete these two entries from the `rules` array:
+
+```js
+      { field: 'resume', label: 'Resume', test: () => !!files.resume },
+      { field: 'basset', label: 'BASSET Certification', test: () => !!files.basset },
+```
+
+Change the resume `FileUpload` label from `"Upload Your Resume *"` to `"Upload Your Resume"`, and the BASSET label from `"Upload Your BASSET / Alcohol Certification *"` to `"Upload Your BASSET / Alcohol Certification"`.
+
+Add this notice immediately above the `<div className={"form-group" + fieldClass('resume')}>` that wraps the resume upload:
+
+```jsx
+            <div className="alert alert-info" role="status">
+              You can submit without these and add them later, but we do need both
+              on file before your first shift.
+            </div>
+```
+
+Update the BASSET helper from `"BASSET, TIPS, ServSafe, or equivalent. Required for all positions."` to `"BASSET, TIPS, ServSafe, or equivalent. Needed before your first shift."`
+
+- [ ] **Step 4: Show the recruit what is outstanding**
+
+`Welcome.js` already receives progress through its outlet context. Read the new field rather than fetching separately, so the notice cannot disagree with the admin count.
+
+In `client/src/pages/Welcome.js`, pull it from the same `useOutletContext()` the page already uses for `setProgress`, and render above the existing `alert alert-info` block:
 
 ```jsx
           {owed.length > 0 && (
             <div className="alert alert-warning" role="status">
               We still need your {owed.join(' and ')}. You can add {owed.length === 1 ? 'it' : 'them'} on
-              the Contractor Profile step, and we do need {owed.length === 1 ? 'it' : 'them'} before your
-              first shift.
+              the <Link to="/contractor-profile">Contractor Profile</Link> step, and we do need
+              {owed.length === 1 ? ' it' : ' them'} before your first shift.
             </div>
           )}
 ```
 
-- [ ] **Step 2: Verify**
+Add `import { Link } from 'react-router-dom';` and derive `owed` from the context progress:
+
+```js
+  const { progress, setProgress } = useOutletContext();
+  const owed = progress?.documents_outstanding || [];
+```
+
+If the outlet context does not currently expose `progress` alongside `setProgress`, add it in the layout that provides the context rather than fetching in this page. Check the provider before writing this step:
+
+```bash
+grep -rn "useOutletContext\|Outlet context=" client/src/components/Layout.js client/src/pages/Welcome.js
+```
+
+- [ ] **Step 5: Verify**
 
 Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build`
 Expected: build succeeds.
 
-Manually: submit an application with no files, land on `/welcome`, and confirm the notice names both outstanding documents. Upload one on the contractor profile step, return to `/welcome`, and confirm only the remaining one is named.
+Run: `cd /home/drbartender/projects/os && node -r dotenv/config --test server/utils/outstandingDocuments.test.js`
+Expected: still PASS. `GET /api/progress` now calls into it.
 
-- [ ] **Step 3: Commit**
+Manually:
+- [ ] Submit the application with **no files attached**. Confirm it succeeds and routes onward rather than blocking.
+- [ ] Land on `/welcome` and confirm the notice names **both** outstanding documents and links to the contractor profile.
+- [ ] Upload only the certification on the contractor profile, return to `/welcome`, and confirm the notice now names the resume alone. This is the case where the two surfaces used to disagree.
+- [ ] Confirm the admin Needs-attention count from C2 moves in step with what the recruit is being told.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add client/src/pages/Welcome.js
-git commit -m "feat(onboarding): tell recruits which documents are still outstanding"
+git add server/routes/progress.js server/routes/application.js client/src/pages/Application.js client/src/pages/Welcome.js
+git commit -m "feat(onboarding): let the application submit with documents outstanding"
 ```
 
 ---
+
+### Lane C known gap, carried to the warnings pass
+
+The `/welcome` notice fires for a brand-new recruit who has not yet had the chance to upload anything, since they genuinely owe both documents at that moment. It is accurate but poorly timed. Gating it behind "has reached the contractor profile step" is a warnings-pass fix, not a blocker.
 
 ## Review
 
 | Lane | Scope | Fleet |
 |---|---|---|
-| A | `fileValidation.js`, `FileUpload.js`, `index.js` | **Full fleet.** File validation is a sensitive path, and the allowlist widening is security-adjacent: DOC and DOCX are OLE and zip containers. Reviewers must confirm the extension pairing holds and that `isValidUpload` and `isValidImageUpload` are genuinely unchanged for their seven and two existing callers. |
-| B | schema, `progress.js`, hook, two forms | **Full.** New table. Reviewers must confirm every draft query scopes to `req.user.id`, and that `payday_protocols` cannot reach the table by any path. |
-| C | `application.js`, `Application.js`, admin surfacing | Standard. |
+| A | `fileValidation.js`, `FileUpload.js`, `index.js`, the two forms' `kind` opt-in | **Full fleet.** File validation is a sensitive path, and the allowlist widening is security-adjacent: DOC and DOCX are OLE and zip containers. Reviewers must confirm the extension pairing holds, that `isValidUpload` and `isValidImageUpload` are genuinely unchanged for their nine and two existing callers, and that `kind="document"` landed on exactly the four intended fields and on neither `headshot` nor `w9`. |
+| B | schema, `progress.js`, hook, two forms | **Full.** New table. Reviewers must confirm every draft query scopes to `req.user.id`, that `payday_protocols` cannot reach the table by any path, and that the Application snapshot carries all five state hooks rather than `form` alone. |
+| C | `outstandingDocuments.js`, `hiring.js`, `progress.js`, `application.js`, admin and recruit surfacing | **Full.** Raised from Standard: C1 introduces a shared SQL predicate that two independent surfaces depend on agreeing about, and the LEFT-versus-INNER join choice is the difference between the safety net working and being blind to the exact cohort it was built for. |
 
 Run `/second-opinion` on Lane A alongside the fleet.
+
+**Review checkpoints during execution**, matched to what each batch changes:
+- After B2 and after C1: database review (new table, `req.user.id` scoping, the `payday_protocols` allowlist, the join predicate).
+- After A1 and A4: security review (upload allowlist, the client/server accept parity).
+- After C2: verify the admin 403 path for managers still degrades to an absent item rather than an error.
 
 ## Open item carried from the spec
 
 The recruit who triggered this was unblocked by being sent directly to `/welcome`, which skips the application. She will finish onboarding with no `positions_interested`, no availability, no `comfortable_working_alone` answer, and no BASSET on file.
 
-Task C2's count catches the missing documents, and only because it is built on LEFT JOINs against `users`. An earlier draft of this plan derived it from `/admin/applications`, which INNER JOINs and would have rendered her invisible to the very safety net written in response to her. That is the reason the join style in C2 Step 4 is load-bearing rather than incidental, and why Step 6 verifies users 241, 242 and 243 actually appear.
+Task C1's predicate catches the missing documents, and only because it is built on LEFT JOINs against `users`. An earlier draft of this plan derived the count from `/admin/applications`, which INNER JOINs and would have rendered her invisible to the very safety net written in response to her. That is why the join style in `outstandingDocuments.js` is load-bearing rather than incidental, why C1 Step 1 fixtures a user with no application row at all, and why C1 Step 5 verifies users 241, 242 and 243 actually appear in production.
 
 **The application answers are a separate problem and no task here recovers them.** Positions, availability, working alone, tools, and experience will simply be absent. Collect them from her by hand after her first shift.
