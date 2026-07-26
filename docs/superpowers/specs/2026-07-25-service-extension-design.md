@@ -397,11 +397,22 @@ no gratuity.
 **On cancel**: claim the row to `cancelled`, cancel open intents, void the
 invoice, send the decline messages. No duration bump.
 
-**Refunding a paid extension** is a plain refund of that payment. Off-ledger
-means reconciliation does not touch `amount_paid` or `total_price`. The
-duration is NOT auto-reverted: whether the time was served is a fact the admin
-knows and the system does not, so un-extending is a deliberate admin edit of
-the event, not a refund side effect.
+**Refunding a paid extension** happens at Stripe, against that payment, NOT
+through the admin refund button. Corrected 2026-07-26: an earlier revision of
+this spec called it "a plain refund of that payment," which was wrong, because
+the admin refund route takes an amount rather than a target. It resolves the
+target through `planRefund` over every payment on the proposal and caps the
+request at `amount_paid`, and extension dollars are deliberately not in
+`amount_paid`. So that button could either refund the wrong (contract) charge,
+dropping `amount_paid` for side money, or refuse outright with
+`EXCEEDS_AMOUNT_PAID`. The plan closes the first hole by excluding off-ledger
+payments from the contract refund's candidate set, and documents the Stripe
+procedure; the existing refund webhook and stale-pending sweeper already
+reconcile an off-ledger refund correctly without touching `amount_paid`.
+
+The duration is NOT auto-reverted: whether the time was served is a fact the
+admin knows and the system does not, so un-extending is a deliberate admin edit
+of the event, not a refund side effect.
 
 ## 8. Data model and surfaces
 

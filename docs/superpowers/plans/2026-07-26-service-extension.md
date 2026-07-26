@@ -41,6 +41,9 @@ lanes:
       - server/utils/payrollAccrual.extension.test.js
       - server/utils/serviceExtensionSweep.js
       - server/utils/serviceExtensionSweep.test.js
+      - server/utils/refundHelpers.js
+      - server/utils/refundHelpers.extensionScope.test.js
+      - docs/ops-runbook.md
       - scripts/money-smoke-list.txt
       - server/index.js
     deps: [ext-core, ext-routes]
@@ -139,6 +142,21 @@ If the request endpoint ships alone, a client can be charged with no settle path
 
 - Hold `ext-routes` on `main` until `ext-webhook-payroll` merges, then push both in one batch.
 - `ext-ui` may push later; without it the flow still works via the emailed link, minus the terms UI, which is why the server-side acceptance gate (Task 9) exists.
+
+## Every settle path ends with `finalizeExtension`
+
+Three places settle an extension, and all three must call `finalizeExtension(id)`
+as their LAST step, after `applyExtensionHours` and `notifyStaffOfOutcome` have
+both returned:
+
+- Task 8, the zero-delta accept
+- Task 10, the admin override
+- Task 11, the webhook tail
+
+A settled row with `finalized_at IS NULL` is the crash-recovery signal the Task 13
+heal looks for. Stamping it early, or forgetting it, means either the heal never
+fires (bartender never told, payroll never updated, invisible forever) or it fires
+forever on a row that is actually fine. Task 13's heal stamps it itself.
 
 ## Build order (task numbers are stable labels, not the sequence)
 
@@ -490,6 +508,14 @@ CREATE TABLE IF NOT EXISTS service_extensions (
   client_accept_ua          TEXT,
   status                    VARCHAR(20) NOT NULL DEFAULT 'pending'
                               CHECK (status IN ('pending','paid','expired','cancelled','overridden')),
+  -- Stamped only after the post-settle side effects (payroll hours + staff
+  -- greenlight) have run. A 'paid'/'overridden' row with finalized_at NULL is a
+  -- crash casualty: the settle committed but its side effects did not, so
+  -- payroll still holds the old hours and no bartender was told. Stripe will not
+  -- replay (isFirstDelivery already consumed the event) and the expiry sweep
+  -- only looks at 'pending', so without this column that state is invisible
+  -- forever. The sweep heals it.
+  finalized_at              TIMESTAMPTZ,
   override_by_user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
   override_reason           TEXT,
   expires_at                TIMESTAMPTZ NOT NULL,
@@ -513,6 +539,11 @@ CREATE INDEX IF NOT EXISTS idx_service_extensions_invoice
 -- Payroll gratuity addend sums paid rows per proposal.
 CREATE INDEX IF NOT EXISTS idx_service_extensions_proposal_status
   ON service_extensions (proposal_id, status);
+
+-- Crash-recovery driver: settled rows whose post-settle side effects never ran.
+CREATE INDEX IF NOT EXISTS idx_service_extensions_unfinalized
+  ON service_extensions (updated_at)
+  WHERE finalized_at IS NULL AND status IN ('paid', 'overridden');
 ```
 
 - [ ] **Step 6: Apply the schema to the dev DB and verify**
@@ -1437,6 +1468,23 @@ async function settleExtension({ extensionId, outcome, actorUserId = null, overr
 }
 
 async function settleInTx(client, { extensionId, outcome, actorUserId, overrideReason }) {
+  // LOCK ORDER, load-bearing: proposals FIRST, then service_extensions.
+  //
+  // The create route (Task 7) locks `proposals` FOR UPDATE and then inserts into
+  // service_extensions. If this function claimed the extension row first and then
+  // updated proposals, the two paths would take the same two locks in opposite
+  // orders, which is an ABBA deadlock: create holds the proposal lock and waits
+  // on the pending-row unique index, while settle holds the extension row and
+  // waits on the proposal. Postgres would abort one with 40P01. Reading
+  // proposal_id unlocked first is safe because an extension row's proposal_id
+  // never changes.
+  const idRes = await client.query(
+    'SELECT proposal_id FROM service_extensions WHERE id = $1',
+    [extensionId]
+  );
+  if (!idRes.rows[0]) return { ok: false, reason: 'not_pending' };
+  await client.query('SELECT id FROM proposals WHERE id = $1 FOR UPDATE', [idRes.rows[0].proposal_id]);
+
   const row = await claim(client, extensionId, outcome, actorUserId, overrideReason);
   if (!row) return { ok: false, reason: 'not_pending' };
 
@@ -2418,6 +2466,9 @@ router.post('/', auth, serviceExtensionLimiter, asyncHandler(async (req, res) =>
   const window = await checkWindow(ctx);
   if (!window.ok) throw new ConflictError(window.message, window.code);
 
+  // PRE-FLIGHT price, for validation and the hosted-confirmation gate only. The
+  // authoritative price is recomputed inside the transaction below with the
+  // proposal row locked; see the note there.
   const delta = await computeExtensionDelta({
     client: pool, proposalId: ctx.proposal_id, requestedDurationHours: requestedEndHours,
   });
@@ -2441,23 +2492,65 @@ router.post('/', auth, serviceExtensionLimiter, asyncHandler(async (req, res) =>
   const dbClient = await pool.connect();
   let created;
   let invoiceToken;
+  let sent; // { amountCents, requestedEndDisplay } from the LOCKED reprice
   try {
     await dbClient.query('BEGIN');
+
+    // Lock the proposal and RE-PRICE inside the transaction. The pre-flight
+    // delta above was computed against an unlocked read, and the partial unique
+    // index only blocks a second PENDING row: once a first extension SETTLES,
+    // the index frees up while this request still holds a stale baseline. Two
+    // staffers both computing from 4h could then have the first settle to 4.5h
+    // and the second insert a 4h-to-5h delta, overcharging the client for a half
+    // hour they already paid for and recording a contracted baseline that never
+    // existed. FOR UPDATE serialises against settleExtension's own transaction.
+    //
+    // LOCK ORDER: proposals FIRST, then service_extensions (the INSERT below).
+    // settleInTx takes the same two locks in the same order for exactly this
+    // reason; reversing either side is an ABBA deadlock (40P01).
+    await dbClient.query('SELECT id FROM proposals WHERE id = $1 FOR UPDATE', [ctx.proposal_id]);
+    const priced = await computeExtensionDelta({
+      client: dbClient, proposalId: ctx.proposal_id, requestedDurationHours: requestedEndHours,
+    });
+    if (!priced.ok) {
+      // The duration moved under us and the requested end is no longer a valid
+      // extension (e.g. another request already reached or passed it).
+      await dbClient.query('ROLLBACK');
+      throw new ConflictError(
+        'This event was just extended by another request. Reload and pick a new end time.',
+        'EXTENSION_BASELINE_MOVED'
+      );
+    }
+    if (Number(priced.contractedDurationHours) !== Number(delta.contractedDurationHours)) {
+      await dbClient.query('ROLLBACK');
+      throw new ConflictError(
+        'This event was just extended by another request. Reload and pick a new end time.',
+        'EXTENSION_BASELINE_MOVED'
+      );
+    }
+
+    // `priced` is authoritative from here on: it was computed under the row
+    // lock. Destructured so nothing below can accidentally reach for the
+    // pre-flight `delta` and persist a stale baseline or a stale amount.
+    const {
+      amountCents, gratuityDeltaCents, contractedEndDisplay, requestedEndDisplay,
+      contractedDurationHours, requestedDurationHours, contractedEndInstant, isHosted,
+    } = priced;
 
     const invoice = await createInvoice({
       proposalId: ctx.proposal_id,
       label: SERVICE_EXTENSION_INVOICE_LABEL,
-      amountDueCents: delta.amountCents,
+      amountDueCents: amountCents,
       // 'sent', never 'draft': create-intent-for-invoice only accepts
       // sent/partially_paid, so a draft extension invoice would be unpayable.
       status: 'sent',
     }, dbClient);
 
     await writeLineItems(invoice.id, [{
-      description: `Additional bar service, ${delta.contractedEndDisplay} to ${delta.requestedEndDisplay}`,
+      description: `Additional bar service, ${contractedEndDisplay} to ${requestedEndDisplay}`,
       quantity: 1,
-      unit_price: delta.amountCents,
-      line_total: delta.amountCents,
+      unit_price: amountCents,
+      line_total: amountCents,
       // 'fee', NOT a new value. invoice_line_items.source_type carries
       // CHECK (source_type IN ('package','addon','fee','manual')) at
       // schema.sql:1977-1978, so 'service_extension' would raise 23514 on
@@ -2470,7 +2563,7 @@ router.post('/', auth, serviceExtensionLimiter, asyncHandler(async (req, res) =>
     // Payable until the contracted end + EXPIRY_GRACE_MINUTES, floored at
     // 15 minutes from NOW so a request opened late in the open-grace window
     // still gets a usable life instead of expiring on the next sweep tick.
-    const contractedEndMs = new Date(delta.contractedEndInstant).getTime();
+    const contractedEndMs = new Date(contractedEndInstant).getTime();
     const expiresAt = new Date(Math.max(
       contractedEndMs + EXPIRY_GRACE_MINUTES * 60 * 1000,
       Date.now() + 15 * 60 * 1000
@@ -2489,23 +2582,25 @@ router.post('/', auth, serviceExtensionLimiter, asyncHandler(async (req, res) =>
        RETURNING id, requested_end_time, status`,
       [
         ctx.proposal_id, shiftId, req.user.id, invoice.id,
-        delta.contractedEndDisplay, delta.requestedEndDisplay,
-        delta.contractedDurationHours, delta.requestedDurationHours,
-        delta.amountCents, delta.gratuityDeltaCents,
-        delta.isHosted ? hostedProductConfirmed : null,
+        contractedEndDisplay, requestedEndDisplay,
+        contractedDurationHours, requestedDurationHours,
+        amountCents, gratuityDeltaCents,
+        isHosted ? hostedProductConfirmed : null,
         CURRENT_EXTENSION_TERMS_VERSION, expiresAt,
       ]
     );
     created = ins.rows[0];
     invoiceToken = invoice.token;
+    // Carry the authoritative figures out to the post-commit tail.
+    sent = { amountCents, requestedEndDisplay };
 
     await dbClient.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
        VALUES ($1, 'extension_requested', 'staff', $2, $3::jsonb)`,
       [ctx.proposal_id, req.user.id, JSON.stringify({
         extension_id: created.id,
-        requested_end: delta.requestedEndDisplay,
-        amount_cents: delta.amountCents,
+        requested_end: requestedEndDisplay,
+        amount_cents: amountCents,
       })]
     );
 
@@ -2519,6 +2614,15 @@ router.post('/', auth, serviceExtensionLimiter, asyncHandler(async (req, res) =>
         'EXTENSION_ALREADY_PENDING'
       );
     }
+    // 40P01 deadlock / 40001 serialization: the lock order above is designed so
+    // this should not happen, but a future caller could reintroduce it. Surface a
+    // retryable conflict rather than a 500 so the staffer just taps again.
+    if (err.code === '40P01' || err.code === '40001') {
+      throw new ConflictError(
+        'Someone else was updating this event just now. Tap again.',
+        'EXTENSION_CONFLICT_RETRY'
+      );
+    }
     throw err;
   } finally {
     // Release BEFORE notifying: the notify helpers take their own pooled
@@ -2526,18 +2630,20 @@ router.post('/', auth, serviceExtensionLimiter, asyncHandler(async (req, res) =>
     dbClient.release();
   }
 
-  // Post-commit tail. A send failure must not undo a created request.
+  // Post-commit tail. A send failure must not undo a created request. Uses the
+  // LOCKED figures (`sent`), never the pre-flight `delta`: the client must be
+  // quoted exactly what the invoice says.
   const reach = await notify.notifyClientOfRequest({
     proposalId: ctx.proposal_id,
     invoiceToken,
-    amountCents: delta.amountCents,
-    newEndDisplay: delta.requestedEndDisplay,
+    amountCents: sent.amountCents,
+    newEndDisplay: sent.requestedEndDisplay,
     termsVersion: CURRENT_EXTENSION_TERMS_VERSION,
   });
   await notify.alertAdminsRequestSent({
     proposalId: ctx.proposal_id,
-    newEndDisplay: delta.requestedEndDisplay,
-    amountCents: delta.amountCents,
+    newEndDisplay: sent.requestedEndDisplay,
+    amountCents: sent.amountCents,
     requesterUserId: req.user.id,
     clientReachable: reach.reachable,
   });
@@ -3449,6 +3555,15 @@ label, so a deposit-stage event cannot be falsely marked funded."
 **Interfaces:**
 - Consumes: `contractedHours` and `wageCents` from `server/utils/payrollMath.js` (existing).
 - Produces:
+  - `finalizeExtension(extensionId)` → `Promise<void>`. Stamps `finalized_at = NOW()`. EVERY settle path calls it as the LAST step, after payroll and the staff greenlight have both returned. A settled row left unstamped is what the Task 13 heal looks for, so calling it too early defeats the crash recovery:
+    ```javascript
+    async function finalizeExtension(extensionId) {
+      await pool.query(
+        'UPDATE service_extensions SET finalized_at = NOW(), updated_at = NOW() WHERE id = $1',
+        [extensionId]
+      );
+    }
+    ```
   - `applyExtensionHours({ proposalId, newDurationHours })` → `Promise<{ updatedLines, lockedLines, frozenLines, multiShiftSkipped, payoutIds }>`. Called by ALL THREE settle paths: the webhook (Task 11), the zero-delta accept (Task 8), and the admin override (Task 10). A first draft wired it only into the webhook, so an overridden or zero-delta extension moved the duration and never paid for it.
   - `maybeAlertPayroll(notify, proposalId, payrollResult)` → `Promise<void>`. The shared post-settle alert, so all three call sites report `lockedLines` AND `frozenLines` identically. Its body is in Step 2's file, and BOTH names are in that file's `module.exports`. All three consumers destructure `{ applyExtensionHours, maybeAlertPayroll }`; Task 11's lazy require must include both.
   - `payrollAccrual`'s gratuity pool includes `SUM(gratuity_cents)` over that proposal's `paid` extensions, added after fee-netting.
@@ -3524,7 +3639,26 @@ async function applyExtensionHours({ proposalId, newDurationHours, shiftId = nul
     return { updatedLines: 0, lockedLines: 0, frozenLines: 0, multiShiftSkipped: true, payoutIds: [] };
   }
 
-  const { rows } = await pool.query(
+  // ONE transaction for the whole rewrite. The per-line UPDATEs and the payout
+  // header recompute must land together: a failure between them leaves
+  // payout_events disagreeing with payouts.total_cents, i.e. a paystub whose
+  // lines do not add up to its total, on the code path that changes staff pay.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await applyInTx(client, { proposalId, target });
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* already rolled back */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function applyInTx(client, { proposalId, target }) {
+  const { rows } = await client.query(
     // held_state IS NULL is REQUIRED, mirroring payrollAccrual.js:228. A held
     // line belongs to an off-roster worker and carries hours = contracted_hours
     // = 0 with line_total_cents = 0 deliberately. Both guards below would pass
@@ -3571,7 +3705,7 @@ async function applyExtensionHours({ proposalId, newDurationHours, shiftId = nul
       + Number(line.card_tip_net_cents || 0)
       + Number(line.adjustment_cents || 0);
 
-    await pool.query(
+    await client.query(
       `UPDATE payout_events
           SET contracted_hours = $3, hours = $3, wage_cents = $4, line_total_cents = $5
         WHERE payout_id = $1 AND shift_id = $2`,
@@ -3587,7 +3721,7 @@ async function applyExtensionHours({ proposalId, newDurationHours, shiftId = nul
   // old amount and the line-level fix is invisible.
   const payoutIds = [...touchedPayoutIds];
   if (payoutIds.length > 0) {
-    await pool.query(
+    await client.query(
       `UPDATE payouts po SET total_cents = GREATEST(0, COALESCE((
          SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
        ), 0))
@@ -3633,7 +3767,20 @@ async function maybeAlertPayroll(notify, proposalId, payroll) {
   });
 }
 
-module.exports = { applyExtensionHours, maybeAlertPayroll };
+/**
+ * Stamp a settled extension as fully finalized. Call this LAST on every settle
+ * path, after payroll and the staff greenlight have both returned. An unstamped
+ * settled row is exactly what the Task 13 heal hunts for, so stamping early
+ * silently disables the crash recovery.
+ */
+async function finalizeExtension(extensionId) {
+  await pool.query(
+    'UPDATE service_extensions SET finalized_at = NOW(), updated_at = NOW() WHERE id = $1',
+    [extensionId]
+  );
+}
+
+module.exports = { applyExtensionHours, maybeAlertPayroll, finalizeExtension };
 ```
 
 - [ ] **Step 3: Verify the column and table names before trusting the query**
@@ -3806,8 +3953,12 @@ The hard stop is the entire coverage argument in the spec, and nothing enforces 
 - Test: `server/utils/serviceExtensionSweep.test.js`
 
 **Interfaces:**
-- Consumes: `closeExtension` (Task 5); `notifyStaffOfOutcome`, `alertAdminsProblem` (Task 6); `cancelOpenInvoiceIntents` (existing).
-- Produces: `sweepExpiredExtensions()` → `Promise<{ expired: number, notified: number }>`
+- Consumes: `closeExtension` (Task 5); `notifyStaffOfOutcome`, `alertAdminsProblem` (Task 6); `cancelOpenInvoiceIntents` (existing); `applyExtensionHours`, `maybeAlertPayroll` (Task 12a).
+- Produces:
+  - `sweepExpiredExtensions()` → `Promise<{ expired, notified, stranded }>`
+  - `healUnfinalizedExtensions()` → `Promise<{ healed: number }>`. The crash-recovery half; the scheduler runs both on the same tick.
+
+**Why the heal exists.** `settleExtension` commits the `paid` status and the duration bump, and THEN the caller runs payroll and the staff greenlight. If the process dies in between, that row is `paid` with `finalized_at IS NULL`: payroll still holds the old hours, no bartender was told, Stripe will not replay because the webhook's `isFirstDelivery` gate already consumed the event, and the expiry sweep ignores it because it is not `pending`. Nothing else in the system would ever notice. The heal re-runs the side effects, which are all idempotent: `applyExtensionHours` no-ops when `contracted_hours` already equals the target, and the staff message is worth re-sending because the alternative is a bartender who was never told at all.
 
 - [ ] **Step 1: Write the sweep**
 
@@ -3835,6 +3986,7 @@ Create `server/utils/serviceExtensionSweep.js`:
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { closeExtension } = require('./serviceExtensionSettle');
+const { applyExtensionHours, maybeAlertPayroll } = require('./serviceExtensionPayroll');
 const { cancelOpenInvoiceIntents } = require('./invoiceVoid');
 const notify = require('./serviceExtensionNotify');
 
@@ -3924,7 +4076,81 @@ async function sweepExpiredExtensions() {
   return { expired, notified, stranded };
 }
 
-module.exports = { sweepExpiredExtensions, SWEEP_LIMIT };
+/**
+ * Crash recovery: re-run the post-settle side effects for rows that settled but
+ * never finalized. See the note in the task body for why nothing else catches
+ * this state. A short age gate keeps the heal from racing a settle that is still
+ * legitimately mid-tail.
+ */
+async function healUnfinalizedExtensions() {
+  const { rows } = await pool.query(
+    `SELECT id, proposal_id, requested_duration_hours, contracted_end_time,
+            requested_end_time, status
+       FROM service_extensions
+      WHERE finalized_at IS NULL
+        AND status IN ('paid', 'overridden')
+        AND updated_at < NOW() - INTERVAL '2 minutes'
+      ORDER BY updated_at ASC
+      LIMIT $1`,
+    [SWEEP_LIMIT]
+  );
+  if (rows.length === 0) return { healed: 0 };
+
+  let healed = 0;
+  for (const row of rows) {
+    try {
+      // Both side effects are idempotent: applyExtensionHours no-ops when
+      // contracted_hours already equals the target, and re-sending the greenlight
+      // beats a bartender who was never told.
+      const payroll = await applyExtensionHours({
+        proposalId: row.proposal_id,
+        newDurationHours: Number(row.requested_duration_hours),
+      });
+      await maybeAlertPayroll(notify, row.proposal_id, payroll);
+
+      const staffUserIds = await assignedStaffUserIdsFor(row.proposal_id);
+      await notify.notifyStaffOfOutcome({
+        staffUserIds,
+        outcome: 'approved',
+        newEndDisplay: row.requested_end_time,
+        contractedEndDisplay: row.contracted_end_time,
+        proposalId: row.proposal_id,
+      });
+
+      await pool.query(
+        'UPDATE service_extensions SET finalized_at = NOW(), updated_at = NOW() WHERE id = $1',
+        [row.id]
+      );
+      healed += 1;
+      await notify.alertAdminsProblem({
+        proposalId: row.proposal_id,
+        kind: 'settle_on_closed_event',
+        detail: `Extension ${row.id} settled but its follow-up work never ran (likely a restart mid-request). It has now been healed: payroll hours re-applied and the crew re-notified. Spot-check the payout line and that the bartender knows.`,
+      });
+    } catch (err) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(err, { tags: { feature: 'service-extension', step: 'heal' }, extra: { extensionId: row.id } });
+      }
+      console.error(`[serviceExtensionSweep] heal of ${row.id} failed:`, err.message);
+    }
+  }
+  if (healed > 0) console.log(`[serviceExtensionSweep] healed ${healed} unfinalized extension(s)`);
+  return { healed };
+}
+
+/** Roster lookup for the heal path (settleExtension returns this on the live path). */
+async function assignedStaffUserIdsFor(proposalId) {
+  const { rows } = await pool.query(
+    `SELECT DISTINCT sr.user_id
+       FROM shift_requests sr
+       JOIN shifts s ON s.id = sr.shift_id
+      WHERE s.proposal_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL`,
+    [proposalId]
+  );
+  return rows.map((r) => r.user_id);
+}
+
+module.exports = { sweepExpiredExtensions, healUnfinalizedExtensions, SWEEP_LIMIT };
 ```
 
 - [ ] **Step 2: Register the scheduler**
@@ -3937,8 +4163,14 @@ Edit `server/index.js`. Copy the `RUN_REFUND_PENDING_SWEEP_SCHEDULER` block's ex
       // expired, its invoice voided, and every assigned staffer told service
       // ends at the contracted time. Load-bearing, not housekeeping.
       if (enabled('RUN_SERVICE_EXTENSION_SWEEP_SCHEDULER')) {
-        const { sweepExpiredExtensions } = require('./utils/serviceExtensionSweep');
-        const wrapped = wrapScheduler('service_extension_sweep', 60, sweepExpiredExtensions);
+        const { sweepExpiredExtensions, healUnfinalizedExtensions } = require('./utils/serviceExtensionSweep');
+        // One wrapped job, both halves: expire what timed out, then heal any
+        // settled-but-unfinalized row a crash left behind.
+        const wrapped = wrapScheduler('service_extension_sweep', 60, async () => {
+          const a = await sweepExpiredExtensions();
+          const b = await healUnfinalizedExtensions();
+          return { ...a, ...b };
+        });
         setTimeout(wrapped, 60000); // stagger from the other schedulers
         setInterval(wrapped, 60 * 1000);
       } else if (!globalScheduleDisabled) {
@@ -4444,6 +4676,70 @@ git add README.md ARCHITECTURE.md .claude/CLAUDE.md .env.example
 git commit -m "docs(ext): README tree, ARCHITECTURE routes + schema, env var for the sweep"
 ```
 
+### Task 19: The admin refund button cannot target an extension (lane ext-webhook-payroll)
+
+**This is a real gap the spec got wrong, not a nicety.** Spec §7 says "refunding a paid extension is a plain refund of that payment." Verified 2026-07-26: it is not, because there is no way to aim the existing refund at that payment.
+
+`POST /api/stripe/refund/:id` takes an AMOUNT, not a target. It calls `planRefund({ paymentsWithRemaining: await loadPaymentsWithRemaining(proposalId), requestedDollars, amountPaidDollars, ... })` (`server/routes/stripe.js:461-467`), and `planRefund` caps the request at `amountPaidDollars` and then walks the payment list picking charges. Two consequences, both bad:
+
+1. **It can refund the wrong charge.** Extension payments are in `loadPaymentsWithRemaining`'s list (they are `payment_type = 'invoice'` rows), so a $100 refund intended for an extension can land on the contract charge instead, dropping `amount_paid` by $100 and corrupting the contract ledger with side money.
+2. **It can refuse outright.** Extension dollars never enter `amount_paid`, so on an event whose contract is barely paid, refunding the extension can trip `EXCEEDS_AMOUNT_PAID` (`refundHelpers.js:131`) even though the money is sitting right there at Stripe.
+
+**Files:**
+- Modify: `server/utils/refundHelpers.js` (`loadPaymentsWithRemaining` candidate filter)
+- Test: `server/utils/refundHelpers.extensionScope.test.js`
+- Modify: `docs/ops-runbook.md` (the manual procedure)
+
+Add both files plus `docs/ops-runbook.md` to the `ext-webhook-payroll` footprint before starting.
+
+- [ ] **Step 1: Read the refund seam before touching it**
+
+```bash
+sed -n 1,60p server/utils/refundHelpers.js
+grep -n "loadPaymentsWithRemaining" -A25 server/utils/refundHelpers.js | head -40
+cat .claude/seam-sweep-2026-07-02.md 2>/dev/null | head -40
+```
+
+This is a battle-tested money path shared with the cancel-line flow. The change below is deliberately the smallest one that closes the hole: EXCLUDE extension payments from the contract refund's candidate set. It does not add a new refund surface.
+
+- [ ] **Step 2: Exclude off-ledger payments from the contract refund candidates**
+
+In `loadPaymentsWithRemaining`, filter out payments whose linked invoice label is in `OFF_LEDGER_INVOICE_LABELS`. Rationale to put in the comment: those dollars are not in `amount_paid`, so letting a contract refund draw against them lets the admin refund money the contract never recorded, and mis-attributes the reversal. A payment split across a contract invoice AND an extension invoice cannot happen (extension invoices are minted alone and paid alone), so a whole-payment exclusion is exact rather than approximate.
+
+- [ ] **Step 3: Write the test**
+
+Create `server/utils/refundHelpers.extensionScope.test.js`:
+1. A proposal with a paid Balance payment AND a paid Service Extension payment: `loadPaymentsWithRemaining` returns ONLY the Balance payment.
+2. `planRefund` for the full contract amount picks the Balance charge and never the extension charge.
+3. A proposal whose ONLY payment is an extension: `loadPaymentsWithRemaining` returns an empty list, so `planRefund` refuses with a clear code rather than silently refunding nothing.
+4. Regression: a proposal with only ordinary payments behaves byte-identically to before (run the existing `refundHelpers` suites, which is the real guard).
+
+- [ ] **Step 4: Document the manual procedure**
+
+Extension refunds are done in the Stripe dashboard against that payment, and the existing refund webhook plus the stale-pending sweeper adopt it. That path is already correct for off-ledger money: `applyRefundReconciliation` accumulates `offLedgerCents` and deliberately does NOT drop `amount_paid` for it (`refundHelpers.js:300-304`).
+
+Add a short runbook entry: how to find the extension's payment (the event's extensions panel shows the invoice), refund it at Stripe, and what to expect afterwards (the contract totals do not move; the duration is NOT auto-reverted, because whether the time was served is a fact only a human knows; and per the open decision in Task 12, the bartender keeps the gratuity unless Dallas chooses otherwise).
+
+- [ ] **Step 5: Run the refund suites, one at a time, and commit**
+
+```bash
+for f in $(ls server/utils/refundHelpers*.test.js server/routes/invoices.refunds.test.js); do
+  echo "=== $f"; node --env-file=/home/drbartender/projects/os/.env --test "$f" || break
+done
+```
+Expected: all PASS. A failure here is a blocker: this is the refund path.
+
+```bash
+git add server/utils/refundHelpers.js server/utils/refundHelpers.extensionScope.test.js docs/ops-runbook.md
+git commit -m "fix(refunds): keep contract refunds from drawing against extension payments
+
+Extension dollars are off-ledger and never enter amount_paid, so including their
+payments in the contract refund candidate set let an admin refund the wrong
+charge (corrupting the contract ledger with side money) or get refused by the
+amount_paid cap. Extension refunds go through Stripe directly, where the
+existing off-ledger reconciliation already handles them correctly."
+```
+
 ### Task 18: Revenue-reporting enumeration (spec §12)
 
 The spec names this as the one real cost of going off-ledger and explicitly defers the per-surface decision to the plan, so it needs a task rather than an assumption. Extension revenue lives in `proposal_payments` and `invoices` but NOT in `proposals.amount_paid`. Any surface that totals revenue from `amount_paid` will under-report it; any surface that sums payments will include it. Neither is wrong, but the split has to be known rather than discovered later from a number that looks off.
@@ -4573,3 +4869,13 @@ Everything else the spec asks for has a task. The spec's own open items (the bro
   8. Multi-shift events would have had payroll hours bumped proposal-wide, paying a second shift's crew for an hour they did not work. Now skipped and reported.
   9. The 12a/12b split was declared by step RANGE while the file ownership followed a different line, which would have left 12a untested in one lane and aborted the other on footprint drift. Now split per step, with the `ext-core` gate moved and an explicit forward pointer from Task 5.
   10. The webhook insertion anchor pointed at code still holding a pooled connection, which is the pool deadlock the project has hit twice.
+
+- **rev 4, 2026-07-26.** Codex (gpt-5.5) pass plus my own empirical verification of the pricing math against the live engine. Codex independently re-found two things I had already caught (the `$125` `min_total` correction and the refunded-extension gratuity gap), which is corroboration rather than new work, and added three genuinely new ones:
+  1. **The admin refund button cannot target an extension.** `POST /api/stripe/refund/:id` takes an amount, resolves the target through `planRefund` over every payment on the proposal, and caps at `amount_paid`. Extension dollars are deliberately not in `amount_paid`, so that button could refund the wrong (contract) charge or refuse outright. The spec's "plain refund of that payment" claim was false. Now Task 19: exclude off-ledger payments from the contract refund candidates, plus a documented Stripe procedure.
+  2. **Pricing was computed outside the transaction.** Two staffers could both price from 4h, the first settle to 4.5h, and the second insert a 4h-to-5h delta, overcharging for a half hour already paid for. Now re-priced under `SELECT ... FOR UPDATE` with a baseline-moved 409.
+  3. **Post-settle side effects had no recovery path.** A crash between the settle commit and payroll/greenlight left a `paid` row that Stripe will not replay and the sweep ignored, so payroll kept the old hours and no bartender was told, permanently and invisibly. Now a `finalized_at` column, a `healUnfinalizedExtensions` sweep half, and `finalizeExtension` as the mandatory last step on all three settle paths.
+  4. **Payroll line rewrites were not atomic with the payout header recompute**, so a crash between them left a paystub whose lines did not add to its total. Now one transaction.
+
+  Codex also caught a defect in the fix for (2): locking `proposals` in the create route while `settleInTx` claimed the extension row first is an ABBA deadlock (40P01). Both paths now take proposals first, and the create route maps 40P01/40001 to a retryable conflict.
+
+  Verified empirically, not argued: all seven of Task 4's dollar figures were run against the live pricing engine. Six matched exactly, including the $25 Shared Gratuity split. The seventh (`min_total`) was wrong in the plan and is now corrected to the measured $125, with the full reference table moved into the spec.
