@@ -227,9 +227,11 @@ test('empty reconcile preserves total_price even with a multi-quantity per_hour 
   );
   assert.ok(svc.rows[0], 'dev DB has the banquet-server addon');
   const rate = Number(svc.rows[0].rate);
+  // Seed the ENGINE OUTPUT shape: 4 effective hours x 3 servers. (Was a raw
+  // `3`, the hand-written count that hid the squaring defect from this suite.)
   await pool.query(
     `INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
-     VALUES ($1, $2, $3, $4, $5, 3, $6)`,
+     VALUES ($1, $2, $3, $4, $5, 12, $6)`,
     [proposalId, svc.rows[0].id, svc.rows[0].name, svc.rows[0].billing_type, rate, rate * 4 * 3]
   );
   const pkg = (await pool.query('SELECT * FROM service_packages WHERE id = $1', [packageId])).rows[0];
@@ -241,7 +243,7 @@ test('empty reconcile preserves total_price even with a multi-quantity per_hour 
     durationHours: Number(prop.event_duration_hours),
     numBars: prop.num_bars ?? 0,
     numBartenders: prop.num_bartenders,
-    addons: withRepriceQuantities([{ ...svc.rows[0], pa_quantity: 3 }]),
+    addons: withRepriceQuantities([{ ...svc.rows[0], pa_quantity: 12, pa_duration_hours: 4 }]),
     syrupSelections: [],
     adjustments: prop.adjustments || [],
     totalPriceOverride: null,

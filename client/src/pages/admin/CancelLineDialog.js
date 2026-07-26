@@ -25,7 +25,9 @@ function mintKey() {
 }
 
 // entry = a target row from GET /:id/cancel-line/targets
-// ({ target, label, quantity?, count?, rate?, labOwned? }).
+// ({ target, label, quantity?, billed_unit?, count?, rate?, labOwned? }).
+// `quantity` is a COUNT of units; `billed_unit` is how the line is billed
+// ('hour' | 'unit'), NOT the unit of that count. Never render "N billed_unit".
 export default function CancelLineDialog({ proposalId, entry, clientEmail, clientName, onClose, onDone }) {
   const toast = useToast();
   const isGratuity = entry.target === 'gratuity';
@@ -186,7 +188,11 @@ export default function CancelLineDialog({ proposalId, entry, clientEmail, clien
                 </>
               ) : (
                 <label className="vstack" style={{ gap: 6 }}>
-                  <span>Remove how many of the {maxQty}?</span>
+                  <span>
+                    {entry.billed_unit === 'hour'
+                      ? `Remove how many of the ${maxQty}? (each is billed hourly)`
+                      : `Remove how many of the ${maxQty}?`}
+                  </span>
                   <input type="number" min="1" max={maxQty} step="1" value={qty}
                     onChange={(e) => setQty(Math.max(1, Math.min(maxQty, Number(e.target.value) || 1)))}
                     style={{ maxWidth: 120 }} />

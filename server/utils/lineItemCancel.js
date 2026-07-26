@@ -14,6 +14,7 @@
 const { ValidationError, ConflictError, NotFoundError } = require('./errors');
 const { calculateStaffing } = require('./pricingEngine');
 const { readSnapshot } = require('./pricingSnapshot');
+const { storedToInputCount, countLabelFor, effectiveHoursFor, storedIsInputCount } = require('./addonQuantity');
 const { foldExtrasIntoProposal, loadRepriceAddons } = require('./proposalExtrasFold');
 const { refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, writeLineItems } = require('./invoiceHelpers');
 const { syncShiftsFromProposal, deriveStaffingRoster, loadStaffingAddons } = require('./eventCreation');
@@ -65,14 +66,21 @@ function removableBartenders({ pkg, guestCount, durationHours, actual }) {
 }
 
 /**
- * Quantity semantics mirror of withRepriceQuantities (proposalExtrasFold.js):
- * the stored proposal_addons.quantity is a genuine unit count ONLY for billing
- * types where the engine treats it as a multiplier. per_guest/per_guest_timed
- * store guest_count; per_staff bills once per staff and ignores the stored
- * count. Only genuine-count rows with quantity > 1 get a "remove how many?".
+ * Can the admin remove PART of this add-on? Only when the stored quantity can
+ * be converted to a unit count (server/utils/addonQuantity.js): `flat` stores
+ * the count directly and `per_hour` stores hours x count. per_guest /
+ * per_guest_timed / per_staff / per_100_guests store guests, staff, or blocks,
+ * so "remove 1 of them" is meaningless and the whole line comes off.
+ *
+ * BEHAVIOR CHANGE, deliberate: the old quantityIsCount excluded only the
+ * per_guest pair and per_staff, so it offered a partial removal for
+ * per_100_guests. That was never meaningful (the engine recomputes blocks from
+ * guestCount, so "remove 1 block" removes nothing), and it now takes the
+ * whole-line path. An unrecognized billing_type still keeps its picker, because
+ * the engine's default branch does treat the stored figure as a count.
  */
-function quantityIsCount(billingType) {
-  return billingType !== 'per_guest' && billingType !== 'per_guest_timed' && billingType !== 'per_staff';
+function unitCountOf(addon, storedQuantity, durationHours) {
+  return storedToInputCount(addon, storedQuantity, durationHours);
 }
 
 /**
@@ -96,7 +104,8 @@ async function computeCancelTargets(dbClient, proposalId) {
   const snap = readSnapshot(proposal.pricing_snapshot, { context: 'lineItemCancel.targets' });
 
   const addonRows = (await dbClient.query(
-    `SELECT pa.id, pa.addon_id, pa.addon_name, pa.billing_type, pa.quantity, pa.line_total, sa.slug
+    `SELECT pa.id, pa.addon_id, pa.addon_name, pa.billing_type, pa.quantity, pa.line_total,
+            sa.slug, sa.minimum_hours
        FROM proposal_addons pa
        LEFT JOIN service_addons sa ON sa.id = pa.addon_id
       WHERE pa.proposal_id = $1
@@ -151,12 +160,33 @@ async function computeCancelTargets(dbClient, proposalId) {
       });
       continue;
     }
-    const qty = Number(row.quantity) || 1;
+    const durationHours = Number(proposal.event_duration_hours);
+    const count = unitCountOf(row, row.quantity, durationHours);
+    // `billed_unit`, NOT `quantity_unit`: countLabelFor describes the unit of the
+    // STORED figure, so beside a `quantity` of 3 servers a field named
+    // quantity_unit: 'hour' would assert the 3 is three HOURS. It says how the
+    // line is billed, which is all the dialog copy needs. Never phrase a stepper
+    // as "3 <billed_unit>" (addonQuantity.js: label a stepper off the count).
+    // The additional-bartender ADD-ON row and the num_bartenders OVERRIDE row
+    // share a label shape; the engine emits the override first (pricingEngine
+    // :458-481, then the addon loop). Take the LAST matching row when both
+    // exist. Needed because this addon's line_total includes the gratuity
+    // surcharge that its breakdown row puts on a separate Shared Gratuity line.
+    let displayAmount = Number(row.line_total);
+    if (row.slug === 'additional-bartender') {
+      const matches = (snap?.breakdown || []).filter(
+        (b) => typeof b?.label === 'string' && b.label.startsWith('Additional Bartender')
+      );
+      const own = matches.length > 1 ? matches[matches.length - 1] : matches[0];
+      if (own) displayAmount = Number(own.amount);
+    }
     targets.push({
       target: `addon:${row.slug}`,
       label: row.addon_name,
-      amount: Number(row.line_total),
-      ...(quantityIsCount(row.billing_type) && qty > 1 ? { quantity: qty } : {}),
+      amount: displayAmount,
+      ...(count !== null && count > 1
+        ? { quantity: count, billed_unit: countLabelFor(row) }
+        : {}),
       ...(labSlugs.has(row.slug) ? { labOwned: true } : {}),
       cancellable: true,
     });
@@ -425,7 +455,8 @@ async function applyLineItemCancel(client, {
 
   if (t.kind === 'addon') {
     const rowRes = await client.query(
-      `SELECT pa.id, pa.addon_id, pa.addon_name, pa.billing_type, pa.quantity, sa.slug
+      `SELECT pa.id, pa.addon_id, pa.addon_name, pa.billing_type, pa.quantity,
+              sa.slug, sa.minimum_hours
          FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id
         WHERE pa.proposal_id = $1 AND sa.slug = $2`,
       [proposalId, t.key]
@@ -433,15 +464,24 @@ async function applyLineItemCancel(client, {
     const row = rowRes.rows[0];
     if (!row) throw new NotFoundError('That add-on is not on this proposal.');
     removedLabel = row.addon_name;
-    const storedQty = Number(row.quantity) || 1;
-    let removeN = storedQty;
+    // totalCount is already a whole unit count: storedToInputCount rounds with a
+    // floor of 1, so nothing here needs its own Math.round (two roundings on the
+    // same figure is how the two definitions drifted apart the first time).
+    const durationHours = Number(proposal.event_duration_hours);
+    const storedQty = Number(row.quantity) || 0;
+    const totalCount = unitCountOf(row, storedQty, durationHours);
+    let removeN = totalCount;
     if (quantity !== null) {
-      if (!quantityIsCount(row.billing_type)) {
-        throw new ValidationError({ quantity: 'This add-on is priced per guest or per staff; remove it entirely instead.' });
+      if (totalCount === null) {
+        // Covers every type whose stored figure is not a count (per_guest,
+        // per_guest_timed, per_staff, per_100_guests) AND any degenerate row
+        // whose quantity is <= 0 or non-finite, which reaches here for ANY
+        // billing type including per_hour. Do not name specific types.
+        throw new ValidationError({ quantity: 'This add-on cannot be removed a few at a time. Remove the whole line instead.' });
       }
-      removeN = positiveIntOrThrow(quantity, 'quantity', storedQty);
+      removeN = positiveIntOrThrow(quantity, 'quantity', totalCount);
     }
-    if (removeN >= storedQty) {
+    if (totalCount === null || removeN >= totalCount) {
       await client.query('DELETE FROM proposal_addons WHERE id = $1', [row.id]);
       labCleanup = await stripLabSelection(client, proposalId, (sel) => {
         if (sel.addOns && sel.addOns[t.key] && sel.addOns[t.key].labAdded === true) {
@@ -451,7 +491,15 @@ async function applyLineItemCancel(client, {
         return false;
       });
     } else {
-      await client.query('UPDATE proposal_addons SET quantity = $1 WHERE id = $2', [storedQty - removeN, row.id]);
+      // Write the column in its STORED shape (engine output), not the count:
+      // for per_hour that is hours x remaining. The fold re-derives it in the
+      // post-fold sync below, but the row must be coherent for the fold's own
+      // read of it, which happens first.
+      const remainingCount = totalCount - removeN;
+      const restored = storedIsInputCount(row.billing_type)
+        ? remainingCount
+        : remainingCount * effectiveHoursFor(row, durationHours);
+      await client.query('UPDATE proposal_addons SET quantity = $1 WHERE id = $2', [restored, row.id]);
       partialAddonId = row.addon_id;
     }
     addonsAfter = await loadRepriceAddons(client, proposalId);
@@ -538,18 +586,20 @@ async function applyLineItemCancel(client, {
     statusChangeReason: 'line_item_cancelled',
   });
 
-  // 5. Partial-quantity removal: keep the row's line_total honest with the
-  // fresh snapshot. line_total ONLY: the snapshot entry's `quantity` is the
-  // ENGINE-facing figure (per_hour bakes effectiveHours x count,
-  // pricingEngine.js:166-169), while proposal_addons.quantity is the raw unit
-  // count the fold's withRepriceQuantities contract expects — step 3 already
-  // wrote the correct count, and overwriting it with the baked figure would
-  // silently overbill every later reprice (checkpoint code-review, 2026-07-24).
+  // 5. Partial-quantity removal: the fold has now repriced, so re-sync the row
+  // from the snapshot entry. Writing BOTH figures is correct and is what the
+  // three other writers (crud.js, proposalInsert.js, public.js) do: the column
+  // holds the engine's OUTPUT quantity. A 2026-07-24 change wrote line_total
+  // only, on the belief that the column held a raw count; that belief was
+  // wrong (server/utils/addonQuantity.js) and left per_hour rows in a shape
+  // nothing else could read.
   if (partialAddonId !== null) {
     const entry = (snapshot.addons || []).find((a) => a.id === partialAddonId);
     if (entry) {
-      await client.query('UPDATE proposal_addons SET line_total = $1 WHERE proposal_id = $2 AND addon_id = $3',
-        [entry.line_total, proposalId, partialAddonId]);
+      await client.query(
+        'UPDATE proposal_addons SET line_total = $1, quantity = $2 WHERE proposal_id = $3 AND addon_id = $4',
+        [entry.line_total, entry.quantity, proposalId, partialAddonId]
+      );
     }
   }
 

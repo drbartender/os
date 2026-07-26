@@ -22,21 +22,37 @@ function fmtUSD(cents) {
   return '$' + (cents / 100).toFixed(2);
 }
 
+/** Rails the admin refund panel considers refundable. */
+const PANEL_REFUND_RAILS = Object.freeze(['deposit', 'balance', 'full', 'invoice']);
+/**
+ * Rails the cancel-line flow considers refundable: the panel set PLUS the
+ * drink-plan rails, because cancelling a drink-plan item must be able to refund
+ * the charge that paid for it. Both rails roll into proposals.amount_paid
+ * (paymentIntentSucceeded), so excluding them made the overpayment fall entirely
+ * into manual_return_cents (cross-LLM push review, 2026-07-26).
+ */
+const CANCEL_LINE_REFUND_RAILS = Object.freeze([
+  ...PANEL_REFUND_RAILS, 'drink_plan_extras', 'drink_plan_with_balance',
+]);
+
 /**
  * Load a proposal's refundable charges with cents still refundable per charge.
  * EXACT extraction of the inline SQL that lived in routes/stripe.js POST
  * /refund/:id (2026-07-24, cancel-line) so the admin panel and the cancel-line
  * flow share one source of money truth. Semantics unchanged: succeeded,
- * intent-bearing payments on the standard rails ('deposit','balance','full',
- * 'invoice'; the drink_plan_* rails stay excluded), remaining = amount minus
- * succeeded AND pending refunds (a pending row may already be in flight at
- * Stripe, so it conservatively blocks headroom).
+ * intent-bearing payments on the CALLER'S rails (default PANEL_REFUND_RAILS, so
+ * the panel is byte-identical; the cancel-line flow passes the wider
+ * CANCEL_LINE_REFUND_RAILS), remaining = amount minus succeeded AND pending
+ * refunds (a pending row may already be in flight at Stripe, so it
+ * conservatively blocks headroom).
  *
  * @param {number} proposalId
  * @param {object} [dbClient]  held tx client, or the shared pool
+ * @param {object} [opts]
+ * @param {string[]} [opts.rails]  payment_type rails treated as refundable
  * @returns {Promise<{id:number, stripe_payment_intent_id:string, remainingCents:number}[]>}
  */
-async function loadPaymentsWithRemaining(proposalId, dbClient = pool) {
+async function loadPaymentsWithRemaining(proposalId, dbClient = pool, { rails = PANEL_REFUND_RAILS } = {}) {
   const res = await dbClient.query(
     `SELECT pp.id,
             pp.stripe_payment_intent_id,
@@ -48,8 +64,8 @@ async function loadPaymentsWithRemaining(proposalId, dbClient = pool) {
       WHERE pp.proposal_id = $1
         AND pp.status = 'succeeded'
         AND pp.stripe_payment_intent_id IS NOT NULL
-        AND pp.payment_type IN ('deposit', 'balance', 'full', 'invoice')`,
-    [proposalId]
+        AND pp.payment_type = ANY($2::text[])`,
+    [proposalId, rails]
   );
   return res.rows.map((r) => ({
     id: r.id,
@@ -477,4 +493,6 @@ module.exports = {
   applyRefundReconciliation,
   loadPaymentsWithRemaining,
   planOverpaymentSplits,
+  PANEL_REFUND_RAILS,
+  CANCEL_LINE_REFUND_RAILS,
 };

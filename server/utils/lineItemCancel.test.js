@@ -76,12 +76,22 @@ after(async () => {
 
 // Seed a real catalog addon (nonce slug) once per distinct slug.
 const catalogCache = {};
-async function seedCatalogAddon({ slug, name, billingType = 'flat', rate = 200 }) {
+async function seedCatalogAddon({ slug, name, billingType = 'flat', rate = 200, minimumHours = null }) {
   if (catalogCache[slug]) return catalogCache[slug];
+  // A REAL catalog slug (additional-bartender) is reused as-is and deliberately
+  // NOT registered in seededAddonCatalog: the engine's bespoke branch and the
+  // gratuity basis both key on that exact string, so the test must run against
+  // the live row, and teardown must never delete it. Every other slug here is
+  // nonce'd and cannot pre-exist, so this lookup is inert for them.
+  const existing = await pool.query('SELECT * FROM service_addons WHERE slug = $1', [slug]);
+  if (existing.rows[0]) {
+    catalogCache[slug] = existing.rows[0];
+    return existing.rows[0];
+  }
   const r = await pool.query(
-    `INSERT INTO service_addons (slug, name, billing_type, rate, applies_to, is_active)
-     VALUES ($1, $2, $3, $4, 'all', true) RETURNING id`,
-    [slug, name, billingType, rate]
+    `INSERT INTO service_addons (slug, name, billing_type, rate, applies_to, is_active, minimum_hours)
+     VALUES ($1, $2, $3, $4, 'all', true, $5) RETURNING id`,
+    [slug, name, billingType, rate, minimumHours]
   );
   seededAddonCatalog.push(r.rows[0].id);
   const row = (await pool.query('SELECT * FROM service_addons WHERE id = $1', [r.rows[0].id])).rows[0];
@@ -91,7 +101,7 @@ async function seedCatalogAddon({ slug, name, billingType = 'flat', rate = 200 }
 
 /**
  * Seed a proposal with a REAL engine snapshot so stored money is honest.
- * addons: [{ slug, name, billingType, rate, quantity }]; labAddedSlugs mark a
+ * addons: [{ slug, name, billingType, rate, quantity, minimumHours }]; labAddedSlugs mark a
  * subset as lab-owned in a drink_plans row. Returns ids + the seeded snapshot.
  */
 async function seedProposal(opts = {}) {
@@ -114,7 +124,9 @@ async function seedProposal(opts = {}) {
 
   const engineAddons = [];
   for (const a of addons) {
-    const cat = await seedCatalogAddon({ slug: a.slug, name: a.name, billingType: a.billingType, rate: a.rate });
+    const cat = await seedCatalogAddon({
+      slug: a.slug, name: a.name, billingType: a.billingType, rate: a.rate, minimumHours: a.minimumHours ?? null,
+    });
     engineAddons.push({ ...cat, quantity: a.quantity || 1 });
   }
 
@@ -149,14 +161,13 @@ async function seedProposal(opts = {}) {
   seededProposals.push(proposalId);
 
   for (const sa of snapshot.addons) {
-    // Row quantity = the RAW unit count (the fold's withRepriceQuantities
-    // contract), NOT the snapshot entry's engine-facing quantity (which bakes
-    // hours for per_hour rows). For flat addons the two coincide.
-    const rawQty = engineAddons.find((e) => e.id === sa.id)?.quantity ?? 1;
+    // Store the ENGINE'S OUTPUT quantity, exactly as crud.js / proposalInsert.js
+    // / public.js do. Seeding a hand-written raw count here is what hid the
+    // per_hour squaring defect from this suite (push review, 2026-07-26).
     await pool.query(
       `INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [proposalId, sa.id, sa.name, sa.billing_type, sa.rate, rawQty, sa.line_total, sa.variant ?? null]
+      [proposalId, sa.id, sa.name, sa.billing_type, sa.rate, sa.quantity, sa.line_total, sa.variant ?? null]
     );
   }
 
@@ -358,7 +369,7 @@ test('quantity param rejected for per_staff addons', async () => {
     addons: [{ slug: `perstaff-${NONCE}`, name: 'Staff Meal', billingType: 'per_staff', rate: 25, quantity: 1 }],
   });
   await expectCancelError(proposalId, { target: `addon:perstaff-${NONCE}`, quantity: 1 },
-    (err) => err.code === 'VALIDATION_ERROR' && /per guest or per staff/i.test(String(err.fieldErrors?.quantity)));
+    (err) => err.code === 'VALIDATION_ERROR' && /a few at a time/i.test(String(err.fieldErrors?.quantity)));
 });
 
 test('bar removal drops num_bars and prices via additional_bar_fee', async () => {
@@ -639,32 +650,140 @@ test('gratuity staff notice with zero recipients is a clean no-op that still log
   assert.equal(log[0].details.new_rate, 30);
 });
 
-test('per_hour addon partial removal keeps the RAW count in the row (no hours-baked corruption)', async () => {
-  // Checkpoint code-review regression (2026-07-24): the snapshot entry's
-  // quantity for per_hour is effectiveHours x count; writing it back into
-  // proposal_addons.quantity would make the next reprice overbill.
+test('per_hour partial removal: the picker counts UNITS and the row stays in stored shape', async () => {
+  // 3 banquet servers on a 4h event: the engine stores 12 (hours x count) and
+  // charges 4h x 75 x 3 = 900. Removing ONE server must leave 2 servers: a
+  // stored 8, a $600 line, and $300 off the contract. The pre-2026-07-26 code
+  // read the stored 12 as "12 units" and subtracted 1 to get 11, i.e. 2.75
+  // servers.
   const slug = `perhour-${NONCE}`;
   const { proposalId } = await seedProposal({
     override: 2500,
     addons: [{ slug, name: 'Banquet Server X', billingType: 'per_hour', rate: 75, quantity: 3 }],
   });
-  const seededRow = (await pool.query('SELECT quantity FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows[0];
-  assert.equal(Number(seededRow.quantity), 3); // raw count stored, fold contract
+  const seeded = (await pool.query('SELECT quantity, line_total FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows[0];
+  assert.equal(Number(seeded.quantity), 12, 'stored = 4 hours x 3 servers');
+  assert.equal(Number(seeded.line_total), 900);
+
+  const { targets } = await computeCancelTargets(pool, proposalId);
+  const t = targets.find((x) => x.target === `addon:${slug}`);
+  assert.equal(t.quantity, 3, 'the picker offers 3 SERVERS, not 12');
+  assert.equal(t.billed_unit, 'hour', 'how the line is BILLED, not the unit of the 3');
+
   await applyCancel(proposalId, { target: `addon:${slug}`, quantity: 1 }, async (result, client) => {
     const row = (await client.query('SELECT quantity, line_total FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows[0];
-    assert.equal(Number(row.quantity), 2); // raw count, NOT 4hr x 2 = 8
+    assert.equal(Number(row.quantity), 8, 'stored = 4 hours x 2 remaining servers');
     const entry = result.snapshot.addons.find((a) => a.slug === slug);
-    assert.equal(entry.quantity, 8);       // engine-facing figure stays in the snapshot only
-    assert.equal(Number(row.line_total), entry.line_total); // 4hr x 2 x 75 = 600
+    assert.equal(Number(row.quantity), entry.quantity, 'row and snapshot agree');
+    assert.equal(Number(row.line_total), entry.line_total);
     assert.equal(entry.line_total, 600);
-    // One removed server at catalog: 4hr x 75 = 300 off the contract.
-    assert.equal(result.newTotal, 2200);
-    // The corruption scenario: a SECOND fold-style reprice from the stored row
-    // must price the same (quantity 2 raw), not explode via a baked count.
+    assert.equal(result.newTotal, 2200, 'one server off a 2500 override = -300');
+
+    // The corruption gate: repricing from the row must reproduce 2 servers.
     const { loadRepriceAddons } = require('./proposalExtrasFold');
     const reload = await loadRepriceAddons(client, proposalId);
     assert.equal(reload.find((a) => a.slug === slug).quantity, 2);
   });
+});
+
+test('removing ALL units of a per_hour addon deletes the row', async () => {
+  const slug = `perhour-all-${NONCE}`;
+  const { proposalId } = await seedProposal({
+    override: 2500,
+    addons: [{ slug, name: 'Banquet Server All', billingType: 'per_hour', rate: 75, quantity: 2 }],
+  });
+  await applyCancel(proposalId, { target: `addon:${slug}` }, async (result, client) => {
+    const rows = (await client.query('SELECT id FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows;
+    assert.equal(rows.length, 0);
+    assert.equal(result.newTotal, 2500 - 600, 'both servers off: 4h x 75 x 2');
+  });
+});
+
+test('per_hour under its minimum_hours: picker and write-back use the BILLED hours', async () => {
+  // 2 banquet servers on a 2h event with a 4h minimum. The engine bills 4 hours
+  // and stores 8. Dividing by the RAW 2 (what happens whenever the row is loaded
+  // without sa.minimum_hours) recovers FOUR units, so the picker offers to
+  // remove 4 servers from a proposal that has 2, and removing 1 writes back 6,
+  // which the fold reads as 2 servers: the removal does nothing and the client
+  // is still billed for both. The event must be well under the minimum for this
+  // to bite; a 3.5h event rounds back to the right answer on its own.
+  const slug = `perhour-min-${NONCE}`;
+  const { proposalId } = await seedProposal({
+    override: 2500,
+    durationHours: 2,
+    addons: [{ slug, name: 'Banquet Server Min', billingType: 'per_hour', rate: 75, quantity: 2, minimumHours: 4 }],
+  });
+  const seeded = (await pool.query('SELECT quantity, line_total FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows[0];
+  assert.equal(Number(seeded.quantity), 8, 'stored = 4 BILLED hours x 2 servers, not 2 x 2');
+  assert.equal(Number(seeded.line_total), 600);
+
+  const { targets } = await computeCancelTargets(pool, proposalId);
+  const t = targets.find((x) => x.target === `addon:${slug}`);
+  assert.equal(t.quantity, 2, 'the picker offers 2 SERVERS, not 4');
+
+  await applyCancel(proposalId, { target: `addon:${slug}`, quantity: 1 }, async (result, client) => {
+    const row = (await client.query('SELECT quantity, line_total FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows[0];
+    assert.equal(Number(row.quantity), 4, 'stored = 4 BILLED hours x 1 remaining server');
+    assert.equal(Number(row.line_total), 300);
+    assert.equal(result.newTotal, 2200, 'one server off a 2500 override = -300, not a no-op');
+  });
+});
+
+test('additional-bartender: the bespoke raw-duration branch converts end to end', async () => {
+  // The one slug the engine prices in its OWN branch (pricingEngine.js:386-406):
+  // it stores durationHours x qty and multiplies by RAW duration, never
+  // minimum_hours, and BOTH storedToInputCount and effectiveHoursFor dispatch on
+  // that slug ahead of billing_type to mirror it. Uses the REAL catalog slug on
+  // purpose: the engine branch AND the sub-100-guest gratuity basis key on that
+  // exact string, so a nonce slug would price through calculateAddonCost and
+  // prove nothing. seedCatalogAddon reuses the live row and never deletes it, so
+  // the billingType/rate below are documentation, not the values in play.
+  const slug = 'additional-bartender';
+  const { proposalId } = await seedProposal({
+    override: 2500,
+    addons: [{ slug, name: 'Additional Bartender', billingType: 'per_hour', rate: 40, quantity: 3 }],
+  });
+  // 80 guests puts the $15/hr sub-100 gratuity surcharge on top of the $40 rate.
+  const seeded = (await pool.query('SELECT quantity, line_total FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows[0];
+  assert.equal(Number(seeded.quantity), 12, 'stored = 4 hours x 3 bartenders');
+  assert.equal(Number(seeded.line_total), 660, '3 x 4h x (40 + 15)');
+
+  const { targets } = await computeCancelTargets(pool, proposalId);
+  const t = targets.find((x) => x.target === `addon:${slug}`);
+  assert.equal(t.quantity, 3, 'the picker offers 3 BARTENDERS, not 12');
+  assert.equal(t.billed_unit, 'hour');
+
+  await applyCancel(proposalId, { target: `addon:${slug}`, quantity: 1 }, async (result, client) => {
+    const row = (await client.query('SELECT quantity, line_total FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows[0];
+    assert.equal(Number(row.quantity), 8, 'stored = 4 hours x 2 remaining bartenders');
+    assert.equal(Number(row.line_total), 440, '2 x 4h x (40 + 15)');
+    const { loadRepriceAddons } = require('./proposalExtrasFold');
+    const reload = await loadRepriceAddons(client, proposalId);
+    assert.equal(reload.find((a) => a.slug === slug).quantity, 2, 'the fold recovers 2 bartenders');
+    assert.equal(result.newTotal, 2280, 'one bartender off a 2500 override = -220');
+  });
+});
+
+test('per_100_guests offers NO picker and refuses a partial removal', async () => {
+  // The one deliberate behavior change in this lane. The old quantityIsCount let
+  // per_100_guests through, so the picker offered "remove 1 of 3 blocks", which
+  // removed nothing: the engine recomputes blocks from guestCount. Whole line
+  // only now. 250 guests = 3 blocks, so the OLD code WOULD have shown a picker.
+  const slug = `per100-${NONCE}`;
+  const { proposalId } = await seedProposal({
+    guestCount: 250,
+    addons: [{ slug, name: 'Garnish Per Hundred', billingType: 'per_100_guests', rate: 50, quantity: 1 }],
+  });
+  const seeded = (await pool.query('SELECT quantity FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows[0];
+  assert.equal(Number(seeded.quantity), 3, 'stored = ceil(250 / 100) blocks, not a unit count');
+
+  const { targets } = await computeCancelTargets(pool, proposalId);
+  const t = targets.find((x) => x.target === `addon:${slug}`);
+  assert.equal(t.quantity, undefined, 'no picker: blocks are not a removable count');
+  assert.equal(t.billed_unit, undefined);
+
+  await expectCancelError(proposalId, { target: `addon:${slug}`, quantity: 1 },
+    (err) => err.code === 'VALIDATION_ERROR' && /a few at a time/i.test(String(err.fieldErrors?.quantity)));
 });
 
 test('extra-bartender target label matches the engine breakdown row EXACTLY', async () => {

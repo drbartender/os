@@ -31,3 +31,5 @@ server/utils/invoiceLifecycle.additionalInvoice.test.js
 server/utils/refundHelpers.scope.test.js
 server/utils/lineItemCancel.test.js
 server/routes/proposals/cancelLineItem.test.js
+server/utils/proposalExtrasFold.stability.test.js
+server/utils/addonQuantity.test.js

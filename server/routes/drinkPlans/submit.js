@@ -11,6 +11,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { refreshUnlockedInvoices, findOrRefreshExtrasInvoice, findExtrasInvoice, voidExtrasInvoiceWithReconcile, createAdditionalInvoiceIfNeeded } = require('../../utils/invoiceHelpers');
 const { foldExtrasIntoProposal, loadRepriceAddons } = require('../../utils/proposalExtrasFold');
+const { calculateAddonCost } = require('../../utils/pricingEngine');
 const { computeExtrasBreakdown } = require('../../utils/drinkPlanExtras');
 const { NotFoundError, ConflictError } = require('../../utils/errors');
 const { triggerShoppingListAutoGen } = require('../../utils/shoppingListGen');
@@ -279,10 +280,48 @@ async function handleSubmit(req, res) {
         // UPSERT each resolved addon into proposal_addons
         for (const addon of resolvedAddons) {
           const rate = Number(addon.rate);
+          // Store the ENGINE OUTPUT shape, the figures crud.js / proposalInsert.js
+          // / public.js all write. This row is ALSO the fold's input leg
+          // (allAddonsRes re-reads it through loadRepriceAddons a few statements
+          // below), so a hand-written raw count is not merely a mis-shaped row:
+          // the reader converts it back as though it were engine output and
+          // prices a FRACTION of a unit. Measured: one per_hour helper on a 4h
+          // booking priced at $40 instead of $160 (push review, 2026-07-26).
+          // line_total is provisional for additional-bartender (its gratuity
+          // surcharge) and per_staff (needs totalStaff); the post-fold re-sync
+          // below settles both.
+          //
+          // The priceability guard lab.js does not need: lab.js fails closed on
+          // an unpriceable proposal BEFORE its upsert, while this file's
+          // equivalent gate sits AFTER the loop. Number(null) is 0, so pricing an
+          // unpriceable proposal here would store quantity 0 / line_total 0 where
+          // today it stores 1 / rate, and the fold that would repair it never runs.
+          //
+          // It MUST mirror that gate's package test too. package_id is nullable
+          // with ON DELETE SET NULL, so a package-less proposal is reachable, and
+          // on it the fold is skipped and so is the post-fold re-sync. Pricing the
+          // row anyway would leave a per_hour add-on rendering 4 x $40 = $160 on
+          // the invoice (invoiceLineItems.js:75-96 reads quantity/rate/line_total
+          // straight off this row) against a total_price that contains neither.
+          // amount_due is unaffected either way, but the client would see a line
+          // that is wrong in a new way, so a proposal the fold will not price
+          // keeps today's literals exactly (task-5 review, 2026-07-26).
+          //
+          // pkgEarly, not pkg: `const pkg` is declared BELOW this loop, so naming
+          // it here is a temporal-dead-zone ReferenceError. pkgEarly is the same
+          // package row, loaded above, and is null on exactly the same proposals.
+          const priceable = !!pkgEarly
+            && Number(proposal.event_duration_hours) > 0 && Number(proposal.guest_count) > 0;
           let quantity = 1;
           let lineTotal = rate;
-
-          if (addon.billing_type === 'per_guest') {
+          if (priceable) {
+            const priced = calculateAddonCost(
+              addon, proposal.guest_count, Number(proposal.event_duration_hours), null, 1
+            );
+            quantity = priced.quantity;
+            lineTotal = Math.round(priced.total * 100) / 100;
+          } else if (addon.billing_type === 'per_guest') {
+            // Unpriceable proposal: keep the pre-2026-07-26 literals exactly.
             quantity = proposal.guest_count || 1;
             lineTotal = rate * quantity;
           }
@@ -291,6 +330,7 @@ async function handleSubmit(req, res) {
             INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (proposal_id, addon_id) DO UPDATE SET
+              rate = EXCLUDED.rate,
               quantity = EXCLUDED.quantity,
               line_total = EXCLUDED.line_total
           `, [proposal.id, addon.id, addon.name, addon.billing_type, rate, quantity, lineTotal]);
@@ -352,6 +392,43 @@ async function handleSubmit(req, res) {
             numBarsAfter: proposal.num_bars ?? 0,
             statusChangeReason: 'drink_plan_extras_reconciled',
           });
+
+          // The upsert above already wrote the right SHAPE; this settles the
+          // figures only the full engine pass knows: additional-bartender's
+          // gratuity surcharge and per_staff's totalStaff basis. It also brings
+          // any pre-existing row back into agreement with the snapshot the client
+          // is about to be shown.
+          //
+          // SCOPED TO THE ROWS THIS REQUEST WROTE, deliberately. snapshot.addons
+          // carries EVERY row on the proposal, so a blanket re-sync would also
+          // rewrite rows the client never touched. For any row whose stored
+          // figures the engine cannot reproduce from the column that is
+          // DESTRUCTIVE: storedToInputCount returns null for per_guest_timed,
+          // per_staff and per_100_guests, so the fold reprices those at count 1
+          // and writing that back HALVES a live multi-unit line. per_guest_timed
+          // is the honest example (mocktail-bar is live on this very path); its
+          // line_total carries an extra-hours term on top of the per-guest base,
+          // which is why the division cannot recover its count (addonQuantity.js,
+          // prod proposal 464 reads 1.250 for a genuine count of 1).
+          //
+          // NOT pre-batched-mocktail any more: Task 3 recovers a per_guest count
+          // from line_total / (quantity x rate), so that row now round-trips and
+          // no longer demonstrates the hazard (task-5 review, 2026-07-26).
+          //
+          // The boundary is UNTOUCHED rows. Nothing rewrites the line_total of a
+          // row this request did not touch; the upsert above deliberately does
+          // clobber the rows it DID touch, including a pair slug the flip re-adds
+          // that the client never sent (:215-217), which already exposes an
+          // admin's count-bumped row on that slug. That clobber is pre-existing.
+          // Keep the boundary here so the re-sync does not widen it.
+          const touchedAddonIds = new Set(resolvedAddons.map((a) => a.id));
+          for (const entry of snapshot.addons || []) {
+            if (!touchedAddonIds.has(entry.id)) continue;
+            await client.query(
+              'UPDATE proposal_addons SET quantity = $1, line_total = $2 WHERE proposal_id = $3 AND addon_id = $4',
+              [entry.quantity, entry.line_total, proposal.id, entry.id]
+            );
+          }
 
           await client.query(
             `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)

@@ -410,3 +410,112 @@ test('a submit with no financial extras moves no money', async () => {
   assert.strictEqual(Number(row.total_price), CONTRACT);
   assert.strictEqual(Number(row.total_price_override), CONTRACT);
 });
+
+test('a submitted per_hour add-on is stored in the engine OUTPUT shape', async (t) => {
+  // Guards the roster and the invoice line: eventCreation.addonHeadcount divides
+  // the stored figure by duration to recover headcount, and invoiceLineItems
+  // renders it as `quantity x rate`. A raw 1 on a 4-hour booking reads as 0.25
+  // staff (rounds to ZERO bartenders on the roster) and "1 x $40" on the invoice
+  // (push review, 2026-07-26). The planner UI offers no staffing add-on, but the
+  // public token endpoint honors any active slug, which is the door the
+  // gratuity-contract test above uses too.
+  const addon = (await pool.query(
+    "SELECT id, rate FROM service_addons WHERE slug = 'additional-bartender' AND is_active = true"
+  )).rows[0];
+  if (!addon) { t.skip('additional-bartender add-on not seeded'); return; }
+
+  const { proposalId, planToken } = await seedProposal({ override: CONTRACT });
+  const res = await request('PUT', `/api/drink-plans/t/${planToken}`, {
+    body: {
+      status: 'submitted',
+      paid_separately: false,
+      selections: { addOns: { 'additional-bartender': { enabled: true } } },
+    },
+  });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+
+  const row = (await pool.query(
+    'SELECT quantity, line_total FROM proposal_addons WHERE proposal_id = $1 AND addon_id = $2',
+    [proposalId, addon.id]
+  )).rows[0];
+  assert.ok(row, 'the submitted addon row exists');
+  assert.strictEqual(Number(row.quantity), 4, 'stored = 4 hours x 1 bartender, not a raw 1');
+  assert.strictEqual(Number(row.line_total), Number(addon.rate) * 4);
+
+  // The round trip that matters: the roster must read the headcount back out.
+  const { deriveStaffingRoster } = require('../../utils/eventCreation');
+  const roster = deriveStaffingRoster(
+    { event_duration_hours: 4, num_bartenders: 1 },
+    [{ slug: 'additional-bartender', quantity: Number(row.quantity) }]
+  );
+  assert.strictEqual(roster.filter((r) => r === 'Bartender').length, 2,
+    'one add-on bartender on top of the one on the proposal');
+});
+
+test('the post-fold re-sync leaves a row this request did not touch alone', async (t) => {
+  // The scoping the plan calls DESTRUCTIVE to get wrong. After the fold, submit
+  // re-syncs stored figures from snapshot.addons — which carries EVERY row on
+  // the proposal, not just the ones this request wrote. Without the touched-set
+  // `continue`, an unrelated client submit rewrites quantity and line_total on
+  // rows nobody touched.
+  //
+  // The probe type is load-bearing. per_guest does NOT discriminate any more:
+  // Task 3 recovers its count from line_total / (quantity x rate), so a
+  // per_guest row at count 2 reprices to the figure it already held and an
+  // unscoped loop would pass this test vacuously. per_guest_timed is the honest
+  // probe — storedToInputCount returns null for it (its line_total carries an
+  // extra-hours term, so that division does not hold), the fold therefore
+  // reprices it at count 1, and an unscoped loop HALVES the line. mocktail-bar
+  // is the same billing type and is live on this exact submit path.
+  const untouched = (await pool.query(
+    "SELECT id, name, billing_type, rate FROM service_addons WHERE slug = 'the-formula' AND is_active = true"
+  )).rows[0];
+  const bartender = (await pool.query(
+    "SELECT id FROM service_addons WHERE slug = 'additional-bartender' AND is_active = true"
+  )).rows[0];
+  if (!untouched || !bartender) { t.skip('probe add-ons not seeded'); return; }
+
+  const { proposalId, planToken } = await seedProposal({ override: CONTRACT });
+
+  // A pre-existing row at a real count of TWO. quantity holds guestCount either
+  // way, so the count survives ONLY in line_total. Seeded at 4 hours, where
+  // per_guest_timed's extra-hours term is zero, so count 1 is exactly half.
+  const seededQty = 175;
+  const seededTotal = Math.round(175 * Number(untouched.rate) * 2 * 100) / 100;
+  const repricedAtCountOne = Math.round(175 * Number(untouched.rate) * 100) / 100;
+  assert.notStrictEqual(seededTotal, repricedAtCountOne,
+    'test guard: an unscoped re-sync must be ABLE to change this row, or it proves nothing');
+  await pool.query(
+    `INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [proposalId, untouched.id, untouched.name, untouched.billing_type,
+     Number(untouched.rate), seededQty, seededTotal]
+  );
+
+  // Submit a DIFFERENT add-on. Nothing in this payload names the-formula.
+  const res = await request('PUT', `/api/drink-plans/t/${planToken}`, {
+    body: {
+      status: 'submitted',
+      paid_separately: false,
+      selections: { addOns: { 'additional-bartender': { enabled: true } } },
+    },
+  });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+
+  const rows = (await pool.query(
+    'SELECT addon_id, quantity, line_total FROM proposal_addons WHERE proposal_id = $1',
+    [proposalId]
+  )).rows;
+  const row = rows.find((r) => r.addon_id === untouched.id);
+  assert.ok(row, 'the untouched row still exists');
+  assert.strictEqual(Number(row.quantity), seededQty, 'an untouched row keeps its stored quantity');
+  assert.strictEqual(Number(row.line_total), seededTotal,
+    'an untouched row keeps its line_total: the count of 2 lives only there');
+  assert.notStrictEqual(Number(row.line_total), repricedAtCountOne,
+    'a blanket re-sync over snapshot.addons would have halved this line');
+
+  // Guard the other half: the row this request DID write is still re-synced.
+  const written = rows.find((r) => r.addon_id === bartender.id);
+  assert.ok(written, 'the submitted addon row exists');
+  assert.strictEqual(Number(written.quantity), 4, 'the touched row is still settled from the snapshot');
+});

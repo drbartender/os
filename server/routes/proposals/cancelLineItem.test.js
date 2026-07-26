@@ -578,3 +578,41 @@ test('all-external overpayment: removal notice names the manual return, no Strip
     removalNotify.__setDeps({ sendEmail: require('../../utils/email').sendEmail });
   }
 });
+
+test('a non-string target is rejected before anything commits', async () => {
+  const o = await seedProposal({});
+  const before = (await pool.query('SELECT total_price FROM proposals WHERE id = $1', [o.proposalId])).rows[0];
+  const r = await request('POST', `/api/proposals/${o.proposalId}/cancel-line/preview`, {
+    token: await mintAdmin(), body: { target: { kind: 'adjustment', key: '0' } },
+  });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, 'VALIDATION_ERROR');
+  const after = (await pool.query('SELECT total_price FROM proposals WHERE id = $1', [o.proposalId])).rows[0];
+  assert.equal(Number(after.total_price), Number(before.total_price));
+  const log = (await pool.query(
+    "SELECT id FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'line_item_cancelled'",
+    [o.proposalId])).rows;
+  assert.equal(log.length, 0, 'no audit row may claim a removal that never happened');
+});
+
+test('a drink-plan-rail charge funds the refund instead of a manual return', async () => {
+  // The cancel-line feature removes drink-plan items, so the charge that paid
+  // for them must be refundable. The admin-panel rail list excluded
+  // drink_plan_extras / drink_plan_with_balance, which sent the client a "we
+  // will return it separately" notice for money sitting on a refundable Stripe
+  // charge (cross-LLM push review, 2026-07-26).
+  const o = await seedProposal({ payments: [] });
+  const intent = `pi_dpx_${NONCE}`;
+  await pool.query(
+    `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status, stripe_payment_intent_id)
+     VALUES ($1, 'drink_plan_extras', 250000, 'succeeded', $2)`,
+    [o.proposalId, intent]
+  );
+  const prev = await request('POST', `/api/proposals/${o.proposalId}/cancel-line/preview`, {
+    token: await mintAdmin(), body: { target: `addon:${o.addonSlug}` },
+  });
+  assert.equal(prev.status, 200, JSON.stringify(prev.body));
+  assert.equal(prev.body.refund.manual_return_cents, 0, 'this money is refundable, not a manual return');
+  assert.equal(prev.body.refund.stripe_cents, 20000);
+  assert.equal(prev.body.refund.splits, 1);
+});

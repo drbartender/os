@@ -24,7 +24,7 @@ const { publicReadLimiter, drinkPlanWriteLimiter } = require('../../middleware/r
 const { requireUuidToken } = require('../../utils/tokens');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
-const { calculateSyrupCost } = require('../../utils/pricingEngine');
+const { calculateSyrupCost, calculateAddonCost } = require('../../utils/pricingEngine');
 const { createInvoice, writeLineItems, refreshUnlockedInvoices } = require('../../utils/invoiceHelpers');
 const { foldExtrasIntoProposal, loadRepriceAddons } = require('../../utils/proposalExtrasFold');
 const { SYRUP_NAME_LOOKUP } = require('../../utils/shoppingListGen');
@@ -290,20 +290,28 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
         ? (await client.query('SELECT * FROM service_addons WHERE slug = ANY($1) AND is_active = true', [ownedNextSlugs])).rows
         : [];
       for (const addon of labAddonRows) {
-        const rate = Number(addon.rate);
-        let quantity = 1;
-        let lineTotal = rate;
-        if (addon.billing_type === 'per_guest') {
-          quantity = proposal.guest_count || 1;
-          lineTotal = rate * quantity;
-        }
+        // Store the ENGINE OUTPUT shape, the figures crud.js / proposalInsert.js
+        // / public.js all write. This row is ALSO the fold's input leg
+        // (addonsAfter re-reads it through loadRepriceAddons two statements
+        // below), so a hand-written raw count is not merely a mis-shaped row:
+        // the reader converts it back as though it were engine output and
+        // prices a FRACTION of a unit. Measured: one per_hour helper on a 4h
+        // booking priced at $40 instead of $160 (push review, 2026-07-26).
+        // line_total is provisional for additional-bartender (its gratuity
+        // surcharge) and per_staff (needs totalStaff); the post-fold re-sync in
+        // Step 3b settles both.
+        const priced = calculateAddonCost(
+          addon, proposal.guest_count || 1, Number(proposal.event_duration_hours), null, 1
+        );
         await client.query(`
           INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
           VALUES ($1, $2, $3, $4, $5, $6, $7)
           ON CONFLICT (proposal_id, addon_id) DO UPDATE SET
+            rate = EXCLUDED.rate,
             quantity = EXCLUDED.quantity,
             line_total = EXCLUDED.line_total
-        `, [proposal.id, addon.id, addon.name, addon.billing_type, rate, quantity, lineTotal]);
+        `, [proposal.id, addon.id, addon.name, addon.billing_type, Number(addon.rate),
+            priced.quantity, Math.round(priced.total * 100) / 100]);
       }
       const addonsAfter = await loadRepriceAddons(client, proposal.id);
 
@@ -341,6 +349,41 @@ router.put('/t/:token/lab', requireUuidToken('token', 'This drink plan is no lon
         numBarsAfter: proposal.num_bars ?? 0,
         statusChangeReason: 'enhancement_lab_reconciled',
       });
+
+      // Step 3a already wrote the right SHAPE; this settles the figures only the
+      // full engine pass knows: additional-bartender's gratuity surcharge and
+      // per_staff's totalStaff basis. It also brings any pre-existing row back
+      // into agreement with the snapshot the client is about to be shown.
+      //
+      // SCOPED TO THE ROWS THIS REQUEST WROTE, deliberately. snapshot.addons
+      // carries EVERY row on the proposal, so a blanket re-sync would also
+      // rewrite rows the client never touched. For any row whose stored figures
+      // the engine cannot reproduce from the column that is DESTRUCTIVE:
+      // storedToInputCount returns null for per_guest_timed, per_staff and
+      // per_100_guests, so the fold reprices those at count 1 and writing that
+      // back HALVES a live multi-unit line. per_guest_timed is the honest
+      // example; its line_total carries an extra-hours term on top of the
+      // per-guest base, which is why the division cannot recover its count
+      // (addonQuantity.js, prod proposal 464 reads 1.250 for a genuine count
+      // of 1). Covered by submitOverride.test.js on the submit twin of this
+      // loop, which is the reachable writer.
+      //
+      // NOT pre-batched-mocktail any more: Task 3 recovers a per_guest count
+      // from line_total / (quantity x rate), so that row now round-trips and no
+      // longer demonstrates the hazard (task-5 review, 2026-07-26).
+      //
+      // The boundary is UNTOUCHED rows. Nothing rewrites the line_total of a row
+      // this request did not touch; the upsert above deliberately does re-write
+      // the lab-owned rows it DID touch on every reconcile. Keep the boundary
+      // here so the re-sync does not widen it.
+      const touchedAddonIds = new Set(labAddonRows.map((a) => a.id));
+      for (const entry of snapshot.addons || []) {
+        if (!touchedAddonIds.has(entry.id)) continue;
+        await client.query(
+          'UPDATE proposal_addons SET quantity = $1, line_total = $2 WHERE proposal_id = $3 AND addon_id = $4',
+          [entry.quantity, entry.line_total, proposal.id, entry.id]
+        );
+      }
 
       // Rebill. The Balance/Full Payment refresh absorbs the fold. Then the
       // lab invoice reconciles under FOR UPDATE (it is independently payable;

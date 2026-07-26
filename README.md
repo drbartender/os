@@ -259,6 +259,7 @@ dr-bartender/
 │   │   ├── voice.js            # Zul VA-calling Twilio Voice webhooks: POST /inbound (forward 224 → VA_CELL), /bridge (look up target by CallSid → Dial 224→target), /status (failed-leg → Telegram notice), /inbound/missed (<Dial> action: ping Zul + greeting/<Record>), /inbound/voicemail (recordingStatusCallback: upload mp3 to Telegram, then delete from Twilio), GET /greeting.mp3 (PUBLIC, unauthenticated: serves the bundled greeting mp3 that /inbound/missed <Play>s; overridable via VM_GREETING_URL). The two voicemail routes fail CLOSED on signature in every environment
 │   │   └── voiceLeadCall.js    # Lead call bridge Twilio webhooks (/api/voice/lead): /answer (Gather-wrapped spoken briefing), /digit (press-1 → Dial lead from the 224, press-9 replay), /status (claim-guarded chain advance). Signature FAIL-CLOSED in every env
 │   ├── utils/
+│   │   ├── addonQuantity.js    # The ONE sanctioned server conversion between proposal_addons.quantity (the engine's OUTPUT display quantity) and an add-on's INPUT unit count; manual twin of the admin editor's recoverAddonQuantities
 │   │   ├── adminAuditLog.js    # logAdminAction(...) — durable record of admin actions (rotate-token, regenerate-stripe). Best-effort; failures go to Sentry, never block the underlying op
 │   │   ├── adminNotifications.js # notifyAdminCategory(...) — multi-admin notification fan-out by category (joins users.notification_preferences + contractor_profiles for SMS)
 │   │   ├── agreementPdf.js     # PDFKit renderer for signed contractor agreements

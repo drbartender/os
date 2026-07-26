@@ -44,33 +44,48 @@
 
 const { calculateProposal } = require('./pricingEngine');
 const { reconcileProposalPaymentStatus } = require('./proposalStatus');
+const { storedToInputCount } = require('./addonQuantity');
 
 // SQL to load reprice-ready addon rows: service_addons catalog columns PLUS the
-// per-proposal quantity. The bare `SELECT sa.*` this replaced dropped
-// pa.quantity, so calculateProposal priced every per_hour addon
-// (additional-bartender, banquet-server, barback) as quantity 1 — silently
-// under-billing a native proposal's total_price the instant it repriced
-// (found by the cross-LLM push review, 2026-07-20; prod has live proposals
-// with these at quantity up to 6). service_addons has no `quantity` column, so
-// the alias is unambiguous.
-const REPRICE_ADDON_SQL =
-  'SELECT sa.*, pa.quantity AS pa_quantity FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id WHERE pa.proposal_id = $1';
+// per-proposal stored quantity AND the event duration needed to convert it.
+// The bare `SELECT sa.*` this replaced dropped pa.quantity, so calculateProposal
+// priced every per_hour addon as quantity 1, silently under-billing the
+// instant it repriced (cross-LLM push review, 2026-07-20). Passing that stored
+// value straight back through was the OPPOSITE error: the stored figure is the
+// engine's OUTPUT (hours x count for per_hour), so the engine multiplied by
+// hours a second time (cross-LLM push review, 2026-07-26). service_addons has
+// no `quantity` and proposals has no `minimum_hours`, so both aliases are
+// unambiguous.
+const REPRICE_ADDON_SQL = `
+  SELECT sa.*, pa.quantity AS pa_quantity, pa.line_total AS pa_line_total, pa.rate AS pa_rate,
+         p.event_duration_hours AS pa_duration_hours
+    FROM proposal_addons pa
+    JOIN service_addons sa ON sa.id = pa.addon_id
+    JOIN proposals p ON p.id = pa.proposal_id
+   WHERE pa.proposal_id = $1`;
 
 /**
- * Attach the engine-facing `quantity` to each reprice addon row.
- * proposal_addons.quantity means DIFFERENT things per billing_type: the real
- * unit count for per_hour/flat/etc., but guest_count for per_guest /
- * per_guest_timed (which calculateProposal recomputes from guestCount — passing
- * the stored value there would square the guests). So the stored count is
- * applied ONLY for the billing types the engine treats as a genuine multiplier.
+ * Attach the engine-facing input `quantity` to each reprice addon row.
+ *
+ * proposal_addons.quantity stores the engine's OUTPUT display quantity, which
+ * is NOT the input count for any billing type except `flat`
+ * (server/utils/addonQuantity.js explains the full table). Recover the count
+ * through the shared conversion, passing the row's OWN persisted line_total and
+ * rate: a per_guest count survives nowhere else. When the conversion cannot
+ * express a count (per_guest_timed, per_staff, per_100_guests, and a per_guest
+ * row whose line_total or rate is unusable) drop the field entirely and let
+ * calculateProposal recompute from guestCount / staffCount, which is what this
+ * function did for the whole per_guest pair before that recovery existed.
  * @param {Array} rows  rows from REPRICE_ADDON_SQL
  * @returns {Array} rows calculateProposal can price correctly
  */
 function withRepriceQuantities(rows) {
   return (rows || []).map((r) => {
-    const usesStoredCount = r.billing_type !== 'per_guest' && r.billing_type !== 'per_guest_timed';
-    const { pa_quantity, ...addon } = r;
-    return usesStoredCount ? { ...addon, quantity: Number(pa_quantity) || 1 } : addon;
+    const { pa_quantity, pa_duration_hours, pa_line_total, pa_rate, ...addon } = r;
+    const count = storedToInputCount(addon, pa_quantity, pa_duration_hours, {
+      lineTotal: pa_line_total, rate: pa_rate,
+    });
+    return count === null ? addon : { ...addon, quantity: count };
   });
 }
 

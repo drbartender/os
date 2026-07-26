@@ -21,10 +21,10 @@ const { pool } = require('../../db');
 const { auth, adminOnly, requireAdminOrManager } = require('../../middleware/auth');
 const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const asyncHandler = require('../../middleware/asyncHandler');
-const { AppError } = require('../../utils/errors');
+const { AppError, ValidationError } = require('../../utils/errors');
 const { getStripe } = require('../../utils/stripeClient');
 const { refundExecute } = require('../../utils/refundExecute');
-const { loadPaymentsWithRemaining, planOverpaymentSplits } = require('../../utils/refundHelpers');
+const { loadPaymentsWithRemaining, planOverpaymentSplits, CANCEL_LINE_REFUND_RAILS } = require('../../utils/refundHelpers');
 const { computeCancelTargets, applyLineItemCancel } = require('../../utils/lineItemCancel');
 const { sendRefundClientNotification } = require('../../utils/refundClientNotify');
 const { refreshListAfterLabChange } = require('../drinkPlans/labListRefresh');
@@ -45,6 +45,12 @@ async function runCore(req, { expectFingerprint = null } = {}) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // parseCancelTarget only runs for strings, so a crafted object target would
+    // otherwise reach the per-kind switch unvalidated and could commit an audit
+    // row claiming a removal that never happened (cross-LLM push review).
+    if (typeof req.body.target !== 'string') {
+      throw new ValidationError({ target: 'Missing or malformed cancel target' });
+    }
     const result = await applyLineItemCancel(client, {
       proposalId: req.params.id,
       target: req.body.target,
@@ -53,7 +59,7 @@ async function runCore(req, { expectFingerprint = null } = {}) {
       actorId: req.user.id,
       expectFingerprint,
     });
-    const payments = await loadPaymentsWithRemaining(req.params.id, client);
+    const payments = await loadPaymentsWithRemaining(req.params.id, client, { rails: CANCEL_LINE_REFUND_RAILS });
     const plan = planOverpaymentSplits({
       paymentsWithRemaining: payments,
       overpaymentCents: result.overpaymentCents,
@@ -129,6 +135,20 @@ router.post('/:id/cancel-line', auth, adminOnly, adminWriteLimiter, asyncHandler
   }
 
   const { client, result, plan, commit } = await runCore(req, { expectFingerprint: fingerprint });
+  // getStripe() fails closed when creds are missing. Discovering that AFTER the
+  // commit leaves the line removed with a pending refund row blocking headroom
+  // and the operator told the refund is "unconfirmed" when nothing was ever
+  // attempted (cross-LLM push review). Both other refundExecute callers guard
+  // first (stripe.js:430, proposals/cancel.js:468).
+  let stripe = null;
+  if (plan.splits.length > 0) {
+    stripe = getStripe();
+    if (!stripe) {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+      throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
+    }
+  }
   try {
     await commit();
   } catch (e) {
@@ -144,7 +164,6 @@ router.post('/:id/cancel-line', auth, adminOnly, adminWriteLimiter, asyncHandler
   // per-split so a client retry of the whole act can never double-refund.
   const refunds = [];
   let refundIncomplete = false;
-  const stripe = getStripe();
   for (let i = 0; i < plan.splits.length; i++) {
     const s = plan.splits[i];
     try {

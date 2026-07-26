@@ -404,16 +404,6 @@ them; none is a money-wrong path.
   `charge.refunded` webhook reconciles it) rather than the panel.
 
 **Cancel-line feature**
-- The `additional-bartender` ADD-ON target's amount comes from
-  `proposal_addons.line_total`, which bakes the sub-100-guest gratuity surcharge
-  in (`pricingEngine.js` `effectiveRate = rate + bartenderGratuityPerHour`),
-  while its breakdown row splits the surcharge onto a separate Shared Gratuity
-  line. Since the UI now requires label AND amount to agree, that target no
-  longer binds to its row and falls to the "Other removable items" strip.
-  Reachable and correctly labeled there, so this is a UX regression, not a money
-  bug. Four live proposals affected (491, 580, 576, 482). Fix = mirror the
-  breakdown row for that slug the way the override target now does, taking care
-  to pick the ADD-ON row rather than the override row when both exist.
 - `matchCancelTargets` (the ambiguity refusal and amount corroboration) has no
   test: the client has no test runner, and the new server-side test only pins
   the override target's label/amount. The collision case is reproducible with a
@@ -434,20 +424,10 @@ them; none is a money-wrong path.
 - A gratuity-removal refund passes no `gratuityCents`, so `proposal_refunds
   .gratuity_cents` is NULL for the one cancel kind the column exists to describe
   (the cancel-event flow does populate it). Audit fidelity only. (low)
-- `planOverpaymentSplits` inherits the admin-panel rail exclusion
-  (`payment_type IN ('deposit','balance','full','invoice')`), so an overpayment
-  sitting on a `drink_plan_extras` / `drink_plan_with_balance` charge falls
-  entirely into `manual_return_cents` and the client is told we will return it
-  separately, for money that is on a fully refundable Stripe charge. Risk is an
-  admin paying it back by hand AND later refunding the card. (low)
 - The preview's `locked_invoices` line promises "a locked invoice for $X stands",
   but on the fully-paid path the overpayment refund deliberately drops that same
   locked invoice's `amount_due`. Not a ledger error; the stated consequence is
   just wrong for exactly the case that fires a refund. (low)
-- `req.body.target` bypasses `parseCancelTarget` when it is not a string, so a
-  crafted object target can commit a `line_item_cancelled` audit row while
-  removing nothing. Admin-only, no money moves wrongly. One-line route guard.
-  (low)
 - RC4 (adopt the caller's own pending row by id) was applied to `refundExecute`
   and the stale-pending sweeper, but NOT to the `charge.refunded` webhook, which
   also has the row id available on `refundObj.metadata.proposal_refund_row_id`
@@ -458,10 +438,176 @@ them; none is a money-wrong path.
   today (only `refundExecute` and the sweeper pass an id, always their own row),
   but a future caller passing a wrong id would reconcile against the wrong
   proposal. Cheap to harden. (low)
-- `getStripe()` is called AFTER the removal commits with no null check (both
-  other refundExecute callers guard first), so missing creds leave the line
-  removed and a `pending` refund row blocking headroom while the operator is told
-  the refund is "unconfirmed" when nothing was attempted. (low)
+
+**Add-on quantity semantics (2026-07-26 lane)**
+- CORRECTION: a code comment in `lineItemCancel.js` (the post-fold sync) claimed
+  `proposal_addons.quantity` holds "the RAW unit count", and `ARCHITECTURE.md`
+  described it as fractional hours. Both are wrong; it holds the engine's OUTPUT
+  display quantity. See `server/utils/addonQuantity.js` and the rewritten
+  ARCHITECTURE schema note. The 2026-07-24 checkpoint change that stopped
+  writing `quantity` in the post-fold sync was made on that wrong belief and has
+  been reverted.
+- Not fixed, same family: `server/utils/changeRequests.js` is a THIRD reader that
+  disagrees with the column. `priceProposedState` (:57-69) re-prices the
+  proposal's existing add-ons with `safeAddonQty(quantities[id])`, which returns
+  1 for `undefined`, so a client-portal change-request price preview silently
+  drops any count above 1 and under-quotes; `buildDiff` (:129-137) compares the
+  stored OUTPUT against a proposed INPUT count. The diff half is unreachable
+  today (the v1 client form exposes no add-on editing, so `addon_ids` is never
+  sent) but the preview half is not. Left out of the 2026-07-26 lane to keep it
+  narrow. The fix is the same one: route it through `addonQuantity.js`.
+- FIXED 2026-07-26, same family, opposite direction: for `per_guest` add-ons the
+  fold could not recover the admin's unit count, so one sold at count 2 repriced
+  as count 1 and UNDER-billed. The lane originally deferred this on the basis
+  that no live proposal carried such a row. That basis was checked against prod
+  mid-lane and was FALSE: proposal 482 carries a Pre-Batched Mocktail at count 2
+  (`quantity 50`, `rate 2.00`, `line_total 200.00`), reachable through the admin
+  editor's ordinary quantity stepper (`pre-batched-mocktail` is in
+  `QUANTITY_CAPABLE_SLUGS`). The count is now recovered as
+  `line_total / (quantity x rate)` from the row's OWN frozen rate, matching the
+  client inverter (`formState.js:92-98`). `per_guest_timed` is deliberately still
+  excluded: its `line_total` carries an extra-hours term, so the division does
+  not hold (prod 464 reads 1.250 for a genuine count of 1).
+- `REPRICE_ADDON_SQL` does not select `pa.variant`, so a no-op fold drops the
+  variant from `snapshot.addons[]` and the line renames itself: a
+  `champagne-toast` sold as `non-alcoholic-bubbles` reverts to "Champagne Toast"
+  on the client-facing snapshot, and the next writer persists `variant = null`
+  off that snapshot. No money moves, but it is the same "a no-op fold must
+  change nothing" family this lane is about, and the fix is one column in a
+  SELECT this lane already widened (Task 3 review, 2026-07-26).
+- A client drink-plan submit or lab save re-prices an existing add-on line at the
+  CURRENT catalog rate, because both upserts recompute `line_total` from
+  `service_addons.rate` rather than the rate frozen on the row. A catalog price
+  rise therefore reaches proposals that were sold at the old price. Pre-existing
+  and deliberately unchanged on 2026-07-26; the lane only stopped the row's
+  `rate` column from disagreeing with its own `line_total`.
+- A client drink-plan submit can reset an admin-negotiated add-on quantity. The
+  upsert loop in `submit.js` honors any active slug in the client payload
+  (`return true; // user-added addon`) and its `ON CONFLICT DO UPDATE` overwrites
+  `quantity` with the count it just computed for one unit. A payload naming a
+  slug an admin had already set to 3 knocks it back to 1. Pre-existing, not
+  reachable through the planner UI (it offers no staffing add-on), and untouched
+  by the 2026-07-26 work, which only changed what that statement writes, not
+  which rows it is allowed to write.
+- A partial removal of a LAB-owned add-on leaves the `labAdded` entry in
+  `drink_plans.selections`, so the client's next Lab save re-upserts it at the
+  lab's own quantity and undoes the partial removal. Narrow: the lab creates
+  its add-ons at count 1, so a partial removal is only possible if an admin
+  first raised the quantity in the editor.
+- `computeCancelTargets` enumerates targets for a package-less proposal, but
+  `applyLineItemCancel` throws `NO_PACKAGE` for it, so every button 409s.
+
+**Add-on quantity semantics: what the lane's own task reviews parked (2026-07-26)**
+
+Raised by the per-task reviews INSIDE that lane, judged real, and left out to keep
+each task's footprint honest. Written down here because the lane's ledger is not
+tracked and went away with its worktree.
+
+- **Latent 2x on `additional-bartender` the moment that catalog row acquires a
+  `minimum_hours`.** Three reviewers reported this family independently, in
+  three different files: Task 1 closed its instance inside `storedToInputCount`,
+  Task 4's is the next bullet, Task 5 found this one in the pre-fold write. The
+  sites agree on every row that exists today and disagree only here. The reader
+  (`server/utils/addonQuantity.js`, `effectiveHoursFor`) dispatches on the SLUG
+  first and divides by RAW `event_duration_hours`, matching the engine's bespoke
+  branch (`pricingEngine.js:387-405`, which multiplies by raw hours and never
+  looks at `minimum_hours`). The two pre-fold writers
+  (`drinkPlans/submit.js:318` and `drinkPlans/lab.js:303`) bypass the module
+  entirely and call `calculateAddonCost`, whose `per_hour` branch stores
+  `Math.max(durationHours, minimum_hours) x count` (`pricingEngine.js:166-169`).
+  Trace, 2-hour event, one bartender, `minimum_hours` hypothetically 4: the
+  pre-fold write stores 4, the fold recovers 4 / 2 = 2, the engine bills two
+  bartenders, the post-fold re-sync persists 2 x 2 = 4, and the row LATCHES at
+  two permanently. The dollar figure is the one place it does not announce
+  itself (four bartender-hours is exactly what a 4-hour minimum was asking for,
+  so the invoice line reads plausibly); the damage lands in the staffing
+  channels instead. The gratuity staff count doubles
+  (`pricingEngine.js:369` sums the recovered count, `:437` folds that sum into
+  `gratuityStaffCountFrom`), `eventCreation.addonHeadcount` divides the stored 4
+  by the raw 2 and reports two bartenders for the one add-on line, and
+  `syncShiftsFromProposal` therefore creates a second shift for a one-bartender
+  order. The trigger has precedent: `schema.sql:777` is literally
+  `UPDATE service_addons SET minimum_hours = 4 WHERE slug = 'banquet-server';`.
+  The agreed fix, and the reason this is logged rather than patched in place: a
+  shared `countToStored` inverse living beside `storedToInputCount` in
+  `addonQuantity.js`, called by the two pre-fold writers in place of
+  `calculateAddonCost` for that slug. A fourth local patch is how the
+  definitions drifted apart in the first place. (Task 1, 4 and 5 reviews.)
+- **The cancel-line write-back dispatches on `billing_type` while the reader
+  dispatches slug-first**, same family, same fix.
+  `lineItemCancel.js:499-501` restores a partially-removed row as
+  `storedIsInputCount(row.billing_type) ? remainingCount : remainingCount x
+  effectiveHoursFor(row, durationHours)`. If `additional-bartender`'s catalog row
+  were ever edited off `per_hour`, `storedIsInputCount` would return true and the
+  write would store a raw count into a column the slug-first reader still divides
+  by hours. The reviewer verified it is unreachable through any application path
+  today (no route anywhere updates `service_addons`) and also verified that in
+  the hypothetical the post-fold sync does NOT self-heal it, it cements the wrong
+  value. Closed by the same shared `countToStored` inverse. (Task 4 review.)
+- **The `additional-bartender` cancel target can bind to the `num_bartenders`
+  OVERRIDE row's amount, but only against a STALE snapshot.**
+  `computeCancelTargets` (`lineItemCancel.js:175-182`) scans
+  `pricing_snapshot.breakdown` for labels starting "Additional Bartender" and
+  deliberately takes the LAST when there is more than one, because the engine
+  emits the override row first (`pricingEngine.js:458-482`) and the add-on rows
+  after (`:483-505`). The lone-match branch (`matches[0]`) is the hazard, and it
+  needs all three of: the override row present, the add-on row ABSENT, and
+  `rb.removable` at 0 so no competing `extra-bartender` target is emitted
+  (`:211`). A fresh snapshot carries both rows whenever both exist, so it always
+  picks correctly; only a stale snapshot can reach the branch. Display-level,
+  with a mis-click risk once the client's amount corroboration binds the add-on's
+  remove button to the override's breakdown row. Suggested guard: skip the
+  lone-match fallback when `snap.staffing.extra > 0`. (Task 6 review.)
+- **No automated coverage of the DEFAULT-rails `loadPaymentsWithRemaining`
+  call.** Every DB exercise of that SQL now runs through the cancel-line route
+  with the WIDE rails (`CANCEL_LINE_REFUND_RAILS`). The admin panel path
+  (`routes/stripe.js:463`, which takes the default `PANEL_REFUND_RAILS`) has no
+  suite at all, and `refundHelpers.test.js` / `refundHelpers.splits.test.js`
+  exercise only the pure planners, never the query. The 2026-07-26 refactor from
+  a hardcoded `IN (...)` list to `= ANY($2::text[])` was verified
+  behavior-preserving by reading the schema (`payment_type` is
+  `VARCHAR(30) NOT NULL`, so no NULL can change the predicate) rather than by a
+  test. A two-line unit test asserting the default call EXCLUDES a seeded
+  `drink_plan_extras` row would pin it. (Task 6 review.)
+- **`lab.js`'s pre-fold upsert and post-fold re-sync are pinned only by prose.**
+  Both (`lab.js:303-314` and `:379-386`) are near-duplicate hand-copied logic of
+  their `submit.js` twins (`:318-336` and `:424-431`), not shared code, so they
+  can drift; the lab side's only regression cover is a comment pointing at
+  `submitOverride.test.js`. The scoping in particular is a live path: an
+  admin-seeded `mocktail-bar` at count 2 plus a client Enhancement Lab save would
+  be HALVED if `lab.js`'s `if (!touchedAddonIds.has(entry.id)) continue;` were
+  ever dropped, because `storedToInputCount` returns null for `per_guest_timed`
+  and the fold then reprices it at count 1. The submit twin's own cover is
+  partial too: deleting its re-sync loop outright leaves both new tests green,
+  because the pre-fold upsert already writes the right figures at 175 guests /
+  4 hours. The re-sync's distinguishing value is `additional-bartender`'s
+  sub-100-guest gratuity surcharge and `per_staff`'s totalStaff basis, and that
+  fixture zeroes the surcharge, so the "belt" half of belt-and-braces is
+  untested. (Task 5 review.)
+- **The two dispatch sites read `billing_type` off different tables.**
+  `withRepriceQuantities` (`proposalExtrasFold.js:82-90`) dispatches on the
+  CATALOG row, because `REPRICE_ADDON_SQL` selects `sa.*`; both cancel-line
+  queries (`lineItemCancel.js:107` and `:458`) dispatch on the FROZEN
+  `pa.billing_type`. A row whose catalog type was flipped after it was sold
+  therefore reads as two different billing types at once: flipped INTO the
+  count-less set, the cancel-line side still offers a quantity picker while the
+  fold refuses to recover a count at all, and flipped out of it the reverse. The
+  partial-removal write-back at `:499` can therefore disagree with the fold's own
+  re-read of that same row two statements later (`:505`), inside one
+  transaction. Catalog flips are not hypothetical: `schema.sql:785` and `:788` did
+  exactly that to `parking-fee` and `garnish-package-only`. Deciding which source
+  is authoritative is the actual fix; today they simply differ.
+- **Two docstring over-reaches in `addonQuantity.js`**, both cheap, design
+  unaffected in each case. The exclusion list's stated rationale, "billing_type is
+  a bare VARCHAR(20) with no CHECK" (`:33`), is true of
+  `proposal_addons.billing_type` (`schema.sql:866`) but false of
+  `service_addons.billing_type` (`schema.sql:641`, a six-value CHECK), and
+  `service_addons` is the column the reprice SELECT actually delivers. And
+  `effectiveHoursFor`'s claim that `eventCreation.js` encodes "the same split"
+  (`:48`) glosses over `eventCreation.js:45` hardcoding
+  `STAFFING_ADDON_MIN_HOURS = 4` rather than reading the catalog, which makes it a
+  FOURTH site that agrees with the other three only by coincidence. (Task 1
+  review, plus the lane's whole-branch review.)
 
 **Cancel-line admin UI**
 - After a removal the payment panel's invoice list still shows the pre-removal

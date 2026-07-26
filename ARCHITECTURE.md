@@ -868,7 +868,23 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 
 **proposal_addons** — Line items linking proposals to add-ons
 - `proposal_id` FK, `addon_id` FK
-- `addon_name`, `billing_type`, `rate`, `quantity` (NUMERIC — holds fractional hours for per-hour add-ons, e.g. a 3.5h window; pg returns NUMERIC as a string, so readers coerce with `::float8`/`Number()`), `line_total`
+- `addon_name`, `billing_type`, `rate`, `line_total`
+- `quantity` (NUMERIC(10,2)), the pricing engine's OUTPUT display quantity for
+  the add-on (`calculateAddonCost(...).quantity`), NOT the admin's unit count.
+  Per billing_type: `per_guest`/`per_guest_timed` store guestCount, `per_hour`
+  stores effectiveHours x count, `per_staff` stores the staff count,
+  `per_100_guests` stores 100-guest blocks, `flat` stores the count. The
+  `additional-bartender` slug is the exception inside `per_hour`: its bespoke
+  engine branch stores RAW durationHours x count and never consults
+  `minimum_hours`. Read back by `eventCreation.addonHeadcount` (divides by
+  duration for headcount), `invoiceLineItems` (renders `quantity x rate`), and
+  the admin editor's `recoverAddonQuantities`. Any code converting between this
+  and a unit count MUST go through `server/utils/addonQuantity.js` on the server
+  or `client/src/pages/admin/proposalEditor/formState.js` on the client, and the
+  two must agree; re-feeding the stored figure to the engine as an input
+  multiplied per_hour add-ons by their own hours (a $450 line repriced to
+  $2,700, 2026-07-26) and inflated the gratuity staff basis with it. pg returns
+  NUMERIC as a string, so readers coerce with `::float8` / `Number()`.
 - `variant` (nullable) — optional addon-specific variant tag (e.g., `'non-alcoholic-bubbles'` swaps the Champagne Toast label without changing price)
 
 **proposal_activity_log** — Audit trail
@@ -1452,6 +1468,8 @@ Located in `server/utils/pricingEngine.js`. Pure functions, no database dependen
 5. **Syrups**: Three-pack bundles ($30) + singles ($12), optimized for best price
 6. **Gratuity** (client-elected, §8.3): `gratuity_rate × staffCount × hours` where staffCount = bartenders + additional-bartender addon (NOT barbacks/servers). Added on top of the total as staff pass-through money (never diluted by discounts/override). Layered on the forced `"Shared Gratuity"` over-ratio surcharge. Helpers: `getStaffNoun`, `computeGratuityBasis`, `gratuityLineAmount`, `deriveGratuityRate` (dollars-total → stored rate with floor/sanity validation), `recomputeSnapshotGratuity` (drift-free checkout recompute). Labels live in the shared `server/utils/gratuityLabels.js` (client mirror `client/src/utils/gratuityLabels.js`).
 7. **Total**: Sum of all components, plus gratuity
+
+`server/utils/addonQuantity.js` is the one sanctioned server-side conversion between the engine's add-on OUTPUT (`proposal_addons.quantity`) and an add-on's INPUT unit count: `storedToInputCount`, `effectiveHoursFor`, `storedIsInputCount`, `countLabelFor`. Every reprice, cancel-line and fold path that needs a count out of the column goes through it rather than re-deriving the inversion, and it is the manual twin of the admin editor's `recoverAddonQuantities` (`client/src/pages/admin/proposalEditor/formState.js`). See the `proposal_addons` schema note for what the column actually stores.
 
 The result is stored as a `pricing_snapshot` JSONB on the proposal for historical accuracy. Payroll pools both gratuity labels (`payrollMath.extractGratuityCents`) and gates the gratuity portion of accrual on the proposal being funded (`amount_paid >= total_price`); the Stripe webhook records the amount actually charged (additive), never a flat `= total_price`, so a mid-flight total change can't misstate `amount_paid`. Payment-status demotion + overpayment detection is centralized in `server/utils/proposalStatus.js` (`reconcileProposalPaymentStatus`).
 
