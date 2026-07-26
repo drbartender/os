@@ -656,8 +656,9 @@ test('override + gratuity: a no-op fold does not move the gratuity line', async 
 test('TWO folds in a row: the second reads what the first wrote (no slow drift)', async () => {
   // Both folds run in ONE transaction on purpose. noOpFold ROLLBACKs, so
   // calling it twice would just repeat the first test from identical state and
-  // prove nothing about drift. Drift only shows when the second fold reads the
-  // total the first one persisted.
+  // prove nothing about drift. Nor is total_price the vector: the fold never
+  // reads it back. Drift shows only when the second fold reads the QUANTITY the
+  // first one persisted, which is why the loop below re-stores it.
   const { proposalId } = await seedPricedProposal({
     durationHours: 5,
     addonSpecs: [{ slug: `stab-twice-${NONCE}`, name: 'Stability Twice', billingType: 'per_hour', rate: 40, count: 2 }],
