@@ -213,10 +213,54 @@ app.use('/api/calcom/webhook', express.raw({ type: 'application/json', limit: '2
 app.use('/api/blog', express.json({ limit: '10mb' }));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
+const MAX_UPLOAD_BYTES = parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024;
+
 app.use(fileUpload({
-  limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024 },
+  limits: { fileSize: MAX_UPLOAD_BYTES },
   abortOnLimit: true,
-  useTempFiles: false
+  useTempFiles: false,
+  // abortOnLimit is still set, but installing limitHandler changes what it does,
+  // and the change is the point. express-fileupload calls limitHandler first
+  // (processMultipart.js:99-107); because we answer here, its own closeConnection
+  // early-returns on res.headersSent and never sends `Connection: close`. So the
+  // socket is NOT reset and this JSON 413 is delivered intact and readable.
+  // Measured: a 12MB multipart POST returns 413 keep-alive with this body, where
+  // the stock config reset the stream and the browser reported a bare "network
+  // error". That bare error is what stranded a recruit on 2026-07-23.
+  //
+  // The trade is that the remaining request body drains instead of being cut off.
+  // That is not a new exposure: express.json({ limit: '1mb' }) two lines above has
+  // always drained an over-limit body in full (body-parser read.js dumps the whole
+  // request before responding), and Node's 300s server.requestTimeout bounds both.
+  // Buffering still stops at the limit, so memory is unaffected; only discarded
+  // ingress continues.
+  //
+  // The real defence remains the client-side check in
+  // client/src/utils/uploadLimits.js, which rejects before a byte is sent. This
+  // handler exists so that when something gets past it we find out, instead of
+  // the path being silent as it was between 2026-05 and the 2026-07-23 incident.
+  //
+  // No userId here on purpose: this middleware mounts before any router-level
+  // `auth`, so req.user is never populated and recording it would just log a
+  // permanent null. The path plus content-length is what identifies the surface.
+  limitHandler: (req, res) => {
+    Sentry.captureMessage('upload_limit_exceeded', {
+      level: 'warning',
+      tags: { component: 'upload' },
+      extra: {
+        path: req.originalUrl,
+        method: req.method,
+        contentLength: req.headers['content-length'] || null,
+        limitBytes: MAX_UPLOAD_BYTES,
+      },
+    });
+    // Derived, never hardcoded. This is the third copy of the limit (client
+    // constant, server config, user-facing copy) and the only one a reader
+    // would not think to update.
+    res.status(413).json({
+      error: `That file is too large. The limit is ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))}MB.`,
+    });
+  },
 }));
 
 // Protected file access — admin and managers only. Returns a short-lived signed

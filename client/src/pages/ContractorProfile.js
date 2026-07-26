@@ -299,6 +299,7 @@ export default function ContractorProfile() {
           <FileUpload
             label="BASSET / Alcohol Certification"
             name="alcohol_certification"
+            kind="document"
             helper="BASSET, TIPS, ServSafe, etc. Required for events serving alcohol."
             onChange={handleFile}
             currentFile={files.alcohol_certification || existingFiles.alcohol_certification}
@@ -306,6 +307,7 @@ export default function ContractorProfile() {
           <FileUpload
             label="Resume (Optional)"
             name="resume"
+            kind="document"
             helper="Totally optional, but if you upload it we'll take a look at it."
             onChange={handleFile}
             currentFile={files.resume || existingFiles.resume}

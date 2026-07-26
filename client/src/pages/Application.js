@@ -616,7 +616,8 @@ export default function Application() {
               <FileUpload
                 label="Upload Your Resume *"
                 name="resume"
-                helper="PDF, JPEG, or PNG accepted."
+                kind="document"
+                helper="PDF, Word document, or a photo."
                 onChange={handleFile}
                 currentFile={files.resume}
               />
@@ -637,6 +638,7 @@ export default function Application() {
               <FileUpload
                 label="Upload Your BASSET / Alcohol Certification *"
                 name="basset"
+                kind="document"
                 helper="BASSET, TIPS, ServSafe, or equivalent. Required for all positions."
                 onChange={handleFile}
                 currentFile={files.basset}

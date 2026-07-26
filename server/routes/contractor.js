@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../db');
 const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
 const { auth } = require('../middleware/auth');
-const { isValidUpload } = require('../utils/fileValidation');
+const { isValidUpload, isValidOnboardingDocument } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
 const { geocodeAddress, buildAddressString } = require('../utils/geocode');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -98,8 +98,8 @@ router.post('/', auth, asyncHandler(async (req, res) => {
   // Handle file uploads
   if (req.files?.alcohol_certification) {
     const file = req.files.alcohol_certification;
-    if (!isValidUpload(file)) {
-      throw new ValidationError({ alcohol_certification: 'Invalid file type. Use PDF, JPEG, or PNG only.' });
+    if (!isValidOnboardingDocument(file)) {
+      throw new ValidationError({ alcohol_certification: 'We could not read that file. Use a PDF, Word document, or a photo.' });
     }
     const ext = path.extname(file.name);
     const filename = `${req.user.id}_alcohol_${uuidv4()}${ext}`;
@@ -110,8 +110,8 @@ router.post('/', auth, asyncHandler(async (req, res) => {
 
   if (req.files?.resume) {
     const file = req.files.resume;
-    if (!isValidUpload(file)) {
-      throw new ValidationError({ resume: 'Invalid file type. Use PDF, JPEG, or PNG only.' });
+    if (!isValidOnboardingDocument(file)) {
+      throw new ValidationError({ resume: 'We could not read that file. Use a PDF, Word document, or a photo.' });
     }
     const ext = path.extname(file.name);
     const filename = `${req.user.id}_resume_${uuidv4()}${ext}`;

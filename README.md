@@ -438,6 +438,8 @@ dr-bartender/
 │   │   │   ├── setupTime.js    # Back-of-house setup-time formatting (twin of server/utils/setupTime.js)
 │   │   │   ├── isPlaceholderEmail.js # Mirror of server emailValidation.isPlaceholderEmail (CC-import .invalid = no email; keep in sync)
 │   │   │   ├── timeOptions.js  # Time option generator + 12h formatter + input parser
+│   │   │   ├── uploadLimits.js # Upload size cap + per-kind extension allowlist (mirrors fileValidation.js)
+│   │   │   ├── downscaleImage.js # Browser-side photo downscaler run before upload
 │   │   │   └── tipCardMarks.js # Derives printable QR-card payment marks from saved handles (Stripe link + handles → mark list)
 │   │   ├── components/         # AdminLayout, Layout, PublicLayout,
 │   │   │                       # comms/NotifyConfirmModal (confirm-before-messaging popup: edit saves quiet-primary, receipts send-primary),

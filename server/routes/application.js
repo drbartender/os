@@ -3,7 +3,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
-const { isValidUpload } = require('../utils/fileValidation');
+const { isValidUpload, isValidOnboardingDocument } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
@@ -88,8 +88,8 @@ router.post('/', auth, asyncHandler(async (req, res) => {
 
   if (req.files?.resume) {
     const file = req.files.resume;
-    if (!isValidUpload(file)) {
-      throw new ValidationError({ resume: 'Invalid resume file type. Use PDF, JPEG, or PNG only.' });
+    if (!isValidOnboardingDocument(file)) {
+      throw new ValidationError({ resume: 'We could not read that file. Use a PDF, Word document, or a photo.' });
     }
     const ext = path.extname(file.name);
     const filename = `${req.user.id}_app_resume_${uuidv4()}${ext}`;
@@ -112,8 +112,8 @@ router.post('/', auth, asyncHandler(async (req, res) => {
 
   if (req.files?.basset) {
     const file = req.files.basset;
-    if (!isValidUpload(file)) {
-      throw new ValidationError({ basset: 'Invalid BASSET cert file type. Use PDF, JPEG, or PNG only.' });
+    if (!isValidOnboardingDocument(file)) {
+      throw new ValidationError({ basset: 'We could not read that file. Use a PDF, Word document, or a photo.' });
     }
     const ext = path.extname(file.name);
     const filename = `${req.user.id}_basset_${uuidv4()}${ext}`;

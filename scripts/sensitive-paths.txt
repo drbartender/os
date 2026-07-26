@@ -192,3 +192,18 @@ server/utils/lineItemRemovedNotify.js
 # review, 2026-07-26).
 server/utils/stripePayoutSync.js
 server/routes/stripePayouts.js
+
+# Upload perimeter (2026-07-26, onboarding-upload plan). fileValidation.js is the
+# magic-bytes allowlist every upload route trusts, and this batch widens it to admit
+# OLE and zip containers (DOC/DOCX) for onboarding documents. application.js and
+# contractor.js are the two routes that call the widened validator, and application.js
+# additionally owns the submit-time file gate that a later lane makes conditional on
+# pre_hired. Removing a server-side validation gate is the same class as the
+# payment.js self-promotion hole listed above: it matched no glob here, so it would
+# have scaled to a light look at push.
+server/utils/fileValidation.js
+server/routes/application.js
+server/routes/contractor.js
+# Global upload middleware: the size limit and its 413/abort behavior apply to EVERY
+# upload route in the app, so a change here has app-wide blast radius.
+server/index.js

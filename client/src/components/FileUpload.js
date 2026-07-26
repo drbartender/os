@@ -1,4 +1,6 @@
-import React, { useId } from 'react';
+import React, { useId, useState } from 'react';
+import { checkFile, acceptFor, DEFAULT_KIND } from '../utils/uploadLimits';
+import downscaleImage from '../utils/downscaleImage';
 
 // Touch-first devices (phones/tablets) have a coarse pointer. On desktop with a mouse,
 // the "Take Photo" affordance just falls through to a file picker, which is confusing —
@@ -7,13 +9,31 @@ const hasTouchCamera = typeof window !== 'undefined'
   && typeof window.matchMedia === 'function'
   && window.matchMedia('(pointer: coarse)').matches;
 
-export default function FileUpload({ label, name, accept, helper, onChange, currentFile, camera }) {
+export default function FileUpload({ label, name, accept, helper, onChange, currentFile, camera, kind = DEFAULT_KIND }) {
   const inputId = useId();
   const cameraInputId = useId();
+  const [error, setError] = useState('');
 
-  function handleChange(e) {
-    const file = e.target.files[0];
-    if (file) onChange(name, file);
+  // Validate at PICK time, before a single byte is sent. The old behaviour let
+  // an oversized file upload for a full minute and then reported a bare
+  // "network error", blaming the user's connection for our limit.
+  async function handleChange(e) {
+    const input = e.target;
+    const picked = input.files[0];
+    // Allow re-picking the same file after a rejection. jsdom rejects this
+    // assignment in some versions, and it is a convenience, not a correctness
+    // requirement, so a failure here must not break the pick.
+    try { input.value = ''; } catch (err) { /* jsdom */ }
+    if (!picked) return;
+
+    const file = await downscaleImage(picked);
+    const verdict = checkFile(file, kind);
+    if (!verdict.ok) {
+      setError(verdict.message);
+      return;
+    }
+    setError('');
+    onChange(name, file);
   }
 
   // Camera mode with no file yet AND on a touch device: show two distinct picker buttons
@@ -38,6 +58,7 @@ export default function FileUpload({ label, name, accept, helper, onChange, curr
           </label>
         </div>
         {helper && <p className="form-helper">{helper}</p>}
+        {error && <p className="field-error" role="alert">{error}</p>}
         {/* Camera capture input */}
         <input
           id={cameraInputId}
@@ -52,7 +73,7 @@ export default function FileUpload({ label, name, accept, helper, onChange, curr
           id={inputId}
           type="file"
           name={name}
-          accept={accept || 'image/*'}
+          accept={accept || acceptFor(kind)}
           onChange={handleChange}
           className="visually-hidden"
         />
@@ -84,16 +105,19 @@ export default function FileUpload({ label, name, accept, helper, onChange, curr
         ) : (
           <>
             <div className="file-upload-text">Click to upload</div>
-            <div className="file-upload-text">PDF, JPG, PNG accepted</div>
+            <div className="file-upload-text">
+              {kind === 'document' ? 'PDF, Word, or photo' : 'PDF or photo'}
+            </div>
           </>
         )}
       </label>
       {helper && <p className="form-helper" id={`${inputId}-helper`}>{helper}</p>}
+      {error && <p className="field-error" role="alert">{error}</p>}
       <input
         id={inputId}
         type="file"
         name={name}
-        accept={accept || '.pdf,.jpg,.jpeg,.png'}
+        accept={accept || acceptFor(kind)}
         onChange={handleChange}
         aria-describedby={helper ? `${inputId}-helper` : undefined}
         className="visually-hidden"
