@@ -37,4 +37,27 @@ const CONTRACT_LABELS = Object.freeze(['Deposit', 'Balance', 'Full Payment']);
 // in refundHelpers, which is merely ∉ CONTRACT_LABELS.
 const OFF_LEDGER_INVOICE_LABELS = Object.freeze([]);
 
-module.exports = { MAX_ADDON_QTY, safeAddonQty, CONTRACT_LABELS, OFF_LEDGER_INVOICE_LABELS };
+// Labels whose invoice amount_due TRACKS proposals.total_price, i.e. the ones
+// refreshUnlockedInvoices recomputes from the total on every reprice
+// (invoiceLifecycle.js: 'Full Payment' = total - external, 'Balance' = total -
+// external - lockedTotal). Everything else is NOT total-tracking: 'Deposit' is
+// refreshed but from deposit_amount, so a reprice never moves it, and every
+// other label ('Additional Services', 'Enhancement Lab', 'Drink Plan Extras',
+// manual) is skipped by the refresh entirely.
+//
+// This is the difference between "an unlocked invoice" and "an invoice whose
+// demand something else already corrected". A refund that lowers what a client
+// paid must correct that invoice's demand ITSELF unless this list (plus
+// unlocked) says the refresh will. Keying that decision on `locked` alone
+// stranded a client-visible phantom balance on unlocked non-total-tracking
+// invoices, on an invoice whose pay link is still live (push review,
+// 2026-07-26). Consumed by refundHelpers.applyRefundReconciliation.
+const TOTAL_TRACKING_INVOICE_LABELS = Object.freeze(['Balance', 'Full Payment']);
+
+module.exports = {
+  MAX_ADDON_QTY,
+  safeAddonQty,
+  CONTRACT_LABELS,
+  OFF_LEDGER_INVOICE_LABELS,
+  TOTAL_TRACKING_INVOICE_LABELS,
+};

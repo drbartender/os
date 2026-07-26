@@ -119,6 +119,9 @@ async function refundExecute({
         reason,
         issuedBy,
         totalScope,
+        // Adopt the exact row inserted at step 1, never a same-amount stranded
+        // one: the row now carries the total_price rule (push review 2026-07-26).
+        pendingRowId,
       },
       dbClient
     );

@@ -12,7 +12,11 @@
 
 const { pool } = require('../db');
 const { reconcileProposalPaymentStatus } = require('./proposalStatus');
-const { CONTRACT_LABELS, OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
+const {
+  CONTRACT_LABELS,
+  OFF_LEDGER_INVOICE_LABELS,
+  TOTAL_TRACKING_INVOICE_LABELS,
+} = require('./proposalMoneyShared');
 
 function fmtUSD(cents) {
   return '$' + (cents / 100).toFixed(2);
@@ -177,7 +181,10 @@ function planRefund({ paymentsWithRemaining, requestedDollars, amountPaidDollars
  * @returns {Promise<{applied:boolean}>}     applied=false → was already done
  */
 async function applyRefundReconciliation(
-  { proposalId, stripeRefundId, paymentIntentId, paymentId, amountCents, reason, issuedBy, totalScope = null },
+  {
+    proposalId, stripeRefundId, paymentIntentId, paymentId, amountCents, reason,
+    issuedBy, totalScope = null, pendingRowId = null,
+  },
   dbClient
 ) {
   // Serialize ALL refund reconciliation for this proposal on the proposals
@@ -208,13 +215,27 @@ async function applyRefundReconciliation(
   // extra-scope split, which the invoice labels below determine). Insert a
   // provisional value (= totalBefore) to satisfy NOT NULL; overwrite later.
   let refundRowId;
-  const pending = await dbClient.query(
-    `SELECT id, total_scope FROM proposal_refunds
-      WHERE stripe_payment_intent_id = $1 AND amount = $2
-        AND status = 'pending' AND stripe_refund_id IS NULL
-      ORDER BY created_at ASC LIMIT 1`,
-    [paymentIntentId, amountCents]
-  );
+  // Prefer the caller's OWN pending row by id. The (intent, amount) lookup
+  // below was a fine identity heuristic when the row only recorded history,
+  // but total_scope made the adopted row decide the total_price rule: a
+  // stranded pending row of the same amount on the same charge would silently
+  // rewrite the money semantics of a later, unrelated refund in either
+  // direction (push review, 2026-07-26). refundExecute knows exactly which row
+  // it wrote; the heuristic remains for adoption paths that do not (the
+  // charge.refunded webhook and the stale-pending sweeper).
+  const pending = pendingRowId
+    ? await dbClient.query(
+        `SELECT id, total_scope FROM proposal_refunds
+          WHERE id = $1 AND status = 'pending' AND stripe_refund_id IS NULL`,
+        [pendingRowId]
+      )
+    : await dbClient.query(
+        `SELECT id, total_scope FROM proposal_refunds
+          WHERE stripe_payment_intent_id = $1 AND amount = $2
+            AND status = 'pending' AND stripe_refund_id IS NULL
+          ORDER BY created_at ASC LIMIT 1`,
+        [paymentIntentId, amountCents]
+      );
   // total_price rule for THIS refund. The row is the source of truth (the
   // charge.refunded webhook and the stale-pending sweeper adopt pending rows
   // with no memory of the issuing caller); the param covers a direct call from
@@ -292,16 +313,23 @@ async function applyRefundReconciliation(
       );
       // Contract scope: drop amount_due AND amount_paid by `take` so a
       // fully-paid invoice stays paid at the corrected figure (no phantom
-      // unpaid line). Overpayment scope splits by the invoice's lock:
-      //   - UNLOCKED: amount_paid only. refreshUnlockedInvoices already
-      //     rebuilt this invoice's demand at the new total inside the cancel
-      //     transaction; dropping amount_due again would mint phantom credit.
-      //   - LOCKED: both, exactly like contract scope. The refresh never
-      //     touches a locked invoice, so nothing else corrects its demand;
-      //     paid-only would leave due > paid and flip a settled locked
-      //     invoice to a client-visible partially_paid phantom balance
-      //     (merge-fleet code-review, 2026-07-24).
-      const dropDue = scope !== 'overpayment' || link.invoice_locked === true;
+      // unpaid line). Overpayment scope drops amount_paid ONLY when something
+      // else already corrected this invoice's demand — which is true of
+      // exactly one population: UNLOCKED invoices with a TOTAL-TRACKING label,
+      // the ones refreshUnlockedInvoices rebuilds from the new total inside
+      // the cancel transaction. Dropping their due again would mint phantom
+      // credit. Every other invoice (locked, or unlocked with a label the
+      // refresh skips or computes independently, e.g. Deposit / Additional
+      // Services / Enhancement Lab / manual) has nobody correcting it, so
+      // paid-only would leave due > paid and flip a settled invoice to a
+      // client-visible partially_paid phantom balance on a live pay link.
+      // Keyed on the FACT (is the demand refresh-managed?) via the shared
+      // constant, not on the `locked` proxy that first encoded it — so adding
+      // a label to the refresh can never silently desync this rule
+      // (push review, 2026-07-26).
+      const demandIsRefreshManaged = link.invoice_locked !== true
+        && TOTAL_TRACKING_INVOICE_LABELS.includes(link.invoice_label);
+      const dropDue = scope !== 'overpayment' || !demandIsRefreshManaged;
       const upd = dropDue
         ? await dbClient.query(
             `UPDATE invoices
@@ -341,7 +369,23 @@ async function applyRefundReconciliation(
   // contract-linked portion as a total_price drop here would lower it twice
   // (a $200 removal ending $400 lower). Scope-zero the contract portion so the
   // total stands; amount_paid still drops by the full refunded amount.
-  const contractCents = scope === 'overpayment' ? 0 : amountCents - nonContractCents;
+  // Money the client paid IN EXCESS of the contract is attached to no contract
+  // line, so returning it cannot lower the contract — whoever issues it. Before
+  // this derivation, refunding an overpayment lowered total AND paid by the
+  // same amount, so the proposal stayed overpaid by exactly the same figure
+  // forever while the contract silently shrank on every attempt (measured on
+  // prod-shaped data 2026-07-26: total 2300 / paid 2500, refund $200 → total
+  // 2100 / paid 2300, still overpaid $200). That is also the root cause behind
+  // the cancel-line retry path: the payment panel is where the cancel dialog
+  // sends an admin after a failed refund, and it could only issue 'contract'
+  // scope. Deriving the excess here fixes both, for every caller, and leaves
+  // total_scope as the durable record plus a second layer of defense.
+  const paidBeforeCents = Math.round(Number(propRes.rows[0].amount_paid) * 100);
+  const excessCents = Math.max(0, paidBeforeCents - Math.round(totalBefore * 100));
+  const excessPortionCents = Math.min(amountCents, excessCents);
+  const contractCents = scope === 'overpayment'
+    ? 0
+    : Math.max(0, amountCents - nonContractCents - excessPortionCents);
   const paidDropCents = amountCents - offLedgerCents;
   // Floor at 0 to match the SQL GREATEST clamp below (and planRefund's pending
   // preview). Without this the audit figure written to total_price_after could
