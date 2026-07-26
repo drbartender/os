@@ -13,29 +13,44 @@ export function matchCancelTargets(snapshot, cancelTargets) {
   const targets = cancelTargets || [];
   const byRow = new Map();
   const used = new Set();
-  // Pass 1: GLOBAL exact matches first, so a bare-label row always claims its
-  // own target before any prefix logic runs.
+
+  // Money must corroborate the label. Labels alone are NOT unique: the engine
+  // emits the num_bartenders override row and the additional-bartender add-on
+  // row with the same shape ("Additional Bartender(s) (N)", pricingEngine
+  // :471 and :498), so a label-only match wired the override row's remove
+  // button to the add-on and the confirm step could not tell them apart
+  // (both read "Additional Bartender"). Push review, 2026-07-26.
+  const cents = (n) => Math.round(Number(n) * 100);
+  const amountAgrees = (row, entry) => entry.amount !== null
+    && entry.amount !== undefined
+    && cents(row.amount) === cents(entry.amount);
+
+  const claim = (i, idx) => { used.add(idx); byRow.set(i, targets[idx]); };
+
+  // Pass 1: exact label AND amount, globally, so an unambiguous row always
+  // claims its own target before any prefix logic runs.
   rows.forEach((item, i) => {
     const label = String(item.label || '');
-    const t = targets.findIndex((e, idx) => !used.has(idx) && e && e.label === label);
-    if (t !== -1) { used.add(t); byRow.set(i, targets[t]); }
+    const idx = targets.findIndex((e, k) => !used.has(k) && e && e.label === label && amountAgrees(item, e));
+    if (idx !== -1) claim(i, idx);
   });
-  // Pass 2: prefix for parameterized labels ("Bar Rental (2 bars)",
-  // "Wine Service (100 guests)"), LONGEST target label winning so
-  // "Wine Service" beats "Wine" on a Wine Service row. Greedy shortest-first
-  // matching here once bound a row's remove button to the wrong (cheaper)
-  // target when one addon name prefixed another (merge fleet, 2026-07-24).
+
+  // Pass 2: prefix for parameterized labels ("Bar Rental (2 bars)"), still
+  // requiring the amount to agree, and REFUSING to bind when two targets
+  // remain plausible. A control that cannot prove which money line it owns
+  // must not render on that line; it falls to the "other removable items"
+  // strip below the table, which is functional and cannot mis-target.
   rows.forEach((item, i) => {
     if (byRow.has(i)) return;
     const label = String(item.label || '');
-    let best = -1;
-    targets.forEach((e, idx) => {
-      if (used.has(idx) || !e || !e.label) return;
-      if (!label.startsWith(e.label)) return;
-      if (best === -1 || String(e.label).length > String(targets[best].label).length) best = idx;
+    const candidates = [];
+    targets.forEach((e, k) => {
+      if (used.has(k) || !e || !e.label) return;
+      if (label.startsWith(e.label) && amountAgrees(item, e)) candidates.push(k);
     });
-    if (best !== -1) { used.add(best); byRow.set(i, targets[best]); }
+    if (candidates.length === 1) claim(i, candidates[0]);
   });
+
   const unmatched = targets.filter((e, t) => !used.has(t) && e.cancellable && e.target);
   return { byRow, unmatched };
 }

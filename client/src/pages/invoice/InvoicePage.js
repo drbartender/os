@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
+import * as Sentry from '@sentry/react';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import api from '../../utils/api';
@@ -153,6 +154,12 @@ export default function InvoicePage() {
         jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' },
       }).from(element).save();
     } catch (err) {
+      // Report it: the fallback below keeps the client unblocked, but without
+      // this capture CLIENT-9 goes silent in Sentry and reads as fixed whether
+      // or not the onclone taint workaround actually holds on iOS Safari
+      // (client Sentry has no CaptureConsole integration, so console.error
+      // alone reports nothing). Push review, 2026-07-26.
+      Sentry.captureException(err, { tags: { component: 'InvoicePage', step: 'pdf_generate' } });
       console.error('Invoice PDF generation failed:', err);
       setPdfError('We couldn\'t generate the PDF in this browser. Please use your browser\'s Print option and choose "Save as PDF" instead.');
     } finally {

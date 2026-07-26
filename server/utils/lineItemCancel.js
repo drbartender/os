@@ -179,10 +179,27 @@ async function computeCancelTargets(dbClient, proposalId) {
       actual: proposal.num_bartenders,
     });
     if (rb.removable > 0) {
+      // MIRROR the engine's own staffing line rather than recomputing it, so
+      // the admin UI can bind this target to its row by label + amount. Two
+      // traps this avoids (push review, 2026-07-26): the hand-written label
+      // "Additional bartender(s)" matched no row at all, orphaning the control
+      // beside a near-identical add-on line and setting up a mis-click; and
+      // staffing.total is NOT the row's amount, because the engine puts the
+      // sub-100-guest surcharge on its own Shared Gratuity row
+      // (pricingEngine.js:458-481). The override line is emitted BEFORE the
+      // add-on lines, so the first "Additional Bartender…" row is ours — which
+      // also picks up the "— Included with class" variant verbatim.
+      const staffingRow = (snap?.breakdown || []).find(
+        (b) => typeof b?.label === 'string' && b.label.startsWith('Additional Bartender')
+      );
+      const extra = Number(snap?.staffing?.extra || 0);
+      const hours = Number(proposal.event_duration_hours) || 0;
       targets.push({
         target: 'extra-bartender',
-        label: 'Additional bartender(s)',
-        amount: Number(snap?.staffing?.total || 0),
+        label: staffingRow?.label ?? `Additional Bartender${extra !== 1 ? 's' : ''} (${extra})`,
+        amount: staffingRow
+          ? Number(staffingRow.amount)
+          : Math.round(extra * hours * Number(snap?.staffing?.hourly_rate || 0) * 100) / 100,
         count: rb.removable,
         cancellable: true,
       });

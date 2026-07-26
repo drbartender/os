@@ -666,3 +666,19 @@ test('per_hour addon partial removal keeps the RAW count in the row (no hours-ba
     assert.equal(reload.find((a) => a.slug === slug).quantity, 2);
   });
 });
+
+test('extra-bartender target label matches the engine breakdown row EXACTLY', async () => {
+  // Anti-drift pin for the 2026-07-26 mis-bind: the admin UI binds a remove
+  // button to its money row by label + amount, so this target's label must be
+  // byte-identical to the row pricingEngine emits. A hand-written label here
+  // matched no row, orphaned the control, and let the neighbouring
+  // additional-bartender add-on row claim a button that removed the wrong line.
+  const { proposalId, snapshot } = await seedProposal({ numBartenders: 3 });
+  const { targets } = await computeCancelTargets(pool, proposalId);
+  const t = targets.find((x) => x.target === 'extra-bartender');
+  assert.ok(t, 'expected an extra-bartender target');
+  const row = snapshot.breakdown.find((b) => b.label === t.label);
+  assert.ok(row, `no breakdown row matches target label "${t.label}" (labels: ${snapshot.breakdown.map((b) => b.label).join(' | ')})`);
+  assert.equal(Math.round(Number(row.amount) * 100), Math.round(Number(t.amount) * 100),
+    'amount must corroborate the label, or the UI refuses to bind');
+});

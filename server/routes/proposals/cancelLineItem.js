@@ -213,6 +213,17 @@ router.post('/:id/cancel-line', auth, adminOnly, adminWriteLimiter, asyncHandler
         manualReturnCents: plan.manualReturnCents,
       });
       notifications.push({ type: 'line_item_removed_notice', ...n });
+    } else if (notify_client === true) {
+      // Splits were planned but none succeeded: the item is gone and money is
+      // still owed. Emailing either story would be wrong (the refund notice
+      // names money that never moved; the removal notice implies nothing is
+      // owed), so tell the ADMIN no notice went out and let them resolve the
+      // refund first (push review, 2026-07-26).
+      notifications.push({
+        type: 'client_notice',
+        email: 'skipped',
+        skip_reasons: { email: 'Refund did not complete, so no client notice was sent. Finish the refund, then tell the client.' },
+      });
     }
   } catch (e) {
     if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(e, { tags: { route: 'cancelLineItem', step: 'notices' } });

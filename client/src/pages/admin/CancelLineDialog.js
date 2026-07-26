@@ -97,6 +97,20 @@ export default function CancelLineDialog({ proposalId, entry, clientEmail, clien
       });
       setResult(res.data);
       setStep('done');
+      // Per-channel truth: a notice that failed or was suppressed must be
+      // visible or the admin believes the client (or the staff who need the
+      // tip-jar notice) was told when they were not. Same posture as the
+      // payment panel's refund notice (push review, 2026-07-26).
+      (res.data.notifications || []).forEach((n) => {
+        if (n.email === 'failed') {
+          toast.error(`Removed, but the client notice failed to send: ${n.email_error || 'unknown error'}`);
+        } else if (n.email === 'skipped' && n.skip_reasons?.email) {
+          toast.info(`Removed. Notice not sent: ${n.skip_reasons.email}`);
+        }
+        if (n.type === 'gratuity_staff_notice' && n.failed > 0) {
+          toast.error(`Removed, but ${n.failed} staff tip-jar notice${n.failed === 1 ? '' : 's'} failed to send. Tell them directly.`);
+        }
+      });
       toast.success(`${res.data.removed_label || 'Line item'} removed.`);
       if (onDone) onDone(res.data);
     } catch (err) {
