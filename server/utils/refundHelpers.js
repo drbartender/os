@@ -369,23 +369,21 @@ async function applyRefundReconciliation(
   // contract-linked portion as a total_price drop here would lower it twice
   // (a $200 removal ending $400 lower). Scope-zero the contract portion so the
   // total stands; amount_paid still drops by the full refunded amount.
-  // Money the client paid IN EXCESS of the contract is attached to no contract
-  // line, so returning it cannot lower the contract — whoever issues it. Before
-  // this derivation, refunding an overpayment lowered total AND paid by the
-  // same amount, so the proposal stayed overpaid by exactly the same figure
-  // forever while the contract silently shrank on every attempt (measured on
-  // prod-shaped data 2026-07-26: total 2300 / paid 2500, refund $200 → total
-  // 2100 / paid 2300, still overpaid $200). That is also the root cause behind
-  // the cancel-line retry path: the payment panel is where the cancel dialog
-  // sends an admin after a failed refund, and it could only issue 'contract'
-  // scope. Deriving the excess here fixes both, for every caller, and leaves
-  // total_scope as the durable record plus a second layer of defense.
-  const paidBeforeCents = Math.round(Number(propRes.rows[0].amount_paid) * 100);
-  const excessCents = Math.max(0, paidBeforeCents - Math.round(totalBefore * 100));
-  const excessPortionCents = Math.min(amountCents, excessCents);
-  const contractCents = scope === 'overpayment'
-    ? 0
-    : Math.max(0, amountCents - nonContractCents - excessPortionCents);
+  // NOTE (2026-07-26): a derivation was attempted here that treated
+  // `amount_paid - total_price` as "money paid in excess of the contract" and
+  // spared that portion from lowering total_price. It was REVERTED before
+  // shipping: that difference is not overpayment in this schema. Drink Plan
+  // Extras (syrup-only pay-now) and manual-label invoices legitimately roll
+  // into amount_paid and never into total_price, so the difference counted
+  // them as excess and then subtracted them twice, silently swallowing genuine
+  // contract refunds. Prod's only positive difference (proposal 599, $60) is
+  // exactly a paid Drink Plan Extras invoice, not an overpayment. The real
+  // defect it was chasing (refunding a TRUE overpayment lowers total and paid
+  // together, so the proposal stays overpaid forever) is logged in
+  // docs/fix-list-remaining-2026-07-02.md with the netting formula that would
+  // fix it properly. Do not re-attempt without netting out outstanding
+  // non-contract invoice money.
+  const contractCents = scope === 'overpayment' ? 0 : amountCents - nonContractCents;
   const paidDropCents = amountCents - offLedgerCents;
   // Floor at 0 to match the SQL GREATEST clamp below (and planRefund's pending
   // preview). Without this the audit figure written to total_price_after could

@@ -244,35 +244,9 @@ test('RC1 regression: unlocked Balance still drops paid ONLY (refresh owns its d
   assert.equal(Number(inv.amount_paid), 80000);
 });
 
-test('RC3: a CONTRACT-scope refund of an overpayment clears it instead of shrinking the contract', async () => {
-  // Pre-existing defect, measured on the shipped payment panel 2026-07-26:
-  // refunding an overpayment lowered total AND paid by the same amount, so the
-  // proposal stayed overpaid by exactly the same figure forever and the
-  // contract silently shrank on every attempt. Money paid in excess of the
-  // contract is attached to no contract line, so returning it cannot lower the
-  // contract. This is the root cause behind the cancel-line retry path too:
-  // the panel is where the dialog sends an admin after a failed refund.
-  const o = await seedOverpaid();          // total 800, paid 1000, locked Balance
-  const recon = await reconcile(o, { refundId: `re_${NONCE}_rc3` }); // $200, default scope
-  assert.equal(recon.applied, true);
-  const p = (await pool.query('SELECT total_price, amount_paid FROM proposals WHERE id = $1', [o.proposalId])).rows[0];
-  assert.equal(Number(p.total_price), 800, 'excess refund must NOT lower the contract');
-  assert.equal(Number(p.amount_paid), 800, 'money held drops by the refund');
-  assert.equal(Number(p.amount_paid) - Number(p.total_price), 0, 'the overpayment is actually cleared');
-});
-
-test('RC3: a refund SPANNING the overpayment splits: excess spares the contract, the rest lowers it', async () => {
-  // total 800, paid 1000 => 200 excess. Refund 500: 200 is excess (no contract
-  // move), 300 is a genuine contract correction.
-  const o = await seedOverpaid();
-  await reconcile(o, { refundId: `re_${NONCE}_rc3b`, amountCents: 50000 });
-  const p = (await pool.query('SELECT total_price, amount_paid FROM proposals WHERE id = $1', [o.proposalId])).rows[0];
-  assert.equal(Number(p.total_price), 500, '800 - 300 contract portion');
-  assert.equal(Number(p.amount_paid), 500, '1000 - 500 refunded');
-});
-
-test('RC3 regression: a normal contract refund on a NOT-overpaid proposal is unchanged', async () => {
-  // paid == total: no excess, so Approach A applies in full, exactly as shipped.
+test('Approach A on a NOT-overpaid proposal: contract refund lowers the total', async () => {
+  // paid == total, the ordinary shape. Kept from the reverted RC3 work as a
+  // second pin on the shipped Approach-A behavior.
   const o = await seedOverpaid();
   await pool.query('UPDATE proposals SET amount_paid = 800 WHERE id = $1', [o.proposalId]);
   await reconcile(o, { refundId: `re_${NONCE}_rc3c` });

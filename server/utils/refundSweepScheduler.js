@@ -84,6 +84,14 @@ async function adoptCandidate(row, candidate) {
         amountCents: row.amount,
         reason: row.reason,
         issuedBy: null,
+        // Adopt THIS row, not whichever same-amount pending row on the same
+        // charge happens to be oldest. The sweeper already resolved the exact
+        // row (its Stripe candidate is matched by the proposal_refund_row_id
+        // metadata anchor), and the row now carries total_scope, i.e. the
+        // total_price rule — so the heuristic could adopt a stranded row of
+        // the other scope and lower the contract a second time while leaving
+        // this row pending forever (push review, 2026-07-26).
+        pendingRowId: row.id,
       },
       dbClient
     );

@@ -372,7 +372,52 @@ causes in `05c38bb0`, the UI mis-bind in `e1eb303e`). These are the ones judged
 real but not worth expanding that batch for. Severity as the reviewers rated
 them; none is a money-wrong path.
 
+**Refunds: overpayment never clears (REAL, unfixed, do not re-attempt naively)**
+- Refunding a TRUE overpayment lowers `total_price` AND `amount_paid` by the
+  same amount, so the proposal stays overpaid by exactly the same figure and the
+  contract silently shrinks on every attempt. Measured 2026-07-26: total 2300 /
+  paid 2500, refund $200 → total 2100 / paid 2300, still overpaid $200.
+- A fix WAS written and REVERTED before shipping. It derived the excess as
+  `amount_paid - total_price` and spared that portion from lowering the total.
+  That premise is wrong in this schema: Drink Plan Extras (syrup-only pay-now,
+  `submit.js` fast path) and manual-label invoices roll into `amount_paid` and
+  never into `total_price`, so the difference counts them as overpayment and
+  then subtracts them twice. Two independent reviewers reproduced it: a $150
+  goodwill refund on a 2000/2150 proposal left the total at 2000 instead of
+  1850, and a $1100 refund on a deposit-stage 1000/1300 proposal left a $100
+  phantom balance the autopay scheduler would have charged. It also made the
+  multi-split loops order-dependent.
+- Prod exposure is currently ZERO: the only proposal with
+  `amount_paid > total_price` (599, $60) is a paid Drink Plan Extras invoice,
+  not an overpayment. That is why this is logged rather than fixed under push
+  pressure.
+- The candidate fix, if this is ever picked up: net out still-outstanding
+  non-contract invoice money before deriving the excess, read BEFORE the invoice
+  walk decrements it — `excess = paid - total - Σ amount_paid on non-CONTRACT_LABELS
+  invoices (status <> 'void')`. Verify it against the multi-split loops in
+  `proposals/cancel.js` and the cancel-line route for order-independence, and
+  against the RC1 fixtures in `refundHelpers.scope.test.js`.
+- Related, same cause: after a FAILED cancel-line refund the dialog sends the
+  admin to the payment panel, which can only issue `'contract'` scope and would
+  therefore lower a total the fold already corrected. Until the above is fixed,
+  the safe recovery on that path is a manual Stripe-dashboard refund (the
+  `charge.refunded` webhook reconciles it) rather than the panel.
+
 **Cancel-line feature**
+- The `additional-bartender` ADD-ON target's amount comes from
+  `proposal_addons.line_total`, which bakes the sub-100-guest gratuity surcharge
+  in (`pricingEngine.js` `effectiveRate = rate + bartenderGratuityPerHour`),
+  while its breakdown row splits the surcharge onto a separate Shared Gratuity
+  line. Since the UI now requires label AND amount to agree, that target no
+  longer binds to its row and falls to the "Other removable items" strip.
+  Reachable and correctly labeled there, so this is a UX regression, not a money
+  bug. Four live proposals affected (491, 580, 576, 482). Fix = mirror the
+  breakdown row for that slug the way the override target now does, taking care
+  to pick the ADD-ON row rather than the override row when both exist.
+- `matchCancelTargets` (the ambiguity refusal and amount corroboration) has no
+  test: the client has no test runner, and the new server-side test only pins
+  the override target's label/amount. The collision case is reproducible with a
+  throwaway node script against the exported function.
 - `POST /:id/cancel-line/preview` runs the whole mutation (proposals FOR UPDATE,
   addon writes, drink_plans FOR UPDATE, invoice refresh + delta reconcile, shift
   sync) and then ROLLBACKs. Side-effect-free outside the DB and connection-clean,
@@ -403,6 +448,16 @@ them; none is a money-wrong path.
   crafted object target can commit a `line_item_cancelled` audit row while
   removing nothing. Admin-only, no money moves wrongly. One-line route guard.
   (low)
+- RC4 (adopt the caller's own pending row by id) was applied to `refundExecute`
+  and the stale-pending sweeper, but NOT to the `charge.refunded` webhook, which
+  also has the row id available on `refundObj.metadata.proposal_refund_row_id`
+  (stamped by `refundExecute`). Same failure shape: a stranded same-amount
+  pending row of the other scope can be adopted instead. (low)
+- The by-id adoption lookup checks only `id + status + stripe_refund_id IS NULL`;
+  it dropped the corroborating `proposal_id` / intent / amount predicates. Safe
+  today (only `refundExecute` and the sweeper pass an id, always their own row),
+  but a future caller passing a wrong id would reconcile against the wrong
+  proposal. Cheap to harden. (low)
 - `getStripe()` is called AFTER the removal commits with no null check (both
   other refundExecute callers guard first), so missing creds leave the line
   removed and a `pending` refund row blocking headroom while the operator is told
