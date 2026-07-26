@@ -1561,17 +1561,36 @@ git commit -m "feat(onboarding): autosave the application and contractor profile
 
 ## Lane C: Files stop blocking submit
 
-**All three lanes touch `client/src/pages/Application.js`** (A4 step 3b adds `kind`, B4 adds the draft snapshot, C3 removes the file rules), and A and B both touch `ContractorProfile.js`. **Run them strictly in order A, then B, then C, in a single lane or three sequential ones. Never as parallel worktrees.**
+**All three lanes touch `client/src/pages/Application.js`** (A4 step 3b adds `kind`, B4 adds the draft snapshot, C3 removes the file rules), and A and B both touch `ContractorProfile.js`. **Run them strictly in order A, then B, then C, and give Lane C its own lane and its own squash commit.** Never as parallel worktrees. Lane C must not be folded into a single lane with A and B: the squash-merge model would collapse the file-gate removal into the same commit as the safety nets it depends on, and that gate removal is the one change in this plan you might realistically want to revert on its own.
 
-**Order inside Lane C is load-bearing.** The safety nets get built before the guard comes down, not after. C3 is the task that lets a recruit submit with documents missing; C1 and C2 are what make that visible to you and to them. Building C3 first, even for an afternoon, means recruits can submit into a hole nothing reports. C1 declares no dependency on either sibling, so this ordering costs nothing.
+**Order inside Lane C is load-bearing.** The safety nets get built before the guard comes down. C3 is the task that lets a recruit submit with documents missing; C1 and C2 are what make that visible. C1 declares no dependency on either sibling, so this ordering costs nothing.
 
-### Task C1: One predicate, two surfaces
+### Two different questions, deliberately scoped differently
 
-The recruit's "you still owe us X" banner and the admin's "N bartenders missing documents" count answer the same question. If they compute it separately they will disagree, and the disagreement is not hypothetical: `GET /api/contractor` only falls back to application data while the profile has no `preferred_name` (`server/routes/contractor.js:31-42`), and `POST /contractor` never copies application file URLs forward (it preserves only existing `contractor_profiles` URLs, lines 145-149). A recruit who uploaded a resume on the application and then saved their profile would be told "we still need your resume" while the admin count marked them complete.
+This lane answers two things that sound like one:
 
-So the predicate lives in exactly one place and both surfaces import it.
+**"What do I still owe?"** is informational, asked by the recruit about themselves. It covers both documents and everyone still moving through onboarding, including `applied` and `interviewing`. Nobody is harmed by an over-broad to-do list on their own page.
 
-Note both documents have two possible homes. A resume is `applications.resume_file_url` or `contractor_profiles.resume_file_url`; the certification is `applications.basset_file_url` or `contractor_profiles.alcohol_certification_file_url`. Either satisfies the requirement, so the predicate coalesces across both.
+**"Who can work a shift without a certification?"** is a compliance alert, asked by the admin about everyone. It covers the certification only, and only people who can actually be assigned.
+
+Sizing the naive version against production is what forced the split. A predicate covering both documents across all onboarding statuses returns **50 rows**, into a strip capped at 6 whose overflow row links to `/events`:
+
+| Status | Owing something | No certification | No resume |
+|---|---|---|---|
+| hired (legacy) | 33 | 13 | 33 |
+| in_progress | 11 | 11 | 11 |
+| approved | 6 | **2** | 6 |
+
+The resume generates all of the volume and none of the risk: every one of the 50 lacks one, because it is a nice-to-have on people already hired. The certification among people who can actually be staffed is **2 rows**, and both are real:
+
+- **Debbie (241)**, worked shift 363 on 2026-07-25 with no certification on file.
+- **Loryn (55)**, booked on shift 347 for **2026-08-01**, no certification on file.
+
+So the admin alert is scoped to the certification, among exactly the statuses `server/routes/shifts.approval.js:233` uses to gate assignment. Not a hand-picked list: the same one the assignment code enforces, so the alert covers precisely the population that can be put in front of a client.
+
+That scoping also closes a gap by construction. An ordinary applicant becomes `applied` on submit (`server/routes/application.js:278`), and C3 removes their file gate too. Tying the alert to the assignment gate means they are correctly absent from the compliance alert (they cannot be staffed) while still being told what they owe on their own page.
+
+### Task C1: The shared predicate
 
 **Files:**
 - Create: `server/utils/outstandingDocuments.js`
@@ -1580,17 +1599,15 @@ Note both documents have two possible homes. A resume is `applications.resume_fi
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
 - Produces:
-  - `DOC_JOINS: string`: the `LEFT JOIN` clauses both queries share, aliasing `applications` as `a` and `contractor_profiles` as `cp`.
-  - `RESUME_MISSING: string`, `CERT_MISSING: string`: SQL boolean fragments.
-  - `ONBOARDED_STATUSES: string[]`
-  - `outstandingFor(userId) -> Promise<string[]>`: human-readable labels for one user, e.g. `['resume', 'alcohol certification']`, empty when nothing is owed.
-  - `listOutstanding() -> Promise<Array<{ user_id: number, name: string, owed: string[] }>>`: everyone who owes at least one document, newest first.
-
-**Why a list and not a count.** A bare number dead-ends. The admin item would read "3 bartenders missing documents" and link to `/hiring`, but `HiringDashboard.js:59` populates that page from `/admin/applications`, which INNER JOINs `applications`. Every direct hire the count exists to catch is absent from the page the count sends you to. Naming people instead, each linking to their own detail page, costs the same and lands on `DocumentsTab`, which already renders exactly which document is missing (`DocumentsTab.js:13-17` performs the identical profile-then-application fallback).
+  - `outstandingFor(userId) -> Promise<string[]>`: labels for one user, e.g. `['resume', 'alcohol certification']`, empty when nothing is owed. Broad status set.
+  - `listUncertifiedStaffable() -> Promise<Array<{ user_id, name, next_shift_id, next_shift_date }>>`: everyone who can be assigned to a shift and has no certification on file, soonest upcoming shift first. `next_shift_*` are null when they are not currently booked.
+  - `ONBOARDING_STATUSES: string[]`, `STAFFABLE_STATUSES: string[]`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `server/utils/outstandingDocuments.test.js`:
+Create `server/utils/outstandingDocuments.test.js`.
+
+**The `applications` fixtures must satisfy eight NOT NULL columns with no defaults** (`full_name, phone, city, state, travel_distance, reliable_transportation, positions_interested, why_dr_bartender`, verified against the live schema). An earlier revision omitted them and would have aborted `before()`, failing the suite before a single assertion ran.
 
 ```js
 require('dotenv').config();
@@ -1601,12 +1618,13 @@ const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
 
 const { pool } = require('../db');
-const { outstandingFor, listOutstanding } = require('./outstandingDocuments');
+const { outstandingFor, listUncertifiedStaffable } = require('./outstandingDocuments');
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const ids = {};
+let shiftId;
 
-async function mkUser(tag, status = 'in_progress') {
+async function mkUser(tag, status) {
   const hash = await bcrypt.hash('x', 4);
   const r = await pool.query(
     `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
@@ -1616,40 +1634,73 @@ async function mkUser(tag, status = 'in_progress') {
   return r.rows[0].id;
 }
 
+// applications has eight NOT NULL columns with no default; supply them all.
+async function mkApplication(userId, name, { resume = null, basset = null } = {}) {
+  await pool.query(
+    `INSERT INTO applications
+       (user_id, full_name, phone, city, state, travel_distance, reliable_transportation,
+        positions_interested, why_dr_bartender, resume_file_url, basset_file_url)
+     VALUES ($1, $2, '3125550000', 'Chicago', 'Illinois', '30 minutes', 'Yes',
+             '["Bartender"]', 'testing', $3, $4)`,
+    [userId, name, resume, basset]
+  );
+}
+
 before(async () => {
   await pool.query("DELETE FROM users WHERE email LIKE 'odoc-%'");
 
-  // Owes both, and has NO application row at all. This is the direct-hire case
-  // the whole count exists for, and the case an INNER JOIN would silently drop.
-  ids.bare = await mkUser('bare');
+  // Owes both, no application row at all. The direct-hire case an INNER JOIN drops.
+  ids.bare = await mkUser('bare', 'in_progress');
 
-  // Owes nothing, both documents on the APPLICATION only.
-  ids.viaApp = await mkUser('viaapp');
-  await pool.query(
-    `INSERT INTO applications (user_id, full_name, resume_file_url, basset_file_url)
-     VALUES ($1, 'Via App', '/files/r.pdf', '/files/b.pdf')`, [ids.viaApp]);
+  // Owes nothing; both documents on the APPLICATION only.
+  ids.viaApp = await mkUser('viaapp', 'approved');
+  await mkApplication(ids.viaApp, 'Via App', { resume: '/files/r.pdf', basset: '/files/b.pdf' });
 
-  // Owes nothing, both documents on the CONTRACTOR PROFILE only. This is the
-  // pair that diverged when the two surfaces computed the predicate separately.
-  ids.viaProfile = await mkUser('viaprofile');
+  // Owes nothing; both on the CONTRACTOR PROFILE only. The pair that diverged
+  // when the two surfaces computed the predicate separately.
+  ids.viaProfile = await mkUser('viaprofile', 'approved');
   await pool.query(
     `INSERT INTO contractor_profiles (user_id, preferred_name, resume_file_url, alcohol_certification_file_url)
      VALUES ($1, 'Via Profile', '/files/r.pdf', '/files/c.pdf')`, [ids.viaProfile]);
 
-  // Owes the certification only: resume on the application, nothing else.
-  ids.halfway = await mkUser('halfway');
-  await pool.query(
-    `INSERT INTO applications (user_id, full_name, resume_file_url) VALUES ($1, 'Halfway', '/files/r.pdf')`,
-    [ids.halfway]);
+  // STAFFABLE and uncertified, not booked. Belongs in the alert.
+  ids.riskIdle = await mkUser('riskidle', 'approved');
+  await mkApplication(ids.riskIdle, 'Risk Idle', { resume: '/files/r.pdf' });
 
-  // Owes both but is deactivated, so must not be counted.
+  // STAFFABLE, uncertified, AND booked on an upcoming shift. Highest priority.
+  ids.riskBooked = await mkUser('riskbooked', 'approved');
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, preferred_name, resume_file_url)
+     VALUES ($1, 'Risk Booked', '/files/r.pdf')`, [ids.riskBooked]);
+  const sh = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, end_time, location, positions_needed, status, client_name)
+     VALUES (CURRENT_DATE + 5, '3:00 PM', '7:00 PM', 'Test', '["Bartender"]', 'open', $1) RETURNING id`,
+    [`odoc-client-${NONCE}`]);
+  shiftId = sh.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status) VALUES ($1, $2, 'Bartender', 'approved')`,
+    [shiftId, ids.riskBooked]);
+
+  // Uncertified but NOT staffable: mid-onboarding, cannot be assigned.
+  ids.notYet = await mkUser('notyet', 'in_progress');
+
+  // Uncertified and 'applied'. C3 removes their file gate, so they must be told
+  // what they owe, but they cannot be staffed and must stay out of the alert.
+  ids.applied = await mkUser('applied', 'applied');
+  await mkApplication(ids.applied, 'Applied Person');
+
+  // Off-funnel entirely.
   ids.gone = await mkUser('gone', 'deactivated');
 });
 
 after(async () => {
+  await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [shiftId]);
+  await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
   await pool.query('DELETE FROM users WHERE email LIKE $1', [`odoc-%${NONCE}@example.com`]);
   await pool.end();
 });
+
+// ── outstandingFor: the recruit's own to-do, both documents, broad statuses ──
 
 test('a user with no application row owes both documents', async () => {
   assert.deepEqual(await outstandingFor(ids.bare), ['resume', 'alcohol certification']);
@@ -1663,51 +1714,62 @@ test('documents on the contractor profile satisfy the requirement', async () => 
   assert.deepEqual(await outstandingFor(ids.viaProfile), []);
 });
 
-test('a partially complete user owes only what is actually missing', async () => {
-  assert.deepEqual(await outstandingFor(ids.halfway), ['alcohol certification']);
+test('a partially complete user owes only what is missing', async () => {
+  assert.deepEqual(await outstandingFor(ids.riskIdle), ['alcohol certification']);
 });
 
-test('the list names the no-application-row user', async () => {
-  const rows = await listOutstanding();
-  const bare = rows.find(r => r.user_id === ids.bare);
-  assert.ok(bare, 'a direct hire with no application row MUST appear; this is the whole point');
-  assert.deepEqual(bare.owed, ['resume', 'alcohol certification']);
+test('an applicant is told what they owe even though they cannot be staffed', async () => {
+  // C3 removes their file gate, so this MUST NOT be empty.
+  assert.deepEqual(await outstandingFor(ids.applied), ['resume', 'alcohol certification']);
 });
 
-test('the list falls back through profile name, application name, then email', async () => {
-  const rows = await listOutstanding();
-  // ids.bare has neither a profile nor an application, so it falls to email.
-  assert.match(rows.find(r => r.user_id === ids.bare).name, /odoc-bare-/);
-  // ids.halfway has an application carrying full_name.
-  assert.equal(rows.find(r => r.user_id === ids.halfway).name, 'Halfway');
+test('an off-funnel user owes nothing', async () => {
+  assert.deepEqual(await outstandingFor(ids.gone), []);
 });
 
-test('the list carries per-person detail, not just membership', async () => {
-  const rows = await listOutstanding();
-  assert.deepEqual(rows.find(r => r.user_id === ids.halfway).owed, ['alcohol certification']);
+// ── listUncertifiedStaffable: the admin alert, certification only, staffable only ──
+
+test('the alert names staffable people with no certification', async () => {
+  const rows = await listUncertifiedStaffable();
+  const listed = rows.map(r => r.user_id);
+  assert.ok(listed.includes(ids.riskIdle), 'an approved, uncertified worker must be listed');
+  assert.ok(listed.includes(ids.riskBooked), 'a booked, uncertified worker must be listed');
 });
 
-test('the list excludes anyone who owes nothing', async () => {
-  const rows = await listOutstanding();
-  for (const id of [ids.viaApp, ids.viaProfile, ids.gone]) {
-    assert.equal(rows.some(r => r.user_id === id), false, `user ${id} should not be listed`);
+test('the alert excludes people who cannot be staffed', async () => {
+  const listed = (await listUncertifiedStaffable()).map(r => r.user_id);
+  for (const id of [ids.bare, ids.notYet, ids.applied, ids.gone]) {
+    assert.equal(listed.includes(id), false,
+      `user ${id} cannot be assigned to a shift and must not raise a compliance alert`);
   }
 });
 
-test('the list and the per-user answer never disagree', async () => {
-  // The whole point of the shared predicate: two surfaces, one source of truth.
-  const rows = await listOutstanding();
-  for (const id of [ids.bare, ids.halfway, ids.viaApp, ids.viaProfile]) {
-    const perUser = await outstandingFor(id);
-    const listed = rows.find(r => r.user_id === id);
-    assert.deepEqual(listed ? listed.owed : [], perUser,
-      `list and outstandingFor disagree for user ${id}`);
-  }
+test('the alert ignores a missing resume', async () => {
+  // viaApp has both; riskIdle has a resume but no cert; a resume-only gap is not an alert.
+  const listed = (await listUncertifiedStaffable()).map(r => r.user_id);
+  assert.equal(listed.includes(ids.viaApp), false);
 });
 
-test('off-funnel users are excluded', async () => {
-  assert.deepEqual(await outstandingFor(ids.gone), [],
-    'a deactivated user is not "owing" anything; they are not onboarding');
+test('a booked worker carries their next shift, an idle one carries null', async () => {
+  const rows = await listUncertifiedStaffable();
+  const booked = rows.find(r => r.user_id === ids.riskBooked);
+  const idle = rows.find(r => r.user_id === ids.riskIdle);
+  assert.equal(booked.next_shift_id, shiftId);
+  assert.ok(booked.next_shift_date, 'a booked worker must expose the date so the row can escalate');
+  assert.equal(idle.next_shift_id, null);
+});
+
+test('booked workers sort ahead of idle ones', async () => {
+  const rows = await listUncertifiedStaffable();
+  const iBooked = rows.findIndex(r => r.user_id === ids.riskBooked);
+  const iIdle = rows.findIndex(r => r.user_id === ids.riskIdle);
+  assert.ok(iBooked < iIdle, 'someone about to work uncertified outranks someone merely eligible');
+});
+
+test('names fall back through profile, application, then email', async () => {
+  const rows = await listUncertifiedStaffable();
+  assert.equal(rows.find(r => r.user_id === ids.riskBooked).name, 'Risk Booked');
+  assert.equal(rows.find(r => r.user_id === ids.riskIdle).name, 'Risk Idle');
 });
 ```
 
@@ -1723,23 +1785,32 @@ Create `server/utils/outstandingDocuments.js`:
 ```js
 const { pool } = require('../db');
 
-// Which documents a worker still owes, defined ONCE.
+// Two questions that sound like one.
 //
-// Two surfaces ask this question: the recruit's own "you still owe us X" notice
-// and the admin's "N bartenders missing documents" count. Computing it in two
-// places produced contradictory answers, because GET /api/contractor only falls
-// back to application data while the profile has no preferred_name
-// (server/routes/contractor.js:31-42) and POST /contractor never copies
-// application file URLs forward. Someone who uploaded a resume on the
-// application and then saved their profile was told they still owed it while
-// the admin count said they were complete.
+// "What do I still owe?" is informational, asked by a recruit about themselves.
+// Both documents, everyone mid-onboarding. Nobody is harmed by an over-broad
+// to-do list on their own page.
 //
-// LEFT JOINs, deliberately. The sibling queries in admin/hiring.js INNER JOIN
-// applications, which is right for funnel stats but would hide exactly the
-// people this exists for: direct hires who never completed the application. A
-// missing row means missing documents, not an absent person.
+// "Who can work a shift with no certification?" is a compliance alert, asked by
+// the admin about everyone. Certification only, and only people who can
+// actually be assigned. Sized against production, the naive version (both
+// documents, all onboarding statuses) returns 50 rows into a 6-row strip, of
+// which 50 lack a resume and 2 are genuine risk.
+//
+// LEFT JOINs throughout, deliberately. The sibling queries in admin/hiring.js
+// INNER JOIN applications, which is right for funnel stats but would hide
+// exactly the people this exists for: direct hires who never completed the
+// application. A missing row means missing documents, not an absent person.
 
-const ONBOARDED_STATUSES = ['in_progress', 'hired', 'submitted', 'reviewed', 'approved'];
+// Anyone still moving through onboarding. Includes 'applied' and 'interviewing'
+// because C3 removed the file gate for them too, so they must still be TOLD.
+const ONBOARDING_STATUSES = [
+  'applied', 'interviewing', 'in_progress', 'hired', 'submitted', 'reviewed', 'approved',
+];
+
+// Mirrors the assignment gate in server/routes/shifts.approval.js:233. Keep in
+// sync: this list IS the definition of "can be put in front of a client".
+const STAFFABLE_STATUSES = ['submitted', 'reviewed', 'approved'];
 
 const DOC_JOINS = `
   LEFT JOIN applications a ON a.user_id = u.id
@@ -1750,155 +1821,183 @@ const DOC_JOINS = `
 const RESUME_MISSING = 'COALESCE(cp.resume_file_url, a.resume_file_url) IS NULL';
 const CERT_MISSING = 'COALESCE(cp.alcohol_certification_file_url, a.basset_file_url) IS NULL';
 
-const IN_FUNNEL = `u.role IN ('staff', 'manager') AND u.onboarding_status = ANY($1)`;
-
-// One row in, labels out. Shared so the per-user answer and the admin list
-// cannot phrase or compute the same fact differently.
-function labelsFor(row) {
-  const owed = [];
-  if (row.needs_resume) owed.push('resume');
-  if (row.needs_cert) owed.push('alcohol certification');
-  return owed;
-}
+const DISPLAY_NAME = 'COALESCE(cp.preferred_name, a.full_name, u.email)';
 
 async function outstandingFor(userId) {
   const result = await pool.query(`
     SELECT ${RESUME_MISSING} AS needs_resume,
            ${CERT_MISSING}   AS needs_cert
     FROM users u ${DOC_JOINS}
-    WHERE u.id = $2 AND ${IN_FUNNEL}
-  `, [ONBOARDED_STATUSES, userId]);
+    WHERE u.id = $1
+      AND u.role IN ('staff', 'manager')
+      AND u.onboarding_status = ANY($2)
+  `, [userId, ONBOARDING_STATUSES]);
 
   const row = result.rows[0];
-  if (!row) return [];   // Not in the funnel: owes nothing by definition.
-  return labelsFor(row);
+  if (!row) return [];   // Not onboarding: owes nothing by definition.
+
+  const owed = [];
+  if (row.needs_resume) owed.push('resume');
+  if (row.needs_cert) owed.push('alcohol certification');
+  return owed;
 }
 
-// Everyone who owes something, named. Not a count: a bare number would link the
-// admin to /hiring, whose list comes from /admin/applications and INNER JOINs
-// applications, so every direct hire this exists to catch would be missing from
-// the page the number sent them to.
-async function listOutstanding() {
+// Certification only, staffable only, soonest upcoming shift first.
+//
+// The lateral join is what separates "eligible but idle" from "about to pour
+// drinks uncertified". Both belong in the list; only the second is urgent.
+async function listUncertifiedStaffable() {
   const result = await pool.query(`
     SELECT u.id AS user_id,
-           COALESCE(cp.preferred_name, a.full_name, u.email) AS name,
-           ${RESUME_MISSING} AS needs_resume,
-           ${CERT_MISSING}   AS needs_cert
+           ${DISPLAY_NAME} AS name,
+           ns.shift_id     AS next_shift_id,
+           ns.event_date   AS next_shift_date
     FROM users u ${DOC_JOINS}
-    WHERE ${IN_FUNNEL} AND (${RESUME_MISSING} OR ${CERT_MISSING})
-    ORDER BY u.created_at DESC
-  `, [ONBOARDED_STATUSES]);
+    LEFT JOIN LATERAL (
+      SELECT s.id AS shift_id, s.event_date
+      FROM shift_requests r
+      JOIN shifts s ON s.id = r.shift_id
+      WHERE r.user_id = u.id
+        AND r.status = 'approved'
+        AND r.dropped_at IS NULL
+        AND s.event_date >= CURRENT_DATE
+      ORDER BY s.event_date
+      LIMIT 1
+    ) ns ON true
+    WHERE u.role IN ('staff', 'manager')
+      AND u.onboarding_status = ANY($1)
+      AND ${CERT_MISSING}
+    ORDER BY ns.event_date ASC NULLS LAST, u.id DESC
+  `, [STAFFABLE_STATUSES]);
 
-  return result.rows.map(row => ({
-    user_id: row.user_id,
-    name: row.name,
-    owed: labelsFor(row),
-  }));
+  return result.rows;
 }
 
 module.exports = {
-  outstandingFor, listOutstanding,
-  DOC_JOINS, RESUME_MISSING, CERT_MISSING, ONBOARDED_STATUSES,
+  outstandingFor, listUncertifiedStaffable,
+  ONBOARDING_STATUSES, STAFFABLE_STATUSES,
 };
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd /home/drbartender/projects/os && node -r dotenv/config --test server/utils/outstandingDocuments.test.js`
-Expected: PASS, 9 tests.
+Expected: PASS, 12 tests.
 
 - [ ] **Step 5: Verify against real production data**
 
-The count exists to catch people the applications list hides, so prove it does against the real thing. `node -r dotenv/config` reads the local `.env` and hits the **dev** branch, so it cannot answer this. Use the Neon MCP against project `round-tooth-34649976`, branch `br-noisy-frog-ad99sa6l` (`production`), read-only:
+`node -r dotenv/config` reads the local `.env` and hits the **dev** branch, so it cannot answer this. Use the Neon MCP against project `round-tooth-34649976`, branch `br-noisy-frog-ad99sa6l` (`production`), read-only:
 
 ```sql
-SELECT u.id, u.email, u.onboarding_status, (a.user_id IS NULL) AS no_application_row
+SELECT u.id, COALESCE(cp.preferred_name, a.full_name, u.email) AS name, u.onboarding_status,
+       (SELECT min(s.event_date) FROM shift_requests r JOIN shifts s ON s.id=r.shift_id
+         WHERE r.user_id=u.id AND r.status='approved' AND r.dropped_at IS NULL
+           AND s.event_date >= CURRENT_DATE) AS next_shift
 FROM users u
 LEFT JOIN applications a ON a.user_id = u.id
 LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
 WHERE u.role IN ('staff','manager')
-  AND u.onboarding_status IN ('in_progress','hired','submitted','reviewed','approved')
-  AND (COALESCE(cp.resume_file_url, a.resume_file_url) IS NULL
-    OR COALESCE(cp.alcohol_certification_file_url, a.basset_file_url) IS NULL)
-ORDER BY u.id DESC LIMIT 20;
+  AND u.onboarding_status IN ('submitted','reviewed','approved')
+  AND COALESCE(cp.alcohol_certification_file_url, a.basset_file_url) IS NULL
+ORDER BY next_shift ASC NULLS LAST;
 ```
 
-Expected: users **241, 242 and 243** all appear, each with `no_application_row = true`. Those three are the incident cohort. If they are absent, a join has been written as `INNER` and the count is worthless for the exact case it was built for.
+Expected: a **short** list, on the order of two rows, containing **Debbie (241)** and **Loryn (55)**, with Loryn carrying an upcoming `next_shift`. If this returns dozens of rows, the scoping has been widened back out and the alert is noise again. Sizing the output is not optional here: an earlier revision shipped a version that returned 50.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add server/utils/outstandingDocuments.js server/utils/outstandingDocuments.test.js
-git commit -m "feat(onboarding): single shared predicate for outstanding documents"
+git commit -m "feat(onboarding): shared document predicate, plus the uncertified-staffable alert"
 ```
 
 ---
 
-### Task C2: Name the recruits who owe documents, on the admin's own screen
+### Task C2: Put the uncertified workers on the admin's screen
 
-The admin surface names people rather than counting them, and each row links to that person. `AdminUserDetail`'s `DocumentsTab` already renders which document is missing, using the identical profile-then-application fallback (`DocumentsTab.js:13-17`), so the click lands somewhere that already answers the question.
+One row per person, each linking to that person. `AdminUserDetail`'s `DocumentsTab` already renders which document is missing using the identical profile-then-application fallback (`DocumentsTab.js:13-17`), so the click lands somewhere that already answers the question. A single count would link to `/hiring`, whose list comes from `/admin/applications` and INNER JOINs applications (`HiringDashboard.js:59`), omitting every direct hire the alert exists for.
 
-**Not touching `/hiring/summary`.** An earlier revision added a fifth element to that handler's positional `Promise.all` destructure, which is a quiet way to scramble four existing KPI numbers. A dedicated endpoint avoids the hazard entirely and keeps the summary route a set of counts.
+**Not touching `/hiring/summary`.** A dedicated endpoint keeps that route a set of counts and avoids editing its positional `Promise.all` destructure.
 
-**Dropped from the spec deliberately, and now on merit rather than on my say-so:** the spec named three admin surfaces (needs-attention, an `AdminUserDetail` badge, a `/hiring/summary` KPI count). A badge is a second opinion from the same data the page already prints as "Not on file" (`DocumentsTab.js:44-45`), and a KPI tile is the same number somewhere you visit less often. One surface that names people replaces all three. Record the drop in `docs/fix-list-remaining-2026-07-02.md` so the decision survives the squash merge.
+**Dropped from the spec on merit:** the spec named an `AdminUserDetail` badge and a `/hiring/summary` KPI count alongside the needs-attention surface. A badge repeats what `DocumentsTab.js:44-45` already prints as "Not on file", and a KPI tile is the same number somewhere you visit less often.
 
 **Files:**
 - Modify: `server/routes/admin/hiring.js`
-- Modify: `client/src/pages/admin/overview/queueItems.js:26-47`
+- Modify: `client/src/pages/admin/overview/queueItems.js`
 - Modify: `client/src/pages/admin/overview/OverviewPage.js`
-- Modify: `client/src/pages/admin/overview/NeedsYouStrip.js` (the `QUEUE_ICON` map and `queueItemHref`)
+- Modify: `client/src/pages/admin/overview/NeedsYouStrip.js` (`QUEUE_ICON` and `queueItemHref`)
+- Modify: `docs/fix-list-remaining-2026-07-02.md`
 - Test: `client/src/pages/admin/overview/queueItems.test.js`
 
 **Interfaces:**
-- Consumes: `listOutstanding` from Task C1.
+- Consumes: `listUncertifiedStaffable` from Task C1.
 - Produces:
-  - `GET /api/admin/hiring/missing-documents` (admin only) returning `{ users: Array<{ user_id, name, owed: string[] }> }`.
-  - `buildStaffingItems(unstaffed, newApplications, missingDocs)` gains a third parameter, `missingDocs: Array<{user_id, name, owed}>`, defaulting to `[]`. Existing two-argument callers are unaffected.
-  - `queueItemHref` gains a `user` target resolving to `/staffing/users/:id`.
+  - `GET /api/admin/hiring/uncertified` (admin only) returning `{ users: Array<{ user_id, name, next_shift_id, next_shift_date }> }`.
+  - `buildStaffingItems(unstaffed, newApplications, uncertified)` gains a third parameter, `uncertified: Array`, defaulting to `[]`.
+  - `queueItemHref` gains a `user` target resolving to `/staffing/users/:id`, and is exported.
 
 - [ ] **Step 1: Write the failing client test**
 
-Append to `client/src/pages/admin/overview/queueItems.test.js`, inside the existing `describe('buildStaffingItems', ...)` block. That file uses `test()` for its three existing cases; match whichever of `test`/`it` the surrounding block already uses.
+Append to `client/src/pages/admin/overview/queueItems.test.js`, inside the existing `describe('buildStaffingItems', ...)` block. That block uses `test()` for its three existing cases; match the surrounding style.
+
+**Add the import** the new cases need. The existing file imports only from `./queueItems`:
 
 ```js
-  const owing = (user_id, name, owed) => ({ user_id, name, owed });
+import { queueItemHref } from './NeedsYouStrip';
+```
 
-  it('emits one named row per recruit, not a lump count', () => {
+```js
+  const risk = (user_id, name, next_shift_date = null, next_shift_id = null) =>
+    ({ user_id, name, next_shift_date, next_shift_id });
+
+  it('emits one named row per uncertified worker', () => {
     const items = buildStaffingItems([], 0, [
-      owing(241, 'Debbie', ['resume', 'alcohol certification']),
-      owing(242, 'zeehme51@gmail.com', ['resume']),
+      risk(55, 'Loryn', '2026-08-01'),
+      risk(241, 'Debbie'),
     ]).filter(i => i.type === 'documents');
 
     expect(items).toHaveLength(2);
-    expect(items[0].title).toBe('Debbie is missing resume and alcohol certification');
-    expect(items[1].title).toBe('zeehme51@gmail.com is missing resume');
+    expect(items[0].title).toBe('Loryn has no alcohol certification');
+    expect(items[1].title).toBe('Debbie has no alcohol certification');
+  });
+
+  it('escalates someone who is actually booked', () => {
+    const [booked] = buildStaffingItems([], 0, [risk(55, 'Loryn', '2026-08-01', 347)])
+      .filter(i => i.type === 'documents');
+    expect(booked.priority).toBe('danger');
+    expect(booked.sub).toMatch(/working/i);
+  });
+
+  it('leaves an eligible but unbooked worker at warn', () => {
+    const [idle] = buildStaffingItems([], 0, [risk(241, 'Debbie')])
+      .filter(i => i.type === 'documents');
+    expect(idle.priority).toBe('warn');
+    expect(idle.sub).toMatch(/can be assigned/i);
   });
 
   it('links each row to that person, not to a list they may not appear on', () => {
-    const [row] = buildStaffingItems([], 0, [owing(241, 'Debbie', ['resume'])])
+    const [row] = buildStaffingItems([], 0, [risk(241, 'Debbie')])
       .filter(i => i.type === 'documents');
     expect(row.target).toBe('user');
     expect(row.ref).toBe(241);
   });
 
   it('gives each row a stable unique id', () => {
-    const items = buildStaffingItems([], 0, [
-      owing(241, 'Debbie', ['resume']),
-      owing(242, 'Someone', ['resume']),
-    ]).filter(i => i.type === 'documents');
+    const items = buildStaffingItems([], 0, [risk(55, 'Loryn'), risk(241, 'Debbie')])
+      .filter(i => i.type === 'documents');
     expect(new Set(items.map(i => i.id)).size).toBe(2);
   });
 
-  it('emits nothing when nobody owes anything', () => {
+  it('emits nothing when nobody is uncertified', () => {
     expect(buildStaffingItems([], 0, []).some(i => i.type === 'documents')).toBe(false);
   });
 
-  it('treats a missing third argument as nobody owing', () => {
+  it('treats a missing third argument as nobody uncertified', () => {
     expect(buildStaffingItems([], 0).some(i => i.type === 'documents')).toBe(false);
   });
 ```
 
-Add to the existing `describe` covering `queueItemHref` if there is one, or create it:
+And a separate block for the new href target:
 
 ```js
 describe('queueItemHref', () => {
@@ -1908,47 +2007,59 @@ describe('queueItemHref', () => {
 });
 ```
 
-If `queueItemHref` is not currently exported from `NeedsYouStrip.js`, export it so this assertion can run. It is a pure function and exporting it introduces no behavior change.
-
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts test --testPathPattern=queueItems`
-Expected: FAIL, no item of type `documents`.
+Expected: FAIL. `queueItemHref` is not exported and no item of type `documents` exists.
 
 - [ ] **Step 3: Implement the queue rows**
 
-In `client/src/pages/admin/overview/queueItems.js`, change the signature at line 26 and append before the `return`:
+In `client/src/pages/admin/overview/queueItems.js`, change the signature and append before the `return`. `fmtDate` and `dayDiff` are already imported at the top of that file.
 
 ```js
-export function buildStaffingItems(unstaffed, newApplications, missingDocs = []) {
+export function buildStaffingItems(unstaffed, newApplications, uncertified = []) {
 ```
 
 ```js
   // One row per person, each linking to their own detail page. A single
-  // "N bartenders missing documents" row would link to /hiring, whose list
-  // INNER JOINs applications and therefore omits every direct hire this is for.
-  (missingDocs || []).forEach(u => {
+  // "N workers uncertified" row would link to /hiring, whose list INNER JOINs
+  // applications and therefore omits every direct hire this is for.
+  //
+  // Scoped to the certification among staffable people only. Including the
+  // resume, or every onboarding status, returns ~50 rows into a 6-row strip.
+  (uncertified || []).forEach(u => {
+    const booked = !!u.next_shift_date;
+    const day = booked ? u.next_shift_date.slice(0, 10) : null;
     items.push({
-      id: `missing-docs-${u.user_id}`, type: 'documents', priority: 'warn',
-      title: `${u.name} is missing ${u.owed.join(' and ')}`,
-      sub: 'Needed before their next shift',
-      meta: u.owed.length > 1 ? `${u.owed.length} docs` : '1 doc',
+      id: `uncertified-${u.user_id}`, type: 'documents',
+      priority: booked ? 'danger' : 'warn',
+      title: `${u.name} has no alcohol certification`,
+      sub: booked
+        ? `Working ${fmtDate(day)} · ${dayDiff(day)}d out`
+        : 'Can be assigned to shifts',
+      meta: booked ? 'booked' : 'eligible',
       target: 'user', ref: u.user_id,
     });
   });
   return items;
 ```
 
-In `client/src/pages/admin/overview/NeedsYouStrip.js`, add the icon to the `QUEUE_ICON` map (locate it by content, not line number):
+In `client/src/pages/admin/overview/NeedsYouStrip.js`, add the icon to `QUEUE_ICON` (locate it by content, not line number):
 
 ```js
   documents: 'pen',
 ```
 
-and add the target to `queueItemHref`, beside the existing entity cases:
+add the target inside `queueItemHref`, beside the existing entity cases:
 
 ```js
   if (a.target === 'user') return `/staffing/users/${a.ref}`;
+```
+
+and export the function so it can be tested. It is pure, so exporting changes no behavior:
+
+```js
+export function queueItemHref(a) {
 ```
 
 - [ ] **Step 4: Run the client test to verify it passes**
@@ -1958,57 +2069,54 @@ Expected: PASS, including the three pre-existing `buildStaffingItems` cases.
 
 - [ ] **Step 5: Add the endpoint**
 
-In `server/routes/admin/hiring.js`, import the shared helper and add a route beside the existing two. Leave `GET /hiring/summary` completely untouched.
+In `server/routes/admin/hiring.js`, import the helper and add a route beside the existing two. `auth`, `adminOnly`, and `asyncHandler` are already imported there. Leave `GET /hiring/summary` untouched.
 
 ```js
-const { listOutstanding } = require('../../utils/outstandingDocuments');
+const { listUncertifiedStaffable } = require('../../utils/outstandingDocuments');
 ```
 
 ```js
-// Recruits who still owe a resume or an alcohol certification, named.
-//
-// Separate from /hiring/summary on purpose: that route is a set of counts whose
-// handler destructures a positional Promise.all, and appending to it is a quiet
-// way to scramble four existing KPI numbers. This one also cannot live on the
-// applications list, which INNER JOINs applications and so omits exactly the
-// direct hires this endpoint exists to surface.
-router.get('/hiring/missing-documents', auth, adminOnly, asyncHandler(async (_req, res) => {
-  res.json({ users: await listOutstanding() });
+// Workers who can be assigned to a shift but have no alcohol certification on
+// file. Separate from /hiring/summary, which is a set of counts whose handler
+// destructures a positional Promise.all. Also cannot come from the applications
+// list, which INNER JOINs applications and so omits the direct hires this is for.
+router.get('/hiring/uncertified', auth, adminOnly, asyncHandler(async (_req, res) => {
+  res.json({ users: await listUncertifiedStaffable() });
 }));
 ```
 
-- [ ] **Step 6: Verify the endpoint against real data**
+- [ ] **Step 6: Verify the endpoint**
 
-Confirm the route returns the incident cohort and that `/hiring/summary` is byte-identical to before. Capture the summary output BEFORE editing so the comparison is real.
+**Restart the dev server first.** It runs as plain `node server/index.js`, not nodemon, so it will not pick up the new route and the curl would 404 in a way that reads as a code failure.
 
 ```bash
 cd /home/drbartender/projects/os
+lsof -ti:5000 | xargs -r kill
+# restart the dev server the usual way, then:
 TOKEN=$(node -r dotenv/config -e "
 const jwt=require('jsonwebtoken');
 require('./server/db').pool.query(\"SELECT id, token_version FROM users WHERE role='admin' ORDER BY id LIMIT 1\")
  .then(r=>{const u=r.rows[0];
    console.log(jwt.sign({userId:u.id,tokenVersion:u.token_version},process.env.JWT_SECRET,{expiresIn:'1h'}));
    process.exit(0)})")
-curl -s -H "Authorization: Bearer $TOKEN" http://localhost:5000/api/admin/hiring/missing-documents | python3 -m json.tool
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:5000/api/admin/hiring/uncertified | python3 -m json.tool
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:5000/api/admin/hiring/summary | python3 -m json.tool
 ```
 
-Expected: the first returns a `users` array where each entry has `user_id`, `name`, and a non-empty `owed`. The second returns its original four keys with **unchanged values**.
-
-Then confirm against production via the Neon MCP (project `round-tooth-34649976`, branch `br-noisy-frog-ad99sa6l`) that the same predicate names users **241, 242 and 243**, using the query in Task C1 Step 5. Those three are the incident cohort, and 241 is the one who has already worked a shift with no certification on file.
+Expected: the first returns a `users` array whose entries carry `user_id`, `name`, and `next_shift_date` (null or a date). The second returns its original four keys with unchanged values. Capture the summary output before editing so that comparison is real.
 
 - [ ] **Step 7: Feed it to the overview page**
 
-`OverviewPage` does not fetch this today. Add it beside the existing `/admin/applications` fetch (around line 208-215), following that block's admin-only guard and swallowed-catch pattern exactly, since managers get a 403 and must simply see no rows:
+Add beside the existing `/admin/applications` fetch (around line 208-215), following that block's admin-only guard and swallowed-catch pattern, since managers 403 here and must simply see no rows:
 
 ```js
-  const [missingDocs, setMissingDocs] = useState([]);
+  const [uncertified, setUncertified] = useState([]);
 
   useEffect(() => {
     if (!isAdmin) return undefined;
     let cancelled = false;
-    api.get('/admin/hiring/missing-documents')
-      .then(r => { if (!cancelled) setMissingDocs(r.data?.users || []); })
+    api.get('/admin/hiring/uncertified')
+      .then(r => { if (!cancelled) setUncertified(r.data?.users || []); })
       .catch(() => {}); // managers 403 here; the rows simply stay absent
     return () => { cancelled = true; };
   }, [isAdmin]);
@@ -2018,8 +2126,8 @@ Then pass it through where `staffingItems` is built:
 
 ```js
   const staffingItems = useMemo(
-    () => buildStaffingItems(unstaffed, newApplications, missingDocs),
-    [unstaffed, newApplications, missingDocs]);
+    () => buildStaffingItems(unstaffed, newApplications, uncertified),
+    [unstaffed, newApplications, uncertified]);
 ```
 
 - [ ] **Step 8: Verify it reaches the screen and the click works**
@@ -2028,16 +2136,26 @@ Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build
 Expected: build succeeds.
 
 Then load `/` on the admin app as an admin:
-- [ ] The Needs-attention staffing tab shows a row per recruit, reading like **"Debbie is missing resume and alcohol certification"**, with an icon rather than a blank square.
-- [ ] Clicking that row lands on `/staffing/users/241`, and its Documents tab shows "Not on file" for the same documents the row named. The row and the page must agree; that agreement is the entire reason the predicate was extracted in C1.
-- [ ] With more than six rows, the "N more" overflow row renders correctly (`TAB_CAP` is 6).
-- [ ] Load the same page as a manager and confirm the rows are absent with no error, since the endpoint 403s for them.
+- [ ] The Needs-attention staffing tab shows **a small number of rows**, reading like "Loryn has no alcohol certification", with an icon rather than a blank square. If it shows dozens, the C1 scoping regressed.
+- [ ] A booked worker's row is `danger` and reads "Working Aug 1 · Nd out". An unbooked one is `warn` and reads "Can be assigned to shifts".
+- [ ] Clicking a row lands on `/staffing/users/:id`, whose Documents tab shows "Not on file" for the certification the row named. The row and the page must agree; that agreement is why the predicate was extracted.
+- [ ] Load the same page as a manager and confirm the rows are absent with no error.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 9: Record the dropped surfaces**
+
+Add a line to `docs/fix-list-remaining-2026-07-02.md` so the deferral survives the squash merge:
+
+```
+- Onboarding docs: `AdminUserDetail` badge + `/hiring/summary` KPI count were dropped
+  from the 2026-07-26 plan on merit (DocumentsTab already prints "Not on file"; the
+  KPI duplicates the needs-attention rows). Revisit only if the strip proves too quiet.
+```
+
+- [ ] **Step 10: Commit**
 
 ```bash
-git add server/routes/admin/hiring.js server/utils/outstandingDocuments.js client/src/pages/admin/overview/queueItems.js client/src/pages/admin/overview/queueItems.test.js client/src/pages/admin/overview/OverviewPage.js client/src/pages/admin/overview/NeedsYouStrip.js
-git commit -m "feat(hiring): name the recruits who owe documents in needs-attention"
+git add server/routes/admin/hiring.js client/src/pages/admin/overview/queueItems.js client/src/pages/admin/overview/queueItems.test.js client/src/pages/admin/overview/OverviewPage.js client/src/pages/admin/overview/NeedsYouStrip.js docs/fix-list-remaining-2026-07-02.md
+git commit -m "feat(hiring): flag staffable workers with no alcohol certification"
 ```
 
 ### Task C3: Tell the recruit, then stop blocking them
@@ -2048,7 +2166,7 @@ Both halves land together on purpose. The notice is what makes it safe to drop t
 - Modify: `server/routes/progress.js` (extend `GET /`)
 - Modify: `server/routes/application.js` (remove the file gate)
 - Modify: `client/src/pages/Application.js` (remove the matching rules, add the notice)
-- Modify: `client/src/pages/Welcome.js` (show what is outstanding)
+- Modify: `client/src/components/Layout.js` (show what is outstanding, on every onboarding step)
 
 **Interfaces:**
 - Consumes: `outstandingFor` from Task C1.
@@ -2119,61 +2237,86 @@ Add this notice immediately above the `<div className={"form-group" + fieldClass
 
 Update the BASSET helper from `"BASSET, TIPS, ServSafe, or equivalent. Required for all positions."` to `"BASSET, TIPS, ServSafe, or equivalent. Needed before your first shift."`
 
-- [ ] **Step 4: Show the recruit what is outstanding**
+- [ ] **Step 4: Show the recruit what is outstanding, on every onboarding step**
 
-`Welcome.js` already receives progress through its outlet context. Read the new field rather than fetching separately, so the notice cannot disagree with the admin count.
+The spec asks for a **persistent** to-do card, and `Welcome.js` alone is step one of seven. Put it in the layout instead, which already has everything needed: `client/src/components/Layout.js:30-33` fetches `GET /progress` and refetches on **every** `location.pathname` change, and line 99 already passes `{ progress, setProgress }` down. So the notice follows the recruit through welcome, field guide, agreement, contractor profile, and payday, and refreshes itself the moment they upload.
 
-In `client/src/pages/Welcome.js`, pull it from the same `useOutletContext()` the page already uses for `setProgress`, and render above the existing `alert alert-info` block:
+Rendering it across every step also settles the timing objection. A brand-new recruit does genuinely owe both documents, and a to-do list that says so from the start is correct. It only read as premature when it lived on a single page they saw once.
+
+In `client/src/components/Layout.js`, render immediately above `<Outlet ... />` inside `<main>`:
 
 ```jsx
-          {owed.length > 0 && (
-            <div className="alert alert-warning" role="status">
-              We still need your {owed.join(' and ')}. You can add {owed.length === 1 ? 'it' : 'them'} on
-              the <Link to="/contractor-profile">Contractor Profile</Link> step, and we do need
-              {owed.length === 1 ? ' it' : ' them'} before your first shift.
+        {(progress?.documents_outstanding?.length > 0) && (
+          <div className="page-container">
+            <div className="alert alert-info" role="status">
+              We still need your {progress.documents_outstanding.join(' and ')}. Add
+              {progress.documents_outstanding.length === 1 ? ' it' : ' them'} on
+              the <Link to="/contractor-profile">Contractor Profile</Link> step. We do need
+              {progress.documents_outstanding.length === 1 ? ' it' : ' them'} before your first shift.
             </div>
-          )}
+          </div>
+        )}
 ```
 
-Add `import { Link } from 'react-router-dom';` and derive `owed` from the context progress:
+Merge `Link` into the existing `react-router-dom` import at the top of the file rather than adding a second import statement.
 
-```js
-  const { progress, setProgress } = useOutletContext();
-  const owed = progress?.documents_outstanding || [];
-```
+**Use `alert-info`, not `alert-warning`.** `client/src/index.css` defines only `.alert`, `.alert-error`, `.alert-success`, and `.alert-info`. There is no `.alert-warning`, so it would silently render with base styling. (`client-alert-warning` exists, but that is the client-facing surface, not this one.)
 
-If the outlet context does not currently expose `progress` alongside `setProgress`, add it in the layout that provides the context rather than fetching in this page. Check the provider before writing this step:
+Leave `Welcome.js` untouched.
+
+- [ ] **Step 5: Prove the gate is actually gone and the notice actually appears**
+
+This task deletes a server-side validation gate and changes an endpoint every onboarding page consumes, and neither the build nor C1's util suite touches any of its four files. Exercise the route directly.
+
+Create a staff fixture, then submit an application with no files:
 
 ```bash
-grep -rn "useOutletContext\|Outlet context=" client/src/components/Layout.js client/src/pages/Welcome.js
+cd /home/drbartender/projects/os
+# Restart the dev server first: it runs as plain `node server/index.js`, not nodemon.
+lsof -ti:5000 | xargs -r kill
+# restart it the usual way, then:
+
+TOKEN=$(node -r dotenv/config -e "
+const jwt=require('jsonwebtoken'), bcrypt=require('bcryptjs');
+const {pool}=require('./server/db');
+(async()=>{
+  const h=await bcrypt.hash('x',4);
+  await pool.query(\"DELETE FROM users WHERE email='c3-gate-check@example.com'\");
+  const r=await pool.query(\`INSERT INTO users (email,password_hash,role,onboarding_status,token_version)
+    VALUES ('c3-gate-check@example.com',\$1,'staff','in_progress',0) RETURNING id\`,[h]);
+  console.log(jwt.sign({userId:r.rows[0].id,tokenVersion:0},process.env.JWT_SECRET,{expiresIn:'1h'}));
+  process.exit(0);})()")
+
+# Submit with NO files. Before this task, this returned 400 with fieldErrors.
+curl -s -o /dev/null -w "application POST: %{http_code}\n" -X POST http://localhost:5000/api/application \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "full_name=Gate Check" -F "phone=3125550000" -F "city=Chicago" -F "state=Illinois" \
+  -F "travel_distance=30 minutes" -F "reliable_transportation=Yes" \
+  -F "positions_interested=[\"Bartender\"]" -F "why_dr_bartender=testing"
+
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:5000/api/progress | python3 -m json.tool
 ```
 
-- [ ] **Step 5: Verify**
+Expected: the POST returns **201**, not 400. The progress response carries `documents_outstanding` listing **both** `resume` and `alcohol certification`. Clean up the fixture user afterwards.
 
-Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build`
-Expected: build succeeds.
-
-Run: `cd /home/drbartender/projects/os && node -r dotenv/config --test server/utils/outstandingDocuments.test.js`
+Then run: `cd /home/drbartender/projects/os && node -r dotenv/config --test server/utils/outstandingDocuments.test.js`
 Expected: still PASS. `GET /api/progress` now calls into it.
 
-Manually:
-- [ ] Submit the application with **no files attached**. Confirm it succeeds and routes onward rather than blocking.
-- [ ] Land on `/welcome` and confirm the notice names **both** outstanding documents and links to the contractor profile.
-- [ ] Upload only the certification on the contractor profile, return to `/welcome`, and confirm the notice now names the resume alone. This is the case where the two surfaces used to disagree.
-- [ ] Confirm the admin Needs-attention count from C2 moves in step with what the recruit is being told.
+And: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build`
+Expected: build succeeds.
+
+Manually, **using a pre-hired account**, because a non-pre-hired submitter becomes `applied` and routes to `/application-status`, not `/welcome` (`Application.js:220-226`):
+- [ ] Submit with no files. Confirm it succeeds and routes onward rather than blocking.
+- [ ] Confirm the notice appears on `/welcome` **and stays visible** through the field guide and agreement steps.
+- [ ] Upload only the certification on the contractor profile. Confirm the notice updates on the next step to name the resume alone, without a manual refresh.
+- [ ] Confirm the admin rows from C2 agree with what the recruit is being told. That agreement is why the predicate was extracted in C1.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add server/routes/progress.js server/routes/application.js client/src/pages/Application.js client/src/pages/Welcome.js
+git add server/routes/progress.js server/routes/application.js client/src/pages/Application.js client/src/components/Layout.js
 git commit -m "feat(onboarding): let the application submit with documents outstanding"
 ```
-
----
-
-### Lane C known gap, carried to the warnings pass
-
-The `/welcome` notice fires for a brand-new recruit who has not yet had the chance to upload anything, since they genuinely owe both documents at that moment. It is accurate but poorly timed. Gating it behind "has reached the contractor profile step" is a warnings-pass fix, not a blocker.
 
 ## Review
 
@@ -2186,15 +2329,18 @@ The `/welcome` notice fires for a brand-new recruit who has not yet had the chan
 Run `/second-opinion` on Lane A alongside the fleet.
 
 **Review checkpoints during execution**, matched to what each batch changes:
-- After B2 and after C1: database review (new table, `req.user.id` scoping, the `payday_protocols` allowlist, the join predicate).
-- After A1 and A4: security review (upload allowlist, the client/server accept parity).
-- After C2: verify the admin 403 path for managers still degrades to an absent item rather than an error.
+- After B2 and after C1: **database review**. New table, `req.user.id` scoping, the `payday_protocols` allowlist, and the join predicate whose LEFT-versus-INNER choice decides whether the alert sees anyone.
+- After A1 and A4: **security review**. Upload allowlist widening, and client/server accept parity across all five `FileUpload` call sites.
+- After C3: **security review**, and the one checkpoint not to skip. It is the only task that deletes a server-side validation gate, and the only one touching `GET /api/progress`, which every onboarding page consumes.
+- After C2: verify the manager 403 path still degrades to absent rows rather than an error.
 
 ## Open item carried from the spec
 
 The recruit who triggered this was unblocked by being sent directly to `/welcome`, which skips the application. She reached `approved` on 2026-07-24 at 4:50 PM on her original account (user 241, `dlemke03@gmail.com`), was assigned to shift 363, and **worked it on 2026-07-25 with no alcohol certification on file.** Her two abandoned accounts, 242 and 243, are still sitting at `in_progress` and should be deactivated.
 
-So this is not hypothetical: she has `onboarding_status = 'approved'`, no application row, no resume, and no certification. She is precisely the row `listOutstanding()` must return, and the reason its joins are LEFT rather than INNER.
+So this is not hypothetical: she has `onboarding_status = 'approved'`, no application row, no resume, and no certification. She is precisely the row `listUncertifiedStaffable()` must return, and the reason its joins are LEFT rather than INNER.
+
+**And she is not the only one.** Sizing the predicate against production during the second review pass turned up **Loryn (user 55)**, also `approved`, also with no certification on file, and booked on shift 347 for **2026-08-01**. Nobody was looking for her. That is the case for building this at all: the alert found a live compliance exposure before the shift rather than after, which is exactly what did not happen for Debbie.
 
 Task C1's predicate catches the missing documents, and only because it is built on LEFT JOINs against `users`. An earlier draft of this plan derived the count from `/admin/applications`, which INNER JOINs and would have rendered her invisible to the very safety net written in response to her. That is why the join style in `outstandingDocuments.js` is load-bearing rather than incidental, why C1 Step 1 fixtures a user with no application row at all, and why C1 Step 5 verifies users 241, 242 and 243 actually appear in production.
 
