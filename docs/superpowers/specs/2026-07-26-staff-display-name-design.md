@@ -344,6 +344,23 @@ permanent: it means a write path someone adds later and forgets to wire to
 email address on a client-facing BEO. It also removes any ordering constraint
 between populating the column and swapping the reads.
 
+**The email term is not universal.** Several of these queries never had a
+`u.email` fallback, and two of them must never gain one:
+`server/routes/publicTip.js:83,227` sit under an explicit "public-safe column
+allowlist" comment and feed the **public** tip page. Adding `u.email` there would
+publish a bartender's email address to anyone holding a tip link. Any site whose
+current expression has no email term resolves **two-deep**,
+`COALESCE(cp.display_name, cp.preferred_name)`, and keeps whatever fallback it
+already had. Preserve each query's existing tail; only prepend `cp.display_name`.
+
+The sites also differ in shape, and the difference matters: some are
+`COALESCE(...) AS alias`, some are a bare `cp.preferred_name AS alias`, some are
+a bare `cp.preferred_name` whose JSON key the client reads directly (so
+`display_name` must be selected *alongside* rather than replacing it), and three
+are JS display expressions fed by a SELECT several lines above, where changing
+only one half yields `undefined`. The implementation plan carries the per-site
+table; there is no single mechanical rewrite that fits all of them.
+
 Three of these sites are display expressions fed by a SELECT a few lines above
 (`contractorTipPage.js` at `:91`, `:145` and `:190`). Change both halves or the
 value arrives `undefined`.
@@ -375,7 +392,12 @@ that is a money record rather than a money screen:
   `COALESCE(cp.preferred_name, u.email)`, so the year-end 1099 contractor list
   currently reads "TwistidTreets" where it must read "Nevver Sayles". **This is
   the one genuine money defect in scope**, and it takes the same legal-first
-  precedence the paystub already uses.
+  precedence the paystub already uses, meaning the **whole** chain verbatim:
+  `COALESCE(ag.full_name, ap.full_name, cp.preferred_name, u.email)`. Keep the
+  `cp.preferred_name` term. Dropping it to a legal-only chain would render user
+  61, who has neither an agreement nor an application, as a raw email address on
+  a tax document. Note also that this query sorts on the name as a tiebreaker
+  (`ORDER BY total_cents DESC, name ASC`), so the row order changes with it.
 - Contracts and agreements already use `agreements.full_name`. No change.
 
 `stripePayouts.js` is display-only despite living in a money path: its own
