@@ -11,10 +11,14 @@
 //   <worktree>/node_modules        -> <main>/node_modules
 //   <worktree>/client/node_modules -> <main>/client/node_modules
 //   <worktree>/.husky/_            -> <main>/.husky/_
+//   <worktree>/.env                -> <main>/.env
 //
 // All three are needed even by a worktree that only edits and commits: the
 // pre-commit hook runs eslint, the root eslint.config.mjs imports a plugin out
-// of client/node_modules, and .husky/_ is husky's hook runner (without it the
+// of client/node_modules, .env carries DATABASE_URL (without it every server test
+// dies with ECONNREFUSED 127.0.0.1:5432, because dotenv finds nothing and pg falls
+// back to a local socket — hit while building the upload-honesty lane 2026-07-26),
+// and .husky/_ is husky's hook runner (without it the
 // commit silently skips the hook). Symlinks are instant and cost no disk.
 //
 // Re-running on an existing worktree just creates any missing links.
@@ -108,6 +112,7 @@ function link(relPath, source) {
 link('node_modules', path.join(mainRoot, 'node_modules'));
 link(path.join('client', 'node_modules'), path.join(mainRoot, 'client', 'node_modules'));
 link(path.join('.husky', '_'), path.join(mainRoot, '.husky', '_'));
+link('.env', path.join(mainRoot, '.env'));
 
 // --- done -------------------------------------------------------------------
 console.log('');
