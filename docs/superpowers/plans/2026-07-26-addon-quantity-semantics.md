@@ -1001,7 +1001,7 @@ reader agree with them."
 **Interfaces:**
 - Consumes: `storedToInputCount`, `countLabelFor`, `effectiveHoursFor` (Task 1).
 - Produces: target entries whose `quantity` field is the admin-facing COUNT (not
-  the stored figure), plus a new optional `quantity_unit` field (`'hour'` or
+  the stored figure), plus a new optional `billed_unit` field (`'hour'` or
   `'unit'`) the dialog uses to phrase its picker. The execute route's
   `quantity` request parameter continues to mean "how many units to remove".
 
@@ -1053,7 +1053,7 @@ test('per_hour partial removal: the picker counts UNITS and the row stays in sto
   const { targets } = await computeCancelTargets(pool, proposalId);
   const t = targets.find((x) => x.target === `addon:${slug}`);
   assert.equal(t.quantity, 3, 'the picker offers 3 SERVERS, not 12');
-  assert.equal(t.quantity_unit, 'hour');
+  assert.equal(t.billed_unit, 'hour');
 
   await applyCancel(proposalId, { target: `addon:${slug}`, quantity: 1 }, async (result, client) => {
     const row = (await client.query('SELECT quantity, line_total FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows[0];
@@ -1144,7 +1144,7 @@ test('per_hour under its minimum_hours: picker and write-back use the BILLED hou
 
 Run: `node -r dotenv/config --test server/utils/lineItemCancel.test.js`
 Expected: FAIL on all three new per_hour tests. The picker asserts
-`t.quantity === 3` but gets `12`, `quantity_unit` is undefined, and the
+`t.quantity === 3` but gets `12`, `billed_unit` is undefined, and the
 minimum_hours test gets a picker of `8` (pre-conversion) rather than 2.
 
 - [ ] **Step 3: Convert at the three sites**
@@ -1223,7 +1223,17 @@ Delete the old `quantityIsCount` function and replace its two call sites as
 described in (b) and (c).
 
 **(b) `computeCancelTargets`, the addon branch**, the picker must offer the
-count, and name its unit:
+count, and say how the line is BILLED.
+
+The field is `billed_unit`, not `quantity_unit`, and the distinction is the whole
+point of this lane. `countLabelFor` returns the unit of the STORED figure, and
+its own docstring says so verbatim: "Label a quantity stepper off
+`storedToInputCount`, never off this." A field called `quantity_unit` set to
+`'hour'` beside a `quantity` of 3 asserts that the 3 is three hours, when it is
+three servers. Today the dialog only tests the field for truthiness so nothing
+renders wrong, but the next reader to take the name literally puts "Remove how
+many of the 3 hours?" on a money screen. Name it for what it is: how the line is
+billed, which is what the copy actually needs to know.
 
 ```js
     const durationHours = Number(proposal.event_duration_hours);
@@ -1233,7 +1243,7 @@ count, and name its unit:
       label: row.addon_name,
       amount: Number(row.line_total),
       ...(count !== null && count > 1
-        ? { quantity: count, quantity_unit: countLabelFor(row) }
+        ? { quantity: count, billed_unit: countLabelFor(row) }
         : {}),
       ...(labSlugs.has(row.slug) ? { labOwned: true } : {}),
       cancellable: true,
@@ -1321,7 +1331,7 @@ servers/bartenders, so name it:
 ```jsx
                 <label className="vstack" style={{ gap: 6 }}>
                   <span>
-                    {entry.quantity_unit === 'hour'
+                    {entry.billed_unit === 'hour'
                       ? `Remove how many of the ${maxQty}? (each is billed hourly)`
                       : `Remove how many of the ${maxQty}?`}
                   </span>
