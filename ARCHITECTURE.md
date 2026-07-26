@@ -117,13 +117,22 @@ Routes throw via `asyncHandler`-wrapped handlers; the global error middleware in
 ### Onboarding Progress — `/api/progress`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/` | Yes | Get user's onboarding progress |
-| PUT | `/step` | Yes | Mark a step as completed |
+| GET | `/` | Yes | Get user's onboarding progress, plus `documents_outstanding` |
+| PUT | `/step` | Yes | Mark a step as completed; returns the same shape as `GET /` |
 | GET | `/draft/:formKey` | Yes | Read the caller's autosaved draft (`{ data: null }` when none) |
 | PUT | `/draft/:formKey` | Yes | Upsert the caller's draft; body `{ data }`, replaces rather than merges |
 | DELETE | `/draft/:formKey` | Yes | Clear the draft, called on successful submit |
 
 `:formKey` is allowlisted to `application` and `contractor_profile`. Every query is scoped to `req.user.id`, and the payload is capped at 64KB so a draft cannot be used as free storage under the global 1MB JSON limit.
+
+### Outstanding onboarding documents
+
+`server/utils/outstandingDocuments.js` is the single predicate behind two surfaces that must never disagree. It LEFT JOINs `applications` and `contractor_profiles` off `users`, deliberately: the sibling queries in `admin/hiring.js` INNER JOIN applications, which is right for funnel stats but would hide exactly the people this exists for, direct hires who never completed the application. Either storage location satisfies a document, hence the COALESCE.
+
+- `outstandingFor(userId)` — the recruit's own to-do. **Both** documents, across the broad `ONBOARDING_STATUSES` (including `applied`/`interviewing`). Surfaced by `GET /api/progress` as `documents_outstanding`, rendered persistently in `client/src/components/Layout.js` so it follows them through every onboarding step.
+- `listUncertifiedStaffable()` — the admin compliance alert. **Certification only**, and only across `STAFFABLE_STATUSES` (`submitted`/`reviewed`/`approved`), which mirrors the assignment gate at `server/routes/shifts.approval.js:233`. A LATERAL join attaches each worker's soonest upcoming shift so a booked worker outranks a merely-eligible one. Served by `GET /api/admin/hiring/uncertified` and rendered as one named row per person in the Needs-attention strip.
+
+The two scopes differ on purpose. Sized against production, a single predicate covering both documents across all onboarding statuses returns 50 rows into a 6-row strip: every one of the 50 lacks a resume (a nice-to-have on people already hired) while only 2 lack a certification. A missing resume stays visible per-person on `DocumentsTab`; it is not an alert.
 
 ### Contractor Agreement — `/api/agreement`
 | Method | Path | Auth | Description |
@@ -192,6 +201,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | POST | `/applications/:userId/reminder` | Admin | Send paperwork-reminder email (24h cooldown per applicant) |
 | GET | `/hiring/summary` | Admin | KPI strip: new apps 7d / need-to-schedule / stalled / in-pipeline |
 | GET | `/hiring/search` | Admin | Cross-state applicant search (Applied/Interview/Onboarding/Active/Rejected/Unfinished) |
+| GET | `/hiring/uncertified` | Admin | Workers who can be assigned to a shift but have no alcohol certification on file |
 | GET | `/search` | Admin/Manager | Global record search across clients, proposals, events, staff (matches partial name / email / phone) |
 | DELETE | `/notes/:noteId` | Admin | Delete interview note |
 | GET | `/active-staff` | Staffing | Paginated list of onboarded staff |

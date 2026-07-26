@@ -1,6 +1,6 @@
 import {
   buildStaffingItems, buildClientItems, buildSalesItems, buildMoneyItems,
-  computeTabs, defaultTabKey,
+  computeTabs, defaultTabKey, queueItemHref,
 } from './queueItems';
 import { buildPrepItems } from './PrepQueue';
 
@@ -90,6 +90,83 @@ describe('buildStaffingItems', () => {
     const items = buildStaffingItems([], 2);
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ target: 'hiring', priority: 'info' });
+  });
+
+  const risk = (user_id, name, next_shift_date = null, next_shift_id = null) =>
+    ({ user_id, name, next_shift_date, next_shift_id });
+
+  test('emits one named row per uncertified worker', () => {
+    const items = buildStaffingItems([], 0, [
+      risk(55, 'Loryn', '2026-08-01'),
+      risk(241, 'Debbie'),
+    ]).filter(i => i.type === 'documents');
+
+    expect(items).toHaveLength(2);
+    expect(items[0].title).toBe('Loryn has no alcohol certification');
+    expect(items[1].title).toBe('Debbie has no alcohol certification');
+  });
+
+  test('escalates someone who is actually booked', () => {
+    const [booked] = buildStaffingItems([], 0, [risk(55, 'Loryn', '2026-08-01', 347)])
+      .filter(i => i.type === 'documents');
+    expect(booked.priority).toBe('danger');
+    expect(booked.sub).toMatch(/working/i);
+  });
+
+  test('leaves an eligible but unbooked worker at warn', () => {
+    const [idle] = buildStaffingItems([], 0, [risk(241, 'Debbie')])
+      .filter(i => i.type === 'documents');
+    expect(idle.priority).toBe('warn');
+    expect(idle.sub).toMatch(/can be assigned/i);
+  });
+
+  test('links each row to that person, not to a list they may not appear on', () => {
+    const [row] = buildStaffingItems([], 0, [risk(241, 'Debbie')])
+      .filter(i => i.type === 'documents');
+    expect(row.target).toBe('user');
+    expect(row.ref).toBe(241);
+  });
+
+  test('gives each row a stable unique id', () => {
+    const items = buildStaffingItems([], 0, [risk(55, 'Loryn'), risk(241, 'Debbie')])
+      .filter(i => i.type === 'documents');
+    expect(new Set(items.map(i => i.id)).size).toBe(2);
+  });
+
+  test('emits nothing when nobody is uncertified', () => {
+    expect(buildStaffingItems([], 0, []).some(i => i.type === 'documents')).toBe(false);
+  });
+
+  test('treats a missing third argument as nobody uncertified', () => {
+    expect(buildStaffingItems([], 0).some(i => i.type === 'documents')).toBe(false);
+  });
+
+  // Regression guard for the crowding-out defect. NeedsYouStrip renders only
+  // the first TAB_CAP (6) items in array order, so an urgent row appended last
+  // disappears into an overflow link pointing at /events.
+  test('floats danger rows above warn rows regardless of insertion order', () => {
+    const sixWarnEvents = [1, 2, 3, 4, 5, 6].map(i => shift(10, { id: i })); // days=10 => warn
+    const items = buildStaffingItems(sixWarnEvents, 0, [
+      risk(55, 'Loryn', '2026-08-01', 347),   // danger: booked
+    ]);
+    expect(items[0].type).toBe('documents');
+    expect(items.slice(0, 6).some(i => i.type === 'documents')).toBe(true);
+  });
+
+  test('keeps equal-priority rows in their original order', () => {
+    const items = buildStaffingItems([], 0, [risk(55, 'Loryn'), risk(241, 'Debbie')])
+      .filter(i => i.type === 'documents');
+    expect(items.map(i => i.ref)).toEqual([55, 241]);
+  });
+});
+
+describe('queueItemHref', () => {
+  test('routes a user-target row to that user detail page', () => {
+    expect(queueItemHref({ target: 'user', ref: 241 })).toBe('/staffing/users/241');
+  });
+  test('still routes the pre-existing targets', () => {
+    expect(queueItemHref({ target: 'event', ref: 9 })).toBe('/events/9');
+    expect(queueItemHref({ target: 'hiring', ref: null })).toBeNull();
   });
 });
 

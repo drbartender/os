@@ -6,6 +6,7 @@ const express = require('express');
 const { pool } = require('../../db');
 const { auth, adminOnly } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
+const { listUncertifiedStaffable } = require('../../utils/outstandingDocuments');
 
 const router = express.Router();
 
@@ -93,6 +94,14 @@ router.get('/hiring/search', auth, adminOnly, asyncHandler(async (req, res) => {
   `, [term]);
 
   res.json({ results: result.rows });
+}));
+
+// Recruits who can be assigned to a shift but have no alcohol certification on
+// file. Separate from /hiring/summary, which is a set of counts whose handler
+// destructures a positional Promise.all. Also cannot come from the applications
+// list, which INNER JOINs applications and so omits the direct hires this is for.
+router.get('/hiring/uncertified', auth, adminOnly, asyncHandler(async (_req, res) => {
+  res.json({ users: await listUncertifiedStaffable() });
 }));
 
 module.exports = router;

@@ -88,6 +88,7 @@ export default function OverviewPage() {
   const [proposals, setProposals] = useState([]);
   const [proposalsLoading, setProposalsLoading] = useState(true);
   const [applications, setApplications] = useState([]);
+  const [uncertified, setUncertified] = useState([]);
   const [drinkPlans, setDrinkPlans] = useState([]);
   const [drinkPlansLoading, setDrinkPlansLoading] = useState(true);
   const [payoutsLoading, setPayoutsLoading] = useState(true);
@@ -213,6 +214,13 @@ export default function OverviewPage() {
       api.get('/admin/applications')
         .then(r => { if (!cancelled) setApplications(r.data?.applications || r.data || []); })
         .catch(() => {}); // applications queue items simply stay absent
+
+      // Workers who can be assigned to a shift but have no alcohol certification
+      // on file. adminOnly for the same reason as the line above; a manager 403
+      // here would trip the role_denial audit, so they simply see no rows.
+      api.get('/admin/hiring/uncertified')
+        .then(r => { if (!cancelled) setUncertified(r.data?.users || []); })
+        .catch(() => {}); // rows simply stay absent
     }
     return () => { cancelled = true; };
   }, [isAdmin]);
@@ -228,7 +236,9 @@ export default function OverviewPage() {
   // Tab assembly (spec 2026-07-14 §2): pure builders over the fetched state.
   // The old un-aged proposal followups are gone by design; only sent-unviewed
   // past 72h survives, as the conditional Sales tab.
-  const staffingItems = useMemo(() => buildStaffingItems(unstaffed, newApplications), [unstaffed, newApplications]);
+  const staffingItems = useMemo(
+    () => buildStaffingItems(unstaffed, newApplications, uncertified),
+    [unstaffed, newApplications, uncertified]);
   const prepItems = useMemo(() => buildPrepItems(drinkPlans), [drinkPlans]);
   const clientItems = useMemo(() => buildClientItems(changeRequests, conversations), [changeRequests, conversations]);
   const salesItems = useMemo(() => buildSalesItems(proposals, Date.now()), [proposals]);

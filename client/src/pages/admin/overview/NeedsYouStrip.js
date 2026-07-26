@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Icon from '../../../components/adminos/Icon';
 import EntityLink from '../../../components/EntityLink';
-import { defaultTabKey } from './queueItems';
+import { defaultTabKey, queueItemHref } from './queueItems';
 import PayrollStatus from './PayrollStatus';
 
 // Tabbed Needs-attention triage card (spec 2026-07-14 §3). Tab headers do the
@@ -10,24 +10,10 @@ import PayrollStatus from './PayrollStatus';
 // time. ALL panels stay mounted (inactive hidden by CSS) so the admin-only
 // PayrollStatus block mounts once and background tabs feed their dots.
 
-// Real-link target for a needs-attention queue item. Entity-backed items get a
-// canonical link (cmd-click opens a new tab); hiring and other targetless
-// items return null and stay plain text (the row onClick still navigates).
-function queueItemHref(a) {
-  if (a.target === 'event') return `/events/${a.ref}`;
-  if (a.target === 'shift') return `/events/shift/${a.ref}`;
-  if (a.target === 'proposal') return `/proposals/${a.ref}`;
-  if (a.target === 'client') return `/clients/${a.ref}`;
-  if (a.target === 'payouts') return '/dashboard?tab=payouts&show=unmatched';
-  if (a.target === 'drink-plan') return `/drink-plans/${a.ref}`;
-  if (a.target === 'sms') return `/messages?client=${a.ref}`;
-  return null;
-}
-
 const QUEUE_ICON = {
   unstaffed: 'userplus', proposal: 'eye', application: 'pen',
   payouts: 'dollar', prep: 'flask', 'change-request': 'pen', sms: 'chat',
-  'lead-call': 'alert',
+  'lead-call': 'alert', documents: 'alert',
 };
 
 const TAB_CAP = 6;

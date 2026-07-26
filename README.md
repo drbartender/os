@@ -318,6 +318,7 @@ dr-bartender/
 │   │   ├── eventCreation.js    # Auto-create shifts from paid proposals
 │   │   ├── eventEveSms.js      # Event-eve SMS touch (T-24h from event start) and timing helper
 │   │   ├── eventTypes.js       # Event type id→label resolver (mirrors client)
+│   │   ├── outstandingDocuments.js # Which onboarding documents a worker still owes (one predicate, two surfaces)
 │   │   ├── fileValidation.js   # Magic-byte file type validation
 │   │   ├── geocode.js          # Nominatim geocoding (address → lat/lng)
 │   │   ├── globalSearch.js     # Global record search query engine (clients/proposals/events/staff)

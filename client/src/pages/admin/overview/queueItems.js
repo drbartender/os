@@ -18,12 +18,31 @@ const OVERFLOW_HREF = {
   sales: '/proposals?tab=active',
 };
 
+// Real-link target for a needs-attention queue item. Entity-backed items get a
+// canonical link (cmd-click opens a new tab); hiring and other targetless items
+// return null and stay plain text (the row onClick still navigates).
+//
+// Lives here rather than in NeedsYouStrip so the pure queue-item contract and
+// the function that maps it to a URL sit together, and so its test does not have
+// to import a component that transitively pulls in react-router and axios.
+export function queueItemHref(a) {
+  if (a.target === 'event') return `/events/${a.ref}`;
+  if (a.target === 'shift') return `/events/shift/${a.ref}`;
+  if (a.target === 'proposal') return `/proposals/${a.ref}`;
+  if (a.target === 'client') return `/clients/${a.ref}`;
+  if (a.target === 'payouts') return '/dashboard?tab=payouts&show=unmatched';
+  if (a.target === 'drink-plan') return `/drink-plans/${a.ref}`;
+  if (a.target === 'sms') return `/messages?client=${a.ref}`;
+  if (a.target === 'user') return `/staffing/users/${a.ref}`;
+  return null;
+}
+
 const worstPriority = (items) =>
   items.reduce((w, i) => (w === null || (RANK[i.priority] ?? 3) < RANK[w] ? i.priority : w), null);
 
 // Unstaffed upcoming events (uncapped; the tab caps at render) plus the
 // new-applications rollup. `unstaffed` is OverviewPage's derived list.
-export function buildStaffingItems(unstaffed, newApplications) {
+export function buildStaffingItems(unstaffed, newApplications, uncertified = []) {
   const items = (unstaffed || []).map(e => {
     const open = parsePositionsCount(e) - approvedCount(e);
     const days = dayDiff(e.event_date.slice(0, 10));
@@ -41,6 +60,47 @@ export function buildStaffingItems(unstaffed, newApplications) {
       sub: 'Review in hiring', meta: `${newApplications} new`, target: 'hiring', ref: null,
     });
   }
+
+  // One row per person, each linking to their own detail page. A single
+  // "N workers uncertified" row would link to /hiring, whose list INNER JOINs
+  // applications and therefore omits every direct hire this is for.
+  //
+  // Scoped to the certification among staffable people only. Including the
+  // resume, or every onboarding status, returns ~50 rows into a 6-row strip.
+  (uncertified || []).forEach(u => {
+    const booked = !!u.next_shift_date;
+    const day = booked ? String(u.next_shift_date).slice(0, 10) : null;
+    items.push({
+      id: `uncertified-${u.user_id}`, type: 'documents',
+      priority: booked ? 'danger' : 'warn',
+      title: `${u.name} has no alcohol certification`,
+      sub: booked
+        ? `Working ${fmtDate(day)} · ${dayDiff(day)}d out`
+        : 'Can be assigned to shifts',
+      meta: booked ? 'booked' : 'eligible',
+      target: 'user', ref: u.user_id,
+    });
+  });
+
+  // Sort by urgency before returning. NeedsYouStrip renders
+  // `t.items.slice(0, TAB_CAP)` in ARRAY ORDER with TAB_CAP = 6, and the RANK
+  // map here was previously used only to colour the tab dot. Without this,
+  // these rows are appended last and six unstaffed events push a
+  // "working Saturday with no certification" row into the "N more" overflow,
+  // whose href is OVERFLOW_HREF.staffing = '/events'. That is the same
+  // link-to-a-page-they-are-not-on failure this surface was built to replace.
+  //
+  // Array.prototype.sort is stable in Node 26 and every supported browser, so
+  // equal-priority rows keep their existing relative order and the pre-existing
+  // unstaffed-event cases are unaffected.
+  //
+  // Known limit, stated rather than overclaimed: stability also means that when
+  // the unstaffed events are THEMSELVES 'danger' (six or more inside 7 days), a
+  // 'danger' documents row still sorts behind them and can reach the overflow.
+  // Ranking documents above unstaffed at equal priority is a product call about
+  // which is more urgent, not a mechanical fix, so it is deliberately not made
+  // here.
+  items.sort((a, b) => (RANK[a.priority] ?? 3) - (RANK[b.priority] ?? 3));
   return items;
 }
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import BrandLogo from './BrandLogo';
@@ -96,6 +96,22 @@ export default function Layout() {
       )}
 
       <main>
+        {/* Persistent, because a to-do that lives on one page is seen once. This
+            sits in the layout so it follows the recruit through welcome, field
+            guide, agreement, contractor profile and payday, and Layout already
+            refetches /progress on every pathname change so it clears itself the
+            moment they upload. alert-info, not alert-warning: index.css defines
+            only alert / alert-error / alert-success / alert-info. */}
+        {progress?.documents_outstanding?.length > 0 && (
+          <div className="page-container">
+            <div className="alert alert-info" role="status">
+              We still need your {progress.documents_outstanding.join(' and ')}. Add
+              {progress.documents_outstanding.length === 1 ? ' it' : ' them'} on
+              the <Link to="/contractor-profile">Contractor Profile</Link> step. We do need
+              {progress.documents_outstanding.length === 1 ? ' it' : ' them'} before your first shift.
+            </div>
+          </div>
+        )}
         <Outlet context={{ progress, setProgress }} />
       </main>
     </>

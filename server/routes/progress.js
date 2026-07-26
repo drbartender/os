@@ -4,13 +4,17 @@ const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError } = require('../utils/errors');
+const { outstandingFor } = require('../utils/outstandingDocuments');
 
 const router = express.Router();
 
 // Get progress
 router.get('/', auth, asyncHandler(async (req, res) => {
-  const result = await pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [req.user.id]);
-  res.json(result.rows[0] || {});
+  const [result, documentsOutstanding] = await Promise.all([
+    pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [req.user.id]),
+    outstandingFor(req.user.id),
+  ]);
+  res.json({ ...(result.rows[0] || {}), documents_outstanding: documentsOutstanding });
 }));
 
 // Update a step. Note: 'onboarding_completed' is owned by POST /payment, which
@@ -28,7 +32,13 @@ router.put('/step', auth, asyncHandler(async (req, res) => {
   await ensureOnboardingProgress(req.user.id);
   const cur = await pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [req.user.id]);
   if (cur.rows[0]?.onboarding_completed) {
-    return res.json(cur.rows[0]);
+    // Same shape as the main return below. Two exits from one endpoint handing
+    // back different shapes is how a consumer ends up with the field on one call
+    // and undefined on the next.
+    return res.json({
+      ...cur.rows[0],
+      documents_outstanding: await outstandingFor(req.user.id),
+    });
   }
 
   await pool.query(`
@@ -42,8 +52,15 @@ router.put('/step', auth, asyncHandler(async (req, res) => {
     WHERE user_id = $2
   `, [step, req.user.id]);
 
-  const result = await pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [req.user.id]);
-  res.json(result.rows[0]);
+  // Return documents_outstanding here too. Welcome.js, FieldGuide.js and
+  // ContractorProfile.js all call setProgress(r.data) with this response, so a
+  // reply lacking the field blanks it in context and the notice blinks off until
+  // Layout refetches on the next route change.
+  const [result, documentsOutstanding] = await Promise.all([
+    pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [req.user.id]),
+    outstandingFor(req.user.id),
+  ]);
+  res.json({ ...result.rows[0], documents_outstanding: documentsOutstanding });
 }));
 
 // Autosaved drafts for the two long onboarding forms.
