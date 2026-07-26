@@ -766,6 +766,29 @@ test('at 100 guests the same two-bartender shape has no surcharge: $140', async 
   assert.equal(r.amountCents, 14000);
 });
 
+test('the sub-100 surcharge is classified as STAFF gratuity, not service revenue', async () => {
+  // The load-bearing case, and the one the cross-model review caught. The
+  // $25/hr over-ratio surcharge carries the 'Shared Gratuity' breakdown label,
+  // which payroll pools into the staff gratuity. Reading snapshot.gratuity.total
+  // instead of extractGratuityCents would put it in serviceDeltaCents and DRB
+  // would keep money that belongs to the bartenders. gratuity_rate is 0 here, so
+  // the ONLY gratuity in play is the surcharge: it must be $25, not $0.
+  const id = await mkProposal({ packageId: flatPkgId, guests: 50, numBartenders: 2, gratuityRate: 0 });
+  const r = await computeExtensionDelta({ client: pool, proposalId: id, requestedDurationHours: 5 });
+  assert.equal(r.ok, true);
+  assert.equal(r.gratuityDeltaCents, 2500, 'the Shared Gratuity surcharge must land in the staff pool');
+  assert.equal(r.serviceDeltaCents, 14000, '$100 base hour + $40 extra-bartender hour');
+  assert.equal(r.serviceDeltaCents + r.gratuityDeltaCents, r.amountCents, 'the three figures must reconcile');
+});
+
+test('with a client gratuity rate AND a surcharge, both labels reach the staff pool', async () => {
+  const id = await mkProposal({ packageId: flatPkgId, guests: 50, numBartenders: 2, gratuityRate: 50 });
+  const r = await computeExtensionDelta({ client: pool, proposalId: id, requestedDurationHours: 5 });
+  assert.equal(r.ok, true);
+  assert.ok(r.gratuityDeltaCents > 2500, 'both gratuity labels must be pooled, not just one');
+  assert.equal(r.serviceDeltaCents + r.gratuityDeltaCents, r.amountCents);
+});
+
 test('hosted per-guest: 100 guests x $5 x 1h = $500', async () => {
   const id = await mkProposal({ packageId: hostedPkgId, guests: 100, totalPrice: 1800 });
   const r = await computeExtensionDelta({ client: pool, proposalId: id, requestedDurationHours: 5 });
@@ -872,6 +895,10 @@ Create `server/utils/serviceExtensionPricing.js`:
 const { calculateProposal, isHostedPackage } = require('./pricingEngine');
 const { loadRepriceAddons } = require('./proposalExtrasFold');
 const { eventEndInstantForDuration } = require('./eventEndInstant');
+// THE definition of "gratuity" for payroll purposes. It pools BOTH canonical
+// breakdown labels, 'Shared Gratuity' (the forced sub-100-guest over-ratio
+// surcharge) and 'Gratuity' (client-elected), per GRATUITY_PAYROLL_LABELS.
+const { extractGratuityCents } = require('./payrollMath');
 
 // Cap on how far a single request may extend, in hours. A mis-scroll must not
 // be able to invoice a client for a second event.
@@ -886,16 +913,29 @@ function toCents(dollars) {
 }
 
 /**
- * The service portion of an engine result, in dollars. The engine layers the
- * client-gratuity line on top of serviceTotal, so stripping gratuity.total is
- * how we isolate service (the fold's `serviceOf`).
+ * Total for an engine result, in cents. Includes both gratuity flavours:
+ * the client-elected line is layered on top of serviceTotal, and the forced
+ * sub-100-guest surcharge is inside staffing.cost -> subtotal -> serviceTotal.
  */
-function serviceOf(snapshot) {
-  return Math.round((snapshot.total - (snapshot.gratuity?.total || 0)) * 100) / 100;
+function totalCentsOf(snapshot) {
+  return toCents(snapshot.total);
 }
 
-function gratuityOf(snapshot) {
-  return Math.round((snapshot.gratuity?.total || 0) * 100) / 100;
+/**
+ * The STAFF gratuity in an engine result, in cents.
+ *
+ * Deliberately NOT `snapshot.gratuity.total`, which holds only the
+ * client-elected line. Payroll pools BOTH canonical breakdown labels
+ * ('Shared Gratuity' + 'Gratuity') via extractGratuityCents, and the forced
+ * sub-100-guest over-ratio surcharge carries the 'Shared Gratuity' label while
+ * living inside staffing.cost. Reading `.gratuity.total` would classify that
+ * surcharge as DRB service revenue, so on a 50-guest two-bartender event the
+ * $25/hr surcharge the rule exists to pay bartenders with would never reach the
+ * staff pool. This is the load-bearing hosted/staffing gratuity rule CLAUDE.md
+ * flags as re-lost multiple times; extractGratuityCents is the single source.
+ */
+function staffGratuityCentsOf(snapshot) {
+  return extractGratuityCents(snapshot);
 }
 
 async function computeExtensionDelta({ client, proposalId, requestedDurationHours }) {
@@ -949,8 +989,13 @@ async function computeExtensionDelta({ client, proposalId, requestedDurationHour
   const before = calculateProposal({ ...common, durationHours: contracted });
   const after = calculateProposal({ ...common, durationHours: requested });
 
-  const serviceDeltaCents = toCents(serviceOf(after) - serviceOf(before));
-  const gratuityDeltaCents = toCents(gratuityOf(after) - gratuityOf(before));
+  // The whole delta is the total delta. The gratuity share of it comes from the
+  // pooled payroll labels, and service is whatever is left. Deriving service as
+  // the remainder (rather than differencing a separate service figure) means the
+  // three numbers can never fail to reconcile.
+  const amountCents = totalCentsOf(after) - totalCentsOf(before);
+  const gratuityDeltaCents = staffGratuityCentsOf(after) - staffGratuityCentsOf(before);
+  const serviceDeltaCents = amountCents - gratuityDeltaCents;
 
   return {
     ok: true,
@@ -961,7 +1006,7 @@ async function computeExtensionDelta({ client, proposalId, requestedDurationHour
     contractedEndInstant: contractedEnd.endInstant,
     serviceDeltaCents,
     gratuityDeltaCents,
-    amountCents: serviceDeltaCents + gratuityDeltaCents,
+    amountCents,
     isHosted: isHostedPackage(pkg),
   };
 }
@@ -1307,6 +1352,8 @@ Create `server/utils/serviceExtensionSettle.js`:
  * (verified 2026-07-26: 11:00 PM, 12:30 AM, 9:30 AM, 12:00 AM).
  */
 
+const { pool } = require('../db');
+
 const SETTLE_OUTCOMES = new Set(['paid', 'overridden']);
 const CLOSE_OUTCOMES = new Set(['expired', 'cancelled']);
 
@@ -1527,16 +1574,20 @@ gate shared by settle, expiry, override and cancel, and a second idempotency
 wall behind the webhook's isFirstDelivery."
 ```
 
-- [ ] **Step 7: Lane gate**
+- [ ] **Step 7: NOT the lane gate. Build Task 12a next.**
 
-`ext-core` is complete. Run all four suites in this lane one at a time, then dispatch the full review fleet declared in the front-matter before merging.
+`ext-core` is NOT finished here. **Go to Task 12 and execute Steps 1 through 6 (12a, the `serviceExtensionPayroll.js` hours module), which belong to this lane** even though Task 12 is physically printed inside the `ext-webhook-payroll` section. `ext-routes` Tasks 8 and 10 import that module, so if `ext-core` merges without it, the next lane hits `MODULE_NOT_FOUND` and cannot create it without leaving its own footprint.
+
+Before that, confirm the three suites written so far pass:
 
 ```bash
 for f in server/utils/eventEndInstant.test.js server/utils/serviceExtensionPricing.test.js server/utils/serviceExtensionSettle.test.js; do
   echo "=== $f"; node --env-file=/home/drbartender/projects/os/.env --test "$f" || break
 done
 ```
-Expected: all PASS. Plus every suite identified in Task 2 Step 4 still passing.
+Expected: all PASS. Plus every suite named in Task 2 Step 4 still passing.
+
+The real `ext-core` lane gate is at the end of Task 12 Step 6: four suites total, the 12a `code-review`, then the front-matter fleet.
 
 ---
 
@@ -1559,7 +1610,7 @@ All outbound messaging for the feature, in one place. Three audiences: the clien
   - `notifyClientOfRequest({ proposalId, invoiceToken, amountCents, newEndDisplay, termsVersion })` → `Promise<{ sms: 'sent'|'skipped', email: 'sent'|'skipped', reachable: boolean }>`
   - `notifyStaffOfOutcome({ staffUserIds, outcome, newEndDisplay, contractedEndDisplay, proposalId })` → `Promise<{ notified: number[], unreachable: number[] }>`; `outcome` is `'approved' | 'declined'`. Channel fallback per staffer is SMS (if `agreements.sms_consent`), then web push, then email, matching spec §10.
   - `alertAdminsRequestSent({ proposalId, newEndDisplay, amountCents, requesterUserId, clientReachable })` → `Promise<void>`
-  - `alertAdminsProblem({ proposalId, kind, detail })` → `Promise<void>`; `kind` in `'client_unreachable' | 'multi_shift' | 'paid_after_expiry' | 'settle_on_closed_event' | 'staff_unreachable' | 'payroll_hours_locked'`
+  - `alertAdminsProblem({ proposalId, kind, detail })` → `Promise<void>`; `kind` in `'client_unreachable' | 'multi_shift' | 'paid_after_expiry' | 'paid_extension_stranded' | 'settle_on_closed_event' | 'staff_unreachable' | 'payroll_hours_locked'`. `paid_after_expiry` and `paid_extension_stranded` also fire an SMS: both mean DRB is holding money for time that was not authorized or not delivered.
 
 - [ ] **Step 1: Confirm the copy constants and the consent columns exist**
 
@@ -1765,9 +1816,12 @@ async function notifyStaffOfOutcome({ staffUserIds, outcome, newEndDisplay, cont
           body,
           url: `${STAFF_URL}/shifts`,
         }));
-        // sendPush resolves with a result object on success; any throw is
-        // swallowed by safe() and returns null. One good subscription is enough.
-        if (pushed) { delivered = true; break; }
+        // sendPush NEVER throws: it RESOLVES with { ok: false, gone } or
+        // { ok: false, error: 'vapid_unset' } on failure (pushSender.js:46-66).
+        // So a truthiness check would count every failure as a delivery, which
+        // would suppress the staff_unreachable alert on exactly the decline
+        // message that carries the insurance warning. Test ok === true.
+        if (pushed?.ok === true) { delivered = true; break; }
       }
     }
 
@@ -1817,6 +1871,7 @@ async function alertAdminsRequestSent({ proposalId, newEndDisplay, amountCents, 
 
 const PROBLEM_SUBJECTS = Object.freeze({
   client_unreachable: 'Extension link could not be delivered',
+  paid_extension_stranded: 'A PAID extension was never applied: settle or refund it',
   multi_shift: 'Extension on a multi-shift event needs a manual shift edit',
   paid_after_expiry: 'An extension was paid after it expired: refund needed',
   settle_on_closed_event: 'An extension settled on a completed or archived event',
@@ -1829,12 +1884,14 @@ async function alertAdminsProblem({ proposalId, kind, detail }) {
     const subject = PROBLEM_SUBJECTS[kind] || 'Service extension needs attention';
     const line = `Event #${proposalId}: ${detail}`;
     await notifyAdminCategory({
-      // paid_after_expiry means DRB is holding money it should not: urgent.
-      category: kind === 'paid_after_expiry' ? 'urgent_client_reply' : 'routine_admin',
+      // These two mean DRB is holding money for time that was not authorized or
+      // not delivered, so they are urgent rather than routine.
+      category: (kind === 'paid_after_expiry' || kind === 'paid_extension_stranded')
+        ? 'urgent_client_reply' : 'routine_admin',
       subject: `${subject} (event #${proposalId})`,
       emailHtml: `<p>${line}</p><p><a href="${ADMIN_URL}/events/${proposalId}">Open the event</a></p>`,
       emailText: `${line} ${ADMIN_URL}/events/${proposalId}`,
-      ...(kind === 'paid_after_expiry' ? { smsBody: line } : {}),
+      ...((kind === 'paid_after_expiry' || kind === 'paid_extension_stranded') ? { smsBody: line } : {}),
     });
   });
 }
@@ -2395,7 +2452,12 @@ router.post('/', auth, serviceExtensionLimiter, asyncHandler(async (req, res) =>
       quantity: 1,
       unit_price: delta.amountCents,
       line_total: delta.amountCents,
-      source_type: 'service_extension',
+      // 'fee', NOT a new value. invoice_line_items.source_type carries
+      // CHECK (source_type IN ('package','addon','fee','manual')) at
+      // schema.sql:1977-1978, so 'service_extension' would raise 23514 on
+      // every single request, and the catch below only special-cases 23505.
+      // The extension is identified by the invoice's LABEL, not by this column.
+      source_type: 'fee',
       source_id: null,
     }], dbClient);
 
@@ -3223,17 +3285,28 @@ Insert after the `await linkPaymentToInvoice(Number(invoiceId), paymentRowId, in
 
 Declare `let extensionSettleContext = null;` alongside the handler's other pre-transaction locals (find them with `grep -n "^        let \|^      let " server/routes/stripeWebhookHandlers/paymentIntentSucceeded.js | head`), so the post-commit tail can see it.
 
-- [ ] **Step 3: Do the settle in the post-commit tail, not in the transaction**
+- [ ] **Step 3: Do the settle in the post-commit tail, AFTER the connection is released**
 
-Find the handler's post-commit section (after its `COMMIT`, where other best-effort work runs): `grep -n "COMMIT" server/routes/stripeWebhookHandlers/paymentIntentSucceeded.js`.
+**Get this location exactly right.** The `COMMIT` (line ~456) is still inside the `try`, and `dbClient.release()` is in the `finally` at ~473. Inserting "after the COMMIT" would call `settleExtension`, `applyExtensionHours` and the notify helpers while `dbClient` is still held, and every one of those takes its own pooled connection: that is the pool deadlock the Global Constraints forbid and the one that has already bitten this codebase twice.
+
+The correct anchor is the existing best-effort block that starts AFTER the `finally`:
+
+```bash
+grep -n "Non-blocking post-commit work" server/routes/stripeWebhookHandlers/paymentIntentSucceeded.js
+```
+
+That comment sits at ~line 476, immediately followed by `if (isFirstDelivery) {`. Put the new block inside that existing `if (isFirstDelivery)`, alongside the B3 settle-on-archived alert. Being inside it also means a Stripe retry cannot re-run the settle, on top of the claim gate.
 
 Add there:
 
 ```javascript
-  // ─── Service extension: settle AFTER the commit ─────────────────────────
-  // Outside the transaction on purpose. The payment is already durably
-  // recorded; a settle, payroll, or Twilio failure here must never roll that
-  // back and make Stripe retry a charge the client already made.
+  // ─── Service extension: settle AFTER the commit AND after release ───────
+  // Goes inside the existing `if (isFirstDelivery)` best-effort block, which
+  // runs after dbClient.release(). Every helper below takes its own pooled
+  // connection, so running this while dbClient is still held would deadlock the
+  // pool. Outside the transaction is also deliberate: the payment is already
+  // durably recorded, and a settle, payroll or Twilio failure must never roll
+  // that back and make Stripe retry a charge the client already made.
   if (extensionSettleContext) {
     const { settleExtension } = require('../../utils/serviceExtensionSettle');
     const notify = require('../../utils/serviceExtensionNotify');
@@ -3255,7 +3328,14 @@ Add there:
           outcome: 'paid',
         });
         if (settled.ok) {
-          const { applyExtensionHours } = require('../../utils/serviceExtensionPayroll');
+          // BOTH names. Destructuring only applyExtensionHours leaves
+          // maybeAlertPayroll unresolved; the ReferenceError lands in the outer
+          // catch AFTER the settle already committed, so the duration moves and
+          // notifyStaffOfOutcome on the next line never runs: the bartender is
+          // never greenlit and the admin gets a misleading alert. The happy-path
+          // test would still pass, because it only asserts DB state written
+          // before this line.
+          const { applyExtensionHours, maybeAlertPayroll } = require('../../utils/serviceExtensionPayroll');
           const payroll = await applyExtensionHours({
             proposalId: settled.proposalId,
             newDurationHours: settled.newDurationHours,
@@ -3363,27 +3443,8 @@ label, so a deposit-stage event cannot be falsely marked funded."
 **Interfaces:**
 - Consumes: `contractedHours` and `wageCents` from `server/utils/payrollMath.js` (existing).
 - Produces:
-  - `applyExtensionHours({ proposalId, newDurationHours })` → `Promise<{ updatedLines: number, lockedLines: number, frozenLines: number, payoutIds: number[] }>`. Called by ALL THREE settle paths: the webhook (Task 11), the zero-delta accept (Task 8), and the admin override (Task 10). A first draft wired it only into the webhook, so an overridden or zero-delta extension moved the duration and never paid for it.
-  - `maybeAlertPayroll(notify, proposalId, payrollResult)` → `Promise<void>`. The shared post-settle alert, so all three call sites report `lockedLines` AND `frozenLines` identically:
-    ```javascript
-    async function maybeAlertPayroll(notify, proposalId, payroll) {
-      if (!payroll) return;
-      const parts = [];
-      if (payroll.lockedLines > 0) {
-        parts.push(`${payroll.lockedLines} payout line(s) were edited by hand`);
-      }
-      if (payroll.frozenLines > 0) {
-        parts.push(`${payroll.frozenLines} payout line(s) sit in a pay period that is not open`);
-      }
-      if (parts.length === 0) return;
-      await notify.alertAdminsProblem({
-        proposalId,
-        kind: 'payroll_hours_locked',
-        detail: `${parts.join(' and ')}, so the extra time was NOT added to payroll automatically. Update the payout line(s) yourself.`,
-      });
-    }
-    ```
-    Export it from `serviceExtensionPayroll.js`. `frozenLines` MUST be reported: a `processing` or `reopened` period silently skipped is an underpay nobody is told about, which spec §9 forbids (the late-tip deferral precedent).
+  - `applyExtensionHours({ proposalId, newDurationHours })` → `Promise<{ updatedLines, lockedLines, frozenLines, multiShiftSkipped, payoutIds }>`. Called by ALL THREE settle paths: the webhook (Task 11), the zero-delta accept (Task 8), and the admin override (Task 10). A first draft wired it only into the webhook, so an overridden or zero-delta extension moved the duration and never paid for it.
+  - `maybeAlertPayroll(notify, proposalId, payrollResult)` → `Promise<void>`. The shared post-settle alert, so all three call sites report `lockedLines` AND `frozenLines` identically. Its body is in Step 2's file, and BOTH names are in that file's `module.exports`. All three consumers destructure `{ applyExtensionHours, maybeAlertPayroll }`; Task 11's lazy require must include both.
   - `payrollAccrual`'s gratuity pool includes `SUM(gratuity_cents)` over that proposal's `paid` extensions, added after fee-netting.
 
 - [ ] **Step 1: Read the accrual code this task modifies, and the contracted-hours helper**
@@ -3436,13 +3497,34 @@ const { pool } = require('../db');
 // 30-minute extension and cut an hour of pay per line.
 const { contractedHours, wageCents } = require('./payrollMath');
 
-async function applyExtensionHours({ proposalId, newDurationHours }) {
+async function applyExtensionHours({ proposalId, newDurationHours, shiftId = null }) {
   const target = contractedHours(Number(newDurationHours) || 0);
   if (!Number.isFinite(target) || target <= 0) {
-    return { updatedLines: 0, lockedLines: 0, frozenLines: 0, payoutIds: [] };
+    return { updatedLines: 0, lockedLines: 0, frozenLines: 0, multiShiftSkipped: false, payoutIds: [] };
+  }
+
+  // Multi-shift guard. contracted_hours derives from the PROPOSAL's duration, so
+  // on an event with several shift rows a proposal-wide UPDATE would bump hours
+  // for staff on shifts that were never extended (a Day 2 crew paid for Day 1's
+  // extra hour). settleExtension already refuses to sync shift end_times in that
+  // shape and alerts instead; payroll takes the same line. When the event has
+  // exactly one shift we proceed; otherwise nothing is written and the caller
+  // reports it so an admin fixes the right lines by hand.
+  const shiftCountRes = await pool.query(
+    'SELECT COUNT(*)::int AS n FROM shifts WHERE proposal_id = $1',
+    [proposalId]
+  );
+  if ((shiftCountRes.rows[0]?.n || 0) !== 1) {
+    return { updatedLines: 0, lockedLines: 0, frozenLines: 0, multiShiftSkipped: true, payoutIds: [] };
   }
 
   const { rows } = await pool.query(
+    // held_state IS NULL is REQUIRED, mirroring payrollAccrual.js:228. A held
+    // line belongs to an off-roster worker and carries hours = contracted_hours
+    // = 0 with line_total_cents = 0 deliberately. Both guards below would pass
+    // on it (0 === 0, and 0 !== target), so without this filter a settle would
+    // resurrect a deliberately non-payable line into a payable one and pay
+    // someone who was taken off the job.
     `SELECT pe.payout_id, pe.shift_id, pe.hours, pe.contracted_hours, pe.rate_cents,
             pe.gratuity_share_cents, pe.card_tip_net_cents, pe.adjustment_cents,
             pp.status AS period_status
@@ -3450,7 +3532,8 @@ async function applyExtensionHours({ proposalId, newDurationHours }) {
        JOIN payouts po ON po.id = pe.payout_id
        JOIN pay_periods pp ON pp.id = po.pay_period_id
        JOIN shifts s ON s.id = pe.shift_id
-      WHERE s.proposal_id = $1`,
+      WHERE s.proposal_id = $1
+        AND pe.held_state IS NULL`,
     [proposalId]
   );
 
@@ -3507,10 +3590,44 @@ async function applyExtensionHours({ proposalId, newDurationHours }) {
     );
   }
 
-  return { updatedLines, lockedLines, frozenLines, payoutIds };
+  return { updatedLines, lockedLines, frozenLines, multiShiftSkipped: false, payoutIds };
 }
 
-module.exports = { applyExtensionHours };
+/**
+ * The shared post-settle payroll alert. All three settle paths (webhook,
+ * zero-delta accept, admin override) call this with applyExtensionHours' result
+ * so they report identically.
+ *
+ * frozenLines MUST be reported, not just lockedLines: a 'processing' or
+ * 'reopened' pay period is skipped silently otherwise, which is an underpay
+ * nobody is told about (spec section 9, the late-tip deferral precedent). This
+ * is alert-only by design; no deferral marker is written, because wages have no
+ * deferral mechanism the way tips do, so a human has to move the line.
+ *
+ * `notify` is injected rather than required at module load so this module stays
+ * free of the notification dependency and is trivially stubbable in tests.
+ */
+async function maybeAlertPayroll(notify, proposalId, payroll) {
+  if (!payroll) return;
+  const parts = [];
+  if (payroll.lockedLines > 0) {
+    parts.push(`${payroll.lockedLines} payout line(s) were edited by hand`);
+  }
+  if (payroll.frozenLines > 0) {
+    parts.push(`${payroll.frozenLines} payout line(s) sit in a pay period that is not open`);
+  }
+  if (payroll.multiShiftSkipped) {
+    parts.push('this event has multiple shift rows, so payroll hours were not touched at all (bumping them proposal-wide would overpay staff on the shifts that were not extended)');
+  }
+  if (parts.length === 0) return;
+  await notify.alertAdminsProblem({
+    proposalId,
+    kind: 'payroll_hours_locked',
+    detail: `${parts.join(' and ')}, so the extra time was NOT added to payroll automatically. Update the payout line(s) yourself.`,
+  });
+}
+
+module.exports = { applyExtensionHours, maybeAlertPayroll };
 ```
 
 - [ ] **Step 3: Verify the column and table names before trusting the query**
@@ -3580,7 +3697,7 @@ Then confirm there are no stale references: `grep -n "grossGratuity" server/util
 
 **On the fee-netting rationale, corrected.** `proRataFeeCents` already clamps its ratio with `Math.min(1, ...)` (`payrollMath.js:66`), so feeding extension dollars in would over-net within that clamp rather than produce a ratio above 1. The conclusion is unchanged and still right: the addend goes after netting, both because the denominator genuinely excludes extension money and because the spec decided DRB absorbs that fee. But do not write a comment claiming the clamp does not exist.
 
-- [ ] **Step 5: Write both test suites**
+- [ ] **Step 5 (12a, lane ext-core): Write the hours-module suite**
 
 Create `server/utils/serviceExtensionPayroll.test.js`. Use the chicago-keyed track-and-restore pay-period fixture pattern (standing test law: read an existing payroll suite first, `grep -ln "pay_period" server/utils/*.test.js server/routes/admin/payroll*.test.js | head -3`, and copy its period setup and restore). Cover:
 1. **The setup/breakdown guard.** Seed an untouched line for a 4-hour event the way accrual does, `hours = contracted_hours = 5.5` (that is `contractedHours(4)`). Call `applyExtensionHours({ proposalId, newDurationHours: 4.5 })`. Assert `contracted_hours` and `hours` are now **6.0**, not 4.5. This test exists specifically to catch the underpay defect described in Step 1; if it ever asserts 4.5, the module is wrong.
@@ -3591,6 +3708,38 @@ Create `server/utils/serviceExtensionPayroll.test.js`. Use the chicago-keyed tra
 6. A line in a `processing` period is NOT touched and is counted in `frozenLines`. Add a second case for `reopened`, which is also not writable.
 7. Re-running with the same target is a no-op (`updatedLines === 0`) and does not re-write the payout header.
 8. A proposal with no payout lines returns all zeros and an empty `payoutIds` without error.
+9. **A held line is never resurrected.** Seed a line with `held_state = 'held'`, `hours = contracted_hours = 0`, `line_total_cents = 0`. Assert `applyExtensionHours` leaves every column untouched and does not count it in `updatedLines`. Without the `held_state IS NULL` filter both guards pass on such a line and an off-roster worker becomes payable.
+10. `maybeAlertPayroll` fires on `lockedLines > 0`, on `frozenLines > 0`, and on `multiShiftSkipped`, and does NOT fire when all three are clear. Pass a stub `notify` object and assert on the calls.
+11. **Multi-shift events are not touched at all.** Seed a proposal with TWO shift rows, each with its own payout line at `hours = contracted_hours = 5.5`. Call `applyExtensionHours`. Assert `multiShiftSkipped === true`, `updatedLines === 0`, and that BOTH lines still read 5.5. A proposal-wide bump would pay the second shift's crew for an hour they did not work.
+
+- [ ] **Step 6 (12a, lane ext-core): Run the hours suite, then commit 12a**
+
+```bash
+node --env-file=/home/drbartender/projects/os/.env --test server/utils/serviceExtensionPayroll.test.js
+```
+Expected: PASS, 10 tests.
+
+Append ONLY this line to `scripts/money-smoke-list.txt` (the accrual suite's line is added in 12b's own lane; that file's header makes a listed-but-missing file a HARD FAIL, so registering 12b's suite here would break every `server/` push made between the two lanes):
+```
+server/utils/serviceExtensionPayroll.test.js
+```
+
+```bash
+git add server/utils/serviceExtensionPayroll.js server/utils/serviceExtensionPayroll.test.js scripts/money-smoke-list.txt
+git commit -m "feat(ext): re-seed payout hours when an extension settles
+
+Uses payrollMath.contractedHours (duration + 1h setup + 0.5h breakdown), so a
+30-minute extension moves 5.5 to 6.0. Re-seeds only when the admin has not
+edited the line, skips held lines and non-open periods, reports both skip
+reasons, and recomputes the payout header total the way every sibling writer
+does."
+```
+
+That is the end of 12a and the end of lane `ext-core`. Dispatch `code-review` on this task's diff before the lane's merge fleet: Task 12 Step 1 calls this the most dangerous code in the plan, and it is the only place the underpay defect could return.
+
+**Everything below is 12b, lane `ext-webhook-payroll`.** It touches only `payrollAccrual.js` and its own suite.
+
+- [ ] **Step 7 (12b): Write the accrual suite**
 
 Create `server/utils/payrollAccrual.extension.test.js`. Cover:
 1. A fully-paid proposal with one paid extension carrying `gratuity_cents = 2500`: each bartender's `gratuity_share_cents` is higher than the same setup with no extension, by the extension amount split evenly.
@@ -3598,10 +3747,9 @@ Create `server/utils/payrollAccrual.extension.test.js`. Cover:
 3. A `pending` extension and an `overridden` extension both contribute $0.
 4. The extension gratuity is NOT reduced by any Stripe fee (assert the share equals the split of the raw `gratuity_cents`, so the fee-netting change is provably scoped to contract gratuity).
 
-- [ ] **Step 6: Run both suites and the existing payroll suites, one at a time**
+- [ ] **Step 8 (12b): Run the accrual suite and every existing payroll suite**
 
 ```bash
-node --env-file=/home/drbartender/projects/os/.env --test server/utils/serviceExtensionPayroll.test.js
 node --env-file=/home/drbartender/projects/os/.env --test server/utils/payrollAccrual.extension.test.js
 ```
 Then every existing payroll suite:
@@ -3610,26 +3758,15 @@ ls server/utils/payroll*.test.js server/routes/admin/payroll*.test.js
 ```
 Run each alone. Expected: all PASS. The `grossGratuity` rename touches the busiest payroll math in the app, so any failure is a blocker.
 
-- [ ] **Step 7: Add to the money smoke list and commit**
+- [ ] **Step 9 (12b): Register the suite and commit**
 
-Append to `scripts/money-smoke-list.txt`:
+Append ONLY this line to `scripts/money-smoke-list.txt` (12a already added its own):
 ```
-server/utils/serviceExtensionPayroll.test.js
 server/utils/payrollAccrual.extension.test.js
 ```
 
-Two commits, so the addend can be reverted without the hours fix:
-
 ```bash
-git add server/utils/serviceExtensionPayroll.js server/utils/serviceExtensionPayroll.test.js scripts/money-smoke-list.txt
-git commit -m "feat(ext): re-seed payout hours when an extension settles
-
-Uses payrollMath.contractedHours (duration + 1h setup + 0.5h breakdown), so a
-30-minute extension moves 5.5 to 6.0. Re-seeds only when the admin has not
-edited the line, never in a non-open period, and recomputes the payout header
-total the way every sibling writer does."
-
-git add server/utils/payrollAccrual.js server/utils/payrollAccrual.extension.test.js
+git add server/utils/payrollAccrual.js server/utils/payrollAccrual.extension.test.js scripts/money-smoke-list.txt
 git commit -m "feat(ext): extension gratuity joins the payroll pool as an addend
 
 Applied after fee-netting: extension dollars are outside the total_price
@@ -3637,9 +3774,11 @@ denominator the fee pro-ration divides by, and DRB absorbs the extension's
 Stripe fee rather than the staff pool (spec section 9)."
 ```
 
-- [ ] **Step 8: Checkpoint review**
+- [ ] **Step 10 (12b): Checkpoint review**
 
-Dispatch `security-review` AND `code-review` on Tasks 11 and 12 together. These are the two money seams; the reviewers should specifically check that `amount_paid` cannot move, that the fee pro-ration invariant holds, and that no payroll line can be written in a frozen period.
+Dispatch `security-review` AND `code-review` on Tasks 11 and 12b together. These are the two money seams; the reviewers should specifically check that `amount_paid` cannot move, that the fee pro-ration is computed on contract gratuity only, and that the extension addend cannot be double-counted across re-accruals.
+
+Note that 12a's diff is NOT in this lane's diff (it landed in `ext-core`), which is why 12a has its own `code-review` at the end of Step 6.
 
 ### Task 13: Expiry sweep and scheduler registration
 
@@ -3699,15 +3838,37 @@ async function sweepExpiredExtensions() {
 
   let expired = 0;
   let notified = 0;
+  let stranded = 0;
 
   for (const { id } of rows) {
     try {
-      // Read the copy inputs BEFORE claiming, since the claim does not return them.
+      // Read the copy inputs AND the invoice status BEFORE claiming.
       const pre = await pool.query(
-        'SELECT contracted_end_time FROM service_extensions WHERE id = $1',
+        `SELECT se.contracted_end_time, se.proposal_id, i.status AS invoice_status
+           FROM service_extensions se
+           LEFT JOIN invoices i ON i.id = se.invoice_id
+          WHERE se.id = $1`,
         [id]
       );
       const contractedEndDisplay = pre.rows[0] ? pre.rows[0].contracted_end_time : null;
+
+      // STRANDED-PAID GUARD. A pending row whose invoice is already PAID means
+      // the client paid but the settle never ran: the webhook committed the
+      // payment and then the process died before its post-commit tail, or the
+      // tail threw. Expiring it here would be the worst outcome in the feature:
+      // DRB keeps the money, the event is never extended, and the bartender gets
+      // told service is over. The invoice void would also silently no-op against
+      // its own `status <> 'paid'` guard, so nothing would even look wrong.
+      // Leave the row pending, alert, and let a human settle or refund it.
+      if (pre.rows[0] && pre.rows[0].invoice_status === 'paid') {
+        await notify.alertAdminsProblem({
+          proposalId: pre.rows[0].proposal_id,
+          kind: 'paid_extension_stranded',
+          detail: `Extension ${id} is still pending but its invoice is PAID. The client paid and the event was NOT extended. Settle it by hand (bump the duration and the shift end time, and check payroll hours) or refund the payment. The bartender has NOT been told anything.`,
+        });
+        stranded += 1;
+        continue;
+      }
 
       const closed = await closeExtension({ extensionId: id, outcome: 'expired' });
       if (!closed.ok) continue; // a settle or an admin won the claim
@@ -3741,8 +3902,10 @@ async function sweepExpiredExtensions() {
     }
   }
 
-  if (expired > 0) console.log(`[serviceExtensionSweep] expired ${expired}, notified ${notified} staffer(s)`);
-  return { expired, notified };
+  if (expired > 0 || stranded > 0) {
+    console.log(`[serviceExtensionSweep] expired ${expired}, notified ${notified} staffer(s), stranded-paid ${stranded}`);
+  }
+  return { expired, notified, stranded };
 }
 
 module.exports = { sweepExpiredExtensions, SWEEP_LIMIT };
@@ -3779,6 +3942,7 @@ Create `server/utils/serviceExtensionSweep.test.js`. Stub `serviceExtensionNotif
 5. A row whose invoice is already `paid` does not get voided (the `status <> 'paid'` guard), while the extension still expires.
 6. Two consecutive sweeps expire the row exactly once (`expired: 1` then `expired: 0`).
 7. A row that throws mid-processing does not prevent a second eligible row from expiring: seed two expired rows on different proposals, force a failure on the first (e.g. stub `notifyStaffOfOutcome` to throw once), and assert the second still reached `expired`.
+8. **The stranded-paid guard.** Seed a `pending` row past `expires_at` whose invoice is `status = 'paid'` (the crash-between-commit-and-settle shape). Assert: the row is STILL `pending`, `stranded === 1`, `expired === 0`, `alertAdminsProblem` was called with `kind: 'paid_extension_stranded'`, and `notifyStaffOfOutcome` was NOT called. Expiring this row would keep the client's money, leave the event unextended, and tell the bartender to stop serving, all silently.
 
 - [ ] **Step 4: Run it**
 
@@ -4138,7 +4302,7 @@ and use `{showPayment && !paymentBlockedByTerms && ( ... )}` on the payment sect
 
 - [ ] **Step 2: Add the CSS**
 
-Add to `client/src/index.css` (vanilla CSS, no modules), near the other `invoice-` rules:
+`client/src/index.css` is already in this lane's declared footprint, so no front-matter change is needed (and editing this plan doc from a lane would be blocked by the off-main guard anyway). Add to it (vanilla CSS, no modules), near the other `invoice-` rules:
 
 ```css
 .invoice-extension-terms {
@@ -4381,3 +4545,15 @@ Everything else the spec asks for has a task. The spec's own open items (the bro
   4. Tasks 8 and 15 disagreed on the response shape, so the terms gate would have silently never rendered. Now nested inside `invoice` on both sides, with a shape-guard test.
 
   Also fixed: the payroll hours module was wired only into the webhook (missing the override and zero-delta paths); `frozenLines` was computed and never reported; the payout header total was never recomputed; the web-push fallback was dropped; `users.name` and `password` do not exist and every fixture used them; JWTs were signed with the wrong claims; `server/middleware/errorHandler` does not exist; the settle core ran un-transacted; `expires_at` could expire 60 seconds after creation; four footprint omissions would have aborted three lanes; and Task 12a had to move to `ext-core` to break a lane cycle.
+
+- **rev 3, 2026-07-26.** After re-running the fleet on rev 2 plus a cross-model (Gemini) reviewer. Rev 2's four headline fixes verified correct, but rev 2 had introduced seven new defects of its own, and the cross-model pass found two more that all three Claude agents missed. Fixed:
+  1. **The staff gratuity was mis-classified (found only by the cross-model review).** `gratuityOf` read `snapshot.gratuity.total`, which holds only the client-elected line. Payroll pools BOTH canonical breakdown labels, and the forced sub-100-guest over-ratio surcharge carries `'Shared Gratuity'` while living inside `staffing.cost`. So on a 50-guest two-bartender event the $25/hr surcharge, which exists specifically to pay bartenders at small events where tips are light, would have been booked as DRB service revenue and never reached the staff pool. Now uses `extractGratuityCents` and derives service as the remainder, with two tests pinning it. This is the rule CLAUDE.md flags as re-lost multiple times.
+  2. **A stranded paid extension would have been declined (also cross-model).** If the process died between the webhook's COMMIT and its post-commit settle, the row stayed `pending` with a `paid` invoice; the sweep would then expire it, no-op the invoice void against its own `status <> 'paid'` guard, and text the bartender that service was over. Client charged, event not extended, nobody alerted. The sweep now refuses to expire a row whose invoice is paid and raises an urgent alert instead.
+  3. `source_type: 'service_extension'` violates `CHECK (source_type IN ('package','addon','fee','manual'))`, so every request would have 500'd on its first line item. Now `'fee'`.
+  4. `serviceExtensionSettle.js` called `pool.connect()` with no `require` for `pool`.
+  5. `maybeAlertPayroll` was specified in prose but never defined or exported, and Task 11 imported only half the module.
+  6. `applyExtensionHours` did not filter `held_state IS NULL`, so it would have resurrected a deliberately non-payable held line for an off-roster worker.
+  7. `sendPush` resolves `{ok:false}` rather than throwing, so a truthiness check counted every push failure as delivered and suppressed the `staff_unreachable` alert on the decline message.
+  8. Multi-shift events would have had payroll hours bumped proposal-wide, paying a second shift's crew for an hour they did not work. Now skipped and reported.
+  9. The 12a/12b split was declared by step RANGE while the file ownership followed a different line, which would have left 12a untested in one lane and aborted the other on footprint drift. Now split per step, with the `ext-core` gate moved and an explicit forward pointer from Task 5.
+  10. The webhook insertion anchor pointed at code still holding a pooled connection, which is the pool deadlock the project has hit twice.
