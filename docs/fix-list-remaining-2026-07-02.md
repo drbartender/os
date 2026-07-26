@@ -362,3 +362,85 @@ wants Dallas's eyes before it ships:
 
 Blocked on: Dallas confirming the coverage position with the broker in writing. The exact
 wording should follow that answer rather than lead it.
+
+---
+
+## Deferred from the 2026-07-26 push review (cancel-line batch)
+
+The fleet's blocking findings were fixed before that push (three refund root
+causes in `05c38bb0`, the UI mis-bind in `e1eb303e`). These are the ones judged
+real but not worth expanding that batch for. Severity as the reviewers rated
+them; none is a money-wrong path.
+
+**Cancel-line feature**
+- `POST /:id/cancel-line/preview` runs the whole mutation (proposals FOR UPDATE,
+  addon writes, drink_plans FOR UPDATE, invoice refresh + delta reconcile, shift
+  sync) and then ROLLBACKs. Side-effect-free outside the DB and connection-clean,
+  but a nominally read-only endpoint holds exclusive row locks for the full core,
+  so a concurrent `charge.refunded` webhook on the same proposal blocks behind an
+  admin previewing a change they may never make. Each preview also burns
+  `proposal_activity_log` / `invoice_line_items` SERIAL values. (low)
+- Lock-order inversion vs `drinkPlans/lab.js`: lab takes drink_plans then
+  proposals; `applyLineItemCancel` takes proposals then drink_plans (on the addon
+  and syrup kinds). A client saving the Enhancement Lab while an admin cancels a
+  lab-owned addon can deadlock; Postgres aborts one, both roll back atomically,
+  no corruption, admin sees a 500. Widened by the preview endpoint running the
+  same core. (low)
+- A gratuity-removal refund passes no `gratuityCents`, so `proposal_refunds
+  .gratuity_cents` is NULL for the one cancel kind the column exists to describe
+  (the cancel-event flow does populate it). Audit fidelity only. (low)
+- `planOverpaymentSplits` inherits the admin-panel rail exclusion
+  (`payment_type IN ('deposit','balance','full','invoice')`), so an overpayment
+  sitting on a `drink_plan_extras` / `drink_plan_with_balance` charge falls
+  entirely into `manual_return_cents` and the client is told we will return it
+  separately, for money that is on a fully refundable Stripe charge. Risk is an
+  admin paying it back by hand AND later refunding the card. (low)
+- The preview's `locked_invoices` line promises "a locked invoice for $X stands",
+  but on the fully-paid path the overpayment refund deliberately drops that same
+  locked invoice's `amount_due`. Not a ledger error; the stated consequence is
+  just wrong for exactly the case that fires a refund. (low)
+- `req.body.target` bypasses `parseCancelTarget` when it is not a string, so a
+  crafted object target can commit a `line_item_cancelled` audit row while
+  removing nothing. Admin-only, no money moves wrongly. One-line route guard.
+  (low)
+- `getStripe()` is called AFTER the removal commits with no null check (both
+  other refundExecute callers guard first), so missing creds leave the line
+  removed and a `pending` refund row blocking headroom while the operator is told
+  the refund is "unconfirmed" when nothing was attempted. (low)
+
+**Cancel-line admin UI**
+- After a removal the payment panel's invoice list still shows the pre-removal
+  amount due until a manual reload: `invoiceRefreshKey` is panel-private and
+  `onDone` cannot reach it, so the refund history refreshes while the invoice
+  half does not. (medium)
+- Two Escape listeners fire for one keypress (NotifyConfirmModal binds document,
+  the dialog binds window, neither stops propagation), so Escape at the "email
+  the client?" prompt unmounts the whole dialog and loses the typed reason and
+  loaded preview instead of stepping back one level. (low)
+- `ProposalDetail`'s unmatched-targets strip is guarded only by `cancelTargets`,
+  not by the snapshot, so a proposal with a null/legacy `pricing_snapshot` shows
+  an empty pricing card followed by every target as a ✕ button. EventDetailPage
+  wraps its whole card in `snapshot?.breakdown &&` and does not have this. (low)
+- `EventDetailPage.loadProposal`'s catch sets `err`, which early-returns the
+  error view, so a blip on the post-removal refetch destroys the done view (with
+  its refund confirmation and any manual-return warning) mid-flight.
+  ProposalDetail only toasts. (low)
+- `loadCancelTargets` has no in-flight cancellation guard, so navigating between
+  proposals without unmount can bind the previous proposal's targets onto the new
+  snapshot by label; the preview then 404s or previews a line the admin did not
+  click. (low)
+
+**Stripe payout mirror (Sentry-triage lane, same batch)**
+- Acknowledged payout lines are permanently excluded from the re-match loop AND
+  from the unmatched count, and the backfill UPDATE replays on every boot, so
+  hand-NULLing `acknowledged_at` is re-stamped at the next deploy. A future
+  historical-payment import (the CC-clients import is exactly this shape) could
+  make one matchable and it would never be re-matched or surfaced. Escape is a
+  manual `matchLine(id)`, which is not reachable from the admin UI. (low)
+- `StripePayoutsTab`'s In-transit table and "Unmatched only" empty state were not
+  made acknowledged-aware. Inert today (the backfill predicate requires
+  `payout_id IS NOT NULL`, so no acknowledged line can reach the pending array).
+  (low)
+- The `proposal_refunds_total_scope_check` DO block matches `pg_constraint` on
+  `conname` alone rather than `(conrelid, conname)`. Harmless with this name;
+  would false-positive if another table ever took the same constraint name. (low)
