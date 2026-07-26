@@ -8,6 +8,7 @@ lanes:
       - server/utils/proposalExtrasFold.stability.test.js
       - server/utils/proposalExtrasFold.legs.test.js
       - server/routes/drinkPlans/lab.js
+      - server/routes/drinkPlans/lab.test.js
       - server/routes/drinkPlans/submit.js
       - server/utils/lineItemCancel.js
       - server/utils/lineItemCancel.test.js
@@ -28,7 +29,9 @@ lanes:
 
 **Goal:** Make every reader and writer of `proposal_addons.quantity` agree on what the column means, so a reprice can no longer multiply a `per_hour` add-on by its own hours.
 
-**Architecture:** The column stores the pricing engine's OUTPUT display quantity, and two consumers already depend on that (`eventCreation.addonHeadcount` divides it by duration to recover headcount; `invoiceLineItems` renders it as `qty x rate`). One reader (`withRepriceQuantities`) feeds it back as the engine's INPUT count, which squares the hours for `per_hour`; two writers (lab, submit) store a raw count instead of the output shape. This plan introduces a single conversion module as the only sanctioned translation between the two, points the reader and the writers at it, and pins the whole thing with a reprice-stability test that no-op folds cannot move money.
+**Architecture:** The column stores the pricing engine's OUTPUT display quantity, and three consumers already depend on that: `eventCreation.addonHeadcount` divides it by duration to recover headcount, `invoiceLineItems` renders it as `qty x rate`, and the admin editor inverts it back to the stepper count on load
+(`client/src/pages/admin/proposalEditor/formState.js:70-116`, `recoverAddonQuantities`).
+One reader (`withRepriceQuantities`) feeds it back as the engine's INPUT count, which squares the hours for `per_hour`; two writers (lab, submit) store a raw count instead of the output shape. This plan introduces a single SERVER-side conversion module, modelled on the client inverter that already gets this right, points the reader and the writers at it, and pins the whole thing with a reprice-stability test that no-op folds cannot move money.
 
 **Tech Stack:** Node/Express, raw SQL via `pg`, node:test against the shared dev DB, React admin client.
 
@@ -49,10 +52,14 @@ lanes:
 
 Three writers store that OUTPUT verbatim (`server/utils/proposalInsert.js:58`,
 `server/routes/proposals/public.js:465`, `server/routes/proposals/crud.js:618`,
-all `flatMap`ing `snapshot.addons[].quantity`). Two consumers correctly treat
+all `flatMap`ing `snapshot.addons[].quantity`). Three consumers correctly treat
 it as output: `eventCreation.addonHeadcount` (server/utils/eventCreation.js:51-58)
-divides by duration to recover headcount, and `invoiceLineItems`
-(server/utils/invoiceLineItems.js:83-94) renders `quantity x rate`.
+divides by duration to recover headcount, `invoiceLineItems`
+(server/utils/invoiceLineItems.js:83-94) renders `quantity x rate`, and
+`recoverAddonQuantities` (client/src/pages/admin/proposalEditor/formState.js:70-116)
+inverts it back to the admin's 1-10 stepper count when the editor loads. The
+admin editor is therefore NOT a reproduction path: it already recovers the count
+correctly, which is why an unchanged admin re-save does not move money today.
 
 `withRepriceQuantities` (server/utils/proposalExtrasFold.js:57-70) passes the
 stored OUTPUT back as the engine's INPUT for every type except
@@ -65,20 +72,59 @@ server, 6-hour event, stored `quantity 6.00` / `line_total 450`. A NO-OP fold
 total from $2,690 to $4,940. Prod stores exactly this shape: proposal 624 has
 `quantity 6.00`, `rate 75`, `event_duration_hours 6.0`, `line_total 450.00`.
 
+### The second money channel: staff basis, not just the add-on line
+
+The inflated count does not stop at the add-on's own line. `calculateProposal`
+reads the SAME input quantity to build `additionalBartenderQty` and `totalStaff`
+(pricingEngine.js:369-371), and `gratuityStaffCount` is
+`staffing.actual + additionalBartenderQty` (pricingEngine.js:437). So a stored
+`4.00` on an `additional-bartender` row reads as FOUR bartenders for the
+gratuity basis on a 4-hour event.
+
+That matters because gratuity is layered on TOP of a `total_price_override`
+(pricingEngine.js:441-443). On an override proposal the add-on inflation cancels
+in the fold's before/after delta and `total_price` looks safe, but the gratuity
+line does NOT cancel, so a no-op fold still moves money there. `totalStaff` also
+feeds `per_staff` add-on pricing, a third channel. Task 2 pins an override +
+`gratuity_rate > 0` case for exactly this reason.
+
+The inflated `snapshot.addons[]` is also persisted verbatim into
+`proposals.pricing_snapshot`, which is what the client-facing proposal view
+renders. A proposal can therefore carry a client-visible $2,700 line while
+`total_price` reads correct.
+
 **Prod exposure at time of writing:** 10 `per_hour` rows, 5 on active
 proposals, and `COUNT(*) FILTER (WHERE pa.quantity > p.event_duration_hours * 4)`
-is 0, i.e. no row has been inflated yet. The fold is already reachable from
+is 0, i.e. no ROW has been inflated yet. The fold is already reachable from
 the client Enhancement Lab save and the drink-plan submit; the unpushed
-cancel-line feature adds admin-initiated doors. **No data repair is required**,
-only that the code stop squaring. Task 7 re-verifies this immediately before
-merge in case a lab save lands in the interim.
+cancel-line feature adds admin-initiated doors. **No row repair is expected**,
+only that the code stop squaring. That row check does NOT cover the two channels
+above, so Task 7 additionally re-verifies `pricing_snapshot->'addons'` and the
+gratuity basis before merge.
 
 ## Global Constraints
 
 - Do NOT change what the column means. It holds the engine's OUTPUT display
-  quantity. `eventCreation.addonHeadcount` and `invoiceLineItems` depend on
-  that and are OUT OF SCOPE. If a change would require editing either, the
-  design is wrong and the task should stop and surface.
+  quantity. `eventCreation.addonHeadcount`, `invoiceLineItems` and the client's
+  `recoverAddonQuantities` depend on that and are OUT OF SCOPE. If a change
+  would require editing any of them, the design is wrong and the task should
+  stop and surface.
+- The client inverter is the REFERENCE IMPLEMENTATION.
+  `client/src/pages/admin/proposalEditor/formState.js:70-116` already solves
+  this problem correctly, including the two subtleties below. The new server
+  module mirrors it. If the two disagree on a billing type, say so in the
+  module's docstring and explain why; never let them drift silently.
+- `additional-bartender` divides by RAW `durationHours`, not effective hours.
+  Its engine branch is bespoke (pricingEngine.js:387-405) and ignores
+  `minimum_hours` entirely, while every other `per_hour` add-on uses
+  `max(durationHours, minimum_hours)`. Both existing inverters encode this split
+  (eventCreation.js:52-54, formState.js:80-91). Safe today only because that
+  slug's `minimum_hours` is NULL; encode it anyway.
+- Counts are INTEGERS. Steppers are 1-10 and half a bartender is not a thing, so
+  the conversion rounds to the nearest whole unit with a floor of 1, exactly as
+  the client inverter does. This is load-bearing, not cosmetic: it is what keeps
+  a legacy mis-shaped row (a lab-written raw `1` on a 4-hour event) recovering as
+  1 unit instead of 0.25, i.e. what stops this fix from becoming an under-bill.
 - Money in `proposals` is NUMERIC DOLLARS; invoices/payments/refunds are INTEGER
   CENTS. `proposal_addons.quantity` is `NUMERIC(10,2)` and can hold fractions
   (prod has `3.50` for a 3.5-hour event).
@@ -118,6 +164,17 @@ merge in case a lab save lands in the interim.
   - `countLabelFor(addon)` → `'unit'|'hour'|null`. What one stored unit means,
     used by the admin UI to phrase a quantity picker.
 
+The module is the SERVER twin of
+`client/src/pages/admin/proposalEditor/formState.js:70-116`. Read that function
+first: it already handles the `additional-bartender` raw-duration split and the
+round-to-integer contract, and its comments record why each divisor is what it
+is. Two deliberate divergences, both documented in the module:
+
+| | client `recoverAddonQuantities` | this module |
+|---|---|---|
+| `per_guest` | recovers the count from `line_total / (quantity x rate)` | returns `null` (the fold has no `line_total` in its SELECT; unchanged behavior, logged in Task 7) |
+| upper clamp | clamps to 10 (the stepper's max) | NO clamp: clamping would silently re-bill a corrupt row at 10 units instead of surfacing it |
+
 - [ ] **Step 1: Write the failing test**
 
 ```js
@@ -147,6 +204,26 @@ test('per_hour: minimum_hours is the divisor when it exceeds the event duration'
   // The engine billed 4 hours, so it stored 4 for one unit; recovering with the
   // raw 2-hour duration would wrongly read that as 2 units.
   assert.equal(storedToInputCount(addon, 4, 2), 1);
+});
+
+test('additional-bartender divides by RAW duration, never the minimum', () => {
+  // Its engine branch (pricingEngine.js:387-405) is bespoke and ignores
+  // minimum_hours; eventCreation.js:52-54 and formState.js:80-84 both encode
+  // the same split. NULL on the catalog row today, so this pins the intent.
+  const ab = { slug: 'additional-bartender', billing_type: 'per_hour', rate: 40, minimum_hours: 4 };
+  assert.equal(effectiveHoursFor(ab, 2), 2, 'raw duration, not the 4h minimum');
+  assert.equal(storedToInputCount(ab, 4, 2), 2, '2 bartenders on a 2h event store 4');
+});
+
+test('a legacy mis-shaped row recovers as 1 unit, not a fraction', () => {
+  // lab.js / submit.js wrote a raw `1` before Task 5. Dividing that by 4 hours
+  // gives 0.25, which would price a quarter of a server and UNDER-bill by 4x.
+  // Rounding with a floor of 1 (what the client inverter does) keeps today's
+  // money exactly where it is while the writers get fixed.
+  const addon = { billing_type: 'per_hour', rate: 40, minimum_hours: null };
+  assert.equal(storedToInputCount(addon, 1, 4), 1);
+  assert.equal(storedToInputCount(addon, 2, 4), 1, 'still one unit, rounded');
+  assert.equal(storedToInputCount(addon, 7, 4), 2, 'rounds to the nearest whole unit');
 });
 
 test('flat: stored IS the input count, round-trips unchanged', () => {
@@ -212,9 +289,19 @@ Expected: FAIL, "Cannot find module './addonQuantity'".
  * engine as an input multiplies by hours a SECOND time: a $450 banquet-server
  * line repriced to $2,700 on a no-op fold (push review, 2026-07-26).
  *
- * These are the only sanctioned conversions. Anything that needs a unit count
- * out of the column, or needs to write the column from a count, goes through
- * here so the two definitions cannot drift apart again.
+ * These are the only sanctioned SERVER conversions. Anything that needs a unit
+ * count out of the column, or needs to write the column from a count, goes
+ * through here so the two definitions cannot drift apart again.
+ *
+ * SERVER TWIN of client/src/pages/admin/proposalEditor/formState.js:70-116
+ * (`recoverAddonQuantities`), which has inverted this column correctly since the
+ * editor was built. Two deliberate divergences:
+ *   - per_guest: the client recovers the count from line_total / (qty x rate);
+ *     the reprice SELECT carries no line_total, so this returns null and the
+ *     engine recomputes at count 1, which is the pre-existing behavior.
+ *   - no upper clamp: the client clamps to the stepper's max of 10; clamping
+ *     here would silently re-bill a corrupt row at 10 units instead of leaving
+ *     it visible.
  */
 
 // Billing types where the engine's OUTPUT quantity IS its input count, so the
@@ -222,13 +309,29 @@ Expected: FAIL, "Cannot find module './addonQuantity'".
 // entirely (guests, staff, blocks) or scales it (hours).
 const STORED_IS_INPUT_COUNT = new Set(['flat']);
 
-/** The hours the engine actually billed: never fewer than the addon's minimum. */
+/**
+ * The hours the engine actually billed for this add-on.
+ * `additional-bartender` is bespoke: calculateProposal gives it its own branch
+ * (pricingEngine.js:387-405) that multiplies by RAW durationHours and never
+ * consults minimum_hours. Every other per_hour add-on goes through
+ * calculateAddonCost's max(durationHours, minimum_hours). eventCreation.js:52-54
+ * and formState.js:80-91 both encode the same split; keep all three in step.
+ */
 function effectiveHoursFor(addon, durationHours) {
-  return Math.max(Number(durationHours) || 0, Number(addon?.minimum_hours || 0));
+  const hours = Number(durationHours) || 0;
+  if (addon?.slug === 'additional-bartender') return hours;
+  return Math.max(hours, Number(addon?.minimum_hours || 0));
 }
 
 /**
  * Recover the engine INPUT count from the stored OUTPUT quantity.
+ *
+ * Rounds to the nearest whole unit with a floor of 1, matching the client
+ * inverter. Counts are integers everywhere (the stepper is 1-10, and half a
+ * banquet server does not exist), and the rounding is load-bearing: a legacy
+ * lab-written raw `1` on a 4-hour event would otherwise recover as 0.25 and
+ * turn this fix into a 4x under-bill on the very paths it is meant to protect.
+ *
  * @returns {number|null} the count, or null when the stored figure cannot
  *   express one (per_guest / per_guest_timed store guestCount; per_staff stores
  *   the staff count and the engine ignores its input; per_100_guests stores
@@ -239,13 +342,18 @@ function storedToInputCount(addon, storedQuantity, durationHours) {
   const stored = Number(storedQuantity);
   if (!Number.isFinite(stored) || stored <= 0) return null;
   const type = addon?.billing_type;
-  if (STORED_IS_INPUT_COUNT.has(type)) return stored;
-  if (type === 'per_hour') {
+  let raw;
+  if (STORED_IS_INPUT_COUNT.has(type)) {
+    raw = stored;
+  } else if (type === 'per_hour') {
     const hours = effectiveHoursFor(addon, durationHours);
     if (!Number.isFinite(hours) || hours <= 0) return null;
-    return stored / hours;
+    raw = stored / hours;
+  } else {
+    return null;
   }
-  return null;
+  if (!Number.isFinite(raw)) return null;
+  return Math.max(1, Math.round(raw));
 }
 
 /** What one unit of the recovered count means, for admin-facing copy. */
@@ -267,7 +375,7 @@ module.exports = {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test server/utils/addonQuantity.test.js`
-Expected: PASS (7 tests).
+Expected: PASS (9 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -349,11 +457,19 @@ after(async () => {
   await pool.end();
 });
 
-async function seedCatalogAddon({ slug, name, billingType, rate, minimumHours = null }) {
+async function catalogAddonFor(spec) {
+  if (spec.existingSlug) {
+    // A REAL catalog row, needed when the engine branches on the slug itself
+    // (additional-bartender). Never pushed to seededAddons: teardown must not
+    // delete a live catalog row.
+    const r = await pool.query('SELECT * FROM service_addons WHERE slug = $1 AND is_active = true', [spec.existingSlug]);
+    assert.ok(r.rows[0], `dev DB has the ${spec.existingSlug} addon`);
+    return r.rows[0];
+  }
   const r = await pool.query(
     `INSERT INTO service_addons (slug, name, billing_type, rate, applies_to, is_active, minimum_hours)
      VALUES ($1, $2, $3, $4, 'all', true, $5) RETURNING *`,
-    [slug, name, billingType, rate, minimumHours]
+    [spec.slug, spec.name, spec.billingType, spec.rate, spec.minimumHours ?? null]
   );
   seededAddons.push(r.rows[0].id);
   return r.rows[0];
@@ -364,27 +480,29 @@ async function seedCatalogAddon({ slug, name, billingType, rate, minimumHours = 
  * store snapshot.addons[].quantity (the engine's OUTPUT) into proposal_addons.
  * This is crud.js:610-620 verbatim in miniature.
  */
-async function seedPricedProposal({ addonSpecs, durationHours = 4, guestCount = 80 }) {
+async function seedPricedProposal({
+  addonSpecs, durationHours = 4, guestCount = 80, override = null, gratuityRate = 0,
+}) {
   const engineAddons = [];
   for (const s of addonSpecs) {
-    const cat = await seedCatalogAddon(s);
+    const cat = await catalogAddonFor(s);
     engineAddons.push({ ...cat, quantity: s.count });
   }
   const snapshot = calculateProposal({
     pkg, guestCount, durationHours, numBars: 0, numBartenders: null,
     addons: engineAddons, syrupSelections: [], adjustments: [],
-    totalPriceOverride: null, gratuityRate: 0, tipJar: true,
+    totalPriceOverride: override, gratuityRate, tipJar: true,
   });
   const p = await pool.query(
     `INSERT INTO proposals
        (client_id, package_id, event_date, event_start_time, event_duration_hours, event_timezone,
         status, event_type, guest_count, num_bars, num_bartenders, adjustments,
-        total_price, amount_paid, pricing_snapshot)
+        total_price, total_price_override, gratuity_rate, tip_jar, amount_paid, pricing_snapshot)
      VALUES ($1, $2, CURRENT_DATE + 30, '18:00', $3, 'America/Chicago',
-             'deposit_paid', 'other', $4, 0, $5, '[]'::jsonb, $6, 100, $7::jsonb)
+             'deposit_paid', 'other', $4, 0, $5, '[]'::jsonb, $6, $7, $8, true, 100, $9::jsonb)
      RETURNING id`,
     [clientId, pkg.id, durationHours, guestCount, snapshot.inputs.numBartenders,
-     snapshot.total, JSON.stringify(snapshot)]
+     snapshot.total, override, gratuityRate, JSON.stringify(snapshot)]
   );
   const proposalId = p.rows[0].id;
   seededProposals.push(proposalId);
@@ -465,6 +583,35 @@ test('per_guest add-on: stable', async () => {
   assert.equal(after, before);
 });
 
+test('override + gratuity: a no-op fold does not move the gratuity line', async () => {
+  // The channel the add-on line alone hides, and the reason this test exists at
+  // all. On an override proposal the add-on inflation CANCELS in the fold's
+  // catalog delta, so total_price looks safe. But gratuity is layered on TOP of
+  // the override (pricingEngine.js:441-443) and its staff basis reads the SAME
+  // input quantity (pricingEngine.js:369, :437). Two addon bartenders on a 4h
+  // event store 8; read back as 8 HEADS the basis goes 3 to 9 and the gratuity
+  // line roughly triples with the override untouched.
+  // Uses the REAL additional-bartender slug: both the engine branch and the
+  // gratuity basis key on that exact string, so a nonce slug proves nothing.
+  const { proposalId, snapshot: seeded } = await seedPricedProposal({
+    durationHours: 4,
+    override: 3000,
+    gratuityRate: 60,
+    addonSpecs: [{ existingSlug: 'additional-bartender', count: 2 }],
+  });
+  const stored = (await pool.query(
+    `SELECT pa.quantity FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id
+      WHERE pa.proposal_id = $1 AND sa.slug = 'additional-bartender'`,
+    [proposalId]
+  )).rows[0];
+  assert.equal(Number(stored.quantity), 8, 'stored = 4 hours x 2 bartenders');
+
+  const { before, after, snapshot } = await noOpFold(proposalId);
+  assert.equal(after, before, `no-op fold moved the total from ${before} to ${after}`);
+  assert.equal(snapshot.gratuity.staff_count, seeded.gratuity.staff_count,
+    'the gratuity staff basis is a HEADCOUNT and must not move on a no-op fold');
+});
+
 test('TWO no-op folds in a row are also stable (no slow drift)', async () => {
   const { proposalId } = await seedPricedProposal({
     durationHours: 5,
@@ -480,9 +627,13 @@ test('TWO no-op folds in a row are also stable (no slow drift)', async () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node -r dotenv/config --test server/utils/proposalExtrasFold.stability.test.js`
-Expected: FAIL on the two `per_hour` tests and the drift test with a message
-like `no-op fold moved the total from 2690 to 4940`. The `flat` and `per_guest`
-tests PASS already, which proves the defect is scoped to `per_hour`.
+Expected: FAIL on the two `per_hour` tests, the override + gratuity test, and
+the drift test, with messages like `no-op fold moved the total from 2690 to 4940`.
+The `flat` and `per_guest` tests PASS already, which proves the defect is scoped
+to `per_hour`. Record the override test's actual before/after: it is the only
+evidence in the plan that the gratuity channel is real, and if it PASSES the
+premise in "The second money channel" is wrong and the task should stop and
+surface rather than delete the test.
 
 - [ ] **Step 3: Commit the red test**
 
@@ -500,6 +651,7 @@ git commit -m "test(addons): pin reprice stability, currently RED for per_hour"
 
 **Files:**
 - Modify: `server/utils/proposalExtrasFold.js:44-70` (`REPRICE_ADDON_SQL`, `withRepriceQuantities`)
+- Modify: `server/routes/drinkPlans/lab.test.js` (correct the per_hour fixture to the stored shape)
 - Test: `server/utils/proposalExtrasFold.stability.test.js` (from Task 2, turns green)
 
 **Interfaces:**
@@ -563,16 +715,41 @@ Add the import at the top of the file, beside the existing requires:
 const { storedToInputCount } = require('./addonQuantity');
 ```
 
-Note the null-guard behavior this gives `lab.test.js:244` for free: that call
-passes `pa_quantity: 3` with no `pa_duration_hours`, so `effectiveHoursFor`
-returns 0, `storedToInputCount` returns `null`, and the row is passed through
-without a `quantity`, the engine recomputes. That test asserts on money, so
-run it in Step 3 and read the result rather than assuming.
+**Then correct `lab.test.js`'s per_hour fixture in the same step.** There is NO
+null-guard rescuing that direct call: `banquet-server` carries
+`minimum_hours 4`, so `effectiveHoursFor(addon, undefined)` returns 4, not 0,
+and `storedToInputCount` returns a count rather than `null`. The suite would
+still go green, because the seeded proposal's duration is also 4, so both sides
+of its assertion drift to the same wrong count together. A test named
+`'empty reconcile preserves total_price even with a multi-quantity per_hour
+addon'` would then be proving that ONE server is preserved, and would keep
+passing if the reader broke symmetrically. Fix the fixture rather than accept
+the free pass, and note that its seeded `quantity 3` is the exact hand-written
+raw count this plan's Global Constraints forbid:
+
+```js
+  // Seed the ENGINE OUTPUT shape: 4 effective hours x 3 servers. (Was a raw
+  // `3`, the hand-written count that hid the squaring defect from this suite.)
+  await pool.query(
+    `INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
+     VALUES ($1, $2, $3, $4, $5, 12, $6)`,
+    [proposalId, svc.rows[0].id, svc.rows[0].name, svc.rows[0].billing_type, rate, rate * 4 * 3]
+  );
+```
+
+and give the direct `withRepriceQuantities` call the duration it now needs:
+
+```js
+    addons: withRepriceQuantities([{ ...svc.rows[0], pa_quantity: 12, pa_duration_hours: 4 }]),
+```
+
+With both corrected the ground truth is 3 servers again, which is what the test
+claims to defend.
 
 - [ ] **Step 2: Run the stability test to verify it passes**
 
 Run: `node -r dotenv/config --test server/utils/proposalExtrasFold.stability.test.js`
-Expected: PASS, all 5.
+Expected: PASS, all 6, including the override + gratuity case.
 
 - [ ] **Step 3: Run every suite this reader reaches, one at a time**
 
@@ -594,14 +771,21 @@ partial-removal test seeds a hand-written raw count and asserts count
 arithmetic. It is expected to fail here and is corrected in Task 4. Record the
 exact failure; do not "fix" it by loosening the assertion.
 
-If `lab.test.js` fails, STOP: that means the direct `withRepriceQuantities`
-call at line 244 changed money, which the null-guard was supposed to prevent.
-Report it rather than working around it.
+`lab.test.js` should PASS on the fixture corrected in Step 1 (12 stored, 3
+servers recovered). If it fails, STOP and report: the corrected fixture and the
+new reader disagree about the column, which is the whole premise of this plan
+and not something to paper over by editing the assertion.
+
+The lab and submit money paths are NOT yet correct at the end of this task.
+Their writers still hand-write a raw `1`, which the new reader rounds back to a
+count of 1 (the floor in `storedToInputCount` is what holds today's money in
+place through this window). Task 5 makes them store the right shape. Do not
+skip from here to Task 6.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add server/utils/proposalExtrasFold.js
+git add server/utils/proposalExtrasFold.js server/routes/drinkPlans/lab.test.js
 git commit -m "fix(addons): recover the input count from the stored quantity instead of re-feeding it
 
 proposal_addons.quantity is the engine's OUTPUT display quantity (hours x count
@@ -617,9 +801,9 @@ reader agree with them."
 ## Task 4: Fix the cancel-line consumers
 
 **Files:**
-- Modify: `server/utils/lineItemCancel.js` (`quantityIsCount` ~:68-75, the addon
-  branch of `computeCancelTargets` ~:140-160, the addon mutation branch ~:420-460,
-  the post-fold sync ~:540-555)
+- Modify: `server/utils/lineItemCancel.js` (both addon SELECTs ~:98 and ~:427,
+  `quantityIsCount` ~:68-75, the addon branch of `computeCancelTargets` ~:140-160,
+  the addon mutation branch ~:420-460, the post-fold sync ~:540-555)
 - Modify: `server/utils/lineItemCancel.test.js` (correct the fixture and the
   per_hour test)
 - Modify: `client/src/pages/admin/CancelLineDialog.js` (quantity picker copy)
@@ -711,19 +895,110 @@ test('removing ALL units of a per_hour addon deletes the row', async () => {
 });
 ```
 
+Then pin step (a0), so the widened SELECT can never be quietly narrowed again.
+First give the fixture a `minimumHours` pass-through (`seedCatalogAddon`, ~:79):
+
+```js
+async function seedCatalogAddon({ slug, name, billingType = 'flat', rate = 200, minimumHours = null }) {
+  if (catalogCache[slug]) return catalogCache[slug];
+  const r = await pool.query(
+    `INSERT INTO service_addons (slug, name, billing_type, rate, applies_to, is_active, minimum_hours)
+     VALUES ($1, $2, $3, $4, 'all', true, $5) RETURNING id`,
+    [slug, name, billingType, rate, minimumHours]
+  );
+```
+
+and forward it from `seedProposal`'s addon loop (~:117):
+
+```js
+    const cat = await seedCatalogAddon({
+      slug: a.slug, name: a.name, billingType: a.billingType, rate: a.rate, minimumHours: a.minimumHours ?? null,
+    });
+```
+
+then:
+
+```js
+test('per_hour under its minimum_hours: picker and write-back use the BILLED hours', async () => {
+  // 2 banquet servers on a 3.5h event with a 4h minimum. The engine bills 4
+  // hours and stores 8. Dividing by the RAW 3.5 (what happens whenever the row
+  // is loaded without sa.minimum_hours) recovers 2.29 units and writes 3.5 back
+  // for the one remaining server, which then reprices as 0.875 servers: $262.50
+  // instead of $300, with the row left in a shape nothing can read.
+  const slug = `perhour-min-${NONCE}`;
+  const { proposalId } = await seedProposal({
+    override: 2500,
+    durationHours: 3.5,
+    addons: [{ slug, name: 'Banquet Server Min', billingType: 'per_hour', rate: 75, quantity: 2, minimumHours: 4 }],
+  });
+  const seeded = (await pool.query('SELECT quantity, line_total FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows[0];
+  assert.equal(Number(seeded.quantity), 8, 'stored = 4 BILLED hours x 2 servers, not 3.5 x 2');
+  assert.equal(Number(seeded.line_total), 600);
+
+  const { targets } = await computeCancelTargets(pool, proposalId);
+  const t = targets.find((x) => x.target === `addon:${slug}`);
+  assert.equal(t.quantity, 2, 'the picker offers 2 SERVERS, not 2.29');
+
+  await applyCancel(proposalId, { target: `addon:${slug}`, quantity: 1 }, async (result, client) => {
+    const row = (await client.query('SELECT quantity, line_total FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows[0];
+    assert.equal(Number(row.quantity), 4, 'stored = 4 BILLED hours x 1 remaining server');
+    assert.equal(Number(row.line_total), 300);
+    assert.equal(result.newTotal, 2200, 'one server off a 2500 override = -300, not -337.50');
+  });
+});
+```
+
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `node -r dotenv/config --test server/utils/lineItemCancel.test.js`
-Expected: FAIL. The picker asserts `t.quantity === 3` but gets `12`, and
-`quantity_unit` is undefined.
+Expected: FAIL on all three new per_hour tests. The picker asserts
+`t.quantity === 3` but gets `12`, `quantity_unit` is undefined, and the
+minimum_hours test gets a picker of `8`.
 
 - [ ] **Step 3: Convert at the three sites**
 
 Add the import beside the existing requires in `server/utils/lineItemCancel.js`:
 
 ```js
-const { storedToInputCount, countLabelFor, effectiveHoursFor } = require('./addonQuantity');
+const { storedToInputCount, countLabelFor, effectiveHoursFor, STORED_IS_INPUT_COUNT } = require('./addonQuantity');
 ```
+
+**(a0) FIRST, widen both addon SELECTs. Nothing below is correct without this.**
+Neither query currently selects `sa.minimum_hours`, so every conversion in this
+task would see `minimum_hours: undefined` and divide a `banquet-server` /
+`barback` row by the raw duration instead of the 4-hour floor the engine billed.
+On the prod shape (proposal 491, a 3.5h event) 2 servers stored as 8 recover as
+2.29, and the partial-removal write-back stores 3.5 where 4 is correct, so the
+next reprice bills 0.875 servers: $262.50 instead of $300, with the row left
+permanently mis-shaped. `sa.rate` comes along because the row's own `pa.rate` is
+the frozen creation-time rate and the conversion should never mix the two.
+
+`computeCancelTargets` (~:98):
+
+```js
+    `SELECT pa.id, pa.addon_id, pa.addon_name, pa.billing_type, pa.quantity, pa.line_total,
+            sa.slug, sa.minimum_hours
+       FROM proposal_addons pa
+       LEFT JOIN service_addons sa ON sa.id = pa.addon_id
+      WHERE pa.proposal_id = $1
+      ORDER BY pa.id`,
+```
+
+`applyLineItemCancel`'s addon branch (~:427):
+
+```js
+      `SELECT pa.id, pa.addon_id, pa.addon_name, pa.billing_type, pa.quantity,
+              sa.slug, sa.minimum_hours
+         FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id
+        WHERE pa.proposal_id = $1 AND sa.slug = $2`,
+```
+
+Both rows now carry `slug` AND `minimum_hours`, which is exactly what
+`effectiveHoursFor` needs to apply the `additional-bartender` raw-duration split.
+`minimum_hours` is read from the LIVE catalog while `billing_type` and `rate` are
+the frozen row values; that residual is inherited from the client inverter
+(formState.js:86-89) and is acceptable for the same reason: `minimum_hours`
+effectively never changes.
 
 **(a) `quantityIsCount`**, replace the hand-rolled list with the shared
 definition, so "can the admin remove part of this?" and "can we convert the
@@ -756,7 +1031,7 @@ count, and name its unit:
       label: row.addon_name,
       amount: Number(row.line_total),
       ...(count !== null && count > 1
-        ? { quantity: Math.round(count), quantity_unit: countLabelFor(row) }
+        ? { quantity: count, quantity_unit: countLabelFor(row) }
         : {}),
       ...(labSlugs.has(row.slug) ? { labOwned: true } : {}),
       cancellable: true,
@@ -767,17 +1042,20 @@ count, and name its unit:
 counts and write back in stored shape:
 
 ```js
+    // totalCount is already a whole unit count: storedToInputCount rounds with a
+    // floor of 1, so nothing here needs its own Math.round (two roundings on the
+    // same figure is how the two definitions drifted apart the first time).
     const durationHours = Number(proposal.event_duration_hours);
     const storedQty = Number(row.quantity) || 0;
     const totalCount = unitCountOf(row, storedQty, durationHours);
-    let removeN = totalCount === null ? null : Math.round(totalCount);
+    let removeN = totalCount;
     if (quantity !== null) {
       if (totalCount === null) {
         throw new ValidationError({ quantity: 'This add-on is priced per guest or per staff; remove it entirely instead.' });
       }
-      removeN = positiveIntOrThrow(quantity, 'quantity', Math.round(totalCount));
+      removeN = positiveIntOrThrow(quantity, 'quantity', totalCount);
     }
-    if (totalCount === null || removeN >= Math.round(totalCount)) {
+    if (totalCount === null || removeN >= totalCount) {
       await client.query('DELETE FROM proposal_addons WHERE id = $1', [row.id]);
       labCleanup = await stripLabSelection(client, proposalId, (sel) => {
         if (sel.addOns && sel.addOns[t.key] && sel.addOns[t.key].labAdded === true) {
@@ -791,7 +1069,7 @@ counts and write back in stored shape:
       // for per_hour that is hours x remaining. The fold re-derives it in the
       // post-fold sync below, but the row must be coherent for the fold's own
       // read of it, which happens first.
-      const remainingCount = Math.round(totalCount) - removeN;
+      const remainingCount = totalCount - removeN;
       const restored = STORED_IS_INPUT_COUNT.has(row.billing_type)
         ? remainingCount
         : remainingCount * effectiveHoursFor(row, durationHours);
@@ -800,7 +1078,9 @@ counts and write back in stored shape:
     }
 ```
 
-Add `STORED_IS_INPUT_COUNT` to the import line from Task 1.
+`effectiveHoursFor` here is reading the `sa.minimum_hours` and `sa.slug` that
+step (a0) added to the SELECT. Without them this line writes the wrong stored
+figure on any event shorter than the add-on's minimum.
 
 **(d) The post-fold sync**, restore writing `quantity`, with the corrected
 reasoning (this reverts the 2026-07-24 checkpoint change):
@@ -827,7 +1107,8 @@ reasoning (this reverts the 2026-07-24 checkpoint change):
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `node -r dotenv/config --test server/utils/lineItemCancel.test.js`
-Expected: PASS, including the two rewritten per_hour tests.
+Expected: PASS, including all three per_hour tests. If the minimum_hours test is
+the only failure, step (a0) was skipped.
 
 - [ ] **Step 5: Teach the dialog to name the unit**
 
@@ -870,12 +1151,12 @@ justifying that change had the column's meaning backwards."
 ## Task 5: Make the lab and submit writers store the same shape
 
 **Files:**
-- Modify: `server/routes/drinkPlans/lab.js:289-307` (the addon upsert)
-- Modify: `server/routes/drinkPlans/submit.js:285-300` (the addon insert)
+- Modify: `server/routes/drinkPlans/lab.js:27` (import) and `:289-307` (the addon upsert)
+- Modify: `server/routes/drinkPlans/submit.js` (import) and `:285-300` (the addon insert)
 
 **Interfaces:**
-- Consumes: nothing new. Both files already call `foldExtrasIntoProposal` and
-  already hold the resulting `snapshot`.
+- Consumes: `calculateAddonCost` from `server/utils/pricingEngine.js`. Both files
+  already call `foldExtrasIntoProposal` and already hold the resulting `snapshot`.
 - Produces: no exported change. After this task all five writers store
   `snapshot.addons[].quantity`.
 
@@ -886,9 +1167,23 @@ would read "1 x $40" for a 4-hour booking. No such row exists on prod today
 (verified: all 10 `per_hour` rows match the engine-output shape), so this is
 closing the door rather than repairing damage.
 
-The fix is the same in both files: keep the pre-fold insert as the fold's input
-leg, then re-sync from the snapshot afterwards, which is exactly what
-`lineItemCancel` does.
+**The pre-fold row IS the fold's input leg, so a post-fold re-sync alone does
+not fix this.** Both files build `addonsAfter` by re-reading the rows they just
+wrote (`lab.js:305`, `submit.js:309`, both `await loadRepriceAddons(...)`), so
+after Task 3 the hand-written raw figure goes back through the new reader before
+anything is priced. Task 3's round-with-a-floor-of-1 is what keeps today's money
+intact in that window (a raw `1` recovers as 1 unit), but the row is still
+wrong for the roster and the invoice, and the floor is a safety net, not a
+design. Fix the WRITE, and keep the post-fold re-sync as the second line of
+defence for the figures the pre-fold write cannot know:
+
+- `additional-bartender`'s line_total carries the sub-100-guest gratuity
+  surcharge, which only `calculateProposal`'s bespoke branch applies.
+- `per_staff` prices off `totalStaff`, which is not known until the whole
+  add-on set is priced together.
+
+So: price the pre-fold row with the engine, then re-sync from the snapshot after
+the fold. Belt and braces, and the same shape `lineItemCancel` already uses.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -932,19 +1227,63 @@ fixtures; the addon must be created inside the test because the suite's
 Run: `node -r dotenv/config --test server/routes/drinkPlans/lab.test.js`
 Expected: FAIL, `stored should be 4 (hours x 1), got 1`.
 
-- [ ] **Step 3: Re-sync both writers from the snapshot**
+- [ ] **Step 3a: Price the pre-fold row with the engine**
+
+In `server/routes/drinkPlans/lab.js`, widen the existing pricingEngine import
+(line 27) to `const { calculateSyrupCost, calculateAddonCost } = require('../../utils/pricingEngine');`
+and replace the hand-computed upsert body (~:293-307):
+
+```js
+      for (const addon of labAddonRows) {
+        // Store the ENGINE OUTPUT shape, the figures crud.js / proposalInsert.js
+        // / public.js all write. This row is ALSO the fold's input leg
+        // (addonsAfter re-reads it through loadRepriceAddons two statements
+        // below), so a hand-written raw count is not merely a mis-shaped row:
+        // the reader converts it back as though it were engine output and
+        // prices a FRACTION of a unit. Measured: one per_hour helper on a 4h
+        // booking priced at $40 instead of $160 (push review, 2026-07-26).
+        // line_total is provisional for additional-bartender (its gratuity
+        // surcharge) and per_staff (needs totalStaff); the post-fold re-sync in
+        // Step 3b settles both.
+        const priced = calculateAddonCost(
+          addon, proposal.guest_count || 1, Number(proposal.event_duration_hours), null, 1
+        );
+        await client.query(`
+          INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          ON CONFLICT (proposal_id, addon_id) DO UPDATE SET
+            quantity = EXCLUDED.quantity,
+            line_total = EXCLUDED.line_total
+        `, [proposal.id, addon.id, addon.name, addon.billing_type, Number(addon.rate),
+            priced.quantity, Math.round(priced.total * 100) / 100]);
+      }
+```
+
+`calculateAddonCost` reproduces `per_guest` (quantity = guestCount) and `flat`
+(quantity = 1) exactly as the hand-written branches did, so those two round-trip
+byte-identically; only `per_hour` and the ignored-input types change.
+
+In `server/routes/drinkPlans/submit.js`, add
+`const { calculateAddonCost } = require('../../utils/pricingEngine');` beside the
+existing requires and apply the identical replacement to its upsert loop
+(~:285-297), using that file's `proposal` variable.
+
+- [ ] **Step 3b: Re-sync both writers from the snapshot**
 
 In `server/routes/drinkPlans/lab.js`, immediately AFTER the
 `foldExtrasIntoProposal` call (which produces `snapshot`) and before the invoice
 work, add:
 
 ```js
-      // The upsert above wrote the fold's INPUT leg by hand. Now that the
-      // engine has priced it, re-sync the rows to the shape every other writer
-      // stores: snapshot.addons[].quantity, the engine's OUTPUT display
-      // quantity. For per_hour that is hours x count, which the staffing roster
-      // (eventCreation.addonHeadcount) and the invoice line both read back
-      // (push review, 2026-07-26).
+      // Step 3a already wrote the right SHAPE; this settles the figures only the
+      // full engine pass knows: additional-bartender's gratuity surcharge and
+      // per_staff's totalStaff basis. It also brings any pre-existing row back
+      // into agreement with the snapshot the client is about to be shown.
+      // NOTE: this touches EVERY addon row on the proposal, not just lab-owned
+      // ones. That is deliberate (the snapshot is the authority on what each
+      // line costs after this fold) but it does mean an admin-owned row with a
+      // stale line_total is silently corrected here. Values come from the
+      // snapshot the fold just committed, never from the client payload.
       for (const entry of snapshot.addons || []) {
         await client.query(
           'UPDATE proposal_addons SET quantity = $1, line_total = $2 WHERE proposal_id = $3 AND addon_id = $4',
@@ -1069,17 +1408,30 @@ inside `runCore` before calling the core:
 
 Add `ValidationError` to the `errors` import on that file.
 
-**(b) Guard the Stripe client BEFORE the removal commits.** Move the
-acquisition above `runCore` in the execute handler, matching
-`server/routes/stripe.js:430` and `server/routes/proposals/cancel.js:468`:
+**(b) Guard the Stripe client BEFORE the removal commits.** Acquire it between
+`runCore` and `commit()`, and ONLY when money actually has to move. Not above
+`runCore`: the split plan does not exist yet there, so an unconditional guard
+would 503 every cancel-line on an unpaid proposal in any environment without
+creds, including the CI smoke branch and the suite's own execute-path tests.
+`runCore` hands the caller the open client on success, so the guard must roll
+back and release before it throws:
 
 ```js
-  // Acquire BEFORE the removal commits. getStripe() fails closed when creds are
-  // missing; discovering that after the commit leaves the line removed with a
-  // pending refund row blocking headroom and the operator told the refund is
-  // "unconfirmed" when nothing was ever attempted (cross-LLM push review).
-  const stripe = getStripe();
-  if (!stripe) throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
+  const { client, result, plan, commit } = await runCore(req, { expectFingerprint: fingerprint });
+  // getStripe() fails closed when creds are missing. Discovering that AFTER the
+  // commit leaves the line removed with a pending refund row blocking headroom
+  // and the operator told the refund is "unconfirmed" when nothing was ever
+  // attempted (cross-LLM push review). Both other refundExecute callers guard
+  // first (stripe.js:430, proposals/cancel.js:468).
+  let stripe = null;
+  if (plan.splits.length > 0) {
+    stripe = getStripe();
+    if (!stripe) {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+      throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
+    }
+  }
 ```
 
 and delete the later `const stripe = getStripe();` inside the refund loop.
@@ -1131,6 +1483,27 @@ Export both constants. In `cancelLineItem.js`'s `runCore`, pass the wider set:
 
 `server/routes/stripe.js` keeps calling `loadPaymentsWithRemaining(proposalId)`
 and is unchanged.
+
+Two things this widening touches, both bounded, neither a reason to drop it:
+
+- It hands a NEW funding source to a derivation the fix list already records as
+  wrong. `overpaymentCents` is `amount_paid - total_price`
+  (`lineItemCancel.js:616`), and Drink Plan Extras fast-path money rolls into
+  `amount_paid` and never into `total_price`, so that difference can be a
+  phantom overpayment (prod 599, $60). The phantom is ALREADY auto-refunded off
+  the deposit/balance charges today, so this does not create the error class; it
+  only adds the drink-plan charge as a source in the case where it is the only
+  refundable charge on the proposal. Do NOT try to fix the derivation here (see
+  the fix list's "do not re-attempt naively"). Task 7 re-checks prod for a
+  proposal in exactly that shape.
+- **Safety check before running the suite.** This box's `.env` holds LIVE Stripe
+  keys and no test keys. Widening the rails can turn a previously split-less
+  execute-path test into one that plans a split and fires a REAL refund. Before
+  running anything in Step 4, grep `cancelLineItem.test.js` and
+  `refundHelpers*.test.js` for `drink_plan_extras` / `drink_plan_with_balance`
+  seeds that carry a `stripe_payment_intent_id` AND reach the execute route. The
+  new test above is preview-only, which is why it is safe. If an execute-path
+  test would newly plan a split, STOP and surface it rather than running it.
 
 **(d) Mirror the breakdown row for the additional-bartender add-on target.** In
 `computeCancelTargets`, the add-on's `line_total` bakes the gratuity surcharge in
@@ -1191,19 +1564,98 @@ inflated. A client Lab save could have landed since. Re-run read-only against
 the `production` branch (`br-noisy-frog-ad99sa6l`, project `round-tooth-34649976`)
 via the Neon MCP:
 
+**(1) The rows.** Divide by the BILLED hours, not the raw duration: an 8 on a
+3.5h event is correct for a 4h-minimum `banquet-server` and would look like
+2.29 servers under a naive check.
+
 ```sql
-SELECT pa.proposal_id, pa.addon_name, pa.quantity, p.event_duration_hours,
-       pa.line_total, pa.rate, p.status
-  FROM proposal_addons pa JOIN proposals p ON p.id = pa.proposal_id
+SELECT pa.proposal_id, sa.slug, pa.quantity, p.event_duration_hours,
+       sa.minimum_hours, pa.line_total, pa.rate, p.status,
+       ROUND(pa.quantity / NULLIF(CASE WHEN sa.slug = 'additional-bartender'
+                                       THEN p.event_duration_hours
+                                       ELSE GREATEST(p.event_duration_hours, COALESCE(sa.minimum_hours, 0))
+                                  END, 0), 3) AS recovered_count
+  FROM proposal_addons pa
+  JOIN proposals p ON p.id = pa.proposal_id
+  LEFT JOIN service_addons sa ON sa.id = pa.addon_id
  WHERE pa.billing_type = 'per_hour'
  ORDER BY pa.proposal_id DESC;
 ```
 
-Expected: every `quantity` equals `event_duration_hours * a small integer` (1-3
-staff). Any row where `quantity / event_duration_hours` is not close to a whole
-number, or exceeds ~6, was inflated by a reprice and needs a repair statement
-written before merge. If all clean, record "no repair required" in the commit
-message.
+Expected: every `recovered_count` is a whole number, 1 to 3. A fractional one is
+a mis-shaped row (the lab/submit writer bug); one above ~6 is an inflated row (a
+reprice already squared it). Either needs a repair statement written before
+merge. If all clean, record "no repair required" in the commit message.
+
+**(2) The snapshots.** Rows can be clean while `pricing_snapshot` is not: on an
+override proposal the add-on inflation cancels in the fold's delta but is still
+frozen into the client-visible snapshot.
+
+```sql
+SELECT p.id, p.status, a->>'slug' AS slug,
+       (a->>'quantity')::numeric AS snap_quantity, p.event_duration_hours
+  FROM proposals p
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(p.pricing_snapshot->'addons') = 'array'
+         THEN p.pricing_snapshot->'addons' ELSE '[]'::jsonb END) a
+ WHERE a->>'billing_type' = 'per_hour'
+   AND (a->>'quantity')::numeric > p.event_duration_hours * 4
+ ORDER BY p.id DESC;
+```
+
+Expected: zero rows.
+
+**(3) The gratuity basis**, the channel that moves money even under an override:
+
+```sql
+SELECT p.id, p.status, p.gratuity_rate, p.num_bartenders,
+       (p.pricing_snapshot->'gratuity'->>'staff_count')::numeric AS basis
+  FROM proposals p
+ WHERE p.gratuity_rate > 0
+   AND (p.pricing_snapshot->'gratuity'->>'staff_count')::numeric > 6
+ ORDER BY p.id DESC;
+```
+
+Expected: zero rows. A double-digit basis on a real event is the inflation
+signature, and it means a client was quoted too much gratuity.
+
+**(4) The rails widening from Task 6(c).** Find any proposal whose only
+refundable charge is a drink-plan rail while `amount_paid > total_price`:
+
+```sql
+SELECT p.id, p.total_price, p.amount_paid,
+       array_agg(DISTINCT pp.payment_type) AS refundable_rails
+  FROM proposals p
+  LEFT JOIN proposal_payments pp
+    ON pp.proposal_id = p.id AND pp.status = 'succeeded'
+   AND pp.stripe_payment_intent_id IS NOT NULL
+ WHERE p.amount_paid > p.total_price
+ GROUP BY p.id, p.total_price, p.amount_paid;
+```
+
+Expected: proposal 599 ($60, a paid Drink Plan Extras invoice, not an
+overpayment). Note in the merge report which rails it carries. If any row's only
+rail is `drink_plan_extras` / `drink_plan_with_balance`, say so explicitly: that
+is the one shape where Task 6(c) newly lets a phantom overpayment auto-refund.
+
+**(5) The per_guest count**, which this plan deliberately does NOT fix. The
+deferral is only safe while no live proposal carries a per_guest add-on at a
+count above 1, so verify rather than assume. The count is recoverable the way
+the client inverter does it, from the row's own frozen rate:
+
+```sql
+SELECT pa.proposal_id, pa.addon_name, pa.quantity, pa.rate, pa.line_total, p.status,
+       ROUND(pa.line_total / NULLIF(pa.quantity * pa.rate, 0), 3) AS recovered_count
+  FROM proposal_addons pa JOIN proposals p ON p.id = pa.proposal_id
+ WHERE pa.billing_type IN ('per_guest', 'per_guest_timed')
+   AND pa.line_total > pa.quantity * pa.rate * 1.01
+ ORDER BY pa.proposal_id DESC;
+```
+
+Expected: zero rows. Any row here is a live per_guest count above 1, which the
+fold under-bills on every reprice, and the deferral has to be revisited before
+merge. (`per_guest_timed` will read high for events over 4 hours because of its
+extra-hours term; check those by hand rather than treating them as counts.)
 
 - [ ] **Step 2: Docs**
 
@@ -1214,12 +1666,17 @@ In `ARCHITECTURE.md`, under the `proposal_addons` schema entry, add:
   the add-on (`calculateAddonCost(...).quantity`), NOT the admin's unit count.
   Per billing_type: `per_guest`/`per_guest_timed` store guestCount, `per_hour`
   stores effectiveHours x count, `per_staff` stores the staff count,
-  `per_100_guests` stores 100-guest blocks, `flat` stores the count. Read back
-  by `eventCreation.addonHeadcount` (divides by duration for headcount) and
-  `invoiceLineItems` (renders `quantity x rate`). Any code converting between
-  this and a unit count MUST go through `server/utils/addonQuantity.js`;
-  re-feeding the stored figure to the engine as an input multiplied per_hour
-  add-ons by their own hours (a $450 line repriced to $2,700, 2026-07-26).
+  `per_100_guests` stores 100-guest blocks, `flat` stores the count. The
+  `additional-bartender` slug is the exception inside `per_hour`: its bespoke
+  engine branch stores RAW durationHours x count and never consults
+  `minimum_hours`. Read back by `eventCreation.addonHeadcount` (divides by
+  duration for headcount), `invoiceLineItems` (renders `quantity x rate`), and
+  the admin editor's `recoverAddonQuantities`. Any code converting between this
+  and a unit count MUST go through `server/utils/addonQuantity.js` on the server
+  or `client/src/pages/admin/proposalEditor/formState.js` on the client, and the
+  two must agree; re-feeding the stored figure to the engine as an input
+  multiplied per_hour add-ons by their own hours (a $450 line repriced to
+  $2,700, 2026-07-26) and inflated the gratuity staff basis with it.
 ```
 
 In `docs/fix-list-remaining-2026-07-02.md`, under the 2026-07-26 push-review
@@ -1235,12 +1692,24 @@ Task 6), DELETE the drink-plan rails bullet (fixed in Task 6), and add:
   `server/utils/addonQuantity.js` and the ARCHITECTURE schema note. The
   2026-07-24 checkpoint change that stopped writing `quantity` in the post-fold
   sync was made on that wrong belief and has been reverted.
-- Still open, same family: for `per_guest` add-ons the admin's unit count is not
-  recoverable from the column at all (it stores guestCount), so a per_guest
-  add-on sold at count 2 reprices as count 1 and UNDER-bills. Not reachable
-  today (no live proposal has an admin-set per_guest count > 1) and deliberately
-  unchanged by the 2026-07-26 work, which kept the existing conservative
-  behavior for that type.
+- Still open, same family: for `per_guest` add-ons the fold cannot recover the
+  admin's unit count, so a per_guest add-on sold at count 2 reprices as count 1
+  and UNDER-bills. It is recoverable in principle, just not from `quantity`
+  alone: the client inverter already does it as
+  `line_total / (quantity x rate)` using the row's OWN persisted rate
+  (`formState.js:92-98`), and the fold could too by adding `pa.line_total` to
+  `REPRICE_ADDON_SQL`. Deliberately left alone on 2026-07-26 to keep that lane
+  narrow, and verified unreachable at the time (query (5) in the plan's Task 7).
+  Pick this up with the same care: the divisor must be the row's frozen rate,
+  never the live catalog rate, because catalog rates drift.
+- A client drink-plan submit can reset an admin-negotiated add-on quantity. The
+  upsert loop in `submit.js` honors any active slug in the client payload
+  (`return true; // user-added addon`) and its `ON CONFLICT DO UPDATE` overwrites
+  `quantity` with the count it just computed for one unit. A payload naming a
+  slug an admin had already set to 3 knocks it back to 1. Pre-existing, not
+  reachable through the planner UI (it offers no staffing add-on), and untouched
+  by the 2026-07-26 work, which only changed what that statement writes, not
+  which rows it is allowed to write.
 - A partial removal of a LAB-owned add-on leaves the `labAdded` entry in
   `drink_plans.selections`, so the client's next Lab save re-upserts it at the
   lab's own quantity and undoes the partial removal. Narrow: the lab creates
@@ -1300,16 +1769,30 @@ git commit -m "docs(addons): document what proposal_addons.quantity means; corre
 
 On the dev DB with the dev server restarted:
 
-1. Open an admin proposal with a per_hour add-on (create one: editor, add 2
-   Banquet Servers on a 5-hour event). The pricing card should show
-   `Banquet Server (10hrs)` at `$750`, and the payment panel total should match.
-2. Save the proposal again with NO changes. The total must not move. Before this
-   work it would have jumped to `$3,750`.
-3. Open the cancel-line dialog on that add-on. The picker must say "Remove how
-   many of the 2?", not 10.
-4. Remove 1. The line becomes `$375`, the total drops by `$375`, and the
-   staffing card on the event page still shows the right number of servers.
-5. Open the event page and confirm the shift's `positions_needed` did not jump.
+1. Create the fixture: admin editor, 2 Banquet Servers on a 5-hour event. The
+   pricing card shows `Banquet Server (10hrs)` at `$750` and the payment panel
+   total matches.
+2. CONTROL, not the repro: re-save the proposal with no changes. The total must
+   not move. It did not move before this work either, because the editor
+   recovers the stepper count through `recoverAddonQuantities` on load. This
+   step exists to prove the fix did not break the one path that was already
+   right, so a "no change" here is the expected result both before and after.
+3. THE REPRO, a fold: open that proposal's drink plan, then save the Enhancement
+   Lab with nothing selected. An empty reconcile still runs
+   `foldExtrasIntoProposal`. Before this work the $750 line repriced to `$3,750`
+   and the proposal total jumped by $3,000. After, the total must not move at
+   all. (If the proposal has no drink plan, the cancel-line PREVIEW on any other
+   line runs the same fold and reports `new_total`; read that instead.)
+4. Open the cancel-line dialog on the Banquet Server line. The picker must say
+   "Remove how many of the 2?", not 10.
+5. Remove 1. The line becomes `$375` and the total drops by exactly `$375`.
+6. Open the event page: the staffing card still shows the right number of
+   servers, and the shift's `positions_needed` did not jump.
+7. The gratuity channel: on a proposal carrying an `additional-bartender` add-on
+   AND a client gratuity rate, note the Gratuity line, run the same empty Lab
+   save, and confirm the line is unchanged. Before this work the staff basis
+   read the add-on's stored hours as headcount and the line inflated with the
+   contract total untouched.
 
 ## Review scaling
 
@@ -1324,12 +1807,47 @@ files touched: `proposalExtrasFold.js`, `refundHelpers.js`, `lineItemCancel.js`,
   (Task 3), writers (Task 5), cancel-line consumers (Task 4), the four ride-along
   findings (Task 6), docs and the wrong fix-list entry (Task 7). The stability
   test (Task 2) is the gate for the whole family.
-- **Deliberately NOT in scope:** `eventCreation.addonHeadcount` and
-  `invoiceLineItems` (they already read the column correctly), the `per_guest`
-  count-recovery limitation (logged in Task 7), and the ~20 previously deferred
-  items in the fix list.
+- **Deliberately NOT in scope:** `eventCreation.addonHeadcount`,
+  `invoiceLineItems` and the client's `recoverAddonQuantities` (all three already
+  read the column correctly), the `per_guest` count-recovery limitation (logged
+  in Task 7, verified unreachable by query (5)), the `overpaymentCents`
+  derivation (the fix list's explicit do-not-re-attempt), and the ~20 previously
+  deferred items in the fix list.
 - **Type consistency:** `storedToInputCount(addon, storedQuantity, durationHours)`
   and `effectiveHoursFor(addon, durationHours)` are used with those exact
   signatures in Tasks 3, 4 and 6; `STORED_IS_INPUT_COUNT` is a `Set` in all uses;
   `countLabelFor` returns `'hour'|'unit'|null` and the dialog only branches on
-  `'hour'`.
+  `'hour'`. `storedToInputCount` returns a WHOLE number or null, so no caller
+  rounds again.
+- **Row prerequisites:** every row handed to `effectiveHoursFor` or
+  `storedToInputCount` must carry `slug` (for the additional-bartender split) and
+  `minimum_hours` (for the per_hour floor). `REPRICE_ADDON_SQL` gets both from
+  `sa.*`; the two `lineItemCancel` SELECTs get them from Task 4 step (a0). A
+  future caller that forgets is the exact bug step (a0) exists to prevent.
+
+## Plan review, 2026-07-26 (what this revision changed)
+
+Reviewed against the code before execution. Two tasks were money-wrong as
+originally written and are corrected above:
+
+- **Task 5 shipped a 4x under-bill.** Both writers re-read the row they just
+  wrote to build the fold's after-leg, so a post-fold re-sync could not fix the
+  input the fold had already priced. Simulated against the real engine: a
+  per_hour lab helper on a 4h booking went from `$160` to `$40`, and the re-sync
+  wrote the wrong figures straight back. Now the pre-fold row is priced with
+  `calculateAddonCost`, and Task 1 rounds with a floor of 1 so the Task 3 window
+  cannot move money either.
+- **Task 4 corrupted rows on sub-minimum events.** Neither cancel-line SELECT
+  carries `sa.minimum_hours`, so a 4h-minimum `banquet-server` on a 3.5h event
+  recovered 2.29 units and wrote 3.5 back for one remaining server ($262.50
+  instead of $300). Step (a0) widens both SELECTs and a test pins it.
+
+Also corrected: the claim that an admin re-save reproduces the bug (the editor
+already inverts correctly), the claim that `lab.test.js:244` is saved by a null
+guard (banquet-server's minimum_hours makes it 0.75, not null, and the fixture
+itself seeds the forbidden raw-count shape), the claim that the per_guest count
+is unrecoverable (the client recovers it from line_total), and the exposure
+statement (the gratuity staff basis and the persisted snapshot move money on
+override proposals where the add-on line does not). Task 6(b)'s guard was
+narrowed to the splits-exist case so a no-refund removal still works without
+Stripe creds.
