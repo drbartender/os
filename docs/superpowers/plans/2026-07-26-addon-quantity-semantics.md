@@ -57,7 +57,7 @@ divides by duration to recover headcount, and `invoiceLineItems`
 `withRepriceQuantities` (server/utils/proposalExtrasFold.js:57-70) passes the
 stored OUTPUT back as the engine's INPUT for every type except
 `per_guest`/`per_guest_timed`. Its docstring asserts the column holds "the real
-unit count for per_hour/flat/etc." — true for `flat`, false for `per_hour`.
+unit count for per_hour/flat/etc.", which is true for `flat` and false for `per_hour`.
 
 Measured on the dev DB with a prod-shaped row (probe, rolled back): one banquet
 server, 6-hour event, stored `quantity 6.00` / `line_total 450`. A NO-OP fold
@@ -67,7 +67,7 @@ total from $2,690 to $4,940. Prod stores exactly this shape: proposal 624 has
 
 **Prod exposure at time of writing:** 10 `per_hour` rows, 5 on active
 proposals, and `COUNT(*) FILTER (WHERE pa.quantity > p.event_duration_hours * 4)`
-is 0 — i.e. no row has been inflated yet. The fold is already reachable from
+is 0, i.e. no row has been inflated yet. The fold is already reachable from
 the client Enhancement Lab save and the drink-plan submit; the unpushed
 cancel-line feature adds admin-initiated doors. **No data repair is required**,
 only that the code stop squaring. Task 7 re-verifies this immediately before
@@ -77,7 +77,7 @@ merge in case a lab save lands in the interim.
 
 - Do NOT change what the column means. It holds the engine's OUTPUT display
   quantity. `eventCreation.addonHeadcount` and `invoiceLineItems` depend on
-  that and are OUT OF SCOPE — if a change would require editing either, the
+  that and are OUT OF SCOPE. If a change would require editing either, the
   design is wrong and the task should stop and surface.
 - Money in `proposals` is NUMERIC DOLLARS; invoices/payments/refunds are INTEGER
   CENTS. `proposal_addons.quantity` is `NUMERIC(10,2)` and can hold fractions
@@ -106,7 +106,7 @@ merge in case a lab save lands in the interim.
 
 **Interfaces:**
 - Produces:
-  - `STORED_IS_INPUT_COUNT` — `Set` of billing types where the stored OUTPUT
+  - `STORED_IS_INPUT_COUNT`: a `Set` of billing types where the stored OUTPUT
     equals the engine INPUT count (`'flat'` plus the default bucket).
   - `effectiveHoursFor(addon, durationHours)` → `number`. Mirrors
     `calculateAddonCost`'s `per_hour` branch:
@@ -513,7 +513,7 @@ Callers that must keep working untouched: `server/routes/drinkPlans/lab.js:279,3
 `server/routes/drinkPlans/submit.js:238,309`, `server/utils/lineItemCancel.js:409,457`,
 and `server/routes/drinkPlans/lab.test.js:244` (which calls
 `withRepriceQuantities([{ ...svcRow, pa_quantity: 3 }])` directly, with NO
-duration — it must not crash; see the null-guard below).
+duration), and it must not crash; see the null-guard below.
 
 - [ ] **Step 1: Replace the SQL and the mapper**
 
@@ -521,7 +521,7 @@ duration — it must not crash; see the null-guard below).
 // SQL to load reprice-ready addon rows: service_addons catalog columns PLUS the
 // per-proposal stored quantity AND the event duration needed to convert it.
 // The bare `SELECT sa.*` this replaced dropped pa.quantity, so calculateProposal
-// priced every per_hour addon as quantity 1 — silently under-billing the
+// priced every per_hour addon as quantity 1, silently under-billing the
 // instant it repriced (cross-LLM push review, 2026-07-20). Passing that stored
 // value straight back through was the OPPOSITE error: the stored figure is the
 // engine's OUTPUT (hours x count for per_hour), so the engine multiplied by
@@ -566,7 +566,7 @@ const { storedToInputCount } = require('./addonQuantity');
 Note the null-guard behavior this gives `lab.test.js:244` for free: that call
 passes `pa_quantity: 3` with no `pa_duration_hours`, so `effectiveHoursFor`
 returns 0, `storedToInputCount` returns `null`, and the row is passed through
-without a `quantity` — the engine recomputes. That test asserts on money, so
+without a `quantity`, the engine recomputes. That test asserts on money, so
 run it in Step 3 and read the result rather than assuming.
 
 - [ ] **Step 2: Run the stability test to verify it passes**
@@ -725,7 +725,7 @@ Add the import beside the existing requires in `server/utils/lineItemCancel.js`:
 const { storedToInputCount, countLabelFor, effectiveHoursFor } = require('./addonQuantity');
 ```
 
-**(a) `quantityIsCount`** — replace the hand-rolled list with the shared
+**(a) `quantityIsCount`**, replace the hand-rolled list with the shared
 definition, so "can the admin remove part of this?" and "can we convert the
 stored figure?" are the same question:
 
@@ -745,7 +745,7 @@ function unitCountOf(addon, storedQuantity, durationHours) {
 Delete the old `quantityIsCount` function and replace its two call sites as
 described in (b) and (c).
 
-**(b) `computeCancelTargets`, the addon branch** — the picker must offer the
+**(b) `computeCancelTargets`, the addon branch**, the picker must offer the
 count, and name its unit:
 
 ```js
@@ -763,7 +763,7 @@ count, and name its unit:
     });
 ```
 
-**(c) `applyLineItemCancel`, the addon mutation branch** — do the arithmetic in
+**(c) `applyLineItemCancel`, the addon mutation branch**, do the arithmetic in
 counts and write back in stored shape:
 
 ```js
@@ -802,7 +802,7 @@ counts and write back in stored shape:
 
 Add `STORED_IS_INPUT_COUNT` to the import line from Task 1.
 
-**(d) The post-fold sync** — restore writing `quantity`, with the corrected
+**(d) The post-fold sync**, restore writing `quantity`, with the corrected
 reasoning (this reverts the 2026-07-24 checkpoint change):
 
 ```js
@@ -1050,7 +1050,7 @@ test('a drink-plan-rail charge funds the refund instead of a manual return', asy
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node -r dotenv/config --test server/routes/proposals/cancelLineItem.test.js`
-Expected: FAIL on both — the object target currently reaches the core, and the
+Expected: FAIL on both, the object target currently reaches the core, and the
 drink-plan charge currently yields `manual_return_cents: 20000`.
 
 - [ ] **Step 3: Apply the four fixes**
@@ -1210,7 +1210,7 @@ message.
 In `ARCHITECTURE.md`, under the `proposal_addons` schema entry, add:
 
 ```
-- `quantity` (NUMERIC(10,2)) — the pricing engine's OUTPUT display quantity for
+- `quantity` (NUMERIC(10,2)), the pricing engine's OUTPUT display quantity for
   the add-on (`calculateAddonCost(...).quantity`), NOT the admin's unit count.
   Per billing_type: `per_guest`/`per_guest_timed` store guestCount, `per_hour`
   stores effectiveHours x count, `per_staff` stores the staff count,
@@ -1257,7 +1257,7 @@ server/utils/proposalExtrasFold.stability.test.js
 server/utils/addonQuantity.test.js
 ```
 
-- [ ] **Step 3: Lane gate — every suite this work reaches, one at a time**
+- [ ] **Step 3: Lane gate, every suite this work reaches, one at a time**
 
 ```
 node -r dotenv/config --test server/utils/addonQuantity.test.js
@@ -1320,7 +1320,7 @@ files touched: `proposalExtrasFold.js`, `refundHelpers.js`, `lineItemCancel.js`,
 
 ## Self-review notes
 
-- **Coverage:** every finding this plan claims to fix has a task — reader
+- **Coverage:** every finding this plan claims to fix has a task, reader
   (Task 3), writers (Task 5), cancel-line consumers (Task 4), the four ride-along
   findings (Task 6), docs and the wrong fix-list entry (Task 7). The stability
   test (Task 2) is the gate for the whole family.
