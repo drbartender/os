@@ -122,11 +122,6 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     basset_name = file.name;
   }
 
-  const fileFieldErrors = {};
-  if (!resume_url) fileFieldErrors.resume = 'Please upload your resume';
-  if (!basset_url) fileFieldErrors.basset = 'Please upload your BASSET / alcohol certification';
-  if (Object.keys(fileFieldErrors).length > 0) throw new ValidationError(fileFieldErrors);
-
   const toBool = v => v === 'true' || v === true || v === 'Yes';
 
   const client = await pool.connect();
@@ -217,6 +212,32 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     // pre_hired is read from the locked row, NOT req.user. The status check
     // is defense-in-depth (the throw above already guaranteed it).
     isPreHired = !!fresh.pre_hired && fresh.onboarding_status === 'in_progress';
+
+    // Files block the submit for cold applicants only.
+    //
+    // A pre-hire can finish later: the outstanding-documents notice follows
+    // them through onboarding (client/src/components/Layout.js) and
+    // /contractor-profile takes the upload. A file upload is the one field here
+    // nobody can reliably complete on demand (it depends on their connection,
+    // their camera resolution, and what format their resume happens to be in),
+    // and blocking a hired contractor on it strands someone who is otherwise
+    // done (incident 2026-07-23).
+    //
+    // A cold applicant has no way back in: the guard above refuses a second
+    // submit, and /contractor-profile sits behind RequireHired, which does not
+    // admit 'applied' (client/src/App.js:305). For them, requiring it now is the
+    // kinder rule, and Lane A has made the upload itself actually work.
+    //
+    // isPreHired comes from the FOR UPDATE row above, never req.user.pre_hired,
+    // matching the convention already stated below. Throwing here rolls back
+    // cleanly via the catch on this transaction.
+    if (!isPreHired) {
+      const fileFieldErrors = {};
+      if (!resume_url) fileFieldErrors.resume = 'Please upload your resume';
+      if (!basset_url) fileFieldErrors.basset = 'Please upload your BASSET / alcohol certification';
+      if (Object.keys(fileFieldErrors).length > 0) throw new ValidationError(fileFieldErrors);
+    }
+
     const newStatus = isPreHired ? 'hired' : 'applied';
 
     await client.query('UPDATE users SET onboarding_status = $1 WHERE id = $2', [newStatus, req.user.id]);

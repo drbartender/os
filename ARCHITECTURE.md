@@ -134,6 +134,10 @@ Routes throw via `asyncHandler`-wrapped handlers; the global error middleware in
 
 The two scopes differ on purpose. Sized against production, a single predicate covering both documents across all onboarding statuses returns 50 rows into a 6-row strip: every one of the 50 lacks a resume (a nice-to-have on people already hired) while only 2 lack a certification. A missing resume stays visible per-person on `DocumentsTab`; it is not an alert.
 
+**Submit-gate contract (2026-07-26).** `POST /api/application` requires `resume` and `basset` **only when the submitter is not `pre_hired`.** A pre-hire may submit without them and finish later, because the notice above follows them through onboarding and `/contractor-profile` accepts the upload. A cold applicant still must supply both, because they have no way back in: the handler refuses a second submit, and `/contractor-profile` sits behind `RequireHired`, whose allow-list excludes `applied`. `isPreHired` is read from the `FOR UPDATE` row inside the transaction, never `req.user.pre_hired`.
+
+Because a pre-hire's application row may now carry NULL document columns, `server/utils/contractorSeed.js` COALESCEs all six document columns against the existing profile row (`COALESCE(EXCLUDED.x, contractor_profiles.x)`) rather than assigning `EXCLUDED` outright. Without that, a pre-hire who uploaded at `/contractor-profile` before applying had both documents destroyed by their own fileless submit. The same change closes a pre-existing headshot wipe, which was always possible because a headshot was always optional.
+
 ### Contractor Agreement — `/api/agreement`
 | Method | Path | Auth | Description |
 |---|---|---|---|

@@ -63,12 +63,28 @@ async function seedContractorProfileFromApplication(client, userId, existingHire
       emergency_contact_name = EXCLUDED.emergency_contact_name,
       emergency_contact_phone = EXCLUDED.emergency_contact_phone,
       emergency_contact_relationship = EXCLUDED.emergency_contact_relationship,
-      alcohol_certification_file_url = EXCLUDED.alcohol_certification_file_url,
-      alcohol_certification_filename = EXCLUDED.alcohol_certification_filename,
-      resume_file_url = EXCLUDED.resume_file_url,
-      resume_filename = EXCLUDED.resume_filename,
-      headshot_file_url = EXCLUDED.headshot_file_url,
-      headshot_filename = EXCLUDED.headshot_filename,
+      -- Documents: never let a NULL from the application erase one already on
+      -- the profile. Same protective shape as hire_date below.
+      --
+      -- These were a plain EXCLUDED assignment while POST /api/application refused any
+      -- submission missing a resume or certification, which guaranteed the
+      -- application columns were non-null whenever this ran for a pre-hire.
+      -- Once a pre-hire may submit without files (2026-07-26), that guarantee is
+      -- gone: a pre-hire who uploads at /contractor-profile first (RequireHired
+      -- admits 'in_progress') and then submits a fileless application had both
+      -- documents destroyed here, and was then told by the outstanding-documents
+      -- notice to re-upload what they had already uploaded.
+      --
+      -- COALESCE per column is safe because every writer sets each url/filename
+      -- pair together; splitting them would otherwise strand a URL with a null
+      -- filename. This also closes the pre-existing headshot case, which could
+      -- always be wiped because a headshot was always optional.
+      alcohol_certification_file_url = COALESCE(EXCLUDED.alcohol_certification_file_url, contractor_profiles.alcohol_certification_file_url),
+      alcohol_certification_filename = COALESCE(EXCLUDED.alcohol_certification_filename, contractor_profiles.alcohol_certification_filename),
+      resume_file_url = COALESCE(EXCLUDED.resume_file_url, contractor_profiles.resume_file_url),
+      resume_filename = COALESCE(EXCLUDED.resume_filename, contractor_profiles.resume_filename),
+      headshot_file_url = COALESCE(EXCLUDED.headshot_file_url, contractor_profiles.headshot_file_url),
+      headshot_filename = COALESCE(EXCLUDED.headshot_filename, contractor_profiles.headshot_filename),
       -- Preserve any existing hire_date over EXCLUDED. Callers pass the
       -- previous hire_date explicitly via $2 to keep re-hires anchored to
       -- the original date; if a caller forgets, fall back to the row's

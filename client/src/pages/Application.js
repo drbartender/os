@@ -182,8 +182,6 @@ export default function Application() {
       { field: 'reliable_transportation', label: 'Transportation' },
       { field: 'positions', label: 'Position', test: () => Object.values(positions).some(Boolean) },
       { field: 'why_dr_bartender', label: 'Why Dr. Bartender' },
-      { field: 'resume', label: 'Resume', test: () => !!files.resume },
-      { field: 'basset', label: 'BASSET Certification', test: () => !!files.basset },
     ];
 
     const result = validate(rules, form);
@@ -642,9 +640,14 @@ export default function Application() {
                 placeholder="Anything else we should know..." />
             </div>
 
+            <div className="alert alert-info" role="status">
+              If you have already been hired, you can add these later and we will
+              follow up. If you are applying, we need them with your application.
+            </div>
+
             <div className={"form-group" + fieldClass('resume')}>
               <FileUpload
-                label="Upload Your Resume *"
+                label="Upload Your Resume"
                 name="resume"
                 kind="document"
                 helper="PDF, Word document, or a photo."
@@ -666,10 +669,10 @@ export default function Application() {
 
             <div className={"form-group" + fieldClass('basset')}>
               <FileUpload
-                label="Upload Your BASSET / Alcohol Certification *"
+                label="Upload Your BASSET / Alcohol Certification"
                 name="basset"
                 kind="document"
-                helper="BASSET, TIPS, ServSafe, or equivalent. Required for all positions."
+                helper="BASSET, TIPS, ServSafe, or equivalent. Needed before your first shift."
                 onChange={handleFile}
                 currentFile={files.basset}
               />
