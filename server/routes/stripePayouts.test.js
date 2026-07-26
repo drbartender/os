@@ -60,7 +60,7 @@ before(async () => {
   const base = await pool.query(`
     SELECT
       COALESCE(SUM(net_cents) FILTER (WHERE payout_id IS NULL AND txn_type <> 'payout'), 0)::int AS in_transit_cents,
-      COUNT(*) FILTER (WHERE matched_kind = 'unmatched')::int AS unmatched_count
+      COUNT(*) FILTER (WHERE matched_kind = 'unmatched' AND acknowledged_at IS NULL)::int AS unmatched_count
     FROM stripe_payout_lines`);
   baseInTransit = base.rows[0].in_transit_cents;
   baseUnmatched = base.rows[0].unmatched_count;
@@ -197,6 +197,29 @@ test('GET /api/stripe-payouts/:id returns the payout with joined lines', async (
 test('GET /api/stripe-payouts/999999 -> 404', async () => {
   const res = await request('GET', '/api/stripe-payouts/999999', { token: adminToken });
   assert.equal(res.status, 404);
+});
+
+test('acknowledged unmatched lines are excluded from unmatched counts but stay visible in detail', async () => {
+  // Acknowledged pre-cutover baseline (2026-07-25): counted nowhere as
+  // "unmatched", still listed. Covered by the after() LIKE cleanup.
+  await pool.query(
+    `INSERT INTO stripe_payout_lines (stripe_balance_txn_id, payout_id, txn_type, reporting_category,
+       amount_cents, fee_cents, net_cents, available_on, matched_kind, acknowledged_at)
+     VALUES ($1,$2,'charge','charge',5000,160,4840,NOW(),'unmatched',NOW())`,
+    [`txn_test_${N}_ack`, unmatchedPayoutRowId]);
+  const res = await request('GET', '/api/stripe-payouts', { token: adminToken });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.summary.unmatched_count, baseUnmatched + 2,
+    'summary unmatched_count unchanged by an acknowledged line');
+  const mineU = res.body.payouts.find((x) => x.id === unmatchedPayoutRowId);
+  assert.equal(mineU.unmatched_count, 1, 'per-payout count still counts only the live unmatched line');
+  assert.equal(mineU.line_count, 2, 'acknowledged line still counted as a line (history visible)');
+  const det = await request('GET', `/api/stripe-payouts/${unmatchedPayoutRowId}`, { token: adminToken });
+  assert.equal(det.status, 200);
+  const ackLine = det.body.lines.find((l) => l.stripe_balance_txn_id === `txn_test_${N}_ack`);
+  assert.ok(ackLine, 'acknowledged line still listed in payout detail');
+  assert.ok(ackLine.acknowledged_at, 'acknowledged_at exposed in the rows payload');
+  assert.equal(ackLine.matched_kind, 'unmatched', 'matched_kind untouched by acknowledgement');
 });
 
 test('POST /api/stripe-payouts/sync -> 200 synced:true (no-op fake stripe)', async () => {

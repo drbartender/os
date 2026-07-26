@@ -938,6 +938,7 @@ Two new tables mirror Stripe payouts and their balance-transaction lines for a b
 - `txn_type`, `reporting_category`, `amount_cents` (signed gross), `fee_cents`, `net_cents`, `available_on`, `description`
 - `stripe_charge_id`, `stripe_payment_intent_id`, `stripe_refund_id` — Stripe-side keys used by the matcher
 - `matched_kind` CHECK (payment | tip | refund | dispute | adjustment | unmatched) — the reconciliation verdict
+- `acknowledged_at` — read-side "known dead line" marker. Set once by the schema.sql backfill on the 119 pre-cutover baseline lines (mirrored by the 2026-07-02 backfill with `available_on` before the cutover; they predate payout tracking and can never match). Acknowledged lines are excluded from the stuck-line Sentry alert, the sweep's re-match loop, and the admin unmatched counts/badge, but stay visible in the payout detail (rendered with a "pre-cutover" chip). Matching semantics untouched: `matched_kind` keeps its value and `matchLine` never reads this column.
 - Link FKs (all ON DELETE SET NULL): `proposal_payment_id`, `tip_id`, `proposal_refund_id`, `proposal_id`, `invoice_id`
 - Indexes: `payout_id`, `stripe_payment_intent_id`, partial index on `matched_kind='unmatched'`
 

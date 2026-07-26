@@ -242,9 +242,11 @@ async function sweep(opts = {}) {
       }
     }
     await syncPendingTransactions({ stripe });
-    // Re-match: heals webhook-before-payment-row ordering races.
+    // Re-match: heals webhook-before-payment-row ordering races. Acknowledged
+    // lines (pre-cutover baseline) can never match — skip regrinding them.
     const unmatched = await pool.query(
       `SELECT id FROM stripe_payout_lines WHERE matched_kind = 'unmatched'
+       AND acknowledged_at IS NULL
        AND (stripe_payment_intent_id IS NOT NULL OR stripe_refund_id IS NOT NULL)`);
     for (const r of unmatched.rows) await matchLine(r.id);
     // Alert any failed payout not yet alerted (belt and braces for a missed webhook).
@@ -252,9 +254,12 @@ async function sweep(opts = {}) {
       `SELECT stripe_payout_id FROM stripe_payouts WHERE status = 'failed' AND alerted_at IS NULL`);
     for (const f of failed.rows) await alertFailedPayout(f.stripe_payout_id, opts);
     // Stuck-line signal: amber flags nobody watches need a Sentry pulse.
+    // acknowledged_at IS NULL keeps the acknowledged pre-cutover baseline out
+    // of the count so ONE real new stuck line reads "1", not "120".
     const stuck = await pool.query(
       `SELECT COUNT(*)::int AS n FROM stripe_payout_lines
-       WHERE matched_kind = 'unmatched' AND payout_id IS NOT NULL AND created_at < NOW() - INTERVAL '7 days'`);
+       WHERE matched_kind = 'unmatched' AND payout_id IS NOT NULL
+       AND acknowledged_at IS NULL AND created_at < NOW() - INTERVAL '7 days'`);
     if (stuck.rows[0].n > 0) {
       Sentry.captureMessage(`stripe-payouts: ${stuck.rows[0].n} line(s) unmatched for >7 days`, { level: 'warning' });
     }

@@ -14,7 +14,7 @@ const router = express.Router();
 const LINE_SELECT = `
   SELECT l.id, l.stripe_balance_txn_id, l.payout_id, l.txn_type, l.reporting_category,
          l.amount_cents, l.fee_cents, l.net_cents, l.available_on, l.description,
-         l.matched_kind, l.proposal_id, l.invoice_id, l.tip_id,
+         l.matched_kind, l.acknowledged_at, l.proposal_id, l.invoice_id, l.tip_id,
          c.name AS client_name, pr.event_type, pr.event_type_custom,
          inv.invoice_number, inv.token AS invoice_token,
          COALESCE(cp.preferred_name, u.email) AS staff_name,
@@ -35,7 +35,7 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
         COALESCE(SUM(net_cents) FILTER (WHERE payout_id IS NULL AND txn_type <> 'payout'), 0)::int AS in_transit_cents,
         COALESCE(SUM(fee_cents) FILTER (WHERE available_on >= date_trunc('month', NOW())), 0)::int AS fees_mtd_cents,
         COALESCE(SUM(fee_cents) FILTER (WHERE available_on >= date_trunc('year', NOW())), 0)::int AS fees_ytd_cents,
-        COUNT(*) FILTER (WHERE matched_kind = 'unmatched')::int AS unmatched_count
+        COUNT(*) FILTER (WHERE matched_kind = 'unmatched' AND acknowledged_at IS NULL)::int AS unmatched_count
       FROM stripe_payout_lines`),
     pool.query(`${LINE_SELECT} WHERE l.payout_id IS NULL AND l.txn_type <> 'payout' ORDER BY l.available_on ASC NULLS LAST`),
     pool.query(`
@@ -44,7 +44,7 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
              COALESCE(SUM(l.amount_cents), 0)::int AS gross_cents,
              COALESCE(SUM(l.fee_cents), 0)::int AS fee_cents,
              COUNT(l.id)::int AS line_count,
-             COUNT(*) FILTER (WHERE l.matched_kind = 'unmatched')::int AS unmatched_count
+             COUNT(*) FILTER (WHERE l.matched_kind = 'unmatched' AND l.acknowledged_at IS NULL)::int AS unmatched_count
       FROM stripe_payouts p
       LEFT JOIN stripe_payout_lines l ON l.payout_id = p.id
       GROUP BY p.id ORDER BY p.created_at_stripe DESC`),

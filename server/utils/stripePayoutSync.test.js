@@ -3,6 +3,7 @@ process.env.SEND_NOTIFICATIONS = 'false';
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const Sentry = require('@sentry/node'); // same module instance the sync module uses
 const { pool } = require('../db');
 const sync = require('./stripePayoutSync');
 
@@ -334,6 +335,66 @@ test('sweep with fullHistory:true uses full-history listing even when table is n
   };
   await sync.sweep({ stripe, notify: async () => {}, force: true, fullHistory: true });
   assert.ok(!seenParams[0].created, 'fullHistory must NOT scope to a 30-day window');
+});
+
+// ============================================================
+// Acknowledged pre-cutover baseline (2026-07-25)
+// ============================================================
+
+test('sweep: acknowledged lines are excluded from the stuck count and the re-match loop', async () => {
+  const poA = `po_test_${N}_ack`;
+  const po = await pool.query(
+    `INSERT INTO stripe_payouts (stripe_payout_id, amount_cents, status, created_at_stripe, lines_synced_at)
+     VALUES ($1, 1940, 'paid', NOW() - INTERVAL '40 days', NOW()) RETURNING id`, [poA]);
+  // Two claimed, stuck-aged (>7 days), unmatched lines with unresolvable PIs
+  // (so both WOULD be re-match candidates); one acknowledged, one live.
+  // updated_at is backdated so a matchLine touch (which stamps NOW()) is visible.
+  const mk = async (txn, acked) => (await pool.query(
+    `INSERT INTO stripe_payout_lines (stripe_balance_txn_id, payout_id, txn_type, reporting_category,
+       amount_cents, fee_cents, net_cents, stripe_payment_intent_id, matched_kind,
+       created_at, updated_at, acknowledged_at)
+     VALUES ($1,$2,'charge','charge',1000,30,970,$3,'unmatched',
+       NOW() - INTERVAL '30 days', NOW() - INTERVAL '30 days', $4)
+     RETURNING id`,
+    [txn, po.rows[0].id, `pi_nope_${txn}`, acked ? new Date() : null])).rows[0].id;
+  const ackId = await mk(`txn_test_${N}_ack1`, true);
+  const liveId = await mk(`txn_test_${N}_ack2`, false);
+
+  const seen = [];
+  const orig = Sentry.captureMessage;
+  Sentry.captureMessage = (msg) => { seen.push(String(msg)); };
+  try {
+    await sync.sweep({ stripe: fakeStripe(), notify: async () => {}, force: true });
+  } finally { Sentry.captureMessage = orig; }
+
+  // Stuck pulse fired (the live line guarantees n >= 1) and its count matches
+  // the acknowledged-excluding predicate over the shared dev DB.
+  const stuckMsg = seen.find((m) => m.includes('unmatched for >7 days'));
+  assert.ok(stuckMsg, 'stuck-line Sentry pulse fired');
+  const n = Number(stuckMsg.match(/(\d+) line\(s\)/)[1]);
+  const { rows: [{ n: expected }] } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM stripe_payout_lines
+     WHERE matched_kind = 'unmatched' AND payout_id IS NOT NULL
+     AND acknowledged_at IS NULL AND created_at < NOW() - INTERVAL '7 days'`);
+  assert.equal(n, expected, 'stuck count excludes acknowledged lines');
+  const { rows: inSet } = await pool.query(
+    `SELECT id FROM stripe_payout_lines
+     WHERE matched_kind = 'unmatched' AND payout_id IS NOT NULL
+     AND acknowledged_at IS NULL AND created_at < NOW() - INTERVAL '7 days' AND id IN ($1,$2)`,
+    [ackId, liveId]);
+  assert.deepEqual(inSet.map((r) => r.id), [liveId], 'live line counted, acknowledged line not');
+
+  // Re-match loop: matchLine stamps updated_at = NOW(); the acknowledged line
+  // must be skipped (untouched), the live one reprocessed.
+  const rows = (await pool.query(
+    'SELECT id, updated_at, matched_kind FROM stripe_payout_lines WHERE id IN ($1,$2)', [ackId, liveId])).rows;
+  const ack = rows.find((r) => r.id === ackId);
+  const live = rows.find((r) => r.id === liveId);
+  assert.ok(new Date(ack.updated_at).getTime() < Date.now() - 86400000,
+    're-match loop must not touch an acknowledged line');
+  assert.ok(new Date(live.updated_at).getTime() > Date.now() - 10 * 60 * 1000,
+    're-match loop still reprocesses live unmatched lines');
+  assert.equal(ack.matched_kind, 'unmatched', 'acknowledgement never rewrites matched_kind');
 });
 
 test('sweep refuses to run in test mode without an injected client [finding 1]', async () => {

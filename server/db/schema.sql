@@ -3731,6 +3731,30 @@ CREATE INDEX IF NOT EXISTS idx_stripe_payout_lines_payout ON stripe_payout_lines
 CREATE INDEX IF NOT EXISTS idx_stripe_payout_lines_pi ON stripe_payout_lines(stripe_payment_intent_id);
 CREATE INDEX IF NOT EXISTS idx_stripe_payout_lines_unmatched ON stripe_payout_lines(matched_kind) WHERE matched_kind = 'unmatched';
 
+-- acknowledged_at: read-side "known dead line" marker (2026-07-25). An
+-- acknowledged line is excluded from the stuck-line Sentry alert, the sweep's
+-- re-match loop, and the admin unmatched counts/badge, but stays fully visible
+-- in the payout detail (history is never hidden). It does NOT change matching
+-- semantics: matched_kind is untouched and matchLine never reads it.
+ALTER TABLE stripe_payout_lines ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ;
+
+-- Backfill: acknowledge the pre-cutover baseline. The 2026-07-02
+-- payout-tracking backfill mirrored 119 lines whose charges settled BEFORE
+-- payout tracking existed (available_on strictly before the cutover date);
+-- they have no proposal_payments rows and can never match, so they held the
+-- stuck-line alert at a permanent 119 and buried any REAL new stuck line.
+-- Predicate verified against prod 2026-07-25 to select exactly those 119 rows.
+-- NOT one-time: initDb re-executes this on every boot, so it is a standing
+-- rule over the frozen created_at=2026-07-02 bucket (no insert path ever sets
+-- created_at, so no future row can enter it). Consequence: to durably
+-- un-acknowledge a row for investigation you must change a predicate field
+-- (e.g. flip matched_kind out of 'unmatched'); merely NULLing acknowledged_at
+-- is re-stamped at the next deploy. A dev DB without backfill rows matches
+-- zero rows.
+UPDATE stripe_payout_lines SET acknowledged_at = NOW()
+WHERE acknowledged_at IS NULL AND matched_kind = 'unmatched' AND payout_id IS NOT NULL
+  AND created_at::date = DATE '2026-07-02' AND available_on < DATE '2026-07-02';
+
 -- ─── Presence tracker (spec docs/superpowers/specs/2026-07-02-presence-tracker-design.md) ───
 -- Two-person time clock: state machine columns on users + interval log.
 -- presence_lead_rank NULL = not tracked. Lowest online-and-taking rank owns

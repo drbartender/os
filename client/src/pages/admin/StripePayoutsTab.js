@@ -215,7 +215,14 @@ export default function StripePayoutsTab({ show, onClearShow } = {}) {
                 {expanded === p.id && !lineError[p.id] && (lines[p.id] || []).map(l => (
                   <tr key={l.id} style={{ background: 'var(--paper-2, transparent)' }}>
                     <td className="muted" style={{ paddingLeft: '2em' }}>{lineLabel(l)}</td>
-                    <td><StatusChip kind={KIND[l.matched_kind] || 'neutral'}>{l.matched_kind}</StatusChip></td>
+                    <td>
+                      <StatusChip kind={KIND[l.matched_kind] || 'neutral'}>{l.matched_kind}</StatusChip>
+                      {/* Acknowledged baseline (settled before payout tracking, 2026-07-02):
+                          visible for history, excluded from every unmatched count. */}
+                      {l.acknowledged_at && (
+                        <>{' '}<StatusChip kind="neutral" dot={false}>pre-cutover</StatusChip></>
+                      )}
+                    </td>
                     <td className="num">{fmt$fromCents(l.amount_cents)}</td>
                     <td className="num muted">{fmt$fromCents(l.fee_cents)}</td>
                     <td className="num">{fmt$fromCents(l.net_cents)}</td>
