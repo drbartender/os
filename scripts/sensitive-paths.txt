@@ -137,3 +137,36 @@ server/utils/clientNotices.js
 # follows the code, not the filename it used to live in.
 server/routes/drinkPlans/submitSanitize.js
 server/routes/drinkPlans/submitNotify.js
+
+# THE MONEY CORE ITSELF (push review, 2026-07-26). Found while computing the
+# trigger for the cancel-line batch: the list gated the ROUTES that move money
+# and the notice that announces it, but not the reconciliation code underneath.
+# Same "sensitivity follows the code" rule as the drinkPlans split above: when
+# stripeWebhook.js was split into per-event handlers, the money logic left the
+# listed file. Every path below writes proposals.total_price / amount_paid,
+# invoice amount_due / amount_paid, or issues a Stripe refund.
+#
+# Webhook handlers: chargeRefunded is the refund backstop (and the tip
+# clawback), paymentIntentSucceeded is the amount_paid roll-up, payout mirrors
+# Stripe payouts, disputes move money out. stripeWebhook.js (listed above) is
+# now only the signature check + dispatch.
+server/routes/stripeWebhookHandlers/*.js
+# Refund core: planRefund + applyRefundReconciliation decide whether a refund
+# lowers total_price; refundExecute is the ONLY caller of stripe.refunds.create.
+# (Glob supersedes the refundClientNotify.js entry above; refundSweepScheduler
+# was already covered by *Scheduler.js.)
+server/utils/refund*.js
+# Invoice money: amount_due / amount_paid / line items / payment linking /
+# void + reconcile. refreshUnlockedInvoices alone rebuilds what a client owes.
+server/utils/invoice*.js
+# Proposal money primitives: the contract-safe reprice (override moves by the
+# catalog delta), the demote-only status ladder + autopay disarm, and the
+# contract-vs-extra label constant every refund classifies against.
+server/utils/proposalExtrasFold.js
+server/utils/proposalStatus.js
+server/utils/proposalMoneyShared.js
+# Cancel line item (shipped 2026-07-24): removes a priced line AND issues the
+# overpayment refund in one act; cancellationMath is the cancel-event refund.
+server/utils/lineItemCancel.js
+server/routes/proposals/cancelLineItem.js
+server/utils/cancellationMath.js
