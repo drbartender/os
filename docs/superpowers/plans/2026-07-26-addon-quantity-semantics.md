@@ -1481,6 +1481,7 @@ and replace the hand-computed upsert body (~:293-307):
           INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
           VALUES ($1, $2, $3, $4, $5, $6, $7)
           ON CONFLICT (proposal_id, addon_id) DO UPDATE SET
+            rate = EXCLUDED.rate,
             quantity = EXCLUDED.quantity,
             line_total = EXCLUDED.line_total
         `, [proposal.id, addon.id, addon.name, addon.billing_type, Number(addon.rate),
@@ -1519,7 +1520,23 @@ never runs:
           }
 ```
 
-then feed `quantity` / `lineTotal` to the existing upsert unchanged.
+then feed `quantity` / `lineTotal` to the existing upsert, WITH the same
+`rate = EXCLUDED.rate` addition.
+
+**Why `rate = EXCLUDED.rate` is not optional after Task 3.** Both upserts
+recompute `line_total` at the CURRENT catalog rate but leave the row's `rate`
+frozen at whatever it was, and Task 3's per_guest recovery divides
+`line_total / (quantity x pa_rate)`. A row whose two halves come from different
+rates therefore recovers `newCatalogRate / oldFrozenRate` units. At the
+historical `pre-batched-mocktail` drift ($1.50 to $2.00) that is 1.33 and rounds
+back to 1, but at a 50% rise it rounds to 2 and the line silently doubles on the
+next fold (Task 3 review, 2026-07-26). Writing all three columns together keeps
+`rate` and `line_total` from ever describing different prices.
+
+Note this does NOT change whether a client save re-prices an existing line at
+the new catalog rate. It already does, through `line_total`. This only stops the
+row from lying about which rate produced that figure. The re-pricing behavior
+itself is pre-existing and logged in Task 7 rather than changed here.
 
 One divergence to know about in both files: `calculateAddonCost`'s `per_hour`
 branch uses `max(durationHours, minimum_hours)`, while the engine's bespoke
@@ -2020,6 +2037,19 @@ Task 6), DELETE the drink-plan rails bullet (fixed in Task 6), and add:
   client inverter (`formState.js:92-98`). `per_guest_timed` is deliberately still
   excluded: its `line_total` carries an extra-hours term, so the division does
   not hold (prod 464 reads 1.250 for a genuine count of 1).
+- `REPRICE_ADDON_SQL` does not select `pa.variant`, so a no-op fold drops the
+  variant from `snapshot.addons[]` and the line renames itself: a
+  `champagne-toast` sold as `non-alcoholic-bubbles` reverts to "Champagne Toast"
+  on the client-facing snapshot, and the next writer persists `variant = null`
+  off that snapshot. No money moves, but it is the same "a no-op fold must
+  change nothing" family this lane is about, and the fix is one column in a
+  SELECT this lane already widened (Task 3 review, 2026-07-26).
+- A client drink-plan submit or lab save re-prices an existing add-on line at the
+  CURRENT catalog rate, because both upserts recompute `line_total` from
+  `service_addons.rate` rather than the rate frozen on the row. A catalog price
+  rise therefore reaches proposals that were sold at the old price. Pre-existing
+  and deliberately unchanged on 2026-07-26; the lane only stopped the row's
+  `rate` column from disagreeing with its own `line_total`.
 - A client drink-plan submit can reset an admin-negotiated add-on quantity. The
   upsert loop in `submit.js` honors any active slug in the client payload
   (`return true; // user-added addon`) and its `ON CONFLICT DO UPDATE` overwrites
