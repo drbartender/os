@@ -181,7 +181,7 @@ is. Two deliberate divergences, both documented in the module:
 
 | | client `recoverAddonQuantities` | this module |
 |---|---|---|
-| `per_guest` | recovers the count from `line_total / (quantity x rate)` | returns `null` (the fold has no `line_total` in its SELECT; unchanged behavior, logged in Task 7) |
+| `per_guest` | recovers the count from `line_total / (quantity x rate)` | returns `null` in Task 1; Task 3 Step 1a closes the gap with the same formula behind an optional `{ lineTotal, rate }` argument, so a caller that cannot supply them still gets `null` |
 | `per_staff`, `per_100_guests` | treats the stored figure as the raw count | returns `null`. The engine IGNORES the input for both, so dropping the field and letting it recompute is identical in effect. Inert, but write it down |
 | upper clamp | clamps to 10 (the stepper's max) | NO clamp: clamping would silently re-bill a corrupt row at 10 units instead of surfacing it |
 
@@ -604,12 +604,24 @@ test('flat add-on with quantity 2: stable (the type that already round-tripped)'
   assert.equal(Number(snapshot.addons[0].line_total), 400);
 });
 
-test('per_guest add-on: stable', async () => {
+test('per_guest add-on at count 2: stable (the count lives in line_total)', async () => {
+  // Seeded at TWO deliberately. At count 1 this test compares 1 against 1 and
+  // CANNOT fail, and that false negative certified a live defect as safe:
+  // prod proposal 482 carries a Pre-Batched Mocktail at a real count of 2
+  // (quantity 50 = guestCount, rate 2.00, line_total 200.00), and a no-op fold
+  // reprices it to $100. per_guest stores guestCount in `quantity`, so the count
+  // survives only in line_total and is recovered as line_total / (quantity x
+  // rate), the same inversion the admin editor already uses (formState.js:92-98).
   const { proposalId } = await seedPricedProposal({
-    addonSpecs: [{ slug: `stab-guest-${NONCE}`, name: 'Stability Guest', billingType: 'per_guest', rate: 5, count: 1 }],
+    addonSpecs: [{ slug: `stab-guest-${NONCE}`, name: 'Stability Guest', billingType: 'per_guest', rate: 5, count: 2 }],
   });
-  const { before, after } = await noOpFold(proposalId);
-  assert.equal(after, before);
+  const stored = (await pool.query('SELECT quantity, line_total FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows[0];
+  assert.equal(Number(stored.quantity), 80, 'per_guest stores the guest count, not the unit count');
+  assert.equal(Number(stored.line_total), 800, '80 guests x $5 x 2 units');
+
+  const { before, after, snapshot } = await noOpFold(proposalId);
+  assert.equal(after, before, `no-op fold moved the total from ${before} to ${after}`);
+  assert.equal(Number(snapshot.addons[0].line_total), 800, 'and it re-emits BOTH units');
 });
 
 test('override + gratuity: a no-op fold does not move the gratuity line', async () => {
@@ -665,10 +677,22 @@ test('TWO folds in a row: the second reads what the first wrote (no slow drift)'
         statusChangeReason: 'stability probe',
       });
       rounds.push({ before: Number(proposal.total_price), after: Number(snapshot.total) });
+      // Re-persist the row the way every WRITER does (crud.js:608-620, and the
+      // re-sync Task 5 adds): snapshot.addons[].quantity back onto the row.
+      // Without this the second fold re-reads an untouched stored value and
+      // recomputes bit-identically, so the test silently collapses into the
+      // first one. THIS is the compounding vector: pre-fix, round 1 stores 50
+      // and round 2 bills 5h x $40 x 50 on top of the base.
+      for (const entry of snapshot.addons || []) {
+        await client.query(
+          'UPDATE proposal_addons SET quantity = $1, line_total = $2 WHERE proposal_id = $3 AND addon_id = $4',
+          [entry.quantity, entry.line_total, proposalId, entry.id]
+        );
+      }
     }
     assert.equal(rounds[0].after, rounds[0].before, 'the first fold moved the total');
-    assert.equal(rounds[1].before, rounds[0].before, 'the first fold persisted a different total');
-    assert.equal(rounds[1].after, rounds[1].before, 'the second fold moved the total');
+    assert.equal(rounds[1].after, rounds[1].before,
+      `the second fold compounded: ${rounds[1].before} to ${rounds[1].after}`);
   } finally {
     await client.query('ROLLBACK').catch(() => {});
     client.release();
@@ -679,13 +703,16 @@ test('TWO folds in a row: the second reads what the first wrote (no slow drift)'
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node -r dotenv/config --test server/utils/proposalExtrasFold.stability.test.js`
-Expected: FAIL on the two `per_hour` tests, the override + gratuity test, and
-the drift test, with messages like `no-op fold moved the total from 2690 to 4940`.
-The `flat` and `per_guest` tests PASS already, which proves the defect is scoped
-to `per_hour`. Record the override test's actual before/after: it is the only
-evidence in the plan that the gratuity channel is real, and if it PASSES the
-premise in "The second money channel" is wrong and the task should stop and
-surface rather than delete the test.
+Expected: FAIL on five of the six, with messages like `no-op fold moved the total
+from 2690 to 4940`: both `per_hour` tests, the override + gratuity test, the
+`per_guest` count-2 test (3040 to 2640, the OPPOSITE direction, an under-bill),
+and the drift test. Only `flat` passes, because `flat` is the one billing type
+whose stored figure already IS the input count.
+
+Record the override test's actual before/after and its gratuity `staff_count`:
+that is the only evidence in the plan that the gratuity channel is real, and if
+it PASSES the premise in "The second money channel" is wrong and the task should
+stop and surface rather than delete the test.
 
 - [ ] **Step 3: Commit the red test**
 
@@ -702,16 +729,22 @@ git commit -m "test(addons): pin reprice stability, currently RED for per_hour"
 ## Task 3: Fix the reader
 
 **Files:**
+- Modify: `server/utils/addonQuantity.js` (+ its test) for the `per_guest` branch
 - Modify: `server/utils/proposalExtrasFold.js:44-70` (`REPRICE_ADDON_SQL`, `withRepriceQuantities`)
 - Modify: `server/routes/drinkPlans/lab.test.js` (correct the per_hour fixture to the stored shape)
 - Test: `server/utils/proposalExtrasFold.stability.test.js` (from Task 2, turns green)
 
 **Interfaces:**
 - Consumes: `storedToInputCount` from Task 1.
+- Produces: `storedToInputCount` gains an OPTIONAL fourth argument
+  `{ lineTotal, rate }`. Every existing caller keeps working untouched and keeps
+  getting `null` for `per_guest`, which is the pre-existing behavior; only a
+  caller that can supply the row's persisted `line_total` and `rate` gets a
+  recovered count.
 - Produces: `withRepriceQuantities(rows)` unchanged in signature. Rows from
   `REPRICE_ADDON_SQL` now additionally carry `pa_duration_hours` (aliased from
-  `p.event_duration_hours`), so the function can convert without a new parameter
-  and no caller changes.
+  `p.event_duration_hours`), `pa_line_total` and `pa_rate`, so the function can
+  convert without a new parameter and no caller changes.
   `loadRepriceAddons(client, proposalId)` signature is unchanged.
 
 Callers that must keep working untouched: `server/routes/drinkPlans/lab.js:279,308`,
@@ -720,7 +753,88 @@ and `server/routes/drinkPlans/lab.test.js:244` (which calls
 `withRepriceQuantities([{ ...svcRow, pa_quantity: 3 }])` directly, with NO
 duration), and it must not crash; see the null-guard below.
 
-- [ ] **Step 1: Replace the SQL and the mapper**
+- [ ] **Step 1a: Teach the module to recover a `per_guest` count**
+
+SCOPE WIDENED 2026-07-26 (Dallas's call, mid-lane). The plan originally deferred
+this, on the stated basis that no live proposal carried a `per_guest` add-on
+above count 1. That basis was checked early against the production branch and is
+FALSE: proposal 482 carries a Pre-Batched Mocktail at a real count of 2
+(`quantity 50` = guestCount, `rate 2.00`, `line_total 200.00`), and a no-op fold
+reprices it to $100. `pre-batched-mocktail` is `per_guest` AND is in the admin
+editor's `QUANTITY_CAPABLE_SLUGS` (client/src/utils/proposalRules.js:150-152),
+so an ordinary 1-to-10 stepper on an admin screen produces this shape. It is the
+same defect family as `per_hour`, in the opposite direction: an under-bill.
+
+Add the branch to `server/utils/addonQuantity.js`, and the optional fourth
+argument that carries the two values the recovery needs:
+
+```js
+function storedToInputCount(addon, storedQuantity, durationHours, { lineTotal, rate } = {}) {
+```
+
+then, in the type chain, between the `per_hour` branch and the
+`storedIsInputCount` branch:
+
+```js
+  } else if (type === 'per_guest') {
+    // The count is NOT in this column: per_guest stores guestCount. It survives
+    // only in line_total (= guestCount x rate x count), so it is recoverable
+    // ONLY when the caller passes the row's OWN persisted line_total and rate.
+    // Never the catalog rate: rates drift (pre-batched-mocktail went $1.50 to
+    // $2.00 in prod) and dividing by the current one recovers a wrong count.
+    // Callers that cannot supply them (the cancel-line picker, which selects
+    // neither) get null and fall back to whole-line removal, unchanged.
+    //
+    // per_guest_timed is deliberately NOT here. Its line_total carries an
+    // extra-hours term on top of the per-guest base, so this division does not
+    // hold: prod proposal 464 reads 1.250 for a genuine count of 1.
+    const total = Number(lineTotal);
+    const unitRate = Number(rate);
+    if (!Number.isFinite(total) || total <= 0) return null;
+    if (!Number.isFinite(unitRate) || unitRate <= 0) return null;
+    raw = total / (stored * unitRate);
+```
+
+Add to `server/utils/addonQuantity.test.js`:
+
+```js
+test('per_guest: the count is recovered from line_total, not from quantity', () => {
+  // Prod proposal 482's exact shape: 50 guests, $2.00, two mocktails.
+  const addon = { billing_type: 'per_guest', slug: 'pre-batched-mocktail' };
+  assert.equal(storedToInputCount(addon, 50, 4, { lineTotal: 200, rate: 2 }), 2);
+  assert.equal(storedToInputCount(addon, 50, 4, { lineTotal: 100, rate: 2 }), 1);
+  // pg hands both back as strings.
+  assert.equal(storedToInputCount(addon, '50.00', '4.0', { lineTotal: '200.00', rate: '2.00' }), 2);
+});
+
+test('per_guest: recovery divides by the ROW rate, never the catalog rate', () => {
+  // The catalog row says $2.00 today; this proposal was sold at $1.50. Dividing
+  // by the catalog rate would recover 1 unit from a 2-unit line and halve it.
+  const addon = { billing_type: 'per_guest', slug: 'pre-batched-mocktail', rate: 2 };
+  assert.equal(storedToInputCount(addon, 50, 4, { lineTotal: 150, rate: 1.5 }), 2);
+});
+
+test('per_guest: without line_total and rate it stays null (the cancel-line path)', () => {
+  const addon = { billing_type: 'per_guest' };
+  assert.equal(storedToInputCount(addon, 50, 4), null);
+  assert.equal(storedToInputCount(addon, 50, 4, { lineTotal: 0, rate: 2 }), null);
+});
+
+test('per_guest_timed is NOT recoverable this way (the extra-hours term)', () => {
+  // Prod proposal 464: 150 guests, $8.00, line_total 1500 for a count of ONE.
+  // The naive division reads 1.25, so this type must keep returning null.
+  const addon = { billing_type: 'per_guest_timed' };
+  assert.equal(storedToInputCount(addon, 150, 6, { lineTotal: 1500, rate: 8 }), null);
+});
+```
+
+Update the existing `'types whose stored figure is not a count return null'`
+test: `per_guest` no longer belongs in that loop when options are supplied. Keep
+it in the loop for the no-options call, which is still null.
+
+Run: `node --test server/utils/addonQuantity.test.js`. Expected: PASS.
+
+- [ ] **Step 1b: Replace the SQL and the mapper**
 
 ```js
 // SQL to load reprice-ready addon rows: service_addons catalog columns PLUS the
@@ -734,7 +848,8 @@ duration), and it must not crash; see the null-guard below.
 // no `quantity` and proposals has no `minimum_hours`, so both aliases are
 // unambiguous.
 const REPRICE_ADDON_SQL = `
-  SELECT sa.*, pa.quantity AS pa_quantity, p.event_duration_hours AS pa_duration_hours
+  SELECT sa.*, pa.quantity AS pa_quantity, pa.line_total AS pa_line_total, pa.rate AS pa_rate,
+         p.event_duration_hours AS pa_duration_hours
     FROM proposal_addons pa
     JOIN service_addons sa ON sa.id = pa.addon_id
     JOIN proposals p ON p.id = pa.proposal_id
@@ -755,12 +870,20 @@ const REPRICE_ADDON_SQL = `
  */
 function withRepriceQuantities(rows) {
   return (rows || []).map((r) => {
-    const { pa_quantity, pa_duration_hours, ...addon } = r;
-    const count = storedToInputCount(addon, pa_quantity, pa_duration_hours);
+    const { pa_quantity, pa_duration_hours, pa_line_total, pa_rate, ...addon } = r;
+    const count = storedToInputCount(addon, pa_quantity, pa_duration_hours, {
+      lineTotal: pa_line_total, rate: pa_rate,
+    });
     return count === null ? addon : { ...addon, quantity: count };
   });
 }
 ```
+
+Note `pa_rate`, not `sa.rate`: the recovery divides by the rate FROZEN on the
+row at creation time, never the live catalog rate. Catalog rates drift
+(`pre-batched-mocktail` went $1.50 to $2.00 in prod), and dividing by the
+current one recovers a wrong count and silently reprices the proposal. The
+client inverter carries the same warning (formState.js:94-96).
 
 Add the import at the top of the file, beside the existing requires:
 
@@ -802,7 +925,10 @@ claims to defend.
 - [ ] **Step 2: Run the stability test to verify it passes**
 
 Run: `node -r dotenv/config --test server/utils/proposalExtrasFold.stability.test.js`
-Expected: PASS, all 6, including the override + gratuity case.
+Expected: PASS, all 6. Five of them were RED before this diff: both `per_hour`
+cases, the override + gratuity case, the `per_guest` count-2 case, and the
+compounding case. If `per_guest` is the only one still failing, Step 1a's
+`pa_line_total` / `pa_rate` plumbing did not reach the mapper.
 
 - [ ] **Step 3: Run every suite this reader reaches, one at a time**
 
@@ -1809,10 +1935,11 @@ that is the one shape where Task 6(c) newly lets a phantom overpayment
 auto-refund real money. Hold that commit back (it is split out for exactly this
 reason), merge the rest, and put the decision to Dallas.
 
-**(5) The per_guest count**, which this plan deliberately does NOT fix. The
-deferral is only safe while no live proposal carries a per_guest add-on at a
-count above 1, so verify rather than assume. The count is recoverable the way
-the client inverter does it, from the row's own frozen rate:
+**(5) The per_guest count.** This query was originally here to justify deferring
+the per_guest gap. It was run early, on 2026-07-26, and it did the opposite: it
+returned proposal 482 at a real count of 2, which is what widened the lane to fix
+it (Task 3 Step 1a). Re-run it at merge as a regression check, and to confirm no
+NEW such row landed while the lane was open:
 
 ```sql
 SELECT pa.proposal_id, pa.addon_name, pa.quantity, pa.rate, pa.line_total, p.status,
@@ -1823,10 +1950,13 @@ SELECT pa.proposal_id, pa.addon_name, pa.quantity, pa.rate, pa.line_total, p.sta
  ORDER BY pa.proposal_id DESC;
 ```
 
-Expected: zero rows. Any row here is a live per_guest count above 1, which the
-fold under-bills on every reprice, and the deferral has to be revisited before
-merge. (`per_guest_timed` will read high for events over 4 hours because of its
-extra-hours term; check those by hand rather than treating them as counts.)
+Expected at merge: the two rows the 2026-07-26 run found, and no others.
+Proposal 482 (Pre-Batched Mocktail, `recovered_count` 2.000) is the real count
+the widened Task 3 now preserves. Proposal 464 (The Full Compound,
+`per_guest_timed`, 1.250) is the extra-hours false positive, a genuine count of
+1, and must stay excluded from the recovery. A THIRD row is new data that landed
+while the lane was open: check it by hand before merging, and if it is
+`per_guest` confirm the fix covers it.
 
 - [ ] **Step 2: Docs**
 
@@ -1877,16 +2007,18 @@ Task 6), DELETE the drink-plan rails bullet (fixed in Task 6), and add:
   today (the v1 client form exposes no add-on editing, so `addon_ids` is never
   sent) but the preview half is not. Left out of the 2026-07-26 lane to keep it
   narrow. The fix is the same one: route it through `addonQuantity.js`.
-- Still open, same family: for `per_guest` add-ons the fold cannot recover the
-  admin's unit count, so a per_guest add-on sold at count 2 reprices as count 1
-  and UNDER-bills. It is recoverable in principle, just not from `quantity`
-  alone: the client inverter already does it as
-  `line_total / (quantity x rate)` using the row's OWN persisted rate
-  (`formState.js:92-98`), and the fold could too by adding `pa.line_total` to
-  `REPRICE_ADDON_SQL`. Deliberately left alone on 2026-07-26 to keep that lane
-  narrow, and verified unreachable at the time (query (5) in the plan's Task 7).
-  Pick this up with the same care: the divisor must be the row's frozen rate,
-  never the live catalog rate, because catalog rates drift.
+- FIXED 2026-07-26, same family, opposite direction: for `per_guest` add-ons the
+  fold could not recover the admin's unit count, so one sold at count 2 repriced
+  as count 1 and UNDER-billed. The lane originally deferred this on the basis
+  that no live proposal carried such a row. That basis was checked against prod
+  mid-lane and was FALSE: proposal 482 carries a Pre-Batched Mocktail at count 2
+  (`quantity 50`, `rate 2.00`, `line_total 200.00`), reachable through the admin
+  editor's ordinary quantity stepper (`pre-batched-mocktail` is in
+  `QUANTITY_CAPABLE_SLUGS`). The count is now recovered as
+  `line_total / (quantity x rate)` from the row's OWN frozen rate, matching the
+  client inverter (`formState.js:92-98`). `per_guest_timed` is deliberately still
+  excluded: its `line_total` carries an extra-hours term, so the division does
+  not hold (prod 464 reads 1.250 for a genuine count of 1).
 - A client drink-plan submit can reset an admin-negotiated add-on quantity. The
   upsert loop in `submit.js` honors any active slug in the client payload
   (`return true; // user-added addon`) and its `ON CONFLICT DO UPDATE` overwrites
@@ -2014,8 +2146,9 @@ anything here has to come out, it all comes out.
   test (Task 2) is the gate for the whole family.
 - **Deliberately NOT in scope:** `eventCreation.addonHeadcount`,
   `invoiceLineItems` and the client's `recoverAddonQuantities` (all three already
-  read the column correctly), the `per_guest` count-recovery limitation (logged
-  in Task 7, verified unreachable by query (5)), `server/utils/changeRequests.js`
+  read the column correctly), `per_guest_timed` count recovery (its `line_total`
+  carries an extra-hours term, so the `per_guest` inversion does not hold),
+  `server/utils/changeRequests.js`
   (a third disagreeing reader, logged in Task 7), the `overpaymentCents`
   derivation (the fix list's explicit do-not-re-attempt), and the ~20 previously
   deferred items in the fix list.
@@ -2089,3 +2222,23 @@ both folds now run in one transaction. Task 5's submit-side write needed a
 priceability guard that `lab.js` gets for free. Task 6 was split so the refund
 rails commit alone, and `changeRequests.js` was added to Task 7's fix list as a
 third reader that disagrees with the column.
+
+### Third pass: mid-execution, after Task 2 landed RED
+
+Task 2's reviewer caught that the `per_guest` control was seeded at count 1, so
+it compared 1 against 1, could not fail, and certified as safe the one gap this
+plan deferred. That prompted running Task 7's query (5) against prod early,
+before Task 3 was scoped off the suite. The deferral's premise was false:
+proposal 482 carries a live `per_guest` add-on at count 2, produced by an
+ordinary admin quantity stepper, which a fold silently halves. Dallas widened
+the lane. Task 3 Step 1a now recovers the `per_guest` count from
+`line_total / (quantity x rate)`, `per_guest_timed` stays excluded on the
+evidence of prod 464, and the stability suite goes from 4 RED to 5 RED.
+
+The same reviewer showed the "two folds" test still could not fail even in one
+transaction: the fold never writes `proposal_addons.quantity` and `total_price`
+is not an input, so round 2 recomputed identically. It now re-persists the
+writer's shape between rounds, which is the actual compounding vector.
+
+Standing lesson for this plan, now three for three: every time a control test
+was written so that it could not fail, there was a real defect hiding behind it.
