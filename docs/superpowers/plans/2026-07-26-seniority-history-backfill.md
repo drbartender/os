@@ -5,6 +5,7 @@ lanes:
   - id: seniority-baseline-core
     footprint:
       - server/db/schema.sql
+      - ARCHITECTURE.md
       - server/utils/autoAssign.js
       - server/routes/admin/users.js
       - server/utils/autoAssign.seniority.test.js
@@ -23,10 +24,13 @@ lanes:
   - id: cc-seniority-import
     footprint:
       - server/scripts/staffPaymentImport/generateSeniorityMapping.js
+      - server/scripts/staffPaymentImport/generateSeniorityMapping.test.js
       - server/scripts/staffPaymentImport/applySeniorityBackfill.js
       - server/scripts/staffPaymentImport/seniorityBackfill.test.js
+      - server/scripts/staffPaymentImport/ccReports.js
+      - README.md
     depends_on: [seniority-baseline-core]
-    sensitive: false         # writes seniority fields, but human-gated + dry-run default
+    sensitive: false         # not on sensitive-paths.txt; writes seniority fields but human-gated + dry-run default. Fleet consciously scoped to code+database+consistency (no security-review/second-opinion): sign off at review.
     review_fleet: [code-review, database-review, consistency-check]
 parallelism: "seniority-baseline-core first; seniority-panel-ui and cc-seniority-import run in parallel after it merges."
 ---
@@ -61,7 +65,7 @@ parallelism: "seniority-baseline-core first; seniority-panel-ui and cc-seniority
 ### Task 1.1: Add the `historical_events_worked` column
 
 **Files:**
-- Modify: `server/db/schema.sql` (near line 1155, beside the other seniority columns)
+- Modify: `server/db/schema.sql` (line 1171, immediately after the `hire_date` ALTER; match on the exact anchor string below, not the line number)
 
 - [ ] **Step 1: Add the idempotent column next to `seniority_adjustment` / `hire_date`**
 
@@ -187,6 +191,14 @@ test('historical_events_worked is added to the live event count in the ranker', 
 Run: `node --test server/utils/autoAssign.seniority.test.js`
 Expected: FAIL, `events_worked` is `0` (baseline not yet summed), assertion `12 === 0` fails.
 
+- [ ] **Step 2b: Confirm the events-count reader set (guard against a third site)**
+
+Spec §3.2 requires that every reader of the live events count receives the live+baseline change. Confirm the set before editing:
+```bash
+grep -rnE "event_date < CURRENT_DATE|events_worked|computeSeniorityScore" server --include=*.js | grep -v "\.test\.js" | grep -viE "staffPaymentImport|clientPortal"
+```
+Expected: hits ONLY in `server/utils/autoAssign.js` and `server/routes/admin/users.js` (the `clientPortal.js` past-date query is over proposals, not shifts, and is correctly excluded). If a third file appears, it is in scope for the same change before proceeding.
+
 - [ ] **Step 3: Add the column to the step-2 profile SELECT**
 
 In `server/utils/autoAssign.js`, in the pending-requests query (~line 162-173), add the column. Change:
@@ -240,8 +252,12 @@ Expected: PASS.
 
 - [ ] **Step 6: Run the neighbouring auto-assign suites (no regression)**
 
-Run: `node --test server/utils/autoAssign.claim.test.js server/utils/autoAssign.bartenderScope.test.js`
-Expected: PASS (run one at a time if the shared DB complains; see Global Constraints).
+Run each separately (both hit the shared dev DB; never combine them in one `node --test` invocation, which parallelizes files, see Global Constraints):
+```bash
+node --test server/utils/autoAssign.claim.test.js
+node --test server/utils/autoAssign.bartenderScope.test.js
+```
+Expected: PASS for each.
 
 - [ ] **Step 7: Commit**
 
@@ -403,7 +419,7 @@ In `server/routes/admin/users.js`, replace the GET body (lines ~527-559) so the 
 
 - [ ] **Step 4: Update the PUT handler**
 
-Replace the PUT body (lines ~563-576):
+Replace the **entire** PUT handler (line 563 `router.put(` through the closing `}));` on line 577; the block below is the complete handler, so match on content, not the line numbers, or the stale `}));` on 577 becomes a duplicate close):
 ```javascript
 router.put('/users/:id/seniority', auth, adminOnly, asyncHandler(async (req, res) => {
   const { seniority_adjustment, hire_date, historical_events_worked } = req.body;
@@ -511,7 +527,7 @@ Expected: "Compiled successfully" (no ESLint-as-error failures). Return to repo 
 
 - [ ] **Step 6: Manual smoke (record result)**
 
-Load an admin user-detail → Payouts tab for a staffer, confirm the seniority card shows "N live + M historical", edit the historical field, Save, confirm the toast and that the Score/Events values update on reload. Note the result in the commit or lane notes.
+First restart the Claude-managed dev server (it does not auto-reload) so Lane 1's merged `/seniority` route is live. Then load an admin user-detail → Payouts tab for a staffer, confirm the seniority card shows "N live + M historical", edit the historical field, Save, confirm the toast and that the Score/Events values update on reload. Note the result in the commit or lane notes.
 
 - [ ] **Step 7: Commit**
 
@@ -566,6 +582,27 @@ function csvCell(v) {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 const STAFF_ROLE = /bartender|barback|server|staff|manager|captain/i;
+const ACTIVE_STATUS = new Set(['approved', 'hired']);
+const MAPPING_COLUMNS = ['cc_name', 'cc_created_date', 'cc_events', 'matched_user_id', 'os_preferred_name', 'onboarding_status', 'current_hire_date', 'proposed_hire_date', 'current_live_events', 'proposed_historical', 'include', 'flags'];
+
+// Pure: given a CC contact and its matched OS current-state, produce the review
+// row (include default + flags). Exported for unit testing.
+function shapeMappingRow({ name, created, events, matchedUserId, onboardingStatus, current = {}, dupCount = 1 }) {
+  const curHire = current.hire_date ? String(current.hire_date).slice(0, 10) : '';
+  const flags = [];
+  if (!matchedUserId) flags.push('unmatched');
+  if (matchedUserId && dupCount > 1) flags.push('duplicate-match');
+  if (events === 0) flags.push('zero-events');
+  if (curHire && created && created > curHire) flags.push('date-moves-later');
+  return {
+    cc_name: name, cc_created_date: created, cc_events: events,
+    matched_user_id: matchedUserId || '', os_preferred_name: current.preferred_name || '',
+    onboarding_status: onboardingStatus, current_hire_date: curHire, proposed_hire_date: created,
+    current_live_events: current.live_events || 0, proposed_historical: events,
+    include: matchedUserId && ACTIVE_STATUS.has(onboardingStatus) ? 'yes' : 'no',
+    flags: flags.join('|'),
+  };
+}
 
 async function main() {
   const reviewDir = expand(argVal('--review-dir', path.join(process.env.HOME || '.', 'win-share/payments/review')));
@@ -573,6 +610,9 @@ async function main() {
   const knownPeopleCsv = path.join(reviewDir, 'known-people.csv');
   if (!fs.existsSync(knownPeopleCsv)) {
     throw new Error(`Missing ${knownPeopleCsv}. Run exportKnownPeople.js --review-dir first.`);
+  }
+  if (!fs.existsSync(contactsPath)) {
+    throw new Error(`Missing CheckCherry contacts CSV: ${contactsPath} (pass --contacts).`);
   }
 
   // Name→OS matching via the shared cluster dictionary (carries osUserId + status).
@@ -616,36 +656,32 @@ async function main() {
     for (const row of q.rows) cur.set(row.user_id, row);
   }
 
-  // Duplicate-match detection: two CC contacts → one OS user.
+  // Duplicate-match detection: two CC contacts resolve to one OS user.
   const idCounts = {};
   for (const r of rows) if (r.matched_user_id) idCounts[r.matched_user_id] = (idCounts[r.matched_user_id] || 0) + 1;
 
-  const ACTIVE = new Set(['approved', 'hired']);
-  const header2 = 'cc_name,cc_created_date,cc_events,matched_user_id,os_preferred_name,onboarding_status,current_hire_date,proposed_hire_date,current_live_events,proposed_historical,include,flags';
   const lines = rows.map((r) => {
-    const c = cur.get(r.matched_user_id) || {};
-    const curHire = c.hire_date ? String(c.hire_date).slice(0, 10) : '';
-    const flags = [];
-    if (!r.matched_user_id) flags.push('unmatched');
-    if (r.matched_user_id && idCounts[r.matched_user_id] > 1) flags.push('duplicate-match');
-    if (r.events === 0) flags.push('zero-events');
-    if (curHire && r.created && r.created > curHire) flags.push('date-moves-later');
-    const include = r.matched_user_id && ACTIVE.has(r.onboarding_status) ? 'yes' : 'no';
-    return [
-      r.name, r.created, r.events, r.matched_user_id || '', c.preferred_name || '',
-      r.onboarding_status, curHire, r.created, c.live_events || 0, r.events, include, flags.join('|'),
-    ].map(csvCell).join(',');
+    const shaped = shapeMappingRow({
+      name: r.name, created: r.created, events: r.events,
+      matchedUserId: r.matched_user_id, onboardingStatus: r.onboarding_status,
+      current: cur.get(r.matched_user_id) || {}, dupCount: idCounts[r.matched_user_id] || 0,
+    });
+    return MAPPING_COLUMNS.map((k) => csvCell(shaped[k])).join(',');
   });
 
   fs.mkdirSync(reviewDir, { recursive: true });
   const outPath = path.join(reviewDir, 'seniority-mapping.csv');
-  fs.writeFileSync(outPath, `${header2}\n${lines.join('\n')}\n`);
-  console.log(`[generateSeniorityMapping] wrote ${lines.length} rows → ${outPath}`);
+  fs.writeFileSync(outPath, `${MAPPING_COLUMNS.join(',')}\n${lines.join('\n')}\n`);
+  console.log(`[generateSeniorityMapping] wrote ${lines.length} rows -> ${outPath}`);
   console.log(`  matched: ${rows.filter((r) => r.matched_user_id).length}, default-include: ${lines.filter((l) => l.includes(',yes,')).length}`);
 }
 
-main().then(() => pool.end()).then(() => process.exit(0))
-  .catch((err) => { console.error('[generateSeniorityMapping] failed:', err.message); process.exit(1); });
+if (require.main === module) {
+  main().then(() => pool.end()).then(() => process.exit(0))
+    .catch((err) => { console.error('[generateSeniorityMapping] failed:', err.message); process.exit(1); });
+}
+
+module.exports = { shapeMappingRow, MAPPING_COLUMNS };
 ```
 
 - [ ] **Step 1a: Export `ccDateToIso` from `ccReports.js`**
@@ -655,7 +691,53 @@ main().then(() => pool.end()).then(() => process.exit(0))
 module.exports = { loadKnownPeople, loadContacts, loadExpenses, loadBookings, ccDateToIso };
 ```
 
-- [ ] **Step 2: Dry-run the generator against the dev DB and eyeball the output**
+- [ ] **Step 1b: Write the flag-logic test**
+
+Create `server/scripts/staffPaymentImport/generateSeniorityMapping.test.js`:
+```javascript
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { shapeMappingRow } = require('./generateSeniorityMapping');
+
+test('active matched contact defaults include=yes with no flags', () => {
+  const row = shapeMappingRow({ name: 'Kaitlyn Freyer', created: '2025-05-22', events: 32,
+    matchedUserId: 7, onboardingStatus: 'approved',
+    current: { preferred_name: 'Kaitlyn', hire_date: '2025-06-10', live_events: 3 }, dupCount: 1 });
+  assert.equal(row.include, 'yes');
+  assert.equal(row.proposed_hire_date, '2025-05-22');
+  assert.equal(row.proposed_historical, 32);
+  assert.equal(row.flags, '');   // 2025-05-22 is earlier than the current 2025-06-10
+});
+
+test('unmatched contact is excluded and flagged', () => {
+  const row = shapeMappingRow({ name: 'Ghost', created: '2025-05-01', events: 5,
+    matchedUserId: null, onboardingStatus: '', current: {}, dupCount: 0 });
+  assert.equal(row.include, 'no');
+  assert.equal(row.flags, 'unmatched');
+});
+
+test('inactive status excluded; zero-events and date-moves-later flags fire', () => {
+  const row = shapeMappingRow({ name: 'Old Vet', created: '2025-08-01', events: 0,
+    matchedUserId: 9, onboardingStatus: 'deactivated',
+    current: { hire_date: '2025-04-01', live_events: 0 }, dupCount: 1 });
+  assert.equal(row.include, 'no');
+  assert.ok(row.flags.includes('zero-events'));
+  assert.ok(row.flags.includes('date-moves-later'));   // 2025-08-01 later than 2025-04-01
+});
+
+test('two contacts resolving to one user get duplicate-match', () => {
+  const row = shapeMappingRow({ name: 'Dup', created: '2025-05-01', events: 2,
+    matchedUserId: 5, onboardingStatus: 'approved', current: { hire_date: '', live_events: 0 }, dupCount: 2 });
+  assert.ok(row.flags.includes('duplicate-match'));
+});
+```
+
+- [ ] **Step 2: Run the flag-logic test**
+
+Run: `node --test server/scripts/staffPaymentImport/generateSeniorityMapping.test.js`
+Expected: PASS (4 tests). This relies on the `require.main === module` guard in the generator, so importing it does not run `main()`.
+
+- [ ] **Step 3: Dry-run the generator against the dev DB and eyeball the output**
 
 Run:
 ```bash
@@ -664,11 +746,11 @@ node server/scripts/staffPaymentImport/generateSeniorityMapping.js --review-dir 
 ```
 Expected: writes `seniority-mapping.csv`; console prints row/matched/default-include counts. Open the CSV and confirm columns + flags look sane (Kaitlyn Freyer → a real `matched_user_id`, `proposed_historical=32`, etc.).
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add server/scripts/staffPaymentImport/generateSeniorityMapping.js server/scripts/staffPaymentImport/ccReports.js
-git commit -m "feat(seniority): read-only CC→OS seniority mapping generator"
+git add server/scripts/staffPaymentImport/generateSeniorityMapping.js server/scripts/staffPaymentImport/generateSeniorityMapping.test.js server/scripts/staffPaymentImport/ccReports.js
+git commit -m "feat(seniority): read-only CC->OS seniority mapping generator"
 ```
 
 ---
@@ -681,15 +763,21 @@ git commit -m "feat(seniority): read-only CC→OS seniority mapping generator"
 
 **Interfaces:**
 - Consumes: the human-approved `seniority-mapping.csv`.
-- Produces: pure helpers `parseMappingRows(csvText) → [{ userId, hireDate, historical, include, flags }]` and `planWrites(rows) → [{ userId, hireDate, historical }]` (include=yes AND matched only), plus a `--apply` DB path.
+- Produces: pure helpers `parseMappingRows(csvText) → [{ userId, hireDate, historical, include, flags }]` and `planWrites(rows) → [{ userId, hireDate, historical }]` (include=yes AND matched only); the DB writer `applyWrites(client, writes, { apply }) → { changed, before }` (extracted so a test can drive it with an injected client); plus a `--apply` CLI path.
 
-- [ ] **Step 1: Write the failing test for the pure core**
+- [ ] **Step 1: Write the failing tests (pure core + DB-backed apply)**
 
 Create `server/scripts/staffPaymentImport/seniorityBackfill.test.js`:
 ```javascript
-const { test } = require('node:test');
+require('dotenv').config();
+const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { parseMappingRows, planWrites } = require('./applySeniorityBackfill');
+const { pool } = require('../../db');
+const { parseMappingRows, planWrites, applyWrites } = require('./applySeniorityBackfill');
+
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('seniorityBackfill.test.js refuses to run against production');
+}
 
 const CSV = [
   'cc_name,cc_created_date,cc_events,matched_user_id,os_preferred_name,onboarding_status,current_hire_date,proposed_hire_date,current_live_events,proposed_historical,include,flags',
@@ -698,6 +786,7 @@ const CSV = [
   'Inactive Vet,2025-04-01,4,9,Vet,deactivated,,2025-04-01,0,4,no,',
 ].join('\n');
 
+// ── Pure core (no DB) ──────────────────────────────────────────────
 test('parseMappingRows reads every row with typed fields', () => {
   const rows = parseMappingRows(CSV);
   assert.equal(rows.length, 3);
@@ -708,6 +797,59 @@ test('planWrites keeps only include=yes rows with a matched user', () => {
   const writes = planWrites(parseMappingRows(CSV));
   assert.equal(writes.length, 1);
   assert.deepEqual(writes[0], { userId: 7, hireDate: '2025-05-22', historical: 32 });
+});
+
+// ── DB-backed: applyWrites is exact, idempotent, and only touches its targets ──
+const PREFIX = 'seniority-apply-test-';
+let uid, otherUid;
+
+before(async () => {
+  const u = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status) VALUES ($1,'x','staff','approved') RETURNING id`,
+    [`${PREFIX}a@example.com`]);
+  uid = u.rows[0].id;
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, preferred_name, hire_date, historical_events_worked) VALUES ($1,$2,'2025-06-10',0)`,
+    [uid, `${PREFIX}A`]);
+  const o = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status) VALUES ($1,'x','staff','approved') RETURNING id`,
+    [`${PREFIX}b@example.com`]);
+  otherUid = o.rows[0].id;
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, preferred_name, hire_date, historical_events_worked) VALUES ($1,$2,'2025-07-01',1)`,
+    [otherUid, `${PREFIX}B`]);
+});
+
+after(async () => {
+  await pool.query(`DELETE FROM contractor_profiles WHERE user_id = ANY($1::int[])`, [[uid, otherUid]]);
+  await pool.query(`DELETE FROM users WHERE id = ANY($1::int[])`, [[uid, otherUid]]);
+  await pool.end();
+});
+
+test('applyWrites apply=false writes nothing (dry-run)', async () => {
+  const client = await pool.connect();
+  try {
+    await applyWrites(client, [{ userId: uid, hireDate: '2025-05-22', historical: 32 }], { apply: false });
+  } finally { client.release(); }
+  const r = await pool.query('SELECT hire_date, historical_events_worked FROM contractor_profiles WHERE user_id = $1', [uid]);
+  assert.equal(String(r.rows[0].hire_date).slice(0, 10), '2025-06-10');   // unchanged
+  assert.equal(r.rows[0].historical_events_worked, 0);
+});
+
+test('applyWrites apply=true writes exactly, and a re-run leaves identical values (idempotent)', async () => {
+  const w = [{ userId: uid, hireDate: '2025-05-22', historical: 32 }];
+  const client = await pool.connect();
+  try {
+    await applyWrites(client, w, { apply: true });
+    await applyWrites(client, w, { apply: true });   // second run: same values, no drift
+  } finally { client.release(); }
+  const r = await pool.query('SELECT hire_date, historical_events_worked FROM contractor_profiles WHERE user_id = $1', [uid]);
+  assert.equal(String(r.rows[0].hire_date).slice(0, 10), '2025-05-22');
+  assert.equal(r.rows[0].historical_events_worked, 32);
+  // The other profile was never in the write set, so it is untouched.
+  const o = await pool.query('SELECT hire_date, historical_events_worked FROM contractor_profiles WHERE user_id = $1', [otherUid]);
+  assert.equal(String(o.rows[0].hire_date).slice(0, 10), '2025-07-01');
+  assert.equal(o.rows[0].historical_events_worked, 1);
 });
 ```
 
@@ -748,6 +890,28 @@ function planWrites(rows) {
     .map((r) => ({ userId: r.userId, hireDate: r.hireDate, historical: r.historical }));
 }
 
+// Read current state, print before->after for each row, and (when apply) UPDATE.
+// Extracted + exported so a DB-backed test can drive it with an injected client.
+// Returns { changed, before }; `before` snapshots prior values for the rollback file.
+async function applyWrites(client, writes, { apply }) {
+  const before = [];
+  let changed = 0;
+  for (const w of writes) {
+    const b = (await client.query(
+      'SELECT hire_date, historical_events_worked FROM contractor_profiles WHERE user_id = $1', [w.userId])).rows[0] || {};
+    const priorHire = b.hire_date ? String(b.hire_date).slice(0, 10) : '';
+    before.push({ userId: w.userId, hire_date: priorHire, historical_events_worked: b.historical_events_worked ?? '' });
+    console.log(`  user ${w.userId}: hire_date ${priorHire || '(unset)'} -> ${w.hireDate}, historical ${b.historical_events_worked ?? '(unset)'} -> ${w.historical}`);
+    if (apply) {
+      const res = await client.query(
+        'UPDATE contractor_profiles SET hire_date = $1, historical_events_worked = $2 WHERE user_id = $3',
+        [w.hireDate, w.historical, w.userId]);
+      changed += res.rowCount;
+    }
+  }
+  return { changed, before };
+}
+
 async function main() {
   const i = process.argv.indexOf('--file');
   const file = i !== -1 && process.argv[i + 1]
@@ -762,21 +926,17 @@ async function main() {
   const client = await pool.connect();
   try {
     if (apply) await client.query('BEGIN');
-    let changed = 0;
-    for (const w of writes) {
-      const before = await client.query(
-        'SELECT hire_date, historical_events_worked FROM contractor_profiles WHERE user_id = $1', [w.userId]);
-      const b = before.rows[0] || {};
-      console.log(`  user ${w.userId}: hire_date ${b.hire_date ? String(b.hire_date).slice(0,10) : '∅'} → ${w.hireDate}, historical ${b.historical_events_worked ?? '∅'} → ${w.historical}`);
-      if (apply) {
-        const res = await client.query(
-          `UPDATE contractor_profiles SET hire_date = $1, historical_events_worked = $2 WHERE user_id = $3`,
-          [w.hireDate, w.historical, w.userId]);
-        changed += res.rowCount;
-      }
+    const { changed, before } = await applyWrites(client, writes, { apply });
+    if (apply) {
+      // Snapshot prior state for rollback (written before COMMIT; harmless on rollback).
+      const backup = `${path.resolve(file).replace(/\.csv$/i, '')}.backup-${Date.now()}.csv`;
+      fs.writeFileSync(backup, ['user_id,hire_date,historical_events_worked',
+        ...before.map((r) => `${r.userId},${r.hire_date},${r.historical_events_worked}`)].join('\n') + '\n');
+      await client.query('COMMIT');
+      console.log(`[applySeniorityBackfill] committed ${changed} update(s). Prior state saved to ${backup}`);
+    } else {
+      console.log('[applySeniorityBackfill] dry-run only; pass --apply to write.');
     }
-    if (apply) { await client.query('COMMIT'); console.log(`[applySeniorityBackfill] committed ${changed} update(s).`); }
-    else console.log('[applySeniorityBackfill] dry-run only; pass --apply to write.');
   } catch (err) {
     if (apply) await client.query('ROLLBACK');
     throw err;
@@ -790,13 +950,13 @@ if (require.main === module) {
   main().then(() => process.exit(0)).catch((err) => { console.error('[applySeniorityBackfill] failed:', err.message); process.exit(1); });
 }
 
-module.exports = { parseMappingRows, planWrites };
+module.exports = { parseMappingRows, planWrites, applyWrites };
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test server/scripts/staffPaymentImport/seniorityBackfill.test.js`
-Expected: PASS (both tests).
+Expected: PASS (all tests: 2 pure + 2 DB-backed).
 
 - [ ] **Step 5: Dry-run against the dev DB (writes nothing)**
 
@@ -825,11 +985,12 @@ The code shipping does **not** change any data. The backfill is a deliberate, re
 3. `node server/scripts/staffPaymentImport/generateSeniorityMapping.js --review-dir DIR --contacts .../cc-report-contacts.csv`.
 4. **Dallas reviews `seniority-mapping.csv`**, toggles `include`, fixes matches, eyeballs `date-moves-later` / `duplicate-match` / `unmatched` flags.
 5. `node .../applySeniorityBackfill.js --file DIR/seniority-mapping.csv` (dry-run) → review the before→after.
-6. `node .../applySeniorityBackfill.js --file DIR/seniority-mapping.csv --apply`.
+6. `node .../applySeniorityBackfill.js --file DIR/seniority-mapping.csv --apply` (also writes a `...backup-<ts>.csv` snapshot of the prior hire_date / historical values beside the mapping file, for rollback).
 7. Spot-check a couple of profiles on the admin seniority panel (live + historical shows the expected total).
 
 ## Self-Review
 
-- **Spec coverage:** column (§3.1 → 1.1); events = live+baseline at both sites (§3.2 → 1.2 autoAssign, 1.3 route); hire_date direct-set (§3.3 → applied in 3.2 write); admin panel split + edit (§3.4 → 2.1); mapping generator + review + apply (§4 → 3.1, 3.2, runbook); DATE truncation + face-value counts + flags incl. date-moves-later (§5 → generator flags, `ccDateToIso`); cap left unchanged (§6 → Global Constraints); tests both paths + idempotent seed (§7 → 1.2, 1.3, 3.2); out-of-scope respected (§8, no phones, no synthetic shifts, weights/cap untouched).
+- **Spec coverage:** column (§3.1 → 1.1); events = live+baseline at both sites (§3.2 → 1.2 autoAssign, 1.3 route; a grep-readers guard added at 1.2 Step 2b); hire_date direct-set (§3.3 → applied in 3.2 write); admin panel split + edit (§3.4 → 2.1); mapping generator + review + apply (§4 → 3.1, 3.2, runbook); DATE truncation + face-value counts + flags (§5 → generator flags, `ccDateToIso`); cap left unchanged (§6 → Global Constraints); tests (§7 → 1.2, 1.3; 3.1 pure flag-logic test; 3.2 DB-backed `applyWrites` idempotency/exactness test plus the pure filter); out-of-scope respected (§8, no phones, no synthetic shifts, weights/cap untouched).
+- **Design-fleet review folded (2026-07-26):** footprints corrected (ARCHITECTURE.md → L1; ccReports.js + README + generator test → L3); autoAssign suites run one at a time; apply script snapshots prior state before writing; spec §4 flag set reconciled to `duplicate-match` + `unmatched` (true `ambiguous` is not derivable without resolver scope creep) and §3.1 DDL carries the `CHECK (>= 0)`.
 - **Placeholder scan:** none, every code step carries full code; the one "follow the existing harness" note (1.3 Step 1) points at a concrete file (`users.activeStaff.test.js`) to copy verbatim rather than inventing a signature.
 - **Type consistency:** `historical_events_worked` (DB/route/form), `events_worked_live` + `events_worked` (total) used identically in 1.3 and 2.1; `parseMappingRows`/`planWrites` shapes match between 3.2 impl and its test.

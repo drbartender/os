@@ -56,7 +56,8 @@ re-litigated.
 
 ```sql
 ALTER TABLE contractor_profiles
-  ADD COLUMN IF NOT EXISTS historical_events_worked INTEGER NOT NULL DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS historical_events_worked INTEGER NOT NULL DEFAULT 0
+  CHECK (historical_events_worked >= 0);
 ```
 
 The count of events a person worked **before** the OS migration (i.e. in
@@ -126,7 +127,7 @@ writes a review CSV. One row per CheckCherry staff-flagged contact:
 | `current_live_events` | OS live count |
 | `proposed_historical` | = `cc_events` |
 | `include` | default `yes` when matched AND status in (`approved`,`hired`); else `no` |
-| `flags` | `unmatched`, `ambiguous`, `date-moves-later` (proposed hire_date later than current, the rare tenure-shortening case), `zero-events` |
+| `flags` | `unmatched` (no OS match), `duplicate-match` (two CheckCherry contacts resolve to one OS user), `date-moves-later` (proposed hire_date later than current, the rare tenure-shortening case), `zero-events` |
 
 This step touches **no writes**, it only reads the CSV and the DB.
 
