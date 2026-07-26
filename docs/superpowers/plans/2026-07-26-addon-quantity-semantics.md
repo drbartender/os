@@ -10,6 +10,7 @@ lanes:
       - server/routes/drinkPlans/lab.js
       - server/routes/drinkPlans/lab.test.js
       - server/routes/drinkPlans/submit.js
+      - server/routes/drinkPlans/submitOverride.test.js
       - server/utils/lineItemCancel.js
       - server/utils/lineItemCancel.test.js
       - server/routes/proposals/cancelLineItem.js
@@ -136,8 +137,9 @@ gratuity basis before merge.
 - Seed fixtures MUST store add-on rows the way the writers actually store them
   (`snapshot.addons[].quantity`). A fixture that seeds a hand-computed raw count
   is what hid this defect; see Task 4.
-- File-size soft cap 700 lines. `lineItemCancel.js` is ~610 and grows slightly;
-  keep it under 700.
+- File-size soft cap 700 lines. `lineItemCancel.js` is 635 today and Tasks 4 and
+  6(d) add roughly 35 to 45, landing near 670 to 680. Under the cap, but the
+  headroom is thin: any further growth in this lane needs a split first.
 - No em dashes in client-visible copy.
 - `flat` add-ons round-trip identically under every change here. Any task whose
   diff changes behavior for a `flat` add-on has a bug.
@@ -152,8 +154,15 @@ gratuity basis before merge.
 
 **Interfaces:**
 - Produces:
-  - `STORED_IS_INPUT_COUNT`: a `Set` of billing types where the stored OUTPUT
-    equals the engine INPUT count (`'flat'` plus the default bucket).
+  - `storedIsInputCount(billingType)` → `boolean`. True when the stored OUTPUT
+    equals the engine INPUT count. That is `flat` AND the engine's `default:`
+    bucket, which prices `rate x qty` identically (pricingEngine.js:182-186).
+    A PREDICATE, not a Set, and the exclusion list is the explicit one:
+    `proposal_addons.billing_type` is a bare `VARCHAR(20)` with no CHECK, and
+    today's `withRepriceQuantities` passes the stored count through for every
+    type except the per_guest pair. An allowlist of `['flat']` would silently
+    drop the count for an unrecognized or NULL billing_type, which is the exact
+    under-bill the 2026-07-20 review found, reintroduced for that bucket.
   - `effectiveHoursFor(addon, durationHours)` → `number`. Mirrors
     `calculateAddonCost`'s `per_hour` branch:
     `Math.max(Number(durationHours) || 0, Number(addon.minimum_hours || 0))`.
@@ -173,6 +182,7 @@ is. Two deliberate divergences, both documented in the module:
 | | client `recoverAddonQuantities` | this module |
 |---|---|---|
 | `per_guest` | recovers the count from `line_total / (quantity x rate)` | returns `null` (the fold has no `line_total` in its SELECT; unchanged behavior, logged in Task 7) |
+| `per_staff`, `per_100_guests` | treats the stored figure as the raw count | returns `null`. The engine IGNORES the input for both, so dropping the field and letting it recompute is identical in effect. Inert, but write it down |
 | upper clamp | clamps to 10 (the stepper's max) | NO clamp: clamping would silently re-bill a corrupt row at 10 units instead of surfacing it |
 
 - [ ] **Step 1: Write the failing test**
@@ -185,7 +195,7 @@ is. Two deliberate divergences, both documented in the module:
 //   node --test server/utils/addonQuantity.test.js
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { storedToInputCount, effectiveHoursFor, STORED_IS_INPUT_COUNT, countLabelFor } = require('./addonQuantity');
+const { storedToInputCount, effectiveHoursFor, storedIsInputCount, countLabelFor } = require('./addonQuantity');
 const { calculateAddonCost } = require('./pricingEngine');
 
 test('per_hour: stored is hours x count, so the count divides back out', () => {
@@ -228,8 +238,19 @@ test('a legacy mis-shaped row recovers as 1 unit, not a fraction', () => {
 
 test('flat: stored IS the input count, round-trips unchanged', () => {
   const addon = { billing_type: 'flat', rate: 200 };
-  assert.ok(STORED_IS_INPUT_COUNT.has('flat'));
+  assert.ok(storedIsInputCount('flat'));
   assert.equal(storedToInputCount(addon, 2, 4), 2);
+});
+
+test('an unrecognized billing_type keeps its count (the engine default branch)', () => {
+  // billing_type is a bare VARCHAR with no CHECK, and the engine's `default:`
+  // branch prices rate x qty exactly like flat, so the stored figure IS the
+  // count. Reading it as "not a count" would drop it to 1 and under-bill, the
+  // same defect the 2026-07-20 review found for per_hour.
+  assert.ok(storedIsInputCount('some-future-type'));
+  assert.ok(storedIsInputCount(null));
+  assert.equal(storedToInputCount({ billing_type: 'some-future-type' }, 3, 4), 3);
+  assert.equal(storedToInputCount({ billing_type: null }, 3, 4), 3);
 });
 
 test('types whose stored figure is not a count return null', () => {
@@ -304,10 +325,17 @@ Expected: FAIL, "Cannot find module './addonQuantity'".
  *     it visible.
  */
 
-// Billing types where the engine's OUTPUT quantity IS its input count, so the
-// stored figure can be used as-is. Everything else stores something else
-// entirely (guests, staff, blocks) or scales it (hours).
-const STORED_IS_INPUT_COUNT = new Set(['flat']);
+// Billing types whose stored OUTPUT is NOT the input count: they store guests,
+// staff, or 100-guest blocks instead. Stated as an exclusion list on purpose.
+// billing_type is a bare VARCHAR(20) with no CHECK, and the engine's `default:`
+// branch prices `rate x qty` exactly like `flat`, so an unrecognized or NULL
+// type stores the count and must keep being read as one.
+const STORED_IS_NOT_A_COUNT = new Set(['per_guest', 'per_guest_timed', 'per_staff', 'per_100_guests']);
+
+/** Does the column hold the engine's INPUT count verbatim for this type? */
+function storedIsInputCount(billingType) {
+  return billingType !== 'per_hour' && !STORED_IS_NOT_A_COUNT.has(billingType);
+}
 
 /**
  * The hours the engine actually billed for this add-on.
@@ -343,12 +371,12 @@ function storedToInputCount(addon, storedQuantity, durationHours) {
   if (!Number.isFinite(stored) || stored <= 0) return null;
   const type = addon?.billing_type;
   let raw;
-  if (STORED_IS_INPUT_COUNT.has(type)) {
-    raw = stored;
-  } else if (type === 'per_hour') {
+  if (type === 'per_hour') {
     const hours = effectiveHoursFor(addon, durationHours);
     if (!Number.isFinite(hours) || hours <= 0) return null;
     raw = stored / hours;
+  } else if (storedIsInputCount(type)) {
+    raw = stored;
   } else {
     return null;
   }
@@ -360,12 +388,13 @@ function storedToInputCount(addon, storedQuantity, durationHours) {
 function countLabelFor(addon) {
   const type = addon?.billing_type;
   if (type === 'per_hour') return 'hour';
-  if (STORED_IS_INPUT_COUNT.has(type)) return 'unit';
+  if (storedIsInputCount(type)) return 'unit';
   return null;
 }
 
 module.exports = {
-  STORED_IS_INPUT_COUNT,
+  STORED_IS_NOT_A_COUNT,
+  storedIsInputCount,
   effectiveHoursFor,
   storedToInputCount,
   countLabelFor,
@@ -375,7 +404,7 @@ module.exports = {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test server/utils/addonQuantity.test.js`
-Expected: PASS (9 tests).
+Expected: PASS (10 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -612,15 +641,38 @@ test('override + gratuity: a no-op fold does not move the gratuity line', async 
     'the gratuity staff basis is a HEADCOUNT and must not move on a no-op fold');
 });
 
-test('TWO no-op folds in a row are also stable (no slow drift)', async () => {
+test('TWO folds in a row: the second reads what the first wrote (no slow drift)', async () => {
+  // Both folds run in ONE transaction on purpose. noOpFold ROLLBACKs, so
+  // calling it twice would just repeat the first test from identical state and
+  // prove nothing about drift. Drift only shows when the second fold reads the
+  // total the first one persisted.
   const { proposalId } = await seedPricedProposal({
     durationHours: 5,
     addonSpecs: [{ slug: `stab-twice-${NONCE}`, name: 'Stability Twice', billingType: 'per_hour', rate: 40, count: 2 }],
   });
-  const first = await noOpFold(proposalId);
-  assert.equal(first.after, first.before);
-  const second = await noOpFold(proposalId);
-  assert.equal(second.after, second.before);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const rounds = [];
+    for (let i = 0; i < 2; i++) {
+      const proposal = (await client.query('SELECT * FROM proposals WHERE id = $1 FOR UPDATE', [proposalId])).rows[0];
+      const legs = await loadRepriceAddons(client, proposalId);
+      const { snapshot } = await foldExtrasIntoProposal({
+        client, proposal, pkg,
+        addonsBefore: legs, addonsAfter: legs,
+        syrupsBefore: [], syrupsAfter: [],
+        numBarsBefore: proposal.num_bars ?? 0, numBarsAfter: proposal.num_bars ?? 0,
+        statusChangeReason: 'stability probe',
+      });
+      rounds.push({ before: Number(proposal.total_price), after: Number(snapshot.total) });
+    }
+    assert.equal(rounds[0].after, rounds[0].before, 'the first fold moved the total');
+    assert.equal(rounds[1].before, rounds[0].before, 'the first fold persisted a different total');
+    assert.equal(rounds[1].after, rounds[1].before, 'the second fold moved the total');
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
 });
 ```
 
@@ -657,8 +709,9 @@ git commit -m "test(addons): pin reprice stability, currently RED for per_hour"
 **Interfaces:**
 - Consumes: `storedToInputCount` from Task 1.
 - Produces: `withRepriceQuantities(rows)` unchanged in signature. Rows from
-  `REPRICE_ADDON_SQL` now additionally carry `event_duration_hours`, so the
-  function can convert without a new parameter and no caller changes.
+  `REPRICE_ADDON_SQL` now additionally carry `pa_duration_hours` (aliased from
+  `p.event_duration_hours`), so the function can convert without a new parameter
+  and no caller changes.
   `loadRepriceAddons(client, proposalId)` signature is unchanged.
 
 Callers that must keep working untouched: `server/routes/drinkPlans/lab.js:279,308`,
@@ -776,11 +829,21 @@ servers recovered). If it fails, STOP and report: the corrected fixture and the
 new reader disagree about the column, which is the whole premise of this plan
 and not something to paper over by editing the assertion.
 
-The lab and submit money paths are NOT yet correct at the end of this task.
-Their writers still hand-write a raw `1`, which the new reader rounds back to a
-count of 1 (the floor in `storedToInputCount` is what holds today's money in
-place through this window). Task 5 makes them store the right shape. Do not
-skip from here to Task 6.
+Two things are still unfinished at the end of this task, both harmless but worth
+knowing while the lane is open:
+
+- The lab and submit writers still hand-write a raw `1`, which the new reader
+  rounds back to a count of 1 (the floor in `storedToInputCount` is what holds
+  today's money in place through this window). Task 5 fixes the write.
+- The cancel-line PARTIAL removal is temporarily a no-op: it still subtracts
+  from the stored figure (3 servers stored as 12, remove 1, row becomes 11), and
+  the new reader recovers `round(11/4) = 3`, so the total does not move and the
+  row is left mis-shaped at 11. No money is wrong (the invoice bills off
+  `line_total` and the roster rounds 11/4 back to 3) and it is strictly better
+  than main's current +$2,400, but do not report partial removal as working
+  until Task 4 lands.
+
+Do not skip from here to Task 6.
 
 - [ ] **Step 4: Commit**
 
@@ -920,30 +983,32 @@ then:
 
 ```js
 test('per_hour under its minimum_hours: picker and write-back use the BILLED hours', async () => {
-  // 2 banquet servers on a 3.5h event with a 4h minimum. The engine bills 4
-  // hours and stores 8. Dividing by the RAW 3.5 (what happens whenever the row
-  // is loaded without sa.minimum_hours) recovers 2.29 units and writes 3.5 back
-  // for the one remaining server, which then reprices as 0.875 servers: $262.50
-  // instead of $300, with the row left in a shape nothing can read.
+  // 2 banquet servers on a 2h event with a 4h minimum. The engine bills 4 hours
+  // and stores 8. Dividing by the RAW 2 (what happens whenever the row is loaded
+  // without sa.minimum_hours) recovers FOUR units, so the picker offers to
+  // remove 4 servers from a proposal that has 2, and removing 1 writes back 6,
+  // which the fold reads as 2 servers: the removal does nothing and the client
+  // is still billed for both. The event must be well under the minimum for this
+  // to bite; a 3.5h event rounds back to the right answer on its own.
   const slug = `perhour-min-${NONCE}`;
   const { proposalId } = await seedProposal({
     override: 2500,
-    durationHours: 3.5,
+    durationHours: 2,
     addons: [{ slug, name: 'Banquet Server Min', billingType: 'per_hour', rate: 75, quantity: 2, minimumHours: 4 }],
   });
   const seeded = (await pool.query('SELECT quantity, line_total FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows[0];
-  assert.equal(Number(seeded.quantity), 8, 'stored = 4 BILLED hours x 2 servers, not 3.5 x 2');
+  assert.equal(Number(seeded.quantity), 8, 'stored = 4 BILLED hours x 2 servers, not 2 x 2');
   assert.equal(Number(seeded.line_total), 600);
 
   const { targets } = await computeCancelTargets(pool, proposalId);
   const t = targets.find((x) => x.target === `addon:${slug}`);
-  assert.equal(t.quantity, 2, 'the picker offers 2 SERVERS, not 2.29');
+  assert.equal(t.quantity, 2, 'the picker offers 2 SERVERS, not 4');
 
   await applyCancel(proposalId, { target: `addon:${slug}`, quantity: 1 }, async (result, client) => {
     const row = (await client.query('SELECT quantity, line_total FROM proposal_addons WHERE proposal_id = $1', [proposalId])).rows[0];
     assert.equal(Number(row.quantity), 4, 'stored = 4 BILLED hours x 1 remaining server');
     assert.equal(Number(row.line_total), 300);
-    assert.equal(result.newTotal, 2200, 'one server off a 2500 override = -300, not -337.50');
+    assert.equal(result.newTotal, 2200, 'one server off a 2500 override = -300, not a no-op');
   });
 });
 ```
@@ -953,25 +1018,28 @@ test('per_hour under its minimum_hours: picker and write-back use the BILLED hou
 Run: `node -r dotenv/config --test server/utils/lineItemCancel.test.js`
 Expected: FAIL on all three new per_hour tests. The picker asserts
 `t.quantity === 3` but gets `12`, `quantity_unit` is undefined, and the
-minimum_hours test gets a picker of `8`.
+minimum_hours test gets a picker of `8` (pre-conversion) rather than 2.
 
 - [ ] **Step 3: Convert at the three sites**
 
 Add the import beside the existing requires in `server/utils/lineItemCancel.js`:
 
 ```js
-const { storedToInputCount, countLabelFor, effectiveHoursFor, STORED_IS_INPUT_COUNT } = require('./addonQuantity');
+const { storedToInputCount, countLabelFor, effectiveHoursFor, storedIsInputCount } = require('./addonQuantity');
 ```
 
 **(a0) FIRST, widen both addon SELECTs. Nothing below is correct without this.**
 Neither query currently selects `sa.minimum_hours`, so every conversion in this
 task would see `minimum_hours: undefined` and divide a `banquet-server` /
-`barback` row by the raw duration instead of the 4-hour floor the engine billed.
-On the prod shape (proposal 491, a 3.5h event) 2 servers stored as 8 recover as
-2.29, and the partial-removal write-back stores 3.5 where 4 is correct, so the
-next reprice bills 0.875 servers: $262.50 instead of $300, with the row left
-permanently mis-shaped. `sa.rate` comes along because the row's own `pa.rate` is
-the frozen creation-time rate and the conversion should never mix the two.
+`barback` row by the raw duration instead of the hours the engine actually
+billed. How bad that is scales with how far under the minimum the event runs,
+and Task 1's rounding absorbs the mild cases: on a 3.5h event 2 servers stored
+as 8 still recover as `round(8/3.5) = 2`, and a partial removal self-heals
+through the fold. On a 2h event the same row recovers as `round(8/2) = 4`, so
+the picker offers to remove 4 servers when the proposal has 2, and "remove 1 of
+4" writes back 6, which the fold reads as 2 servers: the removal silently does
+nothing and the client is still billed for both. Widen the SELECTs and the count
+is 2 either way.
 
 `computeCancelTargets` (~:98):
 
@@ -1011,6 +1079,13 @@ stored figure?" are the same question:
  * the count directly and `per_hour` stores hours x count. per_guest /
  * per_guest_timed / per_staff / per_100_guests store guests, staff, or blocks,
  * so "remove 1 of them" is meaningless and the whole line comes off.
+ *
+ * BEHAVIOR CHANGE, deliberate: the old quantityIsCount excluded only the
+ * per_guest pair and per_staff, so it offered a partial removal for
+ * per_100_guests. That was never meaningful (the engine recomputes blocks from
+ * guestCount, so "remove 1 block" removes nothing), and it now takes the
+ * whole-line path. An unrecognized billing_type still keeps its picker, because
+ * the engine's default branch does treat the stored figure as a count.
  */
 function unitCountOf(addon, storedQuantity, durationHours) {
   return storedToInputCount(addon, storedQuantity, durationHours);
@@ -1070,7 +1145,7 @@ counts and write back in stored shape:
       // post-fold sync below, but the row must be coherent for the fold's own
       // read of it, which happens first.
       const remainingCount = totalCount - removeN;
-      const restored = STORED_IS_INPUT_COUNT.has(row.billing_type)
+      const restored = storedIsInputCount(row.billing_type)
         ? remainingCount
         : remainingCount * effectiveHoursFor(row, durationHours);
       await client.query('UPDATE proposal_addons SET quantity = $1 WHERE id = $2', [restored, row.id]);
@@ -1153,6 +1228,9 @@ justifying that change had the column's meaning backwards."
 **Files:**
 - Modify: `server/routes/drinkPlans/lab.js:27` (import) and `:289-307` (the addon upsert)
 - Modify: `server/routes/drinkPlans/submit.js` (import) and `:285-300` (the addon insert)
+- Test: `server/routes/drinkPlans/submitOverride.test.js` (the reachable writer;
+  the lab's shelf carries no `per_hour` slug, so the lab half of this task is a
+  no-op today and is closing a door rather than fixing live behavior)
 
 **Interfaces:**
 - Consumes: `calculateAddonCost` from `server/utils/pricingEngine.js`. Both files
@@ -1187,45 +1265,69 @@ the fold. Belt and braces, and the same shape `lineItemCancel` already uses.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `server/routes/drinkPlans/lab.test.js`:
+**Test the SUBMIT path, not the lab.** The lab cannot reach a `per_hour` add-on
+at all: its shelf is six `per_guest` slugs plus drink-dossier enhancements
+(`labHelpers.js:17-18`), and `sanitizeLabAddOns` THROWS on any never-stored slug
+outside that set (`labHelpers.js:150-159`), so a test that invents a `per_hour`
+slug 400s before it writes anything. The reachable writer is `submit.js`, whose
+filter honors any active slug from the payload (`submit.js:205`,
+`return true; // user-added addon`). `submitOverride.test.js` already exercises
+exactly that door with `additional-bartender`, so the test belongs beside it.
+
+Append to `server/routes/drinkPlans/submitOverride.test.js`:
 
 ```js
-test('a lab-added per_hour addon is stored in the engine OUTPUT shape', async () => {
-  // Guards the roster and the invoice line: eventCreation.addonHeadcount
-  // divides the stored figure by duration to get headcount, and
-  // invoiceLineItems renders it as `quantity x rate`. Storing a raw 1 for a
-  // 4-hour booking reads as 0.25 staff and "1 x $40" (push review, 2026-07-26).
-  const svc = await pool.query(
-    `INSERT INTO service_addons (slug, name, billing_type, rate, applies_to, is_active)
-     VALUES ($1, 'Lab Hourly Helper', 'per_hour', 40, 'all', true) RETURNING id, slug`,
-    [`lab-hourly-${NONCE}`]
-  );
-  const res = await request('PUT', `/api/drink-plans/t/${planTokens.money}/lab`, {
-    body: { addOns: { [svc.rows[0].slug]: {} }, labSyrupSelections: {} },
-  });
-  assert.equal(res.status, 200, JSON.stringify(res.body));
-  const row = (await pool.query(
-    `SELECT pa.quantity, pa.line_total, p.event_duration_hours
-       FROM proposal_addons pa JOIN proposals p ON p.id = pa.proposal_id
-      WHERE pa.proposal_id = $1 AND pa.addon_id = $2`,
-    [proposalIds[proposalIds.length - 1], svc.rows[0].id]
+test('a submitted per_hour add-on is stored in the engine OUTPUT shape', async (t) => {
+  // Guards the roster and the invoice line: eventCreation.addonHeadcount divides
+  // the stored figure by duration to recover headcount, and invoiceLineItems
+  // renders it as `quantity x rate`. A raw 1 on a 4-hour booking reads as 0.25
+  // staff (rounds to ZERO bartenders on the roster) and "1 x $40" on the invoice
+  // (push review, 2026-07-26). The planner UI offers no staffing add-on, but the
+  // public token endpoint honors any active slug, which is the door the
+  // gratuity-contract test above uses too.
+  const addon = (await pool.query(
+    "SELECT id, rate FROM service_addons WHERE slug = 'additional-bartender' AND is_active = true"
   )).rows[0];
-  await pool.query('DELETE FROM service_addons WHERE id = $1', [svc.rows[0].id]);
-  assert.ok(row, 'the lab addon row should exist');
-  const hours = Number(row.event_duration_hours);
-  assert.equal(Number(row.quantity), hours, `stored should be ${hours} (hours x 1), got ${row.quantity}`);
-  assert.equal(Number(row.line_total), hours * 40);
+  if (!addon) { t.skip('additional-bartender add-on not seeded'); return; }
+
+  const { proposalId, planToken } = await seedProposal({ override: CONTRACT });
+  const res = await request('PUT', `/api/drink-plans/t/${planToken}`, {
+    body: {
+      status: 'submitted',
+      paid_separately: false,
+      selections: { addOns: { 'additional-bartender': { enabled: true } } },
+    },
+  });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+
+  const row = (await pool.query(
+    'SELECT quantity, line_total FROM proposal_addons WHERE proposal_id = $1 AND addon_id = $2',
+    [proposalId, addon.id]
+  )).rows[0];
+  assert.ok(row, 'the submitted addon row exists');
+  assert.strictEqual(Number(row.quantity), 4, 'stored = 4 hours x 1 bartender, not a raw 1');
+  assert.strictEqual(Number(row.line_total), Number(addon.rate) * 4);
+
+  // The round trip that matters: the roster must read the headcount back out.
+  const { deriveStaffingRoster } = require('../../utils/eventCreation');
+  const roster = deriveStaffingRoster(
+    { event_duration_hours: 4, num_bartenders: 1 },
+    [{ slug: 'additional-bartender', quantity: Number(row.quantity) }]
+  );
+  assert.strictEqual(roster.filter((r) => r === 'Bartender').length, 2,
+    'one add-on bartender on top of the one on the proposal');
 });
 ```
 
-Note: `planTokens.money` and the `proposalIds` array are the suite's existing
-fixtures; the addon must be created inside the test because the suite's
-`before()` seeds its catalog before this slug exists.
+The suite seeds a 175-guest, 4-hour event, so `bartenderGratuityPerHour` is 0
+and the expected `line_total` is a clean `rate x 4`. `seedProposal`, `request`
+and `CONTRACT` are the suite's existing fixtures.
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `node -r dotenv/config --test server/routes/drinkPlans/lab.test.js`
-Expected: FAIL, `stored should be 4 (hours x 1), got 1`.
+Run: `node -r dotenv/config --test server/routes/drinkPlans/submitOverride.test.js`
+Expected: FAIL, `stored = 4 hours x 1 bartender, not a raw 1` (actual: 1), and
+the roster assertion reporting 1 Bartender instead of 2.
 
 - [ ] **Step 3a: Price the pre-fold row with the engine**
 
@@ -1259,14 +1361,52 @@ and replace the hand-computed upsert body (~:293-307):
       }
 ```
 
-`calculateAddonCost` reproduces `per_guest` (quantity = guestCount) and `flat`
-(quantity = 1) exactly as the hand-written branches did, so those two round-trip
-byte-identically; only `per_hour` and the ignored-input types change.
+`calculateAddonCost` reproduces `per_guest` (quantity = guestCount, line_total =
+guestCount x rate) and `flat` (quantity = 1, line_total = rate) exactly as the
+hand-written branches did, so those two round-trip byte-identically.
 
 In `server/routes/drinkPlans/submit.js`, add
 `const { calculateAddonCost } = require('../../utils/pricingEngine');` beside the
-existing requires and apply the identical replacement to its upsert loop
-(~:285-297), using that file's `proposal` variable.
+existing requires and apply the same replacement to its upsert loop (~:285-297),
+using that file's `proposal` variable, WITH one guard `lab.js` does not need.
+`lab.js` fails closed on an unpriceable proposal BEFORE its upsert (`lab.js:258`);
+`submit.js`'s equivalent gate sits AFTER the loop (`submit.js:328`). `Number(null)`
+is 0, so pricing an unpriceable proposal here would store `quantity 0 /
+line_total 0` where today it stores `1 / rate`, and the fold that would repair it
+never runs:
+
+```js
+          const priceable = Number(proposal.event_duration_hours) > 0 && Number(proposal.guest_count) > 0;
+          let quantity = 1;
+          let lineTotal = rate;
+          if (priceable) {
+            const priced = calculateAddonCost(
+              addon, proposal.guest_count, Number(proposal.event_duration_hours), null, 1
+            );
+            quantity = priced.quantity;
+            lineTotal = Math.round(priced.total * 100) / 100;
+          } else if (addon.billing_type === 'per_guest') {
+            // Unpriceable proposal: keep the pre-2026-07-26 literals exactly.
+            quantity = proposal.guest_count || 1;
+            lineTotal = rate * quantity;
+          }
+```
+
+then feed `quantity` / `lineTotal` to the existing upsert unchanged.
+
+One divergence to know about in both files: `calculateAddonCost`'s `per_hour`
+branch uses `max(durationHours, minimum_hours)`, while the engine's bespoke
+`additional-bartender` branch uses raw `durationHours` and adds the
+sub-100-guest surcharge. Identical today (that slug's `minimum_hours` is NULL)
+and Step 3b's re-sync settles the surcharge either way, but if
+`additional-bartender` ever gets a `minimum_hours`, `calculateProposal`'s branch
+is the authority and this pre-fold write must follow it.
+
+Also note `per_guest_timed` changes shape here too (`mocktail-bar`, live on the
+submit path): stored `quantity` goes from a raw 1 to `guestCount` and
+`line_total` from `rate` to the full timed total. That is the correct engine
+output and matches what Step 3b would write anyway, so no money moves, but it is
+not only `per_hour` that changes.
 
 - [ ] **Step 3b: Re-sync both writers from the snapshot**
 
@@ -1279,12 +1419,19 @@ work, add:
       // full engine pass knows: additional-bartender's gratuity surcharge and
       // per_staff's totalStaff basis. It also brings any pre-existing row back
       // into agreement with the snapshot the client is about to be shown.
-      // NOTE: this touches EVERY addon row on the proposal, not just lab-owned
-      // ones. That is deliberate (the snapshot is the authority on what each
-      // line costs after this fold) but it does mean an admin-owned row with a
-      // stale line_total is silently corrected here. Values come from the
-      // snapshot the fold just committed, never from the client payload.
+      //
+      // SCOPED TO THE ROWS THIS REQUEST WROTE, deliberately. A blanket re-sync
+      // over snapshot.addons would also rewrite rows the client never touched,
+      // and for a quantity-capable per_guest add-on that is DESTRUCTIVE:
+      // pre-batched-mocktail's unit count survives only in line_total
+      // (proposalRules.js QUANTITY_CAPABLE_SLUGS, formState.js:92-98), the fold
+      // reprices it at count 1 because the column cannot express a count, and
+      // overwriting line_total would erase the last record of it. No writer
+      // rewrites a pre-existing row's line_total today; do not start here
+      // (plan review, 2026-07-26).
+      const touchedAddonIds = new Set(labAddonRows.map((a) => a.id));
       for (const entry of snapshot.addons || []) {
+        if (!touchedAddonIds.has(entry.id)) continue;
         await client.query(
           'UPDATE proposal_addons SET quantity = $1, line_total = $2 WHERE proposal_id = $3 AND addon_id = $4',
           [entry.quantity, entry.line_total, proposal.id, entry.id]
@@ -1293,8 +1440,8 @@ work, add:
 ```
 
 In `server/routes/drinkPlans/submit.js`, add the identical block immediately
-after its `foldExtrasIntoProposal` call, using that file's variable names for
-the snapshot and the proposal id.
+after its `foldExtrasIntoProposal` call, using that file's variable names: the
+touched set is `resolvedAddons`, not `labAddonRows`.
 
 - [ ] **Step 4: Run to verify it passes, then the neighbours**
 
@@ -1312,7 +1459,7 @@ Expected: all PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/routes/drinkPlans/lab.js server/routes/drinkPlans/submit.js server/routes/drinkPlans/lab.test.js
+git add server/routes/drinkPlans/lab.js server/routes/drinkPlans/submit.js server/routes/drinkPlans/submitOverride.test.js
 git commit -m "fix(drink-plans): store add-on rows in the engine output shape
 
 lab.js and submit.js hand-wrote quantity 1 for every non-per_guest addon. For
@@ -1332,7 +1479,9 @@ proposalInsert.js and public.js."
 - Test: `server/routes/proposals/cancelLineItem.test.js`
 
 **Interfaces:**
-- Consumes: nothing from earlier tasks except the Task 1 import already added.
+- Consumes: Task 4's version of `lineItemCancel.js`. Fix (d) below rewrites the
+  same `targets.push({ ... })` block Task 4(b) already replaced (~:155-163), so
+  apply it on top of Task 4's code, not the code described in Task 4's "before".
 - Produces: `loadPaymentsWithRemaining(proposalId, dbClient, { rails })` gains an
   OPTIONAL third argument. Default rails stay
   `['deposit','balance','full','invoice']` so `server/routes/stripe.js` is
@@ -1434,7 +1583,8 @@ back and release before it throws:
   }
 ```
 
-and delete the later `const stripe = getStripe();` inside the refund loop.
+and delete the unguarded `const stripe = getStripe();` that currently sits
+immediately BEFORE the refund loop (`cancelLineItem.js:147`), not inside it.
 
 **(c) Widen the refund rails for this flow.** In `server/utils/refundHelpers.js`:
 
@@ -1475,7 +1625,8 @@ async function loadPaymentsWithRemaining(proposalId, dbClient = pool, { rails = 
 }
 ```
 
-Export both constants. In `cancelLineItem.js`'s `runCore`, pass the wider set:
+Export both constants, add `CANCEL_LINE_REFUND_RAILS` to the `refundHelpers`
+require at `cancelLineItem.js:27`, and in `runCore` pass the wider set:
 
 ```js
     const payments = await loadPaymentsWithRemaining(req.params.id, client, { rails: CANCEL_LINE_REFUND_RAILS });
@@ -1543,9 +1694,25 @@ Expected: all PASS.
 
 - [ ] **Step 5: Commit**
 
+TWO commits, not one. (a), (b) and (d) are cheap hardening confined to the
+cancel-line feature. (c) is the only change in this whole plan that alters WHICH
+Stripe charges get refunded, and it edits a helper shared with
+`server/routes/stripe.js`. Bundling them means a refund-rail regression can only
+be reverted by taking three unrelated fixes with it. Work them in that order:
+write the target-validation test, apply (a)(b)(d), commit; then write the
+drink-plan-rail test, apply (c), commit.
+
 ```bash
-git add server/routes/proposals/cancelLineItem.js server/utils/refundHelpers.js server/utils/lineItemCancel.js server/routes/proposals/cancelLineItem.test.js
-git commit -m "fix(cancel-line): validate target, guard Stripe before commit, refund drink-plan rails, restore the bartender addon button"
+git add server/routes/proposals/cancelLineItem.js server/utils/lineItemCancel.js server/routes/proposals/cancelLineItem.test.js
+git commit -m "fix(cancel-line): validate target, guard Stripe before commit, restore the bartender addon button"
+
+git add server/utils/refundHelpers.js server/routes/proposals/cancelLineItem.js server/routes/proposals/cancelLineItem.test.js
+git commit -m "fix(cancel-line): let a drink-plan-rail charge fund the refund
+
+The admin-panel rail list excluded drink_plan_extras / drink_plan_with_balance,
+so an overpayment sitting on one of those charges fell entirely into
+manual_return_cents and the client was told we would return it separately, for
+money on a fully refundable Stripe charge. stripe.js keeps the panel rails."
 ```
 
 ---
@@ -1584,8 +1751,10 @@ SELECT pa.proposal_id, sa.slug, pa.quantity, p.event_duration_hours,
 
 Expected: every `recovered_count` is a whole number, 1 to 3. A fractional one is
 a mis-shaped row (the lab/submit writer bug); one above ~6 is an inflated row (a
-reprice already squared it). Either needs a repair statement written before
-merge. If all clean, record "no repair required" in the commit message.
+reprice already squared it). **Either one STOPS the merge.** Write the repair
+statement, show it with the affected rows, and get Dallas's explicit go before
+running it: it moves money on live proposals and is not the executor's call. If
+all clean, record "no repair required" in the commit message.
 
 **(2) The snapshots.** Rows can be clean while `pricing_snapshot` is not: on an
 override proposal the add-on inflation cancels in the fold's delta but is still
@@ -1634,9 +1803,11 @@ SELECT p.id, p.total_price, p.amount_paid,
 ```
 
 Expected: proposal 599 ($60, a paid Drink Plan Extras invoice, not an
-overpayment). Note in the merge report which rails it carries. If any row's only
-rail is `drink_plan_extras` / `drink_plan_with_balance`, say so explicitly: that
-is the one shape where Task 6(c) newly lets a phantom overpayment auto-refund.
+overpayment). Note in the merge report which rails it carries. **If any row's
+only refundable rail is `drink_plan_extras` / `drink_plan_with_balance`, STOP:**
+that is the one shape where Task 6(c) newly lets a phantom overpayment
+auto-refund real money. Hold that commit back (it is split out for exactly this
+reason), merge the rest, and put the decision to Dallas.
 
 **(5) The per_guest count**, which this plan deliberately does NOT fix. The
 deferral is only safe while no live proposal carries a per_guest add-on at a
@@ -1659,7 +1830,10 @@ extra-hours term; check those by hand rather than treating them as counts.)
 
 - [ ] **Step 2: Docs**
 
-In `ARCHITECTURE.md`, under the `proposal_addons` schema entry, add:
+In `ARCHITECTURE.md`, the `proposal_addons` entry already has a `quantity`
+clause (~:858: "holds fractional hours for per-hour add-ons"). That is a
+half-truth that helped this bug survive, so REPLACE it rather than adding a
+second description beside it. Keep its coercion note, which is still correct:
 
 ```
 - `quantity` (NUMERIC(10,2)), the pricing engine's OUTPUT display quantity for
@@ -1676,7 +1850,8 @@ In `ARCHITECTURE.md`, under the `proposal_addons` schema entry, add:
   or `client/src/pages/admin/proposalEditor/formState.js` on the client, and the
   two must agree; re-feeding the stored figure to the engine as an input
   multiplied per_hour add-ons by their own hours (a $450 line repriced to
-  $2,700, 2026-07-26) and inflated the gratuity staff basis with it.
+  $2,700, 2026-07-26) and inflated the gratuity staff basis with it. pg returns
+  NUMERIC as a string, so readers coerce with `::float8` / `Number()`.
 ```
 
 In `docs/fix-list-remaining-2026-07-02.md`, under the 2026-07-26 push-review
@@ -1686,12 +1861,22 @@ DELETE the two bullets about the non-string target and `getStripe()` (fixed in
 Task 6), DELETE the drink-plan rails bullet (fixed in Task 6), and add:
 
 ```
-- CORRECTION: an earlier entry here and a code comment in `lineItemCancel.js`
-  claimed `proposal_addons.quantity` holds "the RAW unit count". That is wrong;
-  it holds the engine's OUTPUT display quantity. See
-  `server/utils/addonQuantity.js` and the ARCHITECTURE schema note. The
-  2026-07-24 checkpoint change that stopped writing `quantity` in the post-fold
-  sync was made on that wrong belief and has been reverted.
+- CORRECTION: a code comment in `lineItemCancel.js` (the post-fold sync) claimed
+  `proposal_addons.quantity` holds "the RAW unit count", and `ARCHITECTURE.md`
+  described it as fractional hours. Both are wrong; it holds the engine's OUTPUT
+  display quantity. See `server/utils/addonQuantity.js` and the rewritten
+  ARCHITECTURE schema note. The 2026-07-24 checkpoint change that stopped
+  writing `quantity` in the post-fold sync was made on that wrong belief and has
+  been reverted.
+- Not fixed, same family: `server/utils/changeRequests.js` is a THIRD reader that
+  disagrees with the column. `priceProposedState` (:57-69) re-prices the
+  proposal's existing add-ons with `safeAddonQty(quantities[id])`, which returns
+  1 for `undefined`, so a client-portal change-request price preview silently
+  drops any count above 1 and under-quotes; `buildDiff` (:129-137) compares the
+  stored OUTPUT against a proposed INPUT count. The diff half is unreachable
+  today (the v1 client form exposes no add-on editing, so `addon_ids` is never
+  sent) but the preview half is not. Left out of the 2026-07-26 lane to keep it
+  narrow. The fix is the same one: route it through `addonQuantity.js`.
 - Still open, same family: for `per_guest` add-ons the fold cannot recover the
   admin's unit count, so a per_guest add-on sold at count 2 reprices as count 1
   and UNDER-bills. It is recoverable in principle, just not from `quantity`
@@ -1786,8 +1971,8 @@ On the dev DB with the dev server restarted:
 4. Open the cancel-line dialog on the Banquet Server line. The picker must say
    "Remove how many of the 2?", not 10.
 5. Remove 1. The line becomes `$375` and the total drops by exactly `$375`.
-6. Open the event page: the staffing card still shows the right number of
-   servers, and the shift's `positions_needed` did not jump.
+6. Open the event page: the staffing card shows exactly 1 Banquet Server (2
+   minus the one removed) and the shift's `positions_needed` did not jump.
 7. The gratuity channel: on a proposal carrying an `additional-bartender` add-on
    AND a client gratuity rate, note the Gratuity line, run the same empty Lab
    save, and confirm the line is unchanged. Before this work the staff basis
@@ -1801,6 +1986,26 @@ review fleet at merge plus `/second-opinion` on the same commits. Sensitive
 files touched: `proposalExtrasFold.js`, `refundHelpers.js`, `lineItemCancel.js`,
 `cancelLineItem.js`, `drinkPlans/submit.js`, `drinkPlans/lab.js`.
 
+**Mid-execution checkpoints**, matched to what each batch changes rather than
+one blanket pass at the end:
+
+- After **Task 3**, the highest-risk commit in the lane (the reprice core every
+  proposal flows through): a money/pricing review plus a cross-cutting
+  consistency pass confirming the new reader agrees with
+  `eventCreation.addonHeadcount`, `invoiceLineItems` and `recoverAddonQuantities`.
+- After **Task 5**: a money review of the pre-fold-write / post-fold-resync pair
+  across both PUBLIC token-gated writers, with the scoping of the re-sync
+  (touched rows only) as a named check.
+- After **Task 6**: a refunds/Stripe review, since (c) is the only change in the
+  lane that moves real money.
+- Tasks 1, 2, 4 and 7 ride the merge fleet.
+
+**Revert unit is the LANE, never a single task commit.** Tasks 4 and 5 store the
+engine-output shape and are correct only with Task 3's reader present; reverting
+Task 3 alone after a push would turn those now-correct writes straight back into
+the squaring bug. The squash merge makes this mostly theoretical, but if
+anything here has to come out, it all comes out.
+
 ## Self-review notes
 
 - **Coverage:** every finding this plan claims to fix has a task, reader
@@ -1810,12 +2015,14 @@ files touched: `proposalExtrasFold.js`, `refundHelpers.js`, `lineItemCancel.js`,
 - **Deliberately NOT in scope:** `eventCreation.addonHeadcount`,
   `invoiceLineItems` and the client's `recoverAddonQuantities` (all three already
   read the column correctly), the `per_guest` count-recovery limitation (logged
-  in Task 7, verified unreachable by query (5)), the `overpaymentCents`
+  in Task 7, verified unreachable by query (5)), `server/utils/changeRequests.js`
+  (a third disagreeing reader, logged in Task 7), the `overpaymentCents`
   derivation (the fix list's explicit do-not-re-attempt), and the ~20 previously
   deferred items in the fix list.
 - **Type consistency:** `storedToInputCount(addon, storedQuantity, durationHours)`
   and `effectiveHoursFor(addon, durationHours)` are used with those exact
-  signatures in Tasks 3, 4 and 6; `STORED_IS_INPUT_COUNT` is a `Set` in all uses;
+  signatures in Tasks 3, 4 and 6; `storedIsInputCount(billingType)` is called as
+  a predicate on a billing-type STRING in all uses, never on an addon object;
   `countLabelFor` returns `'hour'|'unit'|null` and the dialog only branches on
   `'hour'`. `storedToInputCount` returns a WHOLE number or null, so no caller
   rounds again.
@@ -1851,3 +2058,34 @@ statement (the gratuity staff basis and the persisted snapshot move money on
 override proposals where the add-on line does not). Task 6(b)'s guard was
 narrowed to the splits-exist case so a no-refund removal still works without
 Stripe creds.
+
+### Second pass: the plan-review fleet (fidelity / decomposition / feasibility)
+
+Run against the revision above. Two more blockers, both in Task 5:
+
+- **Its test could never run.** It added a nonce `per_hour` slug and PUT it at
+  the lab, but `sanitizeLabAddOns` THROWS on any never-stored slug outside the
+  offered shelf, and that shelf is six `per_guest` slugs. The lab cannot reach a
+  `per_hour` add-on at all, so the lab half of Task 5 is a no-op today and the
+  reachable writer, `submit.js`, had no test. The test moved to
+  `submitOverride.test.js`, beside the existing case that already adds
+  `additional-bartender` through the same public door.
+- **Its post-fold re-sync was destructive.** Written as a blanket loop over
+  `snapshot.addons`, it would rewrite rows the request never touched. For a
+  quantity-capable `per_guest` add-on (`pre-batched-mocktail`) the unit count
+  survives ONLY in `line_total`, and the fold reprices it at count 1, so the
+  re-sync would have erased the last record of the count and made the Task 7
+  deferral false going forward. Now scoped to the ids the writer touched.
+
+Corrections the fleet made to THIS document's own first revision: Task 4's
+minimum_hours rationale was wrong once Task 1 started rounding (a 3.5h event
+recovers correctly on its own and self-heals through the fold; the fixture is
+now a 2h event, where the picker really does offer 4 servers for 2 and a partial
+removal silently does nothing). Task 1's `STORED_IS_INPUT_COUNT` allowlist
+contradicted its own interface text and would have dropped the count for an
+unrecognized or NULL `billing_type`; it is now an exclusion-list predicate.
+Task 2's "two folds" test could not detect drift because `noOpFold` rolls back;
+both folds now run in one transaction. Task 5's submit-side write needed a
+priceability guard that `lab.js` gets for free. Task 6 was split so the refund
+rails commit alone, and `changeRequests.js` was added to Task 7's fix list as a
+third reader that disagrees with the column.
