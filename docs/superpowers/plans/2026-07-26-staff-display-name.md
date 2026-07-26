@@ -1,37 +1,52 @@
 ---
 plan: staff-display-name
 spec: docs/superpowers/specs/2026-07-26-staff-display-name-design.md
+# ONE lane, deliberately. The first draft declared core/server/client lanes and
+# four of thirteen tasks edited outside their own footprint: contractor.js and
+# me.js are BOTH write paths (Task 5) and read/GET surfaces (Tasks 10, 12);
+# contractorTipPage.js is both a write path (Task 5) and a read site (Task 7);
+# PaydayProtocols.js is client work inside the server-side step-5 removal.
+# Those overlaps are inherent to the change, the lanes were strictly serial
+# anyway (client depended on server depended on core), so splitting bought zero
+# parallelism and only manufactured footprint aborts.
 lanes:
-  - id: core
-    tasks: [1, 2, 3, 4]
+  - id: staff-display-name
+    tasks: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
     footprint:
       - server/utils/staffDisplayName.js
       - server/utils/staffDisplayName.validate.js
       - server/utils/refreshDisplayName.js
-      - server/utils/*.test.js
-      - server/db/schema.sql
-      - server/scripts/refreshDisplayNames.js
-    depends_on: []
-    review: [code-review, database-review]
-  - id: server
-    tasks: [5, 6, 7, 8, 9, 13]
-    footprint:
-      - server/routes/**
+      - server/utils/staffDisplayName*.test.js
+      - server/utils/refreshDisplayName.test.js
       - server/utils/presenceStore.js
       - server/utils/beoHandlers.js
       - server/utils/staffShiftHandlers.js
       - server/utils/marketingHandlers.js
       - server/utils/globalSearch.js
       - server/utils/contractorSeed.js
+      - server/db/schema.sql
       - server/db/seedTestData.js
-    depends_on: [core]
-    review: [code-review, consistency-check, security-review]
-  - id: client
-    tasks: [10, 11, 12]
-    footprint:
-      - client/src/**
-    depends_on: [core, server]
-    review: [code-review, ui-ux-review]
+      - server/scripts/refreshDisplayNames.js
+      - server/scripts/staffPaymentImport/importFromSheet.js
+      - server/routes/**
+      - client/src/utils/preferredName.js
+      - client/src/utils/preferredName.test.js
+      - client/src/pages/**
+      - client/src/components/adminos/drawers/ShiftDrawer.js
+      - client/src/index.css
+    depends_on: []
+    # database-review for the schema add + the backfill that mutates prod rows;
+    # security-review for the new admin router and the public tip-page reads;
+    # consistency-check because a 30-site column swap IS the cross-cutting
+    # consistency invariant.
+    review: [code-review, database-review, consistency-check, security-review]
+    review_checkpoints:
+      - after_task: 4
+        agents: [database-review]
+      - after_task: 9
+        agents: [code-review, consistency-check]
+      - after_task: 13
+        agents: [security-review]
 ---
 
 # Staff Display Name Implementation Plan
@@ -315,7 +330,7 @@ const REJECTED = [
   ['Nicholas or Nick', 'three words'],
   ['Bar2Go', 'contains a digit'],
   ['Chip!', 'contains a symbol'],
-  ['Abcdefghijklmnopqrstuvwxyz', 'over 20 characters'],
+  ['Abcdefghijklmnopqrstuvwxyzabcd', 'thirty characters, over the 20 cap'],
 ];
 
 for (const [name, why] of REJECTED) {
@@ -835,7 +850,8 @@ git commit -m "feat(staff-name): backfill with opt-in review stamp and --check a
 - Modify: `server/routes/me.js` (PATCH `/tip-page`, `:147-173`)
 - Modify: `server/routes/staffPortal.js` (PATCH `/profile`, `:261`)
 - Modify: `server/routes/admin/users.js` (PUT `/users/:id/profile` at `:302`, upsert params at **[verified]** `:349-358`; seed-from-application path at `:172-190`)
-- Modify: `server/routes/admin/contractorTipPage.js` (**[verified]** `:60-63`, the admin override the first draft of the spec missed entirely)
+- Modify: `server/routes/admin/contractorTipPage.js` (**[verified]** `:60-65`, the admin override the first draft of the spec missed entirely)
+- Modify: `server/scripts/staffPaymentImport/importFromSheet.js:294` (spec §4.2; missing from the first draft of this plan)
 - Modify: `server/routes/agreement.js` (POST `/`, after the agreements upsert commits)
 - Modify: `server/utils/contractorSeed.js` (**[verified]** the upsert spans `:17-78`)
 - Modify: `server/db/seedTestData.js` (`:59`, `:97`)
@@ -1040,12 +1056,14 @@ Add the same two imports. Before the transaction opens, read the previous value:
   const prevPreferredName = prevRow.rows[0]?.preferred_name ?? null;
 ```
 
-In the `fieldErrors` block at `:87-92`, alongside the existing phone checks:
+In the `fieldErrors` block (**[verified]** `:87-92`, where `validatePhone` already runs), alongside the existing phone checks:
 
 ```js
   const nameCheck = validatePreferredNameChange(preferred_name, prevPreferredName);
   if (!nameCheck.valid) fieldErrors.preferred_name = nameCheck.error;
 ```
+
+Blank gets a hard 400 here, and that is **intentional and different from the admin paths**. This is the staff-facing step 4 form where the name is a required field (it already carried a `*` and a required rule); "Tell us what to call you." is the correct response to an empty submit. The blank-is-legal carve-out exists only for admins editing someone else's skeleton profile.
 
 Use `nameCheck.value` in place of `preferred_name` in **both** parameter arrays: the UPDATE at `:153` and the INSERT at `:174`. After `COMMIT` and after `client.release()` (**[verified]** the handler releases in a `finally`, so a pool-based call in the tail is safe):
 
@@ -1062,13 +1080,24 @@ Add the same two imports. Before the `preferred_name` handling at `:147`:
   const prevPreferredName = prevRow.rows[0]?.preferred_name ?? null;
 ```
 
-Replace the block at `:147-150`:
+**[verified]** the existing block is lines **147-151** (the closing `}` is on 151), not 147-150. Replace this exact text:
+
+```js
+  if ('preferred_name' in updates) {
+    const t = String(updates.preferred_name || '').trim();
+    if (!t) throw new ValidationError('preferred_name cannot be blank');
+    updates.preferred_name = t;
+  }
+```
+
+with:
 
 ```js
   if ('preferred_name' in updates) {
     const check = validatePreferredNameChange(updates.preferred_name, prevPreferredName);
     // ValidationError's FIRST argument is a fieldErrors object, not a message
-    // string (server/utils/errors.js:12).
+    // string (server/utils/errors.js:12). The existing line here passes a bare
+    // string, which lands in the fieldErrors slot; do not copy that pattern.
     if (!check.valid) throw new ValidationError({ preferred_name: check.error });
     updates.preferred_name = check.value;
   }
@@ -1113,26 +1142,43 @@ No `previousPreferredName` there: seeding fills a blank profile rather than chan
 
 - [ ] **Step 8: Wire `admin/contractorTipPage.js` (the missed fourth path)**
 
-Add the same two imports. Replace the block at `:60-63`:
+Add the same two imports. **[verified]** the block is lines **60-65**, not 60-63: `:64` is the closing `);` of the query call and `:65` is the closing `}` of the `if`. The first draft of this plan cited 60-63 and marked it verified, which would have left a dangling `);` and `}` and broken the parse. Match on the text, not the range. Replace:
+
+```js
+  if ('preferred_name' in req.body) {
+    await pool.query(
+      'UPDATE contractor_profiles SET preferred_name = $1, updated_at = NOW() WHERE user_id = $2',
+      [String(req.body.preferred_name || '').trim() || null, userId]
+    );
+  }
+```
+
+with:
 
 ```js
   if ('preferred_name' in req.body) {
     const prevRow = await pool.query('SELECT preferred_name FROM contractor_profiles WHERE user_id = $1', [userId]);
     const prevPreferredName = prevRow.rows[0]?.preferred_name ?? null;
-    // Blank stays legal on the admin path, same as admin/users.js.
-    if (String(req.body.preferred_name || '').trim() !== '') {
+    // Blank stays legal on the admin path, same as admin/users.js. `nextName`
+    // is declared OUTSIDE the guard so the validated, whitespace-normalized
+    // value is what reaches the column, not the raw body string.
+    let nextName = String(req.body.preferred_name || '').trim() || null;
+    if (nextName !== null) {
       const check = validatePreferredNameChange(req.body.preferred_name, prevPreferredName);
       if (!check.valid) throw new ValidationError({ preferred_name: check.error });
+      nextName = check.value;
     }
     await pool.query(
       'UPDATE contractor_profiles SET preferred_name = $1, updated_at = NOW() WHERE user_id = $2',
-      [String(req.body.preferred_name || '').trim() || null, userId]
+      [nextName, userId]
     );
     await refreshDisplayName(userId, pool, { previousPreferredName: prevPreferredName });
   }
 ```
 
 Confirm `ValidationError` is imported in this file; add it from `../../utils/errors` if not.
+
+Apply the same `nextName` shape in Step 7's `admin/users.js` edit: declare the validated value outside the non-empty guard so the normalized string, not the raw body value, lands in the upsert parameter array.
 
 - [ ] **Step 9: Wire `agreement.js` and the seeds**
 
@@ -1152,6 +1198,16 @@ Confirm `ValidationError` is imported in this file; add it from `../../utils/err
 ```
 
 `server/db/seedTestData.js`, after each of the two `contractor_profiles` INSERTs (`:59`, `:97`), call `refreshDisplayName(<userId>, client)`. Without this, every route test that asserts on a staff name sees a NULL `display_name`.
+
+`server/scripts/staffPaymentImport/importFromSheet.js:294` creates profiles during a sheet import (`INSERT INTO contractor_profiles (user_id, preferred_name, phone, email)`). It is named in spec §4.2 and was missing from the first draft of this plan entirely. Add the refresh after that INSERT:
+
+```js
+          await refreshDisplayName(userId, client);
+```
+
+using whatever client that script already holds. Without it, imported staff land with a NULL `display_name` and render by bare preferred name until someone re-runs the backfill.
+
+**Do not** add a refresh call in `admin/users.js`'s seed-from-application path if that path calls `seedContractorProfileFromApplication`, which now refreshes internally. One call, in `contractorSeed.js`. Check which applies before writing both.
 
 - [ ] **Step 10: Run every suite these files reach**
 
@@ -1175,8 +1231,8 @@ Expected: PASS. Any failure here is a real regression; read it before adjusting 
 
 ```bash
 cd ~/projects/os
-git add server/routes/contractor.js server/routes/me.js server/routes/staffPortal.js server/routes/admin/users.js server/routes/admin/contractorTipPage.js server/routes/agreement.js server/utils/contractorSeed.js server/db/seedTestData.js server/routes/staffPortal.displayName.test.js
-git commit -m "feat(staff-name): validate and refresh display_name on all six write paths" -- server/routes/contractor.js server/routes/me.js server/routes/staffPortal.js server/routes/admin/users.js server/routes/admin/contractorTipPage.js server/routes/agreement.js server/utils/contractorSeed.js server/db/seedTestData.js server/routes/staffPortal.displayName.test.js
+git add server/routes/contractor.js server/routes/me.js server/routes/staffPortal.js server/routes/admin/users.js server/routes/admin/contractorTipPage.js server/routes/agreement.js server/utils/contractorSeed.js server/db/seedTestData.js server/scripts/staffPaymentImport/importFromSheet.js server/routes/staffPortal.displayName.test.js
+git commit -m "feat(staff-name): validate and refresh display_name on all six write paths" -- server/routes/contractor.js server/routes/me.js server/routes/staffPortal.js server/routes/admin/users.js server/routes/admin/contractorTipPage.js server/routes/agreement.js server/utils/contractorSeed.js server/db/seedTestData.js server/scripts/staffPaymentImport/importFromSheet.js server/routes/staffPortal.displayName.test.js
 ```
 
 ---
@@ -1318,10 +1374,18 @@ Update the intro paragraph at `:418-423` to drop "Your name is required":
 
 `GET /api/contractor` returns `display_name` once Task 10 Step 4 widens all three of its return paths; until then this degrades to `preferred_name`, which is why the fallback is there.
 
-- [ ] **Step 6: Verify the client builds**
+- [ ] **Step 6: Verify the client builds, then walk step 5**
 
 Run: `cd ~/projects/os/client && CI=true npx react-scripts build`
 Expected: build succeeds with no lint errors. `CI=true` makes warnings fatal, which is what the pre-push hook gates on.
+
+This step deletes a form field, removes a validation rule, and adds a new read-only line, so a build is not enough. On the dev server, as a test staffer who has completed step 4, open `/payday-protocols`:
+- there is **no** name input anywhere on the page
+- the tip-page block reads "Your tip page will read **Name L.**" with their actual display name
+- "Change this" navigates to `/contractor-profile`
+- the intro paragraph no longer says the name is required
+- submitting the form with only a payment method still succeeds and completes onboarding
+- afterwards, their `contractor_profiles.preferred_name` is unchanged from what step 4 saved
 
 - [ ] **Step 7: Commit**
 
@@ -1353,45 +1417,98 @@ git commit -m "fix(staff-name): step 5 stops asking for a name (this is where Tw
 - `server/utils/globalSearch.js:117,125`
 - `server/routes/beo.js:100` and `:140-204`
 
-- [ ] **Step 1: Swap the SQL, three-deep**
+- [ ] **Step 1: Swap the SQL, per the table below**
 
-The mechanical form everywhere:
+**There is no single mechanical rewrite.** The first draft of this plan said "the mechanical form everywhere" and named two exceptions; there are in fact five distinct shapes, and applying the generic form to the wrong one either publishes an email address on a public page or produces a column the client never reads. **[verified]** every expression below was read out of the file at HEAD.
 
-```sql
--- before
-COALESCE(cp.preferred_name, u.email) AS staff_name
--- after
-COALESCE(cp.display_name, cp.preferred_name, u.email) AS staff_name
-```
+**Address by text, not by line number.** `admin/contractorTipPage.js` is edited by Task 5 before this task runs, so every line number in it has already shifted. Match on the quoted expression.
 
-`presenceStore.js:12` (**not** line 8) is the same swap inside a constant:
+---
+
+**Shape A. `COALESCE(cp.preferred_name, u.email)` -> prepend `cp.display_name`.**
+
+| file | current expression |
+|---|---|
+| `shifts.js:200` | `COALESCE(cp.preferred_name, u.email) AS name` |
+| `shifts.js:243,245` | `'name', COALESCE(cp.preferred_name, u.email)` and its `ORDER BY` |
+| `shifts.js:297` | `COALESCE(cp.preferred_name, u.email) AS staff_name,` |
+| `calendar.js:179` | `COALESCE(cp.preferred_name, u.email) AS name` |
+| `staffShiftActions.js:840` | `COALESCE(cp.preferred_name, u.email) AS display_name` |
+| `proposals/cancel.js:170` | `DISTINCT COALESCE(cp.preferred_name, u.email) AS name` |
+| `beo.js:100` | `COALESCE(cp.preferred_name, u.email) AS name` |
+
+Each becomes `COALESCE(cp.display_name, cp.preferred_name, u.email) AS <same alias>`.
+
+---
+
+**Shape B. Bare `cp.preferred_name AS <alias>` with NO email term in the query -> two-deep only.**
+
+| file | current expression |
+|---|---|
+| `publicTip.js:83` | `cp.preferred_name AS display_name,` |
+| `publicTip.js:227` | `SELECT u.id AS user_id, cp.preferred_name AS display_name` |
+| `staffPortal.js:99` | `cp.preferred_name AS requester_preferred_name,` |
+| `admin/applications.js:164` | `cp.preferred_name AS actor_name` |
+| `beoHandlers.js:223` | `cp.preferred_name AS staff_name,` |
+| `staffShiftHandlers.js:306,544` | `cp.preferred_name AS staff_name, cp.phone AS staff_phone` |
+| `marketingHandlers.js:390` | `cp.preferred_name AS bartender_name,` |
+| `admin/contractorTipPage.js` | `cp.preferred_name AS bartender_name` (two occurrences) |
+
+Each becomes `COALESCE(cp.display_name, cp.preferred_name) AS <same alias>`.
+
+**`publicTip.js` is the reason this shape exists as its own rule.** **[verified]** both of its queries sit under an explicit "public-safe column allowlist" comment and have no `u.email` term. Adding one, as the generic three-deep form would, publishes a bartender's email address to anyone holding a public tip link. Two-deep, never three, on these two.
+
+**`beoHandlers.js` and `staffShiftHandlers.js` belong here and not in the salutation list**, which is counterintuitive enough to be worth stating: their `staff_name` flows to `sendAndLogSms({ recipientName })`, which **[verified]** writes only to the `sms_messages.recipient_name` log column (`server/utils/sms.js:151,168,181`). The message `body` is composed separately and never uses it. This is a list-display label, so it takes the display name.
+
+---
+
+**Shape C. Bare `cp.preferred_name` with NO alias -> select `display_name` ALONGSIDE, do not replace.**
+
+The client reads the JSON key `preferred_name` directly, so replacing the column renames the key and silently breaks the consumer.
+
+| file | current expression | consumer |
+|---|---|---|
+| `messages.js:20` | `SELECT u.id AS user_id, cp.preferred_name, u.email, cp.phone, ag.sms_consent` | `AdminDashboard.js:632` |
+| `adminCoverSwaps.js:81` | `cp.preferred_name, cp.phone, cp.position` | admin cover-swap UI |
+| `shifts.js:486` | `SELECT sr.*, u.email, cp.preferred_name, cp.phone` | `AdminDashboard.js:486`, `ShiftDrawer.js:371,650,653` |
+
+Each becomes `..., cp.preferred_name, cp.display_name, ...`. **The client-side halves of these three are Task 12**, not this task; they are listed here only so the pairing is visible.
+
+---
+
+**Shape D. A JS display expression fed by a SELECT above it -> change BOTH halves.**
+
+In `admin/contractorTipPage.js`, three SELECTs feed three display expressions. Changing only the display half yields `undefined`.
+
+| SELECT (add `cp.display_name`) | display expression | becomes |
+|---|---|---|
+| `SELECT pp.tip_page_token, pp.stripe_payment_link_id, cp.preferred_name` (first) | `displayName: row.preferred_name,` | `displayName: row.display_name \|\| row.preferred_name,` |
+| same SELECT text (second occurrence) | `displayName: row.preferred_name,` | `displayName: row.display_name \|\| row.preferred_name,` |
+| `SELECT pp.tip_page_token, pp.stripe_payment_link_url, cp.preferred_name` | `const displayName = (row && row.preferred_name) \|\| 'your bartender';` | `const displayName = (row && (row.display_name \|\| row.preferred_name)) \|\| 'your bartender';` |
+
+---
+
+**Shape E. Constants, custom chains, filters and sorts.**
+
+`presenceStore.js:12` (**not** line 8) is a constant with an `INITCAP` fallback; preserve it:
 
 ```js
 const NAME_SQL = "COALESCE(cp.display_name, cp.preferred_name, INITCAP(SPLIT_PART(u.email, '@', 1)))";
 ```
 
-`globalSearch.js:117` uses a different fallback chain; preserve it and prepend:
+`globalSearch.js:117` has its own chain; preserve the tail and prepend:
 
 ```sql
            COALESCE(cp.display_name, cp.preferred_name, a.full_name, u.email) AS name,
 ```
 
-Search filters must match what the admin can see, or typing a name you are looking at fails to find it. Add `display_name` to each:
+Search filters must match what the admin can see, or typing the name you are looking at fails to find it:
 - `globalSearch.js:125`: add `OR LOWER(cp.display_name) LIKE $1 ESCAPE '\\'`
 - `messages.js:34`: `AND (cp.display_name ILIKE $1 OR cp.preferred_name ILIKE $1 OR u.email ILIKE $1)`
 
-`messages.js:37` sorts; change the ORDER BY to `COALESCE(cp.display_name, cp.preferred_name)` so the recipient picker is alphabetized on what is rendered.
+`messages.js:37` sorts; change the `ORDER BY` to `COALESCE(cp.display_name, cp.preferred_name) ASC` so the recipient picker is alphabetized on what is rendered. That query is Shape C, so it now returns both columns and the sort has something real to sort on.
 
-**`admin/contractorTipPage.js` needs both halves.** The display expressions at `:110`, `:160` and `:211` are fed by SELECTs a few lines above at `:91`, `:145` and `:190`. Add `cp.display_name` to each SELECT, then:
-
-```js
-// :110 and :160
-    displayName: row.display_name || row.preferred_name,
-// :211
-  const displayName = (row && (row.display_name || row.preferred_name)) || 'your bartender';
-```
-
-`shifts.js:486` (`SELECT sr.*, u.email, cp.preferred_name, cp.phone`) selects the bare column, so add `cp.display_name` alongside rather than replacing it, and update the consumer to prefer `display_name`.
+---
 
 **Do not touch** `server/routes/shifts.queries.js:42`. It already extracts a single initial from `preferred_name` for a cover marker and is correct as-is.
 
@@ -1449,8 +1566,12 @@ Expected: PASS. Because Task 5 now refreshes `display_name` in `seedTestData.js`
 
 ```bash
 cd ~/projects/os
-git add server/routes/shifts.js server/routes/calendar.js server/routes/staffShiftActions.js server/routes/proposals/cancel.js server/routes/publicTip.js server/routes/admin/contractorTipPage.js server/routes/messages.js server/routes/adminCoverSwaps.js server/routes/staffPortal.js server/routes/admin/applications.js server/routes/beo.js server/utils/presenceStore.js server/utils/beoHandlers.js server/utils/staffShiftHandlers.js server/utils/marketingHandlers.js server/utils/globalSearch.js
-git commit -m "refactor(staff-name): read display_name on roster, search and document surfaces" -- server/routes/shifts.js server/routes/calendar.js server/routes/staffShiftActions.js server/routes/proposals/cancel.js server/routes/publicTip.js server/routes/admin/contractorTipPage.js server/routes/messages.js server/routes/adminCoverSwaps.js server/routes/staffPortal.js server/routes/admin/applications.js server/routes/beo.js server/utils/presenceStore.js server/utils/beoHandlers.js server/utils/staffShiftHandlers.js server/utils/marketingHandlers.js server/utils/globalSearch.js
+SRC="server/routes/shifts.js server/routes/calendar.js server/routes/staffShiftActions.js server/routes/proposals/cancel.js server/routes/publicTip.js server/routes/admin/contractorTipPage.js server/routes/messages.js server/routes/adminCoverSwaps.js server/routes/staffPortal.js server/routes/admin/applications.js server/routes/beo.js server/utils/presenceStore.js server/utils/beoHandlers.js server/utils/staffShiftHandlers.js server/utils/marketingHandlers.js server/utils/globalSearch.js"
+# Add every fixture file Step 3 told you to update. A commit whose own suite
+# fails is not a checkpoint; list them explicitly (never `git add -A`).
+FIXTURES="<the *.test.js paths you actually edited in Step 3>"
+git add $SRC $FIXTURES
+git commit -m "refactor(staff-name): read display_name on roster, search and document surfaces" -- $SRC $FIXTURES
 ```
 
 ---
@@ -1503,8 +1624,12 @@ Expected: PASS. If a sorted-list or array-order assertion fails, the cause is th
 
 ```bash
 cd ~/projects/os
-git add server/routes/admin/payroll.js server/routes/admin/users.js server/routes/stripePayouts.js
-git commit -m "refactor(staff-name): money SCREENS read display_name (records stay legal)" -- server/routes/admin/payroll.js server/routes/admin/users.js server/routes/stripePayouts.js
+SRC="server/routes/admin/payroll.js server/routes/admin/users.js server/routes/stripePayouts.js"
+# Same rule as Task 7: any fixture whose expected ordering you fixed in Step 2
+# belongs in this commit, or this checkpoint ships with a red suite.
+FIXTURES="<the *.test.js paths you actually edited in Step 2>"
+git add $SRC $FIXTURES
+git commit -m "refactor(staff-name): money SCREENS read display_name (records stay legal)" -- $SRC $FIXTURES
 ```
 
 ---
@@ -1544,6 +1669,19 @@ await pool.query(
 );
 ```
 
+**[verified] the teardown must delete this row first.** `staff_payment_history.contractor_id` is `INTEGER NOT NULL REFERENCES users(id)` with **no `ON DELETE CASCADE`** (`server/db/schema.sql:4019`), so the Task 5 `after()` hook's bare `DELETE FROM users` raises a foreign-key violation, fails teardown, and strands an orphan row plus a permanently-consumed UNIQUE `row_fingerprint` in the shared dev database. Change the `after()` to:
+
+```js
+after(async () => {
+  if (server) await new Promise((r) => server.close(r));
+  if (userId) {
+    await pool.query('DELETE FROM staff_payment_history WHERE contractor_id = $1', [userId]);
+    await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+  }
+  await pool.end();
+});
+```
+
 Then:
 
 ```js
@@ -1576,12 +1714,15 @@ In `server/routes/admin/payrollTax.js`, replace line 137:
             COALESCE(cp.preferred_name, u.email) AS name,
 ```
 
-with the same legal-first precedence `paystubData.js:40` already uses:
+with the **whole** precedence chain `paystubData.js:40` uses, `cp.preferred_name` included:
 
 ```sql
             -- A 1099 is a government document, so this is the LEGAL name, not
-            -- the display name. Same precedence as paystubData.js:40.
-            COALESCE(ag.full_name, ap.full_name, u.email) AS name,
+            -- the display name. Same precedence as paystubData.js:40, INCLUDING
+            -- the cp.preferred_name term: user 61 has neither an agreement nor
+            -- an application, and a legal-only chain would put a raw email
+            -- address on a tax document.
+            COALESCE(ag.full_name, ap.full_name, cp.preferred_name, u.email) AS name,
 ```
 
 Add the joins onto the existing alias `c`, alongside the current `LEFT JOIN contractor_profiles`:
@@ -1591,7 +1732,9 @@ Add the joins onto the existing alias `c`, alongside the current `LEFT JOIN cont
   LEFT JOIN applications ap ON ap.user_id = c.user_id
 ```
 
-**[verified]** both tables have a UNIQUE `user_id`, so neither join can fan out and inflate the money totals. If nothing else in the statement references `cp` after this change, remove that join too.
+**[verified]** both tables have a UNIQUE `user_id`, so neither join can fan out and inflate the money totals. **Keep** the `LEFT JOIN contractor_profiles`: the chain still references `cp`.
+
+**[verified]** this query ends `ORDER BY total_cents DESC, name ASC`, so the tiebreaker sort now runs on the legal name. Same class of change Task 8 warns about; if a row-order assertion moves, fix the expectation, not the chain.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1930,7 +2073,7 @@ git commit -m "feat(staff-name): staff portal preferred-name copy, preview and v
 - `client/src/pages/AdminDashboard.js:256,269,486,605-639`
 - `client/src/pages/admin/StaffDashboard.js:26,27,119,126,174`
 - `client/src/pages/admin/userDetail/AdminUserDetail.js:166,350,510-520`
-- `client/src/pages/admin/userDetail/tabs/OverviewTab.js:186-189`
+- `client/src/pages/admin/userDetail/tabs/OverviewTab.js:185-189` (match by text; the enclosing `<div>` opens at `:185`)
 - `client/src/pages/staff/TipCardPage.js:110,275`
 - `server/routes/me.js:75,121` (the staff tip-page GET that feeds TipCardPage)
 
@@ -1986,7 +2129,7 @@ In `OverviewTab.js`, add `legalName` to the destructured props, and in the **non
 </div>
 ```
 
-In the **editing** branch at `:186-189`, relabel the input and cap its length:
+In the **editing** branch, relabel the input and cap its length. **[verified]** the enclosing `<div>` opens at `:185` and the block runs `:185-189`; replacing only `186-189` leaves an unbalanced element and fails the build. Match on the text, replacing the whole `<div>` that contains the "Preferred name" label:
 
 ```jsx
 <div>
@@ -2028,6 +2171,8 @@ Visibility, never a gate. The name is live the moment it is typed; this is how D
 - Modify: `server/routes/admin/index.js` (**[verified]** a real composition router)
 - Test: `server/routes/admin/nameNotices.test.js`
 - Modify: `client/src/pages/admin/overview/queueItems.js` (`buildStaffingItems` at `:26`)
+- Modify: `client/src/pages/admin/overview/queueItems.test.js` (**[verified]** this suite exists and already asserts on `buildStaffingItems`; its arity changes from 2 to 4)
+- Modify: `client/src/index.css` (the `.queue-meta-btn` rule, Step 5)
 - Modify: `client/src/pages/admin/overview/NeedsYouStrip.js` (`queueItemHref` at `:16`, `QUEUE_ICON` at `:27`)
 - Modify: `client/src/pages/admin/overview/OverviewPage.js` (`:231`)
 
@@ -2045,7 +2190,16 @@ Create `server/routes/admin/nameNotices.test.js`. Copy the harness from Task 5 S
 - `const EMAIL = \`nn-${NONCE}@example.com\`;` and an admin role
 - the profile seed: `[userId, 'TwistidTreets']`, the agreement seed: `[userId, 'Nevver Sayles', EMAIL]`
 - the mount: `app.use('/api/admin', require('./nameNotices'));`
-- add a second, staff-role user and token (`staffUserId` / `staffToken`) for the permission test, since the Task 5 harness defines only one
+- add a second, staff-role user and token (`staffUserId` / `staffToken`) for the permission test, since the Task 5 harness defines only one. **Delete it in `after()` too**, or it leaks into the shared dev database on every run:
+
+```js
+after(async () => {
+  if (server) await new Promise((r) => server.close(r));
+  if (userId) await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+  if (staffUserId) await pool.query('DELETE FROM users WHERE id = $1', [staffUserId]);
+  await pool.end();
+});
+```
 
 Then:
 
@@ -2175,6 +2329,22 @@ Expected: PASS, all 5 tests
 
 The first draft of this plan built the endpoint and never called it, so the strip would have accumulated one permanent row per staff member. The ack must be wired in this same task.
 
+**[verified]** `client/src/pages/admin/overview/queueItems.test.js` exists and calls `buildStaffingItems`. Its existing calls pass two arguments; the new parameters are optional in effect (`nameNotices || []` and `onAck` unused when the list is empty), so those calls keep passing, but add one case for the new item type so the notice is covered:
+
+```js
+test('buildStaffingItems emits an info-priority name notice per unreviewed name', () => {
+  const items = buildStaffingItems([], 0, [
+    { user_id: 7, legal_name: 'Nevver Sayles', preferred_name: 'TwistidTreets', display_name: 'TwistidTreets S.' },
+  ], () => {});
+  const row = items.find((i) => i.type === 'name-notice');
+  expect(row).toBeTruthy();
+  expect(row.priority).toBe('info');
+  expect(row.title).toBe('Nevver Sayles goes by TwistidTreets');
+  expect(row.target).toBe('user');
+  expect(row.ref).toBe(7);
+});
+```
+
 In `client/src/pages/admin/overview/queueItems.js`, extend `buildStaffingItems`:
 
 ```js
@@ -2214,10 +2384,22 @@ and make the `meta` cell clickable when the item carries a `metaAction`, stoppin
 
 ```jsx
 {a.metaAction
-  ? <button type="button" className="queue-meta-btn"
+  ? <button type="button" className="queue-meta queue-meta-btn"
       onClick={(e) => { e.stopPropagation(); a.metaAction(); }}>{a.meta}</button>
   : a.meta}
 ```
+
+**[verified]** `.queue-meta` exists in `client/src/index.css` (`:12826`, plus a light-skin override at `:11637`) but `.queue-meta-btn` does **not**. Composing both keeps the existing type treatment; add the button reset next to the existing `.queue-meta` rule at `:12826` so it does not render as a default browser button inside the strip:
+
+```css
+html[data-app="admin-os"] .queue-meta-btn {
+  background: none; border: 1px solid var(--line); border-radius: 4px;
+  padding: 1px 6px; cursor: pointer; color: inherit; font: inherit;
+}
+html[data-app="admin-os"] .queue-meta-btn:hover { border-color: var(--ink-2); }
+```
+
+`client/src/index.css` is in this task's Files list and commit pathspec because of this.
 
 In `OverviewPage.js`, fetch the notices and supply the ack callback:
 
@@ -2263,8 +2445,9 @@ On the dev server, as an admin:
 
 ```bash
 cd ~/projects/os
-git add server/routes/admin/nameNotices.js server/routes/admin/nameNotices.test.js server/routes/admin/index.js client/src/pages/admin/overview/queueItems.js client/src/pages/admin/overview/NeedsYouStrip.js client/src/pages/admin/overview/OverviewPage.js
-git commit -m "feat(staff-name): informational Needs Attention notice with a working Got it action" -- server/routes/admin/nameNotices.js server/routes/admin/nameNotices.test.js server/routes/admin/index.js client/src/pages/admin/overview/queueItems.js client/src/pages/admin/overview/NeedsYouStrip.js client/src/pages/admin/overview/OverviewPage.js
+P="server/routes/admin/nameNotices.js server/routes/admin/nameNotices.test.js server/routes/admin/index.js client/src/pages/admin/overview/queueItems.js client/src/pages/admin/overview/queueItems.test.js client/src/pages/admin/overview/NeedsYouStrip.js client/src/pages/admin/overview/OverviewPage.js client/src/index.css"
+git add $P
+git commit -m "feat(staff-name): informational Needs Attention notice with a working Got it action" -- $P
 ```
 
 ---
@@ -2304,10 +2487,19 @@ CI=true npx react-scripts build
 
 ```bash
 cd ~/projects/os
-git diff main --stat -- server/routes/shifts.approval.js server/utils/lastMinuteStaffingConfirmation.js server/utils/eventEveSms.js server/utils/lastMinuteAlert.js server/utils/payrollDisputeNotify.js server/utils/paystubData.js
+git diff main --stat -- server/routes/shifts.approval.js server/utils/lastMinuteStaffingConfirmation.js server/utils/eventEveSms.js server/utils/lastMinuteAlert.js server/utils/payrollDisputeNotify.js server/utils/paystubData.js server/routes/auth.js server/routes/shifts.queries.js
 ```
 
-Expected: **empty output.** Every one of these must still read the bare `preferred_name` ("Hi Fareed", not "Hi Fareed S."), and `paystubData.js` must still resolve legal-name-first. A non-empty diff here means a swap went somewhere it should not have.
+Expected: **empty output.** Every one of these must still read the bare `preferred_name` ("Hi Fareed", not "Hi Fareed S."). `auth.js:317,367` feeds the staff shell user pill, where someone is looking at their own name; `shifts.queries.js:42` already extracts a cover-marker initial; and `paystubData.js` must still resolve legal-name-first. A non-empty diff here means a swap went somewhere it should not have.
+
+Then confirm the reverse, that the swap actually happened everywhere the table said:
+
+```bash
+cd ~/projects/os
+rg -n "COALESCE\(cp\.preferred_name" server --glob '!*.test.js'
+```
+
+Expected: **no output.** Every remaining `cp.preferred_name` in a read position should now be preceded by `cp.display_name` in the same COALESCE. Hits here are Shape A or B sites the table listed and the swap missed.
 
 - [ ] **Step 5: Commit any fixture updates**
 
@@ -2332,7 +2524,19 @@ node -r dotenv/config server/scripts/refreshDisplayNames.js --check
 
 Never pass `--stamp-existing` again. A later re-run with that flag would silently ack every pending notice, which is the exact state the notice exists to prevent. Plain re-runs are always safe.
 
-Note that the backfill trims stored `preferred_name` whitespace, which is not reversible from the column alone. It is 8 rows and the trim is cosmetic, but if a true rollback is ever needed, the column values come from a database snapshot, not from the script.
+**Run it promptly after the deploy.** The write paths go live with the deploy, but the stamp lands only when the script runs. Any staffer who changes their name in that window has `preferred_name_reviewed_at` correctly set to NULL, and `--stamp-existing`'s `COALESCE(..., NOW())` then stamps exactly those rows, acking a genuinely pending notice. The window is minutes if you run the script right after the deploy, and the cost is one missed notice, not a wrong name. If it matters, check the notice list before and after:
+
+```bash
+node -r dotenv/config -e "require('./server/db').pool.query(\"SELECT user_id, preferred_name FROM contractor_profiles WHERE preferred_name_reviewed_at IS NULL AND preferred_name IS NOT NULL\").then(r=>{console.log(r.rows);process.exit(0)})"
+```
+
+### Rollback
+
+Reverting the whole batch is clean: the columns are additive, and every read is `COALESCE(cp.display_name, cp.preferred_name, ...)`, so removing the reads falls back to exactly today's behavior.
+
+**Reverting Task 5 alone is not clean** and is the one hazard worth naming. If the write paths are reverted while Tasks 7, 8 and 12 remain, `display_name` stops being maintained but keeps its last value, and every read prefers that stale non-NULL string forever. The three-deep COALESCE cannot rescue a stale value, only a missing one, so the failure is silent: people render under names they have since changed. If Task 5 has to come out, either revert the read swaps with it or run `refreshDisplayNames.js` on a schedule until it goes back in.
+
+The backfill also trims stored `preferred_name` whitespace, which is not reversible from the column alone. It is 8 rows and cosmetic, but a true rollback of that takes a database snapshot, not the script.
 
 ### Owed to Dallas: four rows no script touches (spec §6)
 
