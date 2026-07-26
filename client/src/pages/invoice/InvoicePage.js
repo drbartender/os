@@ -75,6 +75,10 @@ export default function InvoicePage() {
   const [stripePromise, setStripePromise] = useState(null);
   const [showPayment, setShowPayment] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
+  // "Save as PDF" busy/error state. pdfError steers the client to the browser
+  // print path (a @media print stylesheet renders a clean B&W document).
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState('');
   const printRef = useRef(null);
 
   useEffect(() => {
@@ -121,17 +125,39 @@ export default function InvoicePage() {
   }, [token, toast]);
 
   const handleSavePdf = useCallback(async () => {
-    const html2pdf = (await import('html2pdf.js')).default;
     const element = printRef.current;
     if (!element) return;
-    const filename = `${invoice.invoice_number}-${invoice.label.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`;
-    html2pdf().set({
-      margin: [0.5, 0.5, 0.5, 0.5],
-      filename,
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2 },
-      jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' },
-    }).from(element).save();
+    setPdfError('');
+    setPdfBusy(true);
+    try {
+      const html2pdf = (await import('html2pdf.js')).default;
+      const filename = `${invoice.invoice_number}-${invoice.label.replace(/[^a-zA-Z0-9]/g, '-')}.pdf`;
+      await html2pdf().set({
+        margin: [0.5, 0.5, 0.5, 0.5],
+        filename,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: {
+          scale: 2,
+          // Strip the decorative feTurbulence paper-grain SVG from the capture
+          // clone, keeping the paper gradient underneath. WebKit taints the
+          // canvas after drawing that SVG image, so toDataURL() throws
+          // SecurityError on iOS Safari (Sentry DRBARTENDER-CLIENT-9).
+          // Stripped for every browser so PDF output is uniform; the
+          // on-screen document is untouched.
+          onclone: (clonedDoc) => {
+            clonedDoc.querySelectorAll('.invoice-document').forEach((el) => {
+              el.style.backgroundImage = 'linear-gradient(180deg, var(--paper) 0%, var(--card-bg) 100%)';
+            });
+          },
+        },
+        jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' },
+      }).from(element).save();
+    } catch (err) {
+      console.error('Invoice PDF generation failed:', err);
+      setPdfError('We couldn\'t generate the PDF in this browser. Please use your browser\'s Print option and choose "Save as PDF" instead.');
+    } finally {
+      setPdfBusy(false);
+    }
   }, [invoice]);
 
   if (loading) return <div className="invoice-page"><div className="loading"><div className="spinner" />Loading...</div></div>;
@@ -324,8 +350,10 @@ export default function InvoicePage() {
             </div>
           )}
 
-          <button className="btn btn-secondary invoice-pdf-btn" onClick={handleSavePdf}>
-            Save as PDF
+          <FormBanner error={pdfError} />
+
+          <button className="btn btn-secondary invoice-pdf-btn" onClick={handleSavePdf} disabled={pdfBusy}>
+            {pdfBusy ? 'Preparing PDF...' : 'Save as PDF'}
           </button>
 
           <p className="invoice-actions-footnote">
