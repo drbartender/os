@@ -27,27 +27,42 @@ helper copy reading "Use whatever you go by: your real name, a nickname, a stage
 name," and writes the answer straight over the step 4 value in
 `contractor_profiles.preferred_name`.
 
+Nevver did what the form told her she could do.
+
 ## 2. The rule
 
 A preferred name is **a personal name, not an identity**.
 
 The test, which is also the instruction we give: could a guest say it to your
 face when you introduce yourself? "Hi, I'm Chip, I'll be taking care of you
-tonight" works. "Hi, I'm TwistedTreats" does not. "Hi, I'm Miss Taylor" is a form
+tonight" works. "Hi, I'm LumpyIceCream" does not. "Hi, I'm Miss Taylor" is a form
 of address rather than a name, which is the tell.
 
 The field exists to be inclusive. Alexander gets to be Alexis. Mohammad gets to
 be Fareed. Tashea gets to be Shea. It does not exist to let anyone trade under a
 bar handle.
 
-Every staff name shown as an identifier carries a last initial. There are no
+**The preferred name is authoritative.** It is what we call the person, not a
+claim to be checked against anything. The legal name supplies one character, the
+last initial, and never appears on a screen otherwise. If someone gives their
+name as Joey, they are Joey K. forever, and nobody infers a Joseph.
+
+Every staff name shown as an identifier carries that last initial. There are no
 mononyms. Nobody appears as "Cher."
+
+**Instructions are the enforcement.** There is no approval queue, no review
+state, and no heuristic sorting nicknames into legitimate and suspicious. Those
+were compensation for copy that invited the wrong answer. Fix the copy and the
+answers come back right.
 
 ## 3. Copy
 
+This is the substance of the change. Everything below it is plumbing.
+
 ### 3.1 Step 4, Contractor Profile (`client/src/pages/ContractorProfile.js`)
 
-Replaces the current bare `Preferred Name *` label with no helper text.
+Replaces the current bare `Preferred Name *` label, which has no helper text at
+all.
 
 > **What do I call you?**
 > Fill in the blank: "Hi, I'm \_\_\_\_\_\_, I'll be taking care of you tonight."
@@ -61,12 +76,14 @@ The preview line is live, recomputed as they type, using the surname from their
 signed agreement. Step 3 is the agreement, so in the standard flow the legal name
 is on file before they reach this field; where it is missing or single-token the
 preview degrades to the short name alone rather than inventing an initial.
-Someone typing a handle watches "SaltyBannanas S." appear underneath.
+
+The preview is doing real work. Someone typing a handle watches
+"LumpyIceCream S." appear underneath, in the same breath as a sentence about
+introducing themselves to a guest.
 
 Deliberately **no** prohibition list ("not a stage name, not a business name").
 A field whose purpose is that Alexander gets to be Alexis should not open by
-listing what you are not allowed to be. The framing does the eliciting; §5 does
-the enforcing.
+listing what you are not allowed to be. The framing does the eliciting.
 
 ### 3.2 Staff portal (`client/src/pages/staff/account/ProfileSection.js`)
 
@@ -84,20 +101,36 @@ Same label, same preview, minus the fill-in-the-blank line. Replaces
 (`server/routes/payment.js:162-168`); `createTipPaymentLink` takes the display
 name off the profile instead (`server/routes/payment.js:223`).
 
-This is what actually closes the stage-name door, and it is the only way to stop
-step 5 from silently overwriting step 4.
+This is the single highest-value change in the spec. It deletes the copy that
+produced the problem and stops step 5 from silently overwriting step 4.
+
+### 3.4 Format validation
+
+Narrow, mechanical, and about shape rather than judgment. It is not a filter on
+whether a name is worthy:
+
+- required, 2 to 20 characters after trim
+- one or two words (catches `Nicholas or Nick`)
+- letters, spaces, hyphens, apostrophes and periods only, so `Mary-Kate`,
+  `O'Brien` and `D.J.` pass and digits and symbols do not
+- no leading title: Miss, Ms, Mrs, Mr, Dr, Chef, Sir, Madam, Master, Coach,
+  Captain, Prof, Rev (catches `Miss Taylor`)
+
+Deliberately **no** camelCase detection. McKenna, DeShawn and LaToya are real
+names, and rejecting a real name to catch `LumpyIceCream` is a bad trade. This
+check would not have caught Nevver, and it is not meant to. The copy catches
+Nevver.
+
+Enforced client-side for immediate feedback and in the server validators for
+`contractor.js`, `me.js`, `staffPortal.js` and `admin/users.js`.
 
 ## 4. Data model
 
-Two new columns on `contractor_profiles`:
+One new column on `contractor_profiles`:
 
 ```sql
 ALTER TABLE contractor_profiles
   ADD COLUMN IF NOT EXISTS display_name VARCHAR(255);
-ALTER TABLE contractor_profiles
-  ADD COLUMN IF NOT EXISTS preferred_name_status VARCHAR(20)
-    NOT NULL DEFAULT 'pending'
-    CHECK (preferred_name_status IN ('pending', 'approved'));
 ```
 
 `display_name` is maintained, not computed at read time. Every read site becomes
@@ -110,29 +143,30 @@ to remember and becomes a column choice.
 A database trigger was considered and rejected: it puts invisible behavior on a
 table that payroll reads, and a stale display name is cosmetic where a surprise
 inside a money query is not. Explicit and greppable wins, backed by a re-runnable
-audit script (§8).
+audit script (§7).
 
 ### 4.1 The helper
 
 New `server/utils/staffDisplayName.js`, pure and unit-testable:
 
 ```
-computeDisplayName({ preferredName, legalFullName, status }) -> string | null
+computeDisplayName({ preferredName, legalFullName }) -> string | null
 ```
 
 1. Collapse whitespace and trim both inputs.
 2. `legalTokens` = legal name split on whitespace.
-3. Pick the source of the initial:
+3. Pick the source of the last initial:
    - if `legalTokens.length >= 2`, take it from the legal surname;
    - else if the preferred name has 2+ tokens, take it from the preferred name's
      own last token;
-   - else there is no initial (see §10).
-4. Pick the short name:
-   - if `status === 'approved'` and a preferred name exists, shorten it (below);
-   - otherwise use `legalTokens[0]`, so a pending or rejected entry renders by
-     legal first name.
+   - else there is no initial (see §9).
+4. Shorten the preferred name (below).
 5. Return `"<short> <Initial>."`, or `short` alone when step 3 found no initial,
-   or `null` when there is nothing at all (caller keeps its email fallback).
+   or `null` when there is no preferred name at all, in which case the caller
+   keeps its existing email fallback.
+
+The legal name is used **only** in step 3, and only for one character. It is
+never a substitute for a name the person gave us.
 
 Shortening handles the "they typed their full name" case:
 
@@ -157,14 +191,16 @@ Worked examples from live data:
 | Fareed | Mohammad F Shafiuddin | Fareed S. |
 | Teah | Teah Teriele | Teah T. |
 | Dallas | Dallas Raby | Dallas R. |
+| Joey | Joseph Key | Joey K. |
+| Nikki | Monique Lundy | Nikki L. |
 | Tashea Coates | Tashea Coates | Tashea C. |
 | Billie | Billie Jean Barrone | Billie B. |
-| TwistidTreets *(pending)* | Nevver Sayles | Nevver S. |
+| Mark Holt | Mark | Mark H. |
 
 ### 4.2 Refresh points
 
-`refreshDisplayName(userId, client)` recomputes and writes both columns. Called
-from every place a name or a status can change:
+`refreshDisplayName(userId, client)` recomputes and writes `display_name`. Called
+from every place a preferred name or a legal name can change:
 
 - `server/routes/contractor.js` (step 4 save)
 - `server/routes/me.js` (staff portal PATCH)
@@ -173,68 +209,11 @@ from every place a name or a status can change:
   path at `:173-186`)
 - `server/routes/agreement.js` (signing supplies the legal name)
 - `server/utils/contractorSeed.js`
-- the new approve/reject endpoint (§5)
 
-`server/routes/payment.js` drops off this list entirely, because it stops writing
-names.
+`server/routes/payment.js` drops off this list entirely, because per §3.3 it
+stops writing names.
 
-## 5. The approval gate
-
-The form never rejects anyone. Enforcement is one admin click.
-
-**Auto-approved** (never reaches the queue) when the preferred name is traceable
-to the legal name by any of:
-
-- exact match of a legal-name token (`Tashea` from Tashea Coates)
-- substring of a legal token (`Shea` inside Tashea)
-- a shared prefix of three or more characters (`Tim`/Timothy, `Nick`/Nicholas,
-  `Nicki` for Nicole Prowell, `Alexis`/Alexander)
-- first letter of a legal middle token (`Fareed` against Mohammad **F**
-  Shafiuddin)
-
-All comparisons are case-insensitive, so `FELICIA` against Felicia and
-`veronica` against Veronica both trace cleanly.
-
-**Pending** otherwise, which is the small high-signal queue: Chip for Vernon, DJ
-for Dallas, `Joey` for Joseph Key, `Mikey` for Michael Ryan, `Nikki` for Monique
-Lundy, `TwistidTreets` for Nevver Sayles. A pending row renders by legal first
-name plus initial, so the app is never showing something unprofessional, only
-something formal.
-
-Surface: a `name-approval` item type in the existing Needs Attention staffing tab
-(`client/src/pages/admin/overview/queueItems.js`, `buildStaffingItems`), reading
-"Nevver Sayles wants to be called TwistidTreats", targeting
-`/staffing/users/:id`. `queueItemHref` in `NeedsYouStrip.js` gains a `user`
-target.
-
-Approve sets `preferred_name_status = 'approved'` and refreshes. Reject clears
-`preferred_name` to NULL and refreshes, so they revert to legal first name and
-can enter something else.
-
-Staff-side honesty: while pending, the portal shows a calm note under the field,
-"Waiting on a quick review. You'll show as Nevver S. until then." Rejection sends
-no automatic email; Dallas messages the person if it needs a conversation. This
-is the one place worth revisiting if it feels cold in practice.
-
-### 5.1 Input validation
-
-Narrow on purpose, so real names never trip:
-
-- required, 2 to 20 characters after trim
-- one or two words (catches `Nicholas or Nick`)
-- letters, spaces, hyphens, apostrophes and periods only, so `Mary-Kate`,
-  `O'Brien` and `D.J.` pass and digits and symbols do not
-- no leading title: Miss, Ms, Mrs, Mr, Dr, Chef, Sir, Madam, Master, Coach,
-  Captain, Prof, Rev (catches `Miss Taylor`)
-
-Deliberately **no** camelCase detection. McKenna, DeShawn and LaToya are real
-names, and it is better to miss `TwistidTreets` here and catch it at §5 than to
-reject someone's actual name.
-
-Enforced both client-side (immediate feedback) and in the server validators for
-`contractor.js`, `me.js`, `staffPortal.js` and `admin/users.js`.
-
-## 6. Where each name is used
+## 5. Where each name is used
 
 **Display name (`display_name`).** Every place a name identifies a person in a
 list or on a document:
@@ -263,7 +242,8 @@ Fareed, you're confirmed for Saturday" must never read "Hi Fareed S.":
 · `auth.js:317,367` and the staff shell user pill, where they are looking at
 themselves (protected by the existing `auth.preferredName.test.js`)
 
-**Legal name.** Money records, as opposed to money screens:
+**Legal name.** Government documents only, which is also the rule for anything
+that is a money record rather than a money screen:
 
 - `server/utils/paystubData.js:40` already resolves legal name first, by
   deliberate design, with a comment saying so. **No change.**
@@ -278,45 +258,51 @@ themselves (protected by the existing `auth.preferredName.test.js`)
 comment at line 11 says so, and matching keys on `t.target_user_id`, never on the
 name string. Safe to swap.
 
-## 7. Existing data
+## 6. Existing data
 
-A one-shot backfill runs every current row through the same helper and the same
-auto-approve test. For a value that would fail §5.1 validation, it applies the
-§4.1 shortening rule first and only falls back to the legal first name if the
-result still fails. So `Ariel  D. Smith` shortens to `Ariel` and renders
-`Ariel S.`, while `Nicholas or Nick ` cannot be shortened (none of its tokens
-match the legal surname) and falls back to `Nicholas`.
+**No script rewrites anyone's `preferred_name`.** The shortening in §4.1 is a
+display concern and lives entirely in `display_name`, so `Tashea Coates` keeps
+her stored value and simply renders as `Tashea C.` This removes any question of
+the backfill assuming something about a person's name.
 
-Expected outcome on production:
+The backfill therefore does two things only:
 
-- the ~25 full-name rows auto-approve and shorten (`Tashea Coates` to
-  `Tashea C.`)
-- `Nicholas or Nick ` fails the two-word cap, falls back to `Nicholas`, and
-  renders `Nicholas D.`
-- four rows land pending and **visibly change on deploy**: Joey renders
-  `Joseph K.`, Mikey renders `Michael R.`, Nikki renders `Monique L.`, and
-  TwistidTreets renders `Nevver S.` until the queue is cleared. Clearing it is
-  one click each, and rejecting Nevver's is the point of the whole exercise.
-- `Miss Taylor` (61) has no legal name at all and cannot be resolved by script.
-  Manual: get her legal name on file.
+1. Trim leading and trailing whitespace on the ~8 affected rows.
+2. Populate `display_name` for every existing row.
 
-Rows needing a legal name before they can carry an initial: users 1 (admin), 2
-(Zul), 61 (Miss Taylor), 62, 233, 236, 237, 238, 239, 240. Most are deactivated
-and cosmetic; 61 and 237 are not.
+Everyone currently on the roster keeps the name they gave us. Joey renders
+`Joey K.`, Mikey renders `Mikey R.`, Nikki renders `Nikki L.` Nothing is demoted.
+
+Four rows a script should not touch, reported for Dallas to handle by hand:
+
+| user | value | issue |
+|---|---|---|
+| 205 | `TwistidTreets` | valid format, wrong kind of name; needs a conversation |
+| 61 | `Miss Taylor` | leading title, and no legal name on file at all |
+| 31 | `Nicholas or Nick ` | either/or answer; he should pick one |
+| 62 | `Adelle M. Reynolds` | three tokens, and a duplicate of user 51 |
+
+Two of these are the rows that started this conversation. They were found by a
+human noticing, and they are fixed by a human asking. That is the correct amount
+of automation for two rows.
+
+Rows with no legal name, so no last initial until one is on file: users 1
+(admin), 2 (Zul), 61, 62, 233, 236, 237, 238, 239, 240. Most are deactivated and
+cosmetic; 61 and 237 are not, and 61 needs one for money records regardless.
 
 Out of scope but surfaced by this work: Felicia Kluppelberg (39, 40) and Adelle
 Reynolds (51, 62) each hold duplicate accounts.
 
-## 8. Verification
+## 7. Verification
 
-- Unit tests for `computeDisplayName` and the auto-approve test, table-driven off
-  the real production pairs in §4.1, including the single-token-agreement case
-  (`Mark`), the no-legal-name case, and `Billie Jean`.
-- Validator tests for §5.1, asserting `McKenna`, `DeShawn`, `O'Brien`,
+- Unit tests for `computeDisplayName`, table-driven off the real production pairs
+  in §4.1, including the single-token-agreement case (`Mark`), the no-legal-name
+  case, `Billie Jean`, and `veronica martinez`.
+- A test asserting the legal name never reaches the output except as one
+  initial, so the Joey-is-really-Joseph failure mode cannot regress in.
+- Validator tests for §3.4, asserting `McKenna`, `DeShawn`, `O'Brien`,
   `Mary-Kate` and `D.J.` all pass and `Miss Taylor`, `Nicholas or Nick`,
   `Bar2Go` and a 30-character string all fail.
-- Route tests for the approve and reject endpoints, including that reject reverts
-  the rendered name.
 - `server/scripts/refreshDisplayNames.js`, idempotent, with a `--check` mode that
   exits non-zero if any row's stored `display_name` differs from a fresh
   computation. This is the safety net for the "someone added a write path and
@@ -325,19 +311,26 @@ Reynolds (51, 62) each hold duplicate accounts.
   sort and aggregate on the name string, so swapping the column changes sort keys
   and array ordering, which is exactly where count and sorted-list assertions
   bite. Same for `messages.js:37`.
-- Manual pass: onboarding steps 4 and 5 on a fresh account, the live preview, the
-  portal edit, one approve, one reject.
+- Manual pass: onboarding steps 4 and 5 on a fresh account, watching the live
+  preview, then the portal edit.
 
-## 9. Not doing
+## 8. Not doing
 
-- No automatic email on rejection.
-- No camelCase or profanity heuristics.
+- No approval queue, no review state, no approve or reject endpoints.
+- No heuristic relating a preferred name to a legal name.
+- No camelCase or profanity detection.
+- No script rewriting a stored preferred name.
 - No merging of the duplicate accounts.
 - No change to how legal names are captured. The agreement remains the source.
 
-## 10. Known gaps
+## 9. Known gaps
 
 A few agreements were signed with a single token (`Mark`, `Zul`), so there is no
 surname to take an initial from and those people render bare until the legal name
 is completed. The helper degrades to the short name rather than inventing an
-initial, and the affected rows are listed in §7 for manual follow-up.
+initial, and the affected rows are listed in §6 for manual follow-up.
+
+Format validation cannot catch a well-formed handle. `LumpyIceCream` passes every
+mechanical check in §3.4 and always will. The copy is what prevents it, and if
+the copy stops working the answer is to remove the question, not to build a
+filter.
