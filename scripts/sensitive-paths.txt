@@ -170,3 +170,15 @@ server/utils/proposalMoneyShared.js
 server/utils/lineItemCancel.js
 server/routes/proposals/cancelLineItem.js
 server/utils/cancellationMath.js
+# Same contract as refundClientNotify above (the money side emails someone):
+# the cancel-line notices announce a money change to a client and carry the
+# MANDATORY staff tip-jar notice. Missed in the first pass of this same block
+# (consistency review, 2026-07-26).
+server/utils/gratuityStaffNotice.js
+server/utils/lineItemRemovedNotify.js
+# Payout mirror. stripeWebhookHandlers/payout.js is a thin dispatcher; the
+# substance is here — writes money-bearing cents columns and ATTRIBUTES lines
+# back to payments / tips / refunds. Sensitivity follows the code (chunk-3
+# review, 2026-07-26).
+server/utils/stripePayoutSync.js
+server/routes/stripePayouts.js

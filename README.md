@@ -632,6 +632,13 @@ dr-bartender/
 - One transaction archives the proposal (`archive_reason` `client_cancelled`/`we_cancelled`, `cancelled_at`/`cancelled_by`/`cancellation_note`), cancels linked shifts, deletes pending scheduled comms, and voids unpaid invoices. A cancel-time tip clawback runs idempotently (marker-coordinated with the `charge.refunded` webhook so a later refund can't double-claw); frozen pay periods defer the clawback.
 - The refund is a separate explicit action (`POST /api/proposals/:id/cancel/refund`), looping the shared `refundExecute` per charge largest-first (deposit + balance) with per-row `gratuity_cents` attribution. Refunded money is not income (the standard reconciliation nets it out); the original contract total is preserved in the audit note.
 
+### Cancel Line Item
+- Admin-only ✕ on each line of the pricing breakdown, on both Proposal Detail and Event Detail. Removes the line AND settles the money in one act, closing the old gap where a refund returned money but left the item on the contract (and the client owing it again).
+- Every client-visible line is a target: add-ons (with a "remove how many?" picker), portable bars, syrups, over-ratio bartenders, adjustments, and gratuity. The package line hands off to the cancel-event flow.
+- Two-step confirm. The preview is server-computed by running the SAME core inside a rolled-back transaction, so the button restates exactly what will happen ("Remove and refund $225.00"), and a fingerprint rejects a stale preview if anything moved.
+- The removal commits first; refunds fire after, so a Stripe failure leaves the removal standing with the overpaid flag and the payment panel as the retry. Money paid outside Stripe is called out as a manual return, never auto-refunded.
+- Removing or lowering a gratuity below the $50 no-jar floor flips the tip jar on and emails the assigned staff that they can set one out. Removing a lab-added item also strips it from the client's drink plan so the Enhancement Lab cannot re-add it.
+
 ### Tip QR Pages
 - Each onboarded bartender gets a public token-gated tip page (`/tip/:token`) with their photo, name, and tip buttons
 - Tip buttons deep-link to Venmo and Cash App when the bartender has those handles set, plus a Stripe Payment Link fallback that flows to the bartender's Stripe Express account
