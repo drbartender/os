@@ -1,9 +1,10 @@
 # On-site service extension (design spec)
 
-Status: rev 2, 2026-07-26. Rev 1 approved 2026-07-25 (brainstorm, section-by-section);
-rev 2 folds in the spec-fleet findings (13 blockers, 12 warnings) and redesigns the
-money model from fold-into-contract to side-money. The side-money decision (D12) is
-awaiting Dallas's confirmation; everything else in rev 2 is fleet-driven repair.
+Status: rev 3, APPROVED 2026-07-26. Rev 1 approved 2026-07-25 (brainstorm,
+section-by-section); rev 2 folded in the spec-fleet findings (13 blockers, 12
+warnings) and redesigned the money model from fold-into-contract to side money;
+rev 3 records Dallas's approval of side money and the no-receivable rule it rests
+on (D12, D14), which changed the admin override.
 Author: Claude + Dallas
 
 ## 1. Problem
@@ -123,6 +124,19 @@ or forced by the fleet review (D12 to D13, 2026-07-26).
     trade: the proposal's headline total stays the booked price, and the
     extension shows as its own invoice and payment on the event rather than
     inside `total_price`.
+
+    **Why side money is safe here, in Dallas's words (2026-07-26, approving
+    D12):** an extension only ever happens once the event is basically over,
+    and there is nothing to track or chase, because it does not exist for DRB
+    to care about unless it was paid and the service was rendered right away.
+    That is the load-bearing invariant behind this whole section, not a
+    convenience. An extension is a paid-and-served fact or it is nothing.
+    Consequences that follow, and must not be "improved" later: no dunning, no
+    reminder ladder, no aging report, and no collections surface for extension
+    invoices ever. (Verified 2026-07-26: balance reminders key off
+    `proposals.total_price` / `amount_paid` / `balance_due_date`, never off
+    invoice rows, so no existing scheduler would chase one. That is a fact to
+    preserve, not a coincidence to rely on.) The corollary is D14.
 13. **A zero-delta extension still requires acceptance and settles without a
     charge (rev 2).** The engine is law (D6), and it prices some real shapes at
     $0: flat packages below 4 hours extending within the base (a 3h Core
@@ -131,6 +145,16 @@ or forced by the fleet review (D12 to D13, 2026-07-26).
     artifact matters regardless of price, so the client link shows the terms
     with "$0, included in your package" and an Accept button, no payment
     element; acceptance settles the request.
+14. **The admin override grants time; it never creates a receivable (rev 3).**
+    An override voids the extension invoice (cancelling open intents first) and
+    bumps the duration. It does not leave an open invoice to collect, because
+    per D12 an unpaid extension is not a thing DRB carries. The override is a
+    coverage-and-payroll action: it says "this time was DRB service, pay the
+    staff for it, and the record shows why," not "bill them later." If Dallas
+    ever does want to bill an overridden extension, the existing manual-invoice
+    tooling is the deliberate, visible way to do it. Rev 2 had the override
+    leaving the invoice open; that contradicted D12 by manufacturing exactly
+    the receivable the model says will not exist.
 
 ## 4. Non-goals
 
@@ -202,9 +226,10 @@ or forced by the fleet review (D12 to D13, 2026-07-26).
 6. **Override / cancel.** Admin surfaces (section 8) let Dallas or Zul
    greenlight unpaid time (status `overridden`, reason required) or cancel a
    pending request (status `cancelled`). An override bumps the duration exactly
-   as a paid settle does and leaves the invoice open to collect; because the
-   money is side money, an unpaid override cannot demote payment status, block
-   auto-completion, or touch the funded-gratuity gate. Both actions write
+   as a paid settle does and VOIDS the extension invoice (D14): no receivable is
+   left behind, and because the money is side money an override cannot demote
+   payment status, block auto-completion, or touch the funded-gratuity gate
+   either. A cancel voids the invoice too and bumps nothing. Both actions write
    `adminAuditLog` entries.
 
 ## 6. Pricing
@@ -317,10 +342,15 @@ this shape (payment against a void extension invoice) and raises a Sentry event
 plus an admin alert with a refund instruction. Damage is contained to "refund
 one payment," not "unwind contract state."
 
-**On override**: same steps 2 to 4, status `overridden` with
-`override_by_user_id` and `override_reason`, invoice left open at `sent`.
-Collection is manual. The override screen carries the payroll note from
-section 9.
+**On override**: claim the row to `overridden` with `override_by_user_id` and
+`override_reason` (same `WHERE status = 'pending'` gate, so an override cannot
+race a settle or an expiry), then steps 2 to 4, then cancel open intents and
+void the invoice (D14). Nothing is left to collect. The override screen carries
+the payroll note from section 9, including that a voided extension contributes
+no gratuity.
+
+**On cancel**: claim the row to `cancelled`, cancel open intents, void the
+invoice, send the decline messages. No duration bump.
 
 **Refunding a paid extension** is a plain refund of that payment. Off-ledger
 means reconciliation does not touch `amount_paid` or `total_price`. The
@@ -372,7 +402,8 @@ refuses an unknown version rather than recording a lie. Without it a stored
 page: each request's status, requester, old and new end, amount, outcome
 timestamps, plus Cancel on pending rows and Override with a required reason.
 The admin notification links here. Empty state: panel hidden. No new top-level
-page.
+page. Deliberately absent, per D12: any open-extension-invoice list, aging
+view, or "collect" action.
 
 **Activity log:** `proposal_activity_log` actions `extension_requested`,
 `extension_paid`, `extension_expired`, `extension_cancelled`,
@@ -405,9 +436,13 @@ addend, mirroring how card tips already join: pool = snapshot gratuity +
 = 'paid'`. The funded gate for the addend is per-extension (`status = 'paid'`
 means its own money arrived), independent of the proposal-level
 `amount_paid >= total_price` gate that governs the snapshot pool. An
-`overridden` extension contributes nothing until its invoice is actually paid
-and the row flips accordingly; wage hours still accrue (staff worked, staff
-paid; the funded gate has never applied to wages). The extension payment's
+`overridden` extension contributes NO gratuity, permanently: its invoice is
+voided (D14), so that money never arrives and the row never becomes `paid`.
+Wage hours still accrue for it, because the funded gate has never applied to
+wages (staff worked, staff paid). If Dallas comps an extension and still wants
+the crew to see the gratuity, `payout_events.adjustment_cents` is the
+deliberate, visible lever; nothing does it automatically. The extension
+payment's
 Stripe fee sits outside `CONTRACT_LABELS`, so it does not net against the
 pool: DRB absorbs that fee. Decided, not accidental; it errs toward staff,
 consistent with the accrual file's stated bias.
@@ -528,6 +563,9 @@ What moves, and everything that reads it:
 - Off-ledger: extension payment does not move `amount_paid`, status, or any
   balance invoice; refund of an extension payment leaves contract accounting
   untouched.
+- Override (D14): duration bumps, invoice ends `void`, no open invoice survives
+  anywhere for that proposal, and no reminder or scheduled message is created
+  for it. Cancel: invoice `void`, duration unchanged.
 - Payroll: seed-before-accrual; re-seed when `hours = contracted_hours`;
   no-touch + warning when admin-edited; frozen-period deferral; gratuity addend
   for `paid` only (not `pending`/`overridden`); fee not netted against the
@@ -543,7 +581,6 @@ What moves, and everything that reads it:
 
 - Dallas: coverage question to the broker in writing.
 - Signed-document copy changes: on the fix list, blocked on the broker answer.
-- D12 (side money) awaiting Dallas's explicit confirmation; if rejected, §7
-  reverts to a repaired fold design (duration legs, forced invoiced-delta
-  total, link-before-refresh, post-roll-up reconcile, and a bespoke
-  auto-complete carve-out for unpaid overrides).
+
+D12 was confirmed by Dallas on 2026-07-26, which closes the only design fork
+that was still open. The spec is ready for a plan.
