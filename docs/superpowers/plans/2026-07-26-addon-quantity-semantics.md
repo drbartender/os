@@ -1796,11 +1796,17 @@ Two things this widening touches, both bounded, neither a reason to drop it:
   (`lineItemCancel.js:616`), and Drink Plan Extras fast-path money rolls into
   `amount_paid` and never into `total_price`, so that difference can be a
   phantom overpayment (prod 599, $60). The phantom is ALREADY auto-refunded off
-  the deposit/balance charges today, so this does not create the error class; it
-  only adds the drink-plan charge as a source in the case where it is the only
-  refundable charge on the proposal. Do NOT try to fix the derivation here (see
-  the fix list's "do not re-attempt naively"). Task 7 re-checks prod for a
-  proposal in exactly that shape.
+  the deposit/balance charges today, so this does not create the error class.
+  CORRECTED after the Task 6 review: it is NOT limited to proposals where a
+  drink-plan charge is the only refundable one. `planOverpaymentSplits` sorts
+  candidates by `remainingCents` DESC (`refundHelpers.js:96`), so on a proposal
+  carrying BOTH rail families the drink-plan charge is now PREFERRED whenever it
+  has the most headroom. No money error follows (`amount_paid` drops identically
+  and `total_price` is untouched under `overpayment` scope), but which real
+  Stripe charge is reversed changes, and so does which invoice absorbs it: a
+  Drink Plan Extras invoice is not total-tracking, so its `amount_due` drops,
+  where a Balance invoice's would not. Do NOT try to fix the derivation here (see
+  the fix list's "do not re-attempt naively"). Task 7 checks prod for BOTH shapes.
 - **Safety check before running the suite.** This box's `.env` holds LIVE Stripe
   keys and no test keys. Widening the rails can turn a previously split-less
   execute-path test into one that plans a split and fires a REAL refund. Before
@@ -1959,9 +1965,33 @@ SELECT p.id, p.total_price, p.amount_paid,
 Expected: proposal 599 ($60, a paid Drink Plan Extras invoice, not an
 overpayment). Note in the merge report which rails it carries. **If any row's
 only refundable rail is `drink_plan_extras` / `drink_plan_with_balance`, STOP:**
-that is the one shape where Task 6(c) newly lets a phantom overpayment
-auto-refund real money. Hold that commit back (it is split out for exactly this
-reason), merge the rest, and put the decision to Dallas.
+that is the shape where Task 6(c) newly lets a phantom overpayment auto-refund
+real money. Hold that commit back (it is split out for exactly this reason),
+merge the rest, and put the decision to Dallas.
+
+**(4b) Mixed rails.** The Task 6 review corrected the risk note above: the
+widening does not only matter when a drink-plan charge is the ONLY refundable
+one. `planOverpaymentSplits` picks the charge with the most headroom, so on a
+proposal carrying both families the drink-plan charge can now be reversed where a
+deposit or balance charge would have been. Find every such proposal:
+
+```sql
+SELECT pp.proposal_id,
+       array_agg(DISTINCT pp.payment_type ORDER BY pp.payment_type) AS rails,
+       SUM(pp.amount) FILTER (WHERE pp.payment_type IN ('drink_plan_extras','drink_plan_with_balance')) AS drink_plan_cents,
+       SUM(pp.amount) FILTER (WHERE pp.payment_type IN ('deposit','balance','full','invoice')) AS panel_cents
+  FROM proposal_payments pp
+ WHERE pp.status = 'succeeded' AND pp.stripe_payment_intent_id IS NOT NULL
+ GROUP BY pp.proposal_id
+HAVING COUNT(*) FILTER (WHERE pp.payment_type IN ('drink_plan_extras','drink_plan_with_balance')) > 0
+   AND COUNT(*) FILTER (WHERE pp.payment_type IN ('deposit','balance','full','invoice')) > 0
+ ORDER BY pp.proposal_id DESC;
+```
+
+Expected: a list, not necessarily empty. These do not block the merge; no money
+figure changes on them. Record the count and the proposal ids in the merge report
+so that if a cancel-line refund on one of them later looks surprising, the reason
+is already written down.
 
 **(5) The per_guest count.** This query was originally here to justify deferring
 the per_guest gap. It was run early, on 2026-07-26, and it did the opposite: it
