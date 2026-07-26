@@ -52,8 +52,24 @@ These facts shaped the design and are recorded so a later reader knows why.
   stays wired for a future genuinely-additive label"); `refreshUnlockedInvoices`
   excludes those labels from `lockedTotal` and skips refreshing bespoke labels
   entirely (`invoiceLifecycle.js`); refund reconciliation skips them
-  (`refundHelpers.js:279`). The set is currently `Object.freeze([])`. This
-  feature is the anticipated label.
+  (`refundHelpers.js`, the `OFF_LEDGER_INVOICE_LABELS.includes(link.invoice_label)`
+  branch). The set is currently `Object.freeze([])`. This feature is the
+  anticipated label.
+- **The alternative to off-ledger is a live, just-confirmed landmine.** Drink
+  Plan Extras take the other shape: their webhook branch DOES increment
+  `proposals.amount_paid` while their money never enters `total_price`, so they
+  push `amount_paid` above `total_price`. On 2026-07-26 (`29316b10`) a refunds
+  change was reverted specifically because that shape breaks the naive
+  `amount_paid - total_price` overpayment derivation, double-subtracting extras
+  and swallowing genuine contract refunds; prod's only positive difference
+  (proposal 599, $60) is exactly a paid Drink Plan Extras invoice. Service
+  Extension must NOT copy that shape. Beyond the refund math, an inflated
+  `amount_paid` would falsely satisfy two gates keyed on it: the
+  funded-gratuity gate (`paidCents >= totalCents`, `payrollAccrual.js`), which
+  would release the CONTRACT gratuity pool on a deposit-only event, and the
+  auto-complete gate (`total_price - amount_paid <= 0`), which would complete
+  an event and accrue payroll early. Going off-ledger keeps this feature out of
+  that entire class of bug. Do not "make it consistent with Drink Plan Extras."
 - **The gratuity pool has a precedent for event-scoped side money.** Payroll
   accrual pools card tips by summing the `tips` table scoped to the event's
   shifts (`payrollAccrual.js:341-346`), separate from the snapshot-derived
@@ -538,9 +554,13 @@ What moves, and everything that reads it:
 - Invoices: new label joins `OFF_LEDGER_INVOICE_LABELS` (the standing rule:
   new invoice-only labels MUST join the constant); `CONTRACT_LABELS`
   untouched; fee-netting consequence decided in section 9.
-- Money Board and revenue reporting read payments/invoices: verify the
-  extension payment presents sensibly there (verification item, not a code
-  change).
+- Money Board and revenue reporting: this is the one real cost of off-ledger.
+  Extension revenue is in `proposal_payments` and `invoices` but NOT in
+  `proposals.amount_paid`, so any surface that totals revenue from `amount_paid`
+  will under-report it while any surface that sums payments will include it.
+  Enumerate which surfaces do which and decide per surface in the plan; do not
+  "fix" a discrepancy by rolling the payment into `amount_paid` (see §2's
+  landmine note).
 - Refunds: off-ledger skip covers reconciliation; no auto-un-extend (section 7).
 - Activity log + `adminAuditLog` entries per section 8.
 - Docs per section 8.
@@ -562,7 +582,9 @@ What moves, and everything that reads it:
   raises the alert.
 - Off-ledger: extension payment does not move `amount_paid`, status, or any
   balance invoice; refund of an extension payment leaves contract accounting
-  untouched.
+  untouched. Explicit regression guard for the §2 landmine: a paid extension on
+  a DEPOSIT-only event must leave `gratuityFunded` false and must not trip
+  auto-completion.
 - Override (D14): duration bumps, invoice ends `void`, no open invoice survives
   anywhere for that proposal, and no reminder or scheduled message is created
   for it. Cancel: invoice `void`, duration unchanged.
