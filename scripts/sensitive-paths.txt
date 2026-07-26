@@ -138,6 +138,16 @@ server/utils/clientNotices.js
 server/routes/drinkPlans/submitSanitize.js
 server/routes/drinkPlans/submitNotify.js
 
+# Onboarding promotion (found 2026-07-26 while reviewing the promotion-gate
+# lane). payment.js is where a staff account is granted
+# onboarding_status='approved' — the status requireOnboarded (shifts.js:32)
+# gates every staff-data surface on. A public register + one POST here was a
+# live self-promotion hole for months, and the change that closed it matched
+# NO glob on this list, so an auth-perimeter fix scaled to a light look. The
+# promotion rule now lives in the helper, so both belong here.
+server/routes/payment.js
+server/utils/onboardingPromotion.js
+
 # THE MONEY CORE ITSELF (push review, 2026-07-26). Found while computing the
 # trigger for the cancel-line batch: the list gated the ROUTES that move money
 # and the notice that announces it, but not the reconciliation code underneath.
