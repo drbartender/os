@@ -10,6 +10,38 @@
 
 **Spec:** `docs/superpowers/specs/2026-07-26-phone-system-redesign-design.md` (revision 3, commit `a8be8086`)
 
+**Plan revision 2** (rev 2 folds in the `/review-plan` fleet). What changed, because
+several of these are correctness fixes and not polish:
+
+1. **The whisper screen was self-defeating.** A carrier voicemail that answers and
+   is then hung up by the whisper's `<Hangup/>` is still an ANSWERED child leg, so
+   Twilio reports `DialCallStatus=completed`, and rev 1's `escalate/done` read that
+   as "they talked" and hung up on the caller. Acceptance is now explicit STATE
+   (`escalation_accepted_at`, set only by a real keypress) and `done` consults it
+   instead of trusting `DialCallStatus`.
+2. **A gated primary SMS was being treated as delivered.** `sendSMS` does not throw
+   when notifications are gated or creds are missing; it returns a
+   `dev-skipped-*` sid. Rev 1 marked such a row `delivered` and deleted the
+   recording, parking it outside both retry and delivery forever. Now it returns
+   `'skipped'`, which is the same contract the Telegram path already honors.
+3. **Per-line delivery was only half done.** The route's bootstrap gate and its
+   `unfetchable`/`failed` operator alerts still assumed Zul, so a primary voicemail
+   was undeliverable when her chat id was unset and its failures alerted her
+   instead of Dallas. Task 6 now makes that tail line-aware.
+4. **`/inbound` now fails closed too**, per spec section 8's explicit "ALL voice
+   webhooks", instead of being silently narrowed to only the routes this plan adds.
+5. **The public phone constants split is now a task** (rev 1 filed a code change as
+   an owner checkbox; an owner cannot split a JS constant).
+6. Canary corrections (`SENTRY_DSN_SERVER` must be set in the test; `line` and
+   `tail` must be resolved ABOVE the cheap-branch return or the block is
+   unreachable), an honest file-size budget with a second extraction, review
+   checkpoints added for the two batches that most needed one (the live-path
+   rewrite and the spend-guard SQL), the atomic extraction moved into Task 1, and
+   the harness corrections the feasibility pass found (`vaCallingDdl()` not
+   `vaCallingSql`, `dbTest` not `test`, `claim.fromE164` not `claimed.fromE164`,
+   explicit `notificationsEnabled`, `sid()` numbering from 40, `$DATABASE_URL` for
+   psql in a lane shell).
+
 **Scope note.** This is Phase **1a** of the spec's Phase 1. It deliberately excludes transcription, the AI summary/tag, R2 audio storage, the listen-link page, and the 14-day purge; those are Phase **1b** and get their own plan. 1a leaves the existing Twilio-fetch delivery path intact, so the shipped redelivery sweep keeps working unchanged. Phase 2 (moving client SMS off the 888 to the 1922) is gated on 224 A2P approval and is out of scope here.
 
 ## Global Constraints
@@ -52,6 +84,12 @@ lanes:
       - server/routes/voiceEscalate.js
       - server/routes/voiceEscalate.test.js
       - server/index.js
+      - client/src/utils/constants.js
+      - client/src/pages/Completion.js
+      - client/src/pages/ApplicationStatus.js
+      - client/src/pages/FieldGuide.js
+      - client/src/pages/PaydayProtocols.js
+      - client/src/pages/proposal/proposalView/ProposalView.js
       - scripts/sensitive-paths.txt
       - .env.example
       - .claude/CLAUDE.md
@@ -65,17 +103,28 @@ lanes:
 
 Full review fleet regardless of size: `server/routes/voice.js`, `server/utils/voicemail.js`, `server/utils/telegram.js`, `server/utils/sms.js`, and `server/utils/twilioSignature.js` are already on `scripts/sensitive-paths.txt`. Task 1 adds the four new modules. This is a billed-voice path, so `/second-opinion` runs alongside the fleet at push.
 
-**Task order:** 1 → 2 → 3 → 4 → 5 → 6 → 7. Strictly sequential.
+**Task order:** 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8. Strictly sequential.
+
+The seven code tasks are review-and-bisect units, NOT independently deployable
+increments. Between Task 3 and Task 6 the tree is knowingly in a half state (the
+primary handler stamps `line=primary` while delivery still ignores it, so a primary
+voicemail would go to Zul's Telegram). That is harmless because nothing reaches
+`/inbound/primary` until the Twilio webhook is repointed after deploy, but do not
+merge or cherry-pick a partial lane.
 
 **Per-task review checkpoints** (mid-build checks, scoped to the batch; the lane fleet still runs at merge):
 
 | After | Agent | Why |
 |---|---|---|
-| Task 1 | `database-review` | The three new columns, the `NOT NULL DEFAULT 'zul'` backfill semantics, and the CHECK enums. |
-| Task 3 | `security-review` | A new public webhook that places a billed `<Dial>`: signature gate, limiter bucket, attribute safety. |
-| Task 5 | `security-review` + `code-review` | The escalation together: claim guard, cap, quiet window, whisper screening, attribute safety, and the `<Gather>` change to a live path. |
-| Task 6 | `code-review` + `security-review` | Per-line delivery: the internal SMS must bypass the client ledger and consent path, and must not leak PII into logs. |
-| Task 7 | `consistency-check` | Docs against the code that actually landed. |
+| Task 1, commit 1 (schema) | `database-review` | The four new columns, the `NOT NULL DEFAULT 'zul'` backfill semantics, and the CHECK enums. Fires on the schema commit alone so the reviewer is not reading 200 lines of unrelated JS. |
+| Task 1, commit 2 (utils) | `code-review` | `escalationTargetFor` is the only thing between env config and a `<Dial>` attribute, and the quiet-window and canary logic are pure functions worth a read before any route calls them. |
+| Task 2 | `code-review` | The ONLY batch that rewrites the live 0082 document and changes a live `<Dial action>` URL, and it makes `/inbound` fail closed. "Byte-identical when escalation is off" is the whole safety claim; someone other than the author should check it. |
+| Task 3 | `security-review` + `code-review` | A new public webhook that places a billed `<Dial>` (signature gate, limiter bucket, attribute safety), PLUS the canary, which edits the live shared missed handler and moves its early-return boundary. |
+| Task 4 | `database-review` | The toll-fraud spend guard itself: the `escalated_at IS NULL` claim, the rolling-window count, and the accept/read pair the caller-stranding fix depends on. No database reviewer sees this SQL otherwise, because the Task 1 checkpoint fires before it exists. |
+| Task 5 | `security-review` + `code-review` | The escalation end to end: claim guard, cap, quiet window, the whisper screen and its acceptance state, attribute safety, and the `<Gather>` change to a live path. |
+| Task 6 | `code-review` + `security-review` | Per-line delivery: the gated-send contract, the line-aware route tail, the internal SMS bypassing the client ledger and consent path, and no PII in logs. |
+| Task 7 | `code-review` | A client-facing constant split where getting it backwards points client texting at an unapproved number. |
+| Task 8 | `consistency-check` | Docs against the code that actually landed. |
 
 ---
 
@@ -97,7 +146,7 @@ Three columns and two new pure-ish modules. Everything downstream imports these,
 **Interfaces:**
 - Consumes: `xmlEscape` from `server/utils/xmlEscape.js`; `API_URL` from `server/utils/urls.js`.
 - Produces:
-  - `voicemailLine.js`: `LINES` (frozen `['primary','zul']`), `resolveLine(raw) => 'primary'|'zul'`, `escalationTargetFor(line) => string|null`, `inQuietWindow(line, now) => boolean`, `quietWindowFor(line) => {start,end,tz}|null`
+  - `voicemailLine.js`: `LINES` (frozen `['primary','zul']`), `resolveLine(raw) => 'primary'|'zul'`, `escalationTargetFor(line) => string|null`, `inQuietWindow(line, now) => boolean`, `quietWindowFor(line) => {start,end,tz}|null`, `primaryRingSec() => number`, `interceptionSuspicion({line, status, dialCallDuration}) => {suspect: boolean, dialSec: number|null}`
   - `voicemailTwiml.js`: `GREETING_TEXT_ZUL`, `GREETING_TEXT_PRIMARY`, `ESCALATION_PROMPT_TEXT`, `vmMaxLengthSec() => number`, `greetingVerbForLine(line) => string`, `escalationPromptVerb() => string`, `recordVerb() => string`, `escalationEnabled() => boolean`
 
 - [ ] **Step 1: Add the three columns to `server/db/schema.sql`**
@@ -131,6 +180,15 @@ END $$;
 -- inside a rolling 24h is VM_ESCALATION_DAILY_CAP.
 ALTER TABLE voicemail_delivery
   ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ;
+-- escalation_accepted_at is set ONLY when a human presses a key on the whisper,
+-- and it is the thing escalate/done branches on. It has to exist because
+-- DialCallStatus cannot answer the question: a carrier voicemail that picks up
+-- and is then hung up by the whisper's screen is still an ANSWERED child leg, so
+-- Twilio reports 'completed' for both "they talked" and "a machine grabbed it and
+-- we rejected it". Trusting that status hangs up on a caller who never reached a
+-- person. Explicit acceptance state is the only reliable discriminator.
+ALTER TABLE voicemail_delivery
+  ADD COLUMN IF NOT EXISTS escalation_accepted_at TIMESTAMPTZ;
 -- Why the escalation ended. Observability only; nothing branches on it.
 ALTER TABLE voicemail_delivery
   ADD COLUMN IF NOT EXISTS escalation_outcome TEXT;
@@ -153,7 +211,16 @@ CREATE INDEX IF NOT EXISTS idx_voicemail_delivery_escalated_at
 Run: `node -r dotenv/config -e "require('./server/db').initDb().then(() => process.exit(0))"`
 Expected: exits 0. Statements are idempotent, so a re-run is safe.
 
-Verify: `psql "$DATABASE_URL" -c "\d voicemail_delivery"` lists `line` (not null, default `'zul'`), `escalated_at`, `escalation_outcome`, both new CHECK constraints, and the partial index.
+**A lane worktree has no `.env`** (`scripts/worktree-new.js` symlinks only
+`node_modules`, `client/node_modules`, and `.husky/_`), so `$DATABASE_URL` is empty
+in a lane shell and bare `psql` would silently fall back to a local socket. Export
+it first for every psql step in this plan:
+
+```bash
+export DATABASE_URL=$(grep -oP '(?<=^DATABASE_URL=).*' /home/drbartender/projects/os/.env | tr -d '"')
+```
+
+Verify: `psql "$DATABASE_URL" -c "\d voicemail_delivery"` lists `line` (not null, default `'zul'`), `escalated_at`, `escalation_accepted_at`, `escalation_outcome`, both new CHECK constraints, and the partial index.
 
 Verify the backfill actually landed on existing rows:
 Run: `psql "$DATABASE_URL" -c "SELECT line, COUNT(*) FROM voicemail_delivery GROUP BY line"`
@@ -161,23 +228,41 @@ Expected: every pre-existing row reads `zul`, and zero rows read NULL.
 
 - [ ] **Step 3: Extend `server/db/schema.vaCalling.test.js`**
 
-That suite slices `schema.sql` from the `-- Zul VA Calling` marker to EOF and executes the slice in its `before()`, so this DDL is already inside its scope. Add assertions in the file's existing style (a content assertion against the sliced SQL plus an `information_schema` catalog assertion). Match the existing file's variable name for the sliced SQL and its pool handling rather than inventing new ones.
+That suite slices `schema.sql` from the `-- Zul VA Calling` marker to EOF via the
+`vaCallingDdl()` FUNCTION (`schema.vaCalling.test.js:53-58`) and executes the slice
+in its `before()`, so this DDL is already inside its scope.
+
+Three harness facts to match exactly, all verified:
+- The whole-file string is `schemaSql` (`:8`); the existing CONTENT tests assert
+  against it. There is no `vaCallingSql` variable.
+- `pool` is only assigned inside `before()` when `HAS_DB` (`:47-50, :60-67`), so any
+  test that touches the DB must use `dbTest` (`:48`, which is `test.skip` without a
+  `DATABASE_URL`), never a bare `test`.
+- A `DO $$ ... END $$` block is new to `schema.sql`; the feasibility pass confirmed
+  the suite's `splitStatements` keeps it intact.
 
 ```js
 test('voicemail_delivery carries the line + escalation columns idempotently', () => {
-  assert.match(vaCallingSql, /ADD COLUMN IF NOT EXISTS line TEXT NOT NULL DEFAULT 'zul'/);
-  assert.match(vaCallingSql, /CHECK \(line IN \('primary','zul'\)\)/);
-  assert.match(vaCallingSql, /ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ/);
-  assert.match(vaCallingSql, /ADD COLUMN IF NOT EXISTS escalation_outcome TEXT/);
-  assert.match(vaCallingSql, /idx_voicemail_delivery_escalated_at/);
+  assert.match(schemaSql, /ADD COLUMN IF NOT EXISTS line TEXT NOT NULL DEFAULT 'zul'/);
+  assert.match(schemaSql, /CHECK \(line IN \('primary','zul'\)\)/);
+  assert.match(schemaSql, /ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ/);
+  assert.match(schemaSql, /ADD COLUMN IF NOT EXISTS escalation_accepted_at TIMESTAMPTZ/);
+  assert.match(schemaSql, /ADD COLUMN IF NOT EXISTS escalation_outcome TEXT/);
+  assert.match(schemaSql, /idx_voicemail_delivery_escalated_at/);
 });
 
-test('line is NOT NULL and defaults to zul so old rows backfill', async () => {
+test('the new DDL is inside the slice the suite actually applies', () => {
+  // Guard against the block being appended below the slice boundary, which would
+  // make the catalog tests below pass only because someone ran initDb by hand.
+  assert.match(vaCallingDdl(), /ADD COLUMN IF NOT EXISTS line TEXT NOT NULL/);
+});
+
+dbTest('line is NOT NULL and defaults to zul so old rows backfill', async () => {
   const { rows } = await pool.query(
     `SELECT column_name, is_nullable, column_default
        FROM information_schema.columns
       WHERE table_name = 'voicemail_delivery'
-        AND column_name IN ('line','escalated_at','escalation_outcome')
+        AND column_name IN ('line','escalated_at','escalation_accepted_at','escalation_outcome')
       ORDER BY column_name`
   );
   const byName = Object.fromEntries(rows.map((r) => [r.column_name, r]));
@@ -187,7 +272,7 @@ test('line is NOT NULL and defaults to zul so old rows backfill', async () => {
   assert.equal(byName.escalation_outcome.is_nullable, 'YES');
 });
 
-test('the line CHECK rejects an unknown line', async () => {
+dbTest('the line CHECK rejects an unknown line', async () => {
   await assert.rejects(
     () => pool.query(
       `INSERT INTO voicemail_delivery (call_sid, line) VALUES ($1, 'not-a-line')`,
@@ -290,6 +375,32 @@ test('inQuietWindow honors a window that wraps midnight', () => {
 test('inQuietWindow is false when no window is configured', () => {
   delete process.env.VM_ESCALATION_QUIET_ZUL;
   assert.equal(line.inQuietWindow('primary', new Date('2026-07-27T19:00:00Z')), false);
+});
+
+test('primaryRingSec defaults to 18 and clamps to 5..30', () => {
+  delete process.env.VM_PRIMARY_RING_SEC;
+  assert.equal(line.primaryRingSec(), 18);
+  process.env.VM_PRIMARY_RING_SEC = '1';
+  assert.equal(line.primaryRingSec(), 5);
+  process.env.VM_PRIMARY_RING_SEC = '600';
+  assert.equal(line.primaryRingSec(), 30, 'must stay under a carrier voicemail pickup');
+  delete process.env.VM_PRIMARY_RING_SEC;
+});
+
+test('interceptionSuspicion fires only on an instant answer on the primary line', () => {
+  const s = (o) => line.interceptionSuspicion(o).suspect;
+  assert.equal(s({ line: 'primary', status: 'completed', dialCallDuration: '1' }), true);
+  assert.equal(s({ line: 'primary', status: 'completed', dialCallDuration: '45' }), false,
+    'a real conversation is not an anomaly');
+  assert.equal(s({ line: 'zul', status: 'completed', dialCallDuration: '1' }), false,
+    'Zul dials her cell directly; the canary is for the forwarded hop');
+  assert.equal(s({ line: 'primary', status: 'no-answer', dialCallDuration: '0' }), false);
+  assert.equal(s({ line: 'primary', status: 'completed', dialCallDuration: '0' }), false,
+    'zero means never connected, not instantly answered');
+  assert.equal(s({ line: 'primary', status: 'completed', dialCallDuration: undefined }), false);
+  assert.equal(line.interceptionSuspicion({
+    line: 'primary', status: 'completed', dialCallDuration: '7',
+  }).dialSec, 7, 'the parsed duration comes back for the log line');
 });
 ```
 
@@ -412,15 +523,56 @@ function inQuietWindow(line, now = new Date()) {
     : (mins >= w.start || mins < w.end);
 }
 
+/**
+ * Ring seconds on the primary line before Twilio calls it a miss.
+ *
+ * Deliberately SHORTER than a typical carrier or Google Voice voicemail pickup
+ * (around 25 seconds). If the target's own voicemail answers first, Twilio
+ * reports DialCallStatus=completed, our missed handler correctly does nothing,
+ * and the caller lands in a dumb voicemail we cannot transcribe or route. Ringing
+ * out first is the primary mitigation for that; disabling voicemail on the target
+ * is the other, and it is a manual console setting we cannot enforce from here.
+ */
+function primaryRingSec() {
+  const n = parseInt(process.env.VM_PRIMARY_RING_SEC, 10);
+  return Math.min(30, Math.max(5, Number.isFinite(n) ? n : 18));
+}
+
+// An answer this fast is not a person picking up a phone, it is an auto-attendant.
+const PRIMARY_INSTANT_ANSWER_SEC = 3;
+
+/**
+ * Interception canary for the primary line (spec section 2 mitigation c).
+ *
+ * Honest about its limits: a machine and a human both answering at 25 seconds are
+ * indistinguishable in this callback, so there is no reliable detector. What IS
+ * detectable is an answer far too fast for a person to have reached the phone,
+ * which is the signature of carrier or Google Voice voicemail re-enabling on the
+ * dial target and quietly stealing every caller from our own voicemail. Nothing
+ * branches on the result; it exists so the regression cannot be invisible.
+ *
+ * Only meaningful on the primary line, which forwards through a third party. Zul's
+ * line dials her cell directly and has always behaved this way.
+ */
+function interceptionSuspicion({ line, status, dialCallDuration }) {
+  const parsed = parseInt(dialCallDuration, 10);
+  const dialSec = Number.isFinite(parsed) ? parsed : null;
+  const suspect = resolveLine(line) === 'primary'
+    && status === 'completed'
+    && dialSec !== null && dialSec > 0 && dialSec <= PRIMARY_INSTANT_ANSWER_SEC;
+  return { suspect, dialSec };
+}
+
 module.exports = {
   LINES, resolveLine, otherLine, escalationTargetFor, quietWindowFor, inQuietWindow,
+  primaryRingSec, interceptionSuspicion, PRIMARY_INSTANT_ANSWER_SEC,
 };
 ```
 
 - [ ] **Step 8: Run the test to confirm it passes**
 
 Run: `node -r dotenv/config --test server/utils/voicemailLine.test.js`
-Expected: PASS, 6 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 9: Write the failing test for `voicemailTwiml.js`**
 
@@ -627,14 +779,24 @@ module.exports = {
 Run: `node -r dotenv/config --test server/utils/voicemailTwiml.test.js`
 Expected: PASS, 10 tests.
 
-- [ ] **Step 13: Commit**
+- [ ] **Step 13: Commit, as TWO commits**
+
+Two logical features live in this task (a schema migration and two new pure
+modules) and they share nothing: they verify differently and they want different
+reviewers. Split them so each checkpoint reads a focused diff.
 
 ```bash
-git add server/db/schema.sql server/db/schema.vaCalling.test.js \
-        server/utils/voicemailLine.js server/utils/voicemailLine.test.js \
+git add server/db/schema.sql server/db/schema.vaCalling.test.js
+git commit -m "feat(phone): voicemail_delivery line + escalation columns"
+```
+
+Run the `database-review` checkpoint here, then:
+
+```bash
+git add server/utils/voicemailLine.js server/utils/voicemailLine.test.js \
         server/utils/voicemailTwiml.js server/utils/voicemailTwiml.test.js \
         scripts/sensitive-paths.txt
-git commit -m "feat(phone): line column + per-line routing and TwiML helpers"
+git commit -m "feat(phone): per-line routing policy and shared TwiML fragments"
 ```
 
 ---
@@ -703,19 +865,19 @@ In `server/utils/voicemail.test.js`, add persistence coverage next to the existi
 
 ```js
 test('claimMissedCall persists the line it is given', async () => {
-  await vm.claimMissedCall({ callSid: sid(20), fromE164: '+13125550147', line: 'primary' });
-  const { rows } = await pool.query('SELECT line FROM voicemail_delivery WHERE call_sid = $1', [sid(20)]);
+  await vm.claimMissedCall({ callSid: sid(40), fromE164: '+13125550147', line: 'primary' });
+  const { rows } = await pool.query('SELECT line FROM voicemail_delivery WHERE call_sid = $1', [sid(40)]);
   assert.equal(rows[0].line, 'primary');
 });
 
 test('claimMissedCall coerces a missing or unknown line to zul rather than throwing', async () => {
   // A live caller must never lose voicemail to a coding slip, and every row that
   // predates the line column was Zul's, so zul is the correct coercion.
-  await vm.claimMissedCall({ callSid: sid(21), fromE164: null });
-  await vm.claimMissedCall({ callSid: sid(22), fromE164: null, line: 'nope' });
+  await vm.claimMissedCall({ callSid: sid(41), fromE164: null });
+  await vm.claimMissedCall({ callSid: sid(42), fromE164: null, line: 'nope' });
   const { rows } = await pool.query(
     'SELECT call_sid, line FROM voicemail_delivery WHERE call_sid = ANY($1) ORDER BY call_sid',
-    [[sid(21), sid(22)]]
+    [[sid(41), sid(42)]]
   );
   assert.deepEqual(rows.map((r) => r.line), ['zul', 'zul']);
 });
@@ -775,12 +937,42 @@ Four edits.
 
 ```js
 const { resolveLine } = require('../utils/voicemailLine');
-const {
-  greetingVerbForLine, recordVerb, escalationEnabled, escalationPromptVerb,
-} = require('../utils/voicemailTwiml');
+const { greetingVerbForLine, recordVerb } = require('../utils/voicemailTwiml');
 ```
 
-`escalationEnabled` and `escalationPromptVerb` are imported now and used in Task 5; importing them here keeps the two edits to the same import block from colliding.
+Import ONLY what this task uses. `escalationEnabled` and `escalationPromptVerb` are
+added to this same import in Task 5, where they are first called. Tasks 2 and 5 are
+sequential commits on one branch, not parallel lanes, so there is no collision to
+pre-empt, and importing them early would leave one commit carrying dead imports.
+
+**(b0) Make `/inbound` fail closed.** Spec section 8 says ALL voice webhooks fail
+closed in every environment, and `/inbound` is the one still on `passesSignature`
+(`voice.js:248`), which warns and allows whenever `NODE_ENV !== 'production'`. It
+places the billed international `<Dial>` to `VA_CELL`, which is the exact risk class
+that rule exists for, and its two downstream handlers already fail closed. Swap it:
+
+```js
+router.post('/inbound', inboundForwardLimiter, (req, res) => {
+  if (!requireSignature(req, res, 'inbound')) return;
+```
+
+Consequence to accept knowingly: a local or curl request to `/inbound` without a
+valid Twilio signature now gets a 403 instead of a warned-but-served dial. Every
+existing test stubs `isValidTwilioRequest`, so the suite is unaffected. `passesSignature`
+stays in the file for `/bridge` and `/status`, which do not place a new billed leg.
+
+Add a test alongside the other signature tests:
+
+```js
+test('/inbound fails CLOSED on a bad signature with NODE_ENV unset', async () => {
+  const saved = process.env.NODE_ENV;
+  delete process.env.NODE_ENV;
+  router.__setVoiceDeps({ isValidTwilioRequest: () => false });
+  const res = await post('/api/voice/inbound', { From: '+13125550147', CallSid: cs('CAsig0') });
+  assert.equal(res.status, 403, 'a dev signature skip must not dial a PH cell');
+  if (saved !== undefined) process.env.NODE_ENV = saved;
+});
+```
 
 **(b)** Add `?line=zul` to the existing `/inbound` `<Dial action>` (`voice.js:254`). The query string is covered by the webhook HMAC (`server/utils/twilioSignature.js:20` builds the signed URL from `req.originalUrl`), so a forged `line` cannot pass the signature gate:
 
@@ -914,7 +1106,7 @@ Expected: FAIL, 404s on `/api/voice/inbound/primary`.
 
 - [ ] **Step 3: Implement in `server/routes/voice.js`**
 
-Add the limiter beside the existing `inboundForwardLimiter` (after `voice.js:44`):
+Add the limiter after the existing `inboundForwardLimiter`, which closes at `voice.js:45`:
 
 ```js
 // The primary (1922) line gets its OWN global bucket. Sharing
@@ -933,24 +1125,16 @@ const primaryForwardLimiter = rateLimit({
 });
 ```
 
-Add a ring-timeout helper beside `timeLimitSec()`:
+`primaryRingSec` and `interceptionSuspicion` are IMPORTED from
+`server/utils/voicemailLine.js` (Task 1), not defined here. Extend the existing
+import added in Task 2:
 
 ```js
-/**
- * Ring seconds on the primary line before Twilio calls it a miss.
- *
- * Deliberately SHORTER than a typical carrier or Google Voice voicemail pickup
- * (~25 seconds). If the target's own voicemail answers first, Twilio reports
- * DialCallStatus=completed, our missed handler correctly does nothing, and the
- * caller lands in a dumb voicemail we cannot transcribe or route. Ringing out
- * first is the primary mitigation for that; disabling voicemail on the target is
- * the other, and it is a manual console setting we cannot enforce from here.
- */
-function primaryRingSec() {
-  const n = parseInt(process.env.VM_PRIMARY_RING_SEC, 10);
-  return Math.min(30, Math.max(5, Number.isFinite(n) ? n : 18));
-}
+const { resolveLine, primaryRingSec, interceptionSuspicion } = require('../utils/voicemailLine');
 ```
+
+Keeping them in the util is what buys `voice.js` its line budget (see Step 8) and
+it makes the canary's threshold logic unit-testable without an HTTP harness.
 
 Then the handler, directly after the existing `/inbound` route (after `voice.js:256`):
 
@@ -1012,42 +1196,72 @@ Twilio console can be reconciled later) is the useful, non-overclaiming version.
 
 Add to `server/routes/voice.test.js`:
 
+The canary's threshold logic is already unit-tested in
+`server/utils/voicemailLine.test.js` (Task 1). These tests cover only the WIRING:
+that the handler consults it, reports through the `captureMessage` seam, and still
+takes the cheap branch.
+
+`SENTRY_DSN_SERVER` is load-bearing here and the harness does NOT set it (the
+suite's `beforeEach` at `voice.test.js:62-107` never does, the local `.env` has no
+such key, and two existing tests `delete` it in their `finally` at `:547` and
+`:693`). Set it explicitly in a try/finally, the same shape `voice.test.js:534-549`
+already uses, or the assertion can never pass.
+
 ```js
 test('a suspiciously instant answer on the primary line raises the interception canary', async () => {
-  const res = await post('/api/voice/inbound/missed?line=primary', {
-    DialCallStatus: 'completed', DialCallDuration: '1', CallSid: cs('CAcan1'), From: '+13125550147',
-  });
-  await settle();
-  // Still the cheap branch: an answered call must never record or ping.
-  assert.match(res.text, /<Hangup\/>/);
-  assert.doesNotMatch(res.text, /<Record/);
-  assert.equal(calls.telegram.length, 0);
-  // But it must be VISIBLE, because this is what a re-enabled carrier voicemail
-  // eating our callers looks like.
-  assert.ok(
-    calls.sentry.some((m) => /interception/i.test(String(m))),
-    'an instant answer on the primary line must be reported'
-  );
+  const savedDsn = process.env.SENTRY_DSN_SERVER;
+  process.env.SENTRY_DSN_SERVER = 'https://example.invalid/1';
+  try {
+    const res = await post('/api/voice/inbound/missed?line=primary', {
+      DialCallStatus: 'completed', DialCallDuration: '1', CallSid: cs('CAcan1'), From: '+13125550147',
+    });
+    await settle();
+    // Still the cheap branch: an answered call must never record or ping.
+    assert.match(res.text, /<Hangup\/>/);
+    assert.doesNotMatch(res.text, /<Record/);
+    assert.equal(calls.telegram.length, 0);
+    // But it must be VISIBLE, because this is what a re-enabled carrier voicemail
+    // quietly eating our callers looks like.
+    assert.ok(
+      calls.sentry.some((m) => /interception/i.test(String(m))),
+      'an instant answer on the primary line must be reported'
+    );
+  } finally {
+    if (savedDsn === undefined) delete process.env.SENTRY_DSN_SERVER;
+    else process.env.SENTRY_DSN_SERVER = savedDsn;
+  }
 });
 
-test('a normal answered call raises no canary', async () => {
-  const res = await post('/api/voice/inbound/missed?line=primary', {
-    DialCallStatus: 'completed', DialCallDuration: '45', CallSid: cs('CAcan2'), From: '+13125550147',
-  });
-  await settle();
-  assert.match(res.text, /<Hangup\/>/);
-  assert.equal(calls.sentry.length, 0, 'a real conversation is not an anomaly');
+test('a normal answered call on the primary line raises no canary', async () => {
+  const savedDsn = process.env.SENTRY_DSN_SERVER;
+  process.env.SENTRY_DSN_SERVER = 'https://example.invalid/1';
+  try {
+    const res = await post('/api/voice/inbound/missed?line=primary', {
+      DialCallStatus: 'completed', DialCallDuration: '45', CallSid: cs('CAcan2'), From: '+13125550147',
+    });
+    await settle();
+    assert.match(res.text, /<Hangup\/>/);
+    assert.equal(calls.sentry.length, 0, 'a real conversation is not an anomaly');
+  } finally {
+    if (savedDsn === undefined) delete process.env.SENTRY_DSN_SERVER;
+    else process.env.SENTRY_DSN_SERVER = savedDsn;
+  }
 });
 
 test('an instant answer on the zul line raises no canary', async () => {
-  // Zul's line dials her cell directly and has always behaved this way; the
-  // canary is specific to the primary line's forward-through-a-third-party hop.
-  const res = await post('/api/voice/inbound/missed?line=zul', {
-    DialCallStatus: 'completed', DialCallDuration: '1', CallSid: cs('CAcan3'), From: '+13125550147',
-  });
-  await settle();
-  assert.match(res.text, /<Hangup\/>/);
-  assert.equal(calls.sentry.length, 0);
+  const savedDsn = process.env.SENTRY_DSN_SERVER;
+  process.env.SENTRY_DSN_SERVER = 'https://example.invalid/1';
+  try {
+    const res = await post('/api/voice/inbound/missed?line=zul', {
+      DialCallStatus: 'completed', DialCallDuration: '1', CallSid: cs('CAcan3'), From: '+13125550147',
+    });
+    await settle();
+    assert.match(res.text, /<Hangup\/>/);
+    assert.equal(calls.sentry.length, 0);
+  } finally {
+    if (savedDsn === undefined) delete process.env.SENTRY_DSN_SERVER;
+    else process.env.SENTRY_DSN_SERVER = savedDsn;
+  }
 });
 ```
 
@@ -1056,39 +1270,63 @@ Expected: FAIL, no Sentry report is emitted.
 
 - [ ] **Step 6: Implement the canary in `server/routes/voice.js`**
 
-Add the threshold constant beside the other voicemail constants:
+**Ordering is the whole trick here.** As of Task 2 the handler reads:
 
-```js
-// An answer this fast on the primary line is not a person picking up a phone; it
-// is an auto-attendant. The most likely one is carrier or Google Voice voicemail
-// re-enabling on VM_PRIMARY_DIAL_TARGET, which silently steals every caller from
-// our own voicemail. Not a perfect detector (a machine and a human answering at
-// 25 seconds look identical here), so it is a canary, not a gate: nothing
-// branches on it, it just refuses to let the regression be invisible.
-const PRIMARY_INSTANT_ANSWER_SEC = 3;
+```
+const status = req.body.DialCallStatus;      // :379
+const callSid = req.body.CallSid || null;    // :380
+if (!voicemailEnabled() || !MISSED_STATUSES.has(status) || !callSid) { ... return; }  // :383-386
+const fromE164 = callerE164(req.body.From);  // :388
+const line = resolveLine(req.query.line);    // added by Task 2
+const tail = ...;                            // :389
 ```
 
-Then in `/inbound/missed`, immediately after `const line = resolveLine(req.query.line);`
-and BEFORE the cheap-branch early return, add:
+`'completed'` is NOT in `MISSED_STATUSES`, so the handler returns at `:383-386` on
+exactly the calls the canary needs to see. Both `line` and `tail` must therefore
+move ABOVE that early return, and the canary block goes between them and the
+return. Restructure the top of the handler to:
 
 ```js
+  const status = req.body.DialCallStatus;
+  const callSid = req.body.CallSid || null;
+  const line = resolveLine(req.query.line);
+  const tail = `sid=...${String(callSid).slice(-4)}`;
+
+  // Interception canary (spec section 2 mitigation c). Runs BEFORE the cheap
+  // branch because the case it watches for, DialCallStatus=completed, is exactly
+  // what that branch returns on. Observation only: it never changes the outcome.
+  const canary = interceptionSuspicion({
+    line, status, dialCallDuration: req.body.DialCallDuration,
+  });
   if (line === 'primary' && status === 'completed') {
-    const dialSec = parseInt(req.body.DialCallDuration, 10);
-    console.log(`[voice/missed] primary answered ${tail} dialSec=${Number.isFinite(dialSec) ? dialSec : 'unknown'}`);
-    if (Number.isFinite(dialSec) && dialSec > 0 && dialSec <= PRIMARY_INSTANT_ANSWER_SEC
-        && process.env.SENTRY_DSN_SERVER) {
-      _deps.captureMessage('primary line possible voicemail interception', {
-        level: 'warning',
-        tags: { webhook: 'twilio-voice', route: 'inbound/missed', line: 'primary' },
-        extra: { dialSec, hint: 'check that voicemail is still disabled on VM_PRIMARY_DIAL_TARGET' },
-      });
-    }
+    console.log(`[voice/missed] primary answered ${tail} dialSec=${canary.dialSec === null ? 'unknown' : canary.dialSec}`);
   }
+  if (canary.suspect && process.env.SENTRY_DSN_SERVER) {
+    _deps.captureMessage('primary line possible voicemail interception', {
+      level: 'warning',
+      tags: { webhook: 'twilio-voice', route: 'inbound/missed', line: 'primary' },
+      extra: {
+        dialSec: canary.dialSec,
+        hint: 'check that voicemail is still disabled on VM_PRIMARY_DIAL_TARGET',
+      },
+    });
+  }
+
+  // Cheap branch is the default: only an explicitly recognized miss costs money.
+  if (!voicemailEnabled() || !MISSED_STATUSES.has(status) || !callSid) {
+    sendTwiml(res, HANGUP_TWIML);
+    return;
+  }
+
+  const fromE164 = callerE164(req.body.From);
 ```
 
-Note `tail` is derived a few lines further down in the current code. Move the
-`const tail = ...` assignment ABOVE this block so both use it, rather than
-duplicating the expression.
+Delete the now-duplicated `const tail = ...` and `const line = ...` lines further
+down, and leave everything below `fromE164` untouched.
+
+Note this also makes `tail` safe on a NULL `callSid` (it becomes `sid=...null`),
+which is only reachable on the canary path since the cheap branch rejects a missing
+`callSid` immediately.
 
 - [ ] **Step 7: Run to confirm pass**
 
@@ -1097,10 +1335,30 @@ Expected: PASS, including the three canary tests. The pre-existing
 `'/inbound/missed on an answered call pings nobody and returns no Record'` test
 must still pass: the canary observes, it never changes the branch.
 
-- [ ] **Step 8: Confirm the file-size extraction held**
+- [ ] **Step 8: Confirm the file-size budget**
+
+`server/routes/voice.js` starts at 624 lines. YELLOW is strictly `> 700`
+(`scripts/check-file-size.js` `bucket()`), so the budget is real but not generous.
+Running arithmetic against this plan's own code blocks:
+
+| After | Change | Lines |
+|---|---|---|
+| start | | 624 |
+| Task 1 + 2 | remove `greetingVerb` + `GREETING_TEXT` + `vmMaxLengthSec` (about 21), add about 6 import lines | about 609 |
+| Task 3 | primary limiter (15) + handler (34) + canary block (13). `primaryRingSec` and the threshold live in `voicemailLine.js`, which is what keeps this off the coin flip | about 671 |
+| Task 5 | `<Gather>` wrapper | about 677 |
+| Task 6 | `line` threading (3 hops) + the line-aware failure tail | about 697 |
 
 Run: `npm run check:filesize`
-Expected: `server/routes/voice.js` appears in NEITHER the RED nor the YELLOW list. If it is yellow, the Task 1 extraction did not happen; go back and move `greetingVerb`/`GREETING_TEXT`/`vmMaxLengthSec` out before continuing.
+Expected: `server/routes/voice.js` is NOT in the RED list, and reports about 671 at
+this point in the lane.
+
+If it reads above 700 here, the Task 1 extraction did not land: verify
+`greetingVerb`, `GREETING_TEXT`, and `vmMaxLengthSec` are gone from `voice.js` and
+that `primaryRingSec` was imported rather than redefined. Do not proceed past
+Task 3 over the cap, because Tasks 5 and 6 both add to this file and the only
+extraction left large enough to matter is the `/inbound/voicemail` claim-and-deliver
+pair (`voice.js:540-622`), which Task 6 needs to edit anyway.
 
 - [ ] **Step 9: Commit**
 
@@ -1124,9 +1382,20 @@ The DB half of the press-1 escalation, kept out of `voicemail.js` so that file s
 - Produces:
   - `claimEscalation(callSid) => Promise<{line: 'primary'|'zul'}|null>` (null means already claimed or unknown call)
   - `countEscalationsSince(hours) => Promise<number>`
+  - `markEscalationAccepted(callSid) => Promise<void>`
+  - `wasEscalationAccepted(callSid) => Promise<boolean>`
   - `recordEscalationOutcome({ callSid, outcome }) => Promise<void>`
   - `escalationDailyCap() => number`
+  - `isCallSid(value) => boolean`
   - `__setEscalationDeps(overrides) => void`
+
+**Why acceptance needs its own state.** `DialCallStatus` cannot answer "did a human
+take this call?". A carrier voicemail that answers and is then hung up by the
+whisper's screen is still an answered child leg, so Twilio reports `completed` for
+BOTH "they talked" and "a machine grabbed it and we rejected it". Branching on that
+status hangs up on a caller who never reached a person, which is the exact outcome
+the screen exists to prevent. So a keypress writes `escalation_accepted_at` and
+`escalate/done` reads it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1185,6 +1454,41 @@ test('countEscalationsSince counts only escalated rows in the window', async () 
   assert.equal(await esc.countEscalationsSince(24), before, 'a missed call is not an escalation');
   await esc.claimEscalation(sid(4));
   assert.equal(await esc.countEscalationsSince(24), before + 1);
+});
+
+test('markEscalationAccepted then wasEscalationAccepted is the accept gate', async () => {
+  await seed(7, 'zul');
+  await esc.claimEscalation(sid(7));
+  assert.equal(await esc.wasEscalationAccepted(sid(7)), false, 'not accepted until a keypress');
+  await esc.markEscalationAccepted(sid(7));
+  assert.equal(await esc.wasEscalationAccepted(sid(7)), true);
+});
+
+test('wasEscalationAccepted is false for an unknown call and a bad sid', async () => {
+  // escalate/done must never mistake "row missing" for "a human took the call",
+  // because that would hang up on a caller instead of recording them.
+  assert.equal(await esc.wasEscalationAccepted(sid(8)), false);
+  assert.equal(await esc.wasEscalationAccepted('not-a-sid'), false);
+  assert.equal(await esc.wasEscalationAccepted(null), false);
+});
+
+test('markEscalationAccepted is idempotent and keeps the first timestamp', async () => {
+  await seed(9, 'zul');
+  await esc.claimEscalation(sid(9));
+  await esc.markEscalationAccepted(sid(9));
+  const { rows: first } = await pool.query('SELECT escalation_accepted_at FROM voicemail_delivery WHERE call_sid = $1', [sid(9)]);
+  await esc.markEscalationAccepted(sid(9));
+  const { rows: second } = await pool.query('SELECT escalation_accepted_at FROM voicemail_delivery WHERE call_sid = $1', [sid(9)]);
+  assert.deepEqual(second[0].escalation_accepted_at, first[0].escalation_accepted_at);
+});
+
+test('isCallSid gates what may be echoed back through a query string', () => {
+  assert.equal(esc.isCallSid('CA' + 'a'.repeat(32)), true);
+  assert.equal(esc.isCallSid('CA' + 'A'.repeat(32)), false, 'lowercase hex only');
+  assert.equal(esc.isCallSid('CA' + 'a'.repeat(31)), false);
+  assert.equal(esc.isCallSid('../../etc/passwd'), false);
+  assert.equal(esc.isCallSid(''), false);
+  assert.equal(esc.isCallSid(undefined), false);
 });
 
 test('recordEscalationOutcome writes an allowed outcome', async () => {
@@ -1289,6 +1593,48 @@ async function countEscalationsSince(hours) {
 }
 
 /**
+ * Twilio CallSid shape. Gates the parent sid we echo through the whisper and
+ * accept URLs, so nothing arbitrary is ever carried in a query string or handed
+ * to a query, even though the query is also parameterized and HMAC-covered.
+ */
+function isCallSid(value) {
+  return typeof value === 'string' && /^CA[0-9a-f]{32}$/.test(value);
+}
+
+/**
+ * Record that a HUMAN accepted the escalation by pressing a key on the whisper.
+ *
+ * This is the only signal escalate/done can trust. See the header note: an
+ * auto-answering carrier voicemail produces DialCallStatus=completed just like a
+ * real conversation does, so without this the fallback hangs up on a caller who
+ * never reached a person. The COALESCE keeps the first acceptance if Twilio
+ * redelivers the accept callback.
+ */
+async function markEscalationAccepted(callSid) {
+  if (!isCallSid(callSid)) return;
+  await _deps.pool.query(
+    `UPDATE voicemail_delivery
+        SET escalation_accepted_at = COALESCE(escalation_accepted_at, NOW())
+      WHERE call_sid = $1`,
+    [callSid]
+  );
+}
+
+/**
+ * Did a human accept this escalation? Fails CLOSED (false) on a bad sid, a missing
+ * row, or a read error: "not accepted" sends the caller to voicemail, which is
+ * always recoverable, while a false "accepted" hangs up on them, which is not.
+ */
+async function wasEscalationAccepted(callSid) {
+  if (!isCallSid(callSid)) return false;
+  const { rows } = await _deps.pool.query(
+    'SELECT escalation_accepted_at FROM voicemail_delivery WHERE call_sid = $1',
+    [callSid]
+  );
+  return Boolean(rows[0] && rows[0].escalation_accepted_at);
+}
+
+/**
  * Record why the escalation ended. Observability only; nothing branches on it.
  * An off-list outcome is DROPPED rather than written, so a future caller passing
  * a typo logs a warning instead of violating the CHECK and failing the write on a
@@ -1307,15 +1653,16 @@ async function recordEscalationOutcome({ callSid, outcome }) {
 }
 
 module.exports = {
-  OUTCOMES, escalationDailyCap, claimEscalation, countEscalationsSince,
-  recordEscalationOutcome, __setEscalationDeps,
+  OUTCOMES, isCallSid, escalationDailyCap, claimEscalation, countEscalationsSince,
+  markEscalationAccepted, wasEscalationAccepted, recordEscalationOutcome,
+  __setEscalationDeps,
 };
 ```
 
 - [ ] **Step 4: Run to confirm pass**
 
 Run: `node -r dotenv/config --test server/utils/voicemailEscalation.test.js`
-Expected: PASS, 7 tests.
+Expected: PASS, 11 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1341,7 +1688,34 @@ The behavior the whole feature is for. New route file, mounted before `/api/voic
 - Consumes: `claimEscalation`, `countEscalationsSince`, `escalationDailyCap`, `recordEscalationOutcome` (Task 4); `resolveLine`, `escalationTargetFor`, `inQuietWindow` (Task 1); `recordVerb`, `escalationEnabled`, `escalationPromptVerb` (Task 1); `isValidTwilioRequest`.
 - Produces: `POST /api/voice/escalate`, `POST /api/voice/escalate/done`, `POST /api/voice/escalate/whisper`, `POST /api/voice/escalate/accept`, and `router.__setEscalateDeps` for tests.
 
-**How the four routes fit together.** Twilio's `<Gather>` requests its `action` URL only when a digit arrives; on timeout with no input it falls through to the NEXT verb in the same document. That is why the missed handler can put `<Record>` after the `</Gather>` and get the correct default (no keypress means leave a message) with no extra route. `escalate` is the digit handler. It dials the other person with a `<Number url=...>` whisper: that URL's TwiML plays to the ANSWERING party only, and a `<Gather>` there followed by `<Hangup/>` is the screening gate, so an unattended carrier voicemail that never presses a key gets hung up on instead of silently accepting the bridge. `escalate/done` is the outer `<Dial action>`, which fires when that leg ends for any reason and returns the `<Record>` so the caller is never stranded.
+**How the four routes fit together.** Twilio's `<Gather>` requests its `action` URL
+only when a digit arrives; on timeout with no input it falls through to the NEXT
+verb in the same document. That is why the missed handler can put `<Record>` after
+the `</Gather>` and get the correct default (no keypress means leave a message)
+with no extra route. `escalate` is the digit handler. It dials the other person with
+a `<Number url=...>` whisper: that URL's TwiML plays to the ANSWERING party only,
+and a `<Gather>` there followed by `<Hangup/>` screens the leg, so an unattended
+carrier voicemail that never presses a key gets hung up on. `escalate/done` is the
+outer `<Dial action>`, which fires when that leg ends for any reason.
+
+**Two things rev 1 got wrong here, and they are the reason this task is shaped the
+way it is.**
+
+1. **`escalate/done` must NOT branch on `DialCallStatus`.** Hanging up on the
+   screened leg still counts as an ANSWERED child leg, so Twilio reports
+   `completed` for both "a human talked to the client" and "a machine grabbed it
+   and we rejected it". Branching on that status strands the caller in silence in
+   exactly the case the screen was built for. `done` therefore branches on
+   `wasEscalationAccepted(parentSid)`, which is only ever true after a real
+   keypress.
+2. **The whisper and accept callbacks run on the CHILD leg, so `req.body.CallSid`
+   there is the child's sid, not the parent's.** The acceptance flag lives on the
+   parent's `voicemail_delivery` row, so the parent sid is threaded explicitly
+   through the whisper and accept URLs as `?sid=`, validated with `isCallSid` on the
+   way in and on the way out. It is our own value round-tripping, the query string
+   is inside the webhook HMAC (`twilioSignature.js:20` signs `req.originalUrl`), and
+   the shape check means nothing arbitrary can reach the query even so. Do not rely
+   on `ParentCallSid`; the explicit round-trip is deterministic.
 
 - [ ] **Step 1: Write the failing tests for the routes**
 
@@ -1396,7 +1770,7 @@ const cs = (label) => 'CA' + crypto.createHash('md5').update(String(label)).dige
 
 let calls;
 beforeEach(() => {
-  calls = { claims: [], counts: 0, outcomes: [] };
+  calls = { claims: [], counts: 0, outcomes: [], accepted: [], wasAccepted: false };
   process.env.VM_ESCALATION_ENABLED = 'true';
   process.env.VM_MAX_LENGTH_SEC = '120';
   process.env.VA_CELL = '+639171234567';
@@ -1410,14 +1784,9 @@ beforeEach(() => {
     claimEscalation: async (sid) => { calls.claims.push(sid); return { line: 'zul' }; },
     countEscalationsSince: async () => calls.counts,
     recordEscalationOutcome: async (a) => { calls.outcomes.push(a); },
+    markEscalationAccepted: async (sid) => { calls.accepted.push(sid); },
+    wasEscalationAccepted: async () => calls.wasAccepted,
   });
-});
-
-test('press 1 dials the other person with a screening whisper', async () => {
-  const res = await post('/api/voice/escalate?line=zul', { Digits: '1', CallSid: cs('E1') });
-  assert.match(res.text, /<Dial[^>]*action="[^"]*\/api\/voice\/escalate\/done\?line=zul"/);
-  assert.match(res.text, /timeLimit="1800"/);
-  assert.match(res.text, /<Number[^>]*url="[^"]*\/api\/voice\/escalate\/whisper"[^>]*>\+13125889401<\/Number>/);
 });
 
 test('a digit other than 1 goes straight to the recording, no dial', async () => {
@@ -1468,28 +1837,49 @@ test('VM_ESCALATION_ENABLED=false makes the digit handler a plain recording', as
   assert.equal(calls.claims.length, 0);
 });
 
-test('the whisper screens with a Gather and hangs up when nobody presses a key', async () => {
-  const res = await post('/api/voice/escalate/whisper', { CallSid: cs('E8') });
+test('press 1 dials the other person and threads the parent sid to the whisper', async () => {
+  const parent = cs('E1');
+  const res = await post('/api/voice/escalate?line=zul', { Digits: '1', CallSid: parent });
+  assert.match(res.text, new RegExp(`action="[^"]*/api/voice/escalate/done\\?line=zul&amp;sid=${parent}"`));
+  assert.match(res.text, /timeLimit="1800"/);
+  assert.match(res.text, new RegExp(`<Number[^>]*url="[^"]*/api/voice/escalate/whisper\\?sid=${parent}"[^>]*>\\+13125889401</Number>`));
+});
+
+test('the whisper screens with a Gather, hangs up on no keypress, and carries the sid', async () => {
+  const parent = cs('E8');
+  const res = await post(`/api/voice/escalate/whisper?sid=${parent}`, { CallSid: cs('child8') });
   assert.match(res.text, /<Gather[^>]*numDigits="1"/);
-  assert.match(res.text, /action="[^"]*\/api\/voice\/escalate\/accept"/);
+  assert.match(res.text, new RegExp(`action="[^"]*/api/voice/escalate/accept\\?sid=${parent}"`));
   assert.match(res.text, /Dr\. Bartender/);
   // The trailing Hangup is the whole point: an unattended carrier voicemail that
   // never presses a key must NOT be bridged to the client.
   assert.match(res.text, /<\/Gather><Hangup\/>/);
 });
 
-test('accept returns an empty response so the parties bridge', async () => {
-  const res = await post('/api/voice/escalate/accept', { Digits: '5', CallSid: cs('E9') });
+test('accept marks the PARENT accepted and returns an empty response so they bridge', async () => {
+  const parent = cs('E9');
+  // The whisper and accept callbacks run on the CHILD leg, so CallSid here is the
+  // child's. The acceptance flag belongs to the parent row.
+  const res = await post(`/api/voice/escalate/accept?sid=${parent}`, { Digits: '5', CallSid: cs('child9') });
   assert.match(res.text, /<Response><\/Response>|<Response\/>/);
+  assert.deepEqual(calls.accepted, [parent], 'the parent sid, not the child sid');
 });
 
-test('accept with no digits hangs up rather than bridging', async () => {
-  const res = await post('/api/voice/escalate/accept', { Digits: '', CallSid: cs('E10') });
+test('accept with no digits hangs up and marks nothing accepted', async () => {
+  const res = await post(`/api/voice/escalate/accept?sid=${cs('E10')}`, { Digits: '', CallSid: cs('child10') });
   assert.match(res.text, /<Hangup\/>/);
+  assert.equal(calls.accepted.length, 0);
 });
 
-test('escalate/done returns the recording so the caller is never stranded', async () => {
-  const res = await post('/api/voice/escalate/done?line=zul', {
+test('accept with a malformed sid hangs up rather than bridging blind', async () => {
+  const res = await post('/api/voice/escalate/accept?sid=nope', { Digits: '5', CallSid: cs('child10b') });
+  assert.match(res.text, /<Hangup\/>/);
+  assert.equal(calls.accepted.length, 0);
+});
+
+test('escalate/done returns the recording when nobody accepted', async () => {
+  calls.wasAccepted = false;
+  const res = await post(`/api/voice/escalate/done?line=zul&sid=${cs('E11')}`, {
     DialCallStatus: 'no-answer', CallSid: cs('E11'),
   });
   assert.match(res.text, /<Record[^>]*maxLength="120"/);
@@ -1497,13 +1887,35 @@ test('escalate/done returns the recording so the caller is never stranded', asyn
   assert.deepEqual(calls.outcomes.at(-1).outcome, 'no_answer');
 });
 
-test('escalate/done on an answered leg just hangs up, no second recording', async () => {
-  const res = await post('/api/voice/escalate/done?line=zul', {
+test('escalate/done RECORDS a screened-out machine even though Twilio says completed', async () => {
+  // THE REGRESSION TEST. Hanging up the screened leg still reports completed, so
+  // trusting DialCallStatus here would hang up on a caller who never reached a
+  // person. Acceptance state is the only thing that may decide this.
+  calls.wasAccepted = false;
+  const res = await post(`/api/voice/escalate/done?line=zul&sid=${cs('E12')}`, {
     DialCallStatus: 'completed', CallSid: cs('E12'),
+  });
+  assert.match(res.text, /<Record[^>]*maxLength="120"/, 'completed without acceptance is NOT a conversation');
+  assert.deepEqual(calls.outcomes.at(-1).outcome, 'no_answer');
+});
+
+test('escalate/done hangs up with no second recording once a human accepted', async () => {
+  calls.wasAccepted = true;
+  const res = await post(`/api/voice/escalate/done?line=zul&sid=${cs('E13')}`, {
+    DialCallStatus: 'completed', CallSid: cs('E13'),
   });
   assert.doesNotMatch(res.text, /<Record/);
   assert.match(res.text, /<Hangup\/>/);
   assert.deepEqual(calls.outcomes.at(-1).outcome, 'answered');
+});
+
+test('escalate/done falls back to recording when the acceptance read throws', async () => {
+  // Fail closed toward the caller: voicemail is recoverable, silence is not.
+  router.__setEscalateDeps({ wasEscalationAccepted: async () => { throw new Error('db down'); } });
+  const res = await post(`/api/voice/escalate/done?line=zul&sid=${cs('E14')}`, {
+    DialCallStatus: 'completed', CallSid: cs('E14'),
+  });
+  assert.match(res.text, /<Record/);
 });
 
 test('every escalate route fails CLOSED on a bad signature with NODE_ENV unset', async () => {
@@ -1562,6 +1974,8 @@ let _deps = {
   isValidTwilioRequest,
   claimEscalation: (...a) => escalation.claimEscalation(...a),
   countEscalationsSince: (...a) => escalation.countEscalationsSince(...a),
+  markEscalationAccepted: (...a) => escalation.markEscalationAccepted(...a),
+  wasEscalationAccepted: (...a) => escalation.wasEscalationAccepted(...a),
   recordEscalationOutcome: (...a) => escalation.recordEscalationOutcome(...a),
 };
 function __setEscalateDeps(d) { _deps = { ..._deps, ...d }; }
@@ -1623,8 +2037,9 @@ router.post('/', escalateLimiter, async (req, res) => {
   const callSid = req.body.CallSid || null;
   const tail = `sid=...${String(callSid).slice(-4)}`;
 
-  // Anything but 1 is "just let me leave a message". No claim, so no spend.
-  if (req.body.Digits !== '1' || !escalationEnabled() || !callSid) {
+  // Anything but 1 is "just let me leave a message". No claim, so no spend. The
+  // sid shape is checked here because it is about to be echoed into two URLs.
+  if (req.body.Digits !== '1' || !escalationEnabled() || !escalation.isCallSid(callSid)) {
     return recordTwiml(res);
   }
 
@@ -1670,9 +2085,12 @@ router.post('/', escalateLimiter, async (req, res) => {
   }
 
   // Attribute-value invariant: xmlEscape covers & < > but NOT quotes, so every
-  // attribute below is a validated integer, a fixed enum, or an env E.164.
-  const doneUrl = `${API_URL}/api/voice/escalate/done?line=${line}`;
-  const whisperUrl = `${API_URL}/api/voice/escalate/whisper`;
+  // attribute below is a validated integer, a fixed enum, an env E.164, or a
+  // shape-validated CallSid. The parent sid rides along because the whisper and
+  // accept callbacks run on the CHILD leg, where req.body.CallSid is the child's,
+  // while the acceptance flag belongs to this parent's ledger row.
+  const doneUrl = `${API_URL}/api/voice/escalate/done?line=${line}&sid=${callSid}`;
+  const whisperUrl = `${API_URL}/api/voice/escalate/whisper?sid=${callSid}`;
   console.log(`[vm-escalate] dialing line=${line} target=...${target.slice(-4)} ${tail}`);
   sendTwiml(res,
     '<Response>'
@@ -1695,7 +2113,11 @@ router.post('/', escalateLimiter, async (req, res) => {
  */
 router.post('/whisper', escalateLimiter, (req, res) => {
   if (!requireSignature(req, res, 'escalate/whisper')) return;
-  const acceptUrl = `${API_URL}/api/voice/escalate/accept`;
+  // The parent sid round-trips so /accept can flag the right ledger row. Validated
+  // on the way in as well as the way out: it is our own value, but it arrives over
+  // the wire.
+  const parentSid = escalation.isCallSid(req.query.sid) ? req.query.sid : '';
+  const acceptUrl = `${API_URL}/api/voice/escalate/accept?sid=${parentSid}`;
   sendTwiml(res,
     '<Response>'
     + `<Gather numDigits="1" timeout="8" action="${xmlEscape(acceptUrl)}" method="POST">`
@@ -1707,42 +2129,71 @@ router.post('/whisper', escalateLimiter, (req, res) => {
 });
 
 /**
- * POST /api/voice/escalate/accept. the whisper's <Gather action>. An empty
- * response ends the whisper document, which is what bridges the two parties.
+ * POST /api/voice/escalate/accept. The whisper's <Gather action>, so it fires ONLY
+ * on a real keypress. Records acceptance against the PARENT call, then returns an
+ * empty response, which ends the whisper document and bridges the two parties.
+ *
+ * This runs on the child leg, so req.body.CallSid here is the DIALED party's sid,
+ * not the caller's. The acceptance flag belongs to the parent, hence ?sid=.
  */
-router.post('/accept', escalateLimiter, (req, res) => {
+router.post('/accept', escalateLimiter, async (req, res) => {
   if (!requireSignature(req, res, 'escalate/accept')) return;
-  if (!req.body.Digits) {
-    // Defensive: Gather normally falls through to <Hangup/> on a timeout rather
-    // than calling this URL with no digits, but never bridge without a keypress.
+  const parentSid = req.query.sid;
+  if (!req.body.Digits || !escalation.isCallSid(parentSid)) {
+    // Gather normally falls through to <Hangup/> on a timeout rather than calling
+    // this URL with no digits, but never bridge without a keypress, and never
+    // bridge a leg that cannot be attributed to a parent call.
     return sendTwiml(res, '<Response><Hangup/></Response>');
   }
+  try {
+    await _deps.markEscalationAccepted(parentSid);
+  } catch (err) {
+    // A human IS on the line expecting to be connected, so failing the bridge over
+    // a bookkeeping error would be worse than a mis-recorded outcome. The cost is
+    // that /done may offer voicemail after they hang up.
+    console.error(`[vm-escalate] accept write failed sid=...${String(parentSid).slice(-4)}: ${err.message}`);
+  }
+  console.log(`[vm-escalate] accepted by keypress sid=...${String(parentSid).slice(-4)}`);
   sendTwiml(res, '<Response></Response>');
 });
 
 /**
- * POST /api/voice/escalate/done. the outer <Dial action>, requested when the
- * escalation leg ends for any reason. On anything but a connected call, return
- * the <Record> so the caller lands in voicemail instead of dead air.
+ * POST /api/voice/escalate/done. The outer <Dial action>, requested when the
+ * escalation leg ends for any reason.
+ *
+ * Branches on ACCEPTANCE, never on DialCallStatus. Hanging up the screened leg
+ * still counts as an answered child leg, so Twilio reports 'completed' both when a
+ * human talked to the client and when a carrier voicemail grabbed the call and the
+ * whisper rejected it. Only an explicit keypress separates them, and getting this
+ * wrong hangs up on a caller who never reached a person.
  */
 router.post('/done', escalateLimiter, async (req, res) => {
   if (!requireSignature(req, res, 'escalate/done')) return;
 
-  const callSid = req.body.CallSid || null;
+  const parentSid = escalation.isCallSid(req.query.sid) ? req.query.sid : (req.body.CallSid || null);
   const status = req.body.DialCallStatus;
-  const answered = status === 'completed';
-  if (callSid) {
+
+  // Fails CLOSED toward the caller: on any doubt, offer voicemail. A wrong
+  // "voicemail" is recoverable; a wrong "hang up" loses the lead in silence.
+  let accepted = false;
+  try {
+    accepted = await _deps.wasEscalationAccepted(parentSid);
+  } catch (err) {
+    console.error(`[vm-escalate] acceptance read failed: ${err.message}`);
+  }
+
+  if (parentSid) {
     await _deps.recordEscalationOutcome({
-      callSid, outcome: answered ? 'answered' : 'no_answer',
+      callSid: parentSid, outcome: accepted ? 'answered' : 'no_answer',
     }).catch((err) => console.error(`[vm-escalate] outcome write failed: ${err.message}`));
   }
 
-  if (answered) {
+  if (accepted) {
     // They talked. Nothing left to record.
     sendTwiml(res, '<Response><Hangup/></Response>');
     return;
   }
-  console.log(`[vm-escalate] no answer (${status}), back to voicemail sid=...${String(callSid).slice(-4)}`);
+  console.log(`[vm-escalate] not accepted (status=${status}), back to voicemail sid=...${String(parentSid).slice(-4)}`);
   recordTwiml(res);
 });
 
@@ -1752,7 +2203,7 @@ module.exports = router;
 - [ ] **Step 4: Run to confirm the route tests pass**
 
 Run: `node -r dotenv/config --test server/routes/voiceEscalate.test.js`
-Expected: PASS, 13 tests.
+Expected: PASS, 16 tests.
 
 - [ ] **Step 5: Mount the router in `server/index.js`**
 
@@ -1775,7 +2226,7 @@ test('/inbound/missed wraps the greeting in a Gather when escalation is enabled'
     DialCallStatus: 'no-answer', CallSid: cs('CAg1'), From: '+13125550147',
   });
   await settle();
-  assert.match(res.text, /<Gather[^>]*numDigits="1"/);
+  assert.match(res.text, /<Gather[^>]*numDigits="1"[^>]*timeout="4"/);
   assert.match(res.text, /action="[^"]*\/api\/voice\/escalate\?line=zul"/);
   assert.match(res.text, /press 1/);
   // The Record must sit AFTER </Gather>: a caller who presses nothing falls
@@ -1814,7 +2265,15 @@ Expected: FAIL on the three new tests (no `<Gather>` is emitted yet).
 
 - [ ] **Step 8: Add the `<Gather>` wrapper in `server/routes/voice.js`**
 
-Replace the TwiML block in `/inbound/missed` (the one Task 2 step 4d installed):
+Extend the Task 2 import with the two helpers this step is the first to call:
+
+```js
+const {
+  greetingVerbForLine, recordVerb, escalationEnabled, escalationPromptVerb,
+} = require('../utils/voicemailTwiml');
+```
+
+Then replace the TwiML block in `/inbound/missed` (the one Task 2 step 4d installed):
 
 ```js
   // The greeting goes INSIDE a <Gather> only when escalation is on. Twilio
@@ -1825,7 +2284,7 @@ Replace the TwiML block in `/inbound/missed` (the one Task 2 step 4d installed):
   // With escalation off this emits the exact document production emits today.
   const greeting = greetingVerbForLine(line);
   const body = escalationEnabled()
-    ? `<Gather numDigits="1" timeout="2" action="${xmlEscape(API_URL)}/api/voice/escalate?line=${line}" method="POST">`
+    ? `<Gather numDigits="1" timeout="4" action="${xmlEscape(API_URL)}/api/voice/escalate?line=${line}" method="POST">`
       + greeting + escalationPromptVerb()
       + '</Gather>'
     : greeting;
@@ -1907,19 +2366,20 @@ async function statusOf(callSid) {
 test('deliverVoicemail on the zul line uploads audio to Telegram, never SMS', async () => {
   const spy = removeSpy();
   const sent = { audio: [], sms: [] };
-  await vm.claimMissedCall({ callSid: sid(30), fromE164: '+13125550147', line: 'zul' });
+  await vm.claimMissedCall({ callSid: sid(50), fromE164: '+13125550147', line: 'zul' });
   vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
     client: spy.client,
     fetchRecordingMp3: async () => Buffer.from('ID3zul'),
     sendTelegramAudio: async (chatId, buf, opts) => { sent.audio.push({ chatId, opts }); return { ok: true }; },
     sendSMS: async (args) => { sent.sms.push(args); return { sid: 'SM1' }; },
   });
   const out = await vm.deliverVoicemail({
-    callSid: sid(30), recordingSid: 'RE' + 'a'.repeat(32), durationSec: 9,
+    callSid: sid(50), recordingSid: 'RE' + 'a'.repeat(32), durationSec: 9,
     fromE164: '+13125550147', chatId: '5550001', line: 'zul',
   });
   assert.equal(out, 'delivered');
-  assert.equal(await statusOf(sid(30)), 'delivered');
+  assert.equal(await statusOf(sid(50)), 'delivered');
   assert.equal(sent.audio.length, 1);
   assert.equal(sent.sms.length, 0, 'Zul gets Telegram, never the SMS path');
   assert.equal(spy.removed.length, 1, 'a delivered recording is deleted from Twilio');
@@ -1929,19 +2389,20 @@ test('deliverVoicemail on the primary line texts the destination, no Telegram au
   const spy = removeSpy();
   const sent = { audio: [], sms: [] };
   process.env.VM_TEXT_DESTINATION = '+13125889401';
-  await vm.claimMissedCall({ callSid: sid(31), fromE164: '+13125550147', line: 'primary' });
+  await vm.claimMissedCall({ callSid: sid(51), fromE164: '+13125550147', line: 'primary' });
   vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
     client: spy.client,
     fetchRecordingMp3: async () => Buffer.from('ID3dallas'),
     sendTelegramAudio: async (chatId, buf, opts) => { sent.audio.push({ chatId, opts }); return { ok: true }; },
     sendSMS: async (args) => { sent.sms.push(args); return { sid: 'SM2' }; },
   });
   const out = await vm.deliverVoicemail({
-    callSid: sid(31), recordingSid: 'RE' + 'b'.repeat(32), durationSec: 12,
+    callSid: sid(51), recordingSid: 'RE' + 'b'.repeat(32), durationSec: 12,
     fromE164: '+13125550147', chatId: '5550001', line: 'primary',
   });
   assert.equal(out, 'delivered');
-  assert.equal(await statusOf(sid(31)), 'delivered');
+  assert.equal(await statusOf(sid(51)), 'delivered');
   assert.equal(sent.audio.length, 0, "Dallas does not get Zul's Telegram");
   assert.equal(sent.sms.length, 1);
   assert.equal(sent.sms[0].to, '+13125889401');
@@ -1950,24 +2411,49 @@ test('deliverVoicemail on the primary line texts the destination, no Telegram au
   assert.equal(spy.removed.length, 1);
 });
 
-test('primary delivery with no destination is a skip that writes no status', async () => {
+test('primary delivery with no destination is a skip that writes no status (gate 1 of 2)', async () => {
   const spy = removeSpy();
   delete process.env.VM_TEXT_DESTINATION;
-  await vm.claimMissedCall({ callSid: sid(32), fromE164: '+13125550147', line: 'primary' });
+  await vm.claimMissedCall({ callSid: sid(52), fromE164: '+13125550147', line: 'primary' });
   vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
     client: spy.client,
     fetchRecordingMp3: async () => Buffer.from('ID3'),
     sendSMS: async () => { throw new Error('must not be called'); },
   });
   const out = await vm.deliverVoicemail({
-    callSid: sid(32), recordingSid: 'RE' + 'c'.repeat(32), durationSec: 8,
+    callSid: sid(52), recordingSid: 'RE' + 'c'.repeat(32), durationSec: 8,
     fromE164: '+13125550147', chatId: null, line: 'primary',
   });
   // Gated, not failed: keep the recording and leave the row 'recorded' so it
   // stays inside the sweep's retry window and a fixed config still delivers.
   assert.equal(out, 'skipped');
-  assert.equal(await statusOf(sid(32)), 'missed', 'no status write on a gated send');
+  assert.equal(await statusOf(sid(52)), 'missed', 'no status write on a gated send');
   assert.equal(spy.removed.length, 0, 'never delete a recording we did not deliver');
+});
+
+test('a GATED primary send is a skip, not a delivery (gate 2 of 2)', async () => {
+  // sendSMS does NOT throw when notifications are off or creds are missing: it
+  // returns a dev-skipped-* sid. Treating that as delivered would mark the row
+  // 'delivered' and DELETE the recording, and since delivered_at is a one-way door
+  // and the sweep only reaps 'recorded'/'failed', the voicemail would be parked
+  // outside both retry and delivery forever.
+  const spy = removeSpy();
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  await vm.claimMissedCall({ callSid: sid(55), fromE164: '+13125550147', line: 'primary' });
+  vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
+    client: spy.client,
+    fetchRecordingMp3: async () => Buffer.from('ID3'),
+    sendSMS: async () => ({ sid: 'dev-skipped-1753-abcd1234' }),
+  });
+  const out = await vm.deliverVoicemail({
+    callSid: sid(55), recordingSid: 'RE' + 'f'.repeat(32), durationSec: 8,
+    fromE164: '+13125550147', chatId: null, line: 'primary',
+  });
+  assert.equal(out, 'skipped');
+  assert.equal(await statusOf(sid(55)), 'missed', 'no status write on a gated send');
+  assert.equal(spy.removed.length, 0, 'a gated send must never delete the recording');
 });
 
 test('a failed primary SMS marks failed, keeps the recording, and alerts the backstop', async () => {
@@ -1975,19 +2461,20 @@ test('a failed primary SMS marks failed, keeps the recording, and alerts the bac
   const alerts = [];
   process.env.VM_TEXT_DESTINATION = '+13125889401';
   process.env.TELEGRAM_ALLOWED_USER_ID = '5550001';
-  await vm.claimMissedCall({ callSid: sid(33), fromE164: '+13125550147', line: 'primary' });
+  await vm.claimMissedCall({ callSid: sid(53), fromE164: '+13125550147', line: 'primary' });
   vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
     client: spy.client,
     fetchRecordingMp3: async () => Buffer.from('ID3'),
     sendSMS: async () => { throw new Error('twilio 500'); },
     sendTelegramMessage: async (chatId, text) => { alerts.push({ chatId, text }); return { ok: true }; },
   });
   const out = await vm.deliverVoicemail({
-    callSid: sid(33), recordingSid: 'RE' + 'd'.repeat(32), durationSec: 8,
+    callSid: sid(53), recordingSid: 'RE' + 'd'.repeat(32), durationSec: 8,
     fromE164: '+13125550147', chatId: null, line: 'primary',
   });
   assert.equal(out, 'failed');
-  assert.equal(await statusOf(sid(33)), 'failed');
+  assert.equal(await statusOf(sid(53)), 'failed');
   assert.equal(spy.removed.length, 0, 'never delete a recording we did not deliver');
   // The 312 is a Google Voice inbox and the SMS is the ONLY delivery channel on
   // this line, so a silent drop would lose the lead with no signal.
@@ -1997,22 +2484,25 @@ test('a failed primary SMS marks failed, keeps the recording, and alerts the bac
 
 test('a backstop alert that itself fails does not change the outcome', async () => {
   process.env.VM_TEXT_DESTINATION = '+13125889401';
-  await vm.claimMissedCall({ callSid: sid(34), fromE164: null, line: 'primary' });
+  await vm.claimMissedCall({ callSid: sid(54), fromE164: null, line: 'primary' });
   vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
     client: removeSpy().client,
     fetchRecordingMp3: async () => Buffer.from('ID3'),
     sendSMS: async () => { throw new Error('twilio 500'); },
     sendTelegramMessage: async () => { throw new Error('telegram down too'); },
   });
   const out = await vm.deliverVoicemail({
-    callSid: sid(34), recordingSid: 'RE' + 'e'.repeat(32), durationSec: 8,
+    callSid: sid(54), recordingSid: 'RE' + 'e'.repeat(32), durationSec: 8,
     fromE164: null, chatId: null, line: 'primary',
   });
   assert.equal(out, 'failed', 'the backstop is best-effort, never the thing that throws');
 });
 ```
 
-Add to `server/routes/voice.test.js`:
+Add to `server/routes/voice.test.js`. The last three are the tests that catch the
+route-level half of per-line delivery, which is invisible if you only stub
+`deliverVoicemail`:
 
 ```js
 test('/inbound/voicemail passes the row line into the delivery job', async () => {
@@ -2027,6 +2517,66 @@ test('/inbound/voicemail passes the row line into the delivery job', async () =>
   await settle();
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].line, 'primary', 'delivery must follow the line the call arrived on');
+});
+
+test('a primary voicemail still delivers with TELEGRAM_ALLOWED_USER_ID unset', async () => {
+  // The bootstrap gate is Zul-specific. If it also gated the primary line, every
+  // one of Dallas's voicemails would be silently undelivered whenever her chat id
+  // was unset, which is a documented production configuration.
+  const saved = process.env.TELEGRAM_ALLOWED_USER_ID;
+  delete process.env.TELEGRAM_ALLOWED_USER_ID;
+  const jobs = [];
+  try {
+    router.__setVoiceDeps({
+      claimDelivery: async () => ({ fromE164: '+13125550147', line: 'primary' }),
+      deliverVoicemail: async (job) => { jobs.push(job); return 'delivered'; },
+    });
+    await post('/api/voice/inbound/voicemail', {
+      CallSid: cs('CAdel2'), RecordingSid: GOOD_RE, RecordingStatus: 'completed', RecordingDuration: '11',
+    });
+    await settle();
+    assert.equal(jobs.length, 1, 'the primary line must not be gated on Zul\'s chat id');
+  } finally {
+    if (saved === undefined) delete process.env.TELEGRAM_ALLOWED_USER_ID;
+    else process.env.TELEGRAM_ALLOWED_USER_ID = saved;
+  }
+});
+
+test('a zul voicemail is still gated on TELEGRAM_ALLOWED_USER_ID', async () => {
+  const saved = process.env.TELEGRAM_ALLOWED_USER_ID;
+  delete process.env.TELEGRAM_ALLOWED_USER_ID;
+  const jobs = [];
+  try {
+    router.__setVoiceDeps({
+      claimDelivery: async () => ({ fromE164: '+13125550147', line: 'zul' }),
+      deliverVoicemail: async (job) => { jobs.push(job); return 'delivered'; },
+    });
+    await post('/api/voice/inbound/voicemail', {
+      CallSid: cs('CAdel3'), RecordingSid: GOOD_RE, RecordingStatus: 'completed', RecordingDuration: '11',
+    });
+    await settle();
+    assert.equal(jobs.length, 0, 'her line has no channel without a chat id; stay retryable');
+  } finally {
+    if (saved === undefined) delete process.env.TELEGRAM_ALLOWED_USER_ID;
+    else process.env.TELEGRAM_ALLOWED_USER_ID = saved;
+  }
+});
+
+test('a failed primary delivery alerts Dallas by SMS, never Zul by Telegram', async () => {
+  const sms = [];
+  router.__setVoiceDeps({
+    claimDelivery: async () => ({ fromE164: '+13125550147', line: 'primary' }),
+    deliverVoicemail: async () => 'failed',
+    sendSMS: async (args) => { sms.push(args); return { sid: 'SMalert' }; },
+  });
+  await post('/api/voice/inbound/voicemail', {
+    CallSid: cs('CAdel4'), RecordingSid: GOOD_RE, RecordingStatus: 'completed', RecordingDuration: '11',
+  });
+  await settle();
+  assert.equal(calls.telegram.length, 0, 'a primary failure must not be reported to Zul');
+  assert.equal(sms.length, 1);
+  assert.match(sms[0].body, /\+13125550147/);
+  assert.equal(sms[0].meta.skipLog, true);
 });
 ```
 
@@ -2126,6 +2676,7 @@ recording, `'skipped'` writes no status and keeps it, anything else writes
       console.log(`[voicemail] primary delivery skipped (VM_TEXT_DESTINATION unset) ${tail}`);
       return 'skipped';
     }
+    let sms;
     try {
       // sendSMS, NOT sendAndLogSms: this is an internal ops alert about a client,
       // not a message TO a client. skipLog keeps it out of the sms_messages
@@ -2133,7 +2684,7 @@ recording, `'skipped'` writes no status and keeps it, anything else writes
       // never show up in a client's conversation history. Neither primitive
       // applies consent or STOP suppression, so a stray STOP on the destination
       // can never silence Dallas's own voicemail alerts.
-      await _deps.sendSMS({
+      sms = await _deps.sendSMS({
         to,
         body: primaryAlertText({ fromE164, durationSec }),
         meta: { skipLog: true, messageType: 'voicemail_alert' },
@@ -2158,6 +2709,19 @@ recording, `'skipped'` writes no status and keeps it, anything else writes
       }
       return 'failed';
     }
+
+    // A GATED send is not a delivery. sendSMS does not throw when notifications
+    // are off or Twilio creds are missing; it returns a `dev-skipped-*` sid
+    // (sms.js:20-29). Treating that as delivered would mark the row 'delivered'
+    // and DELETE the recording, and because delivered_at is a one-way door and the
+    // sweep only reaps 'recorded'/'failed', the voicemail would be parked outside
+    // both retry and delivery forever. Same contract as the Telegram path's
+    // {ok:false, skipped:true}: write NO status, keep the recording, stay retryable.
+    if (!sms || String(sms.sid || '').startsWith('dev-skipped')) {
+      console.log(`[voicemail] primary delivery gated off, recording retained and still retryable ${tail}`);
+      return 'skipped';
+    }
+
     await markDelivery({ callSid, status: 'delivered' });
     await deleteRecording(recordingSid);
     console.log(`[voicemail] delivered to the primary line ${tail} duration=${durationSec}s`);
@@ -2167,15 +2731,82 @@ recording, `'skipped'` writes no status and keeps it, anything else writes
 
 Leave the existing Zul/Telegram path below this block exactly as it is.
 
-- [ ] **Step 5: Pass `line` into the job from `server/routes/voice.js`**
+- [ ] **Step 5: Thread `line` through `server/routes/voice.js` (THREE hops, not one)**
 
-In the `/inbound/voicemail` handler, the claim already returns the row context. Include the line in the job handed to `deliverVoicemail`:
+There is no `claimed.fromE164` anywhere; the local is `claim`. `line` has to be
+added at three points, and the route's Zul-specific tail has to become line-aware or
+the whole primary-SMS branch is unreachable and its failures alert the wrong person.
+
+**(a) `claimVoicemail`'s return (`voice.js:565`):**
 
 ```js
-      line: claimed.line,
+  return { callSid, recordingSid, durationSec, fromE164: claim.fromE164, line: claim.line, tail };
 ```
 
-Add it beside the existing `fromE164: claimed.fromE164` property in that object literal.
+**(b) `deliverClaimedVoicemail`'s destructure (`voice.js:568`):**
+
+```js
+async function deliverClaimedVoicemail({ callSid, recordingSid, durationSec, fromE164, line, tail }) {
+```
+
+**(c) The bootstrap gate (`voice.js:581-592`).** Today it returns early whenever
+`TELEGRAM_ALLOWED_USER_ID` is unset, which on the primary line would skip a delivery
+that never needed Telegram at all. Gate it per line:
+
+```js
+  // Zul's line delivers over Telegram, so her chat id is a hard precondition
+  // there. The primary line delivers by SMS and does not need it, so gating it on
+  // her id would make Dallas's voicemails silently undeliverable.
+  const allowed = process.env.TELEGRAM_ALLOWED_USER_ID;
+  if (line !== 'primary' && !allowed) {
+    // Documented bootstrap mode. Deliberately writes NO status: the row stays
+    // 'recorded', which is what keeps it inside the sweep's retry window.
+    console.warn(`[voice/voicemail] TELEGRAM_ALLOWED_USER_ID unset, recording retained and still retryable ${tail}`);
+    return;
+  }
+```
+
+**(d) The job literal (`voice.js:598-600`):**
+
+```js
+  const outcome = await _deps.deliverVoicemail({
+    callSid, recordingSid, durationSec, fromE164, line, chatId: allowed,
+  });
+```
+
+**(e) The operator alerts (`voice.js:602-619`).** Both `unfetchable` and `failed`
+currently Telegram Zul, so a primary-line failure would tell her about a voicemail
+that is not hers and tell Dallas nothing. Route the alert to the line's owner:
+
+```js
+  const who = fromE164 || 'a withheld number';
+  const alertOperator = async (text) => {
+    if (line === 'primary') {
+      const to = String(process.env.VM_TEXT_DESTINATION || '').trim();
+      if (!/^\+[1-9]\d{6,14}$/.test(to)) {
+        console.error(`[voice/voicemail] no primary alert destination ${tail}`);
+        return;
+      }
+      await _deps.sendSMS({ to, body: text, meta: { skipLog: true, messageType: 'voicemail_alert' } })
+        .catch((err) => console.error(`[voice/voicemail] primary alert failed ${tail}: ${err.message}`));
+      return;
+    }
+    if (!allowed) return;
+    await _deps.sendTelegramMessage(allowed, text)
+      .catch((err) => console.error(`[voice/voicemail] telegram alert failed ${tail}: ${err.message}`));
+  };
+```
+
+Then replace the two `await _deps.sendTelegramMessage(allowed, ...)` calls in the
+`unfetchable` and `failed` branches with `await alertOperator(...)`, leaving their
+Sentry captures and their messages otherwise unchanged.
+
+This requires `sendSMS` on the route's `_deps` too. Add it beside the existing
+`sendTelegramMessage` entry in `voice.js`'s `_deps` object:
+
+```js
+  sendSMS: (...a) => require('../utils/sms').sendSMS(...a),
+```
 
 - [ ] **Step 6: Make the redelivery sweep line-aware**
 
@@ -2248,7 +2879,121 @@ git commit -m "feat(phone): per-line voicemail delivery, primary line texts the 
 
 ---
 
-### Task 7: Env registration and documentation
+### Task 7: Split the public phone constants (voice to the 1922, text stays on the 888)
+
+Spec Ops step 5 is a CODE change, not an owner checkbox: one constant currently
+serves both "call us" and "text us", so repointing it at the 1922 would aim client
+texting at a number with no SMS approval, and leaving it alone means no client ever
+dials the new primary line.
+
+**Files:**
+- Modify: `client/src/utils/constants.js`
+- Modify: `client/src/pages/Completion.js`
+- Modify: `client/src/pages/ApplicationStatus.js`
+- Modify: `client/src/pages/FieldGuide.js`
+- Modify: `client/src/pages/PaydayProtocols.js`
+- Modify: `client/src/pages/proposal/proposalView/ProposalView.js`
+
+**Interfaces:**
+- Produces: `COMPANY_PHONE` / `COMPANY_PHONE_TEL` (VOICE, the 1922) and
+  `COMPANY_TEXT_PHONE` / `COMPANY_TEXT_PHONE_TEL` (SMS, the 888) in
+  `client/src/utils/constants.js`.
+
+There is no client test runner in this project, so verification is the CI build plus
+a concrete manual read of each surface.
+
+- [ ] **Step 1: Split the constants**
+
+In `client/src/utils/constants.js`, replace the two existing lines
+(`constants.js:4-5`) with four:
+
+```js
+// VOICE: the primary business line (+12242221922). This is the number to CALL.
+export const COMPANY_PHONE = '(224) 222-1922';
+export const COMPANY_PHONE_TEL = 'tel:+12242221922';
+// SMS: still the toll-free 888 until the 224 numbers clear A2P 10DLC registration
+// (spec Phase 2). Texting a number with no approved campaign does not deliver, so
+// these MUST stay separate from the voice pair until that cutover.
+export const COMPANY_TEXT_PHONE = '(888) 231-4320';
+export const COMPANY_TEXT_PHONE_TEL = 'sms:+18882314320';
+```
+
+Confirm the 888's real digits against `TWILIO_PHONE_NUMBER` before committing; the
+value above is from `reference-twilio-account` and must match what actually sends.
+
+- [ ] **Step 2: Repoint the two "Text us" links to the text pair**
+
+`client/src/pages/Completion.js:70` and `client/src/pages/ApplicationStatus.js:88`
+both render `<a href={COMPANY_PHONE_TEL}>Text us at {COMPANY_PHONE}</a>`. Both become:
+
+```jsx
+<a href={COMPANY_TEXT_PHONE_TEL}>Text us at {COMPANY_TEXT_PHONE}</a>
+```
+
+and their imports change from `{ COMPANY_PHONE, COMPANY_PHONE_TEL }` to
+`{ COMPANY_TEXT_PHONE, COMPANY_TEXT_PHONE_TEL }` (Completion.js also imports
+`WHATSAPP_GROUP_URL`; leave that alone).
+
+- [ ] **Step 3: Fix the three display-only surfaces**
+
+These are staff-facing and say "call or text", which is now two different numbers.
+
+`client/src/pages/FieldGuide.js:138` and `:226` currently read "Text or Call
+{COMPANY_PHONE}" and "Call or text Dr. Bartender immediately: {COMPANY_PHONE}".
+Make the channel explicit:
+
+```jsx
+<li>Day-of or urgent issues? Call {COMPANY_PHONE} or text {COMPANY_TEXT_PHONE}</li>
+```
+```jsx
+<li>Call Dr. Bartender immediately: <strong>{COMPANY_PHONE}</strong></li>
+```
+
+and add `COMPANY_TEXT_PHONE` to its import.
+
+`client/src/pages/PaydayProtocols.js:272` reads "Dr. Bartender Company Line:
+{COMPANY_PHONE}". That is a voice line, so it needs no change beyond inheriting the
+new value.
+
+`client/src/pages/proposal/proposalView/ProposalView.js:652` renders
+`contact@drbartender.com · {COMPANY_PHONE}` in the client-facing footer. A client
+reading a proposal is most likely to CALL, so the voice pair is correct here and it
+needs no change beyond the new value.
+
+- [ ] **Step 4: Verify no consumer was missed**
+
+Run: `grep -rn "COMPANY_PHONE\|COMPANY_TEXT_PHONE" client/src --include=*.js`
+Expected: exactly seven files (the constants file plus the six above), every usage
+is intentionally on the voice pair or the text pair, and NO remaining site links the
+word "text" to `COMPANY_PHONE_TEL`.
+
+- [ ] **Step 5: Verify the client compiles the way Vercel will**
+
+There is no client test runner, so this build is the gate. It is also what
+`.husky/pre-push` runs, so catching it here avoids a failed push.
+
+Run: `CI=true npx react-scripts build` from `client/`
+Expected: "Compiled successfully". A missed import surfaces here as a build error.
+
+- [ ] **Step 6: Manual read of each surface**
+
+The build proves it compiles, not that the right number is shown. Confirm each of
+the five pages renders the intended number for the intended channel (the two "Text
+us" links show the 888, everything else shows the 1922).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add client/src/utils/constants.js client/src/pages/Completion.js \
+        client/src/pages/ApplicationStatus.js client/src/pages/FieldGuide.js \
+        client/src/pages/PaydayProtocols.js \
+        client/src/pages/proposal/proposalView/ProposalView.js
+git commit -m "feat(phone): split voice and text company constants, voice to the 1922"
+```
+
+---
+
+### Task 8: Env registration and documentation
 
 **Files:**
 - Modify: `.env.example`
@@ -2258,7 +3003,7 @@ git commit -m "feat(phone): per-line voicemail delivery, primary line texts the 
 
 - [ ] **Step 1: Add the new vars to `.env.example`**
 
-Add to the voicemail block (after `VM_GREETING_URL`, near line 240):
+Add to the voicemail block (after `VM_GREETING_URL`, at `.env.example:245`):
 
 ```bash
 # ── Phone system Phase 1a (spec 2026-07-26) ─────────────────────────────────
@@ -2309,14 +3054,22 @@ Insert after the `VM_GREETING_URL` row (CLAUDE.md:315), one row per variable, us
 
 - Environment Variables table: the same rows as step 2.
 - Folder tree: add `server/routes/voiceEscalate.js`, `server/utils/voicemailLine.js`, `server/utils/voicemailTwiml.js`, `server/utils/voicemailEscalation.js`, each with a one-line description.
-- The `voice.js` tree entry (`README.md:257`) enumerates that router's endpoints; add `POST /inbound/primary`.
+- The `voice.js` tree entry (`README.md:259`) enumerates that router's endpoints; add `POST /inbound/primary`.
 
 - [ ] **Step 4: Update `ARCHITECTURE.md`**
 
-- API route table, the `/api/voice` section: add `POST /inbound/primary`. Add a new `/api/voice/escalate` table (mounted before `/api/voice`) with `POST /`, `POST /done`, `POST /whisper`, `POST /accept`, each fail-closed on signature.
+- API route table, the `/api/voice` section: add `POST /inbound/primary`. ALSO correct the two existing rows at `ARCHITECTURE.md:437-438`, which still describe the pre-1a `/inbound` action URL (no `?line=`) and a missed-call document with no `<Gather>`. Add a new `/api/voice/escalate` table (mounted before `/api/voice`) with `POST /`, `POST /done`, `POST /whisper`, `POST /accept`, each fail-closed on signature.
 - Database Schema: add `line`, `escalated_at`, `escalation_outcome` to the `voicemail_delivery` entry, including that `line` is NOT NULL DEFAULT `'zul'` and that the default IS the backfill for pre-2026-07-26 rows.
-- The inbound-flow prose (around `ARCHITECTURE.md:1581`): describe the two lines, the shared missed handler keyed on `line`, and the press-1 escalation with its four guards (kill switch, claim, cap, quiet window) and the key-to-accept whisper.
+- The inbound-flow prose (`ARCHITECTURE.md:1589-1590`; note `:1581` is the SMS section): describe the two lines, the shared missed handler keyed on `line`, and the press-1 escalation with its four guards (kill switch, claim, cap, quiet window) and the key-to-accept whisper.
 - Helper modules list: add the three new utils. Toll-fraud guards list: add `VM_ESCALATION_DAILY_CAP` and the escalation claim.
+
+- [ ] **Step 4b: Document the phone-constant split**
+
+`README.md` and `ARCHITECTURE.md` both describe the public phone number. Record that
+voice and text are now two different numbers (`COMPANY_PHONE*` = the 1922 for calls,
+`COMPANY_TEXT_PHONE*` = the 888 for texts) and that they reunite in Phase 2 once the
+224 numbers clear A2P. Without this, the next person to touch a "call or text us"
+surface will helpfully collapse them back into one.
 
 - [ ] **Step 5: Verify the docs against the code that landed**
 
@@ -2349,13 +3102,17 @@ git commit -m "docs(phone): register Phase 1a env vars, routes, and schema colum
 - [ ] `npx eslint server/` clean (0 errors).
 - [ ] `npm run check:filesize` shows `server/routes/voice.js` in neither the RED nor the YELLOW list.
 - [ ] Full review fleet (`security-review`, `database-review`, `code-review`, `consistency-check`) plus `/second-opinion`, since this is a billed-voice path.
-- [ ] Confirm in Render, BEFORE the deploy that carries this code: `VM_ESCALATION_ENABLED=false`, `VM_PRIMARY_DIAL_TARGET` set, `VM_TEXT_DESTINATION` set. The escalation ships dark; the primary line does not, so its target must exist before the 1922's webhook is pointed at us.
+- [ ] `CI=true npx react-scripts build` from `client/` passes (Task 7 touches the client, so `.husky/pre-push` will run this anyway).
+- [ ] Confirm in Render, BEFORE the deploy that carries this code: `VOICEMAIL_ENABLED=true` (the primary line shares this master switch with Zul's, and with it off a missed primary call just hangs up), `VM_ESCALATION_ENABLED=false` (ships dark), `VM_PRIMARY_DIAL_TARGET` set, `VM_TEXT_DESTINATION` set. The escalation ships dark; the primary line does not, so its target must exist before the 1922's webhook is pointed at us.
+- [ ] Note that `VM_DAILY_CAP` is shared across BOTH lines (it counts `voicemail_delivery` rows, which now include primary-line calls). Consider raising it from 50 if two lines of real volume would crowd it.
 
 ## Ops and live verification (owner, after deploy)
 
 Code alone does not finish this. In order:
 
 - [ ] **Twilio console:** point `+12242221922`'s Voice webhook at `POST https://api.drbartender.com/api/voice/inbound/primary`. Leave `+12242220082` alone.
+- [ ] **Twilio console, the 1922's MESSAGING webhook:** point it at the existing inbound-SMS route (`POST https://api.drbartender.com/api/sms/inbound`), the same target the 888 uses. This is NOT the Phase 2 item (that is moving OUTBOUND client texts off the 888): the 1922 is about to become the number on the website, so a client who texts it must land somewhere instead of vanishing into an unconfigured number.
+- [ ] **Know the rollback before you need it.** The escalation is env-revertable (`VM_ESCALATION_ENABLED=false`). The primary line is NOT: backing it out means un-pointing `+12242221922`'s Voice webhook in the Twilio console, which instantly returns that number to doing nothing. The lane squash-merges to one commit, so a git revert takes the schema and Zul's per-line greeting with it; prefer the console and env switches.
 - [ ] **Google Voice on the 312:** confirm it forwards to Dallas's phone, and DISABLE its voicemail. This is the un-monitored manual setting the whole primary-line miss detection depends on; if it re-enables, callers hit a dumb voicemail we cannot route.
 - [ ] **Live test, primary line:** call the 1922, let it ring out, confirm Dallas's greeting plays (not Zul's) and a text arrives at the 312 with the caller number. This proves GV voicemail did not intercept.
 - [ ] **Live test, escalation:** set `VM_ESCALATION_ENABLED=true`. Call each line, press 1, and confirm (a) the other person's phone rings, (b) the whisper plays and the call only connects after a keypress, (c) letting it ring out with nobody answering returns you to the voicemail beep, and (d) pressing nothing at the greeting still records normally.
