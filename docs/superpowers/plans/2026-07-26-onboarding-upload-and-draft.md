@@ -1584,7 +1584,9 @@ Note both documents have two possible homes. A resume is `applications.resume_fi
   - `RESUME_MISSING: string`, `CERT_MISSING: string`: SQL boolean fragments.
   - `ONBOARDED_STATUSES: string[]`
   - `outstandingFor(userId) -> Promise<string[]>`: human-readable labels for one user, e.g. `['resume', 'alcohol certification']`, empty when nothing is owed.
-  - `countOutstanding() -> Promise<number>`: how many workers owe at least one document.
+  - `listOutstanding() -> Promise<Array<{ user_id: number, name: string, owed: string[] }>>`: everyone who owes at least one document, newest first.
+
+**Why a list and not a count.** A bare number dead-ends. The admin item would read "3 bartenders missing documents" and link to `/hiring`, but `HiringDashboard.js:59` populates that page from `/admin/applications`, which INNER JOINs `applications`. Every direct hire the count exists to catch is absent from the page the count sends you to. Naming people instead, each linking to their own detail page, costs the same and lands on `DocumentsTab`, which already renders exactly which document is missing (`DocumentsTab.js:13-17` performs the identical profile-then-application fallback).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1599,7 +1601,7 @@ const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
 
 const { pool } = require('../db');
-const { outstandingFor, countOutstanding } = require('./outstandingDocuments');
+const { outstandingFor, listOutstanding } = require('./outstandingDocuments');
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const ids = {};
@@ -1665,19 +1667,41 @@ test('a partially complete user owes only what is actually missing', async () =>
   assert.deepEqual(await outstandingFor(ids.halfway), ['alcohol certification']);
 });
 
-test('the count includes the no-application-row user', async () => {
-  const n = await countOutstanding();
-  assert.ok(n >= 2, `expected the bare and halfway fixtures to be counted, got ${n}`);
+test('the list names the no-application-row user', async () => {
+  const rows = await listOutstanding();
+  const bare = rows.find(r => r.user_id === ids.bare);
+  assert.ok(bare, 'a direct hire with no application row MUST appear; this is the whole point');
+  assert.deepEqual(bare.owed, ['resume', 'alcohol certification']);
 });
 
-test('the count and the per-user answer never disagree', async () => {
-  // The whole point of the shared predicate. Every fixture that reports
-  // outstanding documents must be inside the count, and vice versa.
-  for (const id of [ids.bare, ids.halfway]) {
-    assert.ok((await outstandingFor(id)).length > 0);
+test('the list falls back through profile name, application name, then email', async () => {
+  const rows = await listOutstanding();
+  // ids.bare has neither a profile nor an application, so it falls to email.
+  assert.match(rows.find(r => r.user_id === ids.bare).name, /odoc-bare-/);
+  // ids.halfway has an application carrying full_name.
+  assert.equal(rows.find(r => r.user_id === ids.halfway).name, 'Halfway');
+});
+
+test('the list carries per-person detail, not just membership', async () => {
+  const rows = await listOutstanding();
+  assert.deepEqual(rows.find(r => r.user_id === ids.halfway).owed, ['alcohol certification']);
+});
+
+test('the list excludes anyone who owes nothing', async () => {
+  const rows = await listOutstanding();
+  for (const id of [ids.viaApp, ids.viaProfile, ids.gone]) {
+    assert.equal(rows.some(r => r.user_id === id), false, `user ${id} should not be listed`);
   }
-  for (const id of [ids.viaApp, ids.viaProfile]) {
-    assert.equal((await outstandingFor(id)).length, 0);
+});
+
+test('the list and the per-user answer never disagree', async () => {
+  // The whole point of the shared predicate: two surfaces, one source of truth.
+  const rows = await listOutstanding();
+  for (const id of [ids.bare, ids.halfway, ids.viaApp, ids.viaProfile]) {
+    const perUser = await outstandingFor(id);
+    const listed = rows.find(r => r.user_id === id);
+    assert.deepEqual(listed ? listed.owed : [], perUser,
+      `list and outstandingFor disagree for user ${id}`);
   }
 });
 
@@ -1728,6 +1752,15 @@ const CERT_MISSING = 'COALESCE(cp.alcohol_certification_file_url, a.basset_file_
 
 const IN_FUNNEL = `u.role IN ('staff', 'manager') AND u.onboarding_status = ANY($1)`;
 
+// One row in, labels out. Shared so the per-user answer and the admin list
+// cannot phrase or compute the same fact differently.
+function labelsFor(row) {
+  const owed = [];
+  if (row.needs_resume) owed.push('resume');
+  if (row.needs_cert) owed.push('alcohol certification');
+  return owed;
+}
+
 async function outstandingFor(userId) {
   const result = await pool.query(`
     SELECT ${RESUME_MISSING} AS needs_resume,
@@ -1738,23 +1771,33 @@ async function outstandingFor(userId) {
 
   const row = result.rows[0];
   if (!row) return [];   // Not in the funnel: owes nothing by definition.
-
-  const owed = [];
-  if (row.needs_resume) owed.push('resume');
-  if (row.needs_cert) owed.push('alcohol certification');
-  return owed;
+  return labelsFor(row);
 }
 
-async function countOutstanding() {
+// Everyone who owes something, named. Not a count: a bare number would link the
+// admin to /hiring, whose list comes from /admin/applications and INNER JOINs
+// applications, so every direct hire this exists to catch would be missing from
+// the page the number sent them to.
+async function listOutstanding() {
   const result = await pool.query(`
-    SELECT COUNT(*) FROM users u ${DOC_JOINS}
+    SELECT u.id AS user_id,
+           COALESCE(cp.preferred_name, a.full_name, u.email) AS name,
+           ${RESUME_MISSING} AS needs_resume,
+           ${CERT_MISSING}   AS needs_cert
+    FROM users u ${DOC_JOINS}
     WHERE ${IN_FUNNEL} AND (${RESUME_MISSING} OR ${CERT_MISSING})
+    ORDER BY u.created_at DESC
   `, [ONBOARDED_STATUSES]);
-  return parseInt(result.rows[0].count, 10);
+
+  return result.rows.map(row => ({
+    user_id: row.user_id,
+    name: row.name,
+    owed: labelsFor(row),
+  }));
 }
 
 module.exports = {
-  outstandingFor, countOutstanding,
+  outstandingFor, listOutstanding,
   DOC_JOINS, RESUME_MISSING, CERT_MISSING, ONBOARDED_STATUSES,
 };
 ```
@@ -1762,7 +1805,7 @@ module.exports = {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd /home/drbartender/projects/os && node -r dotenv/config --test server/utils/outstandingDocuments.test.js`
-Expected: PASS, 7 tests.
+Expected: PASS, 9 tests.
 
 - [ ] **Step 5: Verify against real production data**
 
@@ -1791,80 +1834,121 @@ git commit -m "feat(onboarding): single shared predicate for outstanding documen
 
 ---
 
-### Task C2: Surface outstanding documents to the admin
+### Task C2: Name the recruits who owe documents, on the admin's own screen
 
-**Trimmed from the spec, needs Dallas's sign-off.** The spec named three admin surfaces: the needs-attention strip, a badge on `AdminUserDetail`, and a count in the `/hiring/summary` KPI strip. This task builds the strip and the summary field that feeds it, and drops the `AdminUserDetail` badge. That page already renders the document links, so their absence is visible there without a badge. The spec is marked approved and still says three, so this is the plan re-deciding a settled item: confirm the trim rather than inherit it. If it stands, add the badge to `docs/fix-list-remaining-2026-07-02.md` so the deferral survives the squash merge.
+The admin surface names people rather than counting them, and each row links to that person. `AdminUserDetail`'s `DocumentsTab` already renders which document is missing, using the identical profile-then-application fallback (`DocumentsTab.js:13-17`), so the click lands somewhere that already answers the question.
+
+**Not touching `/hiring/summary`.** An earlier revision added a fifth element to that handler's positional `Promise.all` destructure, which is a quiet way to scramble four existing KPI numbers. A dedicated endpoint avoids the hazard entirely and keeps the summary route a set of counts.
+
+**Dropped from the spec deliberately, and now on merit rather than on my say-so:** the spec named three admin surfaces (needs-attention, an `AdminUserDetail` badge, a `/hiring/summary` KPI count). A badge is a second opinion from the same data the page already prints as "Not on file" (`DocumentsTab.js:44-45`), and a KPI tile is the same number somewhere you visit less often. One surface that names people replaces all three. Record the drop in `docs/fix-list-remaining-2026-07-02.md` so the decision survives the squash merge.
 
 **Files:**
-- Modify: `server/routes/admin/hiring.js:18-61`
+- Modify: `server/routes/admin/hiring.js`
 - Modify: `client/src/pages/admin/overview/queueItems.js:26-47`
 - Modify: `client/src/pages/admin/overview/OverviewPage.js`
-- Modify: `client/src/pages/admin/overview/NeedsYouStrip.js` (the `QUEUE_ICON` map, currently lines 27-31)
+- Modify: `client/src/pages/admin/overview/NeedsYouStrip.js` (the `QUEUE_ICON` map and `queueItemHref`)
 - Test: `client/src/pages/admin/overview/queueItems.test.js`
 
 **Interfaces:**
-- Consumes: `countOutstanding` from Task C1.
+- Consumes: `listOutstanding` from Task C1.
 - Produces:
-  - `GET /api/admin/hiring/summary` gains a `missing_documents: number` field alongside its existing four.
-  - `buildStaffingItems(unstaffed, newApplications, missingDocs)` gains a third parameter, `missingDocs: number`. Existing two-argument callers still work, treating it as zero.
+  - `GET /api/admin/hiring/missing-documents` (admin only) returning `{ users: Array<{ user_id, name, owed: string[] }> }`.
+  - `buildStaffingItems(unstaffed, newApplications, missingDocs)` gains a third parameter, `missingDocs: Array<{user_id, name, owed}>`, defaulting to `[]`. Existing two-argument callers are unaffected.
+  - `queueItemHref` gains a `user` target resolving to `/staffing/users/:id`.
 
 - [ ] **Step 1: Write the failing client test**
 
 Append to `client/src/pages/admin/overview/queueItems.test.js`, inside the existing `describe('buildStaffingItems', ...)` block. That file uses `test()` for its three existing cases; match whichever of `test`/`it` the surrounding block already uses.
 
 ```js
-  it('adds a missing-documents item when any recruit owes files', () => {
-    const items = buildStaffingItems([], 0, 3);
-    const docs = items.find(i => i.type === 'documents');
-    expect(docs).toBeDefined();
-    expect(docs.title).toBe('3 bartenders missing documents');
-    expect(docs.priority).toBe('warn');
-    expect(docs.target).toBe('hiring');
+  const owing = (user_id, name, owed) => ({ user_id, name, owed });
+
+  it('emits one named row per recruit, not a lump count', () => {
+    const items = buildStaffingItems([], 0, [
+      owing(241, 'Debbie', ['resume', 'alcohol certification']),
+      owing(242, 'zeehme51@gmail.com', ['resume']),
+    ]).filter(i => i.type === 'documents');
+
+    expect(items).toHaveLength(2);
+    expect(items[0].title).toBe('Debbie is missing resume and alcohol certification');
+    expect(items[1].title).toBe('zeehme51@gmail.com is missing resume');
   });
 
-  it('singularises the missing-documents item', () => {
-    const docs = buildStaffingItems([], 0, 1).find(i => i.type === 'documents');
-    expect(docs.title).toBe('1 bartender missing documents');
+  it('links each row to that person, not to a list they may not appear on', () => {
+    const [row] = buildStaffingItems([], 0, [owing(241, 'Debbie', ['resume'])])
+      .filter(i => i.type === 'documents');
+    expect(row.target).toBe('user');
+    expect(row.ref).toBe(241);
   });
 
-  it('omits the missing-documents item at zero', () => {
-    expect(buildStaffingItems([], 0, 0).some(i => i.type === 'documents')).toBe(false);
+  it('gives each row a stable unique id', () => {
+    const items = buildStaffingItems([], 0, [
+      owing(241, 'Debbie', ['resume']),
+      owing(242, 'Someone', ['resume']),
+    ]).filter(i => i.type === 'documents');
+    expect(new Set(items.map(i => i.id)).size).toBe(2);
   });
 
-  it('treats a missing third argument as zero', () => {
+  it('emits nothing when nobody owes anything', () => {
+    expect(buildStaffingItems([], 0, []).some(i => i.type === 'documents')).toBe(false);
+  });
+
+  it('treats a missing third argument as nobody owing', () => {
     expect(buildStaffingItems([], 0).some(i => i.type === 'documents')).toBe(false);
   });
 ```
+
+Add to the existing `describe` covering `queueItemHref` if there is one, or create it:
+
+```js
+describe('queueItemHref', () => {
+  it('routes a user-target row to that user detail page', () => {
+    expect(queueItemHref({ target: 'user', ref: 241 })).toBe('/staffing/users/241');
+  });
+});
+```
+
+If `queueItemHref` is not currently exported from `NeedsYouStrip.js`, export it so this assertion can run. It is a pure function and exporting it introduces no behavior change.
 
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts test --testPathPattern=queueItems`
 Expected: FAIL, no item of type `documents`.
 
-- [ ] **Step 3: Implement the queue item**
+- [ ] **Step 3: Implement the queue rows**
 
-In `client/src/pages/admin/overview/queueItems.js`, change the signature at line 26 and append the new item before the `return`:
+In `client/src/pages/admin/overview/queueItems.js`, change the signature at line 26 and append before the `return`:
 
 ```js
-export function buildStaffingItems(unstaffed, newApplications, missingDocs = 0) {
+export function buildStaffingItems(unstaffed, newApplications, missingDocs = []) {
 ```
 
 ```js
-  if (missingDocs > 0) {
+  // One row per person, each linking to their own detail page. A single
+  // "N bartenders missing documents" row would link to /hiring, whose list
+  // INNER JOINs applications and therefore omits every direct hire this is for.
+  (missingDocs || []).forEach(u => {
     items.push({
-      id: 'missing-docs', type: 'documents', priority: 'warn',
-      title: `${missingDocs} ${missingDocs === 1 ? 'bartender' : 'bartenders'} missing documents`,
-      sub: 'No resume or certification on file',
-      meta: `${missingDocs} owed`, target: 'hiring', ref: null,
+      id: `missing-docs-${u.user_id}`, type: 'documents', priority: 'warn',
+      title: `${u.name} is missing ${u.owed.join(' and ')}`,
+      sub: 'Needed before their next shift',
+      meta: u.owed.length > 1 ? `${u.owed.length} docs` : '1 doc',
+      target: 'user', ref: u.user_id,
     });
-  }
+  });
   return items;
 ```
 
-Add an icon for the new type to the `QUEUE_ICON` map in `NeedsYouStrip.js`. Locate it by content, not line number:
+In `client/src/pages/admin/overview/NeedsYouStrip.js`, add the icon to the `QUEUE_ICON` map (locate it by content, not line number):
 
 ```js
   documents: 'pen',
+```
+
+and add the target to `queueItemHref`, beside the existing entity cases:
+
+```js
+  if (a.target === 'user') return `/staffing/users/${a.ref}`;
 ```
 
 - [ ] **Step 4: Run the client test to verify it passes**
@@ -1872,38 +1956,30 @@ Add an icon for the new type to the `QUEUE_ICON` map in `NeedsYouStrip.js`. Loca
 Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts test --testPathPattern=queueItems`
 Expected: PASS, including the three pre-existing `buildStaffingItems` cases.
 
-- [ ] **Step 5: Add the server count**
+- [ ] **Step 5: Add the endpoint**
 
-In `server/routes/admin/hiring.js`, import the shared helper:
-
-```js
-const { countOutstanding } = require('../../utils/outstandingDocuments');
-```
-
-The handler destructures a **4-element** array from `Promise.all` today:
+In `server/routes/admin/hiring.js`, import the shared helper and add a route beside the existing two. Leave `GET /hiring/summary` completely untouched.
 
 ```js
-  const [newApps, needSchedule, stalled, inPipeline] = await Promise.all([
+const { listOutstanding } = require('../../utils/outstandingDocuments');
 ```
-
-Add a fifth entry at the END of the array and a matching fifth name at the END of the destructure, so the existing positional bindings cannot shift:
 
 ```js
-  const [newApps, needSchedule, stalled, inPipeline, missingDocs] = await Promise.all([
-    // ... the four existing pool.query(...) calls, unchanged ...
-    countOutstanding(),
-  ]);
+// Recruits who still owe a resume or an alcohol certification, named.
+//
+// Separate from /hiring/summary on purpose: that route is a set of counts whose
+// handler destructures a positional Promise.all, and appending to it is a quiet
+// way to scramble four existing KPI numbers. This one also cannot live on the
+// applications list, which INNER JOINs applications and so omits exactly the
+// direct hires this endpoint exists to surface.
+router.get('/hiring/missing-documents', auth, adminOnly, asyncHandler(async (_req, res) => {
+  res.json({ users: await listOutstanding() });
+}));
 ```
 
-`countOutstanding()` returns a number, not a pg result, so add it to the response directly:
+- [ ] **Step 6: Verify the endpoint against real data**
 
-```js
-    missing_documents: missingDocs,
-```
-
-- [ ] **Step 6: Verify the endpoint actually returns it**
-
-Positional destructuring is exactly the kind of edit that silently returns the wrong number while every unit test stays green, so hit the real route. Get an admin token from the dev database and call it:
+Confirm the route returns the incident cohort and that `/hiring/summary` is byte-identical to before. Capture the summary output BEFORE editing so the comparison is real.
 
 ```bash
 cd /home/drbartender/projects/os
@@ -1913,24 +1989,27 @@ require('./server/db').pool.query(\"SELECT id, token_version FROM users WHERE ro
  .then(r=>{const u=r.rows[0];
    console.log(jwt.sign({userId:u.id,tokenVersion:u.token_version},process.env.JWT_SECRET,{expiresIn:'1h'}));
    process.exit(0)})")
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:5000/api/admin/hiring/missing-documents | python3 -m json.tool
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:5000/api/admin/hiring/summary | python3 -m json.tool
 ```
 
-Expected: all five keys present, and `new_apps_7d`, `need_to_schedule`, `stalled`, `in_pipeline` hold the **same values they did before this change**. Capture them before editing so you can compare. A shifted destructure shows up here as scrambled numbers and nowhere else.
+Expected: the first returns a `users` array where each entry has `user_id`, `name`, and a non-empty `owed`. The second returns its original four keys with **unchanged values**.
+
+Then confirm against production via the Neon MCP (project `round-tooth-34649976`, branch `br-noisy-frog-ad99sa6l`) that the same predicate names users **241, 242 and 243**, using the query in Task C1 Step 5. Those three are the incident cohort, and 241 is the one who has already worked a shift with no certification on file.
 
 - [ ] **Step 7: Feed it to the overview page**
 
-`OverviewPage` does not fetch `/admin/hiring/summary` today. Add it beside the existing `/admin/applications` fetch (around line 208-215), following that block's admin-only guard and swallowed-catch pattern exactly, since managers get a 403 here and must simply see no item:
+`OverviewPage` does not fetch this today. Add it beside the existing `/admin/applications` fetch (around line 208-215), following that block's admin-only guard and swallowed-catch pattern exactly, since managers get a 403 and must simply see no rows:
 
 ```js
-  const [hiringSummary, setHiringSummary] = useState(null);
+  const [missingDocs, setMissingDocs] = useState([]);
 
   useEffect(() => {
     if (!isAdmin) return undefined;
     let cancelled = false;
-    api.get('/admin/hiring/summary')
-      .then(r => { if (!cancelled) setHiringSummary(r.data); })
-      .catch(() => {}); // managers 403 here; the item simply stays absent
+    api.get('/admin/hiring/missing-documents')
+      .then(r => { if (!cancelled) setMissingDocs(r.data?.users || []); })
+      .catch(() => {}); // managers 403 here; the rows simply stay absent
     return () => { cancelled = true; };
   }, [isAdmin]);
 ```
@@ -1939,25 +2018,27 @@ Then pass it through where `staffingItems` is built:
 
 ```js
   const staffingItems = useMemo(
-    () => buildStaffingItems(unstaffed, newApplications, hiringSummary?.missing_documents || 0),
-    [unstaffed, newApplications, hiringSummary]);
+    () => buildStaffingItems(unstaffed, newApplications, missingDocs),
+    [unstaffed, newApplications, missingDocs]);
 ```
 
-- [ ] **Step 8: Verify it reaches the screen**
+- [ ] **Step 8: Verify it reaches the screen and the click works**
 
 Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build`
 Expected: build succeeds.
 
-Then load `/` on the admin app as an admin and confirm the row **"N bartenders missing documents"** appears in the Needs-attention card's staffing tab, with an icon rather than a blank square. Click it and confirm it navigates to `/hiring`. Unit tests cover the builder in isolation; nothing else proves the fetch, the memo, the icon, and the row all line up.
+Then load `/` on the admin app as an admin:
+- [ ] The Needs-attention staffing tab shows a row per recruit, reading like **"Debbie is missing resume and alcohol certification"**, with an icon rather than a blank square.
+- [ ] Clicking that row lands on `/staffing/users/241`, and its Documents tab shows "Not on file" for the same documents the row named. The row and the page must agree; that agreement is the entire reason the predicate was extracted in C1.
+- [ ] With more than six rows, the "N more" overflow row renders correctly (`TAB_CAP` is 6).
+- [ ] Load the same page as a manager and confirm the rows are absent with no error, since the endpoint 403s for them.
 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add server/routes/admin/hiring.js client/src/pages/admin/overview/queueItems.js client/src/pages/admin/overview/queueItems.test.js client/src/pages/admin/overview/OverviewPage.js client/src/pages/admin/overview/NeedsYouStrip.js
-git commit -m "feat(hiring): surface recruits missing documents in needs-attention"
+git add server/routes/admin/hiring.js server/utils/outstandingDocuments.js client/src/pages/admin/overview/queueItems.js client/src/pages/admin/overview/queueItems.test.js client/src/pages/admin/overview/OverviewPage.js client/src/pages/admin/overview/NeedsYouStrip.js
+git commit -m "feat(hiring): name the recruits who owe documents in needs-attention"
 ```
-
----
 
 ### Task C3: Tell the recruit, then stop blocking them
 
@@ -2111,8 +2192,10 @@ Run `/second-opinion` on Lane A alongside the fleet.
 
 ## Open item carried from the spec
 
-The recruit who triggered this was unblocked by being sent directly to `/welcome`, which skips the application. She will finish onboarding with no `positions_interested`, no availability, no `comfortable_working_alone` answer, and no BASSET on file.
+The recruit who triggered this was unblocked by being sent directly to `/welcome`, which skips the application. She reached `approved` on 2026-07-24 at 4:50 PM on her original account (user 241, `dlemke03@gmail.com`), was assigned to shift 363, and **worked it on 2026-07-25 with no alcohol certification on file.** Her two abandoned accounts, 242 and 243, are still sitting at `in_progress` and should be deactivated.
+
+So this is not hypothetical: she has `onboarding_status = 'approved'`, no application row, no resume, and no certification. She is precisely the row `listOutstanding()` must return, and the reason its joins are LEFT rather than INNER.
 
 Task C1's predicate catches the missing documents, and only because it is built on LEFT JOINs against `users`. An earlier draft of this plan derived the count from `/admin/applications`, which INNER JOINs and would have rendered her invisible to the very safety net written in response to her. That is why the join style in `outstandingDocuments.js` is load-bearing rather than incidental, why C1 Step 1 fixtures a user with no application row at all, and why C1 Step 5 verifies users 241, 242 and 243 actually appear in production.
 
-**The application answers are a separate problem and no task here recovers them.** Positions, availability, working alone, tools, and experience will simply be absent. Collect them from her by hand after her first shift.
+**The application answers are a separate problem and no task here recovers them.** Positions, availability, working alone, tools, and experience are simply absent, and nothing in this plan will surface them. That collection is a manual follow-up, already overdue since she has worked a shift.
