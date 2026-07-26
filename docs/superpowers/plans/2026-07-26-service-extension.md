@@ -11,6 +11,8 @@ lanes:
       - server/utils/serviceExtensionPricing.test.js
       - server/utils/serviceExtensionSettle.js
       - server/utils/serviceExtensionSettle.test.js
+      - server/utils/serviceExtensionPayroll.js
+      - server/utils/serviceExtensionPayroll.test.js
       - scripts/money-smoke-list.txt
     deps: []
     review: full-fleet
@@ -24,6 +26,7 @@ lanes:
       - server/routes/serviceExtensions/admin.js
       - server/routes/serviceExtensions/admin.test.js
       - server/utils/serviceExtensionNotify.js
+      - server/middleware/rateLimiters.js
       - server/routes/stripe.js
       - server/routes/invoices.js
       - server/routes/invoices.extension.test.js
@@ -36,10 +39,9 @@ lanes:
       - server/routes/stripeWebhookHandlers/paymentIntentSucceeded.extension.test.js
       - server/utils/payrollAccrual.js
       - server/utils/payrollAccrual.extension.test.js
-      - server/utils/serviceExtensionPayroll.js
-      - server/utils/serviceExtensionPayroll.test.js
       - server/utils/serviceExtensionSweep.js
       - server/utils/serviceExtensionSweep.test.js
+      - scripts/money-smoke-list.txt
       - server/index.js
     deps: [ext-core, ext-routes]
     review: full-fleet
@@ -51,8 +53,6 @@ lanes:
       - client/src/index.css
       - client/src/components/adminos/ServiceExtensionPanel.js
       - client/src/pages/admin/EventDetailPage.js
-      - server/routes/serviceExtensions/create.js
-      - server/routes/serviceExtensions/create.test.js
     deps: [ext-routes]
     review: full-fleet
   - id: ext-docs
@@ -61,7 +61,8 @@ lanes:
       - ARCHITECTURE.md
       - .claude/CLAUDE.md
       - .env.example
-    deps: [ext-routes, ext-webhook-payroll]
+      - docs/fix-list-remaining-2026-07-02.md
+    deps: [ext-routes, ext-webhook-payroll, ext-ui]
     review: light
 ---
 
@@ -89,14 +90,78 @@ lanes:
 - Tests: co-located `*.test.js`, node:test, run **one suite at a time** against the shared dev DB. From a lane worktree (no `.env` there): `node --env-file=/home/drbartender/projects/os/.env --test <file>`. Nonce-suffixed seed rows, FK-ordered teardown, `await pool.end()` in `after()`. Pay-period fixtures use the chicago-keyed track-and-restore pattern (standing test law).
 - Hosted-package bartender rule is load-bearing: included 1:100 bartenders are $0; over-ratio bartenders bill `extra_bartender_hourly` PLUS the sub-100-guest surcharge ($50/$25/$15 per hour for <50/<75/<100 guests). The pricing delta inherits this from the engine; Task 4 pins it with a test.
 
+## Test harness constraints (READ BEFORE WRITING ANY FIXTURE)
+
+The plan-review fleet found that a first draft of this plan got all of these wrong, in every suite at once. They are stated here so no task repeats them.
+
+- **`users` has NO `name` column, and the password column is `password_hash` (NOT NULL, no default).** The real columns are `id, email, password_hash, role, onboarding_status, token_version, created_at, updated_at` plus later `ALTER`s. Human names live on `contractor_profiles.preferred_name`. Every fixture insert is:
+  ```javascript
+  const u = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1, 'x', 'staff', 'approved', 0) RETURNING id, token_version`,
+    [`${NONCE}-a@example.test`]
+  );
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, phone, preferred_name, hourly_rate)
+     VALUES ($1, '3125550111', $2, 40)`,
+    [u.rows[0].id, `${NONCE} A`]
+  );
+  ```
+  Never select `u.name` in application code either. Use `COALESCE(cp.preferred_name, u.email)`.
+- **JWTs must be signed `{ userId, tokenVersion }`, not `{ id, role }`.** `server/middleware/auth.js` reads `decoded.userId` for the user lookup and compares `decoded.tokenVersion` against `users.token_version`; a mismatch is a 401. Role comes from the DB row, never from the token. Copy the precedent at `server/routes/beo.test.js:130`:
+  ```javascript
+  const token = jwt.sign(
+    { userId: u.rows[0].id, tokenVersion: u.rows[0].token_version },
+    process.env.JWT_SECRET, { expiresIn: '1h' }
+  );
+  ```
+- **There is NO `server/middleware/errorHandler` module.** The global handler is inline in `server/index.js`, so route suites hand-roll it. Copy `server/routes/invoices.extrasVoid.test.js:107-111`:
+  ```javascript
+  app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    if (err instanceof AppError) {
+      const b = { error: err.message, code: err.code };
+      if (err.fieldErrors) b.fieldErrors = err.fieldErrors;
+      return res.status(err.statusCode).json(b);
+    }
+    return res.status(500).json({ error: 'Internal error', code: 'INTERNAL_ERROR' });
+  });
+  ```
+  Note the field-error key is `fieldErrors`, so client-side reads use `data.fieldErrors`, not `data.fields`.
+- **Pin package fixtures by slug, never `LIMIT 1` on a rate.** `schema.sql` seeds both `the-core-reaction` and `the-doctors-orders` at `extra_hour_rate = 100`, so `WHERE extra_hour_rate = 100 LIMIT 1` is non-deterministic. These suites join the money-smoke list and run against a fresh Neon branch where both rows exist. Always `WHERE slug = 'the-core-reaction'` / `'the-base-compound'`.
+- **`publicLimiter` has no test-environment skip** (20 requests / 15 min, keyed by IP). A suite that drives the accept route and the intent route through it will trip. Keep each suite under ~15 public requests, or add a `NODE_ENV === 'test'` skip to `publicLimiter` and say so in the task that does it.
+
+## Deploy ordering (push equals deploy)
+
+`ext-routes` is independently buildable and mergeable, but it must NOT be **pushed** without `ext-webhook-payroll`. Merging is not deploying, and this plan relies on that distinction.
+
+If the request endpoint ships alone, a client can be charged with no settle path (Task 12) and no expiry sweep (Task 13): the event is never extended, no staffer is greenlit, and the pending row permanently occupies `idx_service_extensions_one_pending` for that proposal, blocking every future request on that event. So:
+
+- Hold `ext-routes` on `main` until `ext-webhook-payroll` merges, then push both in one batch.
+- `ext-ui` may push later; without it the flow still works via the emailed link, minus the terms UI, which is why the server-side acceptance gate (Task 9) exists.
+
+## Build order (task numbers are stable labels, not the sequence)
+
+Task 12 is split across two lanes because `ext-routes` consumes half of it. The real order is:
+
+1. **ext-core:** Tasks 1, 2, 3, 4, 5, then **12a** (the `serviceExtensionPayroll.js` hours module, Steps 1 to 3 of Task 12).
+2. **ext-routes:** Tasks 6, 7, 8, 9, 10. Tasks 8 and 10 import `applyExtensionHours` and `maybeAlertPayroll` from 12a, which is why 12a cannot live in a later lane.
+3. **ext-webhook-payroll:** **12b** (the `payrollAccrual.js` gratuity addend, Steps 4 onward of Task 12), then 11, then 13. Task 11's suite imports the payroll module, so 12a must already exist; it does, from step 1.
+4. **ext-ui:** Tasks 14, 15, 16. **ext-docs:** Tasks 17, 18.
+
+If a worker builds Task 11 before 12a exists, the test file's top-level `require` throws `MODULE_NOT_FOUND`. The lazy `require` inside the handler does not save the suite.
+
 ## In-lane review cadence
 
 Per the execution-review cadence rule, agents fire at checkpoints, not only at merge:
-- `ext-core` after Task 2 (schema + off-ledger constant): `database-review`.
-- `ext-core` after Task 5: `code-review` on the pricing math.
-- `ext-webhook-payroll` after Task 12: `security-review` + `code-review` (webhook + payroll are the two money seams).
-- `ext-routes` after Task 10: `security-review` (auth predicate, public token surface).
+- `ext-core` after Task 4 Step 7: `code-review` on the pricing math.
+- `ext-routes` after Task 7: `security-review` (the assignment predicate and the auth/mount ordering are both authored there).
+- `ext-routes` after Task 10: `security-review` + `database-review` (public token surface; the off-ledger branches go LIVE here, when the first `Service Extension` invoice is minted).
+- `ext-webhook-payroll` after Tasks 12 and 11: `security-review` + `code-review` (the two money seams).
+- `ext-ui` after Task 15: `code-review` + `ui-ux-review` (`InvoicePage.js` is every client's payment surface).
 - Merge gate per lane: the fleet declared in front-matter.
+
+Deliberately NOT a checkpoint: Task 2. The constant flip is inert until an invoice actually carries the label, because empty-set and one-element `.includes()` / `= ANY()` behave identically while no row matches. The database review that matters happens at Task 10, when the label goes live.
 
 ---
 
@@ -144,9 +209,9 @@ before(async () => {
     [`${NONCE} client`, `${NONCE}@example.test`]
   );
   clientId = c.rows[0].id;
-  const p = await pool.query(
-    "SELECT id FROM service_packages WHERE pricing_type = 'flat' AND is_active = true LIMIT 1"
-  );
+  // Pinned by slug, never LIMIT 1 on a rate: these suites also run against a
+  // fresh Neon branch via the money-smoke gate.
+  const p = await pool.query("SELECT id FROM service_packages WHERE slug = 'the-core-reaction'");
   pkgId = p.rows[0].id;
 
   // 8:00 PM Chicago on 2026-09-12, 4 hours -> midnight Chicago = 05:00 UTC on 9/13 (CDT, UTC-5).
@@ -317,15 +382,19 @@ git commit -m "feat(ext): timezone-correct event end instant helper"
   - `SERVICE_EXTENSION_INVOICE_LABEL` = `'Service Extension'`, exported from `proposalMoneyShared.js`.
   - `OFF_LEDGER_INVOICE_LABELS` now contains that label.
 
-- [ ] **Step 1: Read the constant module before editing it**
+- [ ] **Step 1: Read the constant module before editing it, and do not trust this plan's copy of it**
 
 Run: `cat server/utils/proposalMoneyShared.js`
 
-Note the existing `CONTRACT_LABELS` and the frozen-empty `OFF_LEDGER_INVOICE_LABELS`. `CONTRACT_LABELS` must NOT change: adding the extension label there would put extension money inside the contract-refund scope, which is the exact defect spec §3 D12 exists to avoid.
+**This file changed under a previous draft of this plan.** `TOTAL_TRACKING_INVOICE_LABELS` landed on `main` on 2026-07-26 (`05c38bb0`) and is destructured by `server/utils/refundHelpers.js:18` and called at `:331`. A draft of this task pasted an exports block that omitted it, which would have made refund reconciliation throw `TypeError: Cannot read properties of undefined (reading 'includes')` on the next refund, silently until a refund happened.
 
-- [ ] **Step 2: Add the constant**
+So: **add to the exports, never retype them.** Read the real export list first and confirm what is there. As of 2026-07-26 it is `MAX_ADDON_QTY`, `safeAddonQty`, `CONTRACT_LABELS`, `OFF_LEDGER_INVOICE_LABELS`, `TOTAL_TRACKING_INVOICE_LABELS`. If the list has grown again, keep whatever you find.
 
-Edit `server/utils/proposalMoneyShared.js`. Replace the `OFF_LEDGER_INVOICE_LABELS` line and the exports:
+`CONTRACT_LABELS` and `TOTAL_TRACKING_INVOICE_LABELS` must NOT change. Adding the extension label to `CONTRACT_LABELS` would put extension money inside the contract-refund scope, the exact defect spec §3 D12 exists to avoid; adding it to `TOTAL_TRACKING_INVOICE_LABELS` would make `refreshUnlockedInvoices` rebuild it as a contract-total invoice.
+
+- [ ] **Step 2: Add the constant, additively**
+
+Edit `server/utils/proposalMoneyShared.js`. Add the new constant near the other label constants:
 
 ```javascript
 // The service-extension invoice label. Off-ledger by design (spec
@@ -333,37 +402,63 @@ Edit `server/utils/proposalMoneyShared.js`. Replace the `OFF_LEDGER_INVOICE_LABE
 // skip the amount_paid roll-up, refreshUnlockedInvoices must not count it,
 // and refund reconciliation must leave the contract alone. All three read
 // OFF_LEDGER_INVOICE_LABELS, so joining that set is the whole wiring.
-// Deliberately NOT in CONTRACT_LABELS.
+// Deliberately NOT in CONTRACT_LABELS and NOT in TOTAL_TRACKING_INVOICE_LABELS.
 const SERVICE_EXTENSION_INVOICE_LABEL = 'Service Extension';
+```
 
+Change ONLY the `OFF_LEDGER_INVOICE_LABELS` line:
+
+```javascript
 const OFF_LEDGER_INVOICE_LABELS = Object.freeze([SERVICE_EXTENSION_INVOICE_LABEL]);
-
-module.exports = {
-  MAX_ADDON_QTY,
-  safeAddonQty,
-  CONTRACT_LABELS,
-  OFF_LEDGER_INVOICE_LABELS,
-  SERVICE_EXTENSION_INVOICE_LABEL,
-};
 ```
 
-- [ ] **Step 3: Prove the set is no longer a no-op**
+Then add exactly TWO new lines to the existing `module.exports` object, leaving every other entry byte-identical:
 
-Run:
+```javascript
+  OFF_LEDGER_INVOICE_LABELS,          // already present, leave it
+  SERVICE_EXTENSION_INVOICE_LABEL,    // <- the one new entry
+```
+
+- [ ] **Step 3: Prove nothing was dropped from the export surface**
+
+This check exists specifically to catch the defect described in Step 1. Run:
+
 ```bash
-node -e "const m=require('/home/drbartender/projects/os/server/utils/proposalMoneyShared');console.log(m.OFF_LEDGER_INVOICE_LABELS, m.CONTRACT_LABELS)"
+node -e "
+const m=require('/home/drbartender/projects/os/server/utils/proposalMoneyShared');
+const need=['MAX_ADDON_QTY','safeAddonQty','CONTRACT_LABELS','OFF_LEDGER_INVOICE_LABELS','TOTAL_TRACKING_INVOICE_LABELS','SERVICE_EXTENSION_INVOICE_LABEL'];
+const missing=need.filter(k=>m[k]===undefined);
+if(missing.length) throw new Error('DROPPED EXPORTS: '+missing.join(','));
+console.log('OFF_LEDGER:',m.OFF_LEDGER_INVOICE_LABELS);
+console.log('CONTRACT:',m.CONTRACT_LABELS);
+console.log('TOTAL_TRACKING:',m.TOTAL_TRACKING_INVOICE_LABELS);
+console.log('all exports intact');
+"
 ```
-Expected: `[ 'Service Extension' ] [ 'Deposit', 'Balance', 'Full Payment' ]`
+Expected: `OFF_LEDGER: [ 'Service Extension' ]`, `CONTRACT: [ 'Deposit', 'Balance', 'Full Payment' ]`, `TOTAL_TRACKING: [ 'Balance', 'Full Payment' ]`, `all exports intact`.
 
-- [ ] **Step 4: Run every existing suite that reads either constant**
-
-Run:
+Then confirm every consumer still resolves its import:
 ```bash
-grep -rln "OFF_LEDGER_INVOICE_LABELS\|CONTRACT_LABELS" server --include=*.test.js
+node -e "require('/home/drbartender/projects/os/server/utils/refundHelpers');require('/home/drbartender/projects/os/server/utils/invoiceLifecycle');require('/home/drbartender/projects/os/server/routes/stripeWebhookHandlers/paymentIntentSucceeded');console.log('consumers load OK')"
 ```
-Then run each hit ONE AT A TIME with `node --env-file=/home/drbartender/projects/os/.env --test <file>`.
 
-Expected: all PASS. The constant was empty until now, so any suite that asserted emptiness or counted off-ledger behavior will move. If one fails, read it: a test asserting `OFF_LEDGER_INVOICE_LABELS.length === 0` is asserting the old placeholder state and should be updated to assert the label is present. A test that fails on actual money math is a real regression and blocks this task.
+- [ ] **Step 4: Run the named suites that guard the three off-ledger branches**
+
+Do NOT grep for the constant names: no test file mentions them, so a grep returns zero hits and the step would pass vacuously. That is exactly how the dropped-export defect survived review in the first draft. Run these four by name, one at a time:
+
+```bash
+for f in \
+  server/utils/refundHelpers.test.js \
+  server/routes/invoices.refunds.test.js \
+  server/utils/invoiceLifecycle.additionalInvoice.test.js \
+  server/routes/stripeWebhook.guards.test.js ; do
+  echo "=== $f"; node --env-file=/home/drbartender/projects/os/.env --test "$f" || break
+done
+```
+
+Expected: all PASS. If a filename does not exist, find the real one with `ls server/utils/refundHelpers*.test.js server/routes/invoices*.test.js server/routes/stripeWebhook*.test.js` and run those instead; all of them are already in `scripts/money-smoke-list.txt`, which is the authoritative list of money suites.
+
+A failure here is a real regression and blocks the task. Note that a PASS does not prove much on its own: the flip is inert until an invoice actually carries the label (empty-set and one-element matching behave identically while no row matches), which is why the real database review happens at Task 10.
 
 - [ ] **Step 5: Add the table to the schema**
 
@@ -447,12 +542,11 @@ git commit -m "feat(ext): service_extensions table + Service Extension off-ledge
 
 Flips OFF_LEDGER_INVOICE_LABELS from its frozen-empty placeholder to the
 label the webhook, invoice refresh, and refund reconciliation branches were
-already written to expect."
+already written to expect. Additive to the export surface: CONTRACT_LABELS and
+TOTAL_TRACKING_INVOICE_LABELS are untouched."
 ```
 
-- [ ] **Step 8: Checkpoint review**
-
-Dispatch `database-review` on `git diff HEAD~1` for this task. The constant flip changes behavior in three call sites that were previously dead; the reviewer should confirm each branch does what §2 of the spec claims.
+No checkpoint review on this task. The flip is inert until an invoice carries the label, so there is nothing behavioral for a reviewer to judge yet; the `database-review` fires at Task 10, where the label goes live.
 
 ### Task 3: Terms copy registry
 
@@ -569,8 +663,9 @@ Two legs differ ONLY in `durationHours`. Everything else is identical, so anythi
 - Produces:
   - `MAX_EXTENSION_HOURS` = `3`
   - `computeExtensionDelta({ client, proposalId, requestedDurationHours })` → `Promise<Result>` where `Result` is either
-    `{ ok: true, contractedDurationHours, requestedDurationHours, contractedEndDisplay, requestedEndDisplay, serviceDeltaCents, gratuityDeltaCents, amountCents, isHosted }`
+    `{ ok: true, contractedDurationHours, requestedDurationHours, contractedEndDisplay, requestedEndDisplay, contractedEndInstant, serviceDeltaCents, gratuityDeltaCents, amountCents, isHosted }`
     or `{ ok: false, reason }` with `reason` in `'missing_proposal' | 'missing_package' | 'unparseable_time' | 'not_an_extension' | 'over_cap' | 'bad_increment'`.
+    `contractedEndInstant` is a Date; Task 7 derives `expires_at` from it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -584,7 +679,7 @@ const { pool } = require('../db');
 const { computeExtensionDelta, MAX_EXTENSION_HOURS } = require('./serviceExtensionPricing');
 
 const NONCE = `sxp-${Date.now()}`;
-let clientId, flatPkgId, hostedPkgId;
+let clientId, flatPkgId, hostedPkgId, classPkgId;
 const made = [];
 
 async function mkProposal(fields) {
@@ -611,16 +706,17 @@ before(async () => {
     [`${NONCE} client`, `${NONCE}@example.test`]
   );
   clientId = c.rows[0].id;
-  // The Core Reaction: flat, base_rate_4hr 350, extra_hour_rate 100.
-  const f = await pool.query(
-    "SELECT id FROM service_packages WHERE pricing_type='flat' AND extra_hour_rate = 100 AND is_active=true LIMIT 1"
-  );
+  // Pinned by slug. The Core Reaction: flat, base_rate_4hr 350, extra_hour_rate 100.
+  const f = await pool.query("SELECT id FROM service_packages WHERE slug = 'the-core-reaction'");
   flatPkgId = f.rows[0].id;
   // The Base Compound: per_guest, base 18, extra_hour_rate 5.
-  const h = await pool.query(
-    "SELECT id FROM service_packages WHERE pricing_type='per_guest' AND extra_hour_rate = 5 AND bar_type='full_bar' AND is_active=true LIMIT 1"
-  );
+  const h = await pool.query("SELECT id FROM service_packages WHERE slug = 'the-base-compound'");
   hostedPkgId = h.rows[0].id;
+  // A per-guest CLASS package: extra_hour_rate 0, so extending is always $0.
+  const cl = await pool.query(
+    "SELECT id FROM service_packages WHERE bar_type = 'class' AND pricing_type = 'per_guest' AND is_active = true ORDER BY sort_order LIMIT 1"
+  );
+  classPkgId = cl.rows[0].id;
 });
 
 after(async () => {
@@ -698,6 +794,33 @@ test('refuses beyond the 3 hour cap and refuses non-30-minute increments', async
   const id = await mkProposal({ packageId: flatPkgId });
   assert.equal((await computeExtensionDelta({ client: pool, proposalId: id, requestedDurationHours: 4 + MAX_EXTENSION_HOURS + 0.5 })).reason, 'over_cap');
   assert.equal((await computeExtensionDelta({ client: pool, proposalId: id, requestedDurationHours: 4.25 })).reason, 'bad_increment');
+});
+
+test('a per-guest class package extends for $0 (extra_hour_rate 0)', async () => {
+  const id = await mkProposal({ packageId: classPkgId, guests: 20, totalPrice: 700 });
+  const r = await computeExtensionDelta({ client: pool, proposalId: id, requestedDurationHours: 5 });
+  assert.equal(r.ok, true);
+  assert.equal(r.amountCents, 0);
+});
+
+test('a hosted event pinned to min_total absorbs the delta', async () => {
+  // Few enough guests that min_total is the binding constraint at BOTH durations,
+  // so the raw per-guest increase is swallowed by the dollar floor.
+  const pkg = await pool.query(
+    "SELECT min_total, min_billed_guests, extra_hour_rate FROM service_packages WHERE slug = 'the-base-compound'"
+  );
+  const minTotal = Number(pkg.rows[0].min_total || 0);
+  if (!minTotal) return; // no dollar floor configured; nothing to assert
+  const id = await mkProposal({ packageId: hostedPkgId, guests: 1, totalPrice: minTotal });
+  const r = await computeExtensionDelta({ client: pool, proposalId: id, requestedDurationHours: 5 });
+  assert.equal(r.ok, true);
+  assert.equal(r.amountCents, 0, 'a floored hosted event has no service delta');
+});
+
+test('returns the contracted end instant that Task 7 uses for expires_at', async () => {
+  const id = await mkProposal({ packageId: flatPkgId });
+  const r = await computeExtensionDelta({ client: pool, proposalId: id, requestedDurationHours: 4.5 });
+  assert.ok(r.contractedEndInstant instanceof Date || typeof r.contractedEndInstant === 'string');
 });
 
 test('never mutates the proposal', async () => {
@@ -895,11 +1018,13 @@ The claim is the race gate. Settle, expiry, override, and cancel all claim with 
 **Interfaces:**
 - Consumes: nothing from earlier tasks at runtime (it reads the `service_extensions` row Task 2 created).
 - Produces:
-  - `settleExtension({ client, extensionId, outcome, actorUserId, overrideReason })` → `Promise<Result>`
+  - `settleExtension({ extensionId, outcome, actorUserId, overrideReason })` → `Promise<Result>`
     - `outcome` is `'paid'` or `'overridden'`.
-    - `Result` on success: `{ ok: true, proposalId, shiftId, staffUserIds: number[], newDurationHours, previousDurationHours, newEndDisplay, multiShift: boolean, gratuityCents, outcome }`
+    - `Result` on success: `{ ok: true, proposalId, shiftId, invoiceId, staffUserIds: number[], newDurationHours, previousDurationHours, newEndDisplay, multiShift: boolean, gratuityCents, amountCents, outcome }`
     - `Result` on a lost claim: `{ ok: false, reason: 'not_pending' }`
-  - `closeExtension({ client, extensionId, outcome, actorUserId, overrideReason })` → same claim discipline for the non-settling outcomes `'expired'` and `'cancelled'`; returns `{ ok: true, proposalId, shiftId, staffUserIds, invoiceId, outcome }` or `{ ok: false, reason: 'not_pending' }`. No duration change.
+  - `closeExtension({ extensionId, outcome, actorUserId, overrideReason })` → same claim discipline for the non-settling outcomes `'expired'` and `'cancelled'`; returns `{ ok: true, proposalId, shiftId, invoiceId, staffUserIds, outcome }` or `{ ok: false, reason: 'not_pending' }`. No duration change.
+
+**No `client` parameter, deliberately.** Both functions open and own their own transaction. Every caller (the webhook's post-commit tail, the public accept route, the admin routes, the expiry sweep) invokes them from outside any transaction, and the claim plus the duration bump plus the shift sync MUST be atomic: a first draft ran them as four separate statements on the pool, so a failure between the claim and the duration UPDATE left a row marked `paid` on an event that was never extended.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -973,18 +1098,27 @@ before(async () => {
     [`${NONCE} client`, `${NONCE}@example.test`]
   );
   clientId = c.rows[0].id;
-  const p = await pool.query("SELECT id FROM service_packages WHERE pricing_type='flat' AND is_active=true LIMIT 1");
+  const p = await pool.query("SELECT id FROM service_packages WHERE slug = 'the-core-reaction'");
   pkgId = p.rows[0].id;
+  // users has NO `name` column and the password column is `password_hash`.
+  // See "Test harness constraints" at the top of this plan.
   const a = await pool.query(
-    "INSERT INTO users (email, password, name, role, onboarding_status) VALUES ($1,'x',$2,'staff','approved') RETURNING id",
-    [`${NONCE}-a@example.test`, `${NONCE} A`]
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1,'x','staff','approved',0) RETURNING id`,
+    [`${NONCE}-a@example.test`]
   );
   staffAId = a.rows[0].id;
   const b = await pool.query(
-    "INSERT INTO users (email, password, name, role, onboarding_status) VALUES ($1,'x',$2,'staff','approved') RETURNING id",
-    [`${NONCE}-b@example.test`, `${NONCE} B`]
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1,'x','staff','approved',0) RETURNING id`,
+    [`${NONCE}-b@example.test`]
   );
   staffBId = b.rows[0].id;
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, phone, preferred_name, hourly_rate)
+     VALUES ($1,'3125550111',$2,40), ($3,'3125550112',$4,40)`,
+    [staffAId, `${NONCE} A`, staffBId, `${NONCE} B`]
+  );
 });
 
 after(async () => {
@@ -993,6 +1127,7 @@ after(async () => {
   if (shifts.length) await pool.query('DELETE FROM shifts WHERE id = ANY($1)', [shifts]);
   if (proposals.length) await pool.query('DELETE FROM proposal_activity_log WHERE proposal_id = ANY($1)', [proposals]);
   if (proposals.length) await pool.query('DELETE FROM proposals WHERE id = ANY($1)', [proposals]);
+  await pool.query('DELETE FROM contractor_profiles WHERE user_id = ANY($1)', [[staffAId, staffBId]]);
   await pool.query('DELETE FROM users WHERE id = ANY($1)', [[staffAId, staffBId]]);
   await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
   await pool.end();
@@ -1004,7 +1139,7 @@ test('paid settle bumps duration, syncs the shift, returns every assigned staffe
   await assign(ev.shiftId, staffBId);
   const extId = await mkExtension({ proposalId: ev.proposalId, shiftId: ev.shiftId, gratuityCents: 2500 });
 
-  const r = await settleExtension({ client: pool, extensionId: extId, outcome: 'paid' });
+  const r = await settleExtension({ extensionId: extId, outcome: 'paid' });
   assert.equal(r.ok, true);
   assert.equal(r.newDurationHours, 4.5);
   assert.equal(r.previousDurationHours, 4);
@@ -1041,8 +1176,8 @@ test('a second settle on the same row loses the claim and changes nothing', asyn
   await assign(ev.shiftId, staffAId);
   const extId = await mkExtension({ proposalId: ev.proposalId, shiftId: ev.shiftId });
 
-  assert.equal((await settleExtension({ client: pool, extensionId: extId, outcome: 'paid' })).ok, true);
-  const second = await settleExtension({ client: pool, extensionId: extId, outcome: 'paid' });
+  assert.equal((await settleExtension({ extensionId: extId, outcome: 'paid' })).ok, true);
+  const second = await settleExtension({ extensionId: extId, outcome: 'paid' });
   assert.equal(second.ok, false);
   assert.equal(second.reason, 'not_pending');
 
@@ -1056,7 +1191,7 @@ test('override settles the same way and records who and why', async () => {
   const extId = await mkExtension({ proposalId: ev.proposalId, shiftId: ev.shiftId });
 
   const r = await settleExtension({
-    client: pool, extensionId: extId, outcome: 'overridden',
+    extensionId: extId, outcome: 'overridden',
     actorUserId: staffBId, overrideReason: 'link never arrived',
   });
   assert.equal(r.ok, true);
@@ -1080,7 +1215,7 @@ test('a multi-shift event bumps the proposal but flags rather than guessing whic
   await assign(ev.allShiftIds[1], staffBId);
   const extId = await mkExtension({ proposalId: ev.proposalId, shiftId: ev.allShiftIds[0] });
 
-  const r = await settleExtension({ client: pool, extensionId: extId, outcome: 'paid' });
+  const r = await settleExtension({ extensionId: extId, outcome: 'paid' });
   assert.equal(r.ok, true);
   assert.equal(r.multiShift, true);
 
@@ -1096,14 +1231,14 @@ test('closeExtension expires without touching duration, and only once', async ()
   await assign(ev.shiftId, staffAId);
   const extId = await mkExtension({ proposalId: ev.proposalId, shiftId: ev.shiftId });
 
-  const r = await closeExtension({ client: pool, extensionId: extId, outcome: 'expired' });
+  const r = await closeExtension({ extensionId: extId, outcome: 'expired' });
   assert.equal(r.ok, true);
   assert.deepEqual(r.staffUserIds, [staffAId]);
 
   const prop = await pool.query('SELECT event_duration_hours FROM proposals WHERE id = $1', [ev.proposalId]);
   assert.equal(Number(prop.rows[0].event_duration_hours), 4, 'expiry must not extend');
 
-  assert.equal((await closeExtension({ client: pool, extensionId: extId, outcome: 'expired' })).ok, false);
+  assert.equal((await closeExtension({ extensionId: extId, outcome: 'expired' })).ok, false);
 });
 
 test('a settle cannot win after an expiry claimed the row', async () => {
@@ -1111,8 +1246,8 @@ test('a settle cannot win after an expiry claimed the row', async () => {
   await assign(ev.shiftId, staffAId);
   const extId = await mkExtension({ proposalId: ev.proposalId, shiftId: ev.shiftId });
 
-  assert.equal((await closeExtension({ client: pool, extensionId: extId, outcome: 'expired' })).ok, true);
-  const late = await settleExtension({ client: pool, extensionId: extId, outcome: 'paid' });
+  assert.equal((await closeExtension({ extensionId: extId, outcome: 'expired' })).ok, true);
+  const late = await settleExtension({ extensionId: extId, outcome: 'paid' });
   assert.equal(late.ok, false);
   assert.equal(late.reason, 'not_pending');
 
@@ -1128,7 +1263,7 @@ test('a dropped staffer is not notified', async () => {
     [ev.shiftId, staffBId]
   );
   const extId = await mkExtension({ proposalId: ev.proposalId, shiftId: ev.shiftId });
-  const r = await settleExtension({ client: pool, extensionId: extId, outcome: 'paid' });
+  const r = await settleExtension({ extensionId: extId, outcome: 'paid' });
   assert.deepEqual(r.staffUserIds, [staffAId]);
 });
 ```
@@ -1225,11 +1360,30 @@ async function logAction(client, proposalId, outcome, details) {
   );
 }
 
-async function settleExtension({ client, extensionId, outcome, actorUserId = null, overrideReason = null }) {
+async function settleExtension({ extensionId, outcome, actorUserId = null, overrideReason = null }) {
   if (!SETTLE_OUTCOMES.has(outcome)) {
     throw new Error(`settleExtension: invalid outcome '${outcome}'`);
   }
+  // Own transaction: claim + duration bump + shift sync + log are ONE atomic
+  // unit, and every query goes through the held client (CLAUDE.md one-pooled-
+  // connection rule). A first draft ran these as four separate pool statements,
+  // so a failure after the claim left a row marked paid on an event that was
+  // never extended.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await settleInTx(client, { extensionId, outcome, actorUserId, overrideReason });
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* already rolled back */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 
+async function settleInTx(client, { extensionId, outcome, actorUserId, overrideReason }) {
   const row = await claim(client, extensionId, outcome, actorUserId, overrideReason);
   if (!row) return { ok: false, reason: 'not_pending' };
 
@@ -1237,7 +1391,12 @@ async function settleExtension({ client, extensionId, outcome, actorUserId = nul
   const newDuration = Number(row.requested_duration_hours);
   const previousDuration = Number(row.contracted_duration_hours);
 
-  // The ONE contract mutation.
+  // The ONE contract mutation. The RETURNING expression parses the free-text
+  // event_start_time, so an unparseable value raises 22007 and the whole
+  // transaction rolls back, releasing the claim. That is the outcome we want:
+  // better an unsettled request the sweep can expire than a row marked paid on
+  // an event whose duration never moved. Task 7 refuses to CREATE a request on
+  // an unparseable event, so reaching this is a data-drift case.
   const { rows: durRows } = await client.query(
     `UPDATE proposals
         SET event_duration_hours = $2, updated_at = NOW()
@@ -1299,28 +1458,39 @@ async function settleExtension({ client, extensionId, outcome, actorUserId = nul
   };
 }
 
-async function closeExtension({ client, extensionId, outcome, actorUserId = null, overrideReason = null }) {
+async function closeExtension({ extensionId, outcome, actorUserId = null, overrideReason = null }) {
   if (!CLOSE_OUTCOMES.has(outcome)) {
     throw new Error(`closeExtension: invalid outcome '${outcome}'`);
   }
-  const row = await claim(client, extensionId, outcome, actorUserId, overrideReason);
-  if (!row) return { ok: false, reason: 'not_pending' };
-
-  const staffUserIds = await assignedStaffUserIds(client, row.proposal_id);
-  await logAction(client, row.proposal_id, outcome, {
-    extension_id: row.id,
-    requested_duration_hours: Number(row.requested_duration_hours),
-    amount_cents: row.amount_cents,
-  });
-
-  return {
-    ok: true,
-    outcome,
-    proposalId: row.proposal_id,
-    shiftId: row.shift_id,
-    invoiceId: row.invoice_id,
-    staffUserIds,
-  };
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const row = await claim(client, extensionId, outcome, actorUserId, overrideReason);
+    if (!row) {
+      await client.query('COMMIT');
+      return { ok: false, reason: 'not_pending' };
+    }
+    const staffUserIds = await assignedStaffUserIds(client, row.proposal_id);
+    await logAction(client, row.proposal_id, outcome, {
+      extension_id: row.id,
+      requested_duration_hours: Number(row.requested_duration_hours),
+      amount_cents: row.amount_cents,
+    });
+    await client.query('COMMIT');
+    return {
+      ok: true,
+      outcome,
+      proposalId: row.proposal_id,
+      shiftId: row.shift_id,
+      invoiceId: row.invoice_id,
+      staffUserIds,
+    };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* already rolled back */ }
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 module.exports = { settleExtension, closeExtension, ACTION_BY_OUTCOME };
@@ -1387,7 +1557,7 @@ All outbound messaging for the feature, in one place. Three audiences: the clien
 - Consumes: `renderExtensionTerms` (Task 3).
 - Produces:
   - `notifyClientOfRequest({ proposalId, invoiceToken, amountCents, newEndDisplay, termsVersion })` → `Promise<{ sms: 'sent'|'skipped', email: 'sent'|'skipped', reachable: boolean }>`
-  - `notifyStaffOfOutcome({ staffUserIds, outcome, newEndDisplay, contractedEndDisplay, proposalId })` → `Promise<{ notified: number[], unreachable: number[] }>`; `outcome` is `'approved' | 'declined'`
+  - `notifyStaffOfOutcome({ staffUserIds, outcome, newEndDisplay, contractedEndDisplay, proposalId })` → `Promise<{ notified: number[], unreachable: number[] }>`; `outcome` is `'approved' | 'declined'`. Channel fallback per staffer is SMS (if `agreements.sms_consent`), then web push, then email, matching spec §10.
   - `alertAdminsRequestSent({ proposalId, newEndDisplay, amountCents, requesterUserId, clientReachable })` → `Promise<void>`
   - `alertAdminsProblem({ proposalId, kind, detail })` → `Promise<void>`; `kind` in `'client_unreachable' | 'multi_shift' | 'paid_after_expiry' | 'settle_on_closed_event' | 'staff_unreachable' | 'payroll_hours_locked'`
 
@@ -1435,8 +1605,9 @@ const { sendEmail } = require('./email');
 const { sendAndLogSms } = require('./sms');
 const { shouldSendImmediate } = require('./messageSuppression');
 const { notifyAdminCategory } = require('./adminNotifications');
+const { sendPush } = require('./pushSender');
 const { renderExtensionTerms } = require('../data/extensionTermsCopy');
-const { PUBLIC_SITE_URL, ADMIN_URL } = require('./urls');
+const { PUBLIC_SITE_URL, ADMIN_URL, STAFF_URL } = require('./urls');
 
 function money(cents) {
   return `$${(Number(cents) / 100).toFixed(2).replace(/\.00$/, '')}`;
@@ -1476,7 +1647,20 @@ async function notifyClientOfRequest({ proposalId, invoiceToken, amountCents, ne
   };
 
   const link = `${PUBLIC_SITE_URL}/invoice/${invoiceToken}`;
-  const terms = renderExtensionTerms({ version: termsVersion, newEndDisplay });
+  // renderExtensionTerms THROWS on an unknown version by design. This runs in
+  // an unwrapped post-commit tail, so an uncaught throw here would 500 a request
+  // whose invoice and extension row are already committed. Degrade to the SMS
+  // leg (which does not need the terms text) and let the invoice page render the
+  // terms; the page has its own fallback for the same case.
+  let terms = null;
+  try {
+    terms = renderExtensionTerms({ version: termsVersion, newEndDisplay });
+  } catch (copyErr) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(copyErr, { tags: { feature: 'service-extension', step: 'terms_render_notify' } });
+    }
+    console.error('[serviceExtensionNotify] unknown terms version:', termsVersion, copyErr.message);
+  }
   const priced = Number(amountCents) > 0 ? ` (${money(amountCents)})` : ' (included in your package)';
 
   let smsResult = 'skipped';
@@ -1495,7 +1679,7 @@ async function notifyClientOfRequest({ proposalId, invoiceToken, amountCents, ne
 
   let emailResult = 'skipped';
   const emailGate = await shouldSendImmediate({ proposal, client, channel: 'email' });
-  if (emailGate.ok && row.email) {
+  if (emailGate.ok && row.email && terms) {
     const paragraphs = terms.paragraphs.map((t) => `<p>${t}</p>`).join('');
     const sent = await safe('client_email', () => sendEmail({
       to: row.email,
@@ -1538,9 +1722,10 @@ async function notifyStaffOfOutcome({ staffUserIds, outcome, newEndDisplay, cont
     : 'Additional time was not approved';
 
   // sms_consent is the staff SMS gate (messages.js). LEFT JOIN so a staffer
-  // with no agreements row is email-only rather than silently dropped.
+  // with no agreements row is push/email-only rather than silently dropped.
   const { rows } = await pool.query(
     `SELECT u.id, u.email, u.communication_preferences AS prefs,
+            u.staff_notification_preferences AS staff_prefs,
             cp.phone, COALESCE(ag.sms_consent, false) AS sms_consent
        FROM users u
        LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
@@ -1565,6 +1750,25 @@ async function notifyStaffOfOutcome({ staffUserIds, outcome, newEndDisplay, cont
         messageType: `service_extension_${outcome}`,
       }));
       if (sent && sent.status !== 'skipped') delivered = true;
+    }
+
+    // Web push, the middle rung of the spec's SMS -> push -> email fallback.
+    // sendPush takes a subscription directly, so no scheduled_messages row is
+    // needed and there is no dispatcher latency. Attempted whenever SMS did not
+    // land, which is exactly when a staffer without consent needs another rung.
+    if (!delivered) {
+      const subs = Array.isArray(r.staff_prefs?.push_subscriptions) ? r.staff_prefs.push_subscriptions : [];
+      for (const sub of subs) {
+        const pushed = await safe(`staff_push_${r.id}`, () => sendPush({
+          subscription: { endpoint: sub.endpoint, keys: sub.keys },
+          title: subject,
+          body,
+          url: `${STAFF_URL}/shifts`,
+        }));
+        // sendPush resolves with a result object on success; any throw is
+        // swallowed by safe() and returns null. One good subscription is enough.
+        if (pushed) { delivered = true; break; }
+      }
     }
 
     if (prefs.email_enabled !== false && r.email) {
@@ -1684,14 +1888,21 @@ The security-critical surface. `auth` alone is NOT sufficient: the known onboard
 **Files:**
 - Create: `server/routes/serviceExtensions/create.js`
 - Create: `server/routes/serviceExtensions/index.js`
+- Create: `server/routes/serviceExtensions/publicAccept.js` (stub here, real in Task 8)
+- Create: `server/routes/serviceExtensions/admin.js` (stub here, real in Task 10)
+- Modify: `server/middleware/rateLimiters.js` (one new limiter)
+- Modify: `server/index.js` (mount)
 - Test: `server/routes/serviceExtensions/create.test.js`
 
 **Interfaces:**
-- Consumes: `computeExtensionDelta`, `MAX_EXTENSION_HOURS` (Task 4); `CURRENT_EXTENSION_TERMS_VERSION` (Task 3); `SERVICE_EXTENSION_INVOICE_LABEL` (Task 2); `notifyClientOfRequest`, `alertAdminsRequestSent`, `alertAdminsProblem` (Task 6); `eventEndInstant` (Task 1).
+- Consumes: `computeExtensionDelta`, `MAX_EXTENSION_HOURS` (Task 4); `CURRENT_EXTENSION_TERMS_VERSION` (Task 3); `SERVICE_EXTENSION_INVOICE_LABEL` (Task 2); `notifyClientOfRequest`, `alertAdminsRequestSent`, `alertAdminsProblem` (Task 6); `eventEndInstantForDuration` (Task 1).
 - Produces:
-  - `GET /api/service-extensions/eligibility/:shiftId` → `{ eligible, reason?, contractedEndDisplay, maxEndDisplay, isHosted, pending: {requestedEndTime,status}|null }`. NO price.
-  - `POST /api/service-extensions` body `{ shiftId, requestedEndHours, hostedProductConfirmed }` → `201 { id, status: 'pending', requestedEndTime }`. NO price.
+  - `GET /api/service-extensions/eligibility/:shiftId` → `{ eligible, reason, contractedEndDisplay, contractedDurationHours, maxEndDisplay, maxAdditionalHours, stepLabels, isHosted, isClass, pending }`. NO price. `contractedDurationHours` and `stepLabels` exist because Task 14's picker needs a base value and human labels; both are times and durations, never money.
+  - `POST /api/service-extensions` body `{ shiftId, requestedEndHours, hostedProductConfirmed }` → `201 { id, status: 'pending', requestedEndTime, clientNotified }`. NO price.
   - `server/routes/serviceExtensions/index.js` composition router.
+  - `serviceExtensionLimiter` exported from `server/middleware/rateLimiters.js`.
+
+**AUTH ORDERING, load-bearing.** Do NOT put `router.use(auth)` at the top of `create.js`. A pathless `router.use` runs for every request entering the sub-router, and because the composition router mounts each sibling at `'/'`, that would apply `auth` to the PUBLIC accept route in Task 8 and 401 every client trying to pay. That defect is authored here and only fails in Task 8's suite, so it is easy to miss. Attach `auth` per route instead.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1711,16 +1922,19 @@ notify.notifyClientOfRequest = async () => ({ sms: 'sent', email: 'sent', reacha
 notify.alertAdminsRequestSent = async () => {};
 notify.alertAdminsProblem = async () => {};
 
-const errorHandler = require('../../middleware/errorHandler');
+const { AppError } = require('../../utils/errors');
 const router = require('./index');
 
 const NONCE = `sxc-${Date.now()}`;
 let app, server, baseUrl;
 let clientId, pkgId, onStaffId, otherStaffId, proposalId, shiftId;
+const tokens = {};
 const cleanup = { proposals: [], shifts: [], users: [] };
 
+// auth reads decoded.userId and compares decoded.tokenVersion to
+// users.token_version. Signing { id, role } 401s every request.
 function tokenFor(userId) {
-  return jwt.sign({ id: userId, role: 'staff' }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  return tokens[userId];
 }
 
 async function post(body, userId) {
@@ -1738,27 +1952,46 @@ before(async () => {
   app = express();
   app.use(express.json());
   app.use('/api/service-extensions', router);
-  app.use(errorHandler);
-  server = app.listen(0);
-  baseUrl = `http://127.0.0.1:${server.address().port}`;
+  // No server/middleware/errorHandler module exists; the global handler is
+  // inline in server/index.js, so route suites hand-roll it. Precedent:
+  // server/routes/invoices.extrasVoid.test.js:107-111.
+  app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    if (err instanceof AppError) {
+      const b = { error: err.message, code: err.code };
+      if (err.fieldErrors) b.fieldErrors = err.fieldErrors;
+      return res.status(err.statusCode).json(b);
+    }
+    return res.status(500).json({ error: 'Internal error', code: 'INTERNAL_ERROR' });
+  });
+  await new Promise((resolve) => {
+    server = app.listen(0, () => { baseUrl = `http://127.0.0.1:${server.address().port}`; resolve(); });
+  });
 
   const c = await pool.query('INSERT INTO clients (name, email, phone) VALUES ($1,$2,$3) RETURNING id',
     [`${NONCE} client`, `${NONCE}@example.test`, '3125550100']);
   clientId = c.rows[0].id;
-  const p = await pool.query("SELECT id FROM service_packages WHERE pricing_type='flat' AND extra_hour_rate=100 AND is_active=true LIMIT 1");
+  const p = await pool.query("SELECT id FROM service_packages WHERE slug = 'the-core-reaction'");
   pkgId = p.rows[0].id;
 
   for (const key of ['on', 'other']) {
     const u = await pool.query(
-      "INSERT INTO users (email, password, name, role, onboarding_status) VALUES ($1,'x',$2,'staff','approved') RETURNING id",
-      [`${NONCE}-${key}@example.test`, `${NONCE} ${key}`]
+      `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+       VALUES ($1,'x','staff','approved',0) RETURNING id, token_version`,
+      [`${NONCE}-${key}@example.test`]
     );
-    cleanup.users.push(u.rows[0].id);
-    if (key === 'on') onStaffId = u.rows[0].id; else otherStaffId = u.rows[0].id;
+    const id = u.rows[0].id;
+    cleanup.users.push(id);
+    tokens[id] = jwt.sign(
+      { userId: id, tokenVersion: u.rows[0].token_version },
+      process.env.JWT_SECRET, { expiresIn: '1h' }
+    );
+    if (key === 'on') onStaffId = id; else otherStaffId = id;
   }
   await pool.query(
-    "INSERT INTO contractor_profiles (user_id, phone, hourly_rate) VALUES ($1,'3125550111',40)",
-    [onStaffId]
+    `INSERT INTO contractor_profiles (user_id, phone, preferred_name, hourly_rate)
+     VALUES ($1,'3125550111',$2,40)`,
+    [onStaffId, `${NONCE} on`]
   );
 
   // Event happening RIGHT NOW so the request window is open: start 1 hour ago,
@@ -1897,14 +2130,26 @@ test('eligibility is refused for a non-assigned staffer', async () => {
   });
   assert.equal(res.status, 403);
 });
+
+test('the router does NOT apply auth to sibling public paths', async () => {
+  // Regression guard for the auth-ordering defect authored in this task: a
+  // pathless router.use(auth) in create.js would 401 the public accept route
+  // that Task 8 mounts on the same router, breaking client payment entirely.
+  // The stub returns 404 today; the ONLY unacceptable answer is 401.
+  const res = await fetch(
+    `${baseUrl}/api/service-extensions/t/11111111-1111-1111-1111-111111111111/accept`,
+    { method: 'POST' }
+  );
+  assert.notEqual(res.status, 401, 'auth leaked onto the public accept path');
+});
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `node --env-file=/home/drbartender/projects/os/.env --test server/routes/serviceExtensions/create.test.js`
+Run: `NODE_ENV=test node --env-file=/home/drbartender/projects/os/.env --test server/routes/serviceExtensions/create.test.js`
 Expected: FAIL, cannot find `./index`.
 
-If `require('../../middleware/errorHandler')` does not resolve, find the real path with `grep -rn "errorHandler" server/index.js | head -3` and fix the test's import. The global error middleware is what turns `AppError` subclasses into status codes, so the test needs it.
+Expected test count once passing: 8.
 
 - [ ] **Step 3: Write the composition router**
 
@@ -1929,8 +2174,12 @@ Create `server/routes/serviceExtensions/index.js`:
 const express = require('express');
 const router = express.Router();
 
-router.use('/', require('./create'));
+// publicAccept FIRST as belt-and-braces: even if a sibling ever regains a
+// pathless `router.use(auth)`, the public client payment path is already
+// matched. create.js applies `auth` per route, never at router level, which is
+// the actual guarantee.
 router.use('/', require('./publicAccept'));
+router.use('/', require('./create'));
 router.use('/', require('./admin'));
 
 module.exports = router;
@@ -1977,6 +2226,7 @@ const express = require('express');
 const { pool } = require('../../db');
 const { auth } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
+const { serviceExtensionLimiter } = require('../../middleware/rateLimiters');
 const { ValidationError, ConflictError, PermissionError, NotFoundError } = require('../../utils/errors');
 const { createInvoice, writeLineItems } = require('../../utils/invoiceHelpers');
 const { SERVICE_EXTENSION_INVOICE_LABEL } = require('../../utils/proposalMoneyShared');
@@ -1986,10 +2236,17 @@ const { CURRENT_EXTENSION_TERMS_VERSION } = require('../../data/extensionTermsCo
 const notify = require('../../utils/serviceExtensionNotify');
 
 const router = express.Router();
-router.use(auth);
 
-// Grace after the contracted end during which a request may still be opened.
+// NO router-level `auth`. This router is mounted at '/' alongside the PUBLIC
+// accept router, so a pathless router.use(auth) would 401 the client payment
+// path. `auth` is attached per route below.
+
+// Grace after the contracted end during which a request may still be OPENED.
 const REQUEST_GRACE_MINUTES = 15;
+// How long a pending request stays payable after the contracted end. Longer than
+// the open-grace on purpose: a request created at end+14min must not expire 60
+// seconds later, before the client can even read the text.
+const EXPIRY_GRACE_MINUTES = 30;
 
 /**
  * Resolve the caller's assignment to this shift, or throw. Returns the shift +
@@ -2033,7 +2290,7 @@ async function checkWindow(ctx) {
 }
 
 /** GET /api/service-extensions/eligibility/:shiftId */
-router.get('/eligibility/:shiftId', asyncHandler(async (req, res) => {
+router.get('/eligibility/:shiftId', auth, asyncHandler(async (req, res) => {
   const shiftId = Number(req.params.shiftId);
   if (!Number.isInteger(shiftId)) throw new ValidationError({ shiftId: 'Invalid shift.' });
   const ctx = await requireAssignment(req, shiftId);
@@ -2053,10 +2310,21 @@ router.get('/eligibility/:shiftId', asyncHandler(async (req, res) => {
   const window = await checkWindow(ctx);
   const pkg = pkgRes.rows[0] || {};
 
+  // Human labels for the picker, one per 30-minute step. Times and durations
+  // only: no money, so spec decision 2 still holds.
+  const stepLabels = {};
+  for (let i = 1; i <= Math.round(MAX_EXTENSION_HOURS / 0.5); i++) {
+    const added = i * 0.5;
+    const e = await eventEndInstantForDuration(pool, ctx.proposal_id, contracted + added);
+    if (e) stepLabels[String(added)] = `${e.endDisplay} (+${added === 0.5 ? '30 min' : added + ' hr'})`;
+  }
+
   res.json({
     eligible: window.ok && pendingRes.rowCount === 0,
     reason: !window.ok ? window.code : (pendingRes.rowCount > 0 ? 'already_pending' : null),
     contractedEndDisplay: end ? end.endDisplay : null,
+    contractedDurationHours: contracted,
+    stepLabels,
     maxEndDisplay: maxEnd ? maxEnd.endDisplay : null,
     maxAdditionalHours: MAX_EXTENSION_HOURS,
     // Hosted packages need the product confirmation tick before sending.
@@ -2069,7 +2337,7 @@ router.get('/eligibility/:shiftId', asyncHandler(async (req, res) => {
 }));
 
 /** POST /api/service-extensions */
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', auth, serviceExtensionLimiter, asyncHandler(async (req, res) => {
   const shiftId = Number(req.body?.shiftId);
   const requestedEndHours = Number(req.body?.requestedEndHours);
   const hostedProductConfirmed = req.body?.hostedProductConfirmed === true;
@@ -2131,9 +2399,14 @@ router.post('/', asyncHandler(async (req, res) => {
       source_id: null,
     }], dbClient);
 
-    const expiresAt = new Date(
-      new Date(delta.contractedEndInstant).getTime() + REQUEST_GRACE_MINUTES * 60 * 1000
-    );
+    // Payable until the contracted end + EXPIRY_GRACE_MINUTES, floored at
+    // 15 minutes from NOW so a request opened late in the open-grace window
+    // still gets a usable life instead of expiring on the next sweep tick.
+    const contractedEndMs = new Date(delta.contractedEndInstant).getTime();
+    const expiresAt = new Date(Math.max(
+      contractedEndMs + EXPIRY_GRACE_MINUTES * 60 * 1000,
+      Date.now() + 15 * 60 * 1000
+    ));
 
     // The partial unique index on (proposal_id) WHERE status='pending' is what
     // makes a concurrent second request a clean 409 instead of a double charge.
@@ -2228,28 +2501,29 @@ Edit `server/index.js`. Add next to the other feature mounts (order does not mat
 app.use('/api/service-extensions', require('./routes/serviceExtensions'));
 ```
 
-- [ ] **Step 6: Run the test to verify it passes**
+- [ ] **Step 6: Add the rate limiter BEFORE running the suite**
 
-Run: `node --env-file=/home/drbartender/projects/os/.env --test server/routes/serviceExtensions/create.test.js`
+`create.js` imports `serviceExtensionLimiter`, so the suite cannot load until it exists. Re-read `server/middleware/rateLimiters.js` and copy the construction shape of an existing limiter exactly. Requirements:
+- name `serviceExtensionLimiter`, exported from the module's `module.exports`
+- 5 requests per hour
+- keyed on the authenticated user id, not IP, because several staffers at one venue share an IP. Use `keyGenerator: (req) => String(req.user?.id || req.ip)`; this is why the limiter is attached AFTER `auth` on the route.
+- a test-environment skip, because this suite makes several POSTs: `skip: () => process.env.NODE_ENV === 'test'`. Check whether the file already has a house pattern for this (`grep -n "skip:" server/middleware/rateLimiters.js`) and match it; if none exists, add the `skip` option to this limiter only and do not touch the others.
+
+Confirm it loads: `node -e "console.log(typeof require('/home/drbartender/projects/os/server/middleware/rateLimiters').serviceExtensionLimiter)"` → `function`.
+
+- [ ] **Step 7: Run the test to verify it passes**
+
+Run: `NODE_ENV=test node --env-file=/home/drbartender/projects/os/.env --test server/routes/serviceExtensions/create.test.js`
 Expected: PASS, 7 tests.
 
-If the 403 tests return 500, the `PermissionError` import name is wrong: check `grep -n "class.*Error" server/utils/errors.js` and use the real class names.
-
-- [ ] **Step 7: Add the rate limiter**
-
-Re-read `server/middleware/rateLimiters.js`. Add a limiter for this endpoint following the file's existing construction exactly (copy the shape of `clientPortalWriteLimiter`), named `serviceExtensionLimiter`, at 5 requests per hour keyed on the authenticated user id rather than IP (several staffers at one venue can share an IP):
-
-Then apply it to the POST only, after `auth` so `req.user` exists:
-```javascript
-router.post('/', serviceExtensionLimiter, asyncHandler(async (req, res) => {
-```
-
-Re-run the suite. If the limiter's window trips the multi-request tests, give the test file its own bypass the way the existing rate-limiter-bound suites do (check `grep -rn "rateLimit\|NODE_ENV === 'test'" server/middleware/rateLimiters.js | head`), or reduce the number of POSTs per test.
+If the 403 tests return 500, the `PermissionError` import name is wrong: check `grep -n "class.*Error" server/utils/errors.js`. If they return 401 instead of 403, the JWT is wrong: re-read "Test harness constraints" at the top of this plan.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add server/routes/serviceExtensions/ server/index.js server/middleware/rateLimiters.js
+git add server/routes/serviceExtensions/index.js server/routes/serviceExtensions/create.js \
+        server/routes/serviceExtensions/create.test.js server/routes/serviceExtensions/publicAccept.js \
+        server/routes/serviceExtensions/admin.js server/index.js server/middleware/rateLimiters.js
 git commit -m "feat(ext): staff request endpoint, assignment-gated and price-free
 
 Requires the staff-home assignment predicate rather than trusting auth alone
@@ -2274,7 +2548,9 @@ The zero-delta case settles here, because Stripe cannot charge $0 and the covera
 - Consumes: `renderExtensionTerms`, `getExtensionTerms` (Task 3); `settleExtension` (Task 5); `notifyStaffOfOutcome`, `alertAdminsProblem` (Task 6).
 - Produces:
   - `POST /api/service-extensions/t/:token/accept` → `{ accepted: true, requiresPayment: boolean, acceptedAt }`. Idempotent.
-  - `GET /api/invoices/t/:token` response gains `extension: { is_extension: true, terms: {headline, paragraphs, version}, accepted_at, requires_payment } | null`.
+  - `GET /api/invoices/t/:token` gains `extension` **nested INSIDE the `invoice` object**, so clients read `data.invoice.extension`. Shape: `{ is_extension: true, status, terms: {headline, paragraphs, version} | null, accepted_at, expires_at, contracted_end_time, requested_end_time, requires_payment, requires_acceptance } | null`.
+
+**RESPONSE SHAPE, load-bearing.** That route returns `res.json({ invoice: { ...invoice, line_items, payments, refunds } })` and `InvoicePage` does `setInvoice(data.invoice)`. A first draft of this plan put `extension` inside `invoice` on the server but had the client read `res.data.extension`, so the terms block never rendered and the payment gate was permanently open, while every server test passed. Server and client must agree: it lives inside `invoice`.
 
 - [ ] **Step 1: Write the accept route**
 
@@ -2306,6 +2582,7 @@ const { publicLimiter } = require('../../middleware/rateLimiters');
 const { requireUuidToken } = require('../../utils/tokens');
 const { NotFoundError, ConflictError } = require('../../utils/errors');
 const { settleExtension } = require('../../utils/serviceExtensionSettle');
+const { applyExtensionHours, maybeAlertPayroll } = require('../../utils/serviceExtensionPayroll');
 const notify = require('../../utils/serviceExtensionNotify');
 
 const router = express.Router();
@@ -2370,8 +2647,15 @@ router.post(
 
     // Zero-delta: acceptance itself settles (spec decision 13). Stripe cannot
     // charge $0, and the coverage artifact matters regardless of price.
-    const settled = await settleExtension({ client: pool, extensionId: ext.id, outcome: 'paid' });
+    const settled = await settleExtension({ extensionId: ext.id, outcome: 'paid' });
     if (settled.ok) {
+      // Payroll runs on EVERY settle path, not just the webhook: a zero-delta
+      // extension is still time the staffer worked (spec section 9).
+      const payroll = await applyExtensionHours({
+        proposalId: settled.proposalId,
+        newDurationHours: settled.newDurationHours,
+      });
+      await maybeAlertPayroll(notify, settled.proposalId, payroll);
       await notify.notifyStaffOfOutcome({
         staffUserIds: settled.staffUserIds,
         outcome: 'approved',
@@ -2446,7 +2730,21 @@ const Sentry = require('@sentry/node');
 const { renderExtensionTerms } = require('../data/extensionTermsCopy');
 ```
 
-And add `extension` to the `res.json({ invoice: { ... } })` payload alongside the existing arrays.
+Then add `extension` INSIDE the `invoice` object, alongside the existing arrays, so the final statement reads:
+
+```javascript
+  res.json({
+    invoice: {
+      ...invoice,
+      line_items: lineItemsRes.rows,
+      payments: paymentsRes.rows,
+      refunds: refundsRes.rows,
+      extension,
+    },
+  });
+```
+
+Task 15 reads it as `data.invoice.extension`. Do not put it at the top level: the client only ever stores `data.invoice`.
 
 - [ ] **Step 3: Write the tests**
 
@@ -2460,12 +2758,13 @@ Create `server/routes/serviceExtensions/publicAccept.test.js` covering, with the
 6. An expired-by-timestamp pending row returns 409 `EXTENSION_EXPIRED` and does not stamp acceptance.
 7. A voided invoice returns 404.
 
-Create `server/routes/invoices.extension.test.js` covering:
+Create `server/routes/invoices.extension.test.js` covering. Every assertion reads `body.invoice.extension`, never `body.extension`, which is the contract Task 15 depends on:
 
-1. An ordinary Balance invoice's `GET /t/:token` returns `extension: null` and is otherwise unchanged (assert `invoice.amount_due` and the `line_items` array still present).
-2. An extension invoice returns `extension.is_extension === true`, `terms.headline` containing the requested end time, `requires_acceptance === true`, and `requires_payment === true`.
+1. An ordinary Balance invoice's `GET /t/:token` returns `invoice.extension === null` and is otherwise unchanged (assert `invoice.amount_due` and the `line_items` array still present).
+2. An extension invoice returns `invoice.extension.is_extension === true`, `terms.headline` containing the requested end time, `requires_acceptance === true`, and `requires_payment === true`.
 3. After acceptance, the same GET returns `requires_acceptance === false` and a non-null `accepted_at`.
 4. An extension row carrying an unknown `terms_version` (insert one with `terms_version = 'bogus'`) returns `terms: null` and a 200, never a 500.
+5. Shape guard: assert `body.extension === undefined` AND `body.invoice.extension !== undefined` on an extension invoice. This is the explicit regression test for the server/client shape mismatch described above.
 
 Stub the notify module at the top of both files exactly as Task 7's suite does.
 
@@ -2632,6 +2931,7 @@ const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, NotFoundError, ConflictError } = require('../../utils/errors');
 const { settleExtension, closeExtension } = require('../../utils/serviceExtensionSettle');
+const { applyExtensionHours, maybeAlertPayroll } = require('../../utils/serviceExtensionPayroll');
 const { cancelOpenInvoiceIntents } = require('../../utils/invoiceVoid');
 const { logAdminAction } = require('../../utils/adminAuditLog');
 const notify = require('../../utils/serviceExtensionNotify');
@@ -2681,13 +2981,16 @@ router.get('/proposal/:proposalId', auth, requireAdminOrManager, asyncHandler(as
             se.override_reason, se.hosted_product_confirmed,
             se.requested_by_user_id, se.invoice_id,
             i.status AS invoice_status, i.token AS invoice_token,
-            COALESCE(cp.preferred_name, u.name) AS requested_by_name,
-            ov.name AS override_by_name
+            -- users has NO `name` column; human names live on
+            -- contractor_profiles.preferred_name. Fall back to the email.
+            COALESCE(cp.preferred_name, u.email) AS requested_by_name,
+            COALESCE(ovcp.preferred_name, ov.email) AS override_by_name
        FROM service_extensions se
        LEFT JOIN invoices i ON i.id = se.invoice_id
        LEFT JOIN users u ON u.id = se.requested_by_user_id
        LEFT JOIN contractor_profiles cp ON cp.user_id = se.requested_by_user_id
        LEFT JOIN users ov ON ov.id = se.override_by_user_id
+       LEFT JOIN contractor_profiles ovcp ON ovcp.user_id = se.override_by_user_id
       WHERE se.proposal_id = $1
       ORDER BY se.id DESC`,
     [proposalId]
@@ -2710,7 +3013,7 @@ router.post('/:id/override', auth, requireAdminOrManager, asyncHandler(async (re
   if (!probe.rows[0]) throw new NotFoundError('Request not found');
 
   const settled = await settleExtension({
-    client: pool, extensionId: id, outcome: 'overridden',
+    extensionId: id, outcome: 'overridden',
     actorUserId: req.user.id, overrideReason: reason,
   });
   if (!settled.ok) {
@@ -2722,6 +3025,14 @@ router.post('/:id/override', auth, requireAdminOrManager, asyncHandler(async (re
 
   // Decision 14: no receivable survives an override.
   await voidExtensionInvoice(settled.proposalId, settled.invoiceId);
+
+  // The staffer worked the time regardless of who paid for it, so payroll runs
+  // on this path too (spec section 9: "wage hours still accrue" for an override).
+  const payroll = await applyExtensionHours({
+    proposalId: settled.proposalId,
+    newDurationHours: settled.newDurationHours,
+  });
+  await maybeAlertPayroll(notify, settled.proposalId, payroll);
 
   await logAdminAction({
     actorUserId: req.user.id,
@@ -2771,7 +3082,7 @@ router.post('/:id/cancel', auth, requireAdminOrManager, asyncHandler(async (req,
   if (!probe.rows[0]) throw new NotFoundError('Request not found');
 
   const closed = await closeExtension({
-    client: pool, extensionId: id, outcome: 'cancelled', actorUserId: req.user.id,
+    extensionId: id, outcome: 'cancelled', actorUserId: req.user.id,
   });
   if (!closed.ok) {
     throw new ConflictError(`This request is already ${probe.rows[0].status}.`, 'EXTENSION_NOT_PENDING');
@@ -2940,7 +3251,6 @@ Add there:
         });
       } else {
         const settled = await settleExtension({
-          client: pool,
           extensionId: extensionSettleContext.extensionId,
           outcome: 'paid',
         });
@@ -2950,13 +3260,7 @@ Add there:
             proposalId: settled.proposalId,
             newDurationHours: settled.newDurationHours,
           });
-          if (payroll && payroll.lockedLines > 0) {
-            await notify.alertAdminsProblem({
-              proposalId: settled.proposalId,
-              kind: 'payroll_hours_locked',
-              detail: `${payroll.lockedLines} payout line(s) for this event were edited by hand, so the extra time was not added automatically. Update them yourself.`,
-            });
-          }
+          await maybeAlertPayroll(notify, settled.proposalId, payroll);
           await notify.notifyStaffOfOutcome({
             staffUserIds: settled.staffUserIds,
             outcome: 'approved',
@@ -3032,33 +3336,71 @@ cannot roll back a recorded payment. amount_paid stays put via the off-ledger
 label, so a deposit-stage event cannot be falsely marked funded."
 ```
 
-### Task 12: Payroll, both halves
+### Task 12: Payroll, in two halves that live in DIFFERENT LANES
 
-Two separate problems.
+> **12a, the hours module → lane `ext-core`.** Steps 1 to 3 below. It is a pure util with no route dependencies, and `ext-routes` (Tasks 8 and 10) imports it, so it MUST land in `ext-core` or the lane graph is circular. Build it at the end of `ext-core`, after Task 5.
+>
+> **12b, the accrual addend → lane `ext-webhook-payroll`.** Steps 4 onward. It edits `payrollAccrual.js`, which belongs with the other money-seam review.
+>
+> The front-matter footprints already reflect this split: `serviceExtensionPayroll.js` is declared in `ext-core`, `payrollAccrual.js` in `ext-webhook-payroll`. The two halves get separate commits regardless, so a bad addend never forces reverting the hours fix.
 
-**Wage hours.** Accrual seeds `contracted_hours` from `proposals.event_duration_hours` on FIRST accrual only, and afterwards treats `hours` as admin-owned. First accrual mid-event is the NORM, not the exception: a card tip matched to the shift triggers accrual while the period is open, and auto-completion fires at the contracted end, which is inside the request window. So the spec's rule is: re-seed when `hours = contracted_hours` (the admin demonstrably has not touched the line), and refuse plus warn when they differ.
+**12a, wage hours.** Accrual seeds `contracted_hours` from `proposals.event_duration_hours` on FIRST accrual only, then treats `hours` as admin-owned. First accrual mid-event is the NORM, not the exception: a card tip matched to the shift triggers accrual while the period is open, and auto-completion fires at the contracted end, inside the request window. So: re-seed when `hours = contracted_hours` (the admin demonstrably has not touched the line), refuse and warn when they differ.
 
-**Gratuity share.** The pool is snapshot-derived and the snapshot never moves (side money), so the extension's gratuity joins as an event-scoped addend, mirroring how card tips already join.
+**12b, gratuity share.** The pool is snapshot-derived and the snapshot never moves (side money), so the extension's gratuity joins as an event-scoped addend, mirroring how card tips already join.
 
-**The fee-netting trap.** `proRataFeeCents(grossGratuity, proposalTotalCents, fee)` relies on the stated invariant that the gratuity is a part of `total_price`, so the ratio cannot exceed 1. Extension gratuity is NOT inside `total_price`. Adding it to `grossGratuity` before the fee call would break that invariant and could over-net the fee. So the addend is applied AFTER fee-netting, which also implements the spec's decision that DRB absorbs the extension's Stripe fee rather than charging it to the staff pool.
+**Fee-netting order.** `proRataFeeCents(gross, proposalTotalCents, fee)` pro-rates the card fee by the gratuity's share of `total_price`. Extension gratuity is not inside `total_price`, so feeding it in would over-net the fee (bounded by the helper's existing `Math.min(1, ...)` clamp, but wrong regardless). The addend therefore lands AFTER netting, which also implements the spec's decision that DRB absorbs the extension's Stripe fee rather than charging it to the staff pool.
 
-**Files:**
+**Commit separately.** These are two independent features and they get two commits inside this task: the hours module first, then the accrual addend. A bad addend must be revertable without also reverting the hours fix.
+
+**Files (12a, lane ext-core):**
 - Create: `server/utils/serviceExtensionPayroll.js`
-- Modify: `server/utils/payrollAccrual.js`
 - Test: `server/utils/serviceExtensionPayroll.test.js`
+
+**Files (12b, lane ext-webhook-payroll):**
+- Modify: `server/utils/payrollAccrual.js`
 - Test: `server/utils/payrollAccrual.extension.test.js`
 
 **Interfaces:**
-- Consumes: nothing from earlier tasks.
+- Consumes: `contractedHours` and `wageCents` from `server/utils/payrollMath.js` (existing).
 - Produces:
-  - `applyExtensionHours({ proposalId, newDurationHours })` → `Promise<{ updatedLines: number, lockedLines: number, frozenLines: number }>`
+  - `applyExtensionHours({ proposalId, newDurationHours })` → `Promise<{ updatedLines: number, lockedLines: number, frozenLines: number, payoutIds: number[] }>`. Called by ALL THREE settle paths: the webhook (Task 11), the zero-delta accept (Task 8), and the admin override (Task 10). A first draft wired it only into the webhook, so an overridden or zero-delta extension moved the duration and never paid for it.
+  - `maybeAlertPayroll(notify, proposalId, payrollResult)` → `Promise<void>`. The shared post-settle alert, so all three call sites report `lockedLines` AND `frozenLines` identically:
+    ```javascript
+    async function maybeAlertPayroll(notify, proposalId, payroll) {
+      if (!payroll) return;
+      const parts = [];
+      if (payroll.lockedLines > 0) {
+        parts.push(`${payroll.lockedLines} payout line(s) were edited by hand`);
+      }
+      if (payroll.frozenLines > 0) {
+        parts.push(`${payroll.frozenLines} payout line(s) sit in a pay period that is not open`);
+      }
+      if (parts.length === 0) return;
+      await notify.alertAdminsProblem({
+        proposalId,
+        kind: 'payroll_hours_locked',
+        detail: `${parts.join(' and ')}, so the extra time was NOT added to payroll automatically. Update the payout line(s) yourself.`,
+      });
+    }
+    ```
+    Export it from `serviceExtensionPayroll.js`. `frozenLines` MUST be reported: a `processing` or `reopened` period silently skipped is an underpay nobody is told about, which spec §9 forbids (the late-tip deferral precedent).
   - `payrollAccrual`'s gratuity pool includes `SUM(gratuity_cents)` over that proposal's `paid` extensions, added after fee-netting.
 
-- [ ] **Step 1: Read the accrual code this task modifies**
+- [ ] **Step 1: Read the accrual code this task modifies, and the contracted-hours helper**
 
 Run: `sed -n 283,300p server/utils/payrollAccrual.js` and `sed -n 330,340p server/utils/payrollAccrual.js`
 
-Confirm the current shape: `gratuityFunded`, `grossGratuity`, `gratuityFee = proRataFeeCents(grossGratuity, proposalTotalCents, fee)`, `netGratuity = Math.max(0, grossGratuity - gratuityFee)`. Also read the `contractedHours()` helper (`grep -n "function contractedHours" -A8 server/utils/payrollAccrual.js`) so the re-seed uses the same rounding the seeding path uses.
+Confirm the current shape: `gratuityFunded`, `grossGratuity`, `gratuityFee = proRataFeeCents(grossGratuity, proposalTotalCents, fee)`, `netGratuity = Math.max(0, grossGratuity - gratuityFee)`.
+
+**Then read the contracted-hours helper, which is NOT in this file:**
+
+```bash
+sed -n 1,20p server/utils/payrollMath.js
+```
+
+**This is the single most dangerous thing in the plan.** `contractedHours(d)` is `d + SETUP_HOURS(1) + BREAKDOWN_HOURS(0.5)`, so a 4-hour event seeds `contracted_hours = 5.5`, not 4. A first draft of this task wrote its own helper returning the bare duration, which would have *rewritten 5.5 down to 4.5* on a 30-minute extension: cutting an hour of pay from every bartender instead of adding half an hour, silently, on the exact code path meant to pay them more.
+
+Do not write a local hours helper. Import the real one.
 
 - [ ] **Step 2: Write the hours module**
 
@@ -3088,16 +3430,17 @@ Create `server/utils/serviceExtensionPayroll.js`:
  */
 
 const { pool } = require('../db');
-
-/** Same rounding the accrual seeding path uses. */
-function contractedHoursFor(durationHours) {
-  const h = Number(durationHours) || 0;
-  return Math.round(h * 100) / 100;
-}
+// THE seeding helper, not a local reimplementation. contractedHours(d) =
+// d + 1h setup + 0.5h breakdown, so a 4h event's contracted_hours is 5.5. A
+// local helper returning the bare duration would REWRITE 5.5 down to 4.5 on a
+// 30-minute extension and cut an hour of pay per line.
+const { contractedHours, wageCents } = require('./payrollMath');
 
 async function applyExtensionHours({ proposalId, newDurationHours }) {
-  const target = contractedHoursFor(newDurationHours);
-  if (!target) return { updatedLines: 0, lockedLines: 0, frozenLines: 0 };
+  const target = contractedHours(Number(newDurationHours) || 0);
+  if (!Number.isFinite(target) || target <= 0) {
+    return { updatedLines: 0, lockedLines: 0, frozenLines: 0, payoutIds: [] };
+  }
 
   const { rows } = await pool.query(
     `SELECT pe.payout_id, pe.shift_id, pe.hours, pe.contracted_hours, pe.rate_cents,
@@ -3114,10 +3457,14 @@ async function applyExtensionHours({ proposalId, newDurationHours }) {
   let updatedLines = 0;
   let lockedLines = 0;
   let frozenLines = 0;
+  const touchedPayoutIds = new Set();
 
   for (const line of rows) {
-    // Frozen / processed periods are never rewritten here.
-    if (line.period_status && line.period_status !== 'open') {
+    // Only an 'open' period is writable, matching payrollAccrual.js:187 exactly.
+    // 'processing', 'reopened' and 'paid' all count as frozen here; the caller
+    // MUST surface frozenLines, because a reopened-period extension that is
+    // silently skipped is an underpay nobody is told about.
+    if (line.period_status !== 'open') {
       frozenLines += 1;
       continue;
     }
@@ -3129,7 +3476,7 @@ async function applyExtensionHours({ proposalId, newDurationHours }) {
     // Already at the new duration (a replay, or accrual ran after the bump).
     if (Number(line.contracted_hours) === target) continue;
 
-    const wage = Math.round(target * Number(line.rate_cents));
+    const wage = wageCents(target, Number(line.rate_cents));
     const lineTotal = wage
       + Number(line.gratuity_share_cents || 0)
       + Number(line.card_tip_net_cents || 0)
@@ -3142,12 +3489,28 @@ async function applyExtensionHours({ proposalId, newDurationHours }) {
       [line.payout_id, line.shift_id, target, wage, lineTotal]
     );
     updatedLines += 1;
+    touchedPayoutIds.add(line.payout_id);
   }
 
-  return { updatedLines, lockedLines, frozenLines };
+  // Recompute the payout HEADER total, exactly as every sibling writer does
+  // (payrollAccrual.js:261). Without this the line is right but the payout and
+  // the paystub still show the pre-extension total, so the bartender is paid the
+  // old amount and the line-level fix is invisible.
+  const payoutIds = [...touchedPayoutIds];
+  if (payoutIds.length > 0) {
+    await pool.query(
+      `UPDATE payouts po SET total_cents = GREATEST(0, COALESCE((
+         SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
+       ), 0))
+       WHERE po.id = ANY($1)`,
+      [payoutIds]
+    );
+  }
+
+  return { updatedLines, lockedLines, frozenLines, payoutIds };
 }
 
-module.exports = { applyExtensionHours, contractedHoursFor };
+module.exports = { applyExtensionHours };
 ```
 
 - [ ] **Step 3: Verify the column and table names before trusting the query**
@@ -3161,7 +3524,15 @@ Confirm `pay_periods.status` exists and its open value is literally `'open'`, an
 
 - [ ] **Step 4: Add the gratuity addend to accrual**
 
-Edit `server/utils/payrollAccrual.js`. Replace the `grossGratuity` / `gratuityFee` / `netGratuity` sequence with:
+Edit `server/utils/payrollAccrual.js`. There are TWO separate spans to replace, and `gratuityFunded` / `gratuityFee` / `netGratuity` are existing `const` declarations: re-declaring any of them in the same scope is a `SyntaxError`, so replace the existing lines rather than adding new ones.
+
+Locate them first:
+```bash
+grep -n "gratuityFunded\|grossGratuity\|gratuityFee\|netGratuity" server/utils/payrollAccrual.js
+```
+As of 2026-07-26 the first span is roughly lines 296-300 (the `gratuityFunded` + `grossGratuity` pair) and the second roughly 335-338 (`gratuityFee` + `netGratuity`). Work from the grep output, not these numbers.
+
+**Span 1** replaces the `gratuityFunded` and `grossGratuity` declarations with:
 
 ```javascript
     const gratuityFunded = proposalPaidCents >= proposalTotalCents;
@@ -3189,7 +3560,7 @@ Edit `server/utils/payrollAccrual.js`. Replace the `grossGratuity` / `gratuityFe
     const extensionGratuity = Number(extGratRes.rows[0].cents) || 0;
 ```
 
-Leave the `feeRes` query exactly as it is, then replace the fee application with:
+Leave the `feeRes` query exactly as it is. **Span 2** replaces the existing `gratuityFee` and `netGratuity` declarations with:
 
 ```javascript
     const gratuityFee = proRataFeeCents(
@@ -3205,17 +3576,21 @@ Leave the `feeRes` query exactly as it is, then replace the fee application with
     const netGratuity = Math.max(0, contractGrossGratuity - gratuityFee) + extensionGratuity;
 ```
 
-Then update the two places that referenced `grossGratuity` afterwards if any remain (`grep -n "grossGratuity" server/utils/payrollAccrual.js` after editing; there must be zero stale references).
+Then confirm there are no stale references: `grep -n "grossGratuity" server/utils/payrollAccrual.js` must return ZERO lines (the identifier is renamed to `contractGrossGratuity`). Also confirm the file still parses: `node --check server/utils/payrollAccrual.js`.
+
+**On the fee-netting rationale, corrected.** `proRataFeeCents` already clamps its ratio with `Math.min(1, ...)` (`payrollMath.js:66`), so feeding extension dollars in would over-net within that clamp rather than produce a ratio above 1. The conclusion is unchanged and still right: the addend goes after netting, both because the denominator genuinely excludes extension money and because the spec decided DRB absorbs that fee. But do not write a comment claiming the clamp does not exist.
 
 - [ ] **Step 5: Write both test suites**
 
 Create `server/utils/serviceExtensionPayroll.test.js`. Use the chicago-keyed track-and-restore pay-period fixture pattern (standing test law: read an existing payroll suite first, `grep -ln "pay_period" server/utils/*.test.js server/routes/admin/payroll*.test.js | head -3`, and copy its period setup and restore). Cover:
-1. An untouched line (`hours = contracted_hours = 4`) re-seeds to 4.5, and `wage_cents` recomputes as `4.5 * rate_cents`.
-2. `line_total_cents` recomputes as wage + gratuity + card tip + adjustment.
-3. An admin-edited line (`hours = 3`, `contracted_hours = 4`) is NOT touched and is counted in `lockedLines`.
-4. A line in a non-open period is NOT touched and is counted in `frozenLines`.
-5. Re-running with the same target is a no-op (`updatedLines === 0`).
-6. A proposal with no payout lines returns all zeros without error.
+1. **The setup/breakdown guard.** Seed an untouched line for a 4-hour event the way accrual does, `hours = contracted_hours = 5.5` (that is `contractedHours(4)`). Call `applyExtensionHours({ proposalId, newDurationHours: 4.5 })`. Assert `contracted_hours` and `hours` are now **6.0**, not 4.5. This test exists specifically to catch the underpay defect described in Step 1; if it ever asserts 4.5, the module is wrong.
+2. `wage_cents` recomputes as `wageCents(6.0, rate_cents)`.
+3. `line_total_cents` recomputes as wage + gratuity + card tip + adjustment.
+4. **The payout header.** `payouts.total_cents` for the touched payout equals the new `SUM(line_total_cents)`. Without this the line is right and the paystub still shows the old number.
+5. An admin-edited line (`hours = 5`, `contracted_hours = 5.5`) is NOT touched and is counted in `lockedLines`.
+6. A line in a `processing` period is NOT touched and is counted in `frozenLines`. Add a second case for `reopened`, which is also not writable.
+7. Re-running with the same target is a no-op (`updatedLines === 0`) and does not re-write the payout header.
+8. A proposal with no payout lines returns all zeros and an empty `payoutIds` without error.
 
 Create `server/utils/payrollAccrual.extension.test.js`. Cover:
 1. A fully-paid proposal with one paid extension carrying `gratuity_cents = 2500`: each bartender's `gratuity_share_cents` is higher than the same setup with no extension, by the extension amount split evenly.
@@ -3243,15 +3618,23 @@ server/utils/serviceExtensionPayroll.test.js
 server/utils/payrollAccrual.extension.test.js
 ```
 
-```bash
-git add server/utils/serviceExtensionPayroll.js server/utils/serviceExtensionPayroll.test.js server/utils/payrollAccrual.js server/utils/payrollAccrual.extension.test.js scripts/money-smoke-list.txt
-git commit -m "feat(ext): extension hours re-seed + gratuity addend in payroll
+Two commits, so the addend can be reverted without the hours fix:
 
-Hours re-seed only when the admin has not edited the line, and never in a
-frozen period. Gratuity joins the pool AFTER fee-netting: extension dollars are
-outside the total_price denominator, so feeding them to proRataFeeCents would
-break its ratio invariant, and DRB absorbs the extension's Stripe fee rather
-than the staff pool."
+```bash
+git add server/utils/serviceExtensionPayroll.js server/utils/serviceExtensionPayroll.test.js scripts/money-smoke-list.txt
+git commit -m "feat(ext): re-seed payout hours when an extension settles
+
+Uses payrollMath.contractedHours (duration + 1h setup + 0.5h breakdown), so a
+30-minute extension moves 5.5 to 6.0. Re-seeds only when the admin has not
+edited the line, never in a non-open period, and recomputes the payout header
+total the way every sibling writer does."
+
+git add server/utils/payrollAccrual.js server/utils/payrollAccrual.extension.test.js
+git commit -m "feat(ext): extension gratuity joins the payroll pool as an addend
+
+Applied after fee-netting: extension dollars are outside the total_price
+denominator the fee pro-ration divides by, and DRB absorbs the extension's
+Stripe fee rather than the staff pool (spec section 9)."
 ```
 
 - [ ] **Step 8: Checkpoint review**
@@ -3326,7 +3709,7 @@ async function sweepExpiredExtensions() {
       );
       const contractedEndDisplay = pre.rows[0] ? pre.rows[0].contracted_end_time : null;
 
-      const closed = await closeExtension({ client: pool, extensionId: id, outcome: 'expired' });
+      const closed = await closeExtension({ extensionId: id, outcome: 'expired' });
       if (!closed.ok) continue; // a settle or an admin won the claim
       expired += 1;
 
@@ -3402,11 +3785,22 @@ Create `server/utils/serviceExtensionSweep.test.js`. Stub `serviceExtensionNotif
 Run: `node --env-file=/home/drbartender/projects/os/.env --test server/utils/serviceExtensionSweep.test.js`
 Expected: PASS.
 
-- [ ] **Step 5: Confirm the scheduler wiring boots**
+- [ ] **Step 5: Confirm the scheduler wiring parses**
 
-Run: `RUN_SCHEDULERS=false node --env-file=/home/drbartender/projects/os/.env -e "require('/home/drbartender/projects/os/server/index.js')" 2>&1 | head -20`
+Do NOT `require('server/index.js')`: it opens a real listener and will `EADDRINUSE` against the Claude-managed dev server, which reads as a wiring failure when nothing is wrong.
 
-Expected: the server boots with no require error. `RUN_SCHEDULERS=false` keeps the timers off; this only proves the new `require` path and registration block parse. Kill it once it prints its listening line.
+Syntax-check instead, then prove the new module loads standalone:
+```bash
+node --check server/index.js && echo "index.js parses"
+node --env-file=/home/drbartender/projects/os/.env -e "
+const m=require('/home/drbartender/projects/os/server/utils/serviceExtensionSweep');
+console.log('sweep export:', typeof m.sweepExpiredExtensions);
+process.exit(0);
+"
+```
+Expected: `index.js parses` and `sweep export: function`.
+
+To exercise the registration block itself, restart the dev server (it is a Claude-managed background process with no auto-reload) and confirm the boot log lists the schedulers without an error.
 
 - [ ] **Step 6: Commit**
 
@@ -3498,8 +3892,9 @@ export default function RequestMoreTime({ shiftId, onClose }) {
       setSent(true);
     } catch (err) {
       const data = err.response?.data;
+      // The global error handler emits field errors under `fieldErrors`.
       setError(
-        (data?.fields && Object.values(data.fields)[0])
+        (data?.fieldErrors && Object.values(data.fieldErrors)[0])
         || data?.error
         || 'Could not send the request. Try again.'
       );
@@ -3568,7 +3963,7 @@ export default function RequestMoreTime({ shiftId, onClose }) {
                   checked={choiceHours === (baseHours + added)}
                   onChange={() => setChoiceHours(baseHours + added)}
                 />
-                <span>{eligibility.stepLabels?.[String(added)] || `+${added * 60} minutes`}</span>
+                <span>{eligibility.stepLabels?.[String(added)] || `plus ${added * 60} minutes`}</span>
               </label>
             ))}
           </fieldset>
@@ -3610,25 +4005,14 @@ export default function RequestMoreTime({ shiftId, onClose }) {
 }
 ```
 
-- [ ] **Step 2: Return the step labels and base duration from the API**
+- [ ] **Step 2: Confirm the API already returns what the picker needs**
 
-The component needs `contractedDurationHours` and human labels. Go back to `server/routes/serviceExtensions/create.js` and add to the eligibility response:
+`contractedDurationHours` and `stepLabels` come from Task 7's eligibility response; this lane does NOT edit any server file. Verify before building the UI:
 
-```javascript
-    contractedDurationHours: contracted,
-    stepLabels: await (async () => {
-      const labels = {};
-      const maxSteps = Math.round(MAX_EXTENSION_HOURS / 0.5);
-      for (let i = 1; i <= maxSteps; i++) {
-        const added = i * 0.5;
-        const e = await eventEndInstantForDuration(pool, ctx.proposal_id, contracted + added);
-        if (e) labels[String(added)] = `${e.endDisplay} (+${added === 0.5 ? '30 min' : added + ' hr'})`;
-      }
-      return labels;
-    })(),
+```bash
+grep -n "contractedDurationHours\|stepLabels" server/routes/serviceExtensions/create.js
 ```
-
-These are times and durations, never money, so decision 2 still holds. Extend Task 7's eligibility test to assert `stepLabels` is present and still contains no price-like key.
+Expected: both present. If either is missing, stop: it belongs in `ext-routes`, and adding it here would put this lane outside its declared footprint and abort it.
 
 - [ ] **Step 3: Add the entry point to ShiftDetail**
 
@@ -3674,7 +4058,7 @@ Expected: exit 0.
 
 ```bash
 cd /home/drbartender/projects/os
-git add client/src/pages/staff/RequestMoreTime.js client/src/pages/staff/ShiftDetail.js server/routes/serviceExtensions/create.js server/routes/serviceExtensions/create.test.js
+git add client/src/pages/staff/RequestMoreTime.js client/src/pages/staff/ShiftDetail.js
 git commit -m "feat(ext): staff request-more-time screen, price-free by construction"
 ```
 
@@ -3698,7 +4082,13 @@ Edit `client/src/pages/invoice/InvoicePage.js`. Add state:
   const [accepting, setAccepting] = useState(false);
 ```
 
-Where the fetch sets the invoice, also `setExtension(res.data.extension || null);`.
+The server nests `extension` INSIDE `invoice` (Task 8), and this page stores `data.invoice`. So at BOTH fetch sites in this file (the initial `useEffect` load and the post-payment refetch), add:
+
+```javascript
+        setExtension(data.invoice?.extension || null);
+```
+
+Reading `data.extension` would silently yield `null` forever, leaving the payment gate permanently open while every server test passes.
 
 Add the accept handler:
 
@@ -3878,10 +4268,23 @@ git commit -m "docs(ext): README tree, ARCHITECTURE routes + schema, env var for
 
 The spec names this as the one real cost of going off-ledger and explicitly defers the per-surface decision to the plan, so it needs a task rather than an assumption. Extension revenue lives in `proposal_payments` and `invoices` but NOT in `proposals.amount_paid`. Any surface that totals revenue from `amount_paid` will under-report it; any surface that sums payments will include it. Neither is wrong, but the split has to be known rather than discovered later from a number that looks off.
 
+It also closes spec §12's other deferred item: the four surfaces that read `event_duration_hours` and must be *verified*, not assumed, now that the column moves mid-event.
+
 This task produces a decision record, not a refactor. Any code change it identifies gets raised as its own item.
 
 **Files:**
 - Modify: `docs/fix-list-remaining-2026-07-02.md` (record findings + any follow-ups)
+
+- [ ] **Step 0: Verify the four `event_duration_hours` consumers (spec §12)**
+
+The column now changes during an event, which it never did before. Spec §12 names four surfaces that read it and says each gets verified. With a settled extension on a dev event, open each and confirm it shows the NEW end time and duration, not the booked one:
+
+1. **BEO** (`server/routes/beo.js` and the staff-facing BEO view).
+2. **Calendar feed** (`server/routes/calendar.js`, the iCal description and end time).
+3. **Client portal** event display (`server/routes/clientPortal.js` and the portal event card).
+4. **Staff event details** (the staff shift page, which reads the shift row this feature also syncs).
+
+Record the result per surface. A surface showing the stale duration is a real bug: note it with its file and add it to the fix list in Step 3. Also confirm the Money Board and the events list still render the event without error, since both read the shift and proposal rows this feature touches.
 
 - [ ] **Step 1: Enumerate the revenue surfaces**
 
@@ -3950,13 +4353,31 @@ Every spec section, and the task that implements it. Written so a reviewer can c
 | §8 admin surfaces | 10 (API), 16 (UI) |
 | §8 activity log + admin audit log | 5, 7, 10 |
 | §8 mandatory docs | 17 |
-| §9 payroll hours re-seed + gratuity addend | 12 |
-| §10 copy and channel gates | 6 |
+| §9 payroll hours re-seed (all three settle paths) | 12a, wired in 8, 10, 11 |
+| §9 gratuity addend after fee-netting | 12b |
+| §9 frozen-period alert | 12a (`maybeAlertPayroll` reports `frozenLines`) |
+| §10 copy, channel gates, SMS to push to email fallback | 6 |
 | §11 timezone-correct instants | 1 |
 | §11 authoritative contracted end (proposal-derived) | 4, 7, 11 (edge case) |
 | §11 second extension baseline | 4 |
 | §12 cross-cutting consistency | 5, 11, 12, 18 |
+| §12 the four `event_duration_hours` consumers verified | 18 Step 0 |
 | §12 revenue reporting split | 18 |
 | §13 test matrix | distributed; every task carries its slice |
 
-Deliberately not built, and why: nothing. The spec's own open items (the broker question and the signed-document copy) are tracked on the fix list and are not code.
+**Deliberately not built:**
+
+- **A test for the flat class-package shape.** Spec §13 asks for "both class shapes." `the-doctors-orders` is the flat-priced class package, but `schema.sql` sets `is_active = FALSE` on it, so it cannot be booked and cannot reach this feature. The per-guest class shape (`extra_hour_rate` 0) IS tested in Task 4. If that package is ever reactivated, add the second case.
+
+Everything else the spec asks for has a task. The spec's own open items (the broker question and the signed-document copy) are tracked on the fix list and are not code.
+
+## Revision history
+
+- **rev 1, 2026-07-26.** First draft. Passed its own inline self-review.
+- **rev 2, 2026-07-26.** After the three-agent plan fleet found 14 blockers. The four that would have survived a fully green test run, and are now each guarded by a named test:
+  1. Task 2 pasted a `module.exports` block that dropped `TOTAL_TRACKING_INVOICE_LABELS` (landed on main the same day), breaking refund reconciliation. Now additive, with an export-completeness assertion.
+  2. Task 12's hours helper returned the bare duration instead of `payrollMath.contractedHours`, which would have cut an hour of pay per line on every extension. Now imports the real helper, and the first test asserts 5.5 becomes 6.0.
+  3. Task 7's `router.use(auth)` would have 401'd the public accept route, making client payment impossible. Now per-route `auth`, with a regression test asserting the public path never 401s.
+  4. Tasks 8 and 15 disagreed on the response shape, so the terms gate would have silently never rendered. Now nested inside `invoice` on both sides, with a shape-guard test.
+
+  Also fixed: the payroll hours module was wired only into the webhook (missing the override and zero-delta paths); `frozenLines` was computed and never reported; the payout header total was never recomputed; the web-push fallback was dropped; `users.name` and `password` do not exist and every fixture used them; JWTs were signed with the wrong claims; `server/middleware/errorHandler` does not exist; the settle core ran un-transacted; `expires_at` could expire 60 seconds after creation; four footprint omissions would have aborted three lanes; and Task 12a had to move to `ext-core` to break a lane cycle.
