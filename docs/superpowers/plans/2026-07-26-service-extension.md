@@ -3752,6 +3752,16 @@ Create `server/utils/payrollAccrual.extension.test.js`. Cover:
 2. A DEPOSIT-stage proposal (`amount_paid < total_price`) with a paid extension: the contract gratuity stays $0 (funded gate false) but the extension gratuity still reaches the bartenders. This proves the two gates are independent.
 3. A `pending` extension and an `overridden` extension both contribute $0.
 4. The extension gratuity is NOT reduced by any Stripe fee (assert the share equals the split of the raw `gratuity_cents`, so the fee-netting change is provably scoped to contract gratuity).
+5. **Two paid extensions on one event both contribute, exactly once each.** Seed two `paid` rows with `gratuity_cents` 2500 and 1000; assert the pool grew by 3500. Then re-run accrual and assert it is still 3500, not 7000: the addend is recomputed from the table each time, never accumulated.
+6. **A REFUNDED extension still contributes, and that is deliberate.** Seed a paid extension, then a succeeded `proposal_refunds` row against its payment. Assert the gratuity is still pooled. This test documents the decision below rather than a mechanism; if the decision flips, this test is what changes.
+
+**Open decision for Dallas, defaulted rather than silently chosen.** The gratuity addend keys on `status = 'paid'`, and nothing marks a `service_extensions` row when its payment is later refunded. So refunding an extension currently leaves its gratuity in the staff pool: DRB gave the money back and still pays the bartender their share of it.
+
+Both answers are defensible and it is Dallas's money:
+- **Default as planned: keep paying it.** The bartender did work the extra time, the refund is a client-relations decision made after the fact, and `payrollAccrual.js` states its bias errs toward staff. Refunding an extension should be rare.
+- **The alternative: stop pooling it** once a refund lands against the extension's invoice, and alert so Dallas can add it back by hand as an `adjustment_cents` if the staffer should still be paid.
+
+The plan implements the default. Flag this to Dallas at the plan-approval gate; switching to the alternative is a `WHERE NOT EXISTS (succeeded refund against this extension's invoice)` clause on the addend query plus one more test.
 
 - [ ] **Step 8 (12b): Run the accrual suite and every existing payroll suite**
 

@@ -632,6 +632,15 @@ What moves, and everything that reads it:
 
 - Dallas: coverage question to the broker in writing.
 - Signed-document copy changes: on the fix list, blocked on the broker answer.
+- **Does a refunded extension still pay the bartender its gratuity?** Found
+  2026-07-26 while verifying the payroll addend. The addend keys on the
+  extension being `paid`, and nothing marks the row when its payment is later
+  refunded, so today the answer is yes: DRB returns the money and still pays out
+  the gratuity share of it. The plan implements that as the default, on the
+  grounds that the staffer worked the time and the accrual code's stated bias
+  errs toward staff. The alternative is to stop pooling it once a refund lands
+  and let Dallas re-add it by hand as a payroll adjustment. One clause and one
+  test either way; Dallas decides at the plan-approval gate.
 
 D12 was confirmed by Dallas on 2026-07-26, which closes the only design fork
 that was still open. The spec is ready for a plan.
