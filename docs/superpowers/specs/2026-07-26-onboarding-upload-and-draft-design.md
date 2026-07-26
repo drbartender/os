@@ -103,10 +103,20 @@ this is one component change covering every surface.
 - **HEIC fallback.** Safari decodes HEIC to canvas; Chrome does not. Where decode
   fails, pass the original through and let the size check apply. HEIC matters most
   on iOS, which is where it works.
-- **Widen the server allowlist** in `server/utils/fileValidation.js` to cover HEIC
-  (`ftypheic` / `ftypheix` / `ftypmif1` at offset 4), DOC (OLE magic) and DOCX
-  (PK zip magic). Container formats are accepted only when the magic bytes and the
-  file extension agree, so PK magic alone does not admit arbitrary zips.
+- **Add a separate onboarding-document validator** in
+  `server/utils/fileValidation.js` covering HEIC (`ftypheic` / `ftypheix` /
+  `ftypmif1` at offset 4), DOC (OLE magic) and DOCX (PK zip magic). Container
+  formats are accepted only when the magic bytes and the file extension agree, so
+  PK magic alone does not admit arbitrary zips.
+
+  Revised during planning. The original plan was to widen `isValidUpload` in
+  place, which is wrong: it is shared by seven call sites including the W-9
+  (`payment.js:91`), blog images (`admin/blog.js:176`) and staff portal uploads
+  (`staffPortal.js:692`). Widening it would let a `.docx` through as a blog
+  image. The new `isValidOnboardingDocument` is used only for the resume and
+  alcohol certification on the two onboarding forms. Headshots stay on
+  `isValidUpload` so they remain renderable images, and `isValidImageUpload`
+  (drink plans) is untouched.
 - **Honest rejection as a floor.** Anything still over the limit after downscaling
   (realistically only a very large PDF) is rejected at pick time, before any bytes
   are sent, naming the actual size and the actual limit.
