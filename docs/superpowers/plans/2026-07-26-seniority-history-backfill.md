@@ -50,13 +50,13 @@ parallelism: "seniority-baseline-core first; seniority-panel-ui and cc-seniority
 - **Writes only via the human-approved mapping.** The generator is read-only; the apply script is dry-run by default and writes only on `--apply`, only `include=yes` rows, idempotently.
 - **Raw SQL, parameterized (`$1`…), no ORM. Schema statements idempotent (`IF NOT EXISTS`).**
 - **Server tests:** `node:test`, one suite at a time, shared dev DB, `require('dotenv').config()`, set `process.env.SEND_NOTIFICATIONS='false'`, refuse to run under `NODE_ENV=production`, clean up fixtures by a unique PREFIX in `after`.
-- **Client verification:** `cd client && CI=true npx react-scripts build` (the `.husky/pre-push` gate). `AdminUserDetail.js` is 674 lines — keep additions minimal (soft cap 700).
+- **Client verification:** `cd client && CI=true npx react-scripts build` (the `.husky/pre-push` gate). `AdminUserDetail.js` is 674 lines, keep additions minimal (soft cap 700).
 - **Docs:** update `README.md` (folder tree / scripts) and `ARCHITECTURE.md` (Database Schema section) in the same lane as the code.
 - **Git:** explicit path staging only; `os` never leaves `main`; lanes squash-merge.
 
 ---
 
-## Lane 1 — seniority-baseline-core
+## Lane 1: seniority-baseline-core
 
 ### Task 1.1: Add the `historical_events_worked` column
 
@@ -148,7 +148,7 @@ before(async () => {
     [userId, `${PREFIX}Vet`]
   );
   // A future shift needing one bartender. positions_needed uses the
-  // {position,count} shape — parsePositionsNeeded reads entry.position, NOT
+  // {position,count} shape, parsePositionsNeeded reads entry.position, NOT
   // entry.role. equipment_required is left unset (autoAssign coalesces it to '[]').
   const s = await pool.query(
     `INSERT INTO shifts (event_date, positions_needed, status)
@@ -185,7 +185,7 @@ test('historical_events_worked is added to the live event count in the ranker', 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `node --test server/utils/autoAssign.seniority.test.js`
-Expected: FAIL — `events_worked` is `0` (baseline not yet summed), assertion `12 === 0` fails.
+Expected: FAIL, `events_worked` is `0` (baseline not yet summed), assertion `12 === 0` fails.
 
 - [ ] **Step 3: Add the column to the step-2 profile SELECT**
 
@@ -264,7 +264,7 @@ git commit -m "feat(seniority): count live + historical events in auto-assign ra
 
 - [ ] **Step 1: Write the failing test**
 
-Create `server/routes/admin/users.seniority.test.js`. This mirrors the exact harness of `server/routes/admin/users.activeStaff.test.js` — a real `node:http` server over `express` with the `usersRouter` mounted at `/api/admin`, a jwt admin token, and a small `req()` helper (extended here to send a JSON body):
+Create `server/routes/admin/users.seniority.test.js`. This mirrors the exact harness of `server/routes/admin/users.activeStaff.test.js`, a real `node:http` server over `express` with the `usersRouter` mounted at `/api/admin`, a jwt admin token, and a small `req()` helper (extended here to send a JSON body):
 ```javascript
 require('dotenv').config();
 const { test, before, after } = require('node:test');
@@ -356,7 +356,7 @@ test('GET seniority returns live + historical split; PUT persists the baseline',
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `node --test server/routes/admin/users.seniority.test.js`
-Expected: FAIL — `historical_events_worked` is `undefined` in the response and PUT ignores it.
+Expected: FAIL, `historical_events_worked` is `undefined` in the response and PUT ignores it.
 
 - [ ] **Step 3: Update the GET handler**
 
@@ -438,7 +438,7 @@ git commit -m "feat(seniority): GET/PUT seniority carry the historical baseline"
 
 ---
 
-## Lane 2 — seniority-panel-ui  *(depends on Lane 1)*
+## Lane 2: seniority-panel-ui  *(depends on Lane 1)*
 
 ### Task 2.1: Show the split and edit the baseline on the seniority panel
 
@@ -522,7 +522,7 @@ git commit -m "feat(seniority): admin panel shows live/historical split and edit
 
 ---
 
-## Lane 3 — cc-seniority-import  *(depends on Lane 1 column)*
+## Lane 3: cc-seniority-import  *(depends on Lane 1 column)*
 
 Reuses the existing CC-matching machinery in `server/scripts/staffPaymentImport/`: `ccReports.js` (CSV loaders), `dictionary.js` (`buildDictionary` / alias-cluster `resolve`), and the `exportKnownPeople.js` DB-export conventions. New files sit at the same directory level so the `../../db` / `../../../.env` require paths match `exportKnownPeople.js` exactly.
 
@@ -554,7 +554,7 @@ const fs = require('fs');
 const { pool } = require('../../db');
 const { parseCsv } = require('./parsers/csvUtil');
 const { buildDictionary } = require('./dictionary');
-const { ccDateToIso } = require('./ccReports'); // see Step 1a — export it
+const { ccDateToIso } = require('./ccReports'); // see Step 1a, export it
 
 function argVal(flag, dflt) {
   const i = process.argv.indexOf(flag);
@@ -714,7 +714,7 @@ test('planWrites keeps only include=yes rows with a matched user', () => {
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `node --test server/scripts/staffPaymentImport/seniorityBackfill.test.js`
-Expected: FAIL — module not found / functions undefined.
+Expected: FAIL, module not found / functions undefined.
 
 - [ ] **Step 3: Write the apply script**
 
@@ -823,13 +823,13 @@ The code shipping does **not** change any data. The backfill is a deliberate, re
 1. Deploy Lane 1 (the column must exist in prod).
 2. `node server/scripts/staffPaymentImport/exportKnownPeople.js --review-dir DIR` (against prod DATABASE_URL).
 3. `node server/scripts/staffPaymentImport/generateSeniorityMapping.js --review-dir DIR --contacts .../cc-report-contacts.csv`.
-4. **Dallas reviews `seniority-mapping.csv`** — toggles `include`, fixes matches, eyeballs `date-moves-later` / `duplicate-match` / `unmatched` flags.
+4. **Dallas reviews `seniority-mapping.csv`**, toggles `include`, fixes matches, eyeballs `date-moves-later` / `duplicate-match` / `unmatched` flags.
 5. `node .../applySeniorityBackfill.js --file DIR/seniority-mapping.csv` (dry-run) → review the before→after.
 6. `node .../applySeniorityBackfill.js --file DIR/seniority-mapping.csv --apply`.
 7. Spot-check a couple of profiles on the admin seniority panel (live + historical shows the expected total).
 
 ## Self-Review
 
-- **Spec coverage:** column (§3.1 → 1.1); events = live+baseline at both sites (§3.2 → 1.2 autoAssign, 1.3 route); hire_date direct-set (§3.3 → applied in 3.2 write); admin panel split + edit (§3.4 → 2.1); mapping generator + review + apply (§4 → 3.1, 3.2, runbook); DATE truncation + face-value counts + flags incl. date-moves-later (§5 → generator flags, `ccDateToIso`); cap left unchanged (§6 → Global Constraints); tests both paths + idempotent seed (§7 → 1.2, 1.3, 3.2); out-of-scope respected (§8 — no phones, no synthetic shifts, weights/cap untouched).
-- **Placeholder scan:** none — every code step carries full code; the one "follow the existing harness" note (1.3 Step 1) points at a concrete file (`users.activeStaff.test.js`) to copy verbatim rather than inventing a signature.
+- **Spec coverage:** column (§3.1 → 1.1); events = live+baseline at both sites (§3.2 → 1.2 autoAssign, 1.3 route); hire_date direct-set (§3.3 → applied in 3.2 write); admin panel split + edit (§3.4 → 2.1); mapping generator + review + apply (§4 → 3.1, 3.2, runbook); DATE truncation + face-value counts + flags incl. date-moves-later (§5 → generator flags, `ccDateToIso`); cap left unchanged (§6 → Global Constraints); tests both paths + idempotent seed (§7 → 1.2, 1.3, 3.2); out-of-scope respected (§8, no phones, no synthetic shifts, weights/cap untouched).
+- **Placeholder scan:** none, every code step carries full code; the one "follow the existing harness" note (1.3 Step 1) points at a concrete file (`users.activeStaff.test.js`) to copy verbatim rather than inventing a signature.
 - **Type consistency:** `historical_events_worked` (DB/route/form), `events_worked_live` + `events_worked` (total) used identically in 1.3 and 2.1; `parseMappingRows`/`planWrites` shapes match between 3.2 impl and its test.
