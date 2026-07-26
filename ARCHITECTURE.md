@@ -119,6 +119,11 @@ Routes throw via `asyncHandler`-wrapped handlers; the global error middleware in
 |---|---|---|---|
 | GET | `/` | Yes | Get user's onboarding progress |
 | PUT | `/step` | Yes | Mark a step as completed |
+| GET | `/draft/:formKey` | Yes | Read the caller's autosaved draft (`{ data: null }` when none) |
+| PUT | `/draft/:formKey` | Yes | Upsert the caller's draft; body `{ data }`, replaces rather than merges |
+| DELETE | `/draft/:formKey` | Yes | Clear the draft, called on successful submit |
+
+`:formKey` is allowlisted to `application` and `contractor_profile`. Every query is scoped to `req.user.id`, and the payload is capped at 64KB so a draft cannot be used as free storage under the global 1MB JSON limit.
 
 ### Contractor Agreement — `/api/agreement`
 | Method | Path | Auth | Description |
@@ -676,6 +681,13 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - Boolean columns: `account_created`, `welcome_viewed`, `field_guide_completed`, `agreement_completed`, `contractor_profile_completed`, `payday_protocols_completed`, `onboarding_completed`
 - `last_completed_step`
 - Rows are seeded at registration; legacy accounts predating that seeding get one lazily via `server/utils/onboardingProgress.js` (`ensureOnboardingProgress`, called before every step write — step writes are UPDATE-only, and the active-staff roster INNER JOINs this table, so a missing row made a completed onboarding invisible).
+
+**onboarding_drafts** — Autosaved form state for the two long onboarding forms
+- `user_id` FK → users (ON DELETE CASCADE), `form_key`, `data` JSONB, `UNIQUE (user_id, form_key)`
+- `form_key` is allowlisted to `application` and `contractor_profile`
+- Server-side rather than localStorage on purpose: the 2026-07-23 incident involved a recruit moving from her phone to a laptop partway through an eight-section form, which browser-local state does not survive. She lost the whole form on every failed submit and concluded her account was broken, creating three of them.
+- **`payday_protocols` is deliberately excluded.** It carries SSN and bank routing/account numbers, which are encrypted at rest via `server/utils/encryption.js`; a draft row would be a second, plaintext copy of exactly the data we encrypt. The allowlist is the guard, and `progress.draft.test.js` asserts that form key can never persist.
+- `updated_at` is maintained by the `update_onboarding_drafts_updated_at` trigger; the UPSERT sets only `data`, so without the trigger the "We saved your answers from ..." notice would freeze at insert time.
 
 **contractor_profiles** — Personal details for hired contractors
 - `user_id` FK → users

@@ -53,6 +53,21 @@ CREATE TABLE IF NOT EXISTS onboarding_progress (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Autosaved form state for the long onboarding forms. Server-side rather than
+-- localStorage on purpose: the 2026-07-23 incident involved a recruit moving
+-- from her phone to a laptop partway through, which browser-local state does
+-- not survive. Deliberately excludes payday_protocols, which holds SSN and
+-- bank details that are encrypted at rest and must not gain a plaintext copy.
+CREATE TABLE IF NOT EXISTS onboarding_drafts (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  form_key VARCHAR(50) NOT NULL,
+  data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (user_id, form_key)
+);
+
 CREATE TABLE IF NOT EXISTS contractor_profiles (
   id SERIAL PRIMARY KEY,
   user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -317,6 +332,10 @@ CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
 
 DROP TRIGGER IF EXISTS update_onboarding_progress_updated_at ON onboarding_progress;
 CREATE TRIGGER update_onboarding_progress_updated_at BEFORE UPDATE ON onboarding_progress
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_onboarding_drafts_updated_at ON onboarding_drafts;
+CREATE TRIGGER update_onboarding_drafts_updated_at BEFORE UPDATE ON onboarding_drafts
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_contractor_profiles_updated_at ON contractor_profiles;

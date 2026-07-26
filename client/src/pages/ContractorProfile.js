@@ -8,6 +8,7 @@ import api from '../utils/api';
 import { useToast } from '../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 import useFormValidation from '../hooks/useFormValidation';
+import useFormDraft from '../hooks/useFormDraft';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const STATES = ['Illinois','Indiana','Michigan','Minnesota','Wisconsin','AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'];
@@ -25,6 +26,7 @@ export default function ContractorProfile() {
   const [fromApplication, setFromApplication] = useState(false);
   const [files, setFiles] = useState({ alcohol_certification: null, resume: null, headshot: null });
   const [existingFiles, setExistingFiles] = useState({});
+  const [profileLoaded, setProfileLoaded] = useState(false);
 
   const [form, setForm] = useState({
     preferred_name: '', phone: '', email: user?.email || '',
@@ -74,8 +76,15 @@ export default function ContractorProfile() {
     }).catch(() => {
       setLoadError("We couldn't load your saved profile. You can still fill out the form below.");
       toast.error("We couldn't load your saved profile.");
+    }).finally(() => {
+      setProfileLoaded(true);
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // enabled: the draft is an overlay on top of saved profile data, so it must
+  // load second. Deterministic ordering, not a race we hope resolves our way.
+  const { restoredAt, clearDraft } = useFormDraft('contractor_profile', form,
+    draft => setForm(f => ({ ...f, ...draft })), { enabled: profileLoaded });
 
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
 
@@ -125,6 +134,7 @@ export default function ContractorProfile() {
       if (files.headshot) data.append('headshot', files.headshot);
 
       await api.post('/contractor', data);
+      await clearDraft();
       const r = await api.put('/progress/step', { step: 'contractor_profile_completed' });
       setProgress(r.data);
       toast.success('Profile saved.');
@@ -156,6 +166,11 @@ export default function ContractorProfile() {
       {loadError && <div className="alert alert-info">{loadError}</div>}
 
       <form onSubmit={submit}>
+        {restoredAt && (
+          <div className="alert alert-info" role="status">
+            We saved your answers from {new Date(restoredAt).toLocaleString()}. Pick up where you left off.
+          </div>
+        )}
         <div className="card">
           <h3 style={{ marginBottom: '1.25rem' }}>Personal Info</h3>
           <div className="two-col">

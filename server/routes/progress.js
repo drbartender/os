@@ -46,4 +46,59 @@ router.put('/step', auth, asyncHandler(async (req, res) => {
   res.json(result.rows[0]);
 }));
 
+// Autosaved drafts for the two long onboarding forms.
+//
+// payday_protocols is deliberately absent: it carries SSN and bank routing and
+// account numbers, which live encrypted at rest. A draft row would be a second,
+// plaintext copy of exactly the data we encrypt. The allowlist is the guard.
+const DRAFT_FORM_KEYS = ['application', 'contractor_profile'];
+const MAX_DRAFT_BYTES = 64 * 1024;
+
+function assertFormKey(formKey) {
+  if (!DRAFT_FORM_KEYS.includes(formKey)) {
+    throw new ValidationError({ formKey: 'Unknown form.' });
+  }
+}
+
+router.get('/draft/:formKey', auth, asyncHandler(async (req, res) => {
+  assertFormKey(req.params.formKey);
+  const result = await pool.query(
+    'SELECT data, updated_at FROM onboarding_drafts WHERE user_id = $1 AND form_key = $2',
+    [req.user.id, req.params.formKey]
+  );
+  const row = result.rows[0];
+  res.json(row ? { data: row.data, updated_at: row.updated_at } : { data: null });
+}));
+
+router.put('/draft/:formKey', auth, asyncHandler(async (req, res) => {
+  assertFormKey(req.params.formKey);
+  const { data } = req.body;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new ValidationError({ data: 'Draft data must be an object.' });
+  }
+  const serialized = JSON.stringify(data);
+  if (Buffer.byteLength(serialized) > MAX_DRAFT_BYTES) {
+    throw new ValidationError({ data: 'Draft is too large to save.' });
+  }
+
+  const result = await pool.query(`
+    INSERT INTO onboarding_drafts (user_id, form_key, data)
+    VALUES ($1, $2, $3::jsonb)
+    ON CONFLICT (user_id, form_key)
+      DO UPDATE SET data = EXCLUDED.data
+    RETURNING data, updated_at
+  `, [req.user.id, req.params.formKey, serialized]);
+
+  res.json({ data: result.rows[0].data, updated_at: result.rows[0].updated_at });
+}));
+
+router.delete('/draft/:formKey', auth, asyncHandler(async (req, res) => {
+  assertFormKey(req.params.formKey);
+  await pool.query(
+    'DELETE FROM onboarding_drafts WHERE user_id = $1 AND form_key = $2',
+    [req.user.id, req.params.formKey]
+  );
+  res.json({ ok: true });
+}));
+
 module.exports = router;

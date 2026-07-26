@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import FileUpload from '../components/FileUpload';
@@ -8,6 +8,7 @@ import FieldError from '../components/FieldError';
 import api from '../utils/api';
 import { useToast } from '../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
+import useFormDraft from '../hooks/useFormDraft';
 import useFormValidation from '../hooks/useFormValidation';
 
 const FUN_COLORS = [
@@ -115,6 +116,29 @@ export default function Application() {
   const [tools, setTools] = useState({});
   const [equipment, setEquipment] = useState({});
 
+  // Everything worth preserving, as one object. Memoised so the hook's change
+  // detection compares content rather than a fresh object identity per render.
+  //
+  // Files are deliberately absent: a File is not serialisable to the draft
+  // table, and they do not need to be. They are the last section, and React
+  // holds them across a failed submit. Only a page reload loses them.
+  const draftSnapshot = useMemo(
+    () => ({ form, positions, experienceTypes, tools, equipment, colorHex }),
+    [form, positions, experienceTypes, tools, equipment, colorHex]);
+
+  const { restoredAt, clearDraft } = useFormDraft('application', draftSnapshot, draft => {
+    if (draft.form) setForm(f => ({ ...f, ...draft.form }));
+    if (draft.positions) setPositions(p => ({ ...p, ...draft.positions }));
+    if (draft.experienceTypes) setExperienceTypes(t => ({ ...t, ...draft.experienceTypes }));
+    if (draft.tools) setTools(t => ({ ...t, ...draft.tools }));
+    if (draft.equipment) setEquipment(e => ({ ...e, ...draft.equipment }));
+    // colorHex is a SIXTH piece of state: the swatch input holds the hex while
+    // form.favorite_color holds the name it is labelled with. Restoring only the
+    // name leaves the swatch on the default purple next to a label reading
+    // "Sky Blue". Same class as the five-hook snapshot itself.
+    if (draft.colorHex) setColorHex(draft.colorHex);
+  });
+
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
 
   function handle(e) {
@@ -209,6 +233,7 @@ export default function Application() {
       if (files.basset) data.append('basset', files.basset);
 
       const submitRes = await api.post('/application', data);
+      await clearDraft();
 
       // Update local user state to reflect new status
       const meRes = await api.get('/auth/me');
@@ -254,6 +279,11 @@ export default function Application() {
         </div>
 
         <form onSubmit={submit}>
+          {restoredAt && (
+            <div className="alert alert-info" role="status">
+              We saved your answers from {new Date(restoredAt).toLocaleString()}. Pick up where you left off.
+            </div>
+          )}
           {/* ── Section 1: Basic Information ── */}
           <div className="card">
             <h3 style={{ marginBottom: '0.5rem' }}>Basic Information</h3>

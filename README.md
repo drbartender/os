@@ -469,7 +469,7 @@ dr-bartender/
 │   │   │   ├── potions/        # RecipeEditor: shared structured-recipe editor (Recipes tab detail pane + shopping-list Add-recipe drawer; draft name editing, inline add-par, forwardRef flush) + RecipeEditorSections (dossier tab sections: enhancements, syrup pairing, flags)
 │   │   │   └── MenuPNG/        # Standard Menu PNG export (html2canvas-driven, lazy-loaded; renders hidden MenuPreview at print scale 768x960 and downloads as 2304x2880 PNG)
 │   │   ├── data/               # Shared data (addonCategories, eventServicesAgreement, eventTypes, menuSamples, packages, syrups)
-│   │   ├── hooks/              # Custom hooks (useDebounce, useDrawerParam + drawerHref, useFormValidation, useWizardHistory, useMetricsFilter, useUrlListState (URL-backed list/tab/filter view state))
+│   │   ├── hooks/              # Custom hooks (useDebounce, useDrawerParam + drawerHref, useFormValidation, useWizardHistory, useMetricsFilter, useUrlListState (URL-backed list/tab/filter view state), useFormDraft (server-side autosave for the long onboarding forms))
 │   │   ├── pages/
 │   │   │   ├── (auth)          # Login, Register, ForgotPassword, ResetPassword
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
