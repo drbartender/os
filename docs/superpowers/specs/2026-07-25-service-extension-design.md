@@ -260,9 +260,12 @@ Both components come from `calculateProposal`:
   out. A plain "engine total minus engine total" with the override on would
   collapse to zero for override'd proposals (the override replaces
   `serviceTotal`), which is why the override must be held aside.
-- **Gratuity delta:** `gratuityLineAmount(gratuity_rate, staffCount, newHours)`
-  minus the same at current hours. Stored separately as `gratuity_cents`
-  because payroll consumes it (section 9).
+- **Gratuity delta:** `extractGratuityCents(after) - extractGratuityCents(before)`,
+  which pools both canonical gratuity labels from the engine's `breakdown`.
+  Stored separately as `gratuity_cents` because payroll consumes it (section 9).
+  NOT `gratuityLineAmount` and NOT `snapshot.gratuity.total`: either would miss
+  the forced `'Shared Gratuity'` surcharge. See the note below the worked
+  examples.
 
 `amount_cents = service delta + gratuity delta`, integer cents. That number is
 the invoice, what the client accepts, and what the client pays. There is no
@@ -282,24 +285,50 @@ What the engine gets right for free:
   `minimum_hours`, so an extension inside the floor adds $0 for that add-on.
   Both are the engine's existing behavior, listed here so nobody "fixes" them.
 
-Worked examples:
+**Two gratuity labels, both staff money.** `amount_cents` splits into a service
+part and a gratuity part, and the split is what payroll consumes. The gratuity
+part must be read with `extractGratuityCents`, which pools BOTH canonical
+breakdown labels: `'Gratuity'` (client-elected) and `'Shared Gratuity'` (the
+forced sub-100-guest over-ratio surcharge, which lives inside `staffing.cost`).
+Reading `snapshot.gratuity.total` instead captures only the client-elected line
+and books the surcharge as DRB service revenue, so the money that exists
+specifically to pay bartenders at small events never reaches them. This is the
+load-bearing rule CLAUDE.md flags as re-lost multiple times.
 
-| Event | Extension | Price |
-|---|---|---|
-| Core Reaction, 1 bartender, `gratuity_rate` 0 | +30 min (from 4h) | $50 |
-| Core Reaction, 1 bartender, `gratuity_rate` $50 | +30 min (from 4h) | $75 |
-| Core Reaction, 100 guests, 2 bartenders (1 over ratio), `gratuity_rate` 0 | +60 min | $140 |
-| Core Reaction, 50 guests, 2 bartenders (1 over ratio), `gratuity_rate` 0 | +60 min | $165 ($100 base + $40 hourly + $25 surcharge) |
-| Base Compound hosted, 100 guests, `gratuity_rate` 0 | +60 min | $500 |
+Worked examples. Every figure below was measured against the live pricing engine
+on 2026-07-26, not reasoned about:
 
-Degenerate deltas (all real, all settle via the zero-delta path when $0):
+| Event | Extension | Price | of which staff gratuity |
+|---|---|---|---|
+| Core Reaction, 100g, 1 bartender, `gratuity_rate` 0 | +30 min from 4h | $50 | $0 |
+| Core Reaction, 100g, 1 bartender, `gratuity_rate` $50 | +30 min from 4h | $75 | $25 |
+| Core Reaction, 100g, 2 bartenders (1 over ratio), rate 0 | +60 min | $140 | $0 |
+| Core Reaction, 50g, 2 bartenders (1 over ratio), rate 0 | +60 min | $165 | **$25** (Shared Gratuity) |
+| Core Reaction sold at $400 against a $350 catalog | +60 min | $100 | $0 |
+| Base Compound hosted, 100g, rate 0 | +60 min | $500 | $0 |
+| Base Compound hosted, 1g (billed as 25) | +60 min | $125 | $0 |
+| Per-guest class package, 20g | +60 min | $0 | $0 |
+| Core Reaction, 100g | 3h to 4h | $0 | $0 |
 
-- Flat packages return the same base for any duration at or under 4 hours, so a
-  3h Core Reaction extending to 4h is $0 (and 3.5h to 4.5h is $50, not $100).
-- The six per-guest class packages carry `extra_hour_rate` 0. The Doctor's
-  Orders is the other class shape: `bar_type` class but flat-priced with a real
-  extra-hour rate. Both shapes get tests.
-- Hosted events pinned to `min_total` absorb part or all of the delta.
+Degenerate deltas, corrected. A `$0` delta is real and settles via the
+zero-delta path (D13), but it happens less often than an earlier draft of this
+spec claimed:
+
+- **Flat packages below the 4-hour tier: genuinely $0.** `calculateBaseCost`
+  returns the same `base_rate_4hr` for any duration at or under 4 hours, so 3h to
+  4h on a Core Reaction is $0, and 3.5h to 4.5h is $50, not $100.
+- **Per-guest class packages: genuinely $0.** All six seeded ones carry
+  `extra_hour_rate` 0, and staffing cost is zeroed for `bar_type = 'class'`.
+- **Hosted events pinned to `min_total` do NOT absorb the delta.** This spec
+  previously said they do; that was wrong. The dollar floor binds the 4-hour
+  base, but the extra-hour term is additive on the billed-guest count and clears
+  it. A 1-guest Base Compound event, billed at the 25-head minimum and floored to
+  $550, owes $125 for an extra hour. A floor high enough to bind at both
+  durations would give $0, but no seeded package does that today.
+- **The Doctor's Orders is unreachable, so it gets no test.** It is the
+  flat-priced class shape, but `schema.sql` sets `is_active = FALSE`, so it
+  cannot be booked. §13's "both class shapes" requirement is therefore satisfied
+  by the per-guest shape alone.
 
 ## 7. Money model
 

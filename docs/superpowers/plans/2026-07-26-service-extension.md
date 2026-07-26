@@ -826,18 +826,24 @@ test('a per-guest class package extends for $0 (extra_hour_rate 0)', async () =>
   assert.equal(r.amountCents, 0);
 });
 
-test('a hosted event pinned to min_total absorbs the delta', async () => {
-  // Few enough guests that min_total is the binding constraint at BOTH durations,
-  // so the raw per-guest increase is swallowed by the dollar floor.
-  const pkg = await pool.query(
-    "SELECT min_total, min_billed_guests, extra_hour_rate FROM service_packages WHERE slug = 'the-base-compound'"
-  );
-  const minTotal = Number(pkg.rows[0].min_total || 0);
-  if (!minTotal) return; // no dollar floor configured; nothing to assert
-  const id = await mkProposal({ packageId: hostedPkgId, guests: 1, totalPrice: minTotal });
+test('a tiny hosted event still owes the billed-guest extra hour, NOT $0', async () => {
+  // VERIFIED against the live engine 2026-07-26. The Base Compound carries
+  // min_billed_guests = 25 and min_total = $550, so a 1-guest event bills as 25
+  // heads. The extra-hour term is 25 x $5 = $125, and it is ADDITIVE on top of
+  // the billed-guest base rather than absorbed by the dollar floor.
+  //
+  // An earlier draft asserted $0 here on the theory that min_total swallows the
+  // delta. It does not: the floor binds the 4-hour base, and the extra hour
+  // clears it. That wrong expectation would have sent the implementer hunting a
+  // non-bug in correct pricing code, so the number below is measured, not
+  // reasoned. If a package's floor is ever high enough to bind at BOTH
+  // durations the delta really is $0, which is why Task 13 keeps the
+  // zero-delta settle path; it is just not this package.
+  const id = await mkProposal({ packageId: hostedPkgId, guests: 1, totalPrice: 550 });
   const r = await computeExtensionDelta({ client: pool, proposalId: id, requestedDurationHours: 5 });
   assert.equal(r.ok, true);
-  assert.equal(r.amountCents, 0, 'a floored hosted event has no service delta');
+  assert.equal(r.amountCents, 12500, '25 billed heads x $5 x 1 hour');
+  assert.equal(r.gratuityDeltaCents, 0);
 });
 
 test('returns the contracted end instant that Task 7 uses for expires_at', async () => {
