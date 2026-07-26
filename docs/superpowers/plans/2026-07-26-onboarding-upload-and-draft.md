@@ -1,10 +1,77 @@
+---
+plan: onboarding-upload-and-draft
+spec: docs/superpowers/specs/2026-07-26-onboarding-upload-and-draft-design.md
+lanes:
+  - id: upload-honesty
+    footprint:
+      - server/utils/fileValidation.js
+      - server/utils/fileValidation.test.js
+      - server/routes/application.js
+      - server/routes/contractor.js
+      - server/index.js
+      - client/src/utils/uploadLimits.js
+      - client/src/utils/uploadLimits.test.js
+      - client/src/utils/downscaleImage.js
+      - client/src/components/FileUpload.js
+      - client/src/components/FileUpload.test.js
+      - client/src/pages/Application.js
+      - client/src/pages/ContractorProfile.js
+      - README.md
+      - ARCHITECTURE.md
+    depends_on: []
+    sensitive: true          # file upload validation is an allowlist widening
+    review_fleet: [code-review, security-review, consistency-check]
+    second_opinion: true
+  - id: onboarding-drafts
+    footprint:
+      - server/db/schema.sql
+      - server/routes/progress.js
+      - server/routes/progress.draft.test.js
+      - client/src/hooks/useFormDraft.js
+      - client/src/hooks/useFormDraft.test.js
+      - client/src/pages/Application.js
+      - client/src/pages/ContractorProfile.js
+      - README.md
+      - ARCHITECTURE.md
+    depends_on: [upload-honesty]     # shares Application.js and ContractorProfile.js
+    sensitive: true          # schema.sql is on scripts/sensitive-paths.txt
+    review_fleet: [code-review, database-review, security-review, consistency-check]
+    second_opinion: true
+  - id: document-visibility
+    footprint:
+      - server/utils/outstandingDocuments.js
+      - server/utils/outstandingDocuments.test.js
+      - server/routes/admin/hiring.js
+      - server/routes/progress.js
+      - client/src/pages/admin/overview/queueItems.js
+      - client/src/pages/admin/overview/queueItems.test.js
+      - client/src/pages/admin/overview/OverviewPage.js
+      - client/src/pages/admin/overview/NeedsYouStrip.js
+      - client/src/components/Layout.js
+      - docs/fix-list-remaining-2026-07-02.md
+      - README.md
+      - ARCHITECTURE.md
+    depends_on: [onboarding-drafts]  # shares server/routes/progress.js
+    sensitive: false
+    review_fleet: [code-review, database-review, consistency-check]
+  - id: submit-gate-relax
+    footprint:
+      - server/routes/application.js
+      - client/src/pages/Application.js
+    depends_on: [document-visibility]
+    sensitive: true          # removes a server-side validation gate
+    review_fleet: [code-review, security-review, consistency-check]
+    second_opinion: true
+parallelism: "Strictly serial. Every lane after the first shares at least one file with a predecessor (Application.js spans three, progress.js spans two), so none may run as a parallel worktree. submit-gate-relax is deliberately its own lane rather than folded into document-visibility: it is the only change here that might warrant reverting on its own, and a squash merge would otherwise bury it in the same commit as the alert it depends on."
+---
+
 # Onboarding Upload and Draft Fixes Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Stop the onboarding application from stranding recruits: make uploads succeed, stop discarding their work, and stop letting a file upload block the whole form.
 
-**Architecture:** Three independent lanes. Lane A widens what uploads we accept and downscales oversized images in the browser before a byte is sent. Lane B adds a server-side draft table so a half-finished form survives a failure or a device switch. Lane C removes the hard file requirement at submit and surfaces outstanding documents to the admin instead.
+**Architecture:** Four strictly serial lanes (see the front-matter lane map; they are NOT independent, every one after the first shares a file with a predecessor). `upload-honesty` widens what we accept and downscales oversized images in the browser before a byte is sent. `onboarding-drafts` adds a server-side draft table so a half-finished form survives a failure or a device switch. `document-visibility` derives who still owes documents and puts the compliance cases on the admin's screen. `submit-gate-relax` then stops the two file uploads blocking submit, for people already hired.
 
 **Tech Stack:** Node 26 / Express 4, raw SQL over `pg`, React 18 (CRA), `express-fileupload`, `node:test` on the server, `react-scripts test` (Jest + @testing-library/react) on the client.
 
@@ -21,7 +88,10 @@
 - No em dashes in any user-facing copy. Use commas, periods, colons, or parentheses.
 - Server tests run one suite at a time against the dev DB: `node -r dotenv/config --test <file>`. Fixtures must be nonce-keyed and cleaned up in `after()`.
 - Client verification is `CI=true npx react-scripts build` from `client/`, because `npm run lint` does not cover client code.
-- File-size discipline: soft cap 700 lines, hard cap 1000. `Application.js` is already 685 lines, so Lane C must not grow it meaningfully.
+- **Jest resets mocks between tests.** CRA sets `resetMocks: true` (`react-scripts/scripts/utils/createJestConfig.js:68`) and `client/package.json` does not override it, so a `jest.mock(...)` module factory's implementation is stripped before every test. Any mocked module a test relies on must be re-armed in `beforeEach` with `mockImplementation`, not merely `clearAllMocks`.
+- **The dev server does not auto-reload.** It runs as plain `node server/index.js` on port 5000, Claude-managed. Restart it after any server edit before curling.
+- File-size discipline: soft cap 700 lines (warn only), hard cap 1000 (blocks growth). `client/src/pages/Application.js` is 685 lines today and is touched by three lanes: roughly +2 (upload-honesty), +29 (onboarding-drafts), +3 (submit-gate-relax), landing near 714. That crosses the soft cap into YELLOW during **onboarding-drafts**, which warns and never blocks. The hard cap is not in play. Do not attribute the crossing to the last lane to touch the file.
+- **Documentation is not optional.** Per CLAUDE.md's mandatory-docs table, each lane updates `README.md` (folder tree) and `ARCHITECTURE.md` (routes, schema) for what it adds. The specific obligations are listed in each lane's final task.
 
 ---
 
@@ -29,7 +99,7 @@
 
 ### Task A1: Add an onboarding-document validator
 
-`isValidUpload` is shared by seven call sites including the W-9 (`payment.js:91`), blog images (`admin/blog.js:176`), and staff portal uploads (`staffPortal.js:692`). Widening it in place would let a `.docx` through as a blog image. Add a separate validator instead and leave the existing two untouched.
+`isValidUpload` is shared by nine call sites including the W-9 (`payment.js:92`), blog images (`admin/blog.js:176`), and staff portal uploads (`staffPortal.js:692`). Widening it in place would let a `.docx` through as a blog image. Add a separate validator instead and leave the existing two untouched.
 
 **Files:**
 - Modify: `server/utils/fileValidation.js`
@@ -189,7 +259,7 @@ In `server/routes/application.js`, change the import on line 6 to:
 const { isValidUpload, isValidOnboardingDocument } = require('../utils/fileValidation');
 ```
 
-Swap `isValidUpload` for `isValidOnboardingDocument` at line 91 (resume) and line 115 (basset). **Leave line 103 (headshot) on `isValidUpload`** so a headshot stays a renderable image. Update the two error strings to name what is now accepted:
+Locate the three call sites with `grep -n 'isValidUpload' server/routes/application.js` rather than trusting line numbers, then swap `isValidUpload` for `isValidOnboardingDocument` at the **resume** and **basset** sites only. **Leave the headshot site on `isValidUpload`** so a headshot stays a renderable image. Update the two error strings to name what is now accepted:
 
 ```js
 throw new ValidationError({ resume: 'We could not read that file. Use a PDF, Word document, or a photo.' });
@@ -198,14 +268,25 @@ throw new ValidationError({ resume: 'We could not read that file. Use a PDF, Wor
 throw new ValidationError({ basset: 'We could not read that file. Use a PDF, Word document, or a photo.' });
 ```
 
-Apply the identical change in `server/routes/contractor.js`: import on line 7, swap at line 101 (`alcohol_certification`) and line 113 (`resume`), leave line 125 (headshot) alone, and update those two error strings the same way.
+Apply the identical change in `server/routes/contractor.js`: same grep, swap the `alcohol_certification` and `resume` sites, leave the headshot site alone, and update those two error strings the same way.
 
-- [ ] **Step 6: Run the suites these routes reach**
+- [ ] **Step 6: Confirm the swap landed on the right sites**
+
+`staffPortal.test.js` exercises the **unchanged** validator, so it passes whether or not the swap is correct. The dangerous mistake is swapping the headshot site, which would widen a field the server still validates narrowly. Check by content, the same way A4 Step 3c does:
+
+```bash
+cd /home/drbartender/projects/os
+grep -n "isValidUpload\|isValidOnboardingDocument" server/routes/application.js server/routes/contractor.js
+```
+
+Expected: `isValidOnboardingDocument` appears at exactly **four** call sites (resume and basset in `application.js`, alcohol_certification and resume in `contractor.js`). `isValidUpload` still appears at exactly **two** call sites, both of them the `headshot` block. Read the surrounding lines to confirm which block each one sits in rather than trusting the count alone.
+
+- [ ] **Step 7: Run the suites these routes reach**
 
 Run: `cd /home/drbartender/projects/os && node -r dotenv/config --test server/routes/staffPortal.test.js`
-Expected: PASS. This suite exercises `isValidUpload` through the staff portal and must be unaffected.
+Expected: PASS. This is a non-regression check: the staff portal still uses `isValidUpload`, and widening must not have leaked into it.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add server/utils/fileValidation.js server/utils/fileValidation.test.js server/routes/application.js server/routes/contractor.js
@@ -239,7 +320,7 @@ git commit -m "feat(uploads): accept HEIC and Word docs for onboarding documents
 validator the destination route uses, or the client waves a file through that the
 server then rejects, which is the original bug wearing a different hat.
 `PaydayProtocols.js:527` renders `FileUpload` with no `accept` prop for the W-9,
-and `payment.js:91` validates that upload with the narrow `isValidUpload`. So the
+and `payment.js:92` validates that upload with the narrow `isValidUpload`. So the
 **default is `narrow`**, and only the resume and alcohol certification opt into
 `document`. The two sets mirror `isValidUpload` and `isValidOnboardingDocument`
 exactly.
@@ -382,7 +463,7 @@ const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'];
 // the user picks a file, waits through an upload, and gets rejected at the end.
 //
 //   narrow   -> server/utils/fileValidation.js isValidUpload
-//               (W-9 via payment.js:91, headshots, blog, staff portal)
+//               (W-9 via payment.js:92, headshots, blog, staff portal)
 //   document -> server/utils/fileValidation.js isValidOnboardingDocument
 //               (resume and alcohol certification only)
 export const UPLOAD_KINDS = {
@@ -471,7 +552,9 @@ git commit -m "feat(uploads): shared client upload limit and type check"
 - Consumes: `DOWNSCALE_THRESHOLD_BYTES`, `MAX_IMAGE_EDGE`, `IMAGE_QUALITY`, `isImageName` from `./uploadLimits`.
 - Produces: `downscaleImage(file: File) -> Promise<File>`. Always resolves, never rejects. Returns the original `file` unchanged when downscaling is unnecessary or impossible.
 
-There is no unit test for this task. It depends on real canvas and image decoding, which jsdom does not provide, and a mocked canvas would only assert that the mock was called. The decision logic it depends on (`isImageName`, thresholds) is already covered by Task A2, and the behaviour is verified in the manual check at the end of this lane.
+The canvas path itself cannot be unit tested: jsdom provides no real image decoding, and a mocked canvas would only assert that the mock was called. It is covered by the Lane A manual check, including the HEIC decode-failure case.
+
+**The four early returns can and must be tested**, because a downscaler that returns the original for every input would otherwise pass this task, pass A4 (which mocks it), and pass the build. Test the guards, skip the canvas.
 
 - [ ] **Step 1: Implement the module**
 
@@ -488,8 +571,10 @@ import {
 //
 // HEIC note: Safari decodes HEIC to canvas, Chrome does not. Where decode fails
 // we hand back the original untouched and let the server's
-// isValidOnboardingDocument accept the HEIC as-is. Both paths work, so the
-// failure mode here is "no improvement", never "broken upload".
+// isValidOnboardingDocument accept the HEIC as-is. So the failure mode is "no
+// shrink", not "broken upload": an under-limit HEIC still goes through. An
+// OVER-limit one is then rejected at pick time by checkFile, which is exactly
+// what the spec prescribes rather than a regression.
 export default async function downscaleImage(file) {
   if (!file || !isImageName(file.name)) return file;
   if (file.size <= DOWNSCALE_THRESHOLD_BYTES) return file;
@@ -530,15 +615,54 @@ export default async function downscaleImage(file) {
 }
 ```
 
-- [ ] **Step 2: Verify it compiles**
+- [ ] **Step 2: Test the guards**
 
-Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build`
-Expected: build succeeds with no ESLint errors. CRA treats warnings as errors under `CI=true`, so an unused import fails here.
+Create `client/src/utils/downscaleImage.test.js`:
+
+```js
+import downscaleImage from './downscaleImage';
+import { DOWNSCALE_THRESHOLD_BYTES } from './uploadLimits';
+
+const file = (name, size) => {
+  const f = new File(['x'], name, { type: 'application/octet-stream' });
+  Object.defineProperty(f, 'size', { value: size });
+  return f;
+};
+
+it('passes non-images straight through', async () => {
+  const pdf = file('resume.pdf', 20 * 1024 * 1024);
+  expect(await downscaleImage(pdf)).toBe(pdf);
+});
+
+it('passes small images straight through', async () => {
+  const small = file('photo.jpg', DOWNSCALE_THRESHOLD_BYTES - 1);
+  expect(await downscaleImage(small)).toBe(small);
+});
+
+it('passes the original back when the browser cannot decode it', async () => {
+  // jsdom has no createImageBitmap, which is exactly the HEIC-in-Chrome path.
+  const heic = file('photo.heic', 8 * 1024 * 1024);
+  expect(await downscaleImage(heic)).toBe(heic);
+});
+
+it('never rejects, whatever it is handed', async () => {
+  await expect(downscaleImage(null)).resolves.toBeNull();
+  await expect(downscaleImage(undefined)).resolves.toBeUndefined();
+});
+```
+
+Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts test --testPathPattern=downscaleImage`
+Expected: PASS, 4 tests.
+
+These also give the module a consumer. Note that `CI=true react-scripts build` alone would prove nothing here: CRA's `eslint-webpack-plugin` only processes modules webpack actually reaches, and nothing imports `downscaleImage.js` until Task A4, so a syntax error in it would sail through the build.
+
+Then run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build`
+Expected: build succeeds.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add client/src/utils/downscaleImage.js
+git add client/src/utils/downscaleImage.js client/src/utils/downscaleImage.test.js
 git commit -m "feat(uploads): downscale oversized images in the browser"
 ```
 
@@ -581,7 +705,13 @@ function setup(props = {}) {
   return { onChange, input: document.querySelector('input[type="file"]') };
 }
 
-beforeEach(() => { jest.clearAllMocks(); });
+// CRA sets resetMocks: true, which strips the module-factory implementation
+// above before EVERY test. Without re-arming, downscaleImage resolves undefined,
+// checkFile(undefined) returns "No file selected.", and every case that does not
+// call mockResolvedValueOnce fails. clearAllMocks does NOT restore it.
+beforeEach(() => {
+  require('../utils/downscaleImage').default.mockImplementation(f => Promise.resolve(f));
+});
 
 it('accepts a normal file and reports it upward', async () => {
   const { onChange, input } = setup();
@@ -640,7 +770,7 @@ it('accepts an image that only fits after downscaling', async () => {
 });
 
 // Regression guard. PaydayProtocols renders the W-9 field with no `kind`, and
-// payment.js:91 validates it with the narrow isValidUpload. If the default ever
+// payment.js:92 validates it with the narrow isValidUpload. If the default ever
 // widens, a .docx W-9 passes here and is rejected only after a full upload,
 // which is the exact failure this component exists to prevent.
 it('defaults to the narrow kind so the W-9 field matches its server validator', async () => {
@@ -747,7 +877,7 @@ While you are in that block, fix the resume field's stale per-field helper, whic
 
 In `client/src/pages/ContractorProfile.js`, same rule: `kind="document"` on `name="alcohol_certification"` and `name="resume"`, and **not** on `name="headshot"`.
 
-Touch nothing in `client/src/pages/PaydayProtocols.js`. Its `name="w9"` field inherits the narrow default, which is exactly what `payment.js:91` enforces.
+Touch nothing in `client/src/pages/PaydayProtocols.js`. Its `name="w9"` field inherits the narrow default, which is exactly what `payment.js:92` enforces.
 
 - [ ] **Step 3c: Confirm the opt-in landed on the right three fields**
 
@@ -793,8 +923,10 @@ git commit -m "feat(uploads): validate and downscale at pick time, not after upl
 Replace the `fileUpload(...)` block at `server/index.js:216-220` with:
 
 ```js
+const MAX_UPLOAD_BYTES = parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024;
+
 app.use(fileUpload({
-  limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024 },
+  limits: { fileSize: MAX_UPLOAD_BYTES },
   abortOnLimit: true,
   useTempFiles: false,
   // abortOnLimit stays on: it is the abuse backstop, and turning it off means
@@ -804,6 +936,11 @@ app.use(fileUpload({
   // client/src/utils/uploadLimits.js; this handler exists so that when someone
   // gets past it we find out, instead of the path being silent as it was
   // between 2026-05 and the 2026-07-23 incident.
+  //
+  // No userId here on purpose: this middleware mounts at line 216, long before
+  // any router-level `auth`, so req.user is never populated and recording it
+  // would just log a permanent null. The path plus content-length is what
+  // identifies the surface.
   limitHandler: (req, res) => {
     Sentry.captureMessage('upload_limit_exceeded', {
       level: 'warning',
@@ -811,28 +948,41 @@ app.use(fileUpload({
       extra: {
         path: req.originalUrl,
         method: req.method,
-        userId: req.user?.id || null,
         contentLength: req.headers['content-length'] || null,
+        limitBytes: MAX_UPLOAD_BYTES,
       },
     });
-    res.status(413).json({ error: 'That file is too large. The limit is 10MB.' });
+    // Derived, never hardcoded. This is the third copy of the limit (client
+    // constant, server config, user-facing copy) and the only one a reader
+    // would not think to update.
+    res.status(413).json({
+      error: `That file is too large. The limit is ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))}MB.`,
+    });
   },
 }));
 ```
 
-- [ ] **Step 2: Verify the server boots**
+- [ ] **Step 2: Actually trip the limit**
 
-The dev server is a Claude-managed background process and holds port 5000. **Stop it first**, or this step reports a port collision that looks like a config failure. `/api/health` exists at `server/index.js:320`.
+"The server boots" passes whether or not `limitHandler` is ever invoked, whether the Sentry call throws, and whether the message is right. Send a real over-limit upload instead. `/api/application` sits behind `auth`, but `fileUpload` runs first, so an unauthenticated request still exercises the limit path.
+
+The dev server holds port 5000 and does not auto-reload, so restart it first. Avoid a foreground `sleep`; poll instead.
 
 ```bash
 cd /home/drbartender/projects/os
-lsof -ti:5000 | xargs -r kill    # stop the dev server
-node -e "require('./server/index.js')" & sleep 4
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5000/api/health
-kill %1
+lsof -ti:5000 | xargs -r kill
+# restart the dev server the usual way, then wait for it:
+until curl -sf -o /dev/null http://localhost:5000/api/health; do :; done
+
+printf '%%PDF-1.4\n' > /tmp/big.pdf && head -c 12000000 /dev/urandom >> /tmp/big.pdf
+printf '%%PDF-1.4\n' > /tmp/small.pdf && head -c 500000 /dev/urandom >> /tmp/small.pdf
+
+echo "under limit: $(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:5000/api/application -F 'resume=@/tmp/small.pdf')"
+echo "over limit:  $(curl -s -o /tmp/limit.json -w '%{http_code}' -X POST http://localhost:5000/api/application -F 'resume=@/tmp/big.pdf')"
+cat /tmp/limit.json
 ```
 
-Expected: `200`. Restart the dev server afterwards.
+Expected: the small file returns **401** (it got past `fileUpload` and was refused by `auth`, which is the correct proof that the limit did not fire). The 12MB file returns **413** with a JSON body naming the limit in MB. Then confirm a `upload_limit_exceeded` event arrived in Sentry, which is the whole point of the task.
 
 - [ ] **Step 3: Commit**
 
@@ -843,11 +993,31 @@ git commit -m "feat(uploads): report limit-exceeded uploads to Sentry"
 
 ---
 
+### Task A6: Document the new upload surface
+
+Per CLAUDE.md's mandatory-docs table, new util files land in the README folder tree.
+
+- [ ] **Step 1: Update the docs**
+
+In `README.md`, add to the folder-structure tree: `client/src/utils/uploadLimits.js`, `client/src/utils/downscaleImage.js`.
+
+In `ARCHITECTURE.md`, note in the file-upload section that onboarding documents (resume, alcohol certification) validate through `isValidOnboardingDocument`, which additionally accepts HEIC, DOC and DOCX, while every other upload keeps the narrow `isValidUpload`.
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add README.md ARCHITECTURE.md
+git commit -m "docs: record the onboarding upload validators and client limits"
+```
+
+---
+
 ### Lane A manual check
 
 - [ ] Load the application form on a phone, photograph a document so the file exceeds 10MB, and confirm it uploads with no error (downscaling handles it).
 - [ ] Pick a `.docx` resume and confirm it is selectable and uploads.
 - [ ] Pick a genuinely oversized PDF (over 10MB, which does not downscale) and confirm the inline message names the real size and the limit, immediately, with no upload wait.
+- [ ] **Exercise the HEIC decode-failure fallback**, which the spec names as a Risk and which nothing else in this plan covers. In **Chrome on desktop** (which cannot decode HEIC to canvas, unlike Safari), pick a `.heic` file **under** 10MB and confirm it uploads successfully: `downscaleImage` returns the original untouched and the server's `isValidOnboardingDocument` accepts the HEIC on its magic bytes. Then pick a `.heic` **over** 10MB and confirm it is rejected at pick time with the size message rather than failing mid-upload.
 
 ---
 
@@ -1035,9 +1205,16 @@ test('a draft round-trips', async () => {
   assert.ok(get.body.updated_at);
 });
 
-test('a second save overwrites rather than duplicating', async () => {
+test('a second save overwrites rather than duplicating, and advances updated_at', async () => {
+  const before = await request('GET', '/api/progress/draft/application', { tok: token });
+  // The UPSERT sets only `data`; updated_at depends entirely on the trigger from
+  // Task B1. Without it the timestamp freezes at insert time and B4 renders a
+  // permanently stale "We saved your answers from ..." notice.
+  await new Promise(r => setTimeout(r, 1100));
   await request('PUT', '/api/progress/draft/application', { tok: token, body: { data: { city: 'Evanston' } } });
   const get = await request('GET', '/api/progress/draft/application', { tok: token });
+  assert.ok(new Date(get.body.updated_at) > new Date(before.body.updated_at),
+    'update_onboarding_drafts_updated_at trigger is missing or not firing');
   assert.equal(get.body.data.city, 'Evanston');
   assert.equal(get.body.data.full_name, undefined, 'PUT replaces the payload, it does not merge');
 
@@ -1192,7 +1369,7 @@ Create `client/src/hooks/useFormDraft.test.js`:
 
 ```js
 import '@testing-library/jest-dom';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { render, screen, act, waitFor } from '@testing-library/react';
 import useFormDraft from './useFormDraft';
 import api from '../utils/api';
@@ -1216,9 +1393,13 @@ function Harness({ initial = { city: '' } }) {
   );
 }
 
-// Mirrors ContractorProfile: the draft load waits on the page's own fetch.
-function Gated({ enabled }) {
+// Mirrors ContractorProfile: the page loads saved profile data on mount, and
+// the draft load waits on it. `profile` stands in for that server-loaded data.
+function Gated({ enabled, profile }) {
   const [form, setForm] = useState({ phone: '' });
+  useEffect(() => {
+    if (profile) setForm(f => ({ ...f, ...profile }));
+  }, [profile]);
   useFormDraft('contractor_profile', form, d => setForm(f => ({ ...f, ...d })), { enabled });
   return <div data-testid="phone">{form.phone}</div>;
 }
@@ -1279,6 +1460,21 @@ it('does not fetch until enabled', async () => {
 
   rerender(<Gated enabled={true} />);
   await waitFor(() => expect(api.get).toHaveBeenCalledWith('/progress/draft/contractor_profile'));
+});
+
+// The outcome the `enabled` gate exists to guarantee, not just the mechanism.
+// This is the spec Risk "draft restore versus server-loaded profile data".
+it('lets the draft win over already-loaded profile data', async () => {
+  api.get.mockResolvedValue({ data: { data: { phone: '7735551111' }, updated_at: '2026-07-26T12:00:00Z' } });
+
+  // enabled=false models the page before /contractor resolves. The profile
+  // value lands first, exactly as ContractorProfile's own fetch would set it.
+  const { rerender } = render(<Gated enabled={false} profile={{ phone: '3125550000' }} />);
+  await waitFor(() => expect(screen.getByTestId('phone')).toHaveTextContent('3125550000'));
+
+  // Now the profile fetch has settled, so the draft is allowed to load.
+  rerender(<Gated enabled={true} profile={{ phone: '3125550000' }} />);
+  await waitFor(() => expect(screen.getByTestId('phone')).toHaveTextContent('7735551111'));
 });
 
 it('does not save before the initial load settles', async () => {
@@ -1441,7 +1637,7 @@ export default function useFormDraft(formKey, snapshot, applyDraft, { enabled = 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts test --testPathPattern=useFormDraft`
-Expected: PASS, 7 tests.
+Expected: PASS, 12 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1540,8 +1736,11 @@ Call `await clearDraft();` after the successful profile POST, and render the sam
 Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build`
 Expected: build succeeds.
 
-Run: `cd /home/drbartender/projects/os && node scripts/check-file-size.js --all | grep -E "Application.js|ContractorProfile.js"`
-Expected: `Application.js` stays under the 700-line soft cap warning threshold or, if it crosses, is reported as YELLOW rather than blocking. It must not reach 1000.
+Run: `cd /home/drbartender/projects/os && wc -l client/src/pages/Application.js client/src/pages/ContractorProfile.js`
+
+Expected: `Application.js` lands near **714** (685 before this plan, roughly +2 from `upload-honesty`, +27 here). **It crosses the 700 soft cap in THIS lane**, which warns and never blocks. If it exceeds 1000 something has gone badly wrong.
+
+Do not use `check-file-size.js --all | grep` for this: that command prints only RED and YELLOW rows, so a file under the cap produces no output and a non-zero exit, and the check cannot distinguish "fine" from "grep found nothing". `wc -l` gives a number you can actually compare.
 
 - [ ] **Step 4: Manual check**
 
@@ -1559,9 +1758,28 @@ git commit -m "feat(onboarding): autosave the application and contractor profile
 
 ---
 
+### Task B5: Document the drafts surface
+
+- [ ] **Step 1: Update the docs**
+
+In `README.md`, add `client/src/hooks/useFormDraft.js` to the folder-structure tree.
+
+In `ARCHITECTURE.md`, add `onboarding_drafts` to the Database Schema section (columns, the `UNIQUE (user_id, form_key)` constraint, and the note that `payday_protocols` is deliberately excluded because it carries SSN and bank details that are encrypted at rest), and add the three routes to the API route table: `GET`, `PUT` and `DELETE /api/progress/draft/:formKey`.
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add README.md ARCHITECTURE.md
+git commit -m "docs: record onboarding_drafts and the draft endpoints"
+```
+
+---
+
 ## Lane C: Files stop blocking submit
 
-**All three lanes touch `client/src/pages/Application.js`** (A4 step 3b adds `kind`, B4 adds the draft snapshot, C3 removes the file rules), and A and B both touch `ContractorProfile.js`. **Run them strictly in order A, then B, then C, and give Lane C its own lane and its own squash commit.** Never as parallel worktrees. Lane C must not be folded into a single lane with A and B: the squash-merge model would collapse the file-gate removal into the same commit as the safety nets it depends on, and that gate removal is the one change in this plan you might realistically want to revert on its own.
+**Three lanes touch `client/src/pages/Application.js`** (`upload-honesty` adds `kind`, `onboarding-drafts` adds the draft snapshot, `submit-gate-relax` removes the file rules), and two touch `ContractorProfile.js` and `server/routes/progress.js`. **Run all four strictly in the front-matter order, never as parallel worktrees.**
+
+C1 to C3 are the `document-visibility` lane; C4 is `submit-gate-relax` on its own. Keeping the gate removal separate is deliberate: a squash merge would otherwise bury it in the same commit as the alert it depends on, and it is the one change here that might warrant reverting alone.
 
 **Order inside Lane C is load-bearing.** The safety nets get built before the guard comes down. C3 is the task that lets a recruit submit with documents missing; C1 and C2 are what make that visible. C1 declares no dependency on either sibling, so this ordering costs nothing.
 
@@ -1938,7 +2156,7 @@ One row per person, each linking to that person. `AdminUserDetail`'s `DocumentsT
 
 - [ ] **Step 1: Write the failing client test**
 
-Append to `client/src/pages/admin/overview/queueItems.test.js`, inside the existing `describe('buildStaffingItems', ...)` block. That block uses `test()` for its three existing cases; match the surrounding style.
+Append to `client/src/pages/admin/overview/queueItems.test.js`, inside the existing `describe('buildStaffingItems', ...)` block. The existing block uses `test()`; the new cases below use `it()`. Both are valid Jest globals and the file may mix them, but if you prefer consistency convert the new ones to `test()`.
 
 **Add the import** the new cases need. The existing file imports only from `./queueItems`:
 
@@ -1995,6 +2213,24 @@ import { queueItemHref } from './NeedsYouStrip';
   it('treats a missing third argument as nobody uncertified', () => {
     expect(buildStaffingItems([], 0).some(i => i.type === 'documents')).toBe(false);
   });
+
+  // Regression guard for the crowding-out defect. NeedsYouStrip renders only
+  // the first TAB_CAP (6) items in array order, so an urgent row appended last
+  // disappears into an overflow link pointing at /events.
+  it('floats danger rows above warn rows regardless of insertion order', () => {
+    const sixWarnEvents = [1, 2, 3, 4, 5, 6].map(i => shift(10, { id: i })); // days=10 => warn
+    const items = buildStaffingItems(sixWarnEvents, 0, [
+      risk(55, 'Loryn', '2026-08-01', 347),   // danger: booked
+    ]);
+    expect(items[0].type).toBe('documents');
+    expect(items.slice(0, 6).some(i => i.type === 'documents')).toBe(true);
+  });
+
+  it('keeps equal-priority rows in their original order', () => {
+    const items = buildStaffingItems([], 0, [risk(55, 'Loryn'), risk(241, 'Debbie')])
+      .filter(i => i.type === 'documents');
+    expect(items.map(i => i.ref)).toEqual([55, 241]);
+  });
 ```
 
 And a separate block for the new href target:
@@ -2041,6 +2277,19 @@ export function buildStaffingItems(unstaffed, newApplications, uncertified = [])
       target: 'user', ref: u.user_id,
     });
   });
+
+  // Sort by urgency before returning. NeedsYouStrip renders
+  // `t.items.slice(0, TAB_CAP)` in ARRAY ORDER with TAB_CAP = 6, and the RANK
+  // map here was previously used only to colour the tab dot. Without this,
+  // these rows are appended last and six unstaffed events push a
+  // "working Saturday with no certification" row into the "N more" overflow,
+  // whose href is OVERFLOW_HREF.staffing = '/events'. That is the same
+  // link-to-a-page-they-are-not-on failure this surface was built to replace.
+  //
+  // Array.prototype.sort is stable in Node 26 and every supported browser, so
+  // equal-priority rows keep their existing relative order and the pre-existing
+  // unstaffed-event cases are unaffected.
+  items.sort((a, b) => (RANK[a.priority] ?? 3) - (RANK[b.priority] ?? 3));
   return items;
 ```
 
@@ -2107,7 +2356,7 @@ Expected: the first returns a `users` array whose entries carry `user_id`, `name
 
 - [ ] **Step 7: Feed it to the overview page**
 
-Add beside the existing `/admin/applications` fetch (around line 208-215), following that block's admin-only guard and swallowed-catch pattern, since managers 403 here and must simply see no rows:
+Add this at **component top level**, as its own `useState` and its own `useEffect`. Do NOT nest it inside the large existing `useEffect` that contains the `/admin/applications` fetch (that effect ends at `OverviewPage.js:218`); declaring hooks inside another hook is a `react-hooks/rules-of-hooks` error that `CI=true react-scripts build` fails on. Mirror that block's admin-only guard and swallowed catch, since managers 403 here and must simply see no rows:
 
 ```js
   const [uncertified, setUncertified] = useState([]);
@@ -2138,7 +2387,7 @@ Expected: build succeeds.
 Then load `/` on the admin app as an admin:
 - [ ] The Needs-attention staffing tab shows **a small number of rows**, reading like "Loryn has no alcohol certification", with an icon rather than a blank square. If it shows dozens, the C1 scoping regressed.
 - [ ] A booked worker's row is `danger` and reads "Working Aug 1 · Nd out". An unbooked one is `warn` and reads "Can be assigned to shifts".
-- [ ] Clicking a row lands on `/staffing/users/:id`, whose Documents tab shows "Not on file" for the certification the row named. The row and the page must agree; that agreement is why the predicate was extracted.
+- [ ] Clicking a row lands on `/staffing/users/:id`, whose Documents tab shows the certification as **"Missing"** (that is the cert wording at `DocumentsTab.js:37`; "Not on file" is the resume row). The row and the page must agree; that agreement is why the predicate was extracted.
 - [ ] Load the same page as a manager and confirm the rows are absent with no error.
 
 - [ ] **Step 9: Record the dropped surfaces**
@@ -2158,15 +2407,14 @@ git add server/routes/admin/hiring.js client/src/pages/admin/overview/queueItems
 git commit -m "feat(hiring): flag staffable workers with no alcohol certification"
 ```
 
-### Task C3: Tell the recruit, then stop blocking them
+### Task C3: Tell the recruit what they still owe
 
-Both halves land together on purpose. The notice is what makes it safe to drop the requirement, so they share a commit rather than leaving a window where submission is unguarded and unreported.
+Lane: **document-visibility**. This is the recruit-facing half of the safety net, and it lands before the gate relaxes in C4.
 
 **Files:**
 - Modify: `server/routes/progress.js` (extend `GET /`)
-- Modify: `server/routes/application.js` (remove the file gate)
-- Modify: `client/src/pages/Application.js` (remove the matching rules, add the notice)
 - Modify: `client/src/components/Layout.js` (show what is outstanding, on every onboarding step)
+- Modify: `README.md`, `ARCHITECTURE.md`
 
 **Interfaces:**
 - Consumes: `outstandingFor` from Task C1.
@@ -2192,52 +2440,7 @@ router.get('/', auth, asyncHandler(async (req, res) => {
 
 This is the same predicate the admin count uses, so the two surfaces cannot drift.
 
-- [ ] **Step 2: Remove the server-side block**
-
-Delete these four lines at `server/routes/application.js:125-128`:
-
-```js
-  const fileFieldErrors = {};
-  if (!resume_url) fileFieldErrors.resume = 'Please upload your resume';
-  if (!basset_url) fileFieldErrors.basset = 'Please upload your BASSET / alcohol certification';
-  if (Object.keys(fileFieldErrors).length > 0) throw new ValidationError(fileFieldErrors);
-```
-
-Replace with:
-
-```js
-  // Files are collected, not required at submit. A file upload is the only
-  // field on this form the user cannot reliably complete: it depends on their
-  // connection, their phone's camera resolution, and what format their resume
-  // happens to be in. Blocking on it strands people who are otherwise done
-  // (incident 2026-07-23). What is still owed is derived by
-  // server/utils/outstandingDocuments.js and surfaced to both the recruit and
-  // the admin, so nothing goes quiet.
-```
-
-- [ ] **Step 3: Remove the matching client rules and soften the labels**
-
-**Locate by content, not line number.** Lane B inserted lines above these. In `client/src/pages/Application.js`, delete these two entries from the `rules` array:
-
-```js
-      { field: 'resume', label: 'Resume', test: () => !!files.resume },
-      { field: 'basset', label: 'BASSET Certification', test: () => !!files.basset },
-```
-
-Change the resume `FileUpload` label from `"Upload Your Resume *"` to `"Upload Your Resume"`, and the BASSET label from `"Upload Your BASSET / Alcohol Certification *"` to `"Upload Your BASSET / Alcohol Certification"`.
-
-Add this notice immediately above the `<div className={"form-group" + fieldClass('resume')}>` that wraps the resume upload:
-
-```jsx
-            <div className="alert alert-info" role="status">
-              You can submit without these and add them later, but we do need both
-              on file before your first shift.
-            </div>
-```
-
-Update the BASSET helper from `"BASSET, TIPS, ServSafe, or equivalent. Required for all positions."` to `"BASSET, TIPS, ServSafe, or equivalent. Needed before your first shift."`
-
-- [ ] **Step 4: Show the recruit what is outstanding, on every onboarding step**
+- [ ] **Step 2: Show it on every onboarding step**
 
 The spec asks for a **persistent** to-do card, and `Welcome.js` alone is step one of seven. Put it in the layout instead, which already has everything needed: `client/src/components/Layout.js:30-33` fetches `GET /progress` and refetches on **every** `location.pathname` change, and line 99 already passes `{ progress, setProgress }` down. So the notice follows the recruit through welcome, field guide, agreement, contractor profile, and payday, and refreshes itself the moment they upload.
 
@@ -2264,11 +2467,153 @@ Merge `Link` into the existing `react-router-dom` import at the top of the file 
 
 Leave `Welcome.js` untouched.
 
-- [ ] **Step 5: Prove the gate is actually gone and the notice actually appears**
+- [ ] **Step 3: Verify**
+
+Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build`
+Expected: build succeeds.
+
+Restart the dev server (plain `node server/index.js`, no auto-reload), then confirm the endpoint carries the new field for a user who owes something. Use any existing `in_progress` staff account, or the fixture helper written in Task C4 Step 3 if that lane has already run:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:5000/api/progress | python3 -m json.tool
+```
+
+Expected: the response carries `documents_outstanding` alongside the existing progress booleans. For a user with neither document on file it lists both `resume` and `alcohol certification`.
+
+Manually, on a pre-hire account mid-onboarding:
+- [ ] The notice appears on `/welcome` **and stays visible** through the field guide and agreement steps.
+- [ ] Uploading only the certification on the contractor profile makes the notice name the resume alone on the next step, with no manual refresh.
+- [ ] The admin rows from C2 agree with what the recruit is being told. That agreement is why the predicate was extracted in C1.
+
+- [ ] **Step 4: Update the docs**
+
+In `README.md`, add `server/utils/outstandingDocuments.js` to the folder-structure tree.
+
+In `ARCHITECTURE.md`, add `GET /api/admin/hiring/uncertified` to the API route table, and note that `GET /api/progress` now also returns `documents_outstanding`. Record that both surfaces derive from the single predicate in `server/utils/outstandingDocuments.js`, with the admin alert scoped to `STAFFABLE_STATUSES` (mirroring the assignment gate at `server/routes/shifts.approval.js:233`) and the recruit's own list scoped to the broader `ONBOARDING_STATUSES`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/routes/progress.js client/src/components/Layout.js README.md ARCHITECTURE.md
+git commit -m "feat(onboarding): tell recruits which documents are still outstanding"
+```
+
+---
+
+### Task C4: Relax the submit gate, for pre-hires only
+
+Lane: **submit-gate-relax**, deliberately its own lane and its own squash commit. This is the only change in the plan that might warrant reverting on its own, and it depends on C1 through C3 already being in place.
+
+**Files:**
+- Modify: `server/routes/application.js`
+- Modify: `client/src/pages/Application.js`
+
+**Interfaces:**
+- Consumes: the notice from C3 and the admin alert from C2, which are what make this safe.
+- Produces: `POST /api/application` succeeds without `resume` or `basset` **when the submitter is pre-hired**, and still rejects both as missing when they are not.
+
+- [ ] **Step 1: Make the file requirement conditional on being pre-hired**
+
+**The gate relaxes for pre-hires only.** A pre-hire lands in the onboarding flow, where the outstanding-documents notice follows them step to step and `/contractor-profile` accepts the upload: a complete loop. A cold applicant has neither. `POST /application` refuses a second submit (`application.js:160`) and `/contractor-profile` sits behind `RequireHired`, whose allow-list excludes `applied` (`client/src/App.js:305`). Accepting a fileless application from them would remove a requirement, tell nobody, and leave no way to finish. That is a worse trap than the one this plan exists to remove.
+
+This also keeps the collection guarantee intact where it matters. Nothing about the form changes: every applicant, pre-hire or not, still fills in positions, availability, working alone, tools, equipment, transportation, address, emergency contact and the experience fields, all still required and still validated.
+
+First, delete these four lines at `server/routes/application.js:125-128`:
+
+```js
+  const fileFieldErrors = {};
+  if (!resume_url) fileFieldErrors.resume = 'Please upload your resume';
+  if (!basset_url) fileFieldErrors.basset = 'Please upload your BASSET / alcohol certification';
+  if (Object.keys(fileFieldErrors).length > 0) throw new ValidationError(fileFieldErrors);
+```
+
+Then re-add it **inside the transaction**, immediately after `isPreHired` is computed at line 219 and before the `UPDATE users SET onboarding_status` at line 222:
+
+```js
+    // Files block the submit for cold applicants only.
+    //
+    // A pre-hire can finish later: the outstanding-documents notice follows
+    // them through onboarding and /contractor-profile takes the upload. A file
+    // upload is the one field here nobody can reliably complete on demand (it
+    // depends on their connection, their camera resolution, and what format
+    // their resume happens to be in), and blocking a hired contractor on it
+    // strands someone who is otherwise done (incident 2026-07-23).
+    //
+    // A cold applicant has no way back in: the guard at line 160 refuses a
+    // second submit and /contractor-profile is behind RequireHired, which does
+    // not admit 'applied'. For them, requiring it now is the kinder rule.
+    //
+    // isPreHired comes from the FOR UPDATE row above, never req.user.pre_hired,
+    // matching the existing convention on line 217. Throwing here rolls back
+    // cleanly via the catch on line 240.
+    if (!isPreHired) {
+      const fileFieldErrors = {};
+      if (!resume_url) fileFieldErrors.resume = 'Please upload your resume';
+      if (!basset_url) fileFieldErrors.basset = 'Please upload your BASSET / alcohol certification';
+      if (Object.keys(fileFieldErrors).length > 0) throw new ValidationError(fileFieldErrors);
+    }
+```
+
+- [ ] **Step 2: Remove the matching client rules and soften the labels**
+
+**Locate by content, not line number.** Lane B inserted lines above these. In `client/src/pages/Application.js`, delete these two entries from the `rules` array:
+
+```js
+      { field: 'resume', label: 'Resume', test: () => !!files.resume },
+      { field: 'basset', label: 'BASSET Certification', test: () => !!files.basset },
+```
+
+Change the resume `FileUpload` label from `"Upload Your Resume *"` to `"Upload Your Resume"`, and the BASSET label from `"Upload Your BASSET / Alcohol Certification *"` to `"Upload Your BASSET / Alcohol Certification"`.
+
+**Do not gate the client rules on `pre_hired`.** It is not reliably on the client user object: the login SELECT (`server/routes/auth.js:317`) does not include it, only `/auth/me` does. Drop the two rules unconditionally and let the server be the single authority. A cold applicant who omits a file gets a 400 carrying `fieldErrors`, and `Application.js:230` already handles exactly that, marking the field and calling `scrollToFirstError()`. No new client code is needed for that path.
+
+Add this notice immediately above the `<div className={"form-group" + fieldClass('resume')}>` that wraps the resume upload. It has to read correctly for both audiences without knowing which one is looking, since the client cannot tell:
+
+```jsx
+            <div className="alert alert-info" role="status">
+              If you have already been hired, you can add these later and we will
+              follow up. If you are applying, we need them with your application.
+            </div>
+```
+
+Update the BASSET helper from `"BASSET, TIPS, ServSafe, or equivalent. Required for all positions."` to `"BASSET, TIPS, ServSafe, or equivalent. Needed before your first shift."`
+
+- [ ] **Step 3: Prove both branches**
 
 This task deletes a server-side validation gate and changes an endpoint every onboarding page consumes, and neither the build nor C1's util suite touches any of its four files. Exercise the route directly.
 
-Create a staff fixture, then submit an application with no files:
+**Both branches must be exercised.** A pre-hire submits without files and succeeds; a cold applicant submits without files and is refused. A check that only covers one branch cannot tell a correct conditional from a deleted one.
+
+Write the fixture helper to a file rather than inlining it. **The JS contains backticked template literals, and those cannot survive inside a double-quoted `$( ... )` in bash**: the shell reads them as command substitution and dies with `syntax error near unexpected token '('`, leaving `TOKEN` empty and the curls silently unauthenticated.
+
+Create `/tmp/c3-fixture.js`:
+
+```js
+require('dotenv').config();
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const { pool } = require('./server/db');
+
+const preHired = process.argv[2] === 'prehire';
+const email = `c3-gate-${preHired ? 'prehire' : 'cold'}@example.com`;
+
+(async () => {
+  const hash = await bcrypt.hash('x', 4);
+  await pool.query('DELETE FROM users WHERE email = $1', [email]);
+  const r = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version, pre_hired)
+     VALUES ($1, $2, 'staff', 'in_progress', 0, $3) RETURNING id`,
+    [email, hash, preHired]
+  );
+  console.log(jwt.sign(
+    { userId: r.rows[0].id, tokenVersion: 0 },
+    process.env.JWT_SECRET, { expiresIn: '1h' }
+  ));
+  process.exit(0);
+})();
+```
+
+Then:
 
 ```bash
 cd /home/drbartender/projects/os
@@ -2276,28 +2621,29 @@ cd /home/drbartender/projects/os
 lsof -ti:5000 | xargs -r kill
 # restart it the usual way, then:
 
-TOKEN=$(node -r dotenv/config -e "
-const jwt=require('jsonwebtoken'), bcrypt=require('bcryptjs');
-const {pool}=require('./server/db');
-(async()=>{
-  const h=await bcrypt.hash('x',4);
-  await pool.query(\"DELETE FROM users WHERE email='c3-gate-check@example.com'\");
-  const r=await pool.query(\`INSERT INTO users (email,password_hash,role,onboarding_status,token_version)
-    VALUES ('c3-gate-check@example.com',\$1,'staff','in_progress',0) RETURNING id\`,[h]);
-  console.log(jwt.sign({userId:r.rows[0].id,tokenVersion:0},process.env.JWT_SECRET,{expiresIn:'1h'}));
-  process.exit(0);})()")
+submit () {
+  curl -s -o /tmp/c3-out.json -w "%{http_code}" -X POST http://localhost:5000/api/application \
+    -H "Authorization: Bearer $1" \
+    -F "full_name=Gate Check" -F "phone=3125550000" -F "city=Chicago" -F "state=Illinois" \
+    -F "travel_distance=30 minutes" -F "reliable_transportation=Yes" \
+    -F "positions_interested=[\"Bartender\"]" -F "why_dr_bartender=testing" \
+    -F "birth_month=1" -F "birth_day=1" -F "birth_year=1990"
+}
 
-# Submit with NO files. Before this task, this returned 400 with fieldErrors.
-curl -s -o /dev/null -w "application POST: %{http_code}\n" -X POST http://localhost:5000/api/application \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "full_name=Gate Check" -F "phone=3125550000" -F "city=Chicago" -F "state=Illinois" \
-  -F "travel_distance=30 minutes" -F "reliable_transportation=Yes" \
-  -F "positions_interested=[\"Bartender\"]" -F "why_dr_bartender=testing"
+PRE=$(node /tmp/c3-fixture.js prehire)
+echo "pre-hire, no files: $(submit "$PRE")"     # expect 201
+curl -s -H "Authorization: Bearer $PRE" http://localhost:5000/api/progress | python3 -m json.tool
 
-curl -s -H "Authorization: Bearer $TOKEN" http://localhost:5000/api/progress | python3 -m json.tool
+COLD=$(node /tmp/c3-fixture.js cold)
+echo "cold applicant, no files: $(submit "$COLD")"   # expect 400
+cat /tmp/c3-out.json | python3 -m json.tool
 ```
 
-Expected: the POST returns **201**, not 400. The progress response carries `documents_outstanding` listing **both** `resume` and `alcohol certification`. Clean up the fixture user afterwards.
+Expected:
+- Pre-hire returns **201**, and its `/api/progress` carries `documents_outstanding` listing **both** `resume` and `alcohol certification`.
+- Cold applicant returns **400**, with `fieldErrors` naming `resume` and `basset`. If this returns 201, the conditional was dropped rather than added and cold applicants are being stranded.
+
+Clean up both fixture users and `/tmp/c3-fixture.js` afterwards.
 
 Then run: `cd /home/drbartender/projects/os && node -r dotenv/config --test server/utils/outstandingDocuments.test.js`
 Expected: still PASS. `GET /api/progress` now calls into it.
@@ -2311,28 +2657,29 @@ Manually, **using a pre-hired account**, because a non-pre-hired submitter becom
 - [ ] Upload only the certification on the contractor profile. Confirm the notice updates on the next step to name the resume alone, without a manual refresh.
 - [ ] Confirm the admin rows from C2 agree with what the recruit is being told. That agreement is why the predicate was extracted in C1.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add server/routes/progress.js server/routes/application.js client/src/pages/Application.js client/src/components/Layout.js
-git commit -m "feat(onboarding): let the application submit with documents outstanding"
+git add server/routes/application.js client/src/pages/Application.js
+git commit -m "feat(onboarding): let pre-hires submit with documents outstanding"
 ```
-
 ## Review
 
-| Lane | Scope | Fleet |
-|---|---|---|
-| A | `fileValidation.js`, `FileUpload.js`, `index.js`, the two forms' `kind` opt-in | **Full fleet.** File validation is a sensitive path, and the allowlist widening is security-adjacent: DOC and DOCX are OLE and zip containers. Reviewers must confirm the extension pairing holds, that `isValidUpload` and `isValidImageUpload` are genuinely unchanged for their nine and two existing callers, and that `kind="document"` landed on exactly the four intended fields and on neither `headshot` nor `w9`. |
-| B | schema, `progress.js`, hook, two forms | **Full.** New table. Reviewers must confirm every draft query scopes to `req.user.id`, that `payday_protocols` cannot reach the table by any path, and that the Application snapshot carries all five state hooks rather than `form` alone. |
-| C | `outstandingDocuments.js`, `hiring.js`, `progress.js`, `application.js`, admin and recruit surfacing | **Full.** Raised from Standard: C1 introduces a shared SQL predicate that two independent surfaces depend on agreeing about, and the LEFT-versus-INNER join choice is the difference between the safety net working and being blind to the exact cohort it was built for. |
+Four lanes, four squash commits, reviewed independently. The fleets are declared in the front-matter lane map; this table is the rationale.
 
-Run `/second-opinion` on Lane A alongside the fleet.
+| Lane | Tasks | Fleet |
+|---|---|---|
+| `upload-honesty` | A1 to A6 | **Full + `/second-opinion`.** File validation is a sensitive path and the allowlist widening is security-adjacent: DOC and DOCX are OLE and zip containers. Reviewers must confirm the magic-bytes-plus-extension pairing holds, that `isValidUpload` and `isValidImageUpload` are genuinely unchanged for their nine and two existing callers, and that `kind="document"` landed on exactly the four intended fields and on neither `headshot` nor `w9`. |
+| `onboarding-drafts` | B1 to B5 | **Full + `/second-opinion`.** New table on a sensitive path. Reviewers must confirm every draft query scopes to `req.user.id`, that `payday_protocols` cannot reach the table by any path, and that the Application snapshot carries all five state hooks rather than `form` alone. |
+| `document-visibility` | C1 to C3 | **Full.** C1 introduces one SQL predicate that two independent surfaces depend on agreeing about, and its LEFT-versus-INNER join choice is the difference between the alert working and being blind to the exact cohort it was built for. |
+| `submit-gate-relax` | C4 | **Full + `/second-opinion`.** Smallest lane, highest risk: it removes a server-side validation gate. Reviewers must confirm the conditional reads `isPreHired` from the locked row and never `req.user.pre_hired`, and that a cold applicant is still refused. |
 
 **Review checkpoints during execution**, matched to what each batch changes:
 - After B2 and after C1: **database review**. New table, `req.user.id` scoping, the `payday_protocols` allowlist, and the join predicate whose LEFT-versus-INNER choice decides whether the alert sees anyone.
-- After A1 and A4: **security review**. Upload allowlist widening, and client/server accept parity across all five `FileUpload` call sites.
-- After C3: **security review**, and the one checkpoint not to skip. It is the only task that deletes a server-side validation gate, and the only one touching `GET /api/progress`, which every onboarding page consumes.
+- After A1 and A4: **security review**. Upload allowlist widening, and client/server accept parity across all seven `FileUpload` call sites.
+- After C4: **security review**, and the one checkpoint not to skip. It is the only task that removes a server-side validation gate.
 - After C2: verify the manager 403 path still degrades to absent rows rather than an error.
+- After B4: confirm the five-hook snapshot round-trips every checkbox section, not just `form`. This is where Lane B can silently half-work.
 
 ## Open item carried from the spec
 
@@ -2342,6 +2689,8 @@ So this is not hypothetical: she has `onboarding_status = 'approved'`, no applic
 
 **And she is not the only one.** Sizing the predicate against production during the second review pass turned up **Loryn (user 55)**, also `approved`, also with no certification on file, and booked on shift 347 for **2026-08-01**. Nobody was looking for her. That is the case for building this at all: the alert found a live compliance exposure before the shift rather than after, which is exactly what did not happen for Debbie.
 
-Task C1's predicate catches the missing documents, and only because it is built on LEFT JOINs against `users`. An earlier draft of this plan derived the count from `/admin/applications`, which INNER JOINs and would have rendered her invisible to the very safety net written in response to her. That is why the join style in `outstandingDocuments.js` is load-bearing rather than incidental, why C1 Step 1 fixtures a user with no application row at all, and why C1 Step 5 verifies users 241, 242 and 243 actually appear in production.
+Task C1's predicate catches the missing documents, and only because it is built on LEFT JOINs against `users`. An earlier draft of this plan derived the count from `/admin/applications`, which INNER JOINs and would have rendered her invisible to the very safety net written in response to her. That is why the join style in `outstandingDocuments.js` is load-bearing rather than incidental, and why C1 Step 1 fixtures a user with no application row at all.
+
+Note the alert is scoped to staffable statuses, so C1 Step 5 expects **241 (Debbie) and 55 (Loryn)** and NOT 242 or 243, which sit at `in_progress` and cannot be assigned to anything. Those two show up in `outstandingFor` on their own pages, not in the admin alert. An earlier draft of this paragraph claimed Step 5 verifies 242 and 243, which would have let an executor pass the checkpoint against the wrong expectation.
 
 **The application answers are a separate problem and no task here recovers them.** Positions, availability, working alone, tools, and experience are simply absent, and nothing in this plan will surface them. That collection is a manual follow-up, already overdue since she has worked a shift.
