@@ -1,12 +1,19 @@
 # Phone System Redesign: real-feeling numbers, one smart voicemail, AI triage (design)
 
 Date: 2026-07-26
-Revision: 2 (rev 2: the 224 numbers do NOT have SMS/A2P approval yet, so client
-SMS STAYS on the 888 for now. The voice + smart-voicemail redesign proceeds as
-Phase 1 with no SMS dependency; moving client SMS to 1922 and retiring the 888
-becomes Phase 2, gated on the 224 numbers getting A2P approval. Until then, both
-client texts and the VM-transcript texts send from the 888.)
-Status: approved in brainstorm (section-by-section)
+Revision: 3 (rev 3 folds in the /review-spec fleet. Key hardening: R2 becomes the
+retry SOURCE, not just the archive, so the existing Twilio-based redelivery sweep
+keeps working after the Twilio copy is deleted; the whole flow becomes line-aware
+and existing rows are backfilled to `zul`; the press-1 escalation is fully
+specified with a claim-guard, a key-to-accept whisper, a dedicated daily cap, a
+quiet window, and its own kill switch; the audio purge is ordered before the row
+prune so R2 never orphans; the listen-link DELETE gets confirm + audit +
+soft-delete; the internal transcript SMS uses `sendSMS` and bypasses client
+consent suppression; AI is fail-soft with a clamped tag and its own kill switch;
+docs + the `COMPANY_PHONE` cross-cutting are enumerated. Rev 2: the 224 numbers
+have no SMS/A2P approval, so client SMS stays on the 888 (Phase 1 = voice; Phase 2
+= SMS cutover, gated on 224 A2P).)
+Status: approved in brainstorm (section-by-section); spec-review fleet folded (rev 3)
 
 Driver: the phone footprint grew organically and now feels like a robot, not a
 real local business. Four numbers wear the "Dr. Bartender" hat with unclear,
@@ -65,107 +72,159 @@ only aesthetic constraint honored: local, ours, and no toll-free anywhere.
 
 ### 2. Primary voice routing (1922 to Dallas)
 
-Inbound to 1922 is a Twilio-controlled call, not a blind forward, so our smart
-voicemail can own the miss:
+The 1922 gets its OWN inbound handler, DISTINCT from the existing `/inbound`
+(which hardcodes the `VA_CELL`/Zul dial, so it cannot be reused literally). It is
+a Twilio-controlled call, not a blind forward, so our smart voicemail owns the
+miss. Like the voicemail webhooks, it fails CLOSED on signature
+(`requireSignature`, NOT the dev-allow `passesSignature` the current `/inbound`
+uses), because it places a billed `<Dial>`.
 
-`POST /api/voice/inbound` (or a primary-specific handler) responds with a
-`<Dial>` to the 312 (which rings Dallas's phone) carrying a ring timeout, then on
-a missed dial routes to the shared smart-voicemail handler (section 3).
+Each line's inbound handler stamps `line` on its `<Dial action>` URL
+(`?line=primary` / `?line=zul`) so the shared missed handler (section 3) knows
+which line the call arrived on. `line` is what routes greeting, delivery, and
+redelivery downstream, so it is established here at the top.
 
-RISK to verify with a live test before relying on it: Google Voice has its OWN
-voicemail, which could answer the Twilio `<Dial>` to the 312 first, returning
-`DialCallStatus=completed` and pre-empting our smart voicemail. Mitigation:
-DISABLE Google Voice voicemail on the 312 so the call rings out and Twilio's
-no-answer fires our handler. If GV interception proves unavoidable, the fallback
-is to `<Dial>` Dallas's cell (970) directly (still never exposed to callers,
-since they only ever see 1922) and treat the 312 purely as his personal GV line
-plus the VM-text destination. This is a build-time decision gated on a live call.
+The 1922 handler `<Dial>`s `VM_PRIMARY_DIAL_TARGET` (the 312, which rings Dallas's
+phone) with a ring timeout, then routes a missed dial to the shared handler.
 
-### 3. Smart voicemail plus escalation (ONE reusable flow, both lines)
+RISK, and it is the same class either target: Google Voice has its OWN voicemail
+that can answer the Twilio `<Dial>` to the 312 first, returning
+`DialCallStatus=completed` and pre-empting our smart voicemail. The 970-direct
+fallback has the IDENTICAL defect (the cell's carrier voicemail can answer too).
+Mitigations, in order: (a) DISABLE carrier/GV voicemail on whichever target we
+dial, so the leg rings out and Twilio's no-answer fires our handler; (b) keep the
+Twilio ring timeout short enough to fire before the target's voicemail picks up;
+(c) because (a) is a manual, un-monitored console setting, add a lightweight
+canary (a periodic check, or an alert when the primary line logs `completed` with
+a near-zero dial duration) so a silently re-enabled carrier voicemail is caught,
+not discovered weeks later. Settle the target choice (312 vs 970) with a live
+test before relying on it.
 
-This is a single behavior applied to BOTH the primary (1922) and Zul's line
-(0082). It generalizes the existing `/inbound/missed` handler. On any missed
-call:
+### 3. Smart voicemail plus escalation (ONE reusable, line-aware flow, both lines)
 
-1. Play a warm greeting in a real voice (per-line recording, section 6), wrapped
-   in a `<Gather numDigits="1">` so the caller can press a key while it plays.
+A single behavior applied to BOTH lines, keyed on the `line` stamped in section 2.
+It generalizes the existing `/inbound/missed` handler. The battle-tested 0082 path
+must stay byte-identical when escalation is OFF (protect-working-paths): escalation
+ships behind its own kill switch (`VM_ESCALATION_ENABLED`, default off, the
+`VOICEMAIL_ENABLED` ship-dark precedent), so turning it off restores today's exact
+greeting-then-Record flow. On a missed call:
+
+1. Play the per-line greeting (section 6) inside a `<Gather numDigits="1"
+   action="…/inbound/escalate?line=…">` so the caller can press 1 while it plays.
 2. The greeting offers exactly ONE option: "leave a message after the tone, or
    press 1 to try to reach someone else."
-3. **Press 1 (escalation):** `<Dial>` the OTHER person, with a whisper so the
-   person who picks up hears "Dr. Bartender client on the line," never a confused
-   "hello?".
-   - A caller on Dallas's line (1922) who presses 1 rings Zul.
-   - A caller on Zul's line (0082) who presses 1 rings Dallas.
-   - "Simple" on-call only (the fixed other person). Dynamic on-call by
-     presence/shift is explicitly deferred (Out of scope).
-   - No answer on the escalation leg drops the caller BACK to the voicemail
-     `<Record>` so they are never stranded.
-4. **No keypress (default):** fall through to `<Record>`, exactly like today.
+3. **No keypress:** `<Gather>` falls through to `<Record>`, exactly like today.
+4. **Press 1:** Twilio requests the `<Gather action>` route,
+   `POST /api/voice/inbound/escalate` (new, fail-closed on signature). It:
+   - **Claim-guards** the escalation with a guarded state transition (the
+     lead-call bridge pattern, `voiceLeadCall.js:173-180`:
+     `UPDATE … SET escalation_status='dialing' WHERE call_sid=$1 AND
+     escalation_status IS NULL`), because Twilio delivers the action at-least-once
+     and an un-guarded retry places a SECOND billed leg. A lost claim replays the
+     current TwiML.
+   - Checks a **dedicated daily cap** (`VM_ESCALATION_DAILY_CAP`, the
+     `LEAD_CALL_DAILY_CAP` precedent) BEFORE dialing; over cap → straight to
+     `<Record>`. `VM_DAILY_CAP` counts missed calls, not escalation legs, so this
+     new billed leg needs its own bound, especially on the 1922 line where the
+     target is Zul's PH cell (an international leg reachable from a public press-1).
+   - Respects a **quiet window** per target (`VM_ESCALATION_QUIET_*`): outside the
+     target's hours (Zul is a PH VA), skip the dial and go straight to `<Record>`
+     rather than ringing a cell at 3am.
+   - `<Dial>`s the OTHER person from a strict-E.164 ENV target, never a
+     caller-supplied value (1922 press-1 → `VA_CELL`; 0082 press-1 →
+     `VM_PRIMARY_DIAL_TARGET`), with a hard `timeLimit` and a
+     `<Dial action="…/inbound/escalate-done?line=…">`.
+   - The whisper on the ANSWERING leg uses a KEY-TO-ACCEPT gate (a `<Gather>` on
+     the whispered leg: "press any key to take a Dr. Bartender client"), NOT a
+     bare `<Say>`. A bare whisper lets the other party's carrier voicemail silently
+     "answer" and return `completed`, pre-empting the fallback and stranding the
+     caller. Key-to-accept means an unattended voicemail cannot accept.
+5. **Escalate-done (no answer / not accepted):** the `<Dial action>` route returns
+   the `<Record>` so the caller lands in voicemail, never stranded.
 
-Escalation is a billed outbound leg, so it carries the same toll-fraud discipline
-as the existing bridges: a hard `timeLimit`, and it reuses the whisper + press
-mechanics already built for the lead-call bridge (`server/routes/voiceLeadCall.js`,
-`server/utils/leadCallTrigger.js`).
-
-The `<Record>` keeps its current shape (no `action` attribute; delivery hangs off
-`recordingStatusCallback`) and the two webhooks keep failing CLOSED on signature
-in every environment (`requireSignature`, no dev skip).
+The `<Record>` keeps its current shape (no `action`; delivery hangs off
+`recordingStatusCallback`). ALL voice webhooks (inbound, primary, missed,
+escalate, escalate-done, voicemail) fail CLOSED on signature in every environment.
+Dynamic on-call by presence/shift is deferred (Out of scope); v1 is the fixed
+other person.
 
 ### 4. Voicemail handling (after a message is left)
 
-The recording callback (`/inbound/voicemail`) is extended. In order:
+The recording callback (`/inbound/voicemail`) is extended. Order matters:
 
-1. **Fetch** the mp3 from Twilio (existing `fetchRecordingMp3` in
-   `server/utils/voicemail.js`, URL constructed from the account SID plus a
-   shape-validated `RecordingSid`; the body's `RecordingUrl` is never read).
-2. **Store** the mp3 in R2 (private) via `server/utils/storage.js` so it can back
-   the listen-link for the retention window. R2 is the canonical audio archive
-   now, replacing "Telegram is the archive."
-3. **Transcribe** the audio (new transcription dependency, section 9).
-4. **Summarize and tag** the transcript with an LLM (new dependency): a one-line
-   summary plus a tag from a small fixed set (`likely_lead`, `existing_client`,
-   `spam`, `other`). NO SUPPRESSION: every voicemail is delivered regardless of
-   tag. The tag is advisory so a human can eyeball it; nothing weird-but-wanted
-   is ever hidden.
-5. **Deliver per line:**
-   - **Dallas's line (1922):** an SMS (sent from the 888 for now, the only
-     approved sender; from 1922 after Phase 2) to the 312 containing the caller
-     number, the tag, the transcript, and a private listen-link (section 5).
-     Google Voice receives SMS, so it lands on his phone; confirm in testing.
-   - **Zul's line (0082):** her Telegram as today (audio inline via
-     `sendTelegramAudio`) PLUS the transcript, summary, and tag added to the
-     message. The listen-link may also be included.
-6. **Define success** exactly as the current design does (delivery confirmed on
-   an affirmative result, gated vs failed vs delivered are distinct outcomes),
-   then **delete the Twilio recording** once our R2 copy exists. Our copy, not
-   Twilio's, is what the retention window governs.
+1. **Fetch** the mp3 from Twilio (existing `fetchRecordingMp3`, URL built from the
+   account SID + a shape-validated `RecordingSid`; the body's `RecordingUrl` is
+   never read).
+2. **Empty-drop FIRST:** if `RecordingDuration < 2s` (robocall / hangup on the
+   beep), mark `empty`, delete the Twilio recording, done. This runs BEFORE any
+   store/transcribe/LLM, so a robocall never costs an R2 put + a transcription + an
+   LLM call.
+3. **Store** the mp3 in R2 (private) via `storage.uploadFile`, recording
+   `audio_key`. **R2 is now the RETRY SOURCE, not merely an archive** (see the
+   sweep note below).
+4. **Transcribe** (section 9), then **summarize + tag** with an LLM: a one-line
+   summary + a tag CLAMPED to the fixed set (`likely_lead`, `existing_client`,
+   `spam`, `other`); anything the LLM returns off-list is coerced to `other`
+   BEFORE the write, so a stray tag can never violate the `tag` CHECK and fail the
+   row. Both AI steps are FAIL-SOFT: on any error, transcript/summary/tag are left
+   NULL and delivery still goes out with the caller number + audio/link. NO
+   SUPPRESSION: every voicemail is delivered regardless of tag.
+5. **Deliver per line (keyed on `line`):**
+   - **Dallas's line (`primary`):** an SMS via `sendSMS` (NOT `sendAndLogSms`,
+     which files into the client `sms_messages` thread) to `VM_TEXT_DESTINATION`
+     (the 312) with the caller number, tag, summary, and listen-link (the full
+     transcript lives on the page, section 5, since a 5-minute transcript is a
+     multi-segment SMS GV may truncate). Sent from the 888 in Phase 1. This
+     internal alert BYPASSES the client STOP/consent suppression path, so a stray
+     STOP on the 312 can never silently drop Dallas's voicemails. If the SMS send
+     fails, fall back to an alert (email to `ADMIN_EMAIL`, or the Telegram admin
+     channel), so a silent GV/SMS drop never loses the lead.
+   - **Zul's line (`zul`):** her Telegram (audio inline via `sendTelegramAudio`) +
+     summary, tag, and listen-link, as today, plus its existing failure alerting.
+6. **Success is per-channel and explicit.** Each channel defines "delivered"
+   (Telegram `ok===true`; the SMS send accepted). Only on a confirmed delivery is
+   the row marked `delivered`. The Twilio recording is deleted after the R2 copy
+   exists (step 3), which is safe because redelivery re-fetches from R2, not Twilio
+   (next paragraph).
 
-The `voicemail_delivery` ledger (already the dedup claim, the daily-cap window,
-and the delivery record) gains the transcript, summary, tag, the R2 audio key,
-the listen token, and the purge timestamp (section 7).
+**Redelivery sweep re-points to R2 (load-bearing).** `reapUndeliveredVoicemails`
+and `deliverVoicemail` currently re-fetch from Twilio (`fetchRecordingMp3`); under
+this design an undelivered row's Twilio copy is gone, so both MUST re-fetch from R2
+via `audio_key` (else they 404 forever). The sweep's SELECT must also read `line`
+and route redelivery to the correct channel: a stuck `primary` row must re-SMS
+Dallas, never fall through to Zul's Telegram.
+
+The `voicemail_delivery` ledger gains transcript, summary, tag, `audio_key`,
+`listen_token`, `purge_at`, `audio_deleted_at`, and `line` (section 7).
 
 ### 5. The listen-link page
 
-Each voicemail gets an unguessable token (UUID). The SMS/Telegram message carries
-`{PUBLIC_SITE_URL}/vm/{token}` (or an equivalent). The page:
+Each voicemail gets an unguessable token (`gen_random_uuid()`). The message carries
+`{PUBLIC_SITE_URL}/vm/{token}`, a public client route added to `App.js` (the
+existing unknown-path `*` redirect must not swallow it). The page:
 
-- Plays the recording (an `<audio>` element sourced from a token-gated audio
-  endpoint that streams the mp3 out of R2, reusing the private-R2 streaming-proxy
-  pattern from `server/routes/blog.js` `GET /api/blog/images/:filename`, so no
-  public R2 URL is required and the signed URL never leaves the server).
-- Shows the full transcript, tag, caller, and time.
-- Has a **Delete** button that purges the audio (R2 object plus the token) on
-  demand.
+- Plays the recording via a token-gated API endpoint that looks the token up →
+  `audio_key` → streams the mp3 out of R2 (the private-R2 streaming-proxy pattern
+  from `blog.js`, but keyed by TOKEN, never a caller-supplied filename, so it can
+  never be turned into an open R2 proxy). Guard the `:token` param with
+  `requireUuidToken` (a non-UUID otherwise hits Postgres `22P02` → 500, not 404).
+- Shows summary, full transcript, tag, caller, time; has explicit loading, error,
+  unknown-token (404), and expired states.
+- **Delete:** a confirmation step, then a SOFT delete: `deleteFile` the R2 object
+  and stamp `audio_deleted_at`, but RETAIN the transcript (the business record);
+  the page then shows "recording deleted" with the transcript still visible. The
+  action is idempotent (delete on an already-purged row, or `deleteFile` on a
+  missing key, no-ops to success) and writes an audit-log line. Residual: the link
+  travels by SMS/Telegram, so anyone it is forwarded to could trigger the delete;
+  confirm + audit + soft-delete (audio only, transcript kept) bounds the blast
+  radius. If stronger control is wanted later, gate DELETE behind admin auth.
 
 Token-gated, not public: only someone the owner forwards the link to can open it.
 
-Retention: audio auto-purges **14 days** after the voicemail, unless deleted
-sooner via the button. The purge is a new sweep (folded into the existing
-VA-calling maintenance, `server/utils/vaCallingScheduler.js` /
-`server/utils/pendingCall.js` `pruneVaCallingRows`): delete the R2 object and
-clear the token/audio fields for rows past `purge_at`. After purge, the transcript
-may remain as the business record (text, low sensitivity) while the audio (higher
-sensitivity) is gone; the listen-link then shows "recording expired."
+Retention: audio auto-purges at `VM_AUDIO_RETENTION_DAYS` (default 14) unless
+deleted sooner. See section 7 for the purge-before-prune ordering that keeps R2
+from orphaning; after purge the transcript remains (text, low sensitivity) and the
+page shows "recording expired."
 
 ### 6. Per-line greeting
 
@@ -183,47 +242,71 @@ an env override per line; a `say` kill-switch back to the synthetic voice.
 
 Extend `voicemail_delivery` (idempotent `ADD COLUMN IF NOT EXISTS`):
 
-- `line` TEXT: which number received the call (`primary` / `zul`), so delivery
-  and greeting route correctly.
-- `transcript` TEXT, `summary` TEXT, `tag` TEXT (CHECK in the fixed set).
-- `audio_key` TEXT: the R2 object key for the stored mp3.
-- `listen_token` TEXT UNIQUE: the unguessable listen-link token.
-- `purge_at` TIMESTAMPTZ: when the audio auto-deletes (created_at + 14 days).
-- `audio_deleted_at` TIMESTAMPTZ: set when the R2 object is purged (manually or by
-  the sweep), so the listen page can say "expired."
+- `line` TEXT: which number received the call (`primary` / `zul`). **Backfill:**
+  every existing row predates this feature and was Zul's line, so a one-time
+  `UPDATE voicemail_delivery SET line='zul' WHERE line IS NULL` runs with the
+  migration; downstream code also treats NULL `line` as `zul` defensively.
+- `transcript` TEXT, `summary` TEXT, `tag` TEXT with `CHECK (tag IN
+  ('likely_lead','existing_client','spam','other') OR tag IS NULL)`; the writer
+  clamps off-list LLM output before insert (section 4).
+- `audio_key` TEXT (R2 object key), `listen_token` TEXT UNIQUE
+  (`gen_random_uuid()`), `purge_at` TIMESTAMPTZ (created_at +
+  `VM_AUDIO_RETENTION_DAYS`), `audio_deleted_at` TIMESTAMPTZ.
 
-The prune predicate from the current design still governs ROW lifetime; the new
-purge governs the AUDIO OBJECT lifetime (a shorter, 14-day clock).
+**Two clocks, correctly ordered.** The AUDIO purge (14 days) must run and succeed
+BEFORE the ROW prune (`RETENTION_DAYS`, ~30 days) can remove the row, or the row
+(the only pointer to the R2 object) disappears and the audio orphans in R2 past
+retention. So: (a) the audio-purge sweep `deleteFile`s R2, THEN stamps
+`audio_deleted_at`, and does NOT stamp it if `deleteFile` errors (stays
+retryable); (b) the existing row-prune (`pruneVaCallingRows`) gains an
+`AND (audio_key IS NULL OR audio_deleted_at IS NOT NULL)` guard so it never
+deletes a row whose R2 audio still exists. The prior "recording still in the
+Twilio console" retention rationale for `recorded`/`failed` rows no longer holds
+under the R2-canonical model and is replaced by this audio-key guard.
 
 ### 8. Guardrails and security
 
-- Both voicemail webhooks fail CLOSED on signature in every environment.
-- No caller-supplied value reaches an outbound request or a URL (media URL
-  constructed from the account SID plus a validated `RecordingSid`).
-- The escalation `<Dial>` carries a hard `timeLimit` and reuses the toll-fraud
-  discipline of the existing bridges; per-CallSid rate limiting on the webhooks
-  stays.
-- The listen-link is token-gated (unguessable UUID), audio streams through a
-  server proxy (no public R2 URL), and audio auto-purges at 14 days with a manual
-  delete. Client-voice PII is not hoarded.
-- Transcripts and summaries contain client PII; they live in our DB and in the
-  per-line delivery channel only, never in logs (last-4 redaction stays).
-- `970` is never placed in any client-facing surface.
+- ALL voice webhooks (inbound, the new 1922 primary, missed, escalate,
+  escalate-done, voicemail) fail CLOSED on signature in every environment
+  (`requireSignature`, no dev skip).
+- No caller-supplied value reaches an outbound request, a URL, or a `<Dial>`
+  attribute: the media URL is built from the account SID + a validated
+  `RecordingSid`; escalation targets are strict-E.164 env vars only; `line` is a
+  fixed enum, not free text.
+- The escalation is a NEW billed leg: claim-guarded against Twilio's at-least-once
+  retry, bounded by `VM_ESCALATION_DAILY_CAP` + a hard `timeLimit`, quiet-windowed,
+  and behind `VM_ESCALATION_ENABLED` (default off). The key-to-accept whisper stops
+  a carrier voicemail from silently accepting the leg.
+- The listen-link + audio endpoint are token-gated (unguessable UUID,
+  `requireUuidToken`), keyed by token → `audio_key` (never a caller filename);
+  audio auto-purges at 14 days; DELETE is confirmed, soft (audio only), and
+  audited. Client-voice PII is not hoarded on OUR side.
+- Client PII egress: audio + transcript go to a third-party transcription/LLM
+  provider. Use a no-training / short-retention tier and note it in the PII record.
+- Transcripts/summaries are PII: in our DB + the per-line delivery channel only,
+  never in logs (last-4 redaction stays). `970` never appears on a client surface.
+- Retention caveat: Zul's inline Telegram audio lives under Telegram's retention,
+  which can outlast our 14-day purge. Our 14-day guarantee governs R2 (the
+  authoritative store + the listen-link). A strict uniform purge would require
+  switching Zul's line to link-only (no inline Telegram audio) — deferred decision,
+  not built.
 
 ### 9. New dependencies
 
-- **Transcription:** none exists today. A speech-to-text provider is required
-  (candidate: OpenAI Whisper API, or Deepgram; low cost per minute). New API key.
-- **Summary and tag:** an LLM call (Anthropic Claude, the house model). New API
-  key and client (the server has no Anthropic integration yet; see the
-  `claude-api` reference for model IDs and usage).
-- **R2 delete:** `server/utils/storage.js` currently exports only `uploadFile`
-  and `getSignedUrl`; add a `deleteFile` for the purge.
-
-Both AI calls happen off the caller's critical path (the call is already over when
-the recording callback fires), so latency is not caller-facing. Both must fail
-soft: a transcription or summary failure still delivers the audio plus caller
-number (the message is never lost because the AI hiccuped).
+- **Transcription:** none exists today. A speech-to-text provider (candidate:
+  OpenAI Whisper API or Deepgram) behind a named env key. Whisper can HALLUCINATE
+  text on silent/non-English audio; guard with a duration/confidence floor so a
+  fabricated summary is not presented as fact (still delivered, under no-suppress).
+- **Summary + tag:** an LLM call (Anthropic Claude, the house model; the server
+  has no Anthropic integration yet — see the `claude-api` reference). Named env key.
+- Both AI calls run OFF the caller's critical path (the call is over when the
+  recording callback fires) and are FAIL-SOFT (section 4) and behind
+  `VM_AI_ENABLED` — a redeploy-free kill switch for a provider outage or cost
+  spike, gated OFF in non-prod so dev never spends against the shared DB.
+- **R2:** add `deleteFile` to `server/utils/storage.js` (it exports only
+  `uploadFile` / `getSignedUrl` today), and add `.mp3 → audio/mpeg` to its
+  `MIME_TYPES` map (an unmapped `.mp3` stores as `application/octet-stream`, which
+  the `<audio>` element will not play).
 
 ## Environment variables
 
@@ -234,7 +317,11 @@ number (the message is never lost because the AI hiccuped).
 | `VM_TEXT_DESTINATION` (new) | The 312, where Dallas's line VM transcripts are texted. |
 | `VM_PRIMARY_DIAL_TARGET` (new) | What 1922 inbound dials to reach Dallas (the 312, or his 970 if GV interception forces the fallback). |
 | `VM_GREETING_URL` (existing) | Extended to per-line greeting selection. |
-| Transcription + LLM API keys (new) | For section 9. |
+| `VM_ESCALATION_ENABLED` (new) | Kill switch for the press-1 escalation; default OFF (ship dark). Off = today's greeting-then-Record flow, byte-identical. |
+| `VM_ESCALATION_DAILY_CAP` (new) | Max escalation legs per rolling 24h — toll-fraud bound on the new billed leg (incl. the international PH leg). |
+| `VM_ESCALATION_QUIET_*` (new) | Per-target quiet window; outside it, skip the escalation dial and go straight to `<Record>` (e.g. don't ring Zul's PH cell at 3am). |
+| `VM_AI_ENABLED` (new) | Kill switch for transcription + LLM tagging; gated OFF in non-prod. Off = deliver caller number + audio/link, no transcript/tag. |
+| `VM_TRANSCRIBE_API_KEY` / `ANTHROPIC_API_KEY` (new) | Named keys for the transcription provider and the LLM summary/tag. Never hardcoded; in `.env.example` + CLAUDE.md. |
 | `VM_AUDIO_RETENTION_DAYS` (new) | Default 14. |
 
 ## Reuses (build on what exists, do not reinvent)
@@ -245,10 +332,14 @@ number (the message is never lost because the AI hiccuped).
   `server/utils/leadCallTrigger.js`.
 - Telegram delivery: `server/utils/telegram.js` (`sendTelegramAudio`,
   `sendTelegramMessage`).
-- SMS send: `server/utils/sms.js` (`sendAndLogSms`).
-- Private-R2 streaming proxy pattern for the audio endpoint:
-  `server/routes/blog.js`.
-- R2 storage: `server/utils/storage.js` (add `deleteFile`).
+- SMS send: `server/utils/sms.js` — `sendAndLogSms` for client texts, but
+  `sendSMS` DIRECTLY (no client-thread logging, no consent suppression) for the
+  internal VM-transcript alert to the 312.
+- Private-R2 streaming proxy pattern for the audio endpoint (keyed by TOKEN, not a
+  filename): `server/routes/blog.js`.
+- R2 storage: `server/utils/storage.js` (add `deleteFile`; add `.mp3` to
+  `MIME_TYPES`).
+- UUID token guard for `/vm/:token`: `server/utils/tokens.js` `requireUuidToken`.
 - Retention sweep host: `server/utils/vaCallingScheduler.js` /
   `server/utils/pendingCall.js`.
 - Public token-gated route convention (drink plans, proposals) for `/vm/:token`.
@@ -279,14 +370,26 @@ Sequence, shipping dark and verifying with live calls at each gate (the
    1922, cut client texts over, and retire the 888. Not started until that
    approval exists; the 224 numbers cannot send client SMS today, which is why
    Phase 1 keeps the 888.
-5. **Website:** point the voice "call us" (`COMPANY_PHONE_TEL`) to 1922 now; any
-   "text us" number stays the 888 until Phase 2.
+5. **Website + phone constants (cross-cutting):** `COMPANY_PHONE_TEL` also backs
+   client "Text us" links (`Completion.js`, `ApplicationStatus.js`) and the DISPLAY
+   constant `COMPANY_PHONE` shows in several client surfaces (`ProposalView.js`,
+   etc.). Point the VOICE "call us" to 1922 now, keep "text us" on the 888 until
+   Phase 2, and update the displayed number to match wherever it changes (CLAUDE.md
+   phone-change cross-cutting rule). Enumerate every consumer of both constants.
 6. **Greetings:** record Dallas's greeting; keep Zul's.
-7. **Live tests:** primary inbound rings Dallas and misses to smart VM (proves GV
-   does not intercept); press-1 escalation reaches the other person with a
-   whisper and falls back to VM on no-answer; a real voicemail transcribes, tags,
-   texts the 312 with a working listen-link, and the delete button + 14-day purge
-   behave.
+7. **Docs (mandatory):** README folder tree + ARCHITECTURE route table for the new
+   `/vm` route and the escalate routes and the transcription util; CLAUDE.md +
+   README env tables for the new vars; CLAUDE.md Tech Stack + ARCHITECTURE
+   Third-Party Integrations for the first-ever transcription + Anthropic
+   integrations.
+8. **Live tests:** primary inbound rings Dallas and misses to smart VM (proves the
+   target's carrier/GV voicemail does NOT intercept); press-1 escalation
+   claim-guards a double callback, respects the cap + quiet window, requires
+   key-to-accept (an unanswered target's voicemail must NOT accept), and falls back
+   to `<Record>` on no-answer; a voicemail empty-drops under 2s, otherwise
+   transcribes/tags/clamps, SMSes the 312 with a working listen-link, and the
+   soft-delete + 14-day purge (audio gone, transcript kept, no R2 orphan) behave;
+   an undelivered row redelivers from R2 to the correct channel.
 
 ## Out of scope / deferred
 
@@ -325,3 +428,10 @@ Sequence, shipping dark and verifying with live calls at each gate (the
 - **Phase 2 gate:** file the 224 SMS/A2P 10DLC registration. Phase 2 (moving
   client SMS to 1922 and retiring the 888) cannot start until it is APPROVED. Not
   yet filed as of 2026-07-26.
+- **Zul retention decision (deferred):** accept that Zul's inline Telegram audio
+  outlives the 14-day R2 purge (current plan), OR switch her line to link-only for
+  a strict uniform purge. Decide before Phase 1 ships if the uniform guarantee is
+  required.
+- **Escalation target for the 0082 line:** press-1 on Zul's line rings
+  `VM_PRIMARY_DIAL_TARGET` (Dallas). Confirm that is the desired "someone else" for
+  a caller who reached Zul (vs a different on-call), since v1 is a fixed target.
