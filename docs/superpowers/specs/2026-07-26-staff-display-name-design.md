@@ -50,12 +50,16 @@ name as Joey, they are Joey K. forever, and nobody infers a Joseph.
 Every staff name shown as an identifier carries that last initial. There are no
 mononyms. Nobody appears as "Cher."
 
-**Instructions are the enforcement.** There is no approval queue, no review
-state, and no heuristic sorting nicknames into legitimate and suspicious. Those
-were compensation for copy that invited the wrong answer. Fix the copy and the
-answers come back right.
+**Instructions are the enforcement.** There is no approval gate and no heuristic
+sorting nicknames into legitimate and suspicious. Those were compensation for
+copy that invited the wrong answer. Fix the copy and the answers come back right.
 
-## 3. Copy
+**Admin sees every name that comes in.** Not to approve it, and not before it
+goes live. Visibility exists so that if a LumpyIceCream ever gets through, Dallas
+notices it and takes it up with that person directly, which is a conversation
+between two humans and not a workflow state on a row.
+
+## 3. Instructions and visibility
 
 This is the substance of the change. Everything below it is plumbing.
 
@@ -124,14 +128,48 @@ Nevver.
 Enforced client-side for immediate feedback and in the server validators for
 `contractor.js`, `me.js`, `staffPortal.js` and `admin/users.js`.
 
+### 3.5 Admin visibility
+
+Every preferred name that is set or changed surfaces to Dallas once. The name is
+live from the moment it is typed; this is a notice, never a hold.
+
+`preferred_name_reviewed_at TIMESTAMPTZ` on `contractor_profiles`, NULL meaning
+"not looked at yet." Set to NULL by `refreshDisplayName` whenever the preferred
+name actually changes value, and stamped when Dallas dismisses the notice.
+**`display_name` never reads this column.**
+
+Surface: a `name-notice` item type in the existing Needs Attention staffing tab
+(`client/src/pages/admin/overview/queueItems.js`, `buildStaffingItems`), reading
+"Nevver Sayles goes by TwistidTreets", targeting `/staffing/users/:id`.
+`queueItemHref` in `NeedsYouStrip.js` gains a `user` target. Priority `info`, the
+same weight as the new-applications rollup, because in the ordinary case this is
+a pleasant fact rather than a problem.
+
+One action, "Got it", which stamps the timestamp and nothing else. There is no
+reject action: the remedy for a bad name is to talk to the person, and if that
+conversation ends with a change, it gets made in the profile like any other edit.
+
+Volume is a few per month at current hiring pace, so every change surfaces and no
+filtering is needed to keep the queue readable.
+
+Supporting this, the admin user detail Overview tab
+(`client/src/pages/admin/userDetail/tabs/OverviewTab.js`) shows the legal name
+alongside the preferred name, read-only. When Dallas opens Nevver's record to
+have that conversation, both names are in front of him.
+
 ## 4. Data model
 
-One new column on `contractor_profiles`:
+Two new columns on `contractor_profiles`:
 
 ```sql
 ALTER TABLE contractor_profiles
   ADD COLUMN IF NOT EXISTS display_name VARCHAR(255);
+ALTER TABLE contractor_profiles
+  ADD COLUMN IF NOT EXISTS preferred_name_reviewed_at TIMESTAMPTZ;
 ```
+
+`preferred_name_reviewed_at` drives §3.5 and nothing else. No read path for a
+name consults it.
 
 `display_name` is maintained, not computed at read time. Every read site becomes
 a mechanical swap from `COALESCE(cp.preferred_name, u.email)` to
@@ -199,8 +237,12 @@ Worked examples from live data:
 
 ### 4.2 Refresh points
 
-`refreshDisplayName(userId, client)` recomputes and writes `display_name`. Called
-from every place a preferred name or a legal name can change:
+`refreshDisplayName(userId, client)` recomputes and writes `display_name`, and
+clears `preferred_name_reviewed_at` when the preferred name changed value.
+Comparing before and after matters: an admin editing a phone number, or an
+agreement arriving and changing only the initial, must not re-raise a notice for
+a name nobody touched. Called from every place a preferred name or a legal name
+can change:
 
 - `server/routes/contractor.js` (step 4 save)
 - `server/routes/me.js` (staff portal PATCH)
@@ -265,10 +307,15 @@ display concern and lives entirely in `display_name`, so `Tashea Coates` keeps
 her stored value and simply renders as `Tashea C.` This removes any question of
 the backfill assuming something about a person's name.
 
-The backfill therefore does two things only:
+The backfill therefore does three things only:
 
 1. Trim leading and trailing whitespace on the ~8 affected rows.
 2. Populate `display_name` for every existing row.
+3. Stamp `preferred_name_reviewed_at = NOW()` on every existing row, so the
+   Needs Attention queue starts empty rather than opening on day one with sixty
+   notices about names that have been fine for a year. The four rows below are
+   the day-one work, and they are a hand-list rather than a queue because two of
+   them are not preferred-name problems at all.
 
 Everyone currently on the roster keeps the name they gave us. Joey renders
 `Joey K.`, Mikey renders `Mikey R.`, Nikki renders `Nikki L.` Nothing is demoted.
@@ -300,6 +347,11 @@ Reynolds (51, 62) each hold duplicate accounts.
   case, `Billie Jean`, and `veronica martinez`.
 - A test asserting the legal name never reaches the output except as one
   initial, so the Joey-is-really-Joseph failure mode cannot regress in.
+- A test asserting `display_name` is identical whether
+  `preferred_name_reviewed_at` is NULL or set, so the notice can never become a
+  gate by accident.
+- Route tests for the notice: a preferred-name change clears the timestamp, a
+  phone-only edit does not, and "Got it" stamps it.
 - Validator tests for §3.4, asserting `McKenna`, `DeShawn`, `O'Brien`,
   `Mary-Kate` and `D.J.` all pass and `Miss Taylor`, `Nicholas or Nick`,
   `Bar2Go` and a 30-character string all fail.
@@ -316,7 +368,9 @@ Reynolds (51, 62) each hold duplicate accounts.
 
 ## 8. Not doing
 
-- No approval queue, no review state, no approve or reject endpoints.
+- No approval gate. §3.5 is visibility only: a name is live the moment it is
+  typed, and the notice has one action, "Got it".
+- No reject action. The remedy for a bad name is a conversation.
 - No heuristic relating a preferred name to a legal name.
 - No camelCase or profanity detection.
 - No script rewriting a stored preferred name.
