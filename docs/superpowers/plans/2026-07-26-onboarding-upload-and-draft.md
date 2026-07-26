@@ -12,10 +12,12 @@ lanes:
       - client/src/utils/uploadLimits.js
       - client/src/utils/uploadLimits.test.js
       - client/src/utils/downscaleImage.js
+      - client/src/utils/downscaleImage.test.js
       - client/src/components/FileUpload.js
       - client/src/components/FileUpload.test.js
       - client/src/pages/Application.js
       - client/src/pages/ContractorProfile.js
+      - scripts/sensitive-paths.txt
       - README.md
       - ARCHITECTURE.md
     depends_on: []
@@ -90,8 +92,8 @@ parallelism: "Strictly serial. Every lane after the first shares at least one fi
 - Client verification is `CI=true npx react-scripts build` from `client/`, because `npm run lint` does not cover client code.
 - **Jest resets mocks between tests.** CRA sets `resetMocks: true` (`react-scripts/scripts/utils/createJestConfig.js:68`) and `client/package.json` does not override it, so a `jest.mock(...)` module factory's implementation is stripped before every test. Any mocked module a test relies on must be re-armed in `beforeEach` with `mockImplementation`, not merely `clearAllMocks`.
 - **The dev server does not auto-reload.** It runs as plain `node server/index.js` on port 5000, Claude-managed. Restart it after any server edit before curling.
-- File-size discipline: soft cap 700 lines (warn only), hard cap 1000 (blocks growth). `client/src/pages/Application.js` is 685 lines today and is touched by three lanes: roughly +2 (upload-honesty), +29 (onboarding-drafts), +3 (submit-gate-relax), landing near 714. That crosses the soft cap into YELLOW during **onboarding-drafts**, which warns and never blocks. The hard cap is not in play. Do not attribute the crossing to the last lane to touch the file.
-- **Documentation is not optional.** Per CLAUDE.md's mandatory-docs table, each lane updates `README.md` (folder tree) and `ARCHITECTURE.md` (routes, schema) for what it adds. The specific obligations are listed in each lane's final task.
+- File-size discipline: soft cap 700 lines (warn only), hard cap 1000 (blocks growth). `client/src/pages/Application.js` is 685 lines today and is touched by three lanes: roughly +2 (upload-honesty), +29 (onboarding-drafts), +3 (submit-gate-relax), landing near 719. It crosses the soft cap into YELLOW during **onboarding-drafts**, which warns and never blocks. The hard cap is not in play. Do not attribute the crossing to the last lane to touch the file.
+- **Documentation is not optional.** Per CLAUDE.md's mandatory-docs table, every lane that ADDS a file, route, or table updates `README.md` (folder tree) and `ARCHITECTURE.md` (routes, schema); the obligation is a named task at the end of those lanes (A7, B5, C3 Step 4). `submit-gate-relax` adds nothing and carries no docs task by design, but it does change the validation contract of a documented route, so its ARCHITECTURE note lands in C3 Step 4 alongside the rest.
 
 ---
 
@@ -276,10 +278,12 @@ Apply the identical change in `server/routes/contractor.js`: same grep, swap the
 
 ```bash
 cd /home/drbartender/projects/os
-grep -n "isValidUpload\|isValidOnboardingDocument" server/routes/application.js server/routes/contractor.js
+grep -n "isValid.*(file)" server/routes/application.js server/routes/contractor.js
 ```
 
-Expected: `isValidOnboardingDocument` appears at exactly **four** call sites (resume and basset in `application.js`, alcohol_certification and resume in `contractor.js`). `isValidUpload` still appears at exactly **two** call sites, both of them the `headshot` block. Read the surrounding lines to confirm which block each one sits in rather than trusting the count alone.
+The `isValid.*(file)` pattern matters: a bare name grep also matches the two `require` destructuring lines, which after Step 5 carry **both** identifiers, so the counts read 6 and 4 and look like a failure.
+
+Expected: exactly **four** `isValidOnboardingDocument(file)` call sites (resume and basset in `application.js`, alcohol_certification and resume in `contractor.js`) and exactly **two** `isValidUpload(file)` call sites. Then read the surrounding lines and confirm both remaining `isValidUpload` calls sit in a `headshot` block. The count alone cannot tell you which field each guards, and swapping the headshot is the dangerous mistake.
 
 - [ ] **Step 7: Run the suites these routes reach**
 
@@ -547,6 +551,7 @@ git commit -m "feat(uploads): shared client upload limit and type check"
 
 **Files:**
 - Create: `client/src/utils/downscaleImage.js`
+- Test: `client/src/utils/downscaleImage.test.js`
 
 **Interfaces:**
 - Consumes: `DOWNSCALE_THRESHOLD_BYTES`, `MAX_IMAGE_EDGE`, `IMAGE_QUALITY`, `isImageName` from `./uploadLimits`.
@@ -883,10 +888,12 @@ Touch nothing in `client/src/pages/PaydayProtocols.js`. Its `name="w9"` field in
 
 ```bash
 cd /home/drbartender/projects/os
-grep -n 'name="resume"\|name="headshot"\|name="basset"\|name="alcohol_certification"\|name="w9"' -B 2 -A 2 \
+grep -n 'name="resume"\|name="headshot"\|name="basset"\|name="alcohol_certification"\|name="w9"' -A 6 \
   client/src/pages/Application.js client/src/pages/ContractorProfile.js client/src/pages/PaydayProtocols.js \
   | grep -E 'name=|kind='
 ```
+
+Add `kind="document"` **immediately after the `name` prop** so it stays inside this window. A `FileUpload` block runs about six lines (the resume block is `Application.js:616-622`), so `-A 6` covers it; a narrower window silently under-counts.
 
 Expected: exactly four `kind="document"` occurrences. Two in `Application.js` (`resume`, `basset`) and two in `ContractorProfile.js` (`alcohol_certification`, `resume`). Zero on either `headshot` and zero on `w9`.
 
@@ -970,8 +977,12 @@ The dev server holds port 5000 and does not auto-reload, so restart it first. Av
 
 ```bash
 cd /home/drbartender/projects/os
-lsof -ti:5000 | xargs -r kill
-# restart the dev server the usual way, then wait for it:
+lsof -ti:5000 -sTCP:LISTEN | xargs -r kill   # -sTCP:LISTEN matters: a bare
+                                             # lsof -ti:5000 also returns Chrome's
+                                             # network service in CLOSE_WAIT and
+                                             # would kill it
+npm run dev > /tmp/devserver.log 2>&1 &   # or however this session starts it
+# then wait for it:
 until curl -sf -o /dev/null http://localhost:5000/api/health; do :; done
 
 printf '%%PDF-1.4\n' > /tmp/big.pdf && head -c 12000000 /dev/urandom >> /tmp/big.pdf
@@ -982,7 +993,9 @@ echo "over limit:  $(curl -s -o /tmp/limit.json -w '%{http_code}' -X POST http:/
 cat /tmp/limit.json
 ```
 
-Expected: the small file returns **401** (it got past `fileUpload` and was refused by `auth`, which is the correct proof that the limit did not fire). The 12MB file returns **413** with a JSON body naming the limit in MB. Then confirm a `upload_limit_exceeded` event arrived in Sentry, which is the whole point of the task.
+Expected: the small file returns **401** (it got past `fileUpload` and was refused by `auth`, which is the correct proof that the limit did not fire). The 12MB file returns **413** with a JSON body naming the limit in MB.
+
+**Do not expect a Sentry event locally.** `.env` on this box has no `SENTRY_DSN_SERVER`, and `server/index.js:4` gates `Sentry.init` on it, so `captureMessage` is a silent no-op in development. The HTTP assertions above are the local gate. Confirm the capture itself in the Sentry UI after deploy, searching for `upload_limit_exceeded`, and expect nothing until a real user trips the limit.
 
 - [ ] **Step 3: Commit**
 
@@ -993,7 +1006,55 @@ git commit -m "feat(uploads): report limit-exceeded uploads to Sentry"
 
 ---
 
-### Task A6: Document the new upload surface
+### Task A6: List the upload and gate files as sensitive paths
+
+**This is not bookkeeping.** CLAUDE.md drives the push-time full fleet, conflict escalation, and auto-pull disqualification off `scripts/sensitive-paths.txt`, **not** off a plan's front-matter. Verified: `node scripts/sensitive-match.js` currently matches nothing in `upload-honesty` or `submit-gate-relax`. So without this task, the lane that widens a file-upload allowlist and the lane that removes a server-side validation gate both scale to a *light look* at push, whatever their front-matter claims.
+
+That file already carries the precedent, twice. `server/routes/payment.js` was added because "a public register + one POST here was a live self-promotion hole for months, and the change that closed it matched NO glob on this list, so an auth-perimeter fix scaled to a light look." The `drinkPlans` split entry states the rule outright: **sensitivity follows the code, not the filename it used to live in.**
+
+**Files:**
+- Modify: `scripts/sensitive-paths.txt`
+
+- [ ] **Step 1: Add the entries**
+
+Append, matching the file's existing commented style:
+
+```
+# Upload perimeter (2026-07-26, onboarding-upload plan). fileValidation.js is the
+# magic-bytes allowlist every upload route trusts, and this batch widens it to admit
+# OLE and zip containers (DOC/DOCX) for onboarding documents. application.js and
+# contractor.js are the two routes that call the widened validator, and application.js
+# additionally owns the submit-time file gate that this batch makes conditional on
+# pre_hired. Removing a server-side validation gate is the same class as the
+# payment.js self-promotion hole listed above: it matched no glob here, so it would
+# have scaled to a light look at push.
+server/utils/fileValidation.js
+server/routes/application.js
+server/routes/contractor.js
+# Global upload middleware: the size limit and its 413/abort behavior apply to EVERY
+# upload route in the app, so a change here has app-wide blast radius.
+server/index.js
+```
+
+- [ ] **Step 2: Verify the matcher now fires**
+
+```bash
+cd /home/drbartender/projects/os
+node scripts/sensitive-match.js server/utils/fileValidation.js server/routes/application.js server/routes/contractor.js server/index.js
+```
+
+Expected: all four match. Before this task the same command returns nothing, which is the whole point. If `sensitive-match.js` takes different arguments, read its usage and adapt; the assertion is that these four paths are now recognised.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add scripts/sensitive-paths.txt
+git commit -m "chore(review): list the upload perimeter and submit gate as sensitive paths"
+```
+
+---
+
+### Task A7: Document the new upload surface
 
 Per CLAUDE.md's mandatory-docs table, new util files land in the README folder tree.
 
@@ -1003,7 +1064,17 @@ In `README.md`, add to the folder-structure tree: `client/src/utils/uploadLimits
 
 In `ARCHITECTURE.md`, note in the file-upload section that onboarding documents (resume, alcohol certification) validate through `isValidOnboardingDocument`, which additionally accepts HEIC, DOC and DOCX, while every other upload keeps the narrow `isValidUpload`.
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Verify**
+
+```bash
+cd /home/drbartender/projects/os
+grep -n "uploadLimits\|downscaleImage" README.md
+grep -n "isValidOnboardingDocument" ARCHITECTURE.md
+```
+
+Expected: each grep returns at least one line. The pre-commit hook warns on missing doc updates but does not block, so this is the only thing that catches a skipped edit.
+
+- [ ] **Step 3: Commit**
 
 ```bash
 git add README.md ARCHITECTURE.md
@@ -1518,13 +1589,23 @@ it('clearDraft deletes server side', async () => {
 });
 
 it('a failed save is swallowed and never surfaces to the user', async () => {
+  // Assert on the rejection itself, not on the rendered output. The harness has
+  // no error surface, so checking that the city still reads "Chicago" would pass
+  // whether the hook swallowed the rejection or let it escape.
+  const onUnhandled = jest.fn();
+  process.on('unhandledRejection', onUnhandled);
+
   api.get.mockResolvedValue({ data: { data: null } });
   api.put.mockRejectedValue({ message: 'Network error. Check your connection.' });
   render(<Harness />);
   await waitFor(() => expect(screen.getByTestId('ready')).toHaveTextContent('true'));
   act(() => { screen.getByText('type').click(); });
   await act(async () => { jest.advanceTimersByTime(1500); });
+
+  expect(api.put).toHaveBeenCalled();          // it really did try
+  expect(onUnhandled).not.toHaveBeenCalled();  // and the failure went nowhere
   expect(screen.getByTestId('city')).toHaveTextContent('Chicago');
+  process.off('unhandledRejection', onUnhandled);
 });
 ```
 
@@ -1738,7 +1819,7 @@ Expected: build succeeds.
 
 Run: `cd /home/drbartender/projects/os && wc -l client/src/pages/Application.js client/src/pages/ContractorProfile.js`
 
-Expected: `Application.js` lands near **714** (685 before this plan, roughly +2 from `upload-honesty`, +27 here). **It crosses the 700 soft cap in THIS lane**, which warns and never blocks. If it exceeds 1000 something has gone badly wrong.
+Expected: `Application.js` lands near **716** at the end of this lane (685 before the plan, roughly +2 from `upload-honesty`, +29 here), and near **719** once `submit-gate-relax` adds its notice. **It crosses the 700 soft cap in THIS lane**, which warns and never blocks. If it exceeds 1000 something has gone badly wrong.
 
 Do not use `check-file-size.js --all | grep` for this: that command prints only RED and YELLOW rows, so a file under the cap produces no output and a non-zero exit, and the check cannot distinguish "fine" from "grep found nothing". `wc -l` gives a number you can actually compare.
 
@@ -1766,7 +1847,17 @@ In `README.md`, add `client/src/hooks/useFormDraft.js` to the folder-structure t
 
 In `ARCHITECTURE.md`, add `onboarding_drafts` to the Database Schema section (columns, the `UNIQUE (user_id, form_key)` constraint, and the note that `payday_protocols` is deliberately excluded because it carries SSN and bank details that are encrypted at rest), and add the three routes to the API route table: `GET`, `PUT` and `DELETE /api/progress/draft/:formKey`.
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Verify**
+
+```bash
+cd /home/drbartender/projects/os
+grep -n "useFormDraft" README.md
+grep -n "onboarding_drafts\|progress/draft" ARCHITECTURE.md
+```
+
+Expected: each grep returns at least one line.
+
+- [ ] **Step 3: Commit**
 
 ```bash
 git add README.md ARCHITECTURE.md
@@ -1777,11 +1868,11 @@ git commit -m "docs: record onboarding_drafts and the draft endpoints"
 
 ## Lane C: Files stop blocking submit
 
-**Three lanes touch `client/src/pages/Application.js`** (`upload-honesty` adds `kind`, `onboarding-drafts` adds the draft snapshot, `submit-gate-relax` removes the file rules), and two touch `ContractorProfile.js` and `server/routes/progress.js`. **Run all four strictly in the front-matter order, never as parallel worktrees.**
+**Three lanes touch `client/src/pages/Application.js`** (`upload-honesty` adds `kind`, `onboarding-drafts` adds the draft snapshot, `submit-gate-relax` removes the file rules (C4)), and two touch `ContractorProfile.js` and `server/routes/progress.js`. **Run all four strictly in the front-matter order, never as parallel worktrees.**
 
 C1 to C3 are the `document-visibility` lane; C4 is `submit-gate-relax` on its own. Keeping the gate removal separate is deliberate: a squash merge would otherwise bury it in the same commit as the alert it depends on, and it is the one change here that might warrant reverting alone.
 
-**Order inside Lane C is load-bearing.** The safety nets get built before the guard comes down. C3 is the task that lets a recruit submit with documents missing; C1 and C2 are what make that visible. C1 declares no dependency on either sibling, so this ordering costs nothing.
+**Order inside Lane C is load-bearing.** The safety nets get built before the guard comes down. C4 is the task that lets a recruit submit with documents missing; C1 to C3 are what make that visible. C1 declares no dependency on either sibling, so this ordering costs nothing.
 
 ### Two different questions, deliberately scoped differently
 
@@ -1806,7 +1897,7 @@ The resume generates all of the volume and none of the risk: every one of the 50
 
 So the admin alert is scoped to the certification, among exactly the statuses `server/routes/shifts.approval.js:233` uses to gate assignment. Not a hand-picked list: the same one the assignment code enforces, so the alert covers precisely the population that can be put in front of a client.
 
-That scoping also closes a gap by construction. An ordinary applicant becomes `applied` on submit (`server/routes/application.js:278`), and C3 removes their file gate too. Tying the alert to the assignment gate means they are correctly absent from the compliance alert (they cannot be staffed) while still being told what they owe on their own page.
+That scoping also closes a gap by construction. An ordinary applicant becomes `applied` on submit (`server/routes/application.js:278`), and C4 keeps their file gate in place precisely because they have no way back in. They are correctly absent from the compliance alert (they cannot be staffed), and they never reach the owes-documents state in the first place.
 
 ### Task C1: The shared predicate
 
@@ -1899,11 +1990,21 @@ before(async () => {
     `INSERT INTO shift_requests (shift_id, user_id, position, status) VALUES ($1, $2, 'Bartender', 'approved')`,
     [shiftId, ids.riskBooked]);
 
+  // STAFFABLE, certified, but MISSING A RESUME. The fixture that makes the
+  // certification-only scoping falsifiable: without it, widening the predicate
+  // back to (CERT_MISSING OR RESUME_MISSING) passes every other test in this
+  // file while re-introducing the 50-row blowup on production.
+  ids.resumeGapOnly = await mkUser('resumegap', 'approved');
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, preferred_name, alcohol_certification_file_url)
+     VALUES ($1, 'Resume Gap', '/files/c.pdf')`, [ids.resumeGapOnly]);
+
   // Uncertified but NOT staffable: mid-onboarding, cannot be assigned.
   ids.notYet = await mkUser('notyet', 'in_progress');
 
-  // Uncertified and 'applied'. C3 removes their file gate, so they must be told
-  // what they owe, but they cannot be staffed and must stay out of the alert.
+  // Uncertified and 'applied'. C4 keeps this cohort's submit gate, so they
+  // cannot normally reach a fileless state; fixtured anyway to pin that they
+  // stay OUT of the staffable alert whatever their documents look like.
   ids.applied = await mkUser('applied', 'applied');
   await mkApplication(ids.applied, 'Applied Person');
 
@@ -1937,7 +2038,9 @@ test('a partially complete user owes only what is missing', async () => {
 });
 
 test('an applicant is told what they owe even though they cannot be staffed', async () => {
-  // C3 removes their file gate, so this MUST NOT be empty.
+  // Informational only: C4 keeps this cohort's file gate, so in practice they
+  // cannot reach a fileless 'applied' state. Asserted so the broad status set
+  // stays deliberate rather than accidental.
   assert.deepEqual(await outstandingFor(ids.applied), ['resume', 'alcohol certification']);
 });
 
@@ -1963,9 +2066,19 @@ test('the alert excludes people who cannot be staffed', async () => {
 });
 
 test('the alert ignores a missing resume', async () => {
-  // viaApp has both; riskIdle has a resume but no cert; a resume-only gap is not an alert.
+  // THE scoping test. resumeGapOnly is staffable and certified but has no resume.
+  // If the predicate ever widens to (CERT_MISSING OR RESUME_MISSING) this is the
+  // only assertion in the file that fails, and it is what stops the 50-row
+  // blowup from silently returning.
   const listed = (await listUncertifiedStaffable()).map(r => r.user_id);
+  assert.equal(listed.includes(ids.resumeGapOnly), false,
+    'a resume gap alone is not a compliance alert; the predicate has widened');
   assert.equal(listed.includes(ids.viaApp), false);
+});
+
+test('a resume gap still shows on that person own to-do', async () => {
+  // The other half of the split: the recruit is still told, the admin is not alerted.
+  assert.deepEqual(await outstandingFor(ids.resumeGapOnly), ['resume']);
 });
 
 test('a booked worker carries their next shift, an idle one carries null', async () => {
@@ -2020,8 +2133,11 @@ const { pool } = require('../db');
 // exactly the people this exists for: direct hires who never completed the
 // application. A missing row means missing documents, not an absent person.
 
-// Anyone still moving through onboarding. Includes 'applied' and 'interviewing'
-// because C3 removed the file gate for them too, so they must still be TOLD.
+// Anyone still moving through onboarding, including 'applied' and 'interviewing'.
+// Those two cannot currently reach a fileless state (C4 keeps their submit gate),
+// and RequireHired would not render the notice for them anyway. They are included
+// so this stays the honest answer to "what does this person owe" for any caller,
+// rather than a list shaped around today's single consumer.
 const ONBOARDING_STATUSES = [
   'applied', 'interviewing', 'in_progress', 'hired', 'submitted', 'reviewed', 'approved',
 ];
@@ -2100,7 +2216,7 @@ module.exports = {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd /home/drbartender/projects/os && node -r dotenv/config --test server/utils/outstandingDocuments.test.js`
-Expected: PASS, 12 tests.
+Expected: PASS, 14 tests.
 
 - [ ] **Step 5: Verify against real production data**
 
@@ -2158,11 +2274,13 @@ One row per person, each linking to that person. `AdminUserDetail`'s `DocumentsT
 
 Append to `client/src/pages/admin/overview/queueItems.test.js`, inside the existing `describe('buildStaffingItems', ...)` block. The existing block uses `test()`; the new cases below use `it()`. Both are valid Jest globals and the file may mix them, but if you prefer consistency convert the new ones to `test()`.
 
-**Add the import** the new cases need. The existing file imports only from `./queueItems`:
+**Add the import** the new cases need:
 
 ```js
-import { queueItemHref } from './NeedsYouStrip';
+import { buildStaffingItems, queueItemHref } from './queueItems';
 ```
+
+Note the source. Step 3 **moves** `queueItemHref` out of `NeedsYouStrip.js` and into `queueItems.js` rather than exporting it in place. Importing `NeedsYouStrip` here would drag react-router-dom, `EntityLink`, `PayrollStatus` and transitively axios into a previously pure unit suite, where any import-time failure would red the three pre-existing `buildStaffingItems` cases along with the new ones. Both files are already in this lane's footprint, so the move costs nothing.
 
 ```js
   const risk = (user_id, name, next_shift_date = null, next_shift_id = null) =>
@@ -2305,11 +2423,21 @@ add the target inside `queueItemHref`, beside the existing entity cases:
   if (a.target === 'user') return `/staffing/users/${a.ref}`;
 ```
 
-and export the function so it can be tested. It is pure, so exporting changes no behavior:
+**Move `queueItemHref` into `queueItems.js`** and export it there, then import it back into `NeedsYouStrip.js` alongside `defaultTabKey`:
 
 ```js
+// queueItems.js
 export function queueItemHref(a) {
+  // ... body moved verbatim from NeedsYouStrip.js, plus the new `user` case
+}
 ```
+
+```js
+// NeedsYouStrip.js
+import { defaultTabKey, queueItemHref } from './queueItems';
+```
+
+It is a pure function over the queue-item contract, which is what `queueItems.js` already owns, so this is a relocation rather than a redesign. Delete the original definition from `NeedsYouStrip.js`; leaving both would let them drift.
 
 - [ ] **Step 4: Run the client test to verify it passes**
 
@@ -2340,8 +2468,11 @@ router.get('/hiring/uncertified', auth, adminOnly, asyncHandler(async (_req, res
 
 ```bash
 cd /home/drbartender/projects/os
-lsof -ti:5000 | xargs -r kill
-# restart the dev server the usual way, then:
+lsof -ti:5000 -sTCP:LISTEN | xargs -r kill   # -sTCP:LISTEN matters: a bare
+                                             # lsof -ti:5000 also returns Chrome's
+                                             # network service in CLOSE_WAIT and
+                                             # would kill it
+npm run dev > /tmp/devserver.log 2>&1 &   # or however this session starts it
 TOKEN=$(node -r dotenv/config -e "
 const jwt=require('jsonwebtoken');
 require('./server/db').pool.query(\"SELECT id, token_version FROM users WHERE role='admin' ORDER BY id LIMIT 1\")
@@ -2385,7 +2516,8 @@ Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build
 Expected: build succeeds.
 
 Then load `/` on the admin app as an admin:
-- [ ] The Needs-attention staffing tab shows **a small number of rows**, reading like "Loryn has no alcohol certification", with an icon rather than a blank square. If it shows dozens, the C1 scoping regressed.
+- [ ] The Needs-attention staffing tab shows **a small number of rows**, reading like "Loryn has no alcohol certification". If it shows dozens, the C1 scoping regressed.
+- [ ] The row's icon is the one added for `documents`, not the `alert` fallback. `NeedsYouStrip.js:75` renders `QUEUE_ICON[a.type] || 'alert'`, so a missing map key still draws *an* icon and "it isn't blank" proves nothing. Compare against the new-applications row: if the two are indistinguishable, either the key is missing or `pen` is being shared. `pen` is already `application`'s icon, so pick a distinct one if the two rows sit side by side.
 - [ ] A booked worker's row is `danger` and reads "Working Aug 1 · Nd out". An unbooked one is `warn` and reads "Can be assigned to shifts".
 - [ ] Clicking a row lands on `/staffing/users/:id`, whose Documents tab shows the certification as **"Missing"** (that is the cert wording at `DocumentsTab.js:37`; "Not on file" is the resume row). The row and the page must agree; that agreement is why the predicate was extracted.
 - [ ] Load the same page as a manager and confirm the rows are absent with no error.
@@ -2395,9 +2527,14 @@ Then load `/` on the admin app as an admin:
 Add a line to `docs/fix-list-remaining-2026-07-02.md` so the deferral survives the squash merge:
 
 ```
-- Onboarding docs: `AdminUserDetail` badge + `/hiring/summary` KPI count were dropped
-  from the 2026-07-26 plan on merit (DocumentsTab already prints "Not on file"; the
-  KPI duplicates the needs-attention rows). Revisit only if the strip proves too quiet.
+- Onboarding docs, three deviations from the 2026-07-26 spec, all deliberate:
+  (1) `AdminUserDetail` badge dropped, DocumentsTab already prints "Not on file";
+  (2) `/hiring/summary` KPI count dropped, it duplicates the needs-attention rows;
+  (3) the admin alert covers the CERTIFICATION ONLY, not the resume, because the
+  broad version returned 50 production rows into a 6-row strip (all 50 lacked a
+  resume; 2 lacked a certification). A missing resume is visible per-person on
+  DocumentsTab and is deliberately not an alert. Revisit only if the strip proves
+  too quiet.
 ```
 
 - [ ] **Step 10: Commit**
@@ -2440,6 +2577,17 @@ router.get('/', auth, asyncHandler(async (req, res) => {
 
 This is the same predicate the admin count uses, so the two surfaces cannot drift.
 
+**Also extend `PUT /step` to return the same field.** Three onboarding pages call
+`setProgress(r.data)` with that response (`Welcome.js:16`, `FieldGuide.js:289`,
+`ContractorProfile.js:129`), so a `PUT` reply lacking `documents_outstanding` blanks it
+in context and the notice blinks off until `Layout.js` refetches on the next route
+change. Return it from both handlers rather than relying on the refetch to heal it:
+
+```js
+  const result = await pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [req.user.id]);
+  res.json({ ...result.rows[0], documents_outstanding: await outstandingFor(req.user.id) });
+```
+
 - [ ] **Step 2: Show it on every onboarding step**
 
 The spec asks for a **persistent** to-do card, and `Welcome.js` alone is step one of seven. Put it in the layout instead, which already has everything needed: `client/src/components/Layout.js:30-33` fetches `GET /progress` and refetches on **every** `location.pathname` change, and line 99 already passes `{ progress, setProgress }` down. So the notice follows the recruit through welcome, field guide, agreement, contractor profile, and payday, and refreshes itself the moment they upload.
@@ -2469,10 +2617,13 @@ Leave `Welcome.js` untouched.
 
 - [ ] **Step 3: Verify**
 
+Run: `node -r dotenv/config --test server/routes/progress.draft.test.js`
+Expected: PASS, 10 tests. This suite was created one lane earlier and mounts the router this step just edited; it is the cross-lane seam and nothing else covers it.
+
 Run: `cd /home/drbartender/projects/os/client && CI=true npx react-scripts build`
 Expected: build succeeds.
 
-Restart the dev server (plain `node server/index.js`, no auto-reload), then confirm the endpoint carries the new field for a user who owes something. Use any existing `in_progress` staff account, or the fixture helper written in Task C4 Step 3 if that lane has already run:
+Restart the dev server (plain `node server/index.js`, no auto-reload), then confirm the endpoint carries the new field for a user who owes something. Use any existing `in_progress` staff account, or the fixture helper from Task C4 Step 3 if that lane has already run:
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:5000/api/progress | python3 -m json.tool
@@ -2490,6 +2641,8 @@ Manually, on a pre-hire account mid-onboarding:
 In `README.md`, add `server/utils/outstandingDocuments.js` to the folder-structure tree.
 
 In `ARCHITECTURE.md`, add `GET /api/admin/hiring/uncertified` to the API route table, and note that `GET /api/progress` now also returns `documents_outstanding`. Record that both surfaces derive from the single predicate in `server/utils/outstandingDocuments.js`, with the admin alert scoped to `STAFFABLE_STATUSES` (mirroring the assignment gate at `server/routes/shifts.approval.js:233`) and the recruit's own list scoped to the broader `ONBOARDING_STATUSES`.
+
+Also record the contract change `submit-gate-relax` is about to make, since that lane adds no file and carries no docs task of its own: **`POST /api/application` requires `resume` and `basset` only when the submitter is not `pre_hired`.**
 
 - [ ] **Step 5: Commit**
 
@@ -2586,7 +2739,7 @@ This task deletes a server-side validation gate and changes an endpoint every on
 
 Write the fixture helper to a file rather than inlining it. **The JS contains backticked template literals, and those cannot survive inside a double-quoted `$( ... )` in bash**: the shell reads them as command substitution and dies with `syntax error near unexpected token '('`, leaving `TOKEN` empty and the curls silently unauthenticated.
 
-Create `/tmp/c3-fixture.js`:
+Create `c4-fixture.js` **in the repo root** (untracked; delete it afterwards). It must NOT go in `/tmp`: Node resolves bare specifiers like `dotenv` and `jsonwebtoken` from the *script's* directory upward, so `/tmp/c4-fixture.js` fails every `require` with MODULE_NOT_FOUND, both curls then run unauthenticated, and the step reports 401/401 while appearing to have run.
 
 ```js
 require('dotenv').config();
@@ -2618,8 +2771,11 @@ Then:
 ```bash
 cd /home/drbartender/projects/os
 # Restart the dev server first: it runs as plain `node server/index.js`, not nodemon.
-lsof -ti:5000 | xargs -r kill
-# restart it the usual way, then:
+lsof -ti:5000 -sTCP:LISTEN | xargs -r kill   # -sTCP:LISTEN matters: a bare
+                                             # lsof -ti:5000 also returns Chrome's
+                                             # network service in CLOSE_WAIT and
+                                             # would kill it
+npm run dev > /tmp/devserver.log 2>&1 &   # or however this session starts it
 
 submit () {
   curl -s -o /tmp/c3-out.json -w "%{http_code}" -X POST http://localhost:5000/api/application \
@@ -2630,11 +2786,11 @@ submit () {
     -F "birth_month=1" -F "birth_day=1" -F "birth_year=1990"
 }
 
-PRE=$(node /tmp/c3-fixture.js prehire)
+PRE=$(node c4-fixture.js prehire)
 echo "pre-hire, no files: $(submit "$PRE")"     # expect 201
 curl -s -H "Authorization: Bearer $PRE" http://localhost:5000/api/progress | python3 -m json.tool
 
-COLD=$(node /tmp/c3-fixture.js cold)
+COLD=$(node c4-fixture.js cold)
 echo "cold applicant, no files: $(submit "$COLD")"   # expect 400
 cat /tmp/c3-out.json | python3 -m json.tool
 ```
@@ -2643,7 +2799,7 @@ Expected:
 - Pre-hire returns **201**, and its `/api/progress` carries `documents_outstanding` listing **both** `resume` and `alcohol certification`.
 - Cold applicant returns **400**, with `fieldErrors` naming `resume` and `basset`. If this returns 201, the conditional was dropped rather than added and cold applicants are being stranded.
 
-Clean up both fixture users and `/tmp/c3-fixture.js` afterwards.
+Clean up both fixture users and delete `c4-fixture.js` afterwards.
 
 Then run: `cd /home/drbartender/projects/os && node -r dotenv/config --test server/utils/outstandingDocuments.test.js`
 Expected: still PASS. `GET /api/progress` now calls into it.

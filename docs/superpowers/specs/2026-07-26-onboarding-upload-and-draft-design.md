@@ -73,10 +73,16 @@ laptop partway through. Only draft state tied to her account survives that.
 
 ## Principle
 
-**A field may block submission only if the user can reliably complete it.**
+**A field may block submission only if the user can reliably complete it, and where
+it is deferred there must be a way back in.**
 
-Radio buttons and text inputs qualify. A multi-megabyte file upload over cellular
-does not.
+Radio buttons and text inputs satisfy the first clause. A multi-megabyte file upload
+over cellular does not.
+
+The second clause was added 2026-07-26 during the fourth plan review. Deferring a
+field is only kind if the person can still finish it later; deferring it for someone
+with no route back is worse than blocking them, because at least a block is visible.
+See Change 3 for where that bites.
 
 ## Scope
 
@@ -110,8 +116,8 @@ this is one component change covering every surface.
   PK magic alone does not admit arbitrary zips.
 
   Revised during planning. The original plan was to widen `isValidUpload` in
-  place, which is wrong: it is shared by seven call sites including the W-9
-  (`payment.js:91`), blog images (`admin/blog.js:176`) and staff portal uploads
+  place, which is wrong: it is shared by nine call sites including the W-9
+  (`payment.js:92`), blog images (`admin/blog.js:176`) and staff portal uploads
   (`staffPortal.js:692`). Widening it would let a `.docx` through as a blog
   image. The new `isValidOnboardingDocument` is used only for the resume and
   alcohol certification on the two onboarding forms. Headshots stay on
@@ -154,12 +160,19 @@ Endpoints join the existing `server/routes/progress.js` (49 lines, room to grow)
 Every query is scoped to `req.user.id`. The stored payload is capped (64KB) so a
 draft cannot be used as free storage under the global 1MB JSON limit.
 
-Client side, a `useFormDraft(formKey, form, setForm)` hook loads on mount, saves on a
+Client side, a `useFormDraft(formKey, snapshot, applyDraft)` hook loads on mount, saves on a
 1.5s idle debounce, and clears on submit success. Restoring shows a visible notice
 with the saved time rather than silently repopulating fields.
 
 **Ordering rule:** `ContractorProfile` loads existing server data before any draft
-exists, so on conflict the draft wins. It is by definition written after the load.
+exists, so on conflict the draft wins. Revised during planning: source order does not
+guarantee that, because the two fetches race. The hook takes an `enabled` flag and the
+page defers the draft load until its own profile fetch settles.
+
+`snapshot` is deliberately not "the form state hook". `Application.js` spreads its
+answers across five `useState` hooks (`form` plus `positions`, `experienceTypes`,
+`tools`, `equipment` at lines 113-116), one of which is required, so drafting only
+`form` would restore the typed answers and silently drop every checkbox section.
 
 Files are not drafted. Re-picking a file after a reload is unavoidable without a much
 larger change, and it matters less than it sounds: files are the last section, and
@@ -170,14 +183,50 @@ numbers, which are encrypted at rest today. A draft table would be a second, pla
 copy of exactly the data we deliberately encrypt. The form is short enough that
 retyping it is not the same insult as retyping eight sections.
 
-### Change 3: files stop blocking submit
+### Change 3: files stop blocking submit, for people already hired
 
 `server/routes/application.js:126-128` currently throws when `resume_url` or
-`basset_url` is absent. That block is removed. Every other required field on the form
-stays required exactly as it is.
+`basset_url` is absent. That block becomes conditional on the submitter being
+pre-hired. Every other required field on the form stays required exactly as it is,
+for everyone.
+
+**Amended 2026-07-26, after the fourth plan-review pass.** The original text removed
+the block outright, on the principle that a field may block submission only if the
+user can reliably complete it. Reviewing the plan surfaced a case that principle does
+not cover on its own.
+
+Removing it for everyone strands cold applicants. `RequireHired`'s allow-list excludes
+`applied` (`client/src/App.js:305`), so the outstanding-documents notice never renders
+for them; `POST /application` refuses a second submit (`application.js:160`); and
+`/contractor-profile` sits behind the same guard. They would have had a requirement
+lifted, been told nothing, and been given no way to finish. That is a worse trap than
+the one this spec exists to remove.
+
+So the operative rule gains a second clause: **a field may block submission only if
+the user can reliably complete it AND, where it is deferred, there is a way back in.**
+A pre-hire has one: the notice follows them through onboarding and
+`/contractor-profile` accepts the upload. A cold applicant has none, and for them the
+kinder rule is to require it at submit, where Change 1 has now made the upload
+actually work.
+
+This is not the routing change rejected earlier. Pre-hires still complete the entire
+application, every field still required and validated. Only the two file uploads move.
 
 Client-side, the matching `test:` rules for `resume` and `basset` come off, replaced
 by a notice that these are still needed before a first shift.
+
+**Amended 2026-07-26.** The admin-facing alert narrowed to the **alcohol
+certification among people who can actually be staffed**, and the resume dropped out
+of it. Sized against production, the broad version (both documents, all onboarding
+statuses) returns 50 rows into a 6-row strip: every one of the 50 lacks a resume,
+because it is a nice-to-have on people already hired, while only 2 staffable people
+lack a certification. The resume remains visible per-person on `DocumentsTab`, which
+already prints "Not on file"; it is simply not an alert. The certification scope
+mirrors the assignment gate at `server/routes/shifts.approval.js:233`, so the alert
+covers exactly the population that can be put in front of a client.
+
+The recruit's own "what do I still owe" list keeps both documents and the broader
+status set. Two different questions, deliberately scoped differently.
 
 Outstanding documents are **derived, not stored.** No new status column. A user owes
 documents when the relevant `*_file_url` is null. Surfaced in two places:
