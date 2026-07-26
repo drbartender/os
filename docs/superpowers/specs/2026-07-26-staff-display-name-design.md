@@ -126,7 +126,22 @@ check would not have caught Nevver, and it is not meant to. The copy catches
 Nevver.
 
 Enforced client-side for immediate feedback and in the server validators for
-`contractor.js`, `me.js`, `staffPortal.js` and `admin/users.js`.
+`contractor.js`, `me.js`, `staffPortal.js`, `admin/users.js` and
+`admin/contractorTipPage.js`.
+
+Two rules keep validation from punishing people for data we let them enter:
+
+- **Grandfathering.** Validation runs on a value that is *changing*. If the
+  submitted name is identical to the stored one, it passes regardless. Without
+  this, the staffer stored as `Nicholas or Nick` opens his profile, the field
+  pre-fills with the value we accepted years ago, and he is locked out of saving
+  his own phone number until an admin renames him. Nobody should be blocked from
+  editing their address by a name they cannot fix through the form.
+- **Blank stays legal for admins.** `admin/users.js` and
+  `admin/contractorTipPage.js` validate only when a non-empty value is supplied.
+  `preferred_name` is optional on the admin path today, and an admin editing a
+  skeleton profile (hired directly, no application, no name yet) must not get a
+  400 for a field they did not touch.
 
 ### 3.5 Admin visibility
 
@@ -145,9 +160,17 @@ Surface: a `name-notice` item type in the existing Needs Attention staffing tab
 same weight as the new-applications rollup, because in the ordinary case this is
 a pleasant fact rather than a problem.
 
-One action, "Got it", which stamps the timestamp and nothing else. There is no
-reject action: the remedy for a bad name is to talk to the person, and if that
-conversation ends with a change, it gets made in the profile like any other edit.
+One action, "Got it", which stamps the timestamp and nothing else. It lives on
+the queue row itself and calls `POST /name-notices/:userId/ack`. Shipping the
+endpoint without wiring the row is the obvious failure mode here, and it is not
+a cosmetic one: with no way to dismiss, the strip accumulates one permanent row
+per staff member forever. There is no reject action: the remedy for a bad name is
+to talk to the person, and if that conversation ends with a change, it gets made
+in the profile like any other edit.
+
+Deactivated staff are excluded from the queue. They are not working, so their
+name is not going on anything, and a departed staffer is not a thing that needs
+Dallas's attention.
 
 Volume is a few per month at current hiring pace, so every change surfaces and no
 filtering is needed to keep the queue readable.
@@ -198,29 +221,46 @@ computeDisplayName({ preferredName, legalFullName }) -> string | null
    - else if the preferred name has 2+ tokens, take it from the preferred name's
      own last token;
    - else there is no initial (see §9).
-4. Shorten the preferred name (below).
+4. Pick the short name:
+   - if there is a preferred name, shorten it (below);
+   - if there is **no** preferred name, use `legalTokens[0]`.
 5. Return `"<short> <Initial>."`, or `short` alone when step 3 found no initial,
-   or `null` when there is no preferred name at all, in which case the caller
-   keeps its existing email fallback.
+   or `null` when there is neither a preferred name nor a legal name, in which
+   case the caller keeps its existing email fallback.
 
-The legal name is used **only** in step 3, and only for one character. It is
-never a substitute for a name the person gave us.
+The legal name is used for one character, plus one narrow fallback: when the
+person has told us **nothing**, `Nevver S.` beats `nsayles@gmail.com` on a
+client-facing BEO. That is not the legal-name fallback this spec rejects. The
+rejected one is displacing a name someone *did* give us, and step 4 never does
+that: a non-empty preferred name always wins outright. Joey is `Joey K.`, never
+`Joseph K.`, and no code path can produce the latter.
 
 Shortening handles the "they typed their full name" case:
 
-- When the initial came from the legal name, drop trailing preferred-name tokens
-  that match a legal token or are a bare middle initial. `Tashea Coates` against
+- When the initial came from the legal name, drop a trailing preferred-name token
+  **only when it matches the legal SURNAME**, that is the last legal token, and
+  then drop any trailing bare middle initial. `Tashea Coates` against
   `Tashea Coates` becomes `Tashea C.`; `Ariel  D. Smith` against `Ariel Smith`
-  becomes `Ariel S.`; `Billie Jean` against `Billie Jean Barrone` keeps both
-  tokens and becomes `Billie Jean B.`, which is right.
+  becomes `Ariel S.`
+  Matching against *every* legal token would be wrong: `Billie Jean` against
+  `Billie Jean Barrone` would lose the `Jean` and render `Billie B.`, when a
+  two-part given name is exactly what she asked to be called. Surname-only keeps
+  both tokens and renders `Billie Jean B.`
 - When the initial came from the preferred name itself, drop that last token.
   `Mark Holt` against the single-token agreement `Mark` becomes `Mark H.`
 
 Casing is left alone except for one narrow repair: a token that is entirely
-lowercase gets its first letter capitalized, so the live `veronica martinez` row
-renders `Veronica M.` Mixed-case tokens are never touched, because `LaToya`,
-`McKenna` and `d'Angelo` are correct as typed and any general title-casing pass
-would break them.
+lowercase **and at least three characters** gets its first letter capitalized, so
+the live `veronica martinez` row renders `Veronica M.` while the connector in
+`Nicholas or Nick` is not promoted to `Or`. Mixed-case tokens are never touched,
+because `LaToya`, `McKenna` and `d'Angelo` are correct as typed and any general
+title-casing pass would break them.
+
+The three-character threshold is a heuristic with exactly one job: repair the one
+all-lowercase row on production. It is imperfect on name particles (`van`, `del`
+and `mac` are three characters and would be promoted), and the escape hatch is
+that anyone who types mixed case is never touched at all. Do not grow this into
+a general title-caser.
 
 Worked examples from live data:
 
@@ -233,7 +273,13 @@ Worked examples from live data:
 | Nikki | Monique Lundy | Nikki L. |
 | Tashea Coates | Tashea Coates | Tashea C. |
 | Billie | Billie Jean Barrone | Billie B. |
+| Billie Jean | Billie Jean Barrone | Billie Jean B. |
 | Mark Holt | Mark | Mark H. |
+| veronica martinez | veronica martinez | Veronica M. |
+| Nicholas or Nick | Nicholas George DiCristina | Nicholas or Nick D. |
+
+The last row is malformed stored data (§6 hand-fix list), included so the
+connector-casing rule above stays pinned by a test.
 
 ### 4.2 Refresh points
 
@@ -249,8 +295,21 @@ can change:
 - `server/routes/staffPortal.js` (profile PATCH)
 - `server/routes/admin/users.js` (admin profile PUT, and the seed-from-application
   path at `:173-186`)
+- `server/routes/admin/contractorTipPage.js:60-63` (admin override of the
+  preferred name from the tip-page panel). **This is a fourth write path that the
+  first draft of this spec missed entirely.** It writes `preferred_name` directly
+  and would otherwise leave `display_name` stale on every surface.
 - `server/routes/agreement.js` (signing supplies the legal name)
 - `server/utils/contractorSeed.js`
+- `server/scripts/staffPaymentImport/importFromSheet.js:294` (creates profiles
+  with a preferred name during a sheet import)
+- `server/db/seedTestData.js:59,97` (test fixtures; without this every route test
+  that asserts on a name would see a NULL `display_name`)
+
+That list is the current output of `rg "SET preferred_name|INSERT INTO
+contractor_profiles" server`, run 2026-07-26. Any future write joins it. The
+`--check` audit in §7 exists precisely because this is easy to forget: re-run
+that grep before assuming the list is still complete.
 
 `server/routes/payment.js` drops off this list entirely, because per §3.3 it
 stops writing names.
@@ -260,21 +319,44 @@ stops writing names.
 **Display name (`display_name`).** Every place a name identifies a person in a
 list or on a document:
 
-`shifts.js:200,243,245,297` · `calendar.js:179` · `staffShiftActions.js:840` ·
+`shifts.js:200,243,245,297,486` · `calendar.js:179` · `staffShiftActions.js:840` ·
 `admin/payroll.js:34,42,558,655` · `admin/users.js:33,442,455` ·
 `stripePayouts.js:20` · `proposals/cancel.js:170` · `publicTip.js:83,227` ·
-`admin/contractorTipPage.js:110,160,268,294` · `messages.js:20,37` ·
-`adminCoverSwaps.js:81` · `staffPortal.js:99` · `presenceStore.js:8` ·
-`beoHandlers.js:223` · `staffShiftHandlers.js:306,544` ·
-`marketingHandlers.js:390` · `admin/applications.js:164`
+`admin/contractorTipPage.js:91,110,145,160,190,211,268,294` ·
+`messages.js:20,34,37` · `adminCoverSwaps.js:81` · `staffPortal.js:99` ·
+`presenceStore.js:12` · `beoHandlers.js:223` · `staffShiftHandlers.js:306,544` ·
+`marketingHandlers.js:390` · `admin/applications.js:164` ·
+`globalSearch.js:117,125` · `beo.js:100`
 
 Client side: `ShiftDrawer.js:371,650,653` · `AdminDashboard.js:269,486,632` ·
 `admin/StaffDashboard.js:26,27,119,126,174` · `AdminUserDetail.js:166,350` ·
-`staff/TipCardPage.js:275` · `staff/TeamRosterCard.js`
+`staff/TipCardPage.js:275` (plus its two server feeds, `me.js:75,121` and the
+contractorTipPage lines above)
 
-`server/routes/beo.js:182` already implements this rule as a local
-`computeName()`. It is deleted and replaced with the shared helper, which is the
-one behavior-preserving swap in the list.
+`staff/TeamRosterCard.js` needs **no edit**: it already renders a `display_name`
+the server hands it, and that value comes from `beo.js`. Listed here so it is
+accounted for rather than looking like an omission.
+
+Read sites resolve three-deep, `COALESCE(cp.display_name, cp.preferred_name,
+u.email)`, not two. The middle term is not belt-and-braces for the rollout, it is
+permanent: it means a write path someone adds later and forgets to wire to
+`refreshDisplayName` degrades to a name without an initial rather than to a raw
+email address on a client-facing BEO. It also removes any ordering constraint
+between populating the column and swapping the reads.
+
+Three of these sites are display expressions fed by a SELECT a few lines above
+(`contractorTipPage.js` at `:91`, `:145` and `:190`). Change both halves or the
+value arrives `undefined`.
+
+`server/routes/beo.js:185-204` already implements this rule as a local
+`computeName()`. It is deleted and replaced with the shared helper. Two
+differences to reconcile deliberately rather than discover. The local version
+reads `applications_name || agreements_name`, where everything else in this
+system prefers the signed agreement: keep agreement-first. And it falls back to
+the legal name when the preferred name is empty, which is why §4.1 step 4 now
+does the same. With that in place the swap is genuinely behavior-preserving, and
+an empty preferred name still never renders an email local-part on a
+client-facing document.
 
 **Bare preferred name (`preferred_name`, unchanged).** Every salutation. "Hi
 Fareed, you're confirmed for Saturday" must never read "Hi Fareed S.":
@@ -333,6 +415,11 @@ Two of these are the rows that started this conversation. They were found by a
 human noticing, and they are fixed by a human asking. That is the correct amount
 of automation for two rows.
 
+None of this is a prerequisite for shipping. The grandfathering rule in §3.4
+means `Nicholas or Nick` can still save his own profile with the name we already
+accepted, so these four can be worked whenever, in any order, without holding up
+the deploy.
+
 Rows with no legal name, so no last initial until one is on file: users 1
 (admin), 2 (Zul), 61, 62, 233, 236, 237, 238, 239, 240. Most are deactivated and
 cosmetic; 61 and 237 are not, and 61 needs one for money records regardless.
@@ -345,8 +432,18 @@ Reynolds (51, 62) each hold duplicate accounts.
 - Unit tests for `computeDisplayName`, table-driven off the real production pairs
   in §4.1, including the single-token-agreement case (`Mark`), the no-legal-name
   case, `Billie Jean`, and `veronica martinez`.
-- A test asserting the legal name never reaches the output except as one
-  initial, so the Joey-is-really-Joseph failure mode cannot regress in.
+- A test asserting that **whenever a preferred name exists**, the legal name
+  reaches the output only as one initial. `Joey` + `Joseph Key` must render
+  `Joey K.` and must contain neither "Joseph" nor "Key". This is the guard
+  against the Joey-is-really-Joseph failure mode regressing in, and it is scoped
+  to the preferred-name-present case precisely because the empty case now falls
+  back to the legal first name on purpose (§4.1 step 4).
+- A test for the connector-casing rule: `Nicholas or Nick` must render
+  `Nicholas or Nick D.` and never `Nicholas Or Nick D.` The first draft of the
+  helper failed this exact case.
+- A test that a name identical to the stored one passes validation even when it
+  would fail as a new entry, so the grandfathering rule in §3.4 cannot be
+  dropped without a red test.
 - A test asserting `display_name` is identical whether
   `preferred_name_reviewed_at` is NULL or set, so the notice can never become a
   gate by accident.
@@ -359,10 +456,18 @@ Reynolds (51, 62) each hold duplicate accounts.
   exits non-zero if any row's stored `display_name` differs from a fresh
   computation. This is the safety net for the "someone added a write path and
   forgot to refresh" failure mode.
-- **Run the payroll suites, do not assume.** `admin/payroll.js:42` and `:655`
-  sort and aggregate on the name string, so swapping the column changes sort keys
-  and array ordering, which is exactly where count and sorted-list assertions
-  bite. Same for `messages.js:37`.
+- **Run the suites each change reaches, do not assume.** `admin/payroll.js:42`
+  and `:655` sort and aggregate on the name string, so swapping the column
+  changes sort keys and array ordering, which is exactly where count and
+  sorted-list assertions bite. Same for `messages.js:37`. The read-site swap also
+  reaches `beoHandlers`, `staffShiftHandlers`, `proposals/cancel`, `staffPortal`,
+  `shifts.cancelUnassign`, `shifts.withdraw` and `drinkPlans.beo`, all of which
+  assert on staff names today. Grep the callers of every changed query and run
+  those suites at the change, not once at the end.
+- Server suites share the dev database, so they run **one file at a time**. The
+  bare `npm test` script is `node --test "server/**/*.test.js"`, which runs files
+  in parallel; use per-file runs or `--test-concurrency=1` or the interference
+  will read as a display-name regression.
 - Manual pass: onboarding steps 4 and 5 on a fresh account, watching the live
   preview, then the portal edit.
 
@@ -388,3 +493,9 @@ Format validation cannot catch a well-formed handle. `LumpyIceCream` passes ever
 mechanical check in §3.4 and always will. The copy is what prevents it, and if
 the copy stops working the answer is to remove the question, not to build a
 filter.
+
+The casing repair in §4.1 is a two-line heuristic, not a name library. It fixes
+the one all-lowercase row on production and leaves anything mixed-case alone.
+Names with particles (`van der Berg`, `de la Cruz`) typed entirely in lowercase
+will come out slightly wrong. The fix for that is for the person to type their
+name the way they want it, which the live preview now shows them.
