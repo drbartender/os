@@ -37,21 +37,42 @@ const CONTRACT_LABELS = Object.freeze(['Deposit', 'Balance', 'Full Payment']);
 // in refundHelpers, which is merely ∉ CONTRACT_LABELS.
 const OFF_LEDGER_INVOICE_LABELS = Object.freeze([]);
 
-// Labels whose invoice amount_due TRACKS proposals.total_price, i.e. the ones
-// refreshUnlockedInvoices recomputes from the total on every reprice
-// (invoiceLifecycle.js: 'Full Payment' = total - external, 'Balance' = total -
-// external - lockedTotal). Everything else is NOT total-tracking: 'Deposit' is
-// refreshed but from deposit_amount, so a reprice never moves it, and every
-// other label ('Additional Services', 'Enhancement Lab', 'Drink Plan Extras',
-// manual) is skipped by the refresh entirely.
+// Labels that deliberately bill a SUBSET of what the proposal still owes.
+// refreshUnlockedInvoices never RAISES one of these; it only CAPS it at what
+// is still owed, so a partial bill can never become an over-bill.
 //
-// This is the difference between "an unlocked invoice" and "an invoice whose
-// demand something else already corrected". A refund that lowers what a client
-// paid must correct that invoice's demand ITSELF unless this list (plus
-// unlocked) says the refresh will. Keying that decision on `locked` alone
-// stranded a client-visible phantom balance on unlocked non-total-tracking
-// invoices, on an invoice whose pay link is still live (push review,
-// 2026-07-26). Consumed by refundHelpers.applyRefundReconciliation.
+//   'Deposit'           — intended amount is proposals.deposit_amount. 154 of
+//                         these sit open in prod at any time (a sent, unsigned
+//                         proposal), and any rule handing every open invoice
+//                         the full `owed` would rewrite all of them to the
+//                         full contract price.
+//   'Drink Plan Extras' — intended amount is its own amount_due, owned by
+//                         findOrRefreshExtrasInvoice (invoiceExtras.js), which
+//                         writes that same column. Capping is the ONLY safe
+//                         interaction between the two writers: a cap can
+//                         reduce an over-bill but can never contradict the
+//                         extras owner's figure.
+const PARTIAL_BILL_LABELS = Object.freeze(['Deposit', 'Drink Plan Extras']);
+
+// Labels whose invoice amount_due is rebuilt from the NEW total by the
+// refreshUnlockedInvoices call that runs inside the CANCEL transaction, i.e.
+// BEFORE the refund reconciliation that follows in its own transaction
+// (lineItemCancel.js step 6 -> refundExecute.js step 3). For exactly this
+// population, an overpayment-scope refund must drop amount_paid ONLY: the
+// demand was already corrected, and dropping it again would mint phantom
+// credit. Every other invoice has nobody correcting its demand, so paid-only
+// would leave due > paid and flip a settled invoice to a client-visible
+// partially_paid phantom balance on a live pay link (push review 2026-07-26).
+//
+// DO NOT widen this to match PARTIAL_BILL_LABELS' complement. It is tempting
+// once refreshUnlockedInvoices manages every label (2026-07-28), but the
+// question here is NOT "does the refresh touch this label". It is "was this
+// invoice's demand already corrected for the money about to be refunded". A
+// fully-paid 'Additional Services' invoice fails that test no matter what the
+// reprice path does, because the refresh runs before the refund and the
+// derivation floors amount_due at amount_paid on a paid invoice (so it is a
+// no-op there by design). Widening this list re-opens the exact phantom
+// balance RC1 closed; the refundHelpers.scope suite catches it.
 const TOTAL_TRACKING_INVOICE_LABELS = Object.freeze(['Balance', 'Full Payment']);
 
 module.exports = {
@@ -59,5 +80,6 @@ module.exports = {
   safeAddonQty,
   CONTRACT_LABELS,
   OFF_LEDGER_INVOICE_LABELS,
+  PARTIAL_BILL_LABELS,
   TOTAL_TRACKING_INVOICE_LABELS,
 };

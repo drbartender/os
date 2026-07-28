@@ -300,6 +300,44 @@ async function stripLabSelection(client, proposalId, mutate) {
 }
 
 /**
+ * Read every unlocked, non-void delta invoice's demand. Taken once BEFORE the
+ * invoice cascade and once after, so the admin preview can report an
+ * adjustment regardless of which writer made it (refreshUnlockedInvoices or
+ * reconcileOpenDeltaInvoices). Includes voided-since rows by absence: a row in
+ * `before` that is gone from `after` was voided, and reports toCents 0.
+ *
+ * @returns {Promise<Map<number, {id:number, label:string, dueCents:number}>>}
+ */
+async function loadDeltaInvoiceState(client, proposalId) {
+  const { rows } = await client.query(
+    `SELECT id, label, amount_due FROM invoices
+      WHERE proposal_id = $1 AND locked = false AND status != 'void'
+        AND label = ANY($2)
+      ORDER BY id`,
+    [proposalId, DELTA_LABELS]
+  );
+  return new Map(rows.map((r) => [r.id, { id: r.id, label: r.label, dueCents: Number(r.amount_due) }]));
+}
+
+/**
+ * Diff two loadDeltaInvoiceState snapshots into the preview's report shape.
+ * Changed rows only, oldest id first. A row missing from `after` was voided
+ * during the cascade and lands as toCents 0.
+ *
+ * @returns {{id:number, label:string, fromCents:number, toCents:number}[]}
+ */
+function diffDeltaInvoiceState(before, after) {
+  const out = [];
+  for (const [id, was] of before) {
+    const now = after.get(id);
+    const toCents = now ? now.dueCents : 0;
+    if (toCents === was.dueCents) continue;
+    out.push({ id, label: was.label, fromCents: was.dueCents, toCents });
+  }
+  return out.sort((a, b) => a.id - b.id);
+}
+
+/**
  * Reconcile open unlocked delta invoices down after a decrease, mirroring the
  * lab remainder arithmetic (lab.js:365-440) with the same guarded update.
  * Locked invoices are NEVER touched (their totals stand; the preview says so).
@@ -605,13 +643,30 @@ async function applyLineItemCancel(client, {
 
   // 6. Invoice cascade: rebuild unlocked invoices at the new pricing; a RISE
   // (discount removal) flows through the existing increase path instead.
+  //
+  // The delta report is a DIFF across the whole cascade, not the reconciler's
+  // return value. Since 2026-07-28 refreshUnlockedInvoices derives EVERY
+  // unlocked label rather than just Balance / Full Payment / Deposit, so it
+  // can zero (and void) a delta invoice before reconcileOpenDeltaInvoices ever
+  // queries for it — the reconciler's `status IN ('sent','partially_paid')`
+  // filter then finds nothing and reports nothing. The admin cancel dialog
+  // renders this list as delta_invoices_adjusted, so a silently-voided $150
+  // invoice would vanish from the preview. Snapshotting first and diffing
+  // after attributes the change no matter which writer made it, and cannot
+  // double-count because it compares start and end state.
+  const deltaBefore = await loadDeltaInvoiceState(client, proposalId);
+
   await refreshUnlockedInvoices(proposalId, client);
-  let deltaInvoicesAdjusted = [];
   if (toCents(snapshot.total) > toCents(oldTotal)) {
     await createAdditionalInvoiceIfNeeded(Number(proposalId), toCents(oldTotal), client);
   } else {
-    deltaInvoicesAdjusted = await reconcileOpenDeltaInvoices(client, proposal, snapshot);
+    await reconcileOpenDeltaInvoices(client, proposal, snapshot);
   }
+
+  const deltaInvoicesAdjusted = diffDeltaInvoiceState(
+    deltaBefore,
+    await loadDeltaInvoiceState(client, proposalId)
+  );
 
   // 7. Shifts follow staffing (no-ops for non-staffing kinds and multi-shift
   // events; shrink is capped at approved heads and logged by the sync itself).
