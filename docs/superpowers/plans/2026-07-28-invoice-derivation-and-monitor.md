@@ -3,13 +3,26 @@ lanes:
   - id: invoice-derivation
     footprint:
       - server/utils/proposalMoneyShared.js
-      - server/utils/refundHelpers.js
       - server/utils/invoiceLifecycle.js
       - server/utils/invoiceLifecycle.derivation.test.js
+      - server/utils/invoiceLifecycle.external.test.js
+      - server/utils/lineItemCancel.js
       - server/scripts/remediateInvoiceDerivation.js
       - scripts/money-smoke-list.txt
       - README.md
       - ARCHITECTURE.md
+    # FOOTPRINT AMENDED mid-build, approved by Dallas 2026-07-28:
+    #  + lineItemCancel.js — the new derivation voids a delta invoice before
+    #    reconcileOpenDeltaInvoices queries for it, so the admin cancel
+    #    preview's delta_invoices_adjusted went silently empty. The report is
+    #    now a before/after diff across the whole cascade.
+    #  + invoiceLifecycle.external.test.js — its fixture seeded an open Balance
+    #    AND Full Payment on one proposal, the two-remainder shape the
+    #    derivation now refuses. Split to one proposal per label.
+    #  - refundHelpers.js — DROPPED. The plan claimed
+    #    TOTAL_TRACKING_INVOICE_LABELS had to widen in lockstep. That was
+    #    backwards; refundHelpers.scope.test.js RC1 caught it. See the
+    #    constant's comment in proposalMoneyShared.js.
     deps: []
     review: full-fleet
   - id: overbill-monitor
