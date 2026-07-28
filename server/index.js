@@ -487,6 +487,20 @@ async function start() {
         clearHealthRow('quote_draft_cleanup');
       }
 
+      // Balance-invoice monitor — hourly, ALERT ONLY. Watches the invariant
+      // Σ(open invoice remaining) ≤ owed in both directions: a client billed
+      // MORE than they owe (never legitimate) and a client who owes money with
+      // nowhere to pay it. Never writes an invoice. Staggered 5 minutes off
+      // boot so it does not join the 30s startup burst.
+      if (enabled('RUN_BALANCE_INVOICE_MONITOR')) {
+        const { monitorMissingBalanceInvoices } = require('./utils/balanceInvoiceMonitor');
+        const wrapped = wrapScheduler('balance_invoice_monitor', 3600, monitorMissingBalanceInvoices);
+        setTimeout(wrapped, 300000);
+        setInterval(wrapped, 60 * 60 * 1000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('balance_invoice_monitor');
+      }
+
       // Webhook events prune — drop webhook_events rows older than 30 days
       if (enabled('RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER')) {
         const { pruneOldWebhookEvents } = require('./utils/webhookEventsPruneScheduler');
