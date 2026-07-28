@@ -67,6 +67,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
   // InvoiceDropdown use, so a send (draft -> sent) re-reads and re-labels here.
   const [invoices, setInvoices] = useState([]);
   const [sendInvoice, setSendInvoice] = useState(null);
+  const [voidingId, setVoidingId] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -251,6 +252,32 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
     }
   };
 
+  // Void is the ONLY invoice edit the admin gets, on purpose. The proposal is
+  // the authority for what a client owes and refreshUnlockedInvoices derives
+  // every open invoice from it, so a hand-typed amount_due would be silently
+  // overwritten by the next reprice. When an invoice is wrong, fix the
+  // proposal; when it should not exist, void it. PATCH /invoices/:id has
+  // existed and been guarded since before this UI (it refuses a locked
+  // invoice and refuses one with payments applied); nothing in the client had
+  // ever called it, which is the whole reason invoices "could not be edited".
+  const handleVoidInvoice = async (inv) => {
+    if (!window.confirm(
+      `Void ${inv.invoice_number} (${inv.label})? The client will no longer be able to pay it. This cannot be undone.`
+    )) return;
+    setVoidingId(inv.id);
+    try {
+      await api.patch(`/invoices/${inv.id}`, { status: 'void' });
+      setInvoiceRefreshKey(k => k + 1);
+      toast.success(`${inv.invoice_number} voided.`);
+    } catch (err) {
+      // Surfaces the server's INVOICE_HAS_PAYMENTS / INVOICE_LOCKED messages
+      // rather than failing silently.
+      toast.error(err.message || 'Failed to void invoice.');
+    } finally {
+      setVoidingId(null);
+    }
+  };
+
   const handleCreateInvoice = async () => {
     if (!newInvoiceLabel || !newInvoiceAmount || Number(newInvoiceAmount) <= 0) return;
     setCreatingInvoice(true);
@@ -359,11 +386,19 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
                     style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {inv.invoice_number} · {inv.label}
                   </span>
-                  <button type="button" className="btn btn-ghost btn-sm"
-                    style={{ whiteSpace: 'nowrap' }}
-                    onClick={() => setSendInvoice(inv)}>
-                    <Icon name="send" size={11} />{inv.status === 'draft' ? 'Send invoice' : 'Resend'}
-                  </button>
+                  <div className="hstack" style={{ gap: 4 }}>
+                    <button type="button" className="btn btn-ghost btn-sm"
+                      style={{ whiteSpace: 'nowrap' }}
+                      onClick={() => setSendInvoice(inv)}>
+                      <Icon name="send" size={11} />{inv.status === 'draft' ? 'Send invoice' : 'Resend'}
+                    </button>
+                    <button type="button" className="btn btn-ghost btn-sm"
+                      style={{ whiteSpace: 'nowrap' }}
+                      disabled={voidingId === inv.id}
+                      onClick={() => handleVoidInvoice(inv)}>
+                      {voidingId === inv.id ? 'Voiding...' : 'Void'}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
