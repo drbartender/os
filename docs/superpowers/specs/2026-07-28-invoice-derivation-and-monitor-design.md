@@ -68,10 +68,17 @@ The escape hatch is Void, plus the Create and Send buttons that already exist.
 
 `owed = max(0, toCents(total_price) − toCents(amount_paid))`. `external_paid` drops out of the expression entirely, which also retires the cc-transfer special case.
 
-Per unlocked, non-void invoice:
+Invoices split into two kinds, named by a new `PARTIAL_BILL_LABELS` constant in `server/utils/proposalMoneyShared.js`, alongside the existing `CONTRACT_LABELS` and `OFF_LEDGER_INVOICE_LABELS`:
 
-- **`Deposit`** gets `min(deposit_amount, owed)`. This carve-out is load-bearing. 154 open unlocked Deposit invoices exist in prod, and any rule handing every open invoice the full `owed` would rewrite all of them to the full contract price. The `min` is new and prevents a deposit exceeding what is actually owed.
-- **Every other label**, contract or bespoke, gets `owed`. Deleting the `continue` is the single line that fixes Brandon, Cathy, and Eve.
+**Partial bills** (`Deposit`, `Drink Plan Extras`) deliberately bill a subset of what is owed. They keep their intended amount, **capped** at `min(intended, owed)`. A partial bill's intended amount is owned elsewhere and this derivation never raises it, only caps it.
+
+- `Deposit`'s intended amount is `deposit_amount`. This carve-out is load-bearing: 154 open unlocked Deposit invoices exist in prod, and any rule handing every open invoice the full `owed` would rewrite all of them to the full contract price.
+- `Drink Plan Extras`'s intended amount is its current `amount_due`, because `findOrRefreshExtrasInvoice` (`server/utils/invoiceExtras.js:240-260`) already writes that column and remains its authority. Capping is the only safe interaction between the two writers: a cap can reduce an over-bill but can never contradict the extras owner's figure. This is what retires Eve Thornton's row.
+
+**Remainder bills** (everything else: `Balance`, `Full Payment`, `Additional Services`, `Gratuity Balance`) get `owed − Σ(open partial bills)`. Deleting the `continue` is what fixes Brandon and Cathy.
+
+Worked against every shape in prod: David `Balance` → $1,000. Brandon `Additional Services` → $70. Cathy `Additional Services` → $0. Eve `Drink Plan Extras` → `min(155, 0)` = $0. Iga `Gratuity Balance` → $100, unchanged. The 154 open Deposits → `min(deposit_amount, owed)`, unchanged.
+
 - **A derived amount of `0` voids the invoice** rather than leaving a $0 bill open. The 2026-07-21 spec flagged that a zero-due invoice can capture `open_invoice_token`. This retires Cathy's and Eve's rows.
 - **Two or more non-Deposit unlocked invoices: write nothing, log, capture to Sentry.** Zero such rows exist in prod, so rather than invent an allocation rule with no reality to validate against, it refuses to guess and escalates.
 
@@ -131,6 +138,7 @@ Against the shared dev DB, one suite at a time via `node -r dotenv/config`.
 3. A bespoke-label open invoice re-derives on a price decrease (the Brandon shape, mechanism B).
 4. A bespoke-label invoice deriving to `0` is voided, not zeroed (Cathy / Eve).
 5. An open unlocked `Deposit` keeps `deposit_amount`, not `owed`, and is capped by `min(..., owed)`.
+5b. An open unlocked `Drink Plan Extras` keeps its own `amount_due` when it fits inside `owed`, and is capped when it does not (the Eve shape). A remainder invoice sharing the proposal is reduced by the open extras amount, so the two together never exceed `owed`.
 6. Locked invoices are never modified.
 7. Two non-Deposit unlocked invoices: nothing written, Sentry captured.
 8. Bespoke-label line items collapse to one line summing to the new `amount_due`; contract labels regenerate from the proposal.
