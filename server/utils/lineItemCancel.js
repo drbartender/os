@@ -16,6 +16,7 @@ const { calculateStaffing } = require('./pricingEngine');
 const { readSnapshot } = require('./pricingSnapshot');
 const { storedToInputCount, countLabelFor, effectiveHoursFor, storedIsInputCount } = require('./addonQuantity');
 const { foldExtrasIntoProposal, loadRepriceAddons } = require('./proposalExtrasFold');
+const { sumOffContractPaidCents } = require('./invoiceExtras');
 const { refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, writeLineItems } = require('./invoiceHelpers');
 const { syncShiftsFromProposal, deriveStaffingRoster, loadStaffingAddons } = require('./eventCreation');
 const { rosterCounts } = require('./positionsNeeded');
@@ -656,6 +657,25 @@ async function applyLineItemCancel(client, {
     [proposalId]
   )).rows.map((r) => ({ id: r.id, label: r.label, amount_due: Number(r.amount_due) }));
 
+  // NET OUT collected money that does not live inside total_price before
+  // calling anything an overpayment. refundHelpers.js documents this at length:
+  // `amount_paid - total_price` is NOT overpayment in this schema, because
+  // syrup-only Drink Plan Extras and free-text manual invoices roll into
+  // proposals.amount_paid and never into total_price. Feeding the raw
+  // difference to planOverpaymentSplits refunds that money too, and
+  // CANCEL_LINE_REFUND_RAILS deliberately includes the extras rails, so it is
+  // reachable: a $400 contract plus $60 of paid syrups, cancel a $100 add-on,
+  // and the un-netted figure refunds $160 instead of $100. DRB eats the $60 and
+  // still buys the syrups.
+  //
+  // The population is "not in total_price", NOT "∉ CONTRACT_LABELS". Those are
+  // different sets: Additional Services and Enhancement Lab money IS in
+  // total_price, so netting them out under-refunds the client instead (caught
+  // in review 2026-07-28, a $300 under-refund). sumOffContractPaidCents owns
+  // the distinction, including the Drink-Plan-Extras fold test that the label
+  // alone cannot answer.
+  const offContractPaidCents = await sumOffContractPaidCents(proposalId, client);
+
   return {
     oldTotal,
     newTotal: Number(snapshot.total),
@@ -663,7 +683,12 @@ async function applyLineItemCancel(client, {
     snapshot,
     statusChanged,
     newStatus: proposal.status,
-    overpaymentCents: Math.max(0, Math.round(fingerprint.amount_paid * 100) - toCents(snapshot.total)),
+    overpaymentCents: Math.max(
+      0,
+      Math.round(fingerprint.amount_paid * 100)
+        - toCents(snapshot.total)
+        - offContractPaidCents
+    ),
     removedLabel,
     lockedInvoices,
     deltaInvoicesAdjusted,

@@ -801,3 +801,79 @@ test('extra-bartender target label matches the engine breakdown row EXACTLY', as
   assert.equal(Math.round(Number(row.amount) * 100), Math.round(Number(t.amount) * 100),
     'amount must corroborate the label, or the UI refuses to bind');
 });
+
+// ── overpaymentCents netting: "not in total_price", NOT "∉ CONTRACT_LABELS" ──
+
+test('overpaymentCents nets out PAID syrup-only Drink Plan Extras', async () => {
+  // Syrup-only extras took the fast path and never folded into total_price
+  // (submit.js: "syrups are additive money that never fold into total_price"),
+  // so this money is not overpayment and must not be offered to Stripe.
+  const { proposalId } = await seedProposal({
+    override: 400, amountPaid: 460, status: 'balance_paid',
+    addons: [{ slug: SLUGS.photoBooth, name: 'Photo Booth', billingType: 'flat', rate: 100, quantity: 1 }],
+  });
+  await seedInvoice(proposalId, { label: 'Balance', dueCents: 40000, paidCents: 40000, status: 'paid', locked: true });
+  const extrasId = await seedInvoice(proposalId, { label: 'Drink Plan Extras', dueCents: 6000, paidCents: 6000, status: 'paid', locked: true });
+  // Syrup-only: a single non-addon, non-bar line.
+  await pool.query(
+    `INSERT INTO invoice_line_items (invoice_id, description, quantity, unit_price, line_total, source_type)
+     VALUES ($1, 'Strawberry syrup', 1, 6000, 6000, 'manual')`, [extrasId]
+  );
+
+  await applyCancel(proposalId, { target: `addon:${SLUGS.photoBooth}` }, async (result) => {
+    const raw = Math.round(460 * 100) - Math.round(result.newTotal * 100);
+    assert.ok(raw > 6000, 'fixture must produce an apparent overpayment');
+    assert.equal(result.overpaymentCents, raw - 6000, 'the paid syrup money must be netted out');
+  });
+});
+
+test('overpaymentCents does NOT net out PAID Additional Services (it IS in total_price)', async () => {
+  // The regression this pins: netting by ∉ CONTRACT_LABELS treated Additional
+  // Services as off-contract and under-refunded the client by its full amount.
+  const { proposalId } = await seedProposal({
+    override: 400, amountPaid: 460, status: 'balance_paid',
+    addons: [{ slug: SLUGS.photoBooth, name: 'Photo Booth', billingType: 'flat', rate: 100, quantity: 1 }],
+  });
+  await seedInvoice(proposalId, { label: 'Balance', dueCents: 40000, paidCents: 40000, status: 'paid', locked: true });
+  await seedInvoice(proposalId, { label: 'Additional Services', dueCents: 6000, paidCents: 6000, status: 'paid', locked: true });
+
+  await applyCancel(proposalId, { target: `addon:${SLUGS.photoBooth}` }, async (result) => {
+    const raw = Math.round(460 * 100) - Math.round(result.newTotal * 100);
+    assert.equal(result.overpaymentCents, raw, 'contract money must stay refundable');
+  });
+});
+
+test('overpaymentCents does NOT net out a FOLDED Drink Plan Extras invoice', async () => {
+  // An extras invoice carrying an add-on line went through the submit
+  // transaction path, where the whole extras folded into total_price. Same
+  // label as the syrup case, opposite answer: the line items decide.
+  const { proposalId } = await seedProposal({
+    override: 400, amountPaid: 460, status: 'balance_paid',
+    addons: [{ slug: SLUGS.photoBooth, name: 'Photo Booth', billingType: 'flat', rate: 100, quantity: 1 }],
+  });
+  await seedInvoice(proposalId, { label: 'Balance', dueCents: 40000, paidCents: 40000, status: 'paid', locked: true });
+  const extrasId = await seedInvoice(proposalId, { label: 'Drink Plan Extras', dueCents: 6000, paidCents: 6000, status: 'paid', locked: true });
+  await pool.query(
+    `INSERT INTO invoice_line_items (invoice_id, description, quantity, unit_price, line_total, source_type)
+     VALUES ($1, 'Champagne Toast', 1, 6000, 6000, 'addon')`, [extrasId]
+  );
+
+  await applyCancel(proposalId, { target: `addon:${SLUGS.photoBooth}` }, async (result) => {
+    const raw = Math.round(460 * 100) - Math.round(result.newTotal * 100);
+    assert.equal(result.overpaymentCents, raw, 'folded extras money IS contract money');
+  });
+});
+
+test('overpaymentCents nets out a PAID free-text manual invoice', async () => {
+  const { proposalId } = await seedProposal({
+    override: 400, amountPaid: 460, status: 'balance_paid',
+    addons: [{ slug: SLUGS.photoBooth, name: 'Photo Booth', billingType: 'flat', rate: 100, quantity: 1 }],
+  });
+  await seedInvoice(proposalId, { label: 'Balance', dueCents: 40000, paidCents: 40000, status: 'paid', locked: true });
+  await seedInvoice(proposalId, { label: 'Damage Fee', dueCents: 6000, paidCents: 6000, status: 'paid', locked: true });
+
+  await applyCancel(proposalId, { target: `addon:${SLUGS.photoBooth}` }, async (result) => {
+    const raw = Math.round(460 * 100) - Math.round(result.newTotal * 100);
+    assert.equal(result.overpaymentCents, raw - 6000, 'a damage fee is not contract money');
+  });
+});

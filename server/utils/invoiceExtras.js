@@ -272,6 +272,86 @@ async function findOrRefreshExtrasInvoice(
   );
 }
 
+// ─── 11b2. extrasLinesAreFolded / sumOffContractPaidCents ────────────────────
+
+/**
+ * Did this "Drink Plan Extras" invoice's money fold into proposals.total_price?
+ *
+ * PURE. The label alone cannot answer it, which is the single most expensive
+ * ambiguity in the invoice code: an extras invoice with ANY add-on or
+ * bar-rental line came through the submit TRANSACTION path, where
+ * calculateProposal folds the WHOLE extras (add-ons + bar + new syrups) into
+ * total_price. A syrup-only invoice took the fast path, which never runs
+ * calculateProposal, so nothing was folded — routes/drinkPlans/submit.js says
+ * it outright: "syrups are additive money that never fold into total_price".
+ *
+ * Derived from PERSISTED line items, never a fresh recompute, so a mid-flight
+ * price change cannot corrupt the answer.
+ *
+ * @param {{line_total:any, source_type:string, description:string}[]} lineRows
+ * @returns {boolean}
+ */
+function extrasLinesAreFolded(lineRows) {
+  return (lineRows || []).some((r) =>
+    r.source_type === 'addon'
+    || r.description === 'Portable Bar Rental'
+    || r.description === 'Additional Portable Bar');
+}
+
+// Labels whose collected money IS inside proposals.total_price. Deposit /
+// Balance / Full Payment by construction; 'Additional Services' because
+// createAdditionalInvoiceIfNeeded mints it FROM a total_price delta;
+// 'Enhancement Lab' because lab additions fold into total_price (2026-07-20,
+// which is why that label left OFF_LEDGER_INVOICE_LABELS).
+//
+// NOT the same thing as CONTRACT_LABELS, which is a REFUND-SCOPE
+// classification. Confusing the two under-refunded a client by $300 in review
+// (2026-07-28): CONTRACT_LABELS excludes Additional Services, so netting by it
+// treated contract money as off-contract and swallowed a real overpayment.
+const IN_TOTAL_PRICE_LABELS = Object.freeze([
+  'Deposit', 'Balance', 'Full Payment', 'Additional Services', 'Enhancement Lab',
+]);
+
+/**
+ * Sum the money a proposal has COLLECTED that does NOT live inside
+ * proposals.total_price: syrup-only "Drink Plan Extras" and any free-text
+ * manual invoice (Damage Fee, Travel) created via POST /api/invoices/proposal/:id.
+ *
+ * This is the netting term for any "is the client overpaid?" question.
+ * `amount_paid - total_price` is NOT overpayment in this schema, because those
+ * dollars roll into proposals.amount_paid and never into total_price — see the
+ * long note in refundHelpers.js. Handing the raw difference to
+ * planOverpaymentSplits refunds money the client still owes for goods DRB is
+ * still buying.
+ *
+ * @param {number} proposalId
+ * @param {object} dbClient  the CALLER'S client — this runs inside a held
+ *                           transaction, so it must never take its own.
+ * @returns {Promise<number>} cents
+ */
+async function sumOffContractPaidCents(proposalId, dbClient) {
+  const client = db(dbClient);
+  const { rows } = await client.query(
+    `SELECT id, label, amount_paid FROM invoices
+      WHERE proposal_id = $1 AND status <> 'void' AND amount_paid > 0
+        AND NOT (COALESCE(label, '') = ANY($2::text[]))`,
+    [proposalId, IN_TOTAL_PRICE_LABELS]
+  );
+
+  let cents = 0;
+  for (const inv of rows) {
+    if (inv.label === 'Drink Plan Extras') {
+      const lines = await client.query(
+        'SELECT line_total, source_type, description FROM invoice_line_items WHERE invoice_id = $1',
+        [inv.id]
+      );
+      if (extrasLinesAreFolded(lines.rows)) continue; // folded: it IS contract money
+    }
+    cents += Number(inv.amount_paid);
+  }
+  return cents;
+}
+
 // ─── 11c. voidExtrasInvoiceWithReconcile ─────────────────────────────────────
 
 /**
@@ -351,11 +431,7 @@ async function voidExtrasInvoiceWithReconcile(invoiceId, actorId, dbClient, opts
       'SELECT line_total, source_type, description FROM invoice_line_items WHERE invoice_id = $1',
       [invoiceId]
     );
-    const hasAddonOrBar = lines.rows.some((r) =>
-      r.source_type === 'addon'
-      || r.description === 'Portable Bar Rental'
-      || r.description === 'Additional Portable Bar');
-    const foldedCents = hasAddonOrBar
+    const foldedCents = extrasLinesAreFolded(lines.rows)
       ? lines.rows.reduce((sum, r) => sum + Number(r.line_total), 0)
       : 0;
     if (foldedCents > 0) {
@@ -386,6 +462,9 @@ async function voidExtrasInvoiceWithReconcile(invoiceId, actorId, dbClient, opts
 }
 
 module.exports = {
+  extrasLinesAreFolded,
+  sumOffContractPaidCents,
+  IN_TOTAL_PRICE_LABELS,
   writeExtrasLineItems,
   createDrinkPlanExtrasInvoice,
   findExtrasInvoice,
