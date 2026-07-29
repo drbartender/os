@@ -37,73 +37,27 @@ const CONTRACT_LABELS = Object.freeze(['Deposit', 'Balance', 'Full Payment']);
 // in refundHelpers, which is merely ∉ CONTRACT_LABELS.
 const OFF_LEDGER_INVOICE_LABELS = Object.freeze([]);
 
-// ── The derivation's label contract ─────────────────────────────────────────
+// Labels whose invoice amount_due TRACKS proposals.total_price, i.e. the ones
+// refreshUnlockedInvoices recomputes from the total on every reprice
+// (invoiceLifecycle.js: 'Full Payment' = total - external, 'Balance' = total -
+// external - lockedTotal). Everything else is NOT total-tracking: 'Deposit' is
+// refreshed but from deposit_amount, so a reprice never moves it, and every
+// other label ('Additional Services', 'Enhancement Lab', 'Drink Plan Extras',
+// manual) is skipped by the refresh entirely.
 //
-// refreshUnlockedInvoices derives an invoice's demand from
-// `owed = total_price − amount_paid`. That is only meaningful for an invoice
-// whose money IS inside total_price. Deriving a label whose money lives
-// OUTSIDE the contract either destroys it (owed = 0 zeroes the invoice) or
-// makes it cannibalise contract money (its amount is deducted from the
-// remainder). Both were reachable and both are money bugs, so the derivation
-// is an ALLOW-LIST, never "everything unlocked".
-//
-// Money that is NOT in total_price, and therefore must never be derived:
-//   'Drink Plan Extras' on the syrup-only fast path — routes/drinkPlans/
-//     submit.js:571 states it outright ("syrups are additive money that never
-//     fold into total_price"). The add-on path DOES fold, so the same label
-//     means two different things and the label alone cannot tell them apart.
-//     invoiceExtras.js remains its sole owner.
-//   Manual/bespoke labels — POST /api/invoices/proposal/:id accepts free text
-//     ('Damage Fee', 'Travel'), and nothing puts those dollars in total_price.
-//
-// PARTIAL bills deliberately ask for a SUBSET of what is owed, so they are
-// CAPPED at what remains and never raised. Only 'Deposit' qualifies: its
-// intended amount is proposals.deposit_amount, and ~154 sit open in prod at
-// any time on sent-but-unsigned proposals, so any rule handing every open
-// invoice the full `owed` would rewrite all of them to the full contract price.
-const PARTIAL_BILL_LABELS = Object.freeze(['Deposit']);
-
-// REMAINDER bills carry whatever is still owed after the partials. All three
-// are contract money by construction: 'Balance' and 'Full Payment' are minted
-// from total_price, and 'Additional Services' is minted by
-// createAdditionalInvoiceIfNeeded from a total_price DELTA.
-//
-// Ordered by priority. When more than one is open, the earliest in this list
-// takes the remainder and the others keep their current demand — see
-// refreshUnlockedInvoices.
-const REMAINDER_BILL_LABELS = Object.freeze(['Balance', 'Full Payment', 'Additional Services']);
-
-// The full derivable set. Any label outside it is left strictly alone.
-const DERIVABLE_INVOICE_LABELS = Object.freeze([
-  ...PARTIAL_BILL_LABELS,
-  ...REMAINDER_BILL_LABELS,
-]);
-
-// TOTAL_TRACKING_INVOICE_LABELS was REMOVED on 2026-07-28. It existed so an
-// overpayment-scope refund could drop amount_paid ONLY on invoices whose demand
-// refreshUnlockedInvoices had already rebuilt from the new total, since dropping
-// such a demand twice would mint phantom credit.
-//
-// That premise died with the derivation rewrite. A remainder invoice's demand is
-// now `amount_paid + allocation`, FLOORED at amount_paid. In overpayment scope
-// `owed` is always 0 (the refund only fires when amount_paid exceeds the new
-// total), so the allocation is 0 and the refresh writes amount_due = amount_paid
-// exactly. It can no longer pre-absorb the refund for ANY label. Paid-only
-// therefore strands a client-visible partially_paid phantom balance equal to the
-// entire refund, on a live pay link, for the whole population the branch existed
-// to serve.
-//
-// refundHelpers.applyRefundReconciliation now drops both figures unconditionally,
-// which lands on due == paid in every case. Do not reintroduce a label list here
-// without first re-checking whether the refresh can still lower a demand below
-// what the invoice already collected. It cannot.
+// This is the difference between "an unlocked invoice" and "an invoice whose
+// demand something else already corrected". A refund that lowers what a client
+// paid must correct that invoice's demand ITSELF unless this list (plus
+// unlocked) says the refresh will. Keying that decision on `locked` alone
+// stranded a client-visible phantom balance on unlocked non-total-tracking
+// invoices, on an invoice whose pay link is still live (push review,
+// 2026-07-26). Consumed by refundHelpers.applyRefundReconciliation.
+const TOTAL_TRACKING_INVOICE_LABELS = Object.freeze(['Balance', 'Full Payment']);
 
 module.exports = {
   MAX_ADDON_QTY,
   safeAddonQty,
   CONTRACT_LABELS,
   OFF_LEDGER_INVOICE_LABELS,
-  PARTIAL_BILL_LABELS,
-  REMAINDER_BILL_LABELS,
-  DERIVABLE_INVOICE_LABELS,
+  TOTAL_TRACKING_INVOICE_LABELS,
 };

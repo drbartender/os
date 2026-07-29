@@ -23,10 +23,10 @@ server/routes/stripeWebhook.guards.test.js
 server/routes/stripeWebhookHandlers/checkoutSessionCompleted.lastMinute.test.js
 
 # Refunds + invoice lifecycle
+server/utils/balanceInvoiceMonitor.test.js
 server/routes/invoices.refunds.test.js
 server/utils/refundHelpers.test.js
 server/utils/invoiceLifecycle.additionalInvoice.test.js
-server/utils/invoiceLifecycle.derivation.test.js
 server/utils/invoiceLifecycle.external.test.js
 
 # Cancel line item (fold legs + scoped refunds + routes)

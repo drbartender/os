@@ -2,15 +2,9 @@
 
 'use strict';
 
-const Sentry = require('@sentry/node');
 const { toCents, db } = require('./invoiceShared');
 const { generateLineItemsFromProposal, writeLineItems } = require('./invoiceLineItems');
-const {
-  CONTRACT_LABELS,
-  PARTIAL_BILL_LABELS,
-  REMAINDER_BILL_LABELS,
-  DERIVABLE_INVOICE_LABELS,
-} = require('./proposalMoneyShared');
+const { OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
 
 // The invoice-label literals written below ('Deposit' / 'Balance' /
 // 'Full Payment') are the origin of the contract-total classification. The
@@ -84,47 +78,20 @@ async function lockInvoice(invoiceId, dbClient) {
 // ─── 6. refreshUnlockedInvoices ──────────────────────────────────────────────
 
 /**
- * Re-derive amount_due (and line items) for every unlocked, non-void invoice
- * on a proposal, so the open invoices are always a correct view of what the
- * client still owes.
+ * Regenerate line items and recalculate amount_due for all unlocked,
+ * non-void invoices belonging to a proposal.
  *
- * THE INVARIANT: Σ(amount_due − amount_paid) ≤ owed, over the open invoices,
- * where owed = total_price − amount_paid. NOT equality: a partial bill is a
- * deliberate under-bill (a Deposit asks for $100 against a $2,000 contract).
- * Over-billing is never correct.
+ * amount_due logic:
+ *   - "Deposit"       → proposal.deposit_amount in cents
+ *   - "Full Payment"  → (total_price − external_paid) in cents
+ *   - "Balance"       → (total_price − external_paid − sum(locked invoice amount_due)) in cents
  *
- * Each invoice therefore demands what it has ALREADY collected plus its share
- * of what is still outstanding:  amount_due = amount_paid + allocation.
- * With amount_paid = 0 (the normal case) that is just the allocation. The
- * amount_paid term is what keeps a settled invoice settled: a refund lowers
- * amount_paid and its demand together (refundHelpers), and this must not
- * independently drag amount_due below what was actually collected, which would
- * flip a paid invoice to a client-visible partially_paid phantom balance on a
- * live pay link (the RC1 defect, push review 2026-07-26).
- *
- * owed uses amount_paid, NOT the old `Σ(locked invoice amount_due)` proxy.
- * That proxy assumed every payment is backed by a locked invoice, which
- * nothing enforces: prop 51 took a $100 Stripe deposit in 2026-05 and has no
- * Deposit invoice at all, so the proxy read $0 collected and every re-price
- * re-billed the deposit (2026-07-28). external_paid is deliberately absent
- * from the expression because amount_paid already CONTAINS it (verified on
- * prop 599: paid 360 = payments 260 + external 100); subtracting it again is
- * the same double-count in the other direction.
- *
- * The label sets are an ALLOW-LIST (DERIVABLE_INVOICE_LABELS). Partial bills
- * are CAPPED, never raised; remainder bills take what the partials leave, in
- * REMAINDER_BILL_LABELS priority order. Anything outside the allow-list is left
- * strictly alone because its money may not be inside total_price at all
- * (syrup-only 'Drink Plan Extras', admin-created manual labels) — deriving
- * those either destroys the invoice or makes it cannibalise contract money.
- * Their money is ADDITIVE to the contract, so it is neither derived NOR netted
- * out of the remainder; the invariant this function maintains is scoped to the
- * derivable set. The balance-invoice monitor watches the rest.
- *
- * Adding 'Additional Services' to the derivable set is what fixes the price-
- * DECREASE strand (Brandon, Cathy); it also required teaching
- * createAdditionalInvoiceIfNeeded that such an invoice now absorbs a delta,
- * or the two double-bill it.
+ * external_paid (cc-transfer, 2026-07-07) is money collected off-platform in
+ * CheckCherry, folded into amount_paid with NO payment rows and NO locked
+ * invoice backing it — the locked-invoice subtraction alone cannot see it.
+ * Netting it here keeps a refreshed Balance / Full Payment invoice from
+ * re-billing money the client already paid. Zero behavior change when
+ * external_paid = 0 (every non-transferred proposal).
  *
  * @param {number} proposalId
  * @param {object} [dbClient]
@@ -132,13 +99,27 @@ async function lockInvoice(invoiceId, dbClient) {
 async function refreshUnlockedInvoices(proposalId, dbClient) {
   const client = db(dbClient);
 
-  const [propResult, unlockedResult] = await Promise.all([
+  // Fetch proposal financials, locked total, and unlocked invoices in parallel
+  const [propResult, lockedResult, unlockedResult] = await Promise.all([
     client.query(
-      `SELECT total_price, deposit_amount, amount_paid FROM proposals WHERE id = $1`,
+      `SELECT total_price, deposit_amount, external_paid FROM proposals WHERE id = $1`,
       [proposalId]
     ),
     client.query(
-      `SELECT id, label, amount_due, amount_paid FROM invoices
+      // Off-ledger labels are excluded: their amounts have no total_price
+      // entry, so counting a locked one here would shrink the Balance invoice
+      // by money the contract never contained (2026-07-20). COALESCE keeps a
+      // NULL-label invoice counted (NULL = ANY(...) is NULL, and NOT NULL
+      // would silently drop the row); the set is currently empty (lab money
+      // folds into the contract since the same day), making this a no-op.
+      `SELECT COALESCE(SUM(amount_due), 0) AS locked_total
+         FROM invoices
+        WHERE proposal_id = $1 AND locked = true AND status != 'void'
+          AND NOT (COALESCE(label, '') = ANY($2::text[]))`,
+      [proposalId, OFF_LEDGER_INVOICE_LABELS]
+    ),
+    client.query(
+      `SELECT id, label FROM invoices
         WHERE proposal_id = $1 AND locked = false AND status != 'void'
         ORDER BY id`,
       [proposalId]
@@ -148,128 +129,37 @@ async function refreshUnlockedInvoices(proposalId, dbClient) {
   if (propResult.rows.length === 0) return;
 
   const prop = propResult.rows[0];
-  const owed = Math.max(0, toCents(prop.total_price) - toCents(prop.amount_paid));
+  const totalCents = toCents(prop.total_price);
   const depositCents = toCents(prop.deposit_amount);
+  const externalCents = toCents(prop.external_paid);
+  const lockedTotal = Number(lockedResult.rows[0].locked_total);
 
-  // ALLOW-LIST. Anything outside DERIVABLE_INVOICE_LABELS is money that may not
-  // live inside total_price (syrup-only 'Drink Plan Extras', admin-created
-  // manual labels), so deriving it would either destroy the invoice or make it
-  // cannibalise contract money. Leave those strictly alone; the balance-invoice
-  // monitor reports them if they ever go wrong.
-  const rows = unlockedResult.rows.filter((r) => DERIVABLE_INVOICE_LABELS.includes(r.label));
-  const partials = rows.filter((r) => PARTIAL_BILL_LABELS.includes(r.label));
-  const remainders = rows
-    .filter((r) => REMAINDER_BILL_LABELS.includes(r.label))
-    .sort((a, b) =>
-      REMAINDER_BILL_LABELS.indexOf(a.label) - REMAINDER_BILL_LABELS.indexOf(b.label) || a.id - b.id);
+  // Fresh line items (shared across all unlocked invoices for this proposal)
+  const lineItems = await generateLineItemsFromProposal(proposalId, client);
 
-  // Non-derivable open invoices are deliberately NOT subtracted here. Their
-  // money is ADDITIVE to the contract (syrup-only extras, a manual damage fee),
-  // so the client owes `owed` PLUS those. Netting them out of the remainder
-  // would under-bill the contract by their amount — an earlier draft did
-  // exactly that and silently shaved $105 off a Balance to pay for $105 of
-  // syrups. The invariant this function maintains is therefore scoped to the
-  // derivable set: Σ(open DERIVABLE) ≤ owed.
-  //
-  // Cap each partial against what is still unallocated, then hand the rest to
-  // the HIGHEST-PRIORITY remainder. `intended` is the partial's full demand; the
-  // allocation is what it may still ASK FOR beyond what it already collected.
-  let unallocated = owed;
-  const writes = [];
-  for (const inv of partials) {
-    const collected = Number(inv.amount_paid);
-    const intended = depositCents; // 'Deposit' is the only partial label
-    const amountDue = Math.max(collected, Math.min(intended, collected + unallocated));
-    unallocated -= (amountDue - collected);
-    writes.push({ inv, amountDue });
-  }
+  for (const invoice of unlockedResult.rows) {
+    let amountDue;
 
-  // More than one open remainder is a state nothing in the app creates on
-  // purpose (createAdditionalInvoiceIfNeeded refuses to, and the derivation
-  // never mints). An admin CAN reach it via the free-label create form. Earlier
-  // this returned without writing anything, which froze whatever over-bill was
-  // already on the Balance — the opposite of the point. Instead: the
-  // highest-priority remainder absorbs what the others do not already demand,
-  // the others keep their current figure, and we escalate so a human unpicks it.
-  if (remainders.length > 1) {
-    console.warn(
-      `[invoice-derivation] proposal ${proposalId} has ${remainders.length} open remainder invoices; deriving only ${remainders[0].label}`
-    );
-    if (process.env.SENTRY_DSN_SERVER) {
-      Sentry.captureMessage(`Multiple remainder invoices on proposal ${proposalId}`, {
-        level: 'warning',
-        tags: { area: 'invoice_derivation' },
-        extra: { proposalId, labels: remainders.map((r) => r.label) },
-        fingerprint: ['invoice-derivation-multi-remainder', String(proposalId)],
-      });
-    }
-  }
-  for (let i = 0; i < remainders.length; i += 1) {
-    const inv = remainders[i];
-    const collected = Number(inv.amount_paid);
-    if (i === 0) {
-      const others = remainders.slice(1)
-        .reduce((sum, r) => sum + Math.max(0, Number(r.amount_due) - Number(r.amount_paid)), 0);
-      writes.push({ inv, amountDue: collected + Math.max(0, unallocated - others) });
+    if (invoice.label === 'Deposit') {
+      amountDue = depositCents;
+    } else if (invoice.label === 'Full Payment') {
+      amountDue = Math.max(0, totalCents - externalCents);
+    } else if (invoice.label === 'Balance') {
+      amountDue = Math.max(0, totalCents - externalCents - lockedTotal);
     } else {
-      writes.push({ inv, amountDue: Number(inv.amount_due) }); // unchanged
-    }
-  }
-  unallocated = 0;
-
-  const proposalLineItems = await generateLineItemsFromProposal(proposalId, client);
-
-  for (const { inv, amountDue } of writes) {
-    const collected = Number(inv.amount_paid);
-    const changed = Number(inv.amount_due) !== amountDue;
-
-    // A zero-due open invoice is not harmless: it presents a $0 bill on a live
-    // pay link. Void it — but ONLY when nothing was ever collected against it.
-    // Voiding an invoice with payments applied is what the admin PATCH route
-    // refuses outright, and it would orphan the invoice_payments rows.
-    //
-    // Every label reaching here is contract money by construction
-    // (DERIVABLE_INVOICE_LABELS), so there is no comp-reconcile side effect to
-    // worry about: 'Drink Plan Extras' is not derivable and never arrives here.
-    if (amountDue === 0 && collected === 0) {
-      await client.query(
-        `UPDATE invoices SET amount_due = 0, status = 'void', updated_at = NOW() WHERE id = $1`,
-        [inv.id]
-      );
-      // Clear the lines too: a voided invoice carrying a stale $150 breakdown
-      // still renders that breakdown on the public invoice page.
-      await writeLineItems(inv.id, [], client);
+      // Non-standard labels (e.g., 'Additional Services', manual invoices)
+      // have bespoke amounts and line items — skip refresh entirely
       continue;
     }
 
+    // Update amount_due
     await client.query(
       `UPDATE invoices SET amount_due = $1, updated_at = NOW() WHERE id = $2`,
-      [amountDue, inv.id]
+      [amountDue, invoice.id]
     );
 
-    if (CONTRACT_LABELS.includes(inv.label)) {
-      // Contract labels show the full contract breakdown against a partial
-      // amount_due; that is the established shape (INV-0144 shows a $350
-      // package line against a $250 balance) and is unchanged here.
-      await writeLineItems(inv.id, proposalLineItems, client);
-    } else if (changed) {
-      // A bespoke invoice's lines are its own. Collapse to one line so they
-      // sum to the new amount instead of dumping a paid-for package breakdown
-      // onto it. Only on change, so an untouched extras invoice keeps the
-      // itemization writeExtrasLineItems gave it.
-      await writeLineItems(
-        inv.id,
-        [{
-          description: inv.label,
-          quantity: 1,
-          unit_price: amountDue,
-          line_total: amountDue,
-          source_type: 'manual',
-          source_id: null,
-        }],
-        client
-      );
-    }
+    // Replace line items
+    await writeLineItems(invoice.id, lineItems, client);
   }
 }
 
@@ -423,21 +313,12 @@ async function createAdditionalInvoiceIfNeeded(proposalId, oldTotalCents, dbClie
   // re-billed through an unlocked invoice — i.e. every balance-bearing invoice is
   // locked (the fully-paid case). ('Deposit' is a fixed amount that never absorbs
   // the delta in refreshUnlockedInvoices, so it correctly does not count here.)
-  // The absorbing set MUST equal the refresh's remainder set. It used to be
-  // just ('Balance','Full Payment') because those were the only labels the
-  // refresh rebuilt; on 2026-07-28 'Additional Services' joined them, and
-  // leaving this guard narrow double-billed the delta — the refresh handed the
-  // whole `owed` to a standing Additional Services invoice and then this minted
-  // a SECOND one for the same increase (reproduced: $1,000 paid, edits to
-  // $1,200 then $1,300, open demand $400 against $300 owed). Worse, the
-  // proposal then held two remainder invoices. Keyed on the shared constant so
-  // the two can never drift again.
   const absorbing = await client.query(
     `SELECT id FROM invoices
       WHERE proposal_id = $1 AND locked = false AND status != 'void'
-        AND label = ANY($2::text[])
+        AND label IN ('Balance', 'Full Payment')
       LIMIT 1`,
-    [proposalId, REMAINDER_BILL_LABELS]
+    [proposalId]
   );
   if (absorbing.rows.length > 0) return null;
 

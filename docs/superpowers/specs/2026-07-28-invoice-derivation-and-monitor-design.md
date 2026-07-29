@@ -1,7 +1,7 @@
 # Invoice derivation and the over-billing monitor
 
 **Date:** 2026-07-28
-**Status:** approved section-by-section in brainstorm
+**Status:** §2 (monitor) and §3 (Void UI) SHIPPED. **§1 (derivation) and §4 (script remediation) PULLED — see the post-mortem at the bottom before reattempting.**
 **Base:** main @ 52d304b3
 
 ## The rule
@@ -157,3 +157,44 @@ Deployment gate, per the 2026-07-21 spec: after §1 and §4, the monitor's first
 - Amount and line-item editing on invoices.
 - Emiline Mccoy's $60 overpayment.
 - Backfilling Deposit invoices for historical proposals that lack them.
+
+---
+
+# POST-MORTEM, 2026-07-28: why §1 was pulled
+
+The derivation rewrite was built, reviewed by a 6-agent fleet, fixed, and re-reviewed. Both review rounds found reachable money bugs, and the second round found that the FIXES had introduced three more. It was reverted rather than patched a third time. §2 and §3 shipped; they never depended on it.
+
+## What shipped
+
+- `balanceInvoiceMonitor.js`, alert-only, both directions, 18 tests. It works against the UNCHANGED derivation, which is the point: it surfaces exactly the defects below instead of trying to fix them.
+- The Void action in the payment panel, plus `reconcile_total` on `PATCH /api/invoices/:id`. That flag matters on its own: the extras-void path defaults to the comp semantic, which subtracts the invoice from `total_price`, and on a paid-in-full proposal that invents an overpayment.
+
+## What is still broken in `refreshUnlockedInvoices` (unchanged, live)
+
+1. It derives a Balance as `total_price − external_paid − Σ(locked invoice amount_due)`, using locked invoices as a proxy for money collected. Nothing enforces that a payment has a backing locked invoice (prop 51 did not), so a re-price re-bills the deposit.
+2. It skips every label outside Deposit / Balance / Full Payment, so a price DECREASE strands an `Additional Services` / `Drink Plan Extras` / `Enhancement Lab` invoice at its old amount. This produced Brandon Martin, Cathy Murphy, Eve Thornton, and prop 527.
+3. `external_paid` is subtracted from a basis that does not subtract `amount_paid`, which is a second latent double-count.
+
+## Why the rewrite failed, and what any retry must resolve FIRST
+
+The rewrite kept failing because it tried to be the single source of truth in a system that has four disagreeing writers of `invoices.amount_due`, plus one genuinely ambiguous label. Fix these before touching the derivation again:
+
+1. **`Drink Plan Extras` has two money semantics under one label.** On the add-on submit path `foldExtrasIntoProposal` puts the money INSIDE `total_price`; on the syrup-only fast path it never does (`routes/drinkPlans/submit.js`: "syrups are additive money that never fold into total_price"). No derivation can be correct while the label alone cannot tell them apart. `voidExtrasInvoiceWithReconcile` already discriminates by inspecting persisted line items; that test, or an explicit column recorded at mint time, needs to become the shared answer.
+2. **Four writers.** `refreshUnlockedInvoices`, `invoiceExtras.findOrRefreshExtrasInvoice`, `lineItemCancel.reconcileOpenDeltaInvoices`, and `routes/drinkPlans/lab.js`. `lab.js` is the worst: it runs its own copy of the discredited locked-sum formula PLUS an explicit `external_paid` subtraction, AFTER the refresh, in the same request, overwriting it. Two errors that happen to cancel for the CC-transfer cohort and for nobody else.
+3. **`Enhancement Lab` folds into `total_price`** (since 2026-07-20) but is not treated as contract money by the derivation, so it strands the same way.
+4. **Invoice `status` is never re-derived.** Any change that can land `amount_due == amount_paid` manufactures stuck `partially_paid` rows; a later payment then routes to them and `linkPaymentToInvoice` refuses with `no_remaining_due`, crediting `proposals.amount_paid` with no `invoice_payments` row.
+5. **`createBalanceInvoice`'s idempotency check has no `status <> 'void'` filter**, so once a Balance is voided nothing ever mints a replacement. Any design that voids invoices must fix this first.
+
+## Defects the rewrite ITSELF introduced (do not repeat)
+
+- Deriving every unlocked label destroyed syrup-only extras invoices and admin-created manual invoices (`owed = 0` zeroed and voided them, deleting their line items).
+- Netting non-derivable open invoices out of the remainder under-billed the contract by their amount.
+- Widening the refresh without widening `createAdditionalInvoiceIfNeeded`'s absorbing guard double-billed a price increase.
+- Auto-voiding at `amount_due = 0` voided the BALANCE specifically in the multi-remainder case, permanently (see item 5), leaving a proposal with no payable invoice and no path to create one.
+- Netting the cancel-line overpayment by `∉ CONTRACT_LABELS` under-refunded clients, because `Additional Services` and `Enhancement Lab` money IS in `total_price`. `CONTRACT_LABELS` is a refund-scope classification, not a "lives outside the contract" one.
+
+## Also found, still open, unrelated to the derivation
+
+- `lineItemCancel` feeds `planOverpaymentSplits` an un-netted `amount_paid − total_price`, which `refundHelpers.js` documents as forbidden; a cancel-line on a proposal with paid extras over-refunds that money. The obvious fix (netting by `∉ CONTRACT_LABELS`) is wrong, per above.
+- `POST /api/auth/register-pre-hired` is public and reaches `onboarding_status = 'hired'` with no admin acting, and `onboardingPromotion.js` treats `'hired'` as admin-conferred. Pre-existing and already live.
+- `express-fileupload`'s `limitHandler` fires per file part; the second call throws `ERR_HTTP_HEADERS_SENT` and the route handler then runs on `req.files === null`. One-line guard: `if (res.headersSent) return;`.

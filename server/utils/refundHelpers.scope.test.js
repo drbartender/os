@@ -144,24 +144,19 @@ test('overpayment scope, LOCKED invoice: both figures drop, no phantom balance; 
   assert.equal(Number(row.total_price_after), 800); // audit figure: total unchanged
 });
 
-test('overpayment scope, UNLOCKED invoice: drops BOTH figures and stays settled', async () => {
-  // FIXTURE CORRECTED 2026-07-28. This used to seed dueCents: 80000 against
-  // amount_paid 100000 — "the refresh already rebuilt the demand lower" — and
-  // assert a paid-only drop. The derivation rewrite made that state UNREACHABLE:
-  // a remainder invoice's demand is amount_paid + allocation, floored at
-  // amount_paid, and in overpayment scope the allocation is 0. So the refresh
-  // leaves due == paid, and paid-only would strand a partially_paid phantom
-  // balance equal to the whole refund on a live pay link. due == paid in, both
-  // dropped, due == paid out.
-  const o = await seedOverpaid({ pendingScope: 'overpayment', locked: false, dueCents: 100000 });
+test('overpayment scope, UNLOCKED invoice: paid-only drop (refresh already rebuilt the demand)', async () => {
+  // Post-refresh state: unlocked Balance already rebuilt to the new lower
+  // demand (80000) while still holding the original 100000. Dropping due
+  // again would mint phantom credit; paid-only lands exactly on due.
+  const o = await seedOverpaid({ pendingScope: 'overpayment', locked: false, dueCents: 80000 });
   const recon = await reconcile(o, { refundId: `re_${NONCE}_u` });
   assert.equal(recon.applied, true);
   const p = (await pool.query('SELECT total_price FROM proposals WHERE id = $1', [o.proposalId])).rows[0];
-  assert.equal(Number(p.total_price), 800, 'overpayment scope still never re-lowers the total');
+  assert.equal(Number(p.total_price), 800);
   const inv = (await pool.query('SELECT amount_due, amount_paid, status FROM invoices WHERE id = $1', [o.invId])).rows[0];
-  assert.equal(Number(inv.amount_due), 80000);
-  assert.equal(Number(inv.amount_paid), 80000);
-  assert.equal(inv.status, 'paid', 'no phantom partially_paid balance');
+  assert.equal(Number(inv.amount_due), 80000);   // untouched: the refresh owns it
+  assert.equal(Number(inv.amount_paid), 80000);  // 100000 - 20000
+  assert.equal(inv.status, 'paid');
 });
 
 test('contract scope (default) still drops total_price and amount_due', async () => {
@@ -239,21 +234,14 @@ test('RC1: overpayment scope on an UNLOCKED Deposit drops BOTH figures', async (
   assert.equal(Number(inv.amount_paid), 80000);
 });
 
-test('RC1 regression: an unlocked Balance drops BOTH figures, like every other label', async () => {
-  // The label no longer changes the outcome. TOTAL_TRACKING_INVOICE_LABELS was
-  // retired on 2026-07-28 because the refresh can no longer pre-absorb a refund
-  // for ANY label (see proposalMoneyShared.js). Balance and Additional Services
-  // must now land identically; that equivalence is the point of this test.
-  for (const label of ['Balance', 'Full Payment', 'Additional Services']) {
-    const o = await seedOverpaid({
-      pendingScope: 'overpayment', locked: false, label, dueCents: 100000,
-    });
-    await reconcile(o, { refundId: `re_${NONCE}_rc1c_${label.replace(/ /g, '')}` });
-    const inv = (await pool.query('SELECT amount_due, amount_paid, status FROM invoices WHERE id = $1', [o.invId])).rows[0];
-    assert.equal(Number(inv.amount_due), 80000, `${label}: due must drop`);
-    assert.equal(Number(inv.amount_paid), 80000, `${label}: paid must drop`);
-    assert.equal(inv.status, 'paid', `${label}: must stay settled`);
-  }
+test('RC1 regression: unlocked Balance still drops paid ONLY (refresh owns its demand)', async () => {
+  const o = await seedOverpaid({
+    pendingScope: 'overpayment', locked: false, label: 'Balance', dueCents: 80000,
+  });
+  await reconcile(o, { refundId: `re_${NONCE}_rc1c` });
+  const inv = (await pool.query('SELECT amount_due, amount_paid FROM invoices WHERE id = $1', [o.invId])).rows[0];
+  assert.equal(Number(inv.amount_due), 80000, 'refresh already rebuilt this: leave it alone');
+  assert.equal(Number(inv.amount_paid), 80000);
 });
 
 test('Approach A on a NOT-overpaid proposal: contract refund lowers the total', async () => {
