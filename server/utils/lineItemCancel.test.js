@@ -801,3 +801,26 @@ test('extra-bartender target label matches the engine breakdown row EXACTLY', as
   assert.equal(Math.round(Number(row.amount) * 100), Math.round(Number(t.amount) * 100),
     'amount must corroborate the label, or the UI refuses to bind');
 });
+
+test('overpaymentCents nets out paid non-contract invoice money', async () => {
+  // refundHelpers.js:388-405 is explicit that `amount_paid - total_price` is NOT
+  // overpayment here: a paid 'Drink Plan Extras' rolls into proposals.amount_paid
+  // and never into total_price. Feeding the raw difference to
+  // planOverpaymentSplits refunds the syrup money too, and
+  // CANCEL_LINE_REFUND_RAILS deliberately makes those charges reachable.
+  const { proposalId } = await seedProposal({
+    override: 400, amountPaid: 460, status: 'balance_paid',
+    addons: [{ slug: SLUGS.photoBooth, name: 'Photo Booth', billingType: 'flat', rate: 100, quantity: 1 }],
+  });
+  await seedInvoice(proposalId, { label: 'Balance', dueCents: 40000, paidCents: 40000, status: 'paid', locked: true });
+  await seedInvoice(proposalId, { label: 'Drink Plan Extras', dueCents: 6000, paidCents: 6000, status: 'paid', locked: true });
+
+  await applyCancel(proposalId, { target: `addon:${SLUGS.photoBooth}` }, async (result) => {
+    const rawCents = Math.round(460 * 100) - Math.round(result.newTotal * 100);
+    assert.ok(rawCents > 6000, 'fixture must actually produce an apparent overpayment');
+    assert.equal(
+      result.overpaymentCents, rawCents - 6000,
+      'the 6000 of PAID syrup money must be netted out, never offered to Stripe'
+    );
+  });
+});

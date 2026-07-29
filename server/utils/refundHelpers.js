@@ -15,7 +15,6 @@ const { reconcileProposalPaymentStatus } = require('./proposalStatus');
 const {
   CONTRACT_LABELS,
   OFF_LEDGER_INVOICE_LABELS,
-  TOTAL_TRACKING_INVOICE_LABELS,
 } = require('./proposalMoneyShared');
 
 function fmtUSD(cents) {
@@ -327,41 +326,30 @@ async function applyRefundReconciliation(
         'INSERT INTO invoice_payments (invoice_id, payment_id, amount, refund_id) VALUES ($1,$2,$3,$4)',
         [link.invoice_id, paymentId, -take, refundRowId]
       );
-      // Contract scope: drop amount_due AND amount_paid by `take` so a
-      // fully-paid invoice stays paid at the corrected figure (no phantom
-      // unpaid line). Overpayment scope drops amount_paid ONLY when something
-      // else already corrected this invoice's demand — which is true of
-      // exactly one population: UNLOCKED invoices with a TOTAL-TRACKING label,
-      // the ones refreshUnlockedInvoices rebuilds from the new total inside
-      // the cancel transaction. Dropping their due again would mint phantom
-      // credit. Every other invoice (locked, or unlocked with a label the
-      // refresh skips or computes independently, e.g. Deposit / Additional
-      // Services / Enhancement Lab / manual) has nobody correcting it, so
-      // paid-only would leave due > paid and flip a settled invoice to a
-      // client-visible partially_paid phantom balance on a live pay link.
-      // Keyed on the FACT (is the demand refresh-managed?) via the shared
-      // constant, not on the `locked` proxy that first encoded it — so adding
-      // a label to the refresh can never silently desync this rule
-      // (push review, 2026-07-26).
-      const demandIsRefreshManaged = link.invoice_locked !== true
-        && TOTAL_TRACKING_INVOICE_LABELS.includes(link.invoice_label);
-      const dropDue = scope !== 'overpayment' || !demandIsRefreshManaged;
-      const upd = dropDue
-        ? await dbClient.query(
-            `UPDATE invoices
-                SET amount_paid = GREATEST(amount_paid - $1, 0),
-                    amount_due  = GREATEST(amount_due  - $1, 0)
-              WHERE id = $2
-              RETURNING amount_due, amount_paid`,
-            [take, link.invoice_id]
-          )
-        : await dbClient.query(
-            `UPDATE invoices
-                SET amount_paid = GREATEST(amount_paid - $1, 0)
-              WHERE id = $2
-              RETURNING amount_due, amount_paid`,
-            [take, link.invoice_id]
-          );
+      // Drop amount_due AND amount_paid by `take`, always, so a fully-paid
+      // invoice stays paid at the corrected figure and never shows a phantom
+      // unpaid line.
+      //
+      // There used to be an overpayment-scope exception that dropped
+      // amount_paid ONLY, for unlocked invoices with a total-tracking label, on
+      // the premise that refreshUnlockedInvoices had already rebuilt that
+      // invoice's demand from the new total inside the cancel transaction.
+      // REMOVED 2026-07-28: the derivation rewrite made a remainder invoice's
+      // demand `amount_paid + allocation`, FLOORED at amount_paid. In
+      // overpayment scope `owed` is 0 by construction (the refund only fires
+      // when amount_paid exceeds the new total), so the refresh writes
+      // amount_due = amount_paid and can no longer pre-absorb anything. Keeping
+      // paid-only stranded a client-visible partially_paid balance equal to the
+      // whole refund on a live pay link, for exactly the population the branch
+      // served. Dropping both always lands on due == paid.
+      const upd = await dbClient.query(
+        `UPDATE invoices
+            SET amount_paid = GREATEST(amount_paid - $1, 0),
+                amount_due  = GREATEST(amount_due  - $1, 0)
+          WHERE id = $2
+          RETURNING amount_due, amount_paid`,
+        [take, link.invoice_id]
+      );
       if (upd.rows[0]) {
         const inv = upd.rows[0];
         const newStatus = inv.amount_paid >= inv.amount_due ? 'paid' : 'partially_paid';

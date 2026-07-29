@@ -22,8 +22,9 @@ const { pool } = require('../db');
 const { refreshUnlockedInvoices } = require('../utils/invoiceLifecycle');
 const { voidExtrasInvoiceWithReconcile } = require('../utils/invoiceExtras');
 
-// 51 David Luebke, 557 Brandon Martin, 491 Cathy Murphy, 556 Eve Thornton.
-const PROPOSALS = [51, 491, 556, 557];
+// 51 David Luebke, 491 Cathy Murphy, 527 (stale $20 extras, same shape as Eve,
+// found by the 2026-07-28 push review), 556 Eve Thornton, 557 Brandon Martin.
+const PROPOSALS = [51, 491, 527, 556, 557];
 const APPLY = process.argv.includes('--apply');
 
 const usd = (cents) => '$' + (Number(cents) / 100).toFixed(2);
@@ -73,8 +74,13 @@ function report(tag, rows) {
     // voiding one carries a comp-reconcile side effect owned by
     // voidExtrasInvoiceWithReconcile, and calling that from invoiceLifecycle
     // would be a require cycle. Finish those here (this is Eve Thornton).
+    // The derivation deliberately does NOT touch 'Drink Plan Extras' (its money
+    // may live outside total_price), so a stale extras invoice is still open
+    // here at its ORIGINAL amount, not zeroed. Select it by the fact that the
+    // proposal owes nothing, which is what makes the demand stale.
     for (const r of await snapshot(id)) {
-      if (r.label === 'Drink Plan Extras' && Number(r.amount_due) === 0
+      const stillOwed = Math.round(Number(r.total_price) * 100) - Math.round(Number(r.prop_paid) * 100);
+      if (r.label === 'Drink Plan Extras' && stillOwed <= 0
           && Number(r.amount_paid) === 0 && r.status !== 'void' && !r.locked) {
         console.log(`  voiding extras invoice ${r.invoice_number} via reconcile helper`);
         // reconcileTotalPrice MUST be false. Its default (true) is the COMP

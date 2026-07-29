@@ -20,6 +20,7 @@ const { refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, writeLineItems
 const { syncShiftsFromProposal, deriveStaffingRoster, loadStaffingAddons } = require('./eventCreation');
 const { rosterCounts } = require('./positionsNeeded');
 const { toCents } = require('./invoiceShared');
+const { CONTRACT_LABELS } = require('./proposalMoneyShared');
 
 // Archived proposals are settled history; completed events have run payroll.
 // Changes there are deliberate manual territory, never one-click.
@@ -711,6 +712,25 @@ async function applyLineItemCancel(client, {
     [proposalId]
   )).rows.map((r) => ({ id: r.id, label: r.label, amount_due: Number(r.amount_due) }));
 
+  // NET OUT non-contract money before calling anything an overpayment.
+  // refundHelpers.js:388-405 spells this out: `amount_paid - total_price` is NOT
+  // overpayment in this schema, because a paid 'Drink Plan Extras' (and any
+  // other non-CONTRACT_LABELS invoice) rolls into proposals.amount_paid and
+  // never into total_price. Feeding the raw difference to planOverpaymentSplits
+  // refunds that money too, and because CANCEL_LINE_REFUND_RAILS deliberately
+  // includes the extras rails it is reachable: a $400 contract + $60 paid
+  // syrups, cancel a $100 add-on, and the un-netted figure refunds $160 instead
+  // of $100 while the proposal still reads settled. DRB eats the $60 and still
+  // buys the syrups. Prod proposal 599 sits at exactly this +$60 shape.
+  const nonContractPaidCents = Number((await client.query(
+    `SELECT COALESCE(SUM(amount_paid), 0) AS cents
+       FROM invoices
+      WHERE proposal_id = $1
+        AND status != 'void'
+        AND NOT (COALESCE(label, '') = ANY($2::text[]))`,
+    [proposalId, CONTRACT_LABELS]
+  )).rows[0].cents);
+
   return {
     oldTotal,
     newTotal: Number(snapshot.total),
@@ -718,7 +738,12 @@ async function applyLineItemCancel(client, {
     snapshot,
     statusChanged,
     newStatus: proposal.status,
-    overpaymentCents: Math.max(0, Math.round(fingerprint.amount_paid * 100) - toCents(snapshot.total)),
+    overpaymentCents: Math.max(
+      0,
+      Math.round(fingerprint.amount_paid * 100)
+        - toCents(snapshot.total)
+        - nonContractPaidCents
+    ),
     removedLabel,
     lockedInvoices,
     deltaInvoicesAdjusted,

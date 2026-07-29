@@ -238,3 +238,28 @@ test('candidates always equals alerted plus throttled', async () => {
   assert.equal(r.candidates, r.alerted + r.throttled);
   assert.ok(r.candidates >= 1);
 });
+
+test('quiet on an overpaid proposal with no open invoices (Emiline shape)', async () => {
+  // owed is negative here. Without the PAYABLE_SUM > 0 guard, `0 > -6000` made
+  // this report as over-billed forever, breaking the zero-alerts deploy gate.
+  const f = await fixture({
+    status: 'confirmed', total: 300, paid: 360,
+    invoices: [
+      { label: 'Drink Plan Extras', due: 6000, paid: 6000, status: 'paid', locked: true },
+      { label: 'Balance', due: 20000, paid: 20000, status: 'paid', locked: true },
+    ],
+  });
+  await monitorMissingBalanceInvoices();
+  assert.deepEqual(await alertsFor(f.proposalId), []);
+});
+
+test('still alerts on an overpaid proposal that DOES have an open invoice', async () => {
+  const f = await fixture({
+    status: 'deposit_paid', total: 300, paid: 360,
+    invoices: [{ label: 'Additional Services', due: 5000 }],
+  });
+  await monitorMissingBalanceInvoices();
+  const rows = await alertsFor(f.proposalId);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].action, OVER_ACTION);
+});

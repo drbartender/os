@@ -59,6 +59,20 @@ const LABELS = `
 // The client is being asked for more than they owe. Never legitimate at any
 // stage, so this runs on every proposal except 'draft' and 'archived' — a
 // quote-stage proposal can be over-billed too.
+//
+// `PAYABLE_SUM > 0` is load-bearing, not belt-and-braces. An OVERPAID proposal
+// has a negative owed, so `0 > -6000` is true and a proposal with NO open
+// invoice at all would be reported as over-billed, with "$0.00 payable" and
+// email copy claiming the pay button works. Prod proposal 599 (Emiline, paid
+// $360 against a $300 total) is exactly that shape, is deliberately out of
+// scope for the derivation work, and would otherwise alert every 24h forever.
+//
+// Note this counts EVERY open invoice, including labels the derivation leaves
+// alone (syrup-only extras, manual fees) whose money is additive to
+// total_price. That over-reports on the rare abandoned-card syrup-only shape.
+// Deliberate: a false alert is cheap and throttled, while excluding those
+// labels would have missed Eve Thornton, whose stranded $155 extras invoice WAS
+// folded into total_price. Alert-only means we err toward reporting.
 const OVER_SQL = `
   SELECT p.id, c.name AS client_name, p.status, p.event_date,
          ${PAYABLE_SUM} - (${OWED_CENTS}) AS excess_cents,
@@ -68,6 +82,7 @@ const OVER_SQL = `
     FROM proposals p
     JOIN clients c ON c.id = p.client_id
    WHERE p.status NOT IN ('draft', 'archived')
+     AND ${PAYABLE_SUM} > 0
      AND ${PAYABLE_SUM} > (${OWED_CENTS})
    ORDER BY p.id`;
 

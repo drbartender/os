@@ -11,10 +11,11 @@ require('dotenv').config();
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
-const { refreshUnlockedInvoices } = require('./invoiceLifecycle');
+const { refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded } = require('./invoiceLifecycle');
 const {
   PARTIAL_BILL_LABELS,
-  TOTAL_TRACKING_INVOICE_LABELS,
+  REMAINDER_BILL_LABELS,
+  DERIVABLE_INVOICE_LABELS,
 } = require('./proposalMoneyShared');
 
 let seq = 0;
@@ -57,22 +58,13 @@ async function amountOf(id) {
 
 test.after(async () => { await pool.end(); });
 
-test('partial-bill labels are exactly Deposit and Drink Plan Extras', () => {
-  assert.deepEqual([...PARTIAL_BILL_LABELS].sort(), ['Deposit', 'Drink Plan Extras']);
-});
-
-// Regression pin. Widening the refresh to every label (2026-07-28) makes it
-// tempting to widen this too, since it reads like "labels the refresh manages".
-// It is not that. It is "labels whose demand the CANCEL transaction already
-// rebuilt before the refund fires", and widening it re-opens the RC1 phantom
-// balance on a fully-paid bespoke invoice. See the constant's comment.
-test('TOTAL_TRACKING_INVOICE_LABELS stays narrow and does not follow the refresh', () => {
-  assert.deepEqual([...TOTAL_TRACKING_INVOICE_LABELS].sort(), ['Balance', 'Full Payment']);
-  for (const label of ['Additional Services', 'Gratuity Balance', 'Drink Plan Extras']) {
-    assert.equal(
-      TOTAL_TRACKING_INVOICE_LABELS.includes(label), false,
-      `${label} must keep dropping amount_due on an overpayment refund`
-    );
+test('Deposit is the only partial bill; Drink Plan Extras is not derivable at all', () => {
+  assert.deepEqual([...PARTIAL_BILL_LABELS], ['Deposit']);
+  assert.deepEqual([...REMAINDER_BILL_LABELS], ['Balance', 'Full Payment', 'Additional Services']);
+  // The allow-list is the whole point: a label outside it may hold money that
+  // is not in total_price, so deriving it destroys or cannibalises money.
+  for (const label of ['Drink Plan Extras', 'Gratuity Balance', 'Damage Fee', 'Enhancement Lab']) {
+    assert.equal(DERIVABLE_INVOICE_LABELS.includes(label), false, `${label} must not be derivable`);
   }
 });
 
@@ -133,25 +125,42 @@ test('an open Deposit is capped when it exceeds what is still owed', async () =>
   } finally { await cleanup(f); }
 });
 
-test('Drink Plan Extras keeps its own figure when it fits, remainder takes the rest', async () => {
+test('Drink Plan Extras is untouched and never nets against the Balance', async () => {
+  // Syrup-only extras are additive money that never folds into total_price
+  // (routes/drinkPlans/submit.js:571). Netting them out of the remainder would
+  // shave $155 off the contract to pay for $155 of syrups.
   const f = await fixture({
     total: 500, paid: 100,
     invoices: [{ label: 'Drink Plan Extras', due: 15500 }, { label: 'Balance', due: 50000 }],
   });
   try {
     await refreshUnlockedInvoices(f.proposalId);
-    assert.equal((await amountOf(f.invoices[0].id)).due, 15500, 'extras untouched when it fits');
-    assert.equal((await amountOf(f.invoices[1].id)).due, 24500, 'remainder = 40000 owed - 15500 extras');
+    assert.equal((await amountOf(f.invoices[0].id)).due, 15500, 'extras never derived');
+    assert.equal((await amountOf(f.invoices[1].id)).due, 40000, 'Balance takes the FULL owed');
   } finally { await cleanup(f); }
 });
 
-test('Drink Plan Extras capped to zero is flagged, never auto-voided (Eve shape)', async () => {
+test('a fully paid proposal never zeroes or voids a Drink Plan Extras invoice', async () => {
+  // owed is 0, but the extras money is outside total_price, so zeroing it would
+  // destroy a real $155 demand and delete its itemization.
   const f = await fixture({ total: 550, paid: 550, invoices: [{ label: 'Drink Plan Extras', due: 15500 }] });
   try {
     await refreshUnlockedInvoices(f.proposalId);
     const got = await amountOf(f.invoices[0].id);
-    assert.equal(got.due, 0, 'capped at owed');
-    assert.notEqual(got.status, 'void', 'void must route through voidExtrasInvoiceWithReconcile');
+    assert.equal(got.due, 15500, 'untouched');
+    assert.notEqual(got.status, 'void');
+  } finally { await cleanup(f); }
+});
+
+test('an admin-created manual invoice survives a refresh untouched', async () => {
+  // POST /api/invoices/proposal/:id accepts free-text labels for money that is
+  // not in total_price. Deriving one silently voided it and deleted its lines.
+  const f = await fixture({ total: 1000, paid: 1000, invoices: [{ label: 'Damage Fee', due: 25000, status: 'draft' }] });
+  try {
+    await refreshUnlockedInvoices(f.proposalId);
+    const got = await amountOf(f.invoices[0].id);
+    assert.equal(got.due, 25000);
+    assert.equal(got.status, 'draft');
   } finally { await cleanup(f); }
 });
 
@@ -183,22 +192,70 @@ test('locked invoices are never modified', async () => {
   } finally { await cleanup(f); }
 });
 
-test('two remainder invoices: nothing is written', async () => {
+test('two open remainders: the priority one absorbs, the other is left alone', async () => {
+  // Earlier this wrote NOTHING, which froze whatever over-bill was already on
+  // the Balance. Balance outranks Additional Services, so it takes what AS does
+  // not already demand: 50000 owed - 10000 = 40000.
   const f = await fixture({
     total: 500, paid: 0,
-    invoices: [{ label: 'Additional Services', due: 10000 }, { label: 'Gratuity Balance', due: 20000 }],
+    invoices: [{ label: 'Additional Services', due: 10000 }, { label: 'Balance', due: 99999 }],
   });
   try {
     await refreshUnlockedInvoices(f.proposalId);
-    assert.equal((await amountOf(f.invoices[0].id)).due, 10000, 'refuses to guess an allocation');
-    assert.equal((await amountOf(f.invoices[1].id)).due, 20000);
+    assert.equal((await amountOf(f.invoices[0].id)).due, 10000, 'lower priority keeps its figure');
+    assert.equal((await amountOf(f.invoices[1].id)).due, 40000, 'Balance absorbs the rest, no longer frozen');
   } finally { await cleanup(f); }
 });
 
-test('Gratuity Balance is a remainder bill and tracks owed (Iga shape)', async () => {
+test('Gratuity Balance is NOT derivable and is left exactly as-is (Iga shape)', async () => {
   const f = await fixture({ total: 600, paid: 500, invoices: [{ label: 'Gratuity Balance', due: 10000 }] });
   try {
     await refreshUnlockedInvoices(f.proposalId);
-    assert.equal((await amountOf(f.invoices[0].id)).due, 10000);
+    assert.equal((await amountOf(f.invoices[0].id)).due, 10000, 'correct today, and untouched either way');
+  } finally { await cleanup(f); }
+});
+
+// ── The seam that double-billed: refresh + createAdditionalInvoiceIfNeeded ───
+
+test('a standing Additional Services invoice absorbs the delta exactly once', async () => {
+  // Every caller runs refreshUnlockedInvoices() and THEN
+  // createAdditionalInvoiceIfNeeded(). Once the refresh started deriving
+  // 'Additional Services', that guard's narrow ('Balance','Full Payment')
+  // absorbing check stopped seeing the invoice that had just absorbed the
+  // delta, so it minted a second one for the same money.
+  const f = await fixture({
+    total: 1300, paid: 1000,
+    invoices: [
+      { label: 'Deposit', due: 10000, paid: 10000, status: 'paid', locked: true },
+      { label: 'Balance', due: 90000, paid: 90000, status: 'paid', locked: true },
+      { label: 'Additional Services', due: 20000 },
+    ],
+  });
+  try {
+    await refreshUnlockedInvoices(f.proposalId);
+    // oldTotal 1200 -> new 1300: a $100 increase on a fully-paid-through-1200 proposal.
+    const minted = await createAdditionalInvoiceIfNeeded(f.proposalId, 120000);
+    assert.equal(minted, null, 'the open Additional Services invoice already absorbed it');
+
+    const { rows } = await pool.query(
+      `SELECT COALESCE(SUM(amount_due - amount_paid), 0) AS payable
+         FROM invoices WHERE proposal_id = $1 AND status IN ('sent','partially_paid')`,
+      [f.proposalId]
+    );
+    assert.equal(Number(rows[0].payable), 30000, 'open demand equals owed, not owed + delta');
+  } finally { await cleanup(f); }
+});
+
+test('with no open remainder, the delta still mints an Additional Services invoice', async () => {
+  const f = await fixture({
+    total: 1200, paid: 1000,
+    invoices: [{ label: 'Balance', due: 100000, paid: 100000, status: 'paid', locked: true }],
+  });
+  try {
+    await refreshUnlockedInvoices(f.proposalId);
+    const minted = await createAdditionalInvoiceIfNeeded(f.proposalId, 100000);
+    assert.ok(minted, 'nothing could absorb it, so it must be billed');
+    assert.equal(Number(minted.amount_due), 20000);
+    f.invoices.push({ id: minted.id });
   } finally { await cleanup(f); }
 });

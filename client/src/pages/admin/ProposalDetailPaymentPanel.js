@@ -261,6 +261,33 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
   // invoice and refuses one with payments applied); nothing in the client had
   // ever called it, which is the whole reason invoices "could not be edited".
   const handleVoidInvoice = async (inv) => {
+    // A 'Drink Plan Extras' invoice is the one label whose void has a money
+    // side effect: the server's comp path subtracts it from the contract total.
+    // That is right when you are WAIVING the add-on and wrong when you are
+    // clearing a stale duplicate demand, and on a paid-in-full proposal the
+    // wrong choice invents an overpayment. So ask, and never rely on a default.
+    const isExtras = inv.label === 'Drink Plan Extras';
+    if (isExtras) {
+      const waive = window.confirm(
+        `Void ${inv.invoice_number} (${inv.label}).\n\n` +
+        'OK = Waive it: also reduce the event total by this amount. Use this when you are comping the add-on.\n\n' +
+        'Cancel = Correct it: void the invoice and leave the event total unchanged. ' +
+        'Use this when the invoice is a stale or duplicate charge.'
+      );
+      setVoidingId(inv.id);
+      try {
+        await api.patch(`/invoices/${inv.id}`, { status: 'void', reconcile_total: waive });
+        setInvoiceRefreshKey(k => k + 1);
+        if (onUpdate) onUpdate();
+        toast.success(`${inv.invoice_number} voided.`);
+      } catch (err) {
+        toast.error(err.message || 'Failed to void invoice.');
+      } finally {
+        setVoidingId(null);
+      }
+      return;
+    }
+
     if (!window.confirm(
       `Void ${inv.invoice_number} (${inv.label})? The client will no longer be able to pay it. This cannot be undone.`
     )) return;
@@ -268,6 +295,9 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
     try {
       await api.patch(`/invoices/${inv.id}`, { status: 'void' });
       setInvoiceRefreshKey(k => k + 1);
+      // The void can move proposal-level figures, so refresh the parent too or
+      // the panel keeps rendering a stale total and balance.
+      if (onUpdate) onUpdate();
       toast.success(`${inv.invoice_number} voided.`);
     } catch (err) {
       // Surfaces the server's INVOICE_HAS_PAYMENTS / INVOICE_LOCKED messages

@@ -366,7 +366,20 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         );
       }
       if (locked.status !== 'void') {
-        await voidExtrasInvoiceWithReconcile(id, req.user.id, client);
+        // reconcile_total expresses the CALLER'S INTENT and has no safe default.
+        //   true  (comp/waive) — the add-on is being given away, so subtract it
+        //                        from total_price. This is what the comp route
+        //                        has always meant, so it stays the default for
+        //                        any caller that does not say.
+        //   false (correction) — the invoice is a stale or duplicate demand and
+        //                        the contract is right as it stands.
+        // Getting this backwards on a PAID-IN-FULL proposal invents an
+        // overpayment: prod 527 is settled at $370/$370 with a stale $20 extras
+        // invoice, and comping it would drop total_price to $350 against $370
+        // collected. The admin Void button therefore sends false explicitly and
+        // says so in its confirm copy (2026-07-28 push review).
+        const reconcileTotalPrice = req.body.reconcile_total !== false;
+        await voidExtrasInvoiceWithReconcile(id, req.user.id, client, { reconcileTotalPrice });
       }
       const voided = await client.query(
         `SELECT id, token, proposal_id, invoice_number, label,
