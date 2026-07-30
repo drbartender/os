@@ -62,12 +62,12 @@ export default function PrivacyPage() {
 
       <h2>Text messaging (SMS)</h2>
       <p>
-        If you provide your mobile number and check the SMS consent box on our quote
-        form, Dr. Bartender may send you text messages about your quote, booking,
-        payments, and event details. Our staff separately consent to shift and
-        scheduling messages when they sign their contractor agreement. Message
-        frequency varies. Message and data rates may apply. Reply STOP to any message
-        to opt out, or reply HELP for help.
+        If you provide your mobile number and check the SMS consent box on our{' '}
+        <Link to="/sms">text updates form</Link> or on our quote form, Dr. Bartender may
+        send you text messages about your quote, booking, payments, and event details.
+        Our staff separately consent to shift and scheduling messages when they sign
+        their contractor agreement. Message frequency varies. Message and data rates may
+        apply. Reply STOP to any message to opt out, or reply HELP for help.
       </p>
       <p>
         We do not sell your personal information. No mobile information will be shared
@@ -81,7 +81,10 @@ export default function PrivacyPage() {
         contact@drbartender.com. Opting out of text messages does not affect your
         booking or your employment.
       </p>
-      <p>This is the exact consent statement we present on our quote form:</p>
+      <p>
+        This is the exact consent statement we present on both our text updates form and
+        our quote form:
+      </p>
       <blockquote>{SMS_CONSENT_CLIENT}</blockquote>
       <p>
         The box is unchecked by default, consent is never required to book with us,

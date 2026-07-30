@@ -64,6 +64,7 @@ const MethodPage = lazy(() => import('./pages/website/MethodPage'));
 const AboutPage = lazy(() => import('./pages/website/AboutPage'));
 const PrivacyPage = lazy(() => import('./pages/website/legal/PrivacyPage'));
 const TermsPage = lazy(() => import('./pages/website/legal/TermsPage'));
+const SmsOptInPage = lazy(() => import('./pages/website/SmsOptInPage'));
 const Blog = lazy(() => import('./pages/public/Blog'));
 const BlogPost = lazy(() => import('./pages/public/BlogPost'));
 const HiringLanding = lazy(() => import('./pages/HiringLanding'));
@@ -335,6 +336,10 @@ function PublicWebsiteRoutes() {
         <Route path="/classes" element={<ClassWizard />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/terms" element={<TermsPage />} />
+        {/* Standalone SMS opt-in form. This URL is what the Twilio 10DLC campaign
+            submits as its opt-in page, so the path is load-bearing: do not rename
+            it without updating the campaign. */}
+        <Route path="/sms" element={<SmsOptInPage />} />
         {/* These public token-based routes work on both domains */}
         <Route path="/plan/:token" element={<PlannerRouter />} />
       <Route path="/plan/:token/lab" element={<EnhancementLab />} />
@@ -516,6 +521,7 @@ function AppRoutes() {
       <Route path="/labnotes/:slug" element={<BlogPost />} />
       <Route path="/privacy" element={<PrivacyPage />} />
       <Route path="/terms" element={<TermsPage />} />
+      <Route path="/sms" element={<SmsOptInPage />} />
       {/* Client portal */}
       <Route path="/client-login" element={<ClientLogin />} />
       <Route path="/my-proposals" element={<PortalHome />} />

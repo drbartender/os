@@ -39,6 +39,17 @@ server/routes/calcom.js
 server/routes/emailMarketingWebhook.js
 server/routes/sms.js
 server/routes/thumbtack.js
+# Public SMS opt-in form (2026-07-30). Unauthenticated POST that INSERTs a
+# clients row from attacker-controlled input, writes sms_consent_log (the
+# compliance evidence we would hand a carrier in a dispute), and sets
+# communication_preferences.sms_enabled — the SOLE enforcement of an SMS opt-out
+# on the send path. Its sibling routes/sms.js is listed above, and this file was
+# split OUT of it precisely to keep the public write small; listing it is what
+# stops that split from hiding a public write from review-scaling. Same
+# "sensitivity follows the code" rule as the drinkPlans and stripeWebhook splits
+# below. Its own review found a portal-takeover primitive here, so a light look
+# on the next edit is not acceptable.
+server/routes/smsOptIn.js
 
 # Billed-voice surfaces (2026-07-18 push review): outbound Twilio calls cost
 # real money and the webhook routes take attacker-reachable input. Includes

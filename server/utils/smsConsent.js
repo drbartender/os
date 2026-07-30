@@ -72,7 +72,9 @@ function requestMeta(req) {
  * @param {string} opts.phone raw; normalized here via validatePhone
  * @param {boolean} opts.consented
  * @param {string} opts.version
- * @param {string} opts.sourceForm currently always 'quote_wizard'
+ * @param {string} opts.sourceForm 'quote_wizard' (proposals/public.js) or
+ *   'sms_page' (routes/smsOptIn.js). Free text, no CHECK constraint; nothing
+ *   reads it at runtime, so a new caller may add a value without a migration.
  * @param {string} [opts.ip]
  * @param {string} [opts.userAgent]
  * @returns {Promise<{applied: boolean, logged: boolean, reason: string}>}

@@ -19337,4 +19337,83 @@ html[data-app="admin-os"] .pay-qr-tile {
   line-height: 1.55;
   opacity: 0.85;
 }
-.wz-consent-text a { text-decoration: underline; }
+/* The consent links are the two things a carrier reviewer is told to look for,
+   and they sit on the CREAM card, where the site's teal link color lands at
+   2.18:1 — 1.95:1 once .wz-consent-text's 0.85 opacity composites it. This deep
+   teal reads 6.1:1 through the same opacity, so it clears WCAG AA. Applies to
+   the quote wizard's checkbox too, on purpose: the two must look identical
+   because a reviewer compares them. Padding widens the hit area — the whole
+   sentence is a <label>, so a near-miss tap next to a link silently ticks the
+   box, and a reviewer seeing a ticked box reads it as pre-checked. */
+.wz-consent-text a {
+  text-decoration: underline;
+  color: #0e3d3a;
+  padding: 3px 2px;
+}
+
+/* Standalone /sms opt-in page. Reuses .wz-card / .wz-grid / .wz-consent so the
+   checkbox renders identically to the quote wizard's — a carrier reviewer
+   compares the two, and one shared style block is what keeps them the same.
+
+   The compact hero and tightened padding are LOAD-BEARING, not taste: every
+   pixel above the card is a pixel the consent checkbox has to clear, and an
+   unfindable checkbox is the exact defect (A2P 30896) this page exists to fix.
+   The ordering of the form fields does most of that work — see rule 4 in
+   SmsOptInPage.js. If you grow this header, re-verify the checkbox still lands
+   in the first screen at 390x664, 375x667, 412x732 AND 1366x720. Those are
+   browser viewports; do NOT validate against 390x844, which is an iPhone SCREEN
+   height and ~180px more room than Safari actually gives you. */
+.ws-press-pagehero.sms-optin-hero { padding: 34px 0 26px; }
+.ws-press-pagehero.sms-optin-hero .ws-press-pagehero-title {
+  font-size: clamp(2rem, 5vw, 3.4rem);
+}
+.ws-press-pagehero.sms-optin-hero .ws-press-pagehero-sub {
+  margin-top: 12px;
+  font-size: 1rem;
+}
+.ws-section.sms-optin-section { padding-top: 1.5rem; }
+/* h2 rather than h3 (no heading-level skip under the page h1). .wz-card colors
+   h3/h4/p/span/li but not h2, so the color here is required, not cosmetic —
+   without it the heading renders cream-on-cream. */
+.sms-optin-section .wz-card h2 {
+  color: var(--deep-brown);
+  font-size: clamp(1.15rem, 2.5vw, 1.4rem);
+  letter-spacing: 0.015em;
+  margin-bottom: 1.1rem;
+}
+
+/* Phone widths: trim the decorative eyebrow and tighten the shell. The header
+   plus announce bar alone cost ~205px here, so this page has less room to spend
+   than any other on the site. */
+@media (max-width: 640px) {
+  .ws-press-pagehero.sms-optin-hero { padding: 20px 0 14px; }
+  .ws-press-pagehero.sms-optin-hero .ws-press-eyebrow { display: none; }
+  /* The sub-line restates what the consent sentence says verbatim a few inches
+     lower, so on a phone it is 60px spent twice. The h1 stays: it is the page's
+     identity and a reviewer's confirmation they are on the right page. */
+  .ws-press-pagehero.sms-optin-hero .ws-press-pagehero-sub { display: none; }
+  .ws-section.sms-optin-section { padding-top: 1rem; }
+  .sms-optin-section .wz-card { padding: 1.35rem; }
+  .sms-optin-section .wz-card h2 { margin-bottom: 0.85rem; }
+}
+.sms-optin-note {
+  margin-top: 1rem;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  opacity: 0.7;
+}
+.sms-optin-why-email {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  opacity: 0.7;
+}
+.sms-optin-done h2 { margin-bottom: 0.75rem; }
+.sms-optin-done h2:focus-visible { outline: 2px solid var(--deep-brown); outline-offset: 3px; }
+.sms-optin-done p {
+  font-size: 0.9rem;
+  line-height: 1.6;
+  margin-bottom: 0.75rem;
+}
+.sms-optin-next { margin-bottom: 0; }
+.sms-optin-next a { text-decoration: underline; }
