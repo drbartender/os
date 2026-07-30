@@ -645,3 +645,50 @@ tracked and went away with its worktree.
 - The `proposal_refunds_total_scope_check` DO block matches `pg_constraint` on
   `conname` alone rather than `(conrelid, conname)`. Harmless with this name;
   would false-positive if another table ever took the same constraint name. (low)
+
+**Overpayment netting / invoice provenance (2026-07-28 push review)**
+
+Context: `applyLineItemCancel`'s `overpaymentCents` feeds `planOverpaymentSplits`,
+which fires real Stripe refunds. It must be "money paid ABOVE what is now owed on
+the contract". Three implementations have each been wrong on a different real prod
+row: un-netted (over-refunds paid syrup/manual money), netted by
+`∉ CONTRACT_LABELS` (under-refunds, because Additional Services and Enhancement
+Lab money IS in `total_price`), and the shipped one below. The shipped version is
+correct on every currently reachable row and is kept for that reason, but it is
+not correct in general.
+
+ROOT CAUSE, and the fix that closes both gaps at once: **an invoice does not
+record whether its money is inside `proposals.total_price`.** Every classifier is
+therefore a proxy. Add that fact to the row (a boolean set at mint time by each of
+the six `createInvoice` callers, plus a hand backfill of the few ambiguous
+existing rows) and `sumOffContractPaidCents` becomes a single column read, correct
+by construction. This is the SAME root cause as the pulled invoice-derivation
+rewrite (see `docs/superpowers/specs/2026-07-28-invoice-derivation-and-monitor-design.md`
+post-mortem) — do them together, provenance first.
+
+- **Free-text labels that carry contract money are netted out (under-refund).**
+  `invoiceExtras.IN_TOTAL_PRICE_LABELS` is a closed list of the five labels code
+  generates, but `POST /api/invoices/proposal/:id` writes `label.trim()` with no
+  constraint and `PATCH /api/invoices/:id` can rename any unlocked invoice. Both
+  free-text-labelled PAID invoices in the entire prod ledger are contract money
+  (`INV - Balance` $250 on prop 596; `Gratuity Balance` $100 on prop 547), so the
+  base rate of the "bespoke label ⇒ off-contract" assumption is 0 for 2. NOT
+  reachable today: 596 is `completed` (cancel blocked) and 547's invoice is still
+  unpaid, and the netting only counts `amount_paid > 0`. Becomes live the moment
+  someone pays prop 547's $100. (medium)
+- **`reconcileOpenDeltaInvoices` destroys the fold marker it depends on.**
+  `lineItemCancel.js` step 6 replaces an unlocked `sent`/`partially_paid` Drink
+  Plan Extras invoice's line items with one synthetic `source_type: 'manual'`
+  line whenever its amount moves, deleting the `source_type = 'addon'` /
+  bar-rental rows. Those rows are the ONLY record of whether that invoice folded
+  into `total_price`, read by `extrasLinesAreFolded` for the netting AND by
+  `voidExtrasInvoiceWithReconcile`'s comp reconcile (which has depended on them
+  since before this work). The deletion is committed, so one cancel-line
+  misclassifies that invoice permanently in both consumers. Not reachable on any
+  current prod row (the only paid extras invoice, prop 599, is locked and `paid`,
+  which step 6 skips). Independent of the netting; it is a cancel-line defect.
+  (medium)
+- Third option if the provenance work is deferred: stop computing this at all.
+  Show the admin the components (paid, new total, each non-contract invoice and
+  its amount) and let them enter the refund figure. It is the only version with
+  no wrong answer, because it stops guessing. (option, not a bug)
