@@ -227,6 +227,7 @@ dr-bartender/
 │   │   ├── staffShiftActions.js # Drop / Cover shift marketplace (drop, request-cover, claim-cover, emergency-drop, withdraw) under /api/shifts
 │   │   ├── adminCoverSwaps.js  # Admin cover-swap approval endpoints (mounted under /api/admin)
 │   │   ├── sms.js              # Twilio inbound-SMS webhook + admin thread API
+│   │   ├── smsOptIn.js         # POST /api/sms/opt-in — public standalone SMS consent form (the /sms page); records consent via utils/smsConsent.js, rolls back rather than leave a new client SMS-on without an opt-in
 │   │   ├── telegram.js         # Zul VA-calling OUTBOUND trigger: POST /api/telegram/:secret (secret path + secret_token header + user_id allowlist), NANP validation, confirm-before-dial (YES), claim-then-call bridge
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
 │   │   ├── stripeWebhook.js    # Webhook signature verification + per-event dispatch (handlers live in stripeWebhookHandlers/)
@@ -477,7 +478,7 @@ dr-bartender/
 │   │   │   ├── proposal/       # ProposalView (public client-facing) — split into proposalView/ folder (parent + ProposalHeader + ProposalPricingBreakdown + SignAndPaySection + PaymentForm + AgreementText markdown-lite renderer + helpers + styles) + compare/ (ProposalCompare thin wrapper for the option-group page at /compare/:token + PackageMatrix aligned live-priced compare grid, also exported as ExplorePackagesSection = the in-proposal "explore packages for your event" section)
 │   │   │   ├── public/         # Client portal (ClientLogin, ClientShoppingList, Blog, BlogPost) + tip flow (TipPage with TipPage.atoms.jsx + TipPage.css, TipPageThanks post-tip feedback)
 │   │   │   │   └── portal/     # Client Portal v2 — PortalHome (landing), EventCommandCenter (focus shell), OverviewWidgets, ArchiveList, ShareButton, EmptyStates, ChangeRequestForm (request-a-change form with live price preview), money/nextUp/constants helpers + tabs/ (OverviewTab, PrescriptionTab, PotionTab, ReceiptsTab, ChangeRequestBanner pending/decided status banner on the Prescription tab)
-│   │   │   └── website/        # Public website (HomePage, ServicesPage, PackagesPage, MethodPage, AboutPage, FaqPage, QuotePage, ClassWizard, quoteWizard/ — split QuoteWizard with steps/extras/ (AddonTile + BundlePicker + AddonAccordion) for the Extras step redesign; legal/ — LegalLayout + PrivacyPage + TermsPage at /privacy + /terms, the URLs submitted for Twilio A2P campaign review)
+│   │   │   └── website/        # Public website (HomePage, ServicesPage, PackagesPage, MethodPage, AboutPage, FaqPage, QuotePage, ClassWizard, quoteWizard/ — split QuoteWizard with steps/extras/ (AddonTile + BundlePicker + AddonAccordion) for the Extras step redesign; legal/ — LegalLayout + PrivacyPage + TermsPage at /privacy + /terms, the URLs submitted for Twilio A2P campaign review; SmsOptInPage at /sms — the standalone SMS opt-in form, also submitted for A2P review, whose path is referenced by the campaign and must not be renamed casually)
 │   │   ├── images/             # Brand assets
 │   │   └── index.css           # Global styles
 │   ├── vercel.json             # SPA rewrite rule for Vercel
@@ -532,9 +533,10 @@ dr-bartender/
 ## Key Features
 
 ### Public Legal Pages + Client SMS Consent (2026-07-22)
-- `/privacy` and `/terms` are real pages with real footer links; `/privacy` is the URL submitted to Twilio for A2P 10DLC campaign review, and it quotes the consent sentence verbatim from the same constant the checkbox renders
+- `/privacy` and `/terms` are real pages with real footer links; both are submitted to Twilio for A2P 10DLC campaign review alongside the `/sms` opt-in page, and `/privacy` quotes the consent sentence verbatim from the same constant the checkboxes render
 - Terms governs USE OF THE SITE only. Booking, cancellation, and refund terms live in the signed Event Services Agreement, which controls on conflict, so the public page can never drift into contradicting an executed contract
 - The quote wizard carries an SMS consent checkbox, unchecked by default and never a condition of booking. Consent is never persisted in a saved draft, so a restored quote can never come back pre-ticked
+- `/sms` (added 2026-07-30) is a standalone one-screen opt-in form carrying the same checkbox, built after the campaign was rejected twice (30909, then 30896) because a reviewer opening `/quote` never reaches step 2. It is the URL the campaign now submits as its opt-in page, it is footer-linked from every public page, and its field order (mobile number, then the checkbox, then name and email) is what keeps the checkbox in the first screen on a phone. There the box is REQUIRED, so that door never records a decline
 - Every answer writes an append-only `sms_consent_log` row (timestamp, the exact text agreed to, source form, IP) alongside the existing `communication_preferences` flag. That log is the artifact handed to a carrier or a claimant
 - The public form may only write to a client row the same submit created, and never lifts an inbound STOP for that row or for any row sharing the number. Existing clients keep whatever preference they already had
 - Event-eve reminders are now an SMS + email pair, so a client who declines texts still gets the day-before bartender, arrival window, and location

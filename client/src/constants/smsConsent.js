@@ -1,8 +1,19 @@
 // Single source of truth for the SMS consent sentence shown to clients.
 //
-// This exact text is rendered in two places: the quote wizard checkbox and the
-// Text Messaging section of /privacy. A Twilio reviewer compares the public
-// page against the form, so the strings must be one literal, not two copies.
+// This exact text is rendered in THREE places: the quote wizard checkbox
+// (quoteWizard/steps/YourInfoStep.js), the standalone /sms opt-in form
+// (website/SmsOptInPage.js), and the Text Messaging section of /privacy. A
+// Twilio reviewer compares the public page against the forms, so the strings
+// must be one literal, not three copies. Keep this inventory current: a stale
+// list here is the likeliest way a future editor updates two surfaces and
+// misses the third.
+//
+// KNOWN GAP: both checkbox surfaces render the closing clause as JSX so the
+// links are clickable, hard-coding ' See our ' / ' and ' / '.' rather than
+// composing SMS_CONSENT_TAIL. They agree byte-for-byte with TAIL today, but
+// smsConsent.test.js compares constants and cannot see JSX, so editing TAIL
+// updates /privacy and the server audit copy while both forms silently keep the
+// old clause. If you change TAIL, hand-update both forms in the same commit.
 //
 // The sentence is split into LEAD + TAIL because the checkbox renders the tail
 // as links while /privacy renders it as plain prose. Splitting it here, rather

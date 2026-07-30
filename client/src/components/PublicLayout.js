@@ -202,6 +202,9 @@ export default function PublicLayout({ children }) {
             <span className="ws-footer-bottom-right">
               <Link to="/privacy">Privacy</Link> &middot;{' '}
               <Link to="/terms">Terms</Link> &middot;{' '}
+              {/* A carrier reviewer must be able to reach the SMS opt-in form from
+                  any page without filling out the quote wizard (A2P 30896). */}
+              <Link to="/sms">Text Updates</Link> &middot;{' '}
               <em>I'm the Dr. in Dr. Bartender.</em>
             </span>
           </div>

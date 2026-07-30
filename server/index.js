@@ -306,6 +306,10 @@ app.use('/api/public/reviews', require('./routes/publicReviews'));
 app.use('/api/public/tip', require('./routes/publicTip'));
 app.use('/api/public/feedback', require('./routes/publicFeedback'));
 app.use('/api/thumbtack', require('./routes/thumbtack'));
+// Public /sms page opt-in form. Mounted ahead of routes/sms.js (which is the
+// inbound webhook + the authed admin reply surface) so the one unauthenticated
+// POST stays in its own small file; no path collides with /opt-in.
+app.use('/api/sms', require('./routes/smsOptIn'));
 app.use('/api/sms', require('./routes/sms'));
 app.use('/api/telegram', require('./routes/telegram'));
 app.use('/api/voice/lead', require('./routes/voiceLeadCall')); // more specific mount first

@@ -19,6 +19,7 @@
       "tokenQuery": "SELECT slug AS token FROM blog_posts WHERE published_at IS NOT NULL ORDER BY published_at DESC LIMIT 1" },
     { "name": "client-login", "host": "public.localhost", "path": "/login", "auth": "none" },
     { "name": "quote", "host": "public.localhost", "path": "/quote", "auth": "none" },
+    { "name": "sms-optin", "host": "public.localhost", "path": "/sms", "auth": "none" },
     { "name": "classes", "host": "public.localhost", "path": "/classes", "auth": "none" },
 
     { "name": "proposal-sent", "host": "public.localhost", "path": "/proposal/:token", "auth": "none", "settleMs": 2600,
