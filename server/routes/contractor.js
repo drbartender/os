@@ -1,10 +1,9 @@
 const express = require('express');
-const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../db');
 const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
 const { auth } = require('../middleware/auth');
-const { isValidUpload, isValidOnboardingDocument } = require('../utils/fileValidation');
+const { isValidUpload, isValidOnboardingDocument, safeUploadExtension } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
 const { geocodeAddress, buildAddressString } = require('../utils/geocode');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -101,7 +100,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     if (!isValidOnboardingDocument(file)) {
       throw new ValidationError({ alcohol_certification: 'We could not read that file. Use a PDF, Word document, or a photo.' });
     }
-    const ext = path.extname(file.name);
+    const ext = safeUploadExtension(file);
     const filename = `${req.user.id}_alcohol_${uuidv4()}${ext}`;
     await uploadFile(file.data, filename);
     alcohol_cert_url = `/files/${filename}`;
@@ -113,7 +112,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     if (!isValidOnboardingDocument(file)) {
       throw new ValidationError({ resume: 'We could not read that file. Use a PDF, Word document, or a photo.' });
     }
-    const ext = path.extname(file.name);
+    const ext = safeUploadExtension(file);
     const filename = `${req.user.id}_resume_${uuidv4()}${ext}`;
     await uploadFile(file.data, filename);
     resume_url = `/files/${filename}`;
@@ -125,7 +124,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     if (!isValidUpload(file)) {
       throw new ValidationError({ headshot: 'Invalid file type. Use JPEG or PNG only.' });
     }
-    const ext = path.extname(file.name);
+    const ext = safeUploadExtension(file);
     const filename = `${req.user.id}_headshot_${uuidv4()}${ext}`;
     await uploadFile(file.data, filename);
     headshot_url = `/files/${filename}`;

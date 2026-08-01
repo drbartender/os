@@ -1,9 +1,8 @@
 const express = require('express');
-const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
-const { isValidUpload, isValidOnboardingDocument } = require('../utils/fileValidation');
+const { isValidUpload, isValidOnboardingDocument, safeUploadExtension } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
@@ -91,7 +90,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     if (!isValidOnboardingDocument(file)) {
       throw new ValidationError({ resume: 'We could not read that file. Use a PDF, Word document, or a photo.' });
     }
-    const ext = path.extname(file.name);
+    const ext = safeUploadExtension(file);
     const filename = `${req.user.id}_app_resume_${uuidv4()}${ext}`;
     await uploadFile(file.data, filename);
     resume_url = `/files/${filename}`;
@@ -103,7 +102,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     if (!isValidUpload(file)) {
       throw new ValidationError({ headshot: 'Invalid headshot file type. Use JPEG or PNG only.' });
     }
-    const ext = path.extname(file.name);
+    const ext = safeUploadExtension(file);
     const filename = `${req.user.id}_headshot_${uuidv4()}${ext}`;
     await uploadFile(file.data, filename);
     headshot_url = `/files/${filename}`;
@@ -115,7 +114,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     if (!isValidOnboardingDocument(file)) {
       throw new ValidationError({ basset: 'We could not read that file. Use a PDF, Word document, or a photo.' });
     }
-    const ext = path.extname(file.name);
+    const ext = safeUploadExtension(file);
     const filename = `${req.user.id}_basset_${uuidv4()}${ext}`;
     await uploadFile(file.data, filename);
     basset_url = `/files/${filename}`;

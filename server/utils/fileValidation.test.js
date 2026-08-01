@@ -5,6 +5,7 @@ const {
   isValidUpload,
   isValidImageUpload,
   isValidOnboardingDocument,
+  safeUploadExtension,
 } = require('./fileValidation');
 
 const file = (bytes, name = 'x.bin') => ({ data: Buffer.from(bytes), name });
@@ -60,6 +61,41 @@ test('rejects executables and malformed input', () => {
   assert.equal(isValidOnboardingDocument({}), false);
   assert.equal(isValidOnboardingDocument({ data: 'not-a-buffer', name: 'a.pdf' }), false);
   assert.equal(isValidOnboardingDocument(file([], 'empty.pdf')), false);
+});
+
+// 'MZ\x90\x00' is a working DOS/PE header and leaves offsets 4..12 free, so a
+// real executable can carry 'ftyp' + a HEIF brand and still run. The unanchored
+// brand check accepted it, and the R2 key took its extension from the client's
+// filename, so it landed on the admin's disk as a runnable .exe named after the
+// resume they asked for.
+test('rejects an executable wearing a HEIF brand (unanchored-magic polyglot)', () => {
+  const polyglot = [...EXE.slice(0, 4), 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63];
+  assert.equal(isValidOnboardingDocument(file(polyglot, 'resume.exe')), false);
+  assert.equal(isValidOnboardingDocument(file(polyglot, 'resume.heic')), false);
+  // Any ASCII-leading file (shell script, .bat) reads as a huge box size too.
+  const batish = [...Buffer.from('@ech', 'latin1'), 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63];
+  assert.equal(isValidOnboardingDocument(file(batish, 'cert.bat')), false);
+});
+
+test('safeUploadExtension names the sniffed type, never the client filename', () => {
+  assert.equal(safeUploadExtension(file(PDF, 'payload.bat')), '.pdf');
+  assert.equal(safeUploadExtension(file(JPEG, 'photo.exe')), '.jpg');
+  assert.equal(safeUploadExtension(file(PNG, 'a.sh')), '.png');
+  assert.equal(safeUploadExtension(file(webp(), 'a.dll')), '.webp');
+  assert.equal(safeUploadExtension(file(heic(), 'photo.exe')), '.heic');
+  // Containers still need the extension to agree, so they keep their own.
+  assert.equal(safeUploadExtension(file(ZIP, 'resume.docx')), '.docx');
+  assert.equal(safeUploadExtension(file(OLE, 'resume.doc')), '.doc');
+  assert.equal(safeUploadExtension(file(ZIP, 'payload.zip')), '');
+  assert.equal(safeUploadExtension(null), '');
+});
+
+// A validated file must never be rejected for how it was named: the extension
+// is sanitized on the way to R2 instead. Rejecting real uploads strands
+// recruits (incident 2026-07-23).
+test('a genuine photo named .exe is still accepted, just stored safely', () => {
+  assert.equal(isValidOnboardingDocument(file(heic(), 'photo.exe')), true);
+  assert.equal(safeUploadExtension(file(heic(), 'photo.exe')), '.heic');
 });
 
 test('the shared validators are unchanged and stay narrow', () => {

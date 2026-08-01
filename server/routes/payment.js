@@ -1,12 +1,11 @@
 const express = require('express');
-const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
 const { promoteOnboardingIfEligible } = require('../utils/onboardingPromotion');
 const { auth } = require('../middleware/auth');
-const { isValidUpload } = require('../utils/fileValidation');
+const { isValidUpload, safeUploadExtension } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
 const { encrypt, decrypt } = require('../utils/encryption');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -92,10 +91,12 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       if (!isValidUpload(file)) {
         throw new ValidationError({ w9: 'Invalid file type. Use PDF, JPEG, or PNG only.' });
       }
-      // Mobile Safari has been observed to drop the filename on File-from-Blob uploads —
-      // path.extname(undefined) throws TypeError. Guard with a sane default.
+      // Mobile Safari has been observed to drop the filename on File-from-Blob
+      // uploads, so the DISPLAY name still needs a default. The STORED
+      // extension is derived from the sniffed bytes, never from the client's
+      // filename, so a validated upload cannot land in R2 as a runnable file.
       const originalName = (typeof file.name === 'string' && file.name.length > 0) ? file.name : 'w9.pdf';
-      const ext = path.extname(originalName) || '.pdf';
+      const ext = safeUploadExtension(file) || '.pdf';
       const filename = `${req.user.id}_w9_${uuidv4()}${ext}`;
       step = 'upload_w9_to_r2';
       await uploadFile(file.data, filename);
