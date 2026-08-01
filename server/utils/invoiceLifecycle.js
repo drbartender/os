@@ -234,9 +234,13 @@ async function createInvoiceOnSend(proposalId, dbClient) {
 async function createBalanceInvoice(proposalId, dbClient) {
   const client = db(dbClient);
 
-  // Idempotency check — don't create a second Balance invoice
+  // Idempotency check — don't create a second Balance invoice. Void ones are
+  // excluded for the same reason as createInvoiceOnSend above: this is the ONLY
+  // code path that ever mints a label='Balance' row, so a void-blind check made
+  // a voided Balance permanently unmintable and stranded the whole remaining
+  // balance as uncollectable through every automated surface.
   const existingResult = await client.query(
-    `SELECT id FROM invoices WHERE proposal_id = $1 AND label = 'Balance' LIMIT 1`,
+    `SELECT id FROM invoices WHERE proposal_id = $1 AND label = 'Balance' AND status <> 'void' LIMIT 1`,
     [proposalId]
   );
   if (existingResult.rows.length > 0) return null;

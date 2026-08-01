@@ -28,6 +28,7 @@ server/routes/invoices.refunds.test.js
 server/utils/refundHelpers.test.js
 server/utils/invoiceLifecycle.additionalInvoice.test.js
 server/utils/invoiceLifecycle.external.test.js
+server/utils/invoiceLifecycle.voidRemint.test.js
 
 # Cancel line item (fold legs + scoped refunds + routes)
 server/utils/refundHelpers.scope.test.js
