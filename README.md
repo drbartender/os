@@ -408,7 +408,6 @@ dr-bartender/
 │       ├── migrateDrinkMeta.js # One-time: fold hardcoded client drink metadata (drinkUpgrades.js enhancements, DRINK_SYRUP_MAP) into cocktails/mocktails dossier columns. Skips drinks with existing dossier data unless --force; --dry-run. NOT boot-path.
 │       ├── backfillExtrasInvoices.js # One-off: create the "Drink Plan Extras" invoice for an abandoned pay-now PI + cancel stale PIs (idempotent, --dry-run)
 │       ├── backfillStripePayouts.js # One-off: full Stripe payout history into the read-side mirror via sweep() (idempotent; aborts in test mode)
-│       ├── remediateInvoiceDerivation.js # One-off: re-run the FIXED derivation over the four proposals over-billed by the 2026-07-28 incident (David Luebke, Cathy Murphy, Eve Thornton, Brandon Martin). Idempotent; dry-run by default, --apply to write
 │       ├── backfillTipPages.js # One-shot backfill: ensure every active bartender has a tip page row + Stripe link
 │       ├── staffPaymentImport/   # Offline one-off pipeline (never imported by the server): parse Venmo/CashApp/Zelle/PayPal exports → classify/cluster → build a human review sheet → single-transaction import into staff_payment_history. Data files live on the share only, never committed (config.js, staging.js, parsers/, dictionary.js, classify.js, eventMatch.js, exportKnownPeople.js, ccReports.js, buildReviewSheet.js; importFromSheet.js/reconcile.js/verifyImport.js land with the import lane)
 │       └── archive/               # One-time migrations (already run, kept for history)

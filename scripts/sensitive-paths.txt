@@ -180,6 +180,15 @@ server/utils/refund*.js
 # Invoice money: amount_due / amount_paid / line items / payment linking /
 # void + reconcile. refreshUnlockedInvoices alone rebuilds what a client owes.
 server/utils/invoice*.js
+# The invoice ROUTE, missed by the glob above because server/utils/* never
+# crosses '/' (push review, 2026-07-30). It owns void/comp, mark-paid, payment
+# linking, free-text label create AND rename, and the `reconcile_total` opt that
+# decides whether voiding an extras invoice subtracts from proposals.total_price.
+# All of those write amount_due / amount_paid or move total_price. The gap was
+# not theoretical: a total_price semantics change landed here in this very batch
+# at a light look, and the Void control it added could permanently strand a
+# Balance receivable.
+server/routes/invoices.js
 # Proposal money primitives: the contract-safe reprice (override moves by the
 # catalog delta), the demote-only status ladder + autopay disarm, and the
 # contract-vs-extra label constant every refund classifies against.
