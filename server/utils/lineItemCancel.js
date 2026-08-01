@@ -16,7 +16,7 @@ const { calculateStaffing } = require('./pricingEngine');
 const { readSnapshot } = require('./pricingSnapshot');
 const { storedToInputCount, countLabelFor, effectiveHoursFor, storedIsInputCount } = require('./addonQuantity');
 const { foldExtrasIntoProposal, loadRepriceAddons } = require('./proposalExtrasFold');
-const { sumOffContractPaidCents } = require('./invoiceExtras');
+const { sumOffContractPaidCents, extrasLinesAreFolded } = require('./invoiceExtras');
 const { refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, writeLineItems } = require('./invoiceHelpers');
 const { syncShiftsFromProposal, deriveStaffingRoster, loadStaffingAddons } = require('./eventCreation');
 const { rosterCounts } = require('./positionsNeeded');
@@ -264,10 +264,12 @@ async function computeCancelTargets(dbClient, proposalId) {
 // Part 2: the shared preview/execute core.
 // ---------------------------------------------------------------------------
 
-// Delta invoices bill money already folded into total_price ('Additional
-// Services' from an admin increase, 'Enhancement Lab' from a fully-paid lab
-// round, 'Drink Plan Extras' from submit). When a removal lowers the total,
-// open unpaid ones must shrink or the client is chased for cancelled money.
+// Delta invoices bill money folded into total_price ('Additional Services' from
+// an admin increase, 'Enhancement Lab' from a fully-paid lab round). When a
+// removal lowers the total, open unpaid ones must shrink or the client is
+// chased for cancelled money. 'Drink Plan Extras' is here CONDITIONALLY: only
+// the submit-transaction shape folds, so the loop below re-checks each one with
+// extrasLinesAreFolded and leaves the syrup-only kind alone.
 const DELTA_LABELS = ['Additional Services', 'Enhancement Lab', 'Drink Plan Extras'];
 
 function positiveIntOrThrow(value, field, max) {
@@ -352,6 +354,22 @@ async function reconcileOpenDeltaInvoices(client, proposal, snapshot) {
 
   const changed = [];
   for (const inv of open) {
+    // 'Drink Plan Extras' carries two different kinds of money under one label.
+    // The submit TRANSACTION path folds its add-on / bar-rental lines into
+    // total_price, so a lowered total must shrink it. The syrup-only pay-now
+    // path does NOT fold (routes/drinkPlans/submit.js: "syrups are additive
+    // money that never fold into total_price"), so its demand lives outside
+    // total_price and neither the rebuilt Balance nor the headroom walk has any
+    // claim on it. Collapsing an unfolded one destroys an uncollected charge
+    // that nothing re-mints, while the shopping list still buys the syrup.
+    // Skipping before the headroom walk also keeps it out of that arithmetic.
+    if (inv.label === 'Drink Plan Extras') {
+      const lines = (await client.query(
+        'SELECT line_total, source_type, description FROM invoice_line_items WHERE invoice_id = $1',
+        [inv.id]
+      )).rows;
+      if (!extrasLinesAreFolded(lines)) continue;
+    }
     const due = Number(inv.amount_due);
     const paid = Number(inv.amount_paid) || 0;
     let keep;

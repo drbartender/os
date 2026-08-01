@@ -198,7 +198,7 @@ async function seedInvoice(proposalId, { label, dueCents, paidCents = 0, status 
 
 async function seedShiftWithApproved(proposalId, n) {
   const s = await pool.query(
-    `INSERT INTO shifts (proposal_id, event_date, status) VALUES ($1, CURRENT_DATE + 30, 'confirmed') RETURNING id`,
+    `INSERT INTO shifts (proposal_id, event_date, status) VALUES ($1, CURRENT_DATE + 30, 'open') RETURNING id`,
     [proposalId]
   );
   for (let i = 0; i < n; i++) {
@@ -875,5 +875,65 @@ test('overpaymentCents nets out a PAID free-text manual invoice', async () => {
   await applyCancel(proposalId, { target: `addon:${SLUGS.photoBooth}` }, async (result) => {
     const raw = Math.round(460 * 100) - Math.round(result.newTotal * 100);
     assert.equal(result.overpaymentCents, raw - 6000, 'a damage fee is not contract money');
+  });
+});
+
+// ── reconcileOpenDeltaInvoices: the fold marker decides, not the label ──
+
+test('an OPEN syrup-only Drink Plan Extras invoice survives a removal', async () => {
+  // The syrup-only pay-now path mints this invoice precisely so an abandoned
+  // card leaves the syrups billed instead of uncollected and invisible. That
+  // money is NOT in total_price, so the rebuilt Balance never covered it and
+  // collapsing it destroys a live receivable nothing re-mints, while the
+  // shopping list still buys the syrup.
+  const { proposalId } = await seedProposal({
+    amountPaid: 100, status: 'deposit_paid',
+    addons: [{ slug: SLUGS.photoBooth, name: 'Photo Booth', billingType: 'flat', rate: 100, quantity: 1 }],
+  });
+  await seedInvoice(proposalId, { label: 'Deposit', dueCents: 10000, paidCents: 10000, status: 'paid', locked: true });
+  await seedInvoice(proposalId, { label: 'Balance', dueCents: 50000, status: 'sent' });
+  const extrasId = await seedInvoice(proposalId, { label: 'Drink Plan Extras', dueCents: 9000, status: 'sent' });
+  await pool.query(
+    `INSERT INTO invoice_line_items (invoice_id, description, quantity, unit_price, line_total, source_type)
+     VALUES ($1, 'Strawberry syrup', 1, 9000, 9000, 'manual')`, [extrasId]
+  );
+
+  await applyCancel(proposalId, { target: `addon:${SLUGS.photoBooth}` }, async (result, client) => {
+    const row = (await client.query('SELECT amount_due FROM invoices WHERE id = $1', [extrasId])).rows[0];
+    assert.equal(Number(row.amount_due), 9000, 'the syrup receivable must stand');
+    const lines = (await client.query(
+      'SELECT source_type FROM invoice_line_items WHERE invoice_id = $1', [extrasId]
+    )).rows;
+    assert.equal(lines.length, 1, 'its line items are the fold marker and must survive');
+    assert.ok(
+      !(result.deltaInvoicesAdjusted || []).some((d) => d.id === extrasId),
+      'an unfolded extras invoice must not be reported as adjusted'
+    );
+  });
+});
+
+test('an OPEN FOLDED Drink Plan Extras invoice is still reconciled down', async () => {
+  // Same label, opposite answer: an addon line means the submit transaction
+  // folded this money into total_price, so a lowered total must shrink it or
+  // the client is chased for cancelled money.
+  const { proposalId } = await seedProposal({
+    amountPaid: 100, status: 'deposit_paid',
+    addons: [{ slug: SLUGS.photoBooth, name: 'Photo Booth', billingType: 'flat', rate: 100, quantity: 1 }],
+  });
+  await seedInvoice(proposalId, { label: 'Deposit', dueCents: 10000, paidCents: 10000, status: 'paid', locked: true });
+  await seedInvoice(proposalId, { label: 'Balance', dueCents: 50000, status: 'sent' });
+  const extrasId = await seedInvoice(proposalId, { label: 'Drink Plan Extras', dueCents: 9000, status: 'sent' });
+  await pool.query(
+    `INSERT INTO invoice_line_items (invoice_id, description, quantity, unit_price, line_total, source_type)
+     VALUES ($1, 'Champagne Toast', 1, 9000, 9000, 'addon')`, [extrasId]
+  );
+
+  await applyCancel(proposalId, { target: `addon:${SLUGS.photoBooth}` }, async (result, client) => {
+    const row = (await client.query('SELECT amount_due FROM invoices WHERE id = $1', [extrasId])).rows[0];
+    assert.equal(Number(row.amount_due), 0, 'folded extras demand is absorbed by the rebuilt Balance');
+    assert.ok(
+      (result.deltaInvoicesAdjusted || []).some((d) => d.id === extrasId),
+      'a folded extras invoice must still be reported as adjusted'
+    );
   });
 });

@@ -431,7 +431,7 @@ test('external-paid remainder reported; only the card portion fires', async () =
 test('gratuity execute fires the mandatory staff notice', async () => {
   const o = await seedProposal({ withAddon: false, gratuityRate: 50, tipJar: false, amountPaid: 100, status: 'deposit_paid' });
   const s = await pool.query(
-    `INSERT INTO shifts (proposal_id, event_date, status) VALUES ($1, CURRENT_DATE + 30, 'confirmed') RETURNING id`,
+    `INSERT INTO shifts (proposal_id, event_date, status) VALUES ($1, CURRENT_DATE + 30, 'open') RETURNING id`,
     [o.proposalId]
   );
   const u = await pool.query(
