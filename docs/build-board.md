@@ -15,6 +15,7 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 - **invoice-derivation** — lane 1: derivation rewrite, 14 tests. STALE, cut 2026-07-28, 2 checkpoint commits (unfinished). [spec](superpowers/specs/2026-07-28-invoice-derivation-and-monitor-design.md) / [plan](superpowers/plans/2026-07-28-invoice-derivation-and-monitor.md)
 - **invoice-fixes** — review-fleet blockers found in the derivation batch. STALE, cut 2026-07-28, 1 commit. [spec](superpowers/specs/2026-07-28-invoice-derivation-and-monitor-design.md) / [plan](superpowers/plans/2026-07-28-invoice-derivation-and-monitor.md)
 - **overpayment-netting** — net overpayment by not-in-total, not by contract labels. STALE, cut 2026-07-28, 1 commit. [spec](superpowers/specs/2026-07-28-invoice-derivation-and-monitor-design.md) / [plan](superpowers/plans/2026-07-28-invoice-derivation-and-monitor.md)
+- **overbill-monitor** — lane 2: alert-only balance monitor. BLOCKED: needs lane 1 merged first. STALE, cut 2026-07-28, 1 checkpoint. [spec](superpowers/specs/2026-07-28-invoice-derivation-and-monitor-design.md) / [plan](superpowers/plans/2026-07-28-invoice-derivation-and-monitor.md)
 ## Recently shipped
 
 <!-- merged + shipped lanes, newest first. Ages off over time. One line per item. -->
