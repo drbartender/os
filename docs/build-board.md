@@ -17,14 +17,11 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 
 <!-- lane open and building. Stale-lane flags surface here. One line per item. -->
 
-- **event-details-server** — BLOCKED: conflicts with main on server/db/schema.sql (sensitive path, stop-and-ask). STALE, cut 2026-07-22, 9 commits. [spec](superpowers/specs/2026-07-22-staff-event-details-design.md) / [plan](superpowers/plans/2026-07-22-staff-event-details.md)
-- **event-details-admin-ui** — admin menu-print upload block. Merges clean but must ship WITH the server lane. STALE, cut 2026-07-22, 2 commits. [spec](superpowers/specs/2026-07-22-staff-event-details-design.md) / [plan](superpowers/plans/2026-07-22-staff-event-details.md)
-- **event-details-staff-ui** — staff event-details page. Merges clean but must ship WITH the server lane. STALE, cut 2026-07-22, 2 commits. [spec](superpowers/specs/2026-07-22-staff-event-details-design.md) / [plan](superpowers/plans/2026-07-22-staff-event-details.md)
-
 ## Recently shipped
 
 <!-- merged + shipped lanes, newest first. Ages off over time. One line per item. -->
 
+- **event-details revival** — the three stale 7/22 staff event-details lanes revived onto fresh main as one lane, merged + PUSHED 2026-08-03; full fleet, push re-confirm, and cross-LLM second opinion (codex caught a cross-shift drop blocker, fixed pre-push). [spec](superpowers/specs/2026-07-22-staff-event-details-design.md) / [plan](superpowers/plans/2026-07-22-staff-event-details.md)
 - **invoice-derivation batch** — all 5 lanes merged 2026-07-28, pushed 2026-08-03; lane 1's derivation rewrite deliberately REVERTED same evening (monitor, void UI, netting kept); redo queued provenance-first. [spec](superpowers/specs/2026-07-28-invoice-derivation-and-monitor-design.md) / [plan](superpowers/plans/2026-07-28-invoice-derivation-and-monitor.md)
 - **sms-optin** — standalone /sms opt-in page (A2P fix), shipped by cherry-pick 2026-07-30 ahead of the held batch. [spec](superpowers/specs/2026-07-30-sms-opt-in-page.md)
 - **onboarding-upload-and-draft** — 4 lanes (upload-honesty, onboarding-drafts, document-visibility, submit-gate-relax) merged 2026-07-26..28, pushed 2026-08-03 with fleet fixes. [plan](superpowers/plans/2026-07-26-onboarding-upload-and-draft.md)

@@ -692,3 +692,33 @@ post-mortem) — do them together, provenance first.
   Show the admin the components (paid, new total, each non-contract invoice and
   its amount) and let them enter the refund figure. It is the only version with
   no wrong answer, because it stops guessing. (option, not a bug)
+
+**Staff event-details revival (2026-08-03 push review residuals)**
+
+All non-blocking; the blockers found in review were fixed pre-push.
+
+- `ShiftDetail.js:~590` CustomMenuCard logo renders through a bare `<img src>`
+  pointing at the auth-required `GET /api/beo/:id/logo`, which never carries the
+  JWT, so the logo silently 401s for staff. Pre-existing on main before the
+  revival; fails closed. Fix: blob-fetch through api.js like BarMenuCard. (low)
+- `server/routes/eventDetails.js:89-91` legacy proposal-less shifts hardcode
+  `approved_by_role: {}` and `cover_requested_at: null`, so a filled manual
+  shift renders fully open ("Request this shift" instead of "Join waitlist")
+  and an active cover never shows its chip. One aggregate query closes it.
+  Flagged independently by the fleet and codex. (low)
+- `ShiftDetail.js` fetches the full cocktail + mocktail catalogs on every
+  detail-page view; a module-level cache would drop 2 requests per view. Also
+  the file is at 795 lines (soft cap 700): split candidate. (low)
+- `server/routes/proposals/menuPrint.js:26` duplicates fileValidation.js's
+  PDF/JPEG/PNG magic bytes because it needs the canonical extension; a
+  sniff-to-extension helper in fileValidation.js would keep one copy. (low)
+- `server/utils/eventDetailsPayload.js:66` selects `p.status`,
+  `p.balance_due_date`, `p.client_id` it never returns (attractive nuisance in
+  a redaction-sensitive SELECT), and the six-query fan-out is not one snapshot
+  (a drop committed mid-fan-out can transiently disagree between
+  `viewer.is_assigned` and `my_request_status`; heals on refetch). (low)
+- `server/routes/eventDetails.js` menu-print proxy emits an ETag but never
+  checks `If-None-Match`, so revalidation always re-downloads. (low)
+- On an in-place shift-A→shift-B nav across different events, stale `details`
+  can flash the "no longer on the schedule" card until B's fetch lands
+  (details is never cleared on shiftId change; pre-existing shape). (low)
