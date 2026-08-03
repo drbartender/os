@@ -14,7 +14,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
-const { Readable } = require('stream');
+const { Readable, pipeline } = require('stream');
 const { pool } = require('../db');
 const { auth, requireOnboarded } = require('../middleware/auth');
 const { beoReadLimiter } = require('../middleware/rateLimiters');
@@ -172,14 +172,14 @@ router.get('/:shiftId/menu-print', auth, requireOnboarded, beoReadLimiter, async
   res.set('Cache-Control', 'private, no-cache');
   res.set('ETag', `"${crypto.createHash('sha256').update(key).digest('hex').slice(0, 32)}"`);
   // Stream, never buffer: a print-resolution file can run to the 10MB upload
-  // cap, and holding it whole in memory per download is the failure mode. A
-  // mid-stream R2 error can only destroy the socket (headers are gone), which
-  // the client sees as a failed download — the honest outcome.
+  // cap, and holding it whole in memory per download is the failure mode.
+  // pipeline (not pipe) tears down BOTH sides: a mid-stream R2 error destroys
+  // the socket (headers are gone, a failed download is the honest outcome),
+  // and a client disconnect destroys the R2 stream so the upstream fetch
+  // cannot linger until its own socket timeout.
   const len = upstream.headers.get('content-length');
   if (len) res.set('Content-Length', len);
-  const body = Readable.fromWeb(upstream.body);
-  body.on('error', () => res.destroy());
-  body.pipe(res);
+  pipeline(Readable.fromWeb(upstream.body), res, () => {});
 }));
 
 module.exports = router;

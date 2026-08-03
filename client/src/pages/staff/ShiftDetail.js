@@ -97,6 +97,11 @@ export default function ShiftDetail() {
     setRequestOpen(false);
   }, [shiftId]);
 
+  // Monotonic fetch token: a response only lands if no newer fetch has started
+  // since it left. Rapid A→B navigation (or an action refetch racing a nav)
+  // could otherwise paint an older, slower response over the current shift.
+  const fetchSeqRef = useRef(0);
+
   // One shift-keyed fetch. The drink catalogs ride along because the menu cards
   // resolve drink ids against them; a catalog failure is non-fatal, so the
   // brief still renders and the catalog retries on the next visit.
@@ -106,6 +111,7 @@ export default function ShiftDetail() {
       setLoading(false);
       return;
     }
+    const seq = ++fetchSeqRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -114,12 +120,14 @@ export default function ShiftDetail() {
         api.get('/cocktails').catch(() => ({ data: { cocktails: [] } })),
         api.get('/mocktails').catch(() => ({ data: { mocktails: [] } })),
       ]);
+      if (seq !== fetchSeqRef.current) return;
       setDetails(detailsRes.data);
       setDrinkCatalogs({
         cocktails: cocktailsRes.data?.cocktails || [],
         mocktails: mocktailsRes.data?.mocktails || [],
       });
     } catch (err) {
+      if (seq !== fetchSeqRef.current) return;
       const msg =
         err?.status === 404
           ? 'Shift not found, it may have been cancelled.'
@@ -133,7 +141,7 @@ export default function ShiftDetail() {
       if (detailsRef.current) toast?.error?.(msg);
       else setError(msg);
     } finally {
-      setLoading(false);
+      if (seq === fetchSeqRef.current) setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shiftId]);
@@ -179,26 +187,31 @@ export default function ShiftDetail() {
   const coverNeeded = !!myShift?.cover_requested_at;
 
   /**
-   * What this viewer can do here. 'admin' is an admin, or a manager who is only
+   * What this viewer can DO here. 'admin' is an admin, or a manager who is only
    * viewing — a manager who is actually STAFFED is a worker and gets the normal
    * assigned experience (the server computes is_admin with that carve-out).
+   *
+   * Scoped to the ADDRESSED shift via my_request_status, never the
+   * proposal-wide viewer.is_assigned: on a multi-shift event, a worker
+   * approved on shift A who opens shift B must get B's request CTA, not A's
+   * drop/confirm controls (a drop from here would target their shift-A
+   * request). viewer.is_assigned stays the DISPLAY gate (roster, assigned
+   * extras), which is proposal-wide on purpose.
    */
   const viewerState = useMemo(() => {
     if (viewer.is_admin) return 'admin';
-    if (viewer.is_assigned) return 'assigned';
+    if (myShift?.my_request_status === 'approved') return 'assigned';
     if (myShift?.my_request_status === 'pending') {
       const ranked = parsePositionsNeeded(myShift?.my_requested_positions);
       const waitlisted =
         ranked.length > 0 && classifyRequest(ranked, remaining).state === 'waitlisted';
       return waitlisted ? 'waitlisted' : 'pending';
     }
-    // Dropped: the request row survives as 'approved' for management to
-    // resolve, but the server no longer counts them as assigned. Without this
-    // they would land in 'browsing' and be invited to request a shift they
-    // just dropped, with a live request id still on the row.
-    if (myShift?.my_request_status === 'approved' && !viewer.is_assigned) return 'dropped';
+    // A dropped request never surfaces in my_request_* (the payload filters
+    // dropped rows), so post-drop lands in 'browsing'; EventActionArea's
+    // dropResult gate renders the dropped banner there.
     return 'browsing';
-  }, [viewer.is_admin, viewer.is_assigned, myShift, remaining]);
+  }, [viewer.is_admin, myShift, remaining]);
 
   const hoursToEvent = useMemo(() => {
     if (!myShift?.event_date) return null;
@@ -351,16 +364,13 @@ export default function ShiftDetail() {
   // ── Drop / Cover submit ──────────────────────────────────────────────
 
   async function submitDropCover({ mode, reason }) {
-    // The payload carries the viewer's own request on the shift directly; the
-    // shift_requests projection is the fallback for a multi-shift event where
-    // the addressed shift row somehow lacks it.
-    const myRequestId =
-      myShift?.my_request_id ||
-      (details?.shift_requests || []).find((sr) => user?.id && sr.user_id === user.id)?.request_id ||
-      null;
-    if (mode !== 'emergency' && !myRequestId) {
-      // claim-cover is the only one that takes shiftId; the rest need
-      // the staffer's own request id.
+    // Strictly the viewer's request on THE ADDRESSED SHIFT. No proposal-wide
+    // fallback: on a multi-shift event that fallback resolved to their request
+    // on a DIFFERENT shift and dropped the wrong one. All three endpoints act
+    // on a request id, so a missing row is a hard stop for every mode
+    // (emergency included: /requests/null/emergency-drop is not a request).
+    const myRequestId = myShift?.my_request_id || null;
+    if (!myRequestId) {
       toast?.error?.('Could not find your request for this shift.');
       return;
     }
@@ -456,7 +466,13 @@ export default function ShiftDetail() {
     );
   }
 
-  const isAssigned = viewerState === 'assigned';
+  // Two assignment scopes, deliberately distinct. isEventStaffer is
+  // proposal-wide (server truth, drives display entitlements: roster, extras,
+  // call-client — a worker on ANY shift of this event gets those). isAssignedHere
+  // is scoped to the addressed shift (drives actions and this shift's
+  // confirm-state chips).
+  const isEventStaffer = viewer.is_assigned;
+  const isAssignedHere = viewerState === 'assigned';
   const venueForMap = venueMapQuery(proposal) || proposal?.event_location || myShift?.location;
 
   return (
@@ -488,29 +504,29 @@ export default function ShiftDetail() {
             <span className="sp-chip-dot" />
             Admin view
           </span>
-        ) : isAssigned && viewer.is_acknowledged ? (
+        ) : isAssignedHere && viewer.is_acknowledged ? (
           <span className="sp-chip ok">
             <span className="sp-chip-dot" />
             Details confirmed
           </span>
-        ) : isAssigned && isDrinkPlanFinalized ? (
+        ) : isAssignedHere && isDrinkPlanFinalized ? (
           <span className="sp-chip warn">
             <span className="sp-chip-dot" />
             Awaiting your confirm
           </span>
-        ) : isAssigned ? (
+        ) : isAssignedHere ? (
           <span className="sp-chip neutral">
             <span className="sp-chip-dot" />
             Details not finalized yet
           </span>
         ) : null}
-        {isAssigned && myShift?.my_position && (
+        {isAssignedHere && myShift?.my_position && (
           <span className="sp-chip neutral">
             <span className="sp-chip-dot" />
             {myShift.my_position}
           </span>
         )}
-        {isAssigned && (
+        {isEventStaffer && (
           <span className="sp-chip ok">
             <span className="sp-chip-dot" />
             You’re on this event
@@ -543,7 +559,7 @@ export default function ShiftDetail() {
             Get directions
           </a>
         )}
-        {isAssigned && client?.phone && (
+        {isEventStaffer && client?.phone && (
           <a className="sp-btn sp-btn-sm" href={`tel:${client.phone}`}>
             <PhoneIcon size={12} />
             Call client
@@ -586,7 +602,7 @@ export default function ShiftDetail() {
         </div>
       )}
 
-      {(isAssigned || viewerState === 'admin') && <TeamRosterCard teamRoster={teamRoster} />}
+      {(isEventStaffer || viewerState === 'admin') && <TeamRosterCard teamRoster={teamRoster} />}
 
       <SignatureCocktailsCard cocktails={cocktails} customCocktails={customCocktails} />
       <MocktailsCard mocktails={mocktails} />
@@ -606,8 +622,8 @@ export default function ShiftDetail() {
 
       {/* ── Assigned-only extras ──────────────────────────────────────── */}
 
-      {isAssigned && <BarMenuCard menuPrint={details?.menu_print} shiftId={shiftId} />}
-      {(isAssigned || viewerState === 'admin') && (
+      {isEventStaffer && <BarMenuCard menuPrint={details?.menu_print} shiftId={shiftId} />}
+      {(isEventStaffer || viewerState === 'admin') && (
         <ShoppingListCard
           status={details?.shopping_list_status}
           drinkPlanId={drinkPlan?.id}
