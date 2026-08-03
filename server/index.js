@@ -244,6 +244,15 @@ app.use(fileUpload({
   // `auth`, so req.user is never populated and recording it would just log a
   // permanent null. The path plus content-length is what identifies the surface.
   limitHandler: (req, res) => {
+    // express-fileupload calls this once PER FILE PART that trips the cap, on
+    // the same res. A multi-file request (Application sends up to three) whose
+    // second file also overflows re-enters here after the 413 is sent; the
+    // unguarded res.status().json() then throws ERR_HTTP_HEADERS_SENT, which
+    // escapes into busboy's stream stack, skips abortOnLimit's cleanup, and
+    // lets the ROUTE HANDLER run with req.files = null / req.body undefined
+    // (reproduced 2026-07-28). First invocation did everything this handler
+    // exists for; later ones must be no-ops.
+    if (res.headersSent) return;
     Sentry.captureMessage('upload_limit_exceeded', {
       level: 'warning',
       tags: { component: 'upload' },
