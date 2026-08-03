@@ -30,3 +30,4 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 - **sms-optin** — standalone /sms opt-in page (A2P fix), shipped by cherry-pick 2026-07-30 ahead of the held batch. [spec](superpowers/specs/2026-07-30-sms-opt-in-page.md)
 - **onboarding-upload-and-draft** — 4 lanes (upload-honesty, onboarding-drafts, document-visibility, submit-gate-relax) merged 2026-07-26..28, pushed 2026-08-03 with fleet fixes. [plan](superpowers/plans/2026-07-26-onboarding-upload-and-draft.md)
 - **addon-quantity-semantics** — merged in the 2026-07-26 window, pushed 2026-08-03. [plan](superpowers/plans/2026-07-26-addon-quantity-semantics.md)
+- **email-designer** — drag-and-drop designed-email builder on the Marketing composer (design_json → server-rendered html; upload/preview/test endpoints). Merged + pushed 2026-08-03 (a0632ae3) after full fleet re-confirmation + codex/gemini second opinion; no spec doc (patch import from a claude.ai/code session).
