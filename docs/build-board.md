@@ -19,6 +19,7 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 - **invoice-void-ui** — lane 3: void action on open invoices. Independent, client-only. STALE, cut 2026-07-28, 1 checkpoint. [spec](superpowers/specs/2026-07-28-invoice-derivation-and-monitor-design.md) / [plan](superpowers/plans/2026-07-28-invoice-derivation-and-monitor.md)
 - **event-details-server** — BLOCKED: conflicts with main on server/db/schema.sql (sensitive path, stop-and-ask). STALE, cut 2026-07-22, 9 commits. [spec](superpowers/specs/2026-07-22-staff-event-details-design.md) / [plan](superpowers/plans/2026-07-22-staff-event-details.md)
 - **event-details-admin-ui** — admin menu-print upload block. Merges clean but must ship WITH the server lane. STALE, cut 2026-07-22, 2 commits. [spec](superpowers/specs/2026-07-22-staff-event-details-design.md) / [plan](superpowers/plans/2026-07-22-staff-event-details.md)
+- **event-details-staff-ui** — staff event-details page. Merges clean but must ship WITH the server lane. STALE, cut 2026-07-22, 2 commits. [spec](superpowers/specs/2026-07-22-staff-event-details-design.md) / [plan](superpowers/plans/2026-07-22-staff-event-details.md)
 ## Recently shipped
 
 <!-- merged + shipped lanes, newest first. Ages off over time. One line per item. -->
