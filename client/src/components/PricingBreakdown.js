@@ -28,11 +28,21 @@ export function matchCancelTargets(snapshot, cancelTargets) {
   const claim = (i, idx) => { used.add(idx); byRow.set(i, targets[idx]); };
 
   // Pass 1: exact label AND amount, globally, so an unambiguous row always
-  // claims its own target before any prefix logic runs.
+  // claims its own target before any prefix logic runs. Same refusal rule as
+  // pass 2: TWO exact-matching targets means the binding would be arbitrary —
+  // a num_bartenders override and an additional-bartender add-on both emit an
+  // identical "Additional Bartender (1)" row, and findIndex silently handed
+  // the override row the ADD-ON's cancel target (same dollars, wrong line).
+  // An ambiguous row falls to the "other removable items" strip, which names
+  // targets explicitly and cannot mis-fire.
   rows.forEach((item, i) => {
     const label = String(item.label || '');
-    const idx = targets.findIndex((e, k) => !used.has(k) && e && e.label === label && amountAgrees(item, e));
-    if (idx !== -1) claim(i, idx);
+    const candidates = [];
+    targets.forEach((e, k) => {
+      if (used.has(k) || !e) return;
+      if (e.label === label && amountAgrees(item, e)) candidates.push(k);
+    });
+    if (candidates.length === 1) claim(i, candidates[0]);
   });
 
   // Pass 2: prefix for parameterized labels ("Bar Rental (2 bars)"), still
