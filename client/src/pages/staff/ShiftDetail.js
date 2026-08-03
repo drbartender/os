@@ -87,6 +87,16 @@ export default function ShiftDetail() {
   const [actionBusy, setActionBusy] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
 
+  // ShiftsPage keeps ONE instance of this component across numeric URL
+  // changes, so per-shift action state must reset when the shift does or a
+  // banner earned on shift A ("You dropped this shift") shadows shift B's
+  // request CTA after a back/forward hop.
+  useEffect(() => {
+    setDropMode(null);
+    setDropResult(null);
+    setRequestOpen(false);
+  }, [shiftId]);
+
   // One shift-keyed fetch. The drink catalogs ride along because the menu cards
   // resolve drink ids against them; a catalog failure is non-fatal, so the
   // brief still renders and the catalog retries on the next visit.
