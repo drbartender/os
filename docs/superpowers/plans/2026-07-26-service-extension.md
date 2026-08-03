@@ -43,6 +43,11 @@ lanes:
       - server/utils/serviceExtensionSweep.test.js
       - server/utils/refundHelpers.js
       - server/utils/refundHelpers.extensionScope.test.js
+      - server/utils/balanceInvoiceMonitor.js
+      - server/utils/balanceInvoiceMonitor.test.js
+      - server/utils/invoiceExtras.js
+      - server/utils/lineItemCancel.test.js
+      - server/utils/invoiceLifecycle.js
       - docs/ops-runbook.md
       - scripts/money-smoke-list.txt
       - server/index.js
@@ -52,6 +57,7 @@ lanes:
     footprint:
       - client/src/pages/staff/RequestMoreTime.js
       - client/src/pages/staff/ShiftDetail.js
+      - client/src/components/staff/EventActionArea.js
       - client/src/pages/invoice/InvoicePage.js
       - client/src/index.css
       - client/src/components/adminos/ServiceExtensionPanel.js
@@ -89,7 +95,7 @@ lanes:
 - Schema changes go in `server/db/schema.sql`, idempotent (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`).
 - **No em dashes** in any client-visible or staff-visible copy. Commas, periods, colons, parentheses only.
 - **Staff never see the price.** No response from any staff-facing endpoint may contain `amount_cents`, `gratuity_cents`, or any dollar figure. Explicit column allowlists on every staff SELECT.
-- File-size soft cap 700 lines, hard cap 1000. `server/routes/staffShiftActions.js` (929) and `client/src/pages/staff/ShiftDetail.js` (804) are both near/over caps: add NOTHING substantial to either. New surfaces get new files.
+- File-size soft cap 700 lines, hard cap 1000. `server/routes/staffShiftActions.js` (929) and `client/src/pages/staff/ShiftDetail.js` (795 as of 2026-08-03) are both near/over caps: add NOTHING substantial to either. New surfaces get new files.
 - Tests: co-located `*.test.js`, node:test, run **one suite at a time** against the shared dev DB. From a lane worktree (no `.env` there): `node --env-file=/home/drbartender/projects/os/.env --test <file>`. Nonce-suffixed seed rows, FK-ordered teardown, `await pool.end()` in `after()`. Pay-period fixtures use the chicago-keyed track-and-restore pattern (standing test law).
 - Hosted-package bartender rule is load-bearing: included 1:100 bartenders are $0; over-ratio bartenders bill `extra_bartender_hourly` PLUS the sub-100-guest surcharge ($50/$25/$15 per hour for <50/<75/<100 guests). The pricing delta inherits this from the engine; Task 4 pins it with a test.
 
@@ -164,7 +170,7 @@ Task 12 is split across two lanes because `ext-routes` consumes half of it. The 
 
 1. **ext-core:** Tasks 1, 2, 3, 4, 5, then **12a** (the `serviceExtensionPayroll.js` hours module, Steps 1 to 3 of Task 12).
 2. **ext-routes:** Tasks 6, 7, 8, 9, 10. Tasks 8 and 10 import `applyExtensionHours` and `maybeAlertPayroll` from 12a, which is why 12a cannot live in a later lane.
-3. **ext-webhook-payroll:** **12b** (the `payrollAccrual.js` gratuity addend, Steps 4 onward of Task 12), then 11, then 13. Task 11's suite imports the payroll module, so 12a must already exist; it does, from step 1.
+3. **ext-webhook-payroll:** **12b** (the `payrollAccrual.js` gratuity addend, Steps 4 onward of Task 12), then 11, then 20 and 21 (the off-ledger carve-outs, added 2026-08-03), then 13. Task 11's suite imports the payroll module, so 12a must already exist; it does, from step 1.
 4. **ext-ui:** Tasks 14, 15, 16. **ext-docs:** Tasks 17, 18.
 
 If a worker builds Task 11 before 12a exists, the test file's top-level `require` throws `MODULE_NOT_FOUND`. The lazy `require` inside the handler does not save the suite.
@@ -404,11 +410,11 @@ git commit -m "feat(ext): timezone-correct event end instant helper"
 
 Run: `cat server/utils/proposalMoneyShared.js`
 
-**This file changed under a previous draft of this plan.** `TOTAL_TRACKING_INVOICE_LABELS` landed on `main` on 2026-07-26 (`05c38bb0`) and is destructured by `server/utils/refundHelpers.js:18` and called at `:331`. A draft of this task pasted an exports block that omitted it, which would have made refund reconciliation throw `TypeError: Cannot read properties of undefined (reading 'includes')` on the next refund, silently until a refund happened.
+**This file changed under a previous draft of this plan.** `TOTAL_TRACKING_INVOICE_LABELS` landed on `main` on 2026-07-26 (`05c38bb0`) and is destructured by `server/utils/refundHelpers.js:18` and called at `:347`. A draft of this task pasted an exports block that omitted it, which would have made refund reconciliation throw `TypeError: Cannot read properties of undefined (reading 'includes')` on the next refund, silently until a refund happened.
 
 So: **add to the exports, never retype them.** Read the real export list first and confirm what is there. As of 2026-07-26 it is `MAX_ADDON_QTY`, `safeAddonQty`, `CONTRACT_LABELS`, `OFF_LEDGER_INVOICE_LABELS`, `TOTAL_TRACKING_INVOICE_LABELS`. If the list has grown again, keep whatever you find.
 
-`CONTRACT_LABELS` and `TOTAL_TRACKING_INVOICE_LABELS` must NOT change. Adding the extension label to `CONTRACT_LABELS` would put extension money inside the contract-refund scope, the exact defect spec §3 D12 exists to avoid; adding it to `TOTAL_TRACKING_INVOICE_LABELS` would make `refreshUnlockedInvoices` rebuild it as a contract-total invoice.
+`CONTRACT_LABELS` and `TOTAL_TRACKING_INVOICE_LABELS` must NOT change. Adding the extension label to `CONTRACT_LABELS` would put extension money inside the contract-refund scope, the exact defect spec §3 D12 exists to avoid. Adding it to `TOTAL_TRACKING_INVOICE_LABELS` would NOT touch `refreshUnlockedInvoices` (verified 2026-08-03: `invoiceLifecycle.js:140-153` hardcodes 'Deposit'/'Full Payment'/'Balance' and never reads that constant); the constant is consumed only by refund reconciliation (`refundHelpers.js:347`), where wrong membership would misclassify the extension invoice's demand as refresh-managed and drop its `amount_due`. The protective conclusion stands either way: keep the label out.
 
 - [ ] **Step 2: Add the constant, additively**
 
@@ -424,11 +430,13 @@ Edit `server/utils/proposalMoneyShared.js`. Add the new constant near the other 
 const SERVICE_EXTENSION_INVOICE_LABEL = 'Service Extension';
 ```
 
-Change ONLY the `OFF_LEDGER_INVOICE_LABELS` line:
+Change the `OFF_LEDGER_INVOICE_LABELS` line (the only code-behavior change in this task):
 
 ```javascript
 const OFF_LEDGER_INVOICE_LABELS = Object.freeze([SERVICE_EXTENSION_INVOICE_LABEL]);
 ```
+
+The same commit must also update the constant's own now-false docblock (`proposalMoneyShared.js:30-37`, which asserts the set is empty and explains the no-op) to describe the one-element reality. THIS FILE ONLY: the matching "currently empty" comment blocks in the three consumer files (`paymentIntentSucceeded.js:213-216`, `refundHelpers.js:376-379`, `invoiceLifecycle.js:109-114`) are swept by Task 20 Step 4 in lane ext-webhook-payroll, whose footprint owns those files; sweeping them from this lane would edit outside its declared footprint and abort the lane.
 
 Then add exactly TWO new lines to the existing `module.exports` object, leaving every other entry byte-identical:
 
@@ -462,11 +470,14 @@ node -e "require('/home/drbartender/projects/os/server/utils/refundHelpers');req
 
 - [ ] **Step 4: Run the named suites that guard the three off-ledger branches**
 
-Do NOT grep for the constant names: no test file mentions them, so a grep returns zero hits and the step would pass vacuously. That is exactly how the dropped-export defect survived review in the first draft. Run these four by name, one at a time:
+Do NOT grep for the constant names: no test file mentions them, so a grep returns zero hits and the step would pass vacuously. That is exactly how the dropped-export defect survived review in the first draft. Run these seven by name, one at a time (the label-classification flip also reaches `refundHelpers.scope.test.js`, `lineItemCancel.test.js`, and `balanceInvoiceMonitor.test.js`, so they are in the run set):
 
 ```bash
 for f in \
   server/utils/refundHelpers.test.js \
+  server/utils/refundHelpers.scope.test.js \
+  server/utils/lineItemCancel.test.js \
+  server/utils/balanceInvoiceMonitor.test.js \
   server/routes/invoices.refunds.test.js \
   server/utils/invoiceLifecycle.additionalInvoice.test.js \
   server/routes/stripeWebhook.guards.test.js ; do
@@ -474,7 +485,7 @@ for f in \
 done
 ```
 
-Expected: all PASS. If a filename does not exist, find the real one with `ls server/utils/refundHelpers*.test.js server/routes/invoices*.test.js server/routes/stripeWebhook*.test.js` and run those instead; all of them are already in `scripts/money-smoke-list.txt`, which is the authoritative list of money suites.
+Expected: all PASS. If a filename does not exist, find the real one with `ls server/utils/refundHelpers*.test.js server/routes/invoices*.test.js server/routes/stripeWebhook*.test.js` and run those instead; all of them are already in `scripts/money-smoke-list.txt`, which is the authoritative list of money suites. That list has grown to 20 suites and the pre-push gate is now HARD (verified 2026-08-03): `NEON_API_KEY` is configured, so the suites run against the prod-shaped `ci-smoke` Neon branch, which carries prod CHECK constraints the dev DB lacks; a suite green on dev can still fail there.
 
 A failure here is a real regression and blocks the task. Note that a PASS does not prove much on its own: the flip is inert until an invoice actually carries the label (empty-set and one-element matching behave identically while no row matches), which is why the real database review happens at Task 10.
 
@@ -581,7 +592,7 @@ No checkpoint review on this task. The flip is inert until an invoice carries th
 
 ### Task 3: Terms copy registry
 
-Modeled on `server/data/smsConsentCopy.js`, which refuses an unknown version rather than recording a lie. Without this, a stored `terms_version` maps to no text and the audit artifact is empty.
+Modeled on `server/data/smsConsentCopy.js`, whose `getConsentCopy(version)` (smsConsentCopy.js:38-46, own-property-guarded) refuses an unknown version with `null` rather than recording a lie; it never throws. `getExtensionTerms` throws on a miss instead, a deliberate strengthening of that pattern, not a copy of it. Without this registry, a stored `terms_version` maps to no text and the audit artifact is empty.
 
 **Files:**
 - Create: `server/data/extensionTermsCopy.js`
@@ -597,7 +608,7 @@ Modeled on `server/data/smsConsentCopy.js`, which refuses an unknown version rat
 
 Run: `sed -n 1,60p server/data/smsConsentCopy.js`
 
-Match its shape: a frozen version map, a lookup that throws on miss, and copy stored as data rather than inline in a route.
+Match its shape: a frozen version map, a guarded lookup that refuses unknown versions (with `null` in the precedent; this registry throws instead), and copy stored as data rather than inline in a route.
 
 - [ ] **Step 2: Write the registry**
 
@@ -613,7 +624,8 @@ Create `server/data/extensionTermsCopy.js`:
  * service_extensions row, so the audit trail can always reproduce exactly
  * what the client agreed to. getExtensionTerms THROWS on an unknown version
  * rather than returning a default: recording "they accepted v3" while showing
- * v1's text would make the artifact a lie (the smsConsentCopy precedent).
+ * v1's text would make the artifact a lie. smsConsentCopy refuses with null;
+ * throwing here is a deliberate strengthening of that precedent.
  *
  * Copy rule: no em dashes.
  */
@@ -1653,7 +1665,7 @@ The three HTTP surfaces (staff request, public accept, admin override/cancel), t
 
 All outbound messaging for the feature, in one place. Three audiences: the client (payment link), the assigned staffers (greenlight or decline), and the admins (request went out, plus the failure shapes).
 
-**Why direct sends and not `enqueueCategorizedMessage`:** the categorized-message path is the house pattern for staff notifications, but its dispatcher runs on a 5-minute interval (`server/index.js`, `RUN_MESSAGE_DISPATCHER_SCHEDULER`). A bartender standing at a bar deciding whether to keep pouring cannot wait 5 minutes for a greenlight, and the decline is the message carrying the insurance warning. So this module sends immediately and owns its own channel gate. That gate must still honor everything the queued path honors: `agreements.sms_consent` for staff (the `messages.js` rule), `users.communication_preferences` opt-outs, and `clients.communication_preferences` plus contact-status for clients via `shouldSendImmediate`.
+**Why direct sends and not `enqueueCategorizedMessage`:** the categorized-message path is the house pattern for staff notifications, but its dispatcher runs on a 5-minute interval (`server/index.js`, `RUN_MESSAGE_DISPATCHER_SCHEDULER`). A bartender standing at a bar deciding whether to keep pouring cannot wait 5 minutes for a greenlight, and the decline is the message carrying the insurance warning. So this module sends immediately and owns its own channel gate. That gate must still honor everything the queued path honors: `agreements.sms_consent` for staff (the `messages.js` rule), `users.communication_preferences` opt-outs, and for clients the house gate `shouldSendImmediate` (`messageSuppression.js:22-43`), which checks archived status, prefs `sms_enabled`/`email_enabled`, and `phone_status`/`email_status` bad-contact only. The phone-scoped STOP guard is a consent-WRITE-time rule in `smsConsent.js` (~:126-137), not a send-time check; an inbound STOP is still honored at send time because `applyOptOut` (`smsInbound.js:288-312`) has already flipped `sms_enabled = false` on the matched client row. The code below calls the house gate correctly; this sentence only states precisely what that gate does.
 
 **Files:**
 - Create: `server/utils/serviceExtensionNotify.js`
@@ -2364,11 +2376,15 @@ const EXPIRY_GRACE_MINUTES = 30;
  * proposal context every handler needs.
  */
 async function requireAssignment(req, shiftId) {
+  // s.status != 'cancelled' matches the canonical assignment predicates
+  // (eventDetailsPayload.js:113, 149-150; eventDetails.js:130). Without it a
+  // staffer on a cancelled shift of a live proposal could still open an
+  // extension request.
   const { rows } = await pool.query(
     `SELECT s.id AS shift_id, s.proposal_id, s.event_date, s.start_time,
             p.event_duration_hours, p.status AS proposal_status, p.package_id
        FROM shift_requests sr
-       JOIN shifts s ON s.id = sr.shift_id
+       JOIN shifts s ON s.id = sr.shift_id AND s.status != 'cancelled'
        JOIN proposals p ON p.id = s.proposal_id
       WHERE sr.user_id = $1
         AND sr.shift_id = $2
@@ -2553,7 +2569,7 @@ router.post('/', auth, serviceExtensionLimiter, asyncHandler(async (req, res) =>
       line_total: amountCents,
       // 'fee', NOT a new value. invoice_line_items.source_type carries
       // CHECK (source_type IN ('package','addon','fee','manual')) at
-      // schema.sql:1977-1978, so 'service_extension' would raise 23514 on
+      // schema.sql:2004, so 'service_extension' would raise 23514 on
       // every single request, and the catch below only special-cases 23505.
       // The extension is identified by the invoice's LABEL, not by this column.
       source_type: 'fee',
@@ -2920,6 +2936,10 @@ Then add `extension` INSIDE the `invoice` object, alongside the existing arrays,
 
 Task 15 reads it as `data.invoice.extension`. Do not put it at the top level: the client only ever stores `data.invoice`.
 
+- [ ] **Step 2b: Refuse minting or renaming an invoice INTO an off-ledger label**
+
+Still in `server/routes/invoices.js`. The admin create route (`POST /api/invoices/proposal/:proposalId`, invoices.js:185-274) validates the label only as a non-empty string, and the PATCH rename (invoices.js:297-303) validates the same way. Reject BOTH when the label is in `OFF_LEDGER_INVOICE_LABELS` (throw `ValidationError`): otherwise an admin can mint or rename an invoice INTO the 'Service Extension' label and silently make its money off-ledger, because the webhook keys the `amount_paid` roll-up skip on the label alone (paymentIntentSucceeded.js:217-222). Extension invoices are only ever minted by the extension request route, which is exactly why nothing else may wear the label. Covered by the `invoices.extension.test.js` cases in Step 3.
+
 - [ ] **Step 3: Write the tests**
 
 Create `server/routes/serviceExtensions/publicAccept.test.js` covering, with the same fixture shape as Task 7's suite (copy its `before`/`after`, adding a `service_extensions` row plus its invoice):
@@ -2939,6 +2959,7 @@ Create `server/routes/invoices.extension.test.js` covering. Every assertion read
 3. After acceptance, the same GET returns `requires_acceptance === false` and a non-null `accepted_at`.
 4. An extension row carrying an unknown `terms_version` (insert one with `terms_version = 'bogus'`) returns `terms: null` and a 200, never a 500.
 5. Shape guard: assert `body.extension === undefined` AND `body.invoice.extension !== undefined` on an extension invoice. This is the explicit regression test for the server/client shape mismatch described above.
+6. Label guard (Step 2b): `POST /api/invoices/proposal/:proposalId` with `label: 'Service Extension'` returns 400, and a PATCH renaming an existing invoice to `'Service Extension'` returns 400. An ordinary label still creates and renames fine.
 
 Stub the notify module at the top of both files exactly as Task 7's suite does.
 
@@ -3067,6 +3088,8 @@ Ordinary invoices are untouched."
 ### Task 10: Admin override, cancel, and read
 
 The override grants time and **voids the invoice** (spec decision 14). It never leaves a receivable, because an unpaid extension is not something DRB carries. Rev 2 of the spec had it leaving the invoice open; that was corrected, so do not reintroduce it.
+
+**Generic-Void interplay (verified 2026-08-03).** The generic admin invoice Void control (invoices.js:407-447, guarded by `amount_paid = 0`) can void a pending extension invoice WITHOUT touching the `service_extensions` row; the row stays `'pending'` until the sweep expires it. This is benign for money and safety (the public accept joins `i.status <> 'void'` so it 404s, and create-intent refuses a non-sent/partially_paid invoice), but the staffer hears nothing until expiry. The extension's own Cancel action here is the right tool: it closes the row AND sends the decline immediately. Task 16's panel copy steers admins to it.
 
 **Files:**
 - Replace: `server/routes/serviceExtensions/admin.js` (the Task 7 stub)
@@ -3683,7 +3706,8 @@ async function applyInTx(client, { proposalId, target }) {
   const touchedPayoutIds = new Set();
 
   for (const line of rows) {
-    // Only an 'open' period is writable, matching payrollAccrual.js:187 exactly.
+    // Only an 'open' period is writable, matching payrollAccrual.js:186 (the
+    // "if (payPeriod.status !== 'open')" line) exactly.
     // 'processing', 'reopened' and 'paid' all count as frozen here; the caller
     // MUST surface frozenLines, because a reopened-period extension that is
     // silently skipped is an underpay nobody is told about.
@@ -3900,15 +3924,9 @@ Create `server/utils/payrollAccrual.extension.test.js`. Cover:
 3. A `pending` extension and an `overridden` extension both contribute $0.
 4. The extension gratuity is NOT reduced by any Stripe fee (assert the share equals the split of the raw `gratuity_cents`, so the fee-netting change is provably scoped to contract gratuity).
 5. **Two paid extensions on one event both contribute, exactly once each.** Seed two `paid` rows with `gratuity_cents` 2500 and 1000; assert the pool grew by 3500. Then re-run accrual and assert it is still 3500, not 7000: the addend is recomputed from the table each time, never accumulated.
-6. **A REFUNDED extension still contributes, and that is deliberate.** Seed a paid extension, then a succeeded `proposal_refunds` row against its payment. Assert the gratuity is still pooled. This test documents the decision below rather than a mechanism; if the decision flips, this test is what changes.
+6. **A REFUNDED extension still contributes, and that is deliberate.** Seed a paid extension, then a succeeded `proposal_refunds` row against its payment. Assert the gratuity is still pooled. This test documents the approved spec §14 default rather than a mechanism; if Dallas ever flips the decision, this test is what changes.
 
-**Open decision for Dallas, defaulted rather than silently chosen.** The gratuity addend keys on `status = 'paid'`, and nothing marks a `service_extensions` row when its payment is later refunded. So refunding an extension currently leaves its gratuity in the staff pool: DRB gave the money back and still pays the bartender their share of it.
-
-Both answers are defensible and it is Dallas's money:
-- **Default as planned: keep paying it.** The bartender did work the extra time, the refund is a client-relations decision made after the fact, and `payrollAccrual.js` states its bias errs toward staff. Refunding an extension should be rare.
-- **The alternative: stop pooling it** once a refund lands against the extension's invoice, and alert so Dallas can add it back by hand as an `adjustment_cents` if the staffer should still be paid.
-
-The plan implements the default. Flag this to Dallas at the plan-approval gate; switching to the alternative is a `WHERE NOT EXISTS (succeeded refund against this extension's invoice)` clause on the addend query plus one more test.
+**Refunded-extension gratuity: DEFAULT per spec §14, approved 2026-08-03.** A refunded extension still pays the bartender its gratuity share: the staffer worked the time, and the accrual bias errs toward staff. Mechanically, the gratuity addend keys on `status = 'paid'` and nothing marks a `service_extensions` row when its payment is later refunded, so the pool keeps the share by design. Dallas may later flip to pull-from-pool-on-refund with ONE clause (`WHERE NOT EXISTS` a succeeded refund against the extension's invoice, on the addend query) and ONE test; nothing else changes.
 
 - [ ] **Step 8 (12b): Run the accrual suite and every existing payroll suite**
 
@@ -3942,6 +3960,96 @@ Stripe fee rather than the staff pool (spec section 9)."
 Dispatch `security-review` AND `code-review` on Tasks 11 and 12b together. These are the two money seams; the reviewers should specifically check that `amount_paid` cannot move, that the fee pro-ration is computed on contract gratuity only, and that the extension addend cannot be double-counted across re-accruals.
 
 Note that 12a's diff is NOT in this lane's diff (it landed in `ext-core`), which is why 12a has its own `code-review` at the end of Step 6.
+
+### Task 20: Balance-invoice monitor: off-ledger carve-out
+
+Added 2026-08-03 after a verified freshness audit against main. `balanceInvoiceMonitor.js` postdates this plan's rev 4 and counts every payable invoice toward its billing invariant, so the label flip would make the monitor both cry wolf and mask real gaps once an extension invoice exists.
+
+**Files:**
+- Modify: `server/utils/balanceInvoiceMonitor.js`
+- Test: `server/utils/balanceInvoiceMonitor.test.js` (existing suite, already in the money-smoke list)
+
+**Interfaces:**
+- Consumes: `OFF_LEDGER_INVOICE_LABELS` (Task 2).
+- Produces: no new exports. Behavior: off-ledger invoices are invisible to both monitor alert directions.
+
+- [ ] **Step 1: Exclude off-ledger labels from the shared PAYABLE_SUM fragment**
+
+Modify the shared PAYABLE_SUM fragment (balanceInvoiceMonitor.js:39-46) so it excludes invoices whose label is in `OFF_LEDGER_INVOICE_LABELS`. One carve-out fixes BOTH alert directions, because OVER_SQL (lines 76-87) and UNDER_SQL (lines 95-104) share the fragment.
+
+Keep every other bespoke label counted, and preserve the intent of the Eve-Thornton comment (lines 70-75): non-off-ledger bespoke money rolls into `amount_paid` and self-clears, while off-ledger labels are structurally incapable of satisfying the invariant, because their money never enters `amount_paid`. Without the carve-out:
+1. a pending extension invoice on a paid-up event would alert daily as over-billed, permanently in the stranded-paid shape Task 13 deliberately leaves `pending`;
+2. an open extension invoice would inflate payable in the under-coverage check enough to MASK a genuinely missing Balance invoice.
+
+- [ ] **Step 2: Add the matching test case**
+
+Add to the money-smoke cases in `server/utils/balanceInvoiceMonitor.test.js`: a pending 'Service Extension' invoice on a fully-paid proposal triggers NEITHER alert.
+
+- [ ] **Step 3: Run it and commit**
+
+```bash
+node --env-file=/home/drbartender/projects/os/.env --test server/utils/balanceInvoiceMonitor.test.js
+```
+Expected: PASS.
+
+- [ ] **Step 4: Sweep the three consumer "currently empty" comment blocks**
+
+Comment-only edits deferred here from Task 2 (these files are in THIS lane's
+footprint, not ext-core's): `paymentIntentSucceeded.js:213-216`,
+`refundHelpers.js:376-379`, and `invoiceLifecycle.js:109-114` each assert
+`OFF_LEDGER_INVOICE_LABELS` is empty and that the branch "stays wired for a
+future genuinely-additive label". Update each to say Service Extension is that
+label. No behavior change; the suites from Step 3 stay green.
+
+```bash
+git add server/utils/balanceInvoiceMonitor.js server/utils/balanceInvoiceMonitor.test.js \
+  server/routes/stripeWebhookHandlers/paymentIntentSucceeded.js \
+  server/utils/refundHelpers.js server/utils/invoiceLifecycle.js
+git commit -m "fix(ext): balance-invoice monitor carves out off-ledger invoices
+
+One carve-out in the shared PAYABLE_SUM fragment fixes both alert directions:
+a pending extension invoice can neither raise a permanent over-billed alert on
+a paid-up event nor mask a genuinely missing Balance invoice. Also sweeps the
+three consumer comment blocks that still called the off-ledger set empty."
+```
+
+### Task 21: Cancel-line overpayment math: off-ledger carve-out
+
+Same audit, same lane. `sumOffContractPaidCents` also postdates rev 4 and would silently misprice cancel-line refunds once a paid extension exists.
+
+**Files:**
+- Modify: `server/utils/invoiceExtras.js` (`sumOffContractPaidCents`)
+- Test: `server/utils/lineItemCancel.test.js` (existing suite, already in the money-smoke list)
+
+**Interfaces:**
+- Consumes: `OFF_LEDGER_INVOICE_LABELS` (Task 2).
+- Produces: no new exports. Behavior: extension payments never become a netting term in cancel-line overpayment math.
+
+- [ ] **Step 1: Skip off-ledger labels in `sumOffContractPaidCents`**
+
+Modify `sumOffContractPaidCents` (`server/utils/invoiceExtras.js:332-353`) to also skip labels in `OFF_LEDGER_INVOICE_LABELS`. Today it counts every non-void invoice with `amount_paid > 0` whose label is NOT in `IN_TOTAL_PRICE_LABELS` (invoiceExtras.js:311-313), and `lineItemCancel.js:695-709` computes `overpaymentCents = max(0, amount_paid - total - offContract)`. A paid extension invoice would default into that sum while its money never entered `proposals.amount_paid` (the webhook's off-ledger skip), deflating a genuine overpayment and under-refunding the client on a cancel-line. Off-ledger money is off BOTH sides of the `amount_paid` equation and can never be a netting term.
+
+`IN_TOTAL_PRICE_LABELS` must NOT (and today does not) contain 'Service Extension'; that half of the classification is correct by default and stays untouched.
+
+- [ ] **Step 2: Add the test case**
+
+Add to `server/utils/lineItemCancel.test.js`: a paid extension on the proposal does not change `overpaymentCents`.
+
+- [ ] **Step 3: Run it and commit**
+
+```bash
+node --env-file=/home/drbartender/projects/os/.env --test server/utils/lineItemCancel.test.js
+```
+Expected: PASS.
+
+```bash
+git add server/utils/invoiceExtras.js server/utils/lineItemCancel.test.js
+git commit -m "fix(ext): cancel-line overpayment math skips off-ledger payments
+
+Extension money never enters amount_paid, so counting its paid invoice in
+sumOffContractPaidCents would deflate a genuine overpayment and under-refund
+the client on a cancel-line."
+```
 
 ### Task 13: Expiry sweep and scheduler registration
 
@@ -4233,7 +4341,7 @@ Run every suite in this lane one at a time, plus every pre-existing webhook and 
 
 ## Lane ext-ui
 
-Three surfaces. `ShiftDetail.js` (804 lines) and `InvoicePage.js` (373 lines) are both existing files: add the minimum to each and put real content in new components.
+Three surfaces. `ShiftDetail.js` (795 lines as of 2026-08-03) and `InvoicePage.js` (373 lines) are both existing files: add the minimum to each and put real content in new components.
 
 **Verification for every task in this lane:** the only thing that catches CI-fatal ESLint warnings locally is the exact Vercel build. After each task run:
 
@@ -4244,13 +4352,18 @@ Expected: exit 0. A warning here fails the real deploy, so treat it as a failure
 
 ### Task 14: Staff request screen
 
+> **Rebuilt surface (2026-08-03):** the staff event-details redesign shipped and rebuilt ShiftDetail. Everything in this task was re-verified against the new code; the old action-button-row instructions are gone.
+
 **Files:**
 - Create: `client/src/pages/staff/RequestMoreTime.js`
-- Modify: `client/src/pages/staff/ShiftDetail.js` (entry button only)
+- Modify: `client/src/pages/staff/ShiftDetail.js` (state flag + mount only)
+- Modify: `client/src/components/staff/EventActionArea.js` (the entry button, in the `'assigned'` branch)
 
 **Interfaces:**
-- Consumes: `GET /api/service-extensions/eligibility/:shiftId`, `POST /api/service-extensions` (Task 7).
-- Produces: `<RequestMoreTime shiftId={...} onClose={...} />`, a modal/panel component.
+- Consumes: `GET /api/service-extensions/eligibility/:shiftId`, `POST /api/service-extensions` (Task 7); display-context props from ShiftDetail's already-fetched event-details payload (Step 2).
+- Produces: `<RequestMoreTime shiftId={...} onClose={...} />`, a bottom-sheet component.
+
+**Flow model (updated 2026-08-03):** model RequestMoreTime on `client/src/components/staff/RequestSheet.js` (349 lines, shipped 8/03): a bottom-sheet on the sp-modal chassis with scrim, Esc-close, and a submit-lock (RequestSheet.js:288-316), plus the parent-refetch-on-submitted contract (ShiftDetail.js:351-362). Its required-ack checkbox for hosted events, keyed on `package_pricing_type === 'per_guest'` (RequestSheet.js:74, 127, 178-201), is exactly the D4 "I have the product" tick pattern. The old drop/cover states this plan previously pointed at now live across DropCoverModal + EventActionArea.
 
 - [ ] **Step 1: Build the component**
 
@@ -4283,7 +4396,12 @@ export default function RequestMoreTime({ shiftId, onClose }) {
       const res = await api.get(`/service-extensions/eligibility/${shiftId}`);
       setEligibility(res.data);
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not load this event. Try again.');
+      // api.js rejects with the normalized { message, code, fieldErrors, status }
+      // shape (client/src/utils/api.js:45-50). err.response NEVER exists on the
+      // rejected value, and a no-restricted-syntax lint rule bans err.response
+      // reads in client code, so this task's own CI=true build gate would fail
+      // on one. Models: RequestSheet.js:141-147, ShiftDetail.js:319-327.
+      setError(err.message || 'Could not load this event. Try again.');
     } finally {
       setLoading(false);
     }
@@ -4303,11 +4421,11 @@ export default function RequestMoreTime({ shiftId, onClose }) {
       });
       setSent(true);
     } catch (err) {
-      const data = err.response?.data;
-      // The global error handler emits field errors under `fieldErrors`.
+      // Normalized error shape again: field errors arrive as err.fieldErrors,
+      // the message as err.message. Never err.response (see the note in load()).
       setError(
-        (data?.fieldErrors && Object.values(data.fieldErrors)[0])
-        || data?.error
+        (err.fieldErrors && Object.values(err.fieldErrors)[0])
+        || err.message
         || 'Could not send the request. Try again.'
       );
     } finally {
@@ -4417,7 +4535,7 @@ export default function RequestMoreTime({ shiftId, onClose }) {
 }
 ```
 
-- [ ] **Step 2: Confirm the API already returns what the picker needs**
+- [ ] **Step 2: Confirm the API already returns what the picker needs, and plumb display context as props**
 
 `contractedDurationHours` and `stepLabels` come from Task 7's eligibility response; this lane does NOT edit any server file. Verify before building the UI:
 
@@ -4426,9 +4544,15 @@ grep -n "contractedDurationHours\|stepLabels" server/routes/serviceExtensions/cr
 ```
 Expected: both present. If either is missing, stop: it belongs in `ext-routes`, and adding it here would put this lane outside its declared footprint and abort it.
 
-- [ ] **Step 3: Add the entry point to ShiftDetail**
+**Display-context plumbing (verified 2026-08-03).** The shift-keyed endpoint `GET /api/shifts/:shiftId/event-details` (server/routes/eventDetails.js:48-114, payload built by server/utils/eventDetailsPayload.js) already carries what RequestMoreTime needs for DISPLAY: `proposal.event_date` / `event_start_time` / `event_duration_hours` / `event_timezone` (eventDetailsPayload.js:288-291) and hosted-ness as `package.pricing_type` (:314; ShiftDetail derives `requestSheetShift.package_pricing_type` at :261-272). Pass `isHosted` and the contracted-time context down as props from ShiftDetail's already-fetched details instead of a second round trip. The NEW eligibility endpoint remains authoritative for the window check, the pending-request check, and the DST-correct `stepLabels` via `eventEndInstantForDuration`. D2 cuts both ways here: the event-details payload is price-free by construction (eventDetailsPayload.js:58-60, 92-99), and the eligibility response must stay equally price-free.
 
-`ShiftDetail.js` is 804 lines, past the soft cap, so add ONLY a lazy import, one state flag, and a button. Do not add logic.
+- [ ] **Step 3: Add the entry point via EventActionArea**
+
+`ShiftDetail.js` is 795 lines, past the soft cap, so add NOTHING substantial: only a lazy import, one state flag, and the mount. Do not add logic.
+
+The 2026-08-03 redesign removed the old action-button row, and `shiftRow` no longer exists: it was replaced by `myShift` (ShiftDetail.js:167-170), and the shift id is `shiftId`, parsed from the URL at :73-74. The "Request more time" button renders inside `client/src/components/staff/EventActionArea.js`'s `'assigned'` branch (EventActionArea.js:132-170), passed as an `onExtend` prop from ShiftDetail.
+
+In ShiftDetail, keep only:
 
 ```javascript
 const RequestMoreTime = React.lazy(() => import('./RequestMoreTime'));
@@ -4436,25 +4560,20 @@ const RequestMoreTime = React.lazy(() => import('./RequestMoreTime'));
 
 State: `const [showExtend, setShowExtend] = useState(false);`
 
-In the existing action-button row (the `sp-row` with `flexWrap: 'wrap'` near line 365), add:
-
-```javascript
-        <button type="button" className="sp-btn sp-btn-sm" onClick={() => setShowExtend((v) => !v)}>
-          {showExtend ? 'Close' : 'Request more time'}
-        </button>
-```
-
-And below that row:
+Pass `onExtend={() => setShowExtend(true)}` into the existing `<EventActionArea ...>`, render the button in its `'assigned'` branch, and mount the sheet from ShiftDetail:
 
 ```javascript
       {showExtend && (
         <React.Suspense fallback={<div className="sp-skeleton" style={{ height: '4rem' }} />}>
-          <RequestMoreTime shiftId={shiftRow?.id} onClose={() => setShowExtend(false)} />
+          <RequestMoreTime shiftId={shiftId} onClose={() => setShowExtend(false)} />
         </React.Suspense>
       )}
 ```
 
-Use whatever the file's real shift-id variable is (it reads `shiftRow` in the code around line 349; confirm before wiring).
+Two structural bonuses of the rebuilt surface, both load-bearing:
+
+1. `viewerState === 'assigned'` keys on `myShift.my_request_status === 'approved'` (ShiftDetail.js:203), PER SHIFT, exactly mirroring create.js's per-shift assignment predicate. The button can never show to a worker assigned to a different shift of the same event (the 2026-08-03 codex lesson, encoded as `isEventStaffer` vs `isAssignedHere` at ShiftDetail.js:474-475).
+2. During the request window (the event has started), `dropDefaultMode` is null (ShiftDetail.js:224-230, the past-event guard), so the extend button is the sole action in the assigned branch.
 
 - [ ] **Step 4: Confirm the file did not grow past its cap**
 
@@ -4470,7 +4589,7 @@ Expected: exit 0.
 
 ```bash
 cd /home/drbartender/projects/os
-git add client/src/pages/staff/RequestMoreTime.js client/src/pages/staff/ShiftDetail.js
+git add client/src/pages/staff/RequestMoreTime.js client/src/pages/staff/ShiftDetail.js client/src/components/staff/EventActionArea.js
 git commit -m "feat(ext): staff request-more-time screen, price-free by construction"
 ```
 
@@ -4514,7 +4633,11 @@ Add the accept handler:
       // A zero-delta request settles on acceptance: nothing left to pay.
       if (!res.data.requiresPayment) setPaymentSuccess(true);
     } catch (err) {
-      setFormError(err.response?.data?.error || 'Could not record your acceptance. Please try again.');
+      // api.js rejects with the normalized { message, code, fieldErrors, status }
+      // shape (client/src/utils/api.js:45-50); err.response never exists on it,
+      // and the no-restricted-syntax lint rule that bans err.response reads
+      // would fail this task's CI=true build gate.
+      setFormError(err.message || 'Could not record your acceptance. Please try again.');
     } finally {
       setAccepting(false);
     }
@@ -4564,8 +4687,6 @@ and use `{showPayment && !paymentBlockedByTerms && ( ... )}` on the payment sect
 .invoice-extension-accepted { font-weight: 600; }
 ```
 
-Add `client/src/index.css` to the `ext-ui` lane footprint in this plan's front-matter before committing, so the footprint-drift check does not abort the lane.
-
 - [ ] **Step 3: Verify against a real extension invoice**
 
 The dev server is a Claude-managed background process with no auto-reload for server edits: restart it after the server-side tasks. Then create a pending extension against a dev proposal (reuse the `create.test.js` fixture pattern via a scratch script in the scratchpad directory), open `/invoice/<token>`, and confirm:
@@ -4607,11 +4728,12 @@ Create `client/src/components/adminos/ServiceExtensionPanel.js` with:
 - On a `pending` row: a Cancel button, and an Override button that opens a required-reason textarea (min 3 chars, max 500, matching the server rule) and warns inline that overriding grants the time with no charge and voids the invoice.
 - After either action, re-load and surface `payrollWarning` from the response as a visible banner when present, since a silently underpaid bartender is the failure mode this warning exists to prevent.
 - Money is shown here on purpose: this is the admin surface, unlike every staff surface.
+- Panel copy on a pending row steers admins to the extension's own Cancel action for extension invoices (e.g. "Cancel here, not from the invoice list: this also tells the bartender"). The generic admin invoice Void control (invoices.js:407-447, `amount_paid = 0` guard) can void a pending extension invoice WITHOUT touching the `service_extensions` row, which then sits `'pending'` until the sweep expires it. Benign (the public accept joins `i.status <> 'void'` so it 404s, and create-intent refuses a non-sent/partially_paid invoice), but staff hear nothing until expiry; the extension's Cancel sends the decline immediately.
 - No em dashes in any string.
 
 - [ ] **Step 2: Mount it on the event detail page**
 
-Edit `client/src/pages/admin/EventDetailPage.js`. Import the panel and render it in the existing detail column, passing the proposal id the page already has. Check the page's current size first (`wc -l client/src/pages/admin/EventDetailPage.js`); if adding the import and one JSX line pushes it over a cap, mount the panel from a lower-level section component instead.
+Edit `client/src/pages/admin/EventDetailPage.js`. Import the panel and render it in the existing detail column, passing the proposal id the page already has. Verified 2026-08-03: the right-rail vstack integration point is `EventDetailPage.js:534`, the page is 621 lines, so the over-cap contingency is moot. Neighboring precedent: `AdminMenuPrintBlock` lives at `client/src/components/AdminMenuPrintBlock.js` (NOT `components/staff/`).
 
 - [ ] **Step 3: Verify in the app**
 
@@ -4680,10 +4802,12 @@ git commit -m "docs(ext): README tree, ARCHITECTURE routes + schema, env var for
 
 **This is a real gap the spec got wrong, not a nicety.** Spec §7 says "refunding a paid extension is a plain refund of that payment." Verified 2026-07-26: it is not, because there is no way to aim the existing refund at that payment.
 
-`POST /api/stripe/refund/:id` takes an AMOUNT, not a target. It calls `planRefund({ paymentsWithRemaining: await loadPaymentsWithRemaining(proposalId), requestedDollars, amountPaidDollars, ... })` (`server/routes/stripe.js:461-467`), and `planRefund` caps the request at `amountPaidDollars` and then walks the payment list picking charges. Two consequences, both bad:
+`POST /api/stripe/refund/:id` takes an AMOUNT, not a target. It feeds `planRefund` from `loadPaymentsWithRemaining` (`server/routes/stripe.js:463`), and `planRefund` caps the request at `amountPaidDollars` and then walks the payment list picking charges. Two consequences, both bad:
 
 1. **It can refund the wrong charge.** Extension payments are in `loadPaymentsWithRemaining`'s list (they are `payment_type = 'invoice'` rows), so a $100 refund intended for an extension can land on the contract charge instead, dropping `amount_paid` by $100 and corrupting the contract ledger with side money.
-2. **It can refuse outright.** Extension dollars never enter `amount_paid`, so on an event whose contract is barely paid, refunding the extension can trip `EXCEEDS_AMOUNT_PAID` (`refundHelpers.js:131`) even though the money is sitting right there at Stripe.
+2. **It can refuse outright.** Extension dollars never enter `amount_paid`, so on an event whose contract is barely paid, refunding the extension can trip `EXCEEDS_AMOUNT_PAID` (`refundHelpers.js:147`) even though the money is sitting right there at Stripe.
+
+**Re-verified 2026-08-03:** `loadPaymentsWithRemaining` (refundHelpers.js:55-75) is now rails-parameterized (`opts.rails`; `PANEL_REFUND_RAILS` at :26 includes `'invoice'`, `CANCEL_LINE_REFUND_RAILS` at :34) and has TWO money callers: the admin refund panel (`server/routes/stripe.js:463`) and the cancel-line overpayment splitter (`server/routes/proposals/cancelLineItem.js:62` → `planOverpaymentSplits`). The admin refund route itself now flows through `refundExecute` with total_scope-stamped pending rows (stripe.js:479-482), not the old inline orchestration.
 
 **Files:**
 - Modify: `server/utils/refundHelpers.js` (`loadPaymentsWithRemaining` candidate filter)
@@ -4704,7 +4828,7 @@ This is a battle-tested money path shared with the cancel-line flow. The change 
 
 - [ ] **Step 2: Exclude off-ledger payments from the contract refund candidates**
 
-In `loadPaymentsWithRemaining`, filter out payments whose linked invoice label is in `OFF_LEDGER_INVOICE_LABELS`. Rationale to put in the comment: those dollars are not in `amount_paid`, so letting a contract refund draw against them lets the admin refund money the contract never recorded, and mis-attributes the reversal. A payment split across a contract invoice AND an extension invoice cannot happen (extension invoices are minted alone and paid alone), so a whole-payment exclusion is exact rather than approximate.
+The exclusion goes INSIDE `loadPaymentsWithRemaining` itself: a payment linked to an OFF_LEDGER-labeled invoice is filtered out regardless of `rails`, and the rails signature is preserved. That single carve-out protects BOTH flows, the admin refund panel and the cancel-line overpayment splitter. Rationale to put in the comment: those dollars are not in `amount_paid`, so letting a contract refund draw against them lets the admin refund money the contract never recorded, and mis-attributes the reversal. A payment split across a contract invoice AND an extension invoice cannot happen (extension invoices are minted alone and paid alone), so a whole-payment exclusion is exact rather than approximate.
 
 - [ ] **Step 3: Write the test**
 
@@ -4713,12 +4837,13 @@ Create `server/utils/refundHelpers.extensionScope.test.js`:
 2. `planRefund` for the full contract amount picks the Balance charge and never the extension charge.
 3. A proposal whose ONLY payment is an extension: `loadPaymentsWithRemaining` returns an empty list, so `planRefund` refuses with a clear code rather than silently refunding nothing.
 4. Regression: a proposal with only ordinary payments behaves byte-identically to before (run the existing `refundHelpers` suites, which is the real guard).
+5. **Cancel-line flow.** A cancel-line total_scope refund must not draw on an extension payment: seed a proposal with a paid contract payment plus a paid extension payment, run the cancel-line overpayment split, and assert no split targets the extension payment.
 
 - [ ] **Step 4: Document the manual procedure**
 
-Extension refunds are done in the Stripe dashboard against that payment, and the existing refund webhook plus the stale-pending sweeper adopt it. That path is already correct for off-ledger money: `applyRefundReconciliation` accumulates `offLedgerCents` and deliberately does NOT drop `amount_paid` for it (`refundHelpers.js:300-304`).
+Extension refunds are done in the Stripe dashboard against that payment, and the existing refund webhook plus the stale-pending sweeper adopt it. That path is already correct for off-ledger money: `applyRefundReconciliation` declares `offLedgerCents` at `refundHelpers.js:293`, accumulates it at `:319`, and deliberately does NOT drop `amount_paid` for it (the no-drop math, `paidDropCents = amountCents - offLedgerCents`, at `:403`).
 
-Add a short runbook entry: how to find the extension's payment (the event's extensions panel shows the invoice), refund it at Stripe, and what to expect afterwards (the contract totals do not move; the duration is NOT auto-reverted, because whether the time was served is a fact only a human knows; and per the open decision in Task 12, the bartender keeps the gratuity unless Dallas chooses otherwise).
+Add a short runbook entry: how to find the extension's payment (the event's extensions panel shows the invoice), refund it at Stripe, and what to expect afterwards (the contract totals do not move; the duration is NOT auto-reverted, because whether the time was served is a fact only a human knows; and per spec §14's default, approved 2026-08-03, the bartender keeps the gratuity share, unless Dallas later flips to pull-from-pool-on-refund). Also describe the ADMIN panel path as it now works: the refund route flows through `refundExecute` with total_scope-stamped pending rows (stripe.js:479-482); do not describe the old inline orchestration.
 
 - [ ] **Step 5: Run the refund suites, one at a time, and commit**
 
@@ -4751,14 +4876,13 @@ This task produces a decision record, not a refactor. Any code change it identif
 **Files:**
 - Modify: `docs/fix-list-remaining-2026-07-02.md` (record findings + any follow-ups)
 
-- [ ] **Step 0: Verify the four `event_duration_hours` consumers (spec §12)**
+- [ ] **Step 0: Verify the `event_duration_hours` consumers (spec §12)**
 
-The column now changes during an event, which it never did before. Spec §12 names four surfaces that read it and says each gets verified. With a settled extension on a dev event, open each and confirm it shows the NEW end time and duration, not the booked one:
+The column now changes during an event, which it never did before. Spec §12 names four surfaces that read it and says each gets verified; as of the 2026-08-03 staff event-details redesign, two of them (BEO and the staff shift page) are one surface, so three entries cover all four. With a settled extension on a dev event, open each and confirm it shows the NEW end time and duration, not the booked one:
 
-1. **BEO** (`server/routes/beo.js` and the staff-facing BEO view).
+1. **BEO / staff event details, now one surface.** The staff shift page IS the event-details surface, fed by `server/utils/eventDetailsPayload.js` (selects `event_duration_hours` at :63); staff-facing copy dropped the term "BEO" entirely. `server/routes/beo.js` survives as the proposal-keyed admin/legacy route. The verification hits `eventDetailsPayload.js` once plus `beo.js`.
 2. **Calendar feed** (`server/routes/calendar.js`, the iCal description and end time).
 3. **Client portal** event display (`server/routes/clientPortal.js` and the portal event card).
-4. **Staff event details** (the staff shift page, which reads the shift row this feature also syncs).
 
 Record the result per surface. A surface showing the stale duration is a real bug: note it with its file and add it to the fix list in Step 3. Also confirm the Money Board and the events list still render the event without error, since both read the shift and proposal rows this feature touches.
 
@@ -4879,3 +5003,5 @@ Everything else the spec asks for has a task. The spec's own open items (the bro
   Codex also caught a defect in the fix for (2): locking `proposals` in the create route while `settleInTx` claimed the extension row first is an ABBA deadlock (40P01). Both paths now take proposals first, and the create route maps 40P01/40001 to a retryable conflict.
 
   Verified empirically, not argued: all seven of Task 4's dollar figures were run against the live pricing engine. Six matched exactly, including the $25 Shared Gratuity split. The seventh (`min_total`) was wrong in the plan and is now corrected to the measured $125, with the full reference table moved into the spec.
+
+- **rev 5, 2026-08-03.** Freshness audit against main (3 agents), applied as targeted amendments. New code that postdates rev 4 gained three protections: the balance-invoice monitor's PAYABLE_SUM off-ledger carve-out (Task 20), the `sumOffContractPaidCents` off-ledger skip protecting cancel-line overpayment math (Task 21), and a label guard refusing to mint or rename an invoice INTO an off-ledger label (Task 8 Step 2b). Task 14 was rewritten for the shipped staff event-details redesign (EventActionArea entry point, RequestSheet flow model, normalized `err` shape, display-context props). Task 19 was updated for the rails-parameterized `loadPaymentsWithRemaining` (the carve-out now protects both the admin panel and the cancel-line splitter). Spec §14's refunded-extension gratuity default was approved as-is. Stale line cites and the smsConsentCopy/STOP-guard/`TOTAL_TRACKING` prose claims were corrected; the money-smoke gate is now HARD against the prod-shaped ci-smoke branch.
