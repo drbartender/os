@@ -17,6 +17,7 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 - **overpayment-netting** — net overpayment by not-in-total, not by contract labels. STALE, cut 2026-07-28, 1 commit. [spec](superpowers/specs/2026-07-28-invoice-derivation-and-monitor-design.md) / [plan](superpowers/plans/2026-07-28-invoice-derivation-and-monitor.md)
 - **overbill-monitor** — lane 2: alert-only balance monitor. BLOCKED: needs lane 1 merged first. STALE, cut 2026-07-28, 1 checkpoint. [spec](superpowers/specs/2026-07-28-invoice-derivation-and-monitor-design.md) / [plan](superpowers/plans/2026-07-28-invoice-derivation-and-monitor.md)
 - **invoice-void-ui** — lane 3: void action on open invoices. Independent, client-only. STALE, cut 2026-07-28, 1 checkpoint. [spec](superpowers/specs/2026-07-28-invoice-derivation-and-monitor-design.md) / [plan](superpowers/plans/2026-07-28-invoice-derivation-and-monitor.md)
+- **event-details-server** — BLOCKED: conflicts with main on server/db/schema.sql (sensitive path, stop-and-ask). STALE, cut 2026-07-22, 9 commits. [spec](superpowers/specs/2026-07-22-staff-event-details-design.md) / [plan](superpowers/plans/2026-07-22-staff-event-details.md)
 ## Recently shipped
 
 <!-- merged + shipped lanes, newest first. Ages off over time. One line per item. -->
