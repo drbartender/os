@@ -83,8 +83,25 @@ export default function ContractorProfile() {
 
   // enabled: the draft is an overlay on top of saved profile data, so it must
   // load second. Deterministic ordering, not a race we hope resolves our way.
+  //
+  // Empty draft values are DROPPED, not applied. A draft captured while the
+  // profile was empty (pre-hire visit, or a failed /contractor load) stores ''
+  // for every untouched field; spreading those over a server-loaded profile
+  // blanks it — DOB becomes '' (22P02 → 500 on submit, birth_* are INTEGER
+  // columns) and address/travel/emergency-contact silently vanish when the
+  // admin re-saves. The server profile is authoritative for existing data; a
+  // draft only ever ADDS what the user actually typed. Trade-off, accepted: a
+  // deliberately cleared field is not cleared by draft restore — the user
+  // clears it again and submit still persists the clear.
   const { restoredAt, clearDraft } = useFormDraft('contractor_profile', form,
-    draft => setForm(f => ({ ...f, ...draft })), { enabled: profileLoaded });
+    draft => setForm(f => {
+      const additions = {};
+      for (const [k, v] of Object.entries(draft || {})) {
+        if (v !== '' && v !== null && v !== undefined) additions[k] = v;
+      }
+      return { ...f, ...additions };
+    }),
+    { enabled: profileLoaded });
 
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
 
