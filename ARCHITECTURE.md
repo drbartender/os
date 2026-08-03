@@ -508,6 +508,9 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | DELETE | `/campaigns/:id` | Admin | Archive campaign |
 | POST | `/campaigns/:id/send` | Admin | Execute blast send |
 | POST | `/campaigns/:id/schedule` | Admin | Schedule blast for future |
+| POST | `/campaigns/:id/test` | Admin | Send the campaign to a single address (defaults to the requester) before blasting |
+| POST | `/upload-image` | Admin | Designed-email image upload (magic-byte validated, R2; returns `/api/blog/images/...` URL) |
+| POST | `/preview` | Admin | Render a design (or raw HTML) into the branded email shell for an exactly-as-sent preview |
 | GET | `/campaigns/:id/steps` | Admin | List sequence steps |
 | POST | `/campaigns/:id/steps` | Admin | Add sequence step |
 | PUT | `/campaigns/:id/steps/:stepId` | Admin | Update sequence step |
@@ -1327,6 +1330,7 @@ Admin entry points: "Shopping List" button on Drink Plan Detail (visible wheneve
 **email_campaigns** — Blast campaigns and drip sequences
 - `id` SERIAL PK, `name`, `type`: blast | sequence
 - `subject`, `html_body`, `text_body`, `from_email`, `reply_to`
+- `design_json` JSONB — structured blocks from the drag-and-drop designer (`{version, blocks[]}`); `html_body`/`text_body` are server-rendered from it on save (`emailBlockRenderer.js`); NULL for legacy/simple rich-text campaigns
 - `status`: draft | scheduled | sending | sent | active | paused | archived
 - `scheduled_at`, `sent_at`
 - `target_sources` JSONB, `target_event_types` JSONB — audience targeting

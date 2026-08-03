@@ -5,6 +5,7 @@ import api from '../../utils/api';
 import CampaignMetricsBar from '../../components/CampaignMetricsBar';
 import SequenceStepEditor from '../../components/SequenceStepEditor';
 import AudienceSelector from '../../components/AudienceSelector';
+import CampaignBlastEditor from '../../components/emailBuilder/CampaignBlastEditor';
 import EntityLink from '../../components/EntityLink';
 import { useToast } from '../../context/ToastContext';
 
@@ -158,11 +159,19 @@ export default function EmailCampaignDetail() {
       {isBlast && (
         <div className="em-section">
           <h3>Email Content</h3>
-          {campaign.subject && <p><strong>Subject:</strong> {campaign.subject}</p>}
-          {campaign.html_body && (
-            <div className="em-preview-frame">
-              <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(campaign.html_body) }} />
-            </div>
+          {campaign.status === 'draft' ? (
+            // Draft: full designer so the owner can design, save, preview, and
+            // send a test before blasting.
+            <CampaignBlastEditor campaign={campaign} onSaved={fetchCampaign} />
+          ) : (
+            <>
+              {campaign.subject && <p><strong>Subject:</strong> {campaign.subject}</p>}
+              {campaign.html_body && (
+                <div className="em-preview-frame">
+                  <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(campaign.html_body) }} />
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

@@ -311,6 +311,9 @@ dr-bartender/
 │   │   ├── drinkPlanNudge.js   # Drink-plan / Potion Planner nudge: email + SMS touch and scheduling
 │   │   ├── dripSmsHandlers.js  # Unsigned-proposal drip SMS handlers (touches 1, 3, 5-sms)
 │   │   ├── email.js            # Resend email wrapper (send + batch)
+│   │   ├── emailBlockRenderer.js # Designed-email block → email-safe HTML renderer (tables + inline styles; single source of truth for how a designed campaign looks)
+│   │   ├── emailDesign.js      # Design compiler: sanitizes block rich-text + renders design_json → html_body/text_body
+│   │   ├── emailSanitize.js    # Shared allowlist DOMPurify sanitizer for admin-authored email HTML (extracted from emailMarketing.js)
 │   │   ├── emailSequenceScheduler.js # Drip sequence step processor (every 15 min)
 │   │   ├── emailTemplates.js   # Email template helpers (transactional + marketing)
 │   │   ├── emailValidation.js  # Warn-only typo-domain heuristic (flags a domain one edit from a common TLD/provider); client twin kept in manual sync
@@ -451,6 +454,7 @@ dr-bartender/
 │   │   │                       # InvoiceDropdown, SignaturePad, FileUpload, DrinkPlanCard,
 │   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, MenuSamplesModal,
 │   │   │                       # AudienceSelector, SequenceStepEditor, CampaignMetricsBar, SyrupPicker,
+│   │   │                       # emailBuilder/ (drag-and-drop designed-email builder: EmailBlockBuilder canvas + BlockCard + BlockSettings + EmailPreviewModal (server-rendered preview) + CampaignBlastEditor (draft-blast edit/preview/test-send) + blockCatalog + starterTemplates),
 │   │   │                       # TimePicker, NumberStepper, Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler,
 │   │   │                       # VenueAddressFields (structured venue address — sign+pay gate & admin edit),
 │   │   │                       # VenueSearchInput (venue-name typeahead (Google Places)),
@@ -542,6 +546,12 @@ dr-bartender/
 | `npm run lane:status` | List open lanes (worktrees) and flag stale ones (48h no-commit, 15+ main commits since cut, or a sensitive path landed on main since cut); run at session start and in the push sweep |
 
 ## Key Features
+
+### Designed-Email Builder (2026-08-03)
+- Mailchimp-style block designer inside the Marketing campaign composer (`client/src/components/emailBuilder/`): heading, text, image, button, hero, two-column, divider, and spacer blocks with drag-to-reorder (@dnd-kit), per-block settings, and starter templates
+- The design (`email_campaigns.design_json`) is the source of truth: `html_body`/`text_body` are server-rendered from it (`emailBlockRenderer.js` → table + inline-style email-safe HTML) and never trusted from the client; block rich text passes the shared allowlist sanitizer (`emailSanitize.js`), and button/image URLs are scheme-checked (http/https/mailto/tel)
+- Draft blasts get the full designer plus an exactly-as-sent server-rendered preview (desktop/mobile) and a one-address test send; the blast/sequence send pipeline itself is unchanged
+- Campaign images upload through `POST /api/email-marketing/upload-image` (admin+manager): sharp re-encode bounds width at 1088px, strips metadata, and derives the stored extension from the decoded format
 
 ### Public Legal Pages + Client SMS Consent (2026-07-22)
 - `/privacy` and `/terms` are real pages with real footer links; both are submitted to Twilio for A2P 10DLC campaign review alongside the `/sms` opt-in page, and `/privacy` quotes the consent sentence verbatim from the same constant the checkboxes render

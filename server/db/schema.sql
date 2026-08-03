@@ -1466,6 +1466,13 @@ CREATE TABLE IF NOT EXISTS email_campaigns (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Structured design of the email built in the drag-and-drop designer.
+-- Shape: { "version": 1, "blocks": [ { "id", "type", "props" }, ... ] }.
+-- html_body/text_body are rendered from this server-side on save (see
+-- server/utils/emailBlockRenderer.js); design_json is what the builder reloads
+-- to edit. NULL for legacy/simple rich-text campaigns.
+ALTER TABLE email_campaigns ADD COLUMN IF NOT EXISTS design_json JSONB;
+
 DROP TRIGGER IF EXISTS update_email_campaigns_updated_at ON email_campaigns;
 CREATE TRIGGER update_email_campaigns_updated_at BEFORE UPDATE ON email_campaigns
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

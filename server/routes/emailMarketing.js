@@ -1,30 +1,24 @@
 const express = require('express');
+const sharp = require('sharp');
+const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
-const createDOMPurify = require('dompurify');
-const { JSDOM } = require('jsdom');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
 const { wrapMarketingEmail } = require('../utils/emailTemplates');
+const { sanitizeHtml } = require('../utils/emailSanitize');
+const { compileDesign } = require('../utils/emailDesign');
+const { uploadFile } = require('../utils/storage');
+const { isValidUpload } = require('../utils/fileValidation');
 const { API_URL } = require('../utils/urls');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../utils/errors');
 
 const router = express.Router();
 
-// Server-side HTML sanitization for admin-authored campaign bodies. Mirrors the blog
-// post flow — admin is a trust boundary; a compromised admin account can't inject
-// <script> into outbound emails.
-const DOMPurify = createDOMPurify(new JSDOM('').window);
-const EMAIL_SANITIZE_OPTIONS = {
-  ALLOWED_TAGS: ['a', 'b', 'br', 'div', 'em', 'h1', 'h2', 'h3', 'h4', 'hr', 'i', 'img',
-    'li', 'ol', 'p', 'pre', 'span', 'strong', 'u', 'ul',
-    'table', 'tbody', 'td', 'th', 'thead', 'tr'],
-  ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'style', 'width', 'height', 'target', 'rel'],
-  ALLOW_DATA_ATTR: false,
-};
-const sanitizeHtml = (html) =>
-  html ? DOMPurify.sanitize(html, EMAIL_SANITIZE_OPTIONS) : html;
+// A designed email compiles to html_body/text_body from its blocks; pass the
+// public API base so root-relative image URLs are absolutized for email clients.
+const compileEmailDesign = (design) => compileDesign(design, { baseUrl: API_URL });
 
 // Must mirror the schema CHECK on email_leads.lead_source. If you add a new value
 // here, add it to client/src/utils/leadSources.js and the DDL in schema.sql.
@@ -290,7 +284,7 @@ router.get('/campaigns', auth, requireAdminOrManager, asyncHandler(async (req, r
 
 /** POST /campaigns — create campaign */
 router.post('/campaigns', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { name, type, subject, html_body, text_body, from_email, reply_to, target_sources, target_event_types } = req.body;
+  const { name, type, subject, html_body, text_body, from_email, reply_to, target_sources, target_event_types, design_json } = req.body;
 
   const fieldErrors = {};
   if (!name || !name.trim()) fieldErrors.name = 'Campaign name is required.';
@@ -301,10 +295,20 @@ router.post('/campaigns', auth, requireAdminOrManager, asyncHandler(async (req, 
     throw new ValidationError(fieldErrors);
   }
 
+  // A designed email is the source of truth: html_body/text_body are rendered
+  // from its blocks. Fall back to the legacy rich-text html_body otherwise.
+  const compiled = compileEmailDesign(design_json);
+  if (design_json !== undefined && design_json !== null && !compiled) {
+    throw new ValidationError({ design_json: 'Design must be an object with at least one block.' });
+  }
+  const finalHtml = compiled ? compiled.html_body : (sanitizeHtml(html_body) || null);
+  const finalText = compiled ? compiled.text_body : (text_body || null);
+  const finalDesign = compiled ? JSON.stringify(compiled.design_json) : null;
+
   const result = await pool.query(
-    `INSERT INTO email_campaigns (name, type, subject, html_body, text_body, from_email, reply_to, target_sources, target_event_types, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-    [name.trim(), type || 'blast', subject || null, sanitizeHtml(html_body) || null, text_body || null,
+    `INSERT INTO email_campaigns (name, type, subject, html_body, text_body, design_json, from_email, reply_to, target_sources, target_event_types, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+    [name.trim(), type || 'blast', subject || null, finalHtml, finalText, finalDesign,
      from_email || null, reply_to || null,
      target_sources ? JSON.stringify(target_sources) : null,
      target_event_types ? JSON.stringify(target_event_types) : null,
@@ -375,20 +379,41 @@ router.get('/campaigns/:id', auth, requireAdminOrManager, asyncHandler(async (re
 
 /** PUT /campaigns/:id — update campaign */
 router.put('/campaigns/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { name, subject, html_body, text_body, from_email, reply_to, target_sources, target_event_types, status } = req.body;
+  const { name, subject, html_body, text_body, from_email, reply_to, target_sources, target_event_types, status, design_json } = req.body;
+
+  // When a design is supplied, re-render html_body/text_body from it and store
+  // the (sanitized) design so the builder can reload it. `design_json: null` is
+  // an explicit clear (the composer saved in simple-text mode / emptied the
+  // canvas): the stale design AND its derived text_body must go, or a reload
+  // resurrects the old blocks over the newer body. COALESCE keeps every field a
+  // partial PUT omits untouched.
+  const clearDesign = design_json === null;
+  const compiled = compileEmailDesign(design_json);
+  if (design_json !== undefined && !clearDesign && !compiled) {
+    throw new ValidationError({ design_json: 'Design must be an object with at least one block.' });
+  }
+  const nextHtml = compiled ? compiled.html_body : (html_body !== undefined ? sanitizeHtml(html_body) : null);
+  const nextText = compiled ? compiled.text_body : (text_body !== undefined ? text_body : null);
+  const nextDesign = compiled ? JSON.stringify(compiled.design_json) : null;
+  // A compiled design owns text_body outright (even when its plain text is
+  // empty); so does an explicit clear. Otherwise legacy COALESCE semantics.
+  const setText = clearDesign || Boolean(compiled);
+
   const result = await pool.query(`
     UPDATE email_campaigns SET
       name = COALESCE($1, name), subject = COALESCE($2, subject),
-      html_body = COALESCE($3, html_body), text_body = COALESCE($4, text_body),
+      html_body = COALESCE($3, html_body),
+      text_body = CASE WHEN $13::boolean THEN $4 ELSE COALESCE($4, text_body) END,
       from_email = COALESCE($5, from_email), reply_to = COALESCE($6, reply_to),
       target_sources = COALESCE($7, target_sources),
       target_event_types = COALESCE($8, target_event_types),
-      status = COALESCE($9, status)
+      status = COALESCE($9, status),
+      design_json = CASE WHEN $12::boolean THEN NULL ELSE COALESCE($11, design_json) END
     WHERE id = $10 RETURNING *
-  `, [name, subject, sanitizeHtml(html_body), text_body, from_email, reply_to,
+  `, [name, subject, nextHtml, nextText, from_email, reply_to,
       target_sources ? JSON.stringify(target_sources) : null,
       target_event_types ? JSON.stringify(target_event_types) : null,
-      status, req.params.id]);
+      status, req.params.id, nextDesign, clearDesign, setText]);
 
   if (!result.rows[0]) throw new NotFoundError('Campaign not found.');
   res.json(result.rows[0]);
@@ -544,6 +569,87 @@ router.post('/campaigns/:id/schedule', auth, requireAdminOrManager, asyncHandler
   );
   if (!result.rows[0]) throw new NotFoundError('Campaign not found.');
   res.json(result.rows[0]);
+}));
+
+// ─── Email Designer support ───────────────────────────────────────
+
+/** POST /upload-image — store an image for use in a designed campaign.
+ *  Gated to admin OR manager so anyone who can compose a campaign can add
+ *  images. The image is decoded and re-encoded through sharp: that bounds the
+ *  width (emails render at ~544px; 1088 keeps retina sharp), strips metadata,
+ *  caps the payload a blast recipient downloads, and makes the stored bytes
+ *  AND extension come from the decoder — never from the client's filename or
+ *  mimetype (isValidUpload's magic check passes PDFs; the decode does not).
+ *  Returns a root-relative URL served by the public image route; the renderer
+ *  absolutizes it for email. */
+router.post('/upload-image', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  if (!req.files?.image) {
+    throw new ValidationError({ image: 'No image provided.' });
+  }
+  const file = req.files.image;
+  if (!isValidUpload(file) || file.data.subarray(0, 4).equals(Buffer.from('%PDF'))) {
+    throw new ValidationError({ image: 'Invalid file type. Use JPEG, PNG, or WebP.' });
+  }
+  let out;
+  let ext;
+  try {
+    const img = sharp(file.data).rotate().resize({ width: 1088, withoutEnlargement: true });
+    const { format } = await sharp(file.data).metadata();
+    if (format === 'png') { out = await img.png().toBuffer(); ext = '.png'; }
+    else if (format === 'webp') { out = await img.webp({ quality: 82 }).toBuffer(); ext = '.webp'; }
+    else { out = await img.jpeg({ quality: 82 }).toBuffer(); ext = '.jpg'; }
+  } catch (err) {
+    throw new ValidationError({ image: 'Could not process this image. Use JPEG, PNG, or WebP.' });
+  }
+  const filename = `email_${uuidv4()}${ext}`;
+  await uploadFile(out, filename);
+  res.json({ url: `/api/blog/images/${filename}` });
+}));
+
+/** POST /preview — render a design (or raw html) into the full branded email
+ *  shell so the composer can show an accurate, exactly-as-sent preview. */
+router.post('/preview', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const { design_json, html_body } = req.body;
+  const compiled = compileEmailDesign(design_json);
+  const inner = compiled ? compiled.html_body : (sanitizeHtml(html_body) || '');
+  const sampleUnsub = `${API_URL}/api/email-marketing/unsubscribe?token=preview`;
+  res.json({ html: wrapMarketingEmail(inner || '<p style="color:#999">Your email is empty — add some blocks.</p>', sampleUnsub) });
+}));
+
+/** POST /campaigns/:id/test — send the campaign to a single address so the
+ *  admin can see the real thing in their own inbox before blasting. */
+router.post('/campaigns/:id/test', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const campaign = await pool.query('SELECT * FROM email_campaigns WHERE id = $1', [req.params.id]);
+  const c = campaign.rows[0];
+  if (!c) throw new NotFoundError('Campaign not found.');
+  if (!c.html_body) throw new ValidationError({ html_body: 'Add some content before sending a test.' });
+
+  const to = (req.body.email && String(req.body.email).trim()) || req.user.email;
+  if (!to) throw new ValidationError({ email: 'No test recipient — enter an email address.' });
+
+  const sampleUnsub = `${API_URL}/api/email-marketing/unsubscribe?token=preview`;
+  const html = wrapMarketingEmail(c.html_body, sampleUnsub);
+  let result;
+  try {
+    result = await sendEmail({
+      to,
+      subject: `[TEST] ${c.subject || c.name}`,
+      html,
+      text: c.text_body || undefined,
+      from: c.from_email || undefined,
+      replyTo: c.reply_to || undefined,
+      meta: { skipLog: true },
+    });
+  } catch (err) {
+    throw new ExternalServiceError('Resend', err, 'Email sending temporarily unavailable. Please try again.');
+  }
+  if (result.id === 'skipped-invalid') {
+    throw new ValidationError({ email: 'That address was rejected as invalid.' });
+  }
+  if (result.id === 'dev-skipped') {
+    throw new ExternalServiceError('Resend', null, 'Email sending is not enabled in this environment.');
+  }
+  res.json({ message: `Test sent to ${to}.`, to });
 }));
 
 // ─── Sequence Steps ───────────────────────────────────────────────

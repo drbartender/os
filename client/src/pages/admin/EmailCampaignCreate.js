@@ -1,13 +1,22 @@
 import React, { useState, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../../utils/api';
+import api, { API_BASE_URL } from '../../utils/api';
 import AudienceSelector from '../../components/AudienceSelector';
+import EmailBlockBuilder from '../../components/emailBuilder/EmailBlockBuilder';
 import useFormValidation from '../../hooks/useFormValidation';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 
 const RichTextEditor = lazy(() => import('../../components/RichTextEditor'));
+
+// Turn a stored `/api/...` upload path into an absolute URL the browser (and,
+// once absolutized again server-side, the email) can load.
+function resolveImageUrl(url) {
+  if (!url) return url;
+  if (url.startsWith('/api/')) return `${API_BASE_URL.replace(/\/api$/, '')}${url}`;
+  return url;
+}
 
 export default function EmailCampaignCreate() {
   const navigate = useNavigate();
@@ -21,11 +30,25 @@ export default function EmailCampaignCreate() {
     target_sources: [],
     target_event_types: [],
   });
+  const [mode, setMode] = useState('design'); // 'design' (block builder) | 'simple' (rich text)
+  const [blocks, setBlocks] = useState([]);
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
+
+  const uploadImage = async (file) => {
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      const { data } = await api.post('/email-marketing/upload-image', formData);
+      return resolveImageUrl(data.url);
+    } catch (err) {
+      toast.error(err.message || 'Image upload failed.');
+      return null;
+    }
+  };
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -35,15 +58,20 @@ export default function EmailCampaignCreate() {
     if (!result.valid) { setError(result.message); return; }
     setSaving(true);
     try {
+      const useDesign = form.type === 'blast' && mode === 'design' && blocks.length > 0;
       const payload = {
         name: form.name.trim(),
         type: form.type,
         subject: form.subject || null,
-        html_body: form.html_body || null,
         reply_to: form.reply_to || null,
         target_sources: form.target_sources.length > 0 ? form.target_sources : null,
         target_event_types: form.target_event_types.length > 0 ? form.target_event_types : null,
       };
+      if (useDesign) {
+        payload.design_json = { version: 1, blocks };
+      } else {
+        payload.html_body = form.html_body || null;
+      }
       const res = await api.post('/email-marketing/campaigns', payload);
       toast.success('Draft saved.');
       navigate(`/email-marketing/campaigns/${res.data.id}`);
@@ -85,15 +113,30 @@ export default function EmailCampaignCreate() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Email Body</label>
-              <Suspense fallback={<div className="muted" style={{ padding: '1rem 0' }}>Loading editor…</div>}>
-                <RichTextEditor
-                  content={form.html_body}
-                  onChange={val => setForm({ ...form, html_body: val })}
-                  onUploadImage={() => Promise.resolve(null)}
-                  placeholder="Write your email content here..."
-                />
-              </Suspense>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                <label className="form-label" style={{ margin: 0 }}>Email Design</label>
+                <div className="em-mode-toggle" style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" className={`btn ${mode === 'design' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('design')}>Designer</button>
+                  <button type="button" className={`btn ${mode === 'simple' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setMode('simple')}>Simple text</button>
+                </div>
+              </div>
+
+              {mode === 'design' ? (
+                <div style={{ marginTop: 10 }}>
+                  <EmailBlockBuilder value={blocks} onChange={setBlocks} onUploadImage={uploadImage} />
+                </div>
+              ) : (
+                <div style={{ marginTop: 10 }}>
+                  <Suspense fallback={<div className="muted" style={{ padding: '1rem 0' }}>Loading editor…</div>}>
+                    <RichTextEditor
+                      content={form.html_body}
+                      onChange={val => setForm({ ...form, html_body: val })}
+                      onUploadImage={uploadImage}
+                      placeholder="Write your email content here..."
+                    />
+                  </Suspense>
+                </div>
+              )}
               <FieldError error={fieldErrors?.html_body} />
             </div>
           </>
