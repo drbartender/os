@@ -14,8 +14,9 @@ import React from 'react';
  *   'assigned'   — approved + active. Drop / cover + the confirm bar.
  *   'pending'    — requested, awaiting review. Withdraw.
  *   'waitlisted' — requested, but every role they picked is full. Leave waitlist.
- *   'browsing'   — no request. Request / Join waitlist / Cover this.
- *   'dropped'    — dropped the shift; the request row lingers as approved.
+ *   'browsing'   — no request. Request / Join waitlist / Cover this. A just-
+ *                  dropped shift lands here too (the payload filters dropped
+ *                  rows); the dropResult gate renders the dropped banner.
  *   'admin'      — admin or a manager who is only viewing. Read-only note.
  * Anything else renders nothing.
  *
@@ -122,16 +123,6 @@ export default function EventActionArea({
         >
           {busy ? '…' : waitlisted ? 'Leave waitlist' : 'Withdraw'}
         </button>
-      </div>
-    );
-  }
-
-  if (viewerState === 'dropped') {
-    return (
-      <div className="sp-confirm-bar">
-        <div className="sp-confirm-bar-msg">
-          <strong>You dropped this shift.</strong> Management has it from here.
-        </div>
       </div>
     );
   }
