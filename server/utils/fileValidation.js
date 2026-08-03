@@ -89,8 +89,10 @@ function isHeif(buf) {
  * container content is parsed. Accepted risk: these land in R2 and are only
  * ever opened by an admin who chose to download a stranger's resume, which is
  * the same trust decision as opening any emailed attachment. The blast radius
- * is that admin's workstation, not the app; storage.js serves them as
- * attachment-typed downloads, never active content.
+ * is that admin's workstation, not the app. storage.js has no MIME_TYPES
+ * entry for .doc/.docx, so they fall to application/octet-stream and the
+ * browser downloads rather than renders them — note that protection lives in
+ * the ABSENCE of a mapping and would silently evaporate if one were added.
  *
  * Deliberately NOT used by payment.js (W-9), admin/blog.js (blog images), or
  * staffPortal.js. Those keep the narrow isValidUpload.

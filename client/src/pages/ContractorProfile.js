@@ -86,18 +86,21 @@ export default function ContractorProfile() {
   //
   // Empty draft values are DROPPED, not applied. A draft captured while the
   // profile was empty (pre-hire visit, or a failed /contractor load) stores ''
-  // for every untouched field; spreading those over a server-loaded profile
-  // blanks it — DOB becomes '' (22P02 → 500 on submit, birth_* are INTEGER
-  // columns) and address/travel/emergency-contact silently vanish when the
-  // admin re-saves. The server profile is authoritative for existing data; a
-  // draft only ever ADDS what the user actually typed. Trade-off, accepted: a
-  // deliberately cleared field is not cleared by draft restore — the user
-  // clears it again and submit still persists the clear.
+  // for every untouched text field and false for every untouched checkbox;
+  // spreading those over a server-loaded profile blanks it — DOB becomes ''
+  // (22P02 → 500 on submit, birth_* are INTEGER columns), address/travel/
+  // emergency-contact silently vanish, and the six equipment_* flags uncheck.
+  // `false` is filtered alongside '' because it is the untouched-checkbox
+  // serialization, the same call useFormDraft's hasContent already makes. The
+  // server profile is authoritative for existing data; a draft only ever ADDS
+  // what the user actually set. Trade-off, accepted for text and checkbox
+  // alike: a deliberate clear/uncheck is not replayed by draft restore — the
+  // user repeats it and submit still persists it.
   const { restoredAt, clearDraft } = useFormDraft('contractor_profile', form,
     draft => setForm(f => {
       const additions = {};
       for (const [k, v] of Object.entries(draft || {})) {
-        if (v !== '' && v !== null && v !== undefined) additions[k] = v;
+        if (v !== '' && v !== false && v !== null && v !== undefined) additions[k] = v;
       }
       return { ...f, ...additions };
     }),
