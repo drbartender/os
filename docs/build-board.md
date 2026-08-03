@@ -20,7 +20,6 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 - **event-details-server** — BLOCKED: conflicts with main on server/db/schema.sql (sensitive path, stop-and-ask). STALE, cut 2026-07-22, 9 commits. [spec](superpowers/specs/2026-07-22-staff-event-details-design.md) / [plan](superpowers/plans/2026-07-22-staff-event-details.md)
 - **event-details-admin-ui** — admin menu-print upload block. Merges clean but must ship WITH the server lane. STALE, cut 2026-07-22, 2 commits. [spec](superpowers/specs/2026-07-22-staff-event-details-design.md) / [plan](superpowers/plans/2026-07-22-staff-event-details.md)
 - **event-details-staff-ui** — staff event-details page. Merges clean but must ship WITH the server lane. STALE, cut 2026-07-22, 2 commits. [spec](superpowers/specs/2026-07-22-staff-event-details-design.md) / [plan](superpowers/plans/2026-07-22-staff-event-details.md)
-- **email-designer** — drag-and-drop designed-email builder on the Marketing composer. Cut 2026-08-03, 2 commits, built by a separate session; NO spec doc, per-lane review owed before merge.
 
 ## Recently shipped
 
