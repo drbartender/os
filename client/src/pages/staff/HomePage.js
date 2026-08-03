@@ -140,7 +140,7 @@ export default function HomePage() {
               </div>
               <div className="sp-action-main">
                 <div className="sp-action-title">
-                  Confirm the {nextShift.client_name || 'event'} BEO
+                  Confirm the {nextShift.client_name || 'event'} event details
                 </div>
                 <div className="sp-action-sub">
                   {fmtShortDate(nextShift.event_date)} · {relDayLabel(nextShift.event_date)}

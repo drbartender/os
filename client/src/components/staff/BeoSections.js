@@ -1,21 +1,127 @@
 import React from 'react';
+import api from '../../utils/api';
+import {
+  parsePositionsNeeded,
+  rosterCounts,
+  CANONICAL_LABELS,
+} from '../../utils/staffingRoles';
 
 /**
- * BeoSections — read-only BEO body blocks rendered on the staff ShiftDetail
- * page (spec §6.4). Extracted from ShiftDetail.js to keep the page itself
- * focused on data orchestration (resolve proposalId → fetch BEO → render).
+ * Body blocks for the staff Event Details page (spec 2026-07-22, which retired
+ * the "BEO" wording everywhere staff can read it). Extracted from
+ * ShiftDetail.js so the page itself stays focused on data orchestration.
  *
- * Each exported sub-component is purely presentational:
- *   - SignatureCocktailsCard
- *   - MocktailsCard
- *   - AddonsCard
- *   - LogisticsCard
- *   - CustomMenuCard
- *   - NotesCard / ConsultCard / ShoppingListCard
+ * Two tiers, decided by the caller:
+ *   - the brief, visible to EVERY staffer so they can judge a shift before
+ *     requesting it: EquipmentCard, RolesCard, GratuityTipsCard, drinks,
+ *     addons, logistics, menu, notes, consult.
+ *   - assigned-only extras: BarMenuCard, ShoppingListCard (the roster card and
+ *     the client-contact button live in the page itself).
  *
- * Components no-op (return null) when their relevant data is empty, so the
- * caller can render them unconditionally for a clean parent render path.
+ * Each sub-component is purely presentational and no-ops (returns null) when
+ * its data is empty, so the caller can render them unconditionally.
  */
+
+/**
+ * shifts.equipment_required is TEXT holding a JSON array (default '[]'), so it
+ * arrives as a string over the wire. LogisticsTag has a private parser; this is
+ * the same job for a different shape, kept local rather than exported from
+ * there to avoid coupling two unrelated components.
+ */
+function safeParseArray(raw) {
+  if (Array.isArray(raw)) return raw.filter((t) => typeof t === 'string' && t.trim());
+  if (typeof raw !== 'string') return [];
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((t) => typeof t === 'string' && t.trim()) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The at-a-glance facts every staffer needs: when, when to arrive, how many
+ * guests, where, dress code, load-in. Extracted from the page body to keep
+ * ShiftDetail focused on orchestration rather than layout.
+ */
+export function EventMetaGrid({ shift, proposal, setupTimeDisplay, selections }) {
+  const guests = proposal?.guest_count || shift?.guest_count;
+  const location = proposal?.event_location || shift?.location;
+  return (
+    <div className="sp-meta-grid">
+      <div className="sp-meta">
+        <div className="sp-meta-k">Date</div>
+        <div className="sp-meta-v">
+          {fmtLongDate(shift?.event_date)}{' '}
+          <span style={{ color: 'var(--sp-ink-3)' }}>· {relDayLabel(shift?.event_date)}</span>
+        </div>
+      </div>
+      {(shift?.start_time || shift?.end_time) && (
+        <div className="sp-meta">
+          <div className="sp-meta-k">Service time</div>
+          <div className="sp-meta-v num">
+            {shift?.start_time}
+            {shift?.end_time ? ` – ${shift.end_time}` : ''}
+          </div>
+        </div>
+      )}
+      {setupTimeDisplay && (
+        <div className="sp-meta">
+          <div className="sp-meta-k">Be there by</div>
+          <div className="sp-meta-v num">{setupTimeDisplay}</div>
+        </div>
+      )}
+      {guests && (
+        <div className="sp-meta">
+          <div className="sp-meta-k">Guests</div>
+          <div className="sp-meta-v num">{guests}</div>
+        </div>
+      )}
+      {location && (
+        <div className="sp-meta" style={{ gridColumn: '1 / -1' }}>
+          <div className="sp-meta-k">Location</div>
+          <div className="sp-meta-v">{location}</div>
+        </div>
+      )}
+      {selections.dressCode && (
+        <div className="sp-meta" style={{ gridColumn: '1 / -1' }}>
+          <div className="sp-meta-k">Dress code</div>
+          <div className="sp-meta-v">{selections.dressCode}</div>
+        </div>
+      )}
+      {selections.loadInNotes && (
+        <div className="sp-meta" style={{ gridColumn: '1 / -1' }}>
+          <div className="sp-meta-k">Load-in</div>
+          <div className="sp-meta-v">{selections.loadInNotes}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** YYYY-MM-DD to "Saturday, May 30, 2026" */
+function fmtLongDate(iso) {
+  if (!iso) return '';
+  const d = new Date(String(iso).slice(0, 10) + 'T12:00:00');
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+  });
+}
+
+/** YYYY-MM-DD to Today / Tomorrow / In Nd / Nd ago */
+function relDayLabel(iso) {
+  if (!iso) return '';
+  const d = new Date(String(iso).slice(0, 10) + 'T12:00:00');
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const diff = Math.round((d - today) / 86400000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Tomorrow';
+  if (diff > 0) return `In ${diff}d`;
+  if (diff === -1) return 'Yesterday';
+  return `${-diff}d ago`;
+}
 
 export function SignatureCocktailsCard({ cocktails, customCocktails }) {
   const total = cocktails.length + customCocktails.length;
@@ -79,6 +185,147 @@ export function GratuityTipsCard({ tipJar, gratuityPrepaid, staffNoun }) {
         <span style={{ opacity: 0.7 }}>Pre-paid gratuity</span>
         <span>{gratuityPrepaid ? `Yes, pre-paid for the ${staffNoun}s` : 'None'}</span>
       </div>
+    </div>
+  );
+}
+
+/**
+ * What to bring and whether a supply run is attached. Part of the brief: a
+ * staffer needs this BEFORE requesting, because it decides whether they can
+ * physically do the job (and it is what the request sheet makes them ack).
+ */
+export function EquipmentCard({ equipment, supplyRun }) {
+  const list = safeParseArray(equipment);
+  if (list.length === 0 && !supplyRun) return null;
+  return (
+    <div className="sp-card tight">
+      <div className="sp-card-head">
+        <div className="sp-card-title">Equipment &amp; supplies</div>
+      </div>
+      {list.map((item, i) => (
+        <div
+          key={`${item}-${i}`}
+          className="sp-row"
+          style={{ padding: '0.4rem 0', fontSize: 13, borderBottom: '1px solid var(--sp-line-1)' }}
+        >
+          {item}
+        </div>
+      ))}
+      {supplyRun && (
+        <div className="sp-row" style={{ padding: '0.4rem 0', fontSize: 13 }}>
+          Supply run required for this event.
+        </div>
+      )}
+      <div style={{ fontSize: 12, color: 'var(--sp-ink-3)', marginTop: 6, lineHeight: 1.55 }}>
+        Your standard bar kit includes a small handled cooler (about 3 cases of beer plus
+        ice, or two 20 lb bags). Bar mats, ice bins, and the tip jar ride inside it. Bring
+        it even when the client has coolers of their own.
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Per-role fill for the shift ("Bartender 1/2"). This shipped on the list cards
+ * but never on the detail page, which is a chunk of why the page read as having
+ * less information than the screen staff requested from.
+ */
+export function RolesCard({ positionsNeeded, approvedByRole }) {
+  const needed = parsePositionsNeeded(positionsNeeded);
+  if (needed.length === 0) return null;
+  const counts = rosterCounts(needed);
+  const approved = approvedByRole && typeof approvedByRole === 'object' ? approvedByRole : {};
+  const ordered = CANONICAL_LABELS.filter((role) => counts[role] > 0);
+  if (ordered.length === 0) return null;
+  return (
+    <div className="sp-card tight">
+      <div className="sp-card-head">
+        <div className="sp-card-title">Roles on this event</div>
+      </div>
+      <div className="sp-shift-roster-fill">
+        {ordered.map((role, i) => {
+          const total = counts[role] || 0;
+          const filled = Math.min(Number(approved[role]) || 0, total);
+          return (
+            <span key={role} className={'sp-roster-pill' + (filled >= total ? ' full' : '')}>
+              {role} {filled}/{total}
+              {i < ordered.length - 1 ? ' ·' : ''}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The bar menu print file. Assigned-only: this is the deliverable a working
+ * staffer prints and carries, not something a browser needs.
+ */
+export function BarMenuCard({ menuPrint, shiftId }) {
+  const [downloading, setDownloading] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  if (!menuPrint) return null;
+
+  async function download() {
+    setDownloading(true);
+    setError(null);
+    try {
+      const res = await api.get(`/shifts/${shiftId}/menu-print`, { responseType: 'blob' });
+      // Honor the server's filename so a PNG or JPG menu is not saved as .pdf.
+      const cd = (res.headers && res.headers['content-disposition']) || '';
+      const m = cd.match(/filename="([^"]+)"/);
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = m ? m[1] : 'bar-menu.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Deferred: revoking in the same task cancels the in-flight download in
+      // Firefox and some Safari versions, silently and with nothing to catch.
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      setError(err?.message || 'Could not download the menu file.');
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <div className="sp-card tight">
+      <div className="sp-card-head">
+        <div className="sp-card-title">Bar menu</div>
+      </div>
+      {menuPrint.status === 'ready' && (
+        <>
+          <button
+            type="button"
+            className="sp-btn sp-btn-sm"
+            onClick={download}
+            disabled={downloading}
+          >
+            {downloading ? 'Downloading…' : 'Download print file'}
+          </button>
+          {error && <div className="sp-modal-error" style={{ marginTop: 6 }}>{error}</div>}
+          <div style={{ fontSize: 12.5, color: 'var(--sp-ink-2)', marginTop: 8, lineHeight: 1.55 }}>
+            Print this and bring it in a frame (frames will be stocked at the Pilsen storage
+            unit soon). The menu and the frame stay with the client after the event. You get a
+            flat $5 for the print. A tablet or iPad on a stand works instead if it is clean and
+            a decent size. We plan around 8x10 for framed menus.
+          </div>
+        </>
+      )}
+      {menuPrint.status === 'not_required' && (
+        <div style={{ fontSize: 13, color: 'var(--sp-ink-2)' }}>
+          No printed menu for this event.
+        </div>
+      )}
+      {menuPrint.status === 'pending' && (
+        <div style={{ fontSize: 13, color: 'var(--sp-ink-3)' }}>
+          Print file not posted yet. Check back closer to the event.
+        </div>
+      )}
     </div>
   );
 }

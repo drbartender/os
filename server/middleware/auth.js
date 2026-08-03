@@ -90,6 +90,27 @@ const requireAdminOrManager = (req, res, next) => {
   return next(new PermissionError('Admin access required.'));
 };
 
+/**
+ * Staff who have completed onboarding (or admin/manager).
+ *
+ * Moved here from server/routes/shifts.js (2026-07-22) because it stopped being
+ * a shifts-list concern: `POST /api/auth/register` is PUBLIC and mints a live
+ * JWT for a `role='staff', onboarding_status='in_progress'` row, and `auth()`
+ * only rejects deactivated / rejected / suspended. So "authenticated" does NOT
+ * mean "a real staffer" — this is the gate that means that, and every
+ * staff-data surface needs it. shifts.js imports it from here now; there is
+ * exactly one definition.
+ */
+function requireOnboarded(req, res, next) {
+  // Mounted after auth() everywhere today; guard anyway so a future standalone
+  // mount fails closed with the canonical envelope instead of a TypeError 500.
+  if (!req.user) return next(new AppError('No token provided', 401, 'NO_TOKEN'));
+  if (req.user.role === 'admin' || req.user.role === 'manager') return next();
+  const allowed = ['submitted', 'reviewed', 'approved'];
+  if (allowed.includes(req.user.onboarding_status)) return next();
+  return next(new PermissionError('Complete your onboarding to access shifts.'));
+}
+
 const clientAuth = async (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return next(new AppError('No token provided', 401, 'NO_TOKEN'));
@@ -116,4 +137,4 @@ const clientAuth = async (req, res, next) => {
   }
 };
 
-module.exports = { auth, adminOnly, requireAdminOrManager, clientAuth };
+module.exports = { auth, adminOnly, requireAdminOrManager, requireOnboarded, clientAuth };

@@ -95,13 +95,13 @@ const CATEGORIES = [
   },
   {
     id: 'beo_finalized',
-    label: 'BEO ready to confirm',
-    sub: 'A BEO is locked and waiting for my confirm.',
+    label: 'Event details ready to confirm',
+    sub: 'Event details are locked and waiting for my confirm.',
   },
   {
     id: 'beo_reminder_t3',
     label: '3 days out reminder',
-    sub: "Auto SMS if I haven’t confirmed an upcoming BEO.",
+    sub: "Auto SMS if I haven’t confirmed upcoming event details.",
   },
   {
     id: 'schedule_change',
@@ -154,7 +154,7 @@ const PUSH_TOOLTIPS = Object.freeze({
 const SMS_KILL_SWITCH_TOOLTIP =
   'Global SMS is off (you replied STOP). Reply START to your last Dr Bartender text to re-enable.';
 const CRITICAL_FOOTER =
-  "Critical-path messages (BEO finalized, schedule changes, payday) can’t be fully muted. " +
+  "Critical-path messages (event details finalized, schedule changes, payday) can’t be fully muted. " +
   "We’ll deliver them through whatever channel is still on.";
 const CRITICAL_ROW_ERROR =
   'Critical messages need at least one channel. Turn one on first.';

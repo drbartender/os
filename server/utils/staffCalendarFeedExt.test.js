@@ -33,7 +33,7 @@ test('emits all-day VEVENT for unconfirmed-finalized BEO shift', () => {
   assert.match(v, /UID:beo-confirm-42@drbartender\.com/);
   assert.match(v, /DTSTART;VALUE=DATE:20260812/);   // 3 days before 2026-08-15
   assert.match(v, /DTEND;VALUE=DATE:20260813/);     // DTEND = DTSTART + 1 day (all-day convention)
-  assert.match(v, /SUMMARY:Confirm BEO: Smith Wedding/);
+  assert.match(v, /SUMMARY:Confirm event details: Smith Wedding/);
   assert.match(v, /DESCRIPTION:Open the staff portal to confirm: https:\/\/staff\.drbartender\.com\/shifts\/42/);
   assert.match(v, /TRANSP:TRANSPARENT/);
 });
@@ -94,7 +94,7 @@ test('uses "client" as fallback summary when client_name is missing', () => {
   }];
   const events = buildBeoConfirmVEvents(rows, PORTAL);
   assert.equal(events.length, 1);
-  assert.match(events[0], /SUMMARY:Confirm BEO: client/);
+  assert.match(events[0], /SUMMARY:Confirm event details: client/);
 });
 
 test('handles non-array input safely', () => {
@@ -112,7 +112,7 @@ test('escapes special chars in client_name (commas, semicolons, backslashes)', (
     beo_acknowledged_at: null,
   }];
   const v = buildBeoConfirmVEvents(rows, PORTAL)[0];
-  assert.match(v, /SUMMARY:Confirm BEO: Smith\\, Jones\\; & Co\.\\\\Bar/);
+  assert.match(v, /SUMMARY:Confirm event details: Smith\\, Jones\\; & Co\.\\\\Bar/);
 });
 
 test('mixed batch: emits VEVENTs only for unconfirmed-finalized rows', () => {

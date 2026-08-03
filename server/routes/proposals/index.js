@@ -20,6 +20,7 @@ router.use('/', require('./cancelLineItem')); // line-item cancel: /:id/cancel-l
 router.use('/', require('./changeRequests'));
 router.use('/', require('./groups'));
 router.use('/', require('./notifyPreflight'));
+router.use('/', require('./menuPrint'));
 router.use('/', require('./crud'));
 router.use('/', require('./list'));
 router.use('/', require('./metricsSplit'));

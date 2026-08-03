@@ -261,7 +261,7 @@ export default function CalendarSyncSection() {
           <div>
             <div className="sp-card-title">Calendar sync</div>
             <div className="sp-acc-section-sub">
-              Subscribe and confirmed shifts (plus T-3 BEO reminders) appear on
+              Subscribe and confirmed shifts (plus T-3 confirm reminders) appear on
               your phone calendar automatically.
             </div>
           </div>
@@ -341,7 +341,7 @@ export default function CalendarSyncSection() {
         </div>
         <div className="sp-form-foot">
           Refreshes every 5 minutes. Includes your confirmed shifts, plus an
-          all-day reminder 3 days before any unconfirmed BEO. Past shifts roll
+          all-day reminder 3 days before any unconfirmed event. Past shifts roll
           off after 30 days.
         </div>
 

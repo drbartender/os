@@ -330,6 +330,13 @@ app.use('/api/shifts', require('./routes/shifts'));
 // through to this router. Task 27's staff-facing DELETE wins by being added
 // to the existing shifts.js handler instead (role-aware: staff = pending-only
 // gate, admin = unrestricted) — no path collision here.
+// Staff event-details surface (spec 2026-07-22). Two specific two-segment GETs
+// (/:shiftId/event-details, /:shiftId/menu-print) that neither shifts.js nor
+// staffShiftActions.js defines, so no path can be swallowed either way. Mounted
+// BEFORE staffShiftActions deliberately: that router applies `auth` router-wide
+// (router.use(auth)), so falling through it would run auth twice — two users
+// lookups and two presence touches — on the staff portal's hottest read.
+app.use('/api/shifts', require('./routes/eventDetails'));
 app.use('/api/shifts', require('./routes/staffShiftActions'));
 // Regenerate mounts BEFORE the flat drink-plans router: its single specific
 // POST (/:id/shopping-list/regenerate) has no method+path overlap there, and

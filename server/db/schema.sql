@@ -4221,3 +4221,12 @@ CREATE INDEX IF NOT EXISTS idx_sms_consent_log_phone_created_at
   ON sms_consent_log(phone, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sms_consent_log_client
   ON sms_consent_log(client_id, created_at DESC);
+
+-- Bar menu print file (staff event-details redesign, 2026-07-22 spec).
+-- menu_print_key: R2 object key under menu-print/<proposalId>/. Replaced keys
+-- orphan the old object (drink-plan logo pattern; storage.js has no delete).
+-- menu_not_required: admin's explicit "no printed menu for this event" flag.
+-- Tri-state is derived, never stored: key present = ready; not_required =
+-- not_required; else pending.
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_print_key TEXT;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_not_required BOOLEAN NOT NULL DEFAULT FALSE;

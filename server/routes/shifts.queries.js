@@ -33,10 +33,16 @@ const STAFF_OPEN_SHIFTS_SQL = `
     dp.status AS drink_plan_status,
     cov.cover_requested_at,
     cov.cover_for_first_initial,
-    abr.approved_by_role
+    abr.approved_by_role,
+    spk.pricing_type AS package_pricing_type
   FROM shifts s
   LEFT JOIN shift_requests sr ON sr.shift_id = s.id AND sr.user_id = $1
   LEFT JOIN drink_plans dp ON dp.proposal_id = s.proposal_id
+  -- Package pricing type ('per_guest' = hosted) drives the hosted-event warning
+  -- in the staff RequestSheet. Contact columns stay OFF this feed; only the
+  -- pricing type rides along.
+  LEFT JOIN proposals pp ON pp.id = s.proposal_id
+  LEFT JOIN service_packages spk ON spk.id = pp.package_id
   LEFT JOIN LATERAL (
     SELECT csr.cover_requested_at,
            UPPER(LEFT(TRIM(COALESCE(cp2.preferred_name, '?')), 1)) AS cover_for_first_initial

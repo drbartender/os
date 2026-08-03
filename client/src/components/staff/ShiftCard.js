@@ -204,8 +204,8 @@ function ShiftCardFoot({ shift, variant, showConfirmFlag }) {
         )}
         {showConfirmFlag && (
           shift.beo_confirmed
-            ? <span className="sp-chip ok"><span className="sp-chip-dot" />BEO confirmed</span>
-            : <span className="sp-chip warn"><span className="sp-chip-dot" />BEO to confirm</span>
+            ? <span className="sp-chip ok"><span className="sp-chip-dot" />Details confirmed</span>
+            : <span className="sp-chip warn"><span className="sp-chip-dot" />Details to confirm</span>
         )}
       </div>
     </div>

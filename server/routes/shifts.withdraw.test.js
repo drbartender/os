@@ -242,6 +242,9 @@ test('GET /api/shifts > staff path projects cover_requested_at + cover_for_first
   // drink_plan_finalized_at projection (already shipped) still works alongside.
   assert.ok('drink_plan_finalized_at' in projected);
   assert.ok('my_beo_acknowledged_at' in projected);
+  // package_pricing_type rides the feed so the RequestSheet can raise the
+  // hosted-event warning straight from a list row (spec 2026-07-22).
+  assert.ok('package_pricing_type' in projected, 'staff feed row carries package_pricing_type');
 });
 
 test('GET /api/shifts/user/:userId/events > IDOR: another user returns 403', async () => {

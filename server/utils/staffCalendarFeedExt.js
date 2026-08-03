@@ -104,7 +104,10 @@ function buildBeoConfirmVEvents(rows, portalBaseUrl) {
       `DTSTAMP:${nowIcs()}`,
       `DTSTART;VALUE=DATE:${yyyymmdd}`,
       `DTEND;VALUE=DATE:${addDayIcs(yyyymmdd)}`,
-      `SUMMARY:Confirm BEO: ${escapeIcsText(row.client_name || 'client')}`,
+      // Staff-facing text: "BEO" is gone from everything staff read (2026-07-22
+      // spec). The UID keeps its beo- prefix so existing subscribed calendars
+      // update this event in place instead of duplicating it.
+      `SUMMARY:Confirm event details: ${escapeIcsText(row.client_name || 'client')}`,
       `DESCRIPTION:Open the staff portal to confirm: ${portalBaseUrl}/shifts/${shiftId}`,
       'TRANSP:TRANSPARENT',
       'END:VEVENT',

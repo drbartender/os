@@ -13,6 +13,7 @@ import { SYRUPS } from '../../data/syrups';
 import PricingBreakdown, { matchCancelTargets } from '../../components/PricingBreakdown';
 import CancelLineDialog from './CancelLineDialog';
 import DrinkPlanCard from '../../components/DrinkPlanCard';
+import AdminMenuPrintBlock from '../../components/AdminMenuPrintBlock';
 import MessageLogCard from './eventDetail/MessageLogCard';
 import EventDetailPlanLogo from './EventDetailPlanLogo';
 import Icon from '../../components/adminos/Icon';
@@ -550,9 +551,15 @@ export default function EventDetailPage() {
               className="btn btn-secondary btn-sm"
               style={{ justifyContent: 'center' }}
             >
-              <Icon name="external" size={11} />View BEO
+              <Icon name="external" size={11} />View event details
             </a>
           )}
+          <AdminMenuPrintBlock
+            proposalId={proposal.id}
+            menuPrintKey={proposal.menu_print_key}
+            menuNotRequired={proposal.menu_not_required}
+            onChange={loadProposal}
+          />
           {drinkPlan && (
             <EventDetailPlanLogo
               planId={drinkPlan.id}

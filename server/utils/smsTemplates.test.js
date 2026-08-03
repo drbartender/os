@@ -167,7 +167,7 @@ test('staffBeoNudgeSms > includes event type, date, and URL', () => {
     eventDateLocal: 'Saturday, August 15',
     beoUrl: 'https://staff.drbartender.com/shifts/42',
   });
-  assert.match(body, /BEO ready from Dr\. Bartender/);
+  assert.match(body, /Event details ready from Dr\. Bartender/);
   assert.match(body, /birthday party/);
   assert.match(body, /Saturday, August 15/);
   assert.match(body, /https:\/\/staff\.drbartender\.com\/shifts\/42/);
@@ -181,7 +181,7 @@ test('staffBeoNudgeSms > truncates long event type to 40 chars + ellipsis', () =
     eventDateLocal: 'Saturday, August 15',
     beoUrl: 'https://staff.drbartender.com/shifts/42',
   });
-  const truncated = body.match(/BEO ready from Dr\. Bartender: (.+) on /)[1];
+  const truncated = body.match(/Event details ready from Dr\. Bartender: (.+) on /)[1];
   assert.ok(truncated.length <= 41, `expected truncated label <= 41 chars, got ${truncated.length}: "${truncated}"`);
 });
 

@@ -150,7 +150,10 @@ function lastMinuteStaffingConfirmationSms({ eventDate, bartenderList, isPlural 
 }
 
 /**
- * BEO unack nudge SMS (spec section 6.3). The CTA drives staff to the portal
+ * Event-details unack nudge SMS (spec section 6.3; reworded by the 2026-07-22
+ * staff event-details spec, which dropped "BEO" from everything staff read).
+ * The function name and dispatcher key stay `beo*` on purpose: only the words
+ * changed. The CTA drives staff to the portal
  * where the click is itself the read-receipt signal; we do NOT reuse the
  * existing CONFIRM keyword. Body length budgeted for 2 segments worst case;
  * eventTypeLabel is GSM-7-normalized then truncated to 40 chars to avoid an
@@ -165,7 +168,7 @@ function staffBeoNudgeSms({ eventTypeLabel, eventDateLocal, beoUrl }) {
   const truncated = normalized.length > 40
     ? normalized.slice(0, 40) + '…'
     : normalized;
-  return `BEO ready from Dr. Bartender: ${truncated} on ${eventDateLocal}. Tap to review and confirm: ${beoUrl}`;
+  return `Event details ready from Dr. Bartender: ${truncated} on ${eventDateLocal}. Tap to review and confirm: ${beoUrl}`;
 }
 
 // ═════════════════════════════════════════════════════════════════

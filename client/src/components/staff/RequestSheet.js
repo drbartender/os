@@ -68,11 +68,16 @@ export default function RequestSheet({ open, shift, busy = false, onClose, onSub
 
   // Transport gating: equipment present OR a supply run is required.
   const transportRequired = requiresTransport(shift);
+  // Hosted (per_guest) events carry a much heavier commitment than the hourly
+  // ones, and staff have been requesting them without knowing that. The ack is
+  // required so nobody claims one and then discovers the supply run.
+  const isHosted = shift?.package_pricing_type === 'per_guest';
 
   // Seed the picker from a prior request's ranking when re-requesting, else
   // empty. Re-seeded whenever the sheet opens for a different shift.
   const [selection, setSelection] = useState([]);
   const [ack, setAck] = useState(false);
+  const [hostedAck, setHostedAck] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
@@ -82,6 +87,7 @@ export default function RequestSheet({ open, shift, busy = false, onClose, onSub
       .filter((r) => neededRoles.includes(r));
     setSelection(prior);
     setAck(false);
+    setHostedAck(false);
     setError(null);
     setSubmitting(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -118,7 +124,9 @@ export default function RequestSheet({ open, shift, busy = false, onClose, onSub
 
   const blockedNoRole = selection.length === 0;
   const blockedNoAck = transportRequired && !ack;
-  const submitDisabled = submitting || busy || blockedNoRole || blockedNoAck;
+  const blockedNoHostedAck = isHosted && !hostedAck;
+  const submitDisabled =
+    submitting || busy || blockedNoRole || blockedNoAck || blockedNoHostedAck;
 
   async function submit() {
     if (submitDisabled) return;
@@ -166,6 +174,31 @@ export default function RequestSheet({ open, shift, busy = false, onClose, onSub
         onChange={setSelection}
         disabled={submitting}
       />
+
+      {isHosted && (
+        <>
+          <div className="sp-cover-banner" style={{ marginTop: '0.6rem' }}>
+            <AlertIcon size={14} />
+            <span>
+              <strong>Hosted event.</strong> Plan on 90 minutes of setup and up to 2.5 hours
+              of supply handling. Expect to pick up and drop off supplies at storage, and
+              possibly to pick up a grocery order or receive a delivery. These events are
+              usually handled by management and senior staff.
+            </span>
+          </div>
+          <label className="sp-ack-row">
+            <input
+              type="checkbox"
+              checked={hostedAck}
+              disabled={submitting}
+              onChange={(e) => setHostedAck(e.target.checked)}
+            />
+            <span>
+              I understand what a hosted event requires and I am ready for the supply work.
+            </span>
+          </label>
+        </>
+      )}
 
       {transportRequired && (
         <>

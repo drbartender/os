@@ -34,11 +34,13 @@ let baseUrl;
 let adminToken;
 let staffToken;
 let otherStaffToken;
+let unonboardedToken;
 let proposalId;
 let drinkPlanId;
 let shiftId;
 let staffUserId;
 let otherStaffUserId;
+let unonboardedUserId;
 let adminUserId;
 let clientId;
 let managerStaffedId;    // manager WITH an approved shift on the proposal (assignable worker)
@@ -148,6 +150,17 @@ before(async () => {
     { userId: otherStaffUserId, tokenVersion: o.rows[0].token_version },
     process.env.JWT_SECRET, { expiresIn: '1h' }
   );
+
+  // Self-registered, not-yet-onboarded staff row — exactly what the PUBLIC
+  // POST /api/auth/register creates. Passes auth(), must fail requireOnboarded
+  // on all three proposal-keyed routes.
+  const un = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1, $2, 'staff', 'in_progress', 0) RETURNING id`,
+    [`beo-route-unonboarded-${NONCE}@example.com`, passwordHash]
+  );
+  unonboardedUserId = un.rows[0].id;
+  unonboardedToken = jwt.sign({ userId: unonboardedUserId, tokenVersion: 0 }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
   // Manager WITH an approved shift on the proposal (audit 3c W1: managers are a
   // worker class and can be assigned to shifts, so they must be able to ack the BEO).
@@ -317,7 +330,7 @@ after(async () => {
   // contractor_profiles / applications / agreements all FK ON DELETE CASCADE
   // to users — cleaning the user rows below sweeps the rest.
   const userIds = [
-    adminUserId, staffUserId, otherStaffUserId,
+    adminUserId, staffUserId, otherStaffUserId, unonboardedUserId,
     managerStaffedId, managerViewerId,
     rosterPreferredId, rosterAppsOnlyId, rosterAgreementsId,
     rosterEmailOnlyId, rosterDroppedId,
@@ -355,16 +368,70 @@ test('GET /api/beo/:proposalId > staff with approved shift allowed', async () =>
   assert.ok(mine && Number.isInteger(mine.request_id), 'shift_requests row exposes request_id');
 });
 
-test('GET /api/beo/:proposalId > staff without shift 403', async () => {
+// Read auth loosened by the 2026-07-22 staff event-details spec: any staffer
+// may READ an event that has a non-cancelled shift, because staff decide whether
+// to REQUEST a shift from this payload. Contact fields are redacted instead.
+test('GET /api/beo/:proposalId > unassigned staffer gets 200 with contact fields redacted', async () => {
   const res = await request('GET', `/api/beo/${proposalId}`, { token: otherStaffToken });
-  assert.strictEqual(res.status, 403);
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.client.phone, null, 'client phone hidden from non-assigned staff');
+  assert.ok(
+    (res.body.team_roster || []).every((r) => r.phone === null),
+    'teammate phones hidden from non-assigned staff'
+  );
+  assert.strictEqual(res.body.viewer.is_assigned, false);
 });
 
-test('GET /api/beo/:proposalId > staff on cancelled shift 403', async () => {
-  await pool.query("UPDATE shifts SET status='cancelled' WHERE id=$1", [shiftId]);
+test('GET /api/beo/:proposalId > assigned staffer sees client phone and is_assigned true', async () => {
   const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
-  assert.strictEqual(res.status, 403);
-  await pool.query("UPDATE shifts SET status='open' WHERE id=$1", [shiftId]);
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(typeof res.body.client.phone, 'string');
+  assert.strictEqual(res.body.viewer.is_assigned, true);
+});
+
+test('GET /api/beo/:proposalId > proposal whose only shift is cancelled 404s for staff, 200s for admin', async () => {
+  // finally-restore: a bare restore after the asserts would be skipped on
+  // failure, leaving the shared fixture cancelled and cascading into every
+  // later test in this file.
+  await pool.query("UPDATE shifts SET status='cancelled' WHERE id=$1", [shiftId]);
+  try {
+    const rs = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+    assert.strictEqual(rs.status, 404, 'no staffable shift reads as not-found, never 403 (no existence probe)');
+    const ra = await request('GET', `/api/beo/${proposalId}`, { token: adminToken });
+    assert.strictEqual(ra.status, 200);
+  } finally {
+    await pool.query("UPDATE shifts SET status='open' WHERE id=$1", [shiftId]);
+  }
+});
+
+test('GET /api/beo/:proposalId > payload carries shifts[] and the menu_print tri-state', async () => {
+  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+  assert.strictEqual(res.status, 200);
+  const s = (res.body.shifts || []).find((x) => x.id === shiftId);
+  assert.ok(s, 'shifts[] carries the event shift');
+  for (const k of ['equipment_required', 'supply_run_required', 'approved_by_role',
+                   'cover_requested_at', 'my_request_id', 'my_request_status']) {
+    assert.ok(k in s, `shifts[] row exposes ${k}`);
+  }
+  assert.deepStrictEqual(res.body.menu_print, { status: 'pending' });
+});
+
+test('GET /api/beo/:proposalId > menu_print flips to ready and not_required', async () => {
+  try {
+    await pool.query("UPDATE proposals SET menu_print_key='menu-print/1/x.pdf' WHERE id=$1", [proposalId]);
+    const ready = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+    assert.deepStrictEqual(ready.body.menu_print, { status: 'ready' });
+    await pool.query("UPDATE proposals SET menu_print_key=NULL, menu_not_required=true WHERE id=$1", [proposalId]);
+    const nr = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+    assert.deepStrictEqual(nr.body.menu_print, { status: 'not_required' });
+  } finally {
+    await pool.query("UPDATE proposals SET menu_print_key=NULL, menu_not_required=false WHERE id=$1", [proposalId]);
+  }
+});
+
+test('GET /api/beo/:proposalId > non-numeric proposal id 404s (never a 22P02 500)', async () => {
+  const res = await request('GET', '/api/beo/abc', { token: staffToken });
+  assert.strictEqual(res.status, 404);
 });
 
 // ─── POST /api/beo/:proposalId/acknowledge ─────────────────────────────────
@@ -390,6 +457,22 @@ test('POST /api/beo/:proposalId/acknowledge > staff stamps beo_acknowledged_at w
     'UPDATE shift_requests SET beo_acknowledged_at = NULL WHERE shift_id = $1 AND user_id = $2',
     [shiftId, staffUserId]
   );
+});
+
+// Write auth did NOT loosen with the read (2026-07-22 spec). A staffer who can
+// now READ the event still cannot confirm it, and the error must name the real
+// reason (not on the event) rather than the finalize gate.
+test('POST /api/beo/:proposalId/acknowledge > unassigned staffer is rejected by assignment, not the finalize gate', async () => {
+  await pool.query('UPDATE drink_plans SET finalized_at = NULL WHERE id = $1', [drinkPlanId]);
+  const res = await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: otherStaffToken });
+  assert.strictEqual(res.status, 409);
+  assert.match(res.body.error, /no approved active shift/i);
+  // And the ack really did not land anywhere.
+  const rows = await pool.query(
+    'SELECT beo_acknowledged_at FROM shift_requests WHERE shift_id = $1 AND user_id = $2',
+    [shiftId, otherStaffUserId]
+  );
+  assert.strictEqual(rows.rowCount, 0);
 });
 
 test('POST /api/beo/:proposalId/acknowledge > admin returns 200 with acknowledged:false', async () => {
@@ -542,4 +625,27 @@ test('GET /api/beo/:proposalId > team_roster: needs_cover flips when cover_reque
     'UPDATE shift_requests SET cover_requested_at = NULL WHERE shift_id = $1 AND user_id = $2',
     [shiftId, rosterPreferredId]
   );
+});
+
+// ─── Onboarding gate (lane-1 review fleet, 2026-07-22) ─────────────────────
+//
+// Registration is public and mints a live JWT for an in_progress staff row, so
+// the read ungating rests entirely on requireOnboarded. These three assert it
+// is mounted on the proposal-keyed half; eventDetails.test.js covers the
+// shift-keyed half. If a future edit reorders a middleware list, this goes red.
+
+test('GET /api/beo/:proposalId > a not-yet-onboarded account is refused', async () => {
+  const res = await request('GET', `/api/beo/${proposalId}`, { token: unonboardedToken });
+  assert.strictEqual(res.status, 403);
+  assert.strictEqual(res.body.proposal, undefined, 'no payload leaked with the rejection');
+});
+
+test('GET /api/beo/:proposalId/logo > a not-yet-onboarded account is refused', async () => {
+  const res = await request('GET', `/api/beo/${proposalId}/logo`, { token: unonboardedToken });
+  assert.strictEqual(res.status, 403);
+});
+
+test('POST /api/beo/:proposalId/acknowledge > a not-yet-onboarded account is refused', async () => {
+  const res = await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: unonboardedToken });
+  assert.strictEqual(res.status, 403);
 });

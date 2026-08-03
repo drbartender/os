@@ -1,286 +1,46 @@
-// BEO (Banquet Event Order) read-only routes for staff + admin.
+// Event-details read routes for staff + admin, proposal-keyed.
 //
-// GET /api/beo/:proposalId       — full BEO payload for an event (proposal-scoped).
+// GET /api/beo/:proposalId       — full event-details payload (shared builder).
 // GET /api/beo/:proposalId/logo  — proxied download of the drink-plan logo (R2 stays private).
+// POST /api/beo/:proposalId/acknowledge — a worker confirms they have read it.
 //
-// Authorization model (mirrors the rest of the staff portal):
-//   - admin / manager — always allowed.
-//   - staff           — allowed iff they hold an `approved` shift_request on a
-//                       non-cancelled shift linked to this proposal.
+// The staff portal calls the shift-keyed sibling (GET /api/shifts/:shiftId/
+// event-details, server/routes/eventDetails.js); these paths stay for the admin
+// "View event details" link and already-sent nudge links. Both share
+// server/utils/eventDetailsPayload.js.
 //
-// `authorize()` runs the 404-then-403 check in that order so we don't leak the
-// existence of a proposal to a probing staff account.
+// Route paths and the `beo_*` column/key names are deliberately frozen: the
+// 2026-07-22 spec renamed only the words staff read, never the identifiers.
+//
+// AUTHORIZATION. Reads: any ONBOARDED staffer may read an event that has a
+// non-cancelled shift; contact fields are redacted for viewers who are not
+// approved-and-active on it (see eventDetailsPayload.js). `requireOnboarded` is
+// not optional here — registration is public, so plain `auth` would expose this
+// to anyone who signed up. Writes (acknowledge): still assigned-only, enforced
+// by the UPDATE predicates below.
 
 const express = require('express');
 const { pool } = require('../db');
-const { auth } = require('../middleware/auth');
+const { auth, requireOnboarded } = require('../middleware/auth');
 const { beoReadLimiter } = require('../middleware/rateLimiters');
 const asyncHandler = require('../middleware/asyncHandler');
-const { NotFoundError, PermissionError, ConflictError, ExternalServiceError } = require('../utils/errors');
+const { NotFoundError, ConflictError, ExternalServiceError } = require('../utils/errors');
 const { getSignedUrl } = require('../utils/storage');
+const { authorizeEventRead, buildEventDetailsPayload } = require('../utils/eventDetailsPayload');
 
 const router = express.Router();
 
-/**
- * Authorization for any staff/admin viewer on a proposal-keyed BEO route.
- * Throws NotFoundError if the proposal does not exist, PermissionError if the
- * caller is staff without an approved, non-cancelled shift on the proposal.
- * Admin / manager bypass the shift check.
- *
- * Order matters: existence check first, then role check. Otherwise a staffer
- * could enumerate proposal ids via the 403/404 boundary.
- */
-async function authorize(req, proposalId) {
-  // 404 first to avoid leaking proposal existence to a probing staffer.
-  const exists = await pool.query('SELECT 1 FROM proposals WHERE id = $1 LIMIT 1', [proposalId]);
-  if (!exists.rowCount) throw new NotFoundError('Event not found.');
-  if (req.user.role === 'admin' || req.user.role === 'manager') return;
-  const r = await pool.query(
-    `SELECT 1 FROM shift_requests sr
-       JOIN shifts s ON s.id = sr.shift_id
-      WHERE s.proposal_id = $1 AND sr.user_id = $2
-        AND sr.status = 'approved' AND sr.dropped_at IS NULL AND s.status != 'cancelled'
-      LIMIT 1`,
-    [proposalId, req.user.id]
-  );
-  if (!r.rowCount) throw new PermissionError('You are not assigned to this event.');
-}
-
-router.get('/:proposalId', auth, beoReadLimiter, asyncHandler(async (req, res) => {
+router.get('/:proposalId', auth, requireOnboarded, beoReadLimiter, asyncHandler(async (req, res) => {
   const proposalId = parseInt(req.params.proposalId, 10);
   if (!Number.isFinite(proposalId)) throw new NotFoundError('Event not found.');
-  await authorize(req, proposalId);
-
-  // Proposal + client + package join. We deliberately do NOT select fields like
-  // pricing_snapshot, total_price, deposit_amount, amount_paid, autopay_*, or
-  // stripe_* — bartenders do not need pricing/payment data to execute the event.
-  const propRow = await pool.query(
-    `SELECT p.id, p.event_type, p.event_type_custom, p.event_date, p.event_start_time,
-            p.event_duration_hours, p.event_timezone, p.event_location, p.guest_count,
-            p.venue_street, p.venue_city, p.venue_state, p.venue_zip,
-            p.num_bars, p.num_bartenders, p.setup_minutes_before, p.status,
-            p.balance_due_date, p.client_id,
-            p.tip_jar, p.gratuity_rate, (p.pricing_snapshot->>'staff_noun') AS staff_noun,
-            c.name AS client_name, c.phone AS client_phone,
-            sp.id AS package_id, sp.name AS package_name, sp.pricing_type AS package_pricing_type,
-            sp.guests_per_bartender, sp.extra_bartender_hourly
-       FROM proposals p
-       LEFT JOIN clients c ON c.id = p.client_id
-       LEFT JOIN service_packages sp ON sp.id = p.package_id
-      WHERE p.id = $1`,
-    [proposalId]
-  );
-  const p = propRow.rows[0];
-
-  // Drink plan: explicit column list — `token` MUST NOT appear in the response,
-  // because anyone with the drink_plans.token can hit the public client-facing
-  // route. Leaking it to a bartender's compromised account would let them see
-  // the proposal as the client does. `has_logo` is computed as a boolean so the
-  // client can decide whether to render the logo proxy endpoint.
-  const dpRow = await pool.query(
-    `SELECT id, status, finalized_at, finalized_by, selections, consult_selections,
-            admin_notes, shopping_list_status,
-            (selections ? '_logoFilename') AS has_logo
-       FROM drink_plans WHERE proposal_id = $1`,
-    [proposalId]
-  );
-  const dp = dpRow.rows[0] || null;
-
-  const addonsRow = await pool.query(
-    `SELECT addon_id, addon_name, billing_type, rate, quantity::float8 AS quantity, line_total
-       FROM proposal_addons WHERE proposal_id = $1 ORDER BY addon_name`,
-    [proposalId]
-  );
-
-  // Roster + per-staffer ack state. Admin viewers see only the user-id +
-  // ack-timestamp pair; the viewer-flag below is derived from this set so each
-  // staffer's status (is_acknowledged for self) is consistent with what admins
-  // see for them.
-  const shiftReqsRow = await pool.query(
-    `SELECT sr.user_id, sr.id AS request_id, COALESCE(cp.preferred_name, u.email) AS name,
-            sr.beo_acknowledged_at
-       FROM shift_requests sr
-       JOIN shifts s ON s.id = sr.shift_id
-       LEFT JOIN users u ON u.id = sr.user_id
-       LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
-      WHERE s.proposal_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL AND s.status != 'cancelled'
-      ORDER BY name`,
-    [proposalId]
-  );
-
-  // A worker is whoever holds an approved active shift on this proposal (the set
-  // selected above). The admin-VIEW flag must NOT key on role alone: a manager
-  // who is actually staffed (audit 3c W1) is a worker — they get the staff-portal
-  // confirm/drop/cover UI and their ack must round-trip — while an admin, or a
-  // manager who is only viewing, stays an admin-style viewer.
-  const isStaffer = shiftReqsRow.rows.some((r) => r.user_id === req.user.id);
-  const isAdmin = (req.user.role === 'admin' || req.user.role === 'manager') && !isStaffer;
-  const isAck = shiftReqsRow.rows.some(
-    (r) => r.user_id === req.user.id && r.beo_acknowledged_at !== null
-  );
-
-  // ── Team roster (spec §6.18). Spec defines `team_roster` as the active
-  // approved bartenders on this proposal — the same hybrid-state filter the
-  // payroll + auto-assign code uses (status='approved' AND dropped_at IS NULL,
-  // matching idx_shift_requests_active_approved). An emergency-dropped
-  // staffer keeps status='approved' for management to resolve but does NOT
-  // appear on the roster the team sees on the BEO. The roster also LEFT JOINs
-  // applications + agreements to derive a display name even for legacy
-  // staffers who never went through the modern application flow.
-  //
-  // SCHEMA ADAPTATIONS from the planning SQL:
-  //   - Plan said `s.canceled_at IS NULL`. The real `shifts` table uses a
-  //     `status` column ('open' / 'cancelled' / etc.) — no `canceled_at`
-  //     column exists. Mirrors the existing `s.status != 'cancelled'` guard
-  //     in authorize() and the shift_requests projection above.
-  const rosterRow = await pool.query(
-    `SELECT sr.user_id,
-            sr.position AS role,
-            sr.cover_requested_at,
-            cp.preferred_name,
-            cp.phone,
-            a.full_name AS applications_name,
-            ag.full_name AS agreements_name,
-            u.email
-       FROM shift_requests sr
-       JOIN shifts s ON s.id = sr.shift_id
-       LEFT JOIN users u ON u.id = sr.user_id
-       LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
-       LEFT JOIN applications a ON a.user_id = sr.user_id
-       LEFT JOIN agreements ag ON ag.user_id = sr.user_id
-      WHERE s.proposal_id = $1
-        AND sr.status = 'approved'
-        AND sr.dropped_at IS NULL
-        AND s.status != 'cancelled'
-      ORDER BY sr.id`,
-    [proposalId]
-  );
-
-  // Phone gating (spec §6.18). Teammates' phones surface only when the
-  // VIEWER themselves is approved+active on this proposal. A pending
-  // requester (who could be a brand-new staffer the admin hasn't confirmed
-  // yet) does NOT get to harvest active bartenders' numbers via the BEO
-  // endpoint. The gate is the approved-on-this-proposal predicate alone: an
-  // admin (or a manager who is only VIEWING) does not satisfy it and gets
-  // null phones; a manager who is actually STAFFED on the event does satisfy
-  // it and sees teammate phones like any other worker (audit 3c W1). Admin
-  // contact paths use the existing admin UI, not the team-roster card.
-  const viewerRow = await pool.query(
-    `SELECT 1
-       FROM shift_requests sr
-       JOIN shifts s ON s.id = sr.shift_id
-      WHERE s.proposal_id = $1
-        AND sr.user_id = $2
-        AND sr.status = 'approved'
-        AND sr.dropped_at IS NULL
-        AND s.status != 'cancelled'
-      LIMIT 1`,
-    [proposalId, req.user.id]
-  );
-  const viewerApproved = viewerRow.rowCount > 0;
-
-  // computeName: preferred_name + last-initial of legal name, falling back
-  // through applications → agreements → email-local-part. Mirrors the
-  // resolution chain in spec §6.18.
-  function computeName(row) {
-    const preferred = (row.preferred_name || '').trim();
-    if (preferred) {
-      const legal = ((row.applications_name || row.agreements_name) || '').trim();
-      const lastToken = legal ? legal.split(/\s+/).pop() : '';
-      const lastInit = lastToken && lastToken[0] ? lastToken[0].toUpperCase() : '';
-      return lastInit ? `${preferred} ${lastInit}.` : preferred;
-    }
-    const legal = ((row.applications_name || row.agreements_name) || '').trim();
-    if (legal) {
-      const parts = legal.split(/\s+/);
-      if (parts.length >= 2) {
-        return `${parts[0]} ${parts[parts.length - 1][0].toUpperCase()}.`;
-      }
-      return parts[0];
-    }
-    const email = (row.email || '').trim();
-    if (email && email.includes('@')) return email.split('@')[0];
-    return 'Staff';
-  }
-
-  function computeInitials(name) {
-    if (!name) return '??';
-    // Match a first-token+next-word-initial pair when the name has a space.
-    const m = name.match(/(\S)\S*\s+(\S)/);
-    if (m) return (m[1] + m[2]).toUpperCase();
-    return name.slice(0, 2).toUpperCase();
-  }
-
-  const team_roster = rosterRow.rows.map((r) => {
-    const display_name = computeName(r);
-    return {
-      user_id: r.user_id,
-      display_name,
-      initials: computeInitials(display_name),
-      is_me: r.user_id === req.user.id,
-      role: r.role || 'Bartender',
-      phone: viewerApproved ? (r.phone || null) : null,
-      needs_cover: r.cover_requested_at !== null,
-    };
-  });
-
-  res.json({
-    proposal: {
-      id: p.id,
-      event_type: p.event_type,
-      event_type_custom: p.event_type_custom,
-      event_date: p.event_date,
-      event_start_time: p.event_start_time,
-      event_duration_hours: p.event_duration_hours,
-      event_timezone: p.event_timezone,
-      event_location: p.event_location,
-      // Structured address parts (address-only, name excluded) so the staff
-      // "Get directions" link geocodes the street address instead of the venue
-      // name — see venueMapQuery in client/src/components/VenueAddressFields.js.
-      venue_street: p.venue_street,
-      venue_city: p.venue_city,
-      venue_state: p.venue_state,
-      venue_zip: p.venue_zip,
-      guest_count: p.guest_count,
-      num_bars: p.num_bars,
-      num_bartenders: p.num_bartenders,
-      setup_minutes_before: p.setup_minutes_before,
-      // Gratuity / tip jar (§9) — crew-facing, NOT gated on funding. Defaults
-      // backfill old rows (tip_jar true, gratuity_rate 0), so the fallback is safe.
-      tip_jar: p.tip_jar !== false,
-      gratuity_prepaid: Number(p.gratuity_rate) > 0,
-      staff_noun: p.staff_noun || 'bartender',
-    },
-    client: { name: p.client_name, phone: p.client_phone },
-    package: p.package_id ? {
-      id: p.package_id,
-      name: p.package_name,
-      pricing_type: p.package_pricing_type,
-      guests_per_bartender: p.guests_per_bartender,
-      extra_bartender_hourly: p.extra_bartender_hourly,
-    } : null,
-    drink_plan: dp ? {
-      id: dp.id,
-      status: dp.status,
-      finalized_at: dp.finalized_at,
-      finalized_by: dp.finalized_by,
-      selections: dp.selections,
-      consult_selections: dp.consult_selections,
-      admin_notes: dp.admin_notes,
-      has_logo: dp.has_logo === true,
-    } : null,
-    shopping_list_status: dp ? dp.shopping_list_status : null,
-    addons: addonsRow.rows,
-    shift_requests: shiftReqsRow.rows.map((r) => ({ user_id: r.user_id, request_id: r.request_id, beo_acknowledged_at: r.beo_acknowledged_at })),
-    team_roster,
-    viewer: { is_admin: isAdmin, is_acknowledged: isAck },
-  });
+  await authorizeEventRead(req, proposalId);
+  res.json(await buildEventDetailsPayload(req, proposalId));
 }));
 
-router.get('/:proposalId/logo', auth, beoReadLimiter, asyncHandler(async (req, res) => {
+router.get('/:proposalId/logo', auth, requireOnboarded, beoReadLimiter, asyncHandler(async (req, res) => {
   const proposalId = parseInt(req.params.proposalId, 10);
   if (!Number.isFinite(proposalId)) throw new NotFoundError('Event not found.');
-  await authorize(req, proposalId);
+  await authorizeEventRead(req, proposalId);
 
   const r = await pool.query(
     `SELECT selections->>'_logoFilename' AS filename
@@ -317,12 +77,16 @@ router.get('/:proposalId/logo', auth, beoReadLimiter, asyncHandler(async (req, r
 // approved, non-cancelled shift_request they hold on this event. Admins (and
 // managers who are only VIEWING, not staffed) get a 200 no-op (acknowledged:false)
 // so the same UI button is safe for every audience. Requires the drink plan to be
-// finalized — pre-finalize acknowledgement would let staff confirm a BEO that admin
-// may still revise.
-router.post('/:proposalId/acknowledge', auth, beoReadLimiter, asyncHandler(async (req, res) => {
+// finalized — pre-finalize acknowledgement would let staff confirm details that
+// admin may still revise.
+//
+// This is a WRITE and stays assigned-only even though the READ ungated in the
+// 2026-07-22 spec: the UPDATE's own predicates (approved + not dropped + shift
+// not cancelled) are the enforcement, so a browsing staffer matches zero rows.
+router.post('/:proposalId/acknowledge', auth, requireOnboarded, beoReadLimiter, asyncHandler(async (req, res) => {
   const proposalId = parseInt(req.params.proposalId, 10);
   if (!Number.isFinite(proposalId)) throw new NotFoundError('Event not found.');
-  await authorize(req, proposalId);
+  await authorizeEventRead(req, proposalId);
 
   // Admin: pure no-op. Admins view the BEO but are never staffed on a shift
   // (POST /shifts/:id/assign rejects role='admin'), so there is nothing to ack.
@@ -367,10 +131,21 @@ router.post('/:proposalId/acknowledge', auth, beoReadLimiter, asyncHandler(async
   );
 
   if (result.rowCount === 0) {
-    // Discriminator: authorize() (for staff) or the manager-shift check above
-    // (for managers) already proved the caller has an approved active shift, so
-    // the only thing the UPDATE can have rejected on is the finalized_at gate.
-    // Re-check to give a precise error.
+    // Discriminator. Read auth no longer proves assignment (2026-07-22 ungating),
+    // so a browsing staffer can reach this line. Check assignment FIRST: telling
+    // someone who is not on the event that "the plan is not finalized" would send
+    // them back to wait for a confirm button that is never theirs.
+    const staffed = await pool.query(
+      `SELECT 1 FROM shift_requests sr
+         JOIN shifts s ON s.id = sr.shift_id
+        WHERE s.proposal_id = $1 AND sr.user_id = $2
+          AND sr.status = 'approved' AND sr.dropped_at IS NULL
+          AND s.status != 'cancelled' LIMIT 1`,
+      [proposalId, req.user.id]
+    );
+    if (!staffed.rowCount) {
+      throw new ConflictError('No approved active shift for you on this event.');
+    }
     const dp = await pool.query('SELECT finalized_at FROM drink_plans WHERE proposal_id = $1', [proposalId]);
     if (!dp.rows[0] || !dp.rows[0].finalized_at) {
       throw new ConflictError('Plan is not finalized.');

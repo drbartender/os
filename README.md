@@ -177,7 +177,8 @@ dr-bartender/
 │   │   ├── agreement.js        # Contractor agreement + digital signature
 │   │   ├── application.js      # Contractor application form
 │   │   ├── auth.js             # POST /register, POST /login, GET /me
-│   │   ├── beo.js              # Banquet Event Order — staff-authenticated GET BEO + logo proxy + POST acknowledge
+│   │   ├── beo.js              # Event details (proposal-keyed) — GET payload + logo proxy + POST acknowledge
+│   │   ├── eventDetails.js     # Event details (shift-keyed) — staff page payload + bar-menu print download
 │   │   ├── blog.js             # Blog post endpoints
 │   │   ├── calcom.js           # Cal.com webhook receiver (HMAC-SHA256 signed, public); handles booking created/cancelled/rescheduled/no-show events
 │   │   ├── calendar.js         # Calendar/scheduling endpoints
@@ -217,6 +218,7 @@ dr-bartender/
 │   │   │   ├── lifecycle.js    # Proposal status state machine (PATCH /:id/status)
 │   │   │   ├── crud.js         # admin CRUD (list / create / update / archive)
 │   │   │   ├── getOne.js       # GET /:id single-proposal read (carved out of crud.js; greedy `/:id`, mounted last)
+│   │   │   ├── menuPrint.js    # Bar-menu print file admin CRUD (upload/replace, no-menu flag, remove) — R2 menu-print/<proposalId>/
 │   │   │   ├── notifyPreflight.js # POST /:id/notify-preflight — read-only: which client notices a pending edit would trigger + the drafted message
 │   │   │   ├── actions.js      # Per-proposal admin actions: notes, create-shift, balance-due-date, send-reminder, record-payment (carved out of crud.js)
 │   │   │   ├── cancel.js       # Cancel booked events (fix #7): /:id/cancel/preview, /:id/cancel, /:id/cancel/refund — archive + shift-cancel + comms-delete + invoice-void + idempotent tip clawback + agreement refund
@@ -342,6 +344,7 @@ dr-bartender/
 │   │   ├── messageLog.js      # Append-only client-message ledger: pure builders + logClientMessage (fire-and-forget, never throws) + getMessageLogForProposal; written at the sendEmail/sendSMS choke points, read on GET /proposals/:id
 │   │   ├── onboardingPromotion.js # promoteOnboardingIfEligible — the onboarding_status -> 'approved' gate (in_progress needs an applications row; pre_hired is not evidence)
 │   │   ├── onboardingProgress.js # ensureOnboardingProgress — lazy progress-row seed for legacy accounts (step writes are UPDATE-only)
+│   │   ├── eventDetailsPayload.js # Shared staff event-details payload builder + read auth (any staffer on a staffable event; contact fields redacted unless assigned)
 │   │   ├── messageScheduling.js # scheduleMessage(...): idempotent insert of a future touch into the scheduled_messages table
 │   │   ├── messageSuppression.js # shouldSendImmediate(...): shared archive / comm-prefs / bad-contact gate for immediate-send paths
 │   │   ├── refundHelpers.js    # Partial-refund planner (planRefund) + idempotent reconciliation (applyRefundReconciliation, incl. status⟷money + autopay-disarm)
@@ -463,10 +466,11 @@ dr-bartender/
 │   │   │                       # EntityLink (quiet inline entity reference: real anchor, inherits color, hover underline; nullish `to` renders children unlinked),
 │   │   │                       # ClientConversation (shared SMS thread + reply pane: used by the Messages inbox and the client detail page),
 │   │   │                       # AddonControls (shared add-on UI controls: quantity stepper + greyed bundle badge, used by ProposalCreate + the shared proposalEditor/),
+│   │   │                       # AdminMenuPrintBlock (bar-menu print file card on Event Detail: upload/replace/remove, or mark "no menu needed"; staff download and print it from their event details page),
 │   │   │                       # admin/SourceBadge (small "Thumbtack" origin badge next to a proposal's client name when source='thumbtack'),
 │   │   │                       # StaffShell + StaffShellWithThemeWiring (staff portal v2 layout shell — bottom tab bar + user pill, outlet for routed pages),
 │   │   │                       # StaffUserPillMenu (account-pill dropdown rendered by StaffShell)
-│   │   │   ├── staff/          # Staff portal redesign shared components (Placeholder; ShiftCard; TeamRosterCard; DropCoverModal; BeoSections; PayoutEventRow; LogisticsTag; RoleRankPicker; RequestSheet)
+│   │   │   ├── staff/          # Staff portal redesign shared components (Placeholder; ShiftCard; TeamRosterCard; DropCoverModal; BeoSections; EventActionArea; PayoutEventRow; LogisticsTag; RoleRankPicker; RequestSheet)
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
 │   │   │   │                   # GlobalSearchButton (search-bar-shaped button that opens the ⌘K command palette; header + toolbar),
 │   │   │   │                   # StatusChip, StaffingCell (events-list staffing column: confirmed/needed with a red shortfall, plus a requests-vs-waitlist chip), RainbowDefs, Toolbar, Icon, KebabMenu, SortableTh (clickable sort headers), AddressLink,

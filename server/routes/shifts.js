@@ -1,6 +1,6 @@
 const express = require('express');
 const { pool } = require('../db');
-const { auth } = require('../middleware/auth');
+const { auth, requireOnboarded } = require('../middleware/auth');
 const { geocodeAddress } = require('../utils/geocode');
 const { autoAssignShift } = require('../utils/autoAssign');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -28,13 +28,8 @@ function requireStaffing(req, res, next) {
   return next(new PermissionError('Staffing access required.'));
 }
 
-/** Staff who have completed onboarding (or admin/manager) */
-function requireOnboarded(req, res, next) {
-  if (req.user.role === 'admin' || req.user.role === 'manager') return next();
-  const allowed = ['submitted', 'reviewed', 'approved'];
-  if (allowed.includes(req.user.onboarding_status)) return next();
-  return next(new PermissionError('Complete your onboarding to access shifts.'));
-}
+// requireOnboarded now lives in middleware/auth.js — every staff-data surface
+// needs it, not just this file (see the note there).
 
 // ─── Staff-facing routes ──────────────────────────────────────────
 
