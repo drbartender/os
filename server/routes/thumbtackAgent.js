@@ -489,6 +489,10 @@ const logId = (s) => String(s).replace(/[^\w-]/g, '').slice(0, 64);
 const FIRST_REPLY_TEMPLATES = new Set(['day', 'night']);
 const FIRST_REPLY_FAIL_REASONS = new Set([
   'template_not_found', 'lead_not_found', 'quick_reply_unavailable', 'send_unverified', 'ambiguous_lead',
+  // Rebuilt respond-CTA flow (2026-08-03) pre-send back-offs: thread already
+  // answered (composer existed on arrival), respond CTA never found, and TT's
+  // streamed AI draft could not be proven cleared. All terminal, all pre-send.
+  'already_replied', 'response_cta_not_found', 'ai_draft_clear_failed',
 ]);
 
 // GET /api/admin/thumbtack/pending-first-replies?limit=N  (agent-secret only)

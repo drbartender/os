@@ -21,13 +21,24 @@ returns `[]` when disabled; `HARVESTER_ENABLED=false` idles the agent).
 
 The same loop now also sends Dallas's saved `day`/`night` Quick Replies on new
 leads (respond-then-ring: the server fires the lead call only after the reply
-is confirmed). Flow per job: open the lead page (`REPLY_LEAD_URL_TEMPLATE`,
-env-tunable), click Quick Reply, pick the template whose visible label equals
-the offered `day`/`night` (case-insensitive, exact), Send, verify, then POST
-`first-reply-sent`. Definitive failures (`template_not_found`,
-`lead_not_found`, `quick_reply_unavailable`, `send_unverified`) POST
-`first-reply-failed` and are terminal; transient trouble stays silent and the
-server lease re-offers (offer-side attempts cap bounds it at 3).
+is confirmed). Flow per job (rebuilt 2026-08-03 to replicate the real manual
+flow): open the lead page (`REPLY_LEAD_URL_TEMPLATE`, env-tunable); a pristine
+lead has NO composer, so click the respond CTA (`REPLY_CTA_LABELS` allowlist,
+exact-match, fail-closed), wait for the composer, Clear the AI draft TT
+streams into it (`REPLY_CLEAR_LABELS`) and PROVE the box empty; then click
+Quick Reply, pick the template whose visible label equals the offered
+`day`/`night` (case-insensitive, exact), capture the filled text, Send, and
+verify POSITIVELY (the captured text appears as a thread message AND the box
+emptied — the composer persists after a real send, so "Send button gone" can
+never confirm anything). A composer that already exists ON ARRIVAL means the
+lead was already answered: back off with `already_replied`, never double-send.
+Definitive failures (`template_not_found`, `lead_not_found`,
+`quick_reply_unavailable`, `send_unverified`, `already_replied`,
+`response_cta_not_found`, `ai_draft_clear_failed`) POST `first-reply-failed`
+and are terminal; each also drops a screenshot + control dump into
+`<profile>/diag/` so a wrongly-guessed label can be pinned from the capture
+and fixed via env. Transient trouble stays silent and the server lease
+re-offers (offer-side attempts cap bounds it at 3).
 
 Cadence: the loop ticks every `REPLY_POLL_INTERVAL_MS` (25s); the harvest poll
 piggybacks every Nth tick (`src/cadence.js`, unit-tested) so its ~5-minute pace

@@ -302,6 +302,16 @@ test('failed validation: unknown reason 400 and the row stays pending', async ()
   assert.equal(db.rows[0].first_reply_status, 'pending', 'a 400 must not flip the row');
 });
 
+test('failed: rebuilt-flow reasons (2026-08-03) are accepted and flip the row', async () => {
+  for (const reason of ['already_replied', 'response_cta_not_found', 'ai_draft_clear_failed']) {
+    const lead = await mkLead({ template: 'night' });
+    const r = await postFailed(lead.neg, reason);
+    assert.equal(r.status, 200, `${reason} must be a valid reason`);
+    const db = await pool.query('SELECT first_reply_status FROM thumbtack_leads WHERE id = $1', [lead.id]);
+    assert.equal(db.rows[0].first_reply_status, 'failed', `${reason} must flip pending -> failed`);
+  }
+});
+
 // ─── Fleet-fix regression tests (2026-07-22 review round) ────────
 
 test('failed callback on a FRESH day lead still fires the promised call (blocker fix)', async () => {

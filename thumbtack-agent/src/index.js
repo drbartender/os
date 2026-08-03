@@ -3,9 +3,11 @@
 //   Email harvest (original): opens each pending lead's create-price-estimate
 //   page read-only and reports the customer email back (extract.js).
 //
-//   Auto first-reply (spec 2026-07-21): sends Dallas's saved day/night Quick
-//   Reply on new leads through this logged-in session, replicating his manual
-//   flow (lead page -> Quick Reply -> pick template -> Send), then reports
+//   Auto first-reply (spec 2026-07-21; flow rebuilt 2026-08-03): sends Dallas's
+//   saved day/night Quick Reply on new leads through this logged-in session,
+//   replicating his real manual flow: a pristine lead has NO composer until the
+//   respond CTA is clicked; TT then streams an AI draft that must be Cleared;
+//   only then do Quick Reply -> pick template -> Send exist. Reports
 //   first-reply-sent so the server fires the promised call (respond-then-ring).
 //
 // The loop ticks at the fast reply cadence (REPLY_POLL_INTERVAL_MS, 25s); the
@@ -35,6 +37,13 @@ const CFG = {
   // template is env-tunable so the live test can correct the path without a
   // code change; {id} is replaced with the negotiation id.
   replyLeadUrlTemplate: process.env.REPLY_LEAD_URL_TEMPLATE || 'https://www.thumbtack.com/pro-inbox/messages/{id}',
+  // Respond-CTA / Clear-control label allowlists (exact-match, case-insensitive).
+  // Env-tunable so the first live lead pins the real labels without a code
+  // change (REPLY_LEAD_URL_TEMPLATE precedent). No allowlist match = no click.
+  replyCtaLabels: (process.env.REPLY_CTA_LABELS || 'reply,respond,approve,accept,respond to lead,accept lead,view and respond')
+    .split(',').map((s) => s.trim()).filter(Boolean),
+  replyClearLabels: (process.env.REPLY_CLEAR_LABELS || 'clear')
+    .split(',').map((s) => s.trim()).filter(Boolean),
   minDelayMs: int(process.env.MIN_DELAY_MS, 8000),
   maxDelayMs: int(process.env.MAX_DELAY_MS, 25000),
   dailyCap: int(process.env.DAILY_CAP, 40),
@@ -140,6 +149,102 @@ const humanPause = () => sleep(500 + Math.floor(Math.random() * 1200));
 // Picker/Send elements render inside an already-hydrated page; shorter bound
 // than the initial-hydration wait (renderTimeoutMs) but never instant.
 const UI_STEP_TIMEOUT_MS = 8000;
+// Upper bound on the clear-the-AI-draft phase: TT streams its suggested reply
+// into the freshly-created composer; we keep clicking Clear / re-reading until
+// the box is provably empty or this window closes (then fail-closed, no send).
+const AI_DRAFT_WAIT_MS = 15000;
+// Post-send verification window: the sent template must appear as a thread
+// message (the composer persists after a real send, so its absence proves nothing).
+const SEND_VERIFY_WAIT_MS = 12000;
+
+const exactLabelRe = (label) => new RegExp(`^\\s*${escapeRegex(label)}\\s*$`, 'i');
+
+// One locator matching ANY allowlisted label as a button or link, exact-text.
+function anyLabelLocator(page, labels) {
+  let loc = null;
+  for (const label of labels) {
+    const re = exactLabelRe(label);
+    const cand = page.getByRole('button', { name: re }).or(page.getByRole('link', { name: re }));
+    loc = loc ? loc.or(cand) : cand;
+  }
+  return loc;
+}
+
+// The message composer textarea (live-pinned 2026-08-03: placeholder "Type
+// message"). Returns its current value, or null when no such box is visible —
+// callers treat null as "cannot prove composer state" and fail closed.
+async function composerText(page) {
+  const box = page.getByPlaceholder(/type message/i).first();
+  if (!(await box.isVisible().catch(() => false))) return null;
+  return box.inputValue().catch(() => null);
+}
+
+// TT sometimes pops a lead-survey dialog ("initial impression of this lead")
+// over the thread. Dismiss ONLY dialogs matching survey copy — the quick-reply
+// picker is a dialog too and must never be Escaped here.
+async function dismissSurveyDialog(page) {
+  const survey = page.locator('[role="dialog"]')
+    .filter({ hasText: /initial impression|impression of this lead|rate this lead/i }).first();
+  if (await survey.isVisible().catch(() => false)) {
+    await page.keyboard.press('Escape').catch(() => {});
+    await sleep(800);
+    return true;
+  }
+  return false;
+}
+
+// Diagnostic snapshot on definitive failures: screenshot + control dump into
+// the profile dir (survives restarts, off-repo). The next fresh lead pins any
+// label this build guessed wrong. Bounded, and never throws into the flow.
+const DIAG_KEEP_FILES = 40;
+async function captureDiag(page, negotiationId, tag) {
+  try {
+    const dir = path.join(CFG.profileDir, 'diag');
+    fs.mkdirSync(dir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const base = path.join(dir, `${stamp}-${negotiationId}-${tag}`);
+    await page.screenshot({ path: `${base}.png`, fullPage: false }).catch(() => {});
+    const facts = await page.evaluate(() => ({
+      url: location.href,
+      buttons: Array.from(document.querySelectorAll('button, [role="button"], a'))
+        .map((b) => ({ text: (b.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 60), aria: b.getAttribute('aria-label') }))
+        .filter((b) => b.text || b.aria).slice(0, 80),
+      textareas: Array.from(document.querySelectorAll('textarea, [contenteditable="true"]'))
+        .map((t) => ({ tag: t.tagName, placeholder: t.getAttribute('placeholder'), len: (t.value || t.innerText || '').length })),
+    })).catch(() => null);
+    if (facts) fs.writeFileSync(`${base}.json`, JSON.stringify(facts, null, 1));
+    const files = fs.readdirSync(dir).sort();
+    for (const f of files.slice(0, Math.max(0, files.length - DIAG_KEEP_FILES))) {
+      fs.unlinkSync(path.join(dir, f));
+    }
+    log(`diag captured: ${tag} (${base}.png)`);
+  } catch (err) {
+    log(`diag capture failed (${err.message})`);
+  }
+}
+
+// Kill TT's streamed AI draft and PROVE the composer empty before any pick.
+// The empty proof is read twice with a beat between, so a mid-stream read can
+// never slip an AI fragment into the send. Returns 'empty' or 'clear_failed'.
+async function clearAiDraft(page) {
+  const clear = anyLabelLocator(page, CFG.replyClearLabels).first();
+  const deadline = Date.now() + AI_DRAFT_WAIT_MS;
+  await sleep(2500); // let streaming begin; an instant read would race it
+  while (Date.now() < deadline) {
+    if (await clear.isVisible().catch(() => false)) {
+      await humanPause();
+      await clear.click().catch(() => {});
+      await sleep(1200);
+    }
+    const text = await composerText(page);
+    if (text === '') {
+      await sleep(1500);
+      if ((await composerText(page)) === '') return 'empty';
+    }
+    await sleep(700);
+  }
+  return 'clear_failed';
+}
 
 // ── Never-send-twice ledger ───────────────────────────────────────────────────
 // The lease alone cannot guarantee at-most-once: a REAL send whose report never
@@ -195,24 +300,93 @@ async function apiReport(route, body, label) {
   return false;
 }
 
+// Precise pre-send reasons added 2026-08-03 need a server enum extension that
+// rides the next os deploy. Until it lands (or across any skewed rollout), a
+// 400 'invalid reason' downgrades ONCE to the nearest legacy reason so the
+// report still flips the row (and the day-lead call still fires).
+const LEGACY_REASON_FALLBACK = {
+  already_replied: 'quick_reply_unavailable',
+  response_cta_not_found: 'quick_reply_unavailable',
+  ai_draft_clear_failed: 'quick_reply_unavailable',
+};
+
+// Pre-send failure report: single-shot on purpose (nothing was sent; a lost
+// report just re-offers after the cooldown, bounded by the attempts cap).
+async function reportPreSendFailure(negotiationId, reason) {
+  const post = (r) => api('POST', '/api/admin/thumbtack/first-reply-failed', { negotiation_id: negotiationId, reason: r });
+  let res;
+  try { res = await post(reason); } catch (err) { return { status: 0, error: err.message }; }
+  if (res.status === 400 && LEGACY_REASON_FALLBACK[reason]) {
+    log(`fail-report ${negotiationId}: server rejected reason "${reason}"; downgrading to "${LEGACY_REASON_FALLBACK[reason]}"`);
+    try { res = await post(LEGACY_REASON_FALLBACK[reason]); } catch (err) { return { status: 0, error: err.message }; }
+  }
+  return res;
+}
+
 /**
- * Drive the Quick Reply flow on an already-loaded lead page. TT is a
+ * Drive the first reply on an already-loaded lead page, replicating the real
+ * manual flow (Dallas, 2026-08-03): a pristine lead renders NO composer; the
+ * respond CTA creates it; TT then streams an AI draft that must be Cleared;
+ * only then do Quick Reply -> pick day/night -> Send exist. TT is a
  * client-rendered SPA: NOTHING is in the DOM at domcontentloaded, so every
- * "element absent" judgment waits a bounded time first (the harvest side's
- * RENDER_TIMEOUT precedent); an instant count() would terminally fail every
- * live lead before hydration. Definitive failures return an enum reason;
- * transient trouble throws (lease re-offers).
+ * "element absent" judgment waits a bounded time first. Definitive failures
+ * return an enum reason; transient trouble throws (lease re-offers).
+ *
+ * BACK-OFF LAW (2026-08-03, after 6 confirmed double-sends): a composer that
+ * already exists ON ARRIVAL means the lead was already answered (the composer
+ * only exists after a response) — return already_replied, never send.
  *
  * DOUBLE-SEND LAW: `markSendCommitted()` journals the id immediately before
  * Send is clicked, and everything from the click onward is caught: any
  * post-click throw (the SPA tearing down the composer mid-click is normal)
  * returns send_unverified (terminal), NEVER a release.
  */
-async function sendQuickReplyOnPage(page, templateLabel, markSendCommitted) {
+async function sendQuickReplyOnPage(page, negotiationId, templateLabel, markSendCommitted) {
+  await dismissSurveyDialog(page);
+
   const quickReply = page.getByRole('button', { name: /quick\s*repl(y|ies)/i }).first();
-  const qrVisible = await quickReply.waitFor({ state: 'visible', timeout: CFG.renderTimeoutMs })
+  const cta = anyLabelLocator(page, CFG.replyCtaLabels).first();
+
+  // Settle the page state: EITHER the composer (already answered) or the
+  // respond CTA (pristine) must appear; neither is the old dead-end.
+  let settled = await quickReply.or(cta).first().waitFor({ state: 'visible', timeout: CFG.renderTimeoutMs })
     .then(() => true).catch(() => false);
-  if (!qrVisible) return { reason: 'quick_reply_unavailable' };
+  if (!settled) {
+    await dismissSurveyDialog(page); // a late survey dialog can mask both controls
+    settled = await quickReply.or(cta).first().waitFor({ state: 'visible', timeout: UI_STEP_TIMEOUT_MS })
+      .then(() => true).catch(() => false);
+  }
+  if (!settled) {
+    await captureDiag(page, negotiationId, 'no-cta-no-composer');
+    return { reason: 'quick_reply_unavailable' };
+  }
+
+  if (await quickReply.isVisible().catch(() => false)) {
+    return { reason: 'already_replied' };
+  }
+
+  // Pristine lead: the respond CTA creates the composer.
+  await humanPause();
+  await cta.click();
+  let composerUp = await quickReply.waitFor({ state: 'visible', timeout: CFG.renderTimeoutMs })
+    .then(() => true).catch(() => false);
+  if (!composerUp) {
+    await dismissSurveyDialog(page);
+    composerUp = await quickReply.waitFor({ state: 'visible', timeout: UI_STEP_TIMEOUT_MS })
+      .then(() => true).catch(() => false);
+  }
+  if (!composerUp) {
+    await captureDiag(page, negotiationId, 'post-cta-no-composer');
+    return { reason: 'response_cta_not_found' };
+  }
+
+  // Kill the streamed AI draft; NEVER send with unproven composer contents.
+  const draftState = await clearAiDraft(page);
+  if (draftState !== 'empty') {
+    await captureDiag(page, negotiationId, 'ai-draft-not-cleared');
+    return { reason: 'ai_draft_clear_failed' };
+  }
+
   await humanPause();
   await quickReply.click();
 
@@ -241,16 +415,35 @@ async function sendQuickReplyOnPage(page, templateLabel, markSendCommitted) {
   }
   if (!optVisible) {
     // Close the picker without sending anything before reporting.
+    await captureDiag(page, negotiationId, 'template-not-in-picker');
     await page.keyboard.press('Escape').catch(() => {});
     return { reason: 'template_not_found' };
   }
   await humanPause();
   await option.click();
 
+  // The pick fills the (proven-empty) composer, so whatever text appears IS
+  // the template. Capture it: it anchors the post-send verification.
+  let filledText = null;
+  {
+    const deadline = Date.now() + UI_STEP_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const text = await composerText(page);
+      if (text && text.trim().length >= 20) { filledText = text; break; }
+      await sleep(400);
+    }
+  }
+  if (!filledText) {
+    await captureDiag(page, negotiationId, 'template-fill-missing');
+    await page.keyboard.press('Escape').catch(() => {});
+    return { reason: 'quick_reply_unavailable' };
+  }
+
   const send = page.getByRole('button', { name: /^\s*send\s*$/i }).first();
   const sendVisible = await send.waitFor({ state: 'visible', timeout: UI_STEP_TIMEOUT_MS })
     .then(() => true).catch(() => false);
   if (!sendVisible) {
+    await captureDiag(page, negotiationId, 'send-button-missing');
     await page.keyboard.press('Escape').catch(() => {});
     return { reason: 'quick_reply_unavailable' };
   }
@@ -259,13 +452,23 @@ async function sendQuickReplyOnPage(page, templateLabel, markSendCommitted) {
   markSendCommitted();
   try {
     await send.click();
-    // Verification (live-test-tuned; spec wants the Messages thread checked):
-    // composer gone = sent. Indeterminate visibility fails toward
-    // send_unverified, never toward a phantom "sent".
-    await sleep(3000);
-    const sendStillVisible = await send.isVisible().catch(() => true);
-    if (sendStillVisible) return { clickedSend: true, reason: 'send_unverified' };
-    return { clickedSend: true, sent: true };
+    // POSITIVE verification (rebuilt 2026-08-03): the composer PERSISTS after
+    // a real send (live-pinned on a responded thread), so the old "Send button
+    // gone = sent" check false-failed 6 confirmed real deliveries. Proof of
+    // send = the captured template text appears as a thread message AND the
+    // composer emptied. Indeterminate still fails toward send_unverified,
+    // never toward a phantom "sent".
+    const words = filledText.trim().split(/\s+/).slice(0, 8).map(escapeRegex);
+    const snippetRe = new RegExp(words.join('\\s+'), 'i');
+    const deadline = Date.now() + SEND_VERIFY_WAIT_MS;
+    while (Date.now() < deadline) {
+      const boxText = await composerText(page);
+      const inThread = await page.getByText(snippetRe).first().isVisible().catch(() => false);
+      if (inThread && !boxText) return { clickedSend: true, sent: true };
+      await sleep(800);
+    }
+    await captureDiag(page, negotiationId, 'send-unverified');
+    return { clickedSend: true, reason: 'send_unverified' };
   } catch (err) {
     log(`post-click throw (${err.message}); treating as send_unverified`);
     return { clickedSend: true, reason: 'send_unverified' };
@@ -304,7 +507,7 @@ async function replyOne(ctx, job, counters, sentMemory) {
       throw new SessionExpired(); // transient: no report, lease re-offers after re-login
     }
 
-    const result = await sendQuickReplyOnPage(page, template, () => journalSend(negotiationId, sentMemory));
+    const result = await sendQuickReplyOnPage(page, negotiationId, template, () => journalSend(negotiationId, sentMemory));
 
     if (result.sent) {
       await apiReport('/api/admin/thumbtack/first-reply-sent',
@@ -336,9 +539,7 @@ async function replyOne(ctx, job, counters, sentMemory) {
     }
     const urlCarriesId = landed.includes(negotiationId) || landed.includes(encodeURIComponent(negotiationId));
     const reason = urlCarriesId ? result.reason : 'lead_not_found';
-    // Pre-send reports are single-shot on purpose: nothing was sent, so a lost
-    // report just re-offers after the cooldown (bounded by the attempts cap).
-    const r = await api('POST', '/api/admin/thumbtack/first-reply-failed', { negotiation_id: negotiationId, reason });
+    const r = await reportPreSendFailure(negotiationId, reason);
     log(`reply ${negotiationId} -> ${reason} (server ${r.status})`);
   } catch (err) {
     if (err instanceof SessionExpired) throw err;
