@@ -82,8 +82,15 @@ function isHeif(buf) {
  * us. Rejecting them strands people (incident 2026-07-23).
  *
  * Container formats (DOC, DOCX) share their magic bytes with every other OLE
- * or zip file, so they are accepted ONLY when the magic and the filename
- * extension agree. PK magic alone never admits an arbitrary .zip.
+ * or zip file, so they are accepted only when the magic and the filename
+ * extension agree. Be honest about what that buys: the extension check stops a
+ * file NAMED .zip, and nothing more. Any zip renamed resume.docx, or any OLE
+ * file (Word 97 with macros, .xls, .msi) renamed resume.doc, passes — no
+ * container content is parsed. Accepted risk: these land in R2 and are only
+ * ever opened by an admin who chose to download a stranger's resume, which is
+ * the same trust decision as opening any emailed attachment. The blast radius
+ * is that admin's workstation, not the app; storage.js serves them as
+ * attachment-typed downloads, never active content.
  *
  * Deliberately NOT used by payment.js (W-9), admin/blog.js (blog images), or
  * staffPortal.js. Those keep the narrow isValidUpload.
