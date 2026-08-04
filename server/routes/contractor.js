@@ -13,10 +13,15 @@ const { validatePhone } = require('../utils/phone');
 const router = express.Router();
 
 // Fields the contractor is allowed to see in their own profile response.
-// Excludes internal columns like `seniority_adjustment` (admin-only auto-assign weight).
+// Excludes internal columns like `seniority_adjustment` (admin-only auto-assign
+// weight) and `historical_events_worked` (admin-only pre-migration event credit,
+// same policy class: an auto-assign ranking input the contractor must not see or
+// infer their standing from). Any future admin-only column on contractor_profiles
+// belongs in this destructure too.
 function sanitizeProfile(profile) {
   if (!profile) return null;
-  const { seniority_adjustment, ...safe } = profile; // eslint-disable-line no-unused-vars
+  // eslint-disable-next-line no-unused-vars
+  const { seniority_adjustment, historical_events_worked, ...safe } = profile;
   return safe;
 }
 
@@ -220,8 +225,12 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       .catch(err => console.error('[Contractor] Geocode error:', err.message));
   }
 
+  // Same sanitizer as GET: this SELECT * would otherwise hand the contractor
+  // every internal column (seniority_adjustment, historical_events_worked).
+  // The only caller (client/src/pages/ContractorProfile.js) discards this body,
+  // so sanitizing costs nothing and closes the leak at both exits.
   const result = await pool.query('SELECT * FROM contractor_profiles WHERE user_id = $1', [req.user.id]);
-  res.json(result.rows[0]);
+  res.json(sanitizeProfile(result.rows[0]) || {});
 }));
 
 module.exports = router;

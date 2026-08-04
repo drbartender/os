@@ -1188,6 +1188,13 @@ ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
 ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
 ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS seniority_adjustment INTEGER DEFAULT 0;
 ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS hire_date DATE;
+-- Pre-migration (CheckCherry) events worked, added to the live OS event count
+-- wherever seniority is computed. Default 0 makes every non-migrated profile a
+-- no-op. Seeded from the CheckCherry export via the human-reviewed mapping
+-- (server/scripts/staffPaymentImport/applySeniorityBackfill.js).
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS historical_events_worked INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE contractor_profiles DROP CONSTRAINT IF EXISTS contractor_profiles_historical_events_nonneg;
+ALTER TABLE contractor_profiles ADD CONSTRAINT contractor_profiles_historical_events_nonneg CHECK (historical_events_worked >= 0);
 ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS equipment_will_pickup BOOLEAN DEFAULT false;
 
 -- ─── Auto-Assign: shifts additions ───────────────────────────────

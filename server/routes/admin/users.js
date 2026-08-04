@@ -526,7 +526,7 @@ router.get('/users/:id/seniority', auth, requireAdminOrManager, asyncHandler(asy
 
   const [profileRes, eventsRes] = await Promise.all([
     pool.query(
-      'SELECT hire_date, seniority_adjustment FROM contractor_profiles WHERE user_id = $1',
+      'SELECT hire_date, seniority_adjustment, historical_events_worked FROM contractor_profiles WHERE user_id = $1',
       [userId]
     ),
     pool.query(`
@@ -538,7 +538,9 @@ router.get('/users/:id/seniority', auth, requireAdminOrManager, asyncHandler(asy
   ]);
 
   const profile = profileRes.rows[0] || {};
-  const eventsWorked = parseInt(eventsRes.rows[0]?.events_worked || 0, 10);
+  const liveEvents = parseInt(eventsRes.rows[0]?.events_worked || 0, 10);
+  const historicalEvents = parseInt(profile.historical_events_worked || 0, 10);
+  const eventsWorked = liveEvents + historicalEvents;
 
   let tenureMonths = 0;
   if (profile.hire_date) {
@@ -553,25 +555,91 @@ router.get('/users/:id/seniority', auth, requireAdminOrManager, asyncHandler(asy
   res.json({
     hire_date: profile.hire_date,
     seniority_adjustment: seniorityAdjustment,
+    historical_events_worked: historicalEvents,
+    events_worked_live: liveEvents,
     events_worked: eventsWorked,
     tenure_months: tenureMonths,
     computed_score: Math.round(computedScore * 100) / 100,
   });
 }));
 
-// Update seniority adjustment and hire_date
+// Route-level guard for the integer columns the seniority PUT writes.
+//
+// Validate at the route, not at the DB CHECK — dev and prod disagree about which
+// CHECK constraints exist, so leaning on the constraint means a bad value writes
+// cleanly on one database and 500s on another. Without this the failure mode is
+// opaque: a negative raises 23514, a non-numeric 22P02, an oversized value 22003,
+// and all three funnel through asyncHandler to a generic "something went wrong"
+// with no field error.
+//
+// The TYPE is checked BEFORE any coercion, because coercing first hides exactly
+// the inputs that matter: Number(true) is 1, Number(' ') is 0, Number([5]) is 5,
+// Number('0x10') is 16, Number('1e3') is 1000. Each would write a number the
+// admin never typed, and ' ' would silently ZERO a backfilled baseline. Postgres
+// also rounds 1.5 into an INTEGER column rather than rejecting it, so the DB
+// never catches a fractional value either.
+//
+// Returns null for "field omitted, keep what is stored" ('' and null/undefined,
+// the COALESCE-to-keep path), otherwise a validated integer, otherwise throws.
+// The bound value is always the COERCED number, never the raw body value, so a
+// numeric string can never reach an INTEGER column as text.
+function parseSeniorityInt(value, { field, min, max, message, rangeMessage }) {
+  if (value === null || value === undefined || value === '') return null;
+
+  let n;
+  if (typeof value === 'number') {
+    n = value;
+  } else if (typeof value === 'string' && /^-?\d+$/.test(value.trim())) {
+    n = Number(value.trim());
+  } else {
+    // Booleans, arrays, objects, whitespace-only, hex/exponent/decimal strings.
+    throw new ValidationError({ [field]: message });
+  }
+
+  if (!Number.isInteger(n)) throw new ValidationError({ [field]: message });
+  if (n < min || n > max) throw new ValidationError({ [field]: rangeMessage });
+  return n;
+}
+
+// Update seniority adjustment, hire_date and the pre-migration event baseline
 router.put('/users/:id/seniority', auth, adminOnly, asyncHandler(async (req, res) => {
-  const { seniority_adjustment, hire_date } = req.body;
-  await pool.query(`
+  const { seniority_adjustment, hire_date, historical_events_worked } = req.body;
+
+  const historical = parseSeniorityInt(historical_events_worked, {
+    field: 'historical_events_worked',
+    min: 0,
+    max: 100000,
+    message: 'Historical events must be a whole number of 0 or more.',
+    rangeMessage: 'Historical events must be between 0 and 100000.',
+  });
+
+  const adjustment = parseSeniorityInt(seniority_adjustment, {
+    field: 'seniority_adjustment',
+    min: -100000,
+    max: 100000,
+    message: 'Seniority adjustment must be a whole number.',
+    rangeMessage: 'Seniority adjustment must be between -100000 and 100000.',
+  });
+
+  const result = await pool.query(`
     UPDATE contractor_profiles
     SET seniority_adjustment = COALESCE($1, seniority_adjustment),
-        hire_date = COALESCE($2, hire_date)
-    WHERE user_id = $3
+        hire_date = COALESCE($2, hire_date),
+        historical_events_worked = COALESCE($3, historical_events_worked)
+    WHERE user_id = $4
   `, [
-    seniority_adjustment !== null && seniority_adjustment !== undefined ? seniority_adjustment : null,
+    adjustment,
     hire_date || null,
+    historical,
     req.params.id
   ]);
+
+  // No contractor_profiles row means the write silently went nowhere. Staff
+  // without a profile row are common (admin-hired before onboarding), so
+  // reporting success here would lose an admin's baseline with no signal.
+  if (result.rowCount === 0) {
+    throw new NotFoundError('No contractor profile for this user, so seniority was not saved.');
+  }
 
   res.json({ success: true });
 }));

@@ -166,7 +166,7 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
            cp.equipment_cooler, cp.equipment_table_with_spandex,
            cp.equipment_none_but_open, cp.equipment_no_space,
            cp.equipment_will_pickup, cp.seniority_adjustment,
-           cp.hire_date, cp.city, cp.state
+           cp.hire_date, cp.city, cp.state, cp.historical_events_worked
     FROM shift_requests sr
     JOIN contractor_profiles cp ON cp.user_id = sr.user_id
     WHERE sr.shift_id = $1 AND sr.status = 'pending'
@@ -222,8 +222,10 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
 
   // 5. Score each candidate
   const scored = pendingResult.rows.map(candidate => {
+    // Seniority counts OS-native past events PLUS the pre-migration baseline.
+    const totalEvents = (eventsMap[candidate.user_id] || 0) + (candidate.historical_events_worked || 0);
     const seniority = computeSeniorityScore(
-      eventsMap[candidate.user_id] || 0,
+      totalEvents,
       candidate.hire_date,
       candidate.seniority_adjustment,
       seniorityWeights
@@ -265,7 +267,7 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
         geography: Math.round(geo.score * 100) / 100,
         equipment: Math.round(equipment.score * 100) / 100,
         distance_miles: geo.distance !== null && geo.distance !== undefined ? Math.round(geo.distance * 10) / 10 : null,
-        events_worked: eventsMap[candidate.user_id] || 0,
+        events_worked: totalEvents,
         tenure_months: seniority.tenureMonths,
       },
       equipment_details: equipment,

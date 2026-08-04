@@ -429,8 +429,8 @@ Read-side mirror of Stripe payouts + balance-transaction lines (`server/routes/s
 ### Admin — `/api/admin` (continued)
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/users/:id/seniority` | Admin | Get seniority score, events worked, tenure |
-| PUT | `/users/:id/seniority` | Admin | Update seniority_adjustment and hire_date |
+| GET | `/users/:id/seniority` | Admin | Get seniority score, events worked (total, plus the `events_worked_live` / `historical_events_worked` split), tenure |
+| PUT | `/users/:id/seniority` | Admin | Update seniority_adjustment, hire_date and historical_events_worked |
 | GET | `/settings` | Admin | Get app_settings (auto-assign weights, max distance) |
 | PUT | `/settings` | Admin | Update app_settings key-value pairs |
 | POST | `/backfill-geocodes` | Admin | Geocode all staff/shift addresses and backfill hire dates |
@@ -746,6 +746,7 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `lat`, `lng` — Geocoded coordinates (auto-populated via Nominatim on save)
 - `hire_date` — Set when status changes to 'hired'
 - `seniority_adjustment` — Admin manual score override (+/-)
+- `historical_events_worked` (integer, NOT NULL default 0) — Pre-migration (CheckCherry) event credit added to the live event count at every seniority compute site
 - `equipment_will_pickup` — Willing to pick up equipment from storage
 - File URLs: `alcohol_certification_file_url`, `resume_file_url`, `headshot_file_url`
 - Emergency contact fields
