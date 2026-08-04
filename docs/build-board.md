@@ -9,8 +9,6 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 <!-- plan written + reviewed, no lane cut. One line per item, linking its spec + plan. -->
 
 - **phone-system-1a** — phone redesign phase 1a: call experience (spec rev 3, fleet folded). [spec](superpowers/specs/2026-07-26-phone-system-redesign-design.md) / [plan](superpowers/plans/2026-07-26-phone-system-1a-call-experience.md)
-- **seniority-history-backfill** — hire dates + pre-migration event counts from CheckCherry. [spec](superpowers/specs/2026-07-26-seniority-history-backfill-design.md) / [plan](superpowers/plans/2026-07-26-seniority-history-backfill.md)
-- **staff-display-name** — preferred name plus last initial across surfaces. [spec](superpowers/specs/2026-07-26-staff-display-name-design.md) / [plan](superpowers/plans/2026-07-26-staff-display-name.md)
 
 ## In flight
 
