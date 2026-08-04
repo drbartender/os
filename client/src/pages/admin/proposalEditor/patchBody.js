@@ -6,7 +6,6 @@
 // add-on quantities. Structural fix: one builder, always complete.
 
 export function buildProposalPatchBody(form, {
-  gratuityDirty = false,
   isClassPackage = false,
   changeRequestId,
   staffNotify = null,
@@ -45,13 +44,10 @@ export function buildProposalPatchBody(form, {
       ? null
       : Number(form.setup_minutes_before),
   };
-  // Persist the gratuity dollar ONLY when the admin edited it; otherwise omit
-  // both keys so the server preserves the stored rate and rescales the dollar
-  // by the new staffing (crud.js gratuity branch). See gratuityDirty in the form.
-  if (gratuityDirty) {
-    body.tip_jar = form.tip_jar !== false;
-    body.gratuity_total = form.gratuity_total;
-  }
+  // No gratuity keys, ever (election-at-payment, spec 2026-08-03): the tip-jar
+  // election is client-owned at sign-and-pay and persisted by the Stripe
+  // webhook. The admin PATCH ignores tip_jar/gratuity_total, so sending them
+  // would only misrepresent what this form can do.
   if (changeRequestId != null) body.change_request_id = changeRequestId;
   if (staffNotify) {
     // Sub-flags only ride when the parent toggle is on, so an unchecked parent

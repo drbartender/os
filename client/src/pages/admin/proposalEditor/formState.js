@@ -38,8 +38,10 @@ export function initialFormFromProposal(p) {
     syrup_selections: snapshot.syrups?.selections || [],
     adjustments: p.adjustments || [],
     total_price_override: p.total_price_override ?? null,
-    tip_jar: snapshot.gratuity?.tip_jar !== false,
-    gratuity_total: Number(snapshot.gratuity?.total) || 0,
+    // No tip_jar / gratuity_total seeds (election-at-payment, spec 2026-08-03):
+    // the editor cannot write a gratuity, so nothing reads them. The preview
+    // reads storedTipJar / storedGratuityRate straight off the proposal snapshot.
+
     // '' = "use the package-derived default" (server resolves null → 90 hosted /
     // 60 else). A number is an explicit override. Used by both editor mounts.
     setup_minutes_before: p.setup_minutes_before ?? '',

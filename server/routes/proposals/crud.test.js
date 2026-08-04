@@ -850,44 +850,53 @@ test('Case 20: PATCH dropping total below amount_paid keeps paid status + logs o
   assert.ok(log.rowCount >= 1, 'overpayment_detected logged');
 });
 
-// ─── Case 21 — post-payment DIRECT admin gratuity rate increase is rejected ──
-test('Case 21: post-payment direct admin gratuity rate increase is rejected (§7)', async () => {
+// ─── Case 21 — PATCH ignores tip_jar / gratuity_total (election-at-payment) ──
+// The election is client-owned at sign-and-pay; the admin PATCH silently drops
+// these keys so an old client build or a crafted request cannot preset a
+// gratuity on a proposal (spec 2026-08-03).
+test('Case 21: PATCH ignores tip_jar and gratuity_total in the body', async () => {
   const token = await makeFreshAdmin();
   const id = await insertDraftProposal({ status: 'draft', total_price: 2000 });
-  await pool.query("UPDATE proposals SET status='deposit_paid', amount_paid=100, gratuity_rate=25, tip_jar=true WHERE id=$1", [id]);
-  // gratuity_total 400 over 120 guests (2 bartenders x 4h = 8) => rate 50, up from 25.
-  const r = await request('PATCH', `/api/proposals/${id}`, { token, body: { gratuity_total: 400 } });
-  assert.equal(r.status, 400, `expected 400, got ${r.status}: ${r.raw}`);
+  const r = await request('PATCH', `/api/proposals/${id}`, {
+    token, body: { tip_jar: false, gratuity_total: 400 },
+  });
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${r.raw}`);
+  const row = (await pool.query(
+    'SELECT tip_jar, gratuity_rate, pricing_snapshot FROM proposals WHERE id = $1', [id])).rows[0];
+  assert.equal(row.tip_jar, true, 'tip_jar untouched');
+  assert.equal(Number(row.gratuity_rate), 0, 'rate untouched');
+  assert.ok(!row.pricing_snapshot.breakdown.some(l => l.label === 'Gratuity'),
+    'no Gratuity line injected');
 });
 
 // ─── Case 22 — post-payment staffing-driven gratuity increase is allowed ─────
+// The behavior election-at-payment must NOT break: admin can no longer set a
+// rate, but a staffing change still rescales the stored rate's dollar, stamps
+// origin 'staffing', and triggers the client notice on an increase (§7). A bare
+// 200 proves none of that, so assert the three observable effects.
 test('Case 22: post-payment staffing-driven gratuity increase is allowed (rate unchanged, §7)', async () => {
   const token = await makeFreshAdmin();
   const id = await insertDraftProposal({ status: 'draft', total_price: 2000 });
   await pool.query("UPDATE proposals SET status='deposit_paid', amount_paid=100, gratuity_rate=25, tip_jar=true WHERE id=$1", [id]);
+  // First PATCH establishes a REAL gratuity baseline in the snapshot (the seeded
+  // snapshot carries none, so comparing against it would prove nothing).
+  const r0 = await request('PATCH', `/api/proposals/${id}`, { token, body: { guest_count: 120 } });
+  assert.equal(r0.status, 200, `expected 200, got ${r0.status}: ${r0.raw}`);
+  const before = (await pool.query(
+    'SELECT gratuity_rate, pricing_snapshot FROM proposals WHERE id = $1', [id])).rows[0];
+  const gratuityBefore = Number(before.pricing_snapshot.gratuity?.total) || 0;
+  assert.ok(gratuityBefore > 0, 'baseline gratuity present before the staffing change');
+
   // 120 -> 250 guests grows the crew; the SAME rate produces more gratuity.
   const r = await request('PATCH', `/api/proposals/${id}`, { token, body: { guest_count: 250 } });
   assert.equal(r.status, 200, `expected 200, got ${r.status}: ${r.raw}`);
-});
-
-// ─── Case 23 — post-payment DIRECT admin gratuity rate DECREASE is allowed + logged ─
-// A decrease moves toward a refund (not a new charge), so it is permitted — but a
-// 'gratuity_rate_decreased_post_payment' activity-log row records it for the audit
-// trail (the overpayment chip + manual refund flow own the money). (§7)
-test('Case 23: post-payment direct admin gratuity rate decrease is allowed and logged (§7)', async () => {
-  const token = await makeFreshAdmin();
-  const id = await insertDraftProposal({ status: 'draft', total_price: 2000 });
-  await pool.query("UPDATE proposals SET status='deposit_paid', amount_paid=100, gratuity_rate=50, tip_jar=true WHERE id=$1", [id]);
-  // gratuity_total 200 over the same basis (2 bartenders x 4h = 8) => rate 25, down from 50.
-  const r = await request('PATCH', `/api/proposals/${id}`, { token, body: { gratuity_total: 200 } });
-  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${r.raw}`);
-  const row = (await pool.query('SELECT gratuity_rate FROM proposals WHERE id = $1', [id])).rows[0];
-  assert.equal(Number(row.gratuity_rate), 25, 'rate decreased to 25');
-  const log = await pool.query(
-    "SELECT id FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'gratuity_rate_decreased_post_payment'",
-    [id]
-  );
-  assert.equal(log.rows.length, 1, 'a gratuity_rate_decreased_post_payment entry was written');
+  const after = (await pool.query(
+    'SELECT gratuity_rate, gratuity_rate_change_origin, pricing_snapshot FROM proposals WHERE id = $1',
+    [id])).rows[0];
+  assert.ok(Number(after.pricing_snapshot.gratuity.total) > gratuityBefore,
+    `gratuity dollar rescaled up by staffing (${gratuityBefore} -> ${after.pricing_snapshot.gratuity.total})`);
+  assert.equal(Number(after.gratuity_rate), 25, 'the RATE is unchanged — only the basis moved');
+  assert.equal(after.gratuity_rate_change_origin, 'staffing', "origin stamped 'staffing', not 'admin'");
 });
 
 // ─── message log — GET /:id returns the message log ─────────────────────────────

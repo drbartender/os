@@ -22,8 +22,6 @@ const form = {
   client_provides_glassware: false,
   class_options: { spirit_category: 'whiskey_bourbon', top_shelf_requested: true },
   setup_minutes_before: '',
-  tip_jar: true,
-  gratuity_total: '200',
 };
 
 describe('buildProposalPatchBody', () => {
@@ -41,13 +39,10 @@ describe('buildProposalPatchBody', () => {
     expect(body.addon_ids).toEqual([7, 9]);
   });
 
-  it('omits gratuity keys unless gratuityDirty', () => {
-    const clean = buildProposalPatchBody(form, {});
-    expect('tip_jar' in clean).toBe(false);
-    expect('gratuity_total' in clean).toBe(false);
-    const dirty = buildProposalPatchBody(form, { gratuityDirty: true });
-    expect(dirty.tip_jar).toBe(true);
-    expect(dirty.gratuity_total).toBe('200');
+  it('never includes gratuity keys (election-at-payment)', () => {
+    const body = buildProposalPatchBody({ ...form, tip_jar: false, gratuity_total: 400 });
+    expect('tip_jar' in body).toBe(false);
+    expect('gratuity_total' in body).toBe(false);
   });
 
   it('sends class_options only for class packages, null otherwise', () => {

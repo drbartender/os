@@ -84,13 +84,23 @@ async function priceProposedState(proposal, proposed, db = pool) {
     syrupSelections: readSnapshot(proposal.pricing_snapshot, { context: 'changeRequests' })?.syrups?.selections || [],
     adjustments: proposal.adjustments || [],
     totalPriceOverride: proposal.total_price_override ?? null,
+    // Election-at-payment: carry the STORED gratuity so a change-request preview
+    // on a paid proposal doesn't silently drop the client's paid gratuity line.
+    gratuityRate: Number(proposal.gratuity_rate) || 0,
+    tipJar: proposal.tip_jar !== false,
   });
 }
 
 // Build the { current, estimated, delta, staffing } preview (DOLLARS).
 async function buildPreview(proposal, proposed, db = pool) {
   const snapshot = await priceProposedState(proposal, proposed, db);
-  const currentTotal = Number(proposal.total_price_override ?? proposal.total_price ?? 0);
+  // Baseline on total_price, NOT total_price_override: the override is a
+  // SERVICE-level number and the engine layers gratuity on top of it, so
+  // baselining on the override compares a gratuity-exclusive current against a
+  // gratuity-inclusive estimate and invents a phantom delta on a no-op. Every
+  // writer stores snapshot.total into total_price (crud.js), which already
+  // carries override + gratuity.
+  const currentTotal = Number(proposal.total_price ?? proposal.total_price_override ?? 0);
   const estimatedTotal = Number(snapshot.total);
   const currentStaffing = Number(readSnapshot(proposal.pricing_snapshot, { context: 'changeRequests' })?.staffing?.actual ?? proposal.num_bartenders ?? 1);
   return {

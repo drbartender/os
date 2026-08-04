@@ -2,7 +2,7 @@ const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager, adminOnly } = require('../../middleware/auth');
-const { calculateProposal, deriveGratuityRate, computeGratuityBasis } = require('../../utils/pricingEngine');
+const { calculateProposal } = require('../../utils/pricingEngine');
 const { reconcileProposalPaymentStatus } = require('../../utils/proposalStatus');
 const { createEventShifts, syncShiftsFromProposal } = require('../../utils/eventCreation');
 const { validateVenue, normalizeVenueState, resolvePendingLocation } = require('../../utils/venueAddress');
@@ -307,7 +307,6 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     venue_name, venue_street, venue_city, venue_state, venue_zip,
     adjustments, total_price_override, setup_minutes_before,
     class_options, client_provides_glassware,
-    tip_jar, gratuity_total,
     notify_assigned_staff, notify_staff_sms, notify_staff_email,
     notify,
     change_request_id
@@ -450,45 +449,16 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         }
       : null;
 
-    // Gratuity (§3/§4/§7): admin may pass tip_jar + a dollar gratuity_total; else
-    // keep the stored rate/jar. staffCount+hours are independent of gratuity, so
-    // compute the basis first, derive the rate, then snapshot with that rate.
-    const resolvedTipJar = tip_jar !== undefined ? (tip_jar !== false) : (old.tip_jar !== false);
-    let persistTipJar = resolvedTipJar;
-    let resolvedGratuityRate = Number(old.gratuity_rate) || 0;
+    // Gratuity (election-at-payment, spec 2026-08-03): the tip-jar election is
+    // made by the CLIENT at sign-and-pay and persisted by the Stripe webhook —
+    // this PATCH never accepts tip_jar/gratuity_total. The STORED rate + jar
+    // always carry forward so a staffing change on a paid proposal rescales the
+    // dollar at the same rate (origin 'staffing' + client notice below).
+    // Admin's only gratuity power is removal via cancel-line-item.
+    const persistTipJar = old.tip_jar !== false;
+    const resolvedGratuityRate = Number(old.gratuity_rate) || 0;
     let gratuityOrigin = old.gratuity_rate_change_origin || null;
-    if (tip_jar !== undefined || gratuity_total !== undefined) {
-      const { staffCount, hours } = computeGratuityBasis({
-        pkg, guestCount: gc, durationHours: dh, numBartenders: num_bartenders, addons,
-      });
-      // Can't skip the jar with no crew/hours — force it on so the DB CHECK passes.
-      persistTipJar = (staffCount * hours) <= 0 ? true : resolvedTipJar;
-      const enteredTotal = gratuity_total !== undefined
-        ? gratuity_total
-        : resolvedGratuityRate * staffCount * hours; // re-derive total from the stored rate
-      const g = deriveGratuityRate({ enteredTotal, staffCount, hours, tipJar: persistTipJar });
-      if (!g.ok) throw new ValidationError({ gratuity: g.message });
-      if (g.rate !== resolvedGratuityRate) gratuityOrigin = 'admin'; // direct rate change
-      resolvedGratuityRate = g.rate;
-    }
-
-    // Post-payment gratuity guard (§7). Once money is collected (amount_paid > 0)
-    // a DIRECT admin RATE increase is a new charge → rejected (a separate
-    // client-consented flow is out of scope). A staffing-driven increase at the
-    // SAME rate is allowed and triggers a client notice.
     const isPaidForGratuity = Number(old.amount_paid || 0) > 0;
-    const priorGratuityRate = Number(old.gratuity_rate) || 0;
-    if (isPaidForGratuity && gratuityOrigin === 'admin' && resolvedGratuityRate > priorGratuityRate) {
-      throw new ValidationError({
-        gratuity: 'Gratuity rate cannot be increased after payment. Adjust staffing, or arrange a separate client-consented charge.',
-      });
-    }
-    // A DELIBERATE admin rate DECREASE on a paid proposal is allowed — it moves
-    // toward a refund, not a new charge — but recorded for the audit trail below.
-    // The existing overpayment chip + manual refund flow handle the money; no
-    // client email (§7).
-    const gratuityDecreasedPostPayment =
-      isPaidForGratuity && gratuityOrigin === 'admin' && resolvedGratuityRate < priorGratuityRate;
 
     const snapshot = calculateProposal({
       pkg, guestCount: gc, durationHours: dh, numBars: nb,
@@ -593,17 +563,6 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         })]
       );
     }
-    if (gratuityDecreasedPostPayment) {
-      await dbClient.query(
-        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
-         VALUES ($1, 'gratuity_rate_decreased_post_payment', 'admin', $2, $3)`,
-        [req.params.id, req.user.id, JSON.stringify({
-          from_rate: priorGratuityRate, to_rate: resolvedGratuityRate,
-          gratuity_total: Number(snapshot.gratuity?.total) || 0,
-        })]
-      );
-    }
-
     // Replace proposal add-ons — single bulk INSERT
     await dbClient.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [req.params.id]);
     if (snapshot.addons.length) {

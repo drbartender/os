@@ -21,14 +21,6 @@ import RepriceConfirmModal from './RepriceConfirmModal';
 import NotifyConfirmModal from '../../../components/comms/NotifyConfirmModal';
 import PackageSection from './PackageSection';
 
-// Read-only audit copy for proposals.gratuity_rate_change_origin (NULL when the
-// rate was never touched, so the line is hidden). Admin-only: this component is
-// only mounted inside the admin app (auth + requireAdminOrManager).
-const GRATUITY_ORIGIN_LABELS = {
-  admin: 'Rate set by admin',
-  staffing: 'Adjusted by staffing change',
-};
-
 // The ONE proposal/event editor, mounted by ProposalDetail (title "Edit
 // proposal", changeRequest support) and EventDetailPage (title "Edit event",
 // showStaffNotifyToggles). Owns:
@@ -104,12 +96,10 @@ export default function ProposalEditorForm({
   const [notifyStaffSms, setNotifyStaffSms] = useState(false);
   const [notifyStaffEmail, setNotifyStaffEmail] = useState(false);
 
-  // Whether the admin actually touched the gratuity controls this session. When
-  // untouched, the edit/preview must NOT send tip_jar/gratuity_total — otherwise
-  // the server re-derives the rate from a stale dollar total and silently shifts
-  // it on any unrelated edit (e.g. a guest-count change that grows the crew).
-  // Mirrors the public checkout's gratuityDirty guard.
-  const [gratuityDirty, setGratuityDirty] = useState(false);
+  // The gratuity is NOT editable here (election-at-payment, spec 2026-08-03):
+  // the client elects it at sign-and-pay and the Stripe webhook persists it.
+  // These stored values only feed the preview request so a paid proposal's
+  // gratuity line keeps rendering (and rescaling) while staff/hours are edited.
   const storedGratuityRate = Number(proposal?.pricing_snapshot?.gratuity?.rate) || 0;
   const storedTipJar = proposal?.pricing_snapshot?.gratuity?.tip_jar !== false;
 
@@ -189,12 +179,11 @@ export default function ProposalEditorForm({
         syrup_selections: editForm.syrup_selections || [],
         adjustments: editForm.adjustments || [],
         total_price_override: editForm.total_price_override,
-        // Only send the gratuity dollar when the admin actually edited it; else
-        // preview at the STORED rate so the line scales with staff/hours and
-        // matches what will save (no silent rate re-derivation). See gratuityDirty.
-        ...(gratuityDirty
-          ? { tip_jar: editForm.tip_jar !== false, gratuity_total: editForm.gratuity_total }
-          : { tip_jar: storedTipJar, gratuity_rate: storedGratuityRate }),
+        // Preview at the STORED rate/jar so a paid proposal's gratuity line
+        // scales with staff/hours and matches what will save (election is
+        // client-owned at sign-and-pay; this form cannot edit it).
+        tip_jar: storedTipJar,
+        gratuity_rate: storedGratuityRate,
       })
         .then(res => {
           if (seq !== calcSeqRef.current) return; // stale response: a newer edit owns the preview
@@ -218,9 +207,6 @@ export default function ProposalEditorForm({
     editForm.syrup_selections,
     editForm.adjustments,
     editForm.total_price_override,
-    editForm.tip_jar,
-    editForm.gratuity_total,
-    gratuityDirty,
     storedTipJar,
     storedGratuityRate,
     numBartendersOverride,
@@ -244,11 +230,6 @@ export default function ProposalEditorForm({
   }, [isDirty]);
 
   const update = (field, value) => setEditForm(f => ({ ...f, [field]: value }));
-
-  // Gratuity edits flip gratuityDirty so the request includes tip_jar/gratuity_total
-  // (an explicit, admin-intended rate change). Left untouched, those fields are
-  // omitted and the server keeps the stored rate, rescaling the dollar by staffing.
-  const updateGratuity = (field, value) => { setGratuityDirty(true); update(field, value); };
 
   const clearFieldError = (name) => {
     if (fieldErrors[name]) {
@@ -320,7 +301,6 @@ export default function ProposalEditorForm({
   // PATCH itself can never see different payloads (the shared builder is the
   // single payload source for both mounts — see patchBody.js).
   const buildBody = () => buildProposalPatchBody(editForm, {
-    gratuityDirty,
     // Retired package (absent from the active catalog): keep the stored
     // class semantics instead of silently clearing class_options.
     isClassPackage: selectedPkg ? selectedPkg.bar_type === 'class' : proposal.class_options != null,
@@ -631,43 +611,10 @@ export default function ProposalEditorForm({
           </div>
         </div>
 
-        {/* Gratuity (§8.3) — admin preset/adjust; client can change at checkout */}
-        <div className="meta-k" style={{ marginBottom: 8 }}>Gratuity</div>
-        <div style={{ marginBottom: 12 }}>
-          {(() => {
-            const gB = editPreview?.gratuity || null;
-            const gStaff = (gB?.staff_count ?? 0) * (gB?.hours ?? 0);
-            const gFloor = Math.round(50 * (gB?.staff_count ?? 0) * (gB?.hours ?? 0));
-            const gNoun = gB?.staff_noun || 'bartender';
-            if (gStaff <= 0) {
-              return <p className="tiny" style={{ color: 'var(--ink-3)' }}>Gratuity unavailable until staffing and duration are set.</p>;
-            }
-            return (
-              <>
-                <label className="hstack" style={{ gap: 6 }}>
-                  <input type="checkbox" checked={editForm.tip_jar !== false}
-                    onChange={e => updateGratuity('tip_jar', e.target.checked)} /> Tip jar at the bar
-                </label>
-                <div className="hstack" style={{ gap: 6, marginTop: 6, alignItems: 'center' }}>
-                  <span>Pre-paid gratuity for {gNoun}s $</span>
-                  <input className="input" type="number" min={editForm.tip_jar !== false ? 0 : gFloor} step="1"
-                    value={gratuityDirty ? editForm.gratuity_total : (gB?.total ?? editForm.gratuity_total)}
-                    onChange={e => updateGratuity('gratuity_total', e.target.value)} style={{ width: 120 }} />
-                </div>
-                {editForm.tip_jar === false && Number(editForm.gratuity_total) < gFloor && (
-                  <p className="chip danger" style={{ marginTop: 6 }}>Without a tip jar, minimum is ${gFloor}.</p>
-                )}
-                {/* Read-only audit trail: who last moved the gratuity rate. Hidden
-                    when never touched (origin is null). Internal-only. */}
-                {GRATUITY_ORIGIN_LABELS[proposal?.gratuity_rate_change_origin] && (
-                  <p className="tiny muted" style={{ marginTop: 6 }}>
-                    {GRATUITY_ORIGIN_LABELS[proposal.gratuity_rate_change_origin]}
-                  </p>
-                )}
-              </>
-            );
-          })()}
-        </div>
+        {/* No gratuity controls here (election-at-payment, spec 2026-08-03): the
+            client elects the tip jar at sign-and-pay and the Stripe webhook
+            persists it. A paid proposal's Gratuity line still renders read-only
+            in the Live preview breakdown below. */}
 
         {/* Total override */}
         <div style={{ paddingTop: 12, borderTop: '1px solid var(--line-1)', marginBottom: 12 }}>

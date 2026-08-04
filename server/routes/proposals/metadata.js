@@ -1,7 +1,7 @@
 const express = require('express');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
-const { calculateProposal, deriveGratuityRate, computeGratuityBasis } = require('../../utils/pricingEngine');
+const { calculateProposal } = require('../../utils/pricingEngine');
 const { stripIncludedAddons } = require('../../utils/proposalRules');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError } = require('../../utils/errors');
@@ -33,7 +33,7 @@ router.get('/addons', auth, requireAdminOrManager, asyncHandler(async (req, res)
  *  (bundle-covered add-ons dropped) and carry a bounded quantity, so the
  *  preview total matches what the proposal would actually be saved at. */
 router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, addon_variants, addon_quantities, syrup_selections, adjustments, total_price_override, tip_jar, gratuity_total, gratuity_rate } = req.body;
+  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, addon_variants, addon_quantities, syrup_selections, adjustments, total_price_override, tip_jar, gratuity_rate } = req.body;
   if (!package_id) {
     throw new ValidationError({ package_id: 'Package is required' });
   }
@@ -61,24 +61,11 @@ router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, 
       }));
   }
 
-  // Gratuity preview: derive a rate from an entered total so the admin preview
-  // reflects the gratuity line (same derivation the persist path uses, §7).
-  let previewRate = 0;
+  // Gratuity preview (election-at-payment): the editor can no longer ENTER a
+  // gratuity — it always previews at the STORED rate/jar so a paid proposal's
+  // gratuity line scales with staff/hours edits and matches what will save.
   const previewTipJar = tip_jar !== false;
-  if (gratuity_total !== undefined) {
-    const { staffCount, hours } = computeGratuityBasis({
-      pkg: pkgResult.rows[0], guestCount: guest_count || 50,
-      durationHours: duration_hours || 4, numBartenders: num_bartenders, addons,
-    });
-    const g = deriveGratuityRate({ enteredTotal: gratuity_total, staffCount, hours, tipJar: previewTipJar });
-    if (!g.ok) throw new ValidationError({ gratuity: g.message });
-    previewRate = g.rate;
-  } else if (gratuity_rate !== undefined) {
-    // Not an explicit gratuity edit — preview at the stored rate so the gratuity
-    // line scales with staff/hours (mirrors the persist path when gratuity_total
-    // is omitted). No re-derivation, so an unrelated edit can't shift the rate.
-    previewRate = Number(gratuity_rate) || 0;
-  }
+  const previewRate = Number(gratuity_rate) || 0;
 
   const snapshot = calculateProposal({
     pkg: pkgResult.rows[0],
