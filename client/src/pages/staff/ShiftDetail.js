@@ -32,6 +32,8 @@ import {
   EventMetaGrid,
 } from '../../components/staff/BeoSections';
 
+const RequestMoreTime = React.lazy(() => import('./RequestMoreTime'));
+
 /**
  * ShiftDetail — the staff Event Details page (spec 2026-07-22).
  *
@@ -86,6 +88,7 @@ export default function ShiftDetail() {
   const [dropResult, setDropResult] = useState(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
+  const [showExtend, setShowExtend] = useState(false);
 
   // ShiftsPage keeps ONE instance of this component across numeric URL
   // changes, so per-shift action state must reset when the shift does or a
@@ -95,6 +98,7 @@ export default function ShiftDetail() {
     setDropMode(null);
     setDropResult(null);
     setRequestOpen(false);
+    setShowExtend(false);
   }, [shiftId]);
 
   // Monotonic fetch token: a response only lands if no newer fetch has started
@@ -631,6 +635,12 @@ export default function ShiftDetail() {
         />
       )}
 
+      {showExtend && (
+        <React.Suspense fallback={<div className="sp-skeleton" style={{ height: '4rem' }} />}>
+          <RequestMoreTime shiftId={shiftId} onClose={() => setShowExtend(false)} />
+        </React.Suspense>
+      )}
+
       <EventActionArea
         viewerState={viewerState}
         isDrinkPlanFinalized={isDrinkPlanFinalized}
@@ -648,6 +658,7 @@ export default function ShiftDetail() {
         onRequest={() => setRequestOpen(true)}
         onClaimCover={claimCover}
         onWithdraw={withdrawRequest}
+        onExtend={() => setShowExtend(true)}
       />
 
       <DropCoverModal

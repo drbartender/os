@@ -18,6 +18,7 @@ import MessageLogCard from './eventDetail/MessageLogCard';
 import EventDetailPlanLogo from './EventDetailPlanLogo';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
+import ServiceExtensionPanel from '../../components/adminos/ServiceExtensionPanel';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import { fmtDate, fmtDateFull, fmtTime24, fmtTimeRange24, relDay } from '../../components/adminos/format';
 import { parsePositionsCount, approvedCount, remainingByRole } from '../../components/adminos/shifts';
@@ -533,6 +534,10 @@ export default function EventDetailPage() {
 
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
           <ProposalDetailPaymentPanel proposal={proposal} onUpdate={loadProposal} />
+
+          {/* Self-loading; renders nothing when the event has no extension
+              requests, so most events never show the card. */}
+          <ServiceExtensionPanel proposalId={proposal.id} />
 
           <DrinkPlanCard
             proposalId={proposal.id}

@@ -41,6 +41,7 @@ export default function EventActionArea({
   onRequest,
   onClaimCover,
   onWithdraw,
+  onExtend,
 }) {
   if (viewerState === 'admin') {
     return (
@@ -156,6 +157,25 @@ export default function EventActionArea({
       )}
 
       {dropResult && <DropResultNote dropResult={dropResult} />}
+
+      {/* Service extension (spec 2026-07-25 §5.1). Its own card in normal flow,
+          deliberately clear of the sticky confirm bar below, which may carry an
+          active Confirm button for an unacknowledged staffer. No price anywhere
+          on the staff side (spec decision 2); eligibility and window checks
+          live in the panel this opens. */}
+      {onExtend && (
+        <div className="sp-drop-card">
+          <div className="sp-drop-l">
+            <div className="sp-drop-title">Event running long?</div>
+            <div className="sp-drop-sub">
+              Ask the client to add more time. They get a text to confirm.
+            </div>
+          </div>
+          <button type="button" className="sp-btn sp-btn-sm" onClick={onExtend}>
+            Request more time
+          </button>
+        </div>
+      )}
 
       <div className="sp-confirm-bar">
         <ConfirmBar

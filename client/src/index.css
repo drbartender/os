@@ -9602,6 +9602,15 @@ html[data-app="admin-os"] .location-suggest-item.active {
   text-align: center;
   margin: 4px 0 0;
 }
+.invoice-extension-terms {
+  border: 1px solid var(--border, #ddd);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  margin: 1.25rem 0;
+}
+.invoice-extension-terms h2 { margin-top: 0; font-size: 1.15rem; }
+.invoice-extension-terms p { font-size: 0.92rem; line-height: 1.5; }
+.invoice-extension-accepted { font-weight: 600; }
 
 @media (max-width: 640px) {
   .invoice-document { padding: 22px 24px; }
@@ -19417,3 +19426,25 @@ html[data-app="admin-os"] .pay-qr-tile {
 }
 .sms-optin-next { margin-bottom: 0; }
 .sms-optin-next a { text-decoration: underline; }
+
+/* ── Service extension (staff request skeleton + admin panel) ── */
+.sp-skeleton {
+  border-radius: 10px;
+  background: var(--sp-bg-2);
+  border: 1px solid var(--sp-line-1);
+  opacity: 0.6;
+}
+.ext-payroll-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid var(--line-1);
+  border-left: 3px solid #b45309;
+  background: var(--bg-2);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  margin-bottom: 12px;
+}
+.ext-row { padding: 10px 0; }
+.ext-row + .ext-row { border-top: 1px solid var(--line-1); }

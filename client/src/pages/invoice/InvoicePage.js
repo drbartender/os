@@ -76,6 +76,11 @@ export default function InvoicePage() {
   const [stripePromise, setStripePromise] = useState(null);
   const [showPayment, setShowPayment] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
+  // Service-extension terms gate (spec 2026-07-25 decision 8). Non-null only
+  // for an extension invoice, so every ordinary invoice renders exactly as before.
+  const [extension, setExtension] = useState(null);
+  const [accepting, setAccepting] = useState(false);
+  const [zeroDeltaSettled, setZeroDeltaSettled] = useState(false);
   // "Save as PDF" busy/error state. pdfError steers the client to the browser
   // print path (a @media print stylesheet renders a clean B&W document).
   const [pdfBusy, setPdfBusy] = useState(false);
@@ -87,7 +92,12 @@ export default function InvoicePage() {
     (async () => {
       try {
         const { data } = await api.get(`/invoices/t/${token}`);
-        if (!cancelled) setInvoice(data.invoice);
+        if (!cancelled) {
+          setInvoice(data.invoice);
+          // The server nests `extension` INSIDE `invoice`; reading a top-level
+          // `data.extension` would silently stay null and leave the gate open.
+          setExtension(data.invoice?.extension || null);
+        }
       } catch (err) {
         if (!cancelled) setError({ status: err.status, message: err.message });
       } finally {
@@ -122,8 +132,35 @@ export default function InvoicePage() {
     setPaymentSuccess(true);
     setShowPayment(false);
     toast.success('Payment received!');
-    api.get(`/invoices/t/${token}`).then(({ data }) => setInvoice(data.invoice)).catch(err => console.error('Invoice refetch after payment failed:', err));
+    api.get(`/invoices/t/${token}`).then(({ data }) => {
+      setInvoice(data.invoice);
+      setExtension(data.invoice?.extension || null);
+    }).catch(err => console.error('Invoice refetch after payment failed:', err));
   }, [token, toast]);
+
+  const acceptTerms = async () => {
+    if (accepting) return;
+    setAccepting(true);
+    setFormError('');
+    try {
+      const res = await api.post(`/service-extensions/t/${token}/accept`);
+      setExtension((prev) => ({ ...prev, accepted_at: res.data.acceptedAt, requires_acceptance: false }));
+      // A zero-delta request settles on acceptance: nothing left to pay. The
+      // separate flag keeps the success copy honest (no payment happened).
+      if (!res.data.requiresPayment) {
+        setZeroDeltaSettled(true);
+        setPaymentSuccess(true);
+      }
+    } catch (err) {
+      // api.js rejects with the normalized { message, code, fieldErrors, status }
+      // shape (client/src/utils/api.js:45-50); err.response never exists on it,
+      // and the no-restricted-syntax lint rule that bans err.response reads
+      // silently yields undefined here (the generic fallback would always show).
+      setFormError(err.message || 'Could not record your acceptance. Please try again.');
+    } finally {
+      setAccepting(false);
+    }
+  };
 
   const handleSavePdf = useCallback(async () => {
     const element = printRef.current;
@@ -192,6 +229,9 @@ export default function InvoicePage() {
 
   const isPaid = invoice.status === 'paid' || paymentSuccess;
   const balanceDue = invoice.amount_due - invoice.amount_paid;
+  // Server-derived: an extension invoice cannot reach the payment element
+  // before terms acceptance. Always false for ordinary invoices.
+  const paymentBlockedByTerms = Boolean(extension?.is_extension && extension.requires_acceptance);
 
   return (
     <div className="invoice-page">
@@ -337,13 +377,39 @@ export default function InvoicePage() {
             </div>
           )}
 
+          {extension?.is_extension && !extension.terms && extension.requires_acceptance && !paymentSuccess && (
+            <section className="invoice-extension-terms">
+              <p>
+                This invoice extends your bar service, but the terms could not be
+                displayed. Payment stays locked until this is resolved. Please
+                contact us and we will sort it out right away.
+              </p>
+            </section>
+          )}
+
+          {extension?.is_extension && extension.terms && !paymentSuccess && (
+            <section className="invoice-extension-terms">
+              <h2>{extension.terms.headline}</h2>
+              {extension.terms.paragraphs.map((p, i) => <p key={i}>{p}</p>)}
+              {extension.requires_acceptance ? (
+                <button type="button" className="btn" onClick={acceptTerms} disabled={accepting}>
+                  {accepting
+                    ? 'Confirming...'
+                    : (extension.requires_payment ? 'Accept and continue to payment' : 'Accept')}
+                </button>
+              ) : (
+                <p className="invoice-extension-accepted">Accepted. Thank you.</p>
+              )}
+            </section>
+          )}
+
           {!isPaid && balanceDue > 0 && !showPayment && (
-            <button className="btn btn-primary invoice-pay-btn" onClick={handlePayClick}>
+            <button className="btn btn-primary invoice-pay-btn" onClick={handlePayClick} disabled={paymentBlockedByTerms}>
               Pay {formatCurrency(balanceDue)}
             </button>
           )}
 
-          {showPayment && clientSecret && stripePromise && (
+          {showPayment && !paymentBlockedByTerms && clientSecret && stripePromise && (
             <div className="invoice-payment-wrap">
               <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'stripe' } }}>
                 <PaymentForm onSuccess={handlePaymentSuccess} />
@@ -353,7 +419,7 @@ export default function InvoicePage() {
 
           {paymentSuccess && (
             <div className="invoice-success-msg">
-              <p>Payment successful! Thank you.</p>
+              <p>{zeroDeltaSettled ? 'Accepted. The extra time is confirmed, at no additional charge. Thank you.' : 'Payment successful! Thank you.'}</p>
             </div>
           )}
 
