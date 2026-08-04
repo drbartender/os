@@ -138,7 +138,14 @@ calls `recordSmsConsent` at all.**
 The checked path is exactly what ships today and is not modified, including the
 rollback-on-any-non-applied-outcome fix.
 
-The unchecked path:
+> **SUPERSEDED, 2026-08-03.** The unchecked path described immediately below was
+> built, reviewed, and **rejected by the review fleet**. It never shipped. What
+> shipped instead is in "Revision: the unchecked path moved to `email_leads`" at
+> the end of this document. The original is kept because the two defects it had
+> are the reason the current design looks the way it does, and re-deriving it
+> from the shipped code alone would lose that.
+
+The unchecked path, AS ORIGINALLY SPECIFIED (superseded):
 
 1. `findOrCreateClientDetailed(...)`, phone possibly null.
 2. If the client already existed, `ROLLBACK` and return ok, writing nothing. This
@@ -211,3 +218,56 @@ from that worktree so `.husky/pre-push` evaluates only these files.
 
 Resubmit the campaign with `https://drbartender.com/sms` and a fresh screenshot
 showing the unchecked box and the optional phone field.
+
+---
+
+# Revision: the unchecked path moved to `email_leads`
+
+**This section describes what actually shipped.** Where it disagrees with
+anything above, this wins.
+
+The review fleet rejected the original unchecked path (create a `clients` row
+with `sms_enabled` forced false) for two defects, both verified against a running
+database rather than argued:
+
+1. **It locked people out.** A `clients` row created by the unchecked submit is a
+   row that submit "owns", so a LATER ticked submit from the same address
+   resolved as `existing_client`, recorded nothing, and still showed the success
+   screen. Declining once meant never being able to opt in through this form
+   again. The likeliest person to hit it is a carrier reviewer testing the
+   unticked path and then the ticked one.
+2. **It bypassed the phone-scoped STOP guard.** `recordSmsConsent` refuses a
+   number under an active STOP on any row, but that path skipped
+   `recordSmsConsent` entirely, so posting a stranger's stopped number under a
+   different name committed a second row carrying it. `smsInbound`'s
+   `lookupSender` takes the newest row, so the victim's STOP would land on that
+   shadow row while their real row stayed SMS-on.
+
+**What shipped instead.** The unchecked path never touches `clients`. It upserts
+one `email_leads` row (the actual marketing list, so "signed up for email
+updates" is true rather than a `clients` row nothing is ever sent to) and
+returns. `email_leads` has no phone column, which is the point: nothing on this
+path can carry a number, so neither defect is reachable. `status` is deliberately
+excluded from the upsert's `DO UPDATE`, so a public form cannot resurrect an
+unsubscribed lead.
+
+**Two consequences that change earlier sections of this spec:**
+
+- **A number supplied without ticking the box is ignored entirely, and NOT
+  format-validated.** The spec above says a malformed phone on the unchecked path
+  is rejected. That is wrong and was itself a forced-consent defect: someone who
+  half-types a number and then decides against texts would be dead-ended on a
+  field labelled optional. There is a test named `an unticked box with a
+  MALFORMED phone still succeeds`. Do not "restore" the check.
+- **The `sms_enabled: false` hazard section no longer applies to this path**,
+  because no `clients` row is created. It still applies to any future code that
+  creates one.
+
+**Copy rule learned the hard way.** The no-texts success card was wrong three
+times, each time by promising something one `email_leads` upsert cannot deliver
+("we won't text you" — false for an existing client with SMS on; "we'll email you
+about your quote, booking, payments and event details" — none of those send off
+an `email_leads` row; "we'll be in touch by email" — false for a lead who
+previously unsubscribed). The card may state what the submit DID, never a future
+send. The same correction was applied to the ticked card, which promised texts
+that a `prior_opt_out` or `existing_client` rollback means will never arrive.
