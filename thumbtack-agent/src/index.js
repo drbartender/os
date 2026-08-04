@@ -53,8 +53,14 @@ const CFG = {
   // and a label list that parses to empty falls back to the default (an empty
   // list is a misconfig, not a kill switch — that's TT_AUTOREPLY_ENABLED).
   replyCtaLabels: parseLabels(process.env.REPLY_CTA_LABELS,
-    'reply,respond,approve,accept,respond to lead,accept lead,view and respond', 'REPLY_CTA_LABELS'),
+    'view and reply,reply,respond,approve,accept,respond to lead,accept lead,view and respond', 'REPLY_CTA_LABELS'),
   replyClearLabels: parseLabels(process.env.REPLY_CLEAR_LABELS, 'clear', 'REPLY_CLEAR_LABELS'),
+  // Composer-textarea placeholder fragments (case-insensitive substring, any
+  // match). Two live-pinned shapes so far: the answered-thread composer
+  // ("Type message", pro-inbox 8/03) and the pristine-lead respond panel
+  // ("Answer any questions and let them know next steps.", pro-leads 8/03).
+  replyComposerPlaceholders: parseLabels(process.env.REPLY_COMPOSER_PLACEHOLDERS,
+    'type message,answer any questions', 'REPLY_COMPOSER_PLACEHOLDERS'),
   minDelayMs: int(process.env.MIN_DELAY_MS, 8000),
   maxDelayMs: int(process.env.MAX_DELAY_MS, 25000),
   dailyCap: int(process.env.DAILY_CAP, 40),
@@ -195,7 +201,7 @@ async function pickByLabelPriority(page, labels) {
     const matches = page.getByRole('button', { name: re }).or(page.getByRole('link', { name: re }))
       .filter({ visible: true });
     const count = await matches.count().catch(() => 0);
-    if (count === 1) return { locator: matches.first() };
+    if (count === 1) return { locator: matches.first(), label };
     if (count > 1) return { ambiguous: label };
   }
   return null;
@@ -205,11 +211,13 @@ async function pickByLabelPriority(page, labels) {
 // webhook body and are untrusted (the server's logId precedent).
 const fsSafeId = (s) => String(s).replace(/[^\w-]/g, '').slice(0, 64) || 'unknown';
 
-// The message composer textarea (live-pinned 2026-08-03: placeholder "Type
-// message"). Returns its current value, or null when no such box is visible —
-// callers treat null as "cannot prove composer state" and fail closed.
+// The message composer textarea, located by placeholder (env-tunable list —
+// TT uses DIFFERENT placeholders per surface; see replyComposerPlaceholders).
+// Returns its current value, or null when no such box is visible — callers
+// treat null as "cannot prove composer state" and fail closed.
 async function composerText(page) {
-  const box = page.getByPlaceholder(/type message/i).first();
+  const re = new RegExp(CFG.replyComposerPlaceholders.map(escapeRegex).join('|'), 'i');
+  const box = page.getByPlaceholder(re).filter({ visible: true }).first();
   if (!(await box.isVisible().catch(() => false))) return null;
   return box.inputValue().catch(() => null);
 }
@@ -258,26 +266,34 @@ async function captureDiag(page, negotiationId, tag) {
   }
 }
 
-// Kill TT's streamed AI draft and PROVE the composer empty before any pick.
-// The empty proof is read twice with a beat between, so a mid-stream read can
-// never slip an AI fragment into the send. Returns 'empty' or 'clear_failed'.
+// Kill TT's streamed AI draft (when one streams — the pro-leads respond panel
+// opened empty on the 8/03 live lead) and PROVE the composer empty before any
+// pick. Empty is proven FIRST, read twice with a beat between so a mid-stream
+// read can never slip an AI fragment into the send; Clear is clicked only
+// when there is actually text to clear, so an ambiguous pair of Clear
+// controls can only block a draft that genuinely needs clearing.
+// Returns 'empty' or 'clear_failed'.
 async function clearAiDraft(page) {
   await sleep(2500); // let streaming begin; an instant read would race it
   const deadline = Date.now() + AI_DRAFT_WAIT_MS; // budget starts AFTER the settle beat
   while (Date.now() < deadline) {
-    const clear = await pickByLabelPriority(page, CFG.replyClearLabels);
-    if (clear && clear.ambiguous) return 'clear_failed'; // two Clears = never guess
-    if (clear) {
-      await humanPause();
-      await clear.locator.click().catch(() => {});
-      await sleep(1200);
-    }
     const text = await composerText(page);
     if (text === '') {
       await sleep(1500);
       if ((await composerText(page)) === '') return 'empty';
+      continue; // stream landed mid-proof; go clear it
     }
-    await sleep(700);
+    if (text) {
+      const clear = await pickByLabelPriority(page, CFG.replyClearLabels);
+      if (clear && clear.ambiguous) return 'clear_failed'; // two Clears = never guess
+      if (clear) {
+        await humanPause();
+        await clear.locator.click().catch(() => {});
+        await sleep(1200);
+        continue;
+      }
+    }
+    await sleep(700); // null (composer unreadable yet) or no Clear control yet
   }
   return 'clear_failed';
 }
@@ -423,6 +439,7 @@ async function sendQuickReplyOnPage(page, negotiationId, templateLabel, markSend
     await captureDiag(page, negotiationId, cta ? `ambiguous-cta-${fsSafeId(cta.ambiguous)}` : 'cta-vanished');
     return { reason: 'response_cta_not_found' };
   }
+  log(`reply ${negotiationId}: clicking respond CTA "${cta.label}" on ${page.url()}`);
   await humanPause();
   await cta.locator.click();
   let composerUp = await quickReply.waitFor({ state: 'visible', timeout: CFG.renderTimeoutMs })
