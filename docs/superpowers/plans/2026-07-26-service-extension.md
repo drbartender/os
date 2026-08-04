@@ -170,7 +170,7 @@ Task 12 is split across two lanes because `ext-routes` consumes half of it. The 
 
 1. **ext-core:** Tasks 1, 2, 3, 4, 5, then **12a** (the `serviceExtensionPayroll.js` hours module, Steps 1 to 3 of Task 12).
 2. **ext-routes:** Tasks 6, 7, 8, 9, 10. Tasks 8 and 10 import `applyExtensionHours` and `maybeAlertPayroll` from 12a, which is why 12a cannot live in a later lane.
-3. **ext-webhook-payroll:** **12b** (the `payrollAccrual.js` gratuity addend, Steps 4 onward of Task 12), then 11, then 20 and 21 (the off-ledger carve-outs, added 2026-08-03), then 13. Task 11's suite imports the payroll module, so 12a must already exist; it does, from step 1.
+3. **ext-webhook-payroll:** **12b** (the `payrollAccrual.js` gratuity addend, Steps 4 onward of Task 12), then 11, then 20 and 21 (the off-ledger carve-outs, added 2026-08-03), then **19** (the refund candidate-set carve-out: it is printed far below under the ext-docs heading for historical reasons, but its files belong to THIS lane's footprint and it MUST land before the lane gate), then 13. Task 11's suite imports the payroll module, so 12a must already exist; it does, from step 1.
 4. **ext-ui:** Tasks 14, 15, 16. **ext-docs:** Tasks 17, 18.
 
 If a worker builds Task 11 before 12a exists, the test file's top-level `require` throws `MODULE_NOT_FOUND`. The lazy `require` inside the handler does not save the suite.
@@ -182,6 +182,7 @@ Per the execution-review cadence rule, agents fire at checkpoints, not only at m
 - `ext-routes` after Task 7: `security-review` (the assignment predicate and the auth/mount ordering are both authored there).
 - `ext-routes` after Task 10: `security-review` + `database-review` (public token surface; the off-ledger branches go LIVE here, when the first `Service Extension` invoice is minted).
 - `ext-webhook-payroll` after Tasks 12 and 11: `security-review` + `code-review` (the two money seams).
+- `ext-webhook-payroll` after Tasks 20, 21, and 19: `code-review` on the three carve-outs together (they all touch battle-tested money code: the monitor, cancel-line netting, and the refund candidate set).
 - `ext-ui` after Task 15: `code-review` + `ui-ux-review` (`InvoicePage.js` is every client's payment surface).
 - Merge gate per lane: the fleet declared in front-matter.
 
@@ -880,7 +881,7 @@ test('a tiny hosted event still owes the billed-guest extra hour, NOT $0', async
   // clears it. That wrong expectation would have sent the implementer hunting a
   // non-bug in correct pricing code, so the number below is measured, not
   // reasoned. If a package's floor is ever high enough to bind at BOTH
-  // durations the delta really is $0, which is why Task 13 keeps the
+  // durations the delta really is $0, which is why Task 8 keeps the
   // zero-delta settle path; it is just not this package.
   const id = await mkProposal({ packageId: hostedPkgId, guests: 1, totalPrice: 550 });
   const r = await computeExtensionDelta({ client: pool, proposalId: id, requestedDurationHours: 5 });
@@ -3150,7 +3151,7 @@ async function voidExtensionInvoice(proposalId, invoiceId) {
 /**
  * Payroll warning text when the event's hours are already accrued and
  * admin-edited, so the automatic re-seed will refuse to touch them.
- * Mirrors the rule in serviceExtensionPayroll (Task 13).
+ * Mirrors the rule in serviceExtensionPayroll (Task 12a).
  */
 async function payrollWarningFor(proposalId) {
   const { rows } = await pool.query(
@@ -3975,7 +3976,7 @@ Added 2026-08-03 after a verified freshness audit against main. `balanceInvoiceM
 
 - [ ] **Step 1: Exclude off-ledger labels from the shared PAYABLE_SUM fragment**
 
-Modify the shared PAYABLE_SUM fragment (balanceInvoiceMonitor.js:39-46) so it excludes invoices whose label is in `OFF_LEDGER_INVOICE_LABELS`. One carve-out fixes BOTH alert directions, because OVER_SQL (lines 76-87) and UNDER_SQL (lines 95-104) share the fragment.
+Modify the shared PAYABLE_SUM fragment (balanceInvoiceMonitor.js:39-46) so it excludes invoices whose label is in `OFF_LEDGER_INVOICE_LABELS`. One carve-out fixes BOTH alert directions, because OVER_SQL (lines 76-87) and UNDER_SQL (lines 95-104) share the fragment. Note the edit is slightly wider than the fragment alone: both queries run with NO bind parameters today (`pool.query(OVER_SQL)` / `pool.query(UNDER_SQL)` at :198-201), so parameterizing the label list as `$1` inside the fragment (repeated `$1` across interpolations is valid Postgres, and no existing placeholder conflicts) also means passing `[OFF_LEDGER_INVOICE_LABELS]` at both call sites. `invoices.label` is `NOT NULL DEFAULT 'Invoice'` (schema.sql:1949), so there is no NULL-label trap.
 
 Keep every other bespoke label counted, and preserve the intent of the Eve-Thornton comment (lines 70-75): non-off-ledger bespoke money rolls into `amount_paid` and self-clears, while off-ledger labels are structurally incapable of satisfying the invariant, because their money never enters `amount_paid`. Without the carve-out:
 1. a pending extension invoice on a paid-up event would alert daily as over-billed, permanently in the stranded-paid shape Task 13 deliberately leaves `pending`;
@@ -4335,7 +4336,7 @@ race single-winner."
 
 - [ ] **Step 7: Lane gate**
 
-Run every suite in this lane one at a time, plus every pre-existing webhook and payroll suite. Then the full fleet declared in front-matter.
+BEFORE this gate, Task 19 (the refund candidate-set carve-out, printed under the ext-docs heading but owned by THIS lane; see the build order) must have run: the lane must not merge without it. Then: run every suite in this lane one at a time, plus every pre-existing webhook and payroll suite. Then the full fleet declared in front-matter.
 
 ---
 
@@ -4360,10 +4361,10 @@ Expected: exit 0. A warning here fails the real deploy, so treat it as a failure
 - Modify: `client/src/components/staff/EventActionArea.js` (the entry button, in the `'assigned'` branch)
 
 **Interfaces:**
-- Consumes: `GET /api/service-extensions/eligibility/:shiftId`, `POST /api/service-extensions` (Task 7); display-context props from ShiftDetail's already-fetched event-details payload (Step 2).
+- Consumes: `GET /api/service-extensions/eligibility/:shiftId`, `POST /api/service-extensions` (Task 7). The eligibility response is the single data source; no display-context props (see the note after Step 2).
 - Produces: `<RequestMoreTime shiftId={...} onClose={...} />`, a bottom-sheet component.
 
-**Flow model (updated 2026-08-03):** model RequestMoreTime on `client/src/components/staff/RequestSheet.js` (349 lines, shipped 8/03): a bottom-sheet on the sp-modal chassis with scrim, Esc-close, and a submit-lock (RequestSheet.js:288-316), plus the parent-refetch-on-submitted contract (ShiftDetail.js:351-362). Its required-ack checkbox for hosted events, keyed on `package_pricing_type === 'per_guest'` (RequestSheet.js:74, 127, 178-201), is exactly the D4 "I have the product" tick pattern. The old drop/cover states this plan previously pointed at now live across DropCoverModal + EventActionArea.
+**Flow model (updated 2026-08-03, presentation settled):** the pinned Step 1 component STANDS as written: an inline `sp-card` panel with the eligibility response as its single data source (it was hardened by the rev 4 fleet and works standalone). `client/src/components/staff/RequestSheet.js` (349 lines, shipped 8/03) is the model for the INTERACTION PATTERNS only, not the chassis: the submit-lock (RequestSheet.js:288-316), the parent-refetch-on-submitted contract (ShiftDetail.js:351-362), and its required-ack checkbox for hosted events keyed on `package_pricing_type === 'per_guest'` (RequestSheet.js:74, 127, 178-201), which is exactly the D4 "I have the product" tick pattern. The old drop/cover states this plan previously pointed at now live across DropCoverModal + EventActionArea.
 
 - [ ] **Step 1: Build the component**
 
@@ -4398,9 +4399,10 @@ export default function RequestMoreTime({ shiftId, onClose }) {
     } catch (err) {
       // api.js rejects with the normalized { message, code, fieldErrors, status }
       // shape (client/src/utils/api.js:45-50). err.response NEVER exists on the
-      // rejected value, and a no-restricted-syntax lint rule bans err.response
-      // reads in client code, so this task's own CI=true build gate would fail
-      // on one. Models: RequestSheet.js:141-147, ShiftDetail.js:319-327.
+      // rejected value, so reading it silently yields undefined and the user
+      // always sees the generic fallback message. (A root-config lint rule also
+      // flags it, though CRA's build does not load that config.) Models:
+      // RequestSheet.js:141-147, ShiftDetail.js:319-327.
       setError(err.message || 'Could not load this event. Try again.');
     } finally {
       setLoading(false);
@@ -4544,7 +4546,7 @@ grep -n "contractedDurationHours\|stepLabels" server/routes/serviceExtensions/cr
 ```
 Expected: both present. If either is missing, stop: it belongs in `ext-routes`, and adding it here would put this lane outside its declared footprint and abort it.
 
-**Display-context plumbing (verified 2026-08-03).** The shift-keyed endpoint `GET /api/shifts/:shiftId/event-details` (server/routes/eventDetails.js:48-114, payload built by server/utils/eventDetailsPayload.js) already carries what RequestMoreTime needs for DISPLAY: `proposal.event_date` / `event_start_time` / `event_duration_hours` / `event_timezone` (eventDetailsPayload.js:288-291) and hosted-ness as `package.pricing_type` (:314; ShiftDetail derives `requestSheetShift.package_pricing_type` at :261-272). Pass `isHosted` and the contracted-time context down as props from ShiftDetail's already-fetched details instead of a second round trip. The NEW eligibility endpoint remains authoritative for the window check, the pending-request check, and the DST-correct `stepLabels` via `eventEndInstantForDuration`. D2 cuts both ways here: the event-details payload is price-free by construction (eventDetailsPayload.js:58-60, 92-99), and the eligibility response must stay equally price-free.
+**Display-context note (verified 2026-08-03).** The eligibility response is the component's single data source, as pinned in Step 1: it already returns `eligible, reason, contractedEndDisplay, contractedDurationHours, maxAdditionalHours, stepLabels, isHosted`, so NO props beyond `shiftId`/`onClose` are needed and no second data model exists. For the record: ShiftDetail's already-fetched event-details payload carries overlapping display context (`proposal.event_date` / `event_start_time` / `event_duration_hours` / `event_timezone` at eventDetailsPayload.js:288-291; hosted-ness as `package.pricing_type` at :314), and both sources are price-free by construction (eventDetailsPayload.js:58-60, 92-99); the eligibility endpoint is authoritative for the window check, the pending-request check, and the DST-correct `stepLabels` via `eventEndInstantForDuration`, and its response must stay equally price-free (D2).
 
 - [ ] **Step 3: Add the entry point via EventActionArea**
 
@@ -4573,12 +4575,16 @@ Pass `onExtend={() => setShowExtend(true)}` into the existing `<EventActionArea 
 Two structural bonuses of the rebuilt surface, both load-bearing:
 
 1. `viewerState === 'assigned'` keys on `myShift.my_request_status === 'approved'` (ShiftDetail.js:203), PER SHIFT, exactly mirroring create.js's per-shift assignment predicate. The button can never show to a worker assigned to a different shift of the same event (the 2026-08-03 codex lesson, encoded as `isEventStaffer` vs `isAssignedHere` at ShiftDetail.js:474-475).
-2. During the request window (the event has started), `dropDefaultMode` is null (ShiftDetail.js:224-230, the past-event guard), so the extend button is the sole action in the assigned branch.
+2. During the request window (the event has started), `dropDefaultMode` is null (ShiftDetail.js:224-230, the past-event guard), so the drop/cover card cannot render and the extend button is the only shift-management action in the assigned branch. The confirm bar (EventActionArea.js:160-168) still renders unconditionally there and may carry an active Confirm button for an unacknowledged staffer; the extend button must sit visually clear of it.
 
 - [ ] **Step 4: Confirm the file did not grow past its cap**
 
 Run: `node scripts/check-file-size.js --staged` after staging, and `wc -l client/src/pages/staff/ShiftDetail.js`.
 Expected: still under 1000 and grown by roughly 10 lines. If the ratchet blocks, extract the action-button row into its own component rather than using `--no-verify`.
+
+- [ ] **Step 4b: Verify in the app**
+
+The dev server is a Claude-managed background process with no auto-reload for server edits; restart it if server lanes landed since it started. As a dev staffer with an approved request on a shift whose event has started (adjust the fixture's times), open the shift page and confirm: the "Request more time" button renders in the action area (and does NOT render for a browsing staffer or on a different shift of the same event), the sheet opens and closes cleanly, the blocked states show their copy (too early, too late, pending collision), and the hosted tick appears only on a per-guest package. Matches the in-app verification steps Tasks 15 and 16 already carry.
 
 - [ ] **Step 5: Build and commit**
 
@@ -4636,7 +4642,7 @@ Add the accept handler:
       // api.js rejects with the normalized { message, code, fieldErrors, status }
       // shape (client/src/utils/api.js:45-50); err.response never exists on it,
       // and the no-restricted-syntax lint rule that bans err.response reads
-      // would fail this task's CI=true build gate.
+      // silently yields undefined here (the generic fallback would always show).
       setFormError(err.message || 'Could not record your acceptance. Please try again.');
     } finally {
       setAccepting(false);
@@ -4814,7 +4820,7 @@ git commit -m "docs(ext): README tree, ARCHITECTURE routes + schema, env var for
 - Test: `server/utils/refundHelpers.extensionScope.test.js`
 - Modify: `docs/ops-runbook.md` (the manual procedure)
 
-Add both files plus `docs/ops-runbook.md` to the `ext-webhook-payroll` footprint before starting.
+All three files are already declared in the `ext-webhook-payroll` footprint (front-matter). Reminder: this task RUNS in that lane, sequenced after Tasks 20 and 21 and before Task 13's lane gate (see the build order), even though it is printed here.
 
 - [ ] **Step 1: Read the refund seam before touching it**
 
@@ -4828,7 +4834,7 @@ This is a battle-tested money path shared with the cancel-line flow. The change 
 
 - [ ] **Step 2: Exclude off-ledger payments from the contract refund candidates**
 
-The exclusion goes INSIDE `loadPaymentsWithRemaining` itself: a payment linked to an OFF_LEDGER-labeled invoice is filtered out regardless of `rails`, and the rails signature is preserved. That single carve-out protects BOTH flows, the admin refund panel and the cancel-line overpayment splitter. Rationale to put in the comment: those dollars are not in `amount_paid`, so letting a contract refund draw against them lets the admin refund money the contract never recorded, and mis-attributes the reversal. A payment split across a contract invoice AND an extension invoice cannot happen (extension invoices are minted alone and paid alone), so a whole-payment exclusion is exact rather than approximate.
+The exclusion goes INSIDE `loadPaymentsWithRemaining` itself: a payment linked to an OFF_LEDGER-labeled invoice is filtered out regardless of `rails`, and the rails signature is preserved. That single carve-out protects BOTH flows, the admin refund panel and the cancel-line overpayment splitter. Mechanically the query must GROW a join: today it selects from `proposal_payments` only (refundHelpers.js:55-75), which carries no invoice id or label (schema.sql:992-1000); the payment-to-invoice linkage lives in `invoice_payments`, so the exclusion is a `NOT EXISTS` anti-join over `invoice_payments JOIN invoices` on the off-ledger labels (the join pattern is already in this file at refundHelpers.js:295-306). An engineer expecting a label column in the current row set will find nothing to filter on. Rationale to put in the comment: those dollars are not in `amount_paid`, so letting a contract refund draw against them lets the admin refund money the contract never recorded, and mis-attributes the reversal. A payment split across a contract invoice AND an extension invoice cannot happen (extension invoices are minted alone and paid alone), so a whole-payment exclusion is exact rather than approximate.
 
 - [ ] **Step 3: Write the test**
 
@@ -4939,7 +4945,8 @@ Every spec section, and the task that implements it. Written so a reviewer can c
 | D9 unpaid is a hard stop | 13 |
 | D10 contract does not move until settle | 7, 11 |
 | D11 SERVICE ends at the contracted time | 6 (copy) |
-| D12 side money, off-ledger, no dunning ever | 2, 11 (no-dunning test), 10, 18 |
+| D12 side money, off-ledger, no dunning ever | 2, 11 (no-dunning test), 10, 18; extended to post-spec code by 20 (monitor), 21 (cancel-line netting), 8 Step 2b (label guard) |
+| §7 refund candidate-set exclusion + Stripe-dashboard procedure | 19 |
 | D13 zero-delta settles on acceptance | 4, 8 |
 | D14 override grants time, no receivable | 10 |
 | §5.2 client sends through suppression, admins notified | 6, 7 |
@@ -5003,5 +5010,7 @@ Everything else the spec asks for has a task. The spec's own open items (the bro
   Codex also caught a defect in the fix for (2): locking `proposals` in the create route while `settleInTx` claimed the extension row first is an ABBA deadlock (40P01). Both paths now take proposals first, and the create route maps 40P01/40001 to a retryable conflict.
 
   Verified empirically, not argued: all seven of Task 4's dollar figures were run against the live pricing engine. Six matched exactly, including the $25 Shared Gratuity split. The seventh (`min_total`) was wrong in the plan and is now corrected to the measured $125, with the full reference table moved into the spec.
+
+- **rev 5.1, 2026-08-03.** Post-amendment plan-review fleet (plan-fidelity PASS, plan-decomposition FAIL, plan-feasibility PASS) folded: the decomposition BLOCKER was Task 19 missing from every run-order sequence (a worker following the build order would have merged ext-webhook-payroll without the refund carve-out; it predates rev 5 and passed the rev 4 fleet) — the build order, the lane gate, and a new carve-out review checkpoint now sequence it. Also folded: Task 14's data-path/chassis contradictions resolved (eligibility response is the single source; inline sp-card stands; RequestSheet cited for interaction patterns only), Task 20's bind-param scope and Task 19's grow-a-join mechanics stated, err.response enforcement claim corrected (CRA does not load the root flat config; the real hazard is the silent-undefined read), two wrong task pointers fixed (12a, 8), the coverage map gained the §7-refund and carve-out rows, and Task 14 gained an in-app verification step.
 
 - **rev 5, 2026-08-03.** Freshness audit against main (3 agents), applied as targeted amendments. New code that postdates rev 4 gained three protections: the balance-invoice monitor's PAYABLE_SUM off-ledger carve-out (Task 20), the `sumOffContractPaidCents` off-ledger skip protecting cancel-line overpayment math (Task 21), and a label guard refusing to mint or rename an invoice INTO an off-ledger label (Task 8 Step 2b). Task 14 was rewritten for the shipped staff event-details redesign (EventActionArea entry point, RequestSheet flow model, normalized `err` shape, display-context props). Task 19 was updated for the rails-parameterized `loadPaymentsWithRemaining` (the carve-out now protects both the admin panel and the cancel-line splitter). Spec §14's refunded-extension gratuity default was approved as-is. Stale line cites and the smsConsentCopy/STOP-guard/`TOTAL_TRACKING` prose claims were corrected; the money-smoke gate is now HARD against the prod-shaped ci-smoke branch.
