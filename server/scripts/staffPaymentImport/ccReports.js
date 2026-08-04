@@ -80,4 +80,4 @@ function loadBookings(filePath) {
   })).filter((b) => b.title);
 }
 
-module.exports = { loadKnownPeople, loadContacts, loadExpenses, loadBookings };
+module.exports = { loadKnownPeople, loadContacts, loadExpenses, loadBookings, ccDateToIso };
