@@ -23,19 +23,28 @@ function safeAddonQty(raw) {
 // creation) — keep this list in sync with the labels written there.
 const CONTRACT_LABELS = Object.freeze(['Deposit', 'Balance', 'Full Payment']);
 
+// The service-extension invoice label. Off-ledger by design (spec
+// 2026-07-25 D12): its money is never in total_price, so the webhook must
+// skip the amount_paid roll-up, refreshUnlockedInvoices must not count it,
+// and refund reconciliation must leave the contract alone. All three read
+// OFF_LEDGER_INVOICE_LABELS, so joining that set is the whole wiring.
+// Deliberately NOT in CONTRACT_LABELS and NOT in TOTAL_TRACKING_INVOICE_LABELS.
+const SERVICE_EXTENSION_INVOICE_LABEL = 'Service Extension';
+
 // Labels whose invoice amounts live entirely OUTSIDE proposals.total_price
 // (additive upsells; "invoice-only, never touches the contract"). Their
 // payments must never roll into proposals.amount_paid, and their locked
 // invoices never join the Balance lockedTotal — otherwise paying one forgives
-// the contract by its amount. CURRENTLY EMPTY: 'Enhancement Lab' left this
-// set on 2026-07-20 when lab additions switched to folding into total_price
+// the contract by its amount. Holds exactly one label since 2026-07-26:
+// 'Service Extension' (see above). History: 'Enhancement Lab' left this set
+// on 2026-07-20 when lab additions switched to folding into total_price
 // (owner decision — additions join the balance and the final invoice), which
-// makes lab invoices ordinary contract money. The consumer machinery
-// (webhook roll-up skip, refund skip, lockedTotal exclusion) is kept wired
-// and degrades to a no-op on the empty list — add a label here ONLY for a
-// future genuinely-additive invoice type. Distinct from "non-contract scope"
-// in refundHelpers, which is merely ∉ CONTRACT_LABELS.
-const OFF_LEDGER_INVOICE_LABELS = Object.freeze([]);
+// makes lab invoices ordinary contract money; the set then sat empty with the
+// consumer machinery (webhook roll-up skip, refund skip, lockedTotal
+// exclusion) kept wired as a no-op until the extension label joined. Add a
+// label here ONLY for a genuinely-additive invoice type. Distinct from
+// "non-contract scope" in refundHelpers, which is merely ∉ CONTRACT_LABELS.
+const OFF_LEDGER_INVOICE_LABELS = Object.freeze([SERVICE_EXTENSION_INVOICE_LABEL]);
 
 // Labels whose invoice amount_due TRACKS proposals.total_price, i.e. the ones
 // refreshUnlockedInvoices recomputes from the total on every reprice
@@ -59,5 +68,6 @@ module.exports = {
   safeAddonQty,
   CONTRACT_LABELS,
   OFF_LEDGER_INVOICE_LABELS,
+  SERVICE_EXTENSION_INVOICE_LABEL,
   TOTAL_TRACKING_INVOICE_LABELS,
 };

@@ -4230,3 +4230,80 @@ CREATE INDEX IF NOT EXISTS idx_sms_consent_log_client
 -- not_required; else pending.
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_print_key TEXT;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS menu_not_required BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- ─── Service extensions (on-site added bar time) ──────────────────────────
+-- One row per staff request for more bar time. Spec:
+-- docs/superpowers/specs/2026-07-25-service-extension-design.md
+-- Money is SIDE MONEY: the paid extension lives as its own invoice + payment,
+-- and proposals.total_price / amount_paid / pricing_snapshot never move. The
+-- only contract mutation is proposals.event_duration_hours.
+CREATE TABLE IF NOT EXISTS service_extensions (
+  id                        SERIAL PRIMARY KEY,
+  proposal_id               INTEGER NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+  shift_id                  INTEGER REFERENCES shifts(id) ON DELETE SET NULL,
+  requested_by_user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  invoice_id                INTEGER REFERENCES invoices(id) ON DELETE SET NULL,
+  contracted_end_time       VARCHAR(20),
+  requested_end_time        VARCHAR(20),
+  contracted_duration_hours NUMERIC(4,1) NOT NULL,
+  requested_duration_hours  NUMERIC(4,1) NOT NULL,
+  amount_cents              INTEGER NOT NULL,
+  gratuity_cents            INTEGER NOT NULL DEFAULT 0,
+  hosted_product_confirmed  BOOLEAN,
+  terms_version             TEXT,
+  client_accepted_at        TIMESTAMPTZ,
+  client_accept_ip          VARCHAR(64),
+  client_accept_ua          TEXT,
+  status                    VARCHAR(20) NOT NULL DEFAULT 'pending'
+                              CHECK (status IN ('pending','paid','expired','cancelled','overridden')),
+  -- Stamped only after the post-settle side effects (payroll hours + staff
+  -- greenlight) have run. A 'paid'/'overridden' row with finalized_at NULL is a
+  -- crash casualty: the settle committed but its side effects did not, so
+  -- payroll still holds the old hours and no bartender was told. Stripe will not
+  -- replay (isFirstDelivery already consumed the event) and the expiry sweep
+  -- only looks at 'pending', so without this column that state is invisible
+  -- forever. The sweep heals it.
+  finalized_at              TIMESTAMPTZ,
+  override_by_user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  override_reason           TEXT,
+  expires_at                TIMESTAMPTZ NOT NULL,
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- One live request per event at a time. The partial index is what makes a
+-- second staffer's concurrent request a clean no-op instead of a double charge.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_service_extensions_one_pending
+  ON service_extensions (proposal_id) WHERE status = 'pending';
+
+-- Sweep driver: claim pending rows past expiry.
+CREATE INDEX IF NOT EXISTS idx_service_extensions_pending_expiry
+  ON service_extensions (expires_at) WHERE status = 'pending';
+
+-- Webhook discriminator: settle looks the row up by the paid invoice.
+CREATE INDEX IF NOT EXISTS idx_service_extensions_invoice
+  ON service_extensions (invoice_id);
+
+-- Payroll gratuity addend sums paid rows per proposal.
+CREATE INDEX IF NOT EXISTS idx_service_extensions_proposal_status
+  ON service_extensions (proposal_id, status);
+
+-- Crash-recovery driver: settled rows whose post-settle side effects never ran.
+CREATE INDEX IF NOT EXISTS idx_service_extensions_unfinalized
+  ON service_extensions (updated_at)
+  WHERE finalized_at IS NULL AND status IN ('paid', 'overridden');
+
+-- Money columns can never go negative (merge-gate hardening, 2026-08-03).
+-- The pricing module already refuses a negative delta; this is the DB backstop.
+-- Note the fix-list rule: this CHECK also exists on the prod-shaped ci-smoke
+-- branch the moment it lands here, so suites must respect it.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'service_extensions_money_nonnegative_check'
+       AND conrelid = 'service_extensions'::regclass
+  ) THEN
+    ALTER TABLE service_extensions ADD CONSTRAINT service_extensions_money_nonnegative_check
+      CHECK (amount_cents >= 0 AND gratuity_cents >= 0);
+  END IF;
+END $$;

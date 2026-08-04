@@ -36,3 +36,9 @@ server/utils/lineItemCancel.test.js
 server/routes/proposals/cancelLineItem.test.js
 server/utils/proposalExtrasFold.stability.test.js
 server/utils/addonQuantity.test.js
+
+# Service extension (ext-core: pricing delta, settle core, payroll hours, end-instant)
+server/utils/serviceExtensionPricing.test.js
+server/utils/serviceExtensionSettle.test.js
+server/utils/serviceExtensionPayroll.test.js
+server/utils/eventEndInstant.test.js
