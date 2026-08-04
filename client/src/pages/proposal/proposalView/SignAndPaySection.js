@@ -256,6 +256,8 @@ export default function SignAndPaySection({
               <span className="sign-pay-eyebrow">Tip jar at the bar?</span>
               <h3 className="gratuity-heading">Tipping, handled your way</h3>
               <p className="gratuity-intro">
+                Our {gratuityStaffNoun}s are always tipped: either guests tip at
+                the bar, or the gratuity is prepaid.{' '}
                 <span className="assured">Every dollar</span> goes straight to your
                 {` ${gratuityStaffNoun}s`}. None of it is kept by Dr. Bartender.
               </p>
@@ -285,9 +287,13 @@ export default function SignAndPaySection({
                   <span className="tip-tablet-mark" aria-hidden="true">&#10005;</span>
                   <span className="tip-tablet-label">Skip the tip jar</span>
                 </span>
+                {/* NOTE: the literal $50 mirrors the server GRATUITY_FLOOR_RATE
+                    (server/utils/pricingEngine.js) — keep them in sync; a server
+                    bump would otherwise leave this copy quoting a stale floor. */}
                 <span className="tip-tablet-desc">
-                  No jar out. A set gratuity for your {gratuityStaffNoun}s is added to the
-                  total instead.
+                  No jar at the bar. Instead, a prepaid gratuity of $50 per{' '}
+                  {gratuityStaffNoun} per hour is added to your total, so your
+                  crew is still taken care of.
                 </span>
               </label>
             </div>

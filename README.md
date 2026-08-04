@@ -533,6 +533,8 @@ dr-bartender/
 │   │                           #   cc-clients-import.js            : 187 CC clients (dry-run default, cc_id idempotency)
 │   │                           #   cc-ledger-import.js             : frozen CC-era ledger load (P&L penny-tie gates, double-count guard, transfer skip)
 │   │                           #   cc-transfer-events.js           : future CC events -> native proposals (manifest-driven, born-confirmed, comms-guarded, --resume)
+│   │                           # other one-off operator scripts (dry-run default, --apply to write):
+│   │                           #   reset-unpaid-gratuity.js (+ .test.js) : strip pre-election self-elected gratuity from UNPAID proposals (column- OR snapshot-carried); refuses any paid row
 ├── docs/                       # Project docs: build-board.md (Claude-maintained ready/in-flight/shipped index), ops-runbook.md, tech-debt.md,
 │                               # client-portal-v2-project.md, staff-portal-beo-project.md, open-threads.md, superpowers/{specs,plans}/
 ├── .claude/agents/             # Claude Code review agents (7 agents)
@@ -614,7 +616,7 @@ dr-bartender/
 - Client-facing proposal view via UUID token URL
 - Combined contract signing + payment on a single screen
 - Payment options: pay $100 deposit or pay in full
-- Checkout gratuity: clients choose a tip jar and optional pre-paid gratuity at sign-and-pay (admins can preset it on a proposal); it scales with crew and hours and flows to staff through payroll
+- Checkout gratuity: clients choose a tip jar or a pre-paid gratuity at sign-and-pay, and the election persists ONLY when payment succeeds (it rides the PaymentIntent metadata and is applied by the Stripe webhook), so an abandoned checkout leaves the quote service-only and an unpaid proposal never carries a gratuity; admin cannot preset or edit it (removal goes through cancel-line-item). It scales with crew and hours and flows to staff through payroll
 - Autopay enrollment: clients can opt to have their remaining balance auto-charged on the due date (default: 14 days before event)
 - Admin-overridable balance due dates
 - Hourly autopay scheduler charges saved payment methods when balance is due

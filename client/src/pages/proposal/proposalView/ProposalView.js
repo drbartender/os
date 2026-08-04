@@ -262,7 +262,8 @@ export default function ProposalView() {
   }, [isPayableStatus, paymentOption, autopayChecked, token, depositSecret, fullSecret, tipJar, gratuityTotal, gratuityDirty, gratuityBelowFloor]);
 
   // A gratuity change invalidates both cached secrets (the full amount changes;
-  // the deposit must re-persist the new rate), forcing a fresh intent + total.
+  // the deposit must re-stamp the new election into the intent metadata),
+  // forcing a fresh intent + total.
   useEffect(() => {
     if (!gratuityDirty) return;
     // Show the loading state immediately so the payment form doesn't flash its
@@ -270,10 +271,11 @@ export default function ProposalView() {
     setLoadingIntent(true);
     // Debounce the secret-clear (mirrors the admin edit form's 400ms preview
     // debounce). Rapid keystrokes in the gratuity field keep resetting this timer,
-    // so the expensive create-intent refetch (row lock + Stripe retrieve/cancel/
-    // create + total_price rewrite) fires once the client pauses typing, not on
-    // every keystroke. While the secrets are still cached the intent effect
-    // early-returns, so no network or Stripe traffic happens mid-type.
+    // so the expensive create-intent refetch (Stripe retrieve/cancel/create;
+    // election-at-payment means it writes no gratuity to the proposal) fires once
+    // the client pauses typing, not on every keystroke. While the secrets are
+    // still cached the intent effect early-returns, so no network or Stripe
+    // traffic happens mid-type.
     const timer = setTimeout(() => {
       setDepositSecret('');
       setFullSecret('');
