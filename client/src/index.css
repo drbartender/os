@@ -19397,9 +19397,12 @@ html[data-app="admin-os"] .pay-qr-tile {
 @media (max-width: 640px) {
   .ws-press-pagehero.sms-optin-hero { padding: 20px 0 14px; }
   .ws-press-pagehero.sms-optin-hero .ws-press-eyebrow { display: none; }
-  /* The sub-line restates what the consent sentence says verbatim a few inches
-     lower, so on a phone it is 60px spent twice. The h1 stays: it is the page's
-     identity and a reviewer's confirmation they are on the right page. */
+  /* 60px this page cannot spare above the checkbox (see rule 4 in
+     SmsOptInPage.js). The h1 stays: it is the page's identity and a reviewer's
+     confirmation they are on the right page.
+     NOTE the sub-line no longer merely restates the consent sentence — since
+     2026-08-03 it is one of two places naming the EMAIL path. That is why the
+     card's h2 names both channels: it is what a phone gets instead of this. */
   .ws-press-pagehero.sms-optin-hero .ws-press-pagehero-sub { display: none; }
   .ws-section.sms-optin-section { padding-top: 1rem; }
   .sms-optin-section .wz-card { padding: 1.35rem; }
@@ -19424,6 +19427,16 @@ html[data-app="admin-os"] .pay-qr-tile {
   line-height: 1.6;
   margin-bottom: 0.75rem;
 }
+/* Same fix, same reason, as .wz-consent-text a: the default teal link measures
+   2.18:1 on this cream card, well under the 4.5:1 AA floor for body text. This
+   rule covers BOTH links on the card — the mailto that is a decliner's only
+   route back to texts, and the pre-existing "Request a quote" link, which had
+   the same problem from the day this card shipped. Measured 8.92:1 after.
+   The underline is not decoration either: #0e3d3a against this card's body text
+   (--deep-brown) is 1.49:1, so colour alone is not a usable cue (WCAG 1.4.1
+   Level A needs 3:1 for that). The global a:hover underline does not help a
+   phone, and the mailto here is a decliner's only route back to texts. */
+.sms-optin-done a { color: #0e3d3a; text-decoration: underline; }
 .sms-optin-next { margin-bottom: 0; }
 .sms-optin-next a { text-decoration: underline; }
 

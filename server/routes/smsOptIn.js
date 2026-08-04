@@ -9,6 +9,14 @@
 // scripts/sensitive-paths.txt and carries the inbound webhook plus the admin
 // manual reply; widening it for a public form would be gratuitous blast radius.
 //
+// THE CHECKBOX IS OPTIONAL, AND THAT IS A COMPLIANCE REQUIREMENT (2026-08-03).
+// A third rejection, "Forced Consent Violation", landed because this form
+// required BOTH the phone number and the checkbox: a consumer could not decline
+// messaging and still use it. A page whose only action is SMS signup can never
+// pass that test, so an unticked box is now a valid submit that signs the person
+// up for email only. Do not restore either requirement. See
+// docs/superpowers/specs/2026-08-03-sms-optional-consent.md.
+//
 // The consent semantics are NOT re-invented here. Every rule lives in
 // utils/smsConsent.js (the ownership gate, the row-scoped and phone-scoped STOP
 // guards, the audit log) and this route is one more caller of it. See
@@ -42,10 +50,20 @@ const MAX_EMAIL_LEN = 255;  // clients.email is VARCHAR(255)
  */
 router.post('/opt-in', publicLimiter, asyncHandler(async (req, res) => {
   const name = String(req.body?.client_name || '').trim();
-  const email = String(req.body?.client_email || '').trim();
+  // Lowercased HERE, before the length check, not at the point of use. Some
+  // characters expand under toLowerCase (U+0130 becomes two code units), so a
+  // 255-char address can pass the cap and then overflow the VARCHAR(255) column
+  // as a 22001 — an unhandled 500 on a public endpoint. Normalize, then measure.
+  const email = String(req.body?.client_email || '').trim().toLowerCase();
   const phoneRaw = String(req.body?.client_phone || '').trim();
   const { value: phone10 } = validatePhone(phoneRaw);
   const consent = consentFieldsFromBody(req.body);
+
+  // The ONLY thing that counts as consent. An absent field, a false, or a
+  // truthy-but-not-true value all land here as "did not ask for texts" — never
+  // as a decline, which is a different act with a permanent effect (see the
+  // note on the unchecked branch below).
+  const optedIn = consent ? consent.consented === true : false;
 
   const fieldErrors = {};
   if (!name) fieldErrors.client_name = 'Please enter your name';
@@ -53,17 +71,61 @@ router.post('/opt-in', publicLimiter, asyncHandler(async (req, res) => {
   if (!email) fieldErrors.client_email = 'Please enter your email';
   else if (email.length > MAX_EMAIL_LEN) fieldErrors.client_email = 'Email is too long';
   else if (!EMAIL_RE.test(email)) fieldErrors.client_email = 'Please enter a valid email address';
-  if (!phoneRaw) fieldErrors.client_phone = 'Please enter your mobile number';
-  else if (!phone10) fieldErrors.client_phone = 'Please enter a valid 10-digit US mobile number';
-  // The checkbox is REQUIRED on this form, unlike the quote wizard where it is
-  // one optional field on a proposal submit. Signing up for texts is this
-  // page's only purpose, so an unticked box is an unfinished form, not a
-  // decline — which is also why this endpoint can never record a decline and
-  // therefore never stamps the hard sms_opt_out_at.
-  if (!consent || consent.consented !== true) {
-    fieldErrors.sms_consent = 'Please check the box to agree to receive text messages';
+  // The number matters ONLY to receive texts, so it is validated only then, and
+  // a number typed without ticking the box is ignored outright rather than
+  // rejected. Both halves are deliberate. Making it mandatory for every submit
+  // is half of what got us the forced-consent rejection; and merely
+  // format-checking it on the no-texts path still dead-ends anyone who half-types
+  // a number and then decides against texts, which is the same rejection wearing
+  // a different hat. Nothing on the no-texts path stores a number (see below), so
+  // there is nothing here to validate.
+  if (optedIn) {
+    if (!phoneRaw) fieldErrors.client_phone = 'Please enter your mobile number to receive texts';
+    else if (!phone10) fieldErrors.client_phone = 'Please enter a valid 10-digit US mobile number';
   }
   if (Object.keys(fieldErrors).length) throw new ValidationError(fieldErrors);
+
+  // THE BOX WAS NOT TICKED: this is an email signup, and it deliberately does
+  // NOT touch the clients table.
+  //
+  // The first version of this branch created a client row with sms_enabled
+  // forced false. The review fleet killed it, and both reasons are worth keeping
+  // written down:
+  //
+  //   1. It locked people out. A client row created here is a row this submit
+  //      "already owns", so a LATER ticked submit from the same address resolved
+  //      as existing_client, recorded nothing, and still showed a success
+  //      screen. Declining once meant never being able to opt in through this
+  //      form again — most likely to be hit by a carrier reviewer testing the
+  //      un-ticked path and then the ticked one.
+  //   2. It re-opened the phone-scoped STOP guard. recordSmsConsent refuses a
+  //      number under an active STOP on ANY row, but that branch skipped
+  //      recordSmsConsent entirely, so posting a stranger's stopped number with
+  //      a different name committed a second row carrying it. smsInbound's
+  //      lookupSender takes the NEWEST row, so the victim's STOP would land on
+  //      that shadow row while their real row stayed SMS-on.
+  //
+  // email_leads is the actual marketing list (see routes/emailMarketing.js), so
+  // writing here is what makes "signed up for email updates" true rather than a
+  // clients row no email is ever sent to. It has no phone column, which is the
+  // point: nothing on this path can carry a number, so neither problem exists.
+  // The submitted number is dropped on the floor.
+  //
+  // Same unauthenticated exposure as the quote wizard's capture-lead, which
+  // upserts this table from a public form today. status is deliberately NOT in
+  // the DO UPDATE list: an unsubscribed lead must stay unsubscribed, and a public
+  // form must not be able to resurrect one.
+  if (!optedIn) {
+    await pool.query(
+      `INSERT INTO email_leads (email, name, lead_source, status)
+       VALUES ($1, $2, 'website', 'active')
+       ON CONFLICT (email) DO UPDATE SET
+         name = COALESCE(email_leads.name, EXCLUDED.name),
+         updated_at = NOW()`,
+      [email, name]  // already lowercased at parse; idx_email_leads_email is on raw email
+    );
+    return res.json({ ok: true });
+  }
 
   // Resolve the consent version BEFORE touching the database. This ordering is
   // security-relevant, not stylistic: recordSmsConsent checks the ownership gate
@@ -76,7 +138,13 @@ router.post('/opt-in', publicLimiter, asyncHandler(async (req, res) => {
   // browser can post a version this process does not know yet. We cannot say
   // what they agreed to, so record nothing and ask for a retry rather than show
   // a success screen for an opt-in that does not exist. Self-healing.)
-  if (!getConsentCopy(consent.version)) {
+  // Only the opt-in path needs a version, and an unticked box has already
+  // returned above — so the `optedIn` conjunct here is DEFENSIVE, not what
+  // performs the skip. It is kept so that moving the early return cannot
+  // silently start 503-ing email-only signups, which would also be uneven across
+  // emails only if the early return moved below the DB work. Do not "simplify"
+  // it away on the grounds that it is currently unreachable.
+  if (optedIn && !getConsentCopy(consent.version)) {
     Sentry.captureMessage('sms consent not recorded', {
       level: 'warning',
       tags: { route: 'sms/opt-in', reason: 'unknown_version' },
