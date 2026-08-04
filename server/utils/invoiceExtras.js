@@ -5,6 +5,7 @@
 const { toCents, db } = require('./invoiceShared');
 const { calculateSyrupCost } = require('./pricingEngine');
 const { reconcileProposalPaymentStatus } = require('./proposalStatus');
+const { OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
 const { ConflictError } = require('./errors');
 const { writeLineItems } = require('./invoiceLineItems');
 const { createInvoice } = require('./invoiceLifecycle');
@@ -324,6 +325,13 @@ const IN_TOTAL_PRICE_LABELS = Object.freeze([
  * planOverpaymentSplits refunds money the client still owes for goods DRB is
  * still buying.
  *
+ * OFF_LEDGER_INVOICE_LABELS ('Service Extension') is skipped too, for the
+ * OPPOSITE reason: that money never rolls into proposals.amount_paid either
+ * (the webhook's off-ledger skip), so it is off BOTH sides of the
+ * `amount_paid - total_price` equation and can never be a netting term.
+ * Counting a paid extension here would deflate a genuine overpayment and
+ * under-refund the client on a cancel-line.
+ *
  * @param {number} proposalId
  * @param {object} dbClient  the CALLER'S client — this runs inside a held
  *                           transaction, so it must never take its own.
@@ -335,7 +343,7 @@ async function sumOffContractPaidCents(proposalId, dbClient) {
     `SELECT id, label, amount_paid FROM invoices
       WHERE proposal_id = $1 AND status <> 'void' AND amount_paid > 0
         AND NOT (COALESCE(label, '') = ANY($2::text[]))`,
-    [proposalId, IN_TOTAL_PRICE_LABELS]
+    [proposalId, [...IN_TOTAL_PRICE_LABELS, ...OFF_LEDGER_INVOICE_LABELS]]
   );
 
   let cents = 0;

@@ -878,6 +878,26 @@ test('overpaymentCents nets out a PAID free-text manual invoice', async () => {
   });
 });
 
+test('overpaymentCents ignores a PAID Service Extension invoice (off-ledger)', async () => {
+  // Extension money is off-ledger: the webhook never rolls it into
+  // proposals.amount_paid, so it sits off BOTH sides of the
+  // `amount_paid - total_price` equation and can never be a netting term.
+  // Counting it (as any non-IN_TOTAL_PRICE label used to be) would deflate a
+  // genuine overpayment and under-refund the client by the extension amount.
+  const { proposalId } = await seedProposal({
+    override: 400, amountPaid: 460, status: 'balance_paid',
+    addons: [{ slug: SLUGS.photoBooth, name: 'Photo Booth', billingType: 'flat', rate: 100, quantity: 1 }],
+  });
+  await seedInvoice(proposalId, { label: 'Balance', dueCents: 40000, paidCents: 40000, status: 'paid', locked: true });
+  await seedInvoice(proposalId, { label: 'Service Extension', dueCents: 6000, paidCents: 6000, status: 'paid', locked: true });
+
+  await applyCancel(proposalId, { target: `addon:${SLUGS.photoBooth}` }, async (result) => {
+    const raw = Math.round(460 * 100) - Math.round(result.newTotal * 100);
+    assert.ok(raw > 0, 'fixture must produce a genuine overpayment');
+    assert.equal(result.overpaymentCents, raw, 'a paid extension must not change overpaymentCents');
+  });
+});
+
 // ── reconcileOpenDeltaInvoices: the fold marker decides, not the label ──
 
 test('an OPEN syrup-only Drink Plan Extras invoice survives a removal', async () => {

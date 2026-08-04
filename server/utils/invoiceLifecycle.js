@@ -110,8 +110,10 @@ async function refreshUnlockedInvoices(proposalId, dbClient) {
       // entry, so counting a locked one here would shrink the Balance invoice
       // by money the contract never contained (2026-07-20). COALESCE keeps a
       // NULL-label invoice counted (NULL = ANY(...) is NULL, and NOT NULL
-      // would silently drop the row); the set is currently empty (lab money
-      // folds into the contract since the same day), making this a no-op.
+      // would silently drop the row). 'Service Extension' is that label
+      // (since 2026-07-26): a locked extension invoice must stay out of
+      // lockedTotal, so this exclusion is live, not a no-op. (Lab money folds
+      // into the contract since 2026-07-20, so lab invoices count normally.)
       `SELECT COALESCE(SUM(amount_due), 0) AS locked_total
          FROM invoices
         WHERE proposal_id = $1 AND locked = true AND status != 'void'

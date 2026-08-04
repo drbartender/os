@@ -28,6 +28,7 @@
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { notifyAdminCategory } = require('./adminNotifications');
+const { OFF_LEDGER_INVOICE_LABELS } = require('./proposalMoneyShared');
 
 const OVER_ACTION = 'invoice_over_bill';
 const UNDER_ACTION = 'balance_invoice_missing';
@@ -35,7 +36,13 @@ const UNDER_ACTION = 'balance_invoice_missing';
 const usd = (cents) => '$' + (Number(cents) / 100).toFixed(2);
 
 // The payable sum, shared by both directions: what a client can actually pay
-// right now across their open invoices.
+// right now across their open invoices. Off-ledger labels are carved out:
+// their money never enters amount_paid (OFF_LEDGER_INVOICE_LABELS,
+// proposalMoneyShared.js), so they are structurally incapable of satisfying
+// the invariant in either direction. $1 is the OFF_LEDGER_INVOICE_LABELS
+// array; every query interpolating this fragment must bind it at the call
+// site. invoices.label is NOT NULL DEFAULT 'Invoice', so there is no
+// NULL-label trap in the ANY().
 const PAYABLE_SUM = `
   COALESCE((
     SELECT SUM(i.amount_due - i.amount_paid)
@@ -43,6 +50,7 @@ const PAYABLE_SUM = `
      WHERE i.proposal_id = p.id
        AND i.status IN ('sent', 'partially_paid')
        AND i.amount_due > i.amount_paid
+       AND NOT (i.label = ANY($1::text[]))
   ), 0)`;
 
 const OWED_CENTS = `
@@ -67,12 +75,17 @@ const LABELS = `
 // $360 against a $300 total) is exactly that shape, is deliberately out of
 // scope for the derivation work, and would otherwise alert every 24h forever.
 //
-// Note this counts EVERY open invoice, including labels the derivation leaves
-// alone (syrup-only extras, manual fees) whose money is additive to
-// total_price. That over-reports on the rare abandoned-card syrup-only shape.
-// Deliberate: a false alert is cheap and throttled, while excluding those
-// labels would have missed Eve Thornton, whose stranded $155 extras invoice WAS
-// folded into total_price. Alert-only means we err toward reporting.
+// Note this counts every open invoice EXCEPT off-ledger labels, including
+// bespoke labels the derivation leaves alone (syrup-only extras, manual fees)
+// whose money is additive to total_price. That over-reports on the rare
+// abandoned-card syrup-only shape. Deliberate: a false alert is cheap and
+// throttled, while excluding those labels would have missed Eve Thornton,
+// whose stranded $155 extras invoice WAS folded into total_price and
+// self-cleared through amount_paid. Off-ledger labels ('Service Extension')
+// are the one exception: their money NEVER enters amount_paid, so unlike
+// Eve's invoice they can never self-clear, and a pending extension invoice on
+// a paid-up event (the stranded-paid shape the expiry sweep deliberately
+// leaves pending) would alert every 24h forever.
 const OVER_SQL = `
   SELECT p.id, c.name AS client_name, p.status, p.event_date,
          ${PAYABLE_SUM} - (${OWED_CENTS}) AS excess_cents,
@@ -196,8 +209,8 @@ function renderEmail(over, under) {
  */
 async function monitorMissingBalanceInvoices() {
   const [overRes, underRes] = await Promise.all([
-    pool.query(OVER_SQL),
-    pool.query(UNDER_SQL),
+    pool.query(OVER_SQL, [OFF_LEDGER_INVOICE_LABELS]),
+    pool.query(UNDER_SQL, [OFF_LEDGER_INVOICE_LABELS]),
   ]);
 
   const candidates = overRes.rows.length + underRes.rows.length;

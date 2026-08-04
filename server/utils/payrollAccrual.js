@@ -296,9 +296,28 @@ async function accruePayoutsForProposal(proposalId) {
     const proposalTotalCents = Math.round(Number(proposal.total_price || 0) * 100);
     const proposalPaidCents = Math.round(Number(proposal.amount_paid || 0) * 100);
     const gratuityFunded = proposalPaidCents >= proposalTotalCents;
-    const grossGratuity = gratuityFunded
+    // CONTRACT gratuity only. This is the value the fee pro-ration is allowed
+    // to see, because proRataFeeCents relies on the gratuity being a part of
+    // the total_price denominator so the ratio cannot exceed 1.
+    const contractGrossGratuity = gratuityFunded
       ? extractGratuityCents(readSnapshot(proposal.pricing_snapshot, { context: 'payrollAccrual' }))
       : 0;
+
+    // Service-extension gratuity (spec 2026-07-25 section 9). Side money: it is
+    // NOT in pricing_snapshot and NOT in total_price, so it joins the pool as an
+    // event-scoped addend, mirroring how card tips already join. Gated
+    // per-extension on status='paid' (its own money arrived), independent of the
+    // proposal-level funded gate above, so a deposit-stage event still pays out
+    // the gratuity a client actually paid for extra time. An 'overridden'
+    // extension contributes nothing: its invoice is voided, so that money never
+    // arrives (spec decision 14).
+    const extGratRes = await client.query(
+      `SELECT COALESCE(SUM(gratuity_cents), 0)::int AS cents
+         FROM service_extensions
+        WHERE proposal_id = $1 AND status = 'paid'`,
+      [proposalId]
+    );
+    const extensionGratuity = Number(extGratRes.rows[0].cents) || 0;
     // Fee numerator (seam-sweep M4, decided 2026-07-02: exact pro-ration): only
     // fees on dollars INSIDE the total_price denominator may net against the
     // gratuity. Extra charges (Additional Services invoices, drink-plan extras)
@@ -333,9 +352,17 @@ async function accruePayoutsForProposal(proposalId) {
       [proposalId, CONTRACT_LABELS]
     );
     const gratuityFee = proRataFeeCents(
-      grossGratuity, proposalTotalCents, Number(feeRes.rows[0].fee)
+      contractGrossGratuity, proposalTotalCents, Number(feeRes.rows[0].fee)
     );
-    const netGratuity = Math.max(0, grossGratuity - gratuityFee);
+    // The addend is applied AFTER fee-netting on purpose, for two reasons.
+    // (1) Correctness: extension dollars sit outside the total_price
+    // denominator, so feeding them into proRataFeeCents would over-net the fee
+    // (bounded by the helper's Math.min(1, ...) clamp, but wrong regardless).
+    // (2) Policy: the extension payment's Stripe fee sits outside
+    // CONTRACT_LABELS and is therefore not in the fee numerator either, so DRB
+    // absorbs it rather than the staff pool. Decided, not accidental; it errs
+    // toward staff, consistent with this file's bias.
+    const netGratuity = Math.max(0, contractGrossGratuity - gratuityFee) + extensionGratuity;
 
     // Card-tip pools (gross and fee) from tips matched to this event's shifts.
     const tipRes = await client.query(

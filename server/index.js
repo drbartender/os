@@ -567,6 +567,40 @@ async function start() {
         clearHealthRow('refund_pending_sweep');
       }
 
+      // Service-extension expiry (spec 2026-07-25 section 5.5): a 60s sweep that
+      // makes the hard stop real. A pending request past its grace window is
+      // expired, its invoice voided, and every assigned staffer told service
+      // ends at the contracted time. Load-bearing, not housekeeping.
+      if (enabled('RUN_SERVICE_EXTENSION_SWEEP_SCHEDULER')) {
+        const { sweepExpiredExtensions, healUnfinalizedExtensions } = require('./utils/serviceExtensionSweep');
+        // One wrapped job, both halves: expire what timed out, then heal any
+        // settled-but-unfinalized row a crash left behind.
+        // Reentrancy guard (merge-gate finding): wrapScheduler has no overlap
+        // protection and a 50-row tick doing Stripe + provider calls can run
+        // past 60s. Overlap is claim-safe on the expiry half but the heal half
+        // would double-send greenlights and the stranded branch would
+        // double-alert, so skip the tick instead.
+        let sweepInFlight = false;
+        const wrapped = wrapScheduler('service_extension_sweep', 60, async () => {
+          if (sweepInFlight) return { skipped: true };
+          sweepInFlight = true;
+          try {
+            const a = await sweepExpiredExtensions();
+            const b = await healUnfinalizedExtensions();
+            return { ...a, ...b };
+          } finally {
+            sweepInFlight = false;
+          }
+        });
+        // 25s: off every sibling's stagger slot (60000 collided with
+        // auto_assign's boot slot and the :00 tick family; 15000 would ride
+        // first_reply_sweep's every tick).
+        setTimeout(wrapped, 25000);
+        setInterval(wrapped, 60 * 1000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('service_extension_sweep');
+      }
+
       // VA calling maintenance (spec §Components-7 + §Security-9): hourly prune
       // of expired pending_call + aged-out call_audit/telegram_update rows, plus
       // a ~6h Telegram webhook heartbeat (re-arms a silently-disabled webhook so

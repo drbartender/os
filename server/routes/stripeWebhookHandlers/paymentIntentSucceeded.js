@@ -55,6 +55,12 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
       // strand charged money outside the ledger and break /cancel/refund pickup);
       // this flag drives the post-commit Sentry + admin alert only.
       let archivedSettle = null;
+      // Service extension (spec 2026-07-25 section 7): set in-tx when the paid
+      // invoice belongs to a service_extensions row (that lookup IS the
+      // discriminator; the intent carries payment_type:'invoice' like any
+      // Balance payment). Read in the post-commit tail, after release, where
+      // the settle actually runs.
+      let extensionSettleContext = null;
       try {
         await dbClient.query('BEGIN');
 
@@ -210,10 +216,11 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             // OFF-LEDGER EXCEPTION: an invoice whose label is in
             // OFF_LEDGER_INVOICE_LABELS has NO total_price entry, so rolling
             // its payment into amount_paid would forgive the contract by that
-            // amount. The set is CURRENTLY EMPTY (Enhancement Lab money folds
-            // into total_price since 2026-07-20, so its payments roll up like
-            // any contract invoice); the branch stays wired for a future
-            // genuinely-additive label.
+            // amount. 'Service Extension' is that label (since 2026-07-26):
+            // extension money is genuinely additive, billed invoice-only, so
+            // this branch is live. (Enhancement Lab left the set 2026-07-20
+            // when lab money started folding into total_price; its payments
+            // roll up like any contract invoice.)
             const paidInvoiceId = Number(intent.metadata?.invoice_id) || null;
             let offLedger = false;
             if (paidInvoiceId) {
@@ -331,6 +338,32 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
               );
               if (invOwner.rows[0]) {
                 await linkPaymentToInvoice(Number(invoiceId), paymentRowId, intent.amount, dbClient);
+
+                // ─── Service extension settle (spec 2026-07-25 section 7) ───
+                // The service_extensions lookup by invoice_id IS the
+                // discriminator: create-intent-for-invoice stamps
+                // payment_type:'invoice' unconditionally, so nothing else in
+                // the intent tells an extension from a Balance payment.
+                //
+                // The claim UPDATE (WHERE status='pending') is the race gate
+                // against the expiry sweep and a second idempotency wall behind
+                // isFirstDelivery. Deliberately NO fold, NO reconcile, NO
+                // invoice refresh: extension money is off-ledger side money and
+                // the ONLY contract column that moves is event_duration_hours.
+                const extRow = await dbClient.query(
+                  `SELECT id, status, contracted_end_time
+                     FROM service_extensions
+                    WHERE invoice_id = $1
+                    ORDER BY id DESC LIMIT 1`,
+                  [Number(invoiceId)]
+                );
+                if (extRow.rows[0]) {
+                  extensionSettleContext = {
+                    extensionId: extRow.rows[0].id,
+                    priorStatus: extRow.rows[0].status,
+                    contractedEndDisplay: extRow.rows[0].contracted_end_time,
+                  };
+                }
               } else {
                 // Not a full no-op: the proposal-level amount_paid UPDATE above has
                 // already credited this payment. Only the invoice link is refused —
@@ -433,9 +466,20 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
                 }
               }
             } else {
+              // Off-ledger exclusion (merge-gate finding, 2026-08-03): this
+              // metadata-less fallback is label-blind, and the balance rail
+              // carries no invoice_id metadata, so a contract charge landing
+              // while the proposal's only open invoice is a pending Service
+              // Extension invoice would bind contract money to it — reading
+              // the extension paid with no settle, and hiding the payment
+              // from the refund panel's anti-join. Makes "extension invoices
+              // are paid alone" structural instead of circumstantial.
               const openInvoice = await dbClient.query(
-                "SELECT id FROM invoices WHERE proposal_id = $1 AND status IN ('sent', 'partially_paid') ORDER BY created_at ASC LIMIT 1",
-                [proposalId]
+                `SELECT id FROM invoices
+                  WHERE proposal_id = $1 AND status IN ('sent', 'partially_paid')
+                    AND NOT (label = ANY($2::text[]))
+                  ORDER BY created_at ASC LIMIT 1`,
+                [proposalId, OFF_LEDGER_INVOICE_LABELS]
               );
               if (openInvoice.rows[0]) {
                 await linkPaymentToInvoice(openInvoice.rows[0].id, paymentRowId, intent.amount, dbClient);
@@ -489,6 +533,124 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             );
           }
           notifyPaymentOnArchived(proposalId, intent.amount, paymentType, archivedSettle.archiveReason);
+        }
+
+        // ─── Service extension: settle AFTER the commit AND after release ───
+        // Lives inside this `if (isFirstDelivery)` best-effort block, which
+        // runs after dbClient.release(). Every helper below takes its own
+        // pooled connection, so running this while dbClient was still held
+        // would deadlock the pool (the standing one-pooled-connection rule).
+        // Outside the transaction is also deliberate: the payment is already
+        // durably recorded, and a settle, payroll or Twilio failure must never
+        // roll that back and make Stripe retry a charge the client already
+        // made. isFirstDelivery is also why a retried commit cannot re-run the
+        // settle or re-text the roster, on top of the claim gate.
+        if (extensionSettleContext) {
+          const { settleExtension } = require('../../utils/serviceExtensionSettle');
+          const notify = require('../../utils/serviceExtensionNotify');
+          try {
+            if (extensionSettleContext.priorStatus !== 'pending') {
+              // The expiry sweep (or an admin) claimed the row before this
+              // payment landed, so the invoice this intent paid is void. DRB is
+              // holding money for time nobody authorized: contain it to
+              // "refund one payment" and tell a human. Modeled on the existing
+              // payment_on_archived alert. The contract stays untouched (the
+              // off-ledger label already skipped the amount_paid roll-up).
+              // Never throw: a throw here would make Stripe retry forever
+              // against an already-charged client.
+              if (process.env.SENTRY_DSN_SERVER) {
+                Sentry.captureMessage(
+                  `extension_paid_after_${extensionSettleContext.priorStatus} (extension ${extensionSettleContext.extensionId}, proposal ${proposalId}, intent ${intent.id}) — refund this payment`,
+                  'warning'
+                );
+              }
+              await notify.alertAdminsProblem({
+                proposalId,
+                kind: 'paid_after_expiry',
+                detail: `An extension payment of ${intent.amount} cents landed after the request was already ${extensionSettleContext.priorStatus}. The event was NOT extended. Refund this payment.`,
+              });
+            } else {
+              const settled = await settleExtension({
+                extensionId: extensionSettleContext.extensionId,
+                outcome: 'paid',
+              });
+              if (settled.ok) {
+                // ALL THREE names in one destructuring. Pulling only
+                // applyExtensionHours leaves maybeAlertPayroll unresolved; the
+                // ReferenceError lands in the outer catch AFTER the settle
+                // already committed, so the duration moves and
+                // notifyStaffOfOutcome below never runs: the bartender is
+                // never greenlit and the admin gets a misleading alert. The
+                // happy-path test would still pass, because it only asserts DB
+                // state written before this line.
+                const { applyExtensionHours, maybeAlertPayroll, finalizeExtension } = require('../../utils/serviceExtensionPayroll');
+                const payroll = await applyExtensionHours({
+                  proposalId: settled.proposalId,
+                  newDurationHours: settled.newDurationHours,
+                });
+                // Merge-gate blocker fix (2026-08-03): if accrual already ran
+                // (auto-complete ticked before this settle landed, the norm
+                // when a client pays inside the post-end grace window), the
+                // 12b gratuity addend was computed while this row was still
+                // pending, i.e. at $0. applyExtensionHours only rewrites
+                // hours/wage; nothing else ever re-runs accrual, so without
+                // this the extension gratuity silently never reaches staff.
+                // accruePayoutsForProposal is idempotent (recompute, never
+                // accumulate) and preserves admin-owned hours.
+                if ((payroll.updatedLines + payroll.lockedLines + payroll.frozenLines) > 0) {
+                  const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
+                  await accruePayoutsForProposal(settled.proposalId);
+                }
+                await maybeAlertPayroll(notify, settled.proposalId, payroll);
+                await notify.notifyStaffOfOutcome({
+                  staffUserIds: settled.staffUserIds,
+                  outcome: 'approved',
+                  newEndDisplay: settled.newEndDisplay,
+                  contractedEndDisplay: extensionSettleContext.contractedEndDisplay,
+                  proposalId: settled.proposalId,
+                });
+                if (settled.multiShift) {
+                  await notify.alertAdminsProblem({
+                    proposalId: settled.proposalId,
+                    kind: 'multi_shift',
+                    detail: `Duration moved to ${settled.newDurationHours}h but this event has multiple shift rows, so no shift end_time was rewritten. Edit the right shift by hand.`,
+                  });
+                }
+                // LAST, after payroll and the staff greenlight have both
+                // returned (plan Global Constraints, "Every settle path ends
+                // with finalizeExtension"). A settled row with finalized_at
+                // NULL is the Task 13 crash-recovery signal; stamping it early
+                // or skipping it breaks the heal in opposite directions.
+                await finalizeExtension(extensionSettleContext.extensionId);
+              } else {
+                // Lost the claim between the in-tx read and here: same
+                // containment as the not-pending branch above.
+                if (process.env.SENTRY_DSN_SERVER) {
+                  Sentry.captureMessage(
+                    `extension_paid_after_claimed (extension ${extensionSettleContext.extensionId}, proposal ${proposalId}, intent ${intent.id}) — verify and refund`,
+                    'warning'
+                  );
+                }
+                await notify.alertAdminsProblem({
+                  proposalId,
+                  kind: 'paid_after_expiry',
+                  detail: `An extension payment landed but the request was claimed by another process first. The event was NOT extended. Verify and refund if needed.`,
+                });
+              }
+            }
+          } catch (extErr) {
+            // Contain: the payment stands, the extension did not settle, a
+            // human is told.
+            if (process.env.SENTRY_DSN_SERVER) {
+              Sentry.captureException(extErr, { tags: { feature: 'service-extension', step: 'webhook_settle' } });
+            }
+            console.error('[webhook] service-extension settle failed:', extErr.message);
+            await notify.alertAdminsProblem({
+              proposalId,
+              kind: 'settle_failed',
+              detail: `A paid extension could not be settled automatically (${extErr.message}). Extend the event by hand and check the bartender was told.`,
+            }).catch(() => {});
+          }
         }
 
         // ≤72h booking: admin + broad-net staff SMS blast. Fire-and-forget;

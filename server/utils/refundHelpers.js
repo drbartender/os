@@ -46,6 +46,20 @@ const CANCEL_LINE_REFUND_RAILS = Object.freeze([
  * refunds (a pending row may already be in flight at Stripe, so it
  * conservatively blocks headroom).
  *
+ * OFF-LEDGER EXCLUSION (2026-08-03, service extension): a payment linked to an
+ * OFF_LEDGER-labeled invoice ('Service Extension') is never a candidate here,
+ * regardless of rails. Those dollars are not in proposals.amount_paid (the
+ * webhook's off-ledger skip), so letting a contract refund draw against them
+ * would let the admin refund money the contract never recorded, and
+ * mis-attribute the reversal to contract scope. proposal_payments carries no
+ * invoice linkage, so the exclusion is a NOT EXISTS anti-join over
+ * invoice_payments JOIN invoices (same join applyRefundReconciliation walks
+ * below). Whole-payment exclusion is EXACT, not approximate: extension
+ * invoices are minted alone and paid alone, so a payment can never fund a
+ * contract invoice AND an extension invoice. Extension refunds go through the
+ * Stripe dashboard directly, where applyRefundReconciliation's offLedgerCents
+ * path already handles them (see docs/ops-runbook.md).
+ *
  * @param {number} proposalId
  * @param {object} [dbClient]  held tx client, or the shared pool
  * @param {object} [opts]
@@ -64,8 +78,14 @@ async function loadPaymentsWithRemaining(proposalId, dbClient = pool, { rails = 
       WHERE pp.proposal_id = $1
         AND pp.status = 'succeeded'
         AND pp.stripe_payment_intent_id IS NOT NULL
-        AND pp.payment_type = ANY($2::text[])`,
-    [proposalId, rails]
+        AND pp.payment_type = ANY($2::text[])
+        AND NOT EXISTS (
+              SELECT 1
+                FROM invoice_payments ip
+                JOIN invoices i ON i.id = ip.invoice_id
+               WHERE ip.payment_id = pp.id
+                 AND i.label = ANY($3::text[]))`,
+    [proposalId, rails, OFF_LEDGER_INVOICE_LABELS]
   );
   return res.rows.map((r) => ({
     id: r.id,
@@ -373,10 +393,15 @@ async function applyRefundReconciliation(
   // amount_paid drops by the refund MINUS the off-ledger portion: every
   // refunded dollar was money the client paid, but off-ledger invoice dollars
   // were never rolled INTO amount_paid, so reversing them here would make the
-  // contract look less paid than it is. OFF_LEDGER_INVOICE_LABELS is
-  // CURRENTLY EMPTY (Enhancement Lab money folds into total_price/amount_paid
-  // since 2026-07-20, so its refunds reverse symmetrically like Additional
-  // Services); the subtraction stays wired for a future additive label.
+  // contract look less paid than it is. OFF_LEDGER_INVOICE_LABELS holds
+  // 'Service Extension' (since 2026-07-26; Enhancement Lab left the set
+  // 2026-07-20 when lab money started folding into total_price/amount_paid,
+  // so its refunds reverse symmetrically like Additional Services). This is
+  // the LIVE path for extension refunds: loadPaymentsWithRemaining excludes
+  // extension payments from the admin panel and cancel-line candidates, so an
+  // extension refund arrives here only via the Stripe dashboard (charge
+  // .refunded webhook / stale-pending sweeper), where offLedgerCents keeps
+  // amount_paid untouched and total_price never moves (non-contract label).
   // total_price drops ONLY by the contract portion (Approach A) — extra-scope
   // refunds leave the base contract total intact. Exact NUMERIC division
   // ($/100.0); GREATEST clamps ≥ 0.

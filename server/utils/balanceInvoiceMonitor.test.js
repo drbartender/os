@@ -165,6 +165,21 @@ test('quiet when a bespoke-label invoice exactly carries the balance (Iga shape)
   assert.deepEqual(await alertsFor(f.proposalId), []);
 });
 
+test('quiet on a pending off-ledger Service Extension invoice on a fully paid proposal', async () => {
+  // Off-ledger money never enters amount_paid (OFF_LEDGER_INVOICE_LABELS), so
+  // the open extension invoice must not read as an over-bill on a paid-up
+  // proposal (owed = 0), and must not count as payable coverage either.
+  // Without the PAYABLE_SUM carve-out this exact shape alerts OVER every 24h
+  // forever, because the stranded-paid extension row deliberately stays
+  // pending.
+  const f = await fixture({
+    status: 'confirmed', total: 800, paid: 800,
+    invoices: [{ label: 'Service Extension', due: 15000 }],
+  });
+  await monitorMissingBalanceInvoices();
+  assert.deepEqual(await alertsFor(f.proposalId), [], 'neither direction alerts');
+});
+
 test('quiet at deposit stage: an open Deposit under owed on a sent proposal', async () => {
   const f = await fixture({ status: 'sent', total: 2000, paid: 0, invoices: [{ label: 'Deposit', due: 10000 }] });
   await monitorMissingBalanceInvoices();

@@ -42,3 +42,7 @@ server/utils/serviceExtensionPricing.test.js
 server/utils/serviceExtensionSettle.test.js
 server/utils/serviceExtensionPayroll.test.js
 server/utils/eventEndInstant.test.js
+server/utils/payrollAccrual.extension.test.js
+server/routes/stripeWebhookHandlers/paymentIntentSucceeded.extension.test.js
+server/utils/serviceExtensionSweep.test.js
+server/utils/refundHelpers.extensionScope.test.js
