@@ -7,6 +7,10 @@ lanes:
       - server/routes/stripeWebhookHandlers/paymentIntentSucceeded.js
       - server/routes/stripeWebhook.gratuityApply.test.js
       - scripts/money-smoke-list.txt
+      # Fix round 1: deliberate widening — the floor must be re-asserted on the
+      # DERIVED rate in the engine (merge-fleet blocker, cross-confirmed x3).
+      - server/utils/pricingEngine.js
+      - server/utils/pricingEngine.test.js
     deps: []
     review: full-fleet
   - id: grat-admin-lockdown
@@ -26,6 +30,9 @@ lanes:
   - id: grat-copy-reset
     footprint:
       - client/src/pages/proposal/proposalView/SignAndPaySection.js
+      # Fix round 1: comment-only cleanup of two stale server-behavior comments
+      # (ProposalView.js:265, :273-274) found by lane-1 consistency review.
+      - client/src/pages/proposal/proposalView/ProposalView.js
       - scripts/reset-unpaid-gratuity.js
       - scripts/reset-unpaid-gratuity.test.js
       - README.md
@@ -54,7 +61,7 @@ lanes:
 ## Global Constraints
 
 - Proposal money is DOLLARS; Stripe/invoices are integer CENTS. The only conversion in this work is `Math.round(total * 100)` at intent creation.
-- The gratuity floor, `deriveGratuityRate`, `recomputeSnapshotGratuity`, `gratuityLabels.js`, the DB CHECK, and all System B "Shared Gratuity" logic are UNTOUCHED.
+- The gratuity floor value, `recomputeSnapshotGratuity`, `gratuityLabels.js`, the DB CHECK, and all System B "Shared Gratuity" logic are UNTOUCHED. One deliberate engine carve-out (fix round 1): `deriveGratuityRate` gains a floor re-assert on the derived ROUNDED rate — nothing else in the engine moves.
 - Metadata contract (both lanes must match exactly): `tip_jar` = `String(boolean)` (`'true'`/`'false'`), `gratuity_rate` = `String(rate)` (e.g. `'50'`, `'27.5'`). Present on an intent only when the client sent an election; absence means "do not touch the proposal's gratuity".
 - No em dashes in any client-facing copy.
 - Server suites run one at a time from repo root: `node --test <file>`. They hit the shared dev DB. Client changes verify with `cd client && CI=true npx react-scripts build`.
@@ -961,8 +968,13 @@ async function resetUnpaidGratuity({ apply = false } = {}) {
   const { rows } = await pool.query(`
     SELECT id, total_price, amount_paid, pricing_snapshot, event_duration_hours
       FROM proposals
-     WHERE COALESCE(gratuity_rate, 0) > 0 AND COALESCE(amount_paid, 0) = 0
+     WHERE COALESCE(amount_paid, 0) = 0
+       AND (COALESCE(gratuity_rate, 0) > 0
+            OR COALESCE((pricing_snapshot->'gratuity'->>'total')::numeric, 0) > 0)
      ORDER BY id`);
+  // Snapshot-carried OR column-carried: prod proposal 580 holds a $400 gratuity
+  // in its snapshot/total with a ZERO column (pre-existing drift, found at
+  // review) — a column-only WHERE would leave that Delara-shaped row behind.
   const changed = [];
   for (const row of rows) {
     if (Number(row.amount_paid) > 0) throw new Error(`paid row ${row.id} matched — refusing`);
@@ -1023,7 +1035,9 @@ In `.claude/CLAUDE.md`, extend the **Checkout gratuity** invariant bullet (keep 
 
 - [ ] **Step 2: Update ARCHITECTURE.md and README.md**
 
-Find the checkout-gratuity descriptions (`grep -n "gratuity" ARCHITECTURE.md README.md`) and bring them in line with the same sentence. Mention `scripts/reset-unpaid-gratuity.js` wherever the other one-off scripts (`cc-*.js`) are listed, if anywhere.
+Find the checkout-gratuity descriptions (`grep -n "gratuity" ARCHITECTURE.md README.md`) and bring them in line with the same sentence — README.md:595's "admins can preset it on a proposal" is now false and must go. Mention `scripts/reset-unpaid-gratuity.js` wherever the other one-off scripts (`cc-*.js`) are listed, if anywhere. Incidental one-liner while ARCHITECTURE.md is open: line ~383 misattributes `POST /create-intent-for-invoice/:token` to `stripeCreateIntent.js`; it lives in `stripe.js`.
+
+Also in this lane (fix round 1): update the two stale comments in `client/src/pages/proposal/proposalView/ProposalView.js` — line ~265 "the deposit must re-persist the new rate" (now: re-stamps election metadata) and lines ~273-274 "(row lock + Stripe retrieve/cancel/create + total_price rewrite)" (there is no row lock or total_price rewrite anymore). Comment-only, no behavior change.
 
 - [ ] **Step 3: Commit (lane checkpoint)**
 
@@ -1038,7 +1052,7 @@ git commit -m "docs(gratuity): election-at-payment invariant + flow descriptions
 
 1. Server suites the change reaches, one at a time from repo root: the five webhook suites (Task 2 Step 4 list), `stripeCreateIntent.test.js`, `stripe.invoiceIntentArchived.test.js`, `proposals/crud.test.js`, `proposals/public.calculate.test.js`, `changeRequests.gratuity.test.js` (+ any existing changeRequests suites), `utils/pricingEngine.test.js`, `utils/proposalExtrasFold.stability.test.js`, `utils/invoiceHelpers.gratuity.test.js`, `scripts/reset-unpaid-gratuity.test.js`.
 2. Client: `cd client && CI=true npx react-scripts build`; `patchBody.test.js` and `gratuityFloor.test.js`.
-3. Live walk on dev (dev server restart required — Claude-managed background process): open a proposal token, elect Skip the tip jar, watch the Sign & Pay card total move while the left-rail quote stays at the service price; reload; confirm the chooser is back at Keep the tip jar with the quote unchanged; complete a Stripe test-mode payment; confirm total/snapshot/Balance invoice now carry the gratuity.
+3. Live walk on dev (dev server restart required — Claude-managed background process): open a proposal token, elect Skip the tip jar, watch the "New total" move once the server confirms. NOTE: in-session, the left-rail quote MAY also show the Gratuity line after confirmation — the client deliberately adopts the server-confirmed gratuity into local state; that is the in-session consequence view, not persistence. The load-bearing assertion is the RELOAD: the quote is back to service-only, the chooser is reset to Keep the tip jar, and the DB row is untouched. Then complete a Stripe test-mode payment; confirm total/snapshot/Balance invoice now carry the gratuity.
 4. `node scripts/reset-unpaid-gratuity.js` (dry run) against dev, eyeball the list, `--apply` on dev.
 5. Prod, ONLY after the `grat-intent-webhook` and `grat-admin-lockdown` lanes are deployed to prod and step 3's flow is verified live (running the reset while the old `create-intent` is still deployed just lets abandoned checkouts regrow the rows), and with explicit per-action approval: dry run, review the ~13 rows (665 among them), `--apply`, then spot-check proposal 665 renders $450.
 
