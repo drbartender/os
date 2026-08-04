@@ -863,3 +863,14 @@ merged code 2026-08-04):
   election is not stale, so returning the existing intent's clientSecret is
   safe and removes the double-charge window. Behavior change on a money path;
   do it deliberately, with the gratuityApply suite extended. (low)
+
+- `server/utils/balanceReminderScheduling.test.js` hardcodes `balance_due_date = '2026-07-15'`; the
+  function skips past-due dates, so the suite has been red in whole-tree serial runs since ~7/16.
+  Re-fixture with rolling dates (Chicago local frame per test law). Found by the display-name
+  Task 14 gate, 2026-08-04. (med-low)
+- `server/utils/payrollDisputeNotify.test.js:323` asserts elapsed < 400ms; observed 477ms under
+  serial-suite load, 12/12 green in isolation. Loosen the bound or restructure the timing
+  assertion. (low)
+- Whole-tree serial suite runs need `NODE_ENV=test` (calcom.test.js + drinkPlanConsult.test.js
+  self-guard and abort at module load without it) — plan gates citing "run the full server
+  suite" must carry the env var; display-name plan rev 3.3 records it. (note)

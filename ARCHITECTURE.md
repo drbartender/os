@@ -431,6 +431,8 @@ Read-side mirror of Stripe payouts + balance-transaction lines (`server/routes/s
 |---|---|---|---|
 | GET | `/users/:id/seniority` | Admin | Get seniority score, events worked (total, plus the `events_worked_live` / `historical_events_worked` split), tenure |
 | PUT | `/users/:id/seniority` | Admin | Update seniority_adjustment, hire_date and historical_events_worked |
+| GET | `/name-notices` | Admin | Unreviewed preferred-name changes (display name + legal name per row) for the needs-attention strip. Lives in `server/routes/admin/nameNotices.js` |
+| POST | `/name-notices/:userId/ack` | Admin | Stamp `preferred_name_reviewed_at` (integer-guarded `:userId`; 404 on unknown or already-reviewed; scoped `AND preferred_name_reviewed_at IS NULL`) |
 | GET | `/settings` | Admin | Get app_settings (auto-assign weights, max distance) |
 | PUT | `/settings` | Admin | Update app_settings key-value pairs |
 | POST | `/backfill-geocodes` | Admin | Geocode all staff/shift addresses and backfill hire dates |
@@ -747,6 +749,8 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `hire_date` — Set when status changes to 'hired'
 - `seniority_adjustment` — Admin manual score override (+/-)
 - `historical_events_worked` (integer, NOT NULL default 0) — Pre-migration (CheckCherry) event credit added to the live event count at every seniority compute site
+- `display_name` — Derived display form "Preferred L." (`computeDisplayName`: preferred name + legal-surname initial), maintained by `refreshDisplayName` at every name write path and read via `COALESCE(display_name, preferred_name, …)` across display surfaces; never hand-edited
+- `preferred_name_reviewed_at` — Admin ack stamp for the name-notice queue; NULL = change pending review. Set by `POST /api/admin/name-notices/:userId/ack`, cleared by any preferred-name change
 - `equipment_will_pickup` — Willing to pick up equipment from storage
 - File URLs: `alcohol_certification_file_url`, `resume_file_url`, `headshot_file_url`
 - Emergency contact fields

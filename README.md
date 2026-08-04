@@ -168,6 +168,7 @@ dr-bartender/
 │   │   │   ├── contractorTipPage.js # /contractors/:userId/tip-page admin actions (patch/rotate-token/generate-stripe/regenerate-stripe/activate/deactivate) + /tips + /tip-feedback review
 │   │   │   ├── applications.js # /applications + /notes + interview scheduling + scorecard + reject/restore/move/reminder
 │   │   │   ├── hiring.js       # /hiring/summary (KPIs) + /hiring/search (cross-state applicant search)
+│   │   │   ├── nameNotices.js  # /name-notices list + /:userId/ack — unreviewed preferred-name changes for the needs-attention strip
 │   │   │   ├── managers.js     # /managers CRUD
 │   │   │   ├── blog.js         # /blog admin endpoints
 │   │   │   ├── settings.js     # /settings + /test-email + /backfill-geocodes + /badge-counts
@@ -393,6 +394,7 @@ dr-bartender/
 │   │   ├── quantityEngine.js   # Pure demand model: computeDemand (drinkers x hours x pace; profile nudges default split max ±10 pts)
 │   │   ├── shoppingList.js     # Shopping-list generator (the ONE generator; consumes potionCatalog slices, legacy-constant fallback); consult-mode branch + buildGeneratorInputFromConsult translator
 │   │   ├── shoppingListAddonCoverage.js # Maps active BYOB-support add-on slugs to the shopping-list items those add-ons cover (computeStripSet); generateShoppingList strips that set
+│   │   ├── refreshDisplayName.js # Recompute + persist contractor_profiles.display_name for one user (explicit pg handle required — no pool default; IS DISTINCT FROM guarded)
 │   │   ├── shoppingListGen.js  # Shared helpers: loadCatalog, resolveDrinkIds, matchCustomNames, buildPlannerGeneratorInput, buildConsultGeneratorInput, autoGenerateShoppingList
 │   │   ├── sms.js              # Twilio SMS wrapper
 │   │   ├── smsDeliveryStatus.js # Twilio delivery-failure handler — flags bad phone numbers (sets clients.phone_status='bad') on hard SMS failures
@@ -400,6 +402,8 @@ dr-bartender/
 │   │   ├── smsConsent.js      # recordSmsConsent(...) — client SMS consent capture (A2P 10DLC): flips clients.communication_preferences.sms_enabled + stamps sms_opt_in/out_at, appends the append-only sms_consent_log proof row. Writes ONLY to a client row the same submit created (public form, unauthenticated); never lifts a prior STOP
 │   │   ├── smsInbound.js       # Inbound-SMS processing: keyword/response-code detection, sender lookup, orchestrator
 │   │   ├── smsTemplates.js     # Client-facing automated SMS body templates
+│   │   ├── staffDisplayName.js # computeDisplayName: "Preferred L." derivation (preferred name + legal-surname initial), single source for every display surface
+│   │   ├── staffDisplayName.validate.js # Preferred-name format rules + validatePreferredNameChange (grandfathers unchanged legacy values)
 │   │   ├── staffShiftHandlers.js # Staff-shift SMS: day-before reminder, post-event thank-you, schedule-change/cancel notices
 │   │   ├── storage.js          # Cloudflare R2 upload + signed URL helpers
 │   │   ├── stripeClient.js     # Central Stripe client factory (test-mode toggle, fail-closed)
@@ -429,6 +433,7 @@ dr-bartender/
 │       ├── backfillExtrasInvoices.js # One-off: create the "Drink Plan Extras" invoice for an abandoned pay-now PI + cancel stale PIs (idempotent, --dry-run)
 │       ├── backfillStripePayouts.js # One-off: full Stripe payout history into the read-side mirror via sweep() (idempotent; aborts in test mode)
 │       ├── backfillTipPages.js # One-shot backfill: ensure every active bartender has a tip page row + Stripe link
+│       ├── refreshDisplayNames.js # display_name backfill + drift audit (--check FAILs on drift or zero rows; --stamp-existing double-run-guarded) — safe to re-run any time
 │       ├── staffPaymentImport/   # Offline one-off CheckCherry→OS backfill pipeline (never imported by the server), sharing one name-clustering dictionary. Payments: parse Venmo/CashApp/Zelle/PayPal exports → classify/cluster → build a human review sheet → single-transaction import into staff_payment_history. Seniority: CC contacts → a human-reviewed mapping → dry-run-default apply of hire_date + historical_events_worked. Data files live on the share only, never committed (config.js, staging.js, parsers/, dictionary.js, classify.js, eventMatch.js, exportKnownPeople.js, ccReports.js, buildReviewSheet.js, importValidation.js, importFromSheet.js, reconcile.js, verifyImport.js; generateSeniorityMapping.js read-only CC→OS hire-date/event-count mapping for human review, applySeniorityBackfill.js dry-run-default apply of the approved mapping)
 │       └── archive/               # One-time migrations (already run, kept for history)
 │           ├── importBlogPosts.js
