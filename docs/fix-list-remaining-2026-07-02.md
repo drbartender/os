@@ -722,3 +722,23 @@ All non-blocking; the blockers found in review were fixed pre-push.
 - On an in-place shift-A→shift-B nav across different events, stale `details`
   can flash the "no longer on the schedule" card until B's fetch lands
   (details is never cleared on shiftId change; pre-existing shape). (low)
+
+## TT first-reply push-review residuals (2026-08-03, fleet on 61abacf3/7161e8bf/e3e16899)
+
+- `thumbtack_leads.created_at` is nullable while the offer query leans on it
+  in four predicates and the sweep's retirement arm; a NULL row would sit
+  `pending` forever, invisible to both. Zero such rows exist today. One
+  idempotent line closes it: `ALTER TABLE thumbtack_leads ALTER COLUMN
+  created_at SET NOT NULL;` (db-review, low)
+- `server/routes/thumbtackAgent.js` crossed the 700-line soft cap (710);
+  split candidate: the first-reply queue section into
+  `thumbtackAgent.replies.js` behind the composition router. (low)
+- Agent post-send reports (`clickedSend` path) go through `apiReport`, which
+  gives up on any 4xx with no legacy-reason downgrade; only send_unverified
+  (legacy) flows there today, but a future post-send reason added agent-side
+  before the server enum would 400 silently. Route it through the downgrade
+  wrapper when one is ever added. (consistency, low)
+- `FIRST_REPLY_NIGHT_JITTER_END_HOUR` default 8 is coupled by comment to
+  `CALL_WINDOW_START_HOUR = 8` in `leadCallTrigger.js`; nothing enforces it
+  and no test pins "daytime day→night downgrades still offer immediately"
+  if either moves. (consistency, low)
