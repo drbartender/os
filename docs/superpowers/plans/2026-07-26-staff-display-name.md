@@ -1475,6 +1475,8 @@ Each becomes `COALESCE(cp.display_name, cp.preferred_name) AS <same alias>`.
 
 **`beoHandlers.js` and `staffShiftHandlers.js` belong here and not in the salutation list**, which is counterintuitive enough to be worth stating: their `staff_name` flows to `sendAndLogSms({ recipientName })`, which **[verified]** writes only to the `sms_messages.recipient_name` log column (`server/utils/sms.js:151` is the function, `:168` and `:179` the two INSERTs). The message `body` is composed separately and never uses it. This is a list-display label, so it takes the display name.
 
+**`messages.js:71` + the four `POST /messages/send` INSERT sites are the same ruling** (added rev 3.2, from the checkpoint-2 review): the admin-broadcast recipient SELECT feeds `sms_messages.recipient_name` at all four INSERT tuples, identical in kind to the two handlers above. Rev 2/3 never listed the site and it was briefly misremembered as an exemption; checkpoint 2 established no such exemption is recorded and the line-above ruling governs. Converted as select-alongside (`cp.display_name` joins the SELECT; one `recipient.display_name || recipient.preferred_name` resolution feeds all four INSERTs). The only true exemptions remain `staffHiringEmailTemplates.js:290` and `exportKnownPeople.js:38`.
+
 ---
 
 **Shape C. Bare `cp.preferred_name` with NO alias -> select `display_name` ALONGSIDE, do not replace.**
@@ -2593,6 +2595,7 @@ None of these blocks the deploy: the grandfathering rule means each of these peo
 
 ## Revision history
 
+- **rev 3.2, 2026-08-04.** Checkpoint-2 fold. Task 7 gains the `messages.js` recipient-log row (the four `POST /messages/send` INSERTs take the display name per the standing beoHandlers/staffShiftHandlers ruling; the previously claimed exemption was verified unrecorded). Fix round also contained: the `payment.noNameWrite` suite now stubs the `getStripe` seam before any require (its first runs hit LIVE Stripe — two orphaned live Payment Links pending deactivation); the two post-commit `refreshDisplayName` awaits are try/catch+Sentry contained; admin name validation joins `fieldErrors`. Deferred to final review: `readPreferredName` dedup, PaydayProtocols same-tab Link, and suite coverage for the four messages INSERTs.
 - **rev 3.1, 2026-08-04.** Build-time amendments from the lane's checkpoint reviews. Operator hand-fix table trued to a live-prod dry run of the committed validator (205 out — already `Nevver`; 15 in; trim count 10 not 8; dev ids flagged do-not-carry). Task 13's harness call becomes `refreshDisplayName(userId, pool)` — the batch-2 pre-work dropped the helper's `= pool` default so an unthreaded transaction client fails loudly instead of deadlocking the pool.
 - **rev 1, 2026-07-26.** First draft (13 tasks). The `plan-fidelity` / `plan-decomposition` / `plan-feasibility` fleet returned 11 blockers.
 - **rev 2, 2026-07-26.** Full rewrite against the fleet's blockers, plus a same-day correction pass: the single mechanical read swap became the five-shape per-site table, line-range anchors became text anchors where Task 5 shifts them, and the three-lane split collapsed to one lane after four of thirteen tasks proved to edit outside their own footprint.
