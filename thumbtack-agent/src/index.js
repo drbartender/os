@@ -11,7 +11,7 @@
 //   first-reply-sent so the server fires the promised call (respond-then-ring).
 //
 // The loop ticks at the fast reply cadence (REPLY_POLL_INTERVAL_MS, 25s); the
-// harvest poll piggybacks every Nth tick (cadence.js) to keep its ~5-minute
+// harvest poll fires on its own wall-clock pace (POLL_INTERVAL_MS) to keep its
 // pace. Single browser context, single throttle, single session-recovery path.
 // Human-paced (jittered delays, separate daily caps per queue). Kill switches:
 // the server returns [] per queue when disabled (TT_AUTOREPLY_ENABLED /
@@ -22,9 +22,18 @@ const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
 const { extractCustomerEmail } = require('./extract');
-const { harvestTickEvery, isHarvestTick, rolloverDay, underCap } = require('./cadence');
+const { rolloverDay, underCap } = require('./cadence');
 
 const int = (v, d) => (Number.isFinite(parseInt(v, 10)) ? parseInt(v, 10) : d);
+// A label allowlist that parses to empty is a misconfig, not a kill switch:
+// fall back to the default loudly so the flow never crashes on a null locator.
+function parseLabels(envValue, dflt, name) {
+  const parse = (s) => String(s).split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const labels = parse(envValue || dflt);
+  if (labels.length > 0) return labels;
+  console.warn(`[cfg] ${name} parsed to an empty list; using the default (disable replies via TT_AUTOREPLY_ENABLED, not an empty allowlist)`);
+  return parse(dflt);
+}
 const CFG = {
   apiBase: (process.env.API_BASE_URL || 'http://localhost:5000').replace(/\/+$/, ''),
   secret: process.env.THUMBTACK_AGENT_SECRET || '',
@@ -37,13 +46,15 @@ const CFG = {
   // template is env-tunable so the live test can correct the path without a
   // code change; {id} is replaced with the negotiation id.
   replyLeadUrlTemplate: process.env.REPLY_LEAD_URL_TEMPLATE || 'https://www.thumbtack.com/pro-inbox/messages/{id}',
-  // Respond-CTA / Clear-control label allowlists (exact-match, case-insensitive).
+  // Respond-CTA / Clear-control label allowlists (exact-match, case-insensitive,
+  // PRIORITY-ORDERED: earlier labels are preferred when several are on the page).
   // Env-tunable so the first live lead pins the real labels without a code
-  // change (REPLY_LEAD_URL_TEMPLATE precedent). No allowlist match = no click.
-  replyCtaLabels: (process.env.REPLY_CTA_LABELS || 'reply,respond,approve,accept,respond to lead,accept lead,view and respond')
-    .split(',').map((s) => s.trim()).filter(Boolean),
-  replyClearLabels: (process.env.REPLY_CLEAR_LABELS || 'clear')
-    .split(',').map((s) => s.trim()).filter(Boolean),
+  // change (REPLY_LEAD_URL_TEMPLATE precedent). No allowlist match = no click,
+  // and a label list that parses to empty falls back to the default (an empty
+  // list is a misconfig, not a kill switch — that's TT_AUTOREPLY_ENABLED).
+  replyCtaLabels: parseLabels(process.env.REPLY_CTA_LABELS,
+    'reply,respond,approve,accept,respond to lead,accept lead,view and respond', 'REPLY_CTA_LABELS'),
+  replyClearLabels: parseLabels(process.env.REPLY_CLEAR_LABELS, 'clear', 'REPLY_CLEAR_LABELS'),
   minDelayMs: int(process.env.MIN_DELAY_MS, 8000),
   maxDelayMs: int(process.env.MAX_DELAY_MS, 25000),
   dailyCap: int(process.env.DAILY_CAP, 40),
@@ -160,6 +171,8 @@ const SEND_VERIFY_WAIT_MS = 12000;
 const exactLabelRe = (label) => new RegExp(`^\\s*${escapeRegex(label)}\\s*$`, 'i');
 
 // One locator matching ANY allowlisted label as a button or link, exact-text.
+// Used ONLY as a presence signal (the settle wait); clicks go through
+// pickByLabelPriority, never through a blind DOM-order .first().
 function anyLabelLocator(page, labels) {
   let loc = null;
   for (const label of labels) {
@@ -169,6 +182,28 @@ function anyLabelLocator(page, labels) {
   }
   return loc;
 }
+
+// Resolve WHICH allowlisted control to click (push-fleet finding, 2026-08-03):
+// labels are tried in configured order (earlier = preferred, so 'respond'
+// beats 'accept' when both are on the page), only VISIBLE matches count, and
+// a label with 2+ visible matches is ambiguous — on a billing surface we
+// never guess which one, we fail closed and let the diag capture pin it.
+// Returns { locator } | { ambiguous: label } | null (no visible match at all).
+async function pickByLabelPriority(page, labels) {
+  for (const label of labels) {
+    const re = exactLabelRe(label);
+    const matches = page.getByRole('button', { name: re }).or(page.getByRole('link', { name: re }))
+      .filter({ visible: true });
+    const count = await matches.count().catch(() => 0);
+    if (count === 1) return { locator: matches.first() };
+    if (count > 1) return { ambiguous: label };
+  }
+  return null;
+}
+
+// Filesystem-safe id for diag filenames: negotiation ids come from the TT
+// webhook body and are untrusted (the server's logId precedent).
+const fsSafeId = (s) => String(s).replace(/[^\w-]/g, '').slice(0, 64) || 'unknown';
 
 // The message composer textarea (live-pinned 2026-08-03: placeholder "Type
 // message"). Returns its current value, or null when no such box is visible —
@@ -202,7 +237,7 @@ async function captureDiag(page, negotiationId, tag) {
     const dir = path.join(CFG.profileDir, 'diag');
     fs.mkdirSync(dir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const base = path.join(dir, `${stamp}-${negotiationId}-${tag}`);
+    const base = path.join(dir, `${stamp}-${fsSafeId(negotiationId)}-${tag}`);
     await page.screenshot({ path: `${base}.png`, fullPage: false }).catch(() => {});
     const facts = await page.evaluate(() => ({
       url: location.href,
@@ -227,13 +262,14 @@ async function captureDiag(page, negotiationId, tag) {
 // The empty proof is read twice with a beat between, so a mid-stream read can
 // never slip an AI fragment into the send. Returns 'empty' or 'clear_failed'.
 async function clearAiDraft(page) {
-  const clear = anyLabelLocator(page, CFG.replyClearLabels).first();
-  const deadline = Date.now() + AI_DRAFT_WAIT_MS;
   await sleep(2500); // let streaming begin; an instant read would race it
+  const deadline = Date.now() + AI_DRAFT_WAIT_MS; // budget starts AFTER the settle beat
   while (Date.now() < deadline) {
-    if (await clear.isVisible().catch(() => false)) {
+    const clear = await pickByLabelPriority(page, CFG.replyClearLabels);
+    if (clear && clear.ambiguous) return 'clear_failed'; // two Clears = never guess
+    if (clear) {
       await humanPause();
-      await clear.click().catch(() => {});
+      await clear.locator.click().catch(() => {});
       await sleep(1200);
     }
     const text = await composerText(page);
@@ -312,11 +348,15 @@ const LEGACY_REASON_FALLBACK = {
 
 // Pre-send failure report: single-shot on purpose (nothing was sent; a lost
 // report just re-offers after the cooldown, bounded by the attempts cap).
+// The downgrade fires ONLY on the server's literal invalid-reason verdict
+// (push-fleet M3): any other 400 is a real bug that must stay loud, not be
+// silently rewritten into quick_reply_unavailable.
 async function reportPreSendFailure(negotiationId, reason) {
   const post = (r) => api('POST', '/api/admin/thumbtack/first-reply-failed', { negotiation_id: negotiationId, reason: r });
   let res;
   try { res = await post(reason); } catch (err) { return { status: 0, error: err.message }; }
-  if (res.status === 400 && LEGACY_REASON_FALLBACK[reason]) {
+  const invalidReason = res.status === 400 && /invalid reason/i.test(String(res.body?.error || ''));
+  if (invalidReason && LEGACY_REASON_FALLBACK[reason]) {
     log(`fail-report ${negotiationId}: server rejected reason "${reason}"; downgrading to "${LEGACY_REASON_FALLBACK[reason]}"`);
     try { res = await post(LEGACY_REASON_FALLBACK[reason]); } catch (err) { return { status: 0, error: err.message }; }
   }
@@ -344,16 +384,17 @@ async function reportPreSendFailure(negotiationId, reason) {
 async function sendQuickReplyOnPage(page, negotiationId, templateLabel, markSendCommitted) {
   await dismissSurveyDialog(page);
 
-  const quickReply = page.getByRole('button', { name: /quick\s*repl(y|ies)/i }).first();
-  const cta = anyLabelLocator(page, CFG.replyCtaLabels).first();
+  const quickReply = page.getByRole('button', { name: /quick\s*repl(y|ies)/i })
+    .filter({ visible: true }).first();
+  const ctaAny = anyLabelLocator(page, CFG.replyCtaLabels).filter({ visible: true }).first();
 
   // Settle the page state: EITHER the composer (already answered) or the
   // respond CTA (pristine) must appear; neither is the old dead-end.
-  let settled = await quickReply.or(cta).first().waitFor({ state: 'visible', timeout: CFG.renderTimeoutMs })
+  let settled = await quickReply.or(ctaAny).first().waitFor({ state: 'visible', timeout: CFG.renderTimeoutMs })
     .then(() => true).catch(() => false);
   if (!settled) {
     await dismissSurveyDialog(page); // a late survey dialog can mask both controls
-    settled = await quickReply.or(cta).first().waitFor({ state: 'visible', timeout: UI_STEP_TIMEOUT_MS })
+    settled = await quickReply.or(ctaAny).first().waitFor({ state: 'visible', timeout: UI_STEP_TIMEOUT_MS })
       .then(() => true).catch(() => false);
   }
   if (!settled) {
@@ -361,13 +402,29 @@ async function sendQuickReplyOnPage(page, negotiationId, templateLabel, markSend
     return { reason: 'quick_reply_unavailable' };
   }
 
-  if (await quickReply.isVisible().catch(() => false)) {
+  // BACK-OFF probe with a real bound (push-fleet H1): the settle wait returns
+  // the instant EITHER control paints, and on a mid-hydration SPA the CTA can
+  // paint a beat before Quick Reply on an ALREADY-ANSWERED thread. An instant
+  // isVisible() here would misread that thread as pristine and double-send —
+  // the exact harm this guard exists to stop. Give the composer a bounded
+  // window to declare itself before concluding pristine.
+  const answered = await quickReply.waitFor({ state: 'visible', timeout: 2500 })
+    .then(() => true).catch(() => false);
+  if (answered) {
+    await captureDiag(page, negotiationId, 'already-replied');
     return { reason: 'already_replied' };
   }
 
-  // Pristine lead: the respond CTA creates the composer.
+  // Pristine lead: the respond CTA creates the composer. Resolve WHICH control
+  // to click by label priority; ambiguity (or nothing visible despite the
+  // settle) fails closed — on a billing surface we never guess.
+  const cta = await pickByLabelPriority(page, CFG.replyCtaLabels);
+  if (!cta || cta.ambiguous) {
+    await captureDiag(page, negotiationId, cta ? `ambiguous-cta-${fsSafeId(cta.ambiguous)}` : 'cta-vanished');
+    return { reason: 'response_cta_not_found' };
+  }
   await humanPause();
-  await cta.click();
+  await cta.locator.click();
   let composerUp = await quickReply.waitFor({ state: 'visible', timeout: CFG.renderTimeoutMs })
     .then(() => true).catch(() => false);
   if (!composerUp) {
@@ -462,9 +519,14 @@ async function sendQuickReplyOnPage(page, negotiationId, templateLabel, markSend
     const snippetRe = new RegExp(words.join('\\s+'), 'i');
     const deadline = Date.now() + SEND_VERIFY_WAIT_MS;
     while (Date.now() < deadline) {
+      // STRICTLY '' — null means "cannot prove composer state" (box absent,
+      // detached, placeholder changed) and must never count as emptied
+      // (push-fleet + codex converged finding: a null here plus a text match
+      // elsewhere would manufacture a phantom "sent").
       const boxText = await composerText(page);
-      const inThread = await page.getByText(snippetRe).first().isVisible().catch(() => false);
-      if (inThread && !boxText) return { clickedSend: true, sent: true };
+      const inThread = await page.getByText(snippetRe).filter({ visible: true }).first()
+        .isVisible().catch(() => false);
+      if (inThread && boxText === '') return { clickedSend: true, sent: true };
       await sleep(800);
     }
     await captureDiag(page, negotiationId, 'send-unverified');
@@ -498,6 +560,11 @@ async function replyOne(ctx, job, counters, sentMemory) {
   }
 
   const page = await ctx.newPage();
+  // Bound click actionability retries (perf-fleet F2): Playwright's 30s default
+  // on a covered/unstable element could stretch a 3-job batch past the 10-min
+  // lease cooldown. Explicit waitFor timeouts elsewhere are unaffected;
+  // navigation keeps its own default.
+  page.setDefaultTimeout(UI_STEP_TIMEOUT_MS);
   // Page-opens count toward the reply cap (throttle = TT-facing request rate).
   counters.repliesToday += 1;
   try {
@@ -584,10 +651,12 @@ async function main() {
   const counters = { today: 0, repliesToday: 0, day: new Date().getUTCDate() };
   const sentMemory = loadSentJournal();
   if (sentMemory.size > 0) log(`never-send-twice journal: ${sentMemory.size} id(s) loaded`);
-  // Loop ticks at the fast reply cadence; harvest piggybacks every Nth tick.
-  const harvestEvery = harvestTickEvery(CFG.pollIntervalMs, CFG.replyPollIntervalMs);
-  let tick = 0;
-  log(`cadence: reply poll every ${CFG.replyPollIntervalMs}ms, harvest every ${harvestEvery} tick(s)`);
+  // Loop ticks at the fast reply cadence; harvest fires on WALL-CLOCK, not
+  // tick count (perf-fleet F1): a busy reply arm stretches ticks far past 25s,
+  // and tick-counting would stretch the ~5-min harvest pace with it — starving
+  // the email-capture path exactly when leads are flowing.
+  let lastHarvestAt = 0; // epoch ms; 0 = harvest on the first pass
+  log(`cadence: reply poll every ${CFG.replyPollIntervalMs}ms, harvest every ${CFG.pollIntervalMs}ms wall-clock`);
 
   let stop = false;
   let shuttingDown = false;
@@ -624,16 +693,16 @@ async function main() {
       // is off, so a disabled feature costs one cheap request per tick).
       await pollReplies(ctx, counters, sentMemory);
 
-      // Harvest on its original cadence, piggybacked. HARVESTER_ENABLED only
+      // Harvest on its original wall-clock pace. HARVESTER_ENABLED only
       // idles the harvest side; the reply queue keeps its own server switch.
-      if (isHarvestTick(tick, harvestEvery)) {
-        if (!CFG.enabled) log('HARVESTER_ENABLED=false; skipping harvest tick');
+      if (Date.now() - lastHarvestAt >= CFG.pollIntervalMs) {
+        lastHarvestAt = Date.now();
+        if (!CFG.enabled) log('HARVESTER_ENABLED=false; skipping harvest pass');
         else await pollOnce(ctx, counters);
       }
     } catch (err) {
       if (err instanceof SessionExpired) {
         log('batch stopped: session expired. Re-login via RDP into this profile. Backing off.');
-        tick += 1;
         await sleep(Math.max(CFG.pollIntervalMs, 15 * 60 * 1000));
         continue;
       }
@@ -644,7 +713,6 @@ async function main() {
       }
       log(`poll error: ${err.message}`);
     }
-    tick += 1;
     if (CFG.dryRun) break; // one pass, then exit
     await sleep(CFG.replyPollIntervalMs);
   }

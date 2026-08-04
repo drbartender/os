@@ -500,7 +500,10 @@ const FIRST_REPLY_FAIL_REASONS = new Set([
 // [start, end) window below is withheld until created_at + (2 + id % 13)
 // minutes so 3am replies land minutes-spread instead of a constant 25s;
 // night rows created any other time (evening leads, daytime downgrades)
-// offer immediately, same as day.
+// offer immediately, same as day. The window may WRAP midnight (start > end,
+// e.g. 23 -> 6 = 11pm-6am); start == end means an empty window (jitter off).
+// Push-fleet finding: without wraparound support, 23/6 would silently disable
+// jitter for every hour of the day.
 const NIGHT_JITTER_START_HOUR_DEFAULT = 2;
 const NIGHT_JITTER_END_HOUR_DEFAULT = 8; // call-window start: 'day' takes over
 const jitterHour = (envName, dflt) => {
@@ -542,8 +545,15 @@ router.get('/pending-first-replies', agentSecretOnly, asyncHandler(async (req, r
           AND (first_reply_attempted_at IS NULL
                OR first_reply_attempted_at < now() - $1::interval)
           AND (first_reply_template = 'day'
-               OR EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Chicago') < $6::int
-               OR EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Chicago') >= $7::int
+               OR NOT (CASE
+                    WHEN $6::int < $7::int THEN
+                      EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Chicago') >= $6::int
+                      AND EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Chicago') < $7::int
+                    WHEN $6::int > $7::int THEN
+                      EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Chicago') >= $6::int
+                      OR EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Chicago') < $7::int
+                    ELSE false
+                  END)
                OR created_at + ((2 + id % 13) * interval '1 minute') <= now())
           AND created_at > now() - make_interval(mins => $5)
         ORDER BY first_reply_attempted_at NULLS FIRST, id
@@ -682,8 +692,10 @@ router.post('/first-reply-failed', agentSecretOnly, asyncHandler(async (req, res
   }
 
   console.log(`[first-reply] failed ${logId(negotiationId)} -> failed (reason ${reason})`);
-  if (process.env.SENTRY_DSN_SERVER) {
-    Sentry.captureMessage(`Thumbtack first reply failed ${negotiationId}`, {
+  // already_replied is a benign race (a human answered first), not a pipeline
+  // failure — it must not feed the SERVER-1S warning stream (push-fleet).
+  if (process.env.SENTRY_DSN_SERVER && reason !== 'already_replied') {
+    Sentry.captureMessage(`Thumbtack first reply failed ${logId(negotiationId)}`, {
       level: 'warning',
       tags: { component: 'thumbtack-first-reply', reason },
     });

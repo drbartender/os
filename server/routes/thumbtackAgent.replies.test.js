@@ -213,6 +213,29 @@ test('night jitter (dead hours): too-fresh night row withheld, older than 15 min
   }
 });
 
+test('night jitter window wraps midnight (push-fleet fix: 23-to-6 must not disable jitter)', async () => {
+  const h = parseInt(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago', hourCycle: 'h23', hour: '2-digit',
+  }).format(new Date()), 10) % 24;
+  // [h, h+2) mod 24 CONTAINS the current Chicago hour (and wraps when h >= 22);
+  // the two-hour width makes the test immune to an hour flip mid-run.
+  process.env.FIRST_REPLY_NIGHT_JITTER_START_HOUR = String(h);
+  process.env.FIRST_REPLY_NIGHT_JITTER_END_HOUR = String((h + 2) % 24);
+  try {
+    const lead = await mkLead({ template: 'night', createdAgoMin: 0 });
+    let negs = mine((await offer()).body).map((x) => x.negotiation_id);
+    assert.ok(!negs.includes(lead.neg), 'fresh night row inside a (possibly wrapping) window is withheld');
+    // [h+2, h) mod 24 EXCLUDES the current hour (wraps for most h).
+    process.env.FIRST_REPLY_NIGHT_JITTER_START_HOUR = String((h + 2) % 24);
+    process.env.FIRST_REPLY_NIGHT_JITTER_END_HOUR = String(h);
+    negs = mine((await offer()).body).map((x) => x.negotiation_id);
+    assert.ok(negs.includes(lead.neg), 'the same row outside a wrapping window offers immediately');
+  } finally {
+    delete process.env.FIRST_REPLY_NIGHT_JITTER_START_HOUR;
+    delete process.env.FIRST_REPLY_NIGHT_JITTER_END_HOUR;
+  }
+});
+
 test('night jitter applies ONLY in dead hours: evening night rows offer immediately (2026-08-03)', async () => {
   // Empty dead-hours window = the current Chicago hour is never inside it,
   // which is exactly an evening (pre-2am) lead's situation.
