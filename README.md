@@ -135,6 +135,7 @@ Copy `.env.example` and fill in values. All variables:
 | `RUN_FIRST_REPLY_FALLBACK_SCHEDULER` | No | `false` disables the 60s first-reply sweep. Default on; `RUN_SCHEDULERS` wins. |
 | `MAX_FIRST_REPLY_ATTEMPTS` | No | Offer-side attempts cap before a reply flips to `failed` (default 3). |
 | `FIRST_REPLY_COOLDOWN_INTERVAL` | No | Reply lease re-offer interval (default `'10 minutes'`). |
+| `FIRST_REPLY_NIGHT_JITTER_START_HOUR` / `_END_HOUR` | No | Chicago dead-hours window `[start, end)` where night replies get the 2-14 min jitter (defaults 2, 8); outside it night replies are immediate. |
 
 The frontend uses one build-time variable set in `client/.env.production`:
 - `REACT_APP_API_URL` — absolute URL to the backend (e.g., `https://os-g7oa.onrender.com`)

@@ -495,13 +495,27 @@ const FIRST_REPLY_FAIL_REASONS = new Set([
   'already_replied', 'response_cta_not_found', 'ai_draft_clear_failed',
 ]);
 
+// Night-lead jitter is DEAD-HOURS-ONLY (2026-08-03, Dallas: "night leads
+// should still be fast until like 2am"): a night row created in the Chicago
+// [start, end) window below is withheld until created_at + (2 + id % 13)
+// minutes so 3am replies land minutes-spread instead of a constant 25s;
+// night rows created any other time (evening leads, daytime downgrades)
+// offer immediately, same as day.
+const NIGHT_JITTER_START_HOUR_DEFAULT = 2;
+const NIGHT_JITTER_END_HOUR_DEFAULT = 8; // call-window start: 'day' takes over
+const jitterHour = (envName, dflt) => {
+  const v = parseInt(process.env[envName], 10);
+  return Number.isInteger(v) && v >= 0 && v <= 24 ? v : dflt;
+};
+
 // GET /api/admin/thumbtack/pending-first-replies?limit=N  (agent-secret only)
 // Reply work queue. ONE writable CTE (the pending-harvest shape): pick pending,
 // past-cooldown rows FOR UPDATE SKIP LOCKED; the UPDATE stamps the lease AND
 // bumps the attempts counter in the same statement. Offer-side rules:
-//   - night rows are withheld until created_at + (2 + id % 13) minutes, so 3am
-//     replies land minutes-spread instead of a constant 25s after every lead;
-//     day rows offer immediately (call ordering dominates);
+//   - night rows created in the Chicago dead-hours window (default 2am-8am,
+//     FIRST_REPLY_NIGHT_JITTER_START_HOUR/_END_HOUR) are withheld until
+//     created_at + (2 + id % 13) minutes; all other night rows and all day
+//     rows offer immediately (call ordering dominates);
 //   - a day row offered while LEAD_CALL_ENABLED='false' is downgraded to night
 //     IN the DB before offering (never promise a call we will not place);
 //   - rows at the attempts cap flip to 'failed', and the final SELECT filters
@@ -528,6 +542,8 @@ router.get('/pending-first-replies', agentSecretOnly, asyncHandler(async (req, r
           AND (first_reply_attempted_at IS NULL
                OR first_reply_attempted_at < now() - $1::interval)
           AND (first_reply_template = 'day'
+               OR EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Chicago') < $6::int
+               OR EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Chicago') >= $7::int
                OR created_at + ((2 + id % 13) * interval '1 minute') <= now())
           AND created_at > now() - make_interval(mins => $5)
         ORDER BY first_reply_attempted_at NULLS FIRST, id
@@ -551,7 +567,9 @@ router.get('/pending-first-replies', agentSecretOnly, asyncHandler(async (req, r
        FROM leased
       WHERE first_reply_status = 'pending'
       ORDER BY created_at`,
-    [FIRST_REPLY_COOLDOWN, limit, MAX_FIRST_REPLY_ATTEMPTS, callsKilled, FIRST_REPLY_CALL_MAX_AGE_MINUTES]
+    [FIRST_REPLY_COOLDOWN, limit, MAX_FIRST_REPLY_ATTEMPTS, callsKilled, FIRST_REPLY_CALL_MAX_AGE_MINUTES,
+      jitterHour('FIRST_REPLY_NIGHT_JITTER_START_HOUR', NIGHT_JITTER_START_HOUR_DEFAULT),
+      jitterHour('FIRST_REPLY_NIGHT_JITTER_END_HOUR', NIGHT_JITTER_END_HOUR_DEFAULT)]
   );
 
   res.json(rows);

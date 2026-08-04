@@ -192,16 +192,41 @@ test('cooldown: a freshly leased row is withheld; past-cooldown re-offers and bu
   assert.equal(db.rows[0].first_reply_attempts, 2, 're-offer bumps again');
 });
 
-test('night jitter: too-fresh night row withheld, older than 15 min offers; day offers immediately', async () => {
-  const freshNight = await mkLead({ template: 'night', createdAgoMin: 0 });
-  // Jitter max is 2 + (id % 13) = 14 minutes, so 16 always clears it.
-  const oldNight = await mkLead({ template: 'night', createdAgoMin: 16 });
-  const freshDay = await mkLead({ template: 'day', createdAgoMin: 0 });
-  const r = await offer();
-  const negs = mine(r.body).map((x) => x.negotiation_id);
-  assert.ok(!negs.includes(freshNight.neg), 'night row inside its jitter window is withheld');
-  assert.ok(negs.includes(oldNight.neg), 'night row past the max jitter offers');
-  assert.ok(negs.includes(freshDay.neg), 'day rows offer immediately (call ordering dominates)');
+test('night jitter (dead hours): too-fresh night row withheld, older than 15 min offers; day offers immediately', async () => {
+  // Pin the dead-hours window to the whole day so the jitter applies no
+  // matter what Chicago hour this suite runs at.
+  process.env.FIRST_REPLY_NIGHT_JITTER_START_HOUR = '0';
+  process.env.FIRST_REPLY_NIGHT_JITTER_END_HOUR = '24';
+  try {
+    const freshNight = await mkLead({ template: 'night', createdAgoMin: 0 });
+    // Jitter max is 2 + (id % 13) = 14 minutes, so 16 always clears it.
+    const oldNight = await mkLead({ template: 'night', createdAgoMin: 16 });
+    const freshDay = await mkLead({ template: 'day', createdAgoMin: 0 });
+    const r = await offer();
+    const negs = mine(r.body).map((x) => x.negotiation_id);
+    assert.ok(!negs.includes(freshNight.neg), 'night row inside its jitter window is withheld');
+    assert.ok(negs.includes(oldNight.neg), 'night row past the max jitter offers');
+    assert.ok(negs.includes(freshDay.neg), 'day rows offer immediately (call ordering dominates)');
+  } finally {
+    delete process.env.FIRST_REPLY_NIGHT_JITTER_START_HOUR;
+    delete process.env.FIRST_REPLY_NIGHT_JITTER_END_HOUR;
+  }
+});
+
+test('night jitter applies ONLY in dead hours: evening night rows offer immediately (2026-08-03)', async () => {
+  // Empty dead-hours window = the current Chicago hour is never inside it,
+  // which is exactly an evening (pre-2am) lead's situation.
+  process.env.FIRST_REPLY_NIGHT_JITTER_START_HOUR = '0';
+  process.env.FIRST_REPLY_NIGHT_JITTER_END_HOUR = '0';
+  try {
+    const freshNight = await mkLead({ template: 'night', createdAgoMin: 0 });
+    const r = await offer();
+    const negs = mine(r.body).map((x) => x.negotiation_id);
+    assert.ok(negs.includes(freshNight.neg), 'a night row outside the dead-hours window offers with no jitter');
+  } finally {
+    delete process.env.FIRST_REPLY_NIGHT_JITTER_START_HOUR;
+    delete process.env.FIRST_REPLY_NIGHT_JITTER_END_HOUR;
+  }
 });
 
 test('offer downgrades day to night while LEAD_CALL_ENABLED=false (never promise a call we will not place)', async () => {
