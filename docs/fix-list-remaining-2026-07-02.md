@@ -853,3 +853,13 @@ merged code 2026-08-04):
   is gone, and the CSS comment at `index.css:19430` still says "+ admin
   panel", which now overstates. Trim the comment whenever that block is next
   touched.
+
+**Gratuity election, push-review note (2026-08-04)**
+- `stripeCreateIntent.js` mints a second identical intent when a pending
+  election-bearing intent matches the request's amount AND election exactly
+  (documented in-code as accepted; matches prior behavior; damage shape =
+  visible double payment, refund one). Codex push-review suggests the safe
+  hardening: when metadata AND amount match the CURRENT request exactly, the
+  election is not stale, so returning the existing intent's clientSecret is
+  safe and removes the double-charge window. Behavior change on a money path;
+  do it deliberately, with the gratuityApply suite extended. (low)
