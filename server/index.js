@@ -375,6 +375,7 @@ app.use('/api/telegram', require('./routes/telegram'));
 app.use('/api/voice/lead', require('./routes/voiceLeadCall')); // more specific mount first
 app.use('/api/voice', require('./routes/voice'));
 app.use('/api/invoices', require('./routes/invoices'));
+app.use('/api/service-extensions', require('./routes/serviceExtensions'));
 
 // Health check — must be registered BEFORE the React catch-all below.
 // Probes the DB (Render's health probe + uptime pingers hit this): a SELECT 1

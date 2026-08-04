@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager, clientAuth } = require('../middleware/auth');
 const { publicLimiter } = require('../middleware/rateLimiters');
@@ -8,6 +9,8 @@ const { createInvoice, writeLineItems, voidExtrasInvoiceWithReconcile } = requir
 const { cancelOpenInvoiceIntents } = require('../utils/invoiceVoid');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
+const { OFF_LEDGER_INVOICE_LABELS } = require('../utils/proposalMoneyShared');
+const { renderExtensionTerms } = require('../data/extensionTermsCopy');
 
 const router = express.Router();
 
@@ -47,7 +50,7 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
   const invoice = result.rows[0];
 
   // Parallel fetch line items and payments
-  const [lineItemsRes, paymentsRes, refundsRes] = await Promise.all([
+  const [lineItemsRes, paymentsRes, refundsRes, extRes] = await Promise.all([
     pool.query(
       `SELECT id, description, quantity::float8 AS quantity, unit_price, line_total, source_type
          FROM invoice_line_items
@@ -114,14 +117,60 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
         ORDER BY pr.created_at`,
       [invoice.id]
     ),
+    // Service-extension source row. Non-null ONLY when a service_extensions
+    // row references this invoice, so ordinary Deposit/Balance invoices
+    // (including links already in client inboxes) see no change at all. Rides
+    // the parallel fetch: it depends only on invoice.id, and this GET is every
+    // client's invoice page load, so a serial await here would tax all of
+    // them. Drives the terms gate on InvoicePage: pay stays disabled until
+    // accepted_at is set.
+    pool.query(
+      `SELECT id, status, amount_cents, terms_version, client_accepted_at,
+              contracted_end_time, requested_end_time, expires_at
+         FROM service_extensions
+        WHERE invoice_id = $1
+        ORDER BY id DESC LIMIT 1`,
+      [invoice.id]
+    ),
   ]);
+  let extension = null;
+  if (extRes.rows[0]) {
+    const e = extRes.rows[0];
+    // renderExtensionTerms throws on an unknown version rather than showing copy
+    // the client never agreed to. Fall back to no terms block (which leaves pay
+    // disabled) instead of 500-ing a client's payment page.
+    let terms = null;
+    try {
+      terms = renderExtensionTerms({ version: e.terms_version, newEndDisplay: e.requested_end_time });
+    } catch (copyErr) {
+      console.error('[invoices] unknown extension terms version', e.terms_version, copyErr.message);
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(copyErr, { tags: { feature: 'service-extension', step: 'terms_render' } });
+      }
+    }
+    extension = {
+      is_extension: true,
+      status: e.status,
+      terms,
+      accepted_at: e.client_accepted_at,
+      expires_at: e.expires_at,
+      contracted_end_time: e.contracted_end_time,
+      requested_end_time: e.requested_end_time,
+      requires_payment: Number(e.amount_cents) > 0,
+      requires_acceptance: !e.client_accepted_at,
+    };
+  }
 
+  // `extension` lives INSIDE the invoice object: InvoicePage stores data.invoice
+  // and nothing else, so a top-level sibling would never render (the exact
+  // server/client shape mismatch Task 8 pins with a regression test).
   res.json({
     invoice: {
       ...invoice,
       line_items: lineItemsRes.rows,
       payments: paymentsRes.rows,
       refunds: refundsRes.rows,
+      extension,
     },
   });
 }));
@@ -193,6 +242,12 @@ router.post('/proposal/:proposalId', auth, requireAdminOrManager, asyncHandler(a
   const fieldErrors = {};
   if (!label || typeof label !== 'string' || !label.trim()) {
     fieldErrors.label = 'Label is required.';
+  } else if (OFF_LEDGER_INVOICE_LABELS.includes(label.trim())) {
+    // Off-ledger labels (currently 'Service Extension') are minted ONLY by the
+    // extension request route. The webhook keys its amount_paid roll-up skip on
+    // the label alone (paymentIntentSucceeded.js), so an admin minting an
+    // invoice INTO this label would silently take its money off-ledger.
+    fieldErrors.label = 'This label is reserved for system-generated invoices. Pick a different label.';
   }
   if (typeof amount !== 'number' || amount <= 0) {
     fieldErrors.amount = 'Amount must be a positive number.';
@@ -298,6 +353,12 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     if (typeof label !== 'string' || !label.trim()) {
       throw new ValidationError({ label: 'Label must be a non-empty string.' });
     }
+    if (OFF_LEDGER_INVOICE_LABELS.includes(label.trim())) {
+      // Same guard as the create route: renaming an ordinary invoice INTO an
+      // off-ledger label would silently take its money off-ledger (the webhook
+      // keys the amount_paid roll-up skip on the label alone).
+      throw new ValidationError({ label: 'This label is reserved for system-generated invoices. Pick a different label.' });
+    }
     values.push(label.trim());
     setClauses.push(`label = $${values.length}`);
   }
@@ -334,6 +395,19 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   const editingMetadata = label !== undefined || due_date !== undefined;
   if (editingMetadata && existing.rows[0].locked) {
     throw new ConflictError('This invoice is locked and cannot be edited', 'INVOICE_LOCKED');
+  }
+
+  // Symmetric half of the off-ledger guard (merge-gate finding, 2026-08-03):
+  // renaming an invoice OUT of an off-ledger label is as dangerous as renaming
+  // one in. The webhook keys its amount_paid roll-up SKIP on the label alone
+  // while the extension settle keys on invoice_id, so a renamed extension
+  // invoice that then gets paid would roll side money INTO amount_paid AND
+  // still settle the extension: contract money counted twice.
+  if (label !== undefined && OFF_LEDGER_INVOICE_LABELS.includes(existing.rows[0].label)) {
+    throw new ConflictError(
+      'This is a system-generated off-ledger invoice; its label cannot be changed.',
+      'OFF_LEDGER_LABEL_LOCKED'
+    );
   }
 
   // Prevent voiding an invoice that has payments applied

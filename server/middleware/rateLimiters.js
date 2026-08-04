@@ -170,6 +170,24 @@ const emailChangeConfirmLimiter = rateLimit({
   message: { error: 'Too many confirmation attempts. Please try again later.' },
 });
 
+// Staff service-extension requests (POST /api/service-extensions). Each accepted
+// request fires a real client SMS + email and mints a payable invoice, so the
+// budget is tight: 5 per hour is far above any legitimate on-site workflow (one
+// event yields at most a couple of attempts). Keyed by the authenticated user
+// id, not IP, because several staffers at one venue share the venue wifi / NAT;
+// the limiter is attached AFTER `auth` on the route so req.user is set.
+// Skipped in NODE_ENV=test (matches calcomWebhookLimiter) so the suite's several
+// POSTs against one fixture user don't trip the bucket.
+const serviceExtensionLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => String(req.user?.id || req.ip),
+  message: { error: 'Too many extension requests. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test',
+});
+
 module.exports = {
   publicLimiter,
   publicReadLimiter,
@@ -185,4 +203,5 @@ module.exports = {
   beoReadLimiter,
   emailChangeRequestLimiter,
   emailChangeConfirmLimiter,
+  serviceExtensionLimiter,
 };

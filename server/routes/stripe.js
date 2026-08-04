@@ -568,6 +568,37 @@ router.post('/create-intent-for-invoice/:token', requireUuidToken('token', 'This
     );
   }
 
+  // Extension invoices require a recorded terms acceptance before they can be
+  // paid (spec decision 8). The acceptance is what makes the payment an
+  // artifact, so the gate has to live server-side: a client who skips the page
+  // and posts straight here would otherwise pay with no record of agreeing.
+  // Ordinary invoices have no service_extensions row and skip this entirely.
+  const extGate = await pool.query(
+    `SELECT id, status, client_accepted_at, expires_at
+       FROM service_extensions
+      WHERE invoice_id = $1
+      ORDER BY id DESC LIMIT 1`,
+    [inv.invoice_id]
+  );
+  if (extGate.rows[0]) {
+    const ext = extGate.rows[0];
+    if (ext.status !== 'pending') {
+      throw new ConflictError(
+        'This request is no longer open. Contact us if you still need more time.',
+        'EXTENSION_NOT_PENDING'
+      );
+    }
+    if (new Date(ext.expires_at).getTime() < Date.now()) {
+      throw new ConflictError('This request has expired.', 'EXTENSION_EXPIRED');
+    }
+    if (!ext.client_accepted_at) {
+      throw new ConflictError(
+        'Please review and accept the terms before paying.',
+        'EXTENSION_TERMS_NOT_ACCEPTED'
+      );
+    }
+  }
+
   const balanceCents = inv.amount_due - inv.amount_paid;
   if (balanceCents <= 0) {
     throw new ConflictError('This invoice has already been paid in full', 'ALREADY_PAID');
