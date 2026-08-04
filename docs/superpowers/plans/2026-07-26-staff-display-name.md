@@ -2238,7 +2238,7 @@ Then:
 ```js
 before(async () => {
   // ...harness setup above, then:
-  await require('../../utils/refreshDisplayName').refreshDisplayName(userId);
+  await require('../../utils/refreshDisplayName').refreshDisplayName(userId, pool);
   await pool.query('UPDATE contractor_profiles SET preferred_name_reviewed_at = NULL WHERE user_id = $1', [userId]);
 });
 
@@ -2576,21 +2576,24 @@ Reverting the whole batch is clean: the columns are additive, and every read is 
 
 **Reverting Task 5 alone is not clean** and is the one hazard worth naming. If the write paths are reverted while Tasks 7, 8 and 12 remain, `display_name` stops being maintained but keeps its last value, and every read prefers that stale non-NULL string forever. The three-deep COALESCE cannot rescue a stale value, only a missing one, so the failure is silent: people render under names they have since changed. If Task 5 has to come out, either revert the read swaps with it or run `refreshDisplayNames.js` on a schedule until it goes back in.
 
-The backfill also trims stored `preferred_name` whitespace, which is not reversible from the column alone. It is 8 rows and cosmetic, but a true rollback of that takes a database snapshot, not the script.
+The backfill also trims stored `preferred_name` whitespace, which is not reversible from the column alone. It is 10 rows on prod (checkpoint-1 dry run, 2026-08-04) and cosmetic, but a true rollback of that takes a database snapshot, not the script.
 
 ### Owed to Dallas: four rows no script touches (spec §6)
 
+Trued to live prod at the checkpoint-1 review (2026-08-04): the committed validator was dry-run over all 61 prod rows. User 205 is already fixed (`Nevver`, renders `Nevver S.`) and drops off; user 15 joins — the spec's original list predates both.
+
 | user | value | what it needs |
 |---|---|---|
-| 205 | `TwistidTreets` | a conversation with Nevver Sayles, then a profile edit |
+| 15 | `Ariel  D. Smith` | a real preferred name (currently a full formal name; the double space trims away), then a profile edit |
 | 61 | `Miss Taylor` | a legal name on file (needed for money records too), then a real preferred name |
 | 31 | `Nicholas or Nick ` | he picks one |
 | 62 | `Adelle M. Reynolds` | duplicate of user 51, out of scope here |
 
-None of these blocks the deploy: the grandfathering rule means each of these people can still save their own profile with the name already stored.
+None of these blocks the deploy: the grandfathering rule means each of these people can still save their own profile with the name already stored. Do not carry dev-run ids (1456/1486/1487/1488/1497/1499) into the prod operation.
 
 ## Revision history
 
+- **rev 3.1, 2026-08-04.** Build-time amendments from the lane's checkpoint reviews. Operator hand-fix table trued to a live-prod dry run of the committed validator (205 out — already `Nevver`; 15 in; trim count 10 not 8; dev ids flagged do-not-carry). Task 13's harness call becomes `refreshDisplayName(userId, pool)` — the batch-2 pre-work dropped the helper's `= pool` default so an unthreaded transaction client fails loudly instead of deadlocking the pool.
 - **rev 1, 2026-07-26.** First draft (13 tasks). The `plan-fidelity` / `plan-decomposition` / `plan-feasibility` fleet returned 11 blockers.
 - **rev 2, 2026-07-26.** Full rewrite against the fleet's blockers, plus a same-day correction pass: the single mechanical read swap became the five-shape per-site table, line-range anchors became text anchors where Task 5 shifts them, and the three-lane split collapsed to one lane after four of thirteen tasks proved to edit outside their own footprint.
 - **rev 3, 2026-08-04.** Freshness audit against main at `9141171a` (~113 commits after rev 2), applied as targeted amendments. Four findings would have broken the build or the tests outright: (1) Task 6's harness could never see a 200, because POST `/api/payment` enforces a server-side W-9 (`:112-114`, predates the plan) that 400s before the name logic; the harness now seeds a reusable W-9 row. (2) Task 3's application fixture omitted `positions_interested` (NOT NULL, no default), a 23502 before the agreement-precedence assertion ever ran. (3) Task 7 Step 2 targeted deleted code: the 8/03 staff event-details revival (beda7043) gutted `beo.js` to 164 lines and moved the roster + local `computeName` into `server/utils/eventDetailsPayload.js` (now shared with the staff portal's shift-keyed `eventDetails.js`); the step is rewritten against the payload builder (`computeName` `:241-260`, call site `:271`), with beo.test.js/eventDetails.test.js fixture-survival verified fixture-by-fixture. (4) Task 13's `buildStaffingItems` gained a third `uncertified` parameter plus a RANK sort from the 7/26 document-visibility lane, so the planned `(…, nameNotices, onAck)` extension would have parked notices in the documents slot and rendered "undefined has no alcohol certification"; the signature is now `(unstaffed, newApplications, uncertified, nameNotices, onAck)`, the loop sits before the sort, the test case carries the load-bearing empty `[]`, and the `'user'` target edit is dropped entirely because `queueItemHref` moved to `queueItems.js` and already maps it.
