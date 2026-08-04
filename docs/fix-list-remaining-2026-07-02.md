@@ -742,3 +742,114 @@ All non-blocking; the blockers found in review were fixed pre-push.
   `CALL_WINDOW_START_HOUR = 8` in `leadCallTrigger.js`; nothing enforces it
   and no test pins "daytime day→night downgrades still offer immediately"
   if either moves. (consistency, low)
+
+## Service-extension revenue reporting (added when the feature shipped)
+
+Decision record from plan Task 18 (spec §12 of
+`docs/superpowers/specs/2026-07-25-service-extension-design.md`), verified
+against the merged ext-* lanes on 2026-08-04. Extension money lives in
+`proposal_payments` and `invoices` and NEVER in `proposals.amount_paid` or
+`total_price`: the 'Service Extension' label is the sole member of
+`OFF_LEDGER_INVOICE_LABELS` (`server/utils/proposalMoneyShared.js:47`), and the
+webhook's invoice branch skips the `amount_paid` roll-up for it
+(`server/routes/stripeWebhookHandlers/paymentIntentSucceeded.js:318-355`) while
+the unconditional `proposal_payments` insert (`:86`) still records the payment.
+Consequence: every payments-sum surface includes extension revenue and every
+`amount_paid` / `total_price` surface excludes it. Neither is a bug; this table
+is the record of which is which, per surface.
+
+| Surface | File | Basis | Extension revenue | Verdict |
+|---|---|---|---|---|
+| Money Board "Collected" tile (financials summary) | `server/routes/proposals/metadata.js:189-191` + `metricsQueries.refundsInWindow` | succeeded `proposal_payments` minus succeeded `proposal_refunds` (plus frozen CC leg) | INCLUDED | Correct: Collected means cash in, and extension cash is real. |
+| Dashboard-stats headline, basis = paid | `server/utils/metricsQueries.js:283-312` (`qMoney` paid branch) | payments minus refunds | INCLUDED | Correct, same reasoning. |
+| Dashboard-stats headline, basis = booked / scheduled | `metricsQueries.js:313-325` | `SUM(total_price)` | INVISIBLE | Correct: these lenses measure contract value, and extension money is off-contract by design (spec D12). |
+| Outstanding tile + balance-due list filter | `metricsQueries.js:327-337` (`qOutstanding`); `server/routes/proposals/list.js:145` | `total_price` minus `amount_paid` | INVISIBLE on both sides | Correct: an extension can never create or offset contract balance due; an unpaid extension invoice is voided by the sweep, never owed. |
+| Revenue monthly chart | `metricsQueries.js:344-421` (`qRevenue`), rendered by `RevenueChartCard.js` | `paid` series = payments minus refunds; booked / scheduled value series = `total_price` | paid series INCLUDES, value series excludes | Correct both ways; the paid line is where extension money shows up by month. |
+| Funnel metrics (`qSent` / `qAccepted` / `qLostValue` / `qPipelineOutstanding`) and financials `avgEvent` | `metricsQueries.js:195-280`; `metadata.js:218` | `SUM(total_price)` | INVISIBLE | Correct: the sales funnel values contracts, not mid-event add-on cash. |
+| Metrics split (Funnel card Split seg) | `server/routes/proposals/metricsSplit.js:73,87` | `SUM(p.total_price)` on both axes | INVISIBLE | Correct; verified it sums `total_price` only, matching the prior audit's claim. |
+| Financials recent-payments table | `metadata.js:162-188` | raw succeeded `proposal_payments` rows | rows APPEAR, linked to the extension invoice via the `invoice_payments` LATERAL | Correct: the ledger view shows the real payment. |
+| Clients lifetime value (ClientsDashboard LTV column + proposal-create client picker) | `server/routes/clients.js:38` | `SUM(p.amount_paid)` over paid-status proposals | INVISIBLE | Leave as is with a known gap: a client's true spend is understated by exactly their extension money (drink-plan extras and Additional Services DO enter `amount_paid`, so extensions are the only miss). Acceptable because LTV is a ranking and reference column, not accounting. If it ever matters, the fix is a per-client sum of succeeded `proposal_payments` minus refunds. |
+| Stripe payout ledger + matching | `server/routes/stripePayouts.js:35-62`; `server/utils/stripePayoutSync.js:148-170` | Stripe's own balance transactions | INCLUDED automatically | Correct and reconciles: an extension charge matches its proposal via `stripe_payment_intent_id` against the `proposal_payments` row the webhook always inserts. |
+
+Refund symmetry: an extension refund is issued directly in Stripe (spec §12);
+the `charge.refunded` webhook reconciles it into `proposal_refunds`, so
+Collected nets it like any other refund while `amount_paid` stays untouched,
+which is exactly right for an off-ledger payment.
+
+**WARNING (spec §12): do NOT "fix" any of these exclusions by rolling extension
+payments into `amount_paid`.** That reintroduces the spec §2 landmine: it would
+falsely satisfy the funded-gratuity gate and the auto-complete gate, and it
+breaks the `total_price` / `amount_paid` contract-ledger invariant every refund
+and cancel path depends on. Any surface that ever needs extension revenue gets
+it from `proposal_payments` / `invoices` sums, never from `amount_paid`.
+
+**`event_duration_hours` consumers (spec §12), code-level verification.** The
+column now moves mid-event, so each reader was checked for a stale cached copy.
+None found:
+
+- **Staff event details / admin BEO**: `server/utils/eventDetailsPayload.js:63`
+  selects `p.event_duration_hours` live per request (returned at `:290`);
+  `server/routes/beo.js` delegates entirely to `buildEventDetailsPayload`, so
+  both the shift-keyed staff page and the proposal-keyed admin route read the
+  post-bump value.
+- **Calendar feed** (`server/routes/calendar.js`): feeds from
+  `shifts.start_time` / `shifts.end_time` (the `s.*` selects at `:357` / `:377`
+  / `:501`), not the proposal column. `settleExtension` rewrites the single
+  shift's `end_time` and `event_duration_hours` in the same transaction as the
+  proposal bump (`server/utils/serviceExtensionSettle.js:159-167`), and the
+  `update_shifts_updated_at` trigger (`schema.sql:308`) bumps `updated_at`, so
+  the iCal SEQUENCE / LAST-MODIFIED advance and subscribed calendars refresh.
+  On a multi-shift event the settle deliberately rewrites no shift and fires
+  the `multi_shift` admin alert instead, so the calendar shows the old end time
+  until the admin edits the right shift by hand: known, alerted, by design.
+- **Client portal**: `server/routes/clientPortal.js:86` selects
+  `p.event_duration_hours` live in the proposal-detail allowlist.
+- **DEFERRED to the orchestrator's post-merge walkthrough**: the in-app browser
+  pass over these surfaces with a settled extension on a dev event, plus
+  confirming the Money Board and the events list render that event without
+  error. Code-level verification above is done; the eyeball pass is not.
+
+**Deferred follow-ups from the ext-* merge gates** (recorded here because the
+lanes' review ledgers died with their worktrees; all verified against the
+merged code 2026-08-04):
+
+- **Webhook pre-ack settle-tail latency (judgment call, accepted).** The whole
+  extension settle tail runs synchronously inside the webhook handler after
+  commit and release but BEFORE the 200 to Stripe
+  (`paymentIntentSucceeded.js:649-765`): settle transaction, payroll hours,
+  possible accrual recompute, Twilio + email notifies, finalize stamp. A slow
+  tail can push the delivery past Stripe's timeout, marking it failed and
+  triggering a retry; the retry is harmless (`ON CONFLICT` + `isFirstDelivery`
+  make it a no-op) but the dashboard shows failed deliveries and the first
+  tail keeps running. Accepted at current volume; the fix shape if latency
+  alerts appear is queueing the tail (the heal already covers a crash mid-tail).
+- **Heal gate: counters vs line existence (narrow crash window).** The heal
+  re-runs accrual only when `applyExtensionHours` reports touched lines
+  (`server/utils/serviceExtensionSweep.js:208`). A crash in the webhook tail
+  AFTER `applyExtensionHours` applied the hours but BEFORE
+  `accruePayoutsForProposal` ran leaves the row unfinalized with the hours
+  already correct, so the heal's re-run no-ops with all counters at zero, skips
+  the accrual recompute, and the extension gratuity addend stays at $0 until
+  anything else recomputes accrual for that proposal. Fix shape: gate the heal's
+  recompute on payroll-line existence for the proposal, not on this run's
+  update counters.
+- **Settle-tail extraction next time `paymentIntentSucceeded.js` grows.** The
+  file is at 850 lines (soft cap 700); the extension tail (`:649-765`) is the
+  natural first extraction, matching the `stripeWebhookHandlers/` split
+  pattern. The hard-cap ratchet forces this at the next substantial addition
+  anyway.
+- **Dead `settle_on_closed_event` subject entry.**
+  `server/utils/serviceExtensionNotify.js:251` defines the PROBLEM_SUBJECTS
+  entry but no caller ever passes that kind (verified by grep). Delete it, or
+  wire the alert it was minted for (a settle landing on a completed or archived
+  event) if that check is still wanted.
+- **Admin panel renders no loading skeleton (cosmetic, deliberate).**
+  `ServiceExtensionPanel.js:137-143` returns null on first load (merge-gate
+  perf finding: most events have zero extensions, so a skeleton card would
+  flash and shove the cards below it on nearly every event view). Nuance vs
+  the merge-gate note that called the skeleton class "unused": `.sp-skeleton`
+  (`index.css:19431`) IS still used by the two staff surfaces
+  (`RequestMoreTime.js:70`, `ShiftDetail.js:639`); only the admin-panel usage
+  is gone, and the CSS comment at `index.css:19430` still says "+ admin
+  panel", which now overstates. Trim the comment whenever that block is next
+  touched.
