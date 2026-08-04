@@ -14,6 +14,7 @@ const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
 const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
 const { sendPaymentNotifications } = require('../../utils/stripePaymentNotifications');
 const { notifyAdminCategory } = require('../../utils/adminNotifications');
+const { recomputeSnapshotGratuity, GRATUITY_FLOOR_RATE, GRATUITY_SANITY_MAX_RATE } = require('../../utils/pricingEngine');
 
 // B3: email-first admin alert when a payment settles onto a cancelled (archived)
 // proposal. Fire-and-forget from the post-commit tail; notifyAdminCategory self-
@@ -31,6 +32,20 @@ function notifyPaymentOnArchived(proposalId, amountCents, paymentType, archiveRe
   }).catch((err) => {
     console.error('payment_on_archived admin notify failed (non-blocking):', err && err.message);
   });
+}
+
+// Election-at-payment (spec 2026-08-03 §4.5): the gratuity apply must NEVER take
+// the payment record down with it. Both the pre-write validation refusal and the
+// SAVEPOINT rollback land here — loud breadcrumb, credit proceeds untouched.
+// The admin reconciles from the alert; the money is always in the ledger.
+function warnGratuityApplySkipped(reason, proposalId, intentId, metadata, err) {
+  const line = `gratuity_apply_skipped (${reason}): proposal ${proposalId}, intent ${intentId}, `
+    + `tip_jar=${metadata?.tip_jar}, gratuity_rate=${metadata?.gratuity_rate}`
+    + (err ? ` — ${err.message}` : '');
+  console.warn(line);
+  if (process.env.SENTRY_DSN_SERVER) {
+    Sentry.captureMessage(line, 'warning');
+  }
 }
 
 module.exports = async function handlePaymentIntentSucceeded(event) {
@@ -144,6 +159,102 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
           if (!groupChoice.conflict && !archivedSettle && (paymentType === 'full' || paymentType === 'deposit')) {
             const sweep = await sweepClientAlternatives(proposalId, dbClient);
             sweptAlternativeIds = sweep.sweptIds;
+          }
+
+          // Election-at-payment (spec 2026-08-03 §4.5/§4.6): a deposit/full intent
+          // minted at sign-and-pay carries the client's tip-jar election in
+          // metadata. Apply it NOW — BEFORE the credit + createBalanceInvoice, so
+          // the derived status and the Balance invoice both see the
+          // gratuity-inclusive total. Metadata absent (balance / invoice /
+          // drink-plan / legacy client / admin payment link) = no gratuity write.
+          //
+          // THE PAYMENT IS NEVER HOSTAGE TO THIS WRITE. "The DB CHECK holds by
+          // construction" was FALSE (merge-fleet blocker, cross-confirmed x3):
+          // deriveGratuityRate validated the entered TOTAL with a half-cent
+          // tolerance while persisting the derived ROUNDED rate, so a crafted
+          // total could charge at intent time and then violate
+          // proposals_gratuity_jar_check here — aborting the whole tx including
+          // the proposal_payments idempotency insert, so Stripe retried forever
+          // and captured money was never recorded. Three layers now:
+          //   1. validate the metadata against the DB CHECK + sanity bounds and
+          //      require a non-degenerate snapshot, BEFORE touching the row;
+          //   2. run the write inside a SAVEPOINT, so ANY future failure rolls
+          //      back the gratuity alone, never the payment record;
+          //   3. every refusal is a loud Sentry breadcrumb and the credit below
+          //      proceeds untouched.
+          // (The engine also re-asserts the floor on the derived rate, so a
+          // sub-floor election can no longer be charged in the first place. This
+          // is the independent second gate, not a substitute for it.)
+          //
+          // Status guard mirrors create-intent's PAYABLE set and is deliberately
+          // NARROWER than the credit's lifecycle guard: refundHelpers.js:411 and
+          // invoiceExtras.js:440 lower total_price WITHOUT touching
+          // pricing_snapshot, so a stale second intent settling post-conversion or
+          // post-refund must never rewrite total_price back up from a stale snapshot.
+          if ((paymentType === 'full' || paymentType === 'deposit')
+              && intent.metadata?.tip_jar !== undefined) {
+            const electTipJar = intent.metadata.tip_jar !== 'false';
+            // NO `|| 0` coercion: a missing/garbage rate must stay NaN so it
+            // fails the check below rather than silently becoming a valid 0.
+            const electRate = Number(intent.metadata.gratuity_rate);
+            const rateUsable = Number.isFinite(electRate)
+              && electRate >= 0
+              && electRate <= GRATUITY_SANITY_MAX_RATE
+              // the DB CHECK (tip_jar = true OR gratuity_rate >= 50), pre-flighted
+              && (electTipJar || electRate >= GRATUITY_FLOOR_RATE);
+            if (!rateUsable) {
+              warnGratuityApplySkipped('invalid_metadata', proposalId, intent.id, intent.metadata);
+            } else {
+              // FOR UPDATE: this handler holds no proposal row lock of its own
+              // (the hoist above locks only the CLIENT row), and the admin PATCH
+              // does hold proposals FOR UPDATE — an unlocked read-modify-write of
+              // the snapshot here could lose-update against a concurrent edit.
+              const gRow = await dbClient.query(
+                `SELECT pricing_snapshot, event_duration_hours FROM proposals
+                  WHERE id = $1 AND status IN ('sent', 'viewed', 'accepted')
+                  FOR UPDATE`,
+                [proposalId]
+              );
+              const snap = gRow.rows[0] ? (gRow.rows[0].pricing_snapshot || {}) : null;
+              if (!gRow.rows[0]) {
+                // No longer payable (converted / refunded / archived). The client
+                // was charged a gratuity-inclusive amount we are declining to
+                // record, so this is a breadcrumb, not a silent skip.
+                warnGratuityApplySkipped('not_payable', proposalId, intent.id, intent.metadata);
+              } else if (!(Number(snap.total) > 0)) {
+                // Degenerate snapshot (legacy '{}' rows): recomputeSnapshotGratuity
+                // resolves no basis, returns total 0, and would ZERO total_price
+                // after the money was captured, flipping the proposal to
+                // balance_paid at $0. Refuse.
+                warnGratuityApplySkipped('degenerate_snapshot', proposalId, intent.id, intent.metadata);
+              } else {
+                await dbClient.query('SAVEPOINT gratuity_apply');
+                try {
+                  const newSnap = recomputeSnapshotGratuity(snap, {
+                    gratuityRate: electRate, tipJar: electTipJar,
+                    staffNoun: snap.staff_noun, durationHours: gRow.rows[0].event_duration_hours,
+                  });
+                  // origin explicitly NULL: this is a CLIENT election — a stale
+                  // pre-existing 'admin'/'staffing' origin must not mislabel it.
+                  await dbClient.query(
+                    `UPDATE proposals SET tip_jar = $1, gratuity_rate = $2,
+                            gratuity_rate_change_origin = NULL,
+                            pricing_snapshot = $3, total_price = $4, updated_at = NOW()
+                      WHERE id = $5 AND status IN ('sent', 'viewed', 'accepted')`,
+                    [electTipJar, electRate, JSON.stringify(newSnap), newSnap.total, proposalId]
+                  );
+                  await dbClient.query('RELEASE SAVEPOINT gratuity_apply');
+                } catch (gratErr) {
+                  // Degrade to "gratuity not applied, alerted" — never
+                  // "payment never recorded". If the ROLLBACK itself fails the
+                  // outer tx is genuinely dead and the outer catch takes over.
+                  try {
+                    await dbClient.query('ROLLBACK TO SAVEPOINT gratuity_apply');
+                  } catch (_) { /* outer tx already aborted */ }
+                  warnGratuityApplySkipped('write_failed', proposalId, intent.id, intent.metadata, gratErr);
+                }
+              }
+            }
           }
 
           // Determine new status and amount_paid based on payment type

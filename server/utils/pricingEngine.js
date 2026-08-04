@@ -310,6 +310,21 @@ function deriveGratuityRate({ enteredTotal, staffCount, hours, tipJar }) {
     }
   }
   const rate = Math.round((total / basis) * 10000) / 10000; // NUMERIC(10,4)
+  // Re-assert the floor on the DERIVED rate (spec 2026-08-03 §4.5). The check
+  // above is against the entered TOTAL and carries a half-cent tolerance, but
+  // the rate is what gets PERSISTED and what the DB CHECK (tip_jar = true OR
+  // gratuity_rate >= 50) actually tests. A total in [floorTotal - 0.005,
+  // floorTotal) clears the tolerance and rounds to a sub-50 rate: create-intent
+  // would CHARGE it and the webhook could never record it, aborting the
+  // payment-recording transaction. The total-based check stays as the first
+  // line of defense (it owns the dollar-denominated client message).
+  if (tipJar === false && rate < GRATUITY_FLOOR_RATE) {
+    const floorTotal = GRATUITY_FLOOR_RATE * basis;
+    return {
+      ok: false, code: 'GRATUITY_BELOW_FLOOR',
+      message: `Without a tip jar, gratuity must be at least $${floorTotal.toFixed(2)}.`,
+    };
+  }
   if (rate > GRATUITY_SANITY_MAX_RATE) {
     return { ok: false, code: 'GRATUITY_TOO_LARGE', message: 'That gratuity is unusually large — please re-enter it.' };
   }

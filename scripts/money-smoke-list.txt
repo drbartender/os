@@ -22,6 +22,16 @@ server/routes/stripe.chargeBalanceDurable.test.js
 server/routes/stripeWebhook.guards.test.js
 server/routes/stripeWebhookHandlers/checkoutSessionCompleted.lastMinute.test.js
 
+# Checkout gratuity election-at-payment (spec 2026-08-03): create-intent charges
+# the in-memory gratuity-inclusive total and stamps the election into intent
+# metadata; the webhook applies it before the credit + Balance invoice.
+# pricingEngine is pure (no DB) but guards the no-jar floor on the DERIVED rate —
+# the invariant whose absence let a sub-floor rate be charged and then strand the
+# payment behind an unwritable DB CHECK (fix round 1). Cheap; keep it gated.
+server/utils/pricingEngine.test.js
+server/routes/stripeCreateIntent.test.js
+server/routes/stripeWebhook.gratuityApply.test.js
+
 # Refunds + invoice lifecycle
 server/utils/balanceInvoiceMonitor.test.js
 server/routes/invoices.refunds.test.js

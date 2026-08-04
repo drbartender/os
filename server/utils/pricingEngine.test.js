@@ -138,6 +138,26 @@ test('deriveGratuityRate: no-jar enforces the >= $50/staff/hr floor', () => {
   assert.deepStrictEqual(ok, { ok: true, rate: 50 });
 });
 
+// Merge-fleet blocker (fix round 1, spec 2026-08-03 §4.5). The floor was checked
+// against the ENTERED TOTAL with a half-cent tolerance, but the value that gets
+// PERSISTED is the derived ROUNDED rate. A total in [floor - 0.005, floor) slips
+// through and yields a sub-50 rate with tip_jar=false — which create-intent then
+// CHARGES and the webhook cannot write (DB CHECK tip_jar OR rate >= 50), aborting
+// the payment-recording transaction and stranding captured money behind an
+// infinite Stripe retry. The floor must therefore also hold on the DERIVED rate.
+test('deriveGratuityRate: re-asserts the floor on the DERIVED rounded rate', () => {
+  // 1 staff x 5h => floorTotal 250. 249.999 clears `total < floorTotal - 0.005`
+  // but derives 49.9998, which the DB CHECK rejects.
+  const boundary = deriveGratuityRate({ enteredTotal: 249.999, staffCount: 1, hours: 5, tipJar: false });
+  assert.strictEqual(boundary.ok, false, '249.999 must not yield a sub-floor rate');
+  assert.strictEqual(boundary.code, 'GRATUITY_BELOW_FLOOR');
+  // Exact floor still passes and still derives exactly the floor rate.
+  assert.deepStrictEqual(
+    deriveGratuityRate({ enteredTotal: 250, staffCount: 1, hours: 5, tipJar: false }),
+    { ok: true, rate: 50 }
+  );
+});
+
 test('deriveGratuityRate: rejects NaN/negative/Infinity/absurd', () => {
   assert.strictEqual(deriveGratuityRate({ enteredTotal: -5, staffCount: 1, hours: 4, tipJar: true }).ok, false);
   assert.strictEqual(deriveGratuityRate({ enteredTotal: 'abc', staffCount: 1, hours: 4, tipJar: true }).ok, false);

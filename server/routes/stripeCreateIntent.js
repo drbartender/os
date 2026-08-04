@@ -1,8 +1,13 @@
 'use strict';
 /**
  * POST /api/stripe/create-intent/:token — extracted from stripe.js (gratuity
- * split) so the gratuity persist/recompute logic doesn't grow the over-cap
- * stripe.js. Mounted by stripe.js via router.use(require('./stripeCreateIntent')).
+ * split) so the gratuity computation doesn't grow the over-cap stripe.js.
+ * Mounted by stripe.js via router.use(require('./stripeCreateIntent')).
+ *
+ * Election-at-payment (spec 2026-08-03): this route computes the client's
+ * tip-jar election IN MEMORY and stamps it into PaymentIntent metadata. It
+ * writes NO gratuity to the proposal — the payment_intent.succeeded webhook
+ * applies the election when the money actually lands.
  */
 const express = require('express');
 const { pool } = require('../db');
@@ -33,7 +38,7 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
     SELECT p.id, p.status, p.event_type, p.event_type_custom, p.total_price,
            p.event_date, p.event_start_time, p.event_duration_hours,
            p.stripe_customer_id, p.deposit_amount,
-           p.pricing_snapshot, p.gratuity_rate, p.tip_jar,
+           p.pricing_snapshot,
            c.email AS client_email, c.name AS client_name
     FROM proposals p
     LEFT JOIN clients c ON c.id = p.client_id
@@ -69,105 +74,103 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
     );
   }
 
-  // §6: persist the client's gratuity choice + recompute total_price in one
-  // transaction so the PaymentIntent amount is built from the JUST-WRITTEN total
-  // (removes the old TOCTOU). Skipped on the initial intent fetch (no gratuity in
-  // body) — that path charges the already-stored total.
+  // Election-at-payment (spec 2026-08-03): compute the gratuity IN MEMORY only.
+  // Nothing is written to the proposal here; the election rides the
+  // PaymentIntent metadata and is applied by the webhook when payment succeeds.
+  // An abandoned checkout leaves the proposal untouched — no Gratuity line can
+  // ever appear on an unpaid quote.
   //
-  // No reconcileProposalPaymentStatus call here BY DESIGN: this route is gated to
-  // status sent/viewed/accepted (the guards above), all of which have
-  // amount_paid = 0, so a gratuity change can never make amount_paid > total_price.
+  // NAMED REMOVAL: the old persist transaction's under-lock ALREADY_PAID re-check
+  // went with the write. Bounded (spec §3): this route no longer writes anything,
+  // so a proposal paid mid-request can at worst mint a fresh chargeable intent,
+  // and the webhook's additive credit records whatever is actually charged — the
+  // same exposure the metadata-less path already has.
+  let effSnap = proposal.pricing_snapshot || {};
+  let election = null; // { tipJar, rate } when the client sent one this request
   if (gratuityProvided) {
-    const dbClient = await pool.connect();
-    try {
-      await dbClient.query('BEGIN');
-      const lockRes = await dbClient.query(
-        `SELECT status, pricing_snapshot, event_duration_hours, gratuity_rate, tip_jar, total_price
-           FROM proposals WHERE id = $1 FOR UPDATE`,
-        [proposal.id]
-      );
-      const row = lockRes.rows[0];
-      // Re-check status UNDER the row lock: a webhook could have flipped the
-      // proposal to paid between the unlocked status check above and this lock.
-      // Never rewrite total_price on an already-paid proposal.
-      if (!row || ['deposit_paid', 'balance_paid', 'confirmed'].includes(row.status)) {
-        await dbClient.query('ROLLBACK');
-        throw new ConflictError('Payment has already been made for this proposal', 'ALREADY_PAID');
-      }
-      const snap = row.pricing_snapshot || {};
-      const { staffCount, hours } = gratuityBasisFromSnapshot(snap, row.event_duration_hours);
-      // Can't skip the jar with no crew/hours — force it on so the DB CHECK passes.
-      const effTipJar = (staffCount * hours) <= 0 ? true : (tip_jar !== false);
-      const g = deriveGratuityRate({
-        enteredTotal: gratuity_total !== undefined ? gratuity_total : 0,
-        staffCount, hours, tipJar: effTipJar,
-      });
-      if (!g.ok) { await dbClient.query('ROLLBACK'); throw new ValidationError({ gratuity: g.message }); }
-      const newSnap = recomputeSnapshotGratuity(snap, {
-        gratuityRate: g.rate, tipJar: effTipJar,
-        staffNoun: snap.staff_noun, durationHours: row.event_duration_hours,
-      });
-      await dbClient.query(
-        `UPDATE proposals SET tip_jar = $1, gratuity_rate = $2,
-                pricing_snapshot = $3, total_price = $4, updated_at = NOW()
-           WHERE id = $5`,
-        [effTipJar, g.rate, JSON.stringify(newSnap), newSnap.total, proposal.id]
-      );
-      await dbClient.query('COMMIT');
-      proposal.total_price = newSnap.total;     // use the just-written total below
-      proposal.pricing_snapshot = newSnap;
-    } catch (e) {
-      try { await dbClient.query('ROLLBACK'); } catch (_) { /* already rolled back */ }
-      throw e;
-    } finally {
-      dbClient.release();
-    }
+    const { staffCount, hours } = gratuityBasisFromSnapshot(effSnap, proposal.event_duration_hours);
+    // Can't skip the jar with no crew/hours — force it on (mirrors the old path).
+    const effTipJar = (staffCount * hours) <= 0 ? true : (tip_jar !== false);
+    const g = deriveGratuityRate({
+      enteredTotal: gratuity_total !== undefined ? gratuity_total : 0,
+      staffCount, hours, tipJar: effTipJar,
+    });
+    if (!g.ok) throw new ValidationError({ gratuity: g.message });
+    effSnap = recomputeSnapshotGratuity(effSnap, {
+      gratuityRate: g.rate, tipJar: effTipJar,
+      staffNoun: effSnap.staff_noun, durationHours: proposal.event_duration_hours,
+    });
+    election = { tipJar: effTipJar, rate: g.rate };
   }
+  const effTotal = gratuityProvided ? effSnap.total : Number(proposal.total_price);
 
   const isFullPay = payment_option === 'full';
   const wantsAutopay = !isFullPay && autopay === true;
   const amount = isFullPay
-    ? Math.round(Number(proposal.total_price) * 100)
+    ? Math.round(Number(effTotal) * 100)   // the ONE dollars->cents seam in this flow
     : DEPOSIT_AMOUNT;
 
-  // Reuse an existing pending intent only when the amount matches AND the client
-  // did not just change the gratuity this request.
+  // Intent identity = (amount, election metadata). A deposit is $100 regardless
+  // of election, so amount alone can no longer identify an intent (spec §3).
+  //
+  // ACCEPTED HOLE (deliberate, do not "fix"): when the request carries an
+  // election and a pending intent exists with the SAME amount and the SAME
+  // metadata, the intent is neither reused nor cancelled — a second identical
+  // intent is minted alongside it. Harmless (both charge the same amount and
+  // carry the same election) and it matches today's behavior.
+  const reqMeta = election
+    ? { tip_jar: String(election.tipJar), gratuity_rate: String(election.rate) }
+    : null;
   const existing = await pool.query(
     "SELECT stripe_payment_intent_id, amount FROM stripe_sessions WHERE proposal_id = $1 AND status = 'pending' ORDER BY created_at DESC LIMIT 1",
     [proposal.id]
   );
-  if (existing.rows[0] && existing.rows[0].amount === amount && !gratuityProvided) {
+  if (existing.rows[0]) {
     try {
       const intent = await stripe.paymentIntents.retrieve(existing.rows[0].stripe_payment_intent_id);
-      if (intent.status === 'requires_payment_method' || intent.status === 'requires_confirmation') {
+      const intentMeta = (intent.metadata && intent.metadata.tip_jar !== undefined)
+        ? { tip_jar: intent.metadata.tip_jar, gratuity_rate: intent.metadata.gratuity_rate }
+        : null;
+      const amountMatch = existing.rows[0].amount === amount;
+      const metaMatch = (reqMeta === null && intentMeta === null)
+        || (reqMeta !== null && intentMeta !== null
+            && reqMeta.tip_jar === intentMeta.tip_jar
+            && reqMeta.gratuity_rate === intentMeta.gratuity_rate);
+      // Reuse ONLY a metadata-less intent for a metadata-less request: an
+      // election-bearing intent is never reused (a reload resets the client's
+      // UI state; confirming a stale election the client can no longer see is
+      // exactly the harm this redesign removes).
+      if (amountMatch && reqMeta === null && intentMeta === null
+          && (intent.status === 'requires_payment_method' || intent.status === 'requires_confirmation')) {
         return res.json({
           clientSecret: intent.client_secret,
-          total_price: Number(proposal.total_price),
-          gratuity: (proposal.pricing_snapshot && proposal.pricing_snapshot.gratuity) || null,
+          total_price: effTotal,
+          gratuity: (effSnap && effSnap.gratuity) || null,
         });
       }
-    } catch (e) {
-      // Intent no longer valid, create a new one
-    }
-  }
-  // Stale-intent safety (§6): a prior pending intent whose amount no longer
-  // matches must be cancelled so a stale browser tab can't confirm the old total.
-  if (existing.rows[0] && existing.rows[0].amount !== amount) {
-    const oldIntentId = existing.rows[0].stripe_payment_intent_id;
-    try {
-      const oldIntent = await stripe.paymentIntents.retrieve(oldIntentId);
-      // Only cancel + mark canceled when the old intent is still cancelable. If
-      // the client already confirmed it in another tab (succeeded/processing),
-      // leave it for the webhook to reconcile — the additive amount_paid credit
-      // records what was actually charged, so a stale confirm can't desync.
-      if (!['succeeded', 'processing', 'canceled'].includes(oldIntent.status)) {
-        await stripe.paymentIntents.cancel(oldIntentId);
+      // Stale-intent safety: cancel when the identity (amount OR election)
+      // no longer matches, so a stale tab can't confirm an old total/election.
+      // Only when still cancelable — if the client already confirmed it in
+      // another tab (succeeded/processing), leave it for the webhook to
+      // reconcile; the additive amount_paid credit records what was charged.
+      if ((!amountMatch || !metaMatch)
+          && !['succeeded', 'processing', 'canceled'].includes(intent.status)) {
+        await stripe.paymentIntents.cancel(intent.id);
         await pool.query(
           "UPDATE stripe_sessions SET status = 'canceled' WHERE stripe_payment_intent_id = $1",
-          [oldIntentId]
+          [intent.id]
         );
       }
-    } catch (e) { /* intent gone/unretrievable — nothing to cancel */ }
+    } catch (e) {
+      // Intent gone/unretrievable, OR the cancel itself failed. Either way we
+      // fall through and mint a fresh intent — but a FAILED CANCEL leaves a
+      // chargeable stale intent alive out at Stripe, which is worth knowing
+      // about, so never swallow it silently.
+      console.warn(
+        `create-intent: could not retrieve/cancel pending intent ${existing.rows[0].stripe_payment_intent_id} `
+        + `for proposal ${proposal.id} (minting fresh): ${e && e.message}`
+      );
+    }
   }
 
   // Create or retrieve Stripe Customer (needed for autopay card saving)
@@ -184,6 +187,9 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
     metadata: {
       proposal_id: String(proposal.id),
       payment_type: isFullPay ? 'full' : 'deposit',
+      // Election metadata rides ONLY when the client sent one this request.
+      // Its absence is the webhook's "do not touch the gratuity" signal.
+      ...(reqMeta || {}),
     },
   };
 
@@ -216,10 +222,12 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
     WHERE id = $3
   `, [isFullPay ? 'full' : 'deposit', wantsAutopay, proposal.id]);
 
+  // Built from the IN-MEMORY values so the client's "new total" display keeps
+  // working untouched even though nothing was persisted.
   res.json({
     clientSecret: paymentIntent.client_secret,
-    total_price: Number(proposal.total_price),
-    gratuity: (proposal.pricing_snapshot && proposal.pricing_snapshot.gratuity) || null,
+    total_price: effTotal,
+    gratuity: (effSnap && effSnap.gratuity) || null,
   });
 }));
 
