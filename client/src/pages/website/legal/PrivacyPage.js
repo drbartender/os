@@ -87,8 +87,10 @@ export default function PrivacyPage() {
       </p>
       <blockquote>{SMS_CONSENT_CLIENT}</blockquote>
       <p>
-        The box is unchecked by default, consent is never required to book with us,
-        and we keep a dated record of what you agreed to.
+        The box is unchecked by default and consent is never required: not to book
+        with us, and not to use either form. You can sign up for email updates, or
+        request a quote, without agreeing to texts. We keep a dated record of what
+        you agreed to.
       </p>
 
       <h2>Email</h2>

@@ -20,13 +20,14 @@
 // the page reads fieldErrors off it.
 
 require('dotenv').config();
-const { test, before, after } = require('node:test');
+const { test, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const crypto = require('node:crypto');
 const express = require('express');
 
 const { pool } = require('../db');
+const { publicLimiter } = require('../middleware/rateLimiters');
 const { AppError } = require('../utils/errors');
 const { getConsentCopy, SMS_CONSENT_VERSION } = require('../data/smsConsentCopy');
 const smsOptInRouter = require('./smsOptIn');
@@ -79,11 +80,14 @@ function request(method, path, body) {
           let parsed = null;
           try { parsed = data ? JSON.parse(data) : null; } catch (_) { parsed = data; }
           // Tripwire, not a retry. publicLimiter is 20 per 15 min keyed on
-          // 127.0.0.1 and is NOT reset between tests, so this suite's request
-          // budget is finite (16 as written). Without this, adding a case makes
-          // some unrelated assertion fail on a 429 body and the cause is not
-          // obvious. If you see this, split the suite or drop a case — do not
-          // just raise the limiter.
+          // 127.0.0.1. beforeEach clears that counter (in THIS process only, via
+          // the limiter's own resetKey — the production max of 20 is untouched),
+          // so the budget is now 20 requests per TEST rather than 20 for the
+          // whole suite. Before that, the suite had a hard ceiling of 20 total
+          // and adding a case made some unrelated assertion fail on a 429 body
+          // with no obvious cause. If you still see this, one single test is
+          // making more than 20 requests — split it. Do not raise the limiter,
+          // which guards an unauthenticated endpoint that INSERTs client rows.
           if (res.statusCode === 429) {
             reject(new Error(
               'publicLimiter 429: this suite exceeded 20 requests / 15 min from 127.0.0.1'
@@ -117,6 +121,14 @@ async function clientByEmail(email) {
   return rows[0] || null;
 }
 
+async function leadByEmail(email) {
+  const { rows } = await pool.query(
+    'SELECT id, name, status, lead_source FROM email_leads WHERE LOWER(email) = LOWER($1)',
+    [email]
+  );
+  return rows[0] || null;
+}
+
 async function logRowsForPhone(phone) {
   const { rows } = await pool.query(
     'SELECT * FROM sms_consent_log WHERE phone = $1 ORDER BY id',
@@ -141,13 +153,22 @@ before(async () => {
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
 
+// See the tripwire note in request(): clears this process's rate-limit counter
+// for 127.0.0.1 so the suite's size is not capped by a production limit it is
+// not trying to test. publicLimiter's own config is never modified.
+beforeEach(() => { publicLimiter.resetKey('127.0.0.1'); });
+
 after(async () => {
   if (testPhones.length) {
     await pool.query('DELETE FROM sms_consent_log WHERE phone = ANY($1::text[])', [testPhones]);
   }
   if (testEmails.length) {
-    await pool.query('DELETE FROM clients WHERE LOWER(email) = ANY($1::text[])',
-      [testEmails.map(e => e.toLowerCase())]);
+    const lowered = testEmails.map(e => e.toLowerCase());
+    // email_leads first: it holds a client_id FK (ON DELETE SET NULL, so the
+    // order is not strictly forced, but deleting the child first keeps this
+    // readable). The no-consent path writes here instead of clients.
+    await pool.query('DELETE FROM email_leads WHERE LOWER(email) = ANY($1::text[])', [lowered]);
+    await pool.query('DELETE FROM clients WHERE LOWER(email) = ANY($1::text[])', [lowered]);
   }
   if (testPhones.length) {
     // The email-less fixtures (prior_opt_out, phone-only row) are keyed by phone.
@@ -189,36 +210,128 @@ test('opt-in > a ticked box on a new client records consent and turns SMS on', a
   assert.equal(logs[0].copy_text, getConsentCopy(SMS_CONSENT_VERSION));
 });
 
-test('opt-in > an unticked box is a validation error and creates nothing', async () => {
-  // The whole point of this page is the opt-in, so an unticked box is an
-  // unfinished form. It must NOT be recorded as a decline, because a decline
-  // stamps the hard sms_opt_out_at that permanently blocks the number.
+// REWRITTEN 2026-08-03. These three used to assert a 400: the checkbox was
+// required, so an unticked box was an unfinished form. The Twilio "Forced
+// Consent Violation" rejection made that non-compliant — a consumer has to be
+// able to decline texts and still use the form — so an unticked box is now a
+// valid submit. What each test guards is unchanged in spirit: an unticked box
+// must never become an opt-in, and the row it leaves behind must not be
+// textable.
+
+test('opt-in > an unticked box writes an email_leads row and NO client row', async () => {
   const body = optIn({ sms_consent: false });
   const res = await request('POST', '/opt-in', body);
-  assert.equal(res.status, 400);
-  assert.ok(res.body.fieldErrors?.sms_consent, 'the box must report a field error');
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { ok: true });
 
-  assert.equal(await clientByEmail(body.client_email), null, 'no client row may be created');
-  assert.equal((await logRowsForPhone(body.client_phone)).length, 0, 'nothing may be logged');
+  const lead = await leadByEmail(body.client_email);
+  assert.ok(lead, 'the email signup must land on the actual marketing list');
+  assert.equal(lead.status, 'active');
+  assert.equal(lead.lead_source, 'website');
+
+  // THE POINT OF THE REDESIGN. This path used to create a clients row, which
+  // (a) made a later ticked submit resolve as existing_client and silently
+  // record nothing, and (b) could commit a second row carrying someone else's
+  // stopped number, shadowing them for smsInbound's newest-row-wins lookup.
+  // Touching clients at all is the defect; assert it does not.
+  assert.equal(await clientByEmail(body.client_email), null,
+    'the no-texts path must not touch the clients table');
+  assert.equal((await logRowsForPhone(body.client_phone)).length, 0,
+    'there is no consent to log');
 });
 
-test('opt-in > an absent consent field is rejected, never treated as consent', async () => {
+test('opt-in > declining does NOT block opting in later (the reviewer double-submit)', async () => {
+  // THE REGRESSION TEST for the lockout the first version of this branch had.
+  // A carrier reviewer verifies the box is optional by submitting unticked, then
+  // verifies opt-in by submitting ticked with the same address. Under the old
+  // design step 1 created the clients row, so step 2 hit the ownership gate,
+  // recorded nothing, and STILL showed the success screen.
+  const email = newEmail();
+  const phone = newPhone();
+
+  const first = await request('POST', '/opt-in', {
+    client_name: 'Reviewer Double', client_email: email, sms_consent: false,
+  });
+  assert.equal(first.status, 200);
+  assert.equal(await clientByEmail(email), null, 'step 1 must not create a client row');
+
+  const second = await request('POST', '/opt-in', {
+    client_name: 'Reviewer Double', client_email: email, client_phone: phone,
+    sms_consent: true, sms_consent_version: SMS_CONSENT_VERSION,
+  });
+  assert.equal(second.status, 200);
+
+  const row = await clientByEmail(email);
+  assert.ok(row, 'the ticked submit must create the client row');
+  assert.equal((row.communication_preferences || {}).sms_enabled, true,
+    'the opt-in must actually take effect after an earlier decline');
+  const logs = await logRowsForPhone(phone);
+  assert.equal(logs.length, 1, 'the opt-in must be recorded, not silently dropped');
+  assert.equal(logs[0].consented, true);
+});
+
+test('opt-in > an unticked box never stores the number, even a valid one', async () => {
+  // email_leads has no phone column and clients is untouched, so a number given
+  // on the no-texts path has nowhere to live. That is deliberate: storing it is
+  // what created the shadow-row vector against the phone-scoped STOP guard.
+  const body = optIn({ sms_consent: false });
+  const res = await request('POST', '/opt-in', body);
+  assert.equal(res.status, 200);
+
+  const { rows } = await pool.query(
+    `SELECT id FROM clients WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $1`,
+    [body.client_phone]
+  );
+  assert.equal(rows.length, 0, 'no row anywhere may end up carrying this number');
+});
+
+test('opt-in > an unticked box does NOT resurrect an unsubscribed lead', async () => {
+  // A public form must not be able to undo an unsubscribe. The upsert leaves
+  // status out of its DO UPDATE list precisely for this.
+  const email = newEmail();
+  await pool.query(
+    `INSERT INTO email_leads (email, name, lead_source, status, unsubscribed_at)
+     VALUES ($1, $2, 'website', 'unsubscribed', NOW())`,
+    [email.toLowerCase(), 'Unsubscribed Person']
+  );
+
+  const res = await request('POST', '/opt-in', {
+    client_name: 'Someone Else', client_email: email, sms_consent: false,
+  });
+  assert.equal(res.status, 200);
+
+  const lead = await leadByEmail(email);
+  assert.equal(lead.status, 'unsubscribed', 'an unsubscribe must survive a public re-signup');
+  assert.equal(lead.name, 'Unsubscribed Person', 'their name must not be overwritten');
+});
+
+test('opt-in > an absent consent field is never treated as consent', async () => {
   const body = optIn();
   delete body.sms_consent;
   const res = await request('POST', '/opt-in', body);
-  assert.equal(res.status, 400);
-  assert.ok(res.body.fieldErrors?.sms_consent);
-  assert.equal(await clientByEmail(body.client_email), null);
+  assert.equal(res.status, 200);
+
+  assert.ok(await leadByEmail(body.client_email),
+    'a missing field must land on the no-texts path');
+  assert.equal(await clientByEmail(body.client_email), null,
+    'and must never land on the opt-in path');
+  assert.equal((await logRowsForPhone(body.client_phone)).length, 0);
 });
 
 test('opt-in > a truthy-but-not-true consent value does not opt anyone in', async () => {
   // consentFieldsFromBody whitelists true and 'true' only. 'yes' / '1' / 'on'
-  // must not become an opt-in, and here they must not even pass validation.
+  // must land on the no-texts path.
   for (const sneaky of ['yes', '1', 'on', 1]) {
+    const label = JSON.stringify(sneaky);
     const body = optIn({ sms_consent: sneaky });
     const res = await request('POST', '/opt-in', body);
-    assert.equal(res.status, 400, `sms_consent=${JSON.stringify(sneaky)} must not be an opt-in`);
-    assert.equal(await clientByEmail(body.client_email), null);
+    assert.equal(res.status, 200, `sms_consent=${label} should be accepted as a no-texts submit`);
+
+    assert.ok(await leadByEmail(body.client_email), `sms_consent=${label} should reach email_leads`);
+    assert.equal(await clientByEmail(body.client_email), null,
+      `sms_consent=${label} must NOT create a client row`);
+    assert.equal((await logRowsForPhone(body.client_phone)).length, 0,
+      `sms_consent=${label} must not log a consent record`);
   }
 });
 
@@ -227,6 +340,38 @@ test('opt-in > a bad phone is rejected before any row is created', async () => {
   const res = await request('POST', '/opt-in', body);
   assert.equal(res.status, 400);
   assert.ok(res.body.fieldErrors?.client_phone);
+  assert.equal(await clientByEmail(body.client_email), null);
+});
+
+test('opt-in > a ticked box with NO phone is rejected', async () => {
+  // The number is optional only because the texts are. Asking for texts without
+  // one is incoherent, and would otherwise reach recordSmsConsent as no_phone.
+  const body = optIn({ client_phone: '' });
+  const res = await request('POST', '/opt-in', body);
+  assert.equal(res.status, 400);
+  assert.ok(res.body.fieldErrors?.client_phone, 'the number must report a field error');
+  assert.equal(await clientByEmail(body.client_email), null);
+});
+
+test('opt-in > an unticked box with NO phone succeeds (the reviewer path)', async () => {
+  // Exactly what a Twilio reviewer does: fill in the form, ignore the checkbox,
+  // submit. Requiring the number here is half of what earned the forced-consent
+  // rejection, so this must never go back to a 400.
+  const body = optIn({ sms_consent: false, client_phone: '' });
+  const res = await request('POST', '/opt-in', body);
+  assert.equal(res.status, 200);
+  assert.ok(await leadByEmail(body.client_email), 'no number is not a reason to drop the lead');
+});
+
+test('opt-in > an unticked box with a MALFORMED phone still succeeds', async () => {
+  // The other half of the forced-consent shape, and the subtler one. Someone
+  // half-types a number, thinks better of texts, unticks, and submits. If we
+  // format-check a number we are not going to store, they are dead-ended on a
+  // field the label calls optional — the same rejection wearing a different hat.
+  const body = optIn({ sms_consent: false, client_phone: '312555' });
+  const res = await request('POST', '/opt-in', body);
+  assert.equal(res.status, 200, 'a partial number must not block someone who declined texts');
+  assert.ok(await leadByEmail(body.client_email));
   assert.equal(await clientByEmail(body.client_email), null);
 });
 
@@ -239,6 +384,26 @@ test('opt-in > a bad email is rejected before any row is created', async () => {
   assert.equal(res.status, 400);
   assert.ok(res.body.fieldErrors?.client_email);
   assert.equal((await logRowsForPhone(phone)).length, 0);
+});
+
+test('opt-in > an email that GROWS when lowercased is rejected, not a 500', async () => {
+  // U+0130 lowercases to two code units, so this address is 255 chars on the
+  // wire and 505 after normalization. Both clients.email and email_leads.email
+  // are VARCHAR(255), so measuring the length BEFORE normalizing lets it through
+  // to Postgres as a 22001 — an unhandled 500 on a public endpoint. The route
+  // lowercases at parse time so the cap sees the real stored length.
+  const monster = `${'İ'.repeat(250)}@x.co`;
+  assert.equal(monster.length, 255, 'the fixture must pass a naive 255-char cap');
+  assert.ok(monster.toLowerCase().length > 255, 'and must exceed it once lowercased');
+
+  for (const consented of [false, true]) {
+    const res = await request('POST', '/opt-in', {
+      client_name: '长 Email', client_email: monster, client_phone: newPhone(),
+      sms_consent: consented, sms_consent_version: SMS_CONSENT_VERSION,
+    });
+    assert.equal(res.status, 400, `sms_consent=${consented} must be a validation error, never a 500`);
+    assert.ok(res.body.fieldErrors?.client_email, 'and must name the field');
+  }
 });
 
 test('opt-in > an EXISTING client row is never mutated (the ownership rule)', async () => {
@@ -335,6 +500,62 @@ test('opt-in > a PHONE-ONLY client row keeps its NULL email (no portal takeover)
   assert.equal((await logRowsForPhone(victimPhone)).length, 0, 'nothing may be logged');
 });
 
+test('opt-in > an UNTICKED box on a PHONE-ONLY row keeps its NULL email', async () => {
+  // The twin of the test above, for the no-consent path. It passes for a
+  // stronger reason than the ticked one: that path never calls
+  // findOrCreateClientDetailed at all, so the phone+name backfill that hands
+  // over a client's portal is unreachable rather than rolled back. Keep the test
+  // anyway — it is what fails the day someone reintroduces a clients write here.
+  const victimPhone = newPhone();
+  const seeded = await pool.query(
+    `INSERT INTO clients (name, phone, source) VALUES ($1, $2, 'thumbtack') RETURNING id`,
+    ['Phone Only Client', victimPhone]
+  );
+  const victimId = seeded.rows[0].id;
+
+  const attackerEmail = newEmail();
+  const res = await request('POST', '/opt-in', {
+    client_name: 'Phone Only Client', client_email: attackerEmail, client_phone: victimPhone,
+    sms_consent: false,
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { ok: true });
+
+  const after = await pool.query('SELECT email FROM clients WHERE id = $1', [victimId]);
+  assert.equal(after.rows[0].email, null,
+    'declining texts must not become a way to attach your address to someone else\'s row');
+});
+
+test('opt-in > an UNTICKED box against an EXISTING client changes nothing', async () => {
+  // The ownership rule cuts both ways on this branch. Knowing a stranger's email
+  // must not let you turn their texts OFF either: the forced sms_enabled=false
+  // belongs only to a row this submit created.
+  const email = newEmail();
+  const victimPhone = newPhone();
+  const seeded = await pool.query(
+    `INSERT INTO clients (name, email, phone, source, communication_preferences)
+     VALUES ($1, $2, $3, 'website', '{"sms_enabled":true,"email_enabled":true,"marketing_enabled":true}'::jsonb)
+     RETURNING id`,
+    ['Existing Client', email, victimPhone]
+  );
+  const victimId = seeded.rows[0].id;
+
+  const res = await request('POST', '/opt-in', {
+    client_name: 'Someone Else', client_email: email, client_phone: newPhone(),
+    sms_consent: false,
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { ok: true });
+
+  const after = await pool.query(
+    'SELECT name, phone, communication_preferences FROM clients WHERE id = $1', [victimId]
+  );
+  assert.equal(after.rows[0].communication_preferences.sms_enabled, true,
+    'an existing client keeps their own SMS preference');
+  assert.equal(after.rows[0].phone, victimPhone, 'the submitted phone must not overwrite theirs');
+  assert.equal(after.rows[0].name, 'Existing Client', 'the submitted name must not overwrite theirs');
+});
+
 test('opt-in > an unknown consent version records nothing and asks for a retry', async () => {
   // Deploy skew (Vercel ships the bundle before Render ships the server). We
   // cannot say what they agreed to, so we must not show a success screen.
@@ -404,11 +625,22 @@ test('opt-in > holds exactly one pooled connection, never two', async () => {
   };
 
   try {
-    const res = await request('POST', '/opt-in', optIn());
-    assert.equal(res.status, 200);
-    assert.equal(peak, 1, `held ${peak} pooled connections at once; must never exceed 1`);
-    assert.equal(total, 1, `checked out ${total} pooled connections; must use exactly 1`);
-    assert.equal(live, 0, 'the connection must be released');
+    // BOTH paths, because they take different routes through the handler and the
+    // probe only sees the one it is pointed at. optIn() hardcodes sms_consent:true,
+    // so before this second case existed the no-consent path — which returns from
+    // a different place entirely — was never measured.
+    const cases = [
+      ['ticked', optIn()],
+      ['unticked', optIn({ sms_consent: false })],
+    ];
+    for (const [label, body] of cases) {
+      live = 0; peak = 0; total = 0;
+      const res = await request('POST', '/opt-in', body);
+      assert.equal(res.status, 200, `${label}: expected 200`);
+      assert.equal(peak, 1, `${label}: held ${peak} pooled connections at once; must never exceed 1`);
+      assert.equal(total, 1, `${label}: checked out ${total} pooled connections; must use exactly 1`);
+      assert.equal(live, 0, `${label}: the connection must be released`);
+    }
   } finally {
     pool.connect = originalConnect;
   }
