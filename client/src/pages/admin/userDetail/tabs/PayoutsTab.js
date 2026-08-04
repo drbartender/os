@@ -166,6 +166,7 @@ export default function PayoutsTab(props) {
                   <div className="stat">
                     <div className="stat-label">Events worked</div>
                     <div className="stat-value">{seniority.events_worked ?? 0}</div>
+                    <div className="tiny muted">{seniority.events_worked_live ?? 0} live + {seniority.historical_events_worked ?? 0} historical</div>
                   </div>
                   <div className="stat">
                     <div className="stat-label">Months tenure</div>
@@ -190,7 +191,20 @@ export default function PayoutsTab(props) {
                       value={seniorityForm.seniority_adjustment}
                       onChange={(e) => setSeniorityForm(f => ({ ...f, seniority_adjustment: e.target.value }))}
                     />
+                    <FieldError error={seniorityFieldErrors?.seniority_adjustment} />
                     <div className="tiny muted" style={{ marginTop: 3 }}>+ to boost · − to reduce</div>
+                  </div>
+                  <div>
+                    <div className="meta-k" style={{ marginBottom: 4 }}>Historical events (pre-migration)</div>
+                    <input
+                      className="input num"
+                      type="number"
+                      min="0"
+                      value={seniorityForm.historical_events_worked}
+                      onChange={(e) => setSeniorityForm(f => ({ ...f, historical_events_worked: e.target.value }))}
+                    />
+                    <FieldError error={seniorityFieldErrors?.historical_events_worked} />
+                    <div className="tiny muted" style={{ marginTop: 3 }}>Events worked before this system (CheckCherry)</div>
                   </div>
                 </div>
                 <FormBanner error={seniorityError} fieldErrors={seniorityFieldErrors} />

@@ -76,7 +76,7 @@ export default function AdminUserDetail() {
   // Seniority state
   const [seniority, setSeniority] = useState(null);
   const [seniorityLoading, setSeniorityLoading] = useState(false);
-  const [seniorityForm, setSeniorityForm] = useState({ seniority_adjustment: 0, hire_date: '' });
+  const [seniorityForm, setSeniorityForm] = useState({ seniority_adjustment: 0, hire_date: '', historical_events_worked: 0 });
   const [senioritySaving, setSenioritySaving] = useState(false);
   const [seniorityError, setSeniorityError] = useState('');
   const [seniorityFieldErrors, setSeniorityFieldErrors] = useState({});
@@ -124,6 +124,7 @@ export default function AdminUserDetail() {
         setSeniorityForm({
           seniority_adjustment: r.data.seniority_adjustment || 0,
           hire_date: r.data.hire_date ? String(r.data.hire_date).slice(0, 10) : '',
+          historical_events_worked: r.data.historical_events_worked || 0,
         });
       })
       .catch(() => { /* non-blocking */ })
@@ -294,6 +295,7 @@ export default function AdminUserDetail() {
       await api.put(`/admin/users/${id}/seniority`, {
         seniority_adjustment: parseInt(seniorityForm.seniority_adjustment, 10) || 0,
         hire_date: seniorityForm.hire_date || null,
+        historical_events_worked: parseInt(seniorityForm.historical_events_worked, 10) || 0,
       });
       const r = await api.get(`/admin/users/${id}/seniority`);
       setSeniority(r.data);
