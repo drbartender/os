@@ -10,12 +10,15 @@ if (process.env.NODE_ENV === 'production') {
 
 // Pinned negative IDs so fixture rows are unmistakeable and survive partial
 // test runs without colliding with real data (mirrors rescheduleProposal.test.js).
-const STUB_USER_ID = -901;
-const REAL_USER_ID = -902;
-const STUB_PROPOSAL_ID = -9001;
-const REAL_PROPOSAL_ID = -9002;
-const STUB_SHIFT_ID = -9101;
-const REAL_SHIFT_ID = -9102;
+// High positive ids far above any sequence (int4 max is 2147483647): the
+// guards now correctly refuse non-positive ids (8919e83f), so the old
+// negative-id collision-avoidance trick made the stub-side tests fail.
+const STUB_USER_ID = 2147000901;
+const REAL_USER_ID = 2147000902;
+const STUB_PROPOSAL_ID = 2147009001;
+const REAL_PROPOSAL_ID = 2147009002;
+const STUB_SHIFT_ID = 2147009101;
+const REAL_SHIFT_ID = 2147009102;
 
 before(async () => {
   // Hard-reset any leftover rows from a prior aborted run.
