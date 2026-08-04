@@ -6,6 +6,7 @@ lanes:
       - server/routes/stripeCreateIntent.test.js
       - server/routes/stripeWebhookHandlers/paymentIntentSucceeded.js
       - server/routes/stripeWebhook.gratuityApply.test.js
+      - scripts/money-smoke-list.txt
     deps: []
     review: full-fleet
   - id: grat-admin-lockdown
@@ -13,6 +14,7 @@ lanes:
       - server/routes/proposals/crud.js
       - server/routes/proposals/crud.test.js
       - server/routes/proposals/metadata.js
+      - server/routes/proposals/metadata.calculate.test.js
       - server/utils/changeRequests.js
       - server/utils/changeRequests.gratuity.test.js
       - client/src/pages/admin/proposalEditor/ProposalEditorForm.js
@@ -29,7 +31,11 @@ lanes:
       - README.md
       - ARCHITECTURE.md
       - .claude/CLAUDE.md
-    deps: []
+    # deps are real, not ceremonial: Task 9 writes "admin PATCH never accepts
+    # tip_jar" into the CLAUDE.md invariant (true only once grat-admin-lockdown
+    # merges), and the reset script's prod run is only safe once
+    # grat-intent-webhook is DEPLOYED (else abandoned checkouts regrow the rows).
+    deps: [grat-intent-webhook, grat-admin-lockdown]
     review: full-fleet
 ---
 
@@ -184,7 +190,7 @@ test('metadata-less pending intent at the same amount is still reused (existing 
 - [ ] **Step 2: Run to verify the right failures**
 
 Run: `node --test server/routes/stripeCreateIntent.test.js`
-Expected: the no-write assertions FAIL (today the route persists `tip_jar=false, gratuity_rate=50, total_price=700`), and the metadata assertions FAIL (`call.metadata.tip_jar` undefined). The below-floor and reuse cases should already pass.
+Expected: the no-write assertions FAIL (today the route persists `tip_jar=false, gratuity_rate=50, total_price=700`), and the metadata assertions FAIL (`call.metadata.tip_jar` undefined). The stale-metadata-cancel case ALSO fails RED — today's reuse branch (`stripeCreateIntent.js:139-152`) sees a metadata-less request at a matching amount and returns the pending intent early, so no cancel happens. Only the below-floor and metadata-less-reuse cases pass RED.
 
 - [ ] **Step 3: Rewrite the gratuity section of the route**
 
@@ -285,7 +291,9 @@ And build the final response from the in-memory values (lines 219-223):
   });
 ```
 
-Update the file-header comment (it still says "gratuity persist/recompute"). The `pool.connect`/`BEGIN`/`FOR UPDATE` machinery goes away entirely; `ConflictError` is still used by the status guards; keep all imports that remain referenced.
+Update the file-header comment (it still says "gratuity persist/recompute"). The `pool.connect`/`BEGIN`/`FOR UPDATE` machinery goes away entirely — NAMED REMOVAL: the old under-lock ALREADY_PAID re-check goes with it (spec §3: bounded, because this route no longer writes; a paid-mid-request proposal can at worst mint a fresh intent, and the webhook's additive credit records what is actually charged). `ConflictError` is still used by the top-of-route status guards; keep all imports that remain referenced.
+
+Accepted hole (state it in the code comment, do not "fix" it): when the request carries an election and a pending intent exists with the SAME amount and SAME metadata, the intent is neither reused nor cancelled — a second identical intent is minted alongside it. Harmless (both charge the same amount and carry the same election) and matches today's behavior.
 
 - [ ] **Step 4: Run the new suite and the neighbors**
 
@@ -313,7 +321,7 @@ git commit -m "feat(gratuity): create-intent computes election in memory, stamps
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `server/routes/stripeWebhook.gratuityApply.test.js` on the pattern of `server/routes/stripeWebhook.balanceBranch.test.js` (known `STRIPE_WEBHOOK_SECRET`, local HMAC `sign()`, `postWebhook()` over real HTTP, production guard, seeds cleaned in `after()`). Seed helper (same snapshot shape as Task 1, repeated here so this task stands alone):
+Create `server/routes/stripeWebhook.gratuityApply.test.js` on the pattern of `server/routes/stripeWebhook.balanceBranch.test.js` (known `STRIPE_WEBHOOK_SECRET`, local HMAC `sign()`, `postWebhook()` over real HTTP, production guard, seeds cleaned in `after()`). Copy the harness env lines EXACTLY, including `process.env.STRIPE_WEBHOOK_SECRET_TEST = ''` (`balanceBranch:8`) — without it the dispatch-level test-mode gate in `server/routes/stripeWebhook.js` ack-and-drops the event (`{received:true, skipped:'test_mode'}`) and every assertion fails for the wrong reason. Do not put `livemode` in the event fixture. Seed helper (same snapshot shape as Task 1, repeated here so this task stands alone):
 
 ```js
 const SNAPSHOT = {
@@ -394,6 +402,32 @@ test('no election metadata: gratuity untouched (balance/invoice/legacy path)', a
   assert.equal(Number(p.total_price), 450);
 });
 
+test('full-pay onto an existing pre-gratuity Full Payment invoice: link caps, overflow logged', async () => {
+  // Pre-existing behavior surfaced deliberately (review finding): a non-grouped
+  // proposal gets a 'Full Payment' invoice minted AT SEND for the pre-gratuity
+  // total. Raising total_price in-tx then linking the 70000c charge hits the
+  // cap in linkPaymentToInvoice and logs invoice_link_overflow_capped. This
+  // test freezes that behavior so it is a decision, not a surprise.
+  const id = await seedProposal();
+  const invToken = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO invoices (proposal_id, token, invoice_number, label, amount_due, amount_paid, status)
+     VALUES ($1, $2, $3, 'Full Payment', 45000, 0, 'open')`,
+    [id, invToken, `INV${crypto.randomBytes(5).toString('hex')}`]);
+  await postWebhook(intentEvent({ proposalId: id, amount: 70000, paymentType: 'full',
+    meta: { tip_jar: 'false', gratuity_rate: '50' }, piId: `pi_grat_inv_${NONCE}` }));
+  const p = (await pool.query(
+    'SELECT total_price, amount_paid, status FROM proposals WHERE id = $1', [id])).rows[0];
+  assert.equal(Number(p.total_price), 700);
+  assert.equal(Number(p.amount_paid), 700);
+  const inv = (await pool.query(
+    "SELECT amount_paid FROM invoices WHERE proposal_id = $1 AND label = 'Full Payment'", [id])).rows[0];
+  assert.equal(Number(inv.amount_paid), 45000, 'link capped at the invoice amount_due');
+  // If the implementer finds linkPaymentToInvoice behaves differently against a
+  // raised total, adjust the assertion to the OBSERVED behavior and flag it in
+  // the lane summary — the point is to record what happens, not to guess.
+});
+
 test('duplicate delivery: election + credit applied exactly once', async () => {
   const id = await seedProposal();
   const evt = intentEvent({ proposalId: id, amount: 10000, paymentType: 'deposit',
@@ -412,7 +446,7 @@ Cleanup in `after()` must also delete the minted `invoices`, `proposal_payments`
 - [ ] **Step 2: Run to verify the right failures**
 
 Run: `node --test server/routes/stripeWebhook.gratuityApply.test.js`
-Expected: the metadata cases FAIL (`total_price` stays 450, `tip_jar` stays true); the no-metadata and duplicate cases pass vacuously.
+Expected: the deposit, full-pay, AND duplicate-delivery cases all FAIL (each asserts `total_price` 700; pre-implementation it stays 450). Only the no-metadata case passes vacuously RED.
 
 - [ ] **Step 3: Implement the apply block**
 
@@ -438,9 +472,14 @@ Insert immediately before the `// Determine new status and amount_paid based on 
               && intent.metadata?.tip_jar !== undefined) {
             const electTipJar = intent.metadata.tip_jar !== 'false';
             const electRate = Number(intent.metadata.gratuity_rate) || 0;
+            // FOR UPDATE: this handler holds no proposal row lock of its own
+            // (the hoist above locks only the CLIENT row), and the admin PATCH
+            // does hold proposals FOR UPDATE — an unlocked read-modify-write of
+            // the snapshot here could lose-update against a concurrent edit.
             const gRow = await dbClient.query(
               `SELECT pricing_snapshot, event_duration_hours FROM proposals
-                WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')`,
+                WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')
+                FOR UPDATE`,
               [proposalId]
             );
             if (gRow.rows[0]) {
@@ -449,8 +488,11 @@ Insert immediately before the `// Determine new status and amount_paid based on 
                 gratuityRate: electRate, tipJar: electTipJar,
                 staffNoun: snap.staff_noun, durationHours: gRow.rows[0].event_duration_hours,
               });
+              // origin explicitly NULL: this is a CLIENT election — a stale
+              // pre-existing 'admin'/'staffing' origin must not mislabel it.
               await dbClient.query(
                 `UPDATE proposals SET tip_jar = $1, gratuity_rate = $2,
+                        gratuity_rate_change_origin = NULL,
                         pricing_snapshot = $3, total_price = $4, updated_at = NOW()
                   WHERE id = $5 AND status NOT IN ('confirmed', 'completed', 'archived')`,
                 [electTipJar, electRate, JSON.stringify(newSnap), newSnap.total, proposalId]
@@ -463,20 +505,25 @@ The guard mirrors the credit branches exactly (`status NOT IN ('confirmed','comp
 
 - [ ] **Step 4: Run the new suite and every existing webhook suite**
 
-Run each, one at a time:
+Run each, one at a time (this is every suite that drives `paymentIntentSucceeded.js`):
 ```
 node --test server/routes/stripeWebhook.gratuityApply.test.js
-node --test server/routes/stripeWebhook.test.js
+node --test server/routes/stripe.webhook.test.js
 node --test server/routes/stripeWebhook.balanceBranch.test.js
 node --test server/routes/stripeWebhook.invoiceLink.test.js
 node --test server/routes/stripeWebhook.archivedSettle.test.js
+node --test server/routes/stripeWebhook.guards.test.js
+node --test server/routes/stripeWebhook.optionGroup.test.js
+node --test server/routes/stripeWebhook.extrasLink.test.js
 ```
-Expected: all PASS.
+Expected: all PASS. (There is no `stripeWebhook.test.js` — the base suite is `stripe.webhook.test.js`.)
+
+Also append `server/routes/stripeWebhook.gratuityApply.test.js` and `server/routes/stripeCreateIntent.test.js` to `scripts/money-smoke-list.txt` so the pre-push money gate covers the new seam.
 
 - [ ] **Step 5: Commit (lane checkpoint)**
 
 ```bash
-git add server/routes/stripeWebhookHandlers/paymentIntentSucceeded.js server/routes/stripeWebhook.gratuityApply.test.js
+git add server/routes/stripeWebhookHandlers/paymentIntentSucceeded.js server/routes/stripeWebhook.gratuityApply.test.js scripts/money-smoke-list.txt
 git commit -m "feat(gratuity): webhook applies the tip-jar election on payment success"
 ```
 
@@ -565,9 +612,42 @@ git commit -m "feat(gratuity): admin PATCH no longer accepts tip_jar/gratuity_to
 
 **Files:**
 - Modify: `server/routes/proposals/metadata.js:36, 64-81`
+- Test: `server/routes/proposals/metadata.calculate.test.js` (new — NO existing suite covers this endpoint)
 
 **Interfaces:**
 - Consumes/Produces: `POST /api/proposals/calculate` keeps accepting `tip_jar` + `gratuity_rate` (Task 6's editor preview sends the STORED values) and stops accepting `gratuity_total`.
+
+- [ ] **Step 0: Write the failing test**
+
+Create `server/routes/proposals/metadata.calculate.test.js` on the harness pattern of `server/routes/proposals/metadata.shapes.test.js` (minimal express() app, real `metadata` router + real auth middleware, admin JWT, node http against the dev DB). Look up a real active `service_packages` id in `before()` (`SELECT id FROM service_packages WHERE is_active = true LIMIT 1`) rather than hardcoding one.
+
+```js
+test('POST /calculate ignores gratuity_total (election-at-payment)', async () => {
+  const res = await request('POST', '/api/proposals/calculate', {
+    body: { package_id: pkgId, guest_count: 50, duration_hours: 5,
+            tip_jar: false, gratuity_total: 250 },
+  });
+  assert.equal(res.status, 200, res.raw);
+  const snap = JSON.parse(res.raw);
+  assert.ok(!snap.breakdown.some(l => l.label === 'Gratuity'),
+    'an entered dollar total can no longer conjure a preview gratuity line');
+});
+
+test('POST /calculate previews the stored rate', async () => {
+  const res = await request('POST', '/api/proposals/calculate', {
+    body: { package_id: pkgId, guest_count: 50, duration_hours: 5,
+            tip_jar: false, gratuity_rate: 50 },
+  });
+  assert.equal(res.status, 200, res.raw);
+  const snap = JSON.parse(res.raw);
+  const line = snap.breakdown.find(l => l.label === 'Gratuity');
+  assert.ok(line, 'stored-rate preview keeps the Gratuity line');
+  assert.ok(line.amount > 0);
+});
+```
+
+Run: `node --test server/routes/proposals/metadata.calculate.test.js`
+Expected RED: the first test FAILS (today `gratuity_total` derives a rate and injects the line); the second passes.
 
 - [ ] **Step 1: Implement**
 
@@ -583,15 +663,15 @@ In `server/routes/proposals/metadata.js`: remove `gratuity_total` from the destr
 
 Grep the file for `computeGratuityBasis` / `deriveGratuityRate`; remove them from the require if now unused. The `calculateProposal` call at lines 83-94 is unchanged.
 
-- [ ] **Step 2: Verify no server suite regresses**
+- [ ] **Step 2: Verify green + no neighbor regression**
 
-Run: `node --test server/routes/proposals/crud.test.js` and `node --test server/routes/proposals/public.calculate.test.js`
-Expected: PASS.
+Run: `node --test server/routes/proposals/metadata.calculate.test.js` (now PASS), then `node --test server/routes/proposals/metadata.shapes.test.js` and `node --test server/routes/proposals/metadata.leadSpend.test.js`.
+Expected: all PASS. (`public.calculate.test.js` covers a different route in `public.js`; it is in the whole-feature verification list, not a gate here.)
 
 - [ ] **Step 3: Commit (lane checkpoint)**
 
 ```bash
-git add server/routes/proposals/metadata.js
+git add server/routes/proposals/metadata.js server/routes/proposals/metadata.calculate.test.js
 git commit -m "feat(gratuity): /calculate previews only the stored rate"
 ```
 
@@ -614,8 +694,13 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { priceProposedState } = require('./changeRequests');
 
-const PKG = { id: 1, name: 'BYOB', package_type: 'byob', base_price: 200, price_per_hour: 50,
-  min_guests: 0, max_guests: 500, guests_per_bartender: 100, extra_bartender_hourly: 40 };
+// Fixture columns MUST match the real service_packages schema — copy the BYOB
+// fixture from server/utils/pricingEngine.test.js:10-13 (category, pricing_type,
+// bar_type, base_rate_4hr, base_rate_3hr, extra_hour_rate, ...), do NOT invent
+// column names.
+const PKG = { id: 1, slug: 'byob', name: 'BYOB Bar', category: 'byob', pricing_type: 'flat',
+  bar_type: 'byob', base_rate_4hr: 1000, base_rate_3hr: 900, extra_hour_rate: 150,
+  min_guests: 0, guests_per_bartender: 100, extra_bartender_hourly: 40 };
 const fakeDb = { query: async (sql) => sql.includes('service_packages')
   ? { rows: [PKG] } : { rows: [] } };
 
@@ -642,10 +727,9 @@ Expected: FAIL — no Gratuity line (the call omits `gratuityRate`).
 
 - [ ] **Step 3: Implement**
 
-In `server/utils/changeRequests.js`, add to the `calculateProposal` call (lines 77-87):
+In `server/utils/changeRequests.js`, the `calculateProposal` call already ends with `totalPriceOverride: proposal.total_price_override ?? null,` at line 86 — add ONLY these lines after it (do not re-state the existing key; a duplicate key trips `no-dupe-keys`):
 
 ```js
-    totalPriceOverride: proposal.total_price_override ?? null,
     // Election-at-payment: carry the STORED gratuity so a change-request preview
     // on a paid proposal doesn't silently drop the client's paid gratuity line.
     gratuityRate: Number(proposal.gratuity_rate) || 0,
@@ -676,17 +760,15 @@ git commit -m "fix(gratuity): change-request previews carry the stored gratuity"
 
 - [ ] **Step 1: Update patchBody + its test first**
 
-In `patchBody.js`: remove the `gratuityDirty = false` option and the `if (gratuityDirty) {...}` block (lines 9, 48-54). In `patchBody.test.js`: replace the "omits gratuity keys unless gratuityDirty" test with:
+In `patchBody.js`: remove the `gratuityDirty = false` option and the `if (gratuityDirty) {...}` block (lines 9, 48-54). In `patchBody.test.js` — a Jest/CRA suite (`describe`/`it`/`expect`) whose fixture is named `form` — replace the "omits gratuity keys unless gratuityDirty" test with:
 
 ```js
-test('never includes gratuity keys (election-at-payment)', () => {
-  const body = buildProposalPatchBody({ ...baseForm, tip_jar: false, gratuity_total: 400 });
-  assert.ok(!('tip_jar' in body));
-  assert.ok(!('gratuity_total' in body));
+it('never includes gratuity keys (election-at-payment)', () => {
+  const body = buildProposalPatchBody({ ...form, tip_jar: false, gratuity_total: 400 });
+  expect('tip_jar' in body).toBe(false);
+  expect('gratuity_total' in body).toBe(false);
 });
 ```
-
-(Match the file's existing runner/import style; reuse its existing `baseForm` fixture name.)
 
 - [ ] **Step 2: Strip the form**
 
@@ -706,15 +788,23 @@ In `ProposalEditorForm.js`:
 4. Remove `editForm.tip_jar`, `editForm.gratuity_total`, and `gratuityDirty` from the effect dependency array (lines 221-223); keep `storedTipJar` / `storedGratuityRate`.
 5. Delete `updateGratuity` (lines 248-251).
 6. Remove the `gratuityDirty` option from the `buildProposalPatchBody(...)` call site (grep `buildProposalPatchBody(` in the file).
-7. Remove the `GRATUITY_ORIGIN_LABELS` import (line 24) and grep the file to confirm no other use.
+7. Delete the `GRATUITY_ORIGIN_LABELS` local const (it is NOT an import — the const lives at lines 27-30 with its comment at 24-26) and grep the file to confirm no other use. Leaving it orphaned fails the CI build on `no-unused-vars`.
 
 In `formState.js`: delete the `tip_jar` / `gratuity_total` seeds (lines 41-42) — nothing reads them once the form and patchBody are stripped. Grep `client/src/pages/admin/proposalEditor/` for `tip_jar\|gratuity` afterward; the only survivors should be `storedGratuityRate` / `storedTipJar` in the form.
 
 - [ ] **Step 3: Verify with tests + the CI-grade build**
 
-Run: `cd client && npx react-scripts test --watchAll=false src/pages/admin/proposalEditor/patchBody.test.js` (or the repo's client test invocation if it differs — check `client/package.json`).
+Run: `cd client && npx react-scripts test --watchAll=false src/pages/admin/proposalEditor/` — the WHOLE directory, not just patchBody: `formState.test.js` and `ProposalEditorForm.smoke.test.js` exist and are reached by these edits. (Check `client/package.json` first if the invocation differs.)
 Run: `cd client && CI=true npx react-scripts build`
-Expected: test PASS; build clean (CI treats warnings as errors — unused imports would fail here).
+Expected: all suites PASS; build clean (CI treats warnings as errors — an orphaned const or import fails here).
+
+- [ ] **Step 3b: Manual verification (admin editor, dev server restarted first — it does not auto-reload)**
+
+Open a PAID proposal that carries a gratuity (dev DB: any `gratuity_rate > 0 AND amount_paid > 0` row) in the proposal editor:
+- The gratuity block (checkbox + dollar input) is gone.
+- The Gratuity line still renders read-only in the pricing breakdown.
+- Changing guest count/duration still previews the gratuity line scaled at the stored rate.
+- The event detail page still shows the "No tip jar (client paid to skip it)" badge for a no-jar proposal.
 
 - [ ] **Step 4: Commit (lane checkpoint)**
 
@@ -929,7 +1019,7 @@ git commit -m "feat(gratuity): one-off reset of unpaid self-elected gratuities"
 
 In `.claude/CLAUDE.md`, extend the **Checkout gratuity** invariant bullet (keep every existing clause) with:
 
-> The election persists ONLY at payment: `create-intent` computes it in memory and stamps `tip_jar`/`gratuity_rate` into PaymentIntent metadata; the `payment_intent.succeeded` webhook applies it (same lifecycle guard as the credit, before the Balance invoice). Unpaid proposals never carry a gratuity, and the admin PATCH never accepts `tip_jar`/`gratuity_total` (admin removal goes through cancel-line-item only).
+> The election persists ONLY at payment: `create-intent` computes it in memory and stamps `tip_jar`/`gratuity_rate` into PaymentIntent metadata; the `payment_intent.succeeded` webhook applies it (same lifecycle guard as the credit, before the Balance invoice, `FOR UPDATE` on the proposal row). Unpaid proposals never carry a gratuity, and the admin PATCH never accepts `tip_jar`/`gratuity_total` (admin removal goes through cancel-line-item only). Payments that carry no metadata — balance, invoice, drink-plan, admin-issued Stripe payment links — never touch the gratuity, so a link-paid proposal cannot collect a prepaid gratuity.
 
 - [ ] **Step 2: Update ARCHITECTURE.md and README.md**
 
@@ -950,10 +1040,13 @@ git commit -m "docs(gratuity): election-at-payment invariant + flow descriptions
 2. Client: `cd client && CI=true npx react-scripts build`; `patchBody.test.js` and `gratuityFloor.test.js`.
 3. Live walk on dev (dev server restart required — Claude-managed background process): open a proposal token, elect Skip the tip jar, watch the Sign & Pay card total move while the left-rail quote stays at the service price; reload; confirm the chooser is back at Keep the tip jar with the quote unchanged; complete a Stripe test-mode payment; confirm total/snapshot/Balance invoice now carry the gratuity.
 4. `node scripts/reset-unpaid-gratuity.js` (dry run) against dev, eyeball the list, `--apply` on dev.
-5. Prod, only after deploy and with explicit per-action approval: dry run, review the ~13 rows (665 among them), `--apply`, then spot-check proposal 665 renders $450.
+5. Prod, ONLY after the `grat-intent-webhook` and `grat-admin-lockdown` lanes are deployed to prod and step 3's flow is verified live (running the reset while the old `create-intent` is still deployed just lets abandoned checkouts regrow the rows), and with explicit per-action approval: dry run, review the ~13 rows (665 among them), `--apply`, then spot-check proposal 665 renders $450.
 
 ## Execution notes
 
-- Three lanes, no dependencies, can run in parallel; merge order is irrelevant. Every lane touches sensitive paths, so each gets the full review fleet at merge, and push time adds the sensitive-path re-review + `/second-opinion`.
-- The webhook + create-intent lane is the money seam; build it with max reasoning effort.
+- Lanes 1 (`grat-intent-webhook`) and 2 (`grat-admin-lockdown`) are independent and run in parallel. Lane 3 (`grat-copy-reset`) depends on BOTH (see front-matter comment) and builds/merges after them. Every lane touches sensitive paths, so each gets the full review fleet at merge, and push time adds the sensitive-path re-review + `/second-opinion`.
+- Review-cadence mapping (execution-review pattern): `security-review` + `code-review` on lane 1 (public money route + webhook surface); `code-review` + `consistency-check` on lane 2 (the stored-rate carry crosses PATCH/preview/changeRequests/client); `database-review` on lane 3 (the reset script is the only bulk writer in this work); `consistency-check` at push across all three (the metadata contract and the CLAUDE.md invariant span lanes).
+- Lane 1 is the money seam; build it with max reasoning effort. Its two tasks are NOT independently mergeable: Task 1 alone charges a gratuity-inclusive total that nothing records. The lane merges whole or not at all.
+- Safe partial revert (if lane 1 must be rolled back after deploy): revert the `stripeCreateIntent.js` change ONLY. The webhook apply block is a no-op when metadata is absent, and removing it while metadata-bearing intents are in flight strands a charged election (client charged gratuity-inclusive, proposal never records it).
+- Deliberate bundling, decided at review: Task 5 (changeRequests fix) stays in lane 2 — three lines, conceptually part of "the stored gratuity carries correctly everywhere". Lane 3 keeps copy + script + docs — the deps now force it to land last, which is the ordering that mattered.
 - Server tests share the dev DB: one suite at a time, never concurrently with another suite or the reset script.

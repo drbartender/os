@@ -29,7 +29,7 @@ Client experience: the quote always shows the true service price. The tip-jar qu
 
 Replace the persist transaction (lines 80-125) with an in-memory computation:
 
-1. Load the proposal (existing code path; the `FOR UPDATE` transaction is no longer needed for gratuity since nothing is written; keep the status guards exactly as they are).
+1. Load the proposal (existing code path; the `FOR UPDATE` transaction is no longer needed for gratuity since nothing is written; keep the top-of-route status guards exactly as they are). Named removal: the old transaction's under-lock ALREADY_PAID re-check goes with it. Bounded: this route no longer writes anything, so a proposal paid mid-request can at worst mint a fresh chargeable intent, and the webhook's additive credit records whatever is actually charged (the same exposure the metadata-less path has today).
 2. When `gratuityProvided`: `gratuityBasisFromSnapshot`, force jar on when `staffCount * hours <= 0`, `deriveGratuityRate` (floor validation unchanged, `ValidationError` on failure), `recomputeSnapshotGratuity` into a **local** `newSnap`. No UPDATE.
 3. Full-pay amount = `Math.round(newSnap.total * 100)`; deposit stays flat `DEPOSIT_AMOUNT`.
 4. PaymentIntent metadata gains `tip_jar` (`'true'`/`'false'`) and `gratuity_rate` (decimal string) alongside the existing `proposal_id` and `payment_type`. Metadata is attached only when `gratuityProvided`.
@@ -44,10 +44,10 @@ Intent reuse and staleness (lines 135-171). A deposit is $100 regardless of elec
 
 On the first delivery only (existing `proposal_payments` ON CONFLICT idempotency gate), for `payment_type` `deposit` or `full`, when the intent metadata carries `tip_jar`/`gratuity_rate`:
 
-1. Inside the existing proposal row lock, before the `amount_paid` credit and **before `createBalanceInvoice`**: `recomputeSnapshotGratuity` against the proposal's current snapshot with the metadata rate and jar, then `UPDATE proposals SET tip_jar, gratuity_rate, pricing_snapshot, total_price`.
-2. `gratuity_rate_change_origin` stays null (client election, matching today's create-intent write).
+1. Before the `amount_paid` credit and **before `createBalanceInvoice`**: read the proposal row **with `FOR UPDATE`** (the handler holds no proposal row lock of its own — its only lock is `FOR UPDATE OF c` on clients — and a concurrent admin PATCH does hold `proposals FOR UPDATE`, so an unlocked read-modify-write of the snapshot could lose-update), then `recomputeSnapshotGratuity` against the current snapshot with the metadata rate and jar, then `UPDATE proposals SET tip_jar, gratuity_rate, pricing_snapshot, total_price`.
+2. `gratuity_rate_change_origin` is set explicitly to NULL (client election; a stale pre-existing `'admin'`/`'staffing'` origin must not mislabel it).
 3. Ordering is the load-bearing part: the balance invoice computes `total_price - amount_paid`, so the gratuity must be in `total_price` first. The invoice line items regenerate from the snapshot, so the Gratuity line rides into the balance invoice as it does today.
-4. Metadata absent (legacy pay-only, balance, invoice, drink-plan payments, or a client who never touched the gratuity controls): no gratuity write at all, defaults stand.
+4. Metadata absent (legacy pay-only, balance, invoice, drink-plan payments, admin-issued Stripe payment links, or a client who never touched the gratuity controls): no gratuity write at all, defaults stand. Deliberate consequence: a link-paid proposal can never collect a prepaid gratuity; the docs note it so the invariant is not overstated.
 5. The DB CHECK (`tip_jar = true OR gratuity_rate >= 50`) is satisfied by construction: the rate in metadata passed `deriveGratuityRate` at intent creation, and the floor is on the rate, not the basis, so an admin staffing edit mid-flight cannot break the CHECK.
 
 Downstream unchanged: additive `amount_paid` credit, funded gate, payroll pooling of both labels, invoice cents bridge.
@@ -65,7 +65,7 @@ Downstream unchanged: additive `amount_paid` credit, funded gate, payroll poolin
 
 - `ProposalEditorForm.js`: delete the gratuity block (lines 634-670), the `gratuityDirty` state and `updateGratuity` plumbing (107-114, 248-251, 323), and the gratuity branch of the preview request body (192-197). The preview body always sends the stored `gratuity_rate` + `tip_jar` (from `formState`) so paid proposals preview correctly.
 - `patchBody.js`: remove the `tip_jar` / `gratuity_total` keys (lines 48-54).
-- `formState.js`: keep the snapshot seeds (lines 41-42) solely to feed the preview body; they are no longer editable.
+- `formState.js`: delete the `tip_jar` / `gratuity_total` seeds (lines 41-42) — the preview body reads `storedTipJar` / `storedGratuityRate` straight off the proposal snapshot, so nothing consumes the form-state copies once the block and patchBody keys are gone.
 - Paid proposals still surface their gratuity read-only: the breakdown renderer (`client/src/components/PricingBreakdown.js`) shows the Gratuity line, and `EventDetailPage.js` keeps its "No tip jar (client paid to skip it)" badge.
 
 ## 7. Client: sign-and-pay copy
@@ -105,6 +105,7 @@ Delara lands back on a clean $450 next visit, with the choice fresh in front of 
 - `stripeCreateIntent`: new route test asserting (a) no proposal write on intent creation, (b) metadata carries the election, (c) full-pay amount reflects the in-memory gratuity, (d) below-floor still 400s, (e) stale-intent cancellation on metadata mismatch.
 - `paymentIntentSucceeded`: new cases asserting the gratuity applies on first delivery, before the balance invoice (balance = total incl. gratuity minus deposit), no-op when metadata absent, idempotent on redelivery.
 - `crud.test.js`: Cases 21 and 23 (admin rate increase/decrease post-payment) are removed with the code they test. Case 19 (gratuity preserved across unrelated edit) and Case 22 (staffing-driven rescale) stay and must still pass.
+- `metadata.js` `/calculate`: a new route test (no suite covers this endpoint today) asserting `gratuity_total` is ignored and `gratuity_rate` still previews the line.
 - `patchBody.test.js`: gratuity keys never sent.
 - `changeRequests`: preview carries stored gratuity.
 - Reset script: unit-tested against fixture rows (chicago-keyed fixtures per test law), including the paid-row refusal.
