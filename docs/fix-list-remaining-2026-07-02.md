@@ -874,3 +874,35 @@ merged code 2026-08-04):
 - Whole-tree serial suite runs need `NODE_ENV=test` (calcom.test.js + drinkPlanConsult.test.js
   self-guard and abort at module load without it) — plan gates citing "run the full server
   suite" must carry the env var; display-name plan rev 3.3 records it. (note)
+
+## Push-gate residuals 2026-08-05 (display-name + seniority + sms-optin batch — all non-blocking, batch pushed)
+
+- `scripts/testdb-smoke.js` cannot fail on a failed schema statement: `initDb()` logs+Sentry's
+  per-statement errors and RESOLVES, so the child exits 0 and the gate passes while a
+  constraint silently didn't build. Make the smoke child assert zero unexpected failures.
+  The gate's strongest claim is currently unenforceable. (med, gate hardening)
+- Post-commit `refreshDisplayName` is try/catch-contained in contractor.js + agreement.js but
+  UNCONTAINED at admin/users.js:382, me.js:183, staffPortal.js:343/345, contractorTipPage.js:78 —
+  a transient refresh failure 500s a save that already committed. Mirror the contractor.js
+  containment at all five. (low; also flagged by codex)
+- `refreshDisplayName` SELECT-then-UPDATE is unlocked: two concurrent name saves for the SAME
+  user can persist a stale display_name (adjudicated acceptable at checkpoint 1; `--check`
+  detects, next save heals). Optional: `SELECT ... FOR UPDATE` inside a tx. (low)
+- `sanitizeProfile` (contractor.js) policy drift: `preferred_name_reviewed_at` (admin ack stamp)
+  rides the staff self-profile response; the sanitizer's own header says admin-only columns
+  belong in the destructure. One-word fix. (low)
+- `email_leads` unique index is on raw `email` (not LOWER): the "can't resurrect an unsubscribed
+  lead" guard is defeatable via any uppercase-stored row (PUT /leads/:id writes verbatim;
+  legacy rows). Pre-existing (capture-lead has it live); smsOptIn now relies on it. Normalize
+  the column + retarget the index/ON CONFLICTs together. Also: the upsert's
+  `COALESCE(email_leads.name, EXCLUDED.name)` is dead (`name` NOT NULL) — an 'Unknown' from
+  capture-lead is never upgraded to a real name. (low)
+- `staffDisplayName.validate.js` NAME_CHARS is ASCII-only: "José"/"Renée" cannot be SET as a
+  preferred name (grandfathering covers only unchanged values). Product call: widen to
+  `/^[\p{L}][\p{L} .'-]*$/u` keeping length/shape rules. (low, gemini catch)
+- Seniority panel: clearing the Historical-events box sends 0 (parseInt||0), bypassing the PUT's
+  ''-keep path — one-keystroke zeroing of a backfilled baseline (plan-mandated snippet; open
+  decision w/ Dallas; ~3-line client fix + "leave blank to keep" helper copy). (low, decision)
+- New batch suites are NOT on `scripts/money-smoke-list.txt` (incl. payrollTax.legalName.test.js —
+  the 1099 name path). Add deliberately, not mid-push: the gate would immediately run them
+  prod-shaped. (note)
