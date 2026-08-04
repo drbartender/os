@@ -71,8 +71,8 @@ router.get('/proposal/:proposalId', auth, requireAdminOrManager, asyncHandler(as
             i.status AS invoice_status, i.token AS invoice_token,
             -- users has NO \`name\` column; human names live on
             -- contractor_profiles.preferred_name. Fall back to the email.
-            COALESCE(cp.preferred_name, u.email) AS requested_by_name,
-            COALESCE(ovcp.preferred_name, ov.email) AS override_by_name
+            COALESCE(cp.display_name, cp.preferred_name, u.email) AS requested_by_name,
+            COALESCE(ovcp.display_name, ovcp.preferred_name, ov.email) AS override_by_name
        FROM service_extensions se
        LEFT JOIN invoices i ON i.id = se.invoice_id
        LEFT JOIN users u ON u.id = se.requested_by_user_id

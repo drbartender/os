@@ -303,7 +303,7 @@ async function loadStaffShiftContext(shiftId, staffUserId) {
             p.event_timezone, p.event_location,
             p.event_type, p.event_type_custom, p.tip_jar,
             COALESCE(c.name, s.client_name) AS client_name,
-            cp.preferred_name AS staff_name, cp.phone AS staff_phone
+            COALESCE(cp.display_name, cp.preferred_name) AS staff_name, cp.phone AS staff_phone
        FROM shifts s
        LEFT JOIN proposals p ON p.id = s.proposal_id
        LEFT JOIN clients c ON c.id = p.client_id
@@ -541,7 +541,7 @@ async function notifyStaffOfScheduleChange({ proposalId, updated, sms, email }) 
   try {
     const { rows } = await pool.query(
       `SELECT DISTINCT sr.user_id, u.email AS staff_email,
-              cp.preferred_name AS staff_name, cp.phone AS staff_phone,
+              COALESCE(cp.display_name, cp.preferred_name) AS staff_name, cp.phone AS staff_phone,
               p.event_type, p.event_type_custom, p.event_date,
               p.event_start_time, p.event_timezone, p.event_location
          FROM shifts s

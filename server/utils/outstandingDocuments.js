@@ -40,7 +40,7 @@ const DOC_JOINS = `
 const RESUME_MISSING = 'COALESCE(cp.resume_file_url, a.resume_file_url) IS NULL';
 const CERT_MISSING = 'COALESCE(cp.alcohol_certification_file_url, a.basset_file_url) IS NULL';
 
-const DISPLAY_NAME = 'COALESCE(cp.preferred_name, a.full_name, u.email)';
+const DISPLAY_NAME = 'COALESCE(cp.display_name, cp.preferred_name, a.full_name, u.email)';
 
 // One row in, labels out. Shared so the per-user answer and the admin list
 // cannot phrase or compute the same fact differently.

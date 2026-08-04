@@ -134,7 +134,12 @@ router.get('/payroll/tax-totals', auth, adminOnly, asyncHandler(async (req, res)
        SELECT user_id FROM payout_agg
      )
      SELECT c.user_id,
-            COALESCE(cp.preferred_name, u.email) AS name,
+            -- A 1099 is a government document, so this is the LEGAL name, not
+            -- the display name. Same precedence as paystubData.js:40, INCLUDING
+            -- the cp.preferred_name term: user 61 has neither an agreement nor
+            -- an application, and a legal-only chain would put a raw email
+            -- address on a tax document.
+            COALESCE(ag.full_name, ap.full_name, cp.preferred_name, u.email) AS name,
             COALESCE(u.exclude_from_1099, false) AS exclude_from_1099,
             COALESCE(la.ledger_cents, 0)::bigint AS ledger_cents,
             COALESCE(pa.payout_cents, 0)::bigint AS payout_cents,
@@ -143,6 +148,10 @@ router.get('/payroll/tax-totals', auth, adminOnly, asyncHandler(async (req, res)
        FROM combined c
        JOIN users u ON u.id = c.user_id
   LEFT JOIN contractor_profiles cp ON cp.user_id = c.user_id
+  -- Both tables have a UNIQUE user_id, so neither join can fan out and inflate
+  -- a money total.
+  LEFT JOIN agreements   ag ON ag.user_id = c.user_id
+  LEFT JOIN applications ap ON ap.user_id = c.user_id
   LEFT JOIN ledger_agg la ON la.user_id = c.user_id
   LEFT JOIN payout_agg pa ON pa.user_id = c.user_id
       ORDER BY total_cents DESC, name ASC`,

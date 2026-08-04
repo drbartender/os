@@ -11,6 +11,7 @@ const { renderAgreementPdf } = require('../utils/agreementPdf');
 const { uploadFile, getSignedUrl } = require('../utils/storage');
 const { sendEmail } = require('../utils/email');
 const { STAFF_URL } = require('../utils/urls');
+const { refreshDisplayName } = require('../utils/refreshDisplayName');
 
 const router = express.Router();
 
@@ -165,6 +166,22 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
     throw txErr;
   } finally {
     client.release();
+  }
+
+  // Signing supplies the legal name, which can change the last initial.
+  // NO previousPreferredName: this cannot have changed the preferred name, so
+  // it must not re-raise a §3.5 notice. The transaction client is already
+  // released, so the shared pool is the right handle here.
+  //
+  // Contained, like every other post-commit step in this handler: the signature
+  // row is already committed, so a DB blip here must not 500 a request whose
+  // write succeeded. Worst case is a stale display name, and
+  // scripts/refreshDisplayNames.js --check is the net that finds it.
+  try {
+    await refreshDisplayName(req.user.id, pool);
+  } catch (dnErr) {
+    console.error('[agreement] display-name refresh failed:', dnErr.message);
+    Sentry.captureException(dnErr, { tags: { route: 'POST /api/agreement', step: 'display_name' } });
   }
 
   // ── Post-commit: render PDF, upload, respond, then background email ──

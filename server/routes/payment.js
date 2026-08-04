@@ -54,7 +54,9 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       throw new ValidationError({ preferred_payment_method: 'Payment method is required.' });
     }
 
-    const { venmo_handle, cashapp_handle, paypal_url, zelle_handle, preferred_name } = req.body;
+    // preferred_name is deliberately NOT destructured here: this route no longer
+    // reads or writes a name (spec §3.3).
+    const { venmo_handle, cashapp_handle, paypal_url, zelle_handle } = req.body;
 
     // Normalize handles BEFORE the method-vs-handle requirement check so
     // (a) bad formats fail loudly with a clear message instead of being silently
@@ -178,14 +180,11 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       step = 'upsert_tip_handles';
       // (direct_deposit/check/other require no specific handle here)
 
-      // Persist preferred_name on contractor_profiles (existing column)
-      const preferredNameForTip = String(preferred_name || '').trim() || null;
-      if (preferredNameForTip) {
-        await client.query(
-          'UPDATE contractor_profiles SET preferred_name = $1, updated_at = NOW() WHERE user_id = $2',
-          [preferredNameForTip, req.user.id]
-        );
-      }
+      // NO name write here. Payday Protocols used to ask for the preferred name
+      // a second time, with copy inviting a stage name, and overwrote step 4's
+      // answer. The field is gone from the client and the write is gone from
+      // here. Step 4 (routes/contractor.js) is the only name entry point.
+      // Spec §3.3.
 
       // Upsert tip handles onto payment_profiles (row already exists from above).
       // COALESCE so a re-submit that leaves a previously-set handle blank can't
@@ -238,9 +237,16 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       );
       const token = ppRows[0]?.tip_page_token;
       const { createTipPaymentLink } = require('../utils/tipPaymentLinks');
+      // Read the name off the profile rather than the request body: the body no
+      // longer carries one. The transaction client is already released above, so
+      // pool.query here is correct and not a pool deadlock.
+      const { rows: dnRows } = await pool.query(
+        'SELECT display_name, preferred_name FROM contractor_profiles WHERE user_id = $1',
+        [req.user.id]
+      );
       const { url, id: linkId } = await createTipPaymentLink({
         userId: req.user.id,
-        displayName: req.body.preferred_name,
+        displayName: dnRows[0]?.display_name || dnRows[0]?.preferred_name || null,
         token,
       });
       await pool.query(

@@ -22,6 +22,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { pool } = require('../../db');
+const { refreshDisplayName } = require('../../utils/refreshDisplayName');
 const { parseCsv } = require('./parsers/csvUtil');
 const { getArg } = require('./config');
 const { validateSheets, planPeopleEmails, checkAttachRole, checkBoundaryNoDoubleCount, checkPlaceholderNameMatch } = require('./importValidation');
@@ -294,6 +295,10 @@ async function runImport({ reviewDir, execute, operator, allowAdminIds = new Set
           'INSERT INTO contractor_profiles (user_id, preferred_name, phone, email) VALUES ($1, $2, $3, $4)',
           [userId, p.proposed_name, p.phone || null, p.emailProvided ? p.email : null],
         );
+        // Without this an imported staffer lands with a NULL display_name and
+        // renders by bare preferred name until someone re-runs the backfill.
+        // The whole import is one transaction, so the client is threaded.
+        await refreshDisplayName(userId, client);
         await client.query(
           'INSERT INTO payment_profiles (user_id, preferred_payment_method, payment_username) VALUES ($1, $2, $3)',
           [userId, p.preferred_method || null, p.preferred_handle || null],

@@ -42,7 +42,7 @@ const worstPriority = (items) =>
 
 // Unstaffed upcoming events (uncapped; the tab caps at render) plus the
 // new-applications rollup. `unstaffed` is OverviewPage's derived list.
-export function buildStaffingItems(unstaffed, newApplications, uncertified = []) {
+export function buildStaffingItems(unstaffed, newApplications, uncertified = [], nameNotices = [], onAck) {
   const items = (unstaffed || []).map(e => {
     const open = parsePositionsCount(e) - approvedCount(e);
     const days = dayDiff(e.event_date.slice(0, 10));
@@ -81,6 +81,18 @@ export function buildStaffingItems(unstaffed, newApplications, uncertified = [])
       target: 'user', ref: u.user_id,
     });
   });
+
+  // Informational: a staffer told us what to call them. Usually a pleasant
+  // fact, occasionally a conversation. Never blocks the name (spec 3.5).
+  for (const n of nameNotices || []) {
+    items.push({
+      id: 'name-' + n.user_id, type: 'name-notice', priority: 'info',
+      title: `${n.legal_name || 'A staffer'} goes by ${n.preferred_name}`,
+      sub: `shows as ${n.display_name || n.preferred_name}`,
+      meta: 'Got it', metaAction: () => onAck(n.user_id),
+      target: 'user', ref: n.user_id,
+    });
+  }
 
   // Sort by urgency before returning. NeedsYouStrip renders
   // `t.items.slice(0, TAB_CAP)` in ARRAY ORDER with TAB_CAP = 6, and the RANK

@@ -13,7 +13,7 @@ import PayrollStatus from './PayrollStatus';
 const QUEUE_ICON = {
   unstaffed: 'userplus', proposal: 'eye', application: 'pen',
   payouts: 'dollar', prep: 'flask', 'change-request': 'pen', sms: 'chat',
-  'lead-call': 'alert', documents: 'alert',
+  'lead-call': 'alert', documents: 'alert', 'name-notice': 'userplus',
 };
 
 const TAB_CAP = 6;
@@ -68,7 +68,13 @@ export default function NeedsYouStrip({ tabs = [], loading = false, isAdmin = fa
         </div>
         <div className="queue-sub">{a.sub}</div>
       </div>
-      <div className="queue-meta">{a.meta}</div>
+      {/* An item carrying a metaAction renders its meta cell as a button and
+          swallows the click, so acking never navigates the row. Both branches
+          carry `queue-meta` so the type treatment and layout are identical. */}
+      {a.metaAction
+        ? <button type="button" className="queue-meta queue-meta-btn"
+            onClick={(e) => { e.stopPropagation(); a.metaAction(); }}>{a.meta}</button>
+        : <div className="queue-meta">{a.meta}</div>}
     </div>
   );
 

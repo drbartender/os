@@ -78,7 +78,7 @@ async function loadSwapContext(decoded) {
 
   const usersRes = await pool.query(
     `SELECT u.id, u.email,
-            cp.preferred_name, cp.phone, cp.position
+            cp.preferred_name, cp.display_name, cp.phone, cp.position
        FROM users u
        LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
       WHERE u.id = ANY($1::int[])`,

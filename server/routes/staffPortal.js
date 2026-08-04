@@ -15,6 +15,8 @@ const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, PayloadTooLargeError } = require('../utils/errors');
 const { validatePhone } = require('../utils/phone');
+const { refreshDisplayName } = require('../utils/refreshDisplayName');
+const { validatePreferredNameChange } = require('../utils/staffDisplayName.validate');
 const { isValidUpload } = require('../utils/fileValidation');
 const storage = require('../utils/storage');
 const { sendEmail } = require('../utils/email');
@@ -96,7 +98,7 @@ router.get('/staff-home', asyncHandler(async (req, res) => {
              p.id AS proposal_id, p.event_type, p.event_type_custom,
              c.name AS client_name,
              u.email AS requester_email,
-             cp.preferred_name AS requester_preferred_name,
+             COALESCE(cp.display_name, cp.preferred_name) AS requester_preferred_name,
              EXISTS (
                SELECT 1 FROM shift_requests sr2
                 WHERE sr2.shift_id = sr.shift_id
@@ -256,9 +258,19 @@ router.patch('/profile', asyncHandler(async (req, res) => {
     throw new ValidationError({ _form: 'No fields to update.' }, 'No fields to update.');
   }
 
+  const prevRow = await pool.query('SELECT preferred_name FROM contractor_profiles WHERE user_id = $1', [req.user.id]);
+  const prevPreferredName = prevRow.rows[0]?.preferred_name ?? null;
+
   const updates = {};
 
-  if ('preferred_name' in body) updates.preferred_name = trimOrNull(body.preferred_name);
+  if ('preferred_name' in body) {
+    // validatePreferredNameChange, NOT validatePreferredName: an unchanged
+    // legacy value always passes, so nobody is locked out of editing their own
+    // address by a name they cannot fix through the form (spec §3.4).
+    const check = validatePreferredNameChange(body.preferred_name, prevPreferredName);
+    if (!check.valid) throw new ValidationError({ preferred_name: check.error });
+    updates.preferred_name = check.value;
+  }
   if ('street_address' in body) updates.street_address = trimOrNull(body.street_address);
   if ('city' in body)           updates.city           = trimOrNull(body.city);
   if ('state' in body) {
@@ -322,6 +334,15 @@ router.patch('/profile', asyncHandler(async (req, res) => {
       `UPDATE contractor_profiles SET ${setClause}, updated_at = NOW() WHERE user_id = $1`,
       [req.user.id, ...cols.map((c) => updates[c])]
     );
+  }
+
+  // Display name is derived, so it is recomputed on every profile write.
+  // previousPreferredName is passed ONLY when the caller sent a preferred_name,
+  // so a phone-only edit cannot re-raise the §3.5 notice.
+  if ('preferred_name' in updates) {
+    await refreshDisplayName(req.user.id, pool, { previousPreferredName: prevPreferredName });
+  } else {
+    await refreshDisplayName(req.user.id, pool);
   }
 
   // Audit row OUTSIDE the implicit "transaction" (it's all auto-commit anyway,

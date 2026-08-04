@@ -192,7 +192,7 @@ router.get('/my-requests', auth, asyncHandler(async (req, res) => {
   if (approvedShiftIds.length > 0) {
     const teamRes = await pool.query(`
       SELECT sr.shift_id, sr.user_id, sr.position,
-        COALESCE(cp.preferred_name, u.email) AS name
+        COALESCE(cp.display_name, cp.preferred_name, u.email) AS name
       FROM shift_requests sr
       JOIN users u ON u.id = sr.user_id
       LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
@@ -235,9 +235,9 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
       rc.approved_count,
       (SELECT COALESCE(json_agg(json_build_object(
                 'user_id', sr.user_id,
-                'name', COALESCE(cp.preferred_name, u.email),
+                'name', COALESCE(cp.display_name, cp.preferred_name, u.email),
                 'beo_acknowledged_at', sr.beo_acknowledged_at
-              ) ORDER BY COALESCE(cp.preferred_name, u.email)), '[]'::json)
+              ) ORDER BY COALESCE(cp.display_name, cp.preferred_name, u.email)), '[]'::json)
          FROM shift_requests sr
          JOIN users u ON u.id = sr.user_id
          LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
@@ -289,7 +289,7 @@ router.get('/detail/:id', auth, requireStaffing, asyncHandler(async (req, res) =
     `, [req.params.id]),
     pool.query(`
       SELECT sr.*,
-        COALESCE(cp.preferred_name, u.email) AS staff_name,
+        COALESCE(cp.display_name, cp.preferred_name, u.email) AS staff_name,
         u.email AS staff_email,
         cp.city AS staff_city,
         cp.reliable_transportation AS staff_reliable_transportation
@@ -478,7 +478,7 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(assignShiftHandle
 /** GET /shifts/:id/requests — get all requests for a shift */
 router.get('/:id/requests', auth, requireStaffing, asyncHandler(async (req, res) => {
   const result = await pool.query(`
-    SELECT sr.*, u.email, cp.preferred_name, cp.phone
+    SELECT sr.*, u.email, cp.preferred_name, cp.display_name, cp.phone
     FROM shift_requests sr
     JOIN users u ON u.id = sr.user_id
     LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id

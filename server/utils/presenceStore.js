@@ -9,7 +9,7 @@ const presenceActivity = require('./presenceActivity');
 let _deps = { pool, now: () => new Date() };
 function __setPresenceStoreDeps(d) { _deps = { ..._deps, ...d }; }
 
-const NAME_SQL = "COALESCE(cp.preferred_name, INITCAP(SPLIT_PART(u.email, '@', 1)))";
+const NAME_SQL = "COALESCE(cp.display_name, cp.preferred_name, INITCAP(SPLIT_PART(u.email, '@', 1)))";
 
 async function getStripPayload() {
   const r = await _deps.pool.query(`

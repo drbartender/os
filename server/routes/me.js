@@ -8,6 +8,8 @@ const { ValidationError } = require('../utils/errors');
 const { PUBLIC_SITE_URL } = require('../utils/urls');
 const { getSignedUrl } = require('../utils/storage');
 const { normalizeTipHandlesInPlace } = require('../utils/tipHandleValidation');
+const { refreshDisplayName } = require('../utils/refreshDisplayName');
+const { validatePreferredNameChange } = require('../utils/staffDisplayName.validate');
 
 const router = express.Router();
 router.use(auth);
@@ -73,6 +75,7 @@ router.get('/tip-page', asyncHandler(async (req, res) => {
   const { rows } = await pool.query(`
     SELECT
       cp.preferred_name,
+      cp.display_name,
       cp.headshot_file_url,
       pp.tip_page_token,
       pp.tip_page_active,
@@ -119,6 +122,7 @@ router.get('/tip-page', asyncHandler(async (req, res) => {
     active: !!row.tip_page_active,
     has_stripe_link: !!row.stripe_payment_link_url,
     preferred_name: row.preferred_name || null,
+    display_name: row.display_name || null,
     venmo_handle: row.venmo_handle || null,
     cashapp_handle: row.cashapp_handle || null,
     paypal_url: row.paypal_url || null,
@@ -144,10 +148,16 @@ router.patch('/tip-page', asyncHandler(async (req, res) => {
     if (ALLOWED_PATCH_FIELDS.has(k)) updates[k] = req.body[k];
   }
 
+  const prevRow = await pool.query('SELECT preferred_name FROM contractor_profiles WHERE user_id = $1', [req.user.id]);
+  const prevPreferredName = prevRow.rows[0]?.preferred_name ?? null;
+
   if ('preferred_name' in updates) {
-    const t = String(updates.preferred_name || '').trim();
-    if (!t) throw new ValidationError('preferred_name cannot be blank');
-    updates.preferred_name = t;
+    const check = validatePreferredNameChange(updates.preferred_name, prevPreferredName);
+    // ValidationError's FIRST argument is a fieldErrors object, not a message
+    // string (server/utils/errors.js:12). The line this replaced passed a bare
+    // string, which lands in the fieldErrors slot; do not copy that pattern.
+    if (!check.valid) throw new ValidationError({ preferred_name: check.error });
+    updates.preferred_name = check.value;
   }
   // preferred_payment_method: '' from the form means "not picked" (radio inputs
   // can't be unselected) — treat as no-op rather than silent clear of a
@@ -170,6 +180,7 @@ router.patch('/tip-page', asyncHandler(async (req, res) => {
       'UPDATE contractor_profiles SET preferred_name = $1, updated_at = NOW() WHERE user_id = $2',
       [updates.preferred_name, req.user.id]
     );
+    await refreshDisplayName(req.user.id, pool, { previousPreferredName: prevPreferredName });
     delete updates.preferred_name;
   }
 

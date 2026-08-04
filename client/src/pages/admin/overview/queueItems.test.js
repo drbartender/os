@@ -127,6 +127,31 @@ describe('buildStaffingItems', () => {
     expect(row.ref).toBe(241);
   });
 
+  // The empty [] in the third slot is LOAD-BEARING: it is the existing
+  // `uncertified` parameter. Notices passed third would render as
+  // "undefined has no alcohol certification" documents rows.
+  test('buildStaffingItems emits an info-priority name notice per unreviewed name', () => {
+    const items = buildStaffingItems([], 0, [], [
+      { user_id: 7, legal_name: 'Nevver Sayles', preferred_name: 'TwistidTreets', display_name: 'TwistidTreets S.' },
+    ], () => {});
+    const row = items.find((i) => i.type === 'name-notice');
+    expect(row).toBeTruthy();
+    expect(row.priority).toBe('info');
+    expect(row.title).toBe('Nevver Sayles goes by TwistidTreets');
+    expect(row.target).toBe('user');
+    expect(row.ref).toBe(7);
+  });
+
+  test('the name notice meta action acks that user and never navigates', () => {
+    const acked = [];
+    const [row] = buildStaffingItems([], 0, [], [
+      { user_id: 7, legal_name: 'Nevver Sayles', preferred_name: 'TwistidTreets', display_name: 'TwistidTreets S.' },
+    ], (id) => acked.push(id)).filter(i => i.type === 'name-notice');
+    expect(row.meta).toBe('Got it');
+    row.metaAction();
+    expect(acked).toEqual([7]);
+  });
+
   test('gives each row a stable unique id', () => {
     const items = buildStaffingItems([], 0, [risk(55, 'Loryn'), risk(241, 'Debbie')])
       .filter(i => i.type === 'documents');

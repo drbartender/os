@@ -368,7 +368,7 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
 
   const filteredStaff = search.length >= 2
     ? activeStaff.filter(s => {
-        const name = (s.preferred_name || s.email || '').toLowerCase();
+        const name = (s.display_name || s.preferred_name || s.email || '').toLowerCase();
         return name.includes(search.toLowerCase());
       }).slice(0, 8)
     : [];
@@ -647,10 +647,10 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
                       className="staff-assign-item"
                       onClick={() => {
                         setSelectedStaff(s);
-                        setSearch(s.preferred_name || s.email);
+                        setSearch(s.display_name || s.preferred_name || s.email);
                       }}
                     >
-                      <div className="staff-assign-item-name">{s.preferred_name || s.email}</div>
+                      <div className="staff-assign-item-name">{s.display_name || s.preferred_name || s.email}</div>
                       <div className="staff-assign-item-meta">
                         {s.email}{s.city ? ` · ${s.city}` : ''}
                       </div>

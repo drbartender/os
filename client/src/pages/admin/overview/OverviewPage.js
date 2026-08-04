@@ -89,6 +89,7 @@ export default function OverviewPage() {
   const [proposalsLoading, setProposalsLoading] = useState(true);
   const [applications, setApplications] = useState([]);
   const [uncertified, setUncertified] = useState([]);
+  const [nameNotices, setNameNotices] = useState([]);
   const [drinkPlans, setDrinkPlans] = useState([]);
   const [drinkPlansLoading, setDrinkPlansLoading] = useState(true);
   const [payoutsLoading, setPayoutsLoading] = useState(true);
@@ -167,6 +168,23 @@ export default function OverviewPage() {
       .catch(() => {}); // best-effort: missed-call items simply stay absent
   }, []);
 
+  // adminOnly route, same as /admin/applications and /admin/hiring/uncertified below: a manager's 403 would trip
+  // the role_denial audit, so this is only ever called from inside the isAdmin
+  // block. The .catch keeps a failed request from breaking the whole strip.
+  const loadNameNotices = useCallback(() => {
+    api.get('/admin/name-notices')
+      .then(r => setNameNotices(r.data.rows || []))
+      .catch(() => setNameNotices([]));
+  }, []);
+
+  const ackNameNotice = useCallback(async (userId) => {
+    // Optimistic: the row is informational, so a failed ack costs nothing but a
+    // reappearance on the next load.
+    setNameNotices(rows => rows.filter(r => r.user_id !== userId));
+    try { await api.post(`/admin/name-notices/${userId}/ack`); }
+    catch { loadNameNotices(); }
+  }, [loadNameNotices]);
+
   // Operational fetches — each isolated, no shared loading gate.
   useEffect(() => {
     let cancelled = false;
@@ -221,9 +239,12 @@ export default function OverviewPage() {
       api.get('/admin/hiring/uncertified')
         .then(r => { if (!cancelled) setUncertified(r.data?.users || []); })
         .catch(() => {}); // rows simply stay absent
+
+      // Informational name notices. adminOnly for the same reason again.
+      loadNameNotices();
     }
     return () => { cancelled = true; };
-  }, [isAdmin]);
+  }, [isAdmin, loadNameNotices]);
 
   const upcoming = useMemo(() =>
     shifts.filter(e => e.event_date && dayDiff(e.event_date.slice(0, 10)) >= 0)
@@ -237,8 +258,8 @@ export default function OverviewPage() {
   // The old un-aged proposal followups are gone by design; only sent-unviewed
   // past 72h survives, as the conditional Sales tab.
   const staffingItems = useMemo(
-    () => buildStaffingItems(unstaffed, newApplications, uncertified),
-    [unstaffed, newApplications, uncertified]);
+    () => buildStaffingItems(unstaffed, newApplications, uncertified, nameNotices, ackNameNotice),
+    [unstaffed, newApplications, uncertified, nameNotices, ackNameNotice]);
   const prepItems = useMemo(() => buildPrepItems(drinkPlans), [drinkPlans]);
   const clientItems = useMemo(() => buildClientItems(changeRequests, conversations), [changeRequests, conversations]);
   const salesItems = useMemo(() => buildSalesItems(proposals, Date.now()), [proposals]);

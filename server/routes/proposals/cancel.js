@@ -167,7 +167,7 @@ router.post('/:id/cancel/preview', auth, requireAdminOrManager, adminWriteLimite
   });
 
   const staffRes = await pool.query(
-    `SELECT DISTINCT COALESCE(cp.preferred_name, u.email) AS name, sr.position
+    `SELECT DISTINCT COALESCE(cp.display_name, cp.preferred_name, u.email) AS name, sr.position
        FROM shifts s
        JOIN shift_requests sr ON sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL
        JOIN users u ON u.id = sr.user_id

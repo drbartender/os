@@ -13,7 +13,7 @@ import EquipmentDisplay from '../components/EquipmentDisplay';
 
 export default function OverviewTab(props) {
   const {
-    user, profile, upcoming, recent, eventsLoading,
+    user, profile, legalName, upcoming, recent, eventsLoading,
     editing, editForm, setEditForm, startEditing, cancelEditing,
     saveProfile, saving, profileError, profileFieldErrors,
     permsSaving, updatePermission,
@@ -183,8 +183,8 @@ export default function OverviewTab(props) {
               <div className="vstack" style={{ gap: 10 }}>
                 <FormBanner error={profileError} fieldErrors={profileFieldErrors} />
                 <div>
-                  <div className="meta-k" style={{ marginBottom: 4 }}>Preferred name</div>
-                  <input className="input" value={editForm.preferred_name} onChange={e => updateField('preferred_name', e.target.value)} />
+                  <div className="meta-k" style={{ marginBottom: 4 }}>What we call them</div>
+                  <input className="input" value={editForm.preferred_name} onChange={e => updateField('preferred_name', e.target.value)} maxLength={20} />
                   <FieldError error={profileFieldErrors?.preferred_name} />
                 </div>
                 <div>
@@ -226,6 +226,8 @@ export default function OverviewTab(props) {
               </div>
             ) : (
               <dl className="dl">
+                <dt>Legal name</dt>
+                <dd>{legalName || <span className="muted">not on file</span>}</dd>
                 <dt>Phone</dt>
                 <dd>{profile?.phone ? formatPhone(profile.phone) : '—'}</dd>
                 <dt>Address</dt>

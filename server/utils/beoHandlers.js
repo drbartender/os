@@ -220,7 +220,7 @@ async function loadBeoContext(proposalId, userId) {
             p.event_duration_hours, p.event_timezone, p.status AS proposal_status,
             p.event_type, p.event_type_custom,
             dp.finalized_at,
-            cp.phone AS staff_phone, cp.preferred_name AS staff_name,
+            cp.phone AS staff_phone, COALESCE(cp.display_name, cp.preferred_name) AS staff_name,
             u.id AS user_id, u.onboarding_status,
             (
               SELECT bool_or(sr.beo_acknowledged_at IS NOT NULL)

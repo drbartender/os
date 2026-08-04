@@ -12,6 +12,8 @@ const { ValidationError, ConflictError, NotFoundError, PermissionError } = requi
 const { validatePhone } = require('../../utils/phone');
 const { activateTipPage, deactivateTipPage } = require('../../utils/tipPageLifecycle');
 const { seedContractorProfileFromApplication } = require('../../utils/contractorSeed');
+const { refreshDisplayName } = require('../../utils/refreshDisplayName');
+const { validatePreferredNameChange } = require('../../utils/staffDisplayName.validate');
 const { writeActivityBestEffort, writeInterviewNoteBestEffort } = require('../../utils/activityLog');
 
 const router = express.Router();
@@ -30,7 +32,7 @@ router.get('/users', auth, adminOnly, asyncHandler(async (req, res) => {
         op.account_created, op.welcome_viewed, op.field_guide_completed, op.agreement_completed,
         op.contractor_profile_completed, op.payday_protocols_completed, op.onboarding_completed,
         op.last_completed_step, op.updated_at as progress_updated_at,
-        cp.preferred_name, cp.phone as profile_phone,
+        cp.preferred_name, cp.display_name, cp.phone as profile_phone,
         ag.full_name as signed_name, ag.signed_at
       FROM users u
       LEFT JOIN onboarding_progress op ON op.user_id = u.id
@@ -322,11 +324,31 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
     rate = n;
   }
 
+  const prevRow = await pool.query('SELECT preferred_name FROM contractor_profiles WHERE user_id = $1', [userId]);
+  const prevPreferredName = prevRow.rows[0]?.preferred_name ?? null;
+
   const fieldErrors = {};
   const phoneCheck = validatePhone(phone);
   if (phoneCheck.error) fieldErrors.phone = phoneCheck.error;
   const ecPhoneCheck = validatePhone(emergency_contact_phone);
   if (ecPhoneCheck.error) fieldErrors.emergency_contact_phone = ecPhoneCheck.error;
+
+  // Blank stays legal on the admin path (spec §3.4). preferred_name is optional
+  // here today, and an admin editing a skeleton profile (hired directly, no
+  // application, no name yet) must not get a 400 for a field they never touched.
+  // `nextName` is declared OUTSIDE the guard so the validated, whitespace
+  // normalized value is what reaches the upsert, not the raw body string.
+  //
+  // Collected into fieldErrors rather than thrown on its own (contractor.js
+  // pattern): a bad phone AND a bad name come back together, instead of the
+  // admin fixing one and discovering the other on the next submit.
+  let nextName = String(preferred_name || '').trim() || null;
+  if (nextName !== null) {
+    const nameCheck = validatePreferredNameChange(preferred_name, prevPreferredName);
+    if (!nameCheck.valid) fieldErrors.preferred_name = nameCheck.error;
+    else nextName = nameCheck.value;
+  }
+
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
 
   // Upsert contractor profile
@@ -347,7 +369,7 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
       emergency_contact_name=$20, emergency_contact_phone=$21, emergency_contact_relationship=$22,
       hourly_rate=COALESCE($23, contractor_profiles.hourly_rate)
   `, [
-    userId, preferred_name || null, phoneCheck.value, profileEmail || null,
+    userId, nextName, phoneCheck.value, profileEmail || null,
     birth_month || null, birth_day || null, birth_year || null,
     city || null, state || null, street_address || null, zip_code || null,
     travel_distance || null, reliable_transportation || null,
@@ -356,6 +378,8 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
     emergency_contact_name || null, ecPhoneCheck.value, emergency_contact_relationship || null,
     rate,
   ]);
+
+  await refreshDisplayName(userId, pool, { previousPreferredName: prevPreferredName });
 
   // Geocode address in background (fire-and-forget; failures logged only)
   if (street_address || city || state || zip_code) {
@@ -439,7 +463,7 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
     pool.query(`
       SELECT
         u.id, u.email, u.role, u.onboarding_status, u.created_at, u.cc_id, u.import_source,
-        cp.preferred_name, cp.phone, cp.city, cp.state,
+        cp.preferred_name, cp.display_name, cp.phone, cp.city, cp.state,
         cp.travel_distance, cp.reliable_transportation,
         cp.equipment_portable_bar, cp.equipment_cooler, cp.equipment_table_with_spandex,
         a.positions_interested,
@@ -452,7 +476,7 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
       WHERE u.role IN ('staff', 'manager')
         AND u.onboarding_status IN (${statusList})
         AND op.onboarding_completed = true
-      ORDER BY COALESCE(cp.preferred_name, u.email) ASC
+      ORDER BY COALESCE(cp.display_name, cp.preferred_name, u.email) ASC
       LIMIT $1 OFFSET $2
     `, [limit, offset]),
     pool.query(`

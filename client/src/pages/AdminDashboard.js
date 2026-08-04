@@ -253,6 +253,7 @@ export default function AdminDashboard() {
                       {activeStaff
                         .filter(s =>
                           !staffSearch ||
+                          (s.display_name || '').toLowerCase().includes(staffSearch.toLowerCase()) ||
                           (s.preferred_name || '').toLowerCase().includes(staffSearch.toLowerCase()) ||
                           s.email.toLowerCase().includes(staffSearch.toLowerCase())
                         )
@@ -266,7 +267,7 @@ export default function AdminDashboard() {
                             <ClickableRow key={s.id} to={`/staffing/users/${s.id}`}>
                               <td>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                  <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{s.preferred_name || '—'}</span>
+                                  <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{s.display_name || s.preferred_name || '—'}</span>
                                   {s.role === 'manager' && <span className="badge badge-approved" style={{ fontSize: '0.6rem', padding: '0.1rem 0.4rem' }}>Manager</span>}
                                 </div>
                                 <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{s.email}</div>
@@ -483,7 +484,7 @@ export default function AdminDashboard() {
                                     <td>
                                       <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>
                                         <EntityLink to={req.user_id ? `/staffing/users/${req.user_id}` : null}>
-                                          {req.preferred_name || req.email}
+                                          {req.display_name || req.preferred_name || req.email}
                                         </EntityLink>
                                       </div>
                                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{req.phone ? formatPhone(req.phone) : req.email}</div>
@@ -602,18 +603,18 @@ export default function AdminDashboard() {
                       <div style={{ marginBottom: '0.4rem' }}>
                         <label style={{ fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                           <input type="checkbox"
-                            checked={msgSelected.length === msgRecipients.filter(r => !msgSearch || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase())).length && msgSelected.length > 0}
+                            checked={msgSelected.length === msgRecipients.filter(r => !msgSearch || r.display_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase())).length && msgSelected.length > 0}
                             onChange={e => {
-                              const filtered = msgRecipients.filter(r => !msgSearch || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase()));
+                              const filtered = msgRecipients.filter(r => !msgSearch || r.display_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase()));
                               setMsgSelected(e.target.checked ? filtered.map(r => r.user_id) : []);
                             }}
                           />
-                          Select All ({msgRecipients.filter(r => !msgSearch || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase())).length})
+                          Select All ({msgRecipients.filter(r => !msgSearch || r.display_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase())).length})
                         </label>
                       </div>
                       <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid var(--border-dark)', borderRadius: '6px', padding: '0.5rem' }}>
                         {msgRecipients
-                          .filter(r => !msgSearch || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase()))
+                          .filter(r => !msgSearch || r.display_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase()))
                           .map(r => (
                             <label key={r.user_id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.25rem 0', cursor: 'pointer', fontSize: '0.88rem' }}>
                               <input type="checkbox"
@@ -629,14 +630,14 @@ export default function AdminDashboard() {
                                   to={r.user_id ? `/staffing/users/${r.user_id}` : null}
                                   onClick={(e) => e.stopPropagation()}
                                 >
-                                  {r.preferred_name || r.email}
+                                  {r.display_name || r.preferred_name || r.email}
                                 </EntityLink>
                               </span>
                               <span className="text-muted" style={{ fontSize: '0.78rem' }}>{formatPhone(r.phone)}</span>
                             </label>
                           ))
                         }
-                        {msgRecipients.filter(r => !msgSearch || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase())).length === 0 && (
+                        {msgRecipients.filter(r => !msgSearch || r.display_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase())).length === 0 && (
                           <div className="text-muted text-small" style={{ padding: '0.5rem 0' }}>No eligible staff found (must have phone + SMS consent)</div>
                         )}
                       </div>

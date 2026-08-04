@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import FileUpload from '../components/FileUpload';
 import W9Form from '../components/W9Form';
 import FormBanner from '../components/FormBanner';
@@ -71,9 +71,12 @@ export default function PaydayProtocols() {
   const [w9Mode, setW9Mode] = useState('fill'); // 'fill' | 'upload'
   const [w9Done, setW9Done] = useState(false);  // true after W9Form generates PDF
 
+  // Read-only: the name comes from step 4 (Contractor Profile) and this page
+  // never writes it (spec §3.3).
+  const [displayName, setDisplayName] = useState('');
+
   const [form, setForm] = useState({
     // Tip & Payroll Preferences (new — Tip QR page Phase 2)
-    preferred_name: '',
     venmo_handle: '',
     cashapp_handle: '',
     paypal_url: '',
@@ -85,8 +88,9 @@ export default function PaydayProtocols() {
   });
 
   useEffect(() => {
-    // Load saved payment profile + the contractor profile so we can pre-fill
-    // preferred_name (which lives on contractor_profiles, not payment_profiles).
+    // Load saved payment profile + the contractor profile so we can SHOW the
+    // name step 4 saved (it lives on contractor_profiles, not payment_profiles).
+    // Display only: this page never writes a name.
     Promise.all([
       api.get('/payment').catch(() => ({ data: {} })),
       api.get('/contractor').catch(() => ({ data: {} })),
@@ -97,9 +101,10 @@ export default function PaydayProtocols() {
       const method = migrateLegacyMethod(rawMethod);
       const username = pay.payment_username || '';
 
+      setDisplayName(prof.display_name || prof.preferred_name || '');
+
       setForm(f => ({
         ...f,
-        preferred_name: prof.preferred_name || '',
         // Prefer the explicit columns; fall back to the legacy single-field
         // payment_username when the matching method was selected before.
         // Pass through strip helpers so legacy URL-shaped values render as bare handles.
@@ -149,7 +154,6 @@ export default function PaydayProtocols() {
 
     // Build rules dynamically based on selected payment method.
     const rules = [
-      { field: 'preferred_name', label: 'Preferred Name' },
       { field: 'preferred_payment_method', label: 'Pay me out via' },
     ];
 
@@ -180,7 +184,7 @@ export default function PaydayProtocols() {
       const data = new FormData();
 
       // New Tip & Payroll Preferences fields (snake_case to match backend).
-      data.append('preferred_name', String(form.preferred_name || '').trim());
+      // No preferred_name: step 4 owns the name, and the server ignores it here.
       data.append('venmo_handle', form.venmo_handle || '');
       data.append('cashapp_handle', form.cashapp_handle || '');
       data.append('paypal_url', form.paypal_url || '');
@@ -417,22 +421,15 @@ export default function PaydayProtocols() {
             <h3 style={{ marginBottom: '0.35rem' }}>Your public tip page</h3>
             <p className="text-small text-muted" style={{ marginBottom: '1.25rem' }}>
               Your tip page lives at <strong>drbartender.com/tip/your-name</strong> with a
-              QR you can print. Your name is required; the tip handles below are
-              <strong> optional</strong>. Add them now, later from My Tip Page, or never.
-              None of this is shared outside DRB.
+              QR you can print. The tip handles below are <strong>optional</strong>. Add
+              them now, later from My Tip Page, or never. None of this is shared outside DRB.
             </p>
 
-            <div className={`form-group${fieldClass('preferred_name')}`}>
-              <label htmlFor="pp-preferred_name" className="form-label">Preferred name *</label>
-              <input
-                id="pp-preferred_name" name="preferred_name" type="text"
-                className={`form-input${inputClass('preferred_name')}`}
-                value={form.preferred_name} onChange={handle}
-                maxLength={80} required
-                placeholder="What customers see on your tip page"
-              />
-              <p className="form-helper">
-                The name customers see on your tip page. Use whatever you go by: your real name, a nickname, a stage name.
+            <div className="form-group">
+              <div className="meta-k" style={{ marginBottom: 4 }}>Your tip page</div>
+              <p className="form-helper" style={{ marginTop: 0 }}>
+                Your tip page will read <strong>{displayName || 'your name'}</strong>.{' '}
+                <Link to="/contractor-profile">Change this</Link>
               </p>
             </div>
 

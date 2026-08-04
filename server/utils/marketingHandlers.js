@@ -387,7 +387,7 @@ async function bartenderTipHandlesForSingleBartenderEvent(proposalId) {
   //     IF NOT EXISTS zelle_handle TEXT. For now, omit Zelle from the tip
   //     handles entirely.
   const { rows } = await pool.query(`
-    SELECT sr.user_id, cp.preferred_name AS bartender_name,
+    SELECT sr.user_id, COALESCE(cp.display_name, cp.preferred_name) AS bartender_name,
            pp.venmo_handle, pp.cashapp_handle
     FROM shift_requests sr
     JOIN shifts s ON s.id = sr.shift_id

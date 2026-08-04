@@ -837,7 +837,7 @@ router.post('/requests/:requestId/emergency-drop', asyncHandler(async (req, res)
 
   // Look up the staffer's display name for the front-loaded SMS.
   const { rows: staffRows } = await pool.query(
-    `SELECT COALESCE(cp.preferred_name, u.email) AS display_name
+    `SELECT COALESCE(cp.display_name, cp.preferred_name, u.email) AS display_name
        FROM users u LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
       WHERE u.id = $1`,
     [req.user.id]

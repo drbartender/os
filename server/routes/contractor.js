@@ -1,4 +1,5 @@
 const express = require('express');
+const Sentry = require('@sentry/node');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../db');
 const { ensureOnboardingProgress } = require('../utils/onboardingProgress');
@@ -9,6 +10,8 @@ const { geocodeAddress, buildAddressString } = require('../utils/geocode');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError } = require('../utils/errors');
 const { validatePhone } = require('../utils/phone');
+const { refreshDisplayName } = require('../utils/refreshDisplayName');
+const { validatePreferredNameChange } = require('../utils/staffDisplayName.validate');
 
 const router = express.Router();
 
@@ -30,10 +33,22 @@ router.get('/', auth, asyncHandler(async (req, res) => {
   const result = await pool.query('SELECT * FROM contractor_profiles WHERE user_id = $1', [req.user.id]);
   const profile = result.rows[0];
 
+  // Legal name (read-only) so the preferred-name field can preview the display
+  // name live. Same precedence as refreshDisplayName / paystubData.
+  const legalRes = await pool.query(
+    `SELECT COALESCE(ag.full_name, ap.full_name) AS legal_name
+       FROM users u
+       LEFT JOIN agreements   ag ON ag.user_id = u.id
+       LEFT JOIN applications ap ON ap.user_id = u.id
+      WHERE u.id = $1`,
+    [req.user.id]
+  );
+  const legal_name = legalRes.rows[0]?.legal_name || null;
+
   // A profile is "filled in" once the user has saved their preferred_name.
   // Admin-on-hire creates a skeleton row with only hire_date — treat that as empty.
   if (profile && profile.preferred_name) {
-    return res.json(sanitizeProfile(profile));
+    return res.json({ ...sanitizeProfile(profile), legal_name });
   }
 
   // Empty or missing profile — fall back to application data for auto-fill.
@@ -45,6 +60,8 @@ router.get('/', auth, asyncHandler(async (req, res) => {
     return res.json({
       hire_date: profile?.hire_date || null,
       _from_application: true,
+      legal_name,
+      display_name: profile?.display_name || null,
       preferred_name: app.full_name,
       phone: app.phone,
       email: req.user.email,
@@ -74,7 +91,7 @@ router.get('/', auth, asyncHandler(async (req, res) => {
     });
   }
 
-  res.json(sanitizeProfile(profile) || {});
+  res.json({ ...(sanitizeProfile(profile) || {}), legal_name });
 }));
 
 // Save contractor profile
@@ -88,11 +105,20 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     emergency_contact_name, emergency_contact_phone, emergency_contact_relationship
   } = req.body;
 
+  const prevRow = await pool.query('SELECT preferred_name FROM contractor_profiles WHERE user_id = $1', [req.user.id]);
+  const prevPreferredName = prevRow.rows[0]?.preferred_name ?? null;
+
   const fieldErrors = {};
   const phoneCheck = validatePhone(phone);
   if (phoneCheck.error) fieldErrors.phone = phoneCheck.error;
   const ecPhoneCheck = validatePhone(emergency_contact_phone);
   if (ecPhoneCheck.error) fieldErrors.emergency_contact_phone = ecPhoneCheck.error;
+  // Blank is a hard 400 here, and that is intentional and different from the
+  // admin paths: this is the staff-facing step 4 form where the name is a
+  // required field. The blank-is-legal carve-out exists only for admins editing
+  // someone else's skeleton profile.
+  const nameCheck = validatePreferredNameChange(preferred_name, prevPreferredName);
+  if (!nameCheck.valid) fieldErrors.preferred_name = nameCheck.error;
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
 
   let alcohol_cert_url = null, alcohol_cert_name = null;
@@ -164,7 +190,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
          resume_file_url=$24, resume_filename=$25,
          headshot_file_url=$26, headshot_filename=$27
          WHERE user_id=$28`,
-        [preferred_name, phoneCheck.value, email, birth_month, birth_day, birth_year,
+        [nameCheck.value, phoneCheck.value, email, birth_month, birth_day, birth_year,
          street_address, city, state, zip_code,
          travel_distance, reliable_transportation,
          toBool(equipment_portable_bar), toBool(equipment_cooler), toBool(equipment_table_with_spandex),
@@ -185,7 +211,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
          resume_file_url, resume_filename,
          headshot_file_url, headshot_filename)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
-        [req.user.id, preferred_name, phoneCheck.value, email, birth_month, birth_day, birth_year,
+        [req.user.id, nameCheck.value, phoneCheck.value, email, birth_month, birth_day, birth_year,
          street_address, city, state, zip_code,
          travel_distance, reliable_transportation,
          toBool(equipment_portable_bar), toBool(equipment_cooler), toBool(equipment_table_with_spandex),
@@ -209,6 +235,20 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     throw txErr;
   } finally {
     client.release();
+  }
+
+  // Post-commit tail: the transaction client is already released, so the shared
+  // pool is the right handle here and cannot deadlock.
+  //
+  // Contained, like the geocode below it: the profile write is already
+  // committed, so a DB blip here must not 500 a request that succeeded. Worst
+  // case is a stale display name, and scripts/refreshDisplayNames.js --check is
+  // the net that finds it.
+  try {
+    await refreshDisplayName(req.user.id, pool, { previousPreferredName: prevPreferredName });
+  } catch (dnErr) {
+    console.error('[Contractor] display-name refresh failed:', dnErr.message);
+    Sentry.captureException(dnErr, { tags: { route: 'POST /api/contractor', step: 'display_name' } });
   }
 
   // Geocode address in background (don't block the response)

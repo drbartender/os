@@ -11,6 +11,8 @@ const {
 const { activateTipPage, deactivateTipPage } = require('../../utils/tipPageLifecycle');
 const { normalizeTipHandlesInPlace } = require('../../utils/tipHandleValidation');
 const { logAdminAction } = require('../../utils/adminAuditLog');
+const { refreshDisplayName } = require('../../utils/refreshDisplayName');
+const { validatePreferredNameChange } = require('../../utils/staffDisplayName.validate');
 
 const router = express.Router();
 
@@ -58,10 +60,22 @@ router.patch('/contractors/:userId/tip-page', auth, requireAdminOrManager, async
   normalizeTipHandlesInPlace(fields);
 
   if ('preferred_name' in req.body) {
+    const prevRow = await pool.query('SELECT preferred_name FROM contractor_profiles WHERE user_id = $1', [userId]);
+    const prevPreferredName = prevRow.rows[0]?.preferred_name ?? null;
+    // Blank stays legal on the admin path, same as admin/users.js. `nextName`
+    // is declared OUTSIDE the guard so the validated, whitespace-normalized
+    // value is what reaches the column, not the raw body string.
+    let nextName = String(req.body.preferred_name || '').trim() || null;
+    if (nextName !== null) {
+      const check = validatePreferredNameChange(req.body.preferred_name, prevPreferredName);
+      if (!check.valid) throw new ValidationError({ preferred_name: check.error });
+      nextName = check.value;
+    }
     await pool.query(
       'UPDATE contractor_profiles SET preferred_name = $1, updated_at = NOW() WHERE user_id = $2',
-      [String(req.body.preferred_name || '').trim() || null, userId]
+      [nextName, userId]
     );
+    await refreshDisplayName(userId, pool, { previousPreferredName: prevPreferredName });
   }
 
   if (Object.keys(fields).length > 0) {
@@ -88,7 +102,7 @@ router.post('/contractors/:userId/tip-page/rotate-token', auth, requireAdminOrMa
   await ensureNonAdminTargetForManager(req, userId);
 
   const { rows } = await pool.query(`
-    SELECT pp.tip_page_token, pp.stripe_payment_link_id, cp.preferred_name
+    SELECT pp.tip_page_token, pp.stripe_payment_link_id, cp.preferred_name, cp.display_name
     FROM payment_profiles pp
     LEFT JOIN contractor_profiles cp ON cp.user_id = pp.user_id
     WHERE pp.user_id = $1
@@ -107,7 +121,7 @@ router.post('/contractors/:userId/tip-page/rotate-token', auth, requireAdminOrMa
   const newToken = uuidv4();
   const { url, id } = await createTipPaymentLink({
     userId,
-    displayName: row.preferred_name,
+    displayName: row.display_name || row.preferred_name,
     token: newToken,
   });
 
@@ -142,7 +156,7 @@ router.post('/contractors/:userId/tip-page/regenerate-stripe', auth, requireAdmi
   await ensureNonAdminTargetForManager(req, userId);
 
   const { rows } = await pool.query(`
-    SELECT pp.tip_page_token, pp.stripe_payment_link_id, cp.preferred_name
+    SELECT pp.tip_page_token, pp.stripe_payment_link_id, cp.preferred_name, cp.display_name
     FROM payment_profiles pp
     LEFT JOIN contractor_profiles cp ON cp.user_id = pp.user_id
     WHERE pp.user_id = $1
@@ -157,7 +171,7 @@ router.post('/contractors/:userId/tip-page/regenerate-stripe', auth, requireAdmi
 
   const { url, id } = await createTipPaymentLink({
     userId,
-    displayName: row.preferred_name,
+    displayName: row.display_name || row.preferred_name,
     token: row.tip_page_token,
   });
   await pool.query(
@@ -187,7 +201,7 @@ router.post('/contractors/:userId/tip-page/generate-stripe', auth, requireAdminO
   await ensureNonAdminTargetForManager(req, userId);
 
   const { rows } = await pool.query(`
-    SELECT pp.tip_page_token, pp.stripe_payment_link_url, cp.preferred_name
+    SELECT pp.tip_page_token, pp.stripe_payment_link_url, cp.preferred_name, cp.display_name
     FROM payment_profiles pp
     LEFT JOIN contractor_profiles cp ON cp.user_id = pp.user_id
     WHERE pp.user_id = $1
@@ -208,7 +222,7 @@ router.post('/contractors/:userId/tip-page/generate-stripe', auth, requireAdminO
     `, [userId, token]);
   }
 
-  const displayName = (row && row.preferred_name) || 'your bartender';
+  const displayName = (row && (row.display_name || row.preferred_name)) || 'your bartender';
   const { url, id } = await createTipPaymentLink({ userId, displayName, token });
   await pool.query(
     'UPDATE payment_profiles SET stripe_payment_link_url = $1, stripe_payment_link_id = $2 WHERE user_id = $3',
@@ -265,7 +279,7 @@ router.get('/tips', auth, adminOnly, asyncHandler(async (req, res) => {
   params.push(limit);
   const { rows } = await pool.query(`
     SELECT t.id, t.amount_cents, t.tipped_at, t.customer_email,
-           cp.preferred_name AS bartender_name, t.target_user_id
+           COALESCE(cp.display_name, cp.preferred_name) AS bartender_name, t.target_user_id
     FROM tips t
     LEFT JOIN contractor_profiles cp ON cp.user_id = t.target_user_id
     WHERE ${filters.join(' AND ')}
@@ -291,7 +305,7 @@ router.get('/tip-feedback', auth, adminOnly, asyncHandler(async (req, res) => {
   const { rows } = await pool.query(`
     SELECT f.id, f.target_user_id, f.rating, f.comment, f.submitter_email,
            f.created_at, f.reviewed_at,
-           cp.preferred_name AS bartender_name
+           COALESCE(cp.display_name, cp.preferred_name) AS bartender_name
     FROM tip_page_feedback f
     LEFT JOIN contractor_profiles cp ON cp.user_id = f.target_user_id
     WHERE ${where}

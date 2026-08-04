@@ -107,6 +107,18 @@ ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS headshot_filename VARCH
 -- payout-period generation.
 ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC(6,2) NOT NULL DEFAULT 20.00;
 
+-- Staff display name: preferred name plus one initial from the legal surname
+-- (spec docs/superpowers/specs/2026-07-26-staff-display-name-design.md).
+-- MAINTAINED, not generated: a generated column cannot reach agreements /
+-- applications for the surname. server/utils/refreshDisplayName.js owns every
+-- write, and server/scripts/refreshDisplayNames.js --check proves no row drifted.
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS display_name VARCHAR(255);
+
+-- NULL means "admin has not looked at this preferred name yet". Drives the
+-- informational Needs Attention notice ONLY. No name read path consults this
+-- column: a name is live the moment it is typed, and this is never a gate.
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS preferred_name_reviewed_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS agreements (
   id SERIAL PRIMARY KEY,
   user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,

@@ -114,7 +114,7 @@ async function runGlobalSearch(rawQuery) {
 
   const staffSql = `
     SELECT u.id,
-           COALESCE(cp.preferred_name, a.full_name, u.email) AS name,
+           COALESCE(cp.display_name, cp.preferred_name, a.full_name, u.email) AS name,
            u.onboarding_status, u.cc_id
     FROM users u
     LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
@@ -122,6 +122,7 @@ async function runGlobalSearch(rawQuery) {
     WHERE u.role IN ('staff','manager')
       AND (
         LOWER(u.email) LIKE $1 ESCAPE '\\'
+        OR LOWER(cp.display_name) LIKE $1 ESCAPE '\\'
         OR LOWER(cp.preferred_name) LIKE $1 ESCAPE '\\'
         OR LOWER(cp.email) LIKE $1 ESCAPE '\\'
         OR LOWER(a.full_name) LIKE $1 ESCAPE '\\'

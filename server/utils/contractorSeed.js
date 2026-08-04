@@ -1,3 +1,5 @@
+const { refreshDisplayName } = require('./refreshDisplayName');
+
 /**
  * Seed (or update) a contractor_profiles row from the user's applications row.
  *
@@ -92,6 +94,12 @@ async function seedContractorProfileFromApplication(client, userId, existingHire
       -- helper internally robust against future misuse.
       hire_date = COALESCE(EXCLUDED.hire_date, contractor_profiles.hire_date, CURRENT_DATE)
   `, [userId, existingHireDate]);
+
+  // ONE call, here rather than in the callers. All three of them (the admin Hire
+  // path, the pre-hired application submit, the register-with-application path)
+  // are covered by this, and all three hold their own transaction, so the
+  // caller's client is threaded through instead of a second pool checkout.
+  await refreshDisplayName(userId, client);
 }
 
 module.exports = { seedContractorProfileFromApplication };

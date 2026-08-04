@@ -9,6 +9,7 @@ import { useToast } from '../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 import useFormValidation from '../hooks/useFormValidation';
 import useFormDraft from '../hooks/useFormDraft';
+import { computeDisplayName, validatePreferredName } from '../utils/preferredName';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const STATES = ['Illinois','Indiana','Michigan','Minnesota','Wisconsin','AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'];
@@ -27,6 +28,17 @@ export default function ContractorProfile() {
   const [files, setFiles] = useState({ alcohol_certification: null, resume: null, headshot: null });
   const [existingFiles, setExistingFiles] = useState({});
   const [profileLoaded, setProfileLoaded] = useState(false);
+  // Read-only, and deliberately OUTSIDE `form`: the useFormDraft overlay
+  // restores drafts over `form`, so a stale draft captured after this ships
+  // could replay an old legal_name over a fresh one, and the FormData submit
+  // loop at the bottom would post it back. State outside `form` is untouchable
+  // by both.
+  const [legalName, setLegalName] = useState(null);
+  // The preferred_name as the SERVER has it. Needed to mirror the server's
+  // grandfathering (validatePreferredNameChange): an unchanged legacy value
+  // always passes, so a staffer stored as "Nicholas or Nick" is not locked out
+  // of fixing their own address by a name they cannot fix through this form.
+  const [storedPreferredName, setStoredPreferredName] = useState('');
 
   const [form, setForm] = useState({
     preferred_name: '', phone: '', email: user?.email || '',
@@ -42,6 +54,14 @@ export default function ContractorProfile() {
   useEffect(() => {
     api.get('/contractor').then(r => {
       const d = r.data;
+      // Outside the guard below on purpose: an admin-hired skeleton profile has
+      // no preferred_name yet and skips that branch, but the preview should
+      // still know the last initial.
+      setLegalName(d.legal_name || null);
+      // NOT on the _from_application path: that preferred_name is a pre-fill
+      // from the application, and the server has no stored profile name to
+      // grandfather against either.
+      setStoredPreferredName(d._from_application ? '' : (d.preferred_name || ''));
       if (d._from_application || d.preferred_name) {
         if (d._from_application) setFromApplication(true);
         setForm({
@@ -108,8 +128,15 @@ export default function ContractorProfile() {
 
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
 
+  // Mirrors server/utils/staffDisplayName.validate.js validatePreferredNameChange:
+  // an unchanged, non-empty stored value passes however malformed. A blank still
+  // fails, because this field is required here.
+  const normName = (v) => String(v === null || v === undefined ? '' : v).trim().replace(/\s+/g, ' ');
+  const nameUnchanged = normName(storedPreferredName) !== ''
+    && normName(form.preferred_name) === normName(storedPreferredName);
+
   const rules = [
-    { field: 'preferred_name', label: 'Preferred Name' },
+    { field: 'preferred_name', label: 'Preferred Name', test: (v) => nameUnchanged || validatePreferredName(v).valid },
     { field: 'phone', label: 'Phone' },
     { field: 'city', label: 'City' },
     { field: 'state', label: 'State' },
@@ -145,6 +172,16 @@ export default function ContractorProfile() {
     const result = validate(rules, form);
     if (!result.valid) { setError(result.message); scrollToFirstError(); return; }
 
+    if (!nameUnchanged) {
+      const nameCheck = validatePreferredName(form.preferred_name);
+      if (!nameCheck.valid) {
+        setFieldErrors({ preferred_name: nameCheck.error });
+        setError(nameCheck.error);
+        scrollToFirstError();
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       const data = new FormData();
@@ -166,6 +203,13 @@ export default function ContractorProfile() {
       setLoading(false);
     }
   }
+
+  // Live preview. Seeing "LumpyIceCream S." appear under a sentence about
+  // introducing yourself to a guest is most of the enforcement (spec 3.1).
+  const namePreview = computeDisplayName({
+    preferredName: form.preferred_name,
+    legalFullName: legalName,
+  });
 
   return (
     <div className="page-container">
@@ -195,9 +239,29 @@ export default function ContractorProfile() {
           <h3 style={{ marginBottom: '1.25rem' }}>Personal Info</h3>
           <div className="two-col">
             <div className={"form-group" + fieldClass('preferred_name')}>
-              <label htmlFor="cp-preferred_name" className="form-label">Preferred Name *</label>
-              <input id="cp-preferred_name" name="preferred_name" className={"form-input" + inputClass('preferred_name')} value={form.preferred_name} onChange={handle} aria-invalid={!!fieldErrors?.preferred_name} />
+              <label htmlFor="cp-preferred_name" className="form-label">What do I call you? *</label>
+              <p className="form-helper" style={{ marginTop: 0, marginBottom: '0.5rem' }}>
+                Fill in the blank: "Hi, I'm ______, I'll be taking care of you tonight."
+                Whatever you actually go by. A short form, a chosen name, the name your
+                people use. Chip for Vernon, Alexis for Alexander, Shea for Tashea,
+                Fareed for Mohammad.
+              </p>
+              <input
+                id="cp-preferred_name"
+                name="preferred_name"
+                className={"form-input" + inputClass('preferred_name')}
+                value={form.preferred_name}
+                onChange={handle}
+                maxLength={20}
+                aria-invalid={!!fieldErrors?.preferred_name}
+                aria-describedby="cp-preferred_name-preview"
+              />
               <FieldError error={fieldErrors?.preferred_name} />
+              <p className="form-helper" id="cp-preferred_name-preview" style={{ marginTop: '0.4rem' }}>
+                {namePreview
+                  ? <>Your team and clients will see <strong>{namePreview}</strong></>
+                  : 'Your team and clients will see your name plus your last initial.'}
+              </p>
             </div>
             <div className={"form-group" + fieldClass('phone')}>
               <label htmlFor="cp-phone" className="form-label">Phone *</label>

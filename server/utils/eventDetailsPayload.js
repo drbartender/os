@@ -25,6 +25,7 @@
 
 const { pool } = require('../db');
 const { NotFoundError } = require('./errors');
+const { computeDisplayName } = require('./staffDisplayName');
 
 /**
  * Read auth for any event-details surface. Throws NotFoundError when the
@@ -104,7 +105,7 @@ async function buildEventDetailsPayload(req, proposalId) {
   // staffer's status (is_acknowledged for self) is consistent with what admins
   // see for them.
   const shiftReqsRowP = pool.query(
-    `SELECT sr.user_id, sr.id AS request_id, COALESCE(cp.preferred_name, u.email) AS name,
+    `SELECT sr.user_id, sr.id AS request_id, COALESCE(cp.display_name, cp.preferred_name, u.email) AS name,
             sr.beo_acknowledged_at
        FROM shift_requests sr
        JOIN shifts s ON s.id = sr.shift_id
@@ -235,30 +236,6 @@ async function buildEventDetailsPayload(req, proposalId) {
   // Admin/manager keep it because that is their existing contact path.
   const canSeeContact = viewerApproved || isPrivileged;
 
-  // computeName: preferred_name + last-initial of legal name, falling back
-  // through applications → agreements → email-local-part. Mirrors the
-  // resolution chain in spec §6.18.
-  function computeName(row) {
-    const preferred = (row.preferred_name || '').trim();
-    if (preferred) {
-      const legal = ((row.applications_name || row.agreements_name) || '').trim();
-      const lastToken = legal ? legal.split(/\s+/).pop() : '';
-      const lastInit = lastToken && lastToken[0] ? lastToken[0].toUpperCase() : '';
-      return lastInit ? `${preferred} ${lastInit}.` : preferred;
-    }
-    const legal = ((row.applications_name || row.agreements_name) || '').trim();
-    if (legal) {
-      const parts = legal.split(/\s+/);
-      if (parts.length >= 2) {
-        return `${parts[0]} ${parts[parts.length - 1][0].toUpperCase()}.`;
-      }
-      return parts[0];
-    }
-    const email = (row.email || '').trim();
-    if (email && email.includes('@')) return email.split('@')[0];
-    return 'Staff';
-  }
-
   function computeInitials(name) {
     if (!name) return '??';
     // Match a first-token+next-word-initial pair when the name has a space.
@@ -268,7 +245,16 @@ async function buildEventDetailsPayload(req, proposalId) {
   }
 
   const team_roster = rosterRow.rows.map((r) => {
-    const display_name = computeName(r);
+    // Shared helper (spec §5). Two deliberate differences from the deleted local
+    // computeName: agreement-first precedence (it read applications first, but
+    // the signed agreement is what everything else in this system prefers), and
+    // the empty-preferred-name case, which the helper covers by falling back
+    // to the legal first name so a client-facing surface never shows an email.
+    const display_name =
+      computeDisplayName({
+        preferredName: r.preferred_name,
+        legalFullName: r.agreements_name || r.applications_name,
+      }) || (r.email && r.email.includes('@') ? r.email.split('@')[0] : 'Staff');
     return {
       user_id: r.user_id,
       display_name,

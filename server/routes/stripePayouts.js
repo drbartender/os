@@ -8,16 +8,17 @@ const payoutSync = require('../utils/stripePayoutSync');
 
 const router = express.Router();
 
-// staff_name resolves the tip line's staffer: contractor_profiles.preferred_name,
-// then the users.email fallback (contractor_profiles has no full_name column, so
-// the plan's cp.full_name is replaced by a users join — read-side display only).
+// staff_name resolves the tip line's staffer from contractor_profiles.display_name
+// (preferred name plus last initial, see utils/staffDisplayName.js), then the raw
+// preferred name, then the users.email fallback. Read-side display only: matching
+// keys on tips.target_user_id, never on this string.
 const LINE_SELECT = `
   SELECT l.id, l.stripe_balance_txn_id, l.payout_id, l.txn_type, l.reporting_category,
          l.amount_cents, l.fee_cents, l.net_cents, l.available_on, l.description,
          l.matched_kind, l.acknowledged_at, l.proposal_id, l.invoice_id, l.tip_id,
          c.name AS client_name, pr.event_type, pr.event_type_custom,
          inv.invoice_number, inv.token AS invoice_token,
-         COALESCE(cp.preferred_name, u.email) AS staff_name,
+         COALESCE(cp.display_name, cp.preferred_name, u.email) AS staff_name,
          t.target_user_id AS staff_user_id
   FROM stripe_payout_lines l
   LEFT JOIN proposals pr ON pr.id = l.proposal_id

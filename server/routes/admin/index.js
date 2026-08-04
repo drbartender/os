@@ -17,6 +17,7 @@ router.use('/', require('./payroll'));
 router.use('/', require('./payrollTax'));
 router.use('/', require('./presence'));
 router.use('/', require('./leadCalls'));
+router.use('/', require('./nameNotices'));
 // proposalActions lives in ccImport/ but mounts at /api/admin (not /cc-import/) so
 // the URLs read /api/admin/proposals/:id/... — these are proposal-level admin
 // actions whose "cc" nature is incidental.

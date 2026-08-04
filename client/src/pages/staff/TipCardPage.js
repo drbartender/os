@@ -29,7 +29,7 @@ import { formatMoney } from '../../utils/formatMoney';
  * Data fetches (lean — three round-trips on first paint):
  *   1. GET /api/me/tip-page — public tip URL (built server-side via PUBLIC_SITE_URL
  *      so we don't second-guess origin), `active` flag, `has_stripe_link` for the
- *      card row, preferred_name for the QR card head. Note: this route predates
+ *      card row, display_name for the QR card head. Note: this route predates
  *      the Zelle column and does NOT project zelle_handle — that's why we also
  *      hit /payment-methods below.
  *   2. GET /api/me/payment-methods — canonical "what handles are on file" source.
@@ -107,7 +107,8 @@ export default function TipCardPage() {
         url: tipPage.url || null,
         active: !!tipPage.active,
         has_stripe_link: !!tipPage.has_stripe_link,
-        preferred_name: tipPage.preferred_name || methods.preferred_name || null,
+        display_name: tipPage.display_name || methods.display_name
+          || tipPage.preferred_name || methods.preferred_name || null,
         methods: {
           venmo_handle: methods.venmo_handle || null,
           cashapp_handle: methods.cashapp_handle || null,
@@ -272,7 +273,7 @@ export default function TipCardPage() {
       <div className="sp-tipcard-wrap">
         <div className="sp-tipcard">
           <div className="sp-tipcard-head">Tip Your Bartender</div>
-          <div className="sp-tipcard-name">{data.preferred_name || 'your bartender'}</div>
+          <div className="sp-tipcard-name">{data.display_name || 'your bartender'}</div>
           <div className="sp-qr">
             <QRCodeSVG
               value={data.url}

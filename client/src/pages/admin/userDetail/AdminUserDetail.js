@@ -163,7 +163,7 @@ export default function AdminUserDetail() {
   const { user, progress, profile, agreement, payment, application } = data;
   const isDeactivated = user.onboarding_status === 'deactivated';
   const isOnboarding = !progress?.onboarding_completed && !isDeactivated;
-  const displayName = profile?.preferred_name || user.email;
+  const displayName = profile?.display_name || profile?.preferred_name || user.email;
 
   // ── Saved actions ─────────────────────────────────────────────
   const updateStatus = async (status, message) => {
@@ -347,7 +347,7 @@ export default function AdminUserDetail() {
       <div className="card" style={{ padding: '1.5rem 1.75rem', marginBottom: 'var(--gap)' }}>
         <div className="hstack" style={{ gap: 18, alignItems: 'flex-start' }}>
           <div className="avatar" style={{ width: 64, height: 64, fontSize: 22, flexShrink: 0 }}>
-            {initialsOf(profile?.preferred_name, user.email)}
+            {initialsOf(profile?.display_name || profile?.preferred_name, user.email)}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10, marginBottom: 4 }}>
@@ -510,6 +510,7 @@ export default function AdminUserDetail() {
         <OverviewTab
           user={user}
           profile={profile}
+          legalName={agreement?.full_name || application?.full_name || null}
           upcoming={upcomingEvents}
           recent={pastEvents.slice(0, 4)}
           eventsLoading={eventsLoading}

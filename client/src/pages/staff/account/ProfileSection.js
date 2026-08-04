@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../../../utils/formatPhone';
+import { computeDisplayName, validatePreferredName } from '../../../utils/preferredName';
 
 /**
  * ProfileSection — staff portal v2 Account / Profile (spec §6.10).
@@ -41,7 +42,9 @@ import { formatPhoneInput, stripPhone } from '../../../utils/formatPhone';
 
 const PHONE_HELPER = 'SMS reminders go here.';
 const ADDRESS_HELPER = 'For 1099 forms in January.';
-const PREFERRED_NAME_HELPER = 'Shown on the staff roster and to clients.';
+const PREFERRED_NAME_HELPER =
+  'Whatever you actually go by. A short form, a chosen name, the name your people use. '
+  + 'Chip for Vernon, Alexis for Alexander, Shea for Tashea, Fareed for Mohammad.';
 const LEGAL_NAME_HELPER_PRE = 'Need to change your legal name? Email ';
 const LEGAL_NAME_HELPER_POST = ' so we can re-issue your contractor agreement.';
 const LEGAL_SUPPORT_EMAIL = 'staff@drbartender.com';
@@ -172,6 +175,19 @@ export default function ProfileSection() {
       return;
     }
 
+    // Mirrors the server's grandfathering: an unchanged legacy value always
+    // passes, so a name someone cannot fix through this form never locks them
+    // out of saving their address.
+    const stored = (profile?.preferred_name || '').trim().replace(/\s+/g, ' ');
+    const submitted = (form.preferred_name || '').trim().replace(/\s+/g, ' ');
+    if (submitted !== stored) {
+      const nameCheck = validatePreferredName(form.preferred_name);
+      if (!nameCheck.valid) {
+        setFieldErrors((e2) => ({ ...e2, preferred_name: nameCheck.error }));
+        return;
+      }
+    }
+
     setSaving(true);
     setFieldErrors({});
 
@@ -297,6 +313,13 @@ export default function ProfileSection() {
     );
   }
 
+  // Live preview of what the roster and clients actually render. legal_name is
+  // read-only and already arrives on the profile payload.
+  const namePreview = computeDisplayName({
+    preferredName: form.preferred_name,
+    legalFullName: profile?.legal_name,
+  });
+
   return (
     <>
       <section className="sp-card">
@@ -329,7 +352,7 @@ export default function ProfileSection() {
         <form onSubmit={handleSave} noValidate>
           <div className="sp-tf-row">
             <TextField
-              label="Preferred name"
+              label="What do I call you?"
               value={form.preferred_name}
               onChange={(v) => setField('preferred_name', v)}
               sub={PREFERRED_NAME_HELPER}
@@ -348,6 +371,12 @@ export default function ProfileSection() {
                 {LEGAL_NAME_HELPER_POST}
               </span>
             </div>
+          </div>
+
+          <div className="sp-tf-sub" style={{ marginTop: '-0.4rem', marginBottom: '0.75rem' }}>
+            {namePreview
+              ? <>Your team and clients will see <strong>{namePreview}</strong></>
+              : 'Your team and clients will see your name plus your last initial.'}
           </div>
 
           <div className="sp-tf-row">

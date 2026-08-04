@@ -17,7 +17,7 @@ const VALID_TYPES = ['general', 'invitation', 'reminder', 'announcement'];
 router.get('/recipients', auth, adminOnly, asyncHandler(async (req, res) => {
   const search = req.query.search || '';
   let query = `
-    SELECT u.id AS user_id, cp.preferred_name, u.email, cp.phone, ag.sms_consent
+    SELECT u.id AS user_id, cp.preferred_name, cp.display_name, u.email, cp.phone, ag.sms_consent
     FROM users u
     JOIN contractor_profiles cp ON cp.user_id = u.id
     JOIN agreements ag ON ag.user_id = u.id
@@ -31,10 +31,10 @@ router.get('/recipients', auth, adminOnly, asyncHandler(async (req, res) => {
 
   if (search.trim()) {
     params.push(`%${search.trim()}%`);
-    query += ` AND (cp.preferred_name ILIKE $1 OR u.email ILIKE $1)`;
+    query += ` AND (cp.display_name ILIKE $1 OR cp.preferred_name ILIKE $1 OR u.email ILIKE $1)`;
   }
 
-  query += ` ORDER BY cp.preferred_name ASC`;
+  query += ` ORDER BY COALESCE(cp.display_name, cp.preferred_name) ASC`;
 
   const result = await pool.query(query, params);
   res.json({ recipients: result.rows });
@@ -68,7 +68,7 @@ router.post('/send', auth, adminOnly, asyncHandler(async (req, res) => {
 
   // Fetch recipients with consent verification
   const recipientResult = await pool.query(`
-    SELECT u.id AS user_id, cp.preferred_name, cp.phone, ag.sms_consent
+    SELECT u.id AS user_id, cp.preferred_name, cp.display_name, cp.phone, ag.sms_consent
     FROM users u
     JOIN contractor_profiles cp ON cp.user_id = u.id
     JOIN agreements ag ON ag.user_id = u.id
@@ -86,11 +86,16 @@ router.post('/send', auth, adminOnly, asyncHandler(async (req, res) => {
 
   for (const recipient of recipientResult.rows) {
     const normalized = normalizePhone(recipient.phone);
+    // sms_messages.recipient_name is a display label, so it takes the display
+    // name (preferred name plus last initial) and falls back to the raw
+    // preferred name. Same call as beoHandlers / staffShiftHandlers, whose
+    // staff_name feeds the identical log column.
+    const recipientName = recipient.display_name || recipient.preferred_name;
 
     if (!recipient.sms_consent) {
       failedCount++;
       rows.push([group_id, req.user.id, recipient.user_id, recipient.phone || 'none',
-        recipient.preferred_name, trimmedBody, message_type, shift_id, null, 'failed', 'No SMS consent']);
+        recipientName, trimmedBody, message_type, shift_id, null, 'failed', 'No SMS consent']);
       results.push({ recipient_id: recipient.user_id, status: 'failed', error_message: 'No SMS consent' });
       continue;
     }
@@ -98,7 +103,7 @@ router.post('/send', auth, adminOnly, asyncHandler(async (req, res) => {
     if (!normalized) {
       failedCount++;
       rows.push([group_id, req.user.id, recipient.user_id, recipient.phone || 'none',
-        recipient.preferred_name, trimmedBody, message_type, shift_id, null, 'failed', 'Invalid phone number']);
+        recipientName, trimmedBody, message_type, shift_id, null, 'failed', 'Invalid phone number']);
       results.push({ recipient_id: recipient.user_id, status: 'failed', error_message: 'Invalid phone number' });
       continue;
     }
@@ -107,12 +112,12 @@ router.post('/send', auth, adminOnly, asyncHandler(async (req, res) => {
       const message = await sendSMS({ to: normalized, body: trimmedBody });
       sentCount++;
       rows.push([group_id, req.user.id, recipient.user_id, normalized,
-        recipient.preferred_name, trimmedBody, message_type, shift_id, message.sid, 'sent', null]);
+        recipientName, trimmedBody, message_type, shift_id, message.sid, 'sent', null]);
       results.push({ recipient_id: recipient.user_id, status: 'sent' });
     } catch (smsErr) {
       failedCount++;
       rows.push([group_id, req.user.id, recipient.user_id, normalized || recipient.phone,
-        recipient.preferred_name, trimmedBody, message_type, shift_id, null, 'failed', smsErr.message]);
+        recipientName, trimmedBody, message_type, shift_id, null, 'failed', smsErr.message]);
       results.push({ recipient_id: recipient.user_id, status: 'failed', error_message: smsErr.message });
     }
   }

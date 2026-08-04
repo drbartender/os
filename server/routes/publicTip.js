@@ -80,7 +80,7 @@ router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
   // the whole ui_preferences blob — sibling keys like theme are not public).
   const { rows } = await pool.query(`
     SELECT
-      cp.preferred_name AS display_name,
+      COALESCE(cp.display_name, cp.preferred_name) AS display_name,
       cp.headshot_file_url AS headshot_url,
       pp.venmo_handle,
       pp.cashapp_handle,
@@ -224,7 +224,7 @@ router.post('/:token/feedback', publicLimiter, feedbackLimiter, asyncHandler(asy
   }
 
   const { rows } = await pool.query(`
-    SELECT u.id AS user_id, cp.preferred_name AS display_name
+    SELECT u.id AS user_id, COALESCE(cp.display_name, cp.preferred_name) AS display_name
     FROM payment_profiles pp
     JOIN users u ON u.id = pp.user_id
     JOIN contractor_profiles cp ON cp.user_id = u.id

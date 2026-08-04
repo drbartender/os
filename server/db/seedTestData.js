@@ -2,6 +2,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 const bcrypt = require('bcryptjs');
 const { pool } = require('./index');
+const { refreshDisplayName } = require('../utils/refreshDisplayName');
 
 async function seedTestData() {
   if (process.env.NODE_ENV === 'production') {
@@ -79,6 +80,10 @@ async function seedTestData() {
       VALUES ($1, 'venmo', '@tony-kim')
       ON CONFLICT (user_id) DO NOTHING
     `, [staff3.id]);
+    // AFTER the agreement insert, not straight after the profile: the last
+    // initial comes off the signed legal name, so refreshing any earlier seeds
+    // a display name with no initial ("Tony" instead of "Tony K.").
+    await refreshDisplayName(staff3.id, client);
 
     // 4. Another approved staff (for shift assignments)
     const { rows: [staff4] } = await client.query(`
@@ -117,6 +122,9 @@ async function seedTestData() {
       VALUES ($1, 'zelle', 'lisa.chen@test.com')
       ON CONFLICT (user_id) DO NOTHING
     `, [staff4.id]);
+    // Same ordering rule as staff3 above: after the agreement, so the seed
+    // renders "Lisa C." rather than a bare "Lisa".
+    await refreshDisplayName(staff4.id, client);
 
     // 5. Deactivated staff
     await client.query(`

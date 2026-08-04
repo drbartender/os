@@ -161,7 +161,7 @@ router.get('/applications/:userId', auth, adminOnly, asyncHandler(async (req, re
       SELECT
         a.id, a.event_type, a.metadata, a.created_at,
         u.email AS actor_email,
-        cp.preferred_name AS actor_name
+        COALESCE(cp.display_name, cp.preferred_name) AS actor_name
       FROM application_activity a
       LEFT JOIN users u ON u.id = a.actor_id
       LEFT JOIN contractor_profiles cp ON cp.user_id = a.actor_id

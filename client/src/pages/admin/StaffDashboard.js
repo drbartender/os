@@ -23,8 +23,8 @@ function isLegacyCcStub(s) {
 }
 
 function initialsOf(s) {
-  if (!s?.preferred_name && !s?.email) return '?';
-  const src = s.preferred_name || s.email;
+  if (!s?.display_name && !s?.preferred_name && !s?.email) return '?';
+  const src = s.display_name || s.preferred_name || s.email;
   return src.split(/\s+/).map(p => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
 }
 
@@ -116,14 +116,14 @@ export default function StaffDashboard() {
                       <div className="hstack">
                         <div className="avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{initialsOf(s)}</div>
                         <div>
-                          <strong>{s.preferred_name || displayEmail}</strong>
+                          <strong>{s.display_name || s.preferred_name || displayEmail}</strong>
                           {isStub && (
                             <span className="badge badge-legacy-cc-stub">Legacy CC stub (deactivated)</span>
                           )}
                           {s.import_source === 'payment_history_import' && (
                             <span className="imported-chip">imported</span>
                           )}
-                          {s.preferred_name && s.email && <div className="sub">{displayEmail}</div>}
+                          {(s.display_name || s.preferred_name) && s.email && <div className="sub">{displayEmail}</div>}
                         </div>
                       </div>
                     </td>
@@ -171,7 +171,7 @@ export default function StaffDashboard() {
                         {
                           label: 'Assign to Event',
                           icon: 'userplus',
-                          onClick: () => setAssignTarget({ id: s.id, name: s.preferred_name || s.email }),
+                          onClick: () => setAssignTarget({ id: s.id, name: s.display_name || s.preferred_name || s.email }),
                         },
                       ]} />
                     </td>

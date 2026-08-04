@@ -31,7 +31,7 @@ async function loadPeriodWithPayouts(periodRow) {
     `SELECT po.id, po.contractor_id, po.status, po.total_cents,
             po.payment_method, po.payment_handle, po.payment_reference,
             po.paid_at, po.paystub_storage_key,
-            COALESCE(cp.preferred_name, u.email) AS contractor_name,
+            COALESCE(cp.display_name, cp.preferred_name, u.email) AS contractor_name,
             pp.preferred_payment_method, pp.venmo_handle, pp.cashapp_handle,
             pp.paypal_url, pp.zelle_handle
        FROM payouts po
@@ -39,7 +39,7 @@ async function loadPeriodWithPayouts(periodRow) {
   LEFT JOIN contractor_profiles cp ON cp.user_id = po.contractor_id
   LEFT JOIN payment_profiles pp ON pp.user_id = po.contractor_id
       WHERE po.pay_period_id = $1
-      ORDER BY COALESCE(cp.preferred_name, u.email) ASC`,
+      ORDER BY COALESCE(cp.display_name, cp.preferred_name, u.email) ASC`,
     [periodRow.id]
   );
   const payoutIds = payoutsRes.rows.map(p => p.id);
@@ -555,7 +555,7 @@ router.get('/payroll/unassigned-tips', auth, adminOnly, asyncHandler(async (req,
   // these are the genuine failures (no service window matched).
   const tipsRes = await pool.query(
     `SELECT t.id, t.target_user_id, t.amount_cents, t.tipped_at,
-            COALESCE(cp.preferred_name, u.email) AS contractor_name
+            COALESCE(cp.display_name, cp.preferred_name, u.email) AS contractor_name
        FROM tips t
        JOIN users u ON u.id = t.target_user_id
   LEFT JOIN contractor_profiles cp ON cp.user_id = t.target_user_id
@@ -652,7 +652,7 @@ async function loadDeferredTips() {
   const { rows } = await pool.query(
     `SELECT t.id, t.defer_kind, t.amount_cents, t.defer_target_cents, t.deferred_at, t.defer_attempts,
             t.shift_id, s.event_date, p.event_type, p.event_type_custom,
-            ARRAY(SELECT COALESCE(cp.preferred_name, u.email)
+            ARRAY(SELECT COALESCE(cp.display_name, cp.preferred_name, u.email)
                     FROM shift_requests sr
                     JOIN users u ON u.id = sr.user_id
                LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
