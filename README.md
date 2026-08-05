@@ -731,6 +731,12 @@ dr-bartender/
 - Logistics gating: each shift shows a green "Bar Kit Only" tag or an equipment/supply warning; a transport-required shift (gear haul or supply run) makes the staffer acknowledge the requirement before requesting, and admins edit equipment + supply-run per shift.
 - Profile and notification management
 
+### Team Manual (`/vibes`)
+- The vibe-coding manual for the team, served as a standalone static page at `admin.drbartender.com/vibes` (no login). Source lives at `client/public/vibes/index.html`: one self-contained file, no bundle involvement, carrying the OS design tokens inline so it renders in both After Hours and House Lights with a skin toggle (persisted to `localStorage`), plus expand/collapse-all over its collapsible sections.
+- The pretty URL comes from a host-scoped rewrite in `client/vercel.json` (`/vibes` → `/vibes/index.html` on the admin host); the file itself is a static asset, so `/vibes/` also resolves on the other hosts.
+- Carries `noindex, nofollow` — the page is unlisted, not gated. Keep it that way: it is public to anyone with the URL, so it deliberately holds no client names, no infrastructure addresses, and no credentials.
+- Authored in a claude.ai/design project and converted; the prose master is the guide markdown Dallas keeps in win-share.
+
 ## Deployment
 
 ### Backend — Render
