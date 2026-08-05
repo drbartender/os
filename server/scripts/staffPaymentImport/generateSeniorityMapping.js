@@ -130,9 +130,11 @@ async function main() {
     name: get(r, 'Name') || `${get(r, 'First Name')} ${get(r, 'Last Name')}`.trim(),
     // Locale exports write "1,234"; bare parseInt reads that as 1 and proposes
     // a plausible-looking tiny baseline. Strip ONLY digit-grouping commas,
-    // then parse; anything still non-numeric falls to 0 and trips the
-    // zero-events flag instead of writing a number nobody approved.
-    events: parseInt((get(r, 'Staff Events: Count') || '0').replace(/,(?=\d{3}\b)/g, ''), 10) || 0,
+    // then require a clean run of digits (the parseMappingInt standard:
+    // type-check before coercion — parseInt('12.9') is 12 and parseInt(
+    // '12events') is 12, each a number nobody approved). Anything else falls
+    // to 0, which trips the zero-events flag so the operator sees the row.
+    events: ((s) => (/^\d+$/.test(s) ? Number(s) : 0))((get(r, 'Staff Events: Count') || '0').replace(/,(?=\d{3}\b)/g, '')),
     roles: get(r, 'Roles'),
   })).filter((c) => c.name && (STAFF_ROLE.test(c.roles) || c.events > 0));
 
