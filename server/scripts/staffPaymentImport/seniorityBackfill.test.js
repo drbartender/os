@@ -169,6 +169,12 @@ test('exitCodeFor never reports success for a partial run', () => {
   // A dry run that found unapplicable rows still signals, so the operator sees
   // it before --apply.
   assert.equal(exitCodeFor({ apply: false, writeCount: 2, changed: 0, skippedCount: 1, missingCount: 0 }), 1);
+  // A clean RE-run: the IS DISTINCT FROM guard writes nothing, every approved
+  // row is already correct, and that is success — never a false PARTIAL.
+  assert.equal(exitCodeFor({ apply: true, writeCount: 2, changed: 0, alreadyCorrect: 2, skippedCount: 0, missingCount: 0 }), 0);
+  assert.equal(exitCodeFor({ apply: true, writeCount: 2, changed: 1, alreadyCorrect: 1, skippedCount: 0, missingCount: 0 }), 0);
+  // But a row that is neither written nor already correct is still a partial.
+  assert.equal(exitCodeFor({ apply: true, writeCount: 3, changed: 1, alreadyCorrect: 1, skippedCount: 0, missingCount: 0 }), 1);
 });
 
 // ── DB-backed: applyWrites is exact, idempotent, and only touches its targets ──
@@ -210,7 +216,7 @@ after(async () => {
 });
 
 const readProfile = async (id) => (await pool.query(
-  'SELECT hire_date, historical_events_worked FROM contractor_profiles WHERE user_id = $1', [id])).rows[0];
+  'SELECT hire_date, historical_events_worked, updated_at FROM contractor_profiles WHERE user_id = $1', [id])).rows[0];
 
 test('applyWrites apply=false writes nothing and changes nothing (dry-run)', async () => {
   const client = await pool.connect();
@@ -227,10 +233,24 @@ test('applyWrites apply=false writes nothing and changes nothing (dry-run)', asy
 test('applyWrites apply=true writes exactly, and a re-run leaves identical values (idempotent)', async () => {
   const w = [{ userId: uid, hireDate: '2025-05-22', historical: 32 }];
   const client = await pool.connect();
+  let first, second, stampAfterFirst;
   try {
-    await applyWrites(client, w, { apply: true });
-    await applyWrites(client, w, { apply: true });   // second run: same values, no drift
+    first = await applyWrites(client, w, { apply: true });
+    stampAfterFirst = (await readProfile(uid)).updated_at;
+    second = await applyWrites(client, w, { apply: true });   // second run: same values, no drift
   } finally { client.release(); }
+  // The guard makes the re-run a true row-level no-op: nothing rewritten (so
+  // the updated_at trigger never fires and the smsInbound tiebreak cannot
+  // move), and the untouched row is accounted for as alreadyCorrect.
+  assert.equal(first.changed, 1);
+  assert.equal(second.changed, 0, 're-run rewrites nothing');
+  assert.equal(second.alreadyCorrect, 1, 're-run accounts for the untouched row');
+  // THE invariant this lane exists for: a re-run must not move updated_at,
+  // because smsInbound resolves shared inbound numbers by
+  // ORDER BY cp.updated_at DESC — a restamp re-aims where a STOP lands.
+  const stampAfterSecond = (await readProfile(uid)).updated_at;
+  assert.equal(String(stampAfterSecond), String(stampAfterFirst),
+    'a re-run must not restamp updated_at (smsInbound tiebreak)');
   const r = await readProfile(uid);
   assert.equal(toYmd(r.hire_date), '2025-05-22');
   assert.equal(r.historical_events_worked, 32);
@@ -330,7 +350,7 @@ test('the CLI exits non-zero and names the id when an approved row has no contra
 
   const applied = await runCli(['--file', file, '--apply']);
   assert.match(applied.stdout, /APPLY/);
-  assert.match(applied.stderr, /PARTIAL: 0 of 1 row\(s\) written/);
+  assert.match(applied.stderr, /PARTIAL: 0 written \+ 0 already correct of 1 approved row\(s\)/);
   assert.equal(applied.code, 1, 'the bulk writer must not report success');
 });
 

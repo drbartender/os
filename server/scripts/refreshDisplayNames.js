@@ -47,6 +47,8 @@ async function main() {
     if (n > 0) {
       console.error(
         `REFUSING --stamp-existing: ${n} row(s) already carry preferred_name_reviewed_at, so this is not a first run.\n` +
+        '(All writes run in one transaction, so a crashed earlier run leaves zero stamps — hitting this\n' +
+        'refusal means a prior run genuinely COMPLETED, or an admin has since reviewed a name by hand.)\n' +
         'Stamping again would silently acknowledge every pending name notice, and it cannot be undone.\n' +
         'Re-run with --i-mean-it if that is genuinely what you want.'
       );
@@ -70,62 +72,107 @@ async function main() {
   const needsHuman = [];
   const needsLegalName = [];
 
-  for (const r of rows) {
-    const trimmedName = String(r.preferred_name || '').trim().replace(/\s+/g, ' ');
-    const expected = computeDisplayName({ preferredName: trimmedName, legalFullName: r.legal_name });
+  // All writes run in ONE transaction with the contractor_profiles updated_at
+  // trigger disabled for its duration. Why: this table carries a BEFORE UPDATE
+  // trigger (update_contractor_profiles_updated_at, schema.sql) that stamps
+  // updated_at = NOW() on EVERY update — omitting the column from a SET list
+  // does not avoid it, and a BEFORE trigger overwrites even an explicit
+  // SET updated_at = <old value>. That matters because smsInbound.js
+  // lookupSender resolves a shared inbound number to one staff account with
+  // `ORDER BY cp.updated_at DESC LIMIT 1`: a backfill that restamps every row
+  // silently re-arms who a STOP lands on. Disabling the trigger inside the
+  // transaction is safe and atomic: ALTER TABLE ... DISABLE TRIGGER takes a
+  // SHARE ROW EXCLUSIVE lock (reads — including the smsInbound lookup — are
+  // never blocked; concurrent app WRITES wait until COMMIT, and this table is
+  // small), and a failure rolls back the DDL together with the data — the
+  // trigger can never be left disabled, nor ever observed disabled by another
+  // session. The lock_timeout keeps the ALTER from queuing indefinitely
+  // behind a stuck app transaction (and stacking fresh writes behind itself):
+  // past 5s the script fails closed instead of becoming a queue head. If the
+  // connection role cannot ALTER the table, the script dies HERE, before any
+  // write: fail closed.
+  //
+  // The preferred_name trim below still stamps updated_at explicitly — that
+  // one is a real field change and is supposed to look like activity.
+  let client = null;
 
-    if (CHECK_ONLY) {
-      if (expected !== r.display_name) {
-        drift++;
-        console.log(`DRIFT user ${r.user_id}: stored ${JSON.stringify(r.display_name)} != computed ${JSON.stringify(expected)}`);
+  try {
+    if (!CHECK_ONLY) {
+      client = await pool.connect();
+      await client.query('BEGIN');
+      await client.query("SET LOCAL lock_timeout = '5s'");
+      await client.query('ALTER TABLE contractor_profiles DISABLE TRIGGER update_contractor_profiles_updated_at');
+    }
+    for (const r of rows) {
+      const trimmedName = String(r.preferred_name || '').trim().replace(/\s+/g, ' ');
+      const expected = computeDisplayName({ preferredName: trimmedName, legalFullName: r.legal_name });
+
+      if (CHECK_ONLY) {
+        if (expected !== r.display_name) {
+          drift++;
+          console.log(`DRIFT user ${r.user_id}: stored ${JSON.stringify(r.display_name)} != computed ${JSON.stringify(expected)}`);
+        }
+        continue;
       }
-      continue;
-    }
 
-    // The ONLY write here that touches a real profile field, so the ONLY one
-    // that carries updated_at (see the display_name UPDATE below for why that
-    // matters).
-    if (trimmedName && trimmedName !== r.preferred_name) {
-      await pool.query(
-        'UPDATE contractor_profiles SET preferred_name = $1, updated_at = NOW() WHERE user_id = $2',
-        [trimmedName, r.user_id]
+      // The ONLY write here that touches a real profile field, so the ONLY one
+      // that carries an explicit updated_at stamp (the trigger is off).
+      if (trimmedName && trimmedName !== r.preferred_name) {
+        await client.query(
+          'UPDATE contractor_profiles SET preferred_name = $1, updated_at = NOW() WHERE user_id = $2',
+          [trimmedName, r.user_id]
+        );
+        trimmed++;
+      }
+
+      // No updated_at here (and the trigger is disabled, so none is invented):
+      //   1. display_name is derived; refreshing it is not staff activity and
+      //      must not move the smsInbound updated_at tiebreak (see above).
+      //   2. A run that changes nothing must report nothing, or the audit
+      //      trail cannot tell a no-op from a rewrite (IS DISTINCT FROM).
+      const upd = await client.query(
+        'UPDATE contractor_profiles SET display_name = $1 WHERE user_id = $2 AND display_name IS DISTINCT FROM $1',
+        [expected, r.user_id]
       );
-      trimmed++;
+      updated += upd.rowCount;
+
+      // Same no-updated_at rule. Only stamps a row that has never been stamped,
+      // so the write is idempotent and never re-dates an older review.
+      if (STAMP_EXISTING) {
+        const st = await client.query(
+          `UPDATE contractor_profiles
+              SET preferred_name_reviewed_at = NOW()
+            WHERE user_id = $1 AND preferred_name_reviewed_at IS NULL`,
+          [r.user_id]
+        );
+        stamped += st.rowCount;
+      }
+
+      // Report only. A script does not get to decide what someone is called.
+      const check = validatePreferredName(trimmedName);
+      if (trimmedName && !check.valid) {
+        needsHuman.push(`  user ${r.user_id}: ${JSON.stringify(trimmedName)} (${check.error}) -> renders ${JSON.stringify(expected)}`);
+      }
+      if (!r.legal_name && r.onboarding_status !== 'deactivated') {
+        needsLegalName.push(`  user ${r.user_id}: ${JSON.stringify(trimmedName)} has no agreement or application on file`);
+      }
     }
 
-    // Conditional, and deliberately WITHOUT updated_at. Two reasons:
-    //   1. smsInbound.js lookupSender resolves a shared inbound number to one
-    //      staff account with `ORDER BY cp.updated_at DESC LIMIT 1`. Stamping
-    //      every row on every run re-arms an arbitrary pick, so a routine
-    //      backfill could silently move where a STOP lands.
-    //   2. display_name is derived. A run that changes nothing must report
-    //      nothing, or the audit trail cannot tell a no-op from a rewrite.
-    const upd = await pool.query(
-      'UPDATE contractor_profiles SET display_name = $1 WHERE user_id = $2 AND display_name IS DISTINCT FROM $1',
-      [expected, r.user_id]
-    );
-    updated += upd.rowCount;
-
-    // Same no-updated_at rule. Only stamps a row that has never been stamped,
-    // so the write is idempotent and never re-dates an older review.
-    if (STAMP_EXISTING) {
-      const st = await pool.query(
-        `UPDATE contractor_profiles
-            SET preferred_name_reviewed_at = NOW()
-          WHERE user_id = $1 AND preferred_name_reviewed_at IS NULL`,
-        [r.user_id]
-      );
-      stamped += st.rowCount;
+    if (client) {
+      await client.query('ALTER TABLE contractor_profiles ENABLE TRIGGER update_contractor_profiles_updated_at');
+      await client.query('COMMIT');
     }
-
-    // Report only. A script does not get to decide what someone is called.
-    const check = validatePreferredName(trimmedName);
-    if (trimmedName && !check.valid) {
-      needsHuman.push(`  user ${r.user_id}: ${JSON.stringify(trimmedName)} (${check.error}) -> renders ${JSON.stringify(expected)}`);
+  } catch (err) {
+    if (client) {
+      // One transaction: a mid-run failure applies NOTHING (writes and the
+      // trigger DDL roll back together), so a re-run starts clean.
+      try { await client.query('ROLLBACK'); } catch (rbErr) {
+        console.error(`ROLLBACK also failed: ${rbErr.message}`);
+      }
     }
-    if (!r.legal_name && r.onboarding_status !== 'deactivated') {
-      needsLegalName.push(`  user ${r.user_id}: ${JSON.stringify(trimmedName)} has no agreement or application on file`);
-    }
+    throw err;
+  } finally {
+    if (client) client.release();
   }
 
   if (CHECK_ONLY) {

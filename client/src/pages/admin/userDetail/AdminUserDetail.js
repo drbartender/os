@@ -292,10 +292,15 @@ export default function AdminUserDetail() {
     setSeniorityError('');
     setSeniorityFieldErrors({});
     try {
+      // Raw trimmed strings, never parseInt(...) || 0: a cleared box used to
+      // become a literal 0 and silently ZERO a backfilled baseline (the CSV
+      // rollback file on the operator box was the only record). The server
+      // treats '' as "keep the stored value" and rejects garbage with a field
+      // error, so blank now means keep and zeroing requires typing 0.
       await api.put(`/admin/users/${id}/seniority`, {
-        seniority_adjustment: parseInt(seniorityForm.seniority_adjustment, 10) || 0,
+        seniority_adjustment: String(seniorityForm.seniority_adjustment ?? '').trim(),
         hire_date: seniorityForm.hire_date || null,
-        historical_events_worked: parseInt(seniorityForm.historical_events_worked, 10) || 0,
+        historical_events_worked: String(seniorityForm.historical_events_worked ?? '').trim(),
       });
       const r = await api.get(`/admin/users/${id}/seniority`);
       setSeniority(r.data);

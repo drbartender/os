@@ -339,10 +339,17 @@ router.patch('/profile', asyncHandler(async (req, res) => {
   // Display name is derived, so it is recomputed on every profile write.
   // previousPreferredName is passed ONLY when the caller sent a preferred_name,
   // so a phone-only edit cannot re-raise the §3.5 notice.
-  if ('preferred_name' in updates) {
-    await refreshDisplayName(req.user.id, pool, { previousPreferredName: prevPreferredName });
-  } else {
-    await refreshDisplayName(req.user.id, pool);
+  // Contained (contractor.js pattern): the profile write above has already
+  // autocommitted, so a DB blip here must not 500 a save that succeeded.
+  try {
+    if ('preferred_name' in updates) {
+      await refreshDisplayName(req.user.id, pool, { previousPreferredName: prevPreferredName });
+    } else {
+      await refreshDisplayName(req.user.id, pool);
+    }
+  } catch (dnErr) {
+    console.error('[StaffPortal] display-name refresh failed:', dnErr.message);
+    Sentry.captureException(dnErr, { tags: { route: 'PATCH /api/staff-portal/profile', step: 'display_name' } });
   }
 
   // Audit row OUTSIDE the implicit "transaction" (it's all auto-commit anyway,

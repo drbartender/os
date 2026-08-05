@@ -17,14 +17,16 @@ const router = express.Router();
 
 // Fields the contractor is allowed to see in their own profile response.
 // Excludes internal columns like `seniority_adjustment` (admin-only auto-assign
-// weight) and `historical_events_worked` (admin-only pre-migration event credit,
+// weight), `historical_events_worked` (admin-only pre-migration event credit,
 // same policy class: an auto-assign ranking input the contractor must not see or
-// infer their standing from). Any future admin-only column on contractor_profiles
-// belongs in this destructure too.
+// infer their standing from), and `preferred_name_reviewed_at` (the admin-only
+// §3.5 name-review stamp — exposing it lets a staffer watch the moderation
+// queue work). Any future admin-only column on contractor_profiles belongs in
+// this destructure too.
 function sanitizeProfile(profile) {
   if (!profile) return null;
   // eslint-disable-next-line no-unused-vars
-  const { seniority_adjustment, historical_events_worked, ...safe } = profile;
+  const { seniority_adjustment, historical_events_worked, preferred_name_reviewed_at, ...safe } = profile;
   return safe;
 }
 

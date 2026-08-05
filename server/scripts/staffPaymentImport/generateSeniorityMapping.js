@@ -64,20 +64,28 @@ function shapeMappingRow({ name, created, events, matchedUserId, onboardingStatu
   if (!matchedUserId) flags.push('unmatched');
   if (matchedUserId && dupCount > 1) flags.push('duplicate-match');
   if (events === 0) flags.push('zero-events');
-  if (curHire && created && created > curHire) flags.push('date-moves-later');
+  // A proposed date LATER than the stored hire_date would SHORTEN the
+  // person's tenure, and computeSeniorityScore ranks on tenure — so an
+  // unreviewed date-moves-later row demotes them in every auto-assign pick.
+  // The backfill exists to CREDIT pre-migration tenure; a row that reduces it
+  // is almost certainly a bad match, so it defaults OUT of the run like an
+  // unmatched row does. The operator can still flip include to yes by hand
+  // after looking at it — that is the review the flag exists to force.
+  const dateMovesLater = Boolean(curHire && created && created > curHire);
+  if (dateMovesLater) flags.push('date-moves-later');
   // A missing or unparseable CheckCherry "Created At" leaves `created` empty
-  // (ccDateToIso returns '' for anything that is not an MM-DD-YYYY prefix, and
-  // the column is absent entirely from some exports). Proposing an empty hire
-  // date on an include=yes row would push the whole decision onto the apply
-  // script's skip guard, where the human never sees it. Fail safe the same way
-  // an unmatched row does: flag it AND default it out of the run.
+  // (the call site in main() blanks anything that is not strict YYYY-MM-DD,
+  // and the column is absent entirely from some exports). Proposing an empty
+  // hire date on an include=yes row would push the whole decision onto the
+  // apply script's skip guard, where the human never sees it. Fail safe the
+  // same way an unmatched row does: flag it AND default it out of the run.
   if (!created) flags.push('no-proposed-date');
   return {
     cc_name: name, cc_created_date: created, cc_events: events,
     matched_user_id: matchedUserId || '', os_preferred_name: current.preferred_name || '',
     onboarding_status: onboardingStatus, current_hire_date: curHire, proposed_hire_date: created,
     current_live_events: current.live_events || 0, proposed_historical: events,
-    include: matchedUserId && created && ACTIVE_STATUS.has(onboardingStatus) ? 'yes' : 'no',
+    include: matchedUserId && created && !dateMovesLater && ACTIVE_STATUS.has(onboardingStatus) ? 'yes' : 'no',
     flags: flags.join('|'),
   };
 }
@@ -112,9 +120,19 @@ async function main() {
   const get = (r, name) => (col[name] !== undefined ? (r[col[name]] || '').trim() : '');
 
   const contacts = records.slice(1).filter((r) => r.length).map((r) => ({
+    // ccDateToIso passes a NON-matching value through verbatim (that is right
+    // for its money-path callers, where a mangled date must surface loudly,
+    // not vanish). Here a non-ISO leftover must read as "no date" so the
+    // no-proposed-date flag fires and the row defaults OUT of the run —
+    // otherwise a garbage Created At becomes a truthy proposed_hire_date and
+    // only the apply script's regex catches it, out of the operator's sight.
+    created: ((v) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? v : ''))(ccDateToIso(get(r, 'Created At'))),
     name: get(r, 'Name') || `${get(r, 'First Name')} ${get(r, 'Last Name')}`.trim(),
-    created: ccDateToIso(get(r, 'Created At')),
-    events: parseInt(get(r, 'Staff Events: Count') || '0', 10) || 0,
+    // Locale exports write "1,234"; bare parseInt reads that as 1 and proposes
+    // a plausible-looking tiny baseline. Strip ONLY digit-grouping commas,
+    // then parse; anything still non-numeric falls to 0 and trips the
+    // zero-events flag instead of writing a number nobody approved.
+    events: parseInt((get(r, 'Staff Events: Count') || '0').replace(/,(?=\d{3}\b)/g, ''), 10) || 0,
     roles: get(r, 'Roles'),
   })).filter((c) => c.name && (STAFF_ROLE.test(c.roles) || c.events > 0));
 

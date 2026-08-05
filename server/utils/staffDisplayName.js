@@ -38,7 +38,18 @@ function isMiddleInitial(tok) {
 function fixCase(tok) {
   if (tok.length < 3) return tok;
   if (tok !== tok.toLowerCase()) return tok;
-  return tok.charAt(0).toUpperCase() + tok.slice(1);
+  // Spread, not charAt/slice: charAt(0) on a token whose first character is
+  // outside the BMP returns a lone UTF-16 surrogate, which encodes to U+FFFD
+  // on the way into Postgres and renders the person as "�..." forever.
+  const [first, ...rest] = [...tok];
+  return first.toUpperCase() + rest.join('');
+}
+
+// One display-safe initial from a token. Same surrogate rule as fixCase: a
+// name starting with an astral-plane character must yield that whole
+// character, never half of it.
+function firstChar(tok) {
+  return [...String(tok)][0] || '';
 }
 
 function computeDisplayName({ preferredName, legalFullName } = {}) {
@@ -53,10 +64,10 @@ function computeDisplayName({ preferredName, legalFullName } = {}) {
   let lastInitial = '';
   if (legal.length >= 2) {
     initialSource = 'legal';
-    lastInitial = legal[legal.length - 1].charAt(0).toUpperCase();
+    lastInitial = firstChar(legal[legal.length - 1]).toUpperCase();
   } else if (pref.length >= 2) {
     initialSource = 'preferred';
-    lastInitial = pref[pref.length - 1].charAt(0).toUpperCase();
+    lastInitial = firstChar(pref[pref.length - 1]).toUpperCase();
   }
 
   let short;
@@ -77,7 +88,10 @@ function computeDisplayName({ preferredName, legalFullName } = {}) {
     short = pref.slice();
   }
   while (short.length > 1 && isMiddleInitial(short[short.length - 1])) short.pop();
-  if (short.length === 0) short = [pref[0]];
+  // Defensive only (unreachable today: every branch above leaves >= 1 token).
+  // The || keeps a future edit from ever rendering the string "undefined" as
+  // a person's name.
+  if (short.length === 0) short = [pref[0] || legal[0]];
 
   const shortStr = short.map(fixCase).join(' ');
   return lastInitial ? `${shortStr} ${lastInitial}.` : shortStr;

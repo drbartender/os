@@ -45,7 +45,10 @@ const STAFF_OPEN_SHIFTS_SQL = `
   LEFT JOIN service_packages spk ON spk.id = pp.package_id
   LEFT JOIN LATERAL (
     SELECT csr.cover_requested_at,
-           UPPER(LEFT(TRIM(COALESCE(cp2.preferred_name, '?')), 1)) AS cover_for_first_initial
+           -- display_name first: a staffer with no preferred name still has a
+           -- display name ("Nevver S."), so the banner shows "N" instead of
+           -- "?". Same chain as eventDetailsPayload.js.
+           UPPER(LEFT(TRIM(COALESCE(cp2.display_name, cp2.preferred_name, '?')), 1)) AS cover_for_first_initial
       FROM shift_requests csr
       LEFT JOIN contractor_profiles cp2 ON cp2.user_id = csr.user_id
      WHERE csr.shift_id = s.id AND csr.cover_requested_at IS NOT NULL

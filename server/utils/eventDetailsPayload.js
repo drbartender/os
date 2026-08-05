@@ -177,7 +177,10 @@ async function buildEventDetailsPayload(req, proposalId) {
        ) abr ON true
        LEFT JOIN LATERAL (
          SELECT csr.cover_requested_at,
-                UPPER(LEFT(TRIM(COALESCE(cp2.preferred_name, '?')), 1)) AS cover_for_first_initial
+                -- display_name first: a staffer with no preferred name still
+                -- has a display name ("Nevver S."), so the banner shows "N"
+                -- instead of "?". Same chain as shifts.queries.js.
+                UPPER(LEFT(TRIM(COALESCE(cp2.display_name, cp2.preferred_name, '?')), 1)) AS cover_for_first_initial
            FROM shift_requests csr
            LEFT JOIN contractor_profiles cp2 ON cp2.user_id = csr.user_id
           WHERE csr.shift_id = s.id AND csr.cover_requested_at IS NOT NULL

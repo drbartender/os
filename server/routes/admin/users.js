@@ -339,11 +339,19 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
   // `nextName` is declared OUTSIDE the guard so the validated, whitespace
   // normalized value is what reaches the upsert, not the raw body string.
   //
+  // OMITTED is not CLEARED: a payload that never mentions preferred_name keeps
+  // the stored value (the hourly_rate COALESCE pattern below), because display
+  // name now derives from this column and a partial payload silently nulling a
+  // person's name across payroll, BEOs, and the tip page is exactly the class
+  // of wipe the documents COALESCE in contractorSeed exists to prevent. An
+  // explicit '' or null still clears — that is a deliberate admin act.
+  //
   // Collected into fieldErrors rather than thrown on its own (contractor.js
   // pattern): a bad phone AND a bad name come back together, instead of the
   // admin fixing one and discovering the other on the next submit.
+  const preferredNameProvided = preferred_name !== undefined;
   let nextName = String(preferred_name || '').trim() || null;
-  if (nextName !== null) {
+  if (preferredNameProvided && nextName !== null) {
     const nameCheck = validatePreferredNameChange(preferred_name, prevPreferredName);
     if (!nameCheck.valid) fieldErrors.preferred_name = nameCheck.error;
     else nextName = nameCheck.value;
@@ -362,7 +370,8 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
       hourly_rate
     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,COALESCE($23, 20.00))
     ON CONFLICT (user_id) DO UPDATE SET
-      preferred_name=$2, phone=$3, email=$4, birth_month=$5, birth_day=$6, birth_year=$7,
+      preferred_name = CASE WHEN $24 THEN EXCLUDED.preferred_name ELSE contractor_profiles.preferred_name END,
+      phone=$3, email=$4, birth_month=$5, birth_day=$6, birth_year=$7,
       city=$8, state=$9, street_address=$10, zip_code=$11, travel_distance=$12, reliable_transportation=$13,
       equipment_portable_bar=$14, equipment_cooler=$15, equipment_table_with_spandex=$16,
       equipment_none_but_open=$17, equipment_no_space=$18, equipment_will_pickup=$19,
@@ -376,10 +385,21 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
     equipment_portable_bar || false, equipment_cooler || false, equipment_table_with_spandex || false,
     equipment_none_but_open || false, equipment_no_space || false, equipment_will_pickup || false,
     emergency_contact_name || null, ecPhoneCheck.value, emergency_contact_relationship || null,
-    rate,
+    rate, preferredNameProvided,
   ]);
 
-  await refreshDisplayName(userId, pool, { previousPreferredName: prevPreferredName });
+  // Contained like its contractor.js sibling: the profile upsert above has
+  // already autocommitted, so a transient DB blip here must not 500 a save
+  // that succeeded — especially since a 500 at this line would also skip the
+  // geocode below and strand stale coordinates that autoAssign ranks by.
+  // Worst case is a stale display name, and refreshDisplayNames.js --check is
+  // the net that finds it.
+  try {
+    await refreshDisplayName(userId, pool, { previousPreferredName: prevPreferredName });
+  } catch (dnErr) {
+    console.error('[Admin] display-name refresh failed:', dnErr.message);
+    Sentry.captureException(dnErr, { tags: { route: 'PUT /api/admin/users/:id/profile', step: 'display_name' } });
+  }
 
   // Geocode address in background (fire-and-forget; failures logged only)
   if (street_address || city || state || zip_code) {
@@ -627,6 +647,15 @@ function parseSeniorityInt(value, { field, min, max, message, rangeMessage }) {
 
 // Update seniority adjustment, hire_date and the pre-migration event baseline
 router.put('/users/:id/seniority', auth, adminOnly, asyncHandler(async (req, res) => {
+  // user_id is an INTEGER column, so a non-numeric segment reaches Postgres as
+  // a 22P02 invalid_text_representation and surfaces as a 500 plus Sentry
+  // noise — and it would fire BEFORE the rowCount check below, making the
+  // NotFoundError unreachable for exactly the malformed input it should catch.
+  // Same guard as nameNotices.js.
+  if (!/^\d+$/.test(String(req.params.id))) {
+    throw new ValidationError({ id: 'Must be a numeric user id.' });
+  }
+
   const { seniority_adjustment, hire_date, historical_events_worked } = req.body;
 
   const historical = parseSeniorityInt(historical_events_worked, {
@@ -645,12 +674,21 @@ router.put('/users/:id/seniority', auth, adminOnly, asyncHandler(async (req, res
     rangeMessage: 'Seniority adjustment must be between -100000 and 100000.',
   });
 
+  // Guarded so a no-op save writes nothing. Not cosmetic: contractor_profiles
+  // carries a BEFORE UPDATE trigger that stamps updated_at on every rewrite,
+  // and smsInbound.js resolves shared inbound numbers by
+  // `ORDER BY cp.updated_at DESC` — an admin opening the Payouts tab and
+  // clicking "Save seniority" without changing anything must not silently
+  // re-aim where a STOP lands.
   const result = await pool.query(`
     UPDATE contractor_profiles
     SET seniority_adjustment = COALESCE($1, seniority_adjustment),
         hire_date = COALESCE($2, hire_date),
         historical_events_worked = COALESCE($3, historical_events_worked)
     WHERE user_id = $4
+      AND (COALESCE($1, seniority_adjustment) IS DISTINCT FROM seniority_adjustment
+           OR COALESCE($2, hire_date) IS DISTINCT FROM hire_date
+           OR COALESCE($3, historical_events_worked) IS DISTINCT FROM historical_events_worked)
   `, [
     adjustment,
     hire_date || null,
@@ -658,11 +696,15 @@ router.put('/users/:id/seniority', auth, adminOnly, asyncHandler(async (req, res
     req.params.id
   ]);
 
-  // No contractor_profiles row means the write silently went nowhere. Staff
-  // without a profile row are common (admin-hired before onboarding), so
-  // reporting success here would lose an admin's baseline with no signal.
+  // rowCount 0 is now ambiguous: no profile row, OR nothing to change. The
+  // distinction matters — staff without a profile row are common (admin-hired
+  // before onboarding), and reporting success there would lose an admin's
+  // baseline with no signal.
   if (result.rowCount === 0) {
-    throw new NotFoundError('No contractor profile for this user, so seniority was not saved.');
+    const exists = await pool.query('SELECT 1 FROM contractor_profiles WHERE user_id = $1', [req.params.id]);
+    if (exists.rowCount === 0) {
+      throw new NotFoundError('No contractor profile for this user, so seniority was not saved.');
+    }
   }
 
   res.json({ success: true });

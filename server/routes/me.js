@@ -180,7 +180,16 @@ router.patch('/tip-page', asyncHandler(async (req, res) => {
       'UPDATE contractor_profiles SET preferred_name = $1, updated_at = NOW() WHERE user_id = $2',
       [updates.preferred_name, req.user.id]
     );
-    await refreshDisplayName(req.user.id, pool, { previousPreferredName: prevPreferredName });
+    // Contained (contractor.js pattern): the name write above has already
+    // autocommitted, so a DB blip here must not 500 a save that succeeded.
+    // Worst case is a stale display name; refreshDisplayNames.js --check is
+    // the net that finds it.
+    try {
+      await refreshDisplayName(req.user.id, pool, { previousPreferredName: prevPreferredName });
+    } catch (dnErr) {
+      console.error('[Me] display-name refresh failed:', dnErr.message);
+      Sentry.captureException(dnErr, { tags: { route: 'PATCH /api/me/tip-page', step: 'display_name' } });
+    }
     delete updates.preferred_name;
   }
 

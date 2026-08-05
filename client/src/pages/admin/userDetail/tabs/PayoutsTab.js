@@ -192,7 +192,7 @@ export default function PayoutsTab(props) {
                       onChange={(e) => setSeniorityForm(f => ({ ...f, seniority_adjustment: e.target.value }))}
                     />
                     <FieldError error={seniorityFieldErrors?.seniority_adjustment} />
-                    <div className="tiny muted" style={{ marginTop: 3 }}>+ to boost · − to reduce</div>
+                    <div className="tiny muted" style={{ marginTop: 3 }}>+ to boost · − to reduce · leave blank to keep current</div>
                   </div>
                   <div>
                     <div className="meta-k" style={{ marginBottom: 4 }}>Historical events (pre-migration)</div>
@@ -204,7 +204,7 @@ export default function PayoutsTab(props) {
                       onChange={(e) => setSeniorityForm(f => ({ ...f, historical_events_worked: e.target.value }))}
                     />
                     <FieldError error={seniorityFieldErrors?.historical_events_worked} />
-                    <div className="tiny muted" style={{ marginTop: 3 }}>Events worked before this system (CheckCherry)</div>
+                    <div className="tiny muted" style={{ marginTop: 3 }}>Events worked before this system (CheckCherry) · leave blank to keep current · type 0 to zero</div>
                   </div>
                 </div>
                 <FormBanner error={seniorityError} fieldErrors={seniorityFieldErrors} />

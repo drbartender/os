@@ -1,7 +1,10 @@
 // Apply the HUMAN-APPROVED seniority mapping. Dry-run by default (prints the
 // before→after per row, writes nothing); --apply performs the writes inside a
-// transaction. Idempotent: an explicit SET to the approved values, so a second
-// --apply run is a no-op. Only include=yes rows with a matched user are written.
+// transaction. Idempotent at the ROW level: the UPDATE is guarded with
+// IS DISTINCT FROM, so a second --apply run touches zero rows (it reports them
+// as "already correct") and cannot restamp updated_at, which smsInbound.js
+// uses as a tiebreak for shared inbound numbers. Only include=yes rows with a
+// matched user are written.
 //
 // The mapping CSV is an UNTRUSTED input: it goes through a spreadsheet and a
 // human before it reaches this script, so every cell that gets bound to a query
@@ -170,9 +173,12 @@ function planSkips(rows) {
 
 // A bulk writer must never report success for a partial run: anything the
 // operator approved that did not land makes the process exit non-zero.
-function exitCodeFor({ apply, writeCount, changed, skippedCount, missingCount }) {
+// `alreadyCorrect` counts rows the IS DISTINCT FROM guard skipped because the
+// stored values already equal the approved values — a clean re-run is
+// `changed=0, alreadyCorrect=writeCount` and exits 0, never a false PARTIAL.
+function exitCodeFor({ apply, writeCount, changed, alreadyCorrect = 0, skippedCount, missingCount }) {
   if (skippedCount > 0 || missingCount > 0) return 1;
-  if (apply && changed !== writeCount) return 1;
+  if (apply && changed + alreadyCorrect !== writeCount) return 1;
   return 0;
 }
 
@@ -200,6 +206,7 @@ async function applyWrites(client, writes, { apply }) {
   const before = [];
   const missingProfile = [];
   let changed = 0;
+  let alreadyCorrect = 0;
   for (const w of writes) {
     const b = prior.get(w.userId) || {};
     const priorHire = toYmd(b.hire_date);
@@ -208,18 +215,33 @@ async function applyWrites(client, writes, { apply }) {
     if (absent) missingProfile.push(w.userId);
     console.log(`  user ${w.userId}: hire_date ${priorHire || '(unset)'} -> ${w.hireDate}, historical ${b.historical_events_worked ?? '(unset)'} -> ${w.historical}${absent ? '   [NO CONTRACTOR PROFILE - nothing will be written]' : ''}`);
     if (apply) {
+      // Guarded: a row whose stored values already equal the approved values
+      // is NOT rewritten. This is what makes a re-run a true no-op at the row
+      // level — an unguarded UPDATE still fires the table's BEFORE UPDATE
+      // updated_at trigger, and smsInbound.js resolves shared inbound numbers
+      // by `ORDER BY cp.updated_at DESC`, so a blanket rewrite re-arms who a
+      // STOP lands on. Rows skipped here are counted as alreadyCorrect using
+      // the pre-pass snapshot, so exitCodeFor can still prove every approved
+      // row is accounted for.
       const res = await client.query(
-        'UPDATE contractor_profiles SET hire_date = $1, historical_events_worked = $2 WHERE user_id = $3',
+        `UPDATE contractor_profiles SET hire_date = $1, historical_events_worked = $2
+          WHERE user_id = $3
+            AND (hire_date IS DISTINCT FROM $1::date
+                 OR historical_events_worked IS DISTINCT FROM $2::int)`,
         [w.hireDate, w.historical, w.userId]);
       changed += res.rowCount;
+      if (res.rowCount === 0 && !absent
+          && priorHire === w.hireDate && Number(b.historical_events_worked) === w.historical) {
+        alreadyCorrect++;
+      }
     }
   }
-  return { changed, before, missingProfile };
+  return { changed, alreadyCorrect, before, missingProfile };
 }
 
 // The reporting + write body, split out so main stays readable.
-async function reportAndWrite(client, writes, { apply, resolved, skipped }) {
-  const { changed, before, missingProfile } = await applyWrites(client, writes, { apply });
+async function reportAndWrite(client, writes, { apply, skipped }) {
+  const { changed, alreadyCorrect, before, missingProfile } = await applyWrites(client, writes, { apply });
 
   if (skipped.length) {
     console.log('[applySeniorityBackfill] SKIPPED (nothing written, stored values kept):');
@@ -229,16 +251,12 @@ async function reportAndWrite(client, writes, { apply, resolved, skipped }) {
     console.log(`[applySeniorityBackfill] SKIPPED (no contractor profile, nothing written): user id(s) ${missingProfile.join(', ')}`);
   }
 
-  if (apply) {
-    // Snapshot prior state for rollback (written before COMMIT; harmless on rollback).
-    const backup = `${resolved.replace(/\.csv$/i, '')}.backup-${Date.now()}.csv`;
-    fs.writeFileSync(backup, ['user_id,hire_date,historical_events_worked',
-      ...before.map((r) => `${r.userId},${r.hire_date},${r.historical_events_worked}`)].join('\n') + '\n');
-    console.log(`[applySeniorityBackfill] wrote ${changed} update(s). Prior state saved to ${backup}`);
-  } else {
+  if (!apply) {
     console.log('[applySeniorityBackfill] dry-run only; pass --apply to write.');
   }
-  return { changed, missingProfile };
+  // The rollback snapshot is written by main AFTER COMMIT, so a .backup file on
+  // disk always means the writes actually landed.
+  return { changed, alreadyCorrect, before, missingProfile };
 }
 
 async function main() {
@@ -255,12 +273,30 @@ async function main() {
   console.log(`[applySeniorityBackfill] ${apply ? 'APPLY' : 'DRY-RUN'}  file=${resolved}  db=${dbTarget()}`);
   console.log(`[applySeniorityBackfill] ${writes.length} row(s) to write, ${skipped.length} approved row(s) skipped`);
   let changed = 0;
+  let alreadyCorrect = 0;
   let missingProfile = [];
+  let before = [];
   const client = await pool.connect();
   try {
-    if (apply) await client.query('BEGIN');
-    ({ changed, missingProfile } = await reportAndWrite(client, writes, { apply, resolved, skipped }));
-    if (apply) await client.query('COMMIT');
+    if (apply) {
+      await client.query('BEGIN');
+      // The updated_at trigger would restamp every written row and re-aim the
+      // smsInbound shared-number tiebreak (see the guard in applyWrites — the
+      // guard stops RE-runs, this stops the FIRST run). Disabled inside the
+      // transaction: the ALTER takes SHARE ROW EXCLUSIVE (reads never block;
+      // concurrent app writes wait until COMMIT), and a failure rolls the DDL
+      // back with the data, so the trigger can never be left off. The
+      // lock_timeout keeps the ALTER from queuing indefinitely behind a stuck
+      // app transaction — past 5s the run fails closed with zero writes. A
+      // role that cannot ALTER the table dies here too: fail closed.
+      await client.query("SET LOCAL lock_timeout = '5s'");
+      await client.query('ALTER TABLE contractor_profiles DISABLE TRIGGER update_contractor_profiles_updated_at');
+    }
+    ({ changed, alreadyCorrect, before, missingProfile } = await reportAndWrite(client, writes, { apply, skipped }));
+    if (apply) {
+      await client.query('ALTER TABLE contractor_profiles ENABLE TRIGGER update_contractor_profiles_updated_at');
+      await client.query('COMMIT');
+    }
   } catch (err) {
     if (apply) {
       // Its own try: a dead connection here must not replace the real failure.
@@ -276,11 +312,31 @@ async function main() {
     await pool.end();
   }
 
-  const code = exitCodeFor({ apply, writeCount: writes.length, changed, skippedCount: skipped.length, missingCount: missingProfile.length });
+  if (apply) {
+    // Written AFTER COMMIT on purpose: a .backup file on disk always means the
+    // writes actually landed. (A COMMIT that fails leaves no file behind.)
+    // Guarded because the default path sits on a soft-mounted CIFS share that
+    // can EIO — the writes are already committed at this point, so a failed
+    // file write must dump the prior state to stdout (the operator's terminal
+    // is then the rollback artifact) rather than crash and lose it.
+    const backupCsv = ['user_id,hire_date,historical_events_worked',
+      ...before.map((r) => `${r.userId},${r.hire_date},${r.historical_events_worked}`)].join('\n') + '\n';
+    const backup = `${resolved.replace(/\.csv$/i, '')}.backup-${Date.now()}.csv`;
+    try {
+      fs.writeFileSync(backup, backupCsv);
+      console.log(`[applySeniorityBackfill] wrote ${changed} update(s), ${alreadyCorrect} already correct. Prior state saved to ${backup}`);
+    } catch (fsErr) {
+      console.error(`[applySeniorityBackfill] writes are COMMITTED but the backup file failed (${fsErr.message}).`);
+      console.error('SAVE THIS — prior state of every written row:');
+      process.stdout.write(backupCsv);
+    }
+  }
+
+  const code = exitCodeFor({ apply, writeCount: writes.length, changed, alreadyCorrect, skippedCount: skipped.length, missingCount: missingProfile.length });
   if (code !== 0) {
     const unapplied = skipped.length + missingProfile.length;
     console.error(apply
-      ? `[applySeniorityBackfill] PARTIAL: ${changed} of ${writes.length} row(s) written. The committed writes stand, but ${unapplied} approved row(s) never landed. Fix the mapping and re-run.`
+      ? `[applySeniorityBackfill] PARTIAL: ${changed} written + ${alreadyCorrect} already correct of ${writes.length} approved row(s). The committed writes stand, but ${unapplied} approved row(s) never landed. Fix the mapping and re-run.`
       : `[applySeniorityBackfill] ${unapplied} approved row(s) could NOT be applied. Fix the mapping before running with --apply.`);
   }
   return code;

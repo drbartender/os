@@ -1,4 +1,5 @@
 const express = require('express');
+const Sentry = require('@sentry/node');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../../db');
 const { auth, adminOnly, requireAdminOrManager } = require('../../middleware/auth');
@@ -75,7 +76,14 @@ router.patch('/contractors/:userId/tip-page', auth, requireAdminOrManager, async
       'UPDATE contractor_profiles SET preferred_name = $1, updated_at = NOW() WHERE user_id = $2',
       [nextName, userId]
     );
-    await refreshDisplayName(userId, pool, { previousPreferredName: prevPreferredName });
+    // Contained (contractor.js pattern): the name write above has already
+    // autocommitted, so a DB blip here must not 500 a save that succeeded.
+    try {
+      await refreshDisplayName(userId, pool, { previousPreferredName: prevPreferredName });
+    } catch (dnErr) {
+      console.error('[ContractorTipPage] display-name refresh failed:', dnErr.message);
+      Sentry.captureException(dnErr, { tags: { route: 'PATCH /api/admin/contractors/:userId/tip-page', step: 'display_name' } });
+    }
   }
 
   if (Object.keys(fields).length > 0) {

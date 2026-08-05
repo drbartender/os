@@ -57,6 +57,19 @@ test('date-moves-later does NOT fire when the CC date is earlier', () => {
     matchedUserId: 12, onboardingStatus: 'approved',
     current: { hire_date: new Date(2025, 3, 1), live_events: 2 }, dupCount: 1 });
   assert.equal(row.flags, '');
+  assert.equal(row.include, 'yes');
+});
+
+// A proposed date LATER than the stored hire_date would SHORTEN tenure and
+// demote the person in auto-assign, so it defaults OUT of the run exactly like
+// unmatched and no-proposed-date rows do. The operator flips include by hand
+// after reviewing — the flag forces that look instead of hiding it.
+test('date-moves-later defaults the row OUT of the run (include=no)', () => {
+  const row = shapeMappingRow({ name: 'Vet3', created: '2025-08-01', events: 4,
+    matchedUserId: 13, onboardingStatus: 'approved',
+    current: { hire_date: new Date(2025, 3, 1), live_events: 2 }, dupCount: 1 });
+  assert.ok(row.flags.includes('date-moves-later'));
+  assert.equal(row.include, 'no');
 });
 
 // ccDateToIso returns '' for anything that is not an MM-DD-YYYY prefix, and

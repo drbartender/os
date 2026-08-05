@@ -16,6 +16,14 @@ const { refreshDisplayName } = require('./refreshDisplayName');
  * KEEP IN SYNC WITH schema.sql contractor_profiles + PUT /api/admin/users/:id/profile.
  */
 async function seedContractorProfileFromApplication(client, userId, existingHireDate = null) {
+  // Captured BEFORE the upsert (same transaction client): the upsert below
+  // overwrites preferred_name from the application, and refreshDisplayName
+  // needs the prior value to decide whether the §3.5 review stamp must clear.
+  const prevRes = await client.query(
+    'SELECT preferred_name FROM contractor_profiles WHERE user_id = $1', [userId]
+  );
+  const prevPreferredName = prevRes.rows[0]?.preferred_name ?? null;
+
   await client.query(`
     INSERT INTO contractor_profiles (
       user_id, preferred_name, phone, email, birth_month, birth_day, birth_year,
@@ -99,7 +107,14 @@ async function seedContractorProfileFromApplication(client, userId, existingHire
   // path, the pre-hired application submit, the register-with-application path)
   // are covered by this, and all three hold their own transaction, so the
   // caller's client is threaded through instead of a second pool checkout.
-  await refreshDisplayName(userId, client);
+  //
+  // previousPreferredName is passed because the upsert above is a real
+  // preferred_name WRITER (preferred_name = EXCLUDED.preferred_name, sourced
+  // from the application's full_name) — in fact the one writer that always
+  // can change the name. Without it, a re-hire that overwrites a reviewed
+  // "Tony" back to the legal "Anthony" would keep the old review stamp and
+  // revert the person's client-facing name with no notice ever raised.
+  await refreshDisplayName(userId, client, { previousPreferredName: prevPreferredName });
 }
 
 module.exports = { seedContractorProfileFromApplication };
