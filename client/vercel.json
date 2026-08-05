@@ -24,5 +24,8 @@
     { "source": "/portal",           "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://staff.drbartender.com",          "permanent": true },
     { "source": "/portal/:path*",    "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://staff.drbartender.com/:path*",   "permanent": true }
   ],
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    { "source": "/vibes", "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "/vibes/index.html" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }

@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Dr. Bartender Manual</title>
+<link rel="icon" href="/favicon.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&display=swap">
+<style>
+/* Dr. Bartender OS — Color tokens (admin-os scopes; staff-portal scopes omitted). */
+
+[data-app="admin-os"] {
+  --accent: hsl(var(--accent-h) var(--accent-s) var(--accent-l));
+  --accent-soft: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.12);
+  --accent-line: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.32);
+  --accent-ink: hsl(var(--accent-h) calc(var(--accent-s) * 0.6) 20%);
+}
+
+/* AFTER HOURS — dark (default) */
+[data-app="admin-os"][data-skin="dark"] {
+  --accent-h: 212;
+  --accent-s: 78%;
+  --accent-l: 44%;
+
+  --ok-h: 168;
+  --ok-s: 62%;
+  --warn-h: 192;
+  --warn-s: 72%;
+  --danger-h: 262;
+  --danger-s: 62%;
+  --info-h: 224;
+  --info-s: 72%;
+  --violet-h: 280;
+  --violet-s: 68%;
+
+  --bg-0: #0b0d10;
+  --bg-1: #111418;
+  --bg-2: #171b21;
+  --bg-3: #1f242b;
+  --bg-elev: #1b2028;
+
+  --line-1: #232932;
+  --line-2: #2c333d;
+  --line-3: #3a424d;
+
+  --ink-1: #eef1f4;
+  --ink-2: #b8c0cc;
+  --ink-3: #7c8593;
+  --ink-4: #565d69;
+
+  --shadow-pop: 0 18px 40px -12px rgba(0,0,0,0.6), 0 4px 12px rgba(0,0,0,0.4);
+  --shadow-card: 0 1px 0 rgba(255,255,255,0.02), 0 2px 8px rgba(0,0,0,0.2);
+  --shadow-soft: 0 4px 14px rgba(0,0,0,0.35);
+  --glow: 0 0 0 1px var(--accent-line), 0 0 20px -4px hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.3);
+
+  --row-stripe: rgba(255,255,255,0.015);
+  --row-hover: rgba(255,255,255,0.035);
+  --row-active: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.08);
+
+  color-scheme: dark;
+}
+
+/* HOUSE LIGHTS — light */
+[data-app="admin-os"][data-skin="light"] {
+  --accent-h: 120;
+  --accent-s: 16%;
+  --accent-l: 20%;
+
+  --ok-h: 120;
+  --ok-s: 16%;
+  --warn-h: 36;
+  --warn-s: 62%;
+  --danger-h: 10;
+  --danger-s: 58%;
+  --info-h: 208;
+  --info-s: 36%;
+  --violet-h: 280;
+  --violet-s: 40%;
+
+  --ms-navy: #3a5d7a;
+  --ms-bordeaux: #9e3a2a;
+  --ms-emerald: #2a3a2a;
+  --ms-camel: #b8832a;
+  --ms-ink: #1a1a1a;
+
+  --bg-0: #f7f4ec;
+  --bg-1: #fcfaf4;
+  --bg-2: #efeae0;
+  --bg-3: #e7e3d6;
+  --bg-elev: #fcfaf4;
+
+  --line-1: #ece6d4;
+  --line-2: #e1dbcc;
+  --line-3: #1a1a1a;
+
+  --ink-1: #1a1a1a;
+  --ink-2: #3d3a33;
+  --ink-3: #7a7468;
+  --ink-4: #b4ac9b;
+
+  --shadow-pop: 0 40px 80px -32px rgba(26,26,26,0.18), 0 2px 8px rgba(26,26,26,0.04);
+  --shadow-card: none;
+  --shadow-soft: 0 8px 24px -16px rgba(26,26,26,0.2);
+  --glow: 0 0 0 1px var(--ink-1);
+
+  --row-stripe: transparent;
+  --row-hover: #f1ede3;
+  --row-active: #d6dfd0;
+
+  color-scheme: light;
+}
+
+/* Dr. Bartender OS — Typography tokens (admin-os scopes). */
+
+[data-app="admin-os"] {
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-numeric: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+
+  --fs-display: 26px;
+  --fs-title: 22px;
+  --fs-h3: 13px;
+  --fs-body: 13px;
+  --fs-ui: 12.5px;
+  --fs-meta: 11.5px;
+  --fs-label: 11px;
+  --fs-micro: 10.5px;
+
+  --lh-tight: 1.1;
+  --lh-ui: 1.45;
+  --tracking-label: 0.1em;
+  --tracking-tight: -0.02em;
+}
+
+/* House Lights — serif display + serif numerics */
+[data-app="admin-os"][data-skin="light"] {
+  --font-display: 'Libre Caslon Text', 'Caslon', Georgia, serif;
+  --font-numeric: 'Libre Caslon Text', 'Caslon', Georgia, serif;
+}
+
+/* Dr. Bartender OS — Layout, density, radius, z-index tokens (admin-os scopes). */
+
+[data-app="admin-os"] {
+  --radius: 6px;
+  --radius-sm: 4px;
+  --radius-lg: 10px;
+
+  --sidebar-w: 220px;
+  --sidebar-rail-w: 54px;
+  --header-h: 44px;
+  --content-max: 1440px;
+  --gap: 0.75rem;
+
+  --row-h: 44px;
+  --cell-pad-y: 0.7rem;
+  --cell-pad-x: 0.9rem;
+  --font-size-base: 14px;
+
+  --z-drawer: 51;
+  --z-scrim: 50;
+  --z-palette: 80;
+  --z-menu: 1000;
+}
+
+</style>
+<style>
+
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: #0b0d10; }
+  [data-app="admin-os"] { --accent-text: var(--accent); }
+  [data-app="admin-os"][data-skin="dark"] { --accent-text: hsl(var(--accent-h) var(--accent-s) 62%); }
+  [data-app="admin-os"] a { color: var(--accent-text); text-decoration: none; }
+  [data-app="admin-os"] a:hover { text-decoration: underline; }
+  summary::-webkit-details-marker { display: none; }
+  summary { list-style: none; }
+  .chev { transition: transform 140ms ease; }
+  details[open] > summary .chev { transform: rotate(90deg); }
+
+  .hv-row:hover { background: var(--row-hover); }
+  .hv-btn:hover { background: var(--bg-2); color: var(--ink-1); }
+</style>
+</head>
+<body>
+<div data-app="admin-os" data-skin="dark" id="dcRoot" style="min-height:100vh;background:var(--bg-0);color:var(--ink-1);font-family:var(--font-ui);-webkit-font-smoothing:antialiased">
+
+  <div style="position:sticky;top:0;z-index:40;background:var(--bg-1);border-bottom:1px solid var(--line-2)">
+    <div style="max-width:1000px;margin:0 auto;padding:10px 16px;display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+      <a href="#top" style="display:flex;align-items:center;gap:9px;margin-right:auto;min-width:0">
+        <span style="display:grid;place-items:center;width:26px;height:26px;flex:none;border-radius:6px;background:var(--accent);color:#fff;font-size:15px;line-height:1">℞</span>
+        <span style="font-size:13px;font-weight:600;color:var(--ink-1);white-space:nowrap">Dr. Bartender <span style="color:var(--ink-3)">Manual</span></span>
+      </a>
+
+      <details id="dcNav" style="position:relative">
+        <summary style="display:flex;align-items:center;gap:7px;padding:7px 11px;border-radius:6px;background:var(--bg-3);border:1px solid var(--line-2);color:var(--ink-2);font-size:12px;cursor:pointer" class="hv-btn">
+          <span class="chev" style="font-size:10px;line-height:1;color:var(--ink-3)">▶</span>Contents
+        </summary>
+        <div id="dcNavMenu" style="position:fixed;top:58px;left:50%;transform:translateX(-50%);box-sizing:border-box;width:min(620px,calc(100vw - 24px));max-height:min(70vh,540px);overflow:auto;padding:14px;background:var(--bg-elev);border:1px solid var(--line-2);border-radius:10px;box-shadow:var(--shadow-pop);z-index:50">
+          <div style="font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);margin:0 0 8px">Start here</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin:0 0 16px">
+            <a href="#truths" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">The Two Truths</a>
+          </div>
+          <div style="font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);margin:0 0 8px">Book One · Building the software</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin:0 0 16px">
+            <a href="#part-1" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">1 · Machines &amp; Commute</a>
+            <a href="#part-2" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">2 · Which Claude, Which Room</a>
+            <a href="#part-3" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">3 · The Map</a>
+            <a href="#part-4" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">4 · Meet Claude Code</a>
+            <a href="#part-5" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">5 · Git in Plain English</a>
+            <a href="#part-6" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">6 · Main &amp; Lanes</a>
+            <a href="#part-7" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">7 · How to Talk to Claude</a>
+            <a href="#part-8" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">8 · The Safety Nets</a>
+            <a href="#part-9" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">9 · Money &amp; Data Rules</a>
+            <a href="#part-10" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">10 · Building Screens</a>
+            <a href="#part-11" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">11 · When Something Goes Wrong</a>
+          </div>
+          <div style="font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);margin:0 0 8px">Book Two · The other room</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin:0 0 16px">
+            <a href="#ch-1" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">1 · What the Desktop App Is</a>
+            <a href="#ch-2" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">2 · Working as Dallas</a>
+            <a href="#ch-3" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">3 · House Style</a>
+            <a href="#ch-4" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">4 · Making Images</a>
+            <a href="#ch-5" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">5 · Between the Books</a>
+          </div>
+          <div style="font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);margin:0 0 8px">Reference</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            <a href="#leveling" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">Leveling Up</a>
+            <a href="#cheat" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">Cheat Sheet</a>
+            <a href="#glossary" style="font-size:12.5px;padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">Glossary</a>
+          </div>
+        </div>
+      </details>
+
+      <button id="btnExpand" style="padding:7px 11px;border-radius:6px;background:var(--bg-3);border:1px solid var(--line-2);color:var(--ink-2);font-family:inherit;font-size:12px;cursor:pointer" class="hv-btn">Expand all</button>
+      <button id="btnCollapse" style="padding:7px 11px;border-radius:6px;background:var(--bg-3);border:1px solid var(--line-2);color:var(--ink-2);font-family:inherit;font-size:12px;cursor:pointer" class="hv-btn">Collapse all</button>
+      <button id="btnSkin" style="padding:7px 11px;border-radius:6px;background:var(--bg-3);border:1px solid var(--line-2);color:var(--ink-2);font-family:inherit;font-size:12px;cursor:pointer" class="hv-btn">House Lights</button>
+    </div>
+  </div>
+
+  <div data-col id="top" style="max-width:920px;margin:0 auto;padding:38px 16px 90px">
+
+    <div style="margin:0 0 30px">
+      <div style="font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.14em;text-transform:uppercase;color:var(--accent-text);margin:0 0 12px">Version 6 · Written for Zul</div>
+      <h1 style="margin:0 0 14px;font-family:var(--font-display);font-size:clamp(28px,5.4vw,42px);line-height:1.12;font-weight:700;letter-spacing:-0.02em;color:var(--ink-1);text-wrap:balance">The Dr. Bartender Manual: Vibe Coding and the Claude Toolbox</h1>
+      <p style="margin:0 0 14px;font-size:16px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Plain English, everything explained, every rule with its why.</p>
+      <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">You are already doing this job. You have shipped features, fixed things on the spot, and you run half the office. This manual is not here to introduce you to the work; it is here to give you the deeper education: what the machinery actually is, why the rules exist, which room each kind of work belongs in, and how much more you can ask for than you probably realize.</p>
+      <p style="margin:0 0 18px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">It is two books in one cover.</p>
+
+      <div style="display:flex;flex-wrap:wrap;gap:12px;margin:0 0 18px">
+        <div style="flex:1 1 260px;padding:16px 18px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+          <div style="font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-3);margin:0 0 7px">Book One</div>
+          <div style="font-size:15px;font-weight:600;color:var(--ink-1);margin:0 0 6px">Building the Software</div>
+          <div style="font-size:14px;line-height:1.55;color:var(--ink-2)">The terminal, Git, lanes, reviews, and how the Dr. Bartender app gets changed safely.</div>
+        </div>
+        <div style="flex:1 1 260px;padding:16px 18px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+          <div style="font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-3);margin:0 0 7px">Book Two</div>
+          <div style="font-size:15px;font-weight:600;color:var(--ink-1);margin:0 0 6px">The Other Room</div>
+          <div style="font-size:14px;line-height:1.55;color:var(--ink-2)">The Claude desktop app: running the business side as Dallas's proxy, and the creative tools (social posts, images).</div>
+        </div>
+      </div>
+      <p style="margin:0;font-size:15px;line-height:1.65;color:var(--ink-2)">Read it top to bottom once, then live out of the <a href="#cheat">Cheat Sheet</a> and <a href="#glossary">Glossary</a> at the end.</p>
+    </div>
+
+    <details open data-sec id="truths" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">00</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">Before Everything: The Two Truths</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <h3 style="margin:18px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Truth 1: Almost nothing on the code side can break anything</h3>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">You run this business's inbox, its money, and its admin panel every day; nobody needs to tell you it's real. What you need is the map of where "real" actually connects to the code side, because it is much smaller than it feels.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Exactly three things reach the live world: a <strong style="color:var(--ink-1);font-weight:600">push</strong> (always coordinated with Dallas first), <strong style="color:var(--ink-1);font-weight:600">direct edits to the production database</strong> (Dallas's), and <strong style="color:var(--ink-1);font-weight:600">destructive commands</strong> that you would have to approve by hand (anything with <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">force</code>, <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">reset --hard</code>, <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">rm</code>). That's the whole list. Everything else in Book One (thinking, planning, asking, editing, committing, building in lanes) happens in a sandbox with a save system underneath it, and cannot touch a client, a payment, or a paycheck.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">So the posture is not caution. It is <strong style="color:var(--ink-1);font-weight:600">freedom</strong>: explore hard, build things, break things inside lanes, ask endless questions. The hot buttons are few, clearly marked, and none of them fire by accident.</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Truth 2: You can literally just ask</h3>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Here is how this whole operation started. Dallas was not a programmer. He typed questions into claude.ai. Then he got the desktop app. Then he opened an old Windows PowerShell window, and every time something felt foreign he said: <em style="color:var(--ink-1)">"Hey Claude, how do I do this thing? Give me step-by-step instructions for setting up this foreign thing called GitHub."</em> And now here we are: a custom software platform running a whole company, built exactly that way, one honest question at a time.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2)">That is the method. Not a fallback, not a beginner crutch: <strong style="color:var(--ink-1);font-weight:600">the method.</strong></p>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Confused by a word? Ask Claude to explain it like you have never coded.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Something feels wrong or scary? Say "stop, explain what's happening."</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Want to do something and don't know how? Ask for step-by-step instructions and follow them.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Wonder if something is even possible? Ask. The answer is yes more often than you'd guess.</li>
+        </ul>
+        <p style="margin:0;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">This is a POWERFUL tool. It does not judge, it never gets tired of questions, and it gets <em style="color:var(--ink-1)">better</em> the more context you give it. The rules in this manual are guides Dallas set up, each one a lesson learned the hard way, and each one comes with its <em style="color:var(--ink-1)">why</em> so you understand it instead of just obeying it. If a rule ever seems to be in your way and you don't understand why, don't silently work around it: ask Claude to explain it, and if it still seems wrong, tell Dallas. That is exactly how the rules themselves got made.</p>
+      </div>
+    </details>
+
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:20px;margin:38px 0 16px;padding:18px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <img src="https://api.drbartender.com/api/blog/images/manual-art-book1-test.webp" alt="Book One illustration: the terminal and a lane" loading="lazy" style="flex:0 0 auto;width:180px;height:180px;object-fit:cover;border-radius:8px;background:var(--bg-2)">
+      <div style="flex:1 1 240px;min-width:0">
+        <div style="font-family:var(--font-mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-3);margin:0 0 8px">Book One</div>
+        <div style="font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-0.02em;color:var(--ink-1);margin:0 0 8px">Building the Software</div>
+        <div style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty">The terminal, Git, lanes, reviews, and how the Dr. Bartender app gets changed safely.</div>
+      </div>
+    </div>
+
+    <details open data-sec id="part-1" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">01</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">The Machines and Your Commute</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <h3 style="margin:18px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Where the work actually happens</h3>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">All the real work happens on one computer: a Linux machine called the <strong style="color:var(--ink-1);font-weight:600">DRB-Mainframe</strong> that sits in Dallas's office in Chicago and never turns off. It has no monitor, no keyboard, no mouse. A computer like that is called <strong style="color:var(--ink-1);font-weight:600">headless</strong>: a powerful engine running in a locked room. Everyone connects to it remotely, works on it together, and leaves it running.</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Your commute (two hops)</h3>
+        <ol style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Chrome Remote Desktop</strong> into the <strong style="color:var(--ink-1);font-weight:600">Windows box in Dallas's office.</strong> That gives you a full Windows desktop, as if you were sitting at it.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">From that Windows desktop, open a terminal (PowerShell or Windows Terminal) and <strong style="color:var(--ink-1);font-weight:600">SSH into the Mainframe</strong>.</li>
+        </ol>
+        <pre style="margin:0 0 16px;padding:14px 16px;background:var(--bg-0);border:1px solid var(--line-2);border-radius:6px;font-family:var(--font-mono);font-size:13px;line-height:1.6;color:var(--ink-1);overflow-x:auto">ssh drbartender@&lt;address Dallas gives you&gt;</pre>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">SSH</strong> ("Secure Shell") turns your terminal into a direct line to the Mainframe. When the prompt changes to <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">drbartender@DRB-Mainframe:~$</code>, you have arrived. From that moment, everything you type happens on the Mainframe. The Windows box is just the hallway you walked through.</p>
+        <p style="margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink-2)">Keep the geography straight, because it matters in Part 2:</p>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">The Windows box</strong> is where the Claude <strong style="color:var(--ink-1);font-weight:600">desktop app</strong> lives (Book Two).</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">The Mainframe</strong> (through SSH) is where the code, the repo, and <strong style="color:var(--ink-1);font-weight:600">Claude Code</strong> live (Book One).</li>
+        </ul>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">You can open several terminal windows at once; each is a separate conversation with the same machine. Dallas usually has a few going. Normal and safe.</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Terminal survival commands</h3>
+        <p style="margin:0 0 12px;font-size:15px;line-height:1.65;color:var(--ink-2)">You rarely type commands yourself (Claude does that part), but know these:</p>
+        <div style="overflow-x:auto;margin:0 0 4px">
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr>
+              <th style="text-align:left;padding:9px 12px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);border-bottom:1px solid var(--line-2);white-space:nowrap">You type</th>
+              <th style="text-align:left;padding:9px 12px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);border-bottom:1px solid var(--line-2)">What happens</th>
+            </tr></thead>
+            <tbody>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-family:var(--font-mono);font-size:13px;color:var(--ink-1);white-space:nowrap">cd ~/projects/os</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">"Go to the project folder." Start every session here.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-family:var(--font-mono);font-size:13px;color:var(--ink-1)">ls</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">"List what is in this folder."</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-family:var(--font-mono);font-size:13px;color:var(--ink-1)">pwd</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">"Where am I right now?"</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-family:var(--font-mono);font-size:13px;color:var(--ink-1)">claude</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Starts Claude Code.</td></tr>
+              <tr><td style="padding:10px 12px;vertical-align:top;font-family:var(--font-mono);font-size:13px;color:var(--ink-1)">exit</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);vertical-align:top">Ends the SSH connection when you're done.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+
+    <details open data-sec id="part-2" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">02</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">Which Claude, Which Room</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <p style="margin:14px 0 16px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">You have several Claudes available, and they are all the same brain in different rooms with different toolbelts. Using the right room is the single most important habit in this manual, and it is the one place you have been stumbling, so let's make it unmissable.</p>
+        <div style="display:flex;flex-direction:column;gap:10px;margin:0 0 18px">
+          <div style="padding:14px 16px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px">
+            <div style="font-size:14px;font-weight:600;color:var(--ink-1);margin:0 0 6px">Room 1 · Claude Code, in the terminal, on the Mainframe</div>
+            <div style="font-size:14.5px;line-height:1.6;color:var(--ink-2);text-wrap:pretty">The workshop. It can see the entire codebase, the rulebook, the build board, the lanes, the review agents, the database, and the dev server. <strong style="color:var(--ink-1);font-weight:600">Every piece of work on the Dr. Bartender app happens here. All of it. Including the very first sentence of a new idea.</strong></div>
+          </div>
+          <div style="padding:14px 16px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px">
+            <div style="font-size:14px;font-weight:600;color:var(--ink-1);margin:0 0 6px">Room 2 · The Claude desktop app (Cowork), on the Windows box</div>
+            <div style="font-size:14.5px;line-height:1.6;color:var(--ink-2);text-wrap:pretty">The office. It is connected to the business side: the contact@ email, the calendar, Drive, Notion, Canva, Stripe. It is where you act as Dallas (Book Two). What it can NOT see: the Mainframe, the repo, the rulebook, or anything in Book One. (claude.ai in a browser tab is this same room in different clothes.)</div>
+          </div>
+          <div style="padding:14px 16px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px">
+            <div style="font-size:14px;font-weight:600;color:var(--ink-1);margin:0 0 6px">Room 3 · claude.ai/design, in the browser</div>
+            <div style="font-size:14.5px;line-height:1.6;color:var(--ink-2);text-wrap:pretty">The art studio. Used only in the middle of a project, to design new screens, with a prompt written in Room 1 (Part 10).</div>
+          </div>
+        </div>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The room test (one sentence)</h3>
+        <div style="margin:0 0 16px;padding:16px 18px;background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:8px;font-size:15.5px;line-height:1.6;color:var(--ink-1);text-wrap:pretty"><strong style="font-weight:600">Is this about the Dr. Bartender app: its code, its screens, its data, its behavior? Then it happens in Claude Code, in the terminal, on the Mainframe. Everything else about running the business happens in the desktop app.</strong></div>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The classic mistake, named out loud</h3>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">The desktop app is <em style="color:var(--ink-1)">right there</em> when an idea strikes, and it will happily discuss a new feature, plan it, even write code for it. It feels exactly like working. <strong style="color:var(--ink-1);font-weight:600">It isn't.</strong> The desktop app cannot see the repo, so anything it builds is an orphan: not on main, not reviewed, not connected to anything real. The thinking gets stranded in a chat window instead of becoming a committed spec.</p>
+        <p style="margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink-2)">Signs you are in the wrong room:</p>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">There's no <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">drbartender@DRB-Mainframe</code> prompt anywhere in sight.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">You ask Claude to open <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">docs/build-board.md</code> and it can't.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">It's writing code but can't run the app or the tests.</li>
+        </ul>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">What to do when you catch it: stop, copy out any thinking worth keeping, walk your fingers to the terminal (CRD, SSH, <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">cd ~/projects/os</code>, <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">claude</code>), and restart the conversation there with "let's work on ..." Two minutes of commute, and now the work is real: it lands on main, gets reviewed, and ships.</p>
+        <p style="margin:0;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Why even the <em style="color:var(--ink-1)">first sentence</em> belongs in the terminal: our workflow's core rule is that thinking becomes committed documents on main the moment it exists (Part 6). A brainstorm in the wrong room produces thinking that lives nowhere.</p>
+      </div>
+    </details>
+
+    <details open data-sec id="part-3" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">03</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">The Map (Where Everything Lives)</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <h3 style="margin:18px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The project folder: os</h3>
+        <p style="margin:0 0 12px;font-size:15px;line-height:1.65;color:var(--ink-2)">Our entire codebase lives in one folder on the Mainframe:</p>
+        <pre style="margin:0 0 16px;padding:14px 16px;background:var(--bg-0);border:1px solid var(--line-2);border-radius:6px;font-family:var(--font-mono);font-size:13px;line-height:1.6;color:var(--ink-1);overflow-x:auto">/home/drbartender/projects/os</pre>
+        <p style="margin:0 0 12px;font-size:15px;line-height:1.65;color:var(--ink-2)">Everyone calls it "the os folder" or just "os." Inside it:</p>
+        <div style="overflow-x:auto;margin:0 0 20px">
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr>
+              <th style="text-align:left;padding:9px 12px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);border-bottom:1px solid var(--line-2);white-space:nowrap">Folder / file</th>
+              <th style="text-align:left;padding:9px 12px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);border-bottom:1px solid var(--line-2)">What it is, in plain English</th>
+            </tr></thead>
+            <tbody>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-family:var(--font-mono);font-size:13px;color:var(--ink-1)">client/</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The <strong style="color:var(--ink-1);font-weight:600">frontend</strong>: everything a person sees in their browser. Pages, buttons, forms. Written in React.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-family:var(--font-mono);font-size:13px;color:var(--ink-1)">server/</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The <strong style="color:var(--ink-1);font-weight:600">backend</strong>: the brain. It talks to the database, calculates prices, sends emails and texts, and takes payments. Written in Node.js.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-family:var(--font-mono);font-size:13px;color:var(--ink-1)">server/routes/</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The backend's front doors. Each file handles one kind of request, like <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">proposals/</code> or <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">invoices.js</code>.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-family:var(--font-mono);font-size:13px;color:var(--ink-1)">server/utils/pricingEngine.js</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The single file where all money math lives. Every package price, every add-on, every gratuity calculation.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-family:var(--font-mono);font-size:13px;color:var(--ink-1)">server/db/schema.sql</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The blueprint of the <strong style="color:var(--ink-1);font-weight:600">database</strong>: every table and every column, written down.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-family:var(--font-mono);font-size:13px;color:var(--ink-1)">docs/</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Our thinking. Plans, specs, the build board, runbooks. Words, not code.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-family:var(--font-mono);font-size:13px;color:var(--ink-1)">scripts/</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Shop tools we built for ourselves: merge helpers, safety checks, status reports.</td></tr>
+              <tr><td style="padding:10px 12px;vertical-align:top;font-family:var(--font-mono);font-size:13px;color:var(--ink-1)">.claude/CLAUDE.md</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);vertical-align:top"><strong style="color:var(--ink-1);font-weight:600">The rulebook.</strong> Every rule in this manual (and more) is written there, and Claude Code reads it automatically at the start of every session. You do not have to memorize rules; Claude already knows them. Your job is to not talk Claude out of them.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The three live websites</h3>
+        <p style="margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink-2)">When code ships, it goes to three real sites:</p>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">drbartender.com</strong>: the public marketing site clients find on Google.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">admin.drbartender.com</strong>: the admin console where Dallas and you (zul@drbartender.com) run the business.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">staff.drbartender.com</strong>: the portal where bartenders see their shifts and pay.</li>
+        </ul>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">The backend runs on a hosting service called <strong style="color:var(--ink-1);font-weight:600">Render</strong>. The frontend runs on one called <strong style="color:var(--ink-1);font-weight:600">Vercel</strong>. The database lives on one called <strong style="color:var(--ink-1);font-weight:600">Neon</strong>. You never need to log into any of those three; Dallas handles them.</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The browser rule that already bit you once</h3>
+        <div style="padding:14px 16px;background:hsl(var(--warn-h) var(--warn-s) 50% / 0.1);border:1px solid hsl(var(--warn-h) var(--warn-s) 50% / 0.34);border-radius:8px;font-size:15px;line-height:1.6;color:var(--ink-1);text-wrap:pretty">The dummy staff account for testing the staff portal goes in an <strong style="font-weight:600">Incognito/private window, always.</strong> Never log it in on admin.drbartender.com. Mixing the two once poisoned your browser's saved login and produced the famous blank white page on your Mac. Incognito for the test account, normal window for your real admin account, and the two never meet.</div>
+      </div>
+    </details>
+
+    <details open data-sec id="part-4" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">04</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">Meet Claude Code</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <p style="margin:14px 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Vibe coding</strong> means: you describe what you want in plain English, Claude writes the actual code, and you steer, question, and approve. In the terminal, that's <strong style="color:var(--ink-1);font-weight:600">Claude Code</strong>. To start it:</p>
+        <pre style="margin:0 0 16px;padding:14px 16px;background:var(--bg-0);border:1px solid var(--line-2);border-radius:6px;font-family:var(--font-mono);font-size:13px;line-height:1.6;color:var(--ink-1);overflow-x:auto">cd ~/projects/os
+claude</pre>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Always start from inside <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">~/projects/os</code>. That is how Claude finds the rulebook, the project's custom review agents, and its memory of this codebase. Started from the wrong folder, it is an amnesiac.</p>
+        <p style="margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink-2)">Then just talk. Things worth typing any day of the week, all completely safe:</p>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Show me the build board and explain what each item is."</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Explain in plain English what <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">server/utils/pricingEngine.js</code> does."</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"What did we ship in the last two weeks?"</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Walk me through what happens, step by step, when a client pays a proposal."</li>
+        </ul>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Claude reads the actual code and explains it. <strong style="color:var(--ink-1);font-weight:600">Asking questions is free and touches nothing.</strong> If an answer uses a word you don't know: "explain that like I've never coded before." (Truth 2. It's always Truth 2.)</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Permission prompts</h3>
+        <p style="margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink-2)">Claude will sometimes stop and ask permission before running a command. Rules of thumb:</p>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Reading files, searching, listing folders: always fine.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Editing files and committing, when it's the work you asked for: fine.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Anything containing <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">force</code>, <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">reset --hard</code>, <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">clean</code>, <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">rm</code>, or <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">delete</code>, or anything Claude itself flags as destructive: <strong style="color:var(--ink-1);font-weight:600">stop, screenshot, ask Dallas.</strong></li>
+        </ul>
+        <p style="margin:0;font-size:15px;line-height:1.65;color:var(--ink-2)">When in doubt: don't approve, ask. Nothing is ever lost by waiting.</p>
+      </div>
+    </details>
+
+    <details open data-sec id="part-5" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">05</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">Git, in Plain English (Including "What Is Main?")</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <h3 style="margin:18px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Save points</h3>
+        <p style="margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Git</strong> is the save system for our code. Think of a video game:</p>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">A <strong style="color:var(--ink-1);font-weight:600">commit</strong> is a save point: a permanent snapshot of the code at one moment, with a note about what changed.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">The <strong style="color:var(--ink-1);font-weight:600">repository</strong> ("repo") is the whole memory card: every save since the project began. Our repo is the <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">os</code> folder.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">GitHub</strong> is the cloud backup. The master copy lives there, safe even if the Mainframe caught fire.</li>
+        </ul>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2)">Once work is committed, it is essentially impossible to lose. This is why you can relax.</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Branches, and the answer to "what is main?"</h3>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">A <strong style="color:var(--ink-1);font-weight:600">branch</strong> is a named timeline of commits. Git lets a project run many timelines at once, like parallel universes of the same code, so different pieces of work can proceed without colliding, then be combined (<strong style="color:var(--ink-1);font-weight:600">merged</strong>) later.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Every repo has one official timeline that all others eventually flow into. By convention it is named <strong style="color:var(--ink-1);font-weight:600">main</strong>. So:</p>
+        <div style="margin:0 0 16px;padding:16px 18px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px;font-size:15px;line-height:1.6;color:var(--ink-1);text-wrap:pretty"><strong style="font-weight:600">Main is not a place or a folder. It is the official timeline of the code. "On main" means "part of the official version." Everything else is a draft universe that either gets folded into main or thrown away.</strong></div>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2)">And the part you actually asked about, "how do I get there":</p>
+        <div style="margin:0 0 16px;padding:16px 18px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px;font-size:15px;line-height:1.6;color:var(--ink-1);text-wrap:pretty"><strong style="font-weight:600">You are always already there.</strong> The os folder is permanently parked on main. You never switch it, never "go to" main, never leave it. Standing in <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">~/projects/os</code> IS being on main. Type <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">git branch --show-current</code> there and it will say <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">main</code>. It will always say <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">main</code>.</div>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2)">That is deliberate, and it leads to the most important mechanical rule in the shop:</p>
+        <div style="margin:0 0 16px;padding:16px 18px;background:hsl(var(--danger-h) var(--danger-s) 52% / 0.12);border:1px solid hsl(var(--danger-h) var(--danger-s) 52% / 0.36);border-radius:8px">
+          <div style="font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;color:hsl(var(--danger-h) var(--danger-s) 72%);margin:0 0 8px">The big rule</div>
+          <p style="margin:0 0 12px;font-size:15.5px;line-height:1.6;color:var(--ink-1);text-wrap:pretty"><strong style="font-weight:600">The os folder never leaves main. Never run <code style="font-family:var(--font-mono);font-size:13px">git checkout</code>, <code style="font-family:var(--font-mono);font-size:13px">git switch</code>, or <code style="font-family:var(--font-mono);font-size:13px">git checkout -b</code> inside the os folder. If you ever see Claude propose one there, say no.</strong></p>
+          <p style="margin:0;font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty">Why: the os folder is <strong style="color:var(--ink-1);font-weight:600">one shared workspace</strong>. You, Dallas, and several Claude windows are all looking at the same physical files at the same time. A folder can only be on one branch at a time, so if one window switches branches, every other window is silently dragged along, and their work gets stranded. This really happened once; a single <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">git switch</code> yanked a parallel window onto the wrong branch and nearly lost a plan. There is now a robot guard (<code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">scripts/guard-os-main.sh</code>) that blocks commits if the folder somehow ends up off main, but the guard is a seatbelt, not an invitation.</p>
+        </div>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2)">"If we never leave main, where do branches happen at all?" In lanes. That's Part 6.</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Push: the most serious word in Book One</h3>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Push</strong> = upload our commits to GitHub.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">In our shop, <strong style="color:var(--ink-1);font-weight:600">push = deploy.</strong> The moment commits land on GitHub's main, robots ship the backend to Render and the frontend to Vercel automatically. Minutes later the change is live, in front of real paying clients.</li>
+        </ul>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2)">There is no separate publish step. Push IS the publish button. Therefore:</p>
+        <div style="margin:0 0 16px;padding:16px 18px;background:hsl(var(--danger-h) var(--danger-s) 52% / 0.12);border:1px solid hsl(var(--danger-h) var(--danger-s) 52% / 0.36);border-radius:8px;font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">You can push. Merging and pushing are the two moments you sync with Dallas first.</strong> A quick message is all it takes: "X is merged and ready, pushing unless you say hold." Why these two moments: a push ships EVERYTHING sitting on main, not just your work. Dallas may have commits parked there that he isn't ready to ship, and parallel windows merge work you don't know about. Coordinating first means nobody's half-done batch rides along by surprise.</div>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Two mechanics protect you here:</p>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">The cue words are live triggers.</strong> Claude treats "push," "deploy," "ship it," and "send it" as the real deploy signal, so only say them when you mean them and you have synced with Dallas. Claude will never suggest pushing on its own: after a commit it goes quiet, and that silence is the system working, not Claude being stuck. Committed work sits on main, safe and unshipped, until someone gives a deliberate cue.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">The cue starts a gate, not a launch.</strong> On the cue, Claude announces the batch ("N commits / M files pending. Run review + push?"), waits for an explicit yes, runs the full review fleet over everything going out, and only then pushes. Watch this sequence a few times before you run it yourself.</li>
+        </ul>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Words you'll hear constantly</h3>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr>
+              <th style="text-align:left;padding:9px 12px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);border-bottom:1px solid var(--line-2);white-space:nowrap">Word</th>
+              <th style="text-align:left;padding:9px 12px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);border-bottom:1px solid var(--line-2)">Plain meaning</th>
+            </tr></thead>
+            <tbody>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1);white-space:nowrap">stage</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Marking specific files as "include these in the next commit." Claude stages by name, never "everything."</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1);white-space:nowrap">merge</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Folding one branch's commits into another.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1);white-space:nowrap">squash merge</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Folding a whole branch in as ONE tidy commit. Clean final draft handed in, scratch paper shredded.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1);white-space:nowrap">merge conflict</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Two timelines changed the same line differently; someone must decide which wins.</td></tr>
+              <tr><td style="padding:10px 12px;vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1);white-space:nowrap">revert</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);vertical-align:top">Undoing a pushed commit the safe way: a new commit that reverses it. History is never rewritten, only extended.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+
+    <details open data-sec id="part-6" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">06</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">How We Actually Work: Think on Main, Build in Lanes</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <p style="margin:14px 0 16px;font-size:15px;line-height:1.65;color:var(--ink-2)">Say it like a motto: <strong style="color:var(--ink-1);font-weight:600">thinking lives on main, code is built in lanes.</strong></p>
+        <h3 style="margin:22px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Thinking lives on main</h3>
+        <p style="margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">All brainstorming, specs, and plans are written as Markdown documents and committed straight to main, immediately, in the shared os folder:</p>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Specs</strong> (what we're building and why) go in <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">docs/superpowers/specs/</code>. A real one: <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">2026-07-25-service-extension-design.md</code>, the design for letting a client extend their bartender's hours mid-event and pay on the spot.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Plans</strong> (the step-by-step build instructions) go in <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">docs/superpowers/plans/</code>.</li>
+        </ul>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Why commit thinking instantly? An old wound: plans used to be written on side branches, and when a branch died, the thinking died with it. Hours of problem-solving, gone. Now nothing valuable ever sits anywhere except main, so nothing valuable can be stranded. (And now you know the deep reason projects must <em style="color:var(--ink-1)">start</em> in the terminal: a brainstorm's whole purpose is to become a committed document on main.)</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Since thinking is just writing documents, any number of people and Claude windows can plan at the same time in the shared os folder, each in its own document. Planning never collides.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Markdown</strong> (<code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">.md</code>), while we're here: plain text where <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">#</code> means heading and <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">**text**</code> means bold. Readable by humans and AI alike, no Word required. This manual is a Markdown file.</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Code is built in lanes</h3>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">When a plan is approved and it's time to write code, Claude creates a <strong style="color:var(--ink-1);font-weight:600">lane</strong>: a temporary, disposable copy of the codebase in a separate folder (under <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">~/projects/worktrees/</code>, next to os, not inside it) on its own branch. Git calls the mechanism a "worktree"; we say lane because that's what it's for: one piece of work travels down it, then it closes.</p>
+        <p style="margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink-2)">The lifecycle, entirely Claude-managed:</p>
+        <ol style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Cut</strong>: Claude creates the lane as a fresh copy of current main.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Build</strong>: Claude writes code there, saving messy checkpoint commits as it goes. A lane is a sandbox; nothing in it can touch main or the live site.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Review</strong>: agents check the lane's work before anything merges (Part 8).</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Merge</strong>: the lane is squash merged into main as one clean commit, through <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">scripts/merge-lane.sh</code>, which holds a real lock so two lanes can never merge at the same instant. (When you're the one driving the project, give Dallas a quick heads-up before the merge lands; see Part 5.)</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Delete</strong>: the lane is cleaned up, after triple-checking every change made it to main.</li>
+        </ol>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">You never create, name, visit, or clean up a lane.</strong> Curious what's in flight? Ask Claude to "show lane status," or read the build board.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Why lanes? A half-finished or broken build can never hurt main. Worst case, a rotten lane gets thrown away and re-cut from the plan, which is safe on main. The expensive thing (thinking) is never at risk; only the cheap thing (mechanical code Claude can redo) is.</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The two tracks: how every task starts</h3>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Every task is one of two sizes, and <em style="color:var(--ink-1)">you pick the track by how you open your sentence</em>:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;margin:0 0 16px">
+          <div style="flex:1 1 280px;padding:16px 18px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px">
+            <div style="font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-3);margin:0 0 8px">Track 1 · Quick fix</div>
+            <p style="margin:0 0 10px;font-size:14.5px;line-height:1.6;color:var(--ink-2)">Small, obvious, low-risk. Typo, color, label. Edited right on main, committed, done. No lane.</p>
+            <p style="margin:0 0 10px;font-size:14.5px;line-height:1.6;color:var(--ink-1)">Magic phrase: <strong style="font-weight:600">"Just fix this real quick: ..."</strong></p>
+            <p style="margin:0;font-size:14px;line-height:1.6;color:var(--ink-3)">Real example: our menus only ever list Athletic Brewing as the non-alcoholic beer (house rule, never Heineken 0.0). Spot a stray "Heineken 0.0" in menu copy? "Just fix this real quick: the NA beer on the classes page should say Athletic Brewing." Claude edits, shows you, commits. Two minutes, and it sits safely on main until the next push.</p>
+          </div>
+          <div style="flex:1 1 280px;padding:16px 18px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px">
+            <div style="font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-3);margin:0 0 8px">Track 2 · Project</div>
+            <p style="margin:0 0 10px;font-size:14.5px;line-height:1.6;color:var(--ink-2)">A real feature: new behavior, new screens, anything touching money or multiple parts of the system. Full road: brainstorm, spec on main, plan on main, review the plan, build in a lane, review the lane, merge.</p>
+            <p style="margin:0 0 10px;font-size:14.5px;line-height:1.6;color:var(--ink-1)">Magic phrase: <strong style="font-weight:600">"Let's work on ..."</strong></p>
+            <p style="margin:0;font-size:14px;line-height:1.6;color:var(--ink-3)">Real example: "Let's work on letting clients extend their event by an hour and pay on the spot" became the service-extension spec, a five-lane plan, and shipped 2026-08-04. The reviews along the way caught two real money bugs before they ever reached main.</p>
+          </div>
+        </div>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2)">Not sure which track? Ask. Claude will tell you, and it errs toward project when money is anywhere nearby.</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The build board: the shop's whiteboard</h3>
+        <p style="margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink-2)"><code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">docs/build-board.md</code> is the one-page index of all work, in three sections:</p>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Ready to build</strong>: plan written and reviewed, waiting for a go.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">In flight</strong>: a lane is open right now.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Recently shipped</strong>: merged and pushed, newest first.</li>
+        </ul>
+        <p style="margin:0;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Each line links to its spec and plan. Claude maintains it as a byproduct of working; humans read it, never edit it. It is the fastest answer to "what is going on right now?"</p>
+      </div>
+    </details>
+
+    <details open data-sec id="part-7" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">07</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">How to Talk to Claude (This Is the Real Skill)</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <h3 style="margin:18px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Brainstorming style, house rules</h3>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Prose, one question at a time.</strong> Design talk is a conversation, not a form. Claude digs in, forms an opinion, and leads with it; you two hash it out one question at a time. If Claude ever gives you a multiple-choice menu during design talk: "no menus, just talk to me."</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Short answers are real answers.</strong> "yes," "looks good," "do that" are firm decisions, and Claude treats them as final.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Approvals are section by section.</strong> On a big design you approve each piece as you discuss it, and those little approvals ARE the approval. No end-of-spec re-reading ceremony. When the last section is agreed, the spec is done.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Don't rubber-stamp, and don't be rubber-stamped.</strong> If you don't understand, say so; making Claude explain is productive work. If you think Claude is wrong, push back. It's instructed to give real analysis, not flattery. Give it the same.</li>
+        </ul>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Effort levels</h3>
+        <p style="margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink-2)">Claude thinks harder when asked, and we ask deliberately:</p>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">"Use maximum reasoning effort"</strong>: whenever the work touches real money, login/security, or the database's shape. Examples: anything near <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">pricingEngine.js</code>, Stripe or payments, <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">server/middleware/auth.js</code>, <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">schema.sql</code>, or anything that ripples across layers.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Normal effort: one-file tweaks, copy, CSS, docs.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">The house test: <strong style="color:var(--ink-1);font-weight:600">"If this were subtly wrong, would the bug be hard to catch?"</strong> Yes = max effort. Instantly obvious on screen = normal.</li>
+        </ul>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The magic phrases, all in one place</h3>
+        <div style="overflow-x:auto;margin:0 0 20px">
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr>
+              <th style="text-align:left;padding:9px 12px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);border-bottom:1px solid var(--line-2)">You say</th>
+              <th style="text-align:left;padding:9px 12px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);border-bottom:1px solid var(--line-2)">What Claude does</th>
+            </tr></thead>
+            <tbody>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;color:var(--ink-1)">"Just fix this real quick: ..."</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Quick-fix track: edit on main, commit, no lane.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;color:var(--ink-1)">"Let's work on ..."</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Project track: brainstorm, spec, plan, lane.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;color:var(--ink-1)">"Use maximum reasoning effort"</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Slows down, double-checks against the money/auth rules.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;color:var(--ink-1)">"Review the spec" / "review the plan"</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Runs the design-stage review agents (Part 8). These do NOT run unless asked, so always ask.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;color:var(--ink-1)">"What review level ran, and what was the verdict?"</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Makes Claude state, out loud, what review a change got before it merges. Ask before every merge.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;color:var(--ink-1)">"Get a second opinion on this"</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Sends the work to the rival AI reviewers (Part 8).</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;color:var(--ink-1)">"Show lane status" / "Show me the build board"</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Status of every lane / the whole shop.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;color:var(--ink-1)">"Explain like I've never coded"</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Plain-English walkthrough of anything.</td></tr>
+              <tr><td style="padding:10px 12px;vertical-align:top;font-size:14px;color:var(--ink-1)">"Restart the dev server"</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);vertical-align:top">For when a change doesn't show up while testing.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">What you never say (without meaning it)</h3>
+        <ul style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Push" / "deploy" / "ship it" / "send it": live deploy triggers. Sync with Dallas first, then say them on purpose (Part 5).</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Force" anything.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Skip the review" / "don't bother with the checks."</li>
+        </ul>
+      </div>
+    </details>
+
+    <details open data-sec id="part-8" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">08</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">The Safety Nets (Reviews)</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <p style="margin:14px 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">We do not trust any single pass of work, human or AI. Layers of independent review agents check everything, scaled to how dangerous the change is.</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The sensitive-paths list</h3>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty"><code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">scripts/sensitive-paths.txt</code> is the single master list of every file where a mistake means lost money, broken security, damaged data, or a wrong message to a real person. <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">pricingEngine.js</code> is on it. The Stripe webhook handlers. <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">auth.js</code>. <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">schema.sql</code>. The refund code. The email and SMS senders.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">The rule: <strong style="color:var(--ink-1);font-weight:600">any change touching any file on that list gets the full review fleet, no matter how tiny it looks.</strong> Everything else gets a lighter look plus a sweep before push.</p>
+        <div style="margin:0 0 16px;padding:16px 18px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px">
+          <div style="font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-3);margin:0 0 8px">Why so paranoid · a true story</div>
+          <p style="margin:0;font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty">A file that handles client drink-plan submissions could write to a money column, but it wasn't on the list yet. A change to it got the light review, and the bug it carried overbilled a real client by <span style="font-family:var(--font-numeric);color:var(--ink-1)">$627</span>. He was refunded, the file went on the list, and the lesson went into this manual: <strong style="color:var(--ink-1);font-weight:600">sensitivity follows the code.</strong> When Claude says "this touches a sensitive path, running the full fleet," that is the shop remembering Jack.</p>
+        </div>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The review layers</h3>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Design-stage</strong> (before any code): "review the spec" runs three agents that check a spec against reality, hunt gaps, and probe risk; "review the plan" runs three more that check the plan matches the spec, splits sanely into lanes, and is buildable.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Per-lane</strong> (before any merge): agents review the lane's changes. This gate caught the two service-extension money bugs.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Push-time</strong> (before anything goes live): a sweep of everything since the last push, checking the seams where separate pieces of work touch, plus a fresh full-fleet pass on anything sensitive, plus the rival reviewers on sensitive pushes.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">The iron rule</strong>: a review agent that crashed, stalled, or came back vague counts as a FAILURE, never a pass. A blind spot is not a green light.</li>
+        </ul>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The rival reviewers: Codex and Gemini</h3>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Two AI models from rival families live on the Mainframe as command-line tools: <strong style="color:var(--ink-1);font-weight:600">Codex</strong> (OpenAI) and <strong style="color:var(--ink-1);font-weight:600">Gemini</strong> (Google). In our shop they have exactly one job in Book One: <strong style="color:var(--ink-1);font-weight:600">second opinions.</strong> They are reviewers, never builders. Claude leads; they advise.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">How it works: inside Claude Code, "get a second opinion" (the <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">/second-opinion</code> command) hands the changes to Codex and Gemini in parallel. They hunt for problems independently. Then, and this is the important part, <strong style="color:var(--ink-1);font-weight:600">Claude checks every finding against the actual code before showing you anything</strong>, because raw rival-model output is noisy and many findings don't survive contact with reality. Only verified findings surface. The same machinery fires automatically at push time whenever a batch touches sensitive paths. There is also <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">/gemini-spec</code> for a rival read on a spec document.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">The why is a story: different model families have different blind spots, so <em style="color:var(--ink-1)">decorrelated</em> eyes catch what one family misses. Codex once caught a real money bug in the staffing roster that the entire Claude fleet had passed, and later a shift-handling blocker in the event-details work, both before they shipped. The value is not that the rivals are better. It's that they are <em style="color:var(--ink-1)">different</em>.</p>
+        <p style="margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink-2)">Three laws about them:</p>
+        <ol style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Their findings are verified, never obeyed.</strong> A wrong finding is discarded without apology.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Their failure never blocks anything.</strong> If Codex's quota is out or Gemini's billing hiccups (both happen; they run on prepaid accounts), Claude reports it and the Claude fleet remains the gate.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">You never drive them directly.</strong> They only run through Claude Code's commands. Your job is understanding what you're watching: "Codex flagged X, verified real, fixing" versus "Gemini flagged Y, checked it, false alarm."</li>
+        </ol>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Ask for the review out loud, every time</h3>
+        <p style="margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink-2)">Reviews are supposed to be baked into the workflow, and mostly they are. Ask anyway. House habit, not an insult to Claude:</p>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Spec and plan reviews only run when someone asks.</strong> Deliberately not automatic. When a brainstorm settles into a spec: "review the spec." When a plan is written: "review the plan." If you don't say it, it may not happen.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Lane and merge reviews are automatic, but you verify them.</strong> Before any merge: "What review level ran on this, and what was the verdict?" Claude must state which level ran (light look or full fleet) and what was found. A vague answer is a red flag, not a pass.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Asking twice costs nothing. A skipped review is how a $627 bug reaches a real client. "Did the review run?" is never an annoying question here.</li>
+        </ul>
+        <p style="margin:0;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">One boundary: the big push-time review runs only on a real push cue, never early. Ask freely about spec, plan, and lane reviews; don't ask Claude to pre-run the push-time fleet "just to be safe." That one has its own moment.</p>
+      </div>
+    </details>
+
+    <details open data-sec id="part-9" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">09</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">Money and Data Rules (Know These Even If You Never Touch Them)</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <ul style="margin:16px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:12px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Everything is connected.</strong> House rule: if you change X, find everything that depends on X and update it too. Example: if a proposal's price changes, its payment status must be re-checked, because "Paid in Full" at the old price isn't paid in full at the new one. Claude checks these ripples automatically; never tell it "skip that, just change the one thing."</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Business rules live in the code, and they are exact.</strong> Example: hosted packages include one bartender per 100 guests in the price; bartenders beyond the ratio bill hourly plus a gratuity surcharge. Rules like that are law in <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">pricingEngine.js</code>. When a client-facing answer depends on a rule like this, have Claude check the code instead of anyone's memory. The code is the truth.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Watch for unit traps.</strong> Most money is stored as integer <strong style="color:var(--ink-1);font-weight:600">cents</strong> (<span style="font-family:var(--font-numeric)">$100</span> is stored as <span style="font-family:var(--font-numeric)">10000</span>), but proposals store <strong style="color:var(--ink-1);font-weight:600">dollars</strong>, for historical reasons. You don't memorize which is which; you remember that traps like this exist, which is exactly why max effort and the review fleet exist.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Hands off production services.</strong> Using admin.drbartender.com is your normal job, always fine. Directly editing the live database, the Stripe dashboard, or Render/Vercel settings is Dallas-only.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">The dev server</strong> (the test copy of the app on the Mainframe) is a Claude-managed background process and does not restart itself when server code changes. Change not showing up? "Restart the dev server."</li>
+        </ul>
+      </div>
+    </details>
+
+    <details open data-sec id="part-10" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">10</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">Building Screens (The Design Round Trip)</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <p style="margin:14px 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Any part of the app a person sees and touches (a page, a form, a dashboard) we call a <strong style="color:var(--ink-1);font-weight:600">surface</strong>. Claude Code is superb at logic and wiring, but for designing how a <em style="color:var(--ink-1)">brand-new</em> surface looks and feels, we use the art studio: <strong style="color:var(--ink-1);font-weight:600">claude.ai/design</strong>.</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">When to make the trip (and when not to)</h3>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Go to the studio:</strong> a brand-new surface, or a heavy visual redesign of an existing one.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Stay in the terminal:</strong> everything else. Layout fixes, new fields on an existing screen, styling tweaks, ordinary UI work. Terminal Claude does those directly against our existing CSS. Most UI work never leaves the terminal.</li>
+        </ul>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The design systems (why the studio output looks like our app)</h3>
+        <p style="margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">On claude.ai/design we keep <strong style="color:var(--ink-1);font-weight:600">design-system projects</strong>: our real colors, fonts, and components, extracted from the live product, so the studio designs with our actual skin instead of generic AI-pretty taste.</p>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Dr. Bartender OS Design System</strong>: the admin console and staff portal. Two themes: After Hours (dark) and House Lights (light).</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Apothecary Design System</strong>: the public marketing brand (the parchment-and-serif look).</li>
+        </ul>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Design a surface inside the matching project. The design system is what carries the rules, which is why the next step works.</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The trip out: a lean prompt, cut and paste</h3>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">In the terminal, mid-project, tell Claude Code to <strong style="color:var(--ink-1);font-weight:600">write a design prompt</strong> for the new surface. The good kind of prompt is <em style="color:var(--ink-1)">lean</em>: what the surface is for, who looks at it, what data it shows, and the paths to the existing screens and components it should feel adjacent to. Paths and descriptions, not a rulebook. (The design system already IS the rulebook; a prompt stuffed with strict rules just fights it and gives worse results. We learned this by comparing outcomes.)</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Copy the prompt from the terminal chat, paste it into the right design project in your browser, and iterate there until it looks and feels right. This part is genuinely fun, and iterating is free: ask for variations, push on spacing, change your mind.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">You may see old <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">docs/*-design-prompt.md</code> files in the repo (potion-planner, payroll-screen, recipe-card). Those are the previous era's method, when the prompt had to carry everything. History, not the pattern to copy.</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The trip back: the design connector (no more zip files)</h3>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">When the screen is right, go back to the terminal and tell Claude Code to pull it in. Claude uses the <strong style="color:var(--ink-1);font-weight:600">design connector</strong> (a tool called DesignSync) to list and read the files straight out of the design project. No downloading, no zip files, no ferrying.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Then terminal Claude does the part that makes it real: wiring. Swapping fake data for real endpoints (through <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">utils/api.js</code>), folding styles into <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">index.css</code>, adding the route and auth guards in <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">App.js</code>, and putting the work through the normal lane-and-review machinery like any other project code. <strong style="color:var(--ink-1);font-weight:600">The studio decides how it looks; the terminal makes it true.</strong></p>
+        <p style="margin:0;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">One setup note: the design connector rides a claude.ai login in the terminal session. If Claude ever says it can't reach the design project, that's an authorization thing, not a you thing: ask Claude how to fix it (it's a one-time <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">/design-login</code>), or ask Dallas.</p>
+      </div>
+    </details>
+
+    <details open data-sec id="part-11" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">11</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">When Something Goes Wrong</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <p style="margin:14px 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">It will, and it is almost never a big deal. The system is built so mistakes are cheap.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Red text is not an emergency.</strong> Error messages are information, not damage. Copy the message to Claude, ask "what happened?", and nine times out of ten it's fixed in the next message.</p>
+        <p style="margin:0 0 10px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">The unbreakable habit: when unsure, stop and ask.</strong> Nothing here is ever harmed by pausing; things are only harmed by forcing forward.</p>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Claude asks permission for something you don't understand: screenshot, send to Dallas, wait.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">A <strong style="color:var(--ink-1);font-weight:600">merge conflict on a sensitive path</strong>: Claude stops on its own. Let it. That one is Dallas's call.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">A <strong style="color:var(--ink-1);font-weight:600">push fails</strong>: the rule is stop and report. Never retry with force. A failed push is always safe; a forced one is not.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">You think you broke something: you almost certainly didn't. Committed work is essentially indestructible, and uncommitted work is protected by rules that stop Claude from destroying anything without explicit approval. Say "stop," then tell Dallas what happened. Honestly reporting a mistake immediately is a core house value. Zero penalty, every time.</li>
+        </ul>
+        <div style="padding:14px 16px;background:hsl(var(--danger-h) var(--danger-s) 52% / 0.12);border:1px solid hsl(var(--danger-h) var(--danger-s) 52% / 0.36);border-radius:8px;font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">What actual danger looks like:</strong> approving commands with <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">force</code>, <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">reset --hard</code>, <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">clean -f</code>, or <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">rm</code>; pushing without having synced with Dallas; editing the live database directly. All three require <em style="color:var(--ink-1)">you</em> to actively do something. Don't, and you're safe.</div>
+      </div>
+    </details>
+
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:20px;margin:38px 0 16px;padding:18px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <img src="https://api.drbartender.com/api/blog/images/manual-art-book2-test.webp" alt="Book Two illustration: the desk flat-lay" loading="lazy" style="flex:0 0 auto;width:180px;height:180px;object-fit:cover;border-radius:8px;background:var(--bg-2)">
+      <div style="flex:1 1 240px;min-width:0">
+        <div style="font-family:var(--font-mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-3);margin:0 0 8px">Book Two</div>
+        <div style="font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-0.02em;color:var(--ink-1);margin:0 0 8px">The Other Room</div>
+        <div style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty">The Claude desktop app: running the business side as Dallas's proxy, and the creative tools (social posts, images).</div>
+      </div>
+    </div>
+
+    <details open data-sec id="ch-1" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">C1</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">What the Desktop App Is</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <p style="margin:14px 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">The Claude <strong style="color:var(--ink-1);font-weight:600">desktop app</strong> on the Windows box (and claude.ai in a browser, same thing in different clothes) is the same Claude brain with a completely different toolbelt. Where terminal Claude sees the repo, desktop Claude sees the <em style="color:var(--ink-1)">business</em>, through <strong style="color:var(--ink-1);font-weight:600">connectors</strong>:</p>
+        <div style="overflow-x:auto;margin:0 0 18px">
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr>
+              <th style="text-align:left;padding:9px 12px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);border-bottom:1px solid var(--line-2);white-space:nowrap">Connector</th>
+              <th style="text-align:left;padding:9px 12px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);border-bottom:1px solid var(--line-2)">What Claude can reach through it</th>
+            </tr></thead>
+            <tbody>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">Gmail</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The contact@drbartender.com inbox: read, search, draft, label.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">Google Calendar</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The business calendar: check, create, move events.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">Google Drive</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The document store: find, read, create files.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">Stripe</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The payments account: look up charges, balances, account activity.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">Notion</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Notes and databases.</td></tr>
+              <tr><td style="padding:10px 12px;vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">Canva</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);vertical-align:top">Designs: create, edit, export. Useful for social posts.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Cowork</strong> is the desktop app's mode for working on files in a folder: point it at a folder of documents and it can read, organize, and produce work across them, like a colleague at the next desk.</p>
+        <p style="margin:0;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">What this room can NOT do: see the Mainframe, the repo, the code, or anything in Book One. Which is the whole reason the room test exists.</p>
+      </div>
+    </details>
+
+    <details open data-sec id="ch-2" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">C2</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">Working as Dallas</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <p style="margin:14px 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">You are an extension of Dallas here. You have his email, his finances, his calendar, and his trust, and you've been acting on his behalf for a while. This chapter isn't going to lecture you about permissions; you already know what acting for Dallas means. The point of this chapter is smaller and more useful:</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Use this tool for anything you'd watch Dallas use it for.</strong> Triage the inbox. Draft and send the reply. Chase the invoice. Reconcile the weird charge. Summarize the contract in Drive. Build the week's schedule. Prep the social calendar. Turn a rambling client thread into three clean action items. If Dallas would open the desktop app and just <em style="color:var(--ink-1)">ask</em>, you open the desktop app and just ask. Same seat, same tool, same method (Truth 2).</p>
+        <p style="margin:0;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">And the same honesty rule as Book One: when something goes sideways, say so immediately, to Dallas, plainly. Zero penalty. Every time.</p>
+      </div>
+    </details>
+
+    <details open data-sec id="ch-3" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">C3</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">House Style for Anything a Client Reads</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <p style="margin:14px 0 12px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">When you draft words that leave the building (emails, texts, social captions, site copy), a few house laws apply:</p>
+        <ul style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:11px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">No em dashes in client-facing copy.</strong> Use commas, colons, or a period and a new sentence. (You'll notice this manual practices it.)</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Email over SMS by default.</strong> Every text message costs real money; email is effectively free. Texts are for genuinely time-sensitive things.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Only claim what's true.</strong> The NA beer is Athletic Brewing, never Heineken 0.0. And any time copy depends on how the product actually behaves ("you can reschedule anytime!", "tips go 100% to your bartender"), verify against reality first. The code is the truth, and the terminal is where the truth lives: if you're unsure, ask terminal Claude to check before the copy ships.</li>
+        </ul>
+      </div>
+    </details>
+
+    <details open data-sec id="ch-4" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">C4</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">Making Images</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <p style="margin:14px 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">You do the social posts, and Dallas has been generating art for the blog. Same rig is available to you, and this is one Book Two purpose that happens in the Book One room, because the image tools, keys, and upload path all live on the Mainframe.</p>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The rig</h3>
+        <ul style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">gpt-image-2</strong> (an OpenAI image model) is the house standard. It won a head-to-head against Google's image models for our use: better style match, and it renders text baked into the image cleanly instead of producing alien scribbles.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Gemini's image models</strong> are the alternate: cleaner and more minimal when that's the look you want.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Either way, <strong style="color:var(--ink-1);font-weight:600">you don't touch any of that machinery.</strong> You describe; Claude drives.</li>
+        </ul>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The recipe</h3>
+        <p style="margin:0 0 12px;font-size:15px;line-height:1.65;color:var(--ink-2)">In the terminal (<code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">cd ~/projects/os</code>, <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">claude</code>):</p>
+        <ol style="margin:0 0 14px;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Say what it's for and what it shows.</strong> "Generate a square image for an Instagram post about summer cocktails: the apothecary chalkboard style, one concept, a copper mug with a thermometer, chalk line art, teal accent."</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Claude generates, then hands you a link.</strong> It converts the image to web-friendly weight and uploads it, and you open the link in your browser to judge it. (Generated files get shared by link because that's the established review path.)</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Iterate freely.</strong> "Warmer," "less clutter," "make the text bigger," "try a version without the border." Each round takes a couple of minutes. Regenerating until it's right is normal, not wasteful.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">Download the winner</strong> and use it in the post.</li>
+        </ol>
+        <h3 style="margin:26px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The house look (a default, not a law)</h3>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">Blog art follows a codified style called <strong style="color:var(--ink-1);font-weight:600">apothecary chalkboard</strong>: dark charcoal blackboard background, white chalk line art, selective teal, warm-orange, and lime accents; covers are square with a condensed uppercase title and a row of labeled icon tiles; inline images are one concept with a small handwritten caption. Social art should follow the same look <strong style="color:var(--ink-1);font-weight:600">for now</strong>, so the feed and the blog feel like one brand.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">But hear this the way Dallas means it: <strong style="color:var(--ink-1);font-weight:600">we aren't making rules here.</strong> If you or Dallas wants something else for a particular post, prompt for something else. The style is a default that keeps things coherent when you don't have a reason to deviate, not a fence.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">One brand note: the chalkboard look belongs to the <strong style="color:var(--ink-1);font-weight:600">client-facing</strong> side of the house (the blog, social, the public brand). Admin-side things (the console, internal tools, internal docs) wear the OS skin instead. Art follows the brand of the surface it lands on.</p>
+        <p style="margin:0;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">One real boundary to know: the <strong style="color:var(--ink-1);font-weight:600">marketing site's photos are real photographs</strong>, deliberately. Generated art is for the blog and social graphics; it does not replace the real photos of real events on drbartender.com.</p>
+      </div>
+    </details>
+
+    <details open data-sec id="ch-5" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">C5</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">Carrying Work Between the Books</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <p style="margin:14px 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">The two rooms meet constantly, and the skill is noticing which book a thing belongs to while you're in the middle of the other one.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Ops work uncovers an app problem.</strong> You're in the inbox and a client says the payment page errored. Or you notice the admin panel has no button for a thing you do weekly. That is Book One work wearing Book Two clothes. Don't ask desktop Claude to fix it (it can't); carry it across the hall: terminal, <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">cd ~/projects/os</code>, <code style="font-family:var(--font-mono);font-size:12.5px;background:var(--bg-3);border:1px solid var(--line-1);border-radius:4px;padding:1px 5px;color:var(--ink-1)">claude</code>, then "just fix this real quick: ..." or "let's work on ..." You've already done this, and fixing a thing the moment it has no path in the admin panel is exactly the muscle. The only correction from history: <em style="color:var(--ink-1)">start</em> that work in the terminal, not in the desktop app.</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Dev work needs an ops action.</strong> A project needs an email sent to a client, a calendar hold, a decision about how a client relationship should feel. That's Book Two (or a conversation with Dallas). The terminal codes; the office communicates.</p>
+        <p style="margin:0;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">When you're not sure which book something is: the room test, one more time. <em style="color:var(--ink-1)">About the app's code, screens, data, or behavior: terminal. About clients, email, money moves, schedule, content: desktop app.</em></p>
+      </div>
+    </details>
+
+    <div style="display:flex;align-items:center;gap:14px;margin:34px 0 16px">
+      <div style="font-family:var(--font-mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink-3);white-space:nowrap">Reference</div>
+      <div style="flex:1;height:1px;background:var(--line-2)"></div>
+    </div>
+
+    <details open data-sec id="leveling" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">↑</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">Leveling Up (Gaps Worth Closing)</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <p style="margin:14px 0 12px;font-size:15px;line-height:1.65;color:var(--ink-2)">You're past the beginner path, so this is a checklist of depth, not steps:</p>
+        <ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:11px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Read the build board weekly</strong> and have Claude explain any line you can't picture. Knowing what's in flight makes every conversation sharper.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Read one full spec</strong> (service-extension is a good one) so you know what "done thinking" looks like here. That's the bar your own brainstorms are aiming for.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Drive a full brainstorm yourself</strong>, "let's work on ..." through an approved spec, with Dallas nowhere in the room. Section by section, terse approvals, review the spec at the end.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Run one design round trip</strong> end to end: lean prompt out of the terminal, iterate in the studio, pull it back through the connector, watch the wiring land.</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">Watch a push gate closely</strong> next time Dallas ships (the inventory, the fleet, the second opinions, the verdicts), then run one yourself with Dallas in the loop. That sequence is the whole safety philosophy in two minutes.</li>
+        </ol>
+      </div>
+    </details>
+
+    <details open data-sec id="cheat" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">CS</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">Cheat Sheet (Keep This Open)</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:2px 18px 22px">
+        <h3 style="margin:18px 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The commute</h3>
+        <pre style="margin:0 0 18px;padding:14px 16px;background:var(--bg-0);border:1px solid var(--line-2);border-radius:6px;font-family:var(--font-mono);font-size:13px;line-height:1.7;color:var(--ink-1);overflow-x:auto">Chrome Remote Desktop  →  office Windows box
+ssh drbartender@&lt;address Dallas gives you&gt;
+cd ~/projects/os
+claude</pre>
+        <h3 style="margin:0 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">The room test</h3>
+        <p style="margin:0 0 18px;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty">About the app's code, screens, data, behavior → <strong style="color:var(--ink-1);font-weight:600">terminal on the Mainframe</strong>. About clients, email, money moves, schedule, content → <strong style="color:var(--ink-1);font-weight:600">desktop app</strong>. New-surface design, mid-project → <strong style="color:var(--ink-1);font-weight:600">claude.ai/design</strong>, prompt written by the terminal, pulled back by the terminal.</p>
+        <h3 style="margin:0 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Magic phrases (terminal)</h3>
+        <ul style="margin:0 0 18px;padding-left:20px;display:flex;flex-direction:column;gap:8px">
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Just fix this real quick: ..." (small stuff, edited on main)</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Let's work on ..." (features: brainstorm, spec, plan, lane)</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Use maximum reasoning effort" (money, auth, database shape)</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Review the spec" / "Review the plan" (they only run when asked, so ask every time)</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"What review level ran, and what was the verdict?" (ask before every merge)</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Get a second opinion on this" (Codex + Gemini, Claude-verified)</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Show lane status" / "Show me the build board"</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Explain like I've never coded"</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Restart the dev server"</li>
+          <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">"Generate an image for ..." (say what it's for, what it shows, and the style)</li>
+        </ul>
+        <div style="margin:0 0 18px;padding:16px 18px;background:hsl(var(--danger-h) var(--danger-s) 52% / 0.12);border:1px solid hsl(var(--danger-h) var(--danger-s) 52% / 0.36);border-radius:8px">
+          <div style="font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;color:hsl(var(--danger-h) var(--danger-s) 72%);margin:0 0 10px">The five never-dos</div>
+          <ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:9px">
+            <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Never <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">git checkout</code> / <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">git switch</code> in the os folder. (Shared folder; switching drags everyone.)</li>
+            <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Never merge or push without syncing with Dallas first. (A push ships EVERYTHING on main, and it goes live to real clients. "Push / deploy / ship it" are live triggers; say them on purpose.)</li>
+            <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Never approve anything with <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">force</code>, <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">reset --hard</code>, <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">clean</code>, or <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">rm</code> without asking Dallas.</li>
+            <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Never skip or wave off a review, especially on sensitive paths.</li>
+            <li style="font-size:15px;line-height:1.6;color:var(--ink-2)">Never log the staff test account in outside an Incognito window.</li>
+          </ol>
+        </div>
+        <p style="margin:0 0 18px;font-size:15px;line-height:1.65;color:var(--ink-2)"><strong style="color:var(--ink-1);font-weight:600">And the one habit:</strong> app work starts in the terminal. Every time. Including the first sentence of the idea.</p>
+        <h3 style="margin:0 0 10px;font-size:15px;font-weight:600;color:var(--ink-1)">Who presses what</h3>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;margin:0 0 18px">
+          <div style="flex:1 1 260px;padding:14px 16px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px">
+            <div style="font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-3);margin:0 0 8px">You + Claude</div>
+            <div style="font-size:14.5px;line-height:1.6;color:var(--ink-2)">Questions, brainstorms, specs, plans, quick fixes, reviews-watching, design round trips, images, and the entire Book Two office.</div>
+          </div>
+          <div style="flex:1 1 260px;padding:14px 16px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px">
+            <div style="font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-3);margin:0 0 8px">You + Claude, after a sync</div>
+            <div style="font-size:14.5px;line-height:1.6;color:var(--ink-2)">Merges and pushes. Message Dallas first, then run the gate.</div>
+          </div>
+          <div style="flex:1 1 260px;padding:14px 16px;background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px">
+            <div style="font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-3);margin:0 0 8px">Dallas only</div>
+            <div style="font-size:14.5px;line-height:1.6;color:var(--ink-2)">Production database edits, Stripe dashboard, Render/Vercel settings.</div>
+          </div>
+        </div>
+        <p style="margin:0;font-size:15px;line-height:1.65;color:var(--ink-2);text-wrap:pretty"><strong style="color:var(--ink-1);font-weight:600">When lost:</strong> ask Claude. Step-by-step instructions, plain English, as many times as it takes. That's not the backup plan; it's how this whole thing was built.</p>
+      </div>
+    </details>
+
+    <details open data-sec id="glossary" style="scroll-margin-top:76px;margin:0 0 12px;background:var(--bg-1);border:1px solid var(--line-1);border-radius:10px">
+      <summary style="display:flex;align-items:center;gap:12px;padding:15px 18px;cursor:pointer" class="hv-row">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-text);background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:3px 7px;flex:none">GL</span>
+        <span style="flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--ink-1)">Glossary (Plain-English Definitions)</span>
+        <span class="chev" style="flex:none;font-size:11px;color:var(--ink-4)">▶</span>
+      </summary>
+      <div style="padding:8px 18px 22px">
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr>
+              <th style="text-align:left;padding:9px 12px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);border-bottom:1px solid var(--line-2)">Term</th>
+              <th style="text-align:left;padding:9px 12px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-3);border-bottom:1px solid var(--line-2)">Meaning</th>
+            </tr></thead>
+            <tbody>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">backend</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The part of the app users never see: database access, price math, emails, payments. Our <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">server/</code> folder.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">branch</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">A named timeline of code changes. A parallel universe of the codebase.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">build board</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top"><code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">docs/build-board.md</code>. One page listing all work: ready, in flight, shipped.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">Codex / Gemini</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Rival-family AI models (OpenAI / Google) used as second-opinion reviewers and, for Gemini's cousins, alternate image generation. Never primary, never driven directly.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">commit</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">A permanent save point of the code, with a note about what changed.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">connector</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">A hookup that lets desktop Claude reach a business tool: Gmail, Calendar, Drive, Stripe, Notion, Canva.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">Cowork</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The desktop app's mode for working across the files in a folder, like a colleague at the next desk.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">CRD</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Chrome Remote Desktop: how you reach the office Windows box. First hop of your commute.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">CLAUDE.md</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The rulebook file Claude Code reads at session start. The law of the shop.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">database</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Where the business's data lives (clients, proposals, payments, shifts). PostgreSQL, hosted on Neon.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">deploy</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Making code live on the real websites. In our shop, pushing IS deploying.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">design system</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Our real colors, fonts, and components packaged as a claude.ai/design project, so studio designs come out looking like our app.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">DesignSync</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The design connector: the tool terminal Claude uses to pull finished designs out of a claude.ai/design project. Replaced zip-file ferrying.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">dev server</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The private test copy of the app on the Mainframe, so changes can be tried without touching live sites.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">frontend</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The part of the app people see in their browser. Our <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">client/</code> folder. React.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">Git</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The save system for code: commits, branches, merges, history.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">GitHub</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The cloud service holding the master backup of our repo.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">gpt-image-2</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The OpenAI image model that is our house standard for generated art. Won the bake-off; renders in-image text cleanly.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">headless</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">A computer with no screen or keyboard, used only over the network. The Mainframe is headless.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">lane</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">A short-lived, disposable worktree where one piece of code gets built, then squash-merged to main and deleted. Fully Claude-managed.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">main</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The official timeline of the code. The os folder is permanently parked on it.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">Markdown (.md)</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Plain text with simple symbols for formatting (<code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">#</code> heading, <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">**bold**</code>). What all our docs are written in.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">merge</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Folding one branch's changes into another.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">merge conflict</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Two changes collided on the same lines; a decision is needed about which wins.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">plan</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Step-by-step build instructions for a project, broken into lanes. Lives in <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">docs/superpowers/plans/</code>.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">production ("prod")</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The real, live system clients and staff use.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">push</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Uploading commits to GitHub. Here, it triggers automatic deployment. Sync with Dallas before pressing it.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">R2</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Cloudflare's file storage, where our uploaded and generated images live.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">repo (repository)</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">A project folder tracked by Git, with its full history. Ours is <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">os</code>.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">review fleet</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The set of AI review agents that check work before merge and before push.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">route / endpoint</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">One front door of the backend; a URL the frontend calls to get or change data.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">schema</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The blueprint of the database: which tables and columns exist. <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">server/db/schema.sql</code>.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">second opinion</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">A <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">/second-opinion</code> run: Codex + Gemini review the changes in parallel, Claude verifies every finding, only survivors surface.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">sensitive path</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">A file on the master danger list (<code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">scripts/sensitive-paths.txt</code>): money, auth, data, or outbound messages. Any change there gets the full fleet.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">spec</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The written design of what we're building and why. Lives in <code style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink-1)">docs/superpowers/specs/</code>.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">squash merge</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Merging a lane as one single clean commit instead of many messy ones.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">SSH</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The tool that connects a terminal to the Mainframe securely. Second hop of your commute.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">stage</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Selecting exactly which files go into the next commit.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">surface</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Any screen or page a person sees and interacts with.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">terminal</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The text window where you type commands and talk to Claude Code.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">vibe coding</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">Building software by directing an AI in plain English: you steer and judge, it types.</td></tr>
+              <tr><td style="padding:10px 12px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">webp</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);border-bottom:1px solid var(--line-1);vertical-align:top">The lightweight image format all our web images get converted to before publishing.</td></tr>
+              <tr><td style="padding:10px 12px;vertical-align:top;font-size:14px;font-weight:600;color:var(--ink-1)">worktree</td><td style="padding:10px 12px;font-size:14px;line-height:1.55;color:var(--ink-2);vertical-align:top">Git's feature for having a branch checked out in its own separate folder. The machinery underneath a lane.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:34px 0 0;padding-top:18px;border-top:1px solid var(--line-1)">
+      <span style="font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink-4);margin-right:auto">Dr. Bartender Manual · v6</span>
+      <a href="#top" style="font-size:12.5px;padding:7px 11px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line-1);color:var(--ink-2)">Back to top</a>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function () {
+  var root = document.getElementById('dcRoot');
+  var nav = document.getElementById('dcNav');
+  var navMenu = document.getElementById('dcNavMenu');
+  var skinBtn = document.getElementById('btnSkin');
+  function sections() {
+    return Array.prototype.slice.call(root.querySelectorAll('details[data-sec]'));
+  }
+  function setSkin(skin) {
+    root.setAttribute('data-skin', skin);
+    skinBtn.textContent = skin === 'dark' ? 'House Lights' : 'After Hours';
+    try { localStorage.setItem('drb-manual-skin', skin); } catch (e) {}
+  }
+  var skin = 'dark';
+  try {
+    var saved = localStorage.getItem('drb-manual-skin');
+    if (saved === 'dark' || saved === 'light') skin = saved;
+  } catch (e) {}
+  setSkin(skin);
+  skinBtn.addEventListener('click', function () {
+    setSkin(root.getAttribute('data-skin') === 'dark' ? 'light' : 'dark');
+  });
+  document.getElementById('btnExpand').addEventListener('click', function () {
+    sections().forEach(function (d) { d.open = true; });
+  });
+  document.getElementById('btnCollapse').addEventListener('click', function () {
+    sections().forEach(function (d) { d.open = false; });
+  });
+  navMenu.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('a[href^="#"]');
+    if (!a) return;
+    var el = document.getElementById(a.getAttribute('href').slice(1));
+    if (el && el.tagName === 'DETAILS') el.open = true;
+    nav.open = false;
+  });
+})();
+</script>
+</body>
+</html>
+
