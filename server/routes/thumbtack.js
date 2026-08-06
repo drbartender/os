@@ -9,6 +9,7 @@ const { findOrCreateClient } = require('../utils/clientDedup');
 const { safeEqual } = require('../utils/secrets');
 const { createDraftProposalFromLead } = require('../utils/thumbtackProposalDraft');
 const { triggerLeadCall, enqueueFirstReply } = require('../utils/leadCallTrigger');
+const { chicagoTodayYmd } = require('../utils/businessTime');
 
 // Test seam: lets thumbtack.test.js stub the draft builder to throw and prove
 // the webhook still 200s with the lead persisted, and count notifyAdminCategory
@@ -599,6 +600,40 @@ router.post('/reviews', asyncHandler(async (req, res) => {
     }
 
     console.log(`Thumbtack review ${review.reviewId} saved`);
+
+    // Duty pay (spec 2026-08-06 §7): mirror the review into staff_reviews as a
+    // pending row for the admin to confirm and tag. Keyed on tt_review_id, so a
+    // webhook replay can never mint a second row. Non-blocking: a failure here
+    // must not fail the webhook (Thumbtack would retry the whole delivery).
+    try {
+      const stars = Number(review.rating);
+      // staff_reviews.stars is NOT NULL CHECK 1..5; a missing or odd rating
+      // gets no staff_reviews row (the thumbtack_reviews row is still saved).
+      if (Number.isInteger(stars) && stars >= 1 && stars <= 5) {
+        // Chicago date, never CURRENT_DATE: the DB clock is UTC, so an evening
+        // review would land on tomorrow's date, mis-quarter a year-end review
+        // and desync the admin duplicate warning.
+        await pool.query(
+          `INSERT INTO staff_reviews (review_date, stars, source, tt_review_id, excerpt, status)
+           VALUES ($1::date, $2, 'thumbtack', $3, $4, 'pending')
+           ON CONFLICT (tt_review_id) DO NOTHING`,
+          [chicagoTodayYmd(), stars, String(review.reviewId), truncate(review.reviewText, 2000)]
+        );
+      } else {
+        Sentry.addBreadcrumb({
+          category: 'thumbtack', level: 'info',
+          message: 'staff_reviews ingest skipped: rating is not an integer 1..5',
+          data: { review_id: review.reviewId, rating: review.rating },
+        });
+      }
+    } catch (reviewErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(reviewErr, {
+          tags: { webhook: 'thumbtack', route: '/reviews', step: 'staff_reviews_ingest' },
+        });
+      }
+      console.error('Thumbtack staff_reviews ingest failed (non-blocking):', reviewErr);
+    }
 
     // Notify admin (non-blocking)
     try {

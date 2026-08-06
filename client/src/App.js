@@ -156,6 +156,7 @@ const EmailAnalyticsDashboard = lazy(() => import('./pages/admin/EmailAnalyticsD
 const EmailConversations = lazy(() => import('./pages/admin/EmailConversations'));
 const Messages = lazy(() => import('./pages/admin/Messages'));
 const TipsAdmin = lazy(() => import('./pages/admin/TipsAdmin'));
+const StaffReviews = lazy(() => import('./pages/admin/StaffReviews'));
 const ClassWizard = lazy(() => import('./pages/website/ClassWizard'));
 
 const SuspenseFallback = (
@@ -577,6 +578,7 @@ function AppRoutes() {
         <Route path="/financials" element={<FinancialsRedirect />} />
         <Route path="/financials/payroll" element={<PayrollPage />} />
         <Route path="/tips" element={<TipsAdmin />} />
+        <Route path="/reviews" element={<StaffReviews />} />
         <Route path="/settings" element={<SettingsDashboard />} />
         <Route path="/blog" element={<BlogDashboard />} />
         <Route path="/email-marketing" element={<EmailMarketingDashboard />}>

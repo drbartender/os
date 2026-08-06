@@ -12,6 +12,7 @@ const NAV = [
   ]},
   { section: 'Revenue', items: [
     { id: 'tips',        label: 'Tips & Feedback', icon: 'dollar',   path: '/tips' },
+    { id: 'reviews',     label: 'Reviews',         icon: 'dollar',   path: '/reviews' },
     { id: 'marketing',   label: 'Marketing',       icon: 'mail',     path: '/email-marketing' },
   ]},
   { section: 'Content', items: [
