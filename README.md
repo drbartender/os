@@ -176,6 +176,7 @@ dr-bartender/
 │   │   │   ├── search.js       # /search — global record search across clients/proposals/events/staff
 │   │   │   ├── payroll.js      # /payroll — contractor payouts, pay periods, paystub data
 │   │   │   ├── payrollDuty.js  # Duty-line admin API (spec 2026-08-06): manual create / edit / remove / restore, attribution set/move, unattributed-duties list backing the Process gate
+│   │   │   ├── staffReviews.js # Staff review money (spec 2026-08-06 §7): review log CRUD + confirm/dismiss ($10 bounty materialization), quarterly leaderboard + contest award ($100 split)
 │   │   │   ├── payrollTax.js   # /payroll/contractors/:id/payment-history + /payroll/tax-totals + /payroll/tax-totals/:id/exclude — imported-ledger blends + 1099 year totals (read-only + one boolean PATCH)
 │   │   │   ├── presence.js     # /presence + /presence/state + /presence/leads + /presence/log — time-clock strip + history
 │   │   │   ├── leadCalls.js    # /lead-call-attention — lead-call bridge FAULT rows only (failed / misconfigured chains on still-new TT leads, 7-day window) for the overview Sales tab; missed + after-hours are deliberate non-items (2026-07-20)
@@ -298,6 +299,7 @@ dr-bartender/
 │   │   ├── labFollowupHandler.js # lab_followup dispatcher handler (planner v2): +36h post-submit Enhancement Lab nudge; every cancel condition checked at fire time (additions made, window closed, event <72h, marketing opt-out); registered at boot in server/index.js
 │   │   ├── proposalExtrasFold.js # Contract-safe extras fold (extracted verbatim from the submit financial path): override moves by catalog delta, snapshot reprice, total/override write, paid-in-full re-eval; shared by drink-plan submit + the Enhancement Lab
 │   │   ├── dutyLines.js        # Contractor duty pay (spec 2026-08-06): kind labels, pure triggers (funded gate + bar/parking/equipment/hosted/menu/out-of-area), derive-never-increment reconcile, attribution helpers, review bounty/contest materializers + catch-up pass
+│   │   ├── serviceArea.js      # Out-of-Area money geography (spec 2026-08-06 §6): HOME_BASE (Pilsen), internal suggestion bands (never shipped to the client bundle), haversine distances, Nominatim queue
 │   │   ├── payrollGuards.js    # isLegacyCcParticipant (per-proposal stub check, used by payrollAccrual); isLegacyCcStubUser kept for parity
 │   │   ├── payrollDeferredRetry.js # Re-runs placement for tips that deferred while the open pay period was frozen (single-flight, attempt-capped); fired off the response path after a successful accrual and from the admin Retry button
 │   │   ├── changeRequests.js   # Client-portal change-request helpers: edit-window classifier, field allowlist, proposed-state preview + diff + price preview, and the reaper that auto-cancels pending requests on archive/complete

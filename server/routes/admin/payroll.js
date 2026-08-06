@@ -68,8 +68,8 @@ async function loadPeriodWithPayouts(periodRow) {
     }
   }
   // Duty lines per payout (spec 2026-08-06 §9). Labels ride the payload so the
-  // client never hardcodes kind names; NULL-shift lines (review kinds) render
-  // under an "Other" group keyed off shift_id being null.
+  // client never hardcodes kind names; the client renders a per-line event
+  // context caption off shift_id (NULL shift_id = "not tied to an event").
   const dutyByPayout = {};
   if (payoutIds.length > 0) {
     const { DUTY_KIND_LABELS } = require('../../utils/dutyLines');

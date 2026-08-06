@@ -563,8 +563,13 @@ async function materializePendingReviewLines(client) {
            WHERE d.kind = 'review_bounty'
              AND d.staff_review_id = c.staff_review_id
              AND d.contractor_id = c.user_id
-        )`
+        )
+      ORDER BY c.staff_review_id, c.user_id`
   );
+  // The ORDER BY is a deadlock guard, not cosmetics: two admins confirming
+  // different reviews concurrently each run this pass inside their own
+  // transaction; a stable acquisition order keeps their unique-index waits
+  // from interleaving into a 40P01 (reviews-lane code review S1).
   let materialized = 0;
   for (const row of rows) {
     const line = await materializeReviewLine(client, {
