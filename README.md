@@ -136,6 +136,7 @@ Copy `.env.example` and fill in values. All variables:
 | `RUN_FIRST_REPLY_FALLBACK_SCHEDULER` | No | `false` disables the 60s first-reply sweep. Default on; `RUN_SCHEDULERS` wins. |
 | `MAX_FIRST_REPLY_ATTEMPTS` | No | Offer-side attempts cap before a reply flips to `failed` (default 3). |
 | `FIRST_REPLY_COOLDOWN_INTERVAL` | No | Reply lease re-offer interval (default `'10 minutes'`). |
+| `FIRST_REPLY_CALL_DELAY_SECONDS` | No | Delay between the first-reply outcome and the promised lead call (default 60; 0 = immediate; sweep backstops restarts). |
 | `FIRST_REPLY_NIGHT_JITTER_START_HOUR` / `_END_HOUR` | No | Chicago dead-hours window `[start, end)` where night replies get the 2-14 min jitter (defaults 2, 8; may wrap midnight); outside it night replies are immediate. |
 
 The frontend uses one build-time variable set in `client/.env.production`:

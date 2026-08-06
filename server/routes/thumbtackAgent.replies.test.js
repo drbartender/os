@@ -96,6 +96,7 @@ before(async () => {
   process.env.THUMBTACK_AGENT_SECRET = SECRET;
   process.env.TT_AUTOREPLY_ENABLED = 'true';
   delete process.env.LEAD_CALL_ENABLED; // calls on (not 'false') unless a test flips it
+  process.env.FIRST_REPLY_CALL_DELAY_SECONDS = '0'; // immediate calls; the delay test pins its own
 
   // The offer CTE WRITES (lease stamp + attempts bump + downgrade) with
   // limit up to 100: the shared dev DB must hold no offerable rows this
@@ -357,6 +358,23 @@ test('failed: rebuilt-flow reasons (2026-08-03) are accepted and flip the row', 
     assert.equal(r.status, 200, `${reason} must be a valid reason`);
     const db = await pool.query('SELECT first_reply_status FROM thumbtack_leads WHERE id = $1', [lead.id]);
     assert.equal(db.rows[0].first_reply_status, 'failed', `${reason} must flip pending -> failed`);
+  }
+});
+
+test('sent callback delays the promised call by FIRST_REPLY_CALL_DELAY_SECONDS (2026-08-06)', async () => {
+  const lead = await mkLead({ template: 'day', createdAgoMin: 2 });
+  process.env.FIRST_REPLY_CALL_DELAY_SECONDS = '1';
+  try {
+    triggerCalls.length = 0;
+    const r = await postSent(lead.neg, 'day');
+    assert.equal(r.status, 200);
+    assert.equal(triggerCalls.length, 0, 'the call must NOT fire inside the request');
+    await new Promise((res) => setTimeout(res, 1400));
+    assert.equal(triggerCalls.length, 1, 'the call fires after the configured delay');
+    assert.deepEqual(triggerCalls[0].lead, { customerPhone: '+17735550123' });
+    assert.equal(triggerCalls[0].skipWindowCheck, true);
+  } finally {
+    process.env.FIRST_REPLY_CALL_DELAY_SECONDS = '0';
   }
 });
 

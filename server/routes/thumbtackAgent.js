@@ -585,6 +585,29 @@ router.get('/pending-first-replies', agentSecretOnly, asyncHandler(async (req, r
   res.json(rows);
 }));
 
+// Breathing room between a confirmed/failed first reply and the promised call
+// (2026-08-06, Dallas: the ring landed too fast on the reply's heels — he
+// wants ~a minute to get ready). The timer is in-process only, and that is
+// fine: the 60s sweep's Arm A is the durable backstop (a restart-eaten timer
+// still gets its call at the FIRST_REPLY_FALLBACK_MINUTES mark), and the
+// lead_id-UNIQUE attempt open inside triggerLeadCall absorbs any double-fire.
+// 0 = immediate (pre-2026-08-06 behavior). Delays at or beyond the sweep
+// fallback are effectively capped by it.
+const callDelayMs = () => {
+  const v = parseInt(process.env.FIRST_REPLY_CALL_DELAY_SECONDS, 10);
+  return (Number.isInteger(v) && v >= 0 ? v : 60) * 1000;
+};
+function fireOrScheduleLeadCall(args, label) {
+  const ms = callDelayMs();
+  if (ms === 0) return _deps.triggerLeadCall(args);
+  // _deps is read at FIRE time (inside the timer), so test dep injection and
+  // future re-wiring stay honest. triggerLeadCall never throws by contract;
+  // the catch is belt-and-suspenders for a timer with no request context.
+  setTimeout(() => { Promise.resolve(_deps.triggerLeadCall(args)).catch(() => {}); }, ms);
+  console.log(`[first-reply] ${label} -> promised call scheduled in ${Math.round(ms / 1000)}s`);
+  return Promise.resolve();
+}
+
 // POST /api/admin/thumbtack/first-reply-sent  { negotiation_id, template }
 // Agent-secret only. Guarded pending->sent flip; the flip WINNER with a DB
 // template of 'day' fires the promised call via skipWindowCheck (the window was
@@ -622,11 +645,11 @@ router.post('/first-reply-sent', agentSecretOnly, asyncHandler(async (req, res) 
       // Lead-shape law: the trigger reads camelCase lead.customerPhone; construct
       // it explicitly from the snake_case row (a raw row would silently kill
       // every day call as skipped_invalid_phone). triggerLeadCall never throws.
-      await _deps.triggerLeadCall({
+      await fireOrScheduleLeadCall({
         lead: { customerPhone: row.customer_phone },
         leadId: Number(row.id),
         skipWindowCheck: true,
-      });
+      }, `sent ${logId(negotiationId)}`);
     } else {
       // Promise expired (spec 4.4.4): fault row, no surprise late call. The
       // reply itself still counts as sent (response rate banked).
@@ -676,11 +699,11 @@ router.post('/first-reply-failed', agentSecretOnly, asyncHandler(async (req, res
     const ageMs = Date.now() - new Date(row.created_at).getTime();
     if (ageMs < FIRST_REPLY_CALL_MAX_AGE_MINUTES * 60 * 1000) {
       // Lead-shape law: construct the camelCase lead from the snake_case row.
-      await _deps.triggerLeadCall({
+      await fireOrScheduleLeadCall({
         lead: { customerPhone: row.customer_phone },
         leadId: Number(row.id),
         skipWindowCheck: true,
-      });
+      }, `failed ${logId(negotiationId)}`);
     } else {
       await pool.query(
         `INSERT INTO lead_call_attempts (lead_id, status, detail)
