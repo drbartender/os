@@ -3820,6 +3820,12 @@ ALTER TABLE users ADD CONSTRAINT users_presence_nudge_channel_check
 -- key. This is deliberately NOT contractor_profiles.phone and NEVER the shared
 -- 312 Google Voice line (that is what sits on the admin contractor profile).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS presence_nudge_phone VARCHAR(20);
+-- IANA zone the user actually lives in, so the presence strip can show each
+-- person's local wall-clock time to the OTHER person (a browser-derived zone
+-- can only ever tell you your own). Deliberately named generically, not
+-- presence_*: it is a plain user attribute that happens to be introduced here.
+-- Mirrors the proposals.event_timezone precedent (TEXT, IANA, Chicago default).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'America/Chicago';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_presence_lead_rank
   ON users (presence_lead_rank) WHERE presence_lead_rank IS NOT NULL;
 
@@ -3849,6 +3855,15 @@ UPDATE users SET presence_lead_rank = 1, presence_nudge_channel = 'telegram'
 UPDATE users SET presence_lead_rank = 2, presence_nudge_channel = 'sms',
     presence_nudge_phone = '+19703330527'
   WHERE email = 'admin@drbartender.com' AND presence_lead_rank IS NULL;
+
+-- Zul works from Quezon City; every other account defaults to Chicago via the
+-- column default. Guarded on the default value rather than IS NULL (the column
+-- is NOT NULL DEFAULT, so there is no "never set" marker), which means a
+-- deliberate move to any OTHER zone sticks, but deliberately setting her back
+-- to America/Chicago would be re-applied on the next boot. If she ever relocates
+-- to Chicago for real, change this line rather than the row.
+UPDATE users SET timezone = 'Asia/Manila'
+  WHERE email = 'zul@drbartender.com' AND timezone = 'America/Chicago';
 
 -- Strip display name (plan-review finding): the admin account's contractor
 -- profile exists but has preferred_name NULL, so the INITCAP email fallback

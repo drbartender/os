@@ -11867,7 +11867,7 @@ html[data-app="admin-os"] .presence-strip--placeholder {
 }
 html[data-app="admin-os"] .presence-row { display: flex; align-items: center; gap: 6px; position: relative; }
 html[data-app="admin-os"] .presence-row-main {
-  display: flex; align-items: center; gap: 7px;
+  display: flex; align-items: center; gap: 6px;
   background: none; border: 0; padding: 3px 2px; cursor: pointer;
   color: inherit; font: inherit; flex: 1; min-width: 0; text-align: left;
 }
@@ -11879,9 +11879,23 @@ html[data-app="admin-os"] .presence-dot {
 html[data-app="admin-os"] .presence-dot--desk { background: hsl(var(--ok-h) var(--ok-s) 45%); }
 html[data-app="admin-os"] .presence-dot--available { background: #d9a441; }
 html[data-app="admin-os"] .presence-dot--away { background: var(--line-2); }
-html[data-app="admin-os"] .presence-name { font-weight: 600; font-size: 12px; }
-html[data-app="admin-os"] .presence-state { font-size: 11px; color: var(--text-muted); }
-html[data-app="admin-os"] .presence-dur { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+/* The row runs ~144px, which fits dot + name + duration + clock and no more.
+   The state word that used to sit here moved to the row's hover title when the
+   clock landed; the dot is the visual carrier. Name may ellipsize rather than
+   push the clock into the leads pill, since a name is the one item with no
+   bound on its length. */
+html[data-app="admin-os"] .presence-name {
+  font-weight: 600; font-size: 12px;
+  flex: 0 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+html[data-app="admin-os"] .presence-dur { font-size: 11px; color: var(--text-muted); margin-left: auto; flex: 0 0 auto; }
+/* Local wall-clock time. Inherits the row's text color rather than the muted
+   tone the state/duration use, so it reads as a fact alongside the name instead
+   of as secondary chrome. Tabular numerals keep it from jittering each tick. */
+html[data-app="admin-os"] .presence-clock {
+  font-size: 11px; font-variant-numeric: tabular-nums; flex: 0 0 auto;
+}
 html[data-app="admin-os"] .presence-leads-pill {
   font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
   border: 1px solid var(--line-2); border-radius: 8px; padding: 1px 6px;
@@ -11923,8 +11937,8 @@ html[data-app="admin-os"] .presence-initial--available { color: #d9a441; }
 html[data-app="admin-os"] .presence-initial--away { color: var(--text-muted); }
 /* Rail mode: dots + colored pointer initial only (spec: Rail mode) */
 html[data-app="admin-os"] .presence-strip--rail .presence-name,
-html[data-app="admin-os"] .presence-strip--rail .presence-state,
 html[data-app="admin-os"] .presence-strip--rail .presence-dur,
+html[data-app="admin-os"] .presence-strip--rail .presence-clock,
 html[data-app="admin-os"] .presence-strip--rail .presence-leads-pill,
 html[data-app="admin-os"] .presence-strip--rail .presence-pointer-label,
 html[data-app="admin-os"] .presence-strip--rail .presence-pointer-name,

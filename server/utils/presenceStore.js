@@ -14,7 +14,7 @@ const NAME_SQL = "COALESCE(cp.display_name, cp.preferred_name, INITCAP(SPLIT_PAR
 async function getStripPayload() {
   const r = await _deps.pool.query(`
     SELECT u.id, u.presence_state, u.presence_since, u.presence_taking_leads,
-           u.presence_lead_rank, ${NAME_SQL} AS name
+           u.presence_lead_rank, u.timezone, ${NAME_SQL} AS name
     FROM users u
     LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
     WHERE u.presence_lead_rank IS NOT NULL
@@ -28,6 +28,7 @@ async function getStripPayload() {
       since: u.presence_since,
       taking_leads: u.presence_taking_leads,
       rank: u.presence_lead_rank,
+      timezone: u.timezone,
     })),
     lead_owner_id: derivePointer(r.rows),
   };

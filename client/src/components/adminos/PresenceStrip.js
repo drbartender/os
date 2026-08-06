@@ -10,6 +10,22 @@ const STATES = [
   { key: 'away', label: 'Away' },
 ];
 
+// Wall-clock time where this person actually is, 24h. The zone is a stored
+// per-user column, never browser-derived: the whole point is reading the OTHER
+// person's clock. Intl throws on a malformed zone string, and this strip
+// renders inside AdminLayout on every admin page, so an unguarded throw here
+// would white-screen the entire admin app over one bad DB value.
+function fmtLocalTime(timeZone, nowMs) {
+  if (!timeZone) return '';
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).format(nowMs);
+  } catch {
+    return '';
+  }
+}
+
 function fmtDur(sinceIso, nowMs) {
   if (!sinceIso) return '';
   const m = Math.max(0, Math.floor((nowMs - new Date(sinceIso).getTime()) / 60000));
@@ -76,8 +92,19 @@ export default function PresenceStrip({ presence, onPresenceChange, rail, curren
     <div ref={rootRef} className={`presence-strip${rail ? ' presence-strip--rail' : ''}`}>
       {users.map(u => {
         const own = u.id === currentUser?.id;
+        const localTime = fmtLocalTime(u.timezone, nowMs);
         return (
-          <div key={u.id} className={`presence-row${own ? ' own' : ''}`} title={rail ? `${u.name}: ${u.state}` : undefined}>
+          /* The state word used to sit next to the name, but the row is only
+             ~144px and adding the clock pushed a real display name ("Dallas
+             available") past the edge. The dot already encodes state, so the
+             word is the one redundant item and it moved to this hover title in
+             both rail and full mode (rail already relied on exactly that). The
+             dot carries an aria-label so state is never color-only. */
+          <div
+            key={u.id}
+            className={`presence-row${own ? ' own' : ''}`}
+            title={`${u.name}: ${u.state}${localTime ? ` · ${localTime}` : ''}`}
+          >
             {own ? (
               <button
                 type="button"
@@ -87,10 +114,12 @@ export default function PresenceStrip({ presence, onPresenceChange, rail, curren
                 aria-haspopup="menu"
                 aria-expanded={menuOpen}
               >
-                <span className={`presence-dot presence-dot--${u.state}`} />
+                <span className={`presence-dot presence-dot--${u.state}`} role="img" aria-label={u.state} />
                 <span className="presence-name">{u.name}</span>
-                <span className="presence-state">{u.state}</span>
                 <span className="presence-dur">{fmtDur(u.since, nowMs)}</span>
+                {localTime && (
+                  <span className="presence-clock" title={`Local time (${u.timezone})`}>{localTime}</span>
+                )}
               </button>
             ) : (
               /* Non-own rows had a permanently disabled button (presentational
@@ -98,10 +127,12 @@ export default function PresenceStrip({ presence, onPresenceChange, rail, curren
                  the name be a real profile link (anchors can't nest in a
                  disabled button). Own row keeps its menu toggle unlinked. */
               <div className="presence-row-main presence-row-main--static">
-                <span className={`presence-dot presence-dot--${u.state}`} />
+                <span className={`presence-dot presence-dot--${u.state}`} role="img" aria-label={u.state} />
                 <span className="presence-name"><EntityLink to={`/staffing/users/${u.id}`}>{u.name}</EntityLink></span>
-                <span className="presence-state">{u.state}</span>
                 <span className="presence-dur">{fmtDur(u.since, nowMs)}</span>
+                {localTime && (
+                  <span className="presence-clock" title={`Local time (${u.timezone})`}>{localTime}</span>
+                )}
               </div>
             )}
             <button
