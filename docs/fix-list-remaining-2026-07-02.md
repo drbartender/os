@@ -906,3 +906,38 @@ merged code 2026-08-04):
 - New batch suites are NOT on `scripts/money-smoke-list.txt` (incl. payrollTax.legalName.test.js —
   the 1099 name path). Add deliberately, not mid-push: the gate would immediately run them
   prod-shaped. (note)
+
+## 8/06 push aftermath (display-name + seniority batch shipped 677baf95)
+
+- `sanitizeProfile` `preferred_name_reviewed_at` item ABOVE is DONE (shipped in gate-fixes-0805). (done)
+- Prod data hygiene: two probable duplicate-person pairs share a phone AND a name —
+  users 39/40 ("Felicia", 40 has the trailing-space variant, 219-804-3426) and 51/62
+  ("Adelle", two emails, 312-371-6554). The smsInbound shared-number tiebreak between each
+  pair was a literal updated_at TIE pre-backfill (already arbitrary); 40 now wins its pair
+  (trim stamp). Real fix is a human merge/deactivate of the dupes, not code. (med, ops)
+- Backfill hand-fix names (script report, informational): users 15 "Ariel D. Smith",
+  31 "Nicholas or Nick", 61 "Miss Taylor", 62 "Adelle M. Reynolds" — malformed preferred
+  names to settle with the humans; users 1/61/62/237 have no legal name on file. (ops)
+- `toYmd` in applySeniorityBackfill/generateSeniorityMapping assumes UTC-or-negative offset
+  (`toISOString().slice(0,10)` on a local-midnight Date shifts a day on UTC+X boxes). Fails
+  CLOSED (false PARTIAL, exit 1), never corrupts. Fine on Chicago box + Render/UTC. (low)
+- Admin profile PUT omitted-vs-cleared now protects ONLY preferred_name; a partial payload
+  still nulls phone/email/address/emergency contact (bare $3..$22). Latent — the sole caller
+  round-trips every field — but phone feeds smsInbound sender resolution, so it is the
+  higher-stakes column if a second caller ever appears. (low)
+- Numeric :id guards accept arbitrarily long digit strings (int4 22003 → 500 survives for
+  `99999999999999999999`); hire_date on the seniority PUT has no route-level format check
+  (22007 → 500, unreachable from the UI's date input). (low)
+- Test debt: no suite exercises PUT /api/admin/users/:id/profile (the 24-param CASE upsert),
+  and the seniority PUT's no-op-guard property (no updated_at restamp) is hand-verified only.
+  The scripts' invariant IS pinned (seniorityBackfill.test re-run updated_at assert). (med)
+- `gratuityStaffNotice.js:67` + `eventDetailsPayload.js` team_roster recompute: two surviving
+  bare/second-source name reads flagged by the display-name code review — gratuityStaffNotice
+  selects bare preferred_name on a money-adjacent notice; the roster recomputes display name
+  live (util-based, but `--check` cannot see drift there, and JS || vs SQL COALESCE diverge on
+  empty-string legal names — 0 such rows today). Sensitive paths; deliberate no-touch at the
+  gate. (low)
+- Post-deploy owed: `refreshDisplayNames.js --check` against prod after the first week of
+  organic writes; Dallas walkthroughs T6/T10-T13 + seniority panel smoke; CC seniority
+  mapping generation → hand review → --apply (human-gated, Chicago box); Stripe test
+  Payment Links deactivation (plink_1U0nVQ... / plink_1U0nVP..., admin-blocked for Claude). (ops)

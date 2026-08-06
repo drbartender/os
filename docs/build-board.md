@@ -14,8 +14,6 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 
 <!-- lane open and building. Stale-lane flags surface here. One line per item. -->
 
-- **staff-display-name** — preferred name plus last initial across surfaces; single serial lane, cut 2026-08-04 (plan rev 3, freshness-audited). [spec](superpowers/specs/2026-07-26-staff-display-name-design.md) / [plan](superpowers/plans/2026-07-26-staff-display-name.md)
-- **seniority-baseline-core** — seniority backfill lane 1/3: column + live/baseline counts + admin route; cut 2026-08-04 (plan rev 3, freshness-audited); panel-ui + cc-import cut after it merges. [spec](superpowers/specs/2026-07-26-seniority-history-backfill-design.md) / [plan](superpowers/plans/2026-07-26-seniority-history-backfill.md)
 ## Recently shipped
 
 <!-- merged + shipped lanes, newest first. Ages off over time. One line per item. -->
