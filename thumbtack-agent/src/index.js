@@ -10,7 +10,7 @@
 //   only then do Quick Reply -> pick template -> Send exist. Reports
 //   first-reply-sent so the server fires the promised call (respond-then-ring).
 //
-// The loop ticks at the fast reply cadence (REPLY_POLL_INTERVAL_MS, 25s); the
+// The loop ticks at the fast reply cadence (REPLY_POLL_INTERVAL_MS, 10s); the
 // harvest poll fires on its own wall-clock pace (POLL_INTERVAL_MS) to keep its
 // pace. Single browser context, single throttle, single session-recovery path.
 // Human-paced (jittered delays, separate daily caps per queue). Kill switches:
@@ -39,7 +39,10 @@ const CFG = {
   secret: process.env.THUMBTACK_AGENT_SECRET || '',
   profileDir: process.env.CHROME_PROFILE_DIR || path.join(process.env.HOME || '', '.thumbtack-profile'),
   pollIntervalMs: int(process.env.POLL_INTERVAL_MS, 5 * 60 * 1000),
-  replyPollIntervalMs: int(process.env.REPLY_POLL_INTERVAL_MS, 25000),
+  // 10s poll (was 25s, 2026-08-06): Dallas's manual bar is a reply inside a
+  // minute; the UI flow itself runs ~30s, so offer latency is the other half
+  // of the budget. An empty poll is one cheap indexed SELECT.
+  replyPollIntervalMs: int(process.env.REPLY_POLL_INTERVAL_MS, 10000),
   replyDailyCap: int(process.env.REPLY_DAILY_CAP, 40),
   replyBatchLimit: int(process.env.REPLY_BATCH_LIMIT, 3),
   // Deterministic per-negotiation lead page (priceEstimateUrl precedent). The
@@ -162,7 +165,9 @@ async function pollOnce(ctx, counters) {
 const leadInboxUrl = (id) => CFG.replyLeadUrlTemplate.replace('{id}', encodeURIComponent(id));
 const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Small randomized pause between UI actions so the click cadence reads human.
-const humanPause = () => sleep(500 + Math.floor(Math.random() * 1200));
+// Trimmed 2026-08-06 (speed pass): 0.3-1.0s — still jittered; a human racing
+// to answer inside a minute clicks about this fast.
+const humanPause = () => sleep(300 + Math.floor(Math.random() * 700));
 // Picker/Send elements render inside an already-hydrated page; shorter bound
 // than the initial-hydration wait (renderTimeoutMs) but never instant.
 const UI_STEP_TIMEOUT_MS = 8000;
@@ -651,7 +656,7 @@ async function pollReplies(ctx, counters, sentMemory) {
   const batch = Math.min(CFG.replyBatchLimit, remaining);
   const { status, body } = await api('GET', `/api/admin/thumbtack/pending-first-replies?limit=${batch}`);
   if (status !== 200 || !Array.isArray(body)) { log(`pending-first-replies returned ${status}; skipping`); return; }
-  if (body.length === 0) return; // quiet: this polls every 25s
+  if (body.length === 0) return; // quiet: this polls every 10s
   log(`${body.length} pending first repl${body.length === 1 ? 'y' : 'ies'}`);
   for (const job of body) {
     if (!underCap(counters.repliesToday, CFG.replyDailyCap)) { log(`reply daily cap ${CFG.replyDailyCap} reached; stopping batch`); break; }
@@ -669,7 +674,7 @@ async function main() {
   const sentMemory = loadSentJournal();
   if (sentMemory.size > 0) log(`never-send-twice journal: ${sentMemory.size} id(s) loaded`);
   // Loop ticks at the fast reply cadence; harvest fires on WALL-CLOCK, not
-  // tick count (perf-fleet F1): a busy reply arm stretches ticks far past 25s,
+  // tick count (perf-fleet F1): a busy reply arm stretches ticks far past the poll interval,
   // and tick-counting would stretch the ~5-min harvest pace with it — starving
   // the email-capture path exactly when leads are flowing.
   let lastHarvestAt = 0; // epoch ms; 0 = harvest on the first pass
