@@ -408,7 +408,7 @@ Read-side mirror of Stripe payouts + balance-transaction lines (`server/routes/s
 ### Shifts — `/api/shifts`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/` | Yes | List shifts (staff see open upcoming; admin see all) |
+| GET | `/` | Yes | List shifts (staff see open upcoming; admin see **all**, cancelled included — see the filtering contract below) |
 | GET | `/unstaffed-upcoming` | Staffing | Pre-filtered upcoming + still-needs-staffing list (powers AssignToEventModal — replaces the full /shifts dump) |
 | GET | `/my-requests` | Yes | Current user's shift request history |
 | POST | `/` | Staffing | Create shift |
@@ -425,6 +425,10 @@ Read-side mirror of Stripe payouts + balance-transaction lines (`server/routes/s
 | GET | `/user/:userId/events` | Yes | A staffer's assigned upcoming events (powers the staff "my events" redirect). |
 | POST | `/:id/assign` | Staffing | Directly assign a `user_id` to a shift (admin/staffing path; inserts an approved shift_request + notifies). |
 | (Drop / Cover) | various | Yes | Drop / Cover shift marketplace — drop, request-cover, claim-cover, emergency-drop, withdraw. Lives in `server/routes/staffShiftActions.js`, mounted under `/api/shifts`; see the route file for exact paths. |
+
+**Cancelled-shift filtering contract.** Cancelling an event (the P6 cancel flow, the archive reap, or `cancel-or-unassign` mode='cancel') soft-cancels the shift — `shifts.status = 'cancelled'`, never a hard DELETE, because payroll joins and shift history depend on the row surviving (`server/utils/shiftReap.js`). Hiding it is therefore the *reader's* job, and every server-side open-shift reader does it: the staff branch of `GET /` (`STAFF_OPEN_SHIFTS_SQL`), `GET /unstaffed-upcoming`, and `badge-counts.unstaffed_events` all filter `status = 'open'`.
+
+The admin branch of `GET /` deliberately does **not** — the Events dashboard's Past / All tabs exist to show cancelled events as history. So any admin surface that presents that feed as *upcoming* or *needs staffing* must filter client-side, via `isCancelledEvent` / `selectUpcoming` in `client/src/components/adminos/shifts.js` (the single definition; `shifts.test.js` guards it). Skipping that is what once put a cancelled event at the top of the Needs-attention Staffing tab while the sidebar badge, computed server-side, correctly excluded it.
 
 ### Admin — `/api/admin` (continued)
 | Method | Path | Auth | Description |
