@@ -12,6 +12,7 @@ import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
 import { useToast } from '../../context/ToastContext';
 import Icon from '../../components/adminos/Icon';
 import SendModal, { describeSendResult } from '../../components/SendModal';
+import RemoteStaffingFeePrompt from './RemoteStaffingFeePrompt';
 import { fmt$2dp, fmtDateFull } from '../../components/adminos/format';
 import ClientSection from './proposalCreate/ClientSection';
 import EventSection from './proposalCreate/EventSection';
@@ -84,6 +85,11 @@ export default function ProposalCreate() {
   // Compose-first send: id of the just-created draft + SendModal visibility.
   const [createdId, setCreatedId] = useState(null);
   const [sendOpen, setSendOpen] = useState(false);
+  // Remote Staffing Fee check runs BETWEEN the draft create and the send, so a
+  // far-out venue can still be priced before the client ever sees the quote
+  // (billed at proposal time or never, spec §6). It self-clears when there is
+  // nothing to ask.
+  const [feeCheckOpen, setFeeCheckOpen] = useState(false);
   const [saveAsDraft, setSaveAsDraft] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
@@ -261,6 +267,11 @@ export default function ProposalCreate() {
     setError('');
     setFieldErrors({});
     setSubmitting(true);
+    // When the send path hands off to the Remote Staffing Fee check, the submit
+    // button must STAY disabled: the check is an invisible network round-trip,
+    // and re-enabling underneath it lets a second click create a second draft.
+    // Ownership of `submitting` passes to the prompt's onProceed.
+    let handedOff = false;
     try {
       const payload = {
         ...form,
@@ -286,13 +297,14 @@ export default function ProposalCreate() {
         navigate(`/proposals/${res.data.id}`);
       } else {
         setCreatedId(res.data.id);
-        setSendOpen(true);
+        setFeeCheckOpen(true);
+        handedOff = true;
       }
     } catch (err) {
       setError(err.message || 'Failed to create proposal.');
       setFieldErrors(err.fieldErrors || {});
     } finally {
-      setSubmitting(false);
+      if (!handedOff) setSubmitting(false);
     }
   };
 
@@ -436,6 +448,12 @@ export default function ProposalCreate() {
           fieldErrors={fieldErrors}
         />
       </div>
+      {feeCheckOpen && createdId && (
+        <RemoteStaffingFeePrompt
+          proposalId={createdId}
+          onProceed={() => { setFeeCheckOpen(false); setSubmitting(false); setSendOpen(true); }}
+        />
+      )}
       {sendOpen && createdId && (
         <SendModal
           action="proposal_send"

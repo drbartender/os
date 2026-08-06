@@ -349,6 +349,26 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
     // between our SELECT and our UPDATE, so it is not ours to approve or notify.
     if (!claimedIds.has(candidate.request_id)) continue;
 
+    // Out-of-Area lock (spec §6): auto-assign approves without a human in the
+    // loop, so it is a real acceptance event and must freeze an attached bonus
+    // to the staffer it seats. The helper's WHERE clause carries the whole rule
+    // (bonus attached AND unlocked), so on a multi-slot shift only the FIRST
+    // claimed candidate takes it — and `selected` is score-ordered, so that is
+    // the best-ranked staffer, not an arbitrary one. Lazy require: serviceArea
+    // reaches back into this module for haversineDistance.
+    try {
+      const { stampOutOfAreaLock, reaccrueDutyForProposal } = require('./serviceArea');
+      if (await stampOutOfAreaLock(pool, shiftId, candidate.user_id)) {
+        reaccrueDutyForProposal(shift.proposal_id);
+      }
+    } catch (lockErr) {
+      Sentry.captureException(lockErr, {
+        tags: { component: 'autoAssign', issue: 'out-of-area-lock' },
+        extra: { shiftId, user_id: candidate.user_id },
+      });
+      console.error('[AutoAssign] out-of-area lock stamp failed (non-blocking):', lockErr.message);
+    }
+
     // Send SMS notification (same pattern as shifts.js)
     if (candidate.phone) {
       try {

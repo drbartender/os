@@ -31,6 +31,7 @@ import AddressLink from '../../components/adminos/AddressLink';
 import { venueMapQuery } from '../../components/VenueAddressFields';
 import { STAFF_URL } from '../../utils/constants';
 import SendModal, { describeSendResult } from '../../components/SendModal';
+import OutOfAreaKnob from './OutOfAreaKnob';
 
 const MenuPNG = lazy(() => import('../../components/MenuPNG/MenuPNG'));
 
@@ -93,6 +94,9 @@ export default function EventDetailPage() {
   // manager must never see a remove button they cannot use.
   const proposalStatus = proposal?.status;
   const isAdmin = viewer?.role === 'admin';
+  // Mirrors the server's requireStaffing guard on PATCH /shifts/:id/out-of-area:
+  // admins plus can_staff managers (Dallas decision 2026-08-06).
+  const canStaffShifts = isAdmin || (viewer?.role === 'manager' && !!viewer?.can_staff);
   const loadCancelTargets = useCallback(() => {
     if (!isAdmin || !proposalStatus || ['archived', 'completed'].includes(proposalStatus)) {
       setCancelTargets(null);
@@ -388,6 +392,12 @@ export default function EventDetailPage() {
                     const waitlistCount = roster.length > 0
                       ? Math.max(0, requestCount - filled - openSlots)
                       : 0;
+                    // Out-of-area context: distances are DERIVED server-side
+                    // (a staffer's home address never rides the payload) and
+                    // are visible to admins and can_staff managers alike.
+                    const requesters = Array.isArray(s.requesters) ? s.requesters : [];
+                    const distanceByUser = new Map(requesters.map(r => [r.user_id, r.home_distance_miles]));
+                    const pendingRequesters = requesters.filter(r => r.status === 'pending');
                     const openShift = () => drawer.open('shift', s.id);
                     return (
                       /* Row is a div, NOT an anchor: the roster below renders
@@ -448,6 +458,9 @@ export default function EventDetailPage() {
                                   <StatusChip kind={ackAt ? 'ok' : 'neutral'}>
                                     {ackAt ? `Confirmed ${new Date(ackAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}` : 'Not opened'}
                                   </StatusChip>
+                                  {distanceByUser.get(member?.user_id) != null && (
+                                    <span className="tiny muted">home: {distanceByUser.get(member.user_id)} mi</span>
+                                  )}
                                 </li>
                               );
                             })}
@@ -462,6 +475,19 @@ export default function EventDetailPage() {
                             {requestCount} {requestCount === 1 ? 'request' : 'requests'} on file
                           </div>
                         )}
+                        {pendingRequesters.length > 0 && (
+                          <div className="hstack" style={{ flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
+                            {pendingRequesters.map(r => (
+                              <span key={r.request_id} className="chip tiny">
+                                {r.name}
+                                {r.home_distance_miles != null
+                                  ? ` · home: ${r.home_distance_miles} mi`
+                                  : ' · home: no address on file'}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {canStaffShifts && <OutOfAreaKnob shift={s} onSaved={reloadShifts} />}
                       </div>
                     );
                   })}

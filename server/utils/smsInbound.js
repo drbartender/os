@@ -6,6 +6,7 @@ const { pool } = require('../db');
 const Sentry = require('@sentry/node');
 const { notifyAdminCategory } = require('./adminNotifications');
 const { getEventTypeLabel } = require('./eventTypes');
+const { releaseOutOfAreaLock, reaccrueDutyForProposal } = require('./serviceArea');
 
 const STOP_WORDS = new Set(['stop', 'unsubscribe', 'end', 'cancel', 'quit']);
 const START_WORDS = new Set(['start', 'unstop', 'yes']);
@@ -332,7 +333,8 @@ async function applyOptIn(sender) {
 async function findNearestApprovedShift(staffUserId) {
   const r = await pool.query(
     `SELECT sr.id AS request_id, s.id AS shift_id, s.event_date, s.start_time,
-            s.status AS shift_status, s.client_name, s.event_type, s.event_type_custom
+            s.status AS shift_status, s.client_name, s.event_type, s.event_type_custom,
+            s.proposal_id
      FROM shift_requests sr
      JOIN shifts s ON s.id = sr.shift_id
      WHERE sr.user_id = $1
@@ -401,6 +403,7 @@ async function handleCant(staffUserId, twilioSid) {
   if (!shift) return { ok: false, reason: 'no_shift' };
 
   const dbClient = await pool.connect();
+  let bonusReleased = false;
   try {
     await dbClient.query('BEGIN');
     await dbClient.query(
@@ -410,6 +413,11 @@ async function handleCant(staffUserId, twilioSid) {
        WHERE id = $1`,
       [shift.request_id]
     );
+    // Out-of-Area lock (spec 2026-08-06 §6): CANT is a drop by text. The
+    // staffer is off the roster as of the UPDATE above, so their hold on an
+    // attached bonus releases here, in the same transaction. Holder-scoped, and
+    // the AMOUNT stays: the bonus re-arms for whoever restaffs the shift.
+    bonusReleased = await releaseOutOfAreaLock(dbClient, shift.shift_id, staffUserId);
     // Re-open the shift so it shows as unstaffed. auto_assigned_at is left as-is
     // on purpose so processScheduledAutoAssigns does not auto-re-staff it.
     await dbClient.query(
@@ -434,6 +442,9 @@ async function handleCant(staffUserId, twilioSid) {
   } finally {
     dbClient.release();
   }
+
+  // Post-commit, pooled client already released.
+  if (bonusReleased) reaccrueDutyForProposal(shift.proposal_id);
 
   return {
     ok: true,

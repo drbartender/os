@@ -62,6 +62,15 @@ function transportFlag(value) {
   return null;
 }
 
+// "How far is this person's home from the venue?" beside every requester, so an
+// approval is a legible fairness call (spec 2026-08-06 §6). Server-derived on
+// GET /shifts/detail/:id from contractor_profiles.lat/lng and shifts.lat/lng —
+// the derived distance is all that ever reaches the browser, never the home
+// address itself. Null (either side ungeocoded) renders nothing.
+function homeDistanceSuffix(req) {
+  return req?.home_distance_miles == null ? '' : ` · home: ${req.home_distance_miles} mi`;
+}
+
 export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
   const toast = useToast();
   const [shift, setShift] = useState(null);
@@ -472,7 +481,7 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="slot-name"><EntityLink to={req.user_id ? `/staffing/users/${req.user_id}` : null}>{req.staff_name || req.staff_email || '—'}</EntityLink></div>
-                    <div className="tiny muted">Confirmed</div>
+                    <div className="tiny muted">Confirmed{homeDistanceSuffix(req)}</div>
                   </div>
                   <button
                     type="button"
@@ -510,6 +519,7 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
                         <div className="slot-name"><EntityLink to={req.user_id ? `/staffing/users/${req.user_id}` : null}>{req.staff_name || req.staff_email || '—'}</EntityLink></div>
                         <div className="tiny muted">
                           {reqRoles.length ? `Ranked: ${reqRoles.join(' › ')}` : 'Awaiting approval'}
+                          {homeDistanceSuffix(req)}
                         </div>
                       </div>
                       <div className="hstack" style={{ gap: 4 }}>
@@ -562,6 +572,7 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
                         <div className="slot-name"><EntityLink to={req.user_id ? `/staffing/users/${req.user_id}` : null}>{req.staff_name || req.staff_email || '—'}</EntityLink></div>
                         <div className="tiny muted">
                           {reqRoles.length ? `Ranked: ${reqRoles.join(' › ')}` : 'Any role'}
+                          {homeDistanceSuffix(req)}
                         </div>
                         <div className="hstack" style={{ gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
                           {flag && (

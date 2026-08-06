@@ -266,6 +266,79 @@ test('handleCant > un-assigns the staffer and re-opens the shift', async () => {
   await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
 });
 
+test('handleCant > releases the Out-of-Area lock, holder-scoped, keeping the amount', async () => {
+  // A CANT text is a drop by SMS: the staffer comes off the roster, so their
+  // hold on an attached bonus has to release or the duty line pays someone who
+  // is not working the event (spec 2026-08-06 §6).
+  const sh = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status,
+                         out_of_area_bonus_cents, out_of_area_locked_at, out_of_area_locked_user_id)
+     VALUES (CURRENT_DATE + INTERVAL '12 days', '17:00', 'filled', 2000, NOW(), $1)
+     RETURNING id`,
+    [lsStaffUserId]
+  );
+  const shiftId = sh.rows[0].id;
+  const sr = await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status) VALUES ($1, $2, 'approved') RETURNING id`,
+    [shiftId, lsStaffUserId]
+  );
+  const requestId = sr.rows[0].id;
+
+  const result = await handleCant(lsStaffUserId);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.shiftId, shiftId);
+
+  const after = await pool.query(
+    `SELECT out_of_area_bonus_cents, out_of_area_locked_at, out_of_area_locked_user_id
+       FROM shifts WHERE id = $1`,
+    [shiftId]
+  );
+  assert.strictEqual(after.rows[0].out_of_area_locked_at, null, 'CANT released the lock');
+  assert.strictEqual(after.rows[0].out_of_area_locked_user_id, null);
+  assert.strictEqual(Number(after.rows[0].out_of_area_bonus_cents), 2000,
+    'the amount re-arms for whoever restaffs the shift, it is never cleared');
+
+  await pool.query('DELETE FROM shift_requests WHERE id = $1', [requestId]);
+  await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+});
+
+test('handleCant > does NOT release a bonus locked to a different staffer', async () => {
+  // Holder-scoped: one staffer bailing must not unlock money that belongs to a
+  // teammate still working the shift.
+  const other = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status)
+     VALUES ($1, 'x', 'staff', 'approved') RETURNING id`,
+    [`ooa-cant-other-${Date.now()}@example.com`]
+  );
+  const otherId = other.rows[0].id;
+  const sh = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status,
+                         out_of_area_bonus_cents, out_of_area_locked_at, out_of_area_locked_user_id)
+     VALUES (CURRENT_DATE + INTERVAL '13 days', '17:00', 'filled', 3500, NOW(), $1)
+     RETURNING id`,
+    [otherId]
+  );
+  const shiftId = sh.rows[0].id;
+  const sr = await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status) VALUES ($1, $2, 'approved') RETURNING id`,
+    [shiftId, lsStaffUserId]
+  );
+
+  const result = await handleCant(lsStaffUserId);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.shiftId, shiftId);
+
+  const after = await pool.query(
+    'SELECT out_of_area_locked_user_id FROM shifts WHERE id = $1', [shiftId]
+  );
+  assert.strictEqual(after.rows[0].out_of_area_locked_user_id, otherId,
+    "a teammate's CANT must not release someone else's bonus");
+
+  await pool.query('DELETE FROM shift_requests WHERE id = $1', [sr.rows[0].id]);
+  await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+  await pool.query('DELETE FROM users WHERE id = $1', [otherId]);
+});
+
 test('handleCant > returns ok:false reason no_shift when staff has no approved upcoming shift', async () => {
   const result = await handleCant(lsStaffUserId);
   assert.strictEqual(result.ok, false);

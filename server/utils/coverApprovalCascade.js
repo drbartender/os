@@ -31,6 +31,12 @@ const Sentry = require('@sentry/node');
 const { ConflictError } = require('./errors');
 const { scheduleStaffShiftMessages, computeEventStartUtc } = require('./staffShiftHandlers');
 const { insertBeoNudgeIfMissing } = require('./beoHandlers');
+// Out-of-Area lock (spec 2026-08-06 §6). It lives HERE, not in the callers,
+// because a cover swap is approved from two places — the staffing dashboard
+// (PUT /api/shifts/requests/:id) and the one-click admin email link (POST
+// /api/admin/cover-swaps/:swapToken) — and a lock that moved on only one of
+// them would pay the bonus to a staffer who did not work the shift.
+const { stampOutOfAreaLock, releaseOutOfAreaLock, reaccrueDutyForProposal } = require('./serviceArea');
 
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
@@ -102,6 +108,15 @@ async function applyCoverCascade(dbClient, originalRequestId, newRequestId) {
     [`covered_by_request:${newRequestId}`, originalRequestId]
   );
 
+  // 1b. Out-of-Area lock follows the SHIFT, not the person. The original is
+  // dropped as of the UPDATE above, so release their hold (holder-scoped: a
+  // lock belonging to a third staffer on this shift is untouched) and let the
+  // claimer take it. Runs on the caller's transaction client, so the lock move
+  // is atomic with the approval it belongs to — a rollback mid-cascade leaves
+  // the bonus exactly where it was.
+  const lockReleased = await releaseOutOfAreaLock(dbClient, shiftId, original.user_id);
+  const lockStamped = await stampOutOfAreaLock(dbClient, shiftId, neu.user_id);
+
   // 2. Suppress remaining cover_broadcast rows for this shift.
   await dbClient.query(
     `UPDATE scheduled_messages
@@ -155,7 +170,11 @@ async function applyCoverCascade(dbClient, originalRequestId, newRequestId) {
     originalUserId: original.user_id,
     newUserId: neu.user_id,
     shiftId,
+    proposalId,
     beoNudgeScheduled,
+    // Signals the wrapper to re-derive duty lines AFTER commit; re-deriving
+    // from inside this transaction would read the pre-commit roster.
+    outOfAreaLockMoved: lockReleased || lockStamped,
   };
 }
 
@@ -178,6 +197,10 @@ async function approveAndCascade(pool, originalRequestId, newRequestId) {
     );
     const result = await applyCoverCascade(dbc, originalRequestId, newRequestId);
     await dbc.query('COMMIT');
+    // Post-commit, after the client is released below: an out-of-area bonus
+    // that changed hands on a completed event owes a duty-line re-derivation.
+    // Fire-and-forget; no-ops on anything but a recently-completed proposal.
+    if (result.outOfAreaLockMoved) reaccrueDutyForProposal(result.proposalId);
     return result;
   } catch (err) {
     await dbc.query('ROLLBACK').catch(() => {});

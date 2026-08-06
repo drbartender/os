@@ -26,6 +26,7 @@ import { venueMapQuery } from '../../components/VenueAddressFields';
 import EntityLink from '../../components/EntityLink';
 import { proposalStatusMeta } from '../../utils/proposalStatusMap';
 import SendModal, { describeSendResult } from '../../components/SendModal';
+import RemoteStaffingFeePrompt from './RemoteStaffingFeePrompt';
 
 // Lead call bridge outcome, one read-only line for TT-drafted proposals
 // (spec 2026-07-18 §5.3). Absent lead_call renders nothing at the call site.
@@ -447,13 +448,20 @@ export default function ProposalDetail() {
             )}
             {/* Grouped options send together via the Alternatives panel ("Send
                 options" = one compare email); the solo send would 409 USE_GROUP_SEND. */}
+            {/* First send runs the Remote Staffing Fee check first (spec §6
+                covers the send/status action, not only the resend modal). */}
             {!editing && canSend && group && !group.grouped && (
-              <button type="button" className="btn btn-primary" onClick={() => updateStatus('sent')}>
+              <button type="button" className="btn btn-primary" disabled={sendModal === 'first-send-check'} onClick={() => setSendModal('first-send-check')}>
                 <Icon name="send" size={12} />Send to client
               </button>
             )}
+            {/* 'resend-check' runs the Remote Staffing Fee prompt first; it hands
+                off to the real 'resend' modal on every choice. An ACCEPTED
+                proposal is already signed, so it skips straight to the resend:
+                the fee is billed at proposal time or never, and offering to add
+                a surcharge behind a client's signature is the wrong question. */}
             {!editing && canResend && (
-              <button type="button" className="btn btn-secondary" onClick={() => setSendModal('resend')} disabled={sendModal === 'resend'}>
+              <button type="button" className="btn btn-secondary" onClick={() => setSendModal(proposal.status === 'accepted' ? 'resend' : 'resend-check')} disabled={sendModal === 'resend' || sendModal === 'resend-check'}>
                 <Icon name="send" size={12} />Resend
               </button>
             )}
@@ -781,6 +789,15 @@ export default function ProposalDetail() {
       {/* Compose-and-send flows (resend + portal invite). SendModal previews the
           server-resolved recipient/channels, the admin edits and confirms, and
           onSendComplete reports the honest per-channel result. */}
+      {sendModal === 'resend-check' && (
+        <RemoteStaffingFeePrompt proposalId={id} onProceed={() => setSendModal('resend')} />
+      )}
+      {sendModal === 'first-send-check' && (
+        <RemoteStaffingFeePrompt
+          proposalId={id}
+          onProceed={() => { setSendModal(null); updateStatus('sent'); }}
+        />
+      )}
       {sendModal === 'resend' && (
         <SendModal
           action="proposal_resend"

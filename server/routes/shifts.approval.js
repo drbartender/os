@@ -27,6 +27,14 @@ const { parsePositionsNeeded } = require('../utils/positionsNeeded');
 const { canonicalizeRole } = require('../utils/staffingRoles');
 const { computeRemaining, classifyRequest } = require('../utils/staffingClassification');
 const { sendWaitlistJoinEmail } = require('../utils/staffingEmailTemplates');
+// Out-of-Area lock lifecycle (spec §6). There is no separate staffer "accept"
+// event in this system, so APPROVAL is acceptance: the moment a request goes
+// approved on a shift carrying an unlocked bonus, that amount is frozen to that
+// staffer and can only ever be raised. Both helpers are conditional in SQL, so
+// these calls are unconditional and idempotent. The COVER-SWAP branch is not
+// handled here: its lock move lives inside coverApprovalCascade so the email
+// one-click approver gets it too.
+const { stampOutOfAreaLock, releaseOutOfAreaLock, reaccrueDutyForProposal } = require('../utils/serviceArea');
 
 // Equipment tokens a shift can require staff to transport (kept in sync with the
 // staff LogisticsTag + admin equipment picker).
@@ -79,7 +87,7 @@ async function requestShiftHandler(req, res) {
   // Load the shift + its per-role approved-active aggregate in one round trip.
   const shiftRes = await pool.query(
     `SELECT s.id, s.positions_needed, s.equipment_required, s.supply_run_required,
-            s.event_type, s.event_type_custom, s.event_date,
+            s.event_type, s.event_type_custom, s.event_date, s.proposal_id,
             (SELECT COALESCE(jsonb_object_agg(position, c), '{}'::jsonb)
                FROM (SELECT position, COUNT(*) c FROM shift_requests
                       WHERE shift_id = s.id AND status = 'approved' AND dropped_at IS NULL
@@ -160,6 +168,14 @@ async function requestShiftHandler(req, res) {
           cover_requested_at = NULL
     RETURNING *
   `, [req.params.id, req.user.id, JSON.stringify(roles), notes || null, transportRequired && transport_acknowledged === true]);
+
+  // Out-of-Area lock: the upsert above forces status back to 'pending', so an
+  // APPROVED lock-holder who re-requests (re-ranking their roles) is no longer
+  // on the roster. Without this release the bonus stays frozen to a pending
+  // request and the duty line pays someone who may never be re-approved.
+  if (await releaseOutOfAreaLock(pool, shift.id, req.user.id)) {
+    reaccrueDutyForProposal(shift.proposal_id);
+  }
 
   // Requester's preferred name (used by whichever notification branch runs).
   const cp = await pool.query(
@@ -267,6 +283,12 @@ async function assignShiftHandler(req, res) {
 
   const request = result.rows[0];
   const shift = shiftRes.rows[0];
+
+  // Out-of-Area lock: this upsert just made the staffer approved, so an
+  // attached-and-unlocked bonus locks to them here.
+  if (await stampOutOfAreaLock(pool, shift.id, user_id)) {
+    reaccrueDutyForProposal(shift.proposal_id);
+  }
 
   // Over-fill audit (advisory, best-effort): the admin UI routes approvals
   // through /assign, so this is where over-fills are recorded. Log when this
@@ -434,6 +456,8 @@ async function approveOrDenyRequestHandler(req, res) {
       // Cover-swap approval. Cascade extracted to coverApprovalCascade.js;
       // runs in one transaction so deny+suppress+BEO-nudge land atomically.
       // The claimer's position was resolved at claim time, so it is preserved.
+      // The Out-of-Area lock moves INSIDE the cascade (transactional with the
+      // approval), so both swap-approval surfaces share one implementation.
       await approveAndCascade(pool, replacedByRequestId, parseInt(req.params.requestId, 10));
       result = await pool.query(`SELECT * FROM shift_requests WHERE id = $1`, [req.params.requestId]);
     } else {
@@ -461,6 +485,10 @@ async function approveOrDenyRequestHandler(req, res) {
           WHERE id = $1 RETURNING *`,
         [req.params.requestId, resolvedRole]
       );
+      // Out-of-Area lock: the staffer is approved as of the UPDATE above.
+      if (await stampOutOfAreaLock(pool, srShiftId, srUserId)) {
+        reaccrueDutyForProposal(srProposalId);
+      }
       // Over-fill bookkeeping (advisory, best-effort, AFTER the write so a failed
       // approval never logs and a failed log never fails the approval): an admin
       // override onto a role with no open slot is allowed but recorded (same
@@ -483,8 +511,16 @@ async function approveOrDenyRequestHandler(req, res) {
         WHERE id = $1 RETURNING *`,
       [req.params.requestId]
     );
-    if (prior_status === 'approved' && srProposalId) {
-      await suppressBeoNudgesForStaffers(srProposalId, [srUserId], pool, 'staffer_unassigned: PUT request denied');
+    if (prior_status === 'approved') {
+      // Denying an approved staffer takes them off the shift, so it releases
+      // their Out-of-Area lock exactly like a drop does. The amount stays and
+      // re-arms for the next approval (spec §6).
+      if (await releaseOutOfAreaLock(pool, srShiftId, srUserId)) {
+        reaccrueDutyForProposal(srProposalId);
+      }
+      if (srProposalId) {
+        await suppressBeoNudgesForStaffers(srProposalId, [srUserId], pool, 'staffer_unassigned: PUT request denied');
+      }
     }
   } else {
     result = await pool.query(

@@ -1,6 +1,7 @@
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
-const { composeVenueLocation } = require('./venueAddress');
+const { composeVenueLocation, composeVenueMapQuery, isVenueComplete } = require('./venueAddress');
+const { geocodeThrottled } = require('./serviceArea');
 const { effectiveSetupMinutes } = require('./setupTime');
 const { scheduleDrinkPlanNudge } = require('./drinkPlanNudge');
 const { parsePositionsNeeded, rosterCounts } = require('./positionsNeeded');
@@ -144,6 +145,53 @@ async function provisioningSlugSet(db) {
 }
 
 /**
+ * Geocode a shift's venue into shifts.lat/lng (spec §6, geocoding support).
+ *
+ * STREET-GATED, DELIBERATELY. Nominatim with limit=1 answers a street-less
+ * query with a city centroid and no confidence signal, so a venue with only a
+ * name and a city gets NO coordinates. Missing coordinates correctly disable
+ * the out-of-area suggestion, the requester distances, and the Remote Staffing
+ * Fee popup; a guessed centroid would silently drive real money instead. Never
+ * guess.
+ *
+ * Fire-and-forget: an external API call must never sit on a shift-create or
+ * event-edit write path. `setImmediate` defers the whole chain past the current
+ * tick, so it starts after the caller's synchronous work; the lookup itself
+ * then waits on the shared 1 req/sec Nominatim queue in serviceArea.js
+ * (geocode.js ships only a delay helper and an 8s timeout, no limiter), which
+ * puts the UPDATE well outside any caller transaction window. It takes its own
+ * pooled connection, never the caller's.
+ *
+ * The UPDATE re-asserts lat IS NULL so a hand-set coordinate, or a coordinate
+ * written by a concurrent path, is never clobbered by a late-landing lookup.
+ */
+function geocodeShiftVenue(shiftId, proposal) {
+  const sid = Number(shiftId);
+  if (!Number.isInteger(sid) || sid <= 0) return;
+  if (!isVenueComplete(proposal)) return; // street-less venues stay NULL by design
+  const address = composeVenueMapQuery(proposal);
+  if (!address) return;
+  setImmediate(() => {
+    geocodeThrottled(address)
+      .then((coords) => {
+        if (!coords) return null;
+        return pool.query(
+          `UPDATE shifts SET lat = $1, lng = $2
+            WHERE id = $3 AND lat IS NULL AND lng IS NULL`,
+          [coords.lat, coords.lng, sid]
+        );
+      })
+      .catch((err) => {
+        Sentry.captureException(err, {
+          tags: { util: 'eventCreation', step: 'venue_geocode' },
+          extra: { shift_id: sid },
+        });
+        console.error('[eventCreation] venue geocode failed (non-blocking):', err.message);
+      });
+  });
+}
+
+/**
  * Auto-create a drink plan linked to a proposal. Idempotent — skips if one already exists.
  * No longer emails the client: the Stripe webhook's orientation email carries
  * the Potion Planner link. The `skipEmail` option is retained for callers that
@@ -283,6 +331,10 @@ async function createEventShifts(proposalId) {
     proposal.event_duration_hours ?? null,
     supplyRunRequired
   ]);
+
+  // Geocode the venue so out-of-area distances and suggestions have something
+  // to work with the moment the shift exists.
+  geocodeShiftVenue(shiftResult.rows[0].id, proposal);
 
   // Auto-create the linked drink plan (non-blocking). No client email here —
   // the webhook's orientation email carries the Potion Planner link.
@@ -424,7 +476,17 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
     proposal.event_duration_hours ?? null,
     supplyRunDefault,
   ]);
-  return upd.rows[0] || null;
+  const synced = upd.rows[0] || null;
+  // Fires whenever the synced shift has NO coordinates, which is broader than
+  // "the location changed": a location change nulls lat/lng above (the CASE on
+  // `location IS DISTINCT FROM`), and a shift that has never resolved is also
+  // still NULL. Both owe a lookup, so the NULL check is the honest condition
+  // and it self-heals rows whose address was fixed after a failed geocode. An
+  // edit that leaves coordinates in place (date, guest count) costs nothing.
+  if (synced && synced.lat === null && synced.lng === null) {
+    geocodeShiftVenue(synced.id, proposal);
+  }
+  return synced;
 }
 
 module.exports = {

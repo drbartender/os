@@ -21,6 +21,7 @@ router.use('/', require('./changeRequests'));
 router.use('/', require('./groups'));
 router.use('/', require('./notifyPreflight'));
 router.use('/', require('./menuPrint'));
+router.use('/', require('./remoteStaffing')); // /:id/remote-staffing-check, /:id/remote-fee-prompt-answered
 router.use('/', require('./crud'));
 router.use('/', require('./list'));
 router.use('/', require('./metricsSplit'));

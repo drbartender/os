@@ -42,6 +42,10 @@ const { sendEmail } = require('../utils/email');
 const { broadcastCoverRequest } = require('../utils/coverBroadcast');
 const { sendAndLogSms } = require('../utils/sms');
 const { staff_drop_to_management_sms } = require('../utils/smsTemplates');
+// Out-of-Area lock (spec §6): a staffer who leaves the shift releases the lock
+// but NOT the amount — the bonus re-arms for whoever is approved next.
+// Holder-scoped, so a drop never releases a teammate's lock.
+const { releaseOutOfAreaLock, reaccrueDutyForProposal } = require('../utils/serviceArea');
 
 const router = express.Router();
 router.use(auth);
@@ -230,6 +234,7 @@ router.post('/requests/:requestId/drop', asyncHandler(async (req, res) => {
   const dbClient = await pool.connect();
   let ctx;
   let droppedAt;
+  let bonusReleased = false;
   try {
     await dbClient.query('BEGIN');
 
@@ -277,6 +282,7 @@ router.post('/requests/:requestId/drop', asyncHandler(async (req, res) => {
 
     await maybeReopenShift(dbClient, ctx.shift_id);
     await suppressPendingMessagesForUserShift(dbClient, ctx.shift_id, req.user.id);
+    bonusReleased = await releaseOutOfAreaLock(dbClient, ctx.shift_id, req.user.id);
 
     await dbClient.query('COMMIT');
   } catch (err) {
@@ -285,6 +291,10 @@ router.post('/requests/:requestId/drop', asyncHandler(async (req, res) => {
   } finally {
     dbClient.release();
   }
+
+  // Post-commit (pooled client already released): re-derive duty lines only if
+  // this drop actually released a bonus lock.
+  if (bonusReleased) reaccrueDutyForProposal(ctx.proposal_id);
 
   // Post-commit: notify management (best-effort). SMS only when <=7d out, but
   // a clean-drop is always >=14d so SMS never fires here; email always.
@@ -732,6 +742,7 @@ router.post('/requests/:requestId/emergency-drop', asyncHandler(async (req, res)
 
   let ctx;
   let hoursOut;
+  let bonusReleased = false;
 
   const dbClient = await pool.connect();
   try {
@@ -784,6 +795,10 @@ router.post('/requests/:requestId/emergency-drop', asyncHandler(async (req, res)
     );
 
     await suppressPendingMessagesForUserShift(dbClient, ctx.shift_id, req.user.id);
+    // An emergency drop keeps status='approved' but sets dropped_at, and every
+    // downstream reader treats that as "not on this shift" — so the bonus lock
+    // releases here too, or it would stay frozen to someone who is not working.
+    bonusReleased = await releaseOutOfAreaLock(dbClient, ctx.shift_id, req.user.id);
 
     // Audit row on proposal_activity_log when the shift has a proposal_id.
     // shift.proposal_id is nullable (standalone shifts); skip + Sentry-warn
@@ -818,6 +833,9 @@ router.post('/requests/:requestId/emergency-drop', asyncHandler(async (req, res)
   } finally {
     dbClient.release();
   }
+
+  // ── Post-commit (pooled client released) ──────────────────────────────
+  if (bonusReleased) reaccrueDutyForProposal(ctx.proposal_id);
 
   // ── Post-commit notifications ─────────────────────────────────────────
   const eventTypeLabel = getEventTypeLabel({

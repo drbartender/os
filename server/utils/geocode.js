@@ -5,6 +5,7 @@
 
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const USER_AGENT = 'DrBartender/1.0';
+const GEOCODE_TIMEOUT_MS = 8000;
 
 /**
  * Geocode an address string to lat/lng coordinates.
@@ -22,8 +23,14 @@ async function geocodeAddress(address) {
       q: address.trim(),
     });
 
+    // Hard 8s ceiling. Node's fetch has NO default timeout, so a hung
+    // Nominatim connection would otherwise stall the caller indefinitely: the
+    // shared 1 req/sec queue in serviceArea.js is serial, so one hang wedges
+    // every queued lookup behind it, and the admin send path awaits that queue.
+    // An abort throws, which the catch below already turns into a null.
     const res = await fetch(`${NOMINATIM_URL}?${params}`, {
       headers: { 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS),
     });
 
     if (!res.ok) return null;

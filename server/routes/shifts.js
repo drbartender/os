@@ -7,6 +7,20 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError, PermissionError, ConflictError } = require('../utils/errors');
 const { findOrCreateClient } = require('../utils/clientDedup');
 const { suppressBeoNudgesForStaffers } = require('../utils/beoHandlers');
+const { logAdminAction } = require('../utils/adminAuditLog');
+// Out-of-Area Bonus: bands, distances, lock lifecycle, duty re-derivation.
+// The bands are server-only by design (spec §6 published-ambiguity rule), so
+// the payloads below carry derived cents and the client never computes one.
+const {
+  OUT_OF_AREA_MAX_CENTS,
+  suggestOutOfAreaCents,
+  milesFromHomeBase,
+  milesBetween,
+  roundMiles,
+  stampOutOfAreaLock,
+  releaseOutOfAreaLock,
+  reaccrueDutyForProposal,
+} = require('../utils/serviceArea');
 const { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL } = require('./shifts.queries');
 // Request -> approval money seam extracted to keep this file under the 1000-line
 // hard cap. shifts.js still owns the route table + shared middleware; the bulky
@@ -30,6 +44,56 @@ function requireStaffing(req, res, next) {
 
 // requireOnboarded now lives in middleware/auth.js — every staff-data surface
 // needs it, not just this file (see the note there).
+
+// ─── Out-of-Area helpers ──────────────────────────────────────────
+
+/**
+ * Server-derived out-of-area context for a shift row. `suggested_bonus_cents`
+ * is computed HERE and only here: the bands are internal guidance (spec §6
+ * published ambiguity) and the CRA bundle is shared with the public marketing
+ * site, so no band number may ever reach the browser as a literal.
+ *
+ * A venue with no coordinates yields nulls, which correctly disables the
+ * suggestion rather than guessing at a city centroid.
+ */
+function withOutOfAreaContext(shift, approvedCount = 0) {
+  const miles = milesFromHomeBase(shift.lat, shift.lng);
+  const approved = Number(approvedCount || 0);
+  return {
+    ...shift,
+    // Normalized (pg COUNT arrives as a string) and always present, including on
+    // the PATCH response where the row is a bare SELECT * with no aggregate.
+    // The knob words its unlocked warning off this: one approved staffer is a
+    // one-click fix, two or more needs a decision.
+    approved_count: approved,
+    venue_distance_miles: roundMiles(miles),
+    suggested_bonus_cents: suggestOutOfAreaCents(miles),
+    // Money attached but nobody holding it. The duty line derives from
+    // out_of_area_locked_user_id, so an unlocked bonus on a shift that ALREADY
+    // has approved staff pays nobody and does it silently. Reachable two ways:
+    // the amount was attached while 2+ staffers were approved (ambiguous, no
+    // auto-lock), or the holder dropped and left a teammate behind. Either way
+    // the admin has to act, so the surfaces say so.
+    unlocked_warning: shift.out_of_area_bonus_cents !== null
+      && shift.out_of_area_bonus_cents !== undefined
+      && !shift.out_of_area_locked_at
+      && approved >= 1,
+  };
+}
+
+/**
+ * Attach `home_distance_miles` (the requester's home to this venue) and DROP
+ * the raw home coordinates from the row. Admins and `can_staff` managers see
+ * the derived distance beside approvals; nobody sees a staffer's home address.
+ * Null whenever either side lacks coordinates.
+ */
+function withHomeDistance(row, shift) {
+  const { staff_lat, staff_lng, ...rest } = row;
+  return {
+    ...rest,
+    home_distance_miles: roundMiles(milesBetween(staff_lat, staff_lng, shift.lat, shift.lng)),
+  };
+}
 
 // ─── Staff-facing routes ──────────────────────────────────────────
 
@@ -242,6 +306,23 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
          JOIN users u ON u.id = sr.user_id
          LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
         WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_staff,
+      -- Every live requester (pending + approved), carrying the home
+      -- coordinates the route converts to home_distance_miles and then
+      -- strips. Denied rows are excluded: they are not candidates to weigh.
+      (SELECT COALESCE(json_agg(json_build_object(
+                'request_id', sr.id,
+                'user_id', sr.user_id,
+                'name', COALESCE(cp.display_name, cp.preferred_name, u.email),
+                'status', sr.status,
+                'position', sr.position,
+                'dropped_at', sr.dropped_at,
+                'staff_lat', cp.lat,
+                'staff_lng', cp.lng
+              ) ORDER BY sr.created_at), '[]'::json)
+         FROM shift_requests sr
+         JOIN users u ON u.id = sr.user_id
+         LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
+        WHERE sr.shift_id = s.id AND sr.status <> 'denied') AS requesters,
       abr.approved_by_role
     FROM shifts s
     LEFT JOIN LATERAL (
@@ -260,7 +341,10 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
     ORDER BY s.event_date ASC, s.start_time ASC, s.id ASC
     LIMIT 100
   `, [req.params.proposalId]);
-  res.json(result.rows);
+  res.json(result.rows.map((s) => ({
+    ...withOutOfAreaContext(s, s.approved_count),
+    requesters: (Array.isArray(s.requesters) ? s.requesters : []).map((r) => withHomeDistance(r, s)),
+  })));
 }));
 
 /** GET /shifts/detail/:id — single shift details (admin/manager only) */
@@ -292,7 +376,10 @@ router.get('/detail/:id', auth, requireStaffing, asyncHandler(async (req, res) =
         COALESCE(cp.display_name, cp.preferred_name, u.email) AS staff_name,
         u.email AS staff_email,
         cp.city AS staff_city,
-        cp.reliable_transportation AS staff_reliable_transportation
+        cp.reliable_transportation AS staff_reliable_transportation,
+        -- Converted to home_distance_miles and stripped before the response.
+        cp.lat AS staff_lat,
+        cp.lng AS staff_lng
       FROM shift_requests sr
       JOIN users u ON u.id = sr.user_id
       LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
@@ -302,7 +389,137 @@ router.get('/detail/:id', auth, requireStaffing, asyncHandler(async (req, res) =
   ]);
   if (!result.rows[0]) throw new NotFoundError('Shift not found.');
 
-  res.json({ shift: result.rows[0], requests: reqResult.rows });
+  const shift = result.rows[0];
+  res.json({
+    shift: withOutOfAreaContext(shift, shift.approved_count),
+    requests: reqResult.rows.map((r) => withHomeDistance(r, shift)),
+  });
+}));
+
+/**
+ * PATCH /shifts/:id/out-of-area — attach, raise, lower, or clear the
+ * Out-of-Area Bonus on a shift (spec §6). Body: `{ amount_cents: int|null }`,
+ * cents, `0 < amount <= 25000` (the DB CHECK carries the same bound); null
+ * clears an UNLOCKED bonus.
+ *
+ * THE LOCK IS THE WHOLE POINT: once a staffer's request is approved while a
+ * bonus is attached, that staffer took the shift on that number. From then on
+ * the amount may only go UP. Any reduce or clear is a 409 — the money is not
+ * negotiable after acceptance, which is exactly why the $250 cap exists.
+ *
+ * Access is `requireStaffing` (admin + `can_staff` managers), matching every
+ * other staffing surface in this file.
+ */
+router.patch('/:id/out-of-area', auth, requireStaffing, asyncHandler(async (req, res) => {
+  const shiftId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(shiftId) || shiftId <= 0) {
+    throw new ValidationError({ id: 'Invalid shift id.' });
+  }
+
+  const raw = req.body ? req.body.amount_cents : undefined;
+  let amountCents = null;
+  if (raw !== null && raw !== undefined && raw !== '') {
+    amountCents = Number(raw);
+    if (!Number.isInteger(amountCents) || amountCents <= 0 || amountCents > OUT_OF_AREA_MAX_CENTS) {
+      throw new ValidationError({
+        amount_cents: `Enter a bonus between $0.01 and $${OUT_OF_AREA_MAX_CENTS / 100}.`,
+      });
+    }
+  }
+
+  const dbClient = await pool.connect();
+  let updated, priorCents, proposalId, newlyLocked = false, approvedCount = 0;
+  try {
+    await dbClient.query('BEGIN');
+    // FOR UPDATE so a concurrent approval cannot stamp the lock between the
+    // guard read and the write (that race is exactly a silent reduction).
+    const cur = await dbClient.query(
+      `SELECT id, proposal_id, out_of_area_bonus_cents, out_of_area_locked_at
+         FROM shifts WHERE id = $1 FOR UPDATE`,
+      [shiftId]
+    );
+    if (!cur.rows[0]) throw new NotFoundError('Shift not found.');
+    const shift = cur.rows[0];
+    proposalId = shift.proposal_id;
+    priorCents = shift.out_of_area_bonus_cents === null ? null : Number(shift.out_of_area_bonus_cents);
+
+    if (shift.out_of_area_locked_at) {
+      const isClear = amountCents === null;
+      const isReduce = priorCents !== null && amountCents !== null && amountCents < priorCents;
+      if (isClear || isReduce) {
+        // Surfaced verbatim as the knob's inline error, so it has to read like
+        // a sentence to a human, not a status code.
+        throw new ConflictError(
+          'This bonus is locked to an approved staffer and can only change after they drop.',
+          'bonus_locked'
+        );
+      }
+    }
+
+    const upd = await dbClient.query(
+      `UPDATE shifts
+          SET out_of_area_bonus_cents = $2::int,
+              out_of_area_attached_by = CASE WHEN $2::int IS NULL THEN NULL ELSE $3::int END,
+              out_of_area_attached_at = CASE WHEN $2::int IS NULL THEN NULL ELSE NOW() END
+        WHERE id = $1
+        RETURNING *`,
+      [shiftId, amountCents, req.user.id]
+    );
+    updated = upd.rows[0];
+
+    // Always counted, so the response can carry approved_count and the knob can
+    // word its warning for the actual situation.
+    const approved = await dbClient.query(
+      `SELECT user_id FROM shift_requests
+        WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL`,
+      [shiftId]
+    );
+    approvedCount = approved.rowCount;
+
+    // Attaching a bonus to a shift that is ALREADY staffed must not silently
+    // never pay. The lock normally stamps at approval, but here approval has
+    // already happened, so stamp it now for the one unambiguous case: exactly
+    // one approved, non-dropped worker. That staffer is the shift, so there is
+    // nothing to guess. With 2+ approved the choice is a judgment call, so we
+    // leave it unlocked and the payload's unlocked_warning tells the admin.
+    // This is also the escape hatch the knob offers for an already-warned
+    // shift: a same-value re-save runs this block and locks it.
+    if (amountCents !== null && !shift.out_of_area_locked_at && approvedCount === 1) {
+      newlyLocked = await stampOutOfAreaLock(dbClient, shiftId, approved.rows[0].user_id);
+      const reread = await dbClient.query('SELECT * FROM shifts WHERE id = $1', [shiftId]);
+      updated = reread.rows[0];
+    }
+    await dbClient.query('COMMIT');
+  } catch (err) {
+    await dbClient.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    dbClient.release();
+  }
+
+  // Audit + re-derivation run AFTER the pooled client is back in the pool
+  // (one pooled connection per request): logAdminAction takes its own.
+  await logAdminAction({
+    actorUserId: req.user.id,
+    action: 'shift_out_of_area_set',
+    metadata: {
+      shift_id: shiftId,
+      proposal_id: proposalId,
+      from_cents: priorCents,
+      to_cents: amountCents,
+      locked: !!updated.out_of_area_locked_at,
+      newly_locked: newlyLocked,
+    },
+  });
+  // A raise on a locked, already-accrued shift must propagate to the duty line;
+  // pre-event shifts are not completed, so this no-ops after one cheap SELECT.
+  // `newlyLocked` is part of the gate because the escape hatch above is a
+  // SAME-VALUE save: the amount did not move, but the money just became payable
+  // to a specific person, and without this the duty line would sit unwritten
+  // until some unrelated accrual happened to run.
+  if (proposalId && (priorCents !== amountCents || newlyLocked)) reaccrueDutyForProposal(proposalId);
+
+  res.json({ shift: withOutOfAreaContext(updated, approvedCount) });
 }));
 
 /** POST /shifts/:id/request — staff requests to work a shift (ranked roles +
@@ -315,7 +532,7 @@ router.post('/:id/request', auth, requireOnboarded, asyncHandler(requestShiftHan
 router.delete('/requests/:requestId', auth, asyncHandler(async (req, res) => {
   const isManager = req.user.role === 'admin' || req.user.role === 'manager';
   const pre = await pool.query(
-    `SELECT sr.user_id, sr.status, s.proposal_id
+    `SELECT sr.user_id, sr.status, sr.shift_id, s.proposal_id
        FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id WHERE sr.id = $1`,
     [req.params.requestId]
   );
@@ -330,6 +547,13 @@ router.delete('/requests/:requestId', auth, asyncHandler(async (req, res) => {
     ? await pool.query('DELETE FROM shift_requests WHERE id = $1 RETURNING id', [req.params.requestId])
     : await pool.query('DELETE FROM shift_requests WHERE id = $1 AND user_id = $2 RETURNING id', [req.params.requestId, req.user.id]);
   if (!result.rows[0]) throw new NotFoundError('Request not found.');
+  // Out-of-Area lock: this is the ShiftDrawer "Remove" button, the primary way
+  // an admin takes someone off a shift. The request row is DELETED outright, so
+  // without this the bonus would stay frozen to a person with no request at all
+  // and the duty line would pay them for a shift they never worked.
+  if (await releaseOutOfAreaLock(pool, ctx.shift_id, ctx.user_id)) {
+    reaccrueDutyForProposal(ctx.proposal_id);
+  }
   if (ctx.proposal_id) {
     await suppressBeoNudgesForStaffers(ctx.proposal_id, [ctx.user_id], pool, 'staffer_unassigned: request deleted');
   }

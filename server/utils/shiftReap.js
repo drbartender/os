@@ -26,6 +26,7 @@
 // data), never a behavioral change.
 
 const { suppressBeoNudgesForStaffers } = require('./beoHandlers');
+const { releaseOutOfAreaLock } = require('./serviceArea');
 
 /**
  * @param {number|string} proposalId
@@ -67,6 +68,13 @@ async function reapShiftsForProposal(proposalId, dbClient, errorMessage) {
           AND status = 'pending'`,
       [s.id, errorMessage]
     );
+    // Out-of-Area lock (spec 2026-08-06 §6): the shift is cancelled and every
+    // request denied, so nobody holds the bonus any more. Unscoped release, on
+    // the caller's transaction client. NO duty re-derivation is queued here on
+    // purpose: this reap runs from the proposal cancel/archive flows, which move
+    // the proposal out of 'completed', and maybeReaccrueForDuty only acts on a
+    // recently-completed proposal. The cancel flow owns that unwind.
+    await releaseOutOfAreaLock(dbClient, s.id);
     if (userIds.length) {
       await suppressBeoNudgesForStaffers(proposalId, userIds, dbClient, errorMessage);
     }

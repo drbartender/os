@@ -15,6 +15,7 @@ const { geocodeAddress } = require('../utils/geocode');
 const { ValidationError, NotFoundError } = require('../utils/errors');
 const { suppressBeoNudgesForStaffers } = require('../utils/beoHandlers');
 const { notifyStaffOfCancellation } = require('../utils/staffShiftHandlers');
+const { releaseOutOfAreaLock, reaccrueDutyForProposal } = require('../utils/serviceArea');
 const { EQUIPMENT_TOKENS } = require('./shifts.approval');
 
 // ─── PUT /shifts/:id ──────────────────────────────────────────────
@@ -163,6 +164,8 @@ async function cancelOrUnassignShiftHandler(req, res) {
 
   const dbClient = await pool.connect();
   let affectedUserIds = [];
+  let bonusReleased = false;
+  let proposalIdForDuty = null;
   const kind = mode === 'cancel' ? 'cancelled' : 'unassigned';
   try {
     await dbClient.query('BEGIN');
@@ -170,6 +173,7 @@ async function cancelOrUnassignShiftHandler(req, res) {
     const shiftRes = await dbClient.query('SELECT id, proposal_id FROM shifts WHERE id = $1', [shiftId]);
     if (!shiftRes.rows[0]) throw new NotFoundError('Shift not found.');
     const proposalIdForBeo = shiftRes.rows[0].proposal_id;
+    proposalIdForDuty = proposalIdForBeo;
 
     if (mode === 'cancel') {
       const approved = await dbClient.query(
@@ -189,6 +193,10 @@ async function cancelOrUnassignShiftHandler(req, res) {
             AND status = 'pending'`,
         [shiftId]
       );
+      // Out-of-Area lock: a cancel denies EVERY request, so nobody is left to
+      // hold the bonus. Unscoped release (no user filter) — whoever held it is
+      // off the shift by definition.
+      bonusReleased = await releaseOutOfAreaLock(dbClient, shiftId);
     } else {
       const upd = await dbClient.query(
         "UPDATE shift_requests SET status = 'denied' WHERE shift_id = $1 AND user_id = $2 AND status = 'approved' RETURNING id",
@@ -206,6 +214,9 @@ async function cancelOrUnassignShiftHandler(req, res) {
             AND status = 'pending'`,
         [shiftId, unassignUserId]
       );
+      // Holder-scoped: unassigning one staffer must never release a bonus that
+      // belongs to a teammate still working the shift.
+      bonusReleased = await releaseOutOfAreaLock(dbClient, shiftId, unassignUserId);
     }
 
     // BEO: suppress pending nudges for affected staffers on the proposal.
@@ -222,6 +233,10 @@ async function cancelOrUnassignShiftHandler(req, res) {
   } finally {
     dbClient.release();
   }
+
+  // Post-commit (pooled client released): re-derive duty lines only when a
+  // bonus lock actually moved.
+  if (bonusReleased) reaccrueDutyForProposal(proposalIdForDuty);
 
   if (notify_assigned_staff === true && (notify_sms === true || notify_email === true)) {
     try {
