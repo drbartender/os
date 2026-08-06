@@ -25,7 +25,7 @@ const { serviceExtensionLimiter } = require('../../middleware/rateLimiters');
 const { ValidationError, ConflictError, PermissionError } = require('../../utils/errors');
 const { createInvoice, writeLineItems } = require('../../utils/invoiceHelpers');
 const { SERVICE_EXTENSION_INVOICE_LABEL } = require('../../utils/proposalMoneyShared');
-const { computeExtensionDelta, MAX_EXTENSION_HOURS } = require('../../utils/serviceExtensionPricing');
+const { computeExtensionDelta, allowedAdditionalHours, MAX_EXTENSION_HOURS } = require('../../utils/serviceExtensionPricing');
 const { eventEndInstantForDuration } = require('../../utils/eventEndInstant');
 const { CURRENT_EXTENSION_TERMS_VERSION } = require('../../data/extensionTermsCopy');
 const notify = require('../../utils/serviceExtensionNotify');
@@ -95,9 +95,10 @@ router.get('/eligibility/:shiftId', auth, asyncHandler(async (req, res) => {
   const ctx = await requireAssignment(req, shiftId);
 
   const contracted = Number(ctx.event_duration_hours);
-  const [end, maxEnd, pendingRes, pkgRes] = await Promise.all([
+  const [end, allowed, pendingRes, pkgRes] = await Promise.all([
     eventEndInstantForDuration(pool, ctx.proposal_id, contracted),
-    eventEndInstantForDuration(pool, ctx.proposal_id, contracted + MAX_EXTENSION_HOURS),
+    // Both limits at once: the mis-scroll cap and the 2:00 AM curfew.
+    allowedAdditionalHours(pool, ctx.proposal_id, contracted),
     pool.query(
       `SELECT requested_end_time, status FROM service_extensions
         WHERE proposal_id = $1 AND status = 'pending' LIMIT 1`,
@@ -109,23 +110,40 @@ router.get('/eligibility/:shiftId', auth, asyncHandler(async (req, res) => {
   const window = await checkWindow(ctx);
   const pkg = pkgRes.rows[0] || {};
 
+  // The picker offers exactly what the validator will accept, and no more.
+  // Offering a step that POST would refuse means a staffer promises a client
+  // an end time, in person, that we then decline to sell.
+  const allowedHours = allowed ? allowed.hours : 0;
+
   // Human labels for the picker, one per 30-minute step. Times and durations
   // only: no money, so spec decision 2 still holds.
   const stepLabels = {};
-  for (let i = 1; i <= Math.round(MAX_EXTENSION_HOURS / 0.5); i++) {
+  for (let i = 1; i <= Math.round(allowedHours / 0.5); i++) {
     const added = i * 0.5;
     const e = await eventEndInstantForDuration(pool, ctx.proposal_id, contracted + added);
     if (e) stepLabels[String(added)] = `${e.endDisplay} (+${added === 0.5 ? '30 min' : added + ' hr'})`;
   }
+  const maxEnd = allowedHours > 0
+    ? await eventEndInstantForDuration(pool, ctx.proposal_id, contracted + allowedHours)
+    : null;
+
+  // An event already contracted to the curfew has no sellable time left. That
+  // is a real ineligibility, not an empty picker the staffer has to interpret.
+  const noRoom = allowed !== null && allowedHours <= 0;
 
   res.json({
-    eligible: window.ok && pendingRes.rowCount === 0,
-    reason: !window.ok ? window.code : (pendingRes.rowCount > 0 ? 'already_pending' : null),
+    eligible: window.ok && pendingRes.rowCount === 0 && !noRoom,
+    reason: !window.ok
+      ? window.code
+      : (pendingRes.rowCount > 0 ? 'already_pending' : (noRoom ? 'past_curfew' : null)),
     contractedEndDisplay: end ? end.endDisplay : null,
     contractedDurationHours: contracted,
     stepLabels,
     maxEndDisplay: maxEnd ? maxEnd.endDisplay : null,
-    maxAdditionalHours: MAX_EXTENSION_HOURS,
+    maxAdditionalHours: allowedHours,
+    // Set only when the curfew (not the 3-hour cap) is what limits the picker,
+    // so the staffer can explain the hard stop to a client who wants more.
+    curfewEndDisplay: allowed && allowed.curfewBinds ? allowed.curfewDisplay : null,
     // Hosted packages need the product confirmation tick before sending.
     isHosted: pkg.pricing_type === 'per_guest',
     isClass: pkg.bar_type === 'class',
@@ -164,6 +182,9 @@ router.post('/', auth, serviceExtensionLimiter, asyncHandler(async (req, res) =>
     const messages = {
       not_an_extension: 'Pick an end time later than the contracted one.',
       over_cap: `You can add at most ${MAX_EXTENSION_HOURS} hours. Contact management for more.`,
+      past_curfew: delta.curfewDisplay
+        ? `Bar service cannot run past ${delta.curfewDisplay}. Pick an earlier end time.`
+        : 'Bar service cannot run that late. Pick an earlier end time.',
       bad_increment: 'Pick a time on a 30 minute mark.',
       unparseable_time: 'Could not determine this event’s times. Contact management.',
       missing_package: 'This event cannot be priced online. Contact management.',

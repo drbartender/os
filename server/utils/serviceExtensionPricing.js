@@ -23,7 +23,7 @@
 
 const { calculateProposal, isHostedPackage } = require('./pricingEngine');
 const { loadRepriceAddons } = require('./proposalExtrasFold');
-const { eventEndInstantForDuration } = require('./eventEndInstant');
+const { eventEndInstantForDuration, maxDurationHoursBeforeCurfew } = require('./eventEndInstant');
 // THE definition of "gratuity" for payroll purposes. It pools BOTH canonical
 // breakdown labels, 'Shared Gratuity' (the forced sub-100-guest over-ratio
 // surcharge) and 'Gratuity' (client-elected), per GRATUITY_PAYROLL_LABELS.
@@ -35,6 +35,33 @@ const MAX_EXTENSION_HOURS = 3;
 
 // Requests move in 30-minute steps (spec section 3 decision 5).
 const INCREMENT_HOURS = 0.5;
+
+/**
+ * How many hours a given event may actually add, after BOTH limits: the
+ * mis-scroll cap and the 2:00 AM insurance curfew (eventEndInstant.js).
+ * Floored to a whole 30-minute step, never negative.
+ *
+ * ONE function so the picker and the validator cannot drift: an offered step
+ * the validator would reject is a staffer promising a client time we then
+ * refuse to sell, in front of the client, mid-event.
+ *
+ * Returns null when the event's stored time is unparseable, which callers
+ * already surface as an explicit conflict rather than a silent zero.
+ */
+async function allowedAdditionalHours(client, proposalId, contractedHours) {
+  const curfew = await maxDurationHoursBeforeCurfew(client, proposalId);
+  if (!curfew) return null;
+  const roomToCurfew = curfew.maxHours - Number(contractedHours);
+  const raw = Math.min(MAX_EXTENSION_HOURS, roomToCurfew);
+  // Floor to a 30-minute step, with a tolerance so float noise cannot shave a
+  // legitimate step (e.g. 0.9999999 must still yield 0.5, and 1.0 yield 1.0).
+  const steps = Math.floor(raw / INCREMENT_HOURS + 1e-6);
+  return {
+    hours: Math.max(0, steps * INCREMENT_HOURS),
+    curfewDisplay: curfew.curfewDisplay,
+    curfewBinds: roomToCurfew < MAX_EXTENSION_HOURS,
+  };
+}
 
 /** Dollars-to-cents, matching invoiceShared.toCents rounding. */
 function toCents(dollars) {
@@ -95,6 +122,17 @@ async function computeExtensionDelta({ client, proposalId, requestedDurationHour
   const steps = added / INCREMENT_HOURS;
   if (Math.abs(steps - Math.round(steps)) > 1e-6) return { ok: false, reason: 'bad_increment' };
 
+  // The 2:00 AM curfew, enforced HERE because this function is the one both
+  // the pre-flight check and the in-transaction repricing call. A request that
+  // would run the bar past 2:00 AM is refused even though the client is
+  // willing to pay: serving past it can void the liquor liability policy, so
+  // the uninsured hour costs far more than the sale.
+  const allowed = await allowedAdditionalHours(client, proposalId, contracted);
+  if (!allowed) return { ok: false, reason: 'unparseable_time' };
+  if (added > allowed.hours) {
+    return { ok: false, reason: 'past_curfew', curfewDisplay: allowed.curfewDisplay, allowedHours: allowed.hours };
+  }
+
   const contractedEnd = await eventEndInstantForDuration(client, proposalId, contracted);
   const requestedEnd = await eventEndInstantForDuration(client, proposalId, requested);
   if (!contractedEnd || !requestedEnd) return { ok: false, reason: 'unparseable_time' };
@@ -149,4 +187,6 @@ async function computeExtensionDelta({ client, proposalId, requestedDurationHour
   };
 }
 
-module.exports = { computeExtensionDelta, MAX_EXTENSION_HOURS, INCREMENT_HOURS };
+module.exports = {
+  computeExtensionDelta, allowedAdditionalHours, MAX_EXTENSION_HOURS, INCREMENT_HOURS,
+};

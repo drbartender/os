@@ -106,12 +106,17 @@ export default function RequestMoreTime({ shiftId, onClose }) {
     too_early: 'You can request more time once the event has started.',
     too_late: 'The window to request more time for this event has closed.',
     unparseable_shift_time: 'We could not read this event’s times. Contact management.',
+    past_curfew: 'Bar service is already contracted to our 2:00 AM stop, so no more time can be added.',
   };
 
-  // Step the picker in 30-minute increments from the contracted end.
+  // Step the picker in 30-minute increments from the contracted end. The
+  // server sends how much time is ACTUALLY sellable (the 3-hour cap and the
+  // 2:00 AM stop, whichever is tighter), so never fall back to a wider guess:
+  // an offered step the server would refuse becomes a promise made to a client
+  // in person and broken a moment later. Default 0, not 3.
   const steps = [];
   if (eligibility) {
-    const maxSteps = Math.round((eligibility.maxAdditionalHours || 3) / 0.5);
+    const maxSteps = Math.round((eligibility.maxAdditionalHours || 0) / 0.5);
     for (let i = 1; i <= maxSteps; i++) steps.push(i * 0.5);
   }
   const baseHours = eligibility?.contractedDurationHours;
@@ -146,6 +151,12 @@ export default function RequestMoreTime({ shiftId, onClose }) {
                 <span>{eligibility.stepLabels?.[String(added)] || `plus ${added * 60} minutes`}</span>
               </label>
             ))}
+            {eligibility?.curfewEndDisplay && (
+              <div className="sp-detail-sub" style={{ marginTop: '0.5rem' }}>
+                Bar service cannot run past {eligibility.curfewEndDisplay}, so that is the latest
+                time available tonight.
+              </div>
+            )}
           </fieldset>
 
           {eligibility?.isHosted && (
