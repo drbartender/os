@@ -730,7 +730,8 @@ All non-blocking; the blockers found in review were fixed pre-push.
   `pending` forever, invisible to both. Zero such rows exist today. One
   idempotent line closes it: `ALTER TABLE thumbtack_leads ALTER COLUMN
   created_at SET NOT NULL;` (db-review, low)
-- `server/routes/thumbtackAgent.js` crossed the 700-line soft cap (710);
+- `server/routes/thumbtackAgent.js` crossed the 700-line soft cap (~790 after
+  the 8/06 delay + clamp work);
   split candidate: the first-reply queue section into
   `thumbtackAgent.replies.js` behind the composition router. (low)
 - Agent post-send reports (`clickedSend` path) go through `apiReport`, which

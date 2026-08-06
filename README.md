@@ -136,7 +136,7 @@ Copy `.env.example` and fill in values. All variables:
 | `RUN_FIRST_REPLY_FALLBACK_SCHEDULER` | No | `false` disables the 60s first-reply sweep. Default on; `RUN_SCHEDULERS` wins. |
 | `MAX_FIRST_REPLY_ATTEMPTS` | No | Offer-side attempts cap before a reply flips to `failed` (default 3). |
 | `FIRST_REPLY_COOLDOWN_INTERVAL` | No | Reply lease re-offer interval (default `'10 minutes'`). |
-| `FIRST_REPLY_CALL_DELAY_SECONDS` | No | Delay between the first-reply outcome and the promised lead call (default 60; 0 = immediate; sweep backstops restarts). |
+| `FIRST_REPLY_CALL_DELAY_SECONDS` | No | Delay between the first-reply outcome and the promised lead call (default 60; 0 = immediate; clamped 0-600; sweep backstops restarts without preempting the room). |
 | `FIRST_REPLY_NIGHT_JITTER_START_HOUR` / `_END_HOUR` | No | Chicago dead-hours window `[start, end)` where night replies get the 2-14 min jitter (defaults 2, 8; may wrap midnight); outside it night replies are immediate. |
 
 The frontend uses one build-time variable set in `client/.env.production`:
@@ -268,7 +268,7 @@ dr-bartender/
 │   │   ├── publicTip.js        # Public tip-page lookup + post-tip feedback (token-gated)
 │   │   ├── publicFeedback.js   # Post-event feedback router (5-star sentiment routing)
 │   │   ├── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
-│   │   ├── thumbtackAgent.js   # Thumbtack box-agent API (/api/admin/thumbtack): email-harvest queue (pending-harvest/email-harvested/harvest-failed/rearm) + auto first-reply queue (pending-first-replies/first-reply-sent/first-reply-failed). Driven by the box-only agent in thumbtack-agent/ (one loop, 25s reply tick, harvest piggyback every Nth tick)
+│   │   ├── thumbtackAgent.js   # Thumbtack box-agent API (/api/admin/thumbtack): email-harvest queue (pending-harvest/email-harvested/harvest-failed/rearm) + auto first-reply queue (pending-first-replies/first-reply-sent/first-reply-failed). Driven by the box-only agent in thumbtack-agent/ (one loop, 10s reply tick, wall-clock ~5-min harvest pass)
 │   │   ├── venues.js           # Google Places venue search proxy
 │   │   ├── voice.js            # Zul VA-calling Twilio Voice webhooks: POST /inbound (forward 224 → VA_CELL), /bridge (look up target by CallSid → Dial 224→target), /status (failed-leg → Telegram notice), /inbound/missed (<Dial> action: ping Zul + greeting/<Record>), /inbound/voicemail (recordingStatusCallback: upload mp3 to Telegram, then delete from Twilio), GET /greeting.mp3 (PUBLIC, unauthenticated: serves the bundled greeting mp3 that /inbound/missed <Play>s; overridable via VM_GREETING_URL). The two voicemail routes fail CLOSED on signature in every environment
 │   │   └── voiceLeadCall.js    # Lead call bridge Twilio webhooks (/api/voice/lead): /answer (Gather-wrapped spoken briefing), /digit (press-1 → Dial lead from the 224, press-9 replay), /status (claim-guarded chain advance). Signature FAIL-CLOSED in every env

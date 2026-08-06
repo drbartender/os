@@ -48,14 +48,26 @@ function __setDeps(overrides) {
 // env must not become a NaN bound that silently empties every query.
 function fallbackMinutes() { return parseInt(process.env.FIRST_REPLY_FALLBACK_MINUTES, 10) || 3; }
 function callMaxAgeMinutes() { return parseInt(process.env.FIRST_REPLY_CALL_MAX_AGE_MINUTES, 10) || 240; }
+// Mirror of the callback's FIRST_REPLY_CALL_DELAY_SECONDS (same parse, same
+// 600s clamp — keep in sync with routes/thumbtackAgent.js callDelayMs).
+function callDelaySeconds() {
+  const v = parseInt(process.env.FIRST_REPLY_CALL_DELAY_SECONDS, 10);
+  return Math.min(Number.isInteger(v) && v >= 0 ? v : 60, 600);
+}
 
 // Arm A. The NOT EXISTS is the double-fire guard against the agent's
-// first-reply-sent callback: a confirmed reply already opened (or skipped)
-// the chain, which plants the attempt row this predicate excludes. Status
-// covers 'pending' (unconfirmed reply) AND 'sent'/'failed' (fleet finding:
-// a crash between the callback's status flip and its triggerLeadCall, or a
-// fast definitive failure racing this sweep, leaves a flipped row with no
-// attempt row; the promised call must still fire).
+// first-reply callbacks. Since 2026-08-06 a callback SCHEDULES its call on a
+// FIRST_REPLY_CALL_DELAY_SECONDS timer instead of firing inline, so a
+// freshly-flipped sent/failed row with no attempt row is the NORMAL in-flight
+// state, not a crash strand: flipped rows are deferred here until their flip
+// stamp (first_reply_sent_at, else the lease stamp, else created_at) is older
+// than delay + 60s grace — otherwise this sweep would preempt the breathing
+// room and restore the too-fast ring on slow confirms (push-fleet finding).
+// 'pending' rows keep the plain fallback bound (an UNCONFIRMED reply's call
+// fires at the 3-minute mark by design). Status covers 'sent'/'failed' for
+// the original reason too: a crash (or restart-eaten timer) between the flip
+// and its triggerLeadCall still gets the promised call, now one grace window
+// later at worst.
 async function sweepCallFallback() {
   if (process.env.LEAD_CALL_ENABLED === 'false') return 0;
 
@@ -66,10 +78,13 @@ async function sweepCallFallback() {
        AND first_reply_template = 'day'
        AND created_at < NOW() - make_interval(mins => $1)
        AND created_at > NOW() - make_interval(mins => $2)
+       AND (first_reply_status = 'pending'
+            OR COALESCE(first_reply_sent_at, first_reply_attempted_at, created_at)
+               < NOW() - make_interval(secs => $3))
        AND NOT EXISTS (SELECT 1 FROM lead_call_attempts a WHERE a.lead_id = thumbtack_leads.id)
      ORDER BY created_at
      LIMIT 3`,
-    [fallbackMinutes(), callMaxAgeMinutes()]
+    [fallbackMinutes(), callMaxAgeMinutes(), callDelaySeconds() + 60]
   );
 
   for (const row of r.rows) {

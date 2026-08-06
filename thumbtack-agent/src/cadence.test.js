@@ -5,7 +5,7 @@ const { harvestTickEvery, isHarvestTick, rolloverDay, underCap } = require('./ca
 // The piggyback math is load-bearing: a drifted N silently changes the
 // harvest cadence and nothing downstream would notice.
 
-test('defaults: 5-minute harvest over 25s ticks = every 12th tick', () => {
+test('5-minute harvest over 25s ticks = every 12th tick (explicit args; the loop itself is wall-clock now)', () => {
   assert.equal(harvestTickEvery(5 * 60 * 1000, 25000), 12);
 });
 

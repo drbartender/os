@@ -41,8 +41,8 @@ and fixed via env. Transient trouble stays silent and the server lease
 re-offers (offer-side attempts cap bounds it at 3).
 
 Cadence: the loop ticks every `REPLY_POLL_INTERVAL_MS` (10s); the harvest poll
-piggybacks every Nth tick (`src/cadence.js`, unit-tested) so its ~5-minute pace
-is unchanged. Replies draw from their own `REPLY_DAILY_CAP`.
+fires on its own wall-clock pace (`POLL_INTERVAL_MS`, ~5 min) so a busy reply
+arm can never starve it. Replies draw from their own `REPLY_DAILY_CAP`.
 
 Kill switch lives server-side: `TT_AUTOREPLY_ENABLED` not `'true'` means the
 offer endpoint returns `[]` and this agent idles the reply side; no local flag.

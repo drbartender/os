@@ -658,11 +658,14 @@ async function pollReplies(ctx, counters, sentMemory) {
   if (status !== 200 || !Array.isArray(body)) { log(`pending-first-replies returned ${status}; skipping`); return; }
   if (body.length === 0) return; // quiet: this polls every 10s
   log(`${body.length} pending first repl${body.length === 1 ? 'y' : 'ies'}`);
-  for (const job of body) {
+  for (let i = 0; i < body.length; i += 1) {
+    const job = body[i];
     if (!underCap(counters.repliesToday, CFG.replyDailyCap)) { log(`reply daily cap ${CFG.replyDailyCap} reached; stopping batch`); break; }
     if (!job || !job.negotiation_id) continue;
     await replyOne(ctx, job, counters, sentMemory);
-    await sleep(jitter());
+    // Jitter paces BETWEEN Thumbtack page-opens; after the final job it would
+    // only delay the next poll (perf-fleet: a free 8-25s of reply latency).
+    if (i < body.length - 1) await sleep(jitter());
   }
 }
 

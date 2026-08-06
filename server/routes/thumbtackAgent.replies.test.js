@@ -30,6 +30,7 @@ const ORIG = {
   secret: process.env.THUMBTACK_AGENT_SECRET,
   autoreply: process.env.TT_AUTOREPLY_ENABLED,
   leadCall: process.env.LEAD_CALL_ENABLED,
+  callDelay: process.env.FIRST_REPLY_CALL_DELAY_SECONDS,
 };
 const RUN = `fr-${Date.now()}`;
 let server, baseUrl;
@@ -125,6 +126,7 @@ after(async () => {
     ['THUMBTACK_AGENT_SECRET', ORIG.secret],
     ['TT_AUTOREPLY_ENABLED', ORIG.autoreply],
     ['LEAD_CALL_ENABLED', ORIG.leadCall],
+    ['FIRST_REPLY_CALL_DELAY_SECONDS', ORIG.callDelay],
   ]) {
     if (v === undefined) delete process.env[k]; else process.env[k] = v;
   }
@@ -364,17 +366,39 @@ test('failed: rebuilt-flow reasons (2026-08-03) are accepted and flip the row', 
 test('sent callback delays the promised call by FIRST_REPLY_CALL_DELAY_SECONDS (2026-08-06)', async () => {
   const lead = await mkLead({ template: 'day', createdAgoMin: 2 });
   process.env.FIRST_REPLY_CALL_DELAY_SECONDS = '1';
+  // Pin the clock to noon so the 23:00 clamp-crossing guard cannot fire.
+  agentRouter.__setDeps({ chicagoMinutesNow: () => 12 * 60 });
   try {
     triggerCalls.length = 0;
     const r = await postSent(lead.neg, 'day');
     assert.equal(r.status, 200);
     assert.equal(triggerCalls.length, 0, 'the call must NOT fire inside the request');
-    await new Promise((res) => setTimeout(res, 1400));
+    // Poll-until instead of a fixed sleep: race-safe on a loaded box.
+    const deadline = Date.now() + 5000;
+    while (triggerCalls.length === 0 && Date.now() < deadline) {
+      await new Promise((res) => setTimeout(res, 50));
+    }
     assert.equal(triggerCalls.length, 1, 'the call fires after the configured delay');
     assert.deepEqual(triggerCalls[0].lead, { customerPhone: '+17735550123' });
     assert.equal(triggerCalls[0].skipWindowCheck, true);
   } finally {
     process.env.FIRST_REPLY_CALL_DELAY_SECONDS = '0';
+  }
+});
+
+test('a delay that would cross the 23:00 clamp fires immediately instead (codex P2)', async () => {
+  const lead = await mkLead({ template: 'day', createdAgoMin: 2 });
+  process.env.FIRST_REPLY_CALL_DELAY_SECONDS = '120';
+  agentRouter.__setDeps({ chicagoMinutesNow: () => 22 * 60 + 59 }); // 22:59 Chicago
+  try {
+    triggerCalls.length = 0;
+    const r = await postSent(lead.neg, 'day');
+    assert.equal(r.status, 200);
+    assert.equal(triggerCalls.length, 1, '22:59 + 120s crosses 23:00 -> the call must fire inline, never be clamped away');
+    assert.equal(triggerCalls[0].skipWindowCheck, true);
+  } finally {
+    process.env.FIRST_REPLY_CALL_DELAY_SECONDS = '0';
+    agentRouter.__setDeps({ chicagoMinutesNow: () => 12 * 60 });
   }
 });
 

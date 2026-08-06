@@ -22,6 +22,7 @@ let maxInFlight = 0; // > 1 would mean Arm A stopped awaiting sequentially
 const ENV_KEYS = [
   'LEAD_CALL_ENABLED', 'TT_AUTOREPLY_ENABLED',
   'FIRST_REPLY_FALLBACK_MINUTES', 'FIRST_REPLY_CALL_MAX_AGE_MINUTES',
+  'FIRST_REPLY_CALL_DELAY_SECONDS',
 ];
 const savedEnv = {};
 
@@ -120,6 +121,25 @@ after(async () => {
   // Attempts cascade with the leads.
   await pool.query('DELETE FROM thumbtack_leads WHERE negotiation_id LIKE $1', [`${RUN}-%`]);
   await pool.end();
+});
+
+test('Arm A defers a freshly-flipped row while its delayed-call timer is in flight (2026-08-06 breathing room)', async () => {
+  // A 'sent' day row past the 3-min fallback whose flip stamp is FRESH is the
+  // normal in-flight state of the FIRST_REPLY_CALL_DELAY_SECONDS timer, not a
+  // crash strand: the sweep must not preempt the breathing room.
+  const fresh = await makeLead('defer-fresh', { status: 'sent', ageMinutes: 10 });
+  await pool.query('UPDATE thumbtack_leads SET first_reply_sent_at = NOW() WHERE id = $1', [fresh]);
+
+  await runFirstReplySweep();
+  assert.ok(!oursTriggered().some((t) => t.leadId === fresh),
+    'a flip younger than delay + grace must be left to its timer');
+
+  // Once the flip stamp ages past delay (default 60) + 60s grace, the row is
+  // a genuine strand (restart-eaten timer) and the rescue fires.
+  await pool.query(`UPDATE thumbtack_leads SET first_reply_sent_at = NOW() - INTERVAL '3 minutes' WHERE id = $1`, [fresh]);
+  await runFirstReplySweep();
+  assert.ok(oursTriggered().some((t) => t.leadId === fresh),
+    'an aged flip with no attempt row is a strand and must be rescued');
 });
 
 test('Arm A fires day rows (pending AND flipped strands) past-threshold, young-enough, no-attempt; Arm B retires + stale-marks the aged-out one', async () => {

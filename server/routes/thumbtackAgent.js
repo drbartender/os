@@ -12,7 +12,17 @@ const { triggerLeadCall } = require('../utils/leadCallTrigger');
 
 // Test seam (thumbtack.js precedent): the replies suite stubs triggerLeadCall to
 // prove the sent-callback constructs the camelCase lead shape, without dialing.
-let _deps = { triggerLeadCall };
+// Chicago wall-clock minutes since midnight (DST-aware). Injectable so the
+// clamp-boundary test can pin the clock.
+function chicagoMinutesNow() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago', hourCycle: 'h23', hour: '2-digit', minute: '2-digit',
+  }).formatToParts(new Date());
+  const get = (t) => parseInt(parts.find((p) => p.type === t).value, 10);
+  return (get('hour') % 24) * 60 + get('minute');
+}
+
+let _deps = { triggerLeadCall, chicagoMinutesNow };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
 // Dedicated router for the Thumbtack box agent (email-harvest + auto first-reply
@@ -26,7 +36,7 @@ const router = express.Router();
 // Single-box poller plus the admin paste UI, not high-volume inbound. The agent runs
 // human-paced with jittered delays, so a real batch stays well under this; a burst
 // is a signal, not normal.
-// 40/min: headroom for the 25s reply poll + the harvest poll + callback drains.
+// 40/min: headroom for the 10s reply poll (~6/min) + the harvest poll + callback drains.
 const agentLimiter = rateLimit({ windowMs: 60 * 1000, max: 40, message: { error: 'Too many requests' } });
 router.use(agentLimiter);
 
@@ -498,7 +508,7 @@ const FIRST_REPLY_FAIL_REASONS = new Set([
 // Night-lead jitter is DEAD-HOURS-ONLY (2026-08-03, Dallas: "night leads
 // should still be fast until like 2am"): a night row created in the Chicago
 // [start, end) window below is withheld until created_at + (2 + id % 13)
-// minutes so 3am replies land minutes-spread instead of a constant 25s;
+// minutes so 3am replies land minutes-spread instead of on a constant beat;
 // night rows created any other time (evening leads, daytime downgrades)
 // offer immediately, same as day. The window may WRAP midnight (start > end,
 // e.g. 23 -> 6 = 11pm-6am); start == end means an empty window (jitter off).
@@ -517,8 +527,9 @@ const jitterHour = (envName, dflt) => {
 // bumps the attempts counter in the same statement. Offer-side rules:
 //   - night rows created in the Chicago dead-hours window (default 2am-8am,
 //     FIRST_REPLY_NIGHT_JITTER_START_HOUR/_END_HOUR) are withheld until
-//     created_at + (2 + id % 13) minutes; all other night rows and all day
-//     rows offer immediately (call ordering dominates);
+//     created_at + (2 + id % 13) minutes so dead-of-night replies land
+//     minutes-spread instead of on a constant beat; all other night rows and
+//     all day rows offer immediately (call ordering dominates);
 //   - a day row offered while LEAD_CALL_ENABLED='false' is downgraded to night
 //     IN the DB before offering (never promise a call we will not place);
 //   - rows at the attempts cap flip to 'failed', and the final SELECT filters
@@ -591,19 +602,47 @@ router.get('/pending-first-replies', agentSecretOnly, asyncHandler(async (req, r
 // fine: the 60s sweep's Arm A is the durable backstop (a restart-eaten timer
 // still gets its call at the FIRST_REPLY_FALLBACK_MINUTES mark), and the
 // lead_id-UNIQUE attempt open inside triggerLeadCall absorbs any double-fire.
-// 0 = immediate (pre-2026-08-06 behavior). Delays at or beyond the sweep
-// fallback are effectively capped by it.
+// 0 = immediate (pre-2026-08-06 behavior). Clamped to <= 600s: an operator
+// typo must never schedule an hours-late ring past the freshness bound
+// (push-fleet). Arm A defers flipped rows by delay+60s (see the sweep), so
+// the breathing room survives slow confirms instead of being preempted.
+const MAX_CALL_DELAY_SECONDS = 600;
 const callDelayMs = () => {
   const v = parseInt(process.env.FIRST_REPLY_CALL_DELAY_SECONDS, 10);
-  return (Number.isInteger(v) && v >= 0 ? v : 60) * 1000;
+  return Math.min(Number.isInteger(v) && v >= 0 ? v : 60, MAX_CALL_DELAY_SECONDS) * 1000;
 };
+const CLAMP_START_MINS = 23 * 60; // triggerLeadCall's promise clock clamp opens at 23:00 Chicago
 function fireOrScheduleLeadCall(args, label) {
-  const ms = callDelayMs();
+  let ms = callDelayMs();
+  if (ms > 0) {
+    // Codex push-review P2: a delay that crosses INTO the 23:00 clamp would
+    // convert a placeable 22:59 call into a permanent skipped_after_hours row
+    // (which then blocks the sweep too). Pre-delay behavior dialed it — keep
+    // that: fire immediately when the wait would cross the boundary.
+    const nowMins = _deps.chicagoMinutesNow();
+    if (nowMins < CLAMP_START_MINS && nowMins + Math.ceil(ms / 60000) >= CLAMP_START_MINS) {
+      console.log(`[first-reply] ${label} -> delay would cross the 23:00 clamp; firing now`);
+      ms = 0;
+    }
+  }
   if (ms === 0) return _deps.triggerLeadCall(args);
   // _deps is read at FIRE time (inside the timer), so test dep injection and
-  // future re-wiring stay honest. triggerLeadCall never throws by contract;
-  // the catch is belt-and-suspenders for a timer with no request context.
-  setTimeout(() => { Promise.resolve(_deps.triggerLeadCall(args)).catch(() => {}); }, ms);
+  // future re-wiring stay honest. triggerLeadCall never throws by contract,
+  // but this timer has no asyncHandler above it: a synchronous throw here
+  // would hit the process-level uncaughtException exit, so both throw shapes
+  // are caught and reported loudly (a swallowed one would be a silently
+  // lost promised call).
+  setTimeout(() => {
+    try {
+      Promise.resolve(_deps.triggerLeadCall(args)).catch((err) => {
+        console.error(`[first-reply] delayed call for lead ${args.leadId} failed:`, err.message);
+        if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(err, { tags: { component: 'first-reply-delayed-call' } });
+      });
+    } catch (err) {
+      console.error(`[first-reply] delayed call for lead ${args.leadId} threw:`, err.message);
+      if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(err, { tags: { component: 'first-reply-delayed-call' } });
+    }
+  }, ms);
   console.log(`[first-reply] ${label} -> promised call scheduled in ${Math.round(ms / 1000)}s`);
   return Promise.resolve();
 }
