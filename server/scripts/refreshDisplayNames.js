@@ -34,7 +34,25 @@ const CHECK_ONLY = process.argv.includes('--check');
 const STAMP_EXISTING = process.argv.includes('--stamp-existing');
 const I_MEAN_IT = process.argv.includes('--i-mean-it');
 
+// Name the database this run will touch, BEFORE touching it (same banner as
+// applySeniorityBackfill.js dbTarget). A silently-wrong DATABASE_URL is not
+// hypothetical: an env file with an unquoted '&' in the URL sourced clean,
+// exported nothing, and this script fell back to the repo .env — the dev
+// database — and only the stamp-refusal guard stopped the write (2026-08-06).
+// Host + database only, never the URL's credentials.
+function dbTarget() {
+  const url = process.env.DATABASE_URL;
+  if (!url) return '(DATABASE_URL not set)';
+  try {
+    const u = new URL(url);
+    return `${u.host}${u.pathname}`;
+  } catch {
+    return '(unparseable DATABASE_URL)';
+  }
+}
+
 async function main() {
+  console.log(`[refreshDisplayNames] ${CHECK_ONLY ? 'CHECK' : STAMP_EXISTING ? 'BACKFILL + STAMP-EXISTING' : 'BACKFILL'}  db=${dbTarget()}`);
   // --stamp-existing is a one-way door: it acks every pending name notice and
   // there is no record of which stamps it invented. A second accidental run
   // (wrong terminal, shell history, a re-deploy script) would silently swallow
