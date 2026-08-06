@@ -948,3 +948,19 @@ merged code 2026-08-04):
 - **v1 LogisticsStep parking preview mis-quotes**: `client/src/pages/plan/steps/LogisticsStep.js:41-42, 155-159` previews `$20 x num_bartenders` while the server bills per_staff over ALL staff (bartenders + additional-bartender + barback + banquet-server). Live-reachable: prod still carries v1 draft/pending plans (e.g. plan 69 / proposal 472: shown $40, billed $60). Was already ordered in spec 2026-07-01-paynow-extras-addon-pricing-design.md:92 and never shipped. One-line fix, outside the parking-rewire lane's footprint.
 - **Explicit-empty syrupSelections still strips contract syrups on submit**: `server/routes/drinkPlans/submit.js` — the 2026-08-06 guard treats an ABSENT syrupSelections key as "carry contract syrups forward", but an explicit `[]`/`{}` still enters the fold and strips. Pre-existing on main (unvalidated `rawAddonSlugs` already opens the fold); candidate fix: normalize in submitSanitize.js, or treat empty-on-a-no-syrup-UI planner version as "no opinion". (security, low)
 - **paid_separately submit dodges the parking fee**: deliberate 2026-08-06 hardening (half-billed state was worse); a pay-now v2 submit with paid parking attaches nothing, so the fee is admin-added later or missed. Revenue-miss direction only. (low)
+- **Out-of-area residuals (fleet-cleared 2026-08-06, merge a106defd)**: (1) `staff_within_40`
+  field name + "within 40 miles" copy in `RemoteStaffingFeePrompt.js:181` hard-couple
+  `REMOTE_STAFF_RADIUS_MILES` across three semantics (proximity radius, prompt floor, frozen
+  copy) — changing the constant silently breaks the others. (2) Legacy ungated geocoders at
+  `shifts.js:585/:672` + `shifts.handlers.js:121` write city-centroid lat/lng to `shifts.lat/lng`,
+  which now feed venue/home distance surfaces and the band suggestion (advisory only; admin
+  types the amount). (3) Approve/deny/assign lock stamp+release are separate autocommit
+  statements (millisecond window, admin-only, pre-notification). (4) 2+-approved same-value
+  knob Save is a dead-end: returns a success toast, cannot lock, and rewrites
+  `out_of_area_attached_by` for a no-op — tighten the disable to
+  `!(unlocked_warning && approved_count === 1)`. (5) A can_staff manager can
+  remove -> lower -> re-approve to defeat locked-never-reduce; audit trail records it; a
+  `min_locked_cents` floor surviving release is the structural fix if admins should be bound
+  too. (6) `geocodeThrottled` queue ordering untested. (7) Spec §9 knob surface on the
+  staffing-dashboard ShiftDrawer unbuilt for proposal-linked shifts (standalone shifts can
+  never pay a bonus — consistent by omission). (all low)
