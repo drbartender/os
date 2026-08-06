@@ -20,9 +20,9 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('serviceArea.test.js refuses to run against production');
 }
 
-test('HOME_BASE is the Pilsen storage area', () => {
-  assert.equal(HOME_BASE.lat, 41.8570);
-  assert.equal(HOME_BASE.lng, -87.6560);
+test('HOME_BASE is the DRB storage (1500 S Blue Island Ave)', () => {
+  assert.equal(HOME_BASE.lat, 41.8612);
+  assert.equal(HOME_BASE.lng, -87.6586);
 });
 
 test('cap matches the DB CHECK', () => {

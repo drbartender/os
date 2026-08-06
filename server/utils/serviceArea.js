@@ -24,8 +24,8 @@
 const Sentry = require('@sentry/node');
 const { geocodeAddress, delay } = require('./geocode');
 
-// Pilsen storage area, PROVISIONAL: Dallas confirms exact coordinates before push
-const HOME_BASE = { lat: 41.8570, lng: -87.6560 };
+// DRB storage: 1500 S Blue Island Ave, Chicago, IL 60608 (confirmed by Dallas 2026-08-06)
+const HOME_BASE = { lat: 41.8612, lng: -87.6586 };
 
 // Hard cap on a single Out-of-Area Bonus, in integer cents. Mirrors the DB
 // CHECK `shifts_out_of_area_bonus_cap_check` (0 < x <= 25000): the bands top
