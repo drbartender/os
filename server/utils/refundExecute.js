@@ -154,6 +154,22 @@ async function refundExecute({
     );
   }
 
+  // 5. Duty-pay reversal hook (spec 2026-08-06 §3.2): a refund that drops
+  //    amount_paid below total_price un-funds the duty gate on a completed
+  //    event. Accrual is the reconciler (no-ops unless completed; frozen lines
+  //    become alert-only skips). Best-effort, off the caller's path, own
+  //    connection (the reconcile client was released above).
+  if (recon && recon.applied !== false) {
+    setImmediate(() => {
+      require('./payrollAccrual').maybeReaccrueForDuty(Number(proposalId))
+        .catch((e) => {
+          if (process.env.SENTRY_DSN_SERVER) {
+            Sentry.captureException(e, { tags: { util: 'refundExecute', step: 'duty_reaccrual' } });
+          }
+        });
+    });
+  }
+
   return { refund, recon, refundRowId: pendingRowId };
 }
 

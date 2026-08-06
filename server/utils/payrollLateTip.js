@@ -12,7 +12,7 @@
  */
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
-const { findOpenPeriodForDate } = require('./payrollProcessing');
+const { findOpenPeriodForDate, recomputePayoutTotals } = require('./payrollProcessing');
 const { payPeriodForDate, computePayday } = require('./payrollPeriods');
 const { splitEvenly } = require('./payrollMath');
 const { chicagoTodayYmd } = require('./businessTime');
@@ -195,14 +195,9 @@ async function rollForwardLateTip(tipId) {
       );
     }
 
-    // Recompute every touched payout's total.
-    await client.query(
-      `UPDATE payouts po SET total_cents = GREATEST(0, COALESCE((
-         SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
-       ), 0))
-       WHERE po.id = ANY($1)`,
-      [touched]
-    );
+    // Recompute every touched payout's total via the single writer
+    // (payrollProcessing owns the formula, which includes payable duty lines).
+    await recomputePayoutTotals(client, touched);
 
     // Mark idempotent.
     await client.query(

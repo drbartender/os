@@ -266,6 +266,9 @@ export default function HomePage() {
                     {currentPeriod.event_count !== 1 ? 's' : ''}
                   </>
                 )}
+                {Number(currentPeriod.duty_line_count) > 0 && (
+                  <>{' · includes duty pay'}</>
+                )}
               </div>
             </div>
             <div className="sp-earnings-r">

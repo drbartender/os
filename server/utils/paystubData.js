@@ -54,7 +54,7 @@ async function assemblePaystubData(contractorId, periodId) {
   //   detail) and the two YTD aggregates (net + category breakdown). All three
   //   depend only on the head row, not on each other, so fan them out in one
   //   Promise.all instead of three serial Neon round-trips.
-  const [ev, ytdNet, ytdCat] = await Promise.all([
+  const [ev, ytdNet, ytdCat, duty, ytdDuty] = await Promise.all([
     pool.query(
       `SELECT pe.shift_id, pe.hours, pe.wage_cents, pe.gratuity_share_cents,
               pe.card_tip_net_cents, pe.adjustment_cents, pe.adjustment_note,
@@ -96,7 +96,30 @@ async function assemblePaystubData(contractorId, periodId) {
         WHERE ${YTD_WHERE}`,
       [contractorId, h.payday]
     ),
+    // This period's duty lines, itemized (spec 2026-08-06 §3.7). Only PAYABLE
+    // lines (not removed, not held-unconfirmed) — same scope as the payout
+    // total, so the stub keeps footing.
+    pool.query(
+      `SELECT d.kind, d.amount_cents, d.shift_id, d.note
+         FROM payout_duty_lines d
+        WHERE d.payout_id = $1 AND d.removed_at IS NULL
+          AND (d.held_state IS NULL OR d.held_state = 'confirmed')
+        ORDER BY d.id ASC`,
+      [h.payout_id]
+    ),
+    // YTD duty category, payable lines over the same paid-payout window.
+    pool.query(
+      `SELECT COALESCE(SUM(d.amount_cents), 0) AS duty
+         FROM payout_duty_lines d
+         JOIN payouts po ON po.id = d.payout_id
+         JOIN pay_periods pp ON pp.id = po.pay_period_id
+        WHERE ${YTD_WHERE}
+          AND d.removed_at IS NULL
+          AND (d.held_state IS NULL OR d.held_state = 'confirmed')`,
+      [contractorId, h.payday]
+    ),
   ]);
+  const { DUTY_KIND_LABELS } = require('./dutyLines');
   const sum = (k) => ev.rows.reduce((a, r) => a + Number(r[k] || 0), 0);
   const thisPeriod = {
     wages_cents: sum('wage_cents'),
@@ -109,6 +132,7 @@ async function assemblePaystubData(contractorId, periodId) {
       (a, r) => a + ((r.held_state === 'held' && Number(r.adjustment_cents || 0) > 0)
         ? 0 : Number(r.adjustment_cents || 0)), 0
     ),
+    duty_cents: duty.rows.reduce((a, r) => a + Number(r.amount_cents || 0), 0),
     net_cents: Number(h.total_cents), // canonical payout total, not a re-sum
   };
 
@@ -134,12 +158,20 @@ async function assemblePaystubData(contractorId, periodId) {
       adjustment_note: r.adjustment_note,
       line_total_cents: r.line_total_cents,
     })),
+    duty_lines: duty.rows.map((r) => ({
+      kind: r.kind,
+      label: DUTY_KIND_LABELS[r.kind] || r.kind,
+      amount_cents: Number(r.amount_cents),
+      shift_id: r.shift_id,
+      note: r.note || null,
+    })),
     thisPeriod,
     ytd: {
       wages_cents: Number(ytdCat.rows[0].wages),
       gratuity_cents: Number(ytdCat.rows[0].gratuity),
       card_tips_net_cents: Number(ytdCat.rows[0].card_tips),
       adjustments_cents: Number(ytdCat.rows[0].adjustments),
+      duty_cents: Number(ytdDuty.rows[0].duty),
       net_cents: Number(ytdNet.rows[0].net),
     },
   };

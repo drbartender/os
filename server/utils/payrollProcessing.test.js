@@ -3,7 +3,8 @@ const { test, before, beforeEach, afterEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const {
-  findOpenPeriodForDate, recomputePayoutTotal, maybeFinalizePeriod,
+  findOpenPeriodForDate, recomputePayoutTotal, recomputePayoutTotals,
+  maybeFinalizePeriod,
 } = require('./payrollProcessing');
 
 if (process.env.NODE_ENV === 'production') {
@@ -100,6 +101,75 @@ test('recomputePayoutTotal > floors at 0 when line items sum negative', async ()
     const total = await recomputePayoutTotal(pool, payoutId);
     assert.equal(total, 0);
   } finally {
+    await pool.query('DELETE FROM payout_events WHERE shift_id = $1', [shiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+  }
+});
+
+test('recomputePayoutTotal > includes payable duty lines; removed and held excluded', async () => {
+  const s = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status)
+     VALUES ('2026-05-29','6:00 PM','open') RETURNING id`
+  );
+  const shiftId = s.rows[0].id;
+  try {
+    await pool.query(
+      `INSERT INTO payout_events
+         (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents, line_total_cents)
+       VALUES ($1, $2, 2, 2, 2500, 5000, 5000)`,
+      [payoutId, shiftId]
+    );
+    await pool.query(
+      `INSERT INTO payout_duty_lines (payout_id, contractor_id, shift_id, kind, amount_cents, origin)
+       VALUES ($1, $2, $3, 'bar_rental', 2000, 'auto')`,
+      [payoutId, userId, shiftId]
+    );
+    await pool.query(
+      `INSERT INTO payout_duty_lines (payout_id, contractor_id, kind, amount_cents, origin, removed_at)
+       VALUES ($1, $2, 'review_bounty', 999, 'auto', NOW())`,
+      [payoutId, userId]
+    );
+    await pool.query(
+      `INSERT INTO payout_duty_lines (payout_id, contractor_id, kind, amount_cents, origin, held_state)
+       VALUES ($1, $2, 'review_bounty', 500, 'admin', 'held')`,
+      [payoutId, userId]
+    );
+    const total = await recomputePayoutTotal(pool, payoutId);
+    assert.equal(total, 7000, 'events 5000 + payable duty 2000; removed/held ignored');
+    // Bulk variant agrees with the single-payout writer.
+    const bulk = await recomputePayoutTotals(pool, [payoutId]);
+    assert.equal(Number(bulk[0].total_cents), 7000);
+  } finally {
+    await pool.query('DELETE FROM payout_duty_lines WHERE payout_id = $1', [payoutId]);
+    await pool.query('DELETE FROM payout_events WHERE shift_id = $1', [shiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+  }
+});
+
+test('recomputePayoutTotal > clamp wraps the WHOLE sum: debt nets against duty pay', async () => {
+  const s = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status)
+     VALUES ('2026-05-29','6:00 PM','open') RETURNING id`
+  );
+  const shiftId = s.rows[0].id;
+  try {
+    // Clawback-style debt stub: events sum -5000.
+    await pool.query(
+      `INSERT INTO payout_events
+         (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
+          adjustment_cents, line_total_cents)
+       VALUES ($1, $2, 0, 0, 0, 0, -5000, -5000)`,
+      [payoutId, shiftId]
+    );
+    await pool.query(
+      `INSERT INTO payout_duty_lines (payout_id, contractor_id, shift_id, kind, amount_cents, origin)
+       VALUES ($1, $2, $3, 'parking', 2000, 'auto')`,
+      [payoutId, userId, shiftId]
+    );
+    const total = await recomputePayoutTotal(pool, payoutId);
+    assert.equal(total, 0, 'GREATEST(0, -5000 + 2000) = 0, never GREATEST(0,-5000) + 2000 = 2000');
+  } finally {
+    await pool.query('DELETE FROM payout_duty_lines WHERE payout_id = $1', [payoutId]);
     await pool.query('DELETE FROM payout_events WHERE shift_id = $1', [shiftId]);
     await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
   }

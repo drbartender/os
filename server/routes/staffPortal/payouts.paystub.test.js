@@ -404,6 +404,37 @@ test('assemblePaystubData > thisPeriod.net mirrors total_cents; YTD sums both pa
   assert.equal(data.ytd.wages_cents, APRIL_WAGE + MAY_WAGE);
 });
 
+// ─── Assertion 1b: duty lines flow into assemble (spec 2026-08-06 §3.7) ────
+test('assemblePaystubData > payable duty lines itemize; removed/held excluded from the category', async () => {
+  const po = await pool.query(
+    'SELECT id FROM payouts WHERE contractor_id = $1 AND pay_period_id = $2',
+    [contractorAId, mayPeriodId]
+  );
+  const payoutId = po.rows[0].id;
+  const ins = await pool.query(
+    `INSERT INTO payout_duty_lines (payout_id, contractor_id, kind, amount_cents, origin)
+     VALUES ($1, $2, 'review_bounty', 1000, 'auto')
+     RETURNING id`,
+    [payoutId, contractorAId]
+  );
+  const removedIns = await pool.query(
+    `INSERT INTO payout_duty_lines (payout_id, contractor_id, kind, amount_cents, origin, removed_at)
+     VALUES ($1, $2, 'review_bounty', 700, 'auto', NOW())
+     RETURNING id`,
+    [payoutId, contractorAId]
+  );
+  try {
+    const data = await assemblePaystubData(contractorAId, mayPeriodId);
+    assert.equal(data.thisPeriod.duty_cents, 1000, 'payable only; removed excluded');
+    assert.equal(data.duty_lines.length, 1);
+    assert.equal(data.duty_lines[0].label, 'Review bounty');
+    assert.equal(data.duty_lines[0].shift_id, null, 'NULL-shift review line projects fine');
+    assert.equal(data.ytd.duty_cents, 1000, 'YTD duty category counts the paid-period line');
+  } finally {
+    await pool.query('DELETE FROM payout_duty_lines WHERE id IN ($1, $2)', [ins.rows[0].id, removedIns.rows[0].id]);
+  }
+});
+
 // ─── Assertion 2: lazy generate + persist key ──────────────────────────────
 test('GET /api/me/payouts/:mayPeriodId/paystub > generates + persists key on first call', async () => {
   // Reset mock call counters so we can assert "exactly 1 upload".

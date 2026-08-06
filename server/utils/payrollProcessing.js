@@ -23,22 +23,47 @@ async function findOpenPeriodForDate(executor, ymd) {
 }
 
 /**
- * Sum a payout's line items and write the result to payouts.total_cents.
- * Returns the new total. Floors at 0 as a defensive belt — line_total_cents
- * already floors at the write path, so this only matters if a future bug
- * lets a negative line through.
+ * THE single writer of payouts.total_cents (spec 2026-08-06 §3.3). Sums the
+ * payout's event lines PLUS its payable duty lines and clamps the WHOLE sum at
+ * 0, so H1 clawback debt nets against duty pay before the floor (events -$50,
+ * duty +$20 pays $0, not $20). "Payable" duty = removed_at IS NULL AND
+ * (held_state IS NULL OR held_state = 'confirmed'). Every recompute site in
+ * payroll routes through here (or the bulk variant below); any other
+ * `UPDATE payouts SET total_cents` in the codebase is a defect.
  */
+const PAYOUT_TOTAL_SQL = `
+  GREATEST(0,
+    COALESCE((SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id), 0)
+    + COALESCE((SELECT SUM(amount_cents) FROM payout_duty_lines
+                 WHERE payout_id = po.id AND removed_at IS NULL
+                   AND (held_state IS NULL OR held_state = 'confirmed')), 0)
+  )`;
+
 async function recomputePayoutTotal(executor, payoutId) {
   const { rows } = await executor.query(
-    `UPDATE payouts po
-        SET total_cents = GREATEST(0, COALESCE((
-              SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
-            ), 0))
+    `UPDATE payouts po SET total_cents = ${PAYOUT_TOTAL_SQL}
       WHERE po.id = $1
       RETURNING total_cents`,
     [payoutId]
   );
   return rows[0] ? Number(rows[0].total_cents) : 0;
+}
+
+/**
+ * Bulk variant for the sweep/clawback/late-tip callers that recompute many
+ * payouts in one statement. Same formula, one round trip. Returns rows of
+ * { id, total_cents } for callers that need the results (clawback's
+ * residual alarm reads a raw sum separately).
+ */
+async function recomputePayoutTotals(executor, payoutIds) {
+  if (!payoutIds || !payoutIds.length) return [];
+  const { rows } = await executor.query(
+    `UPDATE payouts po SET total_cents = ${PAYOUT_TOTAL_SQL}
+      WHERE po.id = ANY($1)
+      RETURNING po.id, total_cents`,
+    [payoutIds]
+  );
+  return rows;
 }
 
 /**
@@ -61,4 +86,7 @@ async function maybeFinalizePeriod(executor, periodId) {
   return rowCount > 0;
 }
 
-module.exports = { findOpenPeriodForDate, recomputePayoutTotal, maybeFinalizePeriod };
+module.exports = {
+  findOpenPeriodForDate, recomputePayoutTotal, recomputePayoutTotals,
+  maybeFinalizePeriod,
+};

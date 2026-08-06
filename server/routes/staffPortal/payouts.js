@@ -176,6 +176,29 @@ function register(router) {
       [p.payout_id]
     );
 
+    // Duty lines (spec 2026-08-06 §3.7), separate query: the events query
+    // INNER JOINs shifts and cannot project a NULL-shift review line. Pinned to
+    // the payout row we already IDOR-scoped above (po.contractor_id =
+    // req.user.id resolved p.payout_id). Payable lines only, same scope as the
+    // payout total, so the summary keeps footing.
+    const { DUTY_KIND_LABELS } = require('../../utils/dutyLines');
+    const dutyRes = await pool.query(
+      `SELECT d.kind, d.amount_cents, d.shift_id, d.note
+         FROM payout_duty_lines d
+        WHERE d.payout_id = $1 AND d.removed_at IS NULL
+          AND (d.held_state IS NULL OR d.held_state = 'confirmed')
+        ORDER BY d.id ASC`,
+      [p.payout_id]
+    );
+    const dutyLines = dutyRes.rows.map((r) => ({
+      kind: r.kind,
+      label: DUTY_KIND_LABELS[r.kind] || r.kind,
+      amount_cents: Number(r.amount_cents),
+      shift_id: r.shift_id,
+      note: r.note || null,
+    }));
+    const dutyTotal = dutyLines.reduce((a, d) => a + d.amount_cents, 0);
+
     // Sum in JS off the same rows we're already returning. Money is integer
     // cents — Number() each column before summing (pg returns INTEGERs as JS
     // numbers, but we coerce defensively in case a NUMERIC sneaks in).
@@ -234,6 +257,7 @@ function register(router) {
         paystub_storage_key: p.paystub_storage_key,
       },
       events,
+      duty_lines: dutyLines,
       // total_cents comes from the payout row (canonical) — NOT a JS sum of
       // events. The two can drift mid-period before recompute, and the
       // payout-row total is the one we hand to the bank/check-cutter.
@@ -243,6 +267,7 @@ function register(router) {
         card_tips_gross_cents: cardGross,
         card_processing_fee_cents: cardFee,
         adjustments_cents: adjustments,
+        duty_cents: dutyTotal,
         total_cents: p.total_cents,
       },
     });

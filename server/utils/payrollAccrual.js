@@ -12,6 +12,11 @@ const {
 } = require('./payrollMath');
 const { captureProposalPaymentFees, captureTipFeesForProposal } = require('./payrollTips');
 const { isLegacyCcParticipant } = require('./payrollGuards');
+const { recomputePayoutTotals } = require('./payrollProcessing');
+const {
+  loadProposalDutyContext, neededAttributedKinds, eligibleWorkers,
+  computeDesiredDutyLines, reconcileDutyLines, reportFrozenSkips,
+} = require('./dutyLines');
 const { isBartender } = require('./staffingRoles');
 const { readSnapshot } = require('./pricingSnapshot');
 
@@ -250,20 +255,17 @@ async function accruePayoutsForProposal(proposalId) {
           ...heldPayoutIds,
         ])];
         // A held line keeps its payout non-empty; only a payout emptied of every
-        // line is a phantom pending stub to delete.
+        // line is a phantom pending stub to delete. Duty lines count too — ANY
+        // duty row (even removed: they are kept audit/no-resurrect memory, and
+        // the payout CASCADE would destroy them) spares the payout.
         await client.query(
           `DELETE FROM payouts po
             WHERE po.id = ANY($1) AND po.status = 'pending'
-              AND NOT EXISTS (SELECT 1 FROM payout_events WHERE payout_id = po.id)`,
+              AND NOT EXISTS (SELECT 1 FROM payout_events WHERE payout_id = po.id)
+              AND NOT EXISTS (SELECT 1 FROM payout_duty_lines WHERE payout_id = po.id)`,
           [affectedPayoutIds]
         );
-        await client.query(
-          `UPDATE payouts po SET total_cents = GREATEST(0, COALESCE((
-             SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
-           ), 0))
-           WHERE po.id = ANY($1)`,
-          [affectedPayoutIds]
-        );
+        await recomputePayoutTotals(client, affectedPayoutIds);
         Sentry.captureMessage('payrollAccrual: roster emptied; swept remaining payable lines', {
           level: 'warning',
           tags: { component: 'payrollAccrual', reason: 'empty_roster_sweep' },
@@ -272,6 +274,20 @@ async function accruePayoutsForProposal(proposalId) {
             deleted: swept.rows, held_payout_ids: heldPayoutIds,
           },
         });
+      }
+      // Duty-line analog of the inline sweep (spec §3.5 / seam-sweep M5): the
+      // last worker dropping must not leave payable duty lines behind. An empty
+      // desired set system-removes auto lines and holds admin-owned ones.
+      const emptyCtx = await loadProposalDutyContext(client, proposalId);
+      if (emptyCtx && emptyCtx.shiftIds.length) {
+        const dutyRes = await reconcileDutyLines(client, {
+          proposalId, desired: [], shiftIds: emptyCtx.shiftIds, periodOpen: true,
+          rosterContractorIds: [],
+        });
+        if (dutyRes.affectedPayoutIds.length) {
+          await recomputePayoutTotals(client, dutyRes.affectedPayoutIds);
+        }
+        reportFrozenSkips(proposalId, dutyRes.frozenSkips);
       }
       await client.query('COMMIT');
       return {
@@ -405,6 +421,7 @@ async function accruePayoutsForProposal(proposalId) {
     );
 
     const touchedPayoutIds = new Set();
+    const payoutIdByContractor = new Map();
 
     for (const w of workers.rows) {
       const prior = existing.get(`${w.user_id}:${w.shift_id}`);
@@ -450,6 +467,7 @@ async function accruePayoutsForProposal(proposalId) {
       );
       const payoutId = payoutRes.rows[0].id;
       touchedPayoutIds.add(payoutId);
+      payoutIdByContractor.set(Number(w.user_id), payoutId);
       payoutsCreatedCount += 1;
 
       // Upsert the payout_event line. Every column is set from EXCLUDED, so the
@@ -482,6 +500,40 @@ async function accruePayoutsForProposal(proposalId) {
          late, share.gratuity, share.tipGross, share.tipFee,
          tipNet, adjustment, adjustmentNote, lineTotal]
       );
+    }
+
+    // ---- Duty-pay derivation (spec 2026-08-06 §3.2) -----------------------
+    // One shared context/trigger code path (dutyLines.js) for accrual, the
+    // attribution PUT, and the Process gate. Auto-attribute kinds with exactly
+    // one eligible worker, compute the desired auto lines, reconcile both
+    // directions. Frozen skips are alert-only (never clawback after freeze).
+    {
+      const dutyCtx = await loadProposalDutyContext(client, proposalId);
+      if (dutyCtx) {
+        for (const kind of neededAttributedKinds(dutyCtx)) {
+          if (dutyCtx.attributions.some(a => a.kind === kind)) continue;
+          const eligible = eligibleWorkers(kind, dutyCtx.workers);
+          if (eligible.length === 1) {
+            const ins = await client.query(
+              `INSERT INTO duty_attributions (proposal_id, kind, user_id)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (proposal_id, kind) DO NOTHING
+               RETURNING kind, user_id`,
+              [proposalId, kind, eligible[0].user_id]
+            );
+            if (ins.rowCount) dutyCtx.attributions.push(ins.rows[0]);
+          }
+        }
+        const desired = computeDesiredDutyLines(dutyCtx)
+          .map(d => ({ ...d, payout_id: payoutIdByContractor.get(Number(d.contractor_id)) }))
+          .filter(d => d.payout_id);
+        const dutyRes = await reconcileDutyLines(client, {
+          proposalId, desired, shiftIds: dutyCtx.shiftIds, periodOpen: true,
+          rosterContractorIds: dutyCtx.workers.map(w => Number(w.user_id)),
+        });
+        for (const pid of dutyRes.affectedPayoutIds) touchedPayoutIds.add(pid);
+        reportFrozenSkips(proposalId, dutyRes.frozenSkips);
+      }
     }
 
     // Roster corrections: remove orphaned payout lines. A worker approved at a
@@ -615,6 +667,7 @@ async function accruePayoutsForProposal(proposalId) {
         `DELETE FROM payouts po
            WHERE po.id = ANY($1) AND po.status = 'pending'
              AND NOT EXISTS (SELECT 1 FROM payout_events WHERE payout_id = po.id)
+             AND NOT EXISTS (SELECT 1 FROM payout_duty_lines WHERE payout_id = po.id)
            RETURNING id`,
         [orphanPayoutIds]
       );
@@ -624,17 +677,12 @@ async function accruePayoutsForProposal(proposalId) {
       }
     }
 
-    // Recompute every touched payout's total from its line items. GREATEST(0,)
-    // matches every sibling recompute (clawback, lateTip, recomputePayoutTotal):
-    // H1 allows negative clawback lines, and a payable total must never go
-    // negative even when a debt line exceeds the period's fresh earnings.
-    await client.query(
-      `UPDATE payouts po SET total_cents = GREATEST(0, COALESCE((
-         SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
-       ), 0))
-       WHERE po.id = ANY($1)`,
-      [Array.from(touchedPayoutIds)]
-    );
+    // Recompute every touched payout's total via the single writer
+    // (payrollProcessing.recomputePayoutTotals): events sum plus payable duty
+    // lines, whole sum clamped at 0. H1 allows negative clawback lines, and a
+    // payable total must never go negative even when a debt line exceeds the
+    // period's fresh earnings.
+    await recomputePayoutTotals(client, Array.from(touchedPayoutIds));
 
     await client.query('COMMIT');
     // Best-effort, off the response path: a successful accrual proves an open period
@@ -654,4 +702,22 @@ async function accruePayoutsForProposal(proposalId) {
   }
 }
 
-module.exports = { accruePayoutsForProposal, ensurePayPeriod };
+/**
+ * Reversal-hook entry (spec 2026-08-06 §3.2): re-accrue duty lines for a
+ * COMPLETED proposal only when its event is recent enough to plausibly sit in
+ * an open period. Guards the refund/cancel/menu-print hooks from minting
+ * stray historical open periods via ensurePayPeriod and from spamming
+ * pay_period_not_open warnings on years-old refunds (review W9).
+ */
+async function maybeReaccrueForDuty(proposalId) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM proposals
+      WHERE id = $1 AND status = 'completed'
+        AND event_date >= (CURRENT_DATE - INTERVAL '21 days')`,
+    [proposalId]
+  );
+  if (!rows.length) return { skipped: true, reason: 'not_recent_completed' };
+  return accruePayoutsForProposal(proposalId);
+}
+
+module.exports = { accruePayoutsForProposal, ensurePayPeriod, maybeReaccrueForDuty };

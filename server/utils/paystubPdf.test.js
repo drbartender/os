@@ -31,8 +31,12 @@ const FIXTURE = {
     { event_date: '2026-05-17', client_name: 'Smith Family', event_type: 'wedding-reception', event_type_custom: null, hours: 6, wage_cents: 24000, gratuity_share_cents: 5000, card_tip_net_cents: 3240, adjustment_cents: 0, adjustment_note: null, line_total_cents: 32240 },
     { event_date: '2026-05-24', client_name: 'Acme Co', event_type: 'corporate-event', event_type_custom: null, hours: 5, wage_cents: 20000, gratuity_share_cents: 1500, card_tip_net_cents: 0, adjustment_cents: 1000, adjustment_note: 'mileage', line_total_cents: 22500 },
   ],
-  thisPeriod: { wages_cents: 44000, gratuity_cents: 6500, card_tips_net_cents: 3240, adjustments_cents: 1000, net_cents: 54740 },
-  ytd: { wages_cents: 312000, gratuity_cents: 48000, card_tips_net_cents: 21060, adjustments_cents: 1000, net_cents: 382060 },
+  duty_lines: [
+    { kind: 'bar_rental', label: 'Bar rental', amount_cents: 2000, shift_id: 1, note: null },
+    { kind: 'review_bounty', label: 'Review bounty', amount_cents: 1000, shift_id: null, note: null },
+  ],
+  thisPeriod: { wages_cents: 44000, gratuity_cents: 6500, card_tips_net_cents: 3240, adjustments_cents: 1000, duty_cents: 3000, net_cents: 57740 },
+  ytd: { wages_cents: 312000, gratuity_cents: 48000, card_tips_net_cents: 21060, adjustments_cents: 1000, duty_cents: 3000, net_cents: 385060 },
 };
 
 test('renderPaystubPdf: returns a PDF buffer', async () => {
@@ -40,6 +44,28 @@ test('renderPaystubPdf: returns a PDF buffer', async () => {
   assert.ok(Buffer.isBuffer(buf));
   assert.equal(buf.subarray(0, 5).toString('latin1'), '%PDF-');
   assert.ok(buf.length > 500);
+});
+
+test('renderPaystubPdf: duty lines absent renders fine (pre-duty data shape)', async () => {
+  const { duty_lines, ...rest } = FIXTURE;
+  const buf = await renderPaystubPdf({
+    ...rest,
+    thisPeriod: { ...FIXTURE.thisPeriod, duty_cents: undefined },
+    ytd: { ...FIXTURE.ytd, duty_cents: undefined },
+  });
+  assert.ok(Buffer.isBuffer(buf));
+  assert.equal(buf.subarray(0, 5).toString('latin1'), '%PDF-');
+});
+
+test('renderPaystubPdf: heavy row count with duty lines still renders (page-break guard)', async () => {
+  const manyEvents = Array.from({ length: 45 }, (_, i) => ({
+    ...FIXTURE.events[0], event_date: `2026-05-${String((i % 28) + 1).padStart(2, '0')}`,
+  }));
+  const manyDuty = Array.from({ length: 10 }, () => FIXTURE.duty_lines[0]);
+  const buf = await renderPaystubPdf({ ...FIXTURE, events: manyEvents, duty_lines: manyDuty });
+  assert.ok(Buffer.isBuffer(buf));
+  assert.equal(buf.subarray(0, 5).toString('latin1'), '%PDF-');
+  assert.ok(buf.length > 2000, 'multi-page output');
 });
 
 test('renderPaystubPdf: tolerates empty events + missing paid handle', async () => {

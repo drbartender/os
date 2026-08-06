@@ -128,7 +128,12 @@ router.get('/staff-home', asyncHandler(async (req, res) => {
              po.id AS payout_id, COALESCE(po.total_cents, 0) AS total_cents,
              COALESCE((
                SELECT COUNT(*)::int FROM payout_events pe WHERE pe.payout_id = po.id
-             ), 0) AS event_count
+             ), 0) AS event_count,
+             COALESCE((
+               SELECT COUNT(*)::int FROM payout_duty_lines d
+                WHERE d.payout_id = po.id AND d.removed_at IS NULL
+                  AND (d.held_state IS NULL OR d.held_state = 'confirmed')
+             ), 0) AS duty_line_count
         FROM pay_periods pp
         LEFT JOIN payouts po ON po.pay_period_id = pp.id AND po.contractor_id = $1
        WHERE CURRENT_DATE BETWEEN pp.start_date AND pp.end_date

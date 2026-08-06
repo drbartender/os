@@ -178,7 +178,12 @@ const IDEMPOTENT_PG_CODES = new Set([
 // index that fails to build on pre-existing duplicate data raises 23505, which the
 // IDEMPOTENT_PG_CODES swallow above treats as "already applied" — so a
 // silently-absent guard would boot clean with no alert (F7 review follow-up).
-const CRITICAL_INDEXES = ['uq_invoice_payments_positive_link'];
+const CRITICAL_INDEXES = [
+  'uq_invoice_payments_positive_link',
+  'idx_duty_lines_event_kinds',
+  'idx_duty_lines_bounty',
+  'idx_duty_lines_contest',
+];
 
 // Returns the names of CRITICAL_INDEXES absent from the DB. Exported for unit
 // testing; called by initDb after the schema apply.

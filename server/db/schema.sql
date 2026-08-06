@@ -4341,3 +4341,112 @@ DO $$ BEGIN
       CHECK (amount_cents >= 0 AND gratuity_cents >= 0);
   END IF;
 END $$;
+
+-- ============================================================
+-- Contractor duty pay (spec 2026-08-06-contractor-duty-pay-design.md §3, §7)
+-- staff_reviews is created BEFORE payout_duty_lines so the FK is real.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS staff_reviews (
+  id SERIAL PRIMARY KEY,
+  review_date DATE NOT NULL,
+  stars INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 5),
+  source TEXT NOT NULL CHECK (source IN ('google','thumbtack')),
+  tt_review_id VARCHAR(100) UNIQUE,
+  excerpt TEXT,
+  proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','confirmed','dismissed')),
+  created_by INTEGER REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS staff_review_credits (
+  id SERIAL PRIMARY KEY,
+  staff_review_id INTEGER NOT NULL REFERENCES staff_reviews(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  UNIQUE(staff_review_id, user_id)
+);
+
+-- Typed duty-pay lines. One row per (payout, shift, kind) for event-derived
+-- kinds; review kinds may repeat per payout and may carry no shift. Removed
+-- rows are KEPT (never deleted) so derivation cannot resurrect them.
+-- payouts.total_cents includes payable lines only:
+--   removed_at IS NULL AND (held_state IS NULL OR held_state = 'confirmed')
+CREATE TABLE IF NOT EXISTS payout_duty_lines (
+  id SERIAL PRIMARY KEY,
+  payout_id INTEGER NOT NULL REFERENCES payouts(id) ON DELETE CASCADE,
+  contractor_id INTEGER NOT NULL REFERENCES users(id),
+  shift_id INTEGER REFERENCES shifts(id) ON DELETE RESTRICT,
+  kind TEXT NOT NULL CHECK (kind IN ('bar_rental','parking','equipment_supplies','hosted_supplies','menu_print','out_of_area','review_bounty','review_contest')),
+  amount_cents INTEGER NOT NULL,
+  origin TEXT NOT NULL DEFAULT 'auto' CHECK (origin IN ('auto','admin')),
+  admin_owned BOOLEAN NOT NULL DEFAULT FALSE,
+  held_state TEXT CHECK (held_state IN ('held','confirmed')),
+  removed_at TIMESTAMPTZ,
+  removed_by INTEGER REFERENCES users(id),
+  note TEXT,
+  staff_review_id INTEGER REFERENCES staff_reviews(id),
+  contest_quarter TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- All three partial UNIQUEs are money guards and are registered in
+-- CRITICAL_INDEXES (server/db/index.js): a 23505 during build is swallowed as
+-- idempotent, so registration is what makes a silent absence loud.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_duty_lines_event_kinds
+  ON payout_duty_lines(payout_id, shift_id, kind)
+  WHERE kind NOT IN ('review_bounty','review_contest');
+CREATE UNIQUE INDEX IF NOT EXISTS idx_duty_lines_bounty
+  ON payout_duty_lines(staff_review_id, contractor_id)
+  WHERE kind = 'review_bounty';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_duty_lines_contest
+  ON payout_duty_lines(contest_quarter, contractor_id)
+  WHERE kind = 'review_contest';
+CREATE INDEX IF NOT EXISTS idx_duty_lines_payout ON payout_duty_lines(payout_id);
+-- Reconcile's hot lookup is by shift (runs on every accrual).
+CREATE INDEX IF NOT EXISTS idx_duty_lines_shift ON payout_duty_lines(shift_id);
+
+-- DB backstops for the route-level caps (dev DB lacks prod CHECKs otherwise;
+-- derived writers bypass routes entirely). Evolvable-constraint pattern.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'payout_duty_lines_amount_cap_check'
+       AND conrelid = 'payout_duty_lines'::regclass
+  ) THEN
+    ALTER TABLE payout_duty_lines ADD CONSTRAINT payout_duty_lines_amount_cap_check
+      CHECK (ABS(amount_cents) <= 100000);
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'shifts_out_of_area_bonus_cap_check'
+       AND conrelid = 'shifts'::regclass
+  ) THEN
+    ALTER TABLE shifts ADD CONSTRAINT shifts_out_of_area_bonus_cap_check
+      CHECK (out_of_area_bonus_cents IS NULL OR (out_of_area_bonus_cents > 0 AND out_of_area_bonus_cents <= 25000));
+  END IF;
+END $$;
+
+-- Attribution staging: a pending duty has no line row (payout_id is NOT NULL
+-- and per-contractor); lines materialize only after an attribution exists.
+CREATE TABLE IF NOT EXISTS duty_attributions (
+  id SERIAL PRIMARY KEY,
+  proposal_id INTEGER NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('bar_rental','equipment_supplies','hosted_supplies','menu_print')),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  attributed_by INTEGER REFERENCES users(id),
+  attributed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(proposal_id, kind)
+);
+
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_bonus_cents INTEGER;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_attached_by INTEGER REFERENCES users(id);
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_attached_at TIMESTAMPTZ;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_locked_at TIMESTAMPTZ;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_locked_user_id INTEGER REFERENCES users(id);
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS remote_fee_prompted_at TIMESTAMPTZ;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS venue_lat NUMERIC(9,6);
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS venue_lng NUMERIC(9,6);

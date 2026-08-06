@@ -67,7 +67,27 @@ async function loadPeriodWithPayouts(periodRow) {
       (eventsByPayout[ev.payout_id] ||= []).push(ev);
     }
   }
-  const payouts = payoutsRes.rows.map(p => ({ ...p, events: eventsByPayout[p.id] || [] }));
+  // Duty lines per payout (spec 2026-08-06 §9). Labels ride the payload so the
+  // client never hardcodes kind names; NULL-shift lines (review kinds) render
+  // under an "Other" group keyed off shift_id being null.
+  const dutyByPayout = {};
+  if (payoutIds.length > 0) {
+    const { DUTY_KIND_LABELS } = require('../../utils/dutyLines');
+    const dutyRes = await pool.query(
+      `SELECT id, payout_id, shift_id, kind, amount_cents, origin, admin_owned,
+              held_state, removed_at, note
+         FROM payout_duty_lines
+        WHERE payout_id = ANY($1::int[])
+        ORDER BY id ASC`,
+      [payoutIds]
+    );
+    for (const d of dutyRes.rows) {
+      (dutyByPayout[d.payout_id] ||= []).push({ ...d, label: DUTY_KIND_LABELS[d.kind] || d.kind });
+    }
+  }
+  const payouts = payoutsRes.rows.map(p => ({
+    ...p, events: eventsByPayout[p.id] || [], duty_lines: dutyByPayout[p.id] || [],
+  }));
   return { period: periodRow, payouts };
 }
 
@@ -358,6 +378,18 @@ router.post('/payroll/periods/:id/process', auth, adminOnly, asyncHandler(async 
   // force from the confirm dialog.
   if (ymd(periodRes.rows[0].end_date) >= chicagoTodayYmd() && req.body?.force !== true) {
     throw new ConflictError('period is still in progress; pass force to process anyway');
+  }
+
+  // Duty gate (spec 2026-08-06 §5): processing freezes edits, so every
+  // attributed duty must be resolved (and none stale) BEFORE the flip. Plain
+  // message only — the UI reads the list from GET .../unattributed-duties,
+  // never from this 409 body (ConflictError carries no payload).
+  {
+    const { listUnattributedDuties } = require('../../utils/dutyLines');
+    const unattributed = await listUnattributedDuties(pool, id);
+    if (unattributed.length > 0) {
+      throw new ConflictError('unattributed duties block processing; resolve them first');
+    }
   }
 
   // L5: heal gross-paying tips (null Stripe fee) BEFORE freezing the period.

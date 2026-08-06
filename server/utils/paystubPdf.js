@@ -92,7 +92,26 @@ function renderPaystubPdf(data) {
         }
         doc.moveDown(0.15);
       });
+
+      // -- Duty pay, itemized (spec 2026-08-06 §3.7) ----------------
+      // Flow-cursor page-break guard: duty rows roughly halve the row budget,
+      // and the absolute right-column x-positions still work on a fresh page.
+      const dutyLines = data.duty_lines || [];
+      if (dutyLines.length) {
+        if (doc.y > 640) doc.addPage();
+        doc.moveDown(0.3);
+        doc.fontSize(8).fillColor('#555').text('Duty pay', M, doc.y);
+        doc.fillColor('black').fontSize(9);
+        dutyLines.forEach((d) => {
+          if (doc.y > 700) doc.addPage();
+          const y = doc.y;
+          doc.text(normalizeForPdf(d.label), M, y, { width: 250 });
+          doc.text(formatUsdCents(d.amount_cents), 460, y, { width: 80, align: 'right' });
+          doc.moveDown(0.15);
+        });
+      }
       doc.moveDown(0.6);
+      if (doc.y > 600) doc.addPage();
 
       // -- Totals: this period | year to date ----------------------
       const tp = data.thisPeriod, ytd = data.ytd;
@@ -113,6 +132,7 @@ function renderPaystubPdf(data) {
       totalsRow('Gratuity', tp.gratuity_cents, ytd.gratuity_cents);
       totalsRow('Card tips', tp.card_tips_net_cents, ytd.card_tips_net_cents);
       totalsRow('Adjustments', tp.adjustments_cents, ytd.adjustments_cents);
+      totalsRow('Duty pay', tp.duty_cents || 0, ytd.duty_cents || 0);
       doc.moveDown(0.15);
       totalsRow('NET PAID', tp.net_cents, ytd.net_cents, true);
       doc.moveDown(1);

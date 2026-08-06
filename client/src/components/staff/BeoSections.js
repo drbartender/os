@@ -309,10 +309,11 @@ export function BarMenuCard({ menuPrint, shiftId }) {
           </button>
           {error && <div className="sp-modal-error" style={{ marginTop: 6 }}>{error}</div>}
           <div style={{ fontSize: 12.5, color: 'var(--sp-ink-2)', marginTop: 8, lineHeight: 1.55 }}>
-            Print this and bring it in a frame (frames will be stocked at the Pilsen storage
-            unit soon). The menu and the frame stay with the client after the event. You get a
-            flat $5 for the print. A tablet or iPad on a stand works instead if it is clean and
-            a decent size. We plan around 8x10 for framed menus.
+            Print this and bring it in a frame (we stock frames at the Pilsen storage unit if
+            you need one). The print stays with the client, and so does a Dr. Bartender frame;
+            your own frame goes home with you. You get a flat $5 for the print. A tablet or
+            iPad on a stand works instead if it is clean and a decent size. We plan around
+            8x10 for framed menus.
           </div>
         </>
       )}

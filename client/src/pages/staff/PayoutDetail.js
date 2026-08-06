@@ -180,6 +180,7 @@ export default function PayoutDetail() {
   const payout = data?.payout || {};
   const events = Array.isArray(data?.events) ? data.events : [];
   const summary = data?.summary || {};
+  const dutyLines = Array.isArray(data?.duty_lines) ? data.duty_lines : [];
 
   const isPaid = payout.status === 'paid';
   const total = Number.isFinite(payout.total_cents) ? payout.total_cents : 0;
@@ -279,11 +280,32 @@ export default function PayoutDetail() {
             </div>
           </div>
         )}
+        {coerceCents(summary.duty_cents) !== 0 && (
+          <div className="sp-line">
+            <div className="sp-line-k">Duty pay</div>
+            <div className="sp-line-v">{formatMoney(coerceCents(summary.duty_cents))}</div>
+          </div>
+        )}
         <div className="sp-line total">
           <div className="sp-line-k">Payout total</div>
           <div className="sp-line-v">{formatMoney(total)}</div>
         </div>
       </div>
+
+      {/* Duty pay, itemized (bar rental, parking, menu prints, bonuses) */}
+      {dutyLines.length > 0 && (
+        <>
+          <div className="sp-section-title">Duty pay</div>
+          <div className="sp-card tight">
+            {dutyLines.map((d, i) => (
+              <div className="sp-line" key={`${d.kind}-${i}`}>
+                <div className="sp-line-k">{d.label || d.kind}</div>
+                <div className="sp-line-v">{formatMoney(coerceCents(d.amount_cents))}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* Per-event detail cards */}
       <div className="sp-section-title">Events worked</div>

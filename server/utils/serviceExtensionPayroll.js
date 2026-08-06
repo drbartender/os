@@ -26,6 +26,7 @@ const { pool } = require('../db');
 // local helper returning the bare duration would REWRITE 5.5 down to 4.5 on a
 // 30-minute extension and cut an hour of pay per line.
 const { contractedHours, wageCents } = require('./payrollMath');
+const { recomputePayoutTotals } = require('./payrollProcessing');
 
 async function applyExtensionHours({ proposalId, newDurationHours, shiftId: _shiftId = null }) {
   const target = contractedHours(Number(newDurationHours) || 0);
@@ -151,13 +152,8 @@ async function applyInTx(client, { proposalId, target }) {
   // old amount and the line-level fix is invisible.
   const payoutIds = [...touchedPayoutIds];
   if (payoutIds.length > 0) {
-    await client.query(
-      `UPDATE payouts po SET total_cents = GREATEST(0, COALESCE((
-         SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
-       ), 0))
-       WHERE po.id = ANY($1)`,
-      [payoutIds]
-    );
+    // Single writer (payrollProcessing): formula includes payable duty lines.
+    await recomputePayoutTotals(client, payoutIds);
   }
 
   return { updatedLines, lockedLines, frozenLines, multiShiftSkipped: false, payoutIds };

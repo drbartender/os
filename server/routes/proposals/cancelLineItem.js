@@ -252,6 +252,18 @@ router.post('/:id/cancel-line', auth, adminOnly, adminWriteLimiter, asyncHandler
     setImmediate(() => refreshListAfterLabChange(result.labPlanId));
   }
 
+  // Duty-pay reversal hook (spec 2026-08-06 §3.2): cancelling a parking or
+  // storage-pickup add-on, a bar, or a payment-shifting line on a COMPLETED
+  // event can un-trigger derived duty lines. Accrual is the reconciler and
+  // no-ops on non-completed proposals. Best-effort, off the response path,
+  // own connection (the held client is already released above).
+  setImmediate(() => {
+    require('../../utils/payrollAccrual').maybeReaccrueForDuty(Number(proposalId))
+      .catch((e) => {
+        if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(e, { tags: { route: 'cancelLineItem', step: 'duty_reaccrual' } });
+      });
+  });
+
   res.json({
     removed: true,
     removed_label: result.removedLabel,

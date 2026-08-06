@@ -11,7 +11,7 @@
  */
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
-const { findOpenPeriodForDate } = require('./payrollProcessing');
+const { findOpenPeriodForDate, recomputePayoutTotals } = require('./payrollProcessing');
 const { payPeriodForDate, computePayday } = require('./payrollPeriods');
 const { splitEvenly } = require('./payrollMath');
 const { chicagoTodayYmd } = require('./businessTime');
@@ -237,13 +237,18 @@ async function clawbackTip(tipId, newCumulativeRefundedCents, opts = {}) {
       }
     }
 
+    // Single-writer recompute (payrollProcessing owns the formula, which now
+    // includes payable duty lines), then read the UNclamped raw sums for the
+    // residual alarm. raw_sum includes duty cents so the residual math stays
+    // truthful: duty pay legitimately absorbs debt before the clamp engages.
+    await recomputePayoutTotals(client, touched);
     const totalsRes = await client.query(
-      `UPDATE payouts po SET total_cents = GREATEST(0, COALESCE((
-         SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
-       ), 0))
-       WHERE po.id = ANY($1)
-       RETURNING po.id, po.contractor_id, po.total_cents,
-         COALESCE((SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id), 0) AS raw_sum`,
+      `SELECT po.id, po.contractor_id, po.total_cents,
+              COALESCE((SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id), 0)
+              + COALESCE((SELECT SUM(amount_cents) FROM payout_duty_lines
+                           WHERE payout_id = po.id AND removed_at IS NULL
+                             AND (held_state IS NULL OR held_state = 'confirmed')), 0) AS raw_sum
+         FROM payouts po WHERE po.id = ANY($1)`,
       [touched]
     );
     // If the payout-level clamp engaged (raw sum below zero), the clamped

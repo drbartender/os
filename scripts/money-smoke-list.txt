@@ -13,6 +13,15 @@ server/utils/payrollClawback.test.js
 server/utils/payrollLateTip.test.js
 server/utils/payrollMath.test.js
 
+# Contractor duty pay (spec 2026-08-06): trigger/reconcile engine, accrual
+# derivation incl. the M5 analog + payout-stub guard, single-writer totals
+# (whole-sum clamp), admin duty API + Process gate. ci-smoke runs initDb first,
+# so the new tables exist there and carry prod CHECK constraints.
+server/utils/dutyLines.test.js
+server/utils/payrollAccrual.duty.test.js
+server/utils/payrollProcessing.test.js
+server/routes/admin/payrollDuty.test.js
+
 # Autopay durable-charge trio
 server/utils/autopayDurableCharge.test.js
 server/utils/balanceScheduler.autopayDurable.test.js

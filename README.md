@@ -175,6 +175,7 @@ dr-bartender/
 │   │   │   ├── settings.js     # /settings + /test-email + /backfill-geocodes + /badge-counts
 │   │   │   ├── search.js       # /search — global record search across clients/proposals/events/staff
 │   │   │   ├── payroll.js      # /payroll — contractor payouts, pay periods, paystub data
+│   │   │   ├── payrollDuty.js  # Duty-line admin API (spec 2026-08-06): manual create / edit / remove / restore, attribution set/move, unattributed-duties list backing the Process gate
 │   │   │   ├── payrollTax.js   # /payroll/contractors/:id/payment-history + /payroll/tax-totals + /payroll/tax-totals/:id/exclude — imported-ledger blends + 1099 year totals (read-only + one boolean PATCH)
 │   │   │   ├── presence.js     # /presence + /presence/state + /presence/leads + /presence/log — time-clock strip + history
 │   │   │   ├── leadCalls.js    # /lead-call-attention — lead-call bridge FAULT rows only (failed / misconfigured chains on still-new TT leads, 7-day window) for the overview Sales tab; missed + after-hours are deliberate non-items (2026-07-20)
@@ -296,6 +297,7 @@ dr-bartender/
 │   │   ├── ccWrapUpHandler.js  # post_event_wrap_up_email dispatcher handler, registered at boot in server/index.js (enqueue endpoint deleted with v1; retained to drain scheduled rows)
 │   │   ├── labFollowupHandler.js # lab_followup dispatcher handler (planner v2): +36h post-submit Enhancement Lab nudge; every cancel condition checked at fire time (additions made, window closed, event <72h, marketing opt-out); registered at boot in server/index.js
 │   │   ├── proposalExtrasFold.js # Contract-safe extras fold (extracted verbatim from the submit financial path): override moves by catalog delta, snapshot reprice, total/override write, paid-in-full re-eval; shared by drink-plan submit + the Enhancement Lab
+│   │   ├── dutyLines.js        # Contractor duty pay (spec 2026-08-06): kind labels, pure triggers (funded gate + bar/parking/equipment/hosted/menu/out-of-area), derive-never-increment reconcile, attribution helpers, review bounty/contest materializers + catch-up pass
 │   │   ├── payrollGuards.js    # isLegacyCcParticipant (per-proposal stub check, used by payrollAccrual); isLegacyCcStubUser kept for parity
 │   │   ├── payrollDeferredRetry.js # Re-runs placement for tips that deferred while the open pay period was frozen (single-flight, attempt-capped); fired off the response path after a successful accrual and from the admin Retry button
 │   │   ├── changeRequests.js   # Client-portal change-request helpers: edit-window classifier, field allowlist, proposed-state preview + diff + price preview, and the reaper that auto-cancels pending requests on archive/complete
@@ -526,7 +528,7 @@ dr-bartender/
 │   │   └── index.css           # Global styles
 │   ├── vercel.json             # SPA rewrite rule for Vercel
 │   └── package.json            # React deps, proxy: localhost:5000
-├── scripts/                    # Build + workflow scripts (check-file-size.js, optimize-assets.js, worktree-new.js, worktree-rm.js)
+├── scripts/                    # Build + workflow scripts (check-file-size.js, optimize-assets.js, worktree-new.js, worktree-rm.js, backfill-duty-lines.js duty-pay ship/period-open re-derive)
 │   │                           # think-on-main/build-in-lanes tooling (each with a co-located *.test.js where noted):
 │   │                           #   guard-os-main.sh (+ .test.js)   : pre-commit os-stays-on-main guard
 │   │                           #   merge-lane.sh (+ .test.js)      : flock'd squash-merge wrapper

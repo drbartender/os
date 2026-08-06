@@ -14,6 +14,7 @@ router.use('/', require('./settings'));
 router.use('/', require('./hiring'));
 router.use('/', require('./search'));
 router.use('/', require('./payroll'));
+router.use('/', require('./payrollDuty'));
 router.use('/', require('./payrollTax'));
 router.use('/', require('./presence'));
 router.use('/', require('./leadCalls'));

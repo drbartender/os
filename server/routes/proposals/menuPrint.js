@@ -23,6 +23,22 @@ const { uploadFile } = require('../../utils/storage');
 
 const router = express.Router();
 
+// Duty-pay reversal/derivation hook (spec 2026-08-06 §3.2): the $5 menu_print
+// line keys on menu_print_key, so posting or unposting the file on a COMPLETED
+// event must re-reconcile duty lines. Accrual is the reconciler and no-ops on
+// non-completed proposals. Best-effort, off the response path, own connection.
+function reaccrueDuty(proposalId) {
+  setImmediate(() => {
+    require('../../utils/payrollAccrual').maybeReaccrueForDuty(Number(proposalId))
+      .catch((e) => {
+        if (process.env.SENTRY_DSN_SERVER) {
+          const Sentry = require('@sentry/node');
+          Sentry.captureException(e, { tags: { route: 'menuPrint', step: 'duty_reaccrual' } });
+        }
+      });
+  });
+}
+
 const PDF_MAGIC = Buffer.from([0x25, 0x50, 0x44, 0x46]); // %PDF
 const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -78,6 +94,7 @@ router.post('/:id/menu-print', auth, requireAdminOrManager, adminWriteLimiter, a
     [key, id]
   );
   if (!upd.rowCount) throw new NotFoundError('Proposal not found.');
+  reaccrueDuty(id);
   res.json({ menu_print: { status: 'ready' } });
 }));
 
@@ -114,6 +131,7 @@ router.delete('/:id/menu-print', auth, requireAdminOrManager, adminWriteLimiter,
   // Guard the race where the proposal is deleted between the read and this
   // write: statusOf(undefined) would 500 instead of reporting a clean 404.
   if (!upd.rowCount) throw new NotFoundError('Proposal not found.');
+  reaccrueDuty(id);
   res.json({ menu_print: { status: statusOf(upd.rows[0]) } });
 }));
 
