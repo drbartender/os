@@ -24,9 +24,18 @@ lanes:
       - server/routes/staffPortal/payouts.paystub.test.js
       - server/routes/staffPortal.js
       - server/routes/staffPortal.test.js
-      - server/utils/lineItemCancel.js
+      # Reversal hooks: the real COMMIT points turned out to be the cancel
+      # EXECUTE route and the shared refund chokepoint, not the utils the plan
+      # first named (build-time discovery, reconciled 2026-08-06).
+      - server/routes/proposals/cancelLineItem.js
       - server/routes/proposals/menuPrint.js
-      - server/utils/refundHelpers.js
+      - server/utils/refundExecute.js
+      # Staff-facing duty rendering: no other lane owns client/src/pages/staff,
+      # and shipping the server payload without these un-foots the staff view
+      # (consistency-review B1) — widened here, the money-display owner.
+      - client/src/pages/staff/PayoutDetail.js
+      - client/src/pages/staff/HomePage.js
+      - client/src/components/staff/BeoSections.js
       - scripts/backfill-duty-lines.js
       - scripts/money-smoke-list.txt
       - README.md
