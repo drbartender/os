@@ -7,6 +7,7 @@ const {
   computeEditWindow, filterToAllowlist, buildPreview, buildDiff,
 } = require('../../utils/changeRequests');
 const { requireUuidToken } = require('../../utils/tokens');
+const { checkCurfewForStart, curfewMessage } = require('../../utils/serviceCurfew');
 
 const router = express.Router();
 
@@ -84,6 +85,30 @@ router.post('/proposals/:token/change-requests', requireUuidToken('token', 'Prop
       const { validateVenue } = require('../../utils/venueAddress');
       const venueErrors = validateVenue(proposed, { requireStreet: false, requireCityState: false });
       if (Object.keys(venueErrors).length > 0) throw new ValidationError(venueErrors);
+    }
+
+    // 2:00 AM insurance curfew (serviceCurfew.js). Hard refusal with no
+    // override, like the public quote builder: a client must not be able to
+    // request a booking outside liquor liability coverage, and an admin who
+    // approves this request later would apply it through a path whose own
+    // curfew guard could only be satisfied by acknowledging a breach the
+    // client chose. Checked against the request's PROPOSED times, falling back
+    // to the stored ones for whichever fields it does not touch, because a
+    // start-time change alone can push a stored duration past the curfew.
+    const timingTouched = ['event_duration_hours', 'event_start_time', 'event_date'].some(k => proposed[k] !== undefined);
+    if (timingTouched) {
+      const crCurfew = await checkCurfewForStart(dbClient, {
+        eventDate: proposed.event_date ?? proposal.event_date,
+        startTime: proposed.event_start_time ?? proposal.event_start_time,
+        timezone: proposal.event_timezone,
+        durationHours: proposed.event_duration_hours ?? Number(proposal.event_duration_hours),
+      });
+      if (crCurfew && crCurfew.past) {
+        throw new ValidationError(
+          { event_duration_hours: curfewMessage(crCurfew.curfewDisplay, crCurfew.maxHours) },
+          'That end time is outside our service hours.'
+        );
+      }
     }
 
     const { price_preview } = await buildPreview(proposal, proposed, dbClient);

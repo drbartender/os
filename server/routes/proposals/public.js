@@ -11,6 +11,7 @@ const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../../utils/errors');
 const { composeVenueLocation, validateVenue, normalizeVenueState } = require('../../utils/venueAddress');
 const { validateProposalRules, stripIncludedAddons } = require('../../utils/proposalRules');
+const { checkCurfewForStart, curfewMessage } = require('../../utils/serviceCurfew');
 const { createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
 const { findOrCreateClientDetailed } = require('../../utils/clientDedup');
@@ -255,6 +256,24 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   const venueErrors = validateVenue(venueInput, { requireCityState: true });
   if (Object.keys(venueErrors).length > 0) throw new ValidationError(venueErrors);
   const composedLocation = composeVenueLocation(venueInput);
+
+  // The 2:00 AM curfew is an insurance warranty (serviceCurfew.js). Hard
+  // refusal on this route with no override: a client self-serving a booking
+  // outside liquor liability coverage has nobody in the flow who can weigh
+  // that risk. An unparseable or absent start time returns null and is left
+  // alone — the wizard already validates the time, and inventing a refusal
+  // here would block bookings over a parse we cannot do anything about.
+  const publicCurfew = await checkCurfewForStart(pool, {
+    eventDate: event_date,
+    startTime: event_start_time,
+    timezone: null,
+    durationHours: Number(event_duration_hours) || 4,
+  });
+  if (publicCurfew && publicCurfew.past) {
+    throw new ValidationError({
+      event_duration_hours: curfewMessage(publicCurfew.curfewDisplay, publicCurfew.maxHours),
+    });
+  }
 
   // Normalize class_options: only persist recognized keys and only for class bookings
   const isClassBooking = event_type_category === 'class';

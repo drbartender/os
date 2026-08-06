@@ -105,6 +105,12 @@ router.post('/:id/override', auth, requireAdminOrManager, asyncHandler(async (re
     actorUserId: req.user.id, overrideReason: reason,
   });
   if (!settled.ok) {
+    // A curfew refusal leaves the row PENDING, so the stale "already
+    // ${status}" line would tell the admin "this request is already pending"
+    // and hide the real reason. Surface the settle's own message instead.
+    if (settled.reason === 'past_curfew') {
+      throw new ConflictError(settled.message, 'EXTENSION_PAST_CURFEW');
+    }
     throw new ConflictError(
       `This request is already ${probe.rows[0].status}.`,
       'EXTENSION_NOT_PENDING'

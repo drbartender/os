@@ -319,6 +319,15 @@ after(async () => {
     // Plan 2d hooks schedule drip rows on a →sent transition; scheduled_messages
     // has no FK cascade to proposals, so sweep them before deleting proposals.
     await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = ANY($1)", [ids]);
+    // The curfew-override cases write admin_audit_log rows keyed by proposal id
+    // in metadata (no FK, so nothing cascades). Sweep them or every run leaves
+    // orphan "booked past curfew" rows in the dev audit trail.
+    await pool.query(
+      `DELETE FROM admin_audit_log
+        WHERE action = 'proposal_booked_past_service_curfew'
+          AND (metadata->>'proposal_id')::int = ANY($1)`,
+      [ids]
+    );
     await pool.query('DELETE FROM proposals WHERE id = ANY($1)', [ids]);
   }
   if (createdClientIds.size > 0) {
@@ -943,4 +952,110 @@ test('GET /:id carries the linked Thumbtack lead stated budget (lateral join)', 
   assert.equal(body.budget_min, 300);
   assert.equal(body.budget_max, 400);
   assert.equal(body.budget_raw, '$300 - $400');
+});
+
+// ─── The 2:00 AM insurance curfew, end to end ───────────────────────────────
+// Both the refusal AND the override, because the override is the whole reason
+// the refusal is acceptable: without a test, renaming the flag or loosening the
+// strict `!== true` ships a silent hole in an insurance warranty.
+
+test('Curfew: creating a booking past 2:00 AM is refused without an acknowledgement', async () => {
+  const res = await request('POST', '/api/proposals', {
+    token: await makeFreshAdmin(),
+    body: validHostedBody({
+      event_date: '2026-11-14', event_start_time: '10:00 PM', event_duration_hours: 6, // ends 4:00 AM
+    }),
+  });
+  trackResponse(res);
+  assert.equal(res.status, 400, `expected 400, got ${res.status}: ${res.raw}`);
+  assert.equal(res.body.fieldErrors?.past_curfew, 'true', 'the client keys its confirm dialog on this');
+  assert.match(res.body.fieldErrors?.event_duration_hours || '', /2:00 AM/);
+});
+
+test('Curfew: the same booking succeeds WITH the acknowledgement, and is audited', async () => {
+  const res = await request('POST', '/api/proposals', {
+    token: await makeFreshAdmin(),
+    body: validHostedBody({
+      event_date: '2026-11-14', event_start_time: '10:00 PM', event_duration_hours: 6,
+      acknowledge_past_curfew: true,
+    }),
+  });
+  trackResponse(res);
+  assert.equal(res.status, 201, `expected 201, got ${res.status}: ${res.raw}`);
+
+  // The audit row is what justifies allowing the override at all.
+  const audit = await pool.query(
+    `SELECT metadata FROM admin_audit_log
+      WHERE action = 'proposal_booked_past_service_curfew' AND metadata->>'proposal_id' = $1`,
+    [String(res.body.id)]
+  );
+  assert.equal(audit.rows.length, 1, 'an acknowledged breach must leave a record');
+  assert.equal(audit.rows[0].metadata.at, 'create');
+  assert.equal(audit.rows[0].metadata.curfew, '2:00 AM');
+});
+
+test('Curfew: a non-boolean acknowledgement does NOT count as consent', async () => {
+  const res = await request('POST', '/api/proposals', {
+    token: await makeFreshAdmin(),
+    body: validHostedBody({
+      event_date: '2026-11-14', event_start_time: '10:00 PM', event_duration_hours: 6,
+      acknowledge_past_curfew: 'true',   // string, not boolean
+    }),
+  });
+  trackResponse(res);
+  assert.equal(res.status, 400, 'only a real boolean true is consent');
+});
+
+test('Curfew: a booking ending exactly at 2:00 AM needs no acknowledgement', async () => {
+  const res = await request('POST', '/api/proposals', {
+    token: await makeFreshAdmin(),
+    body: validHostedBody({
+      event_date: '2026-11-14', event_start_time: '10:00 PM', event_duration_hours: 4, // ends 2:00 AM
+    }),
+  });
+  trackResponse(res);
+  assert.equal(res.status, 201, `a legal booking must not be refused: ${res.raw}`);
+});
+
+test('Curfew: an existing breach does not re-prompt on an unrelated or lesser edit', async () => {
+  const token = await makeFreshAdmin();
+  const created = await request('POST', '/api/proposals', {
+    token,
+    body: validHostedBody({
+      event_date: '2026-11-14', event_start_time: '10:00 PM', event_duration_hours: 6,
+      acknowledge_past_curfew: true,
+    }),
+  });
+  trackResponse(created);
+  assert.equal(created.status, 201, created.raw);
+
+  // Rescheduling the SAME past-curfew booking to a new date changes nothing
+  // about the breach (the curfew is date-independent), so it must not demand a
+  // second acknowledgement or write a second audit row.
+  const moved = await request('PATCH', `/api/proposals/${created.body.id}`, {
+    token, body: { event_date: '2026-11-21' },
+  });
+  assert.equal(moved.status, 200, `rescheduling a known breach must not re-prompt: ${moved.raw}`);
+
+  // Shortening it (still past curfew, but less so) is an improvement, not a
+  // new decision.
+  const shorter = await request('PATCH', `/api/proposals/${created.body.id}`, {
+    token, body: { event_duration_hours: 5 },
+  });
+  assert.equal(shorter.status, 200, `reducing an existing breach must not re-prompt: ${shorter.raw}`);
+
+  // But making it WORSE is a fresh decision and must be asked again.
+  const worse = await request('PATCH', `/api/proposals/${created.body.id}`, {
+    token, body: { event_duration_hours: 7 },
+  });
+  assert.equal(worse.status, 400, 'extending a breach further must re-prompt');
+  assert.equal(worse.body.fieldErrors?.past_curfew, 'true');
+
+  // Exactly one audit row for the whole sequence: the original decision.
+  const audit = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM admin_audit_log
+      WHERE action = 'proposal_booked_past_service_curfew' AND metadata->>'proposal_id' = $1`,
+    [String(created.body.id)]
+  );
+  assert.equal(audit.rows[0].n, 1, 'the audit records the decision, not every later save');
 });

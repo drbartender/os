@@ -291,6 +291,26 @@ export default function ProposalCreate() {
         // but this cockpit no longer uses it.
         send_now: false,
       };
+      const res = await submitCreate(payload, saveAsDraft);
+      // A successful send-path create opens the Remote Staffing Fee check,
+      // which now owns `submitting` (see the declaration above).
+      if (res && !saveAsDraft) handedOff = true;
+      if (!res) return;
+    } catch (err) {
+      setError(err.message || 'Failed to create proposal.');
+      setFieldErrors(err.fieldErrors || {});
+    } finally {
+      if (!handedOff) setSubmitting(false);
+    }
+  };
+
+  // POST, with the one retry the server asks for: a booking past the 2:00 AM
+  // service curfew is refused by default because it sits outside our liquor
+  // liability coverage, and proceeds only on an explicit acknowledgement (the
+  // server audits it). Without this the create half of that policy is
+  // unreachable from the UI and an admin just gets a dead-end error.
+  const submitCreate = async (payload, saveAsDraft) => {
+    try {
       const res = await api.post('/proposals', payload);
       if (saveAsDraft) {
         toast.success('Proposal created!');
@@ -298,13 +318,25 @@ export default function ProposalCreate() {
       } else {
         setCreatedId(res.data.id);
         setFeeCheckOpen(true);
-        handedOff = true;
       }
+      return res;
     } catch (err) {
+      const fe = err.fieldErrors || {};
+      if (fe.past_curfew && !payload.acknowledge_past_curfew) {
+        const reason = fe.event_duration_hours || 'This booking runs past our 2:00 AM service curfew.';
+        // eslint-disable-next-line no-alert
+        if (window.confirm(`${reason}\n\nBook it anyway? This will be recorded.`)) {
+          // `return await`, not a bare return: the finally below must wait for
+          // the retry to finish, or it clears the submitting flag mid-flight.
+          return await submitCreate({ ...payload, acknowledge_past_curfew: true }, saveAsDraft);
+        }
+        setError('Not created. The end time is past our 2:00 AM service curfew.');
+        setFieldErrors(fe);
+        return null;
+      }
       setError(err.message || 'Failed to create proposal.');
-      setFieldErrors(err.fieldErrors || {});
-    } finally {
-      if (!handedOff) setSubmitting(false);
+      setFieldErrors(fe);
+      return null;
     }
   };
 

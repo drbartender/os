@@ -28,6 +28,7 @@
  */
 
 const { pool } = require('../db');
+const { checkContractCurfew, curfewMessage } = require('./serviceCurfew');
 
 const SETTLE_OUTCOMES = new Set(['paid', 'overridden']);
 const CLOSE_OUTCOMES = new Set(['expired', 'cancelled']);
@@ -117,11 +118,43 @@ async function settleInTx(client, { extensionId, outcome, actorUserId, overrideR
   // proposal_id unlocked first is safe because an extension row's proposal_id
   // never changes.
   const idRes = await client.query(
-    'SELECT proposal_id FROM service_extensions WHERE id = $1',
+    'SELECT proposal_id, requested_duration_hours FROM service_extensions WHERE id = $1',
     [extensionId]
   );
   if (!idRes.rows[0]) return { ok: false, reason: 'not_pending' };
   await client.query('SELECT id FROM proposals WHERE id = $1 FOR UPDATE', [idRes.rows[0].proposal_id]);
+
+  // RE-VALIDATE the curfew under the lock, BEFORE the claim.
+  //
+  // The request was checked when it was created, but the duration stored on it
+  // is only as good as the event it was measured against. An admin who moves
+  // event_date or event_start_time between request and payment turns a legal
+  // request into one that runs past 2:00 AM, and this is the last moment before
+  // the contract actually moves. A request created before the curfew shipped
+  // has never been checked at all.
+  //
+  // BEFORE the claim on purpose: claim() flips the row out of 'pending', so
+  // refusing after it would leave a row marked settled on an event whose
+  // duration never moved — the exact split state this file's header warns
+  // about. Refusing here leaves the row pending, so the sweep expires it and
+  // voids its invoice, the same path a declined request takes.
+  //
+  // Hard refusal, no override: by settle time the payment webhook or the sweep
+  // is driving and nobody is watching a screen to weigh the risk. Reading the
+  // duration unlocked is safe for the same reason proposal_id is — neither
+  // changes after the row is created.
+  const curfew = await checkContractCurfew(
+    client, idRes.rows[0].proposal_id, idRes.rows[0].requested_duration_hours
+  );
+  if (curfew && curfew.past) {
+    return {
+      ok: false,
+      reason: 'past_curfew',
+      proposalId: idRes.rows[0].proposal_id,
+      curfewDisplay: curfew.curfewDisplay,
+      message: curfewMessage(curfew.curfewDisplay, curfew.maxHours),
+    };
+  }
 
   const row = await claim(client, extensionId, outcome, actorUserId, overrideReason);
   if (!row) return { ok: false, reason: 'not_pending' };

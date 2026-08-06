@@ -242,3 +242,47 @@ test('a nonexistent extension id is a clean not_pending on both paths', async ()
   const closed = await closeExtension({ extensionId: 999999999, outcome: 'expired' });
   assert.deepEqual(closed, { ok: false, reason: 'not_pending' });
 });
+
+// ── The 2:00 AM insurance curfew, re-checked under the lock ────────────────
+// A request is validated when created, but the duration it stores is only as
+// good as the event it was measured against. These pin the last gate before
+// the contract actually moves.
+
+test('settle REFUSES when the event moved under a pending request, past the curfew', async () => {
+  const ev = await mkEvent();                       // 8:00 PM, 4h -> ends midnight
+  const extId = await mkExtension({ proposalId: ev.proposalId, shiftId: ev.shiftId, requested: 6, contracted: 4 });
+  // Admin pushes the start later AFTER the request was created and validated:
+  // 11:00 PM + 6h would end at 5:00 AM, well outside coverage.
+  await pool.query("UPDATE proposals SET event_start_time = '11:00 PM' WHERE id = $1", [ev.proposalId]);
+
+  const r = await settleExtension({ extensionId: extId, outcome: 'paid' });
+  assert.equal(r.ok, false, 'a booking outside liquor liability coverage must not settle');
+  assert.equal(r.reason, 'past_curfew');
+  assert.match(r.message, /2:00 AM/);
+});
+
+test('the refused request stays PENDING and the contract never moves', async () => {
+  const ev = await mkEvent();
+  const extId = await mkExtension({ proposalId: ev.proposalId, shiftId: ev.shiftId, requested: 6, contracted: 4 });
+  await pool.query("UPDATE proposals SET event_start_time = '11:00 PM' WHERE id = $1", [ev.proposalId]);
+  await settleExtension({ extensionId: extId, outcome: 'paid' });
+
+  // The refusal runs BEFORE the claim on purpose. Claiming first would leave a
+  // row marked settled on an event whose duration never moved — a split state
+  // no sweep can reconcile. Pending is recoverable: the sweep expires it and
+  // voids its invoice, exactly like a declined request.
+  const { rows } = await pool.query('SELECT status FROM service_extensions WHERE id = $1', [extId]);
+  assert.equal(rows[0].status, 'pending', 'still claimable, not stranded half-settled');
+  const { rows: pr } = await pool.query('SELECT event_duration_hours FROM proposals WHERE id = $1', [ev.proposalId]);
+  assert.equal(Number(pr[0].event_duration_hours), 4, 'the contract is untouched');
+});
+
+test('settle still allows a request that ends exactly at the curfew', async () => {
+  const ev = await mkEvent();
+  const extId = await mkExtension({ proposalId: ev.proposalId, shiftId: ev.shiftId, requested: 6, contracted: 4 });
+  // 8:00 PM + 6h = 2:00 AM exactly. Legal, and must not be caught by the guard.
+  const r = await settleExtension({ extensionId: extId, outcome: 'paid' });
+  assert.equal(r.ok, true);
+  const { rows } = await pool.query('SELECT event_duration_hours FROM proposals WHERE id = $1', [ev.proposalId]);
+  assert.equal(Number(rows[0].event_duration_hours), 6);
+});

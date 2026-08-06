@@ -23,6 +23,8 @@ const { PUBLIC_SITE_URL, ADMIN_URL } = require('../../utils/urls');
 const { findOrCreateClient } = require('../../utils/clientDedup');
 const { insertProposalRecord } = require('../../utils/proposalInsert');
 const { safeAddonQty } = require('../../utils/proposalMoneyShared');
+const { curfewGateForSave } = require('../../utils/serviceCurfew');
+const { logAdminAction } = require('../../utils/adminAuditLog');
 
 const router = express.Router();
 
@@ -56,7 +58,12 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
     addon_variants, addon_quantities, syrup_selections, class_options, client_provides_glassware,
     send_now, event_type, event_type_category, event_type_custom,
     venue_name, venue_street, venue_city, venue_state, venue_zip,
+    acknowledge_past_curfew: acknowledgePastCurfewOnCreate,
   } = req.body;
+
+  // Hoisted for the post-COMMIT audit write (only set when an admin knowingly
+  // books past the insurance curfew).
+  let createdPastCurfew = null;
 
   const fieldErrors = {};
   if (!package_id) fieldErrors.package_id = 'Package is required';
@@ -184,6 +191,20 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
     const numBartenders = snapshot ? snapshot.staffing.actual : 1;
     const sentAt = proposalStatus === 'sent' ? new Date() : null;
 
+    // 2:00 AM insurance curfew, same policy as the PATCH: refused by default,
+    // overridable by an explicit acknowledgement, audited when used. Guarding
+    // create as well as edit is the point — without it an admin can mint a
+    // 4:00 AM booking with no friction and then be unable to edit it later
+    // without acknowledging a breach nobody ever warned them about.
+    const createGate = await curfewGateForSave(dbClient, {
+      next: { eventDate: event_date, startTime: event_start_time, timezone: null, durationHours: dh },
+      acknowledged: acknowledgePastCurfewOnCreate,
+    });
+    if (createGate && createGate.message) {
+      throw new ValidationError({ event_duration_hours: createGate.message, past_curfew: 'true' });
+    }
+    if (createGate && createGate.acknowledged) createdPastCurfew = createGate;
+
     // Insert proposal + addons via the shared builder (single source of the
     // proposals INSERT shape — see proposalInsert.js).
     const proposal = await insertProposalRecord(dbClient, {
@@ -229,6 +250,21 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
     }
 
     await dbClient.query('COMMIT');
+
+    if (createdPastCurfew) {
+      await logAdminAction({
+        actorUserId: req.user.id,
+        targetUserId: null,
+        action: 'proposal_booked_past_service_curfew',
+        metadata: {
+          proposal_id: proposal.id,
+          at: 'create',
+          curfew: createdPastCurfew.curfewDisplay,
+          duration_hours: createdPastCurfew.durationHours,
+          note: 'Admin acknowledged that this booking runs past the liquor-liability service curfew.',
+        },
+      });
+    }
 
     // Email the client AFTER commit — best-effort. The bare INSERT ... RETURNING
     // row has no client_email / client_name (those live on `clients`, not
@@ -309,7 +345,11 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     class_options, client_provides_glassware,
     notify_assigned_staff, notify_staff_sms, notify_staff_email,
     notify,
-    change_request_id
+    change_request_id,
+    // Deliberate admin acknowledgement that this booking runs past the 2:00 AM
+    // insurance curfew. Never defaulted true, never inferred: the UI sends it
+    // only after the operator confirms a dialog naming the coverage risk.
+    acknowledge_past_curfew
   } = req.body;
 
   // Structural validation BEFORE any connection is checked out: a malformed
@@ -318,6 +358,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   // computed. Absent/empty = nothing sends (fail-quiet by design).
   const requestedNotices = validateNotifyList(notify);
   const eventNotice = requestedNotices.find((n) => n.type === NOTICE_EVENT_DETAILS) || null;
+
+  // Hoisted for the post-COMMIT audit write: an acknowledged past-curfew
+  // booking is recorded only once the save actually lands, never on a rollback.
+  let pastCurfewAcknowledged = null;
 
   const dbClient = await pool.connect();
   try {
@@ -388,6 +432,45 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     const nb = num_bars ?? old.num_bars;
     const adj = adjustments ?? (old.adjustments || []);
     const tpo = total_price_override !== undefined ? total_price_override : old.total_price_override;
+
+    // 2:00 AM insurance curfew (serviceCurfew.js). Checked against the times
+    // this save will LAND, not the stored ones, so moving the start time into
+    // a breach is caught as surely as lengthening the duration.
+    //
+    // ONLY when the save actually touches timing (same gate as the client
+    // change-request path). Testing the resulting state instead would make an
+    // already-past-curfew booking — legacy data, or one created before this
+    // shipped — demand an acknowledgement for a venue typo or a guest-count
+    // edit, and write a fresh "booked past curfew" audit row every time. The
+    // audit is supposed to record the decision, not every save that follows it.
+    //
+    // Admin may override, unlike the public route: Dallas owns his own risk
+    // and the code has no business overruling the operator. What it owes him
+    // is that a booking outside liquor liability coverage can never happen by
+    // accident or unnoticed — so it is refused by default, the override is an
+    // explicit acknowledgement, and every use of it is audited.
+    const timingTouched = event_date !== undefined
+      || event_start_time !== undefined
+      || event_duration_hours !== undefined;
+    const curfewGate = timingTouched ? await curfewGateForSave(dbClient, {
+      next: {
+        eventDate: event_date ?? old.event_date,
+        startTime: event_start_time ?? old.event_start_time,
+        timezone: old.event_timezone,
+        durationHours: dh,
+      },
+      previous: {
+        eventDate: old.event_date,
+        startTime: old.event_start_time,
+        timezone: old.event_timezone,
+        durationHours: Number(old.event_duration_hours),
+      },
+      acknowledged: acknowledge_past_curfew,
+    }) : null;
+    if (curfewGate && curfewGate.message) {
+      throw new ValidationError({ event_duration_hours: curfewGate.message, past_curfew: 'true' });
+    }
+    if (curfewGate && curfewGate.acknowledged) pastCurfewAcknowledged = curfewGate;
 
     // Validate total_price_override bounds when explicitly supplied
     if (total_price_override !== undefined && total_price_override !== null) {
@@ -662,6 +745,31 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     }
 
     await dbClient.query('COMMIT');
+
+    // Audit the acknowledged insurance breach. Post-COMMIT and best-effort:
+    // the booking is already saved, and an audit-write failure must not 500 a
+    // successful save. Logged so a coverage question later has a record of who
+    // accepted the risk and when, rather than only a duration in a row.
+    if (pastCurfewAcknowledged) {
+      try {
+        await logAdminAction({
+          actorUserId: req.user.id,
+          targetUserId: null,
+          action: 'proposal_booked_past_service_curfew',
+          metadata: {
+            proposal_id: Number(req.params.id),
+            curfew: pastCurfewAcknowledged.curfewDisplay,
+            duration_hours: pastCurfewAcknowledged.durationHours,
+            note: 'Admin acknowledged that this booking runs past the liquor-liability service curfew.',
+          },
+        });
+      } catch (auditErr) {
+        console.error('[Proposals] past-curfew audit write failed:', auditErr.message);
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(auditErr, { tags: { route: 'proposals/update', issue: 'curfew-audit' } });
+        }
+      }
+    }
 
     // Refresh unlocked invoices with new pricing (own transaction for isolation)
     const oldTotalCents = Math.round(Number(old.total_price || 0) * 100);

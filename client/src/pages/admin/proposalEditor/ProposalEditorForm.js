@@ -348,6 +348,23 @@ export default function ProposalEditorForm({
       // ValidationError's message is the generic banner line — append those
       // reasons to the banner so a stale-popup rejection is explained.
       const fe = err.fieldErrors || {};
+
+      // The 2:00 AM service curfew is an insurance warranty, so the server
+      // refuses this booking by default and marks the rejection past_curfew.
+      // Confirm once and retry with the acknowledgement; the server audits it.
+      // Deliberately a blocking confirm, not a toast: booking outside liquor
+      // liability coverage should cost a decision, and never happen unnoticed.
+      if (fe.past_curfew && !patchBody.acknowledge_past_curfew) {
+        const reason = fe.event_duration_hours || 'This booking runs past our 2:00 AM service curfew.';
+        // eslint-disable-next-line no-alert
+        if (window.confirm(`${reason}\n\nBook it anyway? This will be recorded.`)) {
+          return doSave({ ...patchBody, acknowledge_past_curfew: true }, notify);
+        }
+        setError('Not saved. The end time is past our 2:00 AM service curfew.');
+        setFieldErrors(fe);
+        return false;
+      }
+
       const unrendered = ['notify', 'subject', 'body_text', 'sms_body']
         .map((k) => fe[k]).filter(Boolean);
       setError([err.message || 'Failed to save changes.', ...unrendered].join(' '));

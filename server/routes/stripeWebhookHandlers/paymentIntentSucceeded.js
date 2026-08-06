@@ -734,18 +734,26 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
                 // or skipping it breaks the heal in opposite directions.
                 await finalizeExtension(extensionSettleContext.extensionId);
               } else {
-                // Lost the claim between the in-tx read and here: same
-                // containment as the not-pending branch above.
+                // Either the claim was lost between the in-tx read and here,
+                // or the settle refused on the 2:00 AM insurance curfew (the
+                // event's times moved under a pending request). Same
+                // containment — the money landed and the event was NOT
+                // extended — but name the actual cause, because the two need
+                // different follow-up: a lost claim is a race, a curfew
+                // refusal means someone must fix the times or refund.
+                const pastCurfew = settled && settled.reason === 'past_curfew';
                 if (process.env.SENTRY_DSN_SERVER) {
                   Sentry.captureMessage(
-                    `extension_paid_after_claimed (extension ${extensionSettleContext.extensionId}, proposal ${proposalId}, intent ${intent.id}) — verify and refund`,
+                    `${pastCurfew ? 'extension_paid_past_curfew' : 'extension_paid_after_claimed'} (extension ${extensionSettleContext.extensionId}, proposal ${proposalId}, intent ${intent.id}) — verify and refund`,
                     'warning'
                   );
                 }
                 await notify.alertAdminsProblem({
                   proposalId,
                   kind: 'paid_after_expiry',
-                  detail: `An extension payment landed but the request was claimed by another process first. The event was NOT extended. Verify and refund if needed.`,
+                  detail: pastCurfew
+                    ? `An extension payment landed but the new end time is past our 2:00 AM service curfew, so the event was NOT extended (the event's times likely moved after the request). ${settled.message || ""} Fix the event times and re-run, or refund.`
+                    : `An extension payment landed but the request was claimed by another process first. The event was NOT extended. Verify and refund if needed.`,
                 });
               }
             }
