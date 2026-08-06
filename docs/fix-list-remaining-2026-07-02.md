@@ -942,3 +942,7 @@ merged code 2026-08-04):
   organic writes; Dallas walkthroughs T6/T10-T13 + seniority panel smoke; CC seniority
   mapping generation → hand review → --apply (human-gated, Chicago box); Stripe test
   Payment Links deactivation (plink_1U0nVQ... / plink_1U0nVP..., admin-blocked for Claude). (ops)
+
+## From the duty-pay review fleet (2026-08-06)
+
+- **v1 LogisticsStep parking preview mis-quotes**: `client/src/pages/plan/steps/LogisticsStep.js:41-42, 155-159` previews `$20 x num_bartenders` while the server bills per_staff over ALL staff (bartenders + additional-bartender + barback + banquet-server). Live-reachable: prod still carries v1 draft/pending plans (e.g. plan 69 / proposal 472: shown $40, billed $60). Was already ordered in spec 2026-07-01-paynow-extras-addon-pricing-design.md:92 and never shipped. One-line fix, outside the parking-rewire lane's footprint.
