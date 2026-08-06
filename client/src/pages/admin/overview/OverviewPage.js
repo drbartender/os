@@ -6,8 +6,7 @@ import Icon from '../../../components/adminos/Icon';
 import MetricsFilterBar from '../../../components/adminos/MetricsFilterBar';
 import useMetricsFilter from '../../../hooks/useMetricsFilter';
 import useUrlListState from '../../../hooks/useUrlListState';
-import { dayDiff } from '../../../components/adminos/format';
-import { parsePositionsCount, approvedCount } from '../../../components/adminos/shifts';
+import { parsePositionsCount, approvedCount, selectUpcoming } from '../../../components/adminos/shifts';
 import StripePayoutsTab from '../StripePayoutsTab';
 import NeedsYouStrip from './NeedsYouStrip';
 import { buildPrepItems } from './PrepQueue';
@@ -246,9 +245,11 @@ export default function OverviewPage() {
     return () => { cancelled = true; };
   }, [isAdmin, loadNameNotices]);
 
-  const upcoming = useMemo(() =>
-    shifts.filter(e => e.event_date && dayDiff(e.event_date.slice(0, 10)) >= 0)
-      .sort((a, b) => a.event_date.localeCompare(b.event_date)), [shifts]);
+  // Cancelled events are excluded here (selectUpcoming), which is what keeps them
+  // out of BOTH the header count and the unstaffed queue below — the GET /shifts
+  // feed serves cancelled rows so the Events dashboard can still show them as
+  // history.
+  const upcoming = useMemo(() => selectUpcoming(shifts), [shifts]);
   const unstaffed = useMemo(() =>
     upcoming.filter(e => approvedCount(e) < parsePositionsCount(e)), [upcoming]);
   const newApplications = useMemo(() =>

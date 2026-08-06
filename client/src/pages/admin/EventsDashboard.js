@@ -21,7 +21,7 @@ import EntityLink from '../../components/EntityLink';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
 import { fmt$, fmtDate, fmtTimeRange24, dayDiff } from '../../components/adminos/format';
-import { parsePositionsCount, approvedCount, eventStatusChip, SHIFT_EQUIPMENT_OPTIONS, parseEquipmentArray } from '../../components/adminos/shifts';
+import { parsePositionsCount, approvedCount, eventStatusChip, isCancelledEvent, SHIFT_EQUIPMENT_OPTIONS, parseEquipmentArray } from '../../components/adminos/shifts';
 import { ROLES } from '../../utils/staffingRoles';
 
 // value stays 12h ("7:00 PM") — it is stored raw into shifts.start_time and read
@@ -244,6 +244,9 @@ export default function EventsDashboard() {
     return events
       .filter(e => {
         const day = e.event_date ? dayDiff(e.event_date.slice(0, 10)) : null;
+        // A cancelled event is not upcoming work and can never need staffing.
+        // Past / All still show it — that is the history this feed exists for.
+        if ((tab === 'upcoming' || tab === 'unstaffed') && isCancelledEvent(e)) return false;
         if (tab === 'upcoming' && day != null && day < 0) return false;
         if (tab === 'past' && day != null && day >= 0) return false;
         if (tab === 'unstaffed') {
@@ -269,6 +272,9 @@ export default function EventsDashboard() {
     let upcoming = 0;
     let unstaffed = 0;
     for (const e of events) {
+      // Same exclusion the Upcoming/Unstaffed tab bodies apply, so the badge
+      // never counts a row the tab won't render.
+      if (isCancelledEvent(e)) continue;
       const dayKey = e.event_date ? e.event_date.slice(0, 10) : null;
       if (!dayKey) continue;
       const day = dayDiff(dayKey);
