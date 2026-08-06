@@ -115,7 +115,7 @@ const SECTIONS = [
     num: '08', title: 'Loaner Gear & Supply Runs', emoji: '📦',
     content: (
       <>
-        <p>Sometimes we'll provide bars, coolers, garnish trays, or ice bins. Other times we'll ask you to grab items on the way, we'll cover costs if it's pre-approved.</p>
+        <p>Sometimes we'll provide bars, coolers, garnish trays, or ice bins. Other times we'll ask you to grab items on the way. Bar hauls and storage pickups earn duty pay, see Section 17.</p>
         <p className="guide-sub-heading">If we loan you gear</p>
         <ul>
           <li>Inspect it when you get it</li>
@@ -156,6 +156,7 @@ const SECTIONS = [
           <li>Payouts are processed on Tuesdays for the prior week.</li>
           <li>You can request early payment, but no promises.</li>
           <li>Extra time must be approved in advance to be included in your pay.</li>
+          <li>Duty pay and bonuses (bar, parking, supplies, menu prints, reviews) are covered in Section 17.</li>
         </ul>
         <p style={{marginTop:'0.5rem', fontStyle:'italic'}}>Keep track of your gigs for tax time. We won't send a 1099 unless you cross the IRS threshold, but your earnings are still taxable.</p>
       </>
@@ -264,6 +265,48 @@ const SECTIONS = [
           <li>If you experience or witness inappropriate behavior from another contractor, report it to Dr. Bartender management.</li>
         </ul>
         <p style={{marginTop:'0.5rem', fontStyle:'italic'}}>We've got your back. Speak up, that's how we protect the team.</p>
+      </>
+    )
+  },
+  {
+    num: '17', title: 'Duty Pay & Bonuses', emoji: '💵',
+    content: (
+      <>
+        <p>Some gigs ask for more than pouring drinks. When they do, you get paid for it on top of your hourly. Here's the schedule.</p>
+        <p className="guide-sub-heading">Bar Rental: $20</p>
+        <ul>
+          <li>Bringing your own portable bar counts.</li>
+          <li>Picking up a Dr. Bartender bar at the Pilsen storage unit counts too. Same $20 either way.</li>
+          <li>Hosted events roll the bar into the supply-hours block below instead of the $20.</li>
+        </ul>
+        <p className="guide-sub-heading">Parking: $20</p>
+        <ul>
+          <li>Paid only when the client paid for parking on their event.</li>
+          <li>Carpooling? The driver gets it, passengers don't.</li>
+        </ul>
+        <p className="guide-sub-heading">Equipment & Supplies: $20</p>
+        <ul>
+          <li>Kicks in when the client's storage-pickup add-ons total $50 or more for the event.</li>
+          <li>One fee per event, no matter how many items you grab at storage. It covers the whole pickup. Bar rental has its own $20 above and doesn't count toward the $50.</li>
+          <li>Hosted events work differently. Instead of the $20, you're paid a flat block of supply hours at your hourly rate.</li>
+        </ul>
+        <p className="guide-sub-heading">Menu Print: $5</p>
+        <ul>
+          <li>A frame is required. We stock frames at Pilsen if you need one.</li>
+          <li>The print stays with the client, and so does a Dr. Bartender frame. Your own frame goes home with you.</li>
+          <li>A clean tablet display is an acceptable alternative. No print, no frame, no $5.</li>
+        </ul>
+        <p className="guide-sub-heading">Review Bounty: $10</p>
+        <ul>
+          <li>A 5-star review that names you personally, on Google or Thumbtack, earns you $10.</li>
+          <li>Quarterly contest: $100 for the best rate of named 5-star reviews per event worked.</li>
+          <li>To qualify you need at least 4 events worked and 2 named 5-star reviews in the quarter. Ties split the pot.</li>
+          <li>You can mention that reviews help. Never offer a guest or client anything in exchange for one.</li>
+          <li>Reviews from friends or family don't count.</li>
+        </ul>
+        <p className="guide-sub-heading">Travel</p>
+        <p>Shifts outside our normal service area may include an Out-of-Area Bonus, at company discretion, based on staffing needs.</p>
+        <p style={{marginTop:'0.5rem', fontStyle:'italic'}}>Duty pay appears automatically on your payout and is confirmed at payroll time.</p>
       </>
     )
   },

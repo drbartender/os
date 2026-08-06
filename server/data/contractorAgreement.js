@@ -1,6 +1,6 @@
 // server/data/contractorAgreement.js
 
-const CURRENT_VERSION = 'contractor-agreement-v2';
+const CURRENT_VERSION = 'contractor-agreement-v3';
 
 const V2 = {
   version: 'contractor-agreement-v2',
@@ -94,9 +94,41 @@ const V2 = {
   ],
 };
 
-const VERSIONS = {
-  'contractor-agreement-v2': V2,
+// v3 is v2 plus one sentence in clause 3 (duty pay follows the published Field Guide
+// schedule). Everything else, including the acknowledgments, is unchanged. No re-consent:
+// v3 applies to new signers; contractors who already signed v2 stay on v2.
+const V3 = {
+  ...V2,
+  version: 'contractor-agreement-v3',
+  effective_date: '2026-08-06',
+  clauses: V2.clauses.map(clause => (
+    clause.number === 3
+      ? {
+        ...clause,
+        plain: "In plain English: you're paid for hours worked plus tips. You cover your own taxes. We'll issue a 1099 if you cross the IRS threshold. Duty pay and bonuses follow the published Field Guide schedule.",
+        formal: `${clause.formal} Duty-based fees and bonuses are paid according to the published Field Guide schedule, which the Company may update from time to time.`
+      }
+      : clause
+  )),
 };
+
+// Freeze both versions (extensionTermsCopy.js precedent): V3 spreads V2 and
+// ALIASES its at_a_glance / acknowledgments arrays and 10 of 11 clause
+// objects, so an in-place edit to either would silently rewrite signed-v2
+// history. Every consumer is read-only; the freeze makes that structural.
+function deepFreeze(obj) {
+  for (const value of Object.values(obj)) {
+    if (value && typeof value === 'object' && !Object.isFrozen(value)) deepFreeze(value);
+  }
+  return Object.freeze(obj);
+}
+deepFreeze(V2);
+deepFreeze(V3);
+
+const VERSIONS = Object.freeze({
+  'contractor-agreement-v2': V2,
+  'contractor-agreement-v3': V3,
+});
 
 function getCurrentAgreement() {
   return VERSIONS[CURRENT_VERSION];
