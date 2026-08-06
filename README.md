@@ -496,7 +496,10 @@ dr-bartender/
 │   │   │   │                   # StatusChip, StaffingCell (events-list staffing column: confirmed/needed with a red shortfall, plus a requests-vs-waitlist chip), RainbowDefs, Toolbar, Icon, KebabMenu, SortableTh (clickable sort headers), AddressLink,
 │   │   │   │                   # InterviewScheduleModal, PackageIncludesModal, DocumentPreviewModal (in-app lightbox for staff docs — W-9/BASSET/resume/headshot), MetricsFilterBar,
 │   │   │   │                   # ServiceExtensionPanel (service-extension requests card on EventDetailPage: status chips, money, acceptance stamp, override with required reason, cancel; money IS shown here, unlike every staff surface),
-│   │   │   │                   # format, nav, shifts, PresenceStrip (sidebar time-clock strip);
+│   │   │   │                   # format, nav, shifts (shift-row helpers for admin surfaces: positions/approved counts, remainingByRole, eventStatusChip,
+│   │   │                   #   and isCancelledEvent/selectUpcoming — the single definition of "cancelled" and "upcoming" for surfaces reading the
+│   │   │                   #   deliberately-unfiltered GET /shifts feed, so a cancelled event cannot leak back into an upcoming/needs-staff list; shifts.test.js guards it),
+│   │   │                   # PresenceStrip (sidebar time-clock strip);
 │   │   │   │                   # drawers/{InvoicesDrawer,ShiftDrawer,PresenceDrawer})
 │   │   │   ├── SendModal/      # Shared compose-and-confirm modal for the comms registry (previews server-resolved recipient + channels, admin edits subject/body, sends with honest per-channel results; sendResult.js exports describeSendResult for per-channel toast copy); used by ShoppingListModal approve + proposal-side sends (initial creation send, resend, compare link, portal invite, balance reminder, drink-plan nudge re-enroll)
 │   │   │   ├── ShoppingList/   # Shopping list editor modal + PDF export + ConsultationForm (generation is server-side via the regenerate endpoint) + NeedsRecipeSection (client-requested-drink recipe drawer: reuse-before-create, inline fold-in via regenerate, unresolved-ingredients warning) + DerivationStrip (planner-v2 demand "how we got here" strip + Client-view preview)
