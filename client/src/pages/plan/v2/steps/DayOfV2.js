@@ -12,13 +12,19 @@ const PARKING_OPTIONS = [
 // precedent), the promised-but-never-asked bar placement + power questions,
 // and access notes. Champagne toast moved to the Enhancement Lab; the coolers
 // question is gone (we derive it).
-export default function DayOfV2({ plan, selections, updateSelections }) {
+export default function DayOfV2({ selections, updateSelections }) {
   const logistics = selections.logistics || {};
   const contact = logistics.dayOfContact || { name: '', phone: '' };
   const update = (field, value) => updateSelections('logistics', { ...logistics, [field]: value });
   const updateContact = (field, value) => update('dayOfContact', { ...contact, [field]: value });
 
-  const staffCount = plan.num_bartenders || 1;
+  // Parking bills PER STAFF MEMBER: bartenders plus any additional bartender,
+  // barback, or banquet server. The plan payload exposes no such total
+  // (num_bartenders is bartenders only, the snapshot's gratuity basis excludes
+  // barbacks and servers, and the per-hour helper rows store hours rather than
+  // head counts with no duration in the payload to divide by), so the
+  // disclosure states the rate and the basis and shows NO product. The old
+  // `$20 x num_bartenders` line under-quoted every event carrying a barback.
   const parkingRate = 20;
 
   return (
@@ -57,8 +63,8 @@ export default function DayOfV2({ plan, selections, updateSelections }) {
           </div>
           {logistics.parking === 'paid' && (
             <p className="form-helper" style={{ color: 'var(--amber)', marginTop: '0.5rem' }}>
-              A ${parkingRate} parking fee per staff member is added to your event balance
-              {staffCount > 1 ? ` (${staffCount} staff x $${parkingRate} = $${parkingRate * staffCount})` : ''}.
+              A ${parkingRate} parking fee per staff member is added to your event balance.
+              It applies to everyone working your bar, including barbacks and servers.
             </p>
           )}
         </div>

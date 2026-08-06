@@ -23,6 +23,8 @@ const {
   sendFastPathConfirmation,
 } = require('./submitNotify');
 
+const PARKING_FEE_SLUG = 'parking-fee'; // per_staff catalog slug (spec §4.3)
+
 /** PUT /api/drink-plans/t/:token — save draft or submit (public) */
 async function handleSubmit(req, res) {
   const { serving_type, status, paid_separately } = req.body;
@@ -92,10 +94,28 @@ async function handleSubmit(req, res) {
   const hostedMocktailFlipSlug = isHostedNonMocktail && plannerV2Plan
     ? mocktailAddonFor(mocktailPickCount)
     : null;
+  // Parking rewire (spec 2026-08-06 §4.3): the v2 planner records the paid-lot
+  // answer as TEXT ONLY, so `parking-fee` never attached on the live path — only
+  // the retired v1 planner toggled it through `addOns`. Attach it here so it
+  // folds through the same extras/invoice-at-submit path those add-ons take.
+  // VERSION GATE, same reason as the Jack rule above: only the v2 day-of step
+  // discloses the per-staff fee, and v1's logistics step also lets the client
+  // untick the add-on afterwards, so billing a legacy plan off its stored
+  // `parking` text would charge an add-on that client deliberately removed — v1
+  // keeps billing purely off `addOns`, exactly as today. ATTACH-ONLY: no client
+  // detach path exists or is added, and plans are submit-once, so this can only
+  // RAISE total_price (the fold re-evaluates payment status on an increase);
+  // removal stays admin-side, via cancel-line-item.
+  // Never on the pay-now path: computeExtrasBreakdown cannot price a
+  // logistics-derived per_staff row, so a paid_separately submit would fold
+  // the fee into total_price while invoicing $0 of it (review W1). paid-lot on
+  // a pay-now submit is deferred to the admin editor instead of half-billed.
+  const attachParkingFee = plannerV2Plan && !paidSeparately
+    && selections?.logistics?.parking === 'paid';
   const hasFinancialSideEffects =
     newStatus === 'submitted'
     && !!existing.rows[0].proposal_id
-    && (rawAddonSlugs.length > 0 || addBarRental || hostedMocktailFlipSlug !== null);
+    && (rawAddonSlugs.length > 0 || addBarRental || hostedMocktailFlipSlug !== null || attachParkingFee);
 
   if (hasFinancialSideEffects) {
     // Atomic submit path: plan UPDATE + addons + total + invoice all in one
@@ -216,6 +236,15 @@ async function handleSubmit(req, res) {
               addonSlugs.push(pairSlug);
             }
           }
+        }
+
+        // Parking rewire: fold the paid-lot answer into the billed slug set. Skipped
+        // when the package covers parking (the never-charge rule above) and when the
+        // client already sent the slug in `addOns`, so the row is written once.
+        // parking-fee is per_staff; the post-fold re-sync settles its totalStaff.
+        if (attachParkingFee && !coveredAddonSlugs.includes(PARKING_FEE_SLUG)
+          && !addonSlugs.includes(PARKING_FEE_SLUG)) {
+          addonSlugs.push(PARKING_FEE_SLUG);
         }
 
         // Build the specialty_upgrades payload for activity-log enrichment.
@@ -373,6 +402,18 @@ async function handleSubmit(req, res) {
           // self-provided syrups aren't in preSyrups anyway, so this is a no-op
           // for them; the net effect is that self-provided is neutral to the delta.
           const preSyrupsPriced = preSyrups.filter(dropSelfProvided);
+          // A payload with NO syrupSelections key means "no opinion", never
+          // "remove every contracted syrup": the v2 planner has no syrup UI at
+          // all, so its submits always lack the key, and feeding the resulting
+          // empty list into syrupsAfter would strip contracted syrups out of
+          // the reprice and let an unauthenticated submit net-LOWER
+          // total_price (and flip the amount-based payroll funded gate).
+          // Mirror lab.js's carry-forward: absent key -> syrups are neutral to
+          // the fold. A payload that DOES carry the key (v1 lab) is an
+          // intentional selection and is honored as before.
+          const clientSentSyrups = selections.syrupSelections !== undefined
+            && selections.syrupSelections !== null;
+          const syrupsAfterSafe = clientSentSyrups ? syrupSels : preSyrupsPriced;
 
           // Contract-safe reprice + payment-status re-eval. The override-delta
           // math (Jack Van Dyke lesson), snapshot recompute, total/override
@@ -387,7 +428,7 @@ async function handleSubmit(req, res) {
             addonsBefore: preAddonsRes.rows,
             addonsAfter: allAddonsRes.rows,
             syrupsBefore: preSyrupsPriced,
-            syrupsAfter: syrupSels,
+            syrupsAfter: syrupsAfterSafe,
             numBarsBefore: numBarsAtIntent,
             numBarsAfter: proposal.num_bars ?? 0,
             statusChangeReason: 'drink_plan_extras_reconciled',
