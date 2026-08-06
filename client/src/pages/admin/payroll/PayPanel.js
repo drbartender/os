@@ -114,8 +114,11 @@ export default function PayPanel({ payout, period, onPaid, onDrift }) {
       toast.success(`Paid ${payout.contractor_name}.`);
       onPaid?.(data); // { payout, period_status }
     } catch (err) {
-      const msg = String(err.response?.data?.error || err.message || '');
-      if (err.response?.status === 409) {
+      // api.js rejects a FLATTENED envelope ({ message, code, status }); the
+      // old err.response reads were dead code, so the drift-recovery branch
+      // below never ran and a stale QR/link stayed on screen (re-review NW3).
+      const msg = String(err.message || '');
+      if (err.status === 409) {
         // Drift guard tripped, or another tab changed the payout/period state:
         // clear the lock and let the parent refetch the true state.
         toast.error(msg.includes('regenerate') ? 'Total changed. Regenerate before paying.' : msg);

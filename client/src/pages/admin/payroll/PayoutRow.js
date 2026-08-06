@@ -1,10 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
+import api from '../../../utils/api';
+import { useToast } from '../../../context/ToastContext';
 import StatusChip from '../../../components/adminos/StatusChip';
 import EntityLink from '../../../components/EntityLink';
 import { fmt$fromCents } from '../../../components/adminos/format';
 import { paymentMethodLabel } from '../userDetail/helpers';
 import EventLineItem from './EventLineItem';
+import DutyLineRow from './DutyLineRow';
 import PayPanel from './PayPanel';
+import { EVENT_KIND_OPTIONS } from './dutyKinds';
 
 function preferredHandle(payout) {
   switch (payout.preferred_payment_method) {
@@ -21,10 +25,43 @@ function preferredHandle(payout) {
 // (left) with the pay panel (right); History renders it with payable={false}
 // for a read-only drill-in.
 export default function PayoutRow({
-  payout, period, expanded, onToggle, onLineSaved, onPaid, onRefetch, editable, payable,
+  payout, period, expanded, onToggle, onLineSaved, onDutyChanged, onPaid, onRefetch, editable, payable,
 }) {
+  const toast = useToast();
   const events = payout.events || [];
+  const dutyLines = payout.duty_lines || [];
   const hours = events.reduce((s, e) => s + (Number(e.hours) || 0), 0);
+  const [addKind, setAddKind] = useState('');
+  const [addShiftPick, setAddShiftPick] = useState('');
+  const [addBusy, setAddBusy] = useState(false);
+  // Derived, never stored (re-review NW2): a mounted row whose events list
+  // changes must not strand the Add control behind a stale initializer.
+  const addShift = events.length === 1 ? String(events[0].shift_id) : addShiftPick;
+
+  // Manual duty line, EVENT kinds only (server refuses review kinds — their
+  // idempotency keys exist only on the materializer path). The SHIFT is
+  // required, never guessed: a NULL-shift manual line is invisible to
+  // reconcile, can double-pay next to a later-attributed auto line, and
+  // escapes the off-roster hold (payroll-ui review B2). Defaults come from
+  // the per-kind policy amounts; the row's amount input is the edit surface.
+  const addDutyLine = async () => {
+    if (!addKind || !addShift || addBusy) return;
+    setAddBusy(true);
+    try {
+      const opt = EVENT_KIND_OPTIONS.find((o) => o.kind === addKind);
+      const { data } = await api.post('/admin/payroll/duty-lines', {
+        payout_id: payout.id, kind: addKind,
+        amount_cents: (opt && opt.default_cents) || 2000,
+        shift_id: Number(addShift),
+      });
+      setAddKind('');
+      onDutyChanged?.(payout.id, data.duty_line, data.payout_total_cents, { created: true });
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setAddBusy(false);
+    }
+  };
   const isPaid = payout.status === 'paid';
   // Paid rows show what was actually recorded; pending rows show the preference.
   const tagMethod = isPaid && payout.payment_method ? payout.payment_method : payout.preferred_payment_method;
@@ -84,6 +121,74 @@ export default function PayoutRow({
                 onSaved={({ event, payout_total_cents }) => onLineSaved?.(event, payout_total_cents)}
               />
             ))}
+            {(() => {
+              // Read-only views (History, paid payouts) hide removed lines:
+              // they are derivation memory, not archive information. The
+              // section header gates on the FILTERED list so an all-removed
+              // archive payout never renders an empty "Duty pay" block.
+              const visibleDuty = dutyLines.filter((d) => (editable && !isPaid) || !d.removed_at);
+              if (visibleDuty.length === 0 && !(editable && !isPaid && events.length > 0)) return null;
+              return (
+              <div className="vstack" style={{ gap: 6, paddingTop: 10, borderTop: '1px solid var(--line-1)' }}>
+                <div className="tiny muted" style={{ fontWeight: 600 }}>Duty pay</div>
+                {visibleDuty.map((d) => {
+                    const ev = d.shift_id != null ? events.find((e) => e.shift_id === d.shift_id) : null;
+                    return (
+                      <div key={d.id} className="vstack" style={{ gap: 2 }}>
+                        <DutyLineRow
+                          line={d}
+                          editable={editable && !isPaid}
+                          onChanged={({ duty_line, payout_total_cents }) =>
+                            onDutyChanged?.(payout.id, duty_line, payout_total_cents, {})}
+                        />
+                        <div className="tiny muted" style={{ paddingLeft: 24 }}>
+                          {ev
+                            ? `for the ${String(ev.event_date || '').slice(0, 10)} event`
+                            : d.shift_id == null ? 'not tied to an event' : 'for a past event'}
+                        </div>
+                      </div>
+                    );
+                  })}
+                {editable && !isPaid && events.length > 0 && (
+                  <div className="hstack" style={{ gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <select
+                      className="input"
+                      value={addKind}
+                      onChange={(e) => setAddKind(e.target.value)}
+                      disabled={addBusy}
+                    >
+                      <option value="">Add duty line…</option>
+                      {EVENT_KIND_OPTIONS.map((o) => (
+                        <option key={o.kind} value={o.kind}>{o.label}</option>
+                      ))}
+                    </select>
+                    {events.length > 1 && (
+                      <select
+                        className="input"
+                        value={addShift}
+                        onChange={(e) => setAddShiftPick(e.target.value)}
+                        disabled={addBusy}
+                        aria-label="Which event this duty belongs to"
+                      >
+                        <option value="">Which event…</option>
+                        {events.map((e) => (
+                          <option key={e.shift_id} value={e.shift_id}>
+                            {String(e.event_date || '').slice(0, 10)}{e.client_name ? ` · ${e.client_name}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <button
+                      type="button" className="btn btn-ghost btn-sm"
+                      onClick={addDutyLine} disabled={!addKind || !addShift || addBusy}
+                    >
+                      {addBusy ? 'Adding…' : 'Add'}
+                    </button>
+                  </div>
+                )}
+              </div>
+              );
+            })()}
             <div
               className="hstack"
               style={{ justifyContent: 'space-between', paddingTop: 10, borderTop: '1px solid var(--line-1)' }}

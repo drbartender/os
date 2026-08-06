@@ -4,6 +4,7 @@ import { useToast } from '../../../context/ToastContext';
 import StatusChip from '../../../components/adminos/StatusChip';
 import { fmt$fromCents, fmtDate } from '../../../components/adminos/format';
 import PayoutRow from './PayoutRow';
+import AttributionModal from './AttributionModal';
 
 // pg DATE columns arrive as full ISO strings (Date -> toISOString via
 // res.json); slice the calendar date back out before formatting or comparing.
@@ -161,6 +162,7 @@ function PeriodCard({ period, expanded, onToggle, onQueueChanged, onOwedDelta })
   useEffect(() => { detailRef.current = detail; }, [detail]);
   const [busy, setBusy] = useState(false);
   const [openRows, setOpenRows] = useState(() => new Set());
+  const [attributionOpen, setAttributionOpen] = useState(false);
 
   const loadDetail = useCallback(() => {
     setDetailLoading(true);
@@ -189,19 +191,41 @@ function PeriodCard({ period, expanded, onToggle, onQueueChanged, onOwedDelta })
     setDetailError(false);
   }, [period.status]);
 
-  const runProcess = async () => {
+  const runProcess = async ({ skipDutyCheck = false } = {}) => {
     setBusy(true);
     try {
+      // Attribution gate (spec 2026-08-06 §5): processing freezes edits, so
+      // unattributed duties must be resolved FIRST. The modal renders from
+      // this GET; the server's 409 below is only the plain-message backstop.
+      if (!skipDutyCheck) {
+        try {
+          const { data } = await api.get(`/admin/payroll/periods/${period.id}/unattributed-duties`);
+          if ((data.items || []).length > 0) {
+            setAttributionOpen(true);
+            return;
+          }
+        } catch (err) {
+          // The gate itself will 409 if duties are truly unattributed; don't
+          // block processing on a failed pre-check read.
+        }
+      }
       let resp;
       try {
         resp = await api.post(`/admin/payroll/periods/${period.id}/process`, {});
       } catch (err) {
-        const msg = String(err.response?.data?.error || '');
+        // api.js rejects with a FLATTENED envelope ({ message, code, status }),
+        // never an axios err.response — the old predicates here were dead code
+        // (payroll-ui consistency review B2; pre-existing in this file).
+        const msg = String(err.message || '');
         // Early-process guard: the current week needs a hard confirm + force.
-        if (err.response?.status === 409 && msg.includes('still in progress')) {
+        if (err.status === 409 && msg.includes('still in progress')) {
           const go = window.confirm('This period is still in progress. Events finishing this week will not be added. Process anyway?');
           if (!go) return;
           resp = await api.post(`/admin/payroll/periods/${period.id}/process`, { force: true });
+        } else if (err.status === 409 && msg.includes('unattributed duties')) {
+          // Backstop: something raced between the pre-check and the flip.
+          setAttributionOpen(true);
+          return;
         } else {
           throw err;
         }
@@ -218,8 +242,8 @@ function PeriodCard({ period, expanded, onToggle, onQueueChanged, onOwedDelta })
       }
       onQueueChanged(); // status-sync effect reloads the detail off the new prop
     } catch (err) {
-      toast.error(err.response?.data?.error || err.message);
-      if (err.response?.status === 409) onQueueChanged(); // raced: re-render the true state
+      toast.error(err.message);
+      if (err.status === 409) onQueueChanged(); // raced: re-render the true state
     } finally {
       setBusy(false);
     }
@@ -233,8 +257,8 @@ function PeriodCard({ period, expanded, onToggle, onQueueChanged, onOwedDelta })
       toast.success('Period reopened. Pending lines are editable again.');
       onQueueChanged();
     } catch (err) {
-      toast.error(err.response?.data?.error || err.message);
-      if (err.response?.status === 409) onQueueChanged();
+      toast.error(err.message);
+      if (err.status === 409) onQueueChanged();
     } finally {
       setBusy(false);
     }
@@ -267,6 +291,33 @@ function PeriodCard({ period, expanded, onToggle, onQueueChanged, onOwedDelta })
         // Merge instead of replace: the PATCH returns payout_events columns
         // only, without the proposal-join fields the row needs to render.
         events: po.events.map(e => (e.id === updatedEvent.id ? { ...e, ...updatedEvent } : e)),
+      })),
+    } : prev));
+  };
+
+  // Duty-line edit/remove/restore/create: same owed-delta discipline as
+  // handleLineSaved (ref-first so overlapping saves never double-count),
+  // patching duty_lines by id (or appending on create).
+  const handleDutyChanged = (payoutId, dutyLine, payoutTotal, { created = false } = {}) => {
+    const current = detailRef.current;
+    const before = current && current.payouts.find(po => po.id === payoutId);
+    if (before) {
+      onOwedDelta(period.id, payoutTotal - Number(before.total_cents || 0));
+      detailRef.current = {
+        ...current,
+        payouts: current.payouts.map(po => (
+          po.id === payoutId ? { ...po, total_cents: payoutTotal } : po
+        )),
+      };
+    }
+    setDetail(prev => (prev ? {
+      ...prev,
+      payouts: prev.payouts.map(po => (po.id !== payoutId ? po : {
+        ...po,
+        total_cents: payoutTotal,
+        duty_lines: created
+          ? [...(po.duty_lines || []), dutyLine]
+          : (po.duty_lines || []).map(d => (d.id === dutyLine.id ? { ...d, ...dutyLine } : d)),
       })),
     } : prev));
   };
@@ -360,6 +411,7 @@ function PeriodCard({ period, expanded, onToggle, onQueueChanged, onOwedDelta })
                   expanded={openRows.has(po.id)}
                   onToggle={() => toggleRow(po.id)}
                   onLineSaved={handleLineSaved}
+                  onDutyChanged={handleDutyChanged}
                   onPaid={handlePaid}
                   // Drift/state 409s mean another tab changed this period:
                   // refresh the queue too, so the status prop catches up and
@@ -372,6 +424,25 @@ function PeriodCard({ period, expanded, onToggle, onQueueChanged, onOwedDelta })
             </>
           )}
         </div>
+      )}
+      {attributionOpen && (
+        <AttributionModal
+          periodId={period.id}
+          onDone={() => {
+            setAttributionOpen(false);
+            loadDetail(); // attribution moved money between payouts
+            runProcess({ skipDutyCheck: true });
+          }}
+          onCancel={() => {
+            setAttributionOpen(false);
+            // Any modal session may have written attributions before the
+            // cancel; refresh so the card shows the true lines and totals
+            // (review W2: a stale view invites a duplicate manual add).
+            loadDetail();
+            onQueueChanged();
+            toast.error('Processing is blocked until every booked duty has a name.');
+          }}
+        />
       )}
     </div>
   );
