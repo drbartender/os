@@ -63,12 +63,41 @@ export default function PayoutRow({
     }
   };
   const isPaid = payout.status === 'paid';
+  const isNoDraw = payout.status === 'no_draw';
   // Paid rows show what was actually recorded; pending rows show the preference.
   const tagMethod = isPaid && payout.payment_method ? payout.payment_method : payout.preferred_payment_method;
   const tagHandle = isPaid && payout.payment_method ? payout.payment_handle : preferredHandle(payout);
 
+  const [toggleBusy, setToggleBusy] = useState(false);
+  // Flip pending <-> no_draw (owner rows, spec 2026-08-07). A park that would
+  // CLOSE a processing period 409s server-side without confirm_finalize; the
+  // handler confirms and retries, mirroring runProcess's force pattern.
+  const toggleDraw = async (confirm = false) => {
+    setToggleBusy(true);
+    try {
+      await api.post(`/admin/payroll/payouts/${payout.id}/toggle-draw`,
+        confirm ? { confirm_finalize: true } : {});
+      // Status + rollups (owed, possibly period close) changed: full refetch.
+      onRefetch?.();
+    } catch (err) {
+      const msg = String(err.message || '');
+      if (err.status === 409 && msg.includes('confirm')) {
+        // One-way door: parking the last pending payout closes the period.
+        // `return await` keeps the outer finally from re-enabling the button
+        // while the confirmed retry is in flight (fleet review: double-submit).
+        const go = window.confirm('Parking this payout closes the period for good (no reopen). Continue?');
+        if (go) return await toggleDraw(true);
+        return;
+      }
+      toast.error(msg);
+      if (err.status === 409) onRefetch?.();
+    } finally {
+      setToggleBusy(false);
+    }
+  };
+
   return (
-    <div className="card" style={{ marginBottom: 8 }}>
+    <div className="card" style={{ marginBottom: 8, ...(isNoDraw ? { opacity: 0.6 } : {}) }}>
       <div
         className="card-head"
         style={{ cursor: 'pointer' }}
@@ -95,8 +124,10 @@ export default function PayoutRow({
           <span className="num"><strong>{fmt$fromCents(payout.total_cents)}</strong></span>
           {isPaid
             ? <StatusChip kind="ok">Paid</StatusChip>
-            : <StatusChip kind="info">Pending</StatusChip>}
-          {payable && !isPaid && (
+            : isNoDraw
+              ? <StatusChip kind="neutral">No draw</StatusChip>
+              : <StatusChip kind="info">Pending</StatusChip>}
+          {payable && payout.status === 'pending' && (
             <button
               type="button" className="btn btn-primary btn-sm"
               onClick={(e) => { e.stopPropagation(); onToggle(); }}
@@ -199,8 +230,26 @@ export default function PayoutRow({
             {isPaid && payout.payment_reference && (
               <div className="tiny muted">Reference: {payout.payment_reference}</div>
             )}
+            {/* Owner toggle: convert-to-payable on any no_draw row; park only
+                for a takes_draw=false contractor, so nobody else's pending
+                rows grow a park affordance. */}
+            {payable && !isPaid && (isNoDraw || payout.takes_draw === false) && (
+              <div className="hstack" style={{ gap: 8, paddingTop: 8 }}>
+                <button
+                  type="button" className="btn btn-ghost btn-sm" disabled={toggleBusy}
+                  onClick={() => toggleDraw()}
+                >
+                  {toggleBusy ? 'Working…' : isNoDraw ? 'Convert to payable' : 'Park as no-draw'}
+                </button>
+                <span className="tiny muted">
+                  {isNoDraw
+                    ? 'Makes this payout owed and payable again.'
+                    : 'Tracks it without owing it.'}
+                </span>
+              </div>
+            )}
           </div>
-          {payable && !isPaid && (
+          {payable && payout.status === 'pending' && (
             <PayPanel payout={payout} period={period} onPaid={onPaid} onDrift={onRefetch} />
           )}
         </div>

@@ -16020,6 +16020,8 @@ html[data-app="staff"] main {
 }
 .sp-paystub:hover { border-color: var(--sp-line-3); }
 .sp-paystub + .sp-paystub { margin-top: 0.5rem; }
+/* Owner no_draw rows (spec 2026-08-07): tracked, never drawn — greyed. */
+.sp-paystub-nodraw { opacity: 0.6; }
 [data-skin="light"] .sp-paystub {
   border-radius: 0;
   background: transparent;

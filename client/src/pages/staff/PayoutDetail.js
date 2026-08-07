@@ -183,6 +183,8 @@ export default function PayoutDetail() {
   const dutyLines = Array.isArray(data?.duty_lines) ? data.duty_lines : [];
 
   const isPaid = payout.status === 'paid';
+  // Owner rows (spec 2026-08-07): tracked as-if-paid, never drawn.
+  const isNoDraw = payout.status === 'no_draw';
   const total = Number.isFinite(payout.total_cents) ? payout.total_cents : 0;
   const eventCount = events.length;
 
@@ -192,7 +194,7 @@ export default function PayoutDetail() {
 
       <div>
         <div className="sp-detail-title">
-          {isPaid ? 'Paystub' : 'Period preview'}
+          {isPaid ? 'Paystub' : isNoDraw ? 'Pay record' : 'Period preview'}
         </div>
         <div className="sp-detail-sub">
           {fmtPeriodRange(period.start_date, period.end_date)}
@@ -207,12 +209,17 @@ export default function PayoutDetail() {
       >
         <div className="sp-period-banner-head">
           <span className="sp-period-banner-dates">
-            {isPaid ? 'Paid total' : 'Projected total'}
+            {isPaid ? 'Paid total' : isNoDraw ? 'Tracked total' : 'Projected total'}
           </span>
           {isPaid ? (
             <span className="sp-chip ok">
               <span className="sp-chip-dot" />
               Paid
+            </span>
+          ) : isNoDraw ? (
+            <span className="sp-chip neutral">
+              <span className="sp-chip-dot" />
+              Not drawn
             </span>
           ) : (
             <span className="sp-chip info">
@@ -227,7 +234,7 @@ export default function PayoutDetail() {
             <span>Paid {fmtShortDate(payout.paid_at)}</span>
           </div>
         )}
-        {!isPaid && period.payday && (
+        {!isPaid && !isNoDraw && period.payday && (
           <div className="sp-period-banner-foot">
             <span>Projected: live until payday.</span>
             <span>

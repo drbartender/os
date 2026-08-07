@@ -80,7 +80,11 @@ export default function HistoryView({ periodParam }) {
 
   if (selected) {
     const payouts = selected.payouts || [];
-    const totalPaid = payouts.reduce((s, po) => s + Number(po.total_cents || 0), 0);
+    // Genuinely-paid only: a no_draw owner row inside a closed period is
+    // tracked money, not paid money (spec 2026-08-07). It still renders below.
+    const totalPaid = payouts
+      .filter(po => po.status === 'paid')
+      .reduce((s, po) => s + Number(po.total_cents || 0), 0);
     return (
       <>
         <div className="hstack" style={{ marginBottom: 8 }}>
@@ -154,7 +158,7 @@ export default function HistoryView({ periodParam }) {
               </div>
               <div className="tiny muted">Payday {fmtDate(ymd10(p.payday))}</div>
             </div>
-            <div className="num"><strong>{fmt$fromCents(p.total_cents)}</strong></div>
+            <div className="num"><strong>{fmt$fromCents(p.paid_cents)}</strong></div>
             <StatusChip kind="ok">{p.status}</StatusChip>
             <span className="tiny muted">{Number(p.paid_count)} paid</span>
           </div>

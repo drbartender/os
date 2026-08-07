@@ -89,7 +89,9 @@ export default function PayoutsTab(props) {
                   <div className="tiny muted">{Number(po.event_count)} event{Number(po.event_count) === 1 ? '' : 's'} · Payday {fmtDate(ymd10(po.period.payday))}</div>
                 </div>
                 <div className="num"><strong>{fmt$fromCents(po.total_cents)}</strong></div>
-                <span className={`chip ${po.status === 'paid' ? 'ok' : 'info'}`}>{po.status}</span>
+                <span className={`chip ${po.status === 'paid' ? 'ok' : po.status === 'no_draw' ? 'neutral' : 'info'}`}>
+                  {po.status === 'no_draw' ? 'no draw' : po.status}
+                </span>
               </EntityLink>
             ))}
           </div>

@@ -10,9 +10,10 @@ import { formatMoney } from '../../utils/formatMoney';
  * URL: /pay
  *
  * Data fetches (kept lean):
- *   1. GET /api/me/payouts — always. Drives the paystubs list (status === 'paid')
- *      AND the YTD roll-up (sum total_cents where status === 'paid' and
- *      period.payday falls in the current calendar year). Also used to find
+ *   1. GET /api/me/payouts — always. Drives the paystubs list AND the YTD
+ *      roll-up: status 'paid' plus the owner's 'no_draw' rows, presented
+ *      as-if-paid (spec 2026-08-07; no_draw rows read "Not drawn"), keyed on
+ *      period.payday falling in the current calendar year. Also used to find
  *      the entry whose period covers today — the "current period".
  *   2. GET /api/me/payouts/:periodId — only when a current period is present
  *      in the list. Feeds the per-event PayoutEventRow line items shown on
@@ -184,7 +185,9 @@ export default function PayPage() {
   }
 
   const payouts = Array.isArray(payoutsList) ? payoutsList : [];
-  const paidPayouts = payouts.filter((p) => p.status === 'paid');
+  // Owner rows present as-if-paid (spec 2026-08-07): no_draw weeks list
+  // greyed as "Not drawn" and count into YTD. Everyone else has none.
+  const listPayouts = payouts.filter((p) => p.status === 'paid' || p.status === 'no_draw');
 
   // Banner data: prefer the in-list current-period detail (canonical numbers),
   // fall back to /staff-home, fall back to "no current period" suppression.
@@ -202,7 +205,7 @@ export default function PayPage() {
 
   const banner = pickBanner(listCurrent, currentDetail, fallbackPeriod);
 
-  const ytdCents = computeYtdCents(paidPayouts);
+  const ytdCents = computeYtdCents(listPayouts);
   const ytdYear = new Date().getFullYear();
 
   // ── Brand-new-hire empty state ─────────────────────────────────────────
@@ -211,7 +214,7 @@ export default function PayPage() {
   // every section — an imported staffer with ledger history but no OS payouts
   // must NOT see "No pay history yet", so the payment-history presence gates
   // this too (spec §8.2).
-  if (paidPayouts.length === 0 && !banner && paymentHistory.length === 0 && !historyError) {
+  if (listPayouts.length === 0 && !banner && paymentHistory.length === 0 && !historyError) {
     return (
       <>
         <Hero />
@@ -321,7 +324,7 @@ export default function PayPage() {
             <div className="sp-stat-k">Paid out</div>
             <div className="sp-stat-v">{formatMoney(ytdCents)}</div>
             <div className="sp-stat-sub">
-              across {paidPayouts.length} period{paidPayouts.length !== 1 ? 's' : ''}
+              across {listPayouts.length} period{listPayouts.length !== 1 ? 's' : ''}
             </div>
           </div>
         </div>
@@ -344,17 +347,17 @@ export default function PayPage() {
         <div className="sp-card-head">
           <div className="sp-card-title">Paystubs</div>
         </div>
-        {paidPayouts.length === 0 ? (
+        {listPayouts.length === 0 ? (
           <div className="sp-empty" style={{ padding: '1.4rem 1rem' }}>
             <div className="sp-empty-title">No paystubs yet.</div>
             <div>Closed pay periods will appear here after each payday.</div>
           </div>
         ) : (
-          paidPayouts.map((pp) => (
+          listPayouts.map((pp) => (
             <button
               key={pp.id}
               type="button"
-              className="sp-paystub"
+              className={'sp-paystub' + (pp.status === 'no_draw' ? ' sp-paystub-nodraw' : '')}
               onClick={() => navigate(`/pay/${pp.period.id}`)}
             >
               <div className="sp-paystub-head">
@@ -363,7 +366,7 @@ export default function PayPage() {
               </div>
               <div className="sp-paystub-foot">
                 <span>
-                  Paid {fmtShortDate(pp.paid_at) || '—'}
+                  {pp.status === 'no_draw' ? 'Not drawn' : `Paid ${fmtShortDate(pp.paid_at) || '—'}`}
                   {Number.isFinite(pp.event_count) && (
                     <>
                       {' · '}
@@ -548,9 +551,9 @@ function pickBanner(listCurrent, detail, fallback) {
  * (payday Jan 2) belongs to the new YTD year by payday, which matches how
  * the staffer thinks of pay weeks.
  */
-function computeYtdCents(paidPayouts) {
+function computeYtdCents(payoutsForYtd) {
   const year = new Date().getFullYear();
-  return paidPayouts.reduce((sum, p) => {
+  return payoutsForYtd.reduce((sum, p) => {
     const payday = p.period?.payday;
     if (!payday) return sum;
     const paydayYear = Number(String(payday).slice(0, 4));

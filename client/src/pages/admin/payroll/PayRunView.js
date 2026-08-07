@@ -272,7 +272,11 @@ function PeriodCard({ period, expanded, onToggle, onQueueChanged, onOwedDelta })
     const current = detailRef.current;
     const before = current && current.payouts.find(po => po.id === updatedEvent.payout_id);
     if (before) {
-      onOwedDelta(period.id, payoutTotal - Number(before.total_cents || 0));
+      // A no_draw payout's total is not in owed_cents, so its line edits must
+      // not move the owed rollup (spec 2026-08-07); the totals below still update.
+      if (before.status !== 'no_draw') {
+        onOwedDelta(period.id, payoutTotal - Number(before.total_cents || 0));
+      }
       // Patch the ref synchronously too: the effect-synced copy lags a render,
       // so a second save resolving in the same frame would re-read the stale
       // total and double-count the first delta.
@@ -302,7 +306,10 @@ function PeriodCard({ period, expanded, onToggle, onQueueChanged, onOwedDelta })
     const current = detailRef.current;
     const before = current && current.payouts.find(po => po.id === payoutId);
     if (before) {
-      onOwedDelta(period.id, payoutTotal - Number(before.total_cents || 0));
+      // Same no_draw owed-delta skip as handleLineSaved.
+      if (before.status !== 'no_draw') {
+        onOwedDelta(period.id, payoutTotal - Number(before.total_cents || 0));
+      }
       detailRef.current = {
         ...current,
         payouts: current.payouts.map(po => (
