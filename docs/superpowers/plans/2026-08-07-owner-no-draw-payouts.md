@@ -813,18 +813,26 @@ Inside the expanded card-body, after the "Payout total" row, add:
             )}
 ```
 
-with the handler + state near the other handlers:
+with the handler + state near the other handlers. ENGINE CHANGE (fleet review, built): a park that would CLOSE a processing period 409s without `confirm_finalize: true` — the handler confirms and retries, mirroring the runProcess force pattern:
 
 ```js
   const [toggleBusy, setToggleBusy] = useState(false);
-  const toggleDraw = async () => {
+  const toggleDraw = async (confirm = false) => {
     setToggleBusy(true);
     try {
-      await api.post(`/admin/payroll/payouts/${payout.id}/toggle-draw`, {});
+      await api.post(`/admin/payroll/payouts/${payout.id}/toggle-draw`,
+        confirm ? { confirm_finalize: true } : {});
       // Status + rollups (owed, possibly period close) changed: full refetch.
       onRefetch?.();
     } catch (err) {
-      toast.error(err.message);
+      const msg = String(err.message || '');
+      if (err.status === 409 && msg.includes('confirm')) {
+        // One-way door: parking the last pending payout closes the period.
+        const go = window.confirm('Parking this payout closes the period for good (no reopen). Continue?');
+        if (go) { setToggleBusy(false); return toggleDraw(true); }
+        return;
+      }
+      toast.error(msg);
       if (err.status === 409) onRefetch?.();
     } finally {
       setToggleBusy(false);
