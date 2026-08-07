@@ -87,7 +87,7 @@ router.post('/payroll/duty-lines', auth, adminOnly, asyncHandler(async (req, res
     const po = await client.query(
       `SELECT po.id, po.contractor_id, po.status AS payout_status, pp.status AS period_status
          FROM payouts po JOIN pay_periods pp ON pp.id = po.pay_period_id
-        WHERE po.id = $1 FOR UPDATE OF po`,
+        WHERE po.id = $1 FOR UPDATE OF po, pp`,
       [payoutId]
     );
     if (!po.rows[0]) throw new NotFoundError('payout not found');

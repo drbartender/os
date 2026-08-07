@@ -81,6 +81,7 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
   if (Object.keys(venueErrors).length > 0) throw new ValidationError(venueErrors);
 
   const dbClient = await pool.connect();
+  let dbReleased = false;
   try {
     await dbClient.query('BEGIN');
 
@@ -250,6 +251,9 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
     }
 
     await dbClient.query('COMMIT');
+    // One-pooled-connection law: the whole tail below uses pool or its own client.
+    dbClient.release();
+    dbReleased = true;
 
     if (createdPastCurfew) {
       await logAdminAction({
@@ -305,10 +309,10 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
 
     res.status(201).json(proposal);
   } catch (err) {
-    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    if (!dbReleased) { try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); } }
     throw err;
   } finally {
-    dbClient.release();
+    if (!dbReleased) dbClient.release();
   }
 }));
 
@@ -364,6 +368,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   let pastCurfewAcknowledged = null;
 
   const dbClient = await pool.connect();
+  let dbReleased = false;
   try {
     await dbClient.query('BEGIN');
 
@@ -745,6 +750,9 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     }
 
     await dbClient.query('COMMIT');
+    // One-pooled-connection law: the whole tail below uses pool or its own client.
+    dbClient.release();
+    dbReleased = true;
 
     // Audit the acknowledged insurance breach. Post-COMMIT and best-effort:
     // the booking is already saved, and an audit-write failure must not 500 a
@@ -945,10 +953,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // row fields directly); notifications carries per-channel send truth.
     res.json({ ...updatedRow.rows[0], notifications });
   } catch (err) {
-    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    if (!dbReleased) { try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); } }
     throw err;
   } finally {
-    dbClient.release();
+    if (!dbReleased) dbClient.release();
   }
 }));
 

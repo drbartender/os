@@ -65,3 +65,16 @@ server/utils/payrollAccrual.extension.test.js
 server/routes/stripeWebhookHandlers/paymentIntentSucceeded.extension.test.js
 server/utils/serviceExtensionSweep.test.js
 server/utils/refundHelpers.extensionScope.test.js
+
+# Out-of-Area Bonus (spec 2026-08-06 §6): lock lifecycle on every roster path,
+# auto-lock, duty-line-follows-the-lock; remote-staffing send-check gates.
+server/routes/shifts.bonus.test.js
+server/routes/proposals/remoteStaffing.test.js
+
+# Review money (spec 2026-08-06 §7): settleBounty single door, contest award.
+server/routes/admin/staffReviews.test.js
+
+# 2:00 AM insurance curfew (liquor liability warranty PK810225): proposal-side
+# gates + extension-side curfew clamp.
+server/utils/serviceCurfew.test.js
+server/utils/eventCurfew.test.js

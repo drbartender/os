@@ -66,7 +66,7 @@ test('milesFromHomeBase: home base to itself is zero', () => {
 });
 
 test('milesFromHomeBase: Madison WI lands in the custom-beyond-120 zone', () => {
-  // Madison, WI ~ (43.0731, -89.4012): roughly 120 miles from Pilsen.
+  // Madison, WI ~ (43.0731, -89.4012): roughly 120 miles from the Blue Island storage.
   const miles = milesFromHomeBase(43.0731, -89.4012);
   assert.ok(miles > 110 && miles < 135, `expected ~120 mi, got ${miles}`);
 });

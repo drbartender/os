@@ -100,6 +100,22 @@ router.post(
     // Zero-delta: acceptance itself settles (spec decision 13). Stripe cannot
     // charge $0, and the coverage artifact matters regardless of price.
     const settled = await settleExtension({ extensionId: ext.id, outcome: 'paid' });
+    if (!settled.ok && settled.reason === 'past_curfew') {
+      // The event's times moved under this pending request and the under-lock
+      // re-check refused it on the 2:00 AM insurance curfew. The row stays
+      // pending for the sweep; a human must fix the times. Do NOT fall
+      // through to the generic response — its settled:false still reads as
+      // "confirmed" on InvoicePage, which keys off requiresPayment alone.
+      await notify.alertAdminsProblem({
+        proposalId: ext.proposal_id,
+        kind: 'past_curfew',
+        detail: `A no-charge extension was accepted by the client but refused at settle: the new end time is past our 2:00 AM service curfew (the event's times likely moved after the request). ${settled.message || ''} Fix the event times and re-run, or decline it.`,
+      });
+      throw new ConflictError(
+        settled.message || 'That end time is outside our service hours. We will follow up shortly.',
+        'EXTENSION_PAST_CURFEW'
+      );
+    }
     if (settled.ok) {
       // Payroll runs on EVERY settle path, not just the webhook: a zero-delta
       // extension is still time the staffer worked (spec section 9).

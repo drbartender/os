@@ -358,7 +358,10 @@ export default function ProposalEditorForm({
         const reason = fe.event_duration_hours || 'This booking runs past our 2:00 AM service curfew.';
         // eslint-disable-next-line no-alert
         if (window.confirm(`${reason}\n\nBook it anyway? This will be recorded.`)) {
-          return doSave({ ...patchBody, acknowledge_past_curfew: true }, notify);
+          // await, not a bare return: the outer finally clears `saving`, and
+          // releasing the button while the acknowledged PATCH is in flight
+          // invites a duplicate save (and duplicate client notify).
+          return await doSave({ ...patchBody, acknowledge_past_curfew: true }, notify);
         }
         setError('Not saved. The end time is past our 2:00 AM service curfew.');
         setFieldErrors(fe);

@@ -270,9 +270,12 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     durationHours: Number(event_duration_hours) || 4,
   });
   if (publicCurfew && publicCurfew.past) {
-    throw new ValidationError({
-      event_duration_hours: curfewMessage(publicCurfew.curfewDisplay, publicCurfew.maxHours),
-    });
+    // The message must ride the error itself: the wizard submits from the
+    // contact step, where the event_duration_hours field (and its error
+    // renderer) is unmounted, so the top banner is the only thing the
+    // client sees.
+    const pastCurfewMsg = curfewMessage(publicCurfew.curfewDisplay, publicCurfew.maxHours);
+    throw new ValidationError({ event_duration_hours: pastCurfewMsg }, pastCurfewMsg);
   }
 
   // Normalize class_options: only persist recognized keys and only for class bookings

@@ -4419,6 +4419,15 @@ DO $$ BEGIN
       CHECK (ABS(amount_cents) <= 100000);
   END IF;
 END $$;
+-- The out_of_area_* columns MUST be added before the cap-check DO block below:
+-- statements run in file order, and a CHECK referencing a not-yet-added column
+-- raises 42703 (not idempotent-coded), silently dropping the money backstop
+-- for the life of that boot.
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_bonus_cents INTEGER;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_attached_by INTEGER REFERENCES users(id);
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_attached_at TIMESTAMPTZ;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_locked_at TIMESTAMPTZ;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_locked_user_id INTEGER REFERENCES users(id);
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
@@ -4442,11 +4451,6 @@ CREATE TABLE IF NOT EXISTS duty_attributions (
   UNIQUE(proposal_id, kind)
 );
 
-ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_bonus_cents INTEGER;
-ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_attached_by INTEGER REFERENCES users(id);
-ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_attached_at TIMESTAMPTZ;
-ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_locked_at TIMESTAMPTZ;
-ALTER TABLE shifts ADD COLUMN IF NOT EXISTS out_of_area_locked_user_id INTEGER REFERENCES users(id);
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS remote_fee_prompted_at TIMESTAMPTZ;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS venue_lat NUMERIC(9,6);
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS venue_lng NUMERIC(9,6);
