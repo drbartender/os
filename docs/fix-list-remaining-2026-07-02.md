@@ -948,50 +948,32 @@ merged code 2026-08-04):
 - **v1 LogisticsStep parking preview mis-quotes**: `client/src/pages/plan/steps/LogisticsStep.js:41-42, 155-159` previews `$20 x num_bartenders` while the server bills per_staff over ALL staff (bartenders + additional-bartender + barback + banquet-server). Live-reachable: prod still carries v1 draft/pending plans (e.g. plan 69 / proposal 472: shown $40, billed $60). Was already ordered in spec 2026-07-01-paynow-extras-addon-pricing-design.md:92 and never shipped. One-line fix, outside the parking-rewire lane's footprint.
 - **Explicit-empty syrupSelections still strips contract syrups on submit**: `server/routes/drinkPlans/submit.js` — the 2026-08-06 guard treats an ABSENT syrupSelections key as "carry contract syrups forward", but an explicit `[]`/`{}` still enters the fold and strips. Pre-existing on main (unvalidated `rawAddonSlugs` already opens the fold); candidate fix: normalize in submitSanitize.js, or treat empty-on-a-no-syrup-UI planner version as "no opinion". (security, low)
 - **paid_separately submit dodges the parking fee**: deliberate 2026-08-06 hardening (half-billed state was worse); a pay-now v2 submit with paid parking attaches nothing, so the fee is admin-added later or missed. Revenue-miss direction only. (low)
-- **Out-of-area residuals (fleet-cleared 2026-08-06, merge a106defd)**: (1) `staff_within_40`
-  field name + "within 40 miles" copy in `RemoteStaffingFeePrompt.js:181` hard-couple
+- **Out-of-area residuals (fleet-cleared 2026-08-06, merge a106defd; pruned after the
+  duty-residuals lane, merge afb6e5e6 2026-08-07)**: (1) `staff_within_40` field name +
+  "within 40 miles" copy in `RemoteStaffingFeePrompt.js:181` hard-couple
   `REMOTE_STAFF_RADIUS_MILES` across three semantics (proximity radius, prompt floor, frozen
   copy) — changing the constant silently breaks the others. (2) Legacy ungated geocoders at
-  `shifts.js:585/:672` + `shifts.handlers.js:121` write city-centroid lat/lng to `shifts.lat/lng`,
+  `shifts.js` + `shifts.handlers.js` write city-centroid lat/lng to `shifts.lat/lng`,
   which now feed venue/home distance surfaces and the band suggestion (advisory only; admin
   types the amount). (3) Approve/deny/assign lock stamp+release are separate autocommit
-  statements (millisecond window, admin-only, pre-notification). (4) 2+-approved same-value
-  knob Save is a dead-end: returns a success toast, cannot lock, and rewrites
-  `out_of_area_attached_by` for a no-op — tighten the disable to
-  `!(unlocked_warning && approved_count === 1)`. (5) A can_staff manager can
-  remove -> lower -> re-approve to defeat locked-never-reduce; audit trail records it; a
-  `min_locked_cents` floor surviving release is the structural fix if admins should be bound
-  too. (6) `geocodeThrottled` queue ordering untested. (7) Spec §9 knob surface on the
-  staffing-dashboard ShiftDrawer unbuilt for proposal-linked shifts (standalone shifts can
-  never pay a bonus — consistent by omission). (all low)
+  statements (millisecond window, admin-only, pre-notification). (all low)
+  CLOSED by duty-residuals: same-value dead-end (true no-op + tightened disable), queue-ordering
+  test, ShiftDrawer knob (spec §9). DECIDED: no `min_locked_cents` floor — Dallas 2026-08-07,
+  remove-then-lower flexibility is deliberate, audit trail suffices; do not re-raise.
 
 ## From the push-time gate (2026-08-07, fleet + codex on the 20-commit batch)
 
-- **hosted_supplies duty line unclamped vs the $1,000 CHECK**: `dutyLines.js` computes
-  `2.5 x hourly_rate x 100`; `contractor_profiles.hourly_rate` (NUMERIC(6,2)) has no cap, so a
-  rate over $400/hr yields >100000 and raises 23514 INSIDE accrual's transaction, rolling back
-  the whole proposal's accrual. Fat-finger only (real rates $20-60); clamp at the materializer
-  or cap the rate column. (med-low)
-- **geocodeThrottled: elapsed-time throttle + queue-depth cap + negative caching**: the
-  Nominatim chain sleeps a fixed 1.1s even cold, has no depth cap, and never caches failures;
-  fire-and-forget shift geocodes (eventCreation on convert/PATCH) can queue in front of the
-  admin Send path's remote-staffing check (~3-4s realistic, 9.1s worst per queued item).
-  Perf reviewer supplied a 6-line elapsed-time rewrite. (med-low)
 - **`listUnattributedDuties` N+1**: one `loadProposalDutyContext` (5-6 queries) per completed
   proposal per Process attempt; fine at <=9 proposals/week, JOIN or Promise.all it if periods
   grow ~10x. Related: `loadProposalDutyContext` re-SELECTs the proposal + roster that
   `accruePayoutsForProposal` already holds; `checkContractCurfew` + `maxDurationHoursBeforeCurfew`
   double-read the same proposal row. (low)
-- **`serviceExtensions/create.js` rolls its own curfew copy**: `curfewMessage()` is documented
-  as the one client-facing sentence and used by public/changeRequests/crud/settle; create.js
-  (merged hours earlier) was never retrofitted. (low)
-- **`serviceExtensionPricing.js` calls `maxDurationHoursBeforeCurfew` inside create.js's
-  transaction without the JS pre-screen** that serviceCurfew.js performs; unreachable today only
-  because create.js's checkWindow rejects unparseable events before BEGIN — an upstream accident,
-  not a local guarantee. Add the screen or a comment pinning the dependency. (low)
 - **Curfew-unguarded admin/system duration writers** (documented in ARCHITECTURE as deliberate):
   shifts.js admin mint, thumbtackProposalDraft, proposalGroups clone, seeds/imports. Closing them
   is this fix-list's work, not silent coverage. (low)
-- **Stale comment**: `ProposalCreate.js:329-330` references "the finally below" that now lives in
-  the caller. `eventCurfew.test.js` is named for a module that does not exist (tests
-  eventEndInstant + serviceExtensionPricing). (trivial)
+  CLOSED by the duty-residuals lane (merge afb6e5e6, 2026-08-07): hosted_supplies clamp
+  (structurally moot — flat $50 per Dallas, announced to staff); geocode elapsed-time throttle +
+  depth-4 background shedding (negative caching deliberately DECLINED — a failed address must
+  stay retryable; documented in serviceArea.js); create.js now uses the shared curfewMessage;
+  serviceExtensionPricing carries its own JS pre-screen; both stale-comment/filename nits
+  (test renamed to eventEndInstant.curfew.test.js, smoke list updated).
