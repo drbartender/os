@@ -11,10 +11,12 @@ import { dayDiff } from './format';
 // "N open" warning, so a fully unstaffed event with two applicants rendered
 // calmer than a half-staffed one.
 //
-// Pending requests get their own line, and which word they get depends only on
-// whether an open slot remains: with a hole to fill they are `N requests`
-// (someone is waiting on an approve/deny), with the roster full they are
-// `N on waitlist` (informational overflow).
+// Pending applicants surface here only when an open slot remains: those are
+// `N requests`, someone waiting on an approve/deny. Surplus applicants on a
+// FULL roster are a waitlist, informational rather than actionable, and this is
+// the list staffing actually gets worked from, so the waitlist is not shown at
+// all. A full roster says one thing, the green ratio, and the waitlist count
+// still lives on the overview and on the event itself.
 export function deriveStaffing(e) {
   const needed = parsePositionsNeeded(e?.positions_needed).length;
   const confirmed = approvedCount(e);
@@ -40,8 +42,13 @@ export default function StaffingCell({ event }) {
     // no ratio and no shortfall can be stated.
     line = <span className="staffing-none">No roster</span>;
   } else if (open > 0) {
+    // The ratio itself carries the alarm on a live shortfall: the numbers are
+    // what the eye lands on when scanning the column, so a muted ratio beside a
+    // coloured "N open" buried the count that matters. `staffing-short` is
+    // withheld on inactive rows rather than being fought in CSS, so history
+    // keeps its muted treatment.
     line = (
-      <span className="staffing-ratio">
+      <span className={`staffing-ratio${inactive ? '' : ' staffing-short'}`}>
         {confirmed}/{needed}
         {' · '}
         {/* "open" is an adjective here, so it never takes a plural s. */}
@@ -53,17 +60,15 @@ export default function StaffingCell({ event }) {
   }
 
   // Without a roster we cannot tell a waitlist from an open-slot applicant, so
-  // pending requests stay labelled as requests rather than being miscalled a
-  // waitlist. (The old cell reported nothing at all for these rows.)
-  const chipLabel = (open > 0 || needed === 0)
-    ? plural(pending, 'request')
-    : `${pending} on waitlist`;
+  // those rows keep the chip and stay labelled as requests rather than being
+  // miscalled a waitlist. (The old cell reported nothing at all for these rows.)
+  const actionable = open > 0 || needed === 0;
 
   return (
     <div className={`vstack staffing-cell${inactive ? ' staffing-inactive' : ''}`} style={{ gap: 4, alignItems: 'flex-start' }}>
       {line}
-      {pending > 0 && !inactive && (
-        <StatusChip kind="neutral">{chipLabel}</StatusChip>
+      {pending > 0 && actionable && !inactive && (
+        <StatusChip kind="neutral">{plural(pending, 'request')}</StatusChip>
       )}
     </div>
   );

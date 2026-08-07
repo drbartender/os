@@ -98,9 +98,28 @@ describe('deriveStaffing', () => {
     expect(container.textContent).not.toContain('waitlist');
   });
 
-  test('rendered copy: a full roster with applicants says waitlist', () => {
+  test('rendered copy: a full roster with applicants shows the ratio alone', () => {
+    // The waitlist is informational, and this list is where staffing gets
+    // worked, so a full roster says one thing and does not advertise overflow.
     const { container } = render(<StaffingCell event={ev({ needed: 1, confirmed: 1, pending: 1 })} />);
-    expect(container.textContent).toContain('1 on waitlist');
+    expect(container.textContent).toBe('1/1');
+    expect(container.textContent).not.toContain('waitlist');
+  });
+
+  test('a live shortfall marks the ratio itself, not just the open count', () => {
+    const { container } = render(<StaffingCell event={ev({ needed: 2, confirmed: 0, days: 19 })} />);
+    expect(container.querySelector('.staffing-ratio.staffing-short')).not.toBeNull();
+  });
+
+  test('an inactive shortfall stays muted: no alarm on history', () => {
+    const { container } = render(<StaffingCell event={ev({ needed: 2, confirmed: 0, days: -5 })} />);
+    expect(container.querySelector('.staffing-ratio')).not.toBeNull();
+    expect(container.querySelector('.staffing-short')).toBeNull();
+  });
+
+  test('a full roster never gets the shortfall alarm', () => {
+    const { container } = render(<StaffingCell event={ev({ needed: 2, confirmed: 2 })} />);
+    expect(container.querySelector('.staffing-short')).toBeNull();
   });
 
   test('rendered copy: a single applicant is singular', () => {

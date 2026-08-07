@@ -11082,6 +11082,7 @@ html[data-app="admin-os"][data-skin="light"] {
   /* House Lights accent = deep green; support amber / bordeaux / blue */
   --ms-navy:    #3a5d7a;     /* House Lights blue */
   --ms-bordeaux:#9e3a2a;     /* House Lights red */
+  --ms-alarm:   #cc3520;     /* bordeaux's hue, turned up: staffing shortfall */
   --ms-emerald: #2a3a2a;     /* House Lights deep green (primary accent) */
   --ms-camel:   #b8832a;     /* House Lights amber */
   --ms-ink:     #1a1a1a;
@@ -11495,6 +11496,10 @@ html[data-app="admin-os"][data-skin="light"] .staffing-full { color: var(--ms-em
 html[data-app="admin-os"][data-skin="light"] .staffing-open {
   color: var(--ms-bordeaux);
   font-weight: 600;
+}
+html[data-app="admin-os"][data-skin="light"] .staffing-ratio.staffing-short {
+  color: var(--ms-alarm);
+  font-weight: 700;
 }
 
 /* -- Progress bar ---------------------------------------------------------- */
@@ -12758,6 +12763,16 @@ html[data-app="admin-os"] .staffing-cell {
 html[data-app="admin-os"] .staffing-ratio,
 html[data-app="admin-os"] .staffing-none { color: var(--ink-2); }
 html[data-app="admin-os"] .staffing-full { color: hsl(var(--ok-h) var(--ok-s) 52%); }
+/* Live shortfall: the ratio is the loudest thing in the column, because the
+   numbers are what the eye lands on when scanning for events to staff.
+   Deliberately NOT derived from --danger-h: in the After Hours skin that hue is
+   262 (violet), which is what paints "N open" purple, so a computed danger red
+   comes out purple and vanishes into the badge beside it. A literal red is the
+   whole point of the cue. */
+html[data-app="admin-os"] .staffing-ratio.staffing-short {
+  color: #ff4d4d;
+  font-weight: 700;
+}
 html[data-app="admin-os"] .staffing-open {
   color: hsl(var(--danger-h) var(--danger-s) 58%);
   font-weight: 600;
