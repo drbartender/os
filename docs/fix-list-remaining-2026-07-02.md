@@ -964,3 +964,34 @@ merged code 2026-08-04):
   too. (6) `geocodeThrottled` queue ordering untested. (7) Spec §9 knob surface on the
   staffing-dashboard ShiftDrawer unbuilt for proposal-linked shifts (standalone shifts can
   never pay a bonus — consistent by omission). (all low)
+
+## From the push-time gate (2026-08-07, fleet + codex on the 20-commit batch)
+
+- **hosted_supplies duty line unclamped vs the $1,000 CHECK**: `dutyLines.js` computes
+  `2.5 x hourly_rate x 100`; `contractor_profiles.hourly_rate` (NUMERIC(6,2)) has no cap, so a
+  rate over $400/hr yields >100000 and raises 23514 INSIDE accrual's transaction, rolling back
+  the whole proposal's accrual. Fat-finger only (real rates $20-60); clamp at the materializer
+  or cap the rate column. (med-low)
+- **geocodeThrottled: elapsed-time throttle + queue-depth cap + negative caching**: the
+  Nominatim chain sleeps a fixed 1.1s even cold, has no depth cap, and never caches failures;
+  fire-and-forget shift geocodes (eventCreation on convert/PATCH) can queue in front of the
+  admin Send path's remote-staffing check (~3-4s realistic, 9.1s worst per queued item).
+  Perf reviewer supplied a 6-line elapsed-time rewrite. (med-low)
+- **`listUnattributedDuties` N+1**: one `loadProposalDutyContext` (5-6 queries) per completed
+  proposal per Process attempt; fine at <=9 proposals/week, JOIN or Promise.all it if periods
+  grow ~10x. Related: `loadProposalDutyContext` re-SELECTs the proposal + roster that
+  `accruePayoutsForProposal` already holds; `checkContractCurfew` + `maxDurationHoursBeforeCurfew`
+  double-read the same proposal row. (low)
+- **`serviceExtensions/create.js` rolls its own curfew copy**: `curfewMessage()` is documented
+  as the one client-facing sentence and used by public/changeRequests/crud/settle; create.js
+  (merged hours earlier) was never retrofitted. (low)
+- **`serviceExtensionPricing.js` calls `maxDurationHoursBeforeCurfew` inside create.js's
+  transaction without the JS pre-screen** that serviceCurfew.js performs; unreachable today only
+  because create.js's checkWindow rejects unparseable events before BEGIN — an upstream accident,
+  not a local guarantee. Add the screen or a comment pinning the dependency. (low)
+- **Curfew-unguarded admin/system duration writers** (documented in ARCHITECTURE as deliberate):
+  shifts.js admin mint, thumbtackProposalDraft, proposalGroups clone, seeds/imports. Closing them
+  is this fix-list's work, not silent coverage. (low)
+- **Stale comment**: `ProposalCreate.js:329-330` references "the finally below" that now lives in
+  the caller. `eventCurfew.test.js` is named for a module that does not exist (tests
+  eventEndInstant + serviceExtensionPricing). (trivial)
