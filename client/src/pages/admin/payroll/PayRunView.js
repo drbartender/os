@@ -16,9 +16,9 @@ const chicagoTodayYmd = () =>
 
 const CHIP_KIND = { open: 'info', processing: 'warn', reopened: 'violet' };
 
-// The pay-run queue: every non-paid period, current week first, then oldest
-// payday first. Each card lazy-loads its payouts on expansion and hosts the
-// line editor + pay panel per payout.
+// The pay-run queue: every non-paid period, newest payday first. Each card
+// lazy-loads its payouts on expansion and hosts the line editor + pay panel
+// per payout.
 export default function PayRunView({ periodParam }) {
   const toast = useToast();
   const [periods, setPeriods] = useState(null); // all periods (rollups) | null while loading
@@ -52,14 +52,14 @@ export default function PayRunView({ periodParam }) {
   const derived = useMemo(() => {
     const all = periods || [];
     const today = chicagoTodayYmd();
-    const isCurrent = (p) => ymd10(p.start_date) <= today && today <= ymd10(p.end_date);
+    // Newest payday first. The current week's period carries the latest payday,
+    // so it leads on its own — no current-week special case needed. Staleness
+    // is still surfaced by the "Oldest open" stat rather than by sort position.
     const queue = all.filter(p => p.status !== 'paid').sort((a, b) => {
-      const cur = Number(isCurrent(b)) - Number(isCurrent(a)); // current-week period leads
-      if (cur !== 0) return cur;
       const pa = ymd10(a.payday) || '';
       const pb = ymd10(b.payday) || '';
-      if (pa !== pb) return pa < pb ? -1 : 1; // then oldest payday first
-      return Number(a.id) - Number(b.id);
+      if (pa !== pb) return pa < pb ? 1 : -1;
+      return Number(b.id) - Number(a.id);
     });
     const owedCents = queue.reduce((s, p) => s + Number(p.owed_cents || 0), 0);
     const unpaidCount = queue.reduce((s, p) => s + Number(p.pending_count || 0), 0);
