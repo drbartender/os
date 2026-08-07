@@ -823,3 +823,45 @@ test('the unlocked warning is not a dead end: a SAME-VALUE re-save locks it and 
   assert.equal(lines.rows[0].contractor_id, aId);
   assert.equal(Number(lines.rows[0].amount_cents), 2500);
 });
+
+test('a same-value PATCH with 2+ approved workers is a TRUE no-op: nothing rewritten, nothing audited', async () => {
+  const shiftId = await mkFutureShift();
+  const r1 = await mkPending(shiftId, aId, ['Bartender']);
+  const r2 = await mkPending(shiftId, cId, ['Barback']);
+  await req('PUT', `/api/shifts/requests/${r1}`, { token: adminToken, body: { status: 'approved' } });
+  await req('PUT', `/api/shifts/requests/${r2}`, { token: adminToken, body: { status: 'approved' } });
+
+  // Admin attaches: two approved is ambiguous, so unlocked + warned.
+  let r = await req('PATCH', `/api/shifts/${shiftId}/out-of-area`, { token: adminToken, body: { amount_cents: 2000 } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.shift.unlocked_warning, true);
+  const before = await shiftRow(shiftId);
+  assert.equal(before.out_of_area_attached_by, adminId);
+
+  const auditCount = async () => {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM admin_audit_log
+        WHERE action = 'shift_out_of_area_set' AND metadata->>'shift_id' = $1`,
+      [String(shiftId)]
+    );
+    return rows[0].n;
+  };
+  const auditsBefore = await auditCount();
+
+  // A DIFFERENT staffing admin re-saves the SAME amount. The server cannot
+  // auto-lock (two candidates), so the round-trip must change NOTHING: not the
+  // attachment provenance, not the audit log, not the lock.
+  r = await req('PATCH', `/api/shifts/${shiftId}/out-of-area`, { token: mgrToken, body: { amount_cents: 2000 } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.shift.unlocked_warning, true, 'still warned: the save could not lock');
+  assert.equal(r.body.shift.approved_count, 2);
+  assert.equal(r.body.shift.out_of_area_locked_at, null, 'still unlocked');
+
+  const after = await shiftRow(shiftId);
+  assert.equal(after.out_of_area_attached_by, adminId, 'a no-op save must not steal the attachment');
+  assert.equal(String(after.out_of_area_attached_at), String(before.out_of_area_attached_at),
+    'attached_at untouched');
+  assert.equal(Number(after.out_of_area_bonus_cents), 2000);
+  assert.equal(after.out_of_area_locked_at, null);
+  assert.equal(await auditCount(), auditsBefore, 'a true no-op writes no audit row');
+});

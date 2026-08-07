@@ -22,6 +22,7 @@ import {
   parseEquipmentArray,
 } from '../shifts';
 import EntityLink from '../../EntityLink';
+import OutOfAreaKnob from '../../../pages/admin/OutOfAreaKnob';
 
 // ShiftDrawer — focused per-shift management surface launched from EventDetailPage.
 // Replaces the legacy /events/shift/:id page.
@@ -45,6 +46,7 @@ import EntityLink from '../../EntityLink';
 //   - Remove staff    → DELETE /shifts/requests/:requestId
 //   - Manual assign   → POST /shifts/:id/assign  { user_id, position }
 //   - Edit logistics  → PUT  /shifts/:id { equipment_required } OR { supply_run }
+//   - Out-of-Area Bonus → PATCH /shifts/:id/out-of-area (OutOfAreaKnob; proposal shifts only)
 //
 // onUpdate (optional) fires after any mutation so a parent surface can refetch.
 
@@ -463,6 +465,15 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
                 <div className="meta-v num">{shift.guest_count || '—'}</div>
               </div>
             </div>
+
+            {/* Out-of-Area Bonus knob (spec §6/§9). GET /shifts/detail/:id already
+                carries the out-of-area fields + approved_count + unlocked_warning,
+                and anyone who could load this drawer passed requireStaffing (the
+                same guard as the PATCH). Standalone shifts (no proposal) can never
+                accrue a bonus, so the knob hides there. */}
+            {shift.proposal_id && (
+              <OutOfAreaKnob shift={shift} onSaved={() => { loadShift(); onUpdate?.(); }} />
+            )}
           </div>
 
           <div className="section-title">

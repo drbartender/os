@@ -44,11 +44,13 @@ const EQUIPMENT_SUPPLIES_CENTS = 2000;
 const MENU_PRINT_CENTS = 500;
 const REVIEW_BOUNTY_CENTS = 1000;
 const CONTEST_POT_CENTS = 10000;
-// Hosted events pay a flat supply/load hours block at the attributed staffer's
-// own hourly rate (policy range 2 to 3 hours; Dallas 2026-08-06). Deliberately
-// NOT wired into payrollMath.contractedHours — that would be a retroactive
-// wage change to every past hosted event.
-const HOSTED_SUPPLY_HOURS = 2.5;
+// Hosted events pay a FLAT $50 for the supply run and load-in/out (Dallas
+// 2026-08-07, announced to staff; supersedes the deprecated 2.5h x hourly_rate
+// block of 2026-08-06). Still one per event, still ATTRIBUTED, still replaces
+// BOTH the $20 equipment fee and the $20 bar share on hosted events.
+// Deliberately NOT wired into payrollMath.contractedHours — that would be a
+// retroactive wage change to every past hosted event.
+const HOSTED_SUPPLIES_CENTS = 5000;
 // Storage-pickup threshold for the equipment fee, in cents. The bar-rental
 // package fee (num_bars money) is EXCLUDED: the bar duty pays its own $20.
 const EQUIPMENT_THRESHOLD_CENTS = 5000;
@@ -77,7 +79,7 @@ function eligibleWorkers(kind, workers) {
  *   pkg: service_packages row or null (isHostedPackage input)
  *   addons: [{ slug, line_total, requires_provisioning }] from the snapshot,
  *           requires_provisioning joined from service_addons by slug
- *   workers: accrual roster rows [{ user_id, position, shift_id, hourly_rate }]
+ *   workers: accrual roster rows [{ user_id, position, shift_id }]
  *   shift: { id, out_of_area_bonus_cents, out_of_area_locked_user_id } or null
  *   attributions: duty_attributions rows [{ kind, user_id }]
  * Returns desired auto lines: [{ contractor_id, shift_id, kind, amount_cents }].
@@ -113,11 +115,11 @@ function computeDesiredDutyLines({ proposal, pkg, addons, workers, shift, shifts
     && cents(snap.bar_rental && snap.bar_rental.total) > 0;
 
   if (hosted) {
-    // One hosted_supplies block replaces BOTH the $20 equipment fee and the
-    // $20 bar share, so a single pickup is never paid twice (spec §2).
+    // One flat hosted_supplies fee replaces BOTH the $20 equipment fee and the
+    // $20 bar share, so a single pickup is never paid twice (spec §2). Flat,
+    // never rate-derived (Dallas 2026-08-07).
     if (pickupCents > 0 || Number(proposal.num_bars || 0) > 0) {
-      attributedLine('hosted_supplies', (w) =>
-        Math.round(HOSTED_SUPPLY_HOURS * Number(w.hourly_rate || 0) * 100));
+      attributedLine('hosted_supplies', () => HOSTED_SUPPLIES_CENTS);
     }
   } else {
     if (hasBar) attributedLine('bar_rental', () => BAR_RENTAL_CENTS);
@@ -233,12 +235,12 @@ async function loadProposalDutyContext(executor, proposalId) {
     }));
   }
 
+  // No hourly_rate here on purpose: the only consumer was the deprecated
+  // rate-based hosted_supplies block; every duty amount is a flat constant now.
   const workersRes = await executor.query(
-    `SELECT sr.user_id, sr.position, s.id AS shift_id,
-            COALESCE(cp.hourly_rate, 20.00) AS hourly_rate
+    `SELECT sr.user_id, sr.position, s.id AS shift_id
        FROM shift_requests sr
        JOIN shifts s ON s.id = sr.shift_id
-       LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
       WHERE s.proposal_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL
       ORDER BY sr.user_id`,
     [proposalId]
@@ -574,7 +576,7 @@ async function materializePendingReviewLines(client) {
 
 module.exports = {
   DUTY_KINDS, DUTY_KIND_LABELS, ATTRIBUTED_KINDS, EVENT_KINDS,
-  HOSTED_SUPPLY_HOURS, REVIEW_BOUNTY_CENTS, CONTEST_POT_CENTS,
+  HOSTED_SUPPLIES_CENTS, REVIEW_BOUNTY_CENTS, CONTEST_POT_CENTS,
   isFundedProposal, eligibleWorkers, computeDesiredDutyLines,
   neededAttributedKinds, loadProposalDutyContext, reconcileDutyLines,
   reportFrozenSkips, sumPayableDutyCents, listUnattributedDuties,

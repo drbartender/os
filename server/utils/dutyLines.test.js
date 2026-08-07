@@ -3,7 +3,7 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const {
-  HOSTED_SUPPLY_HOURS, computeDesiredDutyLines, isFundedProposal,
+  HOSTED_SUPPLIES_CENTS, computeDesiredDutyLines, isFundedProposal,
   reconcileDutyLines, sumPayableDutyCents, materializeReviewLine,
   materializePendingReviewLines,
 } = require('./dutyLines');
@@ -81,7 +81,7 @@ test('equipment_supplies: fires at exactly $50.00 of flagged add-ons, not $49.99
   assert.deepEqual(barOnly.map((l) => l.kind), ['bar_rental']);
 });
 
-test('hosted: one hosted_supplies block at the worker rate replaces bar + equipment', () => {
+test('hosted: one FLAT $50 hosted_supplies fee replaces bar + equipment', () => {
   const proposal = fundedProposal({ num_bars: 1, pricing_snapshot: { bar_rental: { total: 50 }, addons: [] } });
   const workers = [W(1, 'Bartender', 30)];
   const desired = computeDesiredDutyLines({
@@ -94,10 +94,27 @@ test('hosted: one hosted_supplies block at the worker rate replaces bar + equipm
       { kind: 'equipment_supplies', user_id: 1 },
     ],
   });
+  assert.equal(HOSTED_SUPPLIES_CENTS, 5000, 'flat $50 per Dallas 2026-08-07');
   assert.deepEqual(desired, [{
-    contractor_id: 1, shift_id: 77, kind: 'hosted_supplies',
-    amount_cents: Math.round(HOSTED_SUPPLY_HOURS * 30 * 100),
+    contractor_id: 1, shift_id: 77, kind: 'hosted_supplies', amount_cents: 5000,
   }]);
+});
+
+test('hosted_supplies is RATE-INVARIANT: an outlier hourly_rate never moves the flat $50', () => {
+  // The deprecated formula was 2.5h x hourly_rate, which a fat-fingered $500/hr
+  // rate would have pushed past the payout_duty_lines_amount_cap_check ($1,000)
+  // and rolled back the whole proposal accrual. Flat means the rate column
+  // cannot reach duty money at all; this pins that.
+  const proposal = fundedProposal({ num_bars: 1, pricing_snapshot: { bar_rental: { total: 50 }, addons: [] } });
+  for (const rate of [0, 18, 500, null]) {
+    const desired = computeDesiredDutyLines({
+      proposal, pkg: hostedPkg, addons: [], workers: [W(1, 'Bartender', rate)],
+      shift: null, attributions: [{ kind: 'hosted_supplies', user_id: 1 }],
+    });
+    assert.deepEqual(desired, [{
+      contractor_id: 1, shift_id: 77, kind: 'hosted_supplies', amount_cents: 5000,
+    }], `hourly_rate=${rate} must not change the flat fee`);
+  }
 });
 
 test('parking: every approved staffer including barbacks, no attribution needed', () => {

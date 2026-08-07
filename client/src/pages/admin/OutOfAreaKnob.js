@@ -73,11 +73,14 @@ export default function OutOfAreaKnob({ shift, onSaved }) {
         <button
           type="button"
           className="btn btn-secondary btn-sm"
-          // A same-value Save stays submittable while the bonus is unlocked:
-          // re-saving the amount is exactly how the admin triggers the server's
-          // auto-lock on a single-staffer shift. Disabling it on
-          // value === stored would make the warning a dead end.
-          disabled={saving || (value === stored && !shift.unlocked_warning)}
+          // A same-value Save stays submittable ONLY when it can still do
+          // something: with the bonus unlocked and exactly one approved
+          // staffer, re-saving the amount is how the admin triggers the
+          // server's auto-lock, so disabling it would make the warning a dead
+          // end. With 2+ approved the server cannot auto-lock, so a same-value
+          // save is a pure no-op; keep it disabled there and let the warning
+          // text point at the real fix (thin the roster to one, or wait).
+          disabled={saving || (value === stored && !(shift.unlocked_warning && Number(shift.approved_count) === 1))}
           onClick={save}
         >
           {saving ? 'Saving…' : 'Save'}

@@ -428,7 +428,7 @@ router.patch('/:id/out-of-area', auth, requireStaffing, asyncHandler(async (req,
   }
 
   const dbClient = await pool.connect();
-  let updated, priorCents, proposalId, newlyLocked = false, approvedCount = 0;
+  let updated, priorCents, proposalId, newlyLocked = false, approvedCount = 0, noOp = false;
   try {
     await dbClient.query('BEGIN');
     // FOR UPDATE so a concurrent approval cannot stamp the lock between the
@@ -456,17 +456,6 @@ router.patch('/:id/out-of-area', auth, requireStaffing, asyncHandler(async (req,
       }
     }
 
-    const upd = await dbClient.query(
-      `UPDATE shifts
-          SET out_of_area_bonus_cents = $2::int,
-              out_of_area_attached_by = CASE WHEN $2::int IS NULL THEN NULL ELSE $3::int END,
-              out_of_area_attached_at = CASE WHEN $2::int IS NULL THEN NULL ELSE NOW() END
-        WHERE id = $1
-        RETURNING *`,
-      [shiftId, amountCents, req.user.id]
-    );
-    updated = upd.rows[0];
-
     // Always counted, so the response can carry approved_count and the knob can
     // word its warning for the actual situation.
     const approved = await dbClient.query(
@@ -483,11 +472,47 @@ router.patch('/:id/out-of-area', auth, requireStaffing, asyncHandler(async (req,
     // nothing to guess. With 2+ approved the choice is a judgment call, so we
     // leave it unlocked and the payload's unlocked_warning tells the admin.
     // This is also the escape hatch the knob offers for an already-warned
-    // shift: a same-value re-save runs this block and locks it.
-    if (amountCents !== null && !shift.out_of_area_locked_at && approvedCount === 1) {
-      newlyLocked = await stampOutOfAreaLock(dbClient, shiftId, approved.rows[0].user_id);
-      const reread = await dbClient.query('SELECT * FROM shifts WHERE id = $1', [shiftId]);
-      updated = reread.rows[0];
+    // shift: a same-value re-save exists only to run this stamp.
+    const canAutoLock = amountCents !== null && !shift.out_of_area_locked_at && approvedCount === 1;
+    const sameValue = priorCents === amountCents;
+
+    if (sameValue) {
+      // The bonus is already attached at this exact amount, so the stamp can
+      // run without the UPDATE below (its WHERE only needs a non-null bonus).
+      if (canAutoLock) {
+        newlyLocked = await stampOutOfAreaLock(dbClient, shiftId, approved.rows[0].user_id);
+      }
+      if (!newlyLocked) {
+        // TRUE no-op: the amount did not move and nothing stamped (e.g. the
+        // 2+-approved warning, where auto-lock is refused by design). Writing
+        // here would only rewrite out_of_area_attached_by/_attached_at to
+        // whoever clicked and log a from==to audit row, so skip the UPDATE,
+        // the audit, and the re-accrue and answer with the row as it stands.
+        const reread = await dbClient.query('SELECT * FROM shifts WHERE id = $1', [shiftId]);
+        updated = reread.rows[0];
+        noOp = true;
+      }
+    }
+
+    if (!noOp) {
+      const upd = await dbClient.query(
+        `UPDATE shifts
+            SET out_of_area_bonus_cents = $2::int,
+                out_of_area_attached_by = CASE WHEN $2::int IS NULL THEN NULL ELSE $3::int END,
+                out_of_area_attached_at = CASE WHEN $2::int IS NULL THEN NULL ELSE NOW() END
+          WHERE id = $1
+          RETURNING *`,
+        [shiftId, amountCents, req.user.id]
+      );
+      updated = upd.rows[0];
+      // Amount-changed path: the bonus may only just now exist, so the stamp
+      // runs AFTER the UPDATE (same-value + stamped ran it above, and the
+      // RETURNING * there already carries the fresh lock columns).
+      if (!sameValue && canAutoLock) {
+        newlyLocked = await stampOutOfAreaLock(dbClient, shiftId, approved.rows[0].user_id);
+        const reread = await dbClient.query('SELECT * FROM shifts WHERE id = $1', [shiftId]);
+        updated = reread.rows[0];
+      }
     }
     await dbClient.query('COMMIT');
   } catch (err) {
@@ -497,27 +522,29 @@ router.patch('/:id/out-of-area', auth, requireStaffing, asyncHandler(async (req,
     dbClient.release();
   }
 
-  // Audit + re-derivation run AFTER the pooled client is back in the pool
-  // (one pooled connection per request): logAdminAction takes its own.
-  await logAdminAction({
-    actorUserId: req.user.id,
-    action: 'shift_out_of_area_set',
-    metadata: {
-      shift_id: shiftId,
-      proposal_id: proposalId,
-      from_cents: priorCents,
-      to_cents: amountCents,
-      locked: !!updated.out_of_area_locked_at,
-      newly_locked: newlyLocked,
-    },
-  });
-  // A raise on a locked, already-accrued shift must propagate to the duty line;
-  // pre-event shifts are not completed, so this no-ops after one cheap SELECT.
-  // `newlyLocked` is part of the gate because the escape hatch above is a
-  // SAME-VALUE save: the amount did not move, but the money just became payable
-  // to a specific person, and without this the duty line would sit unwritten
-  // until some unrelated accrual happened to run.
-  if (proposalId && (priorCents !== amountCents || newlyLocked)) reaccrueDutyForProposal(proposalId);
+  if (!noOp) {
+    // Audit + re-derivation run AFTER the pooled client is back in the pool
+    // (one pooled connection per request): logAdminAction takes its own.
+    await logAdminAction({
+      actorUserId: req.user.id,
+      action: 'shift_out_of_area_set',
+      metadata: {
+        shift_id: shiftId,
+        proposal_id: proposalId,
+        from_cents: priorCents,
+        to_cents: amountCents,
+        locked: !!updated.out_of_area_locked_at,
+        newly_locked: newlyLocked,
+      },
+    });
+    // A raise on a locked, already-accrued shift must propagate to the duty line;
+    // pre-event shifts are not completed, so this no-ops after one cheap SELECT.
+    // `newlyLocked` is part of the gate because the escape hatch above is a
+    // SAME-VALUE save: the amount did not move, but the money just became payable
+    // to a specific person, and without this the duty line would sit unwritten
+    // until some unrelated accrual happened to run.
+    if (proposalId && (priorCents !== amountCents || newlyLocked)) reaccrueDutyForProposal(proposalId);
+  }
 
   res.json({ shift: withOutOfAreaContext(updated, approvedCount) });
 }));

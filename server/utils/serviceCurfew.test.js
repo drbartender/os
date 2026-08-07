@@ -7,8 +7,8 @@ const {
 } = require('./serviceCurfew');
 
 // The contracted-duration half of the 2:00 AM insurance warranty. The extension
-// flow is covered by eventCurfew.test.js; this covers the bigger door — a
-// duration typed into the contract.
+// flow is covered by eventEndInstant.curfew.test.js; this covers the bigger
+// door — a duration typed into the contract.
 
 const NONCE = `svc-curfew-${Date.now()}`;
 const made = [];

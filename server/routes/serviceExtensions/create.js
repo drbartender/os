@@ -26,6 +26,7 @@ const { ValidationError, ConflictError, PermissionError } = require('../../utils
 const { createInvoice, writeLineItems } = require('../../utils/invoiceHelpers');
 const { SERVICE_EXTENSION_INVOICE_LABEL } = require('../../utils/proposalMoneyShared');
 const { computeExtensionDelta, allowedAdditionalHours, MAX_EXTENSION_HOURS } = require('../../utils/serviceExtensionPricing');
+const { curfewMessage } = require('../../utils/serviceCurfew');
 const { eventEndInstantForDuration } = require('../../utils/eventEndInstant');
 const { CURRENT_EXTENSION_TERMS_VERSION } = require('../../data/extensionTermsCopy');
 const notify = require('../../utils/serviceExtensionNotify');
@@ -182,9 +183,10 @@ router.post('/', auth, serviceExtensionLimiter, asyncHandler(async (req, res) =>
     const messages = {
       not_an_extension: 'Pick an end time later than the contracted one.',
       over_cap: `You can add at most ${MAX_EXTENSION_HOURS} hours. Contact management for more.`,
-      past_curfew: delta.curfewDisplay
-        ? `Bar service cannot run past ${delta.curfewDisplay}. Pick an earlier end time.`
-        : 'Bar service cannot run that late. Pick an earlier end time.',
+      // The ONE shared client-facing curfew sentence (serviceCurfew.js), never
+      // re-rolled per surface. maxHours is deliberately omitted: its cap line
+      // speaks in total-from-start hours, which would mislead mid-extension.
+      past_curfew: `${curfewMessage(delta.curfewDisplay)} Pick an earlier end time.`,
       bad_increment: 'Pick a time on a 30 minute mark.',
       unparseable_time: 'Could not determine this event’s times. Contact management.',
       missing_package: 'This event cannot be priced online. Contact management.',

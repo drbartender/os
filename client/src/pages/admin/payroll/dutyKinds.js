@@ -6,8 +6,8 @@
 // exists only so the add-select can offer kinds before any line exists.
 // out_of_area is deliberately NOT offered here: bonus money flows through the
 // shift-level knob with its own cap and lock (spec §6), never free-typed.
-// default_cents mirror the policy amounts (spec §2); hosted_supplies varies by
-// rate, so it seeds at $50 (2.5h x the $20 default rate) and gets edited.
+// default_cents mirror the policy amounts (spec §2); hosted_supplies is a flat
+// $50 (Dallas 2026-08-07; the old rate-based block is gone), same as derivation.
 export const EVENT_KIND_OPTIONS = [
   { kind: 'bar_rental', label: 'Bar rental', default_cents: 2000 },
   { kind: 'parking', label: 'Parking', default_cents: 2000 },

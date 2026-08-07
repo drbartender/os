@@ -326,8 +326,9 @@ export default function ProposalCreate() {
         const reason = fe.event_duration_hours || 'This booking runs past our 2:00 AM service curfew.';
         // eslint-disable-next-line no-alert
         if (window.confirm(`${reason}\n\nBook it anyway? This will be recorded.`)) {
-          // `return await`, not a bare return: the finally below must wait for
-          // the retry to finish, or it clears the submitting flag mid-flight.
+          // `return await`, not a bare return: handleSubmit's finally (the
+          // caller owns the `submitting` flag) must wait for the retry to
+          // finish, or it clears the flag mid-flight.
           return await submitCreate({ ...payload, acknowledge_past_curfew: true }, saveAsDraft);
         }
         setError('Not created. The end time is past our 2:00 AM service curfew.');

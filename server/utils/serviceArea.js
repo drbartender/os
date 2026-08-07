@@ -14,8 +14,13 @@
  *
  * Also owns a Nominatim throttle for ITS OWN callers. `geocode.js` deliberately
  * ships no built-in rate limiting (it only exports a `delay` helper), so the
- * out-of-area callers queue behind one module-level promise chain at 1 req/sec.
- * NOTE the queue serializes only callers that go through `geocodeThrottled`:
+ * out-of-area callers queue behind one module-level promise chain, paced by an
+ * ELAPSED-TIME throttle: each task waits only the unpaid remainder of
+ * GEOCODE_MIN_INTERVAL_MS since the previous dispatch, so a cold queue pays
+ * 0ms instead of a flat 1.1s. Fire-and-forget producers go through
+ * `geocodeThrottledBackground`, which sheds (returns null, no enqueue) past a
+ * small queue-depth cap; awaited callers use `geocodeThrottled` and are never
+ * shed. NOTE the queue serializes only callers that go through these two:
  * six pre-existing sites call `geocodeAddress` directly and are unaffected
  * (pre-existing main behavior, out of scope for this lane). `geocode.js` now
  * carries an 8s per-request timeout so one hung lookup cannot wedge the chain.
@@ -93,20 +98,56 @@ function roundMiles(miles) {
 // ─── Nominatim queue ──────────────────────────────────────────────
 
 let geocodeChain = Promise.resolve();
+// Instant of the last geocodeAddress dispatch. The throttle waits only
+// GEOCODE_MIN_INTERVAL_MS minus the time already elapsed since this, so a cold
+// queue dispatches immediately and only back-to-back lookups pay the interval.
+let lastGeocodeAt = 0;
+// Tasks enqueued and not yet settled (throttle wait included). Only the
+// background variant reads it; awaited callers are never shed.
+let pendingGeocodes = 0;
+
+// Depth at which fire-and-forget producers are shed instead of queued ~1.1s
+// apart into the far future. Deliberately NO negative cache alongside this: a
+// failed or shed address must stay retryable on its next create/edit, so the
+// only state this queue keeps is depth and the last-dispatch instant, never
+// per-address memory.
+const GEOCODE_MAX_QUEUE_DEPTH = 4;
 
 /**
  * Geocode behind the shared 1 req/sec queue. Resolves to {lat,lng} or null;
  * never throws (geocodeAddress already swallows its own errors, and the chain
  * absorbs a rejection so one failure cannot wedge the queue).
+ *
+ * `geocodeFn` is a test seam only (defaults to the real Nominatim call): it
+ * lets a suite drive the queue with no network without restructuring the
+ * module. Production callers pass just the address.
  */
-function geocodeThrottled(address) {
+function geocodeThrottled(address, { geocodeFn = geocodeAddress } = {}) {
   if (!address || !String(address).trim()) return Promise.resolve(null);
-  const run = geocodeChain.then(async () => {
-    await delay(GEOCODE_MIN_INTERVAL_MS);
-    return geocodeAddress(address);
-  });
+  pendingGeocodes += 1;
+  const run = geocodeChain
+    .then(async () => {
+      const wait = GEOCODE_MIN_INTERVAL_MS - (Date.now() - lastGeocodeAt);
+      if (wait > 0) await delay(wait);
+      lastGeocodeAt = Date.now();
+      return geocodeFn(address);
+    })
+    .finally(() => { pendingGeocodes -= 1; });
   geocodeChain = run.then(() => {}, () => {});
   return run;
+}
+
+/**
+ * Fire-and-forget variant with load shedding: returns null IMMEDIATELY, with
+ * nothing enqueued, when GEOCODE_MAX_QUEUE_DEPTH lookups are already pending —
+ * a burst of shift creates must not stack venue lookups a second apart into
+ * the future. A shed venue simply stays uncoordinated until the next
+ * create/edit re-triggers it. Callers that AWAIT a result (the remoteStaffing
+ * send-path check) must keep using `geocodeThrottled`, which never sheds.
+ */
+function geocodeThrottledBackground(address, opts) {
+  if (pendingGeocodes >= GEOCODE_MAX_QUEUE_DEPTH) return null;
+  return geocodeThrottled(address, opts);
 }
 
 // ─── Out-of-Area lock lifecycle ───────────────────────────────────
@@ -206,6 +247,7 @@ module.exports = {
   milesBetween,
   roundMiles,
   geocodeThrottled,
+  geocodeThrottledBackground,
   stampOutOfAreaLock,
   releaseOutOfAreaLock,
   reaccrueDutyForProposal,

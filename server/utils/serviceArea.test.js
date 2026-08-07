@@ -1,7 +1,8 @@
 require('dotenv').config();
 
-// Pure unit tests for the service-area geometry (spec §6). No DB, no network:
-// the band table and the distance helpers are the only things under test here.
+// Pure unit tests for the service-area geometry (spec §6) and the Nominatim
+// queue. No DB, no network: the queue tests inject a fake geocodeFn through
+// the seam geocodeThrottled exposes for exactly this purpose.
 // The lock lifecycle and the routes are covered by shifts.bonus.test.js.
 
 const { test } = require('node:test');
@@ -10,10 +11,13 @@ const assert = require('node:assert/strict');
 const {
   HOME_BASE,
   OUT_OF_AREA_MAX_CENTS,
+  GEOCODE_MIN_INTERVAL_MS,
   suggestOutOfAreaCents,
   milesFromHomeBase,
   milesBetween,
   roundMiles,
+  geocodeThrottled,
+  geocodeThrottledBackground,
 } = require('./serviceArea');
 
 if (process.env.NODE_ENV === 'production') {
@@ -103,4 +107,62 @@ test('roundMiles: one decimal, null-safe', () => {
   assert.equal(roundMiles(12.35), 12.4);
   assert.equal(roundMiles(null), null);
   assert.equal(roundMiles(undefined), null);
+});
+
+// ─── Nominatim queue (no network: geocodeFn is the test seam) ─────
+// Declared in this order on purpose: the cold-path test must run before
+// anything stamps lastGeocodeAt, or "cold" stops being cold.
+
+test('geocodeThrottled: a COLD queue pays 0ms, not the full interval', async () => {
+  const t0 = Date.now();
+  const out = await geocodeThrottled('1500 S Blue Island Ave, Chicago, IL', {
+    geocodeFn: async () => ({ lat: 41.8612, lng: -87.6586 }),
+  });
+  const elapsed = Date.now() - t0;
+  assert.deepEqual(out, { lat: 41.8612, lng: -87.6586 });
+  assert.ok(elapsed < GEOCODE_MIN_INTERVAL_MS,
+    `a cold queue must dispatch immediately, waited ${elapsed}ms`);
+});
+
+test('geocodeThrottled: queued lookups dispatch serialized, FIFO, an interval apart', async () => {
+  const dispatched = [];
+  const fn = (label, sleepMs = 0) => async () => {
+    dispatched.push({ label, at: Date.now() });
+    if (sleepMs) await new Promise((r) => setTimeout(r, sleepMs));
+    return { lat: dispatched.length, lng: dispatched.length };
+  };
+  // First is slow on purpose: the second must still wait its turn AND the
+  // throttle remainder, never overtake.
+  const p1 = geocodeThrottled('addr one', { geocodeFn: fn('one', 40) });
+  const p2 = geocodeThrottled('addr two', { geocodeFn: fn('two') });
+  const [r1, r2] = await Promise.all([p1, p2]);
+  assert.deepEqual(dispatched.map((d) => d.label), ['one', 'two'], 'FIFO order');
+  assert.deepEqual(r1, { lat: 1, lng: 1 });
+  assert.deepEqual(r2, { lat: 2, lng: 2 });
+  // Elapsed-time pacing: the second dispatch waits out the interval measured
+  // from the FIRST dispatch (small slack for timer jitter only).
+  const gap = dispatched[1].at - dispatched[0].at;
+  assert.ok(gap >= GEOCODE_MIN_INTERVAL_MS - 50,
+    `expected ~${GEOCODE_MIN_INTERVAL_MS}ms between dispatches, got ${gap}ms`);
+});
+
+test('geocodeThrottledBackground: sheds (null, nothing enqueued) at the depth cap, never wedges', async () => {
+  const slowFn = async () => ({ lat: 0, lng: 0 });
+  // Fill the queue to the cap through the background variant itself.
+  const queued = [];
+  for (let i = 0; i < 4; i++) {
+    const p = geocodeThrottledBackground(`addr ${i}`, { geocodeFn: slowFn });
+    assert.ok(p, `lookup ${i} under the cap must enqueue`);
+    queued.push(p);
+  }
+  // At the cap: shed immediately, nothing enqueued.
+  assert.equal(geocodeThrottledBackground('addr overflow', { geocodeFn: slowFn }), null);
+  // The AWAITED variant is never shed, even at the cap.
+  const awaited = geocodeThrottled('addr awaited', { geocodeFn: slowFn });
+  assert.ok(awaited && typeof awaited.then === 'function');
+  await Promise.all([...queued, awaited]);
+  // Drained: background lookups flow again (no negative caching, no stuck depth).
+  const after = geocodeThrottledBackground('addr after drain', { geocodeFn: slowFn });
+  assert.ok(after, 'a drained queue accepts background lookups again');
+  assert.deepEqual(await after, { lat: 0, lng: 0 });
 });

@@ -277,7 +277,7 @@ const SECTIONS = [
         <ul>
           <li>Bringing your own portable bar counts.</li>
           <li>Picking up a Dr. Bartender bar at the Pilsen storage unit counts too. Same $20 either way.</li>
-          <li>Hosted events roll the bar into the supply-hours block below instead of the $20.</li>
+          <li>Hosted events roll the bar into the flat $50 hosted supplies fee below instead of the $20.</li>
         </ul>
         <p className="guide-sub-heading">Parking: $20</p>
         <ul>
@@ -288,7 +288,7 @@ const SECTIONS = [
         <ul>
           <li>Kicks in when the client's storage-pickup add-ons total $50 or more for the event.</li>
           <li>One fee per event, no matter how many items you grab at storage. It covers the whole pickup. Bar rental has its own $20 above and doesn't count toward the $50.</li>
-          <li>Hosted events work differently. Instead of the $20, you're paid a flat block of supply hours at your hourly rate.</li>
+          <li>Hosted events work differently. Instead of the $20, you're paid a flat $50 that covers the supply run plus load-in and load-out.</li>
         </ul>
         <p className="guide-sub-heading">Menu Print: $5</p>
         <ul>

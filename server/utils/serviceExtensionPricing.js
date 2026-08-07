@@ -24,6 +24,9 @@
 const { calculateProposal, isHostedPackage } = require('./pricingEngine');
 const { loadRepriceAddons } = require('./proposalExtrasFold');
 const { eventEndInstantForDuration, maxDurationHoursBeforeCurfew } = require('./eventEndInstant');
+// JS pre-screen for the free-text start time (no cycle: serviceCurfew only
+// requires eventEndInstant). See allowedAdditionalHours for why it is needed.
+const { isParseableTime } = require('./serviceCurfew');
 // THE definition of "gratuity" for payroll purposes. It pools BOTH canonical
 // breakdown labels, 'Shared Gratuity' (the forced sub-100-guest over-ratio
 // surcharge) and 'Gratuity' (client-elected), per GRATUITY_PAYROLL_LABELS.
@@ -49,6 +52,19 @@ const INCREMENT_HOURS = 0.5;
  * already surface as an explicit conflict rather than a silent zero.
  */
 async function allowedAdditionalHours(client, proposalId, contractedHours) {
+  // Pre-screen the stored free-text start time in JS BEFORE the SQL cast
+  // (serviceCurfew.js checkContractCurfew pattern). maxDurationHoursBeforeCurfew
+  // casts event_start_time and merely CATCHES 22007/22008 — but a caught cast
+  // error still ABORTS an enclosing transaction (25P02 for every later
+  // statement), and this function runs inside create.js's locked in-transaction
+  // reprice. Until now that was safe only by accident: checkWindow happened to
+  // reject unparseable events pre-BEGIN. The screen is strictly NARROWER than
+  // Postgres's parser, so anything it admits cannot raise; anything it refuses
+  // returns the same null the unparseable case always meant.
+  const { rows: t } = await client.query(
+    'SELECT event_start_time FROM proposals WHERE id = $1', [proposalId]
+  );
+  if (!t[0] || !isParseableTime(t[0].event_start_time)) return null;
   const curfew = await maxDurationHoursBeforeCurfew(client, proposalId);
   if (!curfew) return null;
   const roomToCurfew = curfew.maxHours - Number(contractedHours);

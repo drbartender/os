@@ -75,6 +75,6 @@ server/routes/proposals/remoteStaffing.test.js
 server/routes/admin/staffReviews.test.js
 
 # 2:00 AM insurance curfew (liquor liability warranty PK810225): proposal-side
-# gates + extension-side curfew clamp.
+# gates + extension-side curfew clamp (eventEndInstant + serviceExtensionPricing).
 server/utils/serviceCurfew.test.js
-server/utils/eventCurfew.test.js
+server/utils/eventEndInstant.curfew.test.js

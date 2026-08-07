@@ -1,7 +1,7 @@
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { composeVenueLocation, composeVenueMapQuery, isVenueComplete } = require('./venueAddress');
-const { geocodeThrottled } = require('./serviceArea');
+const { geocodeThrottledBackground } = require('./serviceArea');
 const { effectiveSetupMinutes } = require('./setupTime');
 const { scheduleDrinkPlanNudge } = require('./drinkPlanNudge');
 const { parsePositionsNeeded, rosterCounts } = require('./positionsNeeded');
@@ -160,7 +160,11 @@ async function provisioningSlugSet(db) {
  * then waits on the shared 1 req/sec Nominatim queue in serviceArea.js
  * (geocode.js ships only a delay helper and an 8s timeout, no limiter), which
  * puts the UPDATE well outside any caller transaction window. It takes its own
- * pooled connection, never the caller's.
+ * pooled connection, never the caller's. Because nobody awaits this, it uses
+ * the BACKGROUND queue variant: at queue saturation the lookup is shed (null,
+ * nothing enqueued) and the venue stays uncoordinated until the next
+ * create/edit re-triggers it — a burst of creates must not stack lookups a
+ * second apart into the future.
  *
  * The UPDATE re-asserts lat IS NULL so a hand-set coordinate, or a coordinate
  * written by a concurrent path, is never clobbered by a late-landing lookup.
@@ -172,7 +176,11 @@ function geocodeShiftVenue(shiftId, proposal) {
   const address = composeVenueMapQuery(proposal);
   if (!address) return;
   setImmediate(() => {
-    geocodeThrottled(address)
+    // Shed at the depth cap. No negative caching behind this either: a failed
+    // or shed address stays retryable the next time this venue is saved.
+    const lookup = geocodeThrottledBackground(address);
+    if (!lookup) return;
+    lookup
       .then((coords) => {
         if (!coords) return null;
         return pool.query(
