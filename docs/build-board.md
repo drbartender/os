@@ -8,7 +8,7 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 
 <!-- plan written + reviewed, no lane cut. One line per item, linking its spec + plan. -->
 
-- **phone-system-1a** — phone redesign phase 1a: call experience (spec rev 3, fleet folded). [spec](superpowers/specs/2026-07-26-phone-system-redesign-design.md) / [plan](superpowers/plans/2026-07-26-phone-system-1a-call-experience.md)
+- **phone-system-1a** — phone redesign phase 1a: call experience (spec rev 3, plan rev 2.1 freshness-audited 8/07 against 116 commits: telephony core byte-frozen, one Task-4 harness build-blocker fixed). [spec](superpowers/specs/2026-07-26-phone-system-redesign-design.md) / [plan](superpowers/plans/2026-07-26-phone-system-1a-call-experience.md)
 
 ## In flight
 
