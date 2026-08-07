@@ -67,9 +67,35 @@ async function recomputePayoutTotals(executor, payoutIds) {
 }
 
 /**
- * If every payout in the period is `paid`, flip the period to `paid`.
- * Returns true if the flip happened, false if there is still a pending payout
- * (or if the period was not in `processing` to begin with).
+ * THE single payout-creation path (spec 2026-08-07). Upserts the contractor's
+ * payout for the period and returns its id. A contractor whose
+ * contractor_profiles.takes_draw is false gets a payout born 'no_draw'
+ * (owner rows: tracked, never owed). The ON CONFLICT arm deliberately touches
+ * only pay_period_id (a no-op, to get RETURNING) so an EXISTING row's status
+ * is never rewritten here; pending <-> no_draw flips go through the
+ * toggle-draw route only. No contractor_profiles row = takes_draw true.
+ */
+async function ensurePayout(executor, payPeriodId, contractorId) {
+  const { rows } = await executor.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, status)
+     VALUES ($1, $2,
+       CASE WHEN COALESCE(
+         (SELECT takes_draw FROM contractor_profiles WHERE user_id = $2), true)
+       THEN 'pending' ELSE 'no_draw' END)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE
+       SET pay_period_id = EXCLUDED.pay_period_id
+     RETURNING id`,
+    [payPeriodId, contractorId]
+  );
+  return rows[0].id;
+}
+
+/**
+ * If NO `pending` payout remains in the period, flip the period to `paid`.
+ * `no_draw` rows are deliberately skippable (spec 2026-08-07): a period can
+ * close with tracked-but-never-owed owner rows inside it. Returns true if the
+ * flip happened, false if a pending payout remains (or if the period was not
+ * in `processing` to begin with).
  */
 async function maybeFinalizePeriod(executor, periodId) {
   const { rows: countRows } = await executor.query(
@@ -88,5 +114,5 @@ async function maybeFinalizePeriod(executor, periodId) {
 
 module.exports = {
   findOpenPeriodForDate, recomputePayoutTotal, recomputePayoutTotals,
-  maybeFinalizePeriod,
+  maybeFinalizePeriod, ensurePayout,
 };

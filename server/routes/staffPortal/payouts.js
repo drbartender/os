@@ -81,7 +81,8 @@ function register(router) {
 
   // ─── GET /api/me/payment-history ─────────────────────────────────────────
   // The logged-in staffer's imported pre-OS payment history + a blended
-  // all-time total (imported ledger + own PAID OS payouts). Spec §8.2.
+  // all-time total (imported ledger + own OS payouts counted as-if-paid:
+  // 'paid' plus 'no_draw' owner rows, spec 2026-08-07). Spec §8.2.
   //
   // Hard-scoped to req.user.id (no :userId param, ever). PII discipline: this
   // returns platform ONLY — NO memo, NO source_account, NO payee handles (spec
@@ -97,10 +98,12 @@ function register(router) {
     );
 
     const ledgerCents = rows.reduce((sum, r) => sum + Number(r.amount_cents), 0);
+    // Own OS payouts counted as-if-paid: 'paid' plus the owner's 'no_draw'
+    // rows (spec 2026-08-07; staff-facing only — 1099/tax stays strictly paid).
     const paidRes = await pool.query(
       `SELECT COALESCE(SUM(total_cents), 0)::bigint AS cents
          FROM payouts
-        WHERE contractor_id = $1 AND status = 'paid'`,
+        WHERE contractor_id = $1 AND status IN ('paid', 'no_draw')`,
       [req.user.id]
     );
     const paidCents = Number(paidRes.rows[0].cents);

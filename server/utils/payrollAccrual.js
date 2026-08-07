@@ -12,7 +12,7 @@ const {
 } = require('./payrollMath');
 const { captureProposalPaymentFees, captureTipFeesForProposal } = require('./payrollTips');
 const { isLegacyCcParticipant } = require('./payrollGuards');
-const { recomputePayoutTotals } = require('./payrollProcessing');
+const { recomputePayoutTotals, ensurePayout } = require('./payrollProcessing');
 const {
   loadProposalDutyContext, neededAttributedKinds, eligibleWorkers,
   computeDesiredDutyLines, reconcileDutyLines, reportFrozenSkips,
@@ -255,12 +255,12 @@ async function accruePayoutsForProposal(proposalId) {
           ...heldPayoutIds,
         ])];
         // A held line keeps its payout non-empty; only a payout emptied of every
-        // line is a phantom pending stub to delete. Duty lines count too — ANY
+        // line is a phantom pending/no_draw stub to delete. Duty lines count too — ANY
         // duty row (even removed: they are kept audit/no-resurrect memory, and
         // the payout CASCADE would destroy them) spares the payout.
         await client.query(
           `DELETE FROM payouts po
-            WHERE po.id = ANY($1) AND po.status = 'pending'
+            WHERE po.id = ANY($1) AND po.status IN ('pending', 'no_draw')
               AND NOT EXISTS (SELECT 1 FROM payout_events WHERE payout_id = po.id)
               AND NOT EXISTS (SELECT 1 FROM payout_duty_lines WHERE payout_id = po.id)`,
           [affectedPayoutIds]
@@ -456,16 +456,9 @@ async function accruePayoutsForProposal(proposalId) {
       // the excess debt on re-accrual. The payout-level recompute clamps at 0.
       const lineTotal = wage + share.gratuity + tipNet + adjustment;
 
-      // Upsert the contractor's payout for this period.
-      const payoutRes = await client.query(
-        `INSERT INTO payouts (pay_period_id, contractor_id)
-         VALUES ($1, $2)
-         ON CONFLICT (pay_period_id, contractor_id) DO UPDATE
-           SET pay_period_id = EXCLUDED.pay_period_id
-         RETURNING id`,
-        [payPeriodId, w.user_id]
-      );
-      const payoutId = payoutRes.rows[0].id;
+      // Upsert the contractor's payout for this period (born no_draw for a
+      // takes_draw=false contractor — spec 2026-08-07).
+      const payoutId = await ensurePayout(client, payPeriodId, w.user_id);
       touchedPayoutIds.add(payoutId);
       payoutIdByContractor.set(Number(w.user_id), payoutId);
       payoutsCreatedCount += 1;
@@ -654,10 +647,10 @@ async function accruePayoutsForProposal(proposalId) {
         );
       }
 
-      // A payout emptied of every line is a $0 pending stub for a worker no longer
-      // on any event this period. It would show as a phantom pending payout on the
-      // period list and block period finalization (maybeFinalizePeriod waits for
-      // every payout to be paid). Delete any such now-empty pending payout. A held
+      // A payout emptied of every line is a $0 pending/no_draw stub for a worker no
+      // longer on any event this period. A pending one would show as a phantom on
+      // the period list and block finalization (maybeFinalizePeriod waits only on
+      // pending payouts); an emptied no_draw stub is the same zero-memory phantom. Delete any such now-empty pending payout. A held
       // line keeps its payout non-empty, so those survive and are recomputed below
       // (a positive hold's line_total is 0; a negative hold's is the debt, which
       // the GREATEST(0, SUM) clamp floors to a $0 payable total). A paid payout is
@@ -665,7 +658,7 @@ async function accruePayoutsForProposal(proposalId) {
       const orphanPayoutIds = [...new Set(orphans.map(o => o.payout_id))];
       const emptied = await client.query(
         `DELETE FROM payouts po
-           WHERE po.id = ANY($1) AND po.status = 'pending'
+           WHERE po.id = ANY($1) AND po.status IN ('pending', 'no_draw')
              AND NOT EXISTS (SELECT 1 FROM payout_events WHERE payout_id = po.id)
              AND NOT EXISTS (SELECT 1 FROM payout_duty_lines WHERE payout_id = po.id)
            RETURNING id`,

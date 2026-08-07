@@ -15,7 +15,7 @@ const { isBartender } = require('./staffingRoles');
 const { readSnapshot } = require('./pricingSnapshot');
 const { chicagoTodayYmd } = require('./businessTime');
 // No cycle: payrollProcessing imports nothing from this module.
-const { findOpenPeriodForDate, recomputePayoutTotal } = require('./payrollProcessing');
+const { findOpenPeriodForDate, recomputePayoutTotal, ensurePayout } = require('./payrollProcessing');
 
 const DUTY_KINDS = [
   'bar_rental', 'parking', 'equipment_supplies', 'hosted_supplies',
@@ -491,15 +491,7 @@ async function openPeriodPayout(client, contractorId) {
 
   const period = await findOpenPeriodForDate(client, chicagoTodayYmd());
   if (!period) return null;
-  const { rows } = await client.query(
-    `INSERT INTO payouts (pay_period_id, contractor_id)
-     VALUES ($1, $2)
-     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE
-       SET pay_period_id = EXCLUDED.pay_period_id
-     RETURNING id`,
-    [period.id, contractorId]
-  );
-  return rows[0].id;
+  return ensurePayout(client, period.id, contractorId);
 }
 
 /**

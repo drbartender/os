@@ -1209,6 +1209,10 @@ ALTER TABLE contractor_profiles DROP CONSTRAINT IF EXISTS contractor_profiles_hi
 ALTER TABLE contractor_profiles ADD CONSTRAINT contractor_profiles_historical_events_nonneg CHECK (historical_events_worked >= 0);
 ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS equipment_will_pickup BOOLEAN DEFAULT false;
 
+-- Owner/no-draw flag (spec 2026-08-07): a contractor with takes_draw = false
+-- accrues payouts born 'no_draw' (tracked, never owed). SQL-only toggle; no UI.
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS takes_draw BOOLEAN NOT NULL DEFAULT true;
+
 -- ─── Auto-Assign: shifts additions ───────────────────────────────
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
@@ -2912,7 +2916,7 @@ CREATE TABLE IF NOT EXISTS payouts (
 DO $$ BEGIN
   ALTER TABLE payouts DROP CONSTRAINT IF EXISTS payouts_status_check;
   ALTER TABLE payouts ADD CONSTRAINT payouts_status_check
-    CHECK (status IN ('pending', 'paid'));
+    CHECK (status IN ('pending', 'no_draw', 'paid'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 -- Free-text payment trace (Zelle conf #, Venmo txn note, check number),

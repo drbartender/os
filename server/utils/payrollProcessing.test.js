@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const {
   findOpenPeriodForDate, recomputePayoutTotal, recomputePayoutTotals,
-  maybeFinalizePeriod,
+  maybeFinalizePeriod, ensurePayout,
 } = require('./payrollProcessing');
 
 if (process.env.NODE_ENV === 'production') {
@@ -12,12 +12,32 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 let userId, periodId, payoutId;
+let flaggedId, cpDefaultId, profilelessId;
+
+// ensurePayout fixture emails (pre-cleaned here, deleted in after()).
+const EXTRA_EMAILS = "('proc-flagged@example.com','proc-cpdefault@example.com','proc-noprofile@example.com')";
 
 before(async () => {
+  // Pre-clean stranded ensurePayout fixtures from a crashed prior run.
+  await pool.query(`DELETE FROM payouts WHERE contractor_id IN (SELECT id FROM users WHERE email IN ${EXTRA_EMAILS})`);
+  await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN (SELECT id FROM users WHERE email IN ${EXTRA_EMAILS})`);
+  await pool.query(`DELETE FROM users WHERE email IN ${EXTRA_EMAILS}`);
+
   const u = await pool.query(
     "INSERT INTO users (email, password_hash, role) VALUES ('proc@example.com','x','staff') RETURNING id"
   );
   userId = u.rows[0].id;
+
+  const mkUser = (e) => pool.query(
+    "INSERT INTO users (email, password_hash, role) VALUES ($1,'x','staff') RETURNING id", [e]
+  );
+  flaggedId = (await mkUser('proc-flagged@example.com')).rows[0].id;
+  cpDefaultId = (await mkUser('proc-cpdefault@example.com')).rows[0].id;
+  profilelessId = (await mkUser('proc-noprofile@example.com')).rows[0].id;
+  // flagged = owner shape; cpDefault = profile row with the default flag;
+  // profilelessId deliberately gets NO contractor_profiles row.
+  await pool.query('INSERT INTO contractor_profiles (user_id, takes_draw) VALUES ($1, false)', [flaggedId]);
+  await pool.query('INSERT INTO contractor_profiles (user_id) VALUES ($1)', [cpDefaultId]);
 });
 
 beforeEach(async () => {
@@ -36,12 +56,19 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await pool.query('DELETE FROM payout_events WHERE payout_id = $1', [payoutId]);
-  await pool.query('DELETE FROM payouts WHERE id = $1', [payoutId]);
+  // Period-scoped: ensurePayout tests create extra payouts on the shared
+  // period, and the period delete would FK-violate past them otherwise.
+  await pool.query(
+    'DELETE FROM payout_events WHERE payout_id IN (SELECT id FROM payouts WHERE pay_period_id = $1)',
+    [periodId]
+  );
+  await pool.query('DELETE FROM payouts WHERE pay_period_id = $1', [periodId]);
   await pool.query('DELETE FROM pay_periods WHERE id = $1', [periodId]);
 });
 
 after(async () => {
+  await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN (SELECT id FROM users WHERE email IN ${EXTRA_EMAILS})`);
+  await pool.query(`DELETE FROM users WHERE email IN ${EXTRA_EMAILS}`);
   await pool.query('DELETE FROM users WHERE id = $1', [userId]);
   await pool.end();
 });
@@ -191,4 +218,49 @@ test('maybeFinalizePeriod > does not flip when a pending payout remains', async 
   assert.equal(flipped, false);
   const { rows } = await pool.query('SELECT status FROM pay_periods WHERE id = $1', [periodId]);
   assert.equal(rows[0].status, 'processing');
+});
+
+test('maybeFinalizePeriod > no_draw payouts do not block the flip', async () => {
+  await pool.query("UPDATE pay_periods SET status = 'processing' WHERE id = $1", [periodId]);
+  await pool.query("UPDATE payouts SET status = 'paid', paid_at = NOW() WHERE id = $1", [payoutId]);
+  await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, status, total_cents)
+     VALUES ($1, $2, 'no_draw', 5000)`,
+    [periodId, flaggedId]
+  );
+  const flipped = await maybeFinalizePeriod(pool, periodId);
+  assert.equal(flipped, true);
+  const { rows } = await pool.query('SELECT status FROM pay_periods WHERE id = $1', [periodId]);
+  assert.equal(rows[0].status, 'paid');
+});
+
+test('ensurePayout > births pending for a contractor with the default flag', async () => {
+  const id = await ensurePayout(pool, periodId, cpDefaultId);
+  const { rows } = await pool.query('SELECT status FROM payouts WHERE id = $1', [id]);
+  assert.equal(rows[0].status, 'pending');
+});
+
+test('ensurePayout > births no_draw when takes_draw = false', async () => {
+  const id = await ensurePayout(pool, periodId, flaggedId);
+  const { rows } = await pool.query('SELECT status FROM payouts WHERE id = $1', [id]);
+  assert.equal(rows[0].status, 'no_draw');
+});
+
+test('ensurePayout > upsert never rewrites an existing status', async () => {
+  const first = await ensurePayout(pool, periodId, cpDefaultId); // born pending
+  await pool.query('UPDATE contractor_profiles SET takes_draw = false WHERE user_id = $1', [cpDefaultId]);
+  try {
+    const second = await ensurePayout(pool, periodId, cpDefaultId);
+    assert.equal(second, first);
+    const { rows } = await pool.query('SELECT status FROM payouts WHERE id = $1', [first]);
+    assert.equal(rows[0].status, 'pending');
+  } finally {
+    await pool.query('UPDATE contractor_profiles SET takes_draw = true WHERE user_id = $1', [cpDefaultId]);
+  }
+});
+
+test('ensurePayout > no contractor_profiles row defaults to pending', async () => {
+  const id = await ensurePayout(pool, periodId, profilelessId);
+  const { rows } = await pool.query('SELECT status FROM payouts WHERE id = $1', [id]);
+  assert.equal(rows[0].status, 'pending');
 });

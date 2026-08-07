@@ -345,6 +345,34 @@ test('PATCH /payout-events/:id > 409 when the payout is already paid', async () 
   }
 });
 
+test('PATCH /payout-events/:id > a no_draw payout stays line-editable in an open period', async () => {
+  // Pin (spec 2026-08-07): the freeze guards are '=== paid' / period-status
+  // based; a later tightening to '=== pending' would silently freeze owner
+  // rows. Mirrors the happy-path test above with the payout parked no_draw.
+  const eventRow = await pool.query(
+    'SELECT id FROM payout_events WHERE payout_id = $1', [payoutId]
+  );
+  const eventId = eventRow.rows[0].id;
+  await pool.query("UPDATE payouts SET status = 'no_draw' WHERE id = $1", [payoutId]);
+  try {
+    const r = await req(
+      'PATCH', `/api/admin/payroll/payout-events/${eventId}`, adminToken, { hours: 9 }
+    );
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.event.wage_cents, 18000);
+    assert.equal(body.payout_total_cents, 28000);
+  } finally {
+    await pool.query("UPDATE payouts SET status = 'pending' WHERE id = $1", [payoutId]);
+    await pool.query(
+      `UPDATE payout_events SET hours = 5.5, wage_cents = 11000, adjustment_cents = 0,
+                                line_total_cents = 21000
+         WHERE id = $1`, [eventId]
+    );
+    await pool.query('UPDATE payouts SET total_cents = 21000 WHERE id = $1', [payoutId]);
+  }
+});
+
 test('PATCH /payout-events/:id > 409 when the period is processing', async () => {
   // mark-paid requires processing and copies the stored total_cents, so edits
   // during processing must be frozen or the recorded payout diverges from what
@@ -439,6 +467,116 @@ test('POST /payouts/:id/mark-paid > 400 on an invalid method', async () => {
   } finally {
     await pool.query("UPDATE pay_periods SET status='open' WHERE id = $1", [periodId]);
   }
+});
+
+test('POST /payouts/:id/mark-paid > refuses a no_draw payout with a status-aware 409', async () => {
+  const pp = await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES ('2019-07-02','2019-07-08','2019-07-09','processing')
+     ON CONFLICT (start_date) DO UPDATE SET status = 'processing' RETURNING id`
+  );
+  const ppId = pp.rows[0].id;
+  const po = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, status, total_cents)
+     VALUES ($1, $2, 'no_draw', 1000) RETURNING id`,
+    [ppId, contractorId]
+  );
+  try {
+    const r = await req('POST', `/api/admin/payroll/payouts/${po.rows[0].id}/mark-paid`, adminToken,
+      { payment_method: 'other' });
+    assert.equal(r.status, 409);
+    assert.match(JSON.parse(r.body).error, /no_draw/);
+  } finally {
+    await pool.query('DELETE FROM payouts WHERE id = $1', [po.rows[0].id]);
+    await pool.query(
+      `DELETE FROM pay_periods pp WHERE pp.id = $1
+         AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`,
+      [ppId]
+    );
+  }
+});
+
+// ─── toggle-draw (spec 2026-08-07) ─────────────────────────────────────────
+// Seed a period + one payout for the fixture contractor; caller cleans up.
+// startDate must be unique per test (ON CONFLICT keys on start_date).
+async function seedToggleFixture(periodStatus, payoutStatus, startDate) {
+  const pp = await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES ($1, ($1::date + 6), ($1::date + 7), $2)
+     ON CONFLICT (start_date) DO UPDATE SET status = $2 RETURNING id`,
+    [startDate, periodStatus]
+  );
+  const po = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, status, total_cents)
+     VALUES ($1, $2, $3, 2000)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET status = $3
+     RETURNING id`,
+    [pp.rows[0].id, contractorId, payoutStatus]
+  );
+  return { ppId: pp.rows[0].id, poId: po.rows[0].id };
+}
+async function cleanToggleFixture({ ppId }) {
+  await pool.query('DELETE FROM payouts WHERE pay_period_id = $1', [ppId]);
+  await pool.query('DELETE FROM pay_periods WHERE id = $1', [ppId]);
+}
+
+test('POST /payouts/:id/toggle-draw > pending -> no_draw and back', async () => {
+  const fx = await seedToggleFixture('open', 'pending', '2019-08-06');
+  try {
+    let r = await req('POST', `/api/admin/payroll/payouts/${fx.poId}/toggle-draw`, adminToken, {});
+    assert.equal(r.status, 200);
+    assert.equal(JSON.parse(r.body).payout.status, 'no_draw');
+    r = await req('POST', `/api/admin/payroll/payouts/${fx.poId}/toggle-draw`, adminToken, {});
+    assert.equal(JSON.parse(r.body).payout.status, 'pending');
+  } finally { await cleanToggleFixture(fx); }
+});
+
+test('POST /payouts/:id/toggle-draw > refuses a paid payout', async () => {
+  const fx = await seedToggleFixture('processing', 'paid', '2019-08-13');
+  try {
+    const r = await req('POST', `/api/admin/payroll/payouts/${fx.poId}/toggle-draw`, adminToken, {});
+    assert.equal(r.status, 409);
+  } finally { await cleanToggleFixture(fx); }
+});
+
+test('POST /payouts/:id/toggle-draw > refuses when the period is paid', async () => {
+  const fx = await seedToggleFixture('paid', 'no_draw', '2019-08-20');
+  try {
+    const r = await req('POST', `/api/admin/payroll/payouts/${fx.poId}/toggle-draw`, adminToken, {});
+    assert.equal(r.status, 409);
+  } finally { await cleanToggleFixture(fx); }
+});
+
+test('POST /payouts/:id/toggle-draw > parking the last pending payout needs confirm_finalize, then closes the period', async () => {
+  // processing period whose ONLY payout is the fixture contractor's pending one
+  const fx = await seedToggleFixture('processing', 'pending', '2019-08-27');
+  try {
+    // Without the confirm flag: 409, nothing parked (one-way-door guard).
+    let r = await req('POST', `/api/admin/payroll/payouts/${fx.poId}/toggle-draw`, adminToken, {});
+    assert.equal(r.status, 409);
+    assert.match(JSON.parse(r.body).error, /confirm/);
+    const still = await pool.query('SELECT status FROM payouts WHERE id = $1', [fx.poId]);
+    assert.equal(still.rows[0].status, 'pending');
+    // With it: parks and finalizes.
+    r = await req('POST', `/api/admin/payroll/payouts/${fx.poId}/toggle-draw`, adminToken,
+      { confirm_finalize: true });
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.payout.status, 'no_draw');
+    assert.equal(body.period_status, 'paid');
+  } finally { await cleanToggleFixture(fx); }
+});
+
+test('POST /payouts/:id/toggle-draw > un-parks no_draw -> pending in a processing period', async () => {
+  // The "pay panel comes back" arm: no confirm needed, period stays processing.
+  const fx = await seedToggleFixture('processing', 'no_draw', '2019-09-17');
+  try {
+    const r = await req('POST', `/api/admin/payroll/payouts/${fx.poId}/toggle-draw`, adminToken, {});
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.payout.status, 'pending');
+    assert.equal(body.period_status, 'processing');
+  } finally { await cleanToggleFixture(fx); }
 });
 
 test('GET /unassigned-tips > lists tips with NULL shift_id and candidate shifts', async () => {

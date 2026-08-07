@@ -53,6 +53,8 @@ let proposalId;
 let shiftIdA1, shiftIdA2, shiftIdB;
 let payPeriodId;
 let payoutAId, payoutBId;
+// Second period holding userA's no_draw payout (owner-shape rows, spec 2026-08-07).
+let payPeriod2Id, noDrawPayoutId;
 
 // ─── HTTP helper ────────────────────────────────────────────────────────────
 function request(method, path, { token } = {}) {
@@ -212,6 +214,26 @@ before(async () => {
   );
   payoutBId = poB.rows[0].id;
 
+  // Second, later period: userA's no_draw payout (tracked, never owed). The
+  // period is 'paid' — a no_draw row never blocks close, so this is the
+  // steady state an owner row lives in.
+  const pp2 = await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES ('2025-12-15', '2025-12-21', '2025-12-22', 'paid')
+     ON CONFLICT (start_date) DO UPDATE SET status = 'paid', end_date = EXCLUDED.end_date, payday = EXCLUDED.payday
+     RETURNING id`
+  );
+  payPeriod2Id = pp2.rows[0].id;
+  const poND = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, status, total_cents)
+     VALUES ($1, $2, 'no_draw', 7000)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE
+       SET status = 'no_draw', total_cents = 7000
+     RETURNING id`,
+    [payPeriod2Id, userA]
+  );
+  noDrawPayoutId = poND.rows[0].id;
+
   // Two events on payout A — used by detail-test summary verification.
   // wage_cents 10000 + 12000 = 22000
   // gratuity_share_cents 1000 + 1500 = 2500
@@ -271,12 +293,12 @@ after(async () => {
   // Children → parents. payout_events FK-cascades on payout delete, but we
   // delete explicitly so a failure midway doesn't leave orphans.
   await pool.query('DELETE FROM payout_events WHERE payout_id IN ($1, $2)', [payoutAId, payoutBId]);
-  await pool.query('DELETE FROM payouts WHERE id IN ($1, $2)', [payoutAId, payoutBId]);
-  // Period: only delete if nothing else references it. Belt-and-suspenders.
+  await pool.query('DELETE FROM payouts WHERE id IN ($1, $2, $3)', [payoutAId, payoutBId, noDrawPayoutId]);
+  // Periods: only delete if nothing else references them. Belt-and-suspenders.
   await pool.query(
-    `DELETE FROM pay_periods WHERE id = $1
-       AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = $1)`,
-    [payPeriodId]
+    `DELETE FROM pay_periods WHERE id IN ($1, $2)
+       AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pay_periods.id)`,
+    [payPeriodId, payPeriod2Id]
   );
   await pool.query('DELETE FROM shifts WHERE id IN ($1, $2, $3)', [shiftIdA1, shiftIdA2, shiftIdB]);
   await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
@@ -485,4 +507,24 @@ test('GET /api/me/payouts/:periodId > summary excludes held reimbursements from 
     await pool.query('DELETE FROM payout_events WHERE id = $1', [heldPeId]);
     await pool.query('DELETE FROM shifts WHERE id = $1', [heldShiftId]);
   }
+});
+
+test('GET /api/me/payouts > includes no_draw rows with their status', async () => {
+  // Pin (spec 2026-08-07): the list endpoint has no status filter; the staff
+  // Pay page renders these greyed as "Not drawn".
+  const res = await request('GET', '/api/me/payouts', { token: tokenA });
+  assert.strictEqual(res.status, 200);
+  const row = res.body.payouts.find((p) => p.id === noDrawPayoutId);
+  assert.ok(row, 'no_draw payout is listed');
+  assert.strictEqual(row.status, 'no_draw');
+  assert.strictEqual(row.total_cents, 7000);
+});
+
+test('GET /api/me/payment-history > blended total counts no_draw as-if-paid', async () => {
+  // Owner rows present as-if-paid on the staff surface (spec 2026-08-07);
+  // 1099/tax stays strictly 'paid' (pinned in payrollTax.legalName.test.js).
+  const res = await request('GET', '/api/me/payment-history', { token: tokenA });
+  assert.strictEqual(res.status, 200);
+  // ledger + paid (30000) + no_draw (7000)
+  assert.strictEqual(res.body.blended_total_cents, res.body.total_cents + 30000 + 7000);
 });

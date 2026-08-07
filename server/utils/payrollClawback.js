@@ -11,7 +11,7 @@
  */
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
-const { findOpenPeriodForDate, recomputePayoutTotals } = require('./payrollProcessing');
+const { findOpenPeriodForDate, recomputePayoutTotals, ensurePayout } = require('./payrollProcessing');
 const { payPeriodForDate, computePayday } = require('./payrollPeriods');
 const { splitEvenly } = require('./payrollMath');
 const { chicagoTodayYmd } = require('./businessTime');
@@ -173,15 +173,7 @@ async function clawbackTip(tipId, newCumulativeRefundedCents, opts = {}) {
       const userId = bartenders[i];
       const negAdj = -perBartenderShares[i];
 
-      const poRes = await client.query(
-        `INSERT INTO payouts (pay_period_id, contractor_id)
-         VALUES ($1, $2)
-         ON CONFLICT (pay_period_id, contractor_id) DO UPDATE
-           SET pay_period_id = EXCLUDED.pay_period_id
-         RETURNING id`,
-        [period.id, userId]
-      );
-      const payoutId = poRes.rows[0].id;
+      const payoutId = await ensurePayout(client, period.id, userId);
       touched.push(payoutId);
 
       // Lines may go NEGATIVE (seam-sweep H1, decided 2026-07-02): a clawback

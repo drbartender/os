@@ -35,8 +35,10 @@ function ymd(d) {
 }
 
 // Sum of PAID OS payouts for a contractor, in integer cents. COALESCE so an
-// empty result is 0, never NULL. Reused by both the admin and (mirrored in)
-// the staff blended totals.
+// empty result is 0, never NULL. STRICTLY 'paid' — tax/1099 money is real
+// money only. The staff-portal blended total deliberately DIVERGES (it also
+// counts 'no_draw' owner rows as-if-paid, spec 2026-08-07); do NOT re-sync
+// the two predicates. Pinned by payrollTax.legalName.test.js.
 async function paidPayoutCents(contractorId) {
   const { rows } = await pool.query(
     `SELECT COALESCE(SUM(total_cents), 0)::bigint AS cents

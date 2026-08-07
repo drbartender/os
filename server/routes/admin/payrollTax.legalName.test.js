@@ -103,3 +103,35 @@ test('the 1099 list labels rows with the LEGAL name, never the nickname', async 
   assert.equal(row.name, 'Nevver Sayles');
   assert.ok(!row.name.includes('Twistid'));
 });
+
+test('payment-history blended total ignores no_draw payouts (1099 exclusion pin)', async () => {
+  // Spec 2026-08-07: tax surfaces count REAL money only. This exercises the
+  // actual paidPayoutCents path via the route, not an equivalent SQL sum.
+  const pp = await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES ('2019-09-03','2019-09-09','2019-09-10','paid')
+     ON CONFLICT (start_date) DO UPDATE SET status = 'paid' RETURNING id`
+  );
+  const po = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, status, total_cents)
+     VALUES ($1, $2, 'no_draw', 12345)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET status = 'no_draw', total_cents = 12345
+     RETURNING id`,
+    [pp.rows[0].id, userId]
+  );
+  try {
+    const res = await req('GET', `/api/admin/payroll/contractors/${userId}/payment-history`);
+    assert.equal(res.status, 200);
+    // Fixture ledger is 25000 and this user has NO paid payouts, so the
+    // blended total must equal the ledger alone: the no_draw 12345 is absent.
+    assert.equal(res.body.total_cents, 25000);
+    assert.equal(res.body.blended_total_cents, 25000);
+  } finally {
+    await pool.query('DELETE FROM payouts WHERE id = $1', [po.rows[0].id]);
+    await pool.query(
+      `DELETE FROM pay_periods p WHERE p.id = $1
+         AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = p.id)`,
+      [pp.rows[0].id]
+    );
+  }
+});

@@ -31,6 +31,7 @@ async function loadPeriodWithPayouts(periodRow) {
     `SELECT po.id, po.contractor_id, po.status, po.total_cents,
             po.payment_method, po.payment_handle, po.payment_reference,
             po.paid_at, po.paystub_storage_key,
+            COALESCE(cp.takes_draw, true) AS takes_draw,
             COALESCE(cp.display_name, cp.preferred_name, u.email) AS contractor_name,
             pp.preferred_payment_method, pp.venmo_handle, pp.cashapp_handle,
             pp.paypal_url, pp.zelle_handle
@@ -417,7 +418,26 @@ router.post('/payroll/periods/:id/process', auth, adminOnly, asyncHandler(async 
   // finalizes immediately; mark-paid can never run on it, so this is the only
   // place the flip can happen. The response reflects the outcome so the client
   // drops the card instead of stranding a phantom processing period.
-  const finalized = await maybeFinalizePeriod(pool, id);
+  //
+  // Under a pp row lock (code-review, no-draw lane): toggle-draw's un-park arm
+  // can now flip a payout back to 'pending' inside a 'processing' period, so an
+  // unlocked count here could snapshot 0 pending, lose the race to a committing
+  // un-park, and close the period over a genuinely owed payout. Serializing on
+  // the pp lock (the same lock toggle-draw and mark-paid take) removes the
+  // window; the count runs only after any in-flight toggle commits.
+  const finClient = await pool.connect();
+  let finalized;
+  try {
+    await finClient.query('BEGIN');
+    await finClient.query('SELECT 1 FROM pay_periods WHERE id = $1 FOR UPDATE', [id]);
+    finalized = await maybeFinalizePeriod(finClient, id);
+    await finClient.query('COMMIT');
+  } catch (err) {
+    try { await finClient.query('ROLLBACK'); } catch { /* already rolled back */ }
+    throw err;
+  } finally {
+    finClient.release();
+  }
   if (finalized) {
     rows[0].status = 'paid'; // keep the embedded period object consistent with period_status
     Sentry.addBreadcrumb({
@@ -524,7 +544,11 @@ router.post('/payroll/payouts/:id/mark-paid', auth, adminOnly, asyncHandler(asyn
     }
     if (rows[0].payout_status !== 'pending') {
       await client.query('ROLLBACK');
-      throw new ConflictError('payout is already paid');
+      throw new ConflictError(
+        rows[0].payout_status === 'no_draw'
+          ? 'payout is no_draw; convert it to pending before paying'
+          : 'payout is already paid'
+      );
     }
     if (rows[0].period_status !== 'processing') {
       await client.query('ROLLBACK');
@@ -580,6 +604,98 @@ router.post('/payroll/payouts/:id/mark-paid', auth, adminOnly, asyncHandler(asyn
   } finally {
     client.release();
   }
+}));
+
+// Flip a payout between 'pending' (owed, payable) and 'no_draw' (owner row:
+// tracked, never owed). Spec 2026-08-07. Guards mirror mark-paid: row-locked,
+// unpaid only, period not 'paid'. Parking the LAST pending payout of a
+// processing period runs the same finalize check as mark-paid so the period
+// closes; un-parking in a processing period makes the pay panel live again.
+router.post('/payroll/payouts/:id/toggle-draw', auth, adminOnly, asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) throw new ValidationError(null, 'invalid payout id');
+  const confirmFinalize = !!(req.body && req.body.confirm_finalize);
+
+  const client = await pool.connect();
+  let out;
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT po.id, po.status AS payout_status, po.pay_period_id,
+              pp.status AS period_status
+         FROM payouts po
+         JOIN pay_periods pp ON pp.id = po.pay_period_id
+        WHERE po.id = $1
+        FOR UPDATE OF po, pp`,
+      [id]
+    );
+    if (!rows[0]) {
+      await client.query('ROLLBACK');
+      throw new NotFoundError('payout not found');
+    }
+    const row = rows[0];
+    if (row.payout_status === 'paid') {
+      await client.query('ROLLBACK');
+      throw new ConflictError('payout is already paid');
+    }
+    if (row.period_status === 'paid') {
+      await client.query('ROLLBACK');
+      throw new ConflictError('period is paid; nothing to toggle');
+    }
+    const next = row.payout_status === 'pending' ? 'no_draw' : 'pending';
+    // Parking the LAST pending payout of a processing period closes it — an
+    // API-irreversible flip (reopen requires 'processing', toggle refuses
+    // 'paid'). Mirror the /process force idiom: a park that WOULD finalize
+    // 409s without an explicit confirm_finalize (security-review, no-draw
+    // lane). The count runs under the pp lock, so it cannot lie.
+    if (next === 'no_draw' && row.period_status === 'processing' && !confirmFinalize) {
+      const others = await client.query(
+        `SELECT COUNT(*)::int AS n FROM payouts
+          WHERE pay_period_id = $1 AND status = 'pending' AND id <> $2`,
+        [row.pay_period_id, id]
+      );
+      if (others.rows[0].n === 0) {
+        await client.query('ROLLBACK');
+        throw new ConflictError('parking this payout closes the period; confirm to proceed');
+      }
+    }
+    await client.query('UPDATE payouts SET status = $1 WHERE id = $2', [next, id]);
+    const finalized = next === 'no_draw'
+      ? await maybeFinalizePeriod(client, row.pay_period_id)
+      : false;
+    await client.query('COMMIT');
+
+    // Post-COMMIT reads on the client we already hold (one-connection rule).
+    const refreshed = await client.query(
+      'SELECT id, contractor_id, status, total_cents FROM payouts WHERE id = $1', [id]
+    );
+    const period = await client.query(
+      'SELECT status FROM pay_periods WHERE id = $1', [row.pay_period_id]
+    );
+    out = {
+      payout: refreshed.rows[0],
+      period_status: finalized ? 'paid' : period.rows[0].status,
+      next,
+      finalized,
+    };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  // Audit AFTER release: logAdminAction takes its own pooled connection, and
+  // holding ours while awaiting a second is the one-connection deadlock
+  // (payrollDuty.js precedent). Awaited before the response so the audit row
+  // exists when the caller sees 200.
+  await logAdminAction({
+    actorUserId: req.user.id,
+    targetUserId: out.payout.contractor_id,
+    action: 'payout_toggle_draw',
+    metadata: { payout_id: id, status: out.next, finalized: out.finalized },
+  });
+  res.json({ payout: out.payout, period_status: out.period_status });
 }));
 
 router.get('/payroll/unassigned-tips', auth, adminOnly, asyncHandler(async (req, res) => {

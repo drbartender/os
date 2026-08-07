@@ -484,3 +484,20 @@ test('accruePayoutsForProposal > M4: capped/partial links on a contract payment 
     await pool.query('DELETE FROM invoices WHERE id = $1', [inv.id]);
   }
 });
+
+test('accruePayoutsForProposal > births no_draw for a takes_draw=false contractor', async () => {
+  // Owner-shape pin (spec 2026-08-07): the ensurePayout swap must never
+  // regress to an inline INSERT that ignores the flag.
+  await pool.query('UPDATE contractor_profiles SET takes_draw = false WHERE user_id = $1', [userId]);
+  try {
+    await accruePayoutsForProposal(proposalId);
+    const { rows } = await pool.query(
+      'SELECT status FROM payouts WHERE contractor_id = $1 AND pay_period_id = $2',
+      [userId, ownPeriodId]
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].status, 'no_draw');
+  } finally {
+    await pool.query('UPDATE contractor_profiles SET takes_draw = true WHERE user_id = $1', [userId]);
+  }
+});
