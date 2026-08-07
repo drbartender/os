@@ -10,6 +10,43 @@
 
 **Spec:** `docs/superpowers/specs/2026-07-26-phone-system-redesign-design.md` (revision 3, commit `a8be8086`)
 
+**Plan revision 2.1, freshness-audited 2026-08-07.** `main` advanced **116 commits**
+between rev 2 and this audit, so every factual claim was re-checked against the tree.
+
+The result is better than expected: **the telephony core is byte-frozen.** Not one of
+those commits touched `voice.js`, `voiceLeadCall.js`, or `utils/{voicemail,telegram,
+pendingCall,leadCallTrigger,twilioSignature}.js`, so every citation into the code this
+plan actually rewrites is still exact (`voice.js` is still 624 lines to the line). The
+`voicemail_delivery` table is byte-identical and still has none of the four new columns.
+The recent 2:00 AM curfew, display-name, and seniority work do not overlap this
+footprint. What drifted was everything *around* it. Fixed in this revision:
+
+- **A real build-blocker in Task 4's harness.** `sid()` produced `'CAtestesc' + 23
+  digits` = 32 chars containing non-hex letters, which the same task's `isCallSid`
+  (`/^CA[0-9a-f]{32}$/`, i.e. 34 chars) rejects. `markEscalationAccepted` would have
+  early-returned without writing, failing the accept-gate test and making the
+  idempotency test pass vacuously. Now `'CA' + 32 hex`; verified against `isCallSid`
+  before the edit. Cleanup query updated to match.
+- **`server/index.js:311-312` → `375-376`** (that file grew to 773 lines).
+- **`ARCHITECTURE.md:437-438` → `499-500`**; 437 is now the *shifts* route table.
+- **`ARCHITECTURE.md:1589-1590` → `1727-1728`**; the stale ":1581 is SMS" note dropped.
+- **A false attribution corrected:** rev 2 credited the schema suite's `splitStatements`
+  for surviving dollar quoting. That function lives in `db/index.js`, not the suite;
+  the suite applies the whole slice in one `pool.query()`. Also, `DO $$` is no longer
+  new to `schema.sql` (the duty-pay lanes added blocks inside this very slice). Suite
+  re-run green, 14/14.
+- **`voice.js:113-140` was over-broad** and would have deleted `voicemailEnabled()` and
+  `vmDailyCap()`, which the same step says to keep. Narrowed to `115-118` + `125-140`.
+- Anchor drift in `schema.sql`, `.env.example`, `README.md`, `CLAUDE.md`,
+  `voiceLeadCall.js`, and three client pages (line shifts only, content unchanged).
+- File-size budget now notes `server/index.js` at 773 (YELLOW, +1 line, non-blocking).
+
+Verified still true: all nine pre-existing env vars present and the ten new ones
+correctly flagged as new; the sensitive-paths recipe in Task 1 Step 4 works verbatim;
+`VOICEMAIL_ENABLED` still defaults OFF in code; the 0082 voicemail path is unchanged
+and its byte-identical requirement stands. Not determinable from here: whether
+`VOICEMAIL_ENABLED` is ON in Render (the plan already asks Dallas to confirm).
+
 **Plan revision 2** (rev 2 folds in the `/review-plan` fleet). What changed, because
 several of these are correctness fixes and not polish:
 
@@ -48,7 +85,7 @@ several of these are correctness fixes and not polish:
 
 - **No em dashes** in any copy, comment prose, or spoken text. Commas, periods, colons, parentheticals only.
 - **Every voice webhook in this plan fails CLOSED on signature, in every environment.** Use the `requireSignature` shape (`server/routes/voice.js:172-183`, mirrored from `server/routes/voiceLeadCall.js:62-71`). Do NOT use `passesSignature` (`voice.js:212-227`), which has a `NODE_ENV !== 'production'` warn-and-allow skip. The pre-existing `/inbound` handler keeps `passesSignature` unchanged; every route this plan ADDS uses the fail-closed gate.
-- **`xmlEscape` escapes `& < >` and NOT quotes** (`server/utils/xmlEscape.js`). Therefore every value interpolated into a TwiML **attribute** must be safe by construction: a validated integer, a fixed enum member, an env-provided strict-E.164 string, or a URL we built. Free text goes in element text only. This invariant is already stated at `voiceLeadCall.js:181-184`; keep it.
+- **`xmlEscape` escapes `& < >` and NOT quotes** (`server/utils/xmlEscape.js`). Therefore every value interpolated into a TwiML **attribute** must be safe by construction: a validated integer, a fixed enum member, an env-provided strict-E.164 string, or a URL we built. Free text goes in element text only. This invariant is already stated at `voiceLeadCall.js:182-185`; keep it.
 - **Escalation dial targets come ONLY from env** (`VA_CELL`, `VM_PRIMARY_DIAL_TARGET`), validated to strict E.164 before use. A caller-supplied value must never reach a `<Dial>`.
 - **`VM_ESCALATION_ENABLED` defaults OFF.** With it off, the 0082 line must emit byte-identical TwiML to what production emits today (greeting then `<Record>`, no `<Gather>`). This is the protect-working-paths requirement: the 0082 voicemail path is live and battle-tested.
 - **`line` is a fixed enum, never free text.** `resolveLine` coerces anything unrecognized to `'zul'`, which is both the safe default and the correct value for every row that predates this change.
@@ -57,7 +94,7 @@ several of these are correctness fixes and not polish:
 - Log every branch with the existing last-4 redaction idiom (`String(x).slice(-4)`). Caller numbers and chat ids are never logged in full.
 - **Schema is applied by `initDb()`** in `server/db/index.js` on boot. There is no `applySchema.js`.
 - **Server suites run ONE AT A TIME against the shared dev DB:** `node -r dotenv/config --test <file>`. The lane has no `.env` of its own; pass `dotenv_config_path=/home/drbartender/projects/os/.env` when running from a worktree.
-- **File-size discipline:** `server/routes/voice.js` is **624 lines** today against a 700-line soft cap. This plan moves `greetingVerb`, `GREETING_TEXT`, and `vmMaxLengthSec` OUT of it into `server/utils/voicemailTwiml.js` before adding the primary handler, which keeps the file near 670. Do not skip the extraction: adding the new handler without it pushes past the cap.
+- **File-size discipline:** `server/routes/voice.js` is **624 lines** today against a 700-line soft cap (re-verified 2026-08-07). This plan moves `greetingVerb`, `GREETING_TEXT`, and `vmMaxLengthSec` OUT of it into `server/utils/voicemailTwiml.js` before adding the primary handler, which keeps the file near 670. Do not skip the extraction: adding the new handler without it pushes past the cap. Two notes from the freshness audit: `server/index.js` is already **773 lines** (YELLOW) and Task 5 adds one mount line to it, which is fine because the ratchet only BLOCKS growth above 1000; and `server/routes/voice.test.js` (695) will cross 700 as tests are added, which never gates because `check-file-size.js` excludes `*.test.js`.
 - Money is not touched. No pricing, invoice, or payout surface is in scope.
 - Line cites were verified 2026-07-26. Where a cite and the code disagree by a line or two, trust the described content, not the number.
 
@@ -135,7 +172,7 @@ merge or cherry-pick a partial lane.
 Three columns and two new pure-ish modules. Everything downstream imports these, so it lands first. No route file is touched in this task.
 
 **Files:**
-- Modify: `server/db/schema.sql` (append inside the voicemail block, after the `idx_voicemail_delivery_created_at` index at line 3638-3639, before the "Proposal option groups" divider)
+- Modify: `server/db/schema.sql` (append inside the voicemail block, after the `idx_voicemail_delivery_created_at` index at line 3683-3684, before the "Proposal option groups" divider)
 - Modify: `server/db/schema.vaCalling.test.js`
 - Modify: `scripts/sensitive-paths.txt`
 - Create: `server/utils/voicemailLine.js`
@@ -151,7 +188,7 @@ Three columns and two new pure-ish modules. Everything downstream imports these,
 
 - [ ] **Step 1: Add the three columns to `server/db/schema.sql`**
 
-Append directly after the `idx_voicemail_delivery_created_at` index (schema.sql:3638-3639), before the "Proposal option groups" divider:
+Append directly after the `idx_voicemail_delivery_created_at` index (schema.sql:3683-3684), before the "Proposal option groups" divider:
 
 ```sql
 -- Phase 1a (spec 2026-07-26): the phone system became two-line, so every row
@@ -239,7 +276,10 @@ Three harness facts to match exactly, all verified:
   test that touches the DB must use `dbTest` (`:48`, which is `test.skip` without a
   `DATABASE_URL`), never a bare `test`.
 - A `DO $$ ... END $$` block is new to `schema.sql`; the feasibility pass confirmed
-  the suite's `splitStatements` keeps it intact.
+  the suite applies the slice via a single `pool.query()`, which handles dollar-quoted
+  bodies natively. Verified green (14/14) against dev on 2026-08-07. NOTE: the
+  duty-pay lanes already added `DO $$ ... END $$` blocks inside this same slice, so
+  dollar quoting is no longer new here.
 
 ```js
 test('voicemail_delivery carries the line + escalation columns idempotently', () => {
@@ -933,7 +973,7 @@ const { resolveLine } = require('./voicemailLine');
 
 Four edits.
 
-**(a)** Replace the greeting/length block (`voice.js:113-140`, the `vmMaxLengthSec`, `GREETING_TEXT`, and `greetingVerb` definitions) with imports. Keep `voicemailEnabled()` and `vmDailyCap()` where they are. Add near the other requires at the top:
+**(a)** Replace the greeting/length definitions with imports. Precisely: `vmMaxLengthSec` at `voice.js:115-118` and the greeting comment + `GREETING_TEXT` + `greetingVerb` at `voice.js:125-140`. Do NOT remove `voicemailEnabled()` (`:113`) or `vmDailyCap()` (`:120-123`) — they stay. (Rev 2 cited `113-140` as one range, which would have taken both keepers with it.) Add near the other requires at the top:
 
 ```js
 const { resolveLine } = require('../utils/voicemailLine');
@@ -1411,11 +1451,19 @@ const esc = require('./voicemailEscalation');
 
 // Every row this suite writes uses a recognizable CallSid prefix so cleanup can
 // never touch a real row in the shared dev DB.
-const PREFIX = 'CAtestesc';
-const sid = (n) => `${PREFIX}${String(n).padStart(23, '0')}`;
+// A REAL-SHAPED sid, because this suite's subject is isCallSid-gated.
+// `markEscalationAccepted` early-returns on anything failing /^CA[0-9a-f]{32}$/,
+// so a readable prefix like 'CAtestesc' (non-hex letters, and only 32 chars
+// total) silently writes nothing and the accept-gate assertions fail. 34 chars:
+// 'CA' + exactly 32 lowercase hex. Verified against isCallSid before use.
+// (voicemail.test.js's 'CAtestvm' helper is fine because nothing there is
+// isCallSid-gated; do not copy that shape here.)
+const sid = (n) => `CA${String(n).padStart(32, '0')}`;
 
 async function cleanup() {
-  await pool.query('DELETE FROM voicemail_delivery WHERE call_sid LIKE $1', [`${PREFIX}%`]);
+  // sid() is now all-numeric after 'CA', so clean up on the zero-padded run
+  // this suite occupies rather than a readable prefix.
+  await pool.query("DELETE FROM voicemail_delivery WHERE call_sid LIKE 'CA0000000000000000000000%'");
 }
 async function seed(n, line) {
   await pool.query(
@@ -2207,7 +2255,7 @@ Expected: PASS, 16 tests.
 
 - [ ] **Step 5: Mount the router in `server/index.js`**
 
-Order matters, exactly like the lead-call mount. Change the two existing voice lines (`server/index.js:311-312`) to:
+Order matters, exactly like the lead-call mount. Change the two existing voice lines (`server/index.js:375-376`) to:
 
 ```js
 app.use('/api/voice/lead', require('./routes/voiceLeadCall')); // more specific mount first
@@ -2951,11 +2999,11 @@ Make the channel explicit:
 
 and add `COMPANY_TEXT_PHONE` to its import.
 
-`client/src/pages/PaydayProtocols.js:272` reads "Dr. Bartender Company Line:
+`client/src/pages/PaydayProtocols.js:276` reads "Dr. Bartender Company Line:
 {COMPANY_PHONE}". That is a voice line, so it needs no change beyond inheriting the
 new value.
 
-`client/src/pages/proposal/proposalView/ProposalView.js:652` renders
+`client/src/pages/proposal/proposalView/ProposalView.js:654` renders
 `contact@drbartender.com · {COMPANY_PHONE}` in the client-facing footer. A client
 reading a proposal is most likely to CALL, so the voice pair is correct here and it
 needs no change beyond the new value.
@@ -3003,7 +3051,7 @@ git commit -m "feat(phone): split voice and text company constants, voice to the
 
 - [ ] **Step 1: Add the new vars to `.env.example`**
 
-Add to the voicemail block (after `VM_GREETING_URL`, at `.env.example:245`):
+Add to the voicemail block (after `VM_GREETING_URL`, at `.env.example:259`):
 
 ```bash
 # ── Phone system Phase 1a (spec 2026-07-26) ─────────────────────────────────
@@ -3048,19 +3096,19 @@ VM_ESCALATION_QUIET_PRIMARY=22:00-08:00
 
 - [ ] **Step 2: Add the rows to the `.claude/CLAUDE.md` env table**
 
-Insert after the `VM_GREETING_URL` row (CLAUDE.md:315), one row per variable, using the wording from `.env.example` above condensed to a sentence each: `VM_PRIMARY_DIAL_TARGET`, `VM_PRIMARY_RING_SEC`, `VM_TEXT_DESTINATION`, `VM_GREETING_URL_PRIMARY`, `VM_ESCALATION_ENABLED`, `VM_ESCALATION_DAILY_CAP`, `VM_ESCALATION_QUIET_ZUL` / `VM_ESCALATION_QUIET_PRIMARY`, `VM_ESCALATION_TZ_ZUL` / `VM_ESCALATION_TZ_PRIMARY`, `VM_ESCALATION_PROMPT`.
+Insert after the `VM_GREETING_URL` row (CLAUDE.md:317), one row per variable, using the wording from `.env.example` above condensed to a sentence each: `VM_PRIMARY_DIAL_TARGET`, `VM_PRIMARY_RING_SEC`, `VM_TEXT_DESTINATION`, `VM_GREETING_URL_PRIMARY`, `VM_ESCALATION_ENABLED`, `VM_ESCALATION_DAILY_CAP`, `VM_ESCALATION_QUIET_ZUL` / `VM_ESCALATION_QUIET_PRIMARY`, `VM_ESCALATION_TZ_ZUL` / `VM_ESCALATION_TZ_PRIMARY`, `VM_ESCALATION_PROMPT`.
 
 - [ ] **Step 3: Update `README.md`**
 
 - Environment Variables table: the same rows as step 2.
 - Folder tree: add `server/routes/voiceEscalate.js`, `server/utils/voicemailLine.js`, `server/utils/voicemailTwiml.js`, `server/utils/voicemailEscalation.js`, each with a one-line description.
-- The `voice.js` tree entry (`README.md:259`) enumerates that router's endpoints; add `POST /inbound/primary`.
+- The `voice.js` tree entry (`README.md:277`) enumerates that router's endpoints; add `POST /inbound/primary`.
 
 - [ ] **Step 4: Update `ARCHITECTURE.md`**
 
-- API route table, the `/api/voice` section: add `POST /inbound/primary`. ALSO correct the two existing rows at `ARCHITECTURE.md:437-438`, which still describe the pre-1a `/inbound` action URL (no `?line=`) and a missed-call document with no `<Gather>`. Add a new `/api/voice/escalate` table (mounted before `/api/voice`) with `POST /`, `POST /done`, `POST /whisper`, `POST /accept`, each fail-closed on signature.
+- API route table, the `/api/voice` section: add `POST /inbound/primary`. ALSO correct the two existing rows at `ARCHITECTURE.md:499-500` (inside the `/api/voice` table that begins at :496), which still describe the pre-1a `/inbound` action URL (no `?line=`) and a missed-call document with no `<Gather>`. Add a new `/api/voice/escalate` table (mounted before `/api/voice`) with `POST /`, `POST /done`, `POST /whisper`, `POST /accept`, each fail-closed on signature.
 - Database Schema: add `line`, `escalated_at`, `escalation_outcome` to the `voicemail_delivery` entry, including that `line` is NOT NULL DEFAULT `'zul'` and that the default IS the backfill for pre-2026-07-26 rows.
-- The inbound-flow prose (`ARCHITECTURE.md:1589-1590`; note `:1581` is the SMS section): describe the two lines, the shared missed handler keyed on `line`, and the press-1 escalation with its four guards (kill switch, claim, cap, quiet window) and the key-to-accept whisper.
+- The inbound-flow prose (`ARCHITECTURE.md:1727-1728`; the schema section is :1256-1265 and the tables list :1732): describe the two lines, the shared missed handler keyed on `line`, and the press-1 escalation with its four guards (kill switch, claim, cap, quiet window) and the key-to-accept whisper.
 - Helper modules list: add the three new utils. Toll-fraud guards list: add `VM_ESCALATION_DAILY_CAP` and the escalation claim.
 
 - [ ] **Step 4b: Document the phone-constant split**
@@ -3119,7 +3167,7 @@ Code alone does not finish this. In order:
 - [ ] **Live test, the whisper screen:** call, press 1, and let the target's phone go to ITS carrier voicemail without touching it. The caller must land back in our voicemail, not in the target's voicemail. This is the case the key-to-accept gate exists for; if it fails, re-check the `<Gather>`/`<Hangup>` ordering in the whisper document.
 - [ ] **Live test, quiet window:** temporarily set a window covering now, press 1, confirm no dial and a normal recording.
 - [ ] **Record Dallas's greeting** and set `VM_GREETING_URL_PRIMARY` (or bundle it the way Zul's is), then consider `VM_ESCALATION_PROMPT=none` once a re-recorded greeting announces the press-1 option itself.
-- [ ] **Website:** point the public voice "call us" at the 1922. Note that `COMPANY_PHONE_TEL` also backs client "Text us" links (`client/src/pages/Completion.js:70`, `client/src/pages/ApplicationStatus.js:88`) and `COMPANY_PHONE` is displayed in five more places (`FieldGuide.js`, `PaydayProtocols.js`, `ProposalView.js:652`); texting stays on the 888 until Phase 2, so split the constants rather than repointing one and breaking the other.
+- [ ] **Website:** point the public voice "call us" at the 1922. Note that `COMPANY_PHONE_TEL` also backs client "Text us" links (`client/src/pages/Completion.js:70`, `client/src/pages/ApplicationStatus.js:88`) and `COMPANY_PHONE` is displayed in five more places (`FieldGuide.js`, `PaydayProtocols.js`, `ProposalView.js:654`); texting stays on the 888 until Phase 2, so split the constants rather than repointing one and breaking the other.
 
 ## Deferred to Phase 1b (its own plan)
 
