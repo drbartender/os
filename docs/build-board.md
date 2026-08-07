@@ -15,6 +15,7 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 <!-- lane open and building. Stale-lane flags surface here. One line per item. -->
 
 - **phone-system-1a** — call experience: per-line greetings, press-1 escalation, per-line voicemail delivery. Lane cut 2026-08-07 off ac8a421e (plan rev 2.1, freshness-audited). [spec](superpowers/specs/2026-07-26-phone-system-redesign-design.md) / [plan](superpowers/plans/2026-07-26-phone-system-1a-call-experience.md)
+- **no-draw-engine** — owner no_draw payout status: ensurePayout single creation path, toggle-draw route, staff blended total. Lane cut 2026-08-07 off a0762a48 (plan rev 2, plan-fleet reviewed). no-draw-ui follows after merge. [spec](superpowers/specs/2026-08-07-owner-no-draw-payouts-design.md) / [plan](superpowers/plans/2026-08-07-owner-no-draw-payouts.md)
 ## Recently shipped
 
 <!-- merged + shipped lanes, newest first. Ages off over time. One line per item. -->
