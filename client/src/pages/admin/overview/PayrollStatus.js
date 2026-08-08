@@ -74,7 +74,10 @@ export default function PayrollStatus({ onOverdue }) {
       p => ['processing', 'reopened'].includes(p.status) && Number(p.pending_count || 0) > 0
     );
     if (due) {
-      const total = Number(due.total_cents || 0);
+      // paid + owed, NOT total_cents: since no_draw (owner rows, tracked but
+      // never owed) the unfiltered sum includes money this check will never
+      // cut, and the staff count below already excludes those rows.
+      const total = Number(due.paid_cents || 0) + Number(due.owed_cents || 0);
       const staff = Number(due.paid_count || 0) + Number(due.pending_count || 0);
       const overdue = chicagoTodayYmd() > ymd10(due.payday);
       return {
@@ -87,7 +90,9 @@ export default function PayrollStatus({ onOverdue }) {
 
     const openPeriod = current && current.period;
     if (openPeriod) {
-      const payouts = current.payouts || [];
+      // no_draw rows are tracked, never owed; they belong in neither the
+      // accruing dollar figure nor the headcount.
+      const payouts = (current.payouts || []).filter(p => p.status !== 'no_draw');
       const total = payouts.reduce((acc, p) => acc + Number(p.total_cents || 0), 0);
       const wd = weekday(openPeriod.payday, 'short');
       return {

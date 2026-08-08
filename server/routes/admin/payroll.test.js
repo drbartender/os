@@ -70,9 +70,11 @@ before(async () => {
     "INSERT INTO users (email, password_hash, role) VALUES ('payroll-contractor@example.com','x','staff') RETURNING id"
   );
   contractorId = c.rows[0].id;
+  // takes_draw = false: the toggle-draw tests PARK this contractor, and the
+  // route now refuses to park anyone whose flag says they take a draw.
   await pool.query(
-    `INSERT INTO contractor_profiles (user_id, hourly_rate) VALUES ($1, 20.00)
-     ON CONFLICT (user_id) DO UPDATE SET hourly_rate = 20.00`,
+    `INSERT INTO contractor_profiles (user_id, hourly_rate, takes_draw) VALUES ($1, 20.00, false)
+     ON CONFLICT (user_id) DO UPDATE SET hourly_rate = 20.00, takes_draw = false`,
     [contractorId]
   );
   await pool.query(
@@ -529,6 +531,29 @@ test('POST /payouts/:id/toggle-draw > pending -> no_draw and back', async () => 
     r = await req('POST', `/api/admin/payroll/payouts/${fx.poId}/toggle-draw`, adminToken, {});
     assert.equal(JSON.parse(r.body).payout.status, 'pending');
   } finally { await cleanToggleFixture(fx); }
+});
+
+test('POST /payouts/:id/toggle-draw > refuses to park a contractor who takes a draw', async () => {
+  // The flag is the server-side authority (push-fleet security review): only
+  // the client's render gate stood between a scripted admin call and silently
+  // un-owing a real contractor's wages. Un-parking stays unrestricted.
+  const fx = await seedToggleFixture('open', 'pending', '2019-10-01');
+  try {
+    await pool.query('UPDATE contractor_profiles SET takes_draw = true WHERE user_id = $1', [contractorId]);
+    const r = await req('POST', `/api/admin/payroll/payouts/${fx.poId}/toggle-draw`, adminToken, {});
+    assert.equal(r.status, 409);
+    assert.match(JSON.parse(r.body).error, /takes a draw/);
+    const still = await pool.query('SELECT status FROM payouts WHERE id = $1', [fx.poId]);
+    assert.equal(still.rows[0].status, 'pending');
+    // Un-park is never flag-gated: park it directly, then toggle back.
+    await pool.query(`UPDATE payouts SET status = 'no_draw' WHERE id = $1`, [fx.poId]);
+    const back = await req('POST', `/api/admin/payroll/payouts/${fx.poId}/toggle-draw`, adminToken, {});
+    assert.equal(back.status, 200);
+    assert.equal(JSON.parse(back.body).payout.status, 'pending');
+  } finally {
+    await pool.query('UPDATE contractor_profiles SET takes_draw = false WHERE user_id = $1', [contractorId]);
+    await cleanToggleFixture(fx);
+  }
 });
 
 test('POST /payouts/:id/toggle-draw > refuses a paid payout', async () => {

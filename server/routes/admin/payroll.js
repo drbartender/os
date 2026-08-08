@@ -621,10 +621,12 @@ router.post('/payroll/payouts/:id/toggle-draw', auth, adminOnly, asyncHandler(as
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `SELECT po.id, po.status AS payout_status, po.pay_period_id,
-              pp.status AS period_status
+      `SELECT po.id, po.status AS payout_status, po.pay_period_id, po.contractor_id,
+              pp.status AS period_status,
+              COALESCE(cp.takes_draw, true) AS takes_draw
          FROM payouts po
          JOIN pay_periods pp ON pp.id = po.pay_period_id
+    LEFT JOIN contractor_profiles cp ON cp.user_id = po.contractor_id
         WHERE po.id = $1
         FOR UPDATE OF po, pp`,
       [id]
@@ -643,6 +645,15 @@ router.post('/payroll/payouts/:id/toggle-draw', auth, adminOnly, asyncHandler(as
       throw new ConflictError('period is paid; nothing to toggle');
     }
     const next = row.payout_status === 'pending' ? 'no_draw' : 'pending';
+    // The takes_draw flag is the authority on WHO may be parked (spec: "set
+    // false for user 12 only"); until now only the client's render gate
+    // enforced it, so a scripted or mis-aimed admin call could silently
+    // un-owe a real contractor's wages while their portal read as-if-paid.
+    // Un-parking stays unrestricted: it is always the safe direction.
+    if (next === 'no_draw' && row.takes_draw) {
+      await client.query('ROLLBACK');
+      throw new ConflictError('this contractor takes a draw; set takes_draw = false first');
+    }
     // Parking the LAST pending payout of a processing period closes it — an
     // API-irreversible flip (reopen requires 'processing', toggle refuses
     // 'paid'). Mirror the /process force idiom: a park that WOULD finalize
@@ -666,6 +677,10 @@ router.post('/payroll/payouts/:id/toggle-draw', auth, adminOnly, asyncHandler(as
     await client.query('COMMIT');
 
     // Post-COMMIT reads on the client we already hold (one-connection rule).
+    // The row can vanish in this window: accrual's empty-stub DELETE now
+    // covers no_draw too, so a just-parked line-less payout is deletable by a
+    // concurrent pass. The flip committed either way; answer from what we
+    // know rather than 500ing after the fact.
     const refreshed = await client.query(
       'SELECT id, contractor_id, status, total_cents FROM payouts WHERE id = $1', [id]
     );
@@ -673,7 +688,7 @@ router.post('/payroll/payouts/:id/toggle-draw', auth, adminOnly, asyncHandler(as
       'SELECT status FROM pay_periods WHERE id = $1', [row.pay_period_id]
     );
     out = {
-      payout: refreshed.rows[0],
+      payout: refreshed.rows[0] || { id, contractor_id: row.contractor_id, status: next, total_cents: 0, deleted: true },
       period_status: finalized ? 'paid' : period.rows[0].status,
       next,
       finalized,

@@ -187,7 +187,13 @@ export default function PayPage() {
   const payouts = Array.isArray(payoutsList) ? payoutsList : [];
   // Owner rows present as-if-paid (spec 2026-08-07): no_draw weeks list
   // greyed as "Not drawn" and count into YTD. Everyone else has none.
-  const listPayouts = payouts.filter((p) => p.status === 'paid' || p.status === 'no_draw');
+  // A no_draw row lists (and counts) only once its WEEK has closed: the
+  // current open week already renders as the banner below, and a live-moving
+  // total does not belong in "Paid out" YTD. Closed-but-processing weeks stay
+  // listed; accrual writes only to open periods, so those totals are frozen.
+  const listPayouts = payouts.filter(
+    (p) => p.status === 'paid' || (p.status === 'no_draw' && p.period?.status !== 'open')
+  );
 
   // Banner data: prefer the in-list current-period detail (canonical numbers),
   // fall back to /staff-home, fall back to "no current period" suppression.

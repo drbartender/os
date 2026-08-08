@@ -18,6 +18,12 @@ server/utils/encryption.js
 server/utils/gratuityLabels.js
 server/utils/eventTypes.js
 server/utils/payroll*.js
+# The payroll ROUTE layer (utils globs never cross '/'): mark-paid and
+# toggle-draw move a payout between owed and not-owed, and the staff portal
+# serves blended totals + paystubs. Invisible to review-scaling until listed
+# (push-fleet 2026-08-07).
+server/routes/admin/payroll.js
+server/routes/staffPortal/payouts.js
 
 # Staffing money seam: shift_requests.position resolution feeds the payroll tip
 # split (LOWER(position)='bartender'). shifts.approval.js resolves + writes it;

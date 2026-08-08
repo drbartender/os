@@ -138,9 +138,9 @@ function ShiftCardFoot({ shift, variant, showConfirmFlag }) {
       <div className="sp-shift-foot">
         <div className="sp-shift-foot-l">
           {status && (
-            <span className={'sp-chip ' + (status === 'paid' ? 'ok' : 'info')}>
+            <span className={'sp-chip ' + (status === 'paid' ? 'ok' : status === 'no_draw' ? 'neutral' : 'info')}>
               <span className="sp-chip-dot" />
-              {status === 'paid' ? 'Paid' : 'Processing'}
+              {status === 'paid' ? 'Paid' : status === 'no_draw' ? 'Not drawn' : 'Processing'}
             </span>
           )}
         </div>

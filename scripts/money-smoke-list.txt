@@ -22,6 +22,12 @@ server/utils/payrollAccrual.duty.test.js
 server/utils/payrollProcessing.test.js
 server/routes/admin/payrollDuty.test.js
 
+# Owner no-draw (spec 2026-08-07): the toggle route's guard set (takes_draw
+# authority, confirm_finalize one-way door, mark-paid 409 on no_draw) and the
+# staff blended-total/paystub boundary live at the ROUTE layer, not the engine.
+server/routes/admin/payroll.test.js
+server/routes/staffPortal/payouts.test.js
+
 # Autopay durable-charge trio
 server/utils/autopayDurableCharge.test.js
 server/utils/balanceScheduler.autopayDurable.test.js
