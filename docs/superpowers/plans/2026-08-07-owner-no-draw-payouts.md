@@ -1079,7 +1079,7 @@ Expected: 4 rows all `no_draw`; period 72 `paid`.
 
 - [ ] **5. Push** (normal push gate: full fleet on the payroll commits + second-opinion, both lanes are sensitive-path)
 
-- [ ] **6. Post-deploy walk**: Payroll page: queue shows 89/80/76 (newest first, no 72), Dallas rows greyed "No draw", stats exclude him, toggle round-trips on one row; History shows 72 with paid-only figures in both the list row and drill-in; contractor profile PayoutsTab shows the "no draw" chip; dallas@ staff account shows the four weeks "Not drawn", YTD and the blended all-time total including them, drill-in reads "Pay record / Tracked total" with no paystub button.
+- [ ] **6. Post-deploy walk**: Payroll page: queue shows 89/80/76 (newest first, no 72), Dallas rows greyed "No draw", stats exclude him, toggle round-trips on one row; History shows 72 with paid-only figures in both the list row and drill-in; contractor profile PayoutsTab shows the "no draw" chip; dallas@ staff account shows THREE closed weeks listed "Not drawn" (72/76/80) plus the open week 89 as the current-period banner, not a fourth list row (push-fleet fix c463c9e7: an open no_draw week is banner-only so a live-moving total never counts into "Paid out" YTD); client YTD therefore counts the three closed weeks while the server blended all-time total counts all four; drill-in reads "Pay record / Tracked total" with no paystub button.
 
 ## Self-review notes
 
