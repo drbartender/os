@@ -8,17 +8,15 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 
 <!-- plan written + reviewed, no lane cut. One line per item, linking its spec + plan. -->
 
-- **phone-system-1a** — phone redesign phase 1a: call experience (spec rev 3, plan rev 2.1 freshness-audited 8/07 against 116 commits: telephony core byte-frozen, one Task-4 harness build-blocker fixed). [spec](superpowers/specs/2026-07-26-phone-system-redesign-design.md) / [plan](superpowers/plans/2026-07-26-phone-system-1a-call-experience.md)
-
 ## In flight
 
 <!-- lane open and building. Stale-lane flags surface here. One line per item. -->
 
-- **phone-system-1a** — call experience: per-line greetings, press-1 escalation, per-line voicemail delivery. Lane cut 2026-08-07 off ac8a421e (plan rev 2.1, freshness-audited). [spec](superpowers/specs/2026-07-26-phone-system-redesign-design.md) / [plan](superpowers/plans/2026-07-26-phone-system-1a-call-experience.md)
 ## Recently shipped
 
 <!-- merged + shipped lanes, newest first. Ages off over time. One line per item. -->
 
+- **phone-system-1a** — built + full-fleet-reviewed + MERGED 2026-08-07 (not pushed): two-line call experience (1922 rings Dallas, per-line greetings/voicemail, press-1 escalation ships dark). Fleet caught a signature-order DoS, an advisory-cap race, a sweep starvation blocker — all fixed + re-verified; second opinion clean. SHIP-TIME: Render env (VM_PRIMARY_DIAL_TARGET, VM_TEXT_DESTINATION) BEFORE pointing the 1922 webhooks, same sitting as the push — checklist in plan Ops section. [spec](superpowers/specs/2026-07-26-phone-system-redesign-design.md) / [plan](superpowers/plans/2026-07-26-phone-system-1a-call-experience.md)
 - **owner-no-draw** — both lanes (engine, ui) built, fleet-reviewed, and MERGED 2026-08-07 (not pushed); fleet caught a one-connection audit deadlock, an un-park finalize race, and a CI-fatal orphan; browser walks done both portals. SHIP-TIME: prod DDL + backfill (payouts 80/83/92/98, close period 72) BEFORE the push — checklist in plan. [spec](superpowers/specs/2026-08-07-owner-no-draw-payouts-design.md) / [plan](superpowers/plans/2026-08-07-owner-no-draw-payouts.md)
 - **service-extension** — all 5 lanes built, merged, and PUSHED 2026-08-04 (plan rev 5.1); per-lane fleets caught two money blockers pre-merge (gratuity re-accrual on grace-window payments; stranded-alert storm throttle); push gate = integration sweep + gratuity/TT re-confirm + codex second opinion. [spec](superpowers/specs/2026-07-25-service-extension-design.md) / [plan](superpowers/plans/2026-07-26-service-extension.md)
 - **event-details revival** — the three stale 7/22 staff event-details lanes revived onto fresh main as one lane, merged + PUSHED 2026-08-03; full fleet, push re-confirm, and cross-LLM second opinion (codex caught a cross-shift drop blocker, fixed pre-push). [spec](superpowers/specs/2026-07-22-staff-event-details-design.md) / [plan](superpowers/plans/2026-07-22-staff-event-details.md)
