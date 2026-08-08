@@ -120,6 +120,28 @@ if (!process.env.CAL_WEBHOOK_SECRET) {
   } catch (_) { /* sentry optional in dev */ }
 }
 
+// Primary phone line env checks (Phase 1a). A missing dial target apologizes
+// every 1922 call away; a missing/malformed text destination silently disables
+// primary voicemail delivery (rows stay retryable but nothing sends and the
+// sweep skips them). Both fail quiet at request time by design, so the ONLY
+// loud signal is this one-shot startup warning.
+{
+  const e164 = /^\+[1-9]\d{6,14}$/;
+  const bad = [];
+  if (!e164.test(String(process.env.VM_PRIMARY_DIAL_TARGET || '').trim())) bad.push('VM_PRIMARY_DIAL_TARGET');
+  if (!e164.test(String(process.env.VM_TEXT_DESTINATION || '').trim())) bad.push('VM_TEXT_DESTINATION');
+  if (bad.length) {
+    const msg = `${bad.join(' and ')} unset or not strict E.164; the primary (1922) line cannot ${bad.includes('VM_PRIMARY_DIAL_TARGET') ? 'ring through' : 'deliver voicemail texts'} until fixed`;
+    console.warn(`[startup] ${msg}`);
+    try {
+      const Sentry = require('@sentry/node');
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureMessage(msg, { level: 'warning', tags: { component: 'startup', subsystem: 'phone-primary' } });
+      }
+    } catch (_) { /* sentry optional in dev */ }
+  }
+}
+
 // Thumbtack email-harvester agent secret presence check. The agent routes fail
 // closed (401) in every environment when this is unset; warn at startup so the
 // missed config is visible even before any agent traffic arrives.
@@ -373,6 +395,7 @@ app.use('/api/sms', require('./routes/smsOptIn'));
 app.use('/api/sms', require('./routes/sms'));
 app.use('/api/telegram', require('./routes/telegram'));
 app.use('/api/voice/lead', require('./routes/voiceLeadCall')); // more specific mount first
+app.use('/api/voice/escalate', require('./routes/voiceEscalate')); // ditto, before /api/voice
 app.use('/api/voice', require('./routes/voice'));
 app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/service-extensions', require('./routes/serviceExtensions'));

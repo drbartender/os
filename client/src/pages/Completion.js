@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { WHATSAPP_GROUP_URL, COMPANY_PHONE, COMPANY_PHONE_TEL } from '../utils/constants';
+import { WHATSAPP_GROUP_URL, COMPANY_TEXT_PHONE, COMPANY_TEXT_PHONE_TEL } from '../utils/constants';
 
 export default function Completion() {
   const { refreshUser } = useAuth();
@@ -67,7 +67,7 @@ export default function Completion() {
 
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1.25rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
           Have questions?{' '}
-          <a href={COMPANY_PHONE_TEL}>Text us at {COMPANY_PHONE}</a>
+          <a href={COMPANY_TEXT_PHONE_TEL}>Text us at {COMPANY_TEXT_PHONE}</a>
           {' '}or{' '}
           <a href="mailto:contact@drbartender.com">contact@drbartender.com</a>
           <p style={{ marginTop: '0.5rem', fontStyle: 'italic', color: 'var(--amber)', fontFamily: 'var(--font-display)' }}>

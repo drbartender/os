@@ -129,7 +129,16 @@ Copy `.env.example` and fill in values. All variables:
 | `VOICEMAIL_ENABLED` | No | 224-inbound voicemail master switch. **Default OFF**; only `'true'` enables. Off restores pre-feature behavior exactly (no ping, no recording). |
 | `VM_MAX_LENGTH_SEC` | No | Max voicemail recording length in seconds (default 120, clamped 30..300). |
 | `VM_DAILY_CAP` | No | Max voicemail-path calls per rolling 24h (default 50, counted from `voicemail_delivery`). Inbound analog of `VA_CALL_DAILY_CAP`. |
-| `VA_INBOUND_PER_MIN_CAP` | No | Global inbound-call flood cap per minute (default 30) on `POST /api/voice/inbound` only. The voicemail webhooks have their own per-`CallSid` limiter that does not read this. |
+| `VM_PRIMARY_DIAL_TARGET` | Yes* | What the primary line (+12242221922) dials to reach Dallas, strict E.164 (the 312 GV number). Unset → primary calls are apologized away (Sentry-paged, throttled). *Required once the 1922's voice webhook points at us. |
+| `VM_PRIMARY_RING_SEC` | No | Primary-line ring seconds before a miss (default 18, clamped 5..30; deliberately under a carrier voicemail pickup). |
+| `VM_TEXT_DESTINATION` | Yes* | Where a primary-line voicemail is texted (the 312), strict E.164. Unset/malformed silently disables primary delivery (rows stay retryable; startup warning + per-call log only). |
+| `VM_GREETING_URL_PRIMARY` | No | Dallas's greeting; same contract as `VM_GREETING_URL` for the primary line. Unset → synthetic Dallas text, never Zul's recording. |
+| `VM_ESCALATION_ENABLED` | No | Press-1 escalation master switch, **default OFF**. Off → no `<Gather>` on either line; the zul document is byte-identical to pre-feature production (golden-pinned). |
+| `VM_ESCALATION_DAILY_CAP` | No | Max escalation legs per rolling 24h (default 25), a HARD serialized bound. Billed leg; international on the primary line. |
+| `VM_ESCALATION_QUIET_ZUL` / `VM_ESCALATION_QUIET_PRIMARY` | No | Quiet hours for the escalation TARGET, strict `HH:MM-HH:MM` (`24:00`/en-dash invalid → warned, no window). May wrap midnight. |
+| `VM_ESCALATION_TZ_ZUL` / `VM_ESCALATION_TZ_PRIMARY` | No | IANA zone overrides for the quiet windows (defaults Asia/Manila, America/Chicago). A bad zone silently disables the window. |
+| `VM_ESCALATION_PROMPT` | No | `none` once a greeting recording announces press-1 itself; default speaks a short synthetic prompt. |
+| `VA_INBOUND_PER_MIN_CAP` | No | Inbound flood cap per minute (default 30 per line) on `POST /api/voice/inbound` AND `/inbound/primary`, separate buckets, behind the signature gate. The voicemail/escalation webhooks have their own per-`CallSid` limiter that does not read this. |
 | `TT_AUTOREPLY_ENABLED` | No | TT auto first-reply master switch, default OFF (`'true'` enables): quick replies via the harvester box, day-lead calls fire respond-then-ring. Does NOT gate the fallback sweep. |
 | `FIRST_REPLY_FALLBACK_MINUTES` | No | Unconfirmed day reply falls back to the call past this (default 3). |
 | `FIRST_REPLY_CALL_MAX_AGE_MINUTES` | No | Freshness bound on callback/sweep calls (default 240; the call promise expires). |
@@ -274,7 +283,8 @@ dr-bartender/
 │   │   ├── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
 │   │   ├── thumbtackAgent.js   # Thumbtack box-agent API (/api/admin/thumbtack): email-harvest queue (pending-harvest/email-harvested/harvest-failed/rearm) + auto first-reply queue (pending-first-replies/first-reply-sent/first-reply-failed). Driven by the box-only agent in thumbtack-agent/ (one loop, 10s reply tick, wall-clock ~5-min harvest pass)
 │   │   ├── venues.js           # Google Places venue search proxy
-│   │   ├── voice.js            # Zul VA-calling Twilio Voice webhooks: POST /inbound (forward 224 → VA_CELL), /bridge (look up target by CallSid → Dial 224→target), /status (failed-leg → Telegram notice), /inbound/missed (<Dial> action: ping Zul + greeting/<Record>), /inbound/voicemail (recordingStatusCallback: upload mp3 to Telegram, then delete from Twilio), GET /greeting.mp3 (PUBLIC, unauthenticated: serves the bundled greeting mp3 that /inbound/missed <Play>s; overridable via VM_GREETING_URL). The two voicemail routes fail CLOSED on signature in every environment
+│   │   ├── voice.js            # Two-line Twilio Voice webhooks: POST /inbound (forward 0082 → VA_CELL, stamps line=zul), /inbound/primary (forward 1922 → VM_PRIMARY_DIAL_TARGET, stamps line=primary), /bridge (look up target by CallSid → Dial 224→target), /status (failed-leg → Telegram notice), /inbound/missed (shared <Dial> action, per-line greeting + optional press-1 <Gather> + <Record>, interception canary), /inbound/voicemail (recordingStatusCallback: per-line delivery via utils/voicemail), GET /greeting.mp3 (PUBLIC: the bundled zul greeting; overridable via VM_GREETING_URL). /inbound, /inbound/primary, and both voicemail routes fail CLOSED on signature in every environment; the two FORWARD routes run signature BEFORE the limiter (the voicemail webhooks keep their per-CallSid limiter first, deliberately: junk sids collapse to one bucket no real callback lands in)
+│   │   ├── voiceEscalate.js    # Press-1 escalation webhooks (/api/voice/escalate, mounted before /api/voice): POST / (digit handler: kill switch → target → quiet window → hard-capped claim → billed <Dial> to the OTHER person), /whisper (keypress screen played to the answerer; carrier voicemail can never bridge), /accept (marks the PARENT call accepted), /done (branches on acceptance state, NEVER DialCallStatus; fallback = <Record>). All fail CLOSED on signature
 │   │   └── voiceLeadCall.js    # Lead call bridge Twilio webhooks (/api/voice/lead): /answer (Gather-wrapped spoken briefing), /digit (press-1 → Dial lead from the 224, press-9 replay), /status (claim-guarded chain advance). Signature FAIL-CLOSED in every env
 │   ├── utils/
 │   │   ├── addonQuantity.js    # The ONE sanctioned server conversion between proposal_addons.quantity (the engine's OUTPUT display quantity) and an add-on's INPUT unit count; manual twin of the admin editor's recoverAddonQuantities
@@ -427,11 +437,14 @@ dr-bartender/
 │   │   ├── presenceStore.js    # Presence DB layer: strip payload + lead pointer, transactional transitions/toggle, log totals, id-scoped applyAutoFlip, stampByNudgePhone
 │   │   ├── tipPaymentLinks.js  # Creates/regenerates Stripe Payment Links for bartender tip pages
 │   │   ├── tokens.js           # Canonical public-token shape validation: UUID_RE, isUuid, requireUuidToken(param, message) middleware (404s a non-UUID :token before the DB so it can't cast-throw 22P02 -> 500)
-│   │   ├── twilioSignature.js  # Shared isValidTwilioRequest (Twilio webhook signature check); policy on failure stays per-router (voice.js dev-allows, voiceLeadCall.js fails closed everywhere)
+│   │   ├── twilioSignature.js  # Shared isValidTwilioRequest (Twilio webhook signature check); policy on failure stays per-router (fail-closed everywhere except voice.js's /bridge and /status, which keep the dev warn-and-allow)
 │   │   ├── urls.js             # Canonical PUBLIC_SITE_URL / ADMIN_URL / STAFF_URL / API_URL resolvers
 │   │   ├── usPhone.js          # US/NANP phone validation: toUsE164, isUsE164 (normalizePhone + strict +1 NANP gate, rejects intl + 900/976) — primary VA-calling toll-fraud control
 │   │   ├── vaCallingScheduler.js # VA-calling scheduler body: pruneVaCallingRows + reapUndeliveredVoicemails (redelivers a voicemail stuck between claim and upload; Twilio never retries a 2xx'd recording callback) + checkTelegramWebhookHealth (re-runs setTelegramWebhook + emails admin when the webhook is unset or recently errored)
-│   │   ├── voicemail.js        # 224-inbound voicemail: voicemail_delivery ledger (claimMissedCall = the ping's dedup claim, claimDelivery, markDelivery, countVoicemailsSince = VM_DAILY_CAP window) + Twilio media (recordingMediaUrl CONSTRUCTED from account SID + a ^RE[0-9a-f]{32}$ SID, never the webhook body's RecordingUrl; fetchRecordingMp3, deleteRecording)
+│   │   ├── voicemail.js        # Two-line voicemail: voicemail_delivery ledger (claimMissedCall/claimDelivery carry `line`, markDelivery, countVoicemailsSince = VM_DAILY_CAP window), per-line delivery (zul → Telegram audio + delete; primary → SMS to VM_TEXT_DESTINATION, recording RETAINED until 1b's R2 copy), line-aware alertOperator, Twilio media (recordingMediaUrl CONSTRUCTED from account SID + a ^RE[0-9a-f]{32}$ SID, never the webhook body's RecordingUrl)
+│   │   ├── voicemailLine.js    # Per-line routing policy (pure): resolveLine enum + E164_RE, escalationTargetFor (env-only), quiet windows (strict HH:MM-HH:MM, IANA tz), primaryRingSec clamp, interception canary
+│   │   ├── voicemailTwiml.js   # Shared TwiML fragments (one owner for voice.js + voiceEscalate.js): per-line greeting verb, escalation prompt, <Record> verb, vmMaxLengthSec clamp, VM_ESCALATION_ENABLED switch
+│   │   ├── voicemailEscalation.js # Press-1 escalation DB half: claimEscalationUnderCap (advisory-lock serialized cap+claim = a HARD daily bound), acceptance state (markEscalationAccepted/wasEscalationAccepted, fail-closed), outcome ledger (first-writer-wins)
 │   │   ├── venueAddress.js     # Compose/validate structured venue address; derives event_location & shifts.location; resolvePendingLocation shared by the PATCH + notify-preflight
 │   │   ├── webhookEventsPruneScheduler.js # Hourly prune of `webhook_events` to a 30-day window (gated by RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER)
 │   │   └── xmlEscape.js        # Shared TwiML XML escaper (& < >); used by the SMS + voice routes
@@ -461,7 +474,7 @@ dr-bartender/
 │   │   │   ├── api.js          # Axios instance with JWT interceptor
 │   │   │   ├── buildTipDeepLink.js # Builds Venmo/CashApp deep links + Stripe fallback URL for tip pages
 │   │   │   ├── clientSources.js # Canonical client source list (mirrors schema CHECK + server VALID_SOURCES)
-│   │   │   ├── constants.js    # App-wide constants
+│   │   │   ├── constants.js    # App-wide constants. VOICE and TEXT are now two different numbers: COMPANY_PHONE* = the 1922 for CALLS, COMPANY_TEXT_PHONE* = the 888 for TEXTS (the 224s have no approved A2P campaign until Phase 2 reunites them). Do not collapse the pairs.
 │   │   │   ├── emailValidation.js # Warn-only typo-domain heuristic (manual-sync mirror of server/utils/emailValidation.js)
 │   │   │   ├── eventTypes.js   # Event type id→label resolver (mirrors server)
 │   │   │   ├── formatDelta.js  # Shared change-request dollar-delta formatter (admin queue/card + public portal form)

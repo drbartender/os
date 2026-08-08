@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import api from '../utils/api';
 import { useToast } from '../context/ToastContext';
-import { COMPANY_PHONE } from '../utils/constants';
+import { COMPANY_PHONE, COMPANY_TEXT_PHONE } from '../utils/constants';
 
 const SECTIONS = [
   {
@@ -135,7 +135,7 @@ const SECTIONS = [
         <ul>
           <li>If you say you're available, plan to work, we staff based on what you tell us.</li>
           <li>Shifts will be posted here, where you can view details and request or confirm fits.</li>
-          <li>Day-of or urgent issues? Text or Call {COMPANY_PHONE}</li>
+          <li>Day-of or urgent issues? Call {COMPANY_PHONE} or text {COMPANY_TEXT_PHONE}</li>
           <li>If something goes great, or off the rails, we want to know. Feedback helps us keep evolving.</li>
         </ul>
       </>
@@ -224,7 +224,7 @@ const SECTIONS = [
         </ul>
         <p className="guide-sub-heading">How to Report</p>
         <ul>
-          <li>Call or text Dr. Bartender immediately: <strong>{COMPANY_PHONE}</strong></li>
+          <li>Call Dr. Bartender immediately: <strong>{COMPANY_PHONE}</strong></li>
           <li>Document what happened (time, location, who was involved)</li>
           <li>If there's a medical emergency, call 911 first, then notify Dr. Bartender</li>
         </ul>

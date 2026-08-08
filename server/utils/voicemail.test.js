@@ -34,11 +34,29 @@ test('claimMissedCall stores NULL for a blocked caller', async () => {
   assert.equal(rows[0].status, 'missed');
 });
 
+test('claimMissedCall persists the line it is given', async () => {
+  await vm.claimMissedCall({ callSid: sid(40), fromE164: '+13125550147', line: 'primary' });
+  const { rows } = await pool.query('SELECT line FROM voicemail_delivery WHERE call_sid = $1', [sid(40)]);
+  assert.equal(rows[0].line, 'primary');
+});
+
+test('claimMissedCall coerces a missing or unknown line to zul rather than throwing', async () => {
+  // A live caller must never lose voicemail to a coding slip, and every row that
+  // predates the line column was Zul's, so zul is the correct coercion.
+  await vm.claimMissedCall({ callSid: sid(41), fromE164: null });
+  await vm.claimMissedCall({ callSid: sid(42), fromE164: null, line: 'nope' });
+  const { rows } = await pool.query(
+    'SELECT call_sid, line FROM voicemail_delivery WHERE call_sid = ANY($1) ORDER BY call_sid',
+    [[sid(41), sid(42)]]
+  );
+  assert.deepEqual(rows.map((r) => r.line), ['zul', 'zul']);
+});
+
 test('claimDelivery returns the caller number once, then null', async () => {
   await vm.claimMissedCall({ callSid: sid(3), fromE164: '+13125550147' });
   const first = await vm.claimDelivery({ callSid: sid(3), recordingSid: 'RE' + 'a'.repeat(32), durationSec: 12 });
   const second = await vm.claimDelivery({ callSid: sid(3), recordingSid: 'RE' + 'a'.repeat(32), durationSec: 12 });
-  assert.deepEqual(first, { fromE164: '+13125550147' });
+  assert.deepEqual(first, { fromE164: '+13125550147', line: 'zul' });
   assert.equal(second, null);
 });
 
@@ -255,4 +273,254 @@ test('markDelivery can never demote a delivered row (one-way door)', async () =>
   );
   assert.equal(rows[0].status, 'delivered', 'delivery is terminal');
   assert.ok(rows[0].delivered_at instanceof Date);
+});
+
+// ── per-line delivery (Phase 1a) ────────────────────────────────────────────
+
+// A recordings().remove() spy, so "did we delete the recording?" is observable.
+// deleteRecording is called as a module function but reaches Twilio through
+// _deps.client, which IS injectable.
+function removeSpy() {
+  const removed = [];
+  return {
+    removed,
+    client: { recordings: (s) => ({ remove: async () => { removed.push(s); return true; } }) },
+  };
+}
+async function statusOf(callSid) {
+  const { rows } = await pool.query('SELECT status FROM voicemail_delivery WHERE call_sid = $1', [callSid]);
+  return rows[0] && rows[0].status;
+}
+
+test('claimDelivery returns the line alongside the caller number', async () => {
+  await vm.claimMissedCall({ callSid: sid(49), fromE164: '+13125550147', line: 'primary' });
+  vm.__setVoicemailDeps(deliverDeps({}));
+  const claim = await vm.claimDelivery({ callSid: sid(49), recordingSid: GOOD_SID, durationSec: 9 });
+  assert.deepEqual(claim, { fromE164: '+13125550147', line: 'primary' });
+});
+
+test('deliverVoicemail on the zul line uploads audio to Telegram, never SMS', async () => {
+  const spy = removeSpy();
+  const sent = { audio: [], sms: [] };
+  await vm.claimMissedCall({ callSid: sid(50), fromE164: '+13125550147', line: 'zul' });
+  vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
+    client: spy.client,
+    fetchRecordingMp3: async () => Buffer.from('ID3zul'),
+    sendTelegramAudio: async (chatId, buf, opts) => { sent.audio.push({ chatId, opts }); return { ok: true }; },
+    sendSMS: async (args) => { sent.sms.push(args); return { sid: 'SM1' }; },
+  });
+  const out = await vm.deliverVoicemail({
+    callSid: sid(50), recordingSid: 'RE' + 'a'.repeat(32), durationSec: 9,
+    fromE164: '+13125550147', chatId: '5550001', line: 'zul',
+  });
+  assert.equal(out, 'delivered');
+  assert.equal(await statusOf(sid(50)), 'delivered');
+  assert.equal(sent.audio.length, 1);
+  assert.equal(sent.sms.length, 0, 'Zul gets Telegram, never the SMS path');
+  assert.equal(spy.removed.length, 1, 'a delivered recording is deleted from Twilio');
+});
+
+test('deliverVoicemail on the primary line texts the destination, no Telegram audio', async () => {
+  const spy = removeSpy();
+  const sent = { audio: [], sms: [] };
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  await vm.claimMissedCall({ callSid: sid(51), fromE164: '+13125550147', line: 'primary' });
+  vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
+    client: spy.client,
+    fetchRecordingMp3: async () => Buffer.from('ID3dallas'),
+    sendTelegramAudio: async (chatId, buf, opts) => { sent.audio.push({ chatId, opts }); return { ok: true }; },
+    sendSMS: async (args) => { sent.sms.push(args); return { sid: 'SM2' }; },
+  });
+  const out = await vm.deliverVoicemail({
+    callSid: sid(51), recordingSid: 'RE' + 'b'.repeat(32), durationSec: 12,
+    fromE164: '+13125550147', chatId: '5550001', line: 'primary',
+  });
+  assert.equal(out, 'delivered');
+  assert.equal(await statusOf(sid(51)), 'delivered');
+  assert.equal(sent.audio.length, 0, "Dallas does not get Zul's Telegram");
+  assert.equal(sent.sms.length, 1);
+  assert.equal(sent.sms[0].to, '+13125889401');
+  assert.match(sent.sms[0].body, /\n\+13125550147$/, 'the caller number sits alone on its own line');
+  assert.equal(sent.sms[0].meta.skipLog, true, 'an internal alert never files into a client thread');
+  // Phase 1a keeps the primary recording: the text carries only number and
+  // duration, and until 1b's R2 copy the Twilio console holds the ONLY copy of
+  // what the client actually said. Zul's line still deletes (audio delivered).
+  assert.equal(spy.removed.length, 0, 'the primary recording is retained until 1b');
+});
+
+test('a primary voicemail delivers even when the media is unfetchable', async () => {
+  // The text's payload is the number and duration; a transient media 404 must
+  // not turn a deliverable text into a failed row.
+  const sent = { sms: [] };
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  await vm.claimMissedCall({ callSid: sid(56), fromE164: '+13125550147', line: 'primary' });
+  vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
+    client: removeSpy().client,
+    fetchRecordingMp3: async () => { throw new Error('404'); },
+    sendSMS: async (args) => { sent.sms.push(args); return { sid: 'SM3' }; },
+  });
+  const out = await vm.deliverVoicemail({
+    callSid: sid(56), recordingSid: 'RE' + '1'.repeat(32), durationSec: 7,
+    fromE164: '+13125550147', chatId: null, line: 'primary',
+  });
+  assert.equal(out, 'delivered');
+  assert.equal(sent.sms.length, 1);
+});
+
+test('primaryAlertText handles unknown duration and marks a redelivery', async () => {
+  const sms = [];
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  await vm.claimMissedCall({ callSid: sid(57), fromE164: '+13125550147', line: 'primary' });
+  vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
+    client: removeSpy().client,
+    fetchRecordingMp3: async () => Buffer.from('ID3'),
+    sendSMS: async (args) => { sms.push(args); return { sid: 'SM4' }; },
+  });
+  await vm.deliverVoicemail({
+    callSid: sid(57), recordingSid: 'RE' + '2'.repeat(32), durationSec: null,
+    fromE164: '+13125550147', chatId: null, line: 'primary', redelivered: true,
+  });
+  assert.match(sms[0].body, /unknown length/);
+  assert.match(sms[0].body, /\(redelivered\)/, 'a sweep redelivery must not read as a brand-new call');
+});
+
+test('primary delivery with no destination is a skip that writes no status (gate 1 of 2)', async () => {
+  const spy = removeSpy();
+  delete process.env.VM_TEXT_DESTINATION;
+  await vm.claimMissedCall({ callSid: sid(52), fromE164: '+13125550147', line: 'primary' });
+  vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
+    client: spy.client,
+    fetchRecordingMp3: async () => Buffer.from('ID3'),
+    sendSMS: async () => { throw new Error('must not be called'); },
+  });
+  const out = await vm.deliverVoicemail({
+    callSid: sid(52), recordingSid: 'RE' + 'c'.repeat(32), durationSec: 8,
+    fromE164: '+13125550147', chatId: null, line: 'primary',
+  });
+  // Gated, not failed: keep the recording and leave the row 'recorded' so it
+  // stays inside the sweep's retry window and a fixed config still delivers.
+  assert.equal(out, 'skipped');
+  assert.equal(await statusOf(sid(52)), 'missed', 'no status write on a gated send');
+  assert.equal(spy.removed.length, 0, 'never delete a recording we did not deliver');
+});
+
+test('a GATED primary send is a skip, not a delivery (gate 2 of 2)', async () => {
+  // sendSMS does NOT throw when notifications are off or creds are missing: it
+  // returns a dev-skipped-* sid. Treating that as delivered would mark the row
+  // 'delivered' and DELETE the recording, and since delivered_at is a one-way door
+  // and the sweep only reaps 'recorded'/'failed', the voicemail would be parked
+  // outside both retry and delivery forever.
+  const spy = removeSpy();
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  await vm.claimMissedCall({ callSid: sid(55), fromE164: '+13125550147', line: 'primary' });
+  vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
+    client: spy.client,
+    fetchRecordingMp3: async () => Buffer.from('ID3'),
+    sendSMS: async () => ({ sid: 'dev-skipped-1753-abcd1234' }),
+  });
+  const out = await vm.deliverVoicemail({
+    callSid: sid(55), recordingSid: 'RE' + 'f'.repeat(32), durationSec: 8,
+    fromE164: '+13125550147', chatId: null, line: 'primary',
+  });
+  assert.equal(out, 'skipped');
+  assert.equal(await statusOf(sid(55)), 'missed', 'no status write on a gated send');
+  assert.equal(spy.removed.length, 0, 'a gated send must never delete the recording');
+});
+
+test('a failed primary SMS marks failed, keeps the recording, and alerts the backstop', async () => {
+  const spy = removeSpy();
+  const alerts = [];
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  process.env.TELEGRAM_ALLOWED_USER_ID = '5550001';
+  await vm.claimMissedCall({ callSid: sid(53), fromE164: '+13125550147', line: 'primary' });
+  vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
+    client: spy.client,
+    fetchRecordingMp3: async () => Buffer.from('ID3'),
+    sendSMS: async () => { throw new Error('twilio 500'); },
+    sendTelegramMessage: async (chatId, text) => { alerts.push({ chatId, text }); return { ok: true }; },
+  });
+  const out = await vm.deliverVoicemail({
+    callSid: sid(53), recordingSid: 'RE' + 'd'.repeat(32), durationSec: 8,
+    fromE164: '+13125550147', chatId: null, line: 'primary',
+  });
+  assert.equal(out, 'failed');
+  assert.equal(await statusOf(sid(53)), 'failed');
+  assert.equal(spy.removed.length, 0, 'never delete a recording we did not deliver');
+  // The 312 is a Google Voice inbox and the SMS is the ONLY delivery channel on
+  // this line, so a silent drop would lose the lead with no signal.
+  assert.equal(alerts.length, 1, 'a failed primary SMS must raise a second-channel alert');
+  assert.match(alerts[0].text, /\+13125550147/);
+});
+
+test('a backstop alert that itself fails does not change the outcome', async () => {
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  await vm.claimMissedCall({ callSid: sid(54), fromE164: null, line: 'primary' });
+  vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
+    client: removeSpy().client,
+    fetchRecordingMp3: async () => Buffer.from('ID3'),
+    sendSMS: async () => { throw new Error('twilio 500'); },
+    sendTelegramMessage: async () => { throw new Error('telegram down too'); },
+  });
+  const out = await vm.deliverVoicemail({
+    callSid: sid(54), recordingSid: 'RE' + 'e'.repeat(32), durationSec: 8,
+    fromE164: null, chatId: null, line: 'primary',
+  });
+  assert.equal(out, 'failed', 'the backstop is best-effort, never the thing that throws');
+});
+
+// ── alertOperator (route failure alerts, per line) ──────────────────────────
+
+test('alertOperator texts the primary owner with skipLog and telegrams Zul', async () => {
+  const sent = { sms: [], telegram: [] };
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  vm.__setVoicemailDeps({
+    sendSMS: async (args) => { sent.sms.push(args); return { sid: 'SMa' }; },
+    sendTelegramMessage: async (chatId, text) => { sent.telegram.push({ chatId, text }); return { ok: true }; },
+  });
+  await vm.alertOperator({ line: 'primary', chatId: '5550001', text: 'boom +13125550147', tail: 't' });
+  assert.equal(sent.sms.length, 1);
+  assert.equal(sent.sms[0].to, '+13125889401');
+  assert.equal(sent.sms[0].meta.skipLog, true);
+  assert.equal(sent.telegram.length, 0, "a primary failure never lands in Zul's Telegram");
+  await vm.alertOperator({ line: 'zul', chatId: '5550001', text: 'boom', tail: 't' });
+  assert.equal(sent.telegram.length, 1);
+  assert.equal(sent.sms.length, 1, "Zul's alerts never take the SMS path");
+});
+
+test('alertOperator falls back to Telegram when the primary destination is bad', async () => {
+  // A mis-set VM_TEXT_DESTINATION must not mean NO human hears about a lost
+  // primary voicemail.
+  const sent = { telegram: [] };
+  delete process.env.VM_TEXT_DESTINATION;
+  vm.__setVoicemailDeps({
+    sendSMS: async () => { throw new Error('must not be called'); },
+    sendTelegramMessage: async (chatId, text) => { sent.telegram.push({ chatId, text }); return { ok: true }; },
+  });
+  await vm.alertOperator({ line: 'primary', chatId: '5550001', text: 'lost one', tail: 't' });
+  assert.equal(sent.telegram.length, 1);
+  assert.equal(sent.telegram[0].text, 'Business line (not yours): lost one',
+    'prefixed so Zul cannot mistake it for one of her own');
+});
+
+test('alertOperator never throws: missing destination, missing chat id, failing sends', async () => {
+  delete process.env.VM_TEXT_DESTINATION;
+  vm.__setVoicemailDeps({
+    sendSMS: async () => { throw new Error('down'); },
+    sendTelegramMessage: async () => { throw new Error('down'); },
+  });
+  await vm.alertOperator({ line: 'primary', chatId: null, text: 'x', tail: 't' });
+  await vm.alertOperator({ line: 'zul', chatId: null, text: 'x', tail: 't' });
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  await vm.alertOperator({ line: 'primary', chatId: null, text: 'x', tail: 't' });
+  vm.__setVoicemailDeps({ sendTelegramMessage: async () => { throw new Error('down'); } });
+  await vm.alertOperator({ line: 'zul', chatId: '5550001', text: 'x', tail: 't' });
+  delete process.env.VM_TEXT_DESTINATION;
 });

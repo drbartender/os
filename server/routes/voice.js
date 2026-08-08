@@ -4,10 +4,14 @@ const Sentry = require('@sentry/node');
 const { xmlEscape } = require('../utils/xmlEscape');
 const { isValidTwilioRequest } = require('../utils/twilioSignature');
 const { lookupTargetByCallSid, claimDeadLegAudit, releaseDeadLegAudit } = require('../utils/pendingCall');
-const { sendTelegramMessage, sendTelegramAudio } = require('../utils/telegram');
+const { sendTelegramMessage } = require('../utils/telegram');
 const { API_URL } = require('../utils/urls');
 const { isUsE164 } = require('../utils/usPhone');
 const voicemail = require('../utils/voicemail');
+const { resolveLine, primaryRingSec, interceptionSuspicion, E164_RE } = require('../utils/voicemailLine');
+const {
+  greetingVerbForLine, recordVerb, escalationEnabled, escalationPromptVerb,
+} = require('../utils/voicemailTwiml');
 
 const router = express.Router();
 
@@ -25,24 +29,27 @@ const HANGUP_TWIML = '<Response><Hangup/></Response>';
 
 const rateLimit = require('express-rate-limit');
 
-// Inbound flood cap (spec §Inbound). Every forwarded inbound call bills a PH
-// per-minute leg to VA_CELL, so an unthrottled public 224 is a toll-fraud
-// vector under a robocall storm. Mirrors the SMS inboundLimiter
-// (server/routes/sms.js:19-23). Twilio spreads inbound webhooks across many
-// source IPs, so a per-IP cap is NOT a real spend cap; keyGenerator collapses
-// every inbound request into a single shared bucket, making this a true GLOBAL
-// forward cap per window. On trip we return a busy TwiML and never dial. Override
-// with VA_INBOUND_PER_MIN_CAP (registered in the env docs; default 30/min).
-const inboundForwardLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: parseInt(process.env.VA_INBOUND_PER_MIN_CAP, 10) || 30,
-  keyGenerator: () => 'global',
-  handler: (req, res) => {
-    res.set('Content-Type', 'text/xml').send(
-      `${XML_DECL}<Response><Say>All lines are busy. Please try again shortly.</Say><Hangup/></Response>`
-    );
-  },
-});
+// Inbound flood cap (spec §Inbound). Twilio spreads webhooks across many IPs,
+// so per-IP is no spend cap: one constant-key GLOBAL bucket per line (separate
+// so a storm on one number cannot silence the other; VA_INBOUND_PER_MIN_CAP,
+// default 30/min each). Runs BEHIND the signature gate: junk POSTs must never
+// consume the budget or an unsigned flood answers every real caller busy
+// (security-review 2026-08-07 H1). A trip = a REAL signed storm, so it logs.
+function forwardLimiter(key) {
+  return rateLimit({
+    windowMs: 60 * 1000,
+    max: parseInt(process.env.VA_INBOUND_PER_MIN_CAP, 10) || 30,
+    keyGenerator: () => key,
+    handler: (req, res) => {
+      console.warn(`[voice/${key}] VA_INBOUND_PER_MIN_CAP tripped; answering busy`);
+      res.set('Content-Type', 'text/xml').send(
+        `${XML_DECL}<Response><Say>All lines are busy. Please try again shortly.</Say><Hangup/></Response>`
+      );
+    },
+  });
+}
+const inboundForwardLimiter = forwardLimiter('global');
+const primaryForwardLimiter = forwardLimiter('primary');
 
 // isValidTwilioRequest moved to server/utils/twilioSignature.js so the
 // lead-call webhooks (voiceLeadCall.js) share the check without importing a
@@ -53,15 +60,16 @@ const inboundForwardLimiter = rateLimit({
 // so no real webhook signature, Neon query, or Bot API request is made.
 let _deps = {
   isValidTwilioRequest, lookupTargetByCallSid, claimDeadLegAudit, releaseDeadLegAudit, sendTelegramMessage,
-  // Voicemail (spec 2026-07-22). Sentry goes through the seam too: the only
+  // Voicemail (spec 2026-07-22). The audio upload lives behind deliverVoicemail
+  // since per-line delivery; Sentry goes through the seam too, because the only
   // observable difference between the 'skipped' and 'failed' delivery outcomes
   // is whether Sentry is paged, so it has to be assertable.
-  sendTelegramAudio,
   claimMissedCall: voicemail.claimMissedCall,
   countVoicemailsSince: voicemail.countVoicemailsSince,
   claimDelivery: voicemail.claimDelivery,
   markDelivery: voicemail.markDelivery,
   deliverVoicemail: (...a) => voicemail.deliverVoicemail(...a),
+  alertOperator: (...a) => voicemail.alertOperator(...a),
   deleteRecording: voicemail.deleteRecording,
   isRecordingSid: voicemail.isRecordingSid,
   captureMessage: (...a) => Sentry.captureMessage(...a),
@@ -112,56 +120,40 @@ const voicemailWebhookLimiter = rateLimit({
 
 function voicemailEnabled() { return process.env.VOICEMAIL_ENABLED === 'true'; }
 
-function vmMaxLengthSec() {
-  const n = parseInt(process.env.VM_MAX_LENGTH_SEC, 10);
-  return Math.min(300, Math.max(30, Number.isFinite(n) ? n : 120));
-}
-
 function vmDailyCap() {
   const n = parseInt(process.env.VM_DAILY_CAP, 10);
   return Number.isFinite(n) && n > 0 ? n : 50;
 }
 
-// The voicemail greeting the caller hears. Default is Zul's recorded mp3, served
-// by the public GET /greeting.mp3 route below (bundled at
-// server/assets/voicemail-greeting.mp3). VM_GREETING_URL overrides the source
-// WITHOUT a redeploy: set it to a full https URL to <Play> a different recording,
-// or to the literal 'say' to fall back to the Polly synthetic voice, the
-// known-good kill switch if a recording ever regresses.
-const GREETING_TEXT = "Thanks for calling Dr. Bartender. This is Zul. I'm not available right now. Please leave your name, your number, and the date of your event, and I'll call you right back.";
+// Greeting, <Record>, and vmMaxLengthSec live in utils/voicemailTwiml.js: the
+// escalation router (voiceEscalate.js) emits the same fragments; one owner.
 
-function greetingVerb() {
-  const override = (process.env.VM_GREETING_URL || '').trim();
-  if (override.toLowerCase() === 'say') {
-    return `<Say voice="Polly.Joanna-Neural">${xmlEscape(GREETING_TEXT)}</Say>`;
-  }
-  const url = override || `${API_URL}/api/voice/greeting.mp3`;
-  return `<Play>${xmlEscape(url)}</Play>`;
+// Per-window Sentry claims. The rate limiter cannot cap Sentry emission (a
+// well-formed random CallSid mints a fresh bucket every request), and both a
+// hostile unsigned flood and a PERSISTENT condition (a re-enabled carrier
+// voicemail, a missing dial target) recur 1:1 with call volume, which is an
+// amplifier straight into the org's Sentry quota. Each claim allows a fixed
+// number of events per window and carries the suppressed count.
+function makeWindowClaim(windowMs, allowance) {
+  let start = 0;
+  let hits = 0;
+  let prevOverflow = 0;
+  return () => {
+    const now = Date.now();
+    if (now - start > windowMs) {
+      // Overflow can only exist AFTER the emitted events of a window, so it
+      // rides the next window's first event or it would never be reported.
+      prevOverflow = Math.max(0, hits - allowance);
+      start = now;
+      hits = 0;
+    }
+    hits += 1;
+    return { allowed: hits <= allowance, suppressedPreviousWindow: prevOverflow };
+  };
 }
-
-// Sentry emission on signature failure is throttled INDEPENDENTLY of the rate
-// limiter. The limiter cannot cap it: its key is the caller-supplied CallSid,
-// and while a malformed one collapses into a shared bucket, a well-formed
-// random one (2^128 of them) gets a fresh budget every time, so an
-// unauthenticated flood is never limited and every request would emit an event.
-// That is a 1:1 amplifier against the org's Sentry quota, reachable with no
-// credentials and NOT gated by VOICEMAIL_ENABLED (the switch is checked inside
-// the handler, after this). A plain per-window counter caps it; the first few
-// events carry the suppressed count so the signal is not lost.
-const SIG_FAILURE_WINDOW_MS = 60 * 1000;
-const SIG_FAILURE_REPORTS_PER_WINDOW = 5;
-let sigWindowStart = 0;
-let sigFailures = 0;
-
-function claimSigFailureReport() {
-  const now = Date.now();
-  if (now - sigWindowStart > SIG_FAILURE_WINDOW_MS) {
-    sigWindowStart = now;
-    sigFailures = 0;
-  }
-  sigFailures += 1;
-  return sigFailures <= SIG_FAILURE_REPORTS_PER_WINDOW;
-}
+const claimSigFailureReport = makeWindowClaim(60 * 1000, 5);
+const claimCanaryReport = makeWindowClaim(15 * 60 * 1000, 1);
+const claimNoTargetReport = makeWindowClaim(15 * 60 * 1000, 1);
 
 /**
  * Fail-closed signature gate for the voicemail webhooks. Deliberately NOT
@@ -171,11 +163,12 @@ function claimSigFailureReport() {
  */
 function requireSignature(req, res, tag) {
   if (_deps.isValidTwilioRequest(req)) return true;
-  if (process.env.SENTRY_DSN_SERVER && claimSigFailureReport()) {
+  const claim = process.env.SENTRY_DSN_SERVER ? claimSigFailureReport() : null;
+  if (claim && claim.allowed) {
     _deps.captureMessage('Twilio voicemail webhook signature failure', {
       level: 'warning',
       tags: { webhook: 'twilio-voice', route: tag, reason: 'invalid_signature' },
-      extra: { suppressedSinceWindowStart: sigFailures - SIG_FAILURE_REPORTS_PER_WINDOW },
+      extra: { suppressedPreviousWindow: claim.suppressedPreviousWindow },
     });
   }
   res.status(403).send('Invalid signature');
@@ -194,6 +187,16 @@ function callerE164(raw) {
   return /^\+[1-9]\d{6,14}$/.test(v) ? v : null;
 }
 
+/**
+ * Caller ID on a forwarded leg. From lands in a TwiML ATTRIBUTE and xmlEscape
+ * does not escape quotes, so it is constrained to bare +digits by construction
+ * and otherwise replaced with our own line (looser than callerE164 on purpose:
+ * safe-and-dialable-ish here; callerE164 decides what we store and ping).
+ */
+function callerIdFor(rawFrom) {
+  return /^\+?[0-9]{7,15}$/.test(rawFrom) ? rawFrom : (process.env.VOICE_CALLER_ID || '');
+}
+
 function chicagoTime(d = new Date()) {
   return d.toLocaleString('en-US', {
     timeZone: 'America/Chicago', month: 'short', day: 'numeric',
@@ -202,12 +205,13 @@ function chicagoTime(d = new Date()) {
 }
 
 /**
- * Signature gate shared by all three voice webhooks. Mirrors the sms.js
- * inbound handler (server/routes/sms.js:50-65): prod rejects a bad/missing
- * signature with 403 (privileged call-bridging behavior is NEVER honored on a
- * dev signature-skip in production); dev warns and allows so the endpoints are
- * testable without live Twilio creds. Returns true when the request may proceed;
- * when it returns false it has already sent the 403 response.
+ * Signature gate for /bridge and /status (Phase 1a moved /inbound to the
+ * fail-closed requireSignature above; those two do not place a new billed leg).
+ * Mirrors the sms.js inbound handler (server/routes/sms.js:50-65): prod rejects
+ * a bad/missing signature with 403 (privileged call-bridging behavior is NEVER
+ * honored on a dev signature-skip in production); dev warns and allows so the
+ * endpoints are testable without live Twilio creds. Returns true when the
+ * request may proceed; when it returns false it has already sent the 403.
  */
 function passesSignature(req, res, tag) {
   const inProd = process.env.NODE_ENV === 'production';
@@ -244,14 +248,52 @@ function timeLimitSec() {
  * interpolated values are still xmlEscape'd defensively. The <Dial> carries a
  * hard timeLimit so a forwarded inbound leg can never bill unbounded PH minutes.
  */
-router.post('/inbound', inboundForwardLimiter, (req, res) => {
-  if (!passesSignature(req, res, 'inbound')) return;
-  const rawFrom = req.body.From || '';
-  const caller = /^\+?[0-9]{7,15}$/.test(rawFrom) ? rawFrom : (process.env.VOICE_CALLER_ID || '');
+router.post('/inbound', (req, res, next) => {
+  // Fails CLOSED in every env (spec section 8): this route places the billed
+  // international <Dial>. passesSignature stays only on /bridge and /status.
+  if (!requireSignature(req, res, 'inbound')) return;
+  inboundForwardLimiter(req, res, next);
+}, (req, res) => {
+  const caller = callerIdFor(req.body.From || '');
   const vaCell = process.env.VA_CELL || '';
   sendTwiml(
     res,
-    `<Response><Dial timeout="20" action="${xmlEscape(API_URL)}/api/voice/inbound/missed" method="POST" callerId="${xmlEscape(caller)}" timeLimit="${timeLimitSec()}"><Number>${xmlEscape(vaCell)}</Number></Dial></Response>`
+    `<Response><Dial timeout="20" action="${xmlEscape(API_URL)}/api/voice/inbound/missed?line=zul" method="POST" callerId="${xmlEscape(caller)}" timeLimit="${timeLimitSec()}"><Number>${xmlEscape(vaCell)}</Number></Dial></Response>`
+  );
+});
+
+/**
+ * POST /api/voice/inbound/primary. a client calls the 1922, the primary
+ * business number. Dial Dallas (VM_PRIMARY_DIAL_TARGET, normally the 312 that
+ * rings his phone and keeps his personal cell private), pass the client's
+ * number through as caller ID, and hand a miss to the shared voicemail handler
+ * with line=primary. Fail-closed on signature: billed legs downstream.
+ */
+router.post('/inbound/primary', (req, res, next) => {
+  // Signature BEFORE the limiter: see forwardLimiter.
+  if (!requireSignature(req, res, 'inbound/primary')) return;
+  primaryForwardLimiter(req, res, next);
+}, (req, res) => {
+  // Env only, strict E.164: an unset/malformed target apologizes, never emits
+  // an empty or unsafe <Number>. Every primary call dies here, so it pages.
+  const target = String(process.env.VM_PRIMARY_DIAL_TARGET || '').trim();
+  if (!E164_RE.test(target)) {
+    console.error('[voice/primary] VM_PRIMARY_DIAL_TARGET unset or malformed; cannot dial');
+    if (process.env.SENTRY_DSN_SERVER && claimNoTargetReport().allowed) {
+      _deps.captureMessage('primary line has no dial target; calls are being apologized away', {
+        level: 'error',
+        tags: { webhook: 'twilio-voice', route: 'inbound/primary', reason: 'no_dial_target' },
+      });
+    }
+    sendTwiml(res, '<Response><Say>Sorry, we cannot take your call right now. Please try again shortly.</Say><Hangup/></Response>');
+    return;
+  }
+
+  const caller = callerIdFor(req.body.From || '');
+
+  sendTwiml(
+    res,
+    `<Response><Dial timeout="${primaryRingSec()}" action="${xmlEscape(API_URL)}/api/voice/inbound/missed?line=primary" method="POST" callerId="${xmlEscape(caller)}" timeLimit="${timeLimitSec()}"><Number>${xmlEscape(target)}</Number></Dial></Response>`
   );
 });
 
@@ -378,6 +420,38 @@ router.post('/inbound/missed', voicemailWebhookLimiter, async (req, res) => {
 
   const status = req.body.DialCallStatus;
   const callSid = req.body.CallSid || null;
+  const line = resolveLine(req.query.line);
+  const tail = `sid=...${String(callSid || '').slice(-4)}`;
+
+  // Interception canary (spec section 2 mitigation c). Runs BEFORE the cheap
+  // branch because the case it watches for, DialCallStatus=completed, is exactly
+  // what that branch returns on. Observation only: it never changes the outcome,
+  // so its own failure is swallowed too; a live caller is waiting on this TwiML.
+  try {
+    const canary = interceptionSuspicion({
+      line, status, dialCallDuration: req.body.DialCallDuration,
+    });
+    if (line === 'primary' && status === 'completed') {
+      const say = `[voice/missed] primary answered ${tail} dialSec=${canary.dialSec === null ? 'unknown' : canary.dialSec}`;
+      if (canary.suspect) console.warn(`${say} SUSPECT instant answer`); else console.log(say);
+    }
+    if (canary.suspect && process.env.SENTRY_DSN_SERVER) {
+      const claim = claimCanaryReport();
+      if (claim.allowed) {
+        _deps.captureMessage('primary line possible voicemail interception', {
+          level: 'warning',
+          tags: { webhook: 'twilio-voice', route: 'inbound/missed', line: 'primary' },
+          extra: {
+            dialSec: canary.dialSec,
+            suppressedPreviousWindow: claim.suppressedPreviousWindow,
+            hint: 'check that voicemail is still disabled on VM_PRIMARY_DIAL_TARGET',
+          },
+        });
+      }
+    }
+  } catch (err) {
+    console.error(`[voice/missed] canary failed ${tail}: ${err.message}`);
+  }
 
   // Cheap branch is the default: only an explicitly recognized miss costs money.
   if (!voicemailEnabled() || !MISSED_STATUSES.has(status) || !callSid) {
@@ -386,7 +460,6 @@ router.post('/inbound/missed', voicemailWebhookLimiter, async (req, res) => {
   }
 
   const fromE164 = callerE164(req.body.From);
-  const tail = `sid=...${String(callSid).slice(-4)}`;
 
   // Daily spend cap runs BEFORE the ledger insert. Checking it after meant a
   // rejected call still wrote a row, and that row still counted toward the
@@ -409,7 +482,7 @@ router.post('/inbound/missed', voicemailWebhookLimiter, async (req, res) => {
   // once, so only the winner may ping and offer a recording.
   let claimed = false;
   try {
-    claimed = await _deps.claimMissedCall({ callSid, fromE164 });
+    claimed = await _deps.claimMissedCall({ callSid, fromE164, line });
   } catch (err) {
     // Fails CLOSED on the ping too, matching the cap branch above. Without the
     // ledger there is no dedup, and a DB outage is exactly the correlated
@@ -429,19 +502,23 @@ router.post('/inbound/missed', voicemailWebhookLimiter, async (req, res) => {
     return;
   }
 
-  sendTwiml(
-    res,
-    '<Response>'
-    + greetingVerb()
-    + `<Record maxLength="${vmMaxLengthSec()}" playBeep="true" trim="trim-silence" finishOnKey="#"`
-    + ` recordingStatusCallback="${xmlEscape(API_URL)}/api/voice/inbound/voicemail"`
-    + ' recordingStatusCallbackMethod="POST" recordingStatusCallbackEvent="completed"/>'
-    + '<Hangup/>'
-    + '</Response>'
-  );
-  console.log(`[voice/missed] offering voicemail ${tail} status=${status}`);
+  // Greeting goes INSIDE a <Gather> only when escalation is on: a timeout with
+  // no digit falls through to the <Record> after </Gather>, so "just leave a
+  // message" needs no extra route. Escalation off emits the exact production
+  // document (golden-pinned). `line` is a fixed enum: attribute-safe.
+  const greeting = greetingVerbForLine(line);
+  const body = escalationEnabled()
+    ? `<Gather numDigits="1" timeout="4" action="${xmlEscape(API_URL)}/api/voice/escalate?line=${line}" method="POST">`
+      + greeting + escalationPromptVerb()
+      + '</Gather>'
+    : greeting;
 
-  pingMissed(fromE164);
+  sendTwiml(res, `<Response>${body}${recordVerb()}<Hangup/></Response>`);
+  console.log(`[voice/missed] offering voicemail ${tail} line=${line} status=${status}`);
+
+  // Zul-line only: her ping doubles as the callback trigger. A primary miss
+  // shows natively on the GV dial target; pinging Zul invites a wrong callback.
+  if (line !== 'primary') pingMissed(fromE164);
 });
 
 /**
@@ -562,10 +639,10 @@ async function claimVoicemail(body) {
     console.log(`[voice/voicemail] delivery already claimed or unknown call ${tail}`);
     return null;
   }
-  return { callSid, recordingSid, durationSec, fromE164: claim.fromE164, tail };
+  return { callSid, recordingSid, durationSec, fromE164: claim.fromE164, line: claim.line, tail };
 }
 
-async function deliverClaimedVoicemail({ callSid, recordingSid, durationSec, fromE164, tail }) {
+async function deliverClaimedVoicemail({ callSid, recordingSid, durationSec, fromE164, line, tail }) {
   // A recording Twilio reported as 0 or 1 seconds is a robocall or a hangup on
   // the beep, and is safe to drop: she already has the ping with the number.
   // An ABSENT or unparseable duration is NOT that. It means "unknown", and
@@ -578,15 +655,13 @@ async function deliverClaimedVoicemail({ callSid, recordingSid, durationSec, fro
     return;
   }
 
+  // Zul's line delivers over Telegram, so her chat id is a hard precondition
+  // there; the row then deliberately keeps NO status ('recorded' keeps it in
+  // the sweep's retry window; 'skipped' once parked audio in the Twilio console
+  // forever). The primary line delivers by SMS and does not need it, so gating
+  // it on her id would make Dallas's voicemails silently undeliverable.
   const allowed = process.env.TELEGRAM_ALLOWED_USER_ID;
-  if (!allowed) {
-    // Documented bootstrap mode. Deliberately writes NO status: the row stays
-    // 'recorded', which is what keeps it inside the sweep's retry window, so the
-    // voicemail is delivered once the id is set and the app redeploys. Writing
-    // 'skipped' here parked it outside BOTH the sweep filter and the prune,
-    // stranding real client audio in the Twilio console forever. That is
-    // precisely the parking deliverVoicemail refuses to do, and the rollout
-    // procedure walks through this exact state.
+  if (line !== 'primary' && !allowed) {
     console.warn(`[voice/voicemail] TELEGRAM_ALLOWED_USER_ID unset, recording retained and still retryable ${tail}`);
     return;
   }
@@ -596,9 +671,10 @@ async function deliverClaimedVoicemail({ callSid, recordingSid, durationSec, fro
   // Duplicating it here is what let the sweep collapse a gated send into a
   // permanent failure.
   const outcome = await _deps.deliverVoicemail({
-    callSid, recordingSid, durationSec, fromE164, chatId: allowed,
+    callSid, recordingSid, durationSec, fromE164, line, chatId: allowed,
   });
 
+  // Failure alerts go to the LINE'S OWNER (utils/voicemail.js alertOperator).
   const who = fromE164 || 'a withheld number';
   if (outcome === 'unfetchable') {
     if (process.env.SENTRY_DSN_SERVER) {
@@ -606,16 +682,16 @@ async function deliverClaimedVoicemail({ callSid, recordingSid, durationSec, fro
         level: 'warning', tags: { webhook: 'twilio-voice', route: 'inbound/voicemail' },
       });
     }
-    await _deps.sendTelegramMessage(allowed, `Voicemail from ${who} could not be retrieved. It is still in the Twilio console.`);
+    await _deps.alertOperator({ line, chatId: allowed, tail, text: `Voicemail from ${who} could not be retrieved. It is still in the Twilio console.` });
     return;
   }
   if (outcome === 'failed') {
     if (process.env.SENTRY_DSN_SERVER) {
-      _deps.captureMessage('Voicemail Telegram upload failed', {
+      _deps.captureMessage('Voicemail delivery failed', {
         level: 'warning', tags: { webhook: 'twilio-voice', route: 'inbound/voicemail' },
       });
     }
-    await _deps.sendTelegramMessage(allowed, `Voicemail from ${who} did not come through. It is still in the Twilio console.`);
+    await _deps.alertOperator({ line, chatId: allowed, tail, text: `Voicemail from ${who} did not come through. It is still in the Twilio console.` });
   }
   // 'delivered' and 'skipped' need no operator action. 'skipped' deliberately
   // stays retryable for the sweep rather than being parked in a status.

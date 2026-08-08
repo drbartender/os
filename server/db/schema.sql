@@ -3687,6 +3687,59 @@ CREATE TABLE IF NOT EXISTS voicemail_delivery (
 CREATE INDEX IF NOT EXISTS idx_voicemail_delivery_created_at
   ON voicemail_delivery (created_at);
 
+-- Phase 1a (spec 2026-07-26): the phone system became two-line, so every row
+-- must record WHICH number the call arrived on. `line` drives three decisions
+-- downstream: which greeting plays, who a press-1 escalation rings, and which
+-- channel the voicemail is delivered on. Getting it wrong delivers a client's
+-- voicemail to the wrong person, so it is NOT NULL.
+--
+-- NOT NULL DEFAULT 'zul' is also the backfill: every row that predates this
+-- column was a 224-0082 (Zul) call, which is exactly what the default assigns,
+-- so no separate UPDATE is needed and a re-run cannot corrupt anything. The
+-- default is a migration device, not a fallback the live path relies on:
+-- claimMissedCall always passes an explicit line (see voicemail.js).
+ALTER TABLE voicemail_delivery
+  ADD COLUMN IF NOT EXISTS line TEXT NOT NULL DEFAULT 'zul';
+DO $$ BEGIN
+  ALTER TABLE voicemail_delivery DROP CONSTRAINT IF EXISTS voicemail_delivery_line_check;
+  ALTER TABLE voicemail_delivery
+    ADD CONSTRAINT voicemail_delivery_line_check CHECK (line IN ('primary','zul'));
+END $$;
+
+-- escalated_at is the press-1 escalation's CLAIM and its spend window, the same
+-- double duty call_sid's PK serves for the missed-call ping. Twilio delivers a
+-- <Gather action> at least once, so the claim is what stops a redelivered
+-- callback from placing a SECOND billed leg. Counting rows where it is NOT NULL
+-- inside a rolling 24h is VM_ESCALATION_DAILY_CAP.
+ALTER TABLE voicemail_delivery
+  ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ;
+-- escalation_accepted_at is set ONLY when a human presses a key on the whisper,
+-- and it is the thing escalate/done branches on. It has to exist because
+-- DialCallStatus cannot answer the question: a carrier voicemail that picks up
+-- and is then hung up by the whisper's screen is still an ANSWERED child leg, so
+-- Twilio reports 'completed' for both "they talked" and "a machine grabbed it and
+-- we rejected it". Trusting that status hangs up on a caller who never reached a
+-- person. Explicit acceptance state is the only reliable discriminator.
+ALTER TABLE voicemail_delivery
+  ADD COLUMN IF NOT EXISTS escalation_accepted_at TIMESTAMPTZ;
+-- Why the escalation ended. Observability only; nothing branches on it. The
+-- skipped_* values are written WITHOUT a claim (escalated_at stays NULL), so a
+-- non-null outcome is NOT a proxy for a billed escalation leg having existed.
+ALTER TABLE voicemail_delivery
+  ADD COLUMN IF NOT EXISTS escalation_outcome TEXT;
+DO $$ BEGIN
+  ALTER TABLE voicemail_delivery DROP CONSTRAINT IF EXISTS voicemail_delivery_esc_outcome_check;
+  ALTER TABLE voicemail_delivery
+    ADD CONSTRAINT voicemail_delivery_esc_outcome_check CHECK (
+      escalation_outcome IS NULL OR escalation_outcome IN (
+        'answered','no_answer','declined','skipped_cap','skipped_quiet','skipped_no_target'
+      )
+    );
+END $$;
+-- Partial index: the cap counts only escalated rows, which are a small minority.
+CREATE INDEX IF NOT EXISTS idx_voicemail_delivery_escalated_at
+  ON voicemail_delivery (escalated_at) WHERE escalated_at IS NOT NULL;
+
 -- ── Proposal option groups ("compare your options") ──────────────────────────
 -- A group bundles two or three sibling proposal "options" behind one public
 -- /compare/:token link. Each option stays a full proposals row; the group owns

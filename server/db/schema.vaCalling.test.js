@@ -209,7 +209,8 @@ dbTest('voicemail_delivery exists with the expected columns', async () => {
   );
   assert.deepEqual(rows.map((r) => r.column_name), [
     'attempts', 'call_sid', 'created_at', 'delivered_at',
-    'duration_sec', 'from_e164', 'recording_sid', 'status',
+    'duration_sec', 'escalated_at', 'escalation_accepted_at', 'escalation_outcome',
+    'from_e164', 'line', 'recording_sid', 'status',
   ]);
   const byName = Object.fromEntries(rows.map((r) => [r.column_name, r]));
   assert.equal(byName.call_sid.is_nullable, 'NO');
@@ -239,5 +240,67 @@ dbTest('the voicemail_delivery status CHECK rejects an out-of-domain value', asy
       "INSERT INTO voicemail_delivery (call_sid, status) VALUES ('TEST_VM_bad', 'banana')"
     ),
     /violates check constraint/i
+  );
+});
+
+// ── voicemail_delivery line + escalation columns (Phase 1a, spec 2026-07-26) ─
+
+test('voicemail_delivery carries the line + escalation columns idempotently', () => {
+  assert.match(schemaSql, /ADD COLUMN IF NOT EXISTS line TEXT NOT NULL DEFAULT 'zul'/);
+  assert.match(schemaSql, /CHECK \(line IN \('primary','zul'\)\)/);
+  assert.match(schemaSql, /ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ/);
+  assert.match(schemaSql, /ADD COLUMN IF NOT EXISTS escalation_accepted_at TIMESTAMPTZ/);
+  assert.match(schemaSql, /ADD COLUMN IF NOT EXISTS escalation_outcome TEXT/);
+  // Pin the outcome enum the same way the line enum is pinned above, so widening
+  // the JS OUTCOMES set without widening the CHECK fails a test instead of
+  // silently losing outcome writes to a swallowed 23514.
+  assert.match(
+    schemaSql,
+    /escalation_outcome IS NULL OR escalation_outcome IN \(\s*'answered','no_answer','declined','skipped_cap','skipped_quiet','skipped_no_target'\s*\)/
+  );
+  assert.match(schemaSql, /idx_voicemail_delivery_escalated_at/);
+});
+
+test('the new DDL is inside the slice the suite actually applies', () => {
+  // Guard against the block being appended below the slice boundary, which would
+  // make the catalog tests below pass only because someone ran initDb by hand.
+  assert.match(vaCallingDdl(), /ADD COLUMN IF NOT EXISTS line TEXT NOT NULL/);
+});
+
+dbTest('line is NOT NULL and defaults to zul so old rows backfill', async () => {
+  const { rows } = await pool.query(
+    `SELECT column_name, is_nullable, column_default
+       FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'voicemail_delivery'
+        AND column_name IN ('line','escalated_at','escalation_accepted_at','escalation_outcome')
+      ORDER BY column_name`
+  );
+  const byName = Object.fromEntries(rows.map((r) => [r.column_name, r]));
+  assert.equal(byName.line.is_nullable, 'NO');
+  assert.match(byName.line.column_default, /'zul'/);
+  assert.equal(byName.escalated_at.is_nullable, 'YES');
+  assert.equal(byName.escalation_accepted_at.is_nullable, 'YES');
+  assert.equal(byName.escalation_outcome.is_nullable, 'YES');
+});
+
+// TEST_VM_ sids, not CA-shaped ones: they ride the after() cleanup's
+// LIKE 'TEST_VM_%', so if the CHECK is ever absent when this runs, the
+// then-successful INSERT still gets deleted instead of poisoning every later
+// apply of the slice with a 23514 on ADD CONSTRAINT.
+dbTest('the line CHECK rejects an unknown line', async () => {
+  await assert.rejects(
+    () => pool.query(
+      `INSERT INTO voicemail_delivery (call_sid, line) VALUES ('TEST_VM_badline', 'not-a-line')`
+    ),
+    /voicemail_delivery_line_check/
+  );
+});
+
+dbTest('the escalation_outcome CHECK rejects an off-list value', async () => {
+  await assert.rejects(
+    () => pool.query(
+      `INSERT INTO voicemail_delivery (call_sid, escalation_outcome) VALUES ('TEST_VM_badoutcome', 'banana')`
+    ),
+    /voicemail_delivery_esc_outcome_check/
   );
 });

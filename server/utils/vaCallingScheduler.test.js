@@ -33,6 +33,7 @@ const SAVED_TG_USER = process.env.TELEGRAM_ALLOWED_USER_ID;
 afterEach(() => {
   if (SAVED_TG_USER === undefined) delete process.env.TELEGRAM_ALLOWED_USER_ID;
   else process.env.TELEGRAM_ALLOWED_USER_ID = SAVED_TG_USER;
+  delete process.env.VM_TEXT_DESTINATION;
   __setDeps({
     getTelegramWebhookInfo: require('./telegram').getTelegramWebhookInfo,
     setTelegramWebhook: require('./telegram').setTelegramWebhook,
@@ -42,6 +43,7 @@ afterEach(() => {
     // stubbed pool would otherwise leak into every later DB-backed test.
     pool: require('../db').pool,
     deliverVoicemail: require('./voicemail').deliverVoicemail,
+    alertOperator: require('./voicemail').alertOperator,
     sendTelegramMessage: require('./telegram').sendTelegramMessage,
     notificationsEnabled: require('./notificationsEnabled').notificationsEnabled,
   });
@@ -289,6 +291,119 @@ test('reapUndeliveredVoicemails skips a row another pass already claimed', async
   assert.equal(delivered, 0, 'the claim is what makes a second instance safe');
 });
 
+test("reapUndeliveredVoicemails redelivers on the row's own line", async () => {
+  process.env.TELEGRAM_ALLOWED_USER_ID = '5550001';
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  const jobs = [];
+  __setDeps({
+    notificationsEnabled: () => true,
+    pool: sweepPool(vmRow({ line: 'primary' })),
+    deliverVoicemail: async (job) => { jobs.push(job); return 'delivered'; },
+  });
+  await reapUndeliveredVoicemails();
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].line, 'primary', 'a primary row must never redeliver to Zul');
+});
+
+test("reapUndeliveredVoicemails routes the give-up alert to the row's owner", async () => {
+  process.env.TELEGRAM_ALLOWED_USER_ID = '5550001';
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  const alerts = [];
+  const telegrams = [];
+  __setDeps({
+    notificationsEnabled: () => true,
+    pool: sweepPool(vmRow({ line: 'primary' }), { postBumpAttempts: 99 }),
+    deliverVoicemail: async () => 'failed',
+    alertOperator: async (args) => { alerts.push(args); },
+    sendTelegramMessage: async (chatId, text) => { telegrams.push({ chatId, text }); return { ok: true }; },
+  });
+  await reapUndeliveredVoicemails();
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].line, 'primary', "a primary give-up must not land in Zul's Telegram");
+  assert.equal(telegrams.length, 0);
+});
+
+test('reapUndeliveredVoicemails skips an unconfigured line BEFORE the claim, keeping its budget', async () => {
+  // A primary row with no valid VM_TEXT_DESTINATION must not be claimed at all:
+  // spending an attempt on a pass that cannot send ages the row out of the
+  // retry window with the give-up alert unreachable (review 2026-08-07).
+  process.env.TELEGRAM_ALLOWED_USER_ID = '5550001';
+  delete process.env.VM_TEXT_DESTINATION;
+  const sql = [];
+  let delivered = 0;
+  __setDeps({
+    notificationsEnabled: () => true,
+    pool: {
+      query: async (q) => {
+        sql.push(q);
+        if (/^\s*SELECT/i.test(q)) return { rows: [vmRow({ line: 'primary' })] };
+        return { rows: [{ attempts: 2 }], rowCount: 1 };
+      },
+    },
+    deliverVoicemail: async () => { delivered += 1; return 'delivered'; },
+  });
+  await reapUndeliveredVoicemails();
+  assert.equal(delivered, 0, 'no send channel means no attempt');
+  assert.ok(!sql.some((q) => /attempts = attempts \+ 1/.test(q)), 'and no claim, so no budget spent');
+});
+
+test('the sweep SELECT itself filters to deliverable lines (no head-of-line starvation)', async () => {
+  // A JS-side skip spends no attempts, so a stuck row never leaves the
+  // ORDER BY created_at head; VM_SWEEP_BATCH of them would occupy the whole
+  // batch forever and silently starve the OTHER line's retries. The filter
+  // must live in the SQL predicate so the LIMIT is spent only on sendable rows.
+  process.env.TELEGRAM_ALLOWED_USER_ID = '5550001';
+  delete process.env.VM_TEXT_DESTINATION;
+  let selectParams = null;
+  __setDeps({
+    notificationsEnabled: () => true,
+    pool: {
+      query: async (q, params) => {
+        if (/^\s*SELECT/i.test(q)) {
+          selectParams = params;
+          assert.match(q, /line = ANY\(/, 'the line filter belongs in the WHERE, not the loop');
+          return { rows: [] };
+        }
+        return { rows: [], rowCount: 1 };
+      },
+    },
+    deliverVoicemail: async () => 'delivered',
+  });
+  await reapUndeliveredVoicemails();
+  assert.deepEqual(selectParams && selectParams[3], ['zul'],
+    'with no VM_TEXT_DESTINATION only zul rows may consume the batch');
+
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  delete process.env.TELEGRAM_ALLOWED_USER_ID;
+  await reapUndeliveredVoicemails();
+  assert.deepEqual(selectParams && selectParams[3], ['primary'],
+    'and with no chat id only primary rows may');
+});
+
+test('reapUndeliveredVoicemails rolls the claim back on a skipped outcome', async () => {
+  // 'skipped' means "could not even try". Without the rollback, three quiet
+  // skips exhaust attempts <= 3 and the row silently ages out of the sweep.
+  process.env.TELEGRAM_ALLOWED_USER_ID = '5550001';
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  const sql = [];
+  __setDeps({
+    notificationsEnabled: () => true,
+    pool: {
+      query: async (q, params) => {
+        sql.push({ q, params });
+        if (/^\s*SELECT/i.test(q)) return { rows: [vmRow({ line: 'primary', attempts: 1 })] };
+        if (/attempts = attempts \+ 1/.test(q)) return { rows: [{ attempts: 2 }], rowCount: 1 };
+        return { rows: [], rowCount: 1 };
+      },
+    },
+    deliverVoicemail: async () => 'skipped',
+  });
+  await reapUndeliveredVoicemails();
+  const rollback = sql.find((s) => /attempts = attempts - 1/.test(s.q));
+  assert.ok(rollback, 'a skipped pass must refund the attempt it claimed');
+  assert.deepEqual(rollback.params, [vmRow().call_sid, 2], 'CAS-exact: only this pass can hold attempts=2');
+});
+
 test('reapUndeliveredVoicemails does not run at all when notifications are gated off', async () => {
   // Sweeping while gated would burn every row's retry budget on sends that
   // never leave the box, and the give-up alert would be swallowed too.
@@ -318,29 +433,29 @@ test('reapUndeliveredVoicemails leaves a skipped outcome retryable and never ale
 
 test('reapUndeliveredVoicemails alerts exactly once past the attempt ceiling', async () => {
   process.env.TELEGRAM_ALLOWED_USER_ID = '5550001';
-  const seen = { messages: [] };
+  const seen = { alerts: [] };
   __setDeps({
     notificationsEnabled: () => true,
     pool: sweepPool(vmRow({ attempts: 3 }), { postBumpAttempts: 4 }),
     deliverVoicemail: async () => 'failed',
-    sendTelegramMessage: async (_c, t) => { seen.messages.push(t); return { ok: true }; },
+    alertOperator: async (args) => { seen.alerts.push(args); },
   });
   await reapUndeliveredVoicemails();
-  assert.equal(seen.messages.length, 1);
-  assert.match(seen.messages[0], /Twilio console/);
+  assert.equal(seen.alerts.length, 1);
+  assert.match(seen.alerts[0].text, /Twilio console/);
 });
 
 test('reapUndeliveredVoicemails stays quiet below the ceiling', async () => {
   process.env.TELEGRAM_ALLOWED_USER_ID = '5550001';
-  const seen = { messages: [] };
+  const seen = { alerts: [] };
   __setDeps({
     notificationsEnabled: () => true,
     pool: sweepPool(vmRow({ attempts: 1 }), { postBumpAttempts: 2 }),
     deliverVoicemail: async () => 'failed',
-    sendTelegramMessage: async (_c, t) => { seen.messages.push(t); return { ok: true }; },
+    alertOperator: async (args) => { seen.alerts.push(args); },
   });
   await reapUndeliveredVoicemails();
-  assert.equal(seen.messages.length, 0);
+  assert.equal(seen.alerts.length, 0);
 });
 
 test('reapUndeliveredVoicemails no-ops in bootstrap mode (no allowlisted user)', async () => {

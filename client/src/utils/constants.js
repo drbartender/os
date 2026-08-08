@@ -1,8 +1,14 @@
 /** Shared constants — single source of truth for hardcoded business values */
 
 export const WHATSAPP_GROUP_URL = 'https://chat.whatsapp.com/GjZsSHG5BsRCR2yc9Z2b5A';
-export const COMPANY_PHONE = '(312) 588-9401';
-export const COMPANY_PHONE_TEL = 'tel:+13125889401';
+// VOICE: the primary business line (+12242221922). This is the number to CALL.
+export const COMPANY_PHONE = '(224) 222-1922';
+export const COMPANY_PHONE_TEL = 'tel:+12242221922';
+// SMS: still the toll-free 888 until the 224 numbers clear A2P 10DLC registration
+// (spec Phase 2). Texting a number with no approved campaign does not deliver, so
+// these MUST stay separate from the voice pair until that cutover.
+export const COMPANY_TEXT_PHONE = '(888) 231-4320';
+export const COMPANY_TEXT_PHONE_TEL = 'sms:+18882314320';
 
 /**
  * Public site origin used when an admin builds a shareable link for a client

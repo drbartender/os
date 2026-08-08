@@ -68,6 +68,14 @@ server/utils/sms.js
 # review-scaling until listed explicitly.
 server/utils/telegram.js
 server/utils/voicemail.js
+# Phone system Phase 1a (2026-07-26): the per-line routing policy, the shared
+# TwiML fragments, the escalation claim/cap ledger, and the press-1 escalation
+# routes. Every one of these feeds a billed <Dial> (international on the
+# primary line) or the TwiML documents around it.
+server/utils/voicemailLine.js
+server/utils/voicemailTwiml.js
+server/utils/voicemailEscalation.js
+server/routes/voiceEscalate.js
 # pendingCall.js owns the VA-calling claim-then-call primitives, the DB-backed
 # outbound spend-cap count, and the voicemail ledger prune. Matched no glob for
 # the same reason as the two above.

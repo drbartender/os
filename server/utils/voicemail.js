@@ -15,7 +15,9 @@
 const twilio = require('twilio');
 const { pool } = require('../db');
 const { notificationsEnabled } = require('./notificationsEnabled');
-const { sendTelegramAudio } = require('./telegram');
+const { sendTelegramAudio, sendTelegramMessage } = require('./telegram');
+const { sendSMS } = require('./sms');
+const { resolveLine, E164_RE } = require('./voicemailLine');
 
 // Twilio recording SIDs are 'RE' + 32 lowercase hex. Anchored, so nothing with a
 // path separator, a scheme, or a traversal segment can pass.
@@ -39,6 +41,8 @@ let _deps = {
   client,
   notificationsEnabled,
   sendTelegramAudio,
+  sendTelegramMessage: (...args) => sendTelegramMessage(...args),
+  sendSMS: (...args) => sendSMS(...args),
   fetchRecordingMp3: (...args) => fetchRecordingMp3(...args),
   fetch: (...args) => globalThis.fetch(...args),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -49,15 +53,24 @@ function __setVoicemailDeps(d) { _deps = { ..._deps, ...d }; }
  * Register a missed inbound call. The INSERT is also the missed-call ping's
  * dedup claim: Twilio delivers <Dial action> at least once, so only the request
  * that wins the PK may ping and offer a recording.
+ *
+ * `line` decides who this voicemail is eventually DELIVERED to, so it is written
+ * explicitly on every insert rather than left to the column default. An absent
+ * or unrecognized value is coerced to 'zul' (never thrown): a live caller must
+ * not lose their voicemail to a coding slip, and 'zul' is both the safe default
+ * and the correct value for the line that predates this column.
+ *
+ * @param {{callSid: string, fromE164: string|null, line?: 'primary'|'zul'}} args
  * @returns {Promise<boolean>} true iff this caller won the claim.
  */
-async function claimMissedCall({ callSid, fromE164 }) {
+async function claimMissedCall({ callSid, fromE164, line }) {
+  const safeLine = resolveLine(line);
   const { rows } = await _deps.pool.query(
-    `INSERT INTO voicemail_delivery (call_sid, from_e164)
-     VALUES ($1, $2)
+    `INSERT INTO voicemail_delivery (call_sid, from_e164, line)
+     VALUES ($1, $2, $3)
      ON CONFLICT (call_sid) DO NOTHING
      RETURNING call_sid`,
-    [callSid, fromE164 ?? null]
+    [callSid, fromE164 ?? null, safeLine]
   );
   return rows.length > 0;
 }
@@ -86,8 +99,8 @@ async function countVoicemailsSince(hours) {
  * duplicate re-enter delivery on a row the scheduler's sweep already owns (the
  * sweep queries voicemail_delivery directly and never calls this).
  *
- * @returns {Promise<{fromE164: string|null}|null>} null if already claimed, or
- *   if the call was never registered as missed.
+ * @returns {Promise<{fromE164: string|null, line: 'primary'|'zul'}|null>} null
+ *   if already claimed, or if the call was never registered as missed.
  */
 async function claimDelivery({ callSid, recordingSid, durationSec }) {
   const { rows } = await _deps.pool.query(
@@ -98,10 +111,10 @@ async function claimDelivery({ callSid, recordingSid, durationSec }) {
             attempts = attempts + 1
       WHERE call_sid = $3
         AND status = 'missed'
-      RETURNING from_e164`,
+      RETURNING from_e164, line`,
     [recordingSid, Number.isFinite(durationSec) ? durationSec : null, callSid]
   );
-  return rows.length > 0 ? { fromE164: rows[0].from_e164 } : null;
+  return rows.length > 0 ? { fromE164: rows[0].from_e164, line: rows[0].line } : null;
 }
 
 /**
@@ -201,6 +214,61 @@ async function deleteRecording(recordingSid) {
   }
 }
 
+/** Short Chicago timestamp for the alert body. */
+function chicagoStamp(d = new Date()) {
+  return d.toLocaleString('en-US', {
+    timeZone: 'America/Chicago', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  });
+}
+
+/**
+ * The internal alert text for a voicemail on the primary line.
+ *
+ * Kept short on purpose: it lands in a Google Voice inbox as a normal SMS, and a
+ * long body would split into multiple billed segments and may be truncated. The
+ * caller number is the payload that matters, and it sits on its own line so it
+ * stays tappable and copy-pasteable on a phone.
+ */
+function primaryAlertText({ fromE164, durationSec, redelivered = false }) {
+  const who = fromE164 || 'a withheld number';
+  const secs = Number.isFinite(durationSec) ? `${durationSec}s` : 'unknown length';
+  const redo = redelivered ? ' (redelivered)' : '';
+  return `New voicemail on the business line (${secs})${redo}, ${chicagoStamp()}.\n${who}`;
+}
+
+/**
+ * Route a delivery-failure alert to the LINE'S OWNER: the primary line's owner
+ * is texted (sendSMS with skipLog, an internal ops alert that must never file
+ * into the client message ledger and is not subject to THIS APP'S consent or
+ * STOP suppression); Zul is messaged on Telegram. When the primary destination
+ * is unset or malformed it falls back to the Telegram chat, prefixed so it
+ * cannot be mistaken for one of Zul's own. Lives here beside the delivery
+ * pipeline and is exported for routes/voice.js and the sweep, so the channel
+ * choice cannot drift between files. Best-effort by construction: never throws.
+ */
+async function alertOperator({ line, chatId, text, tail }) {
+  if (resolveLine(line) === 'primary') {
+    const to = String(process.env.VM_TEXT_DESTINATION || '').trim();
+    if (E164_RE.test(to)) {
+      await _deps.sendSMS({ to, body: text, meta: { skipLog: true, messageType: 'voicemail_alert' } })
+        .catch((err) => console.error(`[voicemail] primary alert failed ${tail}: ${err.message}`));
+      return;
+    }
+    // A mis-set destination must not mean NO human hears about a lost primary
+    // voicemail: fall through to the Telegram path as a second channel, marked
+    // so Zul can tell it is NOT one of hers.
+    console.error(`[voicemail] no primary alert destination ${tail}; falling back to Telegram`);
+    if (!chatId) return;
+    await _deps.sendTelegramMessage(chatId, `Business line (not yours): ${text}`)
+      .catch((err) => console.error(`[voicemail] telegram alert failed ${tail}: ${err.message}`));
+    return;
+  }
+  if (!chatId) return;
+  await _deps.sendTelegramMessage(chatId, text)
+    .catch((err) => console.error(`[voicemail] telegram alert failed ${tail}: ${err.message}`));
+}
+
 /**
  * Fetch a recording, deliver it to a Telegram chat, and write the outcome.
  *
@@ -211,11 +279,17 @@ async function deleteRecording(recordingSid) {
  * retry budget and stranding the voicemail permanently.
  *
  * The three outcomes are NOT interchangeable and must never be collapsed:
- *   'delivered'   ok === true. The ONLY case that deletes the Twilio recording.
- *   'skipped'     gated off / no bot token. Not success, not failure. Keeps the
- *                 recording, must not page anyone, must stay retryable.
- *   'failed'      a real Bot API error. Keeps the recording.
- *   'unfetchable' the media could not be retrieved at all. Keeps the recording.
+ *   'delivered'   the send succeeded. On the ZUL line this is the only case
+ *                 that deletes the Twilio recording; the PRIMARY line retains
+ *                 it in Phase 1a (the text carries only number and duration,
+ *                 and the console holds the only copy of the content until
+ *                 1b's R2 copy).
+ *   'skipped'     gated off / channel unconfigured. Not success, not failure.
+ *                 Keeps the recording, must not page anyone, must stay
+ *                 retryable.
+ *   'failed'      a real send error. Keeps the recording.
+ *   'unfetchable' the media could not be retrieved (zul line only; the primary
+ *                 branch runs before the fetch). Keeps the recording.
  *
  * Status writes are the caller's business only for 'unfetchable' vs 'failed'
  * messaging; this function writes the ledger itself so the two callers cannot
@@ -223,9 +297,86 @@ async function deleteRecording(recordingSid) {
  *
  * @returns {Promise<'delivered'|'skipped'|'failed'|'unfetchable'>}
  */
-async function deliverVoicemail({ callSid, recordingSid, durationSec, fromE164, chatId, redelivered = false }) {
+async function deliverVoicemail({ callSid, recordingSid, durationSec, fromE164, chatId, line = 'zul', redelivered = false }) {
   const tail = `sid=...${String(callSid || '').slice(-4)}`;
   const who = fromE164 || 'a withheld number';
+
+  // Delivery is per line. Zul's voicemails go to her Telegram (audio inline, as
+  // shipped 2026-07-24); Dallas's go to his phone as a text, because that is
+  // where he actually looks. `line` defaults to 'zul' so an older caller cannot
+  // land a primary voicemail in Zul's Telegram by omission: the default is the
+  // pre-1a behavior. The primary branch runs BEFORE the media fetch: in Phase
+  // 1a its whole payload is the number and duration, so a transient media 404
+  // must not turn a deliverable text into 'unfetchable'.
+  if (resolveLine(line) === 'primary') {
+    const to = String(process.env.VM_TEXT_DESTINATION || '').trim();
+    if (!E164_RE.test(to)) {
+      // Gated, not failed: the same contract as a tokenless Telegram send. Keep
+      // the recording and write NO status, so the row stays inside the sweep's
+      // retry window and a corrected config still delivers.
+      console.warn(`[voicemail] primary delivery skipped (VM_TEXT_DESTINATION unset or malformed) ${tail}`);
+      return 'skipped';
+    }
+    let sms;
+    try {
+      // sendSMS, NOT sendAndLogSms: this is an internal ops alert about a client,
+      // not a message TO a client. skipLog keeps it out of the client message
+      // ledger (messageLog.buildSmsLogEntry honors it), so internal alerts
+      // never show up in a client's conversation history, and neither primitive
+      // applies THIS APP'S consent or STOP suppression. Carrier-level opt-out is
+      // outside our control: a stray STOP from the 312 to the sending number
+      // would make Twilio refuse these sends (21610), which surfaces here as the
+      // failure path below. Treat a 21610 on this destination as an incident.
+      sms = await _deps.sendSMS({
+        to,
+        body: primaryAlertText({ fromE164, durationSec, redelivered }),
+        meta: { skipLog: true, messageType: 'voicemail_alert' },
+      });
+    } catch (err) {
+      console.error(`[voicemail] primary SMS failed ${tail}: ${err.message}`);
+      await markDelivery({ callSid, status: 'failed' });
+      // Second-channel backstop. The SMS is the ONLY delivery channel on this
+      // line and it lands in a Google Voice inbox, so a silent drop would lose
+      // the lead with no signal at all. Best-effort by construction: this must
+      // never be the thing that throws, and it never changes the outcome.
+      const allowed = process.env.TELEGRAM_ALLOWED_USER_ID;
+      if (allowed) {
+        try {
+          await _deps.sendTelegramMessage(
+            allowed,
+            `A voicemail on the business line could not be texted through. Caller: ${fromE164 || 'withheld'}. It is still in the Twilio console.`
+          );
+        } catch (alertErr) {
+          console.error(`[voicemail] primary backstop alert failed ${tail}: ${alertErr.message}`);
+        }
+      }
+      return 'failed';
+    }
+
+    // A GATED send is not a delivery. sendSMS does not throw when notifications
+    // are off or Twilio creds are missing; it returns a `dev-skipped-*` sid
+    // (sms.js). Treating that as delivered would mark the row 'delivered' and
+    // DELETE the recording, and because delivered_at is a one-way door and the
+    // sweep only reaps 'recorded'/'failed', the voicemail would be parked outside
+    // both retry and delivery forever. Same contract as the Telegram path's
+    // {ok:false, skipped:true}: write NO status, keep the recording, stay retryable.
+    if (!sms || String(sms.sid || '').startsWith('dev-skipped')) {
+      console.log(`[voicemail] primary delivery gated off, recording retained and still retryable ${tail}`);
+      return 'skipped';
+    }
+
+    // The recording is deliberately KEPT on the primary line in Phase 1a. The
+    // text delivers only the number and duration; the message CONTENT exists
+    // nowhere but the Twilio console until 1b's R2 copy and listen link, and
+    // the spec's delete rationale ("redelivery re-fetches from R2") does not
+    // hold yet. Deleting here would destroy a lead's actual words after
+    // telling the owner only that they exist. Cost: audio lingers in Twilio
+    // (trivial storage, real PII) until 1b's purge; the row prune can outlive
+    // the pointer. Zul's line still deletes, because her audio was delivered.
+    await markDelivery({ callSid, status: 'delivered' });
+    console.log(`[voicemail] delivered to the primary line ${tail} duration=${Number.isFinite(durationSec) ? durationSec : '?'}s (recording retained until 1b)`);
+    return 'delivered';
+  }
 
   let audio;
   try {
@@ -266,6 +417,7 @@ module.exports = {
   countVoicemailsSince,
   claimDelivery,
   markDelivery,
+  alertOperator,
   isRecordingSid,
   recordingMediaUrl,
   fetchRecordingMp3,

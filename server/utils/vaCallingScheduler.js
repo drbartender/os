@@ -26,6 +26,7 @@ const pendingCall = require('./pendingCall');
 const adminNotifications = require('./adminNotifications');
 const leadCallTrigger = require('./leadCallTrigger');
 const voicemail = require('./voicemail');
+const { resolveLine, E164_RE } = require('./voicemailLine');
 const { pool } = require('../db');
 
 let deps = {
@@ -35,6 +36,7 @@ let deps = {
   notifyAdminCategory: (...a) => adminNotifications.notifyAdminCategory(...a),
   sendLeadCallChainEmail: (...a) => leadCallTrigger.sendChainEmail(...a),
   deliverVoicemail: (...a) => voicemail.deliverVoicemail(...a),
+  alertOperator: (...a) => voicemail.alertOperator(...a),
   sendTelegramMessage: (...a) => telegram.sendTelegramMessage(...a),
   notificationsEnabled: (...a) => require('./notificationsEnabled').notificationsEnabled(...a),
   pool,
@@ -179,10 +181,22 @@ async function reapUndeliveredVoicemails() {
   // row's retry budget on sends that never leave the box, and the give-up alert
   // would be swallowed by the same gate. Returning early keeps every row
   // retryable for when notifications come back on.
-  if (!allowed || !deps.notificationsEnabled()) return 0;
+  // Line-aware gate: Zul's rows need her chat id, primary rows need a valid
+  // text destination. The deliverable set goes into the SQL predicate, not a
+  // per-row skip: skipped rows spend no attempts, so they never leave the
+  // ORDER BY created_at head, and once VM_SWEEP_BATCH of them exist they would
+  // occupy the ENTIRE batch every pass and starve the other line's retries
+  // silently (review 2026-08-07). Filtering in SQL means the LIMIT is only
+  // ever spent on rows this pass can actually send.
+  const primaryDest = String(process.env.VM_TEXT_DESTINATION || '').trim();
+  const primaryDeliverable = E164_RE.test(primaryDest);
+  const deliverableLines = [];
+  if (allowed) deliverableLines.push('zul');
+  if (primaryDeliverable) deliverableLines.push('primary');
+  if (deliverableLines.length === 0 || !deps.notificationsEnabled()) return 0;
 
   const { rows } = await deps.pool.query(
-    `SELECT call_sid, from_e164, recording_sid, duration_sec, attempts
+    `SELECT call_sid, from_e164, recording_sid, duration_sec, attempts, line
        FROM voicemail_delivery
       WHERE status IN ('recorded', 'failed')
         AND recording_sid IS NOT NULL
@@ -190,9 +204,10 @@ async function reapUndeliveredVoicemails() {
         AND created_at < NOW() - $1::interval
         AND created_at > NOW() - $2::interval
         AND attempts <= $3
+        AND line = ANY($4)
       ORDER BY created_at
-      LIMIT $4`,
-    [VM_SWEEP_MIN_AGE, VM_SWEEP_MAX_AGE, VM_MAX_ATTEMPTS, VM_SWEEP_BATCH]
+      LIMIT $5`,
+    [VM_SWEEP_MIN_AGE, VM_SWEEP_MAX_AGE, VM_MAX_ATTEMPTS, deliverableLines, VM_SWEEP_BATCH]
   );
   if (rows.length === 0) return 0;
 
@@ -200,6 +215,11 @@ async function reapUndeliveredVoicemails() {
   for (const row of rows) {
     const tail = `sid=...${String(row.call_sid).slice(-4)}`;
     const who = row.from_e164 || 'a withheld number';
+
+    // Belt-and-braces: the SQL filter above is the real gate; this only fires
+    // if the two ever disagree, and still spends no attempts when it does.
+    const rowLine = resolveLine(row.line);
+    if (rowLine === 'primary' ? !primaryDeliverable : !allowed) continue;
 
     // Optimistic compare-and-swap on the attempts value this pass just READ.
     // `attempts <= CEILING` would be a bound, not a claim: under READ COMMITTED
@@ -231,6 +251,9 @@ async function reapUndeliveredVoicemails() {
         recordingSid: row.recording_sid,
         durationSec: row.duration_sec,
         fromE164: row.from_e164,
+        // Without this, a stuck primary row would redeliver to Zul's Telegram:
+        // the wrong person gets a client's voicemail.
+        line: row.line,
         chatId: allowed,
         redelivered: true,
       });
@@ -243,16 +266,31 @@ async function reapUndeliveredVoicemails() {
       console.log(`[vm-sweep] recovered ${tail}`);
       continue;
     }
-    // 'skipped' cannot happen here (we returned early when gated off), but if it
-    // ever does it must NOT count as a failure: leave the row alone so it stays
-    // retryable rather than marching it toward the give-up ceiling.
-    if (outcome === 'skipped') continue;
+    // A skip means "could not even try" (creds gated off, destination gone
+    // between the viability check and the send), so it must not cost retry
+    // budget: three quiet skips would age the row out of the SELECT above with
+    // the give-up alert never reached, and a corrected config would then
+    // recover nothing (review 2026-08-07). The CAS shape makes the rollback
+    // exact: only this pass can hold this attempts value.
+    if (outcome === 'skipped') {
+      await deps.pool.query(
+        `UPDATE voicemail_delivery
+            SET attempts = attempts - 1
+          WHERE call_sid = $1
+            AND attempts = $2
+            AND delivered_at IS NULL`,
+        [row.call_sid, attempts]
+      );
+      continue;
+    }
 
     if (attempts > VM_MAX_ATTEMPTS) {
-      await deps.sendTelegramMessage(
-        allowed,
-        `A voicemail from ${who} could not be delivered after several tries. It is still in the Twilio console and needs to be pulled by hand.`
-      );
+      // Line-aware: the give-up alert goes to the row's OWNER, same rule as the
+      // route's failure alerts (utils/voicemail.js alertOperator).
+      await deps.alertOperator({
+        line: row.line, chatId: allowed, tail,
+        text: `A voicemail from ${who} could not be delivered after several tries. It is still in the Twilio console and needs to be pulled by hand.`,
+      });
       console.warn(`[vm-sweep] giving up ${tail}`);
     }
   }
