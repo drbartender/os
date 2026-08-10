@@ -180,10 +180,10 @@ export default function RequestSheet({ open, shift, busy = false, onClose, onSub
           <div className="sp-cover-banner" style={{ marginTop: '0.6rem' }}>
             <AlertIcon size={14} />
             <span>
-              <strong>Hosted event.</strong> Plan on 90 minutes of setup and up to 2.5 hours
-              of supply handling. Expect to pick up and drop off supplies at storage, and
-              possibly to pick up a grocery order or receive a delivery. These events are
-              usually handled by management and senior staff.
+              <strong>Hosted event.</strong> Expect extra setup and supply handling: picking
+              up and dropping off supplies at storage, and possibly picking up a grocery
+              order or receiving a delivery. These events are usually handled by management
+              and senior staff.
             </span>
           </div>
           <label className="sp-ack-row">

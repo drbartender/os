@@ -15,7 +15,7 @@ Pay rules (money seam, read .claude/seam-sweep-2026-07-02.md before planning):
 - Run-payroll attribution popup: for multi-staff events, clicking Run payroll asks who gets paid for each booked duty (who printed the menu, who brought the bar, who did the supply order). Single-staff events auto-attribute.
 - Equipment and Supplies fee: flat $20. Trigger: the client PAID at least $50 for storage-pickup add-ons on the booking (bar rental, bubble gun, glassware, carbonation kit, and the like). ONE fee covering all pickup duties for the event, not per add-on.
 - Bar rental share: bringing your own bar OR using a DRB bar (pickup and dropoff at the Pilsen storage unit) qualifies for the same $20.
-- Hosted events pay a FLAT $50 for equipment and supply handling, never the $20 fee (changed from the hourly block by Dallas 2026-08-07, announced to staff; the workload expectation stays 90 minutes setup plus 2-3 hours supply handling).
+- Hosted events pay a FLAT $50 for equipment and supply handling, never the $20 fee (changed from the hourly block by Dallas 2026-08-07, announced to staff). Staff-facing copy deliberately names NO durations for this work (Dallas 2026-08-10): time estimates next to a flat fee read as an implied hourly rate.
 - Menu print: flat $5. Frame required; frames to be stocked at Pilsen storage; menu + frame are left with the client. Tablet/iPad display is an acceptable alternative (clean, on a stand, decent size). Planning size for framed menus is 8x10.
 
 Bar kit policy (copy ships in Project A, restated here for completeness):
