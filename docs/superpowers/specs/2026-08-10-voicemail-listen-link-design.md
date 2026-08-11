@@ -100,10 +100,20 @@ a redeploy (`HARVESTER_ENABLED` precedent).
 
 ### Security model
 
-- **The UUID is the auth**, identical to proposals, invoices, drink plans, and
-  shopping lists. Unguessable, but not secret: anyone holding the URL can hear
-  the message. That is the accepted trade, and it is why the token is a v4 UUID
-  and never a sequential id.
+- **The UUID is the auth.** Unguessable, but not secret: anyone holding the URL
+  can hear the message. That is the accepted trade, and it is why the token is a
+  v4 UUID and never a sequential id.
+- **AMENDED DURING IMPLEMENTATION (2026-08-11):** this was originally justified
+  as "identical to proposals, invoices, drink plans, and shopping lists."
+  Security review rejected that comparison and it should not be reused. Those
+  documents belong to their recipient, so a recipient-side leak exposes only
+  their own data. Here the audio belongs to a THIRD PARTY who never asked for a
+  link to exist. What actually makes a bare token acceptable is narrower: the
+  link is only ever sent to `VM_TEXT_DESTINATION`, a single pinned operator who
+  can already hear every voicemail in the Twilio console, so the link grants
+  access nobody gained. If that recipient ever stops being the operator, this
+  model must be revisited. The shipped code, `CLAUDE.md`, and `ARCHITECTURE.md`
+  all state it this way.
 - The link is delivered by SMS to `VM_TEXT_DESTINATION` (the 312, a Google Voice
   number), so it comes to rest in Google's message store alongside the caller's
   number, which that channel already carries.
