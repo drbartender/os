@@ -1003,3 +1003,171 @@ is sent; (c) the conclusive fix — a `<Number url=...>` screening whisper on th
 dial leg, the same keypress gate the press-1 escalation already uses, which a machine
 cannot satisfy. (c) is the only one that PREVENTS interception rather than reporting it,
 and the code already exists in voiceEscalate.js.
+
+## Dallas fix-list drop 2026-08-10 (11 items, triaged)
+
+Raw drop, verified against code before triage. Ordering below is the recommended build
+order. Nothing here is built yet.
+
+### P0 — live regression, costing leads right now
+
+1. **TT first reply is broken again, and it IS a Thumbtack change (CONFIRMED).**
+   Dallas: "Thumbtack may have changed. first reply didn't seem to fire." He is right.
+   Evidence from the box (`journalctl --user -u thumbtack-agent`): lead
+   587060300545875971 sent fine 8/08 11:19, then BOTH 8/10 leads failed
+   `ai_draft_clear_failed` (587240325025259524 at 13:19, 587259547793113095 at 18:39),
+   and 587243737936961539 hit `already_replied` at 14:16 because Dallas beat it manually.
+   Root cause pinned from the diag captures in `~/.thumbtack-profile/diag/`: **the Clear
+   control no longer exists on the respond panel.** Both 8/10 dumps show an AI draft
+   sitting in the composer (`len` 306 and 234) and ZERO buttons whose text or aria
+   contains "clear". The 8/03 fix (738cb32e) pinned that chip as aria "Clear message";
+   TT has since removed or renamed it. `clearAiDraft`
+   (`thumbtack-agent/src/index.js:281`) can only clear by clicking a labeled control, so
+   `pickByLabelPriority` returns null, the loop spins out its budget, and the reply dies
+   before the quick-reply pick. Everything downstream is healthy: "Use your quick reply"
+   and "Send" are both present in the dumps, session is valid, harvest works.
+   **Fix: stop depending on a Clear control existing.** Add a programmatic fallback to
+   `clearAiDraft` (focus the composer textarea, select-all + delete, or `fill('')`), keep
+   the label click as the preferred path, and keep the existing empty-proof read-twice
+   beat so a mid-stream AI fragment still cannot reach the send. The strict
+   `boxText === ''` send-verify law is unchanged and becomes the thing that proves it.
+   Agent-only change (box), no server change, no push required to test.
+   See [[project-tt-auto-first-reply]].
+
+### P1 — data loss and wrong-on-its-face output
+
+2. **Adding a client: picking "Other" for Source navigates away and drops the
+   in-progress client (ROOT CAUSE CONFIRMED, and it is not really about "Other").**
+   `ClickableRow` (`client/src/components/ClickableRow.js:37`) activates on **mouseUp**.
+   The add-client form sits directly above the clients table in
+   `client/src/pages/admin/ClientsDashboard.js`. A native `<select>` popup opens on
+   mousedown and the mouseUp that picks the option lands on whatever is underneath the
+   popup, which is a table row, so `ClickableRow` navigates to `/clients/:id` and the
+   unsaved form unmounts. `other` is the LAST entry in the `SOURCE` map (line 18), so its
+   popup row sits furthest down and reliably overlaps row 1, which under the default
+   `recent` sort is the most recently added client. That is exactly what Dallas saw.
+   The kebab cell already carries the workaround (`onMouseUp={ev => ev.stopPropagation()}`,
+   line 231), which is the tell.
+   Fix candidates: (a) require that mouseDown AND mouseUp both landed on the row before
+   activating (ClickableRow already stashes `pressRef` on mousedown for its drag check,
+   so this is close to free and fixes every select/menu on every list page at once);
+   (b) local-only, move the create form below the table or into a modal. (a) is the real
+   fix. Verify on Linux Chromium, that is where the popup passthrough shows up.
+
+3. **Staff-portal recipes render `· [object Object]` (ROOT CAUSE CONFIRMED).**
+   `cocktails.ingredients` / `mocktails.ingredients` are JSONB arrays of OBJECTS
+   (`{ingredient, amount, ...}`), which the server generator handles explicitly
+   (`server/utils/shoppingList.js:265`: `typeof row === 'string' ? row : row.ingredient`).
+   `BeoDrinkRow` in `client/src/components/staff/BeoSections.js:476` does
+   `String(line || '').trim()` on each entry, so every object stringifies to
+   `[object Object]` and falls to the `· {s}` branch. Bartenders cannot read a spec at
+   the bar. Client-only fix in one component: normalize each row to
+   `{qty, name}` (object → `amount` + `ingredient`, string → the existing regex split)
+   and render both shapes. `resolveDrinks` (`client/src/pages/staff/ShiftDetail.js:737`)
+   passes the raw catalog value straight through, so it can stay as-is.
+   ALSO CHECK while in there: `buildGeneratorInputFromConsult`
+   (`server/utils/shoppingList.js:534` and `:540`) runs the same `String(i).trim()`
+   coercion over `customCocktails[].ingredients`. Those are believed to be strings from
+   the consult form, but if a custom recipe ever arrives object-shaped it would poison a
+   real shopping list. Confirm the shape before deciding whether it needs the same guard.
+
+### P2 — cheap, high friction-per-line
+
+4. **Inbound auto-responder should name the staffer.** Three admin alerts in
+   `server/utils/smsInbound.js` say "A staff member" when the identity is already in
+   scope: line 688 (CANT with no upcoming shift), 704 (CANT lost a race), 709 (freeform,
+   the common one). `sender.staffUserId` is resolved by `lookupSender` before the branch,
+   and `findStaffCandidatesByPhone` / `resolveShiftResponder` have already run on the
+   CANT paths. Include name and phone, and on the no-shift/ambiguous paths list the
+   candidate names rather than just user ids (the ambiguous alert at line 671 prints bare
+   `user ids`, which is the same complaint one level down). Fold the whole file's alert
+   copy in one pass.
+
+5. **Message greetings should be first name only.** "Hi Monica Donnely," reads wrong.
+   The codebase already has first-name handling in at least six places
+   (`marketingHandlers.js:42`, `preEventHandlers.js:41`, `drinkPlanNudge.js:129`,
+   `lifecycleEmailTemplates.js:746`, `rescheduleProposal.js:293`,
+   `ccWrapUpEmailTemplate.js:4`), so the newer templates use `first` while most of
+   `emailTemplates.js` still interpolates the full `name`. Fix is a single shared
+   `firstNameOf` helper applied at every `Hi ${name}` site, plus dedup of the five
+   near-identical local copies. Touches a lot of template lines but is behavior-inert
+   otherwise. Watch the SMS templates too.
+
+6. **Guest count at the top of the event details page.** `EventDetailPage.js:501` already
+   renders `{guest_count} guests · {hours}hr`, but gated on `event_duration_hours` also
+   being non-null and sitting below the fold. Surface guest count in the header block
+   independently of duration.
+
+7. **Alternatives: allow more than 3 options.** Cap is `MAX_OPTIONS = 3` in
+   `server/utils/proposalGroups.js:14` (enforced at line 82) with a client mirror,
+   `members.length < 3`, at `client/src/pages/admin/AlternativesPanel.js:32`. Both move
+   together, plus the test at `proposalGroups.test.js:70` which reads the constant. Ask
+   Dallas for the new number before building; the real constraint is item 8, a compare
+   page that is already hard to read at 3 will be worse at 5, so 7 and 8 should ship
+   together.
+
+### P3 — design work, needs a session
+
+8. **Client-facing alternatives/compare surface is unreadable.** Dallas: "the list is run
+   together and hard to compare. bullets or something would be better." Surface is
+   `client/src/pages/proposal/compare/ProposalCompare.js` + `PackageMatrix.js`. Note
+   there is ALREADY a reskin prompt doc parked for this page
+   (`docs/compare-page-design-prompt.md`, sitting since 7/02, listed above under design
+   sessions), and the known finding there is that the page renders light because it
+   references undefined tokens. This item is comprehension, not just skin, so the prompt
+   doc needs a comparability section: per-option bullets, aligned rows so options can be
+   read across, and a defined behavior at more than 3 options. `?choose=1` and both
+   redirect effects are load-bearing and untouchable.
+
+9. **Staff portal skin work + the staff portal menu.** Dallas: "Field guide shows in
+   marketing/admin hybrid skin." `client/src/pages/FieldGuide.js` is reachable from the
+   staff portal but is not wearing the staff skin. There is an existing unresolved scope
+   call above ("Classes / field guide: restyle existing OR new marketing/content pages?")
+   that this collides with, so settle that first. **Dallas's sentence about the staff
+   portal menu was cut off mid-thought ("staff portal menu is") and needs re-asking
+   before this is scopeable.**
+
+10. **Price guide lookup tool.** Dallas: "If somebody wants to know how much xyz or what
+    comes in 'the Full Compound' I want to be able to look it up real quick." Admin for
+    sure, possibly marketing-facing too, which is the scope call. The data already exists
+    (packages, add-ons, and their descriptions are seeded in `schema.sql`; the pricing
+    engine is the authority on how they combine), so an admin lookup is mostly a read
+    surface over existing tables rather than new content. A marketing-facing version is a
+    different and much bigger thing: public pricing is a business decision, and it would
+    need to stay in sync with the engine or it becomes a liability. Recommend building
+    the admin lookup first and deciding on public exposure after seeing it.
+
+### Scope call, not yet a build
+
+11. **Monitor Wedding Pro / The Knot.** Ambiguous as written. Could mean (a) harvest
+    leads from them the way the Thumbtack agent does, (b) watch them for competitor or
+    pricing intel, or (c) just track whether the paid listings are producing. Each is a
+    completely different build. Needs one question answered before it can be scoped.
+    Worth noting (a) would inherit the whole Thumbtack fragility surface, item 1 is the
+    second time a UI change silently broke that pipeline in a week.
+
+### Added 2026-08-10 (cross-LLM push review, admin gratuity mandate)
+
+12. **Cleared sub-$50 mandate orphans a paid gratuity.** Found by codex at the
+    push-time second opinion on `de23daa3`, confirmed against the code; gemini-pro
+    returned NO FINDINGS. In `server/routes/stripeWebhookHandlers/paymentIntentSucceeded.js`
+    the apply-time floor check reads the CURRENT row floor, not the floor the
+    PaymentIntent was created under. Sequence: admin sets a mandate BELOW $50/staff/hr,
+    the client elects "skip the tip jar" at exactly that mandate (legal — the amended
+    CHECK's third disjunct exists for this), admin then CLEARS the mandate while the
+    client still holds a live intent, and the client pays. `rowFloor` is now 0, so the
+    check falls back to the legacy `tip_jar OR rate >= 50` rule, the sub-50 no-jar
+    election fails it, and the gratuity is skipped as `below_floor`. The client is
+    charged the gratuity-inclusive amount, `total_price` has already dropped from the
+    clear, so `amount_paid` exceeds it and payroll's `extractGratuityCents` finds no
+    Gratuity line: DrB holds gratuity money the bartender never receives.
+    **Not silent** (fires `warnGratuityApplySkipped('below_floor')` to Sentry with the
+    proposal id + metadata) and **not currently reachable** — prod has zero mandates, and
+    a mandate at exactly $50/staff/hr or above is immune because the fallback rule passes.
+    Only a sub-$50 mandate is exposed.
+    Candidate fix (a behavior decision, deliberately NOT made at push time): when no
+    mandate remains and the only failing rule is no-jar/sub-50, honor the dollars the
+    client actually paid and apply the gratuity with `tip_jar` forced true (which is what
+    the clear implied anyway) instead of skipping — the DB CHECK is then satisfied and the
+    money reaches payroll. Needs a test and would change the pinned skip-reason on the
+    legacy no-mandate path, so it wants its own small lane rather than a drive-by patch.
