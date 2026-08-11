@@ -1154,13 +1154,16 @@ Items 8-11 are unstarted.
    `guest_count != null`, so it reads "Sat, Aug 16 · setup 4:00 PM · service 5-10 PM ·
    120 guests". The pricing-card copy is left alone.
 
-7. **Alternatives: allow more than 3 options.** Cap is `MAX_OPTIONS = 3` in
-   `server/utils/proposalGroups.js:14` (enforced at line 82) with a client mirror,
-   `members.length < 3`, at `client/src/pages/admin/AlternativesPanel.js:32`. Both move
-   together, plus the test at `proposalGroups.test.js:70` which reads the constant. Ask
-   Dallas for the new number before building; the real constraint is item 8, a compare
-   page that is already hard to read at 3 will be worse at 5, so 7 and 8 should ship
-   together.
+7. ~~**Alternatives: allow more than 3 options.**~~ **NO LONGER BLOCKED ON A NUMBER, and no
+   longer its own item.** Absorbed by the compare-and-book spec
+   (`superpowers/specs/2026-08-11-proposal-compare-and-book-design.md`, §2): sibling
+   proposals stop being how alternatives are expressed, so "there is no cap to raise" and
+   the `MAX_OPTIONS = 3` question dissolves. Do NOT ask Dallas for a new cap number; that
+   question was retired by the design, not answered.
+   Historical detail if the spec is ever abandoned: the cap is `MAX_OPTIONS = 3` in
+   `server/utils/proposalGroups.js:14` (enforced at line 82), mirrored client-side as
+   `members.length < 3` at `client/src/pages/admin/AlternativesPanel.js:32`, with the test
+   at `proposalGroups.test.js:70` reading the constant. All three move together.
 
 ### P3 — design work, needs a session
 
