@@ -1221,3 +1221,42 @@ see below. Item 7 is blocked on Dallas naming the new cap. Items 8-11 are unstar
     the clear implied anyway) instead of skipping — the DB CHECK is then satisfied and the
     money reaches payroll. Needs a test and would change the pinned skip-reason on the
     legacy no-mandate path, so it wants its own small lane rather than a drive-by patch.
+
+### Added 2026-08-11 (found while running the vm-listen-link merge gate)
+
+13. **`criticalIndexes.test.js` has been red on main since the duty-pay lane.** Two
+    assertions in `server/db/criticalIndexes.test.js` compare against hardcoded expected
+    arrays that were never updated when `duty_lines` indexes joined the critical list:
+    "DB has none of them" expects `['uq_invoice_payments_positive_link']` but gets that
+    plus `idx_duty_lines_event_kinds` / `idx_duty_lines_bounty` / `idx_duty_lines_contest`,
+    and "DB reports the index present" expects `[]` but gets the same three. Reproduced on
+    a clean `main` checkout, so it is not lane contamination.
+    This one matters more than a stale fixture normally would: the test's whole job is to
+    fail loudly when a critical index is missing from the DB, and it currently fails
+    loudly ALL the time. A permanently-red guard is a guard nobody reads, so the next
+    genuinely missing index will land in the noise. Fix is to derive the expected arrays
+    from the manifest instead of restating it, so adding an index can never redden it.
+
+14. **`balanceReminderScheduling.test.js` CDT case is red on main.** "summer (CDT) anchors
+    each reminder to 10:00am Chicago = 15:00Z" asserts `actual: 0, expected: 1`. Also
+    reproduced on clean `main`. Reads like a DB-state dependency (it wants a row the
+    shared dev DB no longer has) rather than a DST math bug, but that is a guess — it
+    needs someone to actually look, because if it IS the DST math then balance reminders
+    are firing at the wrong hour for half the year, which is client-facing.
+
+15. **Two suites need an opt-in env var and silently "fail" without it.**
+    `server/routes/calcom.test.js` and `server/routes/drinkPlanConsult.test.js` throw at
+    import unless `NODE_ENV=test` or `ALLOW_TEST_DB_WRITES=1` (they DELETE from
+    `webhook_events`). The guard is right, but `npm test` does not set either, so the
+    documented way to run the suite reports two failures that look like broken code. Give
+    the npm script the env var, or make the guard skip the file rather than throw.
+
+16. **Twilio Account SID and full Recording SID reach Sentry unredacted.** Found during
+    the sentryScrub review (2026-08-11), verified in a real captured envelope at
+    `.spans[].data.url`, `.spans[].data['url.full']`, `.spans[].description`, and
+    `.breadcrumbs[].data.url`, from the OUTGOING media GET to Twilio. No credential
+    leaks (the auth token rides in a header, `voicemail.js:204-208`), but the Account SID
+    is the basic-auth username, so this is half a credential pair sitting in a third-party
+    vendor. Pre-existing, unrelated to the listen link. The by-value span scrubbing added
+    in `fb3a1e68` gives an obvious place to hang the fix: add the `api.twilio.com` media
+    path shape to `scrubUrl` and it is covered on both pipelines at once.
