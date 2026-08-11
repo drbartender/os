@@ -109,8 +109,11 @@ Append directly after the `idx_voicemail_delivery_escalated_at` index:
 -- Listen link (spec 2026-08-10). The alert SMS carries only the caller's number,
 -- so the message CONTENT is unreachable without opening the Twilio console. This
 -- token is the public handle for the retained recording: GET /api/voice/vm/:token
--- streams it. UUID (not a sequential id) because the token IS the auth, the same
--- model proposals and invoices use.
+-- streams it. UUID (not a sequential id) because the token IS the auth.
+-- SUPERSEDED AS PLANNED: this block originally justified that with "the same
+-- model proposals and invoices use." Security review rejected the comparison
+-- (see the spec's Security model amendment, 2026-08-11); the shipped schema.sql
+-- comment carries the corrected reasoning instead.
 --
 -- DEFAULT gen_random_uuid() is also the backfill: every existing row gets a token
 -- the moment the column is added, so nothing generates one in application code and
@@ -1056,7 +1059,7 @@ VM_LISTEN_LINK_ENABLED=true
 Insert after the `VM_TEXT_DESTINATION` row:
 
 ```
-| `VM_LISTEN_LINK_ENABLED` | Listen-link kill switch, **default ON** (only `'false'` disables). TWO-SIDED: off → `GET /api/voice/vm/:token` 404s AND the primary alert SMS omits the link line (one `listenLinkEnabled()` in `utils/voicemail.js` feeds both, so they cannot drift and strand a dead URL in an alert). The token IS the auth (UUID, same model as proposals/invoices), so anyone holding the URL can hear that voicemail; this is the redeploy-free way to shut it. |
+| `VM_LISTEN_LINK_ENABLED` | Listen-link kill switch, **default ON** (only `'false'` disables). TWO-SIDED: off → `GET /api/voice/vm/:token` 404s AND the primary alert SMS omits the link line (one `listenLinkEnabled()` in `utils/voicemail.js` feeds both, so they cannot drift and strand a dead URL in an alert). The token IS the auth (UUID), so anyone holding the URL can hear that voicemail; this is the redeploy-free way to shut it. SUPERSEDED AS PLANNED: the shipped row drops the "same model as proposals/invoices" comparison, which security review rejected — see the spec's Security model amendment (2026-08-11). |
 ```
 
 - [ ] **Step 3: Update `README.md`**
