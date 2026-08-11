@@ -8,6 +8,8 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 
 <!-- plan written + reviewed, no lane cut. One line per item, linking its spec + plan. -->
 
+- **vm-listen-link** — voicemail listen link: token-gated route streams the retained primary recording, alert SMS carries the URL. Transcription considered and declined (two new vendors); this is the thin 1b slice that the 1a retain-the-audio decision made cheap. [spec](superpowers/specs/2026-08-10-voicemail-listen-link-design.md) / [plan](superpowers/plans/2026-08-10-voicemail-listen-link.md)
+
 ## In flight
 
 <!-- lane open and building. Stale-lane flags surface here. One line per item. -->
