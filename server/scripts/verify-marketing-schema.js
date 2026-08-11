@@ -46,14 +46,19 @@ const WANT_INDEXES = [
     const table = (await pool.query("SELECT to_regclass('public.client_tags') AS t")).rows[0].t;
     if (!table) fail('table client_tags is missing');
 
+    // Schema-scoped: a same-named object in a backup/restore schema would
+    // otherwise let this verifier false-pass, which is the one failure mode
+    // that makes the runbook step lie. Same hardening as findMissingCriticalIndexes.
     const cols = (await pool.query(
       `SELECT column_name FROM information_schema.columns
-        WHERE table_name = 'clients' AND column_name = ANY($1)`, [WANT_COLUMNS]
+        WHERE table_schema = current_schema()
+          AND table_name = 'clients' AND column_name = ANY($1)`, [WANT_COLUMNS]
     )).rows.map(r => r.column_name);
     for (const c of WANT_COLUMNS) if (!cols.includes(c)) fail(`column clients.${c} is missing`);
 
     const idx = (await pool.query(
-      'SELECT indexname FROM pg_indexes WHERE indexname = ANY($1)', [WANT_INDEXES]
+      `SELECT indexname FROM pg_indexes
+        WHERE schemaname = current_schema() AND indexname = ANY($1)`, [WANT_INDEXES]
     )).rows.map(r => r.indexname);
     for (const i of WANT_INDEXES) if (!idx.includes(i)) fail(`index ${i} is missing`);
 

@@ -112,9 +112,16 @@ router.put('/contacts/:id/tags', auth, adminOnly, asyncHandler(async (req, res) 
  * RECORDED ONLY, NOT YET ENFORCED. Nothing reads this column today. The live
  * marketing gate is scheduledMessageDispatcher.js's marketing-category check,
  * which consults communication_preferences.marketing_enabled and nothing else.
- * Enforcement lands with the audience resolver in lane mkt-c, which must patch
- * that gate as well as its own MAILABLE_SQL. Until then the flag can only be
- * set by a direct API call: no UI writes it before lane mkt-d.
+ *
+ * Two lanes close that, and they are NOT the same lane:
+ *   - mkt-c-resolver adds MAILABLE_SQL, which keeps an excluded contact out of
+ *     new campaigns.
+ *   - mkt-f-compliance patches the DISPATCHER gate, which is what stops the
+ *     automated touches. That one is deliberately deferred here so a
+ *     comms-critical file is opened by the lane that already touches it.
+ *
+ * Until both land the flag only records intent. It can be set by a direct API
+ * call; no UI writes it before lane mkt-d.
  *
  * Deliberately its own endpoint rather than a field on PUT /api/clients/:id,
  * which destructures a fixed 5-field body and updates via COALESCE($n, col)
