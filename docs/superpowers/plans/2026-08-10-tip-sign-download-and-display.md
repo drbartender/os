@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-10-tip-sign-download-and-display-design.md` (approved 2026-08-10)
 
-**Revision:** rewritten 2026-08-11 after the design-stage fleet returned 9 blockers. Every mechanical finding is folded in below; the three findings that needed a product decision are listed under Open decisions at the end and are NOT implemented by this plan.
+**Revision:** rewritten 2026-08-11 after the design-stage fleet returned 9 blockers. Every mechanical finding is folded in below. Of the three findings that needed a product decision, two were decided and are implemented (the `tip_page_active` download gate, and a `?view=sign` projection so display mode stops putting payment handles on a bar-top tablet); the third is parked on purpose and is described at the end.
 
 ## Global Constraints
 
@@ -424,6 +424,38 @@ In `server/routes/publicTip.js`, add to the `res.json({ ... })` object:
 const { PUBLIC_SITE_URL } = require('../utils/urls');
 ```
 
+- [ ] **Step 4b: Add the `?view=sign` projection**
+
+Display mode puts this response on a tablet that sits unattended on a bar, often hardware the bartender does not own. The full chooser payload carries `zelle_handle`, which normalizes to a personal phone number or email address, plus every other handle. The sign draws only a name, a QR, and marks, so it should receive only those.
+
+In the same handler, **after** the `tip_page_active` guard at line 101 and **before** the headshot signing, return early when the caller asks for the sign projection:
+
+```js
+  // Display mode (spec 2026-08-10) renders name + QR + marks and nothing else.
+  // Sending it the full chooser payload would put a bartender's personal Zelle
+  // phone or email on an unattended bar-top tablet for the length of a shift.
+  // Returning early also skips the R2 headshot signing below, which this view
+  // has no use for.
+  if (req.query.view === 'sign') {
+    const { paypalUrl, zelleHandle } = readSideNormalize(row, {
+      route: 'publicTip.GET.sign',
+      tokenPrefix: token.slice(0, 8),
+    });
+    const methods = computeOrderedMethods(
+      deriveAvailableMethods({ ...row, paypalUrl, zelleHandle }),
+      row.tip_card_order
+    );
+    res.set('Cache-Control', 'private, no-cache');
+    return res.json({
+      display_name: row.display_name || 'your bartender',
+      url: `${PUBLIC_SITE_URL}/tip/${token}`,
+      methods,
+    });
+  }
+```
+
+Note what this deliberately does NOT do: it does not skip the `tip_page_active` guard, and it does not skip the rate limiter. A deactivated page still 404s for display mode, which is what Task 7 Step 8 verifies.
+
 - [ ] **Step 5: Verify both endpoints by hand**
 
 No server test exercises `/me/tip-page`: `grep -rn "me/tip-page" server --include=*.test.js` returns zero hits. **This manual step is the gate for Task 2, not a formality.** The first draft of this plan claimed `staffPortal.test.js` covered it; it does not.
@@ -434,6 +466,8 @@ Expected:
 - `/me/tip-page` returns a `methods` array. For a profile with a Stripe link and a Venmo handle and no saved order, exactly `["card","venmo"]`.
 - `/api/public/tip/:token` returns the SAME `methods` array for the same bartender, plus a `url` of the form `https://<PUBLIC_SITE_URL>/tip/<token>`.
 - The two `methods` arrays are byte-identical. That equality is the whole point of Tasks 1 and 2; if they differ, stop.
+- `/api/public/tip/:token?view=sign` returns exactly three keys: `display_name`, `url`, `methods`. **Confirm no `zelle_handle`, `venmo_handle`, `cashapp_handle`, `paypal_url`, `stripe_payment_link_url`, or `headshot_url` appears in that response.** That absence is the point of the projection, so read the actual body rather than assuming.
+- `/api/public/tip/<a deactivated bartender's token>?view=sign` still 404s. The projection must not have skipped the active guard.
 
 - [ ] **Step 6: Re-run the public suite**
 
@@ -1004,7 +1038,17 @@ export async function downloadCanvasesPdf(canvases, filename, { inW, inH }) {
 
 - [ ] **Step 2: Build the page**
 
-`DownloadTipSign.jsx` fetches `/me/tip-page` through `client/src/utils/api.js` with the same loading / error / inactive states the current print page has, then:
+`DownloadTipSign.jsx` fetches `/me/tip-page` through `client/src/utils/api.js` with the same loading and error states the current print page has.
+
+**Gate on `active`, not just on `url`.** The current page guards `if (!data.url)` (`PrintTipCard.jsx:52`), but `/me/tip-page` derives `url` from token presence alone, independent of `tip_page_active` (`me.js:98`). The portal button is gated on `active`, and this task keeps `/my-tip-page/print` alive as a redirect, so a bookmark walks straight past that gate. Without this, a deactivated bartender downloads print-ready signs and pays a photo counter for QRs that resolve to `NotFoundError` (`publicTip.js:101`).
+
+```jsx
+  if (!data.active || !data.url) {
+    return <p style={{ padding: 24 }}>Your tip page isn't active yet.</p>;
+  }
+```
+
+Then:
 
 ```js
   const marks = buildTipCardMarks(data.methods);
@@ -1233,7 +1277,7 @@ export function useWakeLock(active) {
 
 `TipSignDisplay.jsx`:
 
-- Reads `token` from route params, fetches `/public/tip/${token}` through `utils/api.js`, exactly as `client/src/pages/public/TipPage.jsx:31` does. **Fetches once and never polls.** That endpoint sits behind `publicReadLimiter` (100 per 15 min, keyed by IP), a budget shared with every guest scanning at the same NAT'd venue, and the guests are the money path.
+- Reads `token` from route params and fetches **`/public/tip/${token}?view=sign`** through `utils/api.js` (same call shape as `client/src/pages/public/TipPage.jsx:31`, plus the projection param from Task 2 Step 4b). The projection matters here: without it, a bartender's personal Zelle phone number or email sits in the page payload on a bar-top tablet all night. **Fetches once and never polls.** That endpoint sits behind `publicReadLimiter` (100 per 15 min, keyed by IP), a budget shared with every guest scanning at the same NAT'd venue, and the guests are the money path.
 - Uses `data.url` for the QR, added in Task 2. Do not assemble it from `window.location`.
 - Uses `data.display_name` (the public endpoint already COALESCEs and defaults to `'your bartender'`).
 - `const marks = buildTipCardMarks(data.methods)`.
@@ -1387,15 +1431,15 @@ git commit -m "feat(tip): redesigned sign artwork from the apothecary design sys
 
 ---
 
-## Open decisions (NOT implemented by this plan)
+## Parked, deliberately (Dallas, 2026-08-11)
 
-The design fleet raised three findings that are product calls, not mechanical fixes. Each is a real defect; none is resolved below.
+**A third derivation of method availability lives in the reorder UI.** `TipCardPage.js:97` seeds its set with `card` **unconditionally** ("card is implicit"), while both server paths gate `card` on `stripe_payment_link_url`. A bartender with no Stripe link sees "Card payments" in the reorder list today and gets no card method on the chooser page.
 
-**1. Nothing stops a deactivated bartender downloading a dead sign.** `/me/tip-page` derives `url` from token presence alone, independent of `tip_page_active` (`me.js:98`), while the public endpoint 404s when inactive (`publicTip.js:101`). The portal gates its button on `active`, but this plan keeps `/my-tip-page/print` alive as a redirect, so a bookmark walks straight past that gate. A deactivated bartender can download print-ready signs and pay a photo counter for QRs that resolve to nothing. Fix is a one-line guard on `data.active`, but it is a behavior decision about who can print what.
+This is a real, pre-existing bug, and it feeds `tip_card_order`, which is the input to the very ordering Task 1 unified. It stays out of this work on purpose: fixing it means deciding what the reorder list should show for a bartender who has no card rail at all, which is its own small question and would widen three lanes to answer.
 
-**2. A third derivation of method availability lives in the reorder UI.** `TipCardPage.js:97` seeds its set with `card` **unconditionally** ("card is implicit"), while both server paths gate `card` on `stripe_payment_link_url`. A bartender with no Stripe link sees "Card payments" in the reorder list today and gets no card method on the chooser page. Pre-existing, outside this spec, and it feeds `tip_card_order`, which is the input to the very ordering this plan just unified.
+**Do not fix it opportunistically inside these lanes.** The reorder UI is in lane A's and lane C's footprints for copy and extraction reasons only.
 
-**3. Display mode pulls the full chooser payload onto an unattended tablet.** The public response includes `zelle_handle`, which normalizes to a personal phone number or email address, plus every other handle, onto a device the bartender may not own and may leave on a bar. The sign renders only name, QR, and marks. A trimmed projection (or a `?view=sign` variant) would send only what the sign draws.
+The other two findings the fleet raised here were decided and are now implemented: the `tip_page_active` download gate (Task 6 Step 2) and the `?view=sign` projection for display mode (Task 2 Step 4b, consumed in Task 7 Step 2).
 
 ---
 
@@ -1404,6 +1448,8 @@ The design fleet raised three findings that are product calls, not mechanical fi
 - Seven downloads work from `/my-tip-page/download`, all at 300 DPI, all off one capture path, all with real fonts and a present logo.
 - A printed 4x6 and a printed business card both scan to the correct bartender's tip page.
 - `/me/tip-page` and the public endpoint return byte-identical `methods` for the same bartender.
+- A bartender whose tip page is deactivated cannot download a sign, including by bookmark.
+- `?view=sign` returns three keys and leaks no payment handle onto a bar-top tablet.
 - `/tip/:token/display` fills a phone and a tablet, keeps the screen awake, re-acquires the lock after backgrounding, says so plainly when it cannot, and shows a deliberate message when the page is inactive.
 - The reorder copy claims only what is true.
 - Invoice printing still works.
