@@ -220,11 +220,28 @@ const fsSafeId = (s) => String(s).replace(/[^\w-]/g, '').slice(0, 64) || 'unknow
 // TT uses DIFFERENT placeholders per surface; see replyComposerPlaceholders).
 // Returns its current value, or null when no such box is visible — callers
 // treat null as "cannot prove composer state" and fail closed.
-async function composerText(page) {
+function composerBox(page) {
   const re = new RegExp(CFG.replyComposerPlaceholders.map(escapeRegex).join('|'), 'i');
-  const box = page.getByPlaceholder(re).filter({ visible: true }).first();
+  return page.getByPlaceholder(re).filter({ visible: true }).first();
+}
+
+async function composerText(page) {
+  const box = composerBox(page);
   if (!(await box.isVisible().catch(() => false))) return null;
   return box.inputValue().catch(() => null);
+}
+
+// Empty the composer WITHOUT TT's own Clear control. TT removed that control
+// from the respond panel between 2026-08-08 and 2026-08-10 (the second UI
+// change to kill this one step inside a week), which stalled every reply at
+// ai_draft_clear_failed. A labeled affordance can therefore never be a hard
+// dependency here. fill('') drives the same React onChange the chip did, and
+// the read-twice empty proof in clearAiDraft is what actually certifies the
+// result — so this is a cheaper path to the same guarantee, not a weaker one.
+async function clearComposer(page) {
+  const box = composerBox(page);
+  if (!(await box.isVisible().catch(() => false))) return false;
+  return box.fill('').then(() => true).catch(() => false);
 }
 
 // TT sometimes pops a lead-survey dialog ("initial impression of this lead")
@@ -297,8 +314,16 @@ async function clearAiDraft(page) {
         await sleep(1200);
         continue;
       }
+      // No Clear control anywhere on the page: empty the box ourselves rather
+      // than spinning the budget out waiting for an affordance TT deleted. If
+      // the draft is still streaming it will refill and we clear again next
+      // pass; the loop only exits once two reads 1500ms apart both come back
+      // empty, so a mid-stream fragment still cannot reach the send.
+      await clearComposer(page);
+      await sleep(1200);
+      continue;
     }
-    await sleep(700); // null (composer unreadable yet) or no Clear control yet
+    await sleep(700); // null: composer not readable yet
   }
   return 'clear_failed';
 }
