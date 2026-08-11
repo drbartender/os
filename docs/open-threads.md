@@ -21,16 +21,16 @@ no other home.
 These are not from the original ledger. They surfaced while verifying its
 "Shift #31 still open" entry against production, and both are live.
 
-- **A bartender worked an event on 2026-07-18 and has no payout line.** Proposal 557,
-  shift 339, user 12, `shift_requests.status = 'approved'`, `payout_events` count = **0**,
-  24 days after the event. The cause is the known completion gate: accrual only runs for
-  `completed` proposals, and 557 is still `deposit_paid` even though its Deposit ($100)
-  and Balance ($250) invoices are both `paid`. The status ladder is demote-only, so a past
-  event stuck below `completed` silently never accrues and nothing alerts.
-  Also on 557: an "Additional Services" invoice for **$70** was raised 2026-07-19 (the day
-  after the event) and is still `sent`, unpaid.
-  ACTION: confirm user 12 worked it, move 557 to `completed` so accrual runs, verify the
-  payout line lands, and chase or void the $70.
+- ~~**A bartender worked an event on 2026-07-18 and has no payout line.**~~ **CLOSED
+  2026-08-11 by Dallas: user 12 is Dallas himself, and the unpaid invoice on 557 was already
+  known.** No money is owed to anyone. Kept as a record because the SHAPE is still live and
+  the next instance may not be benign: proposal 557 (event 2026-07-18) has an approved shift
+  request and zero `payout_events` lines because it is still `deposit_paid` even though its
+  Deposit ($100) and Balance ($250) invoices are both `paid`. Accrual is completion-only and
+  the status ladder is demote-only, so any past event stuck below `completed` silently never
+  accrues and nothing alerts. For a contractor rather than the owner, that is an unpaid
+  person with no signal. The standing mitigation is the sweep before every payroll run; a
+  real fix would be an alert on "past event, not completed, has approved staff".
 - **$3,273 outstanding on an event that already happened.** Proposal 600, event 2026-08-01,
   status `confirmed`, total $3,373, `amount_paid` $100. Its Balance invoice (id 193,
   $3,273) was sent 2026-07-16 and has never been paid. Shift 348 is still `open` with
