@@ -94,9 +94,10 @@ export default function TipCardPage() {
       const tips = Array.isArray(tipsRes.data?.tips) ? tipsRes.data.tips : [];
       const prefs = prefsRes.data?.ui_preferences || {};
 
-      // Canonical "on file" set: card is implicit, p2p depends on saved handles
-      // from /payment-methods (the only source with zelle_handle).
-      const onFile = new Set(['card']);
+      // Canonical "on file" set. `card` is gated on the Stripe link existing:
+      // unconditional until 2026-08-11, which listed Card for bartenders whose
+      // link was never generated while the chooser page showed no card button.
+      const onFile = new Set(tipPage.has_stripe_link ? ['card'] : []);
       if (methods.venmo_handle) onFile.add('venmo');
       if (methods.cashapp_handle) onFile.add('cashapp');
       if (methods.paypal_url) onFile.add('paypal');
@@ -320,8 +321,9 @@ export default function TipCardPage() {
           </button>
         </div>
         <div className="sp-reorder-help">
-          Drag (or use the arrows) to reorder. Top of the list shows first on the
-          chooser page guests see after scanning.
+          {order.length === 0
+            ? 'No payment methods on file yet. Add one under Manage methods and it will show here, and on the chooser page guests see after scanning.'
+            : 'Drag (or use the arrows) to reorder. Top of the list shows first on the chooser page guests see after scanning.'}
         </div>
         <DndContext
           sensors={sensors}
