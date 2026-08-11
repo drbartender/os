@@ -1204,6 +1204,18 @@ Duty-pay satellite tables and columns (spec 2026-08-06): `staff_reviews` (review
 - `created_at` TIMESTAMPTZ NOT NULL DEFAULT NOW()
 - Index `idx_message_log_proposal (proposal_id, created_at DESC, id DESC)` serves the newest-first per-proposal read; the `id DESC` tiebreaker keeps ordering deterministic for rows sharing a `created_at`.
 - Index `idx_message_log_provider_id (provider_id)` backs the Resend delivery webhook matching a bounce/complaint event to its ledger row (otherwise a sequential scan on a growing table).
+- Index `idx_message_log_client_created (client_id, created_at DESC) WHERE client_id IS NOT NULL` backs the per-CONTACT read described below, which filters on `client_id` rather than `proposal_id` and so cannot use the index above.
+
+**Per-contact message history** — `server/utils/contactMessageHistory.js` answers "everything this contact has actually received", newest first.
+
+- **`message_log` is the primary and near-complete source.** It is written at the `sendEmail` / `sendSMS` choke points, so it captures scheduler sends and human sends alike (2,200 sent rows in prod as of 2026-08-11).
+- **`automated` is derived from `message_log.sent_by`, never from which table a row came from.** NULL means the scheduler sent it, a set value means a human did; 2,165 of those 2,200 rows are NULL. Assuming the source table instead would label the system's own drip as human-sent, inverting the one fact the view exists to convey.
+- **`scheduled_messages` is a safety net, not a peer, and is anti-joined.** The dispatcher's handlers send through the same choke points *without* `skipLog`, so 1,154 of its 1,196 sent rows already have a `message_log` twin milliseconds apart. A dispatcher row is emitted only when no ledger twin exists within a two-minute window, i.e. only when a ledger write failed. Without that anti-join the drawer lists every drip twice, once tagged automated and once human.
+- **`email_sends` joins in phase 2**, once `mkt-g-send` adds its `client_id`; the leg sits behind a once-per-process `information_schema` probe so the module works before and after. That lane must also add an index on `email_sends (client_id, sent_at DESC)`, or the leg sequential-scans a table that grows by one row per recipient per blast.
+- **Scope limit, phase 1:** a contact with no proposal has nothing in *either* current source. `logClientMessage` returns early without a `proposal_id`, and every client-directed `scheduled_messages` row is proposal-anchored too, so the ~254 proposal-less clients get an empty history until the phase-2 leg lands.
+- Only rows that went out count. Pending is a plan; suppressed, failed, and bounced are non-events. `'complained'` is deliberately kept on the campaign leg: a spam complaint proves receipt, and it is the most important row in a do-not-double-tap view.
+- The `email_sends` leg filters `sent_at IS NOT NULL AND status NOT IN ('failed','bounced','queued')`, **not** `status = 'sent'`: `emailMarketingWebhook.js` monotonically advances a delivered send past `'sent'` to `delivered`/`opened`/`clicked`, so an equality filter would hide most real campaign sends.
+- Rows carry `subject` alongside `kind`, because `message_type` is the literal `'other'` on 1,007 of 2,200 rows while `subject` is populated on all of them. The UI humanizes via the existing `client/src/utils/messageTypes.js` `messageTypeLabel(kind, subject)`.
 
 **scheduled_messages** — Unified per-recipient/per-channel scheduled-message tracking for the Automated Communication Foundation. One row per (recipient, channel) for each scheduled touch so multi-recipient touches (e.g. day-before reminder to two bartenders) and partial failures (email sent, SMS failed) are tracked independently.
 - `id` SERIAL PK

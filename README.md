@@ -355,6 +355,7 @@ dr-bartender/
 │   │   ├── eventCreation.js    # Auto-create shifts from paid proposals
 │   │   ├── eventEndInstant.js  # Timezone-correct event start/end instants: event_date + free-text event_start_time + duration composed inside event_timezone by Postgres (the balanceScheduler completion-gate precedent, parameterized on duration); powers the extension request window + expires_at; unparseable time returns null, never throws
 │   │   ├── eventEveSms.js      # Event-eve SMS touch (T-24h from event start) and timing helper
+│   │   ├── contactMessageHistory.js # Everything one contact actually received. message_log is primary (automated derived from sent_by); scheduled_messages is anti-joined as a safety net so a dispatcher send is not listed twice; email_sends joins in phase 2
 │   │   ├── eventTypes.js       # Event type id→label resolver (mirrors client)
 │   │   ├── marketingTags.js    # Marketing tag vocabulary (mirrors client + the client_tags CHECK; Corporate is never inferred)
 │   │   ├── outstandingDocuments.js # Which onboarding documents a worker still owes (one predicate, two surfaces)
