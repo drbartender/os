@@ -14,6 +14,13 @@ const BRAND = {
   white: '#ffffff',
 };
 
+// CAN-SPAM (15 U.S.C. §7704(a)(5)) requires a valid physical postal address in
+// every commercial message. Rendered by `wrapMarketingEmail` only — `wrapEmail`
+// carries transactional mail (receipts, reminders, staff notices), which the
+// requirement does not cover. Exported so the legal pages and any future
+// marketing surface reuse this string instead of copying the literal.
+const POSTAL_ADDRESS = '1625 W Farwell Ave, Chicago, IL 60626';
+
 /**
  * Wrap inner HTML in the branded email layout.
  */
@@ -454,6 +461,7 @@ function wrapMarketingEmail(innerHtml, unsubscribeUrl) {
     </div>
     <div style="border-top:1px solid #e0d6cf;padding:20px 28px;text-align:center;">
       <p style="margin:0;font-size:12px;color:${BRAND.secondary};">Dr. Bartender &middot; drbartender.com</p>
+      <p style="margin:4px 0 0;font-size:11px;color:${BRAND.secondary};">${POSTAL_ADDRESS}</p>
       ${unsubscribeSection}
     </div>
   </div>
@@ -790,6 +798,7 @@ function invoiceReadyParts({ clientName, eventTypeLabel = 'event', amountDue, in
 module.exports = {
   wrapEmail,
   wrapMarketingEmail,
+  POSTAL_ADDRESS,
   ctaButton,
   clientOtp,
   proposalSent,
