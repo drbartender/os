@@ -1251,7 +1251,7 @@ see below. Item 7 is blocked on Dallas naming the new cap. Items 8-11 are unstar
     documented way to run the suite reports two failures that look like broken code. Give
     the npm script the env var, or make the guard skip the file rather than throw.
 
-16. **Twilio Account SID and full Recording SID reach Sentry unredacted.** Found during
+16. ~~**Twilio Account SID and full Recording SID reach Sentry unredacted.**~~ **CLOSED 2026-08-11** in the vm-listen-link squash merge (`56d0fcd1`). Two caveats worth carrying, because the close is not shaped like the item. (a) Only the **Account SID** is redacted; the **Recording SID is deliberately kept**, so this item's title still describes live behavior. The Account SID is a per-deployment CONSTANT, byte-identical on every span the system emits, so it carries zero diagnostic value and is half a credential pair (it is the basic-auth username). The Recording SID varies per event and is the only key correlating a Sentry trace to a `voicemail_delivery` row, and it is useless without the credential pair. (b) The fix is **broader than proposed**: rather than adding an `api.twilio.com` path shape, `scrubUrl` redacts the SID pattern wherever it appears, so it covers all four locations named below plus any future one, on both pipelines and in breadcrumbs. Original report follows. Found during
     the sentryScrub review (2026-08-11), verified in a real captured envelope at
     `.spans[].data.url`, `.spans[].data['url.full']`, `.spans[].description`, and
     `.breadcrumbs[].data.url`, from the OUTGOING media GET to Twilio. No credential
