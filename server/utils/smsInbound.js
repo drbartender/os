@@ -194,6 +194,42 @@ async function findStaffCandidatesByPhone(fromPhone) {
 }
 
 /**
+ * Human-readable labels for staff user ids, for ADMIN-facing alert copy only.
+ * These alerts used to say "A staff member", which left the reader guessing
+ * from a phone number alone. Audience is internal, so this prefers the fullest
+ * identification available (display name, else preferred name, else the login
+ * email) rather than the client-facing display name on its own.
+ *
+ * Never throws and never blocks: an alert must still go out if this lookup
+ * fails, so every failure path degrades to the bare "user <id>" it replaced.
+ *
+ * @param {number[]|number} userIds
+ * @returns {Promise<string[]>} one label per id, input order preserved
+ */
+async function describeStaff(userIds) {
+  const ids = (Array.isArray(userIds) ? userIds : [userIds])
+    .filter((id) => id !== null && id !== undefined);
+  if (!ids.length) return [];
+  try {
+    const r = await pool.query(
+      `SELECT u.id, u.email, cp.display_name, cp.preferred_name
+         FROM users u
+         LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+        WHERE u.id = ANY($1::int[])`,
+      [ids]
+    );
+    const byId = new Map(r.rows.map((row) => [row.id, row]));
+    return ids.map((id) => {
+      const row = byId.get(id);
+      const name = row && (row.display_name || row.preferred_name || row.email);
+      return name ? `${name} (user ${id})` : `user ${id}`;
+    });
+  } catch {
+    return ids.map((id) => `user ${id}`);
+  }
+}
+
+/**
  * Insert an inbound message into sms_messages. For an inbound row,
  * recipient_phone holds the SENDER's number (the external party) so the
  * column reads as "the other party's phone" for both directions; client_id
@@ -666,8 +702,9 @@ async function processInboundSms({ from, body, twilioSid }) {
       const resolved = await resolveShiftResponder(candidates);
 
       if (resolved.status === 'ambiguous') {
+        const ambiguousWho = await describeStaff(resolved.userIds);
         await alertAdminEmail(`Ambiguous staff ${code.toUpperCase()} text`,
-          `A "${text}" text came from a number matching multiple active staff with upcoming shifts (user ids ${resolved.userIds.join(', ')}). No shift was changed; please follow up.`);
+          `A "${text}" text from ${from} matched multiple active staff with upcoming shifts: ${ambiguousWho.join('; ')}. No shift was changed; please follow up.`);
         return settle(twilioSid, { outcome: `staff_${code}_ambiguous`, reply: AMBIGUOUS_RESPONSE_REPLY });
       }
 
@@ -684,8 +721,9 @@ async function processInboundSms({ from, body, twilioSid }) {
 
       // code === 'cant'
       if (resolved.status === 'no_shift') {
+        const noShiftWho = await describeStaff(candidates);
         await alertAdminEmail('Staff texted CANT but has no upcoming shift',
-          `A staff member texted CANT but the system found no approved upcoming shift for them. Inbound text: "${text}"`);
+          `${noShiftWho.join('; ') || 'An unidentified staff account'} texted CANT from ${from}, but the system found no approved upcoming shift for them. Inbound text: "${text}"`);
         return settle(twilioSid, { outcome: 'staff_cant_no_shift', reply: NO_CANT_SHIFT_REPLY });
       }
       const cant = await handleCant(resolved.staffUserId, twilioSid);
@@ -700,13 +738,15 @@ async function processInboundSms({ from, body, twilioSid }) {
       // released or changed between the two reads (cover swap accepted, admin
       // edit, etc.). Flag this distinctly so an admin is not sent chasing a
       // "never had a shift" trail.
+      const raceWho = await describeStaff(resolved.staffUserId);
       await alertAdminEmail('Staff CANT could not be applied (shift changed mid-request)',
-        `A staff member texted CANT and had a matching upcoming shift, but it was already released or changed before we could act. Inbound text: "${text}"`);
+        `${raceWho.join('; ') || 'A staff member'} texted CANT from ${from} and had a matching upcoming shift, but it was already released or changed before we could act. Inbound text: "${text}"`);
       return settle(twilioSid, { outcome: 'staff_cant_race', reply: NO_CANT_SHIFT_REPLY });
     }
     // Free-form staff text — route to admin, redirect the texter.
+    const freeformWho = await describeStaff(sender.staffUserId);
     await alertAdminEmail('Staff texted Dr. Bartender',
-      `A staff member texted: "${text}". No response code matched, so no system action was taken.`);
+      `${freeformWho.join('; ') || 'A staff member'} texted from ${from}: "${text}". No response code matched, so no system action was taken.`);
     return settle(twilioSid, {
       outcome: 'staff_freeform',
       reply: FREEFORM_STAFF_REPLY,
