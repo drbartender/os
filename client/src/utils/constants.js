@@ -10,6 +10,12 @@ export const COMPANY_PHONE_TEL = 'tel:+12242221922';
 export const COMPANY_TEXT_PHONE = '(888) 231-4320';
 export const COMPANY_TEXT_PHONE_TEL = 'sms:+18882314320';
 
+// Business postal address, shown on the legal pages. Mirrors POSTAL_ADDRESS in
+// server/utils/emailTemplates.js, which renders it in the CAN-SPAM marketing
+// email footer. Client and server bundles are separate, so the two are kept in
+// sync by hand — same arrangement as eventTypes.js. Change both together.
+export const COMPANY_POSTAL_ADDRESS = '1625 W Farwell Ave, Chicago, IL 60626';
+
 /**
  * Public site origin used when an admin builds a shareable link for a client
  * (proposal, drink plan, invoice, shopping list). Using this instead of

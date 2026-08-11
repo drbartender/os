@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import LegalLayout from './LegalLayout';
+import { COMPANY_POSTAL_ADDRESS } from '../../../utils/constants';
 
 // Deliberately narrow: this page governs USE OF THE SITE. Booking, cancellation,
 // and refund terms live in the signed Event Services Agreement and are never
@@ -123,7 +124,9 @@ export default function TermsPage() {
 
       <h2>Contact</h2>
       <p>
-        Dr. Bartender LLC, Chicago, Illinois.
+        Dr. Bartender LLC
+        <br />
+        {COMPANY_POSTAL_ADDRESS}
         <br />
         <a href="mailto:contact@drbartender.com">contact@drbartender.com</a>
       </p>

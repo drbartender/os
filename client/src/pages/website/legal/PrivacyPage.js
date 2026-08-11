@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import LegalLayout from './LegalLayout';
 import { SMS_CONSENT_CLIENT } from '../../../constants/smsConsent';
+import { COMPANY_POSTAL_ADDRESS } from '../../../utils/constants';
 
 // The verbatim SMS_CONSENT_CLIENT render is not decoration: /apply is behind
 // auth and the quote wizard checkbox sits several steps into the wizard, so
@@ -165,7 +166,9 @@ export default function PrivacyPage() {
 
       <h2>Contact</h2>
       <p>
-        Dr. Bartender LLC, Chicago, Illinois.
+        Dr. Bartender LLC
+        <br />
+        {COMPANY_POSTAL_ADDRESS}
         <br />
         <a href="mailto:contact@drbartender.com">contact@drbartender.com</a>
       </p>
