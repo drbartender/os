@@ -29,6 +29,11 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   let query = `
     SELECT
       c.id, c.name, c.email, c.phone, c.source, c.created_at, c.updated_at, c.cc_id,
+      -- The boolean only, to keep the list payload slim. This is NOT a
+      -- privacy boundary: GET /clients/:id is SELECT * and PUT returns *,
+      -- both behind this same requireAdminOrManager guard, so anyone who can
+      -- read this list can read the reason with one more request.
+      c.marketing_excluded,
       COALESCE(agg.events_count, 0)::int    AS events_count,
       COALESCE(agg.lifetime_value, 0)::float8 AS lifetime_value
     FROM clients c

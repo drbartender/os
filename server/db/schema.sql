@@ -4580,3 +4580,69 @@ CREATE TABLE IF NOT EXISTS duty_attributions (
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS remote_fee_prompted_at TIMESTAMPTZ;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS venue_lat NUMERIC(9,6);
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS venue_lng NUMERIC(9,6);
+
+-- ─── Marketing tags and Do-not-contact (spec 2026-08-11) ───────────
+-- Human-set marketing classification. Corporate is NEVER inferred: the email
+-- domain measures as a coin flip in both directions (of 30 clients who booked
+-- corporate work, 14 used a personal address; of 26 on company domains, 10
+-- booked their own weddings). Suggestions are surfaced for a human to accept.
+--
+-- One row per (client, tag). set_by/set_at are the audit trail an array column
+-- could not carry. Derived states (Paid client, Quoted only, Untagged) are
+-- computed at read time and NEVER stored.
+CREATE TABLE IF NOT EXISTS client_tags (
+  client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  tag TEXT NOT NULL,
+  set_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  set_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (client_id, tag)
+);
+
+-- DROP + ADD, not a guarded IF NOT EXISTS. An IF NOT EXISTS guard makes an
+-- enumerated CHECK write-once: once it exists, widening the list here never
+-- reaches an already-booted database, and every other guard still reports
+-- green (the server allowlist, the client mirror, the drift test that reads
+-- schema.sql's TEXT, and a verifier that checks the constraint's name). The
+-- sixth tag then 23514s in prod. This is the file's standing pattern for
+-- enumerated CHECKs, used in 61 other places (users_role_check:294 among them).
+-- Do not "simplify" it back to IF NOT EXISTS.
+ALTER TABLE client_tags DROP CONSTRAINT IF EXISTS client_tags_tag_check;
+ALTER TABLE client_tags ADD CONSTRAINT client_tags_tag_check
+  CHECK (tag IN ('corporate','wedding','birthday','graduation','thumbtack'));
+
+CREATE INDEX IF NOT EXISTS idx_client_tags_tag ON client_tags(tag);
+
+-- Do-not-contact. Displayed as a tag in the UI but deliberately NOT stored in
+-- client_tags: it is the only classification whose accidental removal emails
+-- someone who explicitly asked not to be emailed, so it carries a required
+-- reason and an actor, and removal is a confirmed action rather than a click.
+-- MARKETING ONLY. An excluded client who books still receives proposals,
+-- invoices, and every operational message.
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS marketing_excluded BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS marketing_excluded_reason TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS marketing_excluded_at TIMESTAMPTZ;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS marketing_excluded_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+
+-- Same DROP + ADD reasoning as client_tags_tag_check above: a guarded
+-- IF NOT EXISTS would freeze this predicate at its first-installed form.
+-- Two-sided on purpose: an excluded client must carry a reason, and a
+-- non-excluded one must not carry a stale one left behind by a backfill.
+ALTER TABLE clients DROP CONSTRAINT IF EXISTS clients_marketing_excluded_reason_check;
+ALTER TABLE clients ADD CONSTRAINT clients_marketing_excluded_reason_check
+  CHECK (
+    (marketing_excluded = true
+      AND marketing_excluded_reason IS NOT NULL
+      AND length(btrim(marketing_excluded_reason)) > 0)
+    OR
+    (marketing_excluded = false AND marketing_excluded_reason IS NULL)
+  );
+
+CREATE INDEX IF NOT EXISTS idx_clients_marketing_excluded
+  ON clients(marketing_excluded) WHERE marketing_excluded = true;
+
+-- message_log carries only idx_message_log_proposal and idx_message_log_provider_id.
+-- The contact list's last_contacted lateral and the drawer's history both filter
+-- on client_id, and /audiences runs the same lateral once per audience, so
+-- without this every contact-tab page load sequential-scans the table.
+CREATE INDEX IF NOT EXISTS idx_message_log_client_created
+  ON message_log (client_id, created_at DESC) WHERE client_id IS NOT NULL;

@@ -587,6 +587,19 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | GET | `/unsubscribe` | Public | JWT-verified unsubscribe |
 | POST | `/webhook/resend` | Resend | Webhook receiver (tracking events, svix-verified) |
 
+### Marketing Contacts — `/api/marketing`
+
+Separate router from Email Marketing above, which is at 987 of the 1000-line
+hard cap and cannot grow. **Admin only**, deliberately tighter than that file's
+`requireAdminOrManager` convention: these write the marketing classification and
+(from lane mkt-c) expose names, emails, and lifetime spend across the whole
+client base.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| PUT | `/contacts/:id/tags` | Admin | Replace a contact's marketing tag set (full set, not a delta) |
+| PUT | `/contacts/:id/do-not-contact` | Admin | Set or clear the house do-not-contact rule; setting requires a reason |
+
 ### Client Auth — `/api/client-auth`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -1435,6 +1448,24 @@ Admin entry points: "Shopping List" button on Drink Plan Detail (visible wheneve
 - `cover_image_url` — R2-hosted cover image
 - `published` BOOLEAN, `published_at` TIMESTAMPTZ
 - `chapter_number` — derived via `ROW_NUMBER()` (not stored)
+
+### Marketing Tags and Do-not-contact
+
+**client_tags** — human-set marketing classification, one row per (client, tag)
+- `client_id` FK → clients ON DELETE CASCADE, `tag`, `set_by` FK → users, `set_at`
+- PK `(client_id, tag)`; `tag` CHECK: corporate | wedding | birthday | graduation | thumbtack
+- A table rather than an array column so each tag carries who set it and when. That audit trail is the reason Corporate is human-set: the email domain measures as a coin flip in both directions (of the 30 clients who booked corporate work, 14 used a personal address; of the 26 on company domains, 10 booked their own weddings), so it is never inferred, only suggested for a human to accept.
+- The vocabulary is mirrored in `server/utils/marketingTags.js` and `client/src/utils/marketingTags.js`; a test pins all three against each other.
+- Derived states (Paid client, Quoted only, Untagged) are computed at read time and never stored.
+
+**clients.marketing_excluded / _reason / _at / _by** — the house do-not-contact rule
+- **RECORDED ONLY, NOT YET ENFORCED.** Nothing reads this column today. The live marketing gate is `scheduledMessageDispatcher.js`'s marketing-category check, which consults `communication_preferences.marketing_enabled` and nothing else, so setting this flag does not currently stop the drip or the retention nudge. Enforcement lands with the audience resolver (lane mkt-c), which must patch that gate as well as its own `MAILABLE_SQL`. No UI writes the flag before lane mkt-d, so nothing can be marked excluded and then silently emailed in the meantime.
+- Distinct from the client's own `communication_preferences.marketing_enabled` unsubscribe, which only the unsubscribe route may write.
+- **Marketing only.** An excluded client who books still receives proposals, invoices, and every operational message.
+- Displayed as a tag in the UI but deliberately not a `client_tags` value: it is the only classification whose accidental removal emails someone who asked not to be emailed, so it carries a required reason (enforced by `clients_marketing_excluded_reason_check`) and an actor, and removal is a confirmed action. `isValidTag` and the tag CHECK both reject it.
+- Sole writer: `PUT /api/marketing/contacts/:id/do-not-contact`. `PUT /api/clients/:id` structurally cannot clear it, since it updates via `COALESCE($n, col)`.
+- Both CHECKs use `DROP CONSTRAINT IF EXISTS` + `ADD`, not a guarded `IF NOT EXISTS`. A guard makes an enumerated CHECK write-once: widening the tag list would never reach an already-booted database while every other guard still reported green, and the new tag would `23514` in prod.
+- Run `node server/scripts/verify-marketing-schema.js` after any deploy that replays `schema.sql`. It is strictly read-only (catalog queries, no DDL, no locks, safe against prod) and compares the tag CHECK's *definition* against the code vocabulary, not just its name, so it detects a stale constraint rather than healing one.
 
 ### Email Marketing
 

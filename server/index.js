@@ -364,6 +364,10 @@ app.use('/api/client-auth', require('./routes/clientAuth'));
 app.use('/api/client-portal', require('./routes/clientPortal'));
 app.use('/api/email-marketing', require('./routes/emailMarketing'));
 app.use('/api/email-marketing/webhook', require('./routes/emailMarketingWebhook'));
+// Marketing contacts: tags, do-not-contact, and (lane mkt-c) the audience
+// resolver's read routes. Separate from emailMarketing.js, which is at 987 of
+// the 1000-line hard cap and cannot grow.
+app.use('/api/marketing', require('./routes/marketingContacts'));
 app.use('/api/public/reviews', require('./routes/publicReviews'));
 app.use('/api/public/tip', require('./routes/publicTip'));
 app.use('/api/public/feedback', require('./routes/publicFeedback'));

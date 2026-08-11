@@ -271,6 +271,7 @@ dr-bartender/
 │   │   ├── emailChange.js      # Unauthenticated POST /api/me/confirm-email-change — email-link token proves intent, bumps token_version to invalidate old JWTs (mounted at /api/me before me.js)
 │   │   ├── emailMarketing.js   # Email marketing leads, campaigns, sequences, conversations
 │   │   ├── emailMarketingWebhook.js  # Resend webhook receiver (email tracking events)
+│   │   ├── marketingContacts.js # Marketing tags + do-not-contact (admin only; separate router, emailMarketing.js is at the line cap)
 │   │   ├── invoices.js         # Invoice CRUD, public token view, client portal
 │   │   ├── me.js               # Authenticated self endpoints (tip page settings, my-tips listing)
 │   │   ├── staffPortal.js      # Staff portal v2 /api/me/* composite + account-mgmt endpoints (staff-home, tip-card-order, profile, ui-preferences, staff-notifications, push-subscriptions, documents/:doc_type/replace, request-email-change, cancel-pending-email-change); mounts the per-concern subrouters below
@@ -355,6 +356,7 @@ dr-bartender/
 │   │   ├── eventEndInstant.js  # Timezone-correct event start/end instants: event_date + free-text event_start_time + duration composed inside event_timezone by Postgres (the balanceScheduler completion-gate precedent, parameterized on duration); powers the extension request window + expires_at; unparseable time returns null, never throws
 │   │   ├── eventEveSms.js      # Event-eve SMS touch (T-24h from event start) and timing helper
 │   │   ├── eventTypes.js       # Event type id→label resolver (mirrors client)
+│   │   ├── marketingTags.js    # Marketing tag vocabulary (mirrors client + the client_tags CHECK; Corporate is never inferred)
 │   │   ├── outstandingDocuments.js # Which onboarding documents a worker still owes (one predicate, two surfaces)
 │   │   ├── fileValidation.js   # Magic-byte file type validation
 │   │   ├── geocode.js          # Nominatim geocoding (address → lat/lng)
@@ -461,6 +463,7 @@ dr-bartender/
 │       ├── backfillStripePayouts.js # One-off: full Stripe payout history into the read-side mirror via sweep() (idempotent; aborts in test mode)
 │       ├── backfillTipPages.js # One-shot backfill: ensure every active bartender has a tip page row + Stripe link
 │       ├── refreshDisplayNames.js # display_name backfill + drift audit (--check FAILs on drift or zero rows; --stamp-existing double-run-guarded) — safe to re-run any time
+│       ├── verify-marketing-schema.js # Asserts client_tags + do-not-contact tables/constraints/columns/indexes actually installed (initDb swallows 42710/42P16, so a failed constraint boots clean and absent) — run after any deploy that replays schema.sql
 │       ├── staffPaymentImport/   # Offline one-off CheckCherry→OS backfill pipeline (never imported by the server), sharing one name-clustering dictionary. Payments: parse Venmo/CashApp/Zelle/PayPal exports → classify/cluster → build a human review sheet → single-transaction import into staff_payment_history. Seniority: CC contacts → a human-reviewed mapping → dry-run-default apply of hire_date + historical_events_worked. Data files live on the share only, never committed (config.js, staging.js, parsers/, dictionary.js, classify.js, eventMatch.js, exportKnownPeople.js, ccReports.js, buildReviewSheet.js, importValidation.js, importFromSheet.js, reconcile.js, verifyImport.js; generateSeniorityMapping.js read-only CC→OS hire-date/event-count mapping for human review, applySeniorityBackfill.js dry-run-default apply of the approved mapping)
 │       └── archive/               # One-time migrations (already run, kept for history)
 │           ├── importBlogPosts.js
@@ -483,6 +486,7 @@ dr-bartender/
 │   │   │   ├── constants.js    # App-wide constants. VOICE and TEXT are now two different numbers: COMPANY_PHONE* = the 1922 for CALLS, COMPANY_TEXT_PHONE* = the 888 for TEXTS (the 224s have no approved A2P campaign until Phase 2 reunites them). Do not collapse the pairs.
 │   │   │   ├── emailValidation.js # Warn-only typo-domain heuristic (manual-sync mirror of server/utils/emailValidation.js)
 │   │   │   ├── eventTypes.js   # Event type id→label resolver (mirrors server)
+│   │   │   ├── marketingTags.js # Marketing tag vocabulary + derived-state labels (manual-sync mirror of server/utils/marketingTags.js)
 │   │   │   ├── formatDelta.js  # Shared change-request dollar-delta formatter (admin queue/card + public portal form)
 │   │   │   ├── formatMoney.js  # Integer-cents → human dollar string (e.g. `1234` → `$12.34`, `123456` → `$1,234.56`); canonical client-side money formatter for staff portal Pay surfaces
 │   │   │   ├── proposalStatusMap.js # Shared proposal status → {label, kind} map (single source for admin status chips)
