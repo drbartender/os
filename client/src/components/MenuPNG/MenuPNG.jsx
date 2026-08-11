@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import MenuPreview from '../../pages/plan/components/MenuPreview';
+import { buildDownloadFilename } from '../../utils/downloadFilename';
 
 /**
  * Admin-side Standard Menu PNG export. Renders a hidden full-size
@@ -18,18 +19,6 @@ export default function MenuPNG({ plan }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const sanitizeName = (name) => {
-    const safe = (name || '')
-      // Intentionally strips ASCII control chars to keep filenames safe
-      // for Windows/macOS download dialogs (filesystems reject these).
-      // eslint-disable-next-line no-control-regex
-      .replace(/[/\\:"*?<>|\x00-\x1f]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '')
-      .trim();
-    return safe;
-  };
-
   const handleDownload = async () => {
     setError('');
     setBusy(true);
@@ -43,8 +32,7 @@ export default function MenuPNG({ plan }) {
         useCORS: true,
         logging: false,
       });
-      const safeName = sanitizeName(plan.client_name);
-      const filename = safeName ? `Standard Menu - ${safeName}.png` : 'Standard Menu.png';
+      const filename = buildDownloadFilename('Standard Menu', plan.client_name, 'png');
       canvas.toBlob((blob) => {
         if (!blob) {
           setError('Failed to generate PNG. Please try again.');

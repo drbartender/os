@@ -1820,7 +1820,7 @@ Self-hostable open-source scheduling platform. drb-os receives Cal.com webhooks 
 - **Wrapper**: `server/utils/googlePlaces.js` — server-mediated proxy over the Google Places (New) API powering the proposal venue-name typeahead (autocomplete + place details → structured venue address). Fails soft (returns `[]`/`null`, never throws) so the venue-name field degrades to a plain text input when `GOOGLE_PLACES_API_KEY` is unset or Google is unreachable. The pure `mapPlaceToVenue` mapper drops out-of-area addresses, keeping only `VENUE_STATES` matches.
 
 ### QR Code Rendering (`qrcode.react`)
-- Client-only dependency used by `client/src/pages/staff/PrintTipCard.jsx` and `PrintTipCard.layouts.jsx` to render the bartender's tip-page URL as an SVG QR code on the printable tip card. No server side; rendered in the browser at print time.
+- Client-only dependency used by `client/src/pages/staff/tipCard/SignLayout.jsx` and `BizCardLayout.jsx` to render the bartender's tip-page URL as a QR code on the downloadable bar sign and hand-out card, and by `TipCardPage.js` for the on-screen preview. The sign and card use `QRCodeCanvas`, not `QRCodeSVG`, deliberately: html2canvas is far more reliable capturing a canvas, and these renders become 300-DPI files a bartender prints. No server side.
 
 ## Deployment Architecture
 

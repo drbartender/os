@@ -171,8 +171,8 @@ export default function TipCardPage() {
   }, [toast]);
 
   // ── Action handlers ───────────────────────────────────────────────────
-  const handleOpenPrint = useCallback(() => {
-    window.open('/my-tip-page/print', '_blank', 'noopener,noreferrer');
+  const handleOpenDownload = useCallback(() => {
+    window.open('/my-tip-page/download', '_blank', 'noopener,noreferrer');
   }, []);
 
   const handleShare = useCallback(async () => {
@@ -294,9 +294,9 @@ export default function TipCardPage() {
 
       {/* Action buttons row */}
       <div className="sp-tipcard-actions">
-        <button type="button" className="sp-btn sp-btn-sm" onClick={handleOpenPrint}>
+        <button type="button" className="sp-btn sp-btn-sm" onClick={handleOpenDownload}>
           <ExternalIcon size={12} />
-          Open print page
+          Download your sign
         </button>
         <button type="button" className="sp-btn sp-btn-sm" onClick={handleShare}>
           <SendIcon size={12} />

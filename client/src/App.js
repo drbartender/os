@@ -101,8 +101,10 @@ const ContractorProfile = lazy(() => import('./pages/ContractorProfile'));
 const PaydayProtocols = lazy(() => import('./pages/PaydayProtocols'));
 const Completion = lazy(() => import('./pages/Completion'));
 // Old StaffLayout + staff page fragments removed at cutover (Task 48/49); their
-// files are deleted in Task 50. PrintTipCard stays — the print flow lives on.
-const PrintTipCard = lazy(() => import('./pages/staff/PrintTipCard'));
+// files are deleted in Task 50. The print flow is gone (2026-08-11): it never
+// worked, because a global @media print rule blanked every non-invoice page.
+// Bartenders download the sign as JPG/PNG/PDF instead.
+const DownloadTipSign = lazy(() => import('./pages/staff/DownloadTipSign'));
 // Staff portal v2 (redesign in flight — early stub mount per Task 31).
 // StaffShellWithThemeWiring fetches /api/me/ui-preferences on mount and
 // persists toggles via PATCH. The current StaffLayout mount stays in place
@@ -403,8 +405,11 @@ function HiringRoutes() {
           <Route path="/account/:section" element={<StaffV2AccountPage />} />
           <Route path="/events/:proposalId/beo" element={<BeoByProposalRedirect />} />
         </Route>
-        {/* Print tip card — standalone (no shell chrome), shared with the public flow. */}
-        <Route path="/my-tip-page/print" element={<PrintTipCard />} />
+        {/* Tip sign download — standalone (no shell chrome). Staff-only: the
+            page gates on the tip page being active and the API scopes to req.user.id. */}
+        <Route path="/my-tip-page/download" element={<DownloadTipSign />} />
+        {/* Bookmarks from the old print flow keep working. */}
+        <Route path="/my-tip-page/print" element={<Navigate to="/my-tip-page/download" replace />} />
         {/* Old-path redirects — /dashboard is the portal home here, not redirected. */}
         <Route path="/events" element={<Navigate to="/shifts/mine" replace />} />
         <Route path="/schedule" element={<Navigate to="/shifts/mine" replace />} />
@@ -461,8 +466,11 @@ function StaffSiteRoutes() {
           {/* Pre-cutover BEO nudge links (/events/:proposalId/beo) resolve here. */}
           <Route path="/events/:proposalId/beo" element={<BeoByProposalRedirect />} />
         </Route>
-        {/* Print tip card — standalone (no shell chrome), shared with the public flow. */}
-        <Route path="/my-tip-page/print" element={<PrintTipCard />} />
+        {/* Tip sign download — standalone (no shell chrome). Staff-only: the
+            page gates on the tip page being active and the API scopes to req.user.id. */}
+        <Route path="/my-tip-page/download" element={<DownloadTipSign />} />
+        {/* Bookmarks from the old print flow keep working. */}
+        <Route path="/my-tip-page/print" element={<Navigate to="/my-tip-page/download" replace />} />
         {/* Old-path redirects — 30-day grace for bookmarks + in-flight links. */}
         <Route path="/dashboard" element={<Navigate to="/" replace />} />
         <Route path="/events" element={<Navigate to="/shifts/mine" replace />} />

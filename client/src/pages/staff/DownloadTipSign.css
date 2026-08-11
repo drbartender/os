@@ -1,0 +1,129 @@
+/* DownloadTipSign — a bartender downloads their bar sign and hand-out cards.
+   Standalone page (no portal shell), opened in a new tab from the tip-card
+   screen. Replaced the old print flow, which could never work: a global
+   @media print rule in index.css blanked every non-invoice page. */
+
+.dts-root {
+  background: #2a2a2a;
+  min-height: 100vh;
+  padding: 32px 16px 64px;
+  display: flex;
+  justify-content: center;
+}
+
+.dts-msg {
+  padding: 24px;
+  font-size: 15px;
+}
+
+.dts-panel {
+  background: #fff;
+  color: #1c1610;
+  border-radius: 10px;
+  padding: 24px;
+  width: 100%;
+  max-width: 520px;
+}
+
+.dts-panel h1 {
+  margin: 0 0 8px;
+  font-size: 22px;
+}
+
+.dts-help {
+  margin: 0 0 20px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #5a5048;
+}
+
+/* Preview: the real 4x6 component scaled down for the screen only. The capture
+   surfaces below are the ones that get downloaded, always at full size. */
+.dts-preview {
+  width: 240px;
+  height: 360px;
+  margin: 0 auto 24px;
+  overflow: hidden;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
+  position: relative;
+}
+
+.dts-preview-inner {
+  transform: scale(0.4); /* 600x900 → 240x360 */
+  transform-origin: top left;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.dts-group {
+  border-top: 1px solid #e6e0d6;
+  padding-top: 16px;
+  margin-top: 4px;
+}
+
+.dts-group h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+}
+
+.dts-note {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #6b6156;
+}
+
+.dts-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.dts-row-label {
+  font-size: 14px;
+  color: #1c1610;
+}
+
+.dts-row-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.dts-btn {
+  background: #1D8C89;
+  color: #F0E8D6;
+  border: 0;
+  padding: 9px 16px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  min-width: 58px;
+}
+
+.dts-btn:hover:not(:disabled) { background: #134544; }
+
+.dts-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dts-error {
+  margin: 16px 0 0;
+  font-size: 13.5px;
+  color: #9b2c2c;
+}
+
+/* Full-size render surfaces for html2canvas. Off-screen, NOT display:none:
+   html2canvas has to measure a laid-out node. */
+.dts-capture {
+  position: absolute;
+  left: -99999px;
+  top: 0;
+  pointer-events: none;
+}
