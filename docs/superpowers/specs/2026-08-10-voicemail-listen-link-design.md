@@ -128,9 +128,19 @@ a redeploy (`HARVESTER_ENABLED` precedent).
 ### Lifetime
 
 The link works as long as the row and the Twilio recording both exist. The row
-is pruned at `RETENTION_DAYS` (30), so roughly a month. This is stated in the
-docs rather than enforced with a separate expiry: a second expiry mechanism
-would be a second thing to get wrong, and the prune already bounds it.
+is pruned at `RETENTION_DAYS` (30), so roughly a month.
+
+**AMENDED DURING IMPLEMENTATION (2026-08-11).** The original decision was to
+state this bound in the docs rather than enforce it, on the reasoning that a
+second expiry mechanism is a second thing to get wrong. Security review
+overturned it, and the reasoning was simply wrong on the facts: the prune
+deliberately RETAINS rows in `recorded` / `failed` / `skipped` because their
+audio is still undelivered at Twilio, so a token on any one of those rows would
+never have expired at all. "The prune already bounds it" was false for exactly
+the rows most likely to carry a live link. The route now enforces its own
+30-day bound in its own SQL (`created_at > NOW() - '30 days'::interval`),
+deliberately NOT borrowed from the prune's status allowlist, which is tuned to
+a different question and would silently extend every link if edited.
 
 Note the KNOWN 1a GAP this interacts with: the prune deletes the row while the
 Twilio audio remains, orphaning that audio until 1b's purge lands. This design
@@ -155,6 +165,15 @@ it.
 
 ## Deferred
 
-Everything in Phase 1b, unchanged. Also deferred: HTTP Range support (browsers
-will play the response but cannot seek within it), and any expiry shorter than
-the row prune.
+Everything in Phase 1b, unchanged.
+
+**AMENDED DURING IMPLEMENTATION (2026-08-11).** Two items listed here as
+deferred were BUILT, both on security review's finding:
+
+- **HTTP Range support.** Deferred on the belief that its cost was only "cannot
+  seek." That was wrong for the one client that matters: iOS Safari's media
+  stack probes an `audio/mpeg` URL with `Range: bytes=0-1` and wants a `206`
+  before it will play, so the real cost was likely "does not play on the
+  operator's phone." The route implements `206`/`416` with a single ETag over
+  the full representation.
+- **An expiry shorter than the row prune.** See Lifetime above.

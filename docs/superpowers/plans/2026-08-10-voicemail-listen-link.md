@@ -85,7 +85,7 @@ lanes:
 | After | Agent | Why |
 |---|---|---|
 | Task 1 | `database-review` | `NOT NULL DEFAULT gen_random_uuid()` is a VOLATILE default, so it does not take the PG11+ metadata-only fast path: it rewrites the table under ACCESS EXCLUSIVE, and it lands via `initDb()` on prod boot. Small table, but a reviewer should price it. |
-| Task 2, before Task 3 starts | `security-review` | A public route serving a client's recorded voice, authenticated by a bare never-expiring UUID. If that model is going to be rejected, it must be rejected while only one task exists. |
+| Task 2, before Task 3 starts | `security-review` | A public route serving a client's recorded voice, authenticated by a bare UUID (planned as never-expiring; review added the 30-day bound and the single-row revoke). If that model is going to be rejected, it must be rejected while only one task exists. |
 | Task 4 | `consistency-check` | Docs against the code that landed, specifically the two-sided kill switch. |
 
 Full fleet regardless of size at merge, plus `/second-opinion`: this adds a PUBLIC route serving client voice audio, and it touches `server/utils/voicemail.js`, already on `scripts/sensitive-paths.txt`.
@@ -738,7 +738,7 @@ git add server/routes/voicemailListen.js server/routes/voicemailListen.test.js \
 git commit -m "feat(voicemail): token-gated listen route streaming the retained recording"
 ```
 
-**CHECKPOINT: run `security-review` on this commit BEFORE starting Task 3.** The bare-UUID, never-expiring, never-revocable token as sole auth on a public route serving a client's recorded voice is the decision worth a second opinion while only one task exists.
+**CHECKPOINT: run `security-review` on this commit BEFORE starting Task 3.** The bare-UUID token as sole auth on a public route serving a client's recorded voice is the decision worth a second opinion while only one task exists. (Outcome: the model held, but review added a 30-day bound enforced in the route's own SQL and a single-row revoke, so it is neither never-expiring nor never-revocable as planned here.)
 
 ---
 
@@ -1112,7 +1112,7 @@ git commit -m "docs(voicemail): register the listen link, its route, and its two
 ## Ops and live verification (owner, after deploy)
 
 - [ ] Call the 1922, let it ring out, leave a message, and tap the link in the text. It should play.
-  - If it does NOT play but the URL is right, suspect HTTP Range: the route returns the whole body with `Content-Length` and no `Accept-Ranges`, and some mobile clients issue a Range request for `audio/mpeg`. That is a known deferral, not a broken token; diagnose it before assuming the link is wrong.
+  - If it does NOT play but the URL is right, do NOT reach for the Range explanation: Range/`206` was built (spec amendment 2026-08-11) precisely because iOS will not play without it, so `Accept-Ranges: bytes` and a `206` on a `Range` request are the EXPECTED behavior. Verify with `curl -sI -H 'Range: bytes=0-1' <url>` — a `206` plus `Content-Range` means the transport is fine and the problem is elsewhere (kill switch off, row older than 30 days, recording deleted at Twilio: all of which return the same `404` by design).
 - [ ] Paste a made-up UUID into the same URL shape and confirm a plain 404.
 - [ ] Flip `VM_LISTEN_LINK_ENABLED=false` in Render, leave one more voicemail, and confirm the alert arrives with NO link and the old link 404s. Flip it back.
 
@@ -1121,5 +1121,5 @@ git commit -m "docs(voicemail): register the listen link, its route, and its two
 R2 storage with R2 as the redelivery source, transcription, the AI summary and
 tag, the rich listen PAGE (transcript, soft delete), the 14-day audio purge, and
 the prune's retained-audio orphan gap. Also deferred, from this spec: HTTP Range
-support, and any link expiry shorter than the row prune. This design neither
+support and a link expiry shorter than the row prune — BOTH of which were built during implementation, see the spec's amendment notes. This design neither
 creates nor deletes audio, so it moves none of them.
