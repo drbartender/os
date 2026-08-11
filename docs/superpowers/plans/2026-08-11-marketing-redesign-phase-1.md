@@ -266,8 +266,22 @@ lanes:
       token on test sends; bounce-webhook split so a marketing complaint sets
       marketing_excluded instead of flipping email_status='bad'; admin control
       to clear a bad email_status. Dallas approved the webhook change
-      2026-08-11. NOTE: the CAN-SPAM postal address is NOT in this lane; it
-      already shipped as eb82e092 (footer) and 8240dd89 (legal pages).
+      2026-08-11.
+      **THIS LANE OWNS THE DEFERRED do-not-contact ENFORCEMENT.**
+      marketing_excluded is written by mkt-a and honored by the resolver's
+      MAILABLE_SQL in mkt-c, but the LIVE gate for the drip, the retention
+      nudge, and the New Year touch is scheduledMessageDispatcher.js's
+      marketing-category check, which reads only
+      communication_preferences.marketing_enabled. Until this lane patches it,
+      an excluded client is excluded from new campaigns and STILL RECEIVES
+      every automated touch. Deferred out of mkt-a and mkt-c on purpose
+      (Dallas, 2026-08-11, twice) to keep a comms-critical file out of lanes
+      with no other reason to open it; this lane already touches that file
+      family and already carries security-review. Interim safety: no UI writes
+      the flag before mkt-d, so nothing can be marked excluded and then
+      silently emailed in the gap.
+      NOTE: the CAN-SPAM postal address is NOT in this lane; it already shipped
+      as eb82e092 (footer) and 8240dd89 (legal pages).
     depends_on: [mkt-e-extract]
     review_fleet: [code-review, consistency-check, security-review]
 
