@@ -42,6 +42,12 @@ lanes:
       - client/src/pages/staff/PrintTipCard.jsx
       - client/src/pages/staff/TipCardPage.js
       - ARCHITECTURE.md
+      # Added during execution 2026-08-11, surfaced not silently widened:
+      # me.tipPage.test.js closes the "no server test covers /me/tip-page" gap
+      # the design fleet flagged; README.md is the mandatory docs update for
+      # the new util, which was already in the footprint.
+      - server/routes/me.tipPage.test.js
+      - README.md
     depends_on: []
     review_fleet: [code-review, consistency-check, security-review]
 
