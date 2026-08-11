@@ -472,8 +472,33 @@ export function ShoppingListCard({ status, drinkPlanId, onOpen }) {
 
 // ── Internal ────────────────────────────────────────────────────────────
 
+// cocktails/mocktails.ingredients is JSONB holding OBJECTS
+// ({ingredient, amount, unit, note?}), so stringifying a row rendered a literal
+// "[object Object]" at the bar. Legacy and hand-entered rows can still be plain
+// strings, so both shapes render here — the server generator makes the same
+// allowance (see mergeSignatureRecipes in server/utils/shoppingList.js).
+// Returns {qty, name} or null for an unusable row.
+function ingredientParts(line) {
+  if (line && typeof line === 'object') {
+    const name = String(line.ingredient || '').trim();
+    if (!name) return null;
+    const amount = line.amount == null || line.amount === '' ? '' : String(line.amount);
+    const unit = String(line.unit || '').trim();
+    // "2 each Strawberries" reads wrong on a spec card; "2 Strawberries" doesn't.
+    const qty = !amount ? '' : (unit && unit !== 'each' ? `${amount} ${unit}` : amount);
+    const note = String(line.note || '').trim();
+    return { qty, name: note ? `${name} (${note})` : name };
+  }
+  const s = String(line || '').trim();
+  if (!s) return null;
+  const m = s.match(/^([\d./]+\s*\S+)\s+(.+)$/);
+  return m ? { qty: m[1], name: m[2] } : { qty: '', name: s };
+}
+
 function BeoDrinkRow({ drink }) {
-  const ings = Array.isArray(drink.ingredients) ? drink.ingredients : [];
+  const ings = (Array.isArray(drink.ingredients) ? drink.ingredients : [])
+    .map(ingredientParts)
+    .filter(Boolean);
   return (
     <div className="sp-drink-row">
       <div className="sp-drink-emoji">{drink.emoji || '🍸'}</div>
@@ -485,19 +510,12 @@ function BeoDrinkRow({ drink }) {
         </div>
         {ings.length > 0 && (
           <div className="sp-drink-ings">
-            {ings.map((line, i) => {
-              const s = String(line || '').trim();
-              const m = s.match(/^([\d./]+\s*\S+)\s+(.+)$/);
-              if (m) {
-                return (
-                  <div key={i} className="sp-drink-ings-row">
-                    <span className="sp-drink-ings-qty">{m[1]}</span>
-                    <span>{m[2]}</span>
-                  </div>
-                );
-              }
-              return <div key={i}>· {s}</div>;
-            })}
+            {ings.map((ing, i) => (
+              <div key={i} className="sp-drink-ings-row">
+                <span className="sp-drink-ings-qty">{ing.qty}</span>
+                <span>{ing.name}</span>
+              </div>
+            ))}
           </div>
         )}
         {drink.garnish && <div className="sp-drink-garnish">Garnish: {drink.garnish}</div>}
