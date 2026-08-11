@@ -10277,8 +10277,17 @@ html[data-app="admin-os"] .location-suggest-item.active {
    Strips chalkboard chrome and actions rail; PAID stamp goes B&W too.
    ═══════════════════════════════════════════════════════════ */
 @media print {
-  /* Hide everything that isn't the document */
-  body * { visibility: hidden; }
+  /* Hide everything that isn't the document.
+     SCOPED to pages that actually contain an invoice (`:has`). Unscoped, this
+     blanked every OTHER printable surface in the app — the staff print-tip-card
+     page printed a blank white sheet because its own print CSS could not undo a
+     global `body *` hide it never knew about. Any new print surface is opt-in
+     now: it prints itself, not nothing.
+     The `:has` sits inside `:where` deliberately: `:where` contributes zero
+     specificity, so this stays exactly as weak as the old `body *` and the
+     `.invoice-page *` restore below still wins. A bare `body:has(...)` outranks
+     that restore and prints a blank invoice. */
+  body:where(:has(.invoice-page)) * { visibility: hidden; }
   .invoice-page,
   .invoice-page * { visibility: visible; }
   .invoice-actions { display: none !important; }

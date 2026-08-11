@@ -123,11 +123,20 @@
 
 /* ── Print rules ─────────────────────────────────────────────── */
 @media print {
+  /* The staff shell paints the page dark via `html[data-app="staff"] body`,
+     which out-specifies a bare `html, body` reset — so with "Background
+     graphics" on (required for the card's paper/chalkboard to print at all)
+     the whole sheet came out dark. !important keeps the sheet white. */
   html, body {
-    background: #fff;
+    background: #fff !important;
     margin: 0;
     padding: 0;
   }
+  /* Belt and suspenders: index.css hides everything on invoice prints. That
+     rule is scoped with :has() now, but a browser without :has support drops
+     the selector entirely, so state the card's own visibility outright. */
+  .print-tip-card-root,
+  .print-tip-card-root * { visibility: visible; }
   .print-tip-card-root {
     background: #fff;
     padding: 0;
