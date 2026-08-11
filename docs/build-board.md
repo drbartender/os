@@ -8,12 +8,13 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 
 <!-- plan written + reviewed, no lane cut. One line per item, linking its spec + plan. -->
 
-- **marketing-redesign-phase-1** — campaign section rebuild, phase 1 of 3 against a Sep 5 deadline. Spec approved from a claude.ai/design session; plan written and taken through two rounds of design-stage fleet review. No lane cut yet. [spec](superpowers/specs/2026-08-11-marketing-campaigns-design.md) / [plan](superpowers/plans/2026-08-11-marketing-redesign-phase-1.md)
 - **proposal-compare-and-book** — compare and book on the proposal page. Spec only, no plan yet, so this is not lane-ready; carried here so it is not lost behind the marketing phases. Absorbs the parked compare-page reskin and Dallas's 8/10 item 8 (the client-facing compare surface is unreadable at 3 options, worse at more). [spec](superpowers/specs/2026-08-11-proposal-compare-and-book-design.md)
 
 ## In flight
 
 <!-- lane open and building. Stale-lane flags surface here. One line per item. -->
+
+- **marketing-redesign-phase-1** — campaign section rebuild, phase 1 of 3 against a Sep 5 deadline. Spec approved from a claude.ai/design session; plan taken through three rounds of design-stage fleet review. Lane `mkt-a-tags` cut 2026-08-11. [spec](superpowers/specs/2026-08-11-marketing-campaigns-design.md) / [plan](superpowers/plans/2026-08-11-marketing-redesign-phase-1.md)
 
 ## Recently shipped
 
