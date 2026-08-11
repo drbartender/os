@@ -184,6 +184,9 @@ async function foldExtrasIntoProposal({
     adjustments: adjAfter,
     totalPriceOverride: effectiveOverride,
     gratuityRate: proposal.gratuity_rate, tipJar: proposal.tip_jar, // §5 preserve stored gratuity
+    // Admin mandate (spec 2026-08-10): this fold PERSISTS its snapshot, so the
+    // row's floor must ride along or the client-side checkout floor is stripped.
+    gratuityFloorRate: Number(proposal.gratuity_floor_rate) > 0 ? Number(proposal.gratuity_floor_rate) : null,
   });
 
   // Write the override alongside the total so the two can never drift

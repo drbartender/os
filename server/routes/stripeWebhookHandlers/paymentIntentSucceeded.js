@@ -197,11 +197,11 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
             // NO `|| 0` coercion: a missing/garbage rate must stay NaN so it
             // fails the check below rather than silently becoming a valid 0.
             const electRate = Number(intent.metadata.gratuity_rate);
+            // Shape-only pre-flight; the jar/50-or-mandate floor lives on the
+            // ROW (spec 2026-08-10) and is checked after the FOR UPDATE read.
             const rateUsable = Number.isFinite(electRate)
               && electRate >= 0
-              && electRate <= GRATUITY_SANITY_MAX_RATE
-              // the DB CHECK (tip_jar = true OR gratuity_rate >= 50), pre-flighted
-              && (electTipJar || electRate >= GRATUITY_FLOOR_RATE);
+              && electRate <= GRATUITY_SANITY_MAX_RATE;
             if (!rateUsable) {
               warnGratuityApplySkipped('invalid_metadata', proposalId, intent.id, intent.metadata);
             } else {
@@ -210,12 +210,19 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
               // does hold proposals FOR UPDATE — an unlocked read-modify-write of
               // the snapshot here could lose-update against a concurrent edit.
               const gRow = await dbClient.query(
-                `SELECT pricing_snapshot, event_duration_hours FROM proposals
+                `SELECT pricing_snapshot, event_duration_hours, gratuity_floor_rate FROM proposals
                   WHERE id = $1 AND status IN ('sent', 'viewed', 'accepted')
                   FOR UPDATE`,
                 [proposalId]
               );
               const snap = gRow.rows[0] ? (gRow.rows[0].pricing_snapshot || {}) : null;
+              // Amended-CHECK pre-flight: a mandate (> 0) is the ONLY floor when
+              // set, on both jar answers (it replaces the no-jar 50 rule); a
+              // failure is a breadcrumb, never an aborted payment transaction.
+              const rowFloor = gRow.rows[0] ? Number(gRow.rows[0].gratuity_floor_rate) : 0;
+              const floorOk = rowFloor > 0
+                ? electRate >= rowFloor
+                : (electTipJar || electRate >= GRATUITY_FLOOR_RATE);
               if (!gRow.rows[0]) {
                 // No longer payable (converted / refunded / archived). The client
                 // was charged a gratuity-inclusive amount we are declining to
@@ -227,6 +234,10 @@ module.exports = async function handlePaymentIntentSucceeded(event) {
                 // after the money was captured, flipping the proposal to
                 // balance_paid at $0. Refuse.
                 warnGratuityApplySkipped('degenerate_snapshot', proposalId, intent.id, intent.metadata);
+              } else if (!floorOk) {
+                // Below the row floor: a stale or tampered intent must never
+                // undercut a mandate (or the legacy no-jar 50) after capture.
+                warnGratuityApplySkipped('below_floor', proposalId, intent.id, intent.metadata);
               } else {
                 await dbClient.query('SAVEPOINT gratuity_apply');
                 try {

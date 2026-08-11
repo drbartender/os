@@ -583,11 +583,17 @@ async function applyLineItemCancel(client, {
     // jar (mandatory notice; the BEO page is the durable record).
     const tipJarAfter = targetRate >= 50 ? proposal.tip_jar : true;
     await client.query(
-      `UPDATE proposals SET gratuity_rate = $1, tip_jar = $2, gratuity_rate_change_origin = 'admin' WHERE id = $3`,
+      // gratuity_floor_rate = NULL (spec 2026-08-10): an admin lowering makes
+      // the reduced figure the operative agreement; the mandate no longer binds.
+      `UPDATE proposals SET gratuity_rate = $1, tip_jar = $2, gratuity_rate_change_origin = 'admin', gratuity_floor_rate = NULL WHERE id = $3`,
       [targetRate, tipJarAfter, proposalId]
     );
     proposal.gratuity_rate = targetRate;
     proposal.tip_jar = tipJarAfter;
+    // Sync the in-memory row too: the fold below reads proposal.gratuity_floor_rate
+    // into the snapshot it PERSISTS — a stale value re-advertises the cleared
+    // mandate to the checkout (mid-lane review blocker, 2026-08-10).
+    proposal.gratuity_floor_rate = null;
     removedLabel = 'Gratuity';
     gratuity = { newRate: targetRate, tipJarAfter, staffNotice: targetRate < 50 };
   } else {

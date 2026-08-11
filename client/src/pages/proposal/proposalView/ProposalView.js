@@ -12,7 +12,7 @@ import { EVENT_SERVICES_AGREEMENT } from '../../../data/eventServicesAgreement';
 import ProposalHeader from './ProposalHeader';
 import ProposalPricingBreakdown from './ProposalPricingBreakdown';
 import SignAndPaySection from './SignAndPaySection';
-import { isGratuityBelowFloor, gratuityFloorMessage } from './gratuityFloor';
+import { isGratuityBelowFloor, gratuityFloorMessage, gratuityFloorDollars } from './gratuityFloor';
 import { ExplorePackagesSection } from '../compare/PackageMatrix';
 
 // ─── Main component ───────────────────────────────────────────────
@@ -55,22 +55,27 @@ export default function ProposalView() {
   const [gratuityTotal, setGratuityTotal] = useState(0);
   const [gratuityDirty, setGratuityDirty] = useState(false);
 
-  // Gratuity chooser basis (§4): suggested = 25 x staff x hours, no-jar floor =
-  // GRATUITY_FLOOR_RATE ($50) x staff x hours. Read from the frozen snapshot
+  // Gratuity chooser basis (§4): suggested = 25 x staff x hours; the floor is
+  // the admin mandate when set, else the no-jar $50/staff/hr rule — dollars
+  // computed by gratuityFloorDollars (gratuityFloor.js, which carries the
+  // GRATUITY_FLOOR_RATE keep-in-sync marker). Read from the frozen snapshot
   // gratuity block. Derived HERE (above the payment-intent effect) so that
   // effect's below-floor gate can depend on `gratuityBelowFloor` without a TDZ.
-  // NOTE: the literal 50 mirrors the server GRATUITY_FLOOR_RATE
-  // (server/utils/pricingEngine.js) — keep them in sync; a server bump would
-  // otherwise silently under-block the client here.
   const gratuityBasis = proposal?.pricing_snapshot?.gratuity || null;
   const gratuityStaffCount = gratuityBasis?.staff_count ?? 0;
   const gratuityHours = gratuityBasis?.hours ?? 0;
   const gratuityStaffNoun = gratuityBasis?.staff_noun || 'bartender';
   const gratuityEnabled = gratuityStaffCount * gratuityHours > 0;
   const gratuitySuggested = Math.round(25 * gratuityStaffCount * gratuityHours);
-  const gratuityFloor = Math.round(50 * gratuityStaffCount * gratuityHours);
+  // Admin mandate (spec 2026-08-10): a floor_rate > 0 in the snapshot floors
+  // BOTH jar answers at the mandated dollars, REPLACING the no-jar 50 rule.
+  const gratuityMandateRate = Number(gratuityBasis?.floor_rate) || 0;
+  const gratuityMandated = gratuityMandateRate > 0;
+  const gratuityFloor = gratuityFloorDollars({
+    mandateRate: gratuityMandateRate, staffCount: gratuityStaffCount, hours: gratuityHours,
+  });
   const gratuityBelowFloor = isGratuityBelowFloor({
-    gratuityEnabled, tipJar, gratuityTotal, gratuityFloor,
+    gratuityEnabled, tipJar, gratuityTotal, gratuityFloor, mandated: gratuityMandated,
   });
 
   // Intent state — track separate secrets for deposit vs full
@@ -326,7 +331,7 @@ export default function ProposalView() {
     }
 
     if (gratuityBelowFloor) {
-      const msg = gratuityFloorMessage(fmt(gratuityFloor), gratuityStaffNoun);
+      const msg = gratuityFloorMessage(fmt(gratuityFloor), gratuityStaffNoun, gratuityMandated);
       setFormError(msg);
       throw new Error(msg);
     }
@@ -544,6 +549,7 @@ export default function ProposalView() {
                 setGratuityTotal={setGratuityTotal}
                 setGratuityDirty={setGratuityDirty}
                 gratuityEnabled={gratuityEnabled}
+                gratuityMandated={gratuityMandated}
                 gratuitySuggested={gratuitySuggested}
                 gratuityFloor={gratuityFloor}
                 gratuityStaffNoun={gratuityStaffNoun}

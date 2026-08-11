@@ -42,6 +42,21 @@ export function initialFormFromProposal(p) {
     // the editor cannot write a gratuity, so nothing reads them. The preview
     // reads storedTipJar / storedGratuityRate straight off the proposal snapshot.
 
+    // Admin gratuity mandate (spec 2026-08-10). Display dollars are derived
+    // from the CANONICAL rate at the current staffing, so a rescaled mandate
+    // shows its rescaled dollars. Presence is rate > 0, never != null. Only
+    // sent on save when the admin touched it (patchBody includeGratuityMandate).
+    gratuity_mandate_total: (() => {
+      if (!(Number(p.gratuity_floor_rate) > 0)) return null;
+      const dollars = Math.round(Number(p.gratuity_floor_rate)
+        * (Number(snapshot.gratuity?.staff_count) || 0)
+        * (Number(snapshot.gratuity?.hours) || 0) * 100) / 100;
+      // Degenerate basis (staffing later zeroed): an inert floor must not
+      // render as a checked "$0" mandate; null keeps the block honest and the
+      // untouched form still carries the stored floor forward on save.
+      return dollars > 0 ? dollars : null;
+    })(),
+
     // '' = "use the package-derived default" (server resolves null → 90 hosted /
     // 60 else). A number is an explicit override. Used by both editor mounts.
     setup_minutes_before: p.setup_minutes_before ?? '',

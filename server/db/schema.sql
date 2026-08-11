@@ -1314,6 +1314,51 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- Admin gratuity mandate (spec 2026-08-10): a required prepaid gratuity,
+-- stored as a $/staff/hr floor RATE. A mandate exists iff > 0 (writers never
+-- store 0). The rate is canonical; the dollar rescales with staffing/hours.
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS gratuity_floor_rate NUMERIC(10,4);
+
+-- Amend the jar CHECK: a mandated proposal whose rate meets its own floor is
+-- valid even when no-jar and under $50/staff/hr (the mandate REPLACES the
+-- no-jar floor; ruling 2026-08-10). initDb replays this file on every boot,
+-- so the drop is CONDITIONAL on the old definition: one-time swap, then a
+-- no-op forever (never an unconditional drop, which would re-validate the
+-- table per boot with a constraint-free window). On a fresh DB the block
+-- above creates the old two-clause CHECK and this block immediately swaps it.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+    WHERE t.relname = 'proposals' AND c.conname = 'proposals_gratuity_jar_check'
+      AND pg_get_constraintdef(c.oid) NOT LIKE '%gratuity_floor_rate%'
+  ) THEN
+    ALTER TABLE proposals DROP CONSTRAINT proposals_gratuity_jar_check;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_name = 'proposals' AND constraint_name = 'proposals_gratuity_jar_check'
+  ) THEN
+    ALTER TABLE proposals ADD CONSTRAINT proposals_gratuity_jar_check
+      CHECK (tip_jar = true OR gratuity_rate >= 50
+             OR (gratuity_floor_rate IS NOT NULL AND gratuity_rate >= gratuity_floor_rate));
+  END IF;
+END $$;
+
+-- Structural presence invariant: a stored floor is either NULL or > 0. A zero
+-- would neuter the mandate clause above (0 IS NOT NULL AND rate >= 0 is always
+-- true) and silently disable the no-jar $50 backstop; writers already refuse
+-- non-positive mandates, this makes it enforcement rather than convention.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_name = 'proposals' AND constraint_name = 'proposals_gratuity_floor_positive_check'
+  ) THEN
+    ALTER TABLE proposals ADD CONSTRAINT proposals_gratuity_floor_positive_check
+      CHECK (gratuity_floor_rate IS NULL OR gratuity_floor_rate > 0);
+  END IF;
+END $$;
+
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.constraint_column_usage
@@ -1327,6 +1372,10 @@ END $$;
 -- ROLLBACK (manual, if ever needed — schema additions are forward-safe):
 --   ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_gratuity_jar_check;
 --   ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_gratuity_origin_check;
+--   ALTER TABLE proposals DROP COLUMN IF EXISTS gratuity_floor_rate;
+--   (the column drop auto-drops BOTH dependent CHECKs, incl.
+--    proposals_gratuity_floor_positive_check; re-adding the jar CHECK after
+--    = the original two-clause form: CHECK (tip_jar = true OR gratuity_rate >= 50))
 --   ALTER TABLE proposals DROP COLUMN IF EXISTS gratuity_rate_change_origin;
 --   ALTER TABLE proposals DROP COLUMN IF EXISTS gratuity_rate;
 --   ALTER TABLE proposals DROP COLUMN IF EXISTS tip_jar;

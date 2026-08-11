@@ -114,6 +114,7 @@ async function seedProposal(opts = {}) {
     adjustments = [],
     gratuityRate = 0,
     tipJar = true,
+    gratuityFloorRate = null,
     override = null,
     amountPaid = 100,
     addons = [],
@@ -142,20 +143,23 @@ async function seedProposal(opts = {}) {
     totalPriceOverride: override,
     gratuityRate,
     tipJar,
+    gratuityFloorRate,
   });
 
   const p = await pool.query(
     `INSERT INTO proposals
        (client_id, package_id, event_date, event_start_time, event_duration_hours, event_timezone,
         status, event_type, guest_count, num_bars, num_bartenders, adjustments,
-        total_price, total_price_override, amount_paid, gratuity_rate, tip_jar, pricing_snapshot)
+        total_price, total_price_override, amount_paid, gratuity_rate, tip_jar, pricing_snapshot,
+        gratuity_floor_rate)
      VALUES ($1, $2, CURRENT_DATE + 30, '18:00', $3, 'America/Chicago',
              $4, 'birthday-party', $5, $6, $7, $8::jsonb,
-             $9, $10, $11, $12, $13, $14::jsonb)
+             $9, $10, $11, $12, $13, $14::jsonb, $15)
      RETURNING id`,
     [clientId, pkg.id, durationHours, status, guestCount, numBars,
      snapshot.inputs.numBartenders, JSON.stringify(adjustments),
-     snapshot.total, override, amountPaid, gratuityRate, tipJar, JSON.stringify(snapshot)]
+     snapshot.total, override, amountPaid, gratuityRate, tipJar, JSON.stringify(snapshot),
+     gratuityFloorRate]
   );
   const proposalId = p.rows[0].id;
   seededProposals.push(proposalId);
@@ -955,5 +959,38 @@ test('an OPEN FOLDED Drink Plan Extras invoice is still reconciled down', async 
       (result.deltaInvoicesAdjusted || []).some((d) => d.id === extrasId),
       'a folded extras invoice must still be reported as adjusted'
     );
+  });
+});
+
+// ─── Admin gratuity mandate (spec 2026-08-10) ────────────────────────────────
+// Any admin lowering through cancel-line-item CLEARS the mandate: the reduced
+// figure is the new operative agreement, not the floor. Deliberately on EVERY
+// lowering, including one that lands above the old floor.
+
+test('mandate: lowering a mandated gratuity clears gratuity_floor_rate', async () => {
+  const { proposalId } = await seedProposal({ gratuityRate: 50, tipJar: false, gratuityFloorRate: 50 });
+  await applyCancel(proposalId, { target: 'gratuity', newRate: 30 }, async (result, client) => {
+    const row = (await client.query(
+      'SELECT gratuity_rate, gratuity_floor_rate, tip_jar, pricing_snapshot FROM proposals WHERE id = $1', [proposalId])).rows[0];
+    assert.equal(Number(row.gratuity_rate), 30);
+    assert.equal(row.gratuity_floor_rate, null, 'mandate cleared on lowering');
+    assert.equal(row.tip_jar, true, 'below-50 flip still applies');
+    // Mid-lane review blocker: the fold persists the snapshot AFTER the clear,
+    // so a stale in-memory floor would re-advertise the mandate to checkout.
+    assert.equal(row.pricing_snapshot.gratuity.floor_rate, null,
+      'persisted snapshot must not re-advertise the cleared mandate');
+  });
+});
+
+test('mandate: lowering ABOVE the floor still clears it (deliberate, spec §6)', async () => {
+  const { proposalId } = await seedProposal({ gratuityRate: 80, tipJar: false, gratuityFloorRate: 30 });
+  await applyCancel(proposalId, { target: 'gratuity', newRate: 60 }, async (result, client) => {
+    const row = (await client.query(
+      'SELECT gratuity_rate, gratuity_floor_rate, tip_jar, pricing_snapshot FROM proposals WHERE id = $1', [proposalId])).rows[0];
+    assert.equal(Number(row.gratuity_rate), 60);
+    assert.equal(row.gratuity_floor_rate, null, 'floor cleared even when the target sits above it');
+    assert.equal(row.tip_jar, false, '60 >= 50: no-jar state stays valid');
+    assert.equal(row.pricing_snapshot.gratuity.floor_rate, null,
+      'persisted snapshot floor cleared in lockstep with the column');
   });
 });

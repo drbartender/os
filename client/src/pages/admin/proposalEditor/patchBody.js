@@ -10,6 +10,7 @@ export function buildProposalPatchBody(form, {
   changeRequestId,
   staffNotify = null,
   numBartendersOverride = null,
+  includeGratuityMandate = false,
 } = {}) {
   const body = {
     event_date: form.event_date,
@@ -44,10 +45,20 @@ export function buildProposalPatchBody(form, {
       ? null
       : Number(form.setup_minutes_before),
   };
-  // No gratuity keys, ever (election-at-payment, spec 2026-08-03): the tip-jar
+  // No election keys, ever (election-at-payment, spec 2026-08-03): the tip-jar
   // election is client-owned at sign-and-pay and persisted by the Stripe
   // webhook. The admin PATCH ignores tip_jar/gratuity_total, so sending them
   // would only misrepresent what this form can do.
+  // Admin gratuity mandate (spec 2026-08-10): the ONE gratuity key this form
+  // may send, and ONLY when the admin touched the mandate this session and the
+  // proposal is unsigned + unpaid (the caller gates both). An untouched form
+  // omits the key so the server carries the stored mandate forward and a
+  // staffing edit rescales the dollars at the canonical rate, never from the
+  // stale displayed figure.
+  if (includeGratuityMandate) {
+    body.gratuity_mandate_total = form.gratuity_mandate_total == null
+      ? null : Number(form.gratuity_mandate_total);
+  }
   if (changeRequestId != null) body.change_request_id = changeRequestId;
   if (staffNotify) {
     // Sub-flags only ride when the parent toggle is on, so an unchecked parent

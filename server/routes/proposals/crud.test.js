@@ -1059,3 +1059,140 @@ test('Curfew: an existing breach does not re-prompt on an unrelated or lesser ed
   );
   assert.equal(audit.rows[0].n, 1, 'the audit records the decision, not every later save');
 });
+
+// ─── Admin gratuity mandate (spec 2026-08-10) ────────────────────────────────
+// Hosted fixture: 120 guests / 4h -> gratuity basis = staff_count x 4. A $100
+// mandate derives rate = 100 / basis. Assertions compute from the snapshot's
+// own staff_count so a package-config change cannot flake them.
+
+test('Mandate 1: set writes both columns + snapshot, total up by exactly the mandate', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal({ status: 'draft' });
+  // Baseline recompute without a mandate.
+  const r0 = await request('PATCH', `/api/proposals/${proposalId}`, { token, body: { guest_count: 120 } });
+  assert.equal(r0.status, 200, `expected 200, got ${r0.status}: ${r0.raw}`);
+  const baseline = Number((await pool.query('SELECT total_price FROM proposals WHERE id = $1', [proposalId])).rows[0].total_price);
+
+  const r1 = await request('PATCH', `/api/proposals/${proposalId}`, { token, body: { gratuity_mandate_total: 100 } });
+  assert.equal(r1.status, 200, `expected 200, got ${r1.status}: ${r1.raw}`);
+  const row = (await pool.query(
+    'SELECT gratuity_rate, gratuity_floor_rate, gratuity_rate_change_origin, tip_jar, total_price, pricing_snapshot FROM proposals WHERE id = $1',
+    [proposalId])).rows[0];
+  const g = row.pricing_snapshot.gratuity;
+  assert.ok(Number(row.gratuity_floor_rate) > 0, 'floor stored');
+  assert.equal(Number(row.gratuity_rate), Number(row.gratuity_floor_rate), 'rate = floor on set');
+  assert.equal(row.gratuity_rate_change_origin, null, 'origin untouched by a mandate write');
+  assert.equal(g.floor_rate, Number(row.gratuity_floor_rate), 'snapshot carries floor_rate');
+  assert.equal(g.total, 100, 'mandate dollars on the line');
+  assert.ok(row.pricing_snapshot.breakdown.some(l => l.label === 'Gratuity' && l.amount === 100));
+  assert.equal(Number(row.total_price), baseline + 100, 'total up by exactly the mandate');
+});
+
+test('Mandate 2: null clears a real mandate (rate 0, jar forced on, line gone)', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal({ status: 'draft' });
+  const r0 = await request('PATCH', `/api/proposals/${proposalId}`, { token, body: { guest_count: 120 } });
+  assert.equal(r0.status, 200);
+  const baseline = Number((await pool.query('SELECT total_price FROM proposals WHERE id = $1', [proposalId])).rows[0].total_price);
+  const r1 = await request('PATCH', `/api/proposals/${proposalId}`, { token, body: { gratuity_mandate_total: 100 } });
+  assert.equal(r1.status, 200);
+
+  const r2 = await request('PATCH', `/api/proposals/${proposalId}`, { token, body: { gratuity_mandate_total: null } });
+  assert.equal(r2.status, 200, `expected 200, got ${r2.status}: ${r2.raw}`);
+  const row = (await pool.query(
+    'SELECT gratuity_rate, gratuity_floor_rate, tip_jar, total_price, pricing_snapshot FROM proposals WHERE id = $1',
+    [proposalId])).rows[0];
+  assert.equal(Number(row.gratuity_rate), 0);
+  assert.equal(row.gratuity_floor_rate, null);
+  assert.equal(row.tip_jar, true, 'clear forces the jar on (CHECK safety)');
+  assert.ok(!row.pricing_snapshot.breakdown.some(l => l.label === 'Gratuity'));
+  assert.equal(Number(row.total_price), baseline, 'total back to baseline');
+});
+
+test('Mandate 3: null is a NO-OP without a mandate (elected gratuity never wiped)', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal({ status: 'draft' });
+  // A client-elected gratuity shape: rate set, floor NULL (e.g. refunded to $0 paid).
+  await pool.query('UPDATE proposals SET gratuity_rate = 60, tip_jar = true, amount_paid = 0 WHERE id = $1', [proposalId]);
+  const res = await request('PATCH', `/api/proposals/${proposalId}`, { token, body: { gratuity_mandate_total: null } });
+  assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
+  const row = (await pool.query('SELECT gratuity_rate, gratuity_floor_rate FROM proposals WHERE id = $1', [proposalId])).rows[0];
+  assert.equal(Number(row.gratuity_rate), 60, 'elected rate untouched by a no-op clear');
+  assert.equal(row.gratuity_floor_rate, null);
+});
+
+test('Mandate 4: absent key carries forward; staffing growth rescales dollars at constant rate', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal({ status: 'draft' });
+  const r1 = await request('PATCH', `/api/proposals/${proposalId}`, { token, body: { gratuity_mandate_total: 100 } });
+  assert.equal(r1.status, 200, `expected 200, got ${r1.status}: ${r1.raw}`);
+  const before = (await pool.query('SELECT gratuity_floor_rate, pricing_snapshot FROM proposals WHERE id = $1', [proposalId])).rows[0];
+  const rate = Number(before.gratuity_floor_rate);
+
+  // No mandate key in the body: growing the guest count grows hosted staffing,
+  // and the dollars must rescale at the SAME rate with the floor intact.
+  const r2 = await request('PATCH', `/api/proposals/${proposalId}`, { token, body: { guest_count: 250 } });
+  assert.equal(r2.status, 200, `expected 200, got ${r2.status}: ${r2.raw}`);
+  const row = (await pool.query('SELECT gratuity_rate, gratuity_floor_rate, pricing_snapshot FROM proposals WHERE id = $1', [proposalId])).rows[0];
+  const g = row.pricing_snapshot.gratuity;
+  assert.equal(Number(row.gratuity_floor_rate), rate, 'floor carried forward');
+  assert.equal(Number(row.gratuity_rate), rate, 'rate constant across the rescale');
+  assert.equal(g.floor_rate, rate, 'snapshot floor carried');
+  assert.ok(g.staff_count > before.pricing_snapshot.gratuity.staff_count, 'staffing actually grew');
+  assert.equal(g.total, Math.round(rate * g.staff_count * g.hours * 100) / 100, 'dollars = rate x new basis');
+});
+
+test('Mandate 5: rejected once paid', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal({ status: 'deposit_paid' });
+  await pool.query('UPDATE proposals SET amount_paid = 100 WHERE id = $1', [proposalId]);
+  const res = await request('PATCH', `/api/proposals/${proposalId}`, { token, body: { gratuity_mandate_total: 120 } });
+  assert.equal(res.status, 400, `expected 400, got ${res.status}: ${res.raw}`);
+  const row = (await pool.query('SELECT gratuity_floor_rate FROM proposals WHERE id = $1', [proposalId])).rows[0];
+  assert.equal(row.gratuity_floor_rate, null, 'row untouched');
+});
+
+test('Mandate 6: rejected once signed, even unpaid', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal({ status: 'sent' });
+  await pool.query('UPDATE proposals SET client_signed_at = NOW(), amount_paid = 0 WHERE id = $1', [proposalId]);
+  const res = await request('PATCH', `/api/proposals/${proposalId}`, { token, body: { gratuity_mandate_total: 120 } });
+  assert.equal(res.status, 400, `expected 400, got ${res.status}: ${res.raw}`);
+  const row = (await pool.query('SELECT gratuity_floor_rate FROM proposals WHERE id = $1', [proposalId])).rows[0];
+  assert.equal(row.gratuity_floor_rate, null, 'row untouched');
+});
+
+test('Mandate 7: non-positive dollars rejected (presence is > 0)', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal({ status: 'draft' });
+  // 0.0003 is positive but derives rate 0 at 4dp on this 2-staff x 4h basis
+  // (0.0003/8 rounds to 0): a stored floor of 0 would neuter the CHECK's
+  // mandate clause (mid-lane review finding). Larger sub-cent totals that
+  // derive a positive 4dp rate are accepted — presence stays > 0.
+  for (const bad of [0, -5, 0.0003]) {
+    const res = await request('PATCH', `/api/proposals/${proposalId}`, { token, body: { gratuity_mandate_total: bad } });
+    assert.equal(res.status, 400, `mandate ${bad} must 400, got ${res.status}: ${res.raw}`);
+  }
+});
+
+test('Mandate 8: zero basis rejects set but allows clear', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal({ status: 'draft' });
+  // Realistic zero basis: an explicit num_bartenders override of 0 is honored
+  // by calculateStaffing (only null/undefined fall back to the ratio).
+  // Duration 0 is NOT reachable (the engine rejects it at every entry).
+  const set = await request('PATCH', `/api/proposals/${proposalId}`, {
+    token, body: { gratuity_mandate_total: 120, num_bartenders: 0 },
+  });
+  assert.equal(set.status, 400, `zero-basis set must 400, got ${set.status}: ${set.raw}`);
+
+  // A mandated row whose staffing was later zeroed must remain clearable.
+  await pool.query('UPDATE proposals SET gratuity_rate = 12.5, gratuity_floor_rate = 12.5 WHERE id = $1', [proposalId]);
+  const clear = await request('PATCH', `/api/proposals/${proposalId}`, {
+    token, body: { gratuity_mandate_total: null, num_bartenders: 0 },
+  });
+  assert.equal(clear.status, 200, `zero-basis clear must 200, got ${clear.status}: ${clear.raw}`);
+  const row = (await pool.query('SELECT gratuity_rate, gratuity_floor_rate FROM proposals WHERE id = $1', [proposalId])).rows[0];
+  assert.equal(row.gratuity_floor_rate, null);
+  assert.equal(Number(row.gratuity_rate), 0);
+});

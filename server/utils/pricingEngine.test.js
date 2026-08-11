@@ -270,3 +270,65 @@ test('P4 staffing + gratuity surcharge stay keyed on ACTUAL guests, not billed g
   const addonRow = snap.addons.find(a => a.slug === 'additional-bartender');
   assert.strictEqual(addonRow.gratuity_per_hour, 50);
 });
+
+// ─── Admin gratuity mandate (spec 2026-08-10) ─────────────────────
+
+test('deriveGratuityRate: mandate floor binds on BOTH jar answers, replacing the 50 rule', () => {
+  const below = deriveGratuityRate({ enteredTotal: 99, staffCount: 1, hours: 2, tipJar: true, floorRate: 50 });
+  assert.strictEqual(below.ok, false);
+  assert.strictEqual(below.code, 'GRATUITY_BELOW_FLOOR');
+  assert.match(below.message, /required gratuity of at least \$100\.00/);
+  assert.deepStrictEqual(
+    deriveGratuityRate({ enteredTotal: 100, staffCount: 1, hours: 2, tipJar: true, floorRate: 50 }),
+    { ok: true, rate: 50 });
+  // no-jar with a sub-50 mandate is ALLOWED at the mandate (no stacking)
+  assert.deepStrictEqual(
+    deriveGratuityRate({ enteredTotal: 60, staffCount: 1, hours: 2, tipJar: false, floorRate: 30 }),
+    { ok: true, rate: 30 });
+  assert.deepStrictEqual(
+    deriveGratuityRate({ enteredTotal: 150, staffCount: 1, hours: 2, tipJar: true, floorRate: 50 }),
+    { ok: true, rate: 75 });
+});
+
+test('deriveGratuityRate: mandate snap-to-floor absorbs display rounding after a rescale', () => {
+  // rate 33.3333 rescaled to basis 7: display floor = round(233.3331, 2) =
+  // 233.33, which derives to 33.3329; within tolerance it must SNAP to the
+  // floor rate, never reject and never persist a sub-floor rate (the DB CHECK
+  // gratuity_rate >= gratuity_floor_rate is strict).
+  const g = deriveGratuityRate({ enteredTotal: 233.33, staffCount: 1, hours: 7, tipJar: true, floorRate: 33.3333 });
+  assert.deepStrictEqual(g, { ok: true, rate: 33.3333 });
+  assert.strictEqual(
+    deriveGratuityRate({ enteredTotal: 230, staffCount: 1, hours: 7, tipJar: true, floorRate: 33.3333 }).ok,
+    false);
+});
+
+test('deriveGratuityRate: no-floor behavior is byte-identical to before', () => {
+  assert.deepStrictEqual(deriveGratuityRate({ enteredTotal: 200, staffCount: 1, hours: 4, tipJar: true }),
+    { ok: true, rate: 50 });
+  assert.strictEqual(deriveGratuityRate({ enteredTotal: 100, staffCount: 1, hours: 4, tipJar: false }).ok, false);
+  // floorRate 0 explicitly = no mandate
+  assert.deepStrictEqual(deriveGratuityRate({ enteredTotal: 0, staffCount: 1, hours: 4, tipJar: true, floorRate: 0 }),
+    { ok: true, rate: 0 });
+});
+
+test('calculateProposal stamps gratuity.floor_rate; non-positive coerces to null; recompute + rescale preserve it', () => {
+  const snap = calculateProposal(base({
+    durationHours: 2, gratuityRate: 50, tipJar: true, gratuityFloorRate: 50,
+  }));
+  assert.strictEqual(snap.gratuity.floor_rate, 50);
+  assert.strictEqual(snap.gratuity.total, 100);
+  // recompute (webhook path) preserves floor_rate via the spread
+  const re = recomputeSnapshotGratuity(snap, { gratuityRate: 75, tipJar: false, staffNoun: 'bartender', durationHours: 2 });
+  assert.strictEqual(re.gratuity.floor_rate, 50);
+  // rescale at constant rate: doubling hours doubles the dollars, floor intact
+  const rescaled = calculateProposal(base({
+    durationHours: 4, gratuityRate: 50, tipJar: true, gratuityFloorRate: 50,
+  }));
+  assert.strictEqual(rescaled.gratuity.total, 200);
+  assert.strictEqual(rescaled.gratuity.floor_rate, 50);
+  // absent / null / zero / negative mandate stamps null
+  for (const fr of [undefined, null, 0, -5]) {
+    const plain = calculateProposal(base({ gratuityFloorRate: fr }));
+    assert.strictEqual(plain.gratuity.floor_rate, null);
+  }
+});

@@ -244,3 +244,76 @@ test('metadata-less pending intent at the same amount is still reused (existing 
   assert.equal(JSON.parse(res.body).clientSecret, 'sec_reuse', 'reused the pending intent');
   assert.equal(createCalls.length, before, 'no new intent minted');
 });
+
+// ─── Admin gratuity mandate (spec 2026-08-10) ────────────────────────────────
+// Mandated seed: 450 service + $100 mandate (rate 20, 1 staff x 5h) = 550.
+
+const MANDATED_SNAPSHOT = {
+  total: 550,
+  breakdown: [
+    { label: 'The Core Reaction (5hrs, 50 guests)', amount: 450 },
+    { label: 'Gratuity', amount: 100 },
+  ],
+  staffing: { actual: 1 },
+  staff_noun: 'bartender',
+  gratuity: { rate: 20, tip_jar: true, staff_count: 1, hours: 5, staff_noun: 'bartender', total: 100, floor_rate: 20 },
+};
+
+async function seedMandatedProposal() {
+  const c = await pool.query(
+    `INSERT INTO clients (name, email) VALUES ('Mandate Intent Test', $1) RETURNING id`,
+    [`mand-intent-${NONCE}-${clientIds.length}@example.com`]
+  );
+  clientIds.push(c.rows[0].id);
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_type, total_price, tip_jar, gratuity_rate,
+                            gratuity_floor_rate, event_date, event_duration_hours, pricing_snapshot,
+                            stripe_customer_id, token)
+     VALUES ($1, 'viewed', 'wedding', 550, true, 20, 20,
+             CURRENT_DATE + INTERVAL '60 days', 5, $2, 'cus_faketest', $3)
+     RETURNING id, token`,
+    [c.rows[0].id, JSON.stringify(MANDATED_SNAPSHOT), crypto.randomUUID()]
+  );
+  proposalIds.push(p.rows[0].id);
+  return p.rows[0];
+}
+
+test('mandate: election below the floor is 400 with the required-gratuity message, no Stripe call', async () => {
+  const p = await seedMandatedProposal();
+  const before = createCalls.length;
+  const res = await post(`/api/stripe/create-intent/${p.token}`,
+    { payment_option: 'full', tip_jar: true, gratuity_total: 40 });
+  assert.equal(res.status, 400, res.body);
+  assert.match(res.body, /required gratuity of at least \$100\.00/);
+  assert.equal(createCalls.length, before, 'no intent created');
+});
+
+test('mandate: no-jar election AT a sub-50 mandate is accepted (mandate replaces the 50 rule)', async () => {
+  const p = await seedMandatedProposal();
+  const res = await post(`/api/stripe/create-intent/${p.token}`,
+    { payment_option: 'full', tip_jar: false, gratuity_total: 100 });
+  assert.equal(res.status, 200, res.body);
+  const call = createCalls[createCalls.length - 1];
+  assert.equal(call.amount, 55000, 'mandate-inclusive total, unchanged by an at-floor election');
+  assert.equal(call.metadata.tip_jar, 'false');
+  assert.equal(call.metadata.gratuity_rate, '20', 'sub-50 rate rides the metadata (amended CHECK permits it)');
+});
+
+test('mandate: election above the floor charges the raised total', async () => {
+  const p = await seedMandatedProposal();
+  const res = await post(`/api/stripe/create-intent/${p.token}`,
+    { payment_option: 'full', tip_jar: true, gratuity_total: 150 });
+  assert.equal(res.status, 200, res.body);
+  const call = createCalls[createCalls.length - 1];
+  assert.equal(call.amount, 60000, '450 service + 150 elected = 600');
+  assert.equal(call.metadata.gratuity_rate, '30');
+});
+
+test('mandate: untouched chooser (no election keys) charges total_price with no gratuity metadata', async () => {
+  const p = await seedMandatedProposal();
+  const res = await post(`/api/stripe/create-intent/${p.token}`, { payment_option: 'full' });
+  assert.equal(res.status, 200, res.body);
+  const call = createCalls[createCalls.length - 1];
+  assert.equal(call.amount, 55000, 'total_price verbatim (mandate already inside)');
+  assert.equal(call.metadata.tip_jar, undefined, 'no election metadata: webhook must not touch gratuity');
+});

@@ -103,6 +103,15 @@ export default function ProposalEditorForm({
   const storedGratuityRate = Number(proposal?.pricing_snapshot?.gratuity?.rate) || 0;
   const storedTipJar = proposal?.pricing_snapshot?.gratuity?.tip_jar !== false;
 
+  // Admin gratuity mandate (spec 2026-08-10). Locked once signed or paid: a
+  // recorded signature must never stand against a total admin changed after.
+  // Dirty-gated: the key is sent (to preview AND save) only when the admin
+  // touched the mandate this session — an untouched form omits it so the
+  // server rescales the stored mandate at the canonical rate.
+  const mandateLocked = Number(proposal?.amount_paid || 0) > 0
+    || proposal?.client_signed_at != null || proposal?.status === 'accepted';
+  const [mandateDirty, setMandateDirty] = useState(false);
+
   // Load packages + addons
   useEffect(() => {
     Promise.all([
@@ -184,6 +193,14 @@ export default function ProposalEditorForm({
         // client-owned at sign-and-pay; this form cannot edit it).
         tip_jar: storedTipJar,
         gratuity_rate: storedGratuityRate,
+        // Draft mandate rides the preview only once touched (dirty-gated);
+        // untouched, the stored-rate line above already previews a stored
+        // mandate correctly (its rate equals the floor). Transient typing
+        // states ('' / 0) are withheld so the preview never 400s mid-entry.
+        ...(mandateDirty && !mandateLocked
+          && (editForm.gratuity_mandate_total == null || Number(editForm.gratuity_mandate_total) > 0)
+          ? { gratuity_mandate_total: editForm.gratuity_mandate_total }
+          : {}),
       })
         .then(res => {
           if (seq !== calcSeqRef.current) return; // stale response: a newer edit owns the preview
@@ -193,6 +210,9 @@ export default function ProposalEditorForm({
           if (seq !== calcSeqRef.current) return;
           setEditPreview(null);
           setError(err?.message || 'Pricing preview unavailable.');
+          // Surface field-keyed reasons (e.g. gratuity_mandate_total) so the
+          // rejection renders under its control, not just the generic banner.
+          if (err?.fieldErrors) setFieldErrors(fe => ({ ...fe, ...err.fieldErrors }));
         });
     }, 400);
     return () => clearTimeout(timer);
@@ -209,6 +229,9 @@ export default function ProposalEditorForm({
     editForm.total_price_override,
     storedTipJar,
     storedGratuityRate,
+    editForm.gratuity_mandate_total,
+    mandateDirty,
+    mandateLocked,
     numBartendersOverride,
   ]);
 
@@ -230,6 +253,34 @@ export default function ProposalEditorForm({
   }, [isDirty]);
 
   const update = (field, value) => setEditForm(f => ({ ...f, [field]: value }));
+
+  // Mandate edits route through here so the dirty flag can never be missed.
+  const updateMandate = (v) => { update('gratuity_mandate_total', v); setMandateDirty(true); };
+  // Standard = $50/staff/hr at the CURRENT staffing basis (preview-derived).
+  // The literal 50 mirrors server GRATUITY_FLOOR_RATE (pricingEngine.js) —
+  // keep in sync (same marker as gratuityFloor.js). 0 until the preview lands
+  // or when the basis is degenerate; the checkbox stays disabled then, so a
+  // $0 mandate can never be seeded.
+  const standardGratuityDollars = Math.round(
+    50 * (Number(editPreview?.gratuity?.staff_count) || 0)
+       * (Number(editPreview?.gratuity?.hours) || 0) * 100) / 100;
+
+  // Untouched mandate: keep the displayed dollars in lockstep with the LIVE
+  // preview basis, so a duration/staffing edit can't leave the box quoting
+  // stale dollars that a later touch would re-derive into a lower rate
+  // (merge-fleet blocker #2). Display-only: an untouched form still omits the
+  // key on save and the server rescales at the canonical rate. Returning the
+  // same object when unchanged keeps isDirty honest.
+  useEffect(() => {
+    if (mandateDirty || mandateLocked) return;
+    const floor = Number(proposal?.gratuity_floor_rate) || 0;
+    if (!(floor > 0) || !editPreview?.gratuity) return;
+    const d = Math.round(floor * (Number(editPreview.gratuity.staff_count) || 0)
+      * (Number(editPreview.gratuity.hours) || 0) * 100) / 100;
+    setEditForm(f => (Number(f.gratuity_mandate_total) === d ? f
+      : { ...f, gratuity_mandate_total: d > 0 ? d : null }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editPreview, mandateDirty, mandateLocked]);
 
   const clearFieldError = (name) => {
     if (fieldErrors[name]) {
@@ -301,6 +352,7 @@ export default function ProposalEditorForm({
   // PATCH itself can never see different payloads (the shared builder is the
   // single payload source for both mounts — see patchBody.js).
   const buildBody = () => buildProposalPatchBody(editForm, {
+    includeGratuityMandate: mandateDirty && !mandateLocked,
     // Retired package (absent from the active catalog): keep the stored
     // class semantics instead of silently clearing class_options.
     isClassPackage: selectedPkg ? selectedPkg.bar_type === 'class' : proposal.class_options != null,
@@ -631,10 +683,53 @@ export default function ProposalEditorForm({
           </div>
         </div>
 
-        {/* No gratuity controls here (election-at-payment, spec 2026-08-03): the
-            client elects the tip jar at sign-and-pay and the Stripe webhook
-            persists it. A paid proposal's Gratuity line still renders read-only
-            in the Live preview breakdown below. */}
+        {/* Client ELECTION stays out of this form (election-at-payment, spec
+            2026-08-03): tip_jar / gratuity_total are never sent. The one
+            admin-writable gratuity is the MANDATE below (spec 2026-08-10),
+            which floors the client's checkout election on both jar answers.
+            Locked once signed or paid (post-payment changes go through
+            cancel-line-item). Renders on both editor mounts intentionally. */}
+        <div style={{ paddingTop: 12, borderTop: '1px solid var(--line-1)', marginBottom: 12 }}>
+          <label className="hstack" style={{ gap: 8, fontSize: 12.5, cursor: mandateLocked ? 'default' : 'pointer' }}>
+            <input type="checkbox"
+              checked={editForm.gratuity_mandate_total != null}
+              disabled={mandateLocked || (editForm.gratuity_mandate_total == null && !(standardGratuityDollars > 0))}
+              onChange={e => updateMandate(e.target.checked ? standardGratuityDollars : null)} />
+            Require prepaid gratuity
+          </label>
+          {editForm.gratuity_mandate_total == null && !mandateLocked && !(standardGratuityDollars > 0) && (
+            <div className="tiny muted" style={{ marginTop: 4 }}>Set staffing and duration first</div>
+          )}
+          {mandateLocked && (
+            <div className="tiny muted" style={{ marginTop: 4 }}>
+              Locked after signing or payment. Lower a paid gratuity from its line item.
+            </div>
+          )}
+          {editForm.gratuity_mandate_total != null && (
+            <div className="hstack" style={{ gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+              <div style={{ position: 'relative' }}>
+                <span style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-3)', fontSize: 12, pointerEvents: 'none' }}>$</span>
+                {/* An empty value stays '' (checked, awaiting input) — NEVER
+                    null: type=number reads '' mid-decimal ("412.") and on
+                    select-all+delete, and a null here would unmount this row
+                    and latch a mandate CLEAR into the next save (merge-fleet
+                    blocker #1). Only the checkbox clears. */}
+                <input className="input" type="number" min="0" step="0.01"
+                  value={editForm.gratuity_mandate_total}
+                  disabled={mandateLocked}
+                  onChange={e => { updateMandate(e.target.value === '' ? '' : Number(e.target.value)); clearFieldError('gratuity_mandate_total'); }}
+                  style={{ width: 140, paddingLeft: 18 }} />
+              </div>
+              <button type="button" className="btn btn-ghost btn-sm"
+                disabled={mandateLocked || !(standardGratuityDollars > 0)}
+                onClick={() => updateMandate(standardGratuityDollars)}>
+                Standard ($50/{editPreview?.gratuity?.staff_noun || 'bartender'}/hr = ${standardGratuityDollars.toFixed(2)})
+              </button>
+              <span className="tiny muted">Client can give more at checkout, never less</span>
+            </div>
+          )}
+          <FieldError error={fieldErrors?.gratuity_mandate_total} />
+        </div>
 
         {/* Total override */}
         <div style={{ paddingTop: 12, borderTop: '1px solid var(--line-1)', marginBottom: 12 }}>

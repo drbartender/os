@@ -69,7 +69,7 @@ function postWebhook(eventObj) {
   });
 }
 
-async function seedProposal({ snapshot = SNAPSHOT } = {}) {
+async function seedProposal({ snapshot = SNAPSHOT, totalPrice = 450, gratuityRate = 0, floorRate = null } = {}) {
   const c = await pool.query(
     `INSERT INTO clients (name, email) VALUES ('Grat Apply Test', $1) RETURNING id`,
     [`grat-apply-${NONCE}-${clientIds.length}@example.com`]
@@ -77,12 +77,12 @@ async function seedProposal({ snapshot = SNAPSHOT } = {}) {
   clientIds.push(c.rows[0].id);
   const p = await pool.query(
     `INSERT INTO proposals (client_id, status, event_type, total_price, amount_paid,
-                            tip_jar, gratuity_rate, event_date, event_duration_hours,
-                            pricing_snapshot, token)
-     VALUES ($1, 'viewed', 'wedding', 450, 0, true, 0,
+                            tip_jar, gratuity_rate, gratuity_floor_rate,
+                            event_date, event_duration_hours, pricing_snapshot, token)
+     VALUES ($1, 'viewed', 'wedding', $4, 0, true, $5, $6,
              CURRENT_DATE + INTERVAL '60 days', 5, $2, $3)
      RETURNING id`,
-    [c.rows[0].id, JSON.stringify(snapshot), crypto.randomUUID()]
+    [c.rows[0].id, JSON.stringify(snapshot), crypto.randomUUID(), totalPrice, gratuityRate, floorRate]
   );
   proposalIds.push(p.rows[0].id);
   return p.rows[0].id;
@@ -301,4 +301,91 @@ test('duplicate delivery: election + credit applied exactly once', async () => {
     'SELECT total_price, amount_paid FROM proposals WHERE id = $1', [id])).rows[0];
   assert.equal(Number(p.total_price), 700, 'not re-applied');
   assert.equal(Number(p.amount_paid), 100, 'not re-credited');
+});
+
+// ─── Admin gratuity mandate (spec 2026-08-10) ────────────────────────────────
+// The floor lives on the ROW, so the jar/50-or-mandate check runs after the
+// FOR UPDATE read. Skip reasons are Sentry breadcrumbs (warnGratuityApplySkipped
+// 'below_floor'), not observable here; these cases pin applied-vs-skipped.
+
+const MANDATED_SNAPSHOT = {
+  total: 550,
+  breakdown: [
+    { label: 'The Core Reaction (5hrs, 50 guests)', amount: 450 },
+    { label: 'Gratuity', amount: 100 },
+  ],
+  staffing: { actual: 1 },
+  staff_noun: 'bartender',
+  gratuity: { rate: 20, tip_jar: true, staff_count: 1, hours: 5, staff_noun: 'bartender', total: 100, floor_rate: 20 },
+};
+
+test('mandate: undercutting metadata (jar-yes, rate below floor) is SKIPPED, payment recorded', async () => {
+  // Before the row-floor check, jar-yes metadata passed the old pre-flight at
+  // ANY rate — a stale/tampered intent could rewrite the mandated total down.
+  const id = await seedProposal({ snapshot: MANDATED_SNAPSHOT, totalPrice: 550, gratuityRate: 20, floorRate: 20 });
+  const piId = `pi_mand_under_${NONCE}`;
+  const res = await postWebhook(intentEvent({ proposalId: id, amount: 10000, paymentType: 'deposit',
+    meta: { tip_jar: 'true', gratuity_rate: '8' }, piId }));
+  assert.equal(res.status, 200, `webhook must ack: ${res.body}`);
+  const pay = (await pool.query(
+    'SELECT amount FROM proposal_payments WHERE stripe_payment_intent_id = $1', [piId])).rows[0];
+  assert.ok(pay, 'payment recorded');
+  const p = (await pool.query(
+    'SELECT gratuity_rate, gratuity_floor_rate, total_price, pricing_snapshot FROM proposals WHERE id = $1',
+    [id])).rows[0];
+  assert.equal(Number(p.gratuity_rate), 20, 'undercut NOT applied');
+  assert.equal(Number(p.gratuity_floor_rate), 20, 'floor column untouched');
+  assert.equal(Number(p.total_price), 550, 'total NOT rewritten down');
+  assert.equal(p.pricing_snapshot.gratuity.floor_rate, 20, 'snapshot floor intact');
+});
+
+test('mandate: at/above-floor election applies with floor preserved and origin NULL', async () => {
+  const id = await seedProposal({ snapshot: MANDATED_SNAPSHOT, totalPrice: 550, gratuityRate: 20, floorRate: 20 });
+  await postWebhook(intentEvent({ proposalId: id, amount: 82500, paymentType: 'full',
+    meta: { tip_jar: 'false', gratuity_rate: '75' }, piId: `pi_mand_above_${NONCE}` }));
+  const p = (await pool.query(
+    `SELECT tip_jar, gratuity_rate, gratuity_floor_rate, gratuity_rate_change_origin,
+            total_price, pricing_snapshot FROM proposals WHERE id = $1`, [id])).rows[0];
+  assert.equal(p.tip_jar, false);
+  assert.equal(Number(p.gratuity_rate), 75);
+  assert.equal(Number(p.gratuity_floor_rate), 20, 'floor column survives an above-floor election');
+  assert.equal(p.gratuity_rate_change_origin, null, 'client election stamps origin NULL');
+  assert.equal(Number(p.total_price), 825, '450 service + 75 x 5');
+  assert.equal(p.pricing_snapshot.gratuity.floor_rate, 20, 'recompute spread preserves floor_rate');
+});
+
+test('no mandate: legacy no-jar sub-50 metadata is still SKIPPED after the post-row move', async () => {
+  // The jar/50 clause moved OUT of rateUsable to after the row read; the legacy
+  // rule must survive the move (skip reason is now 'below_floor').
+  const id = await seedProposal();
+  const piId = `pi_mand_legacy_${NONCE}`;
+  await postWebhook(intentEvent({ proposalId: id, amount: 10000, paymentType: 'deposit',
+    meta: { tip_jar: 'false', gratuity_rate: '30' }, piId }));
+  const p = (await pool.query(
+    'SELECT tip_jar, gratuity_rate, total_price FROM proposals WHERE id = $1', [id])).rows[0];
+  assert.equal(p.tip_jar, true, 'sub-50 no-jar NOT applied without a mandate');
+  assert.equal(Number(p.gratuity_rate), 0);
+  assert.equal(Number(p.total_price), 450);
+  const pay = (await pool.query(
+    'SELECT amount FROM proposal_payments WHERE stripe_payment_intent_id = $1', [piId])).rows[0];
+  assert.ok(pay, 'payment still recorded');
+});
+
+test('sub-50 mandate: no-jar metadata AT the mandate rate APPLIES (amended CHECK)', async () => {
+  // The exact corner the CHECK amendment exists for: mandate 30/hr, client
+  // answers no-jar at the mandate. The old pre-flight refused it as
+  // invalid_metadata after capture; the old CHECK would have 500'd the write.
+  const snap = JSON.parse(JSON.stringify(MANDATED_SNAPSHOT));
+  snap.gratuity = { ...snap.gratuity, rate: 30, total: 150, floor_rate: 30 };
+  snap.breakdown = [snap.breakdown[0], { label: 'Gratuity', amount: 150 }];
+  snap.total = 600;
+  const id = await seedProposal({ snapshot: snap, totalPrice: 600, gratuityRate: 30, floorRate: 30 });
+  await postWebhook(intentEvent({ proposalId: id, amount: 60000, paymentType: 'full',
+    meta: { tip_jar: 'false', gratuity_rate: '30' }, piId: `pi_mand_sub50_${NONCE}` }));
+  const p = (await pool.query(
+    'SELECT tip_jar, gratuity_rate, total_price, status FROM proposals WHERE id = $1', [id])).rows[0];
+  assert.equal(p.tip_jar, false, 'no-jar answer recorded');
+  assert.equal(Number(p.gratuity_rate), 30, 'sub-50 rate persisted under the mandate disjunct');
+  assert.equal(Number(p.total_price), 600);
+  assert.equal(p.status, 'balance_paid');
 });

@@ -79,6 +79,7 @@ async function catalogAddonFor(spec) {
  */
 async function seedPricedProposal({
   addonSpecs, durationHours = 4, guestCount = 80, override = null, gratuityRate = 0,
+  gratuityFloorRate = null,
 }) {
   const engineAddons = [];
   for (const s of addonSpecs) {
@@ -88,18 +89,19 @@ async function seedPricedProposal({
   const snapshot = calculateProposal({
     pkg, guestCount, durationHours, numBars: 0, numBartenders: null,
     addons: engineAddons, syrupSelections: [], adjustments: [],
-    totalPriceOverride: override, gratuityRate, tipJar: true,
+    totalPriceOverride: override, gratuityRate, tipJar: true, gratuityFloorRate,
   });
   const p = await pool.query(
     `INSERT INTO proposals
        (client_id, package_id, event_date, event_start_time, event_duration_hours, event_timezone,
         status, event_type, guest_count, num_bars, num_bartenders, adjustments,
-        total_price, total_price_override, gratuity_rate, tip_jar, amount_paid, pricing_snapshot)
+        total_price, total_price_override, gratuity_rate, tip_jar, amount_paid, pricing_snapshot,
+        gratuity_floor_rate)
      VALUES ($1, $2, CURRENT_DATE + 30, '18:00', $3, 'America/Chicago',
-             'deposit_paid', 'other', $4, 0, $5, '[]'::jsonb, $6, $7, $8, true, 100, $9::jsonb)
+             'deposit_paid', 'other', $4, 0, $5, '[]'::jsonb, $6, $7, $8, true, 100, $9::jsonb, $10)
      RETURNING id`,
     [clientId, pkg.id, durationHours, guestCount, snapshot.inputs.numBartenders,
-     snapshot.total, override, gratuityRate, JSON.stringify(snapshot)]
+     snapshot.total, override, gratuityRate, JSON.stringify(snapshot), gratuityFloorRate]
   );
   const proposalId = p.rows[0].id;
   seededProposals.push(proposalId);
@@ -267,4 +269,18 @@ test('TWO folds in a row: the second reads what the first wrote (no slow drift)'
     await client.query('ROLLBACK').catch(() => {});
     client.release();
   }
+});
+
+test('admin gratuity mandate: a fold preserves snapshot gratuity.floor_rate (spec 2026-08-10)', async () => {
+  const { proposalId, snapshot: seeded } = await seedPricedProposal({
+    addonSpecs: [{ slug: `stab-mand-${NONCE}`, name: 'Stability Mandate', billingType: 'per_hour', rate: 75, count: 1 }],
+    gratuityRate: 25, gratuityFloorRate: 25,
+  });
+  assert.equal(seeded.gratuity.floor_rate, 25, 'seed snapshot carries the floor');
+
+  const { before, after, snapshot } = await noOpFold(proposalId);
+  assert.equal(after, before, 'no-op fold still moves no money on a mandated row');
+  assert.equal(snapshot.gratuity.floor_rate, 25,
+    'fold must carry the row floor into the recomputed snapshot (a null here strips the mandate client-side)');
+  assert.equal(snapshot.gratuity.rate, 25, 'stored rate preserved');
 });

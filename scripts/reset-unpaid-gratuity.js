@@ -40,7 +40,11 @@ async function resetUnpaidGratuity({ apply = false } = {}) {
      WHERE COALESCE(amount_paid, 0) = 0
        AND (COALESCE(gratuity_rate, 0) > 0
             OR COALESCE((pricing_snapshot->'gratuity'->>'total')::numeric, 0) > 0)
+       AND gratuity_floor_rate IS NULL
      ORDER BY id`);
+  // gratuity_floor_rate guard (spec 2026-08-10): an ADMIN-MANDATED gratuity is
+  // exactly the shape this script hunts (unpaid, rate > 0) but is deliberate;
+  // a re-run must never strip mandated quotes.
   // Snapshot-carried OR column-carried: prod proposal 580 holds a $400 gratuity
   // in its snapshot/total with a ZERO column (pre-existing drift, found at
   // review) — a column-only WHERE would leave that Delara-shaped row behind.
@@ -95,15 +99,16 @@ async function resetUnpaidGratuity({ apply = false } = {}) {
           `UPDATE proposals SET tip_jar = true, gratuity_rate = 0,
                   gratuity_rate_change_origin = NULL,
                   pricing_snapshot = $1, total_price = $2, updated_at = NOW()
-            WHERE id = $3 AND COALESCE(amount_paid, 0) = 0`,
+            WHERE id = $3 AND COALESCE(amount_paid, 0) = 0
+              AND gratuity_floor_rate IS NULL`,
           [JSON.stringify(newSnap), newSnap.total, row.id]
         );
-        // rowCount 0 = the amount_paid re-check dropped it, i.e. a payment landed
-        // between the SELECT and this UPDATE. Report it; never claim a reset that
-        // did not happen.
+        // rowCount 0 = a re-check dropped it: a payment landed OR an admin
+        // mandate (spec 2026-08-10) was set between the SELECT and this UPDATE.
+        // Report it; never claim a reset that did not happen.
         if (res.rowCount === 0) {
-          raced.push({ id: row.id, reason: 'payment_raced_in' });
-          console.log(`#${row.id}: RACED (payment landed mid-run — NOT reset)`);
+          raced.push({ id: row.id, reason: 'recheck_dropped' });
+          console.log(`#${row.id}: RACED (a payment or an admin mandate landed mid-run — NOT reset)`);
         } else {
           record(row, newSnap);
         }

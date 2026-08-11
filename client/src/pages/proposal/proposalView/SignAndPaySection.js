@@ -80,6 +80,7 @@ export default function SignAndPaySection({
   gratuityFloor = 0,
   gratuityStaffNoun = 'bartender',
   gratuityBelowFloor = false,
+  gratuityMandated = false,
   // Booking-window policy (server-computed; never re-derived here)
   fullPaymentRequired,
   lastMinuteHold,
@@ -256,8 +257,14 @@ export default function SignAndPaySection({
               <span className="sign-pay-eyebrow">Tip jar at the bar?</span>
               <h3 className="gratuity-heading">Tipping, handled your way</h3>
               <p className="gratuity-intro">
-                Our {gratuityStaffNoun}s are always tipped: either guests tip at
-                the bar, or the gratuity is prepaid.{' '}
+                {gratuityMandated ? (
+                  // Admin mandate (spec 2026-08-10): state, don't invite.
+                  <>A prepaid gratuity of {fmt(gratuityFloor)} is included for
+                  your {gratuityStaffNoun}s.{' '}</>
+                ) : (
+                  <>Our {gratuityStaffNoun}s are always tipped: either guests tip at
+                  the bar, or the gratuity is prepaid.{' '}</>
+                )}
                 <span className="assured">Every dollar</span> goes straight to your
                 {` ${gratuityStaffNoun}s`}. None of it is kept by Dr. Bartender.
               </p>
@@ -289,45 +296,51 @@ export default function SignAndPaySection({
                 </span>
                 {/* NOTE: the literal $50 mirrors the server GRATUITY_FLOOR_RATE
                     (server/utils/pricingEngine.js) — keep them in sync; a server
-                    bump would otherwise leave this copy quoting a stale floor. */}
+                    bump would otherwise leave this copy quoting a stale floor.
+                    Under a mandate nothing extra is charged for skipping the
+                    jar, so the added-gratuity sentence is replaced. */}
                 <span className="tip-tablet-desc">
-                  No jar at the bar. Instead, a prepaid gratuity of $50 per{' '}
-                  {gratuityStaffNoun} per hour is added to your total, so your
-                  crew is still taken care of.
+                  {gratuityMandated
+                    ? <>No jar at the bar. Your prepaid gratuity covers your {gratuityStaffNoun}s.</>
+                    : <>No jar at the bar. Instead, a prepaid gratuity of $50 per{' '}
+                      {gratuityStaffNoun} per hour is added to your total, so your
+                      crew is still taken care of.</>}
                 </span>
               </label>
             </div>
 
             <div className="gratuity-amount">
               <span className="sign-pay-eyebrow" style={{ display: 'block' }}>
-                {tipJar ? 'Add a gratuity?' : `Gratuity for your ${gratuityStaffNoun}s`}
+                {tipJar && !gratuityMandated ? 'Add a gratuity?' : `Gratuity for your ${gratuityStaffNoun}s`}
               </span>
 
-              <div className="gratuity-presets">
-                {tipJar && (
-                  <>
-                    <button type="button" className="gratuity-chip"
-                      onClick={() => { setGratuityTotal(0); setGratuityDirty(true); }}>
-                      None
-                    </button>
-                    <button type="button" className="gratuity-chip"
-                      onClick={() => { setGratuityTotal(gratuitySuggested); setGratuityDirty(true); }}>
-                      {fmt(gratuitySuggested)}<span className="chip-note">suggested</span>
-                    </button>
-                  </>
-                )}
-              </div>
+              {/* Preset chips sit below a mandate's floor, so the whole row
+                  (wrapper included, it carries flex gap) hides when one is
+                  set; the input still lets the client give MORE. */}
+              {tipJar && !gratuityMandated && (
+                <div className="gratuity-presets">
+                  <button type="button" className="gratuity-chip"
+                    onClick={() => { setGratuityTotal(0); setGratuityDirty(true); }}>
+                    None
+                  </button>
+                  <button type="button" className="gratuity-chip"
+                    onClick={() => { setGratuityTotal(gratuitySuggested); setGratuityDirty(true); }}>
+                    {fmt(gratuitySuggested)}<span className="chip-note">suggested</span>
+                  </button>
+                </div>
+              )}
 
               <div className="gratuity-input-frame">
                 <span className="gratuity-input-currency">$</span>
-                <input className="gratuity-input" type="number" min={tipJar ? 0 : gratuityFloor} step="1"
+                <input className="gratuity-input" type="number"
+                  min={gratuityMandated ? gratuityFloor : (tipJar ? 0 : gratuityFloor)} step="1"
                   value={gratuityTotal}
                   onChange={(e) => { setGratuityTotal(e.target.value); setGratuityDirty(true); }} />
               </div>
 
               {gratuityBelowFloor && (
                 <p className="gratuity-floor-warn" role="alert">
-                  {gratuityFloorMessage(fmt(gratuityFloor), gratuityStaffNoun)}
+                  {gratuityFloorMessage(fmt(gratuityFloor), gratuityStaffNoun, gratuityMandated)}
                 </p>
               )}
             </div>

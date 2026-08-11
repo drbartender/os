@@ -88,6 +88,8 @@ async function priceProposedState(proposal, proposed, db = pool) {
     // on a paid proposal doesn't silently drop the client's paid gratuity line.
     gratuityRate: Number(proposal.gratuity_rate) || 0,
     tipJar: proposal.tip_jar !== false,
+    // Admin mandate (spec 2026-08-10): keep the preview consistent with the row.
+    gratuityFloorRate: Number(proposal.gratuity_floor_rate) > 0 ? Number(proposal.gratuity_floor_rate) : null,
   });
 }
 

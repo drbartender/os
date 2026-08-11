@@ -130,3 +130,51 @@ test('POST /calculate previews the stored rate', async () => {
   assert.ok(line, 'stored-rate preview keeps the Gratuity line');
   assert.ok(line.amount > 0);
 });
+
+// ─── Admin gratuity mandate preview (spec 2026-08-10) ────────────────────────
+
+test('POST /calculate previews a draft mandate (rate derived, floor stamped)', async () => {
+  const res = await request('POST', '/api/proposals/calculate', {
+    body: { package_id: pkgId, guest_count: 50, duration_hours: 2,
+            num_bartenders: 1, gratuity_mandate_total: 100 },
+  });
+  assert.equal(res.status, 200, res.raw);
+  const snap = JSON.parse(res.raw);
+  assert.equal(snap.gratuity.rate, 50, 'rate = 100 / (1 staff x 2h)');
+  assert.equal(snap.gratuity.floor_rate, 50, 'floor stamped for the checkout seed');
+  assert.equal(snap.gratuity.total, 100);
+  assert.ok(snap.breakdown.some(l => l.label === 'Gratuity' && l.amount === 100));
+});
+
+test('POST /calculate with mandate null previews cleared', async () => {
+  const res = await request('POST', '/api/proposals/calculate', {
+    body: { package_id: pkgId, guest_count: 50, duration_hours: 2,
+            num_bartenders: 1, gratuity_rate: 50, gratuity_mandate_total: null },
+  });
+  assert.equal(res.status, 200, res.raw);
+  const snap = JSON.parse(res.raw);
+  assert.equal(snap.gratuity.rate, 0, 'null mandate wins over the stored rate in preview');
+  assert.equal(snap.gratuity.floor_rate, null);
+  assert.ok(!snap.breakdown.some(l => l.label === 'Gratuity'));
+});
+
+test('POST /calculate absent mandate key keeps the legacy stored-rate path', async () => {
+  const res = await request('POST', '/api/proposals/calculate', {
+    body: { package_id: pkgId, guest_count: 50, duration_hours: 5,
+            tip_jar: false, gratuity_rate: 60 },
+  });
+  assert.equal(res.status, 200, res.raw);
+  const snap = JSON.parse(res.raw);
+  assert.equal(snap.gratuity.rate, 60);
+  assert.equal(snap.gratuity.floor_rate, null, 'no mandate = null floor');
+});
+
+test('POST /calculate rejects non-positive mandate dollars (parity with PATCH)', async () => {
+  for (const bad of [0, -5]) {
+    const res = await request('POST', '/api/proposals/calculate', {
+      body: { package_id: pkgId, guest_count: 50, duration_hours: 2,
+              num_bartenders: 1, gratuity_mandate_total: bad },
+    });
+    assert.equal(res.status, 400, `mandate ${bad} must 400, got ${res.status}: ${res.raw}`);
+  }
+});

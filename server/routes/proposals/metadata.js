@@ -1,7 +1,7 @@
 const express = require('express');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
-const { calculateProposal } = require('../../utils/pricingEngine');
+const { calculateProposal, computeGratuityBasis, deriveGratuityRate } = require('../../utils/pricingEngine');
 const { stripIncludedAddons } = require('../../utils/proposalRules');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError } = require('../../utils/errors');
@@ -33,7 +33,7 @@ router.get('/addons', auth, requireAdminOrManager, asyncHandler(async (req, res)
  *  (bundle-covered add-ons dropped) and carry a bounded quantity, so the
  *  preview total matches what the proposal would actually be saved at. */
 router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, addon_variants, addon_quantities, syrup_selections, adjustments, total_price_override, tip_jar, gratuity_rate } = req.body;
+  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, addon_variants, addon_quantities, syrup_selections, adjustments, total_price_override, tip_jar, gratuity_rate, gratuity_mandate_total } = req.body;
   if (!package_id) {
     throw new ValidationError({ package_id: 'Package is required' });
   }
@@ -61,11 +61,47 @@ router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, 
       }));
   }
 
-  // Gratuity preview (election-at-payment): the editor can no longer ENTER a
-  // gratuity — it always previews at the STORED rate/jar so a paid proposal's
-  // gratuity line scales with staff/hours edits and matches what will save.
+  // Gratuity preview: a DRAFT admin mandate (spec 2026-08-10) wins over the
+  // stored rate/jar; null previews the mandate cleared; absent key = the
+  // stored-rate path (election-at-payment) exactly as before. Validation
+  // mirrors the PATCH (gratuityMandate.js) so preview and save cannot drift.
+  // Known, accepted preview-only divergences (this route has no proposal row):
+  // (a) null on a row with an ELECTED gratuity (rate > 0, floor NULL)
+  //     previews it removed while the PATCH clear is a no-op — a conservative
+  //     under-preview on a legacy-shaped row; nothing persists; (b) the
+  //     absent-key path stamps floor_rate null even for a mandated row — the
+  //     editor reads the stored floor from the loaded proposal, never from
+  //     this preview.
   const previewTipJar = tip_jar !== false;
-  const previewRate = Number(gratuity_rate) || 0;
+  let previewRate = Number(gratuity_rate) || 0;
+  let previewFloorRate = null;
+  if (gratuity_mandate_total !== undefined) {
+    if (gratuity_mandate_total === null) {
+      previewRate = 0;
+    } else if (!(Number(gratuity_mandate_total) > 0)) {
+      throw new ValidationError({ gratuity_mandate_total: 'Enter a required gratuity above $0, or clear it.' });
+    } else {
+      const { staffCount, hours } = computeGratuityBasis({
+        pkg: pkgResult.rows[0],
+        guestCount: guest_count || 50,
+        durationHours: duration_hours || 4,
+        numBartenders: num_bartenders,
+        addons,
+      });
+      if (staffCount * hours > 0) {
+        const g = deriveGratuityRate({ enteredTotal: gratuity_mandate_total, staffCount, hours, tipJar: true });
+        if (!g.ok) throw new ValidationError({ gratuity_mandate_total: g.message });
+        // Sub-cent totals derive rate 0 at 4dp; parity with the PATCH's guard.
+        if (!(g.rate > 0)) {
+          throw new ValidationError({ gratuity_mandate_total: 'Enter a required gratuity above $0, or clear it.' });
+        }
+        previewRate = g.rate;
+        previewFloorRate = g.rate;
+      } else {
+        previewRate = 0; // zero basis: preview no line (the PATCH rejects the save)
+      }
+    }
+  }
 
   const snapshot = calculateProposal({
     pkg: pkgResult.rows[0],
@@ -77,7 +113,7 @@ router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, 
     syrupSelections: syrup_selections || [],
     adjustments: adjustments || [],
     totalPriceOverride: total_price_override ?? null,
-    gratuityRate: previewRate, tipJar: previewTipJar,
+    gratuityRate: previewRate, tipJar: previewTipJar, gratuityFloorRate: previewFloorRate,
   });
 
   res.json(snapshot);

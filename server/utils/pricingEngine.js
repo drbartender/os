@@ -291,7 +291,7 @@ function gratuityLineAmount(rate, staffCount, hours) {
 /** Derive + validate a stored rate from a client/admin-entered TOTAL (dollars).
  *  PURE: the route turns {ok:false} into a clean ValidationError BEFORE the DB
  *  CHECK fires; the DB CHECK is the final backstop (spec §3, §4, §6). */
-function deriveGratuityRate({ enteredTotal, staffCount, hours, tipJar }) {
+function deriveGratuityRate({ enteredTotal, staffCount, hours, tipJar, floorRate = 0 }) {
   const basis = (Number(staffCount) || 0) * (Number(hours) || 0);
   // Degenerate crew/hours: no gratuity is possible — coerce to 0 (the UI step is
   // disabled here; the caller also forces tip_jar=true so the DB CHECK passes).
@@ -300,30 +300,33 @@ function deriveGratuityRate({ enteredTotal, staffCount, hours, tipJar }) {
   if (!Number.isFinite(total) || total < 0) {
     return { ok: false, code: 'INVALID_GRATUITY', message: 'Enter a gratuity amount of $0 or more.' };
   }
-  if (tipJar === false) {
-    const floorTotal = GRATUITY_FLOOR_RATE * basis;
-    if (total < floorTotal - 0.005) {
-      return {
-        ok: false, code: 'GRATUITY_BELOW_FLOOR',
-        message: `Without a tip jar, gratuity must be at least $${floorTotal.toFixed(2)}.`,
-      };
-    }
+  // Admin mandate (spec 2026-08-10): when set (> 0) it is the ONLY floor, on
+  // both jar answers. The $50 no-jar rule applies only when there is no mandate.
+  const mandate = Number(floorRate) > 0 ? Number(floorRate) : 0;
+  const effFloor = mandate > 0 ? mandate : (tipJar === false ? GRATUITY_FLOOR_RATE : 0);
+  const floorTotal = effFloor * basis;
+  const floorMsg = mandate > 0
+    ? `This event includes a required gratuity of at least $${floorTotal.toFixed(2)}.`
+    : `Without a tip jar, gratuity must be at least $${floorTotal.toFixed(2)}.`;
+  if (effFloor > 0 && total < floorTotal - 0.005) {
+    return { ok: false, code: 'GRATUITY_BELOW_FLOOR', message: floorMsg };
   }
-  const rate = Math.round((total / basis) * 10000) / 10000; // NUMERIC(10,4)
+  let rate = Math.round((total / basis) * 10000) / 10000; // NUMERIC(10,4)
+  // Mandate branch only: a displayed floor that round-trips a hair low (the
+  // rescaled rate x basis rounded to cents, divided back) must SNAP up to the
+  // floor rate, because the DB CHECK (gratuity_rate >= gratuity_floor_rate)
+  // is strict. The legacy no-jar branch keeps its reject-only behavior.
+  if (mandate > 0 && rate < mandate && total >= floorTotal - 0.005) rate = mandate;
   // Re-assert the floor on the DERIVED rate (spec 2026-08-03 §4.5). The check
   // above is against the entered TOTAL and carries a half-cent tolerance, but
-  // the rate is what gets PERSISTED and what the DB CHECK (tip_jar = true OR
-  // gratuity_rate >= 50) actually tests. A total in [floorTotal - 0.005,
-  // floorTotal) clears the tolerance and rounds to a sub-50 rate: create-intent
-  // would CHARGE it and the webhook could never record it, aborting the
-  // payment-recording transaction. The total-based check stays as the first
-  // line of defense (it owns the dollar-denominated client message).
-  if (tipJar === false && rate < GRATUITY_FLOOR_RATE) {
-    const floorTotal = GRATUITY_FLOOR_RATE * basis;
-    return {
-      ok: false, code: 'GRATUITY_BELOW_FLOOR',
-      message: `Without a tip jar, gratuity must be at least $${floorTotal.toFixed(2)}.`,
-    };
+  // the rate is what gets PERSISTED and what the DB CHECK actually tests. A
+  // total in [floorTotal - 0.005, floorTotal) clears the tolerance and rounds
+  // to a sub-floor rate: create-intent would CHARGE it and the webhook could
+  // never record it, aborting the payment-recording transaction. The
+  // total-based check stays as the first line of defense (it owns the
+  // dollar-denominated client message).
+  if (effFloor > 0 && rate < effFloor) {
+    return { ok: false, code: 'GRATUITY_BELOW_FLOOR', message: floorMsg };
   }
   if (rate > GRATUITY_SANITY_MAX_RATE) {
     return { ok: false, code: 'GRATUITY_TOO_LARGE', message: 'That gratuity is unusually large — please re-enter it.' };
@@ -355,7 +358,7 @@ function recomputeSnapshotGratuity(snapshot, { gratuityRate, tipJar, staffNoun, 
   return snap;
 }
 
-function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartenders, addons, syrupSelections, adjustments, totalPriceOverride, gratuityRate = 0, tipJar = true }) {
+function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartenders, addons, syrupSelections, adjustments, totalPriceOverride, gratuityRate = 0, tipJar = true, gratuityFloorRate = null }) {
   const isHosted = isHostedPackage(pkg); // HOSTED PACKAGE RULE — see helper comment.
   const isClassPackage = isHosted && pkg.bar_type === 'class';
   const baseCost = calculateBaseCost(pkg, guestCount, durationHours);
@@ -596,6 +599,8 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
       hours: Number(durationHours) || 0,
       staff_noun: staffNoun,
       total: clientGratuityAmount,
+      // Admin mandate (spec 2026-08-10): presence is > 0, uniformly.
+      floor_rate: Number(gratuityFloorRate) > 0 ? Number(gratuityFloorRate) : null,
     },
     floor_applied: floorApplied,
     floor_reason: floorReason,

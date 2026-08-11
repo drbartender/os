@@ -79,3 +79,32 @@ describe('buildProposalPatchBody', () => {
     expect(buildProposalPatchBody({ ...form, client_provides_glassware: 1 }, {}).client_provides_glassware).toBe(true);
   });
 });
+
+describe('gratuity mandate key (spec 2026-08-10)', () => {
+  it('emits gratuity_mandate_total only when includeGratuityMandate is true', () => {
+    const body = buildProposalPatchBody({ ...form, gratuity_mandate_total: 100 }, { includeGratuityMandate: true });
+    expect(body.gratuity_mandate_total).toBe(100);
+  });
+
+  it('emits an explicit null clear when included', () => {
+    const body = buildProposalPatchBody({ ...form, gratuity_mandate_total: null }, { includeGratuityMandate: true });
+    expect(Object.prototype.hasOwnProperty.call(body, 'gratuity_mandate_total')).toBe(true);
+    expect(body.gratuity_mandate_total).toBe(null);
+  });
+
+  it('omits the key entirely when includeGratuityMandate is false (carry-forward path)', () => {
+    const body = buildProposalPatchBody({ ...form, gratuity_mandate_total: 100 }, { includeGratuityMandate: false });
+    expect(Object.prototype.hasOwnProperty.call(body, 'gratuity_mandate_total')).toBe(false);
+  });
+
+  it('omits the key by default (untouched forms rescale server-side at the canonical rate)', () => {
+    const body = buildProposalPatchBody({ ...form, gratuity_mandate_total: 100 }, {});
+    expect(Object.prototype.hasOwnProperty.call(body, 'gratuity_mandate_total')).toBe(false);
+  });
+
+  it('still never contains tip_jar or gratuity_total keys', () => {
+    const body = buildProposalPatchBody({ ...form, gratuity_mandate_total: 100 }, { includeGratuityMandate: true });
+    expect(Object.prototype.hasOwnProperty.call(body, 'tip_jar')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(body, 'gratuity_total')).toBe(false);
+  });
+});

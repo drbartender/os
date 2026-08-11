@@ -23,6 +23,7 @@ const { PUBLIC_SITE_URL, ADMIN_URL } = require('../../utils/urls');
 const { findOrCreateClient } = require('../../utils/clientDedup');
 const { insertProposalRecord } = require('../../utils/proposalInsert');
 const { safeAddonQty } = require('../../utils/proposalMoneyShared');
+const { resolveGratuityForPatch, staffingGratuityOrigin } = require('../../utils/gratuityMandate');
 const { curfewGateForSave } = require('../../utils/serviceCurfew');
 const { logAdminAction } = require('../../utils/adminAuditLog');
 
@@ -537,34 +538,32 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         }
       : null;
 
-    // Gratuity (election-at-payment, spec 2026-08-03): the tip-jar election is
-    // made by the CLIENT at sign-and-pay and persisted by the Stripe webhook —
-    // this PATCH never accepts tip_jar/gratuity_total. The STORED rate + jar
-    // always carry forward so a staffing change on a paid proposal rescales the
-    // dollar at the same rate (origin 'staffing' + client notice below).
-    // Admin's only gratuity power is removal via cancel-line-item.
-    const persistTipJar = old.tip_jar !== false;
-    const resolvedGratuityRate = Number(old.gratuity_rate) || 0;
-    let gratuityOrigin = old.gratuity_rate_change_origin || null;
+    // Gratuity (election-at-payment 2026-08-03 + admin mandate 2026-08-10):
+    // the client election persists only via the Stripe webhook; this PATCH
+    // accepts exactly one gratuity field, gratuity_mandate_total, resolved in
+    // gratuityMandate.js (set/clear/carry, locked once signed/paid). tip_jar/
+    // gratuity_total stay refused; PAID removal stays with cancel-line-item.
     const isPaidForGratuity = Number(old.amount_paid || 0) > 0;
+    const { gratuityRate: resolvedGratuityRate, floorRate: resolvedFloorRate, tipJar: persistTipJar } =
+      resolveGratuityForPatch({
+        body: req.body, old, pkg, guestCount: gc, durationHours: dh,
+        numBartenders: num_bartenders, addons,
+      });
 
     const snapshot = calculateProposal({
       pkg, guestCount: gc, durationHours: dh, numBars: nb,
       numBartenders: num_bartenders, addons, syrupSelections: syrups,
       adjustments: adj, totalPriceOverride: tpo,
       gratuityRate: resolvedGratuityRate, tipJar: persistTipJar,
+      gratuityFloorRate: resolvedFloorRate,
     });
 
     // Flag a staffing-driven post-payment gratuity rise for a client notice (§7).
-    const oldGratuityTotal = Number(old.pricing_snapshot?.gratuity?.total) || 0;
-    const newGratuityTotal = Number(snapshot.gratuity?.total) || 0;
-    // A staffing change moves the gratuity amount at the SAME rate. Stamp origin
-    // 'staffing' only when the amount actually changed (not on an unrelated edit),
-    // and notify the client only on an increase (§7).
-    if (isPaidForGratuity && gratuityOrigin !== 'admin' && newGratuityTotal !== oldGratuityTotal) {
-      gratuityOrigin = 'staffing';
-      if (newGratuityTotal > oldGratuityTotal) notifyStaffingGratuity = true;
-    }
+    const { origin: gratuityOrigin, notify: staffingNotify } = staffingGratuityOrigin({
+      isPaid: isPaidForGratuity, origin: old.gratuity_rate_change_origin || null,
+      oldSnapshot: old.pricing_snapshot, newSnapshot: snapshot,
+    });
+    if (staffingNotify) notifyStaffingGratuity = true;
 
     const updatedRow = await dbClient.query(`
       UPDATE proposals SET
@@ -587,7 +586,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         class_options = $25,
         tip_jar = $26,
         gratuity_rate = $27,
-        gratuity_rate_change_origin = $28
+        gratuity_rate_change_origin = $28,
+        gratuity_floor_rate = $29
       WHERE id = $11
       RETURNING *
     `, [
@@ -602,7 +602,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       normalizeVenueState(venue_state) ?? null, venue_zip ?? null,
       setupMinutes ?? null,
       resolvedGlassware, cleanClassOptions ? JSON.stringify(cleanClassOptions) : null,
-      persistTipJar, resolvedGratuityRate, gratuityOrigin
+      persistTipJar, resolvedGratuityRate, gratuityOrigin, resolvedFloorRate
     ]);
 
     // Re-evaluate payment status when a price increase outruns what's been paid

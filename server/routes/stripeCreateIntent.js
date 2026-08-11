@@ -37,7 +37,7 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
   const result = await pool.query(`
     SELECT p.id, p.status, p.event_type, p.event_type_custom, p.total_price,
            p.event_date, p.event_start_time, p.event_duration_hours,
-           p.stripe_customer_id, p.deposit_amount,
+           p.stripe_customer_id, p.deposit_amount, p.gratuity_floor_rate,
            p.pricing_snapshot,
            c.email AS client_email, c.name AS client_name
     FROM proposals p
@@ -94,6 +94,9 @@ router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is
     const g = deriveGratuityRate({
       enteredTotal: gratuity_total !== undefined ? gratuity_total : 0,
       staffCount, hours, tipJar: effTipJar,
+      // Admin mandate (spec 2026-08-10): the row floor binds the election on
+      // BOTH jar answers, replacing the $50 no-jar rule when set.
+      floorRate: Number(proposal.gratuity_floor_rate) > 0 ? Number(proposal.gratuity_floor_rate) : 0,
     });
     if (!g.ok) throw new ValidationError({ gratuity: g.message });
     effSnap = recomputeSnapshotGratuity(effSnap, {
