@@ -31,18 +31,19 @@ These are not from the original ledger. They surfaced while verifying its
   accrues and nothing alerts. For a contractor rather than the owner, that is an unpaid
   person with no signal. The standing mitigation is the sweep before every payroll run; a
   real fix would be an alert on "past event, not completed, has approved staff".
-- **$3,273 outstanding on an event that already happened.** Proposal 600, event 2026-08-01,
-  status `confirmed`, total $3,373, `amount_paid` $100. Its Balance invoice (id 193,
-  $3,273) was sent 2026-07-16 and has never been paid. Shift 348 is still `open` with
-  **zero** approved staff, which means either the event did not happen and was never
-  archived, or it happened uncovered. Either way it is the largest single receivable on
-  the board and it is not on anyone's radar.
-  ACTION: Dallas says which it is. If cancelled, archive it (which now reaps the shift and
-  voids the invoice). If it happened, this is a collection.
+- **Proposal 600 — DO NOT TOUCH. Legal hold (Dallas, 2026-08-11).** Its unpaid balance,
+  `confirmed` status, and still-`open` shift 348 are all to be **left exactly as they are**.
+  Do not archive it, do not reap or close its shift, do not void or re-send its invoice, do
+  not chase the balance, and do not include it in any cleanup, sweep, or reconciliation.
+  Its current state may be evidence. It is listed here only so that nobody "fixes" it.
+  No further detail is recorded in this file and none is needed.
 - **50 more open shifts sit on `completed` proposals** (oldest 2026-04-25, newest
   2026-08-09). These are cosmetic rather than money: staff never see them, because the
   open-shifts feed filters `s.event_date >= CURRENT_DATE` (`server/routes/shifts.js:195`).
   They are the residue of the same "nothing closes a shift" gap. Worth one sweep.
+  **That sweep must exclude proposal 600 / shift 348** per the legal hold above — scope it
+  to `p.status = 'completed'`, which excludes 600 (`confirmed`) by construction, and confirm
+  the row count before running anything.
 - Shift #31 itself (the original entry) is **confirmed still open**, event date 2026-05-16,
   on a `completed` proposal. It is one of the 50 above.
 
