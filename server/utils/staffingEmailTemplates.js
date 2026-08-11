@@ -5,6 +5,7 @@
 
 const Sentry = require('@sentry/node');
 const { sendEmail } = require('./email');
+const { firstNameOf } = require('./firstName');
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => (
@@ -30,11 +31,11 @@ async function sendWaitlistJoinEmail({ to, staffName, eventLabel } = {}) {
   const name = staffName || 'there';
   const event = eventLabel || 'that event';
   const subject = `You're on the waitlist for ${event}`;
-  const html = `<p>Hi ${esc(name)},</p>
+  const html = `<p>Hi ${esc(firstNameOf(name))},</p>
 <p>Thanks for offering to work <strong>${esc(event)}</strong>. It is currently fully staffed, so we have added you to the waitlist. If a spot opens up we will reach out, no action needed on your end.</p>
 <p>You can leave the waitlist any time from your shifts list.</p>
 <p>The Dr. Bartender Team</p>`;
-  const text = `Hi ${name}, thanks for offering to work ${event}. It is currently fully staffed, so we have added you to the waitlist. If a spot opens up we will reach out. You can leave the waitlist any time from your shifts list. The Dr. Bartender Team`;
+  const text = `Hi ${firstNameOf(name)}, thanks for offering to work ${event}. It is currently fully staffed, so we have added you to the waitlist. If a spot opens up we will reach out. You can leave the waitlist any time from your shifts list. The Dr. Bartender Team`;
   try {
     await sendEmail({ to, subject, html, text });
   } catch (err) {

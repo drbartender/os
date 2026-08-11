@@ -17,6 +17,7 @@ const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const { shouldSendImmediate } = require('./messageSuppression');
 const { isPlaceholderEmail } = require('./emailValidation');
+const { firstNameOf } = require('./firstName');
 
 // Dependency seam for tests (mirrors refundClientNotify.__setDeps).
 let _deps = { sendEmail };
@@ -39,7 +40,7 @@ function lineItemRemovedNotice({ clientName, removedLabel, newTotal, newBalance,
     : newBalance > 0
       ? `Your remaining balance is ${fmtUsd(newBalance)}.`
       : 'Your account is fully settled.';
-  const text = `Hi ${clientName || 'there'},\n\n`
+  const text = `Hi ${firstNameOf(clientName)},\n\n`
     + `We removed ${removedLabel} from your event at your request. `
     + `Your updated total is ${fmtUsd(newTotal)}. ${balanceLine}\n\n`
     + 'Reply to this email with any questions.\n\n'

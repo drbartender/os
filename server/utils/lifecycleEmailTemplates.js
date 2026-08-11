@@ -19,6 +19,7 @@
  */
 
 const { esc } = require('./htmlEscape');
+const { firstNameOf } = require('./firstName');
 
 const BRAND = {
   dark: '#2d1810',
@@ -100,14 +101,14 @@ function signedAndPaidClient({
       subject: `Signed & Paid: your ${eventTypeLabel} - Dr. Bartender`,
       html: wrapEmail(`
         <h2 style="color:${BRAND.primary};margin-top:0;">You're Locked In!</h2>
-        <p>Hi ${esc(name)},</p>
+        <p>Hi ${esc(firstNameOf(name))},</p>
         <p>We've received your signed proposal <em>and</em> your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${esc(eventTypeLabel)}</strong>. Your date is officially on the books.</p>
         ${lastMinuteCaveatHtml(lastMinute)}
         <p>We'll be in touch with next steps as your event date approaches.</p>
         <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
         <p>Cheers, Dallas</p>
       `),
-      text: `Hi ${name}, we've received your signed proposal and your ${paymentType} of $${amount} for your ${eventTypeLabel}. Your date is officially on the books.${lastMinuteCaveatText(lastMinute)} Cheers, Dallas`,
+      text: `Hi ${firstNameOf(name)}, we've received your signed proposal and your ${paymentType} of $${amount} for your ${eventTypeLabel}. Your date is officially on the books.${lastMinuteCaveatText(lastMinute)} Cheers, Dallas`,
     };
   }
 
@@ -148,7 +149,7 @@ function signedAndPaidClient({
 
   const html = wrapEmail(`
     <h2 style="color:${BRAND.primary};margin-top:0;">You're booked!</h2>
-    <p>Hi ${esc(name)},</p>
+    <p>Hi ${esc(firstNameOf(name))},</p>
     <p>Thanks for booking with Dr. Bartender. Everything's locked in for your <strong>${esc(eventTypeLabel)}</strong>.</p>
     <h3 style="color:${BRAND.primary};margin-top:1.5rem;">Booking</h3>
     ${bookingTable}
@@ -163,7 +164,7 @@ function signedAndPaidClient({
 
   // Plain-text fallback.
   const textLines = [
-    `Hi ${name}, you're booked for your ${eventTypeLabel}.`,
+    `Hi ${firstNameOf(name)}, you're booked for your ${eventTypeLabel}.`,
     bb.formattedEventDate ? `Date: ${bb.formattedEventDate}` : null,
     bb.formattedStartTime ? `Start time: ${bb.formattedStartTime}` : null,
     bb.eventLocation ? `Location: ${bb.eventLocation}` : null,
@@ -189,14 +190,14 @@ function drinkPlanLink({ clientName, eventTypeLabel = 'event', planUrl }) {
     subject: `Your Drink Plan for your ${eventTypeLabel} - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Drink Plan is Ready!</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>Thank you for booking with Dr. Bartender! We're excited to help make your <strong>${esc(eventTypeLabel)}</strong> unforgettable.</p>
       <p>We've created a personalized drink planning questionnaire for your event. Use it to tell us your preferences &mdash; signature cocktails, mocktails, beer &amp; wine, and everything in between.</p>
       ${ctaButton(planUrl, 'Plan Your Drinks')}
       <p style="font-size:14px;color:${BRAND.secondary};">You can return to this link anytime to save your progress or make changes before submitting.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your drink plan for your ${eventTypeLabel} is ready! Visit ${planUrl} to plan your drinks. You can return anytime to save progress. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, your drink plan for your ${eventTypeLabel} is ready! Visit ${planUrl} to plan your drinks. You can return anytime to save progress. Cheers, Dallas`,
   };
 }
 
@@ -238,7 +239,7 @@ function drinkPlanBalanceUpdate({
     subject: `Got your drink list for your ${eventTypeLabel}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Got your drink list!</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>Got your drink list. We're prepping for your <strong>${esc(eventTypeLabel)}</strong>.</p>
       ${shoppingWarning}
       ${balanceTable}
@@ -246,7 +247,7 @@ function drinkPlanBalanceUpdate({
       <p>Cheers, Dallas</p>
     `),
     text: [
-      `Hi ${name}, got your drink list for your ${eventTypeLabel}.`,
+      `Hi ${firstNameOf(name)}, got your drink list for your ${eventTypeLabel}.`,
       barOption === 'byob' ? "We'll send your shopping list as soon as it's ready. Best to hold off on actual shopping until closer to your event date for freshness and return windows." : null,
       balanceChanged ? `Updated total: $${Number(newTotal).toFixed(2)}. Amount paid: $${Number(amountPaid).toFixed(2)}. Balance due: $${Number(balanceDue).toFixed(2)}${dueDate ? ` by ${dueDate}` : ''}.` : null,
       'Cheers, Dallas',
@@ -260,14 +261,14 @@ function shoppingListReady({ clientName, eventTypeLabel = 'event', shoppingListU
     subject: `Your shopping list for your ${eventTypeLabel}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Shopping List is Ready</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>Your shopping list for your <strong>${esc(eventTypeLabel)}</strong> is ready.</p>
       ${ctaButton(shoppingListUrl, 'View shopping list')}
       <p>A heads up: best to do the actual shopping in the days leading up to your event so ingredients stay fresh and any unused items stay within most stores' return windows. No need to rush out today.</p>
       <p style="font-size:14px;color:${BRAND.secondary};">Reach out with any questions, just reply to this email.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your shopping list for your ${eventTypeLabel} is ready: ${shoppingListUrl}. A heads up: best to do the actual shopping in the days leading up to your event so ingredients stay fresh and unused items stay within return windows. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, your shopping list for your ${eventTypeLabel} is ready: ${shoppingListUrl}. A heads up: best to do the actual shopping in the days leading up to your event so ingredients stay fresh and unused items stay within return windows. Cheers, Dallas`,
   };
 }
 
@@ -295,14 +296,14 @@ function eventEveEmail({ clientName, startTime, location, bartenderName, bartend
     subject: 'Your event is tomorrow',
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">See You Tomorrow</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>Your event is tomorrow at <strong>${esc(time)}</strong>, ${esc(loc)}.</p>
       ${bartenderHtml}
       <p>Your bartender will arrive 30 to 90 minutes before your start time to set up.</p>
       <p style="font-size:14px;color:${BRAND.secondary};">Let me know if you have any questions or need any changes, just reply to this email.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name},\n\nYour event is tomorrow at ${time}, ${loc}.\n\n${bartenderText}Your bartender will arrive 30 to 90 minutes before your start time to set up.\n\nLet me know if you have any questions or need any changes.\n\nCheers, Dallas`,
+    text: `Hi ${firstNameOf(name)},\n\nYour event is tomorrow at ${time}, ${loc}.\n\n${bartenderText}Your bartender will arrive 30 to 90 minutes before your start time to set up.\n\nLet me know if you have any questions or need any changes.\n\nCheers, Dallas`,
   };
 }
 
@@ -317,7 +318,7 @@ function shoppingListReadyParts({ clientName, eventTypeLabel = 'event', shopping
   return {
     subject: `Your shopping list for your ${eventTypeLabel}`,
     heading: 'Your Shopping List is Ready',
-    bodyText: `Hi ${name},\n\nYour shopping list for your ${eventTypeLabel} is ready.\n\nA heads up: best to do the actual shopping in the days leading up to your event so ingredients stay fresh and any unused items stay within most stores' return windows. No need to rush out today.\n\nReach out with any questions, just reply to this email.\n\nCheers, Dallas`,
+    bodyText: `Hi ${firstNameOf(name)},\n\nYour shopping list for your ${eventTypeLabel} is ready.\n\nA heads up: best to do the actual shopping in the days leading up to your event so ingredients stay fresh and any unused items stay within most stores' return windows. No need to rush out today.\n\nReach out with any questions, just reply to this email.\n\nCheers, Dallas`,
     cta: { label: 'View shopping list', url: shoppingListUrl },
   };
 }
@@ -352,7 +353,7 @@ function postConsultClient({
     subject: `Drink plan recap for your ${eventTypeLabel}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Drink plan recap</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>Great talking through your drink plan for your <strong>${esc(eventTypeLabel)}</strong>${esc(dateSuffix)}. Here's what we landed on:</p>
       ${recapHtml}
       ${nextStepLine ? `<p>${esc(nextStepLine)}</p>` : ''}
@@ -360,7 +361,7 @@ function postConsultClient({
       <p>Cheers, Dallas</p>
     `),
     text: [
-      `Hi ${name}, great talking through your drink plan for your ${eventTypeLabel}${dateSuffix}.`,
+      `Hi ${firstNameOf(name)}, great talking through your drink plan for your ${eventTypeLabel}${dateSuffix}.`,
       list.length ? 'Here is what we landed on:' : null,
       ...list,
       nextStepLine || null,
@@ -384,7 +385,7 @@ function consultRecapParts({ clientName, eventTypeLabel = 'event', formattedEven
     ? list
     : ["Your notes are on file; reach out if you'd like the full list."];
   const paragraphs = [
-    `Hi ${name},`,
+    `Hi ${firstNameOf(name)},`,
     [`Great talking through your drink plan for your ${eventTypeLabel}${dateSuffix}. Here's what we landed on:`, ...recapLines].join('\n'),
     ...(nextStepLine ? [nextStepLine] : []),
     'Let me know if anything needs to change, just reply to this email.',
@@ -464,13 +465,13 @@ function changeRequestApproved({ clientName, eventLabel, newTotal, balanceDue, p
     subject: `Your changes are confirmed (${eventLabel})`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your changes are confirmed</h2>
-      <p>Hi ${esc(clientName || 'there')},</p>
+      <p>Hi ${esc(firstNameOf(clientName))},</p>
       <p>We have updated your <strong>${esc(eventLabel)}</strong>. Your new total is <strong>$${Number(newTotal).toFixed(2)}</strong>.</p>
       ${Number(balanceDue) > 0 ? `<p>Balance remaining: <strong>$${Number(balanceDue).toFixed(2)}</strong>. You can pay it from your portal.</p>` : ''}
       ${ctaButton(portalUrl, 'View your event')}
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${clientName || 'there'}, your ${eventLabel} changes are confirmed. New total $${Number(newTotal).toFixed(2)}.${Number(balanceDue) > 0 ? ` Balance remaining $${Number(balanceDue).toFixed(2)}.` : ''} View: ${portalUrl}`,
+    text: `Hi ${firstNameOf(clientName)}, your ${eventLabel} changes are confirmed. New total $${Number(newTotal).toFixed(2)}.${Number(balanceDue) > 0 ? ` Balance remaining $${Number(balanceDue).toFixed(2)}.` : ''} View: ${portalUrl}`,
   };
 }
 
@@ -479,13 +480,13 @@ function changeRequestDeclined({ clientName, eventLabel, reason, portalUrl }) {
     subject: `About your requested change (${eventLabel})`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">About your requested change</h2>
-      <p>Hi ${esc(clientName || 'there')},</p>
+      <p>Hi ${esc(firstNameOf(clientName))},</p>
       <p>We were not able to make the change you requested to your <strong>${esc(eventLabel)}</strong>.</p>
       <p>${esc(reason)}</p>
       <p>Reply to this email and we will help find the right option.</p>
       ${ctaButton(portalUrl, 'View your event')}
     `),
-    text: `Hi ${clientName || 'there'}, we could not make your requested change to your ${eventLabel}. ${reason} Reply to this email and we will help. ${portalUrl}`,
+    text: `Hi ${firstNameOf(clientName)}, we could not make your requested change to your ${eventLabel}. ${reason} Reply to this email and we will help. ${portalUrl}`,
   };
 }
 
@@ -543,13 +544,13 @@ function gratuityStaffingChange({ name, newTotal, gratuity }) {
   const subject = 'An update to your event staffing and gratuity';
   const html = wrapEmail(`
     <h2 style="color:${BRAND.primary};margin-top:0;">Your gratuity rate hasn't changed</h2>
-    <p>Hi ${esc(who)},</p>
+    <p>Hi ${esc(firstNameOf(who))},</p>
     <p>Your event grew, so we've added more crew to take great care of your guests. Your pre-paid gratuity scales with the team at the same per-${esc(noun)} rate you chose, so it is now <strong>$${gratTotal.toFixed(2)}</strong> for your ${esc(noun)}s.</p>
     <p>Your new event total is <strong>$${Number(newTotal).toFixed(2)}</strong>.</p>
     <p style="font-size:14px;color:${BRAND.secondary};">Questions? Just reply to this email.</p>
     <p>Cheers, Dallas</p>
   `);
-  const text = `Hi ${who}, your event grew so we added more crew. Your gratuity rate is unchanged; it scales with the team at the same per-${noun} rate you chose, now $${gratTotal.toFixed(2)} for your ${noun}s. New event total: $${Number(newTotal).toFixed(2)}. Cheers, Dallas`;
+  const text = `Hi ${firstNameOf(who)}, your event grew so we added more crew. Your gratuity rate is unchanged; it scales with the team at the same per-${noun} rate you chose, now $${gratTotal.toFixed(2)} for your ${noun}s. New event total: $${Number(newTotal).toFixed(2)}. Cheers, Dallas`;
   return { subject, html, text };
 }
 
@@ -567,14 +568,14 @@ function portalInvite({ clientName, portalUrl }) {
     subject: 'Your Dr. Bartender client portal',
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Everything for your event, in one place</h2>
-      <p>Hi ${esc(first)},</p>
+      <p>Hi ${esc(firstNameOf(first))},</p>
       <p>Your client portal has your proposals, payments, receipts, and event details together in one place.</p>
       ${ctaButton(portalUrl, 'Open my portal')}
       <p style="font-size:14px;color:${BRAND.secondary};">Logging in is easy: enter the email address this message was sent to and we'll send you a one-time code. No password needed.</p>
       <p style="font-size:14px;color:${BRAND.secondary};">Questions? Just reply to this email.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${first}, your Dr. Bartender client portal has your proposals, payments, receipts, and event details together in one place: ${portalUrl}. Logging in is easy: enter the email address this message was sent to and we'll send you a one-time code. No password needed. Questions? Just reply. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(first)}, your Dr. Bartender client portal has your proposals, payments, receipts, and event details together in one place: ${portalUrl}. Logging in is easy: enter the email address this message was sent to and we'll send you a one-time code. No password needed. Questions? Just reply. Cheers, Dallas`,
   };
 }
 
@@ -586,7 +587,7 @@ function portalInvite({ clientName, portalUrl }) {
 function portalInviteParts({ clientName, portalUrl }) {
   const first = (clientName || 'there').trim().split(/\s+/)[0] || 'there';
   const paragraphs = [
-    `Hi ${first},`,
+    `Hi ${firstNameOf(first)},`,
     'Your client portal has your proposals, payments, receipts, and event details together in one place.',
     "Logging in is easy: enter the email address this message was sent to and we'll send you a one-time code. No password needed.",
     'Questions? Just reply to this email.',
@@ -620,7 +621,7 @@ function drinkPlanNudgeParts({ clientFirstName, eventTypeLabel = 'event', eventD
     `${consultUrl ? '3' : '2'}. Call or text us${phone ? ` at ${phone}` : ''} and we'll walk through it together.`,
   ].filter(Boolean).join('\n');
   const paragraphs = [
-    `Hi ${name},`,
+    `Hi ${firstNameOf(name)},`,
     ways,
     'If you have any questions, just reply to this email.',
     'Cheers, Dallas',
@@ -657,14 +658,14 @@ function cancellationConfirmation({ clientName, eventTypeLabel = 'event', outcom
     subject: `Your ${eventTypeLabel} has been cancelled - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Cancellation confirmed</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>${opener}</p>
       <p>${esc(outcomeLine)}</p>
       ${refundHtml}
       <p style="font-size:14px;color:${BRAND.secondary};">If anything here looks off, just reply to this email and we will sort it out.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, ${cancelledBy === 'admin'
+    text: `Hi ${firstNameOf(name)}, ${cancelledBy === 'admin'
       ? `we are writing to confirm that your ${eventTypeLabel} has been cancelled.`
       : `we are confirming that your ${eventTypeLabel} has been cancelled as requested.`} ${outcomeLine}${refundTxt} If anything here looks off, just reply to this email. Cheers, Dallas`,
   };
@@ -748,7 +749,7 @@ function enhancementLabFollowup({ clientName, eventTypeLabel = 'event', labUrl, 
     ? `Your formulas are filed: ${drinkNames.slice(0, 4).join(', ')}. There is still time to enhance them.`
     : 'Your formulas are filed. There is still time to enhance them.';
   const paragraphs = [
-    `Hi ${first},`,
+    `Hi ${firstNameOf(first)},`,
     `${drinksLine} The Enhancement Lab is open for your ${eventTypeLabel}: housemade syrups, a champagne toast, real glassware. The cabinet of finishing touches.`,
     'One tap adds them to your event. Anything you pick lands on your final balance, nothing is due today.',
     balanceDue > 0

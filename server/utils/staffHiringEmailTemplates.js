@@ -22,6 +22,7 @@
  */
 
 const { esc } = require('./htmlEscape');
+const { firstNameOf } = require('./firstName');
 
 const BRAND = {
   dark: '#2d1810',
@@ -106,7 +107,7 @@ function shiftRequestApproved({ staffName, eventTypeLabel = 'event', eventDate, 
     subject: `You're Confirmed: ${eventTypeLabel} on ${eventDate} - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">You're Confirmed!</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>Great news, you've been confirmed to work ${esc(eventPhrase)}.</p>
       <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:100px;">Date</td><td style="padding:8px 12px;">${esc(eventDate)}</td></tr>
@@ -117,7 +118,7 @@ function shiftRequestApproved({ staffName, eventTypeLabel = 'event', eventDate, 
       <p>Please arrive on time and in proper uniform. See you there!</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, you're confirmed to work ${eventPhrase} on ${eventDate}, ${startTime} – ${endTime} at ${location}.${setupText} Please arrive on time and in proper uniform. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, you're confirmed to work ${eventPhrase} on ${eventDate}, ${startTime} – ${endTime} at ${location}.${setupText} Please arrive on time and in proper uniform. Cheers, Dallas`,
   };
 }
 
@@ -127,12 +128,12 @@ function applicationReceivedConfirmation({ applicantName }) {
     subject: `Application Received - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Application Received!</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>Thank you for applying to join the Dr. Bartender team! We've received your application and will review it shortly.</p>
       <p>We'll reach out with next steps once our team has had a chance to go over your information.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, thank you for applying to Dr. Bartender! We've received your application and will review it shortly. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, thank you for applying to Dr. Bartender! We've received your application and will review it shortly. Cheers, Dallas`,
   };
 }
 
@@ -155,13 +156,13 @@ function applicationInterviewInvite({ applicantName, customMessage }) {
     subject: `We'd like to interview you - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Let's Chat!</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>Thanks for applying to Dr. Bartender, we liked what we saw and we'd like to set up a quick interview.</p>
       ${note}
       <p>Our team will reach out shortly with scheduling details. Feel free to reply to this email with any times that work for you.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, we'd like to interview you. Our team will reach out with scheduling details. ${customMessage ? `Note from the team: ${customMessage}` : ''} Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, we'd like to interview you. Our team will reach out with scheduling details. ${customMessage ? `Note from the team: ${customMessage}` : ''} Cheers, Dallas`,
   };
 }
 
@@ -173,7 +174,7 @@ function applicationHired({ applicantName, customMessage, staffPortalUrl }) {
     subject: `Welcome to the Dr. Bartender team!`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">You're Hired!</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>Welcome to the team! We're excited to have you. Here's what to do next:</p>
       <ol style="color:${BRAND.primary};line-height:1.6;">
         <li>Log into the staff portal to review your contractor agreement</li>
@@ -185,7 +186,7 @@ function applicationHired({ applicantName, customMessage, staffPortalUrl }) {
       <p>If you have any questions getting set up, just reply to this email, we're here to help.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, welcome to the Dr. Bartender team! Log into the staff portal to complete your onboarding: ${staffPortalUrl || 'https://staff.drbartender.com'}${customMessage ? ` Note: ${customMessage}` : ''}. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, welcome to the Dr. Bartender team! Log into the staff portal to complete your onboarding: ${staffPortalUrl || 'https://staff.drbartender.com'}${customMessage ? ` Note: ${customMessage}` : ''}. Cheers, Dallas`,
   };
 }
 
@@ -196,13 +197,13 @@ function applicationRejected({ applicantName, customMessage }) {
     subject: `About your application - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Thank You for Applying</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>Thank you for your interest in joining the Dr. Bartender team and for taking the time to apply. After careful review, we've decided to move forward with other candidates at this time.</p>
       ${note}
       <p>We genuinely appreciate the effort you put into your application, and we wish you the best in your search.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, thank you for applying to Dr. Bartender. After review, we've decided to move forward with other candidates at this time. ${customMessage ? `Note: ${customMessage}` : ''} We wish you the best. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, thank you for applying to Dr. Bartender. After review, we've decided to move forward with other candidates at this time. ${customMessage ? `Note: ${customMessage}` : ''} We wish you the best. Cheers, Dallas`,
   };
 }
 
@@ -213,13 +214,13 @@ function applicationDeactivated({ applicantName, customMessage }) {
     subject: `Your Dr. Bartender account has been deactivated`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Account Deactivated</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>This is a notice that your Dr. Bartender staff account has been deactivated. You will no longer receive shift requests or be able to log into the staff portal.</p>
       ${note}
       <p>If you believe this was done in error, or if you have questions, please reply to this email.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your Dr. Bartender staff account has been deactivated. ${customMessage ? `Note: ${customMessage}` : ''} If this was in error, please reply to this email. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, your Dr. Bartender staff account has been deactivated. ${customMessage ? `Note: ${customMessage}` : ''} If this was in error, please reply to this email. Cheers, Dallas`,
   };
 }
 
@@ -236,12 +237,12 @@ function interviewConfirmation({ applicantName, interviewAt }) {
     subject: `Interview confirmed: ${dateStr}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Interview confirmed</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>Your interview with Dr. Bartender is confirmed for <strong>${esc(dateStr)} at ${esc(timeStr)}</strong>.</p>
       <p>If anything changes on your end, just reply to this email.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your interview with Dr. Bartender is confirmed for ${dateStr} at ${timeStr}. If anything changes, reply to this email. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, your interview with Dr. Bartender is confirmed for ${dateStr} at ${timeStr}. If anything changes, reply to this email. Cheers, Dallas`,
   };
 }
 
@@ -252,13 +253,13 @@ function paperworkReminder({ applicantName, staffUrl }) {
     subject: 'Quick nudge: finish your onboarding',
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Just a friendly nudge</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>This is a quick reminder to finish your Dr. Bartender onboarding paperwork. The portal saves your progress so you can pick up where you left off:</p>
       <p>${ctaButton(url, 'Continue onboarding →')}</p>
       <p>Reply if you hit a snag, happy to help.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, just a friendly nudge to finish your Dr. Bartender onboarding paperwork: ${url}. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, just a friendly nudge to finish your Dr. Bartender onboarding paperwork: ${url}. Cheers, Dallas`,
   };
 }
 

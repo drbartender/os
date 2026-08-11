@@ -79,7 +79,9 @@ test('buildMessages returns editable parts with a fixed CTA carrying the token U
   const { rows } = await pool.query('SELECT token FROM drink_plans WHERE id = $1', [planId]);
   const m = await getAction('shopping_list_approve').buildMessages(planId);
   assert.match(m.email.subject, /shopping list/i);
-  assert.ok(m.email.bodyText.startsWith('Hi Comms Test,'), 'greeting uses the client name');
+  // Greetings are first-name only (server/utils/firstName.js): "Comms Test" -> "Comms".
+  assert.ok(m.email.bodyText.startsWith('Hi Comms,'), 'greeting uses the client first name');
+  assert.ok(!m.email.bodyText.includes('Hi Comms Test'), 'greeting must not carry the surname');
   assert.ok(m.email.cta.url.includes(rows[0].token));
   assert.ok(m.sms.body.includes(rows[0].token));
 });

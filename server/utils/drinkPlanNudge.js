@@ -39,6 +39,7 @@ const { wrapEmail } = require('./emailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
 const { formatEventDateForSms: eventDateSms } = require('./smsEventDate');
+const { firstNameOf } = require('./firstName');
 
 const BRAND = { primary: '#3b2314', secondary: '#6b4226' };
 const DAY_SECONDS = 86400;
@@ -66,7 +67,7 @@ function drinkPlanNudgeEmail({ clientFirstName, eventTypeLabel, eventDateDisplay
     subject: `Time to lock in drinks for your ${eventTypeLabel} event`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Time to lock in drinks</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>Time to lock in drinks for your <strong>${esc(eventTypeLabel)}</strong> on ${esc(eventDateDisplay)}. Three ways to do it:</p>
       <ol style="line-height:1.7;color:${BRAND.primary};padding-left:1.25rem;">
         <li>Potion Planner: <a href="${esc(plannerUrl)}">${esc(plannerUrl)}</a> (about 5 minutes, easiest)</li>
@@ -77,7 +78,7 @@ function drinkPlanNudgeEmail({ clientFirstName, eventTypeLabel, eventDateDisplay
       <p>Cheers, Dallas</p>
     `),
     text: [
-      `Hi ${name}, time to lock in drinks for your ${eventTypeLabel} on ${eventDateDisplay}. Three ways to do it:`,
+      `Hi ${firstNameOf(name)}, time to lock in drinks for your ${eventTypeLabel} on ${eventDateDisplay}. Three ways to do it:`,
       `1. Potion Planner: ${plannerUrl} (about 5 minutes, easiest)`,
       consultUrl ? `2. Book a 15-minute phone consult: ${consultUrl}` : null,
       `${consultUrl ? '3' : '2'}. Call or text us${phone ? ` at ${phone}` : ''} and we'll walk through it together`,
@@ -124,11 +125,6 @@ async function loadNudgeContext(proposalId) {
     throw new SuppressMessageError('consult_already_recorded');
   }
   return ctx;
-}
-
-function firstNameOf(fullName) {
-  if (!fullName) return 'there';
-  return String(fullName).trim().split(/\s+/)[0] || 'there';
 }
 
 function eventLabel(ctx) {

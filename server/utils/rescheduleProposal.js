@@ -7,6 +7,7 @@ const { shouldSendImmediate } = require('./messageSuppression');
 const { computeScheduledFor, schedulePreEventReminders } = require('./preEventScheduling');
 const { getBookingWindow } = require('./bookingWindow');
 const { BOOKED_SET } = require('./proposalStatus');
+const { firstNameOf } = require('./firstName');
 
 // Defense-in-depth: even though post_event_wrap_up_email registers with
 // offsetFromEventDate: null (which already short-circuits via the
@@ -317,7 +318,7 @@ function buildEventDetailsDraft({ old, updated, ctx }) {
 
   const link = ctx.token ? proposalUrl(ctx.token) : null;
   const body_text = [
-    `Hi ${firstName},`,
+    `Hi ${firstNameOf(firstName)},`,
     'Your event details have been updated. Here is what changed:',
     lines.join('\n'),
     dueLine,

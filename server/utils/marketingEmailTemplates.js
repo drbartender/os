@@ -1,5 +1,6 @@
 const { wrapMarketingEmail, wrapEmail } = require('./emailTemplates');
 const { esc } = require('./htmlEscape');
+const { firstNameOf } = require('./firstName');
 
 const BRAND_PRIMARY = '#3b2314';
 const BRAND_SECONDARY = '#6b4226';
@@ -29,13 +30,13 @@ function dripTouch2Client(params) {
   return {
     subject: `Still thinking about your ${d.eventDateDisplay} event, ${d.clientFirstName}?`,
     html: wrapMarketingEmail(`
-      <p>Hi ${esc(d.clientFirstName)},</p>
+      <p>Hi ${esc(firstNameOf(d.clientFirstName))},</p>
       <p>Just checking in on your <strong>${esc(d.eventTypeLabel)}</strong> coming up ${esc(d.eventDateDisplay)}. Your proposal is still good to go whenever you're ready.</p>
       ${ctaButton(d.proposalUrl, 'View your proposal')}
       <p>Let me know if you have any questions or want to talk anything through.</p>
       <p>Cheers,<br/>Dallas</p>
     `, d.unsubscribeUrl),
-    text: `Hi ${d.clientFirstName}, just checking in on your ${d.eventTypeLabel} coming up ${d.eventDateDisplay}. Your proposal is still good to go: ${d.proposalUrl}. Let me know if you have any questions. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(d.clientFirstName)}, just checking in on your ${d.eventTypeLabel} coming up ${d.eventDateDisplay}. Your proposal is still good to go: ${d.proposalUrl}. Let me know if you have any questions. Cheers, Dallas`,
   };
 }
 
@@ -46,14 +47,14 @@ function dripTouch4Client(params) {
   return {
     subject: `Following up on your ${d.eventDateDisplay} booking, ${d.clientFirstName}`,
     html: wrapMarketingEmail(`
-      <p>Hi ${esc(d.clientFirstName)},</p>
+      <p>Hi ${esc(firstNameOf(d.clientFirstName))},</p>
       <p>Wanted to check back in on your <strong>${esc(d.eventTypeLabel)}</strong>. Your proposal as written is still here.</p>
       ${ctaButton(d.proposalUrl, 'View your proposal')}
       <p>A few things worth knowing: if BYOB isn't quite right, we also offer <strong>Hosted</strong> packages where we handle the alcohol. Happy to send an updated quote if you want to see numbers on that side.</p>
       <p>Let me know if you have any questions or need any changes.</p>
       <p>Cheers,<br/>Dallas</p>
     `, d.unsubscribeUrl),
-    text: `Hi ${d.clientFirstName}, checking back in on your ${d.eventTypeLabel}. Proposal: ${d.proposalUrl}. If BYOB isn't quite right, we also offer Hosted packages, happy to send numbers. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(d.clientFirstName)}, checking back in on your ${d.eventTypeLabel}. Proposal: ${d.proposalUrl}. If BYOB isn't quite right, we also offer Hosted packages, happy to send numbers. Cheers, Dallas`,
   };
 }
 
@@ -64,13 +65,13 @@ function dripTouch5Client(params) {
   return {
     subject: `Last call to secure ${d.eventDateDisplay}, ${d.clientFirstName}`,
     html: wrapMarketingEmail(`
-      <p>Hi ${esc(d.clientFirstName)},</p>
+      <p>Hi ${esc(firstNameOf(d.clientFirstName))},</p>
       <p>Wanted to do one last check-in on your <strong>${esc(d.eventTypeLabel)}</strong> on ${esc(d.eventDateDisplay)}. We're still holding the date, but other bookings come in regularly for that weekend.</p>
       ${ctaButton(d.proposalUrl, 'Lock it in')}
       <p>If you'd rather walk away, no hard feelings, just reply to let us know.</p>
       <p>Cheers,<br/>Dallas</p>
     `, d.unsubscribeUrl),
-    text: `Hi ${d.clientFirstName}, one last check on your ${d.eventTypeLabel} on ${d.eventDateDisplay}. We're still holding the date but others come in for that weekend. Lock it in: ${d.proposalUrl}. Or reply to walk away. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(d.clientFirstName)}, one last check on your ${d.eventTypeLabel} on ${d.eventDateDisplay}. We're still holding the date but others come in for that weekend. Lock it in: ${d.proposalUrl}. Or reply to walk away. Cheers, Dallas`,
   };
 }
 
@@ -111,14 +112,14 @@ function reviewRequestClient(params) {
   return {
     subject: `How was your ${d.eventDateDisplay} event?`,
     html: wrapEmail(`
-      <p>Hi ${esc(d.clientFirstName)},</p>
+      <p>Hi ${esc(firstNameOf(d.clientFirstName))},</p>
       <p>Thanks again for having us at your <strong>${esc(d.eventTypeLabel)}</strong> last ${esc(dayOfWeek)}. Hope you and your guests had a great time.</p>
       <p>If you have a moment, we'd love to hear how it went:</p>
       ${ctaButton(feedbackUrl, 'Rate your experience')}
       ${tipSection}
       <p>Cheers,<br/>Dallas</p>
     `),
-    text: `Hi ${d.clientFirstName}, thanks again for having us at your ${d.eventTypeLabel} last ${dayOfWeek}. Rate your experience: ${feedbackUrl}${bartenderName ? `. Tip ${bartenderName}${venmoHandle ? ` at Venmo ${venmoHandle}` : ''}${cashappHandle ? `, Cash App ${cashappHandle}` : ''}` : ''}. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(d.clientFirstName)}, thanks again for having us at your ${d.eventTypeLabel} last ${dayOfWeek}. Rate your experience: ${feedbackUrl}${bartenderName ? `. Tip ${bartenderName}${venmoHandle ? ` at Venmo ${venmoHandle}` : ''}${cashappHandle ? `, Cash App ${cashappHandle}` : ''}` : ''}. Cheers, Dallas`,
   };
 }
 
@@ -129,12 +130,12 @@ function newYearHelloClient(params) {
   return {
     subject: `Happy new year, ${d.clientFirstName}, looking forward to your event`,
     html: wrapMarketingEmail(`
-      <p>Hi ${esc(d.clientFirstName)}, happy new year from Dr. Bartender.</p>
+      <p>Hi ${esc(firstNameOf(d.clientFirstName))}, happy new year from Dr. Bartender.</p>
       <p>Just a quick hello to say we're looking forward to your <strong>${esc(d.eventTypeLabel)}</strong> later this year on ${esc(d.eventDateDisplay)}. Everything's on the books and we'll be in touch with more details as we get closer.</p>
       <p>Reach out anytime with questions or changes.</p>
       <p>Cheers,<br/>Dallas</p>
     `, d.unsubscribeUrl),
-    text: `Hi ${d.clientFirstName}, happy new year. Looking forward to your ${d.eventTypeLabel} on ${d.eventDateDisplay}. Reach out anytime. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(d.clientFirstName)}, happy new year. Looking forward to your ${d.eventTypeLabel} on ${d.eventDateDisplay}. Reach out anytime. Cheers, Dallas`,
   };
 }
 
@@ -156,12 +157,12 @@ function sixMonthsOutClient(params) {
   return {
     subject: `Six months out from your ${d.eventDateDisplay} event`,
     html: wrapMarketingEmail(`
-      <p>Hi ${esc(d.clientFirstName)},</p>
+      <p>Hi ${esc(firstNameOf(d.clientFirstName))},</p>
       <p>We're now six months out from your <strong>${esc(d.eventTypeLabel)}</strong> on ${esc(d.eventDateDisplay)}. Mostly just saying hi.</p>
       ${plannerSection}
       <p>Cheers,<br/>Dallas</p>
     `, d.unsubscribeUrl),
-    text: `Hi ${d.clientFirstName}, six months out from your ${d.eventTypeLabel} on ${d.eventDateDisplay}.${potionPlannerUrl ? ` Potion Planner: ${potionPlannerUrl}.` : ''}${consultUrl ? ` Book a consult: ${consultUrl}.` : ''} Cheers, Dallas`,
+    text: `Hi ${firstNameOf(d.clientFirstName)}, six months out from your ${d.eventTypeLabel} on ${d.eventDateDisplay}.${potionPlannerUrl ? ` Potion Planner: ${potionPlannerUrl}.` : ''}${consultUrl ? ` Book a consult: ${consultUrl}.` : ''} Cheers, Dallas`,
   };
 }
 
@@ -173,13 +174,13 @@ function retentionNudgeClient(params) {
   return {
     subject: `Almost a year since your ${d.eventTypeLabel}, ${d.clientFirstName}`,
     html: wrapMarketingEmail(`
-      <p>Hi ${esc(d.clientFirstName)},</p>
+      <p>Hi ${esc(firstNameOf(d.clientFirstName))},</p>
       <p>It's been almost a year since your <strong>${esc(d.eventTypeLabel)}</strong> with us. If you're planning anything similar this year, we'd love to help. Same packages, same team.</p>
       ${ctaButton(ctaUrl, 'Get a quote')}
       <p>Reach out anytime.</p>
       <p>Cheers,<br/>Dallas</p>
     `, d.unsubscribeUrl),
-    text: `Hi ${d.clientFirstName}, it's been almost a year since your ${d.eventTypeLabel}. If you're planning anything similar, we'd love to help. Quote: ${ctaUrl}. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(d.clientFirstName)}, it's been almost a year since your ${d.eventTypeLabel}. If you're planning anything similar, we'd love to help. Quote: ${ctaUrl}. Cheers, Dallas`,
   };
 }
 

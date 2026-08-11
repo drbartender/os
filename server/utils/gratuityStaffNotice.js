@@ -24,6 +24,7 @@ const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const { getEventTypeLabel } = require('./eventTypes');
 const { formatEventDateLong } = require('./staffShiftHandlers');
+const { firstNameOf } = require('./firstName');
 
 // Dependency seam for tests (mirrors refundClientNotify.__setDeps).
 let _deps = { sendEmail };
@@ -40,7 +41,7 @@ function gratuityRemovedStaffNotice({ staffName, eventTypeLabel, eventDateLocal,
   const change = newRate > 0
     ? `The client's prepaid gratuity for this event was lowered to $${newRate}/staff/hr.`
     : "The client's prepaid gratuity for this event was removed.";
-  const text = `Hi ${staffName || 'there'},\n\n`
+  const text = `Hi ${firstNameOf(staffName)},\n\n`
     + `${change} You are welcome to set out a tip jar at this event.\n\n`
     + `Event: ${eventTypeLabel} on ${eventDateLocal}\n\n`
     + 'Your event details page reflects the current tip jar status.\n\n'

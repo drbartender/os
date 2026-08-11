@@ -4,6 +4,7 @@
  */
 
 const { esc } = require('./htmlEscape');
+const { firstNameOf } = require('./firstName');
 
 const BRAND = {
   dark: '#2d1810',
@@ -57,14 +58,14 @@ function proposalSent({ clientName, eventTypeLabel = 'event', proposalUrl, planU
     subject: `Your Proposal for your ${eventTypeLabel} - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Proposal is Ready!</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>We've put together a proposal for your <strong>${esc(eventTypeLabel)}</strong>. Take a look, review the details, and sign when you're ready.</p>
       ${ctaButton(proposalUrl, 'View Proposal')}
       ${planSection}
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your proposal for your ${eventTypeLabel} is ready! View it here: ${proposalUrl}${planUrl ? ` Plan your drinks here: ${planUrl}` : ''}. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, your proposal for your ${eventTypeLabel} is ready! View it here: ${proposalUrl}${planUrl ? ` Plan your drinks here: ${planUrl}` : ''}. Cheers, Dallas`,
   };
 }
 
@@ -74,13 +75,13 @@ function proposalOptionsSent({ clientName, eventTypeLabel = 'event', compareUrl 
     subject: `Compare your options for your ${eventTypeLabel} - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Options Are Ready to Compare</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>We've put together a few options for your <strong>${esc(eventTypeLabel)}</strong> so you can compare them side by side and pick the one that fits best.</p>
       ${ctaButton(compareUrl, 'Compare Your Options')}
       <p style="font-size:14px;color:${BRAND.secondary};">When you find the one you like, choose it and sign right from that page. If you have any questions, just reply to this email.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your options for your ${eventTypeLabel} are ready to compare side by side. View them here: ${compareUrl}. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, your options for your ${eventTypeLabel} are ready to compare side by side. View them here: ${compareUrl}. Cheers, Dallas`,
   };
 }
 
@@ -90,13 +91,13 @@ function proposalSignedConfirmation({ clientName, eventTypeLabel = 'event' }) {
     subject: `Proposal Signed: your ${eventTypeLabel} - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Thank You for Signing!</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>We've received your signed proposal for your <strong>${esc(eventTypeLabel)}</strong>. We're excited to work with you!</p>
       <p><strong>Next step:</strong> Submit your deposit to lock in your date. You'll receive payment instructions shortly, or you can pay directly from the proposal page.</p>
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, thank you for signing the proposal for your ${eventTypeLabel}! Next step: submit your deposit to lock in your date. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, thank you for signing the proposal for your ${eventTypeLabel}! Next step: submit your deposit to lock in your date. Cheers, Dallas`,
   };
 }
 
@@ -140,13 +141,13 @@ function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, p
       subject: `Balance charged: you're paid in full${eventDateLabel ? ` for ${esc(eventDateLabel)}` : ''}`,
       html: wrapEmail(`
         <h2 style="color:${BRAND.primary};margin-top:0;">You're Paid in Full</h2>
-        <p>Hi ${esc(name)},</p>
+        <p>Hi ${esc(firstNameOf(name))},</p>
         <p>Your remaining balance of <strong>$${amount}</strong> for your <strong>${esc(eventTypeLabel)}</strong>${eventBit} just ran${cardBit}. You're paid in full.</p>
         <p>Looking forward to the event.</p>
         <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
         <p>Cheers, Dallas</p>
       `),
-      text: `Hi ${name}, your remaining balance of $${amount} for your ${eventTypeLabel}${eventBit} just ran${last4 ? ` on the card ending in ${last4}` : ' on your card on file'}. You're paid in full. Cheers, Dallas`,
+      text: `Hi ${firstNameOf(name)}, your remaining balance of $${amount} for your ${eventTypeLabel}${eventBit} just ran${last4 ? ` on the card ending in ${last4}` : ' on your card on file'}. You're paid in full. Cheers, Dallas`,
     };
   }
   // Default (non-autopay) flow — preserves the existing copy
@@ -154,14 +155,14 @@ function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, p
     subject: `Payment Received: your ${eventTypeLabel} - Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Payment Received!</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>We've received your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${esc(eventTypeLabel)}</strong>.</p>
       ${lastMinuteCaveatHtml(lastMinute)}
       <p>Thank you! We'll be in touch with next steps as your event date approaches.</p>
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, we've received your ${paymentType} of $${amount} for your ${eventTypeLabel}.${lastMinuteCaveatText(lastMinute)} Thank you! Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, we've received your ${paymentType} of $${amount} for your ${eventTypeLabel}.${lastMinuteCaveatText(lastMinute)} Thank you! Cheers, Dallas`,
   };
 }
 
@@ -171,7 +172,7 @@ function clientOtp({ name, otp }) {
     subject: 'Your Dr. Bartender login code',
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Login Code</h2>
-      <p>Hi ${esc(n)},</p>
+      <p>Hi ${esc(firstNameOf(n))},</p>
       <p>Use the code below to sign in to your Dr. Bartender client portal:</p>
       <div style="text-align:center;margin:2rem 0;">
         <span style="display:inline-block;padding:16px 32px;background:${BRAND.bg};border:2px solid ${BRAND.secondary};border-radius:8px;font-size:32px;font-weight:bold;letter-spacing:8px;color:${BRAND.primary};">${otp}</span>
@@ -179,7 +180,7 @@ function clientOtp({ name, otp }) {
       <p style="font-size:14px;color:${BRAND.secondary};">This code expires in 15 minutes. If you didn't request this, you can safely ignore this email.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${n}, your Dr. Bartender login code is: ${otp}. This code expires in 15 minutes. If you didn't request this, you can safely ignore this email. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(n)}, your Dr. Bartender login code is: ${otp}. This code expires in 15 minutes. If you didn't request this, you can safely ignore this email. Cheers, Dallas`,
   };
 }
 
@@ -225,14 +226,14 @@ function paymentReminderClient({ clientName, eventTypeLabel = 'event', balanceDu
     subject,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Balance Reminder</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>${intro}</p>
       ${cardLine}
       ${cta}
       ${footer}
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, ${textIntro} ${isAutopay ? 'No action needed. Pay early or change card: ' : 'View and pay: '}${proposalUrl}. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, ${textIntro} ${isAutopay ? 'No action needed. Pay early or change card: ' : 'View and pay: '}${proposalUrl}. Cheers, Dallas`,
   };
 }
 
@@ -264,13 +265,13 @@ function paymentReminderLate({ clientName, eventTypeLabel = 'event', balanceDue,
     subject,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">${firm ? 'Balance Past Due' : 'Balance Reminder'}</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>${bodyOpen}</p>
       ${ctaButton(proposalUrl, 'View &amp; Pay Balance')}
       ${closeLine}
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your balance of $${Number(balanceDue).toFixed(2)} for your ${eventTypeLabel} is ${daysLate} ${daysLate === 1 ? 'day' : 'days'} past due. Pay here: ${proposalUrl}. ${firm ? 'Please reach out so we can sort this out together.' : 'Reach out if you need help.'} Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, your balance of $${Number(balanceDue).toFixed(2)} for your ${eventTypeLabel} is ${daysLate} ${daysLate === 1 ? 'day' : 'days'} past due. Pay here: ${proposalUrl}. ${firm ? 'Please reach out so we can sort this out together.' : 'Reach out if you need help.'} Cheers, Dallas`,
   };
 }
 
@@ -300,13 +301,13 @@ function refundNotificationClient({ clientName, refundAmount, last4, newBalance 
     subject: `Refund issued for your account`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Refund Issued</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>We've refunded <strong>$${Number(refundAmount).toFixed(2)}</strong>${cardLine}. It should arrive in 5-10 business days depending on your bank.</p>
       ${balanceLine}
       <p style="font-size:14px;color:${BRAND.secondary};">Let me know if you have any questions, just reply to this email.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, we've refunded $${Number(refundAmount).toFixed(2)}${cardLineText}. It should arrive in 5-10 business days. ${balanceLineText} Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, we've refunded $${Number(refundAmount).toFixed(2)}${cardLineText}. It should arrive in 5-10 business days. ${balanceLineText} Cheers, Dallas`,
   };
 }
 
@@ -332,13 +333,13 @@ function paymentFailedClient({ clientName, eventTypeLabel = 'event', last4, prop
     subject: `Payment didn't go through for your ${eventTypeLabel}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Payment Didn't Go Through</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>Your payment for the <strong>${esc(eventTypeLabel)}</strong> didn't go through${cardClause}.</p>
       ${ctaButton(proposalUrl, 'Update Payment Method')}
       <p>If you have any questions or need help, reply to this email or call me.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your payment for the ${eventTypeLabel} didn't go through${cardClauseText}. Update payment method: ${proposalUrl}. Reach out if you need help. Cheers, Dallas`,
+    text: `Hi ${firstNameOf(name)}, your payment for the ${eventTypeLabel} didn't go through${cardClauseText}. Update payment method: ${proposalUrl}. Reach out if you need help. Cheers, Dallas`,
   };
 }
 
@@ -417,14 +418,14 @@ function abandonedQuote({ clientName, resumeUrl }) {
     subject: 'Still planning your event? Your quote is waiting',
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Pick Up Where You Left Off</h2>
-      <p>Hi ${esc(name)},</p>
+      <p>Hi ${esc(firstNameOf(name))},</p>
       <p>We noticed you started putting together a quote for your event but didn't finish.
          No worries, your progress is saved and ready for you!</p>
       ${ctaButton(resumeUrl, 'Continue Your Quote')}
       <p style="margin-top:24px;">If you have any questions, just reply to this email, we'd love to help.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your quote is waiting! Continue where you left off: ${resumeUrl}`,
+    text: `Hi ${firstNameOf(name)}, your quote is waiting! Continue where you left off: ${resumeUrl}`,
   };
 }
 
@@ -587,7 +588,7 @@ function eventWeekReminderClient({
   return {
     subject: `One week until your ${eventDateLocal} event`,
     html: wrapEmail(`
-      <p>Hi ${esc(first)}, can't wait for next week. Here's what we have on file:</p>
+      <p>Hi ${esc(firstNameOf(first))}, can't wait for next week. Here's what we have on file:</p>
       <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
         <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Date</td><td style="padding:8px 12px;text-align:right;">${esc(eventDateLocal)}</td></tr>
         <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Time</td><td style="padding:8px 12px;text-align:right;">${esc(startTimeLocal)}</td></tr>
@@ -599,7 +600,7 @@ function eventWeekReminderClient({
       ${proposalUrl ? ctaButton(proposalUrl, 'View your proposal') : ''}
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${first}, can't wait for next week. Here's what we have on file:\n\nDate: ${eventDateLocal}\nTime: ${startTimeLocal}\nLocation: ${location || 'TBD'}\nGuest count: ${guestCount ?? ''}\nPackage: ${packageName || ''}\n\nAnything changed? Reply here or call.\n\n${proposalUrl ? `View your proposal: ${proposalUrl}\n\n` : ''}Cheers, Dallas`,
+    text: `Hi ${firstNameOf(first)}, can't wait for next week. Here's what we have on file:\n\nDate: ${eventDateLocal}\nTime: ${startTimeLocal}\nLocation: ${location || 'TBD'}\nGuest count: ${guestCount ?? ''}\nPackage: ${packageName || ''}\n\nAnything changed? Reply here or call.\n\n${proposalUrl ? `View your proposal: ${proposalUrl}\n\n` : ''}Cheers, Dallas`,
   };
 }
 
@@ -624,7 +625,7 @@ function rescheduleNotificationClient({
   return {
     subject: 'Updated details for your event',
     html: wrapEmail(`
-      <p>Hi ${esc(first)}, your event has been moved.</p>
+      <p>Hi ${esc(firstNameOf(first))}, your event has been moved.</p>
       <p style="margin:1.5rem 0;"><strong>Old details:</strong> ${esc(oldDateLocal)} at ${esc(oldStartTimeLocal)}, ${esc(oldLocation || 'TBD')}<br/>
          <strong>New details:</strong> ${esc(newDateLocal)} at ${esc(newStartTimeLocal)}, ${esc(newLocation || 'TBD')}</p>
       <p>Everything else stays the same:</p>
@@ -637,7 +638,7 @@ function rescheduleNotificationClient({
       <p>Let me know if you have any questions or need to discuss anything.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${first}, your event has been moved.\n\nOld details: ${oldDateLocal} at ${oldStartTimeLocal}, ${oldLocation || 'TBD'}\nNew details: ${newDateLocal} at ${newStartTimeLocal}, ${newLocation || 'TBD'}\n\nEverything else stays the same:\nPackage: ${packageName || ''}\nGuest count: ${guestCount ?? ''}\nTotal: $${totalFormatted}\n${balanceLineText}\nLet me know if you have any questions or need to discuss anything.\n\nCheers, Dallas`,
+    text: `Hi ${firstNameOf(first)}, your event has been moved.\n\nOld details: ${oldDateLocal} at ${oldStartTimeLocal}, ${oldLocation || 'TBD'}\nNew details: ${newDateLocal} at ${newStartTimeLocal}, ${newLocation || 'TBD'}\n\nEverything else stays the same:\nPackage: ${packageName || ''}\nGuest count: ${guestCount ?? ''}\nTotal: $${totalFormatted}\n${balanceLineText}\nLet me know if you have any questions or need to discuss anything.\n\nCheers, Dallas`,
   };
 }
 
@@ -668,13 +669,13 @@ function longLeadT30RecapClient({
   return {
     subject: `Three weeks out from your ${eventDateLocal} event`,
     html: wrapEmail(`
-      <p>Hi ${esc(first)}, your event is in about 3 weeks. Quick recap of what you've got teed up:</p>
+      <p>Hi ${esc(firstNameOf(first))}, your event is in about 3 weeks. Quick recap of what you've got teed up:</p>
       <p><strong>Drinks:</strong> ${esc(drinksSummary || 'Drink plan submitted')}</p>
       ${shoppingBlockHtml}
       <p>Anything change? Reply here.</p>
       <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${first}, your event is in about 3 weeks. Quick recap of what you've got teed up:\n\nDrinks: ${drinksSummary || 'Drink plan submitted'}\n${shoppingBlockText}\nAnything change? Reply here.\n\nCheers, Dallas`,
+    text: `Hi ${firstNameOf(first)}, your event is in about 3 weeks. Quick recap of what you've got teed up:\n\nDrinks: ${drinksSummary || 'Drink plan submitted'}\n${shoppingBlockText}\nAnything change? Reply here.\n\nCheers, Dallas`,
   };
 }
 
@@ -690,7 +691,7 @@ function longLeadT30RecapClient({
 function proposalSentParts({ clientName, eventTypeLabel = 'event', proposalUrl, planUrl }) {
   const name = clientName || 'there';
   const paragraphs = [
-    `Hi ${name},`,
+    `Hi ${firstNameOf(name)},`,
     `We've put together a proposal for your ${eventTypeLabel}. Take a look, review the details, and sign when you're ready.`,
     planUrl
       ? `We've also created a personalized drink planning questionnaire for your event. Use it to tell us your preferences: signature cocktails, mocktails, beer and wine, and everything in between. Plan your drinks here: ${planUrl}.`
@@ -710,7 +711,7 @@ function proposalSentParts({ clientName, eventTypeLabel = 'event', proposalUrl, 
 function proposalOptionsSentParts({ clientName, eventTypeLabel = 'event', compareUrl }) {
   const name = clientName || 'there';
   const paragraphs = [
-    `Hi ${name},`,
+    `Hi ${firstNameOf(name)},`,
     `We've put together a few options for your ${eventTypeLabel} so you can compare them side by side and pick the one that fits best.`,
     'When you find the one you like, choose it and sign right from that page. If you have any questions, just reply to this email.',
     'Cheers, Dallas',
@@ -748,7 +749,7 @@ function paymentReminderParts({ clientName, eventTypeLabel = 'event', balanceDue
     ? "We'll send a receipt once it's charged. Reply with any questions."
     : "If you've already taken care of this or have any questions, just reply to this email.";
   const paragraphs = [
-    `Hi ${name},`,
+    `Hi ${firstNameOf(name)},`,
     intro,
     cardLine,
     footer,
@@ -773,7 +774,7 @@ function paymentReminderParts({ clientName, eventTypeLabel = 'event', balanceDue
 function invoiceReadyParts({ clientName, eventTypeLabel = 'event', amountDue, invoiceUrl }) {
   const name = clientName || 'there';
   const paragraphs = [
-    `Hi ${name},`,
+    `Hi ${firstNameOf(name)},`,
     `Your invoice for your ${eventTypeLabel} is ready. Amount due: ${amountDue}.`,
     'Reach out with any questions, just reply to this email.',
     'Cheers, Dallas',

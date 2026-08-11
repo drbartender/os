@@ -1,4 +1,5 @@
 const { wrapEmail } = require('./emailTemplates');
+const { firstNameOf } = require('./firstName');
 
 function renderCcWrapUpEmail({ client, proposal }) {
   const firstName = String(client.name || '').split(' ')[0] || client.name || 'there';
@@ -16,7 +17,7 @@ function renderCcWrapUpEmail({ client, proposal }) {
     : '';
 
   const html = wrapEmail(`
-    <p>Hi ${firstName},</p>
+    <p>Hi ${firstNameOf(firstName)},</p>
     <p>Thank you for celebrating with us on ${eventDate}. We hope you had a great time!</p>
     ${reviewBlock}
     <p>We'd love your feedback, <a href="${feedbackUrl}">tell us how we did</a>.</p>
@@ -24,7 +25,7 @@ function renderCcWrapUpEmail({ client, proposal }) {
   `);
 
   const text = [
-    `Hi ${firstName},`,
+    `Hi ${firstNameOf(firstName)},`,
     ``,
     `Thank you for celebrating with us on ${eventDate}.`,
     reviewLink ? `\nLeave a Google review: ${reviewLink}` : '',
