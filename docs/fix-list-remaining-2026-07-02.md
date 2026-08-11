@@ -1009,10 +1009,16 @@ and the code already exists in voiceEscalate.js.
 Raw drop, verified against code before triage. Ordering below is the recommended build
 order.
 
-**STATUS 2026-08-11:** items 1, 3, 4, 5, 6 are BUILT on main (uncommitted at time of
-writing; suites + CI client build green). Item 1 is additionally LIVE on the box (agent
-service restarted onto it). Item 2 is NOT built, its mechanism did not survive scrutiny,
-see below. Item 7 is blocked on Dallas naming the new cap. Items 8-11 are unstarted.
+**STATUS 2026-08-11 (updated at the push):** items 1, 3, 4, 5, 6 are **LIVE IN PROD** —
+pushed 2026-08-11 in the 34-commit batch `e0f777b7..b27b6d4e`, behind the full push fleet
+(6 agents), a clean cross-LLM second opinion (codex + gemini both NO FINDINGS), all 42
+money-path smoke suites green against ci-smoke, and the CI client build. Item 1 was
+already live on the box before the push (agent-only change) and still owes its
+next-real-lead proof. Item 5 shipped with a fix the fleet caught pre-push: the greeting
+sweep would have dropped the partner for the 9 couple-named clients, closed in `dacd1619`
+(see item 21 below for the residual test-coverage gap). Item 2 is NOT built, its mechanism
+did not survive scrutiny, see below. Item 7 is blocked on Dallas naming the new cap.
+Items 8-11 are unstarted.
 
 ### P0 — live regression, costing leads right now
 
@@ -1236,6 +1242,13 @@ see below. Item 7 is blocked on Dallas naming the new cap. Items 8-11 are unstar
     loudly ALL the time. A permanently-red guard is a guard nobody reads, so the next
     genuinely missing index will land in the noise. Fix is to derive the expected arrays
     from the manifest instead of restating it, so adding an index can never redden it.
+    **CONFIRMED STALE FIXTURE ONLY, 2026-08-11** (database-review, push gate): no index is
+    genuinely missing. All four names in `CRITICAL_INDEXES` — `uq_invoice_payments_positive_link`,
+    `idx_duty_lines_event_kinds`, `idx_duty_lines_bounty`, `idx_duty_lines_contest` — were
+    verified present in the dev DB AND in prod. The suite is 3 pass / 2 fail, and the one
+    test that touches a real database is among the PASSES; both failures are the two
+    mock-driven tests whose expected arrays were frozen in the single-element era. So this
+    is cheap to close and carries no hidden DB problem behind it.
 
 14. **`balanceReminderScheduling.test.js` CDT case is red on main.** "summer (CDT) anchors
     each reminder to 10:00am Chicago = 15:00Z" asserts `actual: 0, expected: 1`. Also
@@ -1260,3 +1273,91 @@ see below. Item 7 is blocked on Dallas naming the new cap. Items 8-11 are unstar
     vendor. Pre-existing, unrelated to the listen link. The by-value span scrubbing added
     in `fb3a1e68` gives an obvious place to hang the fix: add the `api.twilio.com` media
     path shape to `scrubUrl` and it is covered on both pipelines at once.
+
+### Added 2026-08-11 (push gate on the 34-commit batch `e0f777b7..b27b6d4e`)
+
+Six-agent fleet plus cross-LLM second opinion (codex + gemini, both NO FINDINGS). Nothing
+below blocked the push; all six agents returned SAFE TO PUSH. Recorded here because the
+batch shipped and these did not.
+
+17. **`event.extra` is unscrubbed on BOTH Sentry hooks, and `server/index.js` puts a raw
+    request URL there.** (security-review, MED.) `sentryScrub.js` scrubs `request`,
+    `breadcrumbs`, `contexts.trace`, `tags.route`, `transaction`, and `spans`, and never
+    touches `event.extra`. Verified by executing both hooks against a synthetic event.
+    Live carrier: the global `fileUpload` middleware is registered before routing, so an
+    over-limit body on ANY path fires `limitHandler`, which calls
+    `Sentry.captureMessage('upload_limit_exceeded', { extra: { path: req.originalUrl } })`
+    — and `beforeSend` ships that URL verbatim. It is not only the voicemail token: the
+    same bypass carries `/t/<proposal-token>`, `/api/public/tip/<token>`, and
+    `/reset-password/<token>`.
+    NOT a live hole — the attacker must already hold the token, so it grants them nothing
+    new; what it does is widen that token's audience from one operator to everyone with
+    Sentry read access (org members, Seer, exports). That is precisely the property this
+    module exists to prevent, and this file has now leaked a token FOUR times across its
+    own review plus this one, each time through a channel no key list covered. Fix shape:
+    scrub `event.extra` by VALUE on both hooks, the same way the span attributes are done,
+    rather than naming another field. (Also worth deciding separately whether
+    `limitHandler` should be putting a full URL in telemetry at all.)
+
+18. **Three shadow `firstNameOf` implementations survived the greeting sweep.**
+    (consistency-check + code-review, MED.) `bbda4db2` deleted the local copy in
+    `server/utils/drinkPlanNudge.js` but left naive `split(/\s+/)[0]` copies in
+    `server/utils/comms/actions/drinkPlanNudge.js:128`,
+    `server/utils/comms/actions/drinkPlanNudgeReenroll.js:31`, and
+    `server/utils/preEventHandlers.js:41` (`marketingHandlers.js:42` is the fourth, named
+    as a known residual in the commit message; the other three were not). These feed
+    `clientFirstName` into templates that now re-apply the canonical title-aware helper,
+    so they stack: `"Dr. Monica Donnely"` → local naive returns `"Dr."` → `firstNameOf("Dr.")`
+    sees only a title → the email greets **"Hi there,"**. On the marketing path the
+    SUBJECT would read "Dr." while the body reads "there".
+    Latent today: 0 of 508 prod client names carry a leading title. But `ARCHITECTURE.md`
+    now states `firstNameOf()` is "the single source for the name in every 'Hi ...' line,"
+    which is not true while these three exist. Fix: delete all four locals and let the
+    templates narrow. They were left in place at the time to keep the change out of the
+    `*Handlers.js` sensitive path.
+    NOTE: the couples half of this family was FIXED pre-push in `dacd1619` — the helper now
+    preserves "Aubrey & Dominic" rather than dropping the partner for the 9 couple-named
+    client rows.
+
+19. **`GET /api/voice/vm/:token` has a per-IP limiter but no global or per-token ceiling,
+    and buffers the whole recording per request.** (performance-review, 2x MED.) The route
+    does have an inline `listenLimiter` (30/60s per IP) — it is not from `rateLimiters.js`,
+    which is why it does not grep as `publicLimiter`. What it lacks is the pattern this repo
+    already built for exactly this case: `venueSearchGlobalLimiter` (`rateLimiters.js:108-115`)
+    exists to stop IP rotation from multiplying a per-IP cap on a paid third-party resource.
+    `express-rate-limit` counts requests per window, not requests in flight, so all 30 of an
+    IP's budget can simultaneously hold a full mp3 buffer (`voicemail.js:216` does
+    `Buffer.from(await res.arrayBuffer())`) for up to the 10s abort timeout. At ~1MB peak
+    each that is ~30MB of heap per attacking IP; on a 512MB Render instance roughly 17
+    rotated IPs would OOM the process that serves the whole API.
+    Second half, same line: there is no cache, and `Cache-Control: no-store` means the
+    client can never produce the `If-None-Match`/`If-Range` the ETag code at `:136-165`
+    carefully reasons about — so that conditional path is effectively unreachable, and
+    iOS Safari's `bytes=0-1` probe-then-body pattern costs TWO full authenticated Twilio
+    downloads per playback, plus another per seek.
+    Requires a valid token to reach any of it, so this is hardening, not a live hole.
+
+20. **`client/src/utils/downloadFilename.js` is absent from `ARCHITECTURE.md`.**
+    (consistency-check, MED — the one real docs-law miss in the batch.) The docs table
+    requires a new util to be mentioned in ARCHITECTURE; it landed in the README tree only.
+    The file's own comment says a second private copy "is how two exports start disagreeing
+    about what a legal filename is," which is exactly what invisibility in the architecture
+    doc invites. One line.
+    Related, pre-existing and NOT caused by this batch: `PrivacyPage.js` and `TermsPage.js`
+    do not appear in `CLIENT_FACING_SURFACES.md`, a doc that bills itself as "a complete
+    map of every surface." They were absent before this batch and still are.
+
+21. **The greeting contract is pinned at one of ~50 template functions.** (code-review, MED.)
+    `comms.test.js:83-84` is a genuine contract change (it asserts both directions) but
+    covers only `shoppingListReadyParts`. The other greeting assertions in
+    `emailTemplates.parts.test.js`, `lifecycleEmailTemplates.test.js`, and
+    `remainingActions.test.js` all PREDATE the sweep and pass on paths that already narrowed
+    upstream. Consequence: reverting `firstNameOf` in `emailTemplates.js`,
+    `staffHiringEmailTemplates.js`, or `marketingEmailTemplates.js` — roughly 62 of the 100
+    sites — goes entirely undetected by CI.
+    PARTIALLY CLOSED 2026-08-11: `server/utils/firstName.test.js` now exists (19 tests,
+    added with the couples fix) and pins the HELPER's contract — couples, titles,
+    idempotency, empty and hostile input, non-ASCII, and the non-split of names that merely
+    contain the joiner letters. What is still unpinned is the APPLICATION of it at the ~100
+    call sites. The cheap version is one rendered-output assertion per template FILE rather
+    than per function.
