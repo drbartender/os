@@ -87,7 +87,7 @@ beforeEach(() => {
     // succeeds. Individual tests override to exercise the other branches.
     claimMissedCall: async (args) => { calls.claims.push(args); return true; },
     countVoicemailsSince: async () => 0,
-    claimDelivery: async (args) => { calls.deliveryClaims.push(args); return { fromE164: '+13125550147', line: 'zul' }; },
+    claimDelivery: async (args) => { calls.deliveryClaims.push(args); return { fromE164: '+13125550147', line: 'zul', listenToken: '11111111-2222-4333-8444-555555555555' }; },
     markDelivery: async (args) => { calls.marks.push(args); },
     deleteRecording: async (sid) => { calls.deletes.push(sid); return true; },
     isRecordingSid: (v) => typeof v === 'string' && /^RE[0-9a-f]{32}$/.test(v),
@@ -1022,4 +1022,17 @@ test('an unsigned flood cannot consume the primary forward budget (signature run
   assert.strictEqual(res.status, 200);
   assert.match(res.text, /<Dial/, 'a signed call after the flood must still ring through');
   assert.doesNotMatch(res.text, /All lines are busy/);
+});
+
+test('/inbound/voicemail passes the row listen token into the delivery job', async () => {
+  const jobs = [];
+  router.__setVoiceDeps({
+    claimDelivery: async () => ({ fromE164: '+13125550147', line: 'primary', listenToken: '11111111-2222-4333-8444-555555555555' }),
+    deliverVoicemail: async (job) => { jobs.push(job); return 'delivered'; },
+  });
+  await post('/api/voice/inbound/voicemail', {
+    CallSid: cs('CAdel5'), RecordingSid: GOOD_RE, RecordingStatus: 'completed', RecordingDuration: '11',
+  });
+  await settle();
+  assert.equal(jobs[0].listenToken, '11111111-2222-4333-8444-555555555555');
 });

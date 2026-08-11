@@ -639,10 +639,10 @@ async function claimVoicemail(body) {
     console.log(`[voice/voicemail] delivery already claimed or unknown call ${tail}`);
     return null;
   }
-  return { callSid, recordingSid, durationSec, fromE164: claim.fromE164, line: claim.line, tail };
+  return { callSid, recordingSid, durationSec, fromE164: claim.fromE164, line: claim.line, listenToken: claim.listenToken, tail };
 }
 
-async function deliverClaimedVoicemail({ callSid, recordingSid, durationSec, fromE164, line, tail }) {
+async function deliverClaimedVoicemail({ callSid, recordingSid, durationSec, fromE164, line, listenToken, tail }) {
   // A recording Twilio reported as 0 or 1 seconds is a robocall or a hangup on
   // the beep, and is safe to drop: she already has the ping with the number.
   // An ABSENT or unparseable duration is NOT that. It means "unknown", and
@@ -671,7 +671,7 @@ async function deliverClaimedVoicemail({ callSid, recordingSid, durationSec, fro
   // Duplicating it here is what let the sweep collapse a gated send into a
   // permanent failure.
   const outcome = await _deps.deliverVoicemail({
-    callSid, recordingSid, durationSec, fromE164, line, chatId: allowed,
+    callSid, recordingSid, durationSec, fromE164, line, listenToken, chatId: allowed,
   });
 
   // Failure alerts go to the LINE'S OWNER (utils/voicemail.js alertOperator).

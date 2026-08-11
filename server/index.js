@@ -1,39 +1,19 @@
 require('dotenv').config();
 const Sentry = require('@sentry/node');
 
+const { scrubErrorEvent, scrubTransactionEvent } = require('./utils/sentryScrub');
+
 if (process.env.SENTRY_DSN_SERVER) {
   Sentry.init({
     dsn: process.env.SENTRY_DSN_SERVER,
     environment: process.env.NODE_ENV || 'development',
     tracesSampleRate: 0.1,
-    beforeSend(event) {
-      // Redact request body (passwords, tokens, PII)
-      if (event.request?.data) event.request.data = '[redacted]';
-
-      // Redact public token segments and query-string tokens from URLs
-      const scrubUrl = (u) => {
-        if (!u) return u;
-        return String(u)
-          .replace(/\/t\/[^/?#]+/g, '/t/[redacted]')
-          .replace(/\/api\/public\/tip\/[^/?#]+/g, '/api/public/tip/[redacted]')
-          .replace(/\/tip\/[^/?#]+/g, '/tip/[redacted]')
-          .replace(/\/unsubscribe\/[^/?#]+/g, '/unsubscribe/[redacted]')
-          .replace(/\/reset-password\/[^/?#]+/g, '/reset-password/[redacted]')
-          .replace(/[?&]token=[^&]+/g, (m) => m[0] + 'token=[redacted]');
-      };
-      if (event.request?.url) event.request.url = scrubUrl(event.request.url);
-      if (event.request?.query_string) {
-        event.request.query_string = String(event.request.query_string).replace(/token=[^&]+/g, 'token=[redacted]');
-      }
-
-      // Drop request headers entirely — default scrub list misses x-thumbtack-secret etc.
-      if (event.request) delete event.request.headers;
-
-      // Scrub the route tag we set in the global error handler too
-      if (event.tags?.route) event.tags.route = scrubUrl(event.tags.route);
-
-      return event;
-    },
+    // Both pipelines, deliberately: beforeSend is ERROR-only, and a sampled
+    // transaction carries the URL in span attributes an error never has.
+    // Logic lives in utils/sentryScrub.js so it can be tested; this file
+    // starts the app on require. See that file's header.
+    beforeSend: scrubErrorEvent,
+    beforeSendTransaction: scrubTransactionEvent,
   });
   console.log('Sentry server SDK initialized');
 }
@@ -396,6 +376,7 @@ app.use('/api/sms', require('./routes/sms'));
 app.use('/api/telegram', require('./routes/telegram'));
 app.use('/api/voice/lead', require('./routes/voiceLeadCall')); // more specific mount first
 app.use('/api/voice/escalate', require('./routes/voiceEscalate')); // ditto, before /api/voice
+app.use('/api/voice/vm', require('./routes/voicemailListen')); // ditto
 app.use('/api/voice', require('./routes/voice'));
 app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/service-extensions', require('./routes/serviceExtensions'));

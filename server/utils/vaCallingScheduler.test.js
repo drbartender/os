@@ -245,6 +245,7 @@ function vmRow(over) {
     recording_sid: 'RE' + 'a'.repeat(32),
     duration_sec: 9,
     attempts: 1,
+    listen_token: '11111111-2222-4333-8444-555555555555',
     ...over,
   };
 }
@@ -607,4 +608,36 @@ test('sweep SQL: a row whose attempts moved under it is skipped, not re-delivere
   } finally {
     await pool.query('DELETE FROM voicemail_delivery WHERE call_sid LIKE $1', [`${VMPREFIX}%`]);
   }
+});
+
+test('reapUndeliveredVoicemails carries the row listen token into the job', async () => {
+  process.env.TELEGRAM_ALLOWED_USER_ID = '5550001';
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  const jobs = [];
+  __setDeps({
+    notificationsEnabled: () => true,
+    pool: sweepPool(vmRow({ line: 'primary' })),
+    deliverVoicemail: async (job) => { jobs.push(job); return 'delivered'; },
+  });
+  await reapUndeliveredVoicemails();
+  assert.equal(jobs[0].listenToken, '11111111-2222-4333-8444-555555555555',
+    'a redelivered alert links to the same recording, not a fresh token');
+});
+
+test('the give-up alert carries NO listen link', async () => {
+  // 'failed' rows are RETAINED past the prune, so a token distributed here
+  // would outlive the 30-day bound the route enforces.
+  process.env.TELEGRAM_ALLOWED_USER_ID = '5550001';
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  const alerts = [];
+  __setDeps({
+    notificationsEnabled: () => true,
+    pool: sweepPool(vmRow({ line: 'primary' }), { postBumpAttempts: 99 }),
+    deliverVoicemail: async () => 'failed',
+    alertOperator: async (args) => { alerts.push(args); },
+  });
+  await reapUndeliveredVoicemails();
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].listenToken, undefined);
+  assert.doesNotMatch(alerts[0].text, /\/api\/voice\/vm/);
 });

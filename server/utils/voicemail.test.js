@@ -56,7 +56,9 @@ test('claimDelivery returns the caller number once, then null', async () => {
   await vm.claimMissedCall({ callSid: sid(3), fromE164: '+13125550147' });
   const first = await vm.claimDelivery({ callSid: sid(3), recordingSid: 'RE' + 'a'.repeat(32), durationSec: 12 });
   const second = await vm.claimDelivery({ callSid: sid(3), recordingSid: 'RE' + 'a'.repeat(32), durationSec: 12 });
-  assert.deepEqual(first, { fromE164: '+13125550147', line: 'zul' });
+  assert.equal(first.fromE164, '+13125550147');
+  assert.equal(first.line, 'zul');
+  assert.match(first.listenToken, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   assert.equal(second, null);
 });
 
@@ -296,7 +298,9 @@ test('claimDelivery returns the line alongside the caller number', async () => {
   await vm.claimMissedCall({ callSid: sid(49), fromE164: '+13125550147', line: 'primary' });
   vm.__setVoicemailDeps(deliverDeps({}));
   const claim = await vm.claimDelivery({ callSid: sid(49), recordingSid: GOOD_SID, durationSec: 9 });
-  assert.deepEqual(claim, { fromE164: '+13125550147', line: 'primary' });
+  assert.equal(claim.fromE164, '+13125550147');
+  assert.equal(claim.line, 'primary');
+  assert.match(claim.listenToken, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 });
 
 test('deliverVoicemail on the zul line uploads audio to Telegram, never SMS', async () => {
@@ -523,4 +527,156 @@ test('alertOperator never throws: missing destination, missing chat id, failing 
   vm.__setVoicemailDeps({ sendTelegramMessage: async () => { throw new Error('down'); } });
   await vm.alertOperator({ line: 'zul', chatId: '5550001', text: 'x', tail: 't' });
   delete process.env.VM_TEXT_DESTINATION;
+});
+
+// ── listen link primitives (spec 2026-08-10) ────────────────────────────────
+
+test('fetchRecordingMp3Once does NOT retry and surfaces the status', async () => {
+  const savedSid = process.env.TWILIO_ACCOUNT_SID;
+  process.env.TWILIO_ACCOUNT_SID = 'ACtest0000000000000000000000000000';
+  let calls = 0;
+  try {
+    vm.__setVoicemailDeps({
+      fetch: async () => { calls += 1; return { ok: false, status: 404 }; },
+    });
+    await assert.rejects(
+      () => vm.fetchRecordingMp3Once(GOOD_SID),
+      (err) => err.status === 404
+    );
+    assert.equal(calls, 1, 'a person is waiting; one attempt only');
+  } finally {
+    if (savedSid === undefined) delete process.env.TWILIO_ACCOUNT_SID;
+    else process.env.TWILIO_ACCOUNT_SID = savedSid;
+    vm.__setVoicemailDeps({ fetch: (...a) => globalThis.fetch(...a) });
+  }
+});
+
+test('fetchRecordingMp3Once returns the bytes on success', async () => {
+  const savedSid = process.env.TWILIO_ACCOUNT_SID;
+  process.env.TWILIO_ACCOUNT_SID = 'ACtest0000000000000000000000000000';
+  try {
+    vm.__setVoicemailDeps({
+      fetch: async () => ({ ok: true, arrayBuffer: async () => new TextEncoder().encode('ID3listen').buffer }),
+    });
+    const buf = await vm.fetchRecordingMp3Once(GOOD_SID);
+    assert.equal(buf.toString(), 'ID3listen');
+  } finally {
+    if (savedSid === undefined) delete process.env.TWILIO_ACCOUNT_SID;
+    else process.env.TWILIO_ACCOUNT_SID = savedSid;
+    vm.__setVoicemailDeps({ fetch: (...a) => globalThis.fetch(...a) });
+  }
+});
+
+test('fetchRecordingMp3 propagates a network failure instead of flattening it', async () => {
+  // The extraction must not turn "DNS failed" or "timed out" into "failed (0)".
+  try {
+    vm.__setVoicemailDeps({
+      fetchRecordingMp3Once: async () => { throw new Error('ETIMEDOUT reaching api.twilio.com'); },
+      sleep: async () => {},
+    });
+    await assert.rejects(() => vm.fetchRecordingMp3(GOOD_SID), /ETIMEDOUT/);
+  } finally {
+    vm.__setVoicemailDeps({
+      fetchRecordingMp3Once: (...a) => vm.fetchRecordingMp3Once(...a),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    });
+  }
+});
+
+test('fetchRecordingMp3 still makes three attempts on a 404', async () => {
+  // `fetch` is stubbed too even though this drives the seam one level up: in a
+  // RED phase where fetchRecordingMp3 still reads _deps.fetch directly, an
+  // unstubbed fetch makes real authenticated GETs to api.twilio.com.
+  let calls = 0;
+  try {
+    vm.__setVoicemailDeps({
+      fetch: async () => ({ ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) }),
+      fetchRecordingMp3Once: async () => { calls += 1; const e = new Error('404'); e.status = 404; throw e; },
+      sleep: async () => {},
+    });
+    await assert.rejects(() => vm.fetchRecordingMp3(GOOD_SID));
+    assert.equal(calls, 3);
+  } finally {
+    vm.__setVoicemailDeps({
+      fetch: (...a) => globalThis.fetch(...a),
+      fetchRecordingMp3Once: (...a) => vm.fetchRecordingMp3Once(...a),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    });
+  }
+});
+
+test('listenLinkEnabled defaults ON and only the literal false disables it', () => {
+  delete process.env.VM_LISTEN_LINK_ENABLED;
+  assert.equal(vm.listenLinkEnabled(), true);
+  process.env.VM_LISTEN_LINK_ENABLED = 'true';
+  assert.equal(vm.listenLinkEnabled(), true);
+  process.env.VM_LISTEN_LINK_ENABLED = 'no';
+  assert.equal(vm.listenLinkEnabled(), true, 'only the exact string false disables it');
+  process.env.VM_LISTEN_LINK_ENABLED = 'false';
+  assert.equal(vm.listenLinkEnabled(), false);
+  delete process.env.VM_LISTEN_LINK_ENABLED;
+});
+
+test('primaryAlertText appends the listen link when a token is present', () => {
+  const body = vm.primaryAlertText({
+    fromE164: '+13125550147', durationSec: 9,
+    listenToken: '11111111-2222-4333-8444-555555555555',
+  });
+  assert.match(body, /\/api\/voice\/vm\/11111111-2222-4333-8444-555555555555$/,
+    'the link is the LAST line, so it stays tappable in a phone client');
+  const hits = body.match(/11111111-2222-4333-8444-555555555555/g) || [];
+  assert.equal(hits.length, 1, 'the token appears exactly once');
+});
+
+test('primaryAlertText omits the link rather than emitting a broken one', () => {
+  const body = vm.primaryAlertText({ fromE164: '+13125550147', durationSec: 9 });
+  assert.doesNotMatch(body, /\/api\/voice\/vm/);
+  assert.doesNotMatch(body, /undefined|null/);
+  assert.match(body, /^New voicemail on the business line \(9s\), .+\.\n\+13125550147$/);
+});
+
+test('the kill switch drops the link line, not just the route', async () => {
+  const sent = { sms: [] };
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  process.env.VM_LISTEN_LINK_ENABLED = 'false';
+  try {
+    await vm.claimMissedCall({ callSid: sid(61), fromE164: '+13125550147', line: 'primary' });
+    vm.__setVoicemailDeps({
+      notificationsEnabled: () => true,
+      client: { recordings: () => ({ remove: async () => true }) },
+      fetchRecordingMp3: async () => Buffer.from('ID3'),
+      sendSMS: async (args) => { sent.sms.push(args); return { sid: 'SM8' }; },
+    });
+    await vm.deliverVoicemail({
+      callSid: sid(61), recordingSid: 'RE' + '8'.repeat(32), durationSec: 6,
+      fromE164: '+13125550147', chatId: null, line: 'primary',
+      listenToken: '11111111-2222-4333-8444-555555555555',
+    });
+    assert.equal(sent.sms.length, 1);
+    assert.doesNotMatch(sent.sms[0].body, /\/api\/voice\/vm/);
+  } finally {
+    delete process.env.VM_LISTEN_LINK_ENABLED;
+  }
+});
+
+test("the delivered alert carries the row's own token, read back with the claim", async () => {
+  const sent = { sms: [] };
+  process.env.VM_TEXT_DESTINATION = '+13125889401';
+  await vm.claimMissedCall({ callSid: sid(60), fromE164: '+13125550147', line: 'primary' });
+  const claim = await vm.claimDelivery({
+    callSid: sid(60), recordingSid: 'RE' + '9'.repeat(32), durationSec: 6,
+  });
+  assert.match(claim.listenToken, /^[0-9a-f-]{36}$/, 'claimDelivery reads the token back');
+  vm.__setVoicemailDeps({
+    notificationsEnabled: () => true,
+    client: { recordings: () => ({ remove: async () => true }) },
+    fetchRecordingMp3: async () => Buffer.from('ID3'),
+    sendSMS: async (args) => { sent.sms.push(args); return { sid: 'SM9' }; },
+  });
+  await vm.deliverVoicemail({
+    callSid: sid(60), recordingSid: 'RE' + '9'.repeat(32), durationSec: 6,
+    fromE164: claim.fromE164, chatId: null, line: claim.line, listenToken: claim.listenToken,
+  });
+  assert.equal(sent.sms.length, 1);
+  assert.match(sent.sms[0].body, new RegExp(`/api/voice/vm/${claim.listenToken}$`));
 });

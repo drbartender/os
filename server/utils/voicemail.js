@@ -18,6 +18,7 @@ const { notificationsEnabled } = require('./notificationsEnabled');
 const { sendTelegramAudio, sendTelegramMessage } = require('./telegram');
 const { sendSMS } = require('./sms');
 const { resolveLine, E164_RE } = require('./voicemailLine');
+const { API_URL } = require('./urls');
 
 // Twilio recording SIDs are 'RE' + 32 lowercase hex. Anchored, so nothing with a
 // path separator, a scheme, or a traversal segment can pass.
@@ -44,6 +45,7 @@ let _deps = {
   sendTelegramMessage: (...args) => sendTelegramMessage(...args),
   sendSMS: (...args) => sendSMS(...args),
   fetchRecordingMp3: (...args) => fetchRecordingMp3(...args),
+  fetchRecordingMp3Once: (...args) => fetchRecordingMp3Once(...args),
   fetch: (...args) => globalThis.fetch(...args),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
 };
@@ -99,8 +101,8 @@ async function countVoicemailsSince(hours) {
  * duplicate re-enter delivery on a row the scheduler's sweep already owns (the
  * sweep queries voicemail_delivery directly and never calls this).
  *
- * @returns {Promise<{fromE164: string|null, line: 'primary'|'zul'}|null>} null
- *   if already claimed, or if the call was never registered as missed.
+ * @returns {Promise<{fromE164: string|null, line: 'primary'|'zul', listenToken: string}|null>}
+ *   null if already claimed, or if the call was never registered as missed.
  */
 async function claimDelivery({ callSid, recordingSid, durationSec }) {
   const { rows } = await _deps.pool.query(
@@ -111,10 +113,12 @@ async function claimDelivery({ callSid, recordingSid, durationSec }) {
             attempts = attempts + 1
       WHERE call_sid = $3
         AND status = 'missed'
-      RETURNING from_e164, line`,
+      RETURNING from_e164, line, listen_token`,
     [recordingSid, Number.isFinite(durationSec) ? durationSec : null, callSid]
   );
-  return rows.length > 0 ? { fromE164: rows[0].from_e164, line: rows[0].line } : null;
+  return rows.length > 0
+    ? { fromE164: rows[0].from_e164, line: rows[0].line, listenToken: rows[0].listen_token }
+    : null;
 }
 
 /**
@@ -165,23 +169,61 @@ function recordingMediaUrl(recordingSid) {
  * the caller can take the failure path (keep the recording, alert).
  */
 async function fetchRecordingMp3(recordingSid) {
+  let lastStatus = 0;
+  for (let attempt = 1; attempt <= MEDIA_FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      return await _deps.fetchRecordingMp3Once(recordingSid);
+    } catch (err) {
+      // No `.status` means the request never got a response at all: a network
+      // failure, the AbortSignal timeout, or a malformed SID / unset account
+      // SID from recordingMediaUrl. Propagate THAT error rather than
+      // flattening it into "failed (0)", or a DNS outage, a timeout, and a
+      // missing env var become indistinguishable in the logs. Only an HTTP
+      // status reaches the retry policy below.
+      if (!err.status) throw err;
+      lastStatus = err.status;
+      if (lastStatus !== 404) break;
+      if (attempt < MEDIA_FETCH_ATTEMPTS) await _deps.sleep(MEDIA_RETRY_BACKOFF_MS * attempt);
+    }
+  }
+  throw new Error(`recording fetch failed (${lastStatus}) sid=...${String(recordingSid).slice(-4)}`);
+}
+
+/**
+ * ONE authenticated GET for a recording's mp3. The single place the account
+ * credentials are assembled into a media request, which is part of why this
+ * file is on scripts/sensitive-paths.txt. Throws with `.status` set so callers
+ * can distinguish "gone" (404) from "our problem" (anything else).
+ *
+ * The listen route uses this directly rather than the retrying wrapper above:
+ * a person is waiting on that HTTP response, and a missing recording is a
+ * final answer, not a transient.
+ */
+async function fetchRecordingMp3Once(recordingSid) {
   const url = recordingMediaUrl(recordingSid);
   const auth = 'Basic ' + Buffer.from(
     `${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`
   ).toString('base64');
-
-  let lastStatus = 0;
-  for (let attempt = 1; attempt <= MEDIA_FETCH_ATTEMPTS; attempt += 1) {
-    const res = await _deps.fetch(url, {
-      headers: { Authorization: auth },
-      signal: AbortSignal.timeout(MEDIA_FETCH_TIMEOUT_MS),
-    });
-    if (res.ok) return Buffer.from(await res.arrayBuffer());
-    lastStatus = res.status;
-    if (res.status !== 404) break;
-    if (attempt < MEDIA_FETCH_ATTEMPTS) await _deps.sleep(MEDIA_RETRY_BACKOFF_MS * attempt);
+  const res = await _deps.fetch(url, {
+    headers: { Authorization: auth },
+    signal: AbortSignal.timeout(MEDIA_FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    const err = new Error(`recording fetch failed (${res.status}) sid=...${String(recordingSid).slice(-4)}`);
+    err.status = res.status;
+    throw err;
   }
-  throw new Error(`recording fetch failed (${lastStatus}) sid=...${String(recordingSid).slice(-4)}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+/**
+ * Listen-link master switch, default ON. TWO-SIDED by contract: off must both
+ * close GET /api/voice/vm/:token AND stop the alert SMS from carrying a link.
+ * Defined here, beside the delivery path, and imported by the route, so the two
+ * sides cannot drift apart and leave a dead URL in a client-facing alert.
+ */
+function listenLinkEnabled() {
+  return process.env.VM_LISTEN_LINK_ENABLED !== 'false';
 }
 
 /**
@@ -229,12 +271,26 @@ function chicagoStamp(d = new Date()) {
  * long body would split into multiple billed segments and may be truncated. The
  * caller number is the payload that matters, and it sits on its own line so it
  * stays tappable and copy-pasteable on a phone.
+ *
+ * The listen link (spec 2026-08-10) deliberately spends the second segment: a
+ * fraction of a cent against an alert that otherwise announces a message
+ * without offering any way to hear it. It is appended only when the caller
+ * passes a token AND listenLinkEnabled(), so the kill switch cannot strand a
+ * dead URL in a text that has already been sent.
  */
-function primaryAlertText({ fromE164, durationSec, redelivered = false }) {
+function primaryAlertText({ fromE164, durationSec, redelivered = false, listenToken = null }) {
   const who = fromE164 || 'a withheld number';
   const secs = Number.isFinite(durationSec) ? `${durationSec}s` : 'unknown length';
   const redo = redelivered ? ' (redelivered)' : '';
-  return `New voicemail on the business line (${secs})${redo}, ${chicagoStamp()}.\n${who}`;
+  // The link goes LAST so phone clients linkify it cleanly. It is omitted when
+  // there is no token OR when the switch is off: a broken or dead URL in an
+  // alert is worse than no URL, because it reads as a bug in the voicemail.
+  // This is the SMS half of the two-sided VM_LISTEN_LINK_ENABLED contract; the
+  // route half is in routes/voicemailListen.js, and both call the same function.
+  const listen = (listenToken && listenLinkEnabled())
+    ? `\n${API_URL}/api/voice/vm/${listenToken}`
+    : '';
+  return `New voicemail on the business line (${secs})${redo}, ${chicagoStamp()}.\n${who}${listen}`;
 }
 
 /**
@@ -281,9 +337,10 @@ async function alertOperator({ line, chatId, text, tail }) {
  * The three outcomes are NOT interchangeable and must never be collapsed:
  *   'delivered'   the send succeeded. On the ZUL line this is the only case
  *                 that deletes the Twilio recording; the PRIMARY line retains
- *                 it in Phase 1a (the text carries only number and duration,
- *                 and the console holds the only copy of the content until
- *                 1b's R2 copy).
+ *                 it (the alert now carries a listen link, but that link
+ *                 STREAMS FROM TWILIO, so Twilio still holds the only copy of
+ *                 the audio until 1b's R2 copy: deleting would break every
+ *                 link already sent).
  *   'skipped'     gated off / channel unconfigured. Not success, not failure.
  *                 Keeps the recording, must not page anyone, must stay
  *                 retryable.
@@ -297,7 +354,7 @@ async function alertOperator({ line, chatId, text, tail }) {
  *
  * @returns {Promise<'delivered'|'skipped'|'failed'|'unfetchable'>}
  */
-async function deliverVoicemail({ callSid, recordingSid, durationSec, fromE164, chatId, line = 'zul', redelivered = false }) {
+async function deliverVoicemail({ callSid, recordingSid, durationSec, fromE164, chatId, line = 'zul', listenToken = null, redelivered = false }) {
   const tail = `sid=...${String(callSid || '').slice(-4)}`;
   const who = fromE164 || 'a withheld number';
 
@@ -305,9 +362,12 @@ async function deliverVoicemail({ callSid, recordingSid, durationSec, fromE164, 
   // shipped 2026-07-24); Dallas's go to his phone as a text, because that is
   // where he actually looks. `line` defaults to 'zul' so an older caller cannot
   // land a primary voicemail in Zul's Telegram by omission: the default is the
-  // pre-1a behavior. The primary branch runs BEFORE the media fetch: in Phase
-  // 1a its whole payload is the number and duration, so a transient media 404
-  // must not turn a deliverable text into 'unfetchable'.
+  // pre-1a behavior. The primary branch runs BEFORE the media fetch, and must
+  // stay there: its payload is the number, the duration, and a listen link, none
+  // of which need the audio BYTES (the duration comes from the webhook body,
+  // the number and token from the row), so a
+  // transient media 404 must not turn a deliverable text into 'unfetchable'.
+  // (The link resolves the media later, when the operator actually taps it.)
   if (resolveLine(line) === 'primary') {
     const to = String(process.env.VM_TEXT_DESTINATION || '').trim();
     if (!E164_RE.test(to)) {
@@ -329,7 +389,7 @@ async function deliverVoicemail({ callSid, recordingSid, durationSec, fromE164, 
       // failure path below. Treat a 21610 on this destination as an incident.
       sms = await _deps.sendSMS({
         to,
-        body: primaryAlertText({ fromE164, durationSec, redelivered }),
+        body: primaryAlertText({ fromE164, durationSec, redelivered, listenToken }),
         meta: { skipLog: true, messageType: 'voicemail_alert' },
       });
     } catch (err) {
@@ -365,12 +425,12 @@ async function deliverVoicemail({ callSid, recordingSid, durationSec, fromE164, 
       return 'skipped';
     }
 
-    // The recording is deliberately KEPT on the primary line in Phase 1a. The
-    // text delivers only the number and duration; the message CONTENT exists
-    // nowhere but the Twilio console until 1b's R2 copy and listen link, and
-    // the spec's delete rationale ("redelivery re-fetches from R2") does not
-    // hold yet. Deleting here would destroy a lead's actual words after
-    // telling the owner only that they exist. Cost: audio lingers in Twilio
+    // The recording is deliberately KEPT on the primary line. The alert now
+    // carries a listen link (spec 2026-08-10), but that link streams from
+    // TWILIO: this recording is still the only copy of the message until 1b's
+    // R2 copy, and the spec's delete rationale ("redelivery re-fetches from
+    // R2") does not hold yet. Deleting here would now break every listen link
+    // already sent as well as destroying a lead's actual words. Cost: audio lingers in Twilio
     // (trivial storage, real PII) until 1b's purge; the row prune can outlive
     // the pointer. Zul's line still deletes, because her audio was delivered.
     await markDelivery({ callSid, status: 'delivered' });
@@ -421,6 +481,11 @@ module.exports = {
   isRecordingSid,
   recordingMediaUrl,
   fetchRecordingMp3,
+  fetchRecordingMp3Once,
+  listenLinkEnabled,
+  // Pure formatter, exported for its own tests: the SMS body is the feature's
+  // only client-facing surface and its copy is worth pinning directly.
+  primaryAlertText,
   deleteRecording,
   __setVoicemailDeps,
 };

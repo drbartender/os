@@ -196,7 +196,7 @@ async function reapUndeliveredVoicemails() {
   if (deliverableLines.length === 0 || !deps.notificationsEnabled()) return 0;
 
   const { rows } = await deps.pool.query(
-    `SELECT call_sid, from_e164, recording_sid, duration_sec, attempts, line
+    `SELECT call_sid, from_e164, recording_sid, duration_sec, attempts, line, listen_token
        FROM voicemail_delivery
       WHERE status IN ('recorded', 'failed')
         AND recording_sid IS NOT NULL
@@ -254,6 +254,7 @@ async function reapUndeliveredVoicemails() {
         // Without this, a stuck primary row would redeliver to Zul's Telegram:
         // the wrong person gets a client's voicemail.
         line: row.line,
+        listenToken: row.listen_token,
         chatId: allowed,
         redelivered: true,
       });
@@ -287,6 +288,18 @@ async function reapUndeliveredVoicemails() {
     if (attempts > VM_MAX_ATTEMPTS) {
       // Line-aware: the give-up alert goes to the row's OWNER, same rule as the
       // route's failure alerts (utils/voicemail.js alertOperator).
+      // Deliberately NO listen link here, and the rationale first written on
+      // this line was backwards, so it is corrected rather than trimmed. It
+      // claimed a token from this path could outlive the route's 30-day bound.
+      // It cannot: the route re-reads `created_at > NOW() - '30 days'` on every
+      // request, and the sweep only selects rows younger than VM_SWEEP_MAX_AGE
+      // (14 days), so any link here would have roughly two weeks left.
+      // The real reason is the opposite one. Reaching this branch means
+      // delivery has failed repeatedly and the only remaining move is pulling
+      // the audio by hand in the Twilio console, where the retained 'failed'
+      // row keeps it available indefinitely. A link would expire while that
+      // audio is still sitting there, and would offer a second thing to try at
+      // the moment the message most needs to give exactly one instruction.
       await deps.alertOperator({
         line: row.line, chatId: allowed, tail,
         text: `A voicemail from ${who} could not be delivered after several tries. It is still in the Twilio console and needs to be pulled by hand.`,

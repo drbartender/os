@@ -3789,6 +3789,26 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_voicemail_delivery_escalated_at
   ON voicemail_delivery (escalated_at) WHERE escalated_at IS NOT NULL;
 
+-- Listen link (spec 2026-08-10). The alert SMS carries only the caller's number,
+-- so the message CONTENT is unreachable without opening the Twilio console. This
+-- token is the public handle for the retained recording: GET /api/voice/vm/:token
+-- streams it. UUID (not a sequential id) because the token IS the auth. Note
+-- this is NOT the proposals/invoices precedent: those documents belong to the
+-- recipient, so a leak exposes only their own. Here the audio belongs to a
+-- THIRD PARTY, and what makes a bare token acceptable is that the link is only
+-- ever sent to VM_TEXT_DESTINATION, an operator who can already hear every
+-- voicemail in the Twilio console. Revisit if that stops being true.
+--
+-- DEFAULT gen_random_uuid() is also the backfill: every existing row gets a token
+-- the moment the column is added, so nothing generates one in application code and
+-- no separate UPDATE is needed. Built into Postgres 13+; prod is 17.
+ALTER TABLE voicemail_delivery
+  ADD COLUMN IF NOT EXISTS listen_token UUID NOT NULL DEFAULT gen_random_uuid();
+-- UNIQUE because the token is a lookup key on a public route: a duplicate would
+-- make one URL ambiguous between two clients' recordings.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_voicemail_delivery_listen_token
+  ON voicemail_delivery (listen_token);
+
 -- ── Proposal option groups ("compare your options") ──────────────────────────
 -- A group bundles two or three sibling proposal "options" behind one public
 -- /compare/:token link. Each option stays a full proposals row; the group owns

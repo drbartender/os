@@ -82,6 +82,16 @@ server/utils/voicemailLine.js
 server/utils/voicemailTwiml.js
 server/utils/voicemailEscalation.js
 server/routes/voiceEscalate.js
+# The listen link (2026-08-10): a PUBLIC route that streams a client's recorded
+# voice to whoever holds the token, using the account credentials server-side.
+server/routes/voicemailListen.js
+# sentryScrub.js is the ONLY thing keeping public tokens, request bodies, and
+# auth headers out of a third-party vendor. It leaked a live listen token THREE
+# times during the 2026-08-11 review: a missing `/api/voice/vm/` path shape on
+# an error-only hook, then the span attributes (which no hook touched), then a
+# bare `url` key the OTel bridge derives that no key list covered. A change here
+# is a data-exposure change even when it reads as a one-line refactor.
+server/utils/sentryScrub.js
 # pendingCall.js owns the VA-calling claim-then-call primitives, the DB-backed
 # outbound spend-cap count, and the voicemail ledger prune. Matched no glob for
 # the same reason as the two above.

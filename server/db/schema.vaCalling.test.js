@@ -210,7 +210,7 @@ dbTest('voicemail_delivery exists with the expected columns', async () => {
   assert.deepEqual(rows.map((r) => r.column_name), [
     'attempts', 'call_sid', 'created_at', 'delivered_at',
     'duration_sec', 'escalated_at', 'escalation_accepted_at', 'escalation_outcome',
-    'from_e164', 'line', 'recording_sid', 'status',
+    'from_e164', 'line', 'listen_token', 'recording_sid', 'status',
   ]);
   const byName = Object.fromEntries(rows.map((r) => [r.column_name, r]));
   assert.equal(byName.call_sid.is_nullable, 'NO');
@@ -302,5 +302,74 @@ dbTest('the escalation_outcome CHECK rejects an off-list value', async () => {
       `INSERT INTO voicemail_delivery (call_sid, escalation_outcome) VALUES ('TEST_VM_badoutcome', 'banana')`
     ),
     /voicemail_delivery_esc_outcome_check/
+  );
+});
+
+// ── voicemail_delivery listen link (spec 2026-08-10) ────────────────────────
+
+test('voicemail_delivery carries the listen_token idempotently', () => {
+  assert.match(schemaSql, /ADD COLUMN IF NOT EXISTS listen_token UUID NOT NULL DEFAULT gen_random_uuid\(\)/);
+  assert.match(schemaSql, /uq_voicemail_delivery_listen_token/);
+});
+
+test('the listen_token DDL is inside the slice the suite actually applies', () => {
+  // Same guard as the `line` column above: a block appended BELOW the slice
+  // boundary would make the catalog tests pass only because someone ran initDb
+  // by hand.
+  assert.match(vaCallingDdl(), /ADD COLUMN IF NOT EXISTS listen_token UUID NOT NULL/);
+});
+
+dbTest('listen_token is NOT NULL, defaulted, and unique', async () => {
+  const { rows } = await pool.query(
+    `SELECT is_nullable, column_default, data_type
+       FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'voicemail_delivery'
+        AND column_name = 'listen_token'`
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].is_nullable, 'NO');
+  assert.equal(rows[0].data_type, 'uuid');
+  assert.match(rows[0].column_default, /gen_random_uuid/);
+
+  const { rows: idx } = await pool.query(
+    `SELECT indexdef FROM pg_indexes
+      WHERE schemaname = 'public' AND indexname = 'uq_voicemail_delivery_listen_token'`
+  );
+  assert.equal(idx.length, 1);
+  assert.match(idx[0].indexdef, /UNIQUE/);
+  // Pin the COLUMN too: a copy-paste slip that indexed call_sid instead would
+  // satisfy a bare /UNIQUE/ check while leaving the token unconstrained, and a
+  // duplicate token makes one public URL ambiguous between two clients.
+  assert.match(idx[0].indexdef, /\(listen_token\)/);
+});
+
+dbTest('a new row is born with a token nobody had to generate', async () => {
+  // ON CONFLICT so an aborted run cannot strand the PK and 23505 every later
+  // run on the shared dev DB (uq_call_audit_dead_leg has the same exposure).
+  await pool.query(
+    `INSERT INTO voicemail_delivery (call_sid, line) VALUES ('TEST_VM_token1', 'primary')
+     ON CONFLICT (call_sid) DO NOTHING`
+  );
+  const { rows } = await pool.query(
+    `SELECT listen_token FROM voicemail_delivery WHERE call_sid = 'TEST_VM_token1'`
+  );
+  assert.match(rows[0].listen_token, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+});
+
+dbTest('the unique index actually rejects a duplicate token', async () => {
+  // Catalog shape is not enforcement: prove it the way uq_call_audit_dead_leg does.
+  await pool.query(
+    `INSERT INTO voicemail_delivery (call_sid, line) VALUES ('TEST_VM_token2', 'primary')
+     ON CONFLICT (call_sid) DO NOTHING`
+  );
+  const { rows } = await pool.query(
+    `SELECT listen_token FROM voicemail_delivery WHERE call_sid = 'TEST_VM_token2'`
+  );
+  await assert.rejects(
+    () => pool.query(
+      `INSERT INTO voicemail_delivery (call_sid, line, listen_token) VALUES ('TEST_VM_token3', 'primary', $1)`,
+      [rows[0].listen_token]
+    ),
+    /duplicate key value|unique constraint/i
   );
 });
