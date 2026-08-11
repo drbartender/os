@@ -347,7 +347,7 @@ dr-bartender/
 │   │   ├── emailSequenceScheduler.js # Drip sequence step processor (every 15 min)
 │   │   ├── emailTemplates.js   # Email template helpers (transactional + marketing)
 │   │   ├── emailValidation.js  # Warn-only typo-domain heuristic (flags a domain one edit from a common TLD/provider); client twin kept in manual sync
-│   │   ├── firstName.js        # firstNameOf: the name to greet someone by; single source for every "Hi ..." across all templates (title-aware, idempotent)
+│   │   ├── firstName.js        # firstNameOf: the name to greet someone by; single source for every "Hi ..." across all templates (title-aware, couple-aware, idempotent)
 │   │   ├── icsCalendar.js      # iCalendar VEVENT renderer for booking-confirmation .ics attachments
 │   │   ├── encryption.js       # AES-256-GCM wrapper for bank PII at rest (fails closed in prod)
 │   │   ├── errors.js           # AppError class hierarchy (ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError, PaymentError)
