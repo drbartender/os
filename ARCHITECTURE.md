@@ -1732,6 +1732,7 @@ The Check Cherry import landed several skip gates and best-effort hooks across t
 - **Webhooks**: `server/routes/emailMarketingWebhook.js` — receives tracking events (sent/delivered/opened/clicked/bounced/complained), verified via `svix`
 - **Scheduler**: `server/utils/emailSequenceScheduler.js` — processes drip sequence steps every 15 minutes
 - **Templates**: `server/utils/emailTemplates.js` — `wrapEmail()` for transactional, `wrapMarketingEmail()` for marketing (includes unsubscribe link). Application status progression sends `applicationInterviewInvite`, `applicationHired`, `applicationRejected`, `applicationDeactivated` (admin's optional personal note is `esc()`-d into a styled block; user-supplied names are also `esc()`-d in HTML bodies). `applicationReceivedConfirmation` is sent only at submission time, not on admin status reverts.
+- **Greetings**: `server/utils/firstName.js` — `firstNameOf()` is the single source for the name in every "Hi ..." line across all 10 template files (client- and staff-facing). Title-aware (shares the `TITLES` set with `staffDisplayName.js`, so "Dr. Monica Donnely" greets as "Monica") and idempotent, so it is safe at a site whose input may already be a first name. Apply it AT the greeting, never at the `const name =` above it: several of those variables also feed admin-facing copy that must keep the full name.
 
 ### Twilio (SMS)
 - **Wrapper**: `server/utils/sms.js` (includes `normalizePhone()` for E.164 formatting)

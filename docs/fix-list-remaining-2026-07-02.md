@@ -1007,7 +1007,12 @@ and the code already exists in voiceEscalate.js.
 ## Dallas fix-list drop 2026-08-10 (11 items, triaged)
 
 Raw drop, verified against code before triage. Ordering below is the recommended build
-order. Nothing here is built yet.
+order.
+
+**STATUS 2026-08-11:** items 1, 3, 4, 5, 6 are BUILT on main (uncommitted at time of
+writing; suites + CI client build green). Item 1 is additionally LIVE on the box (agent
+service restarted onto it). Item 2 is NOT built, its mechanism did not survive scrutiny,
+see below. Item 7 is blocked on Dallas naming the new cap. Items 8-11 are unstarted.
 
 ### P0 — live regression, costing leads right now
 
@@ -1033,26 +1038,39 @@ order. Nothing here is built yet.
    `boxText === ''` send-verify law is unchanged and becomes the thing that proves it.
    Agent-only change (box), no server change, no push required to test.
    See [[project-tt-auto-first-reply]].
+   **BUILT + LIVE 2026-08-11.** `clearComposer()` added next to `composerText()` (both now
+   share one `composerBox()` locator so the read path and the clear path cannot drift),
+   and `clearAiDraft` falls through to it when `pickByLabelPriority` finds no Clear
+   control. The read-twice empty proof and the strict `boxText === ''` send verify are
+   untouched, so the guarantee is unchanged; only the means of getting there is cheaper.
+   Agent tests 8/8; service restarted 05:24Z on the new code (journal 19 ids intact,
+   nothing was in flight). PROOF STILL OWED: the next real lead.
 
 ### P1 — data loss and wrong-on-its-face output
 
 2. **Adding a client: picking "Other" for Source navigates away and drops the
-   in-progress client (ROOT CAUSE CONFIRMED, and it is not really about "Other").**
-   `ClickableRow` (`client/src/components/ClickableRow.js:37`) activates on **mouseUp**.
-   The add-client form sits directly above the clients table in
-   `client/src/pages/admin/ClientsDashboard.js`. A native `<select>` popup opens on
-   mousedown and the mouseUp that picks the option lands on whatever is underneath the
-   popup, which is a table row, so `ClickableRow` navigates to `/clients/:id` and the
-   unsaved form unmounts. `other` is the LAST entry in the `SOURCE` map (line 18), so its
-   popup row sits furthest down and reliably overlaps row 1, which under the default
-   `recent` sort is the most recently added client. That is exactly what Dallas saw.
-   The kebab cell already carries the workaround (`onMouseUp={ev => ev.stopPropagation()}`,
-   line 231), which is the tell.
-   Fix candidates: (a) require that mouseDown AND mouseUp both landed on the row before
-   activating (ClickableRow already stashes `pressRef` on mousedown for its drag check,
-   so this is close to free and fixes every select/menu on every list page at once);
-   (b) local-only, move the create form below the table or into a modal. (a) is the real
-   fix. Verify on Linux Chromium, that is where the popup passthrough shows up.
+   in-progress client. MECHANISM NOT YET ESTABLISHED — needs a live repro.**
+   The obvious suspect does NOT hold up. `ClickableRow`
+   (`client/src/components/ClickableRow.js`) does activate on **mouseUp** (line 37) and
+   the add-client form does sit directly above the table in
+   `client/src/pages/admin/ClientsDashboard.js`, which suggested a native `<select>`
+   popup passing its mouseUp through to the row underneath. But `onMouseDown` (line 32)
+   stashes `pressRef` per row, and `onMouseUp` returns immediately when it is null
+   (line 40). A mousedown on the select above the table sets no row's `pressRef`, so a
+   stray mouseUp on a row should be a no-op. Line 46 additionally bails when the event
+   target is inside `button, a, input, select, textarea, [role="button"]`. So the row
+   already defends against the story that fits the symptom, and the real path is
+   something else.
+   Other candidates not yet ruled out: the `<select>` sits inside the `<form>`, so a
+   keyboard-committed choice could submit; `RowLink`/`EntityLink` anchors inside the row
+   are separate activation paths; or the click landed on a row's Source chip rather than
+   the dropdown (row 1 under the default `recent` sort IS the most recently added
+   client, which matches the symptom exactly).
+   NOT reproducible via Playwright: a native select popup is an out-of-DOM widget that
+   automation cannot drive, so this needs Dallas to reproduce it once with devtools open,
+   or a temporary listener logging mousedown/mouseup/click targets plus navigation.
+   Ask him: did he click the option with the mouse or commit it with the keyboard, and
+   did the form disappear at the moment of the click or on submit?
 
 3. **Staff-portal recipes render `· [object Object]` (ROOT CAUSE CONFIRMED).**
    `cocktails.ingredients` / `mocktails.ingredients` are JSONB arrays of OBJECTS
@@ -1070,6 +1088,13 @@ order. Nothing here is built yet.
    coercion over `customCocktails[].ingredients`. Those are believed to be strings from
    the consult form, but if a custom recipe ever arrives object-shaped it would poison a
    real shopping list. Confirm the shape before deciding whether it needs the same guard.
+   **BUILT 2026-08-11.** Shape confirmed against the dev DB: rows are
+   `{ingredient, amount, unit, note?}`. New `ingredientParts()` in BeoSections.js
+   normalizes object OR string rows to `{qty, name}`; `unit: 'each'` drops the unit so a
+   card reads "2 Strawberries" not "2 each Strawberries", and `note` renders in parens.
+   Every row now goes through the aligned two-span markup (the old string fallback used a
+   bare `· ` line), which `.sp-drink-ings-qty { min-width: 56px }` already columnizes.
+   The shoppingList.js custom-drink coercion is still UNCHECKED.
 
 ### P2 — cheap, high friction-per-line
 
@@ -1082,6 +1107,11 @@ order. Nothing here is built yet.
    candidate names rather than just user ids (the ambiguous alert at line 671 prints bare
    `user ids`, which is the same complaint one level down). Fold the whole file's alert
    copy in one pass.
+   **BUILT 2026-08-11.** New `describeStaff(userIds)` helper labels ids as
+   "Display Name (user N)", preferring display_name then preferred_name then email, and
+   degrading to the bare "user N" it replaced on any failure so an alert can never be
+   lost to the lookup. Applied to all four alerts (ambiguous, CANT-no-shift, CANT-race,
+   freeform); each now also carries the sender's number. Suite 42/42.
 
 5. **Message greetings should be first name only.** "Hi Monica Donnely," reads wrong.
    The codebase already has first-name handling in at least six places
@@ -1092,11 +1122,31 @@ order. Nothing here is built yet.
    `firstNameOf` helper applied at every `Hi ${name}` site, plus dedup of the five
    near-identical local copies. Touches a lot of template lines but is behavior-inert
    otherwise. Watch the SMS templates too.
+   **BUILT 2026-08-11.** New `server/utils/firstName.js` exporting `firstNameOf`, which
+   reuses the `TITLES` set from staffDisplayName.js rather than duplicating that judgment,
+   so "Dr. Monica Donnely" greets as "Monica" and a name that is ONLY a title falls to
+   "there". Applied at all 100 greeting sites across 10 template files as
+   `Hi ${firstNameOf(x)}` / `Hi ${esc(firstNameOf(x))}`. Deliberately wrapped AT the
+   greeting rather than at each `const name =`, because several of those same `name`
+   variables feed admin-facing copy ("A client ...") that must keep the full name.
+   The helper is idempotent, which also closed a latent bug: `first` was
+   `clientFirstName || clientName || 'there'`, so it silently fell back to the FULL name
+   whenever clientFirstName was absent. Removed the duplicate local helper in
+   drinkPlanNudge.js (it collided with the import). SMS templates have zero greetings.
+   Suites green: emailTemplates.parts 12, lifecycle 8, marketing 21, smsTemplates 34,
+   comms 8 (one assertion updated to pin the new contract), drinkPlanNudge 9,
+   preEventHandlers 15, staffDisplayName 24, beoHandlers 21. CI client build exit 0.
+   RESIDUAL: the local firstName helpers in marketingHandlers.js / preEventHandlers.js
+   are now redundant (their output gets re-narrowed idempotently). Left in place to keep
+   this change out of the *Handlers.js sensitive path; fold them in a later pass.
 
 6. **Guest count at the top of the event details page.** `EventDetailPage.js:501` already
    renders `{guest_count} guests · {hours}hr`, but gated on `event_duration_hours` also
    being non-null and sitting below the fold. Surface guest count in the header block
    independently of duration.
+   **BUILT 2026-08-11.** Appended to the header date/time line, gated only on
+   `guest_count != null`, so it reads "Sat, Aug 16 · setup 4:00 PM · service 5-10 PM ·
+   120 guests". The pricing-card copy is left alone.
 
 7. **Alternatives: allow more than 3 options.** Cap is `MAX_OPTIONS = 3` in
    `server/utils/proposalGroups.js:14` (enforced at line 82) with a client mirror,
