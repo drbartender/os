@@ -1,124 +1,194 @@
-# Marketing Campaigns (Hand-Picked Recipients, Designed Emails)
+# Marketing Section Redesign
 
 **Date:** 2026-08-11
-**Status:** Approved (section-by-section, 2026-08-11 brainstorm). **Rewritten same day** after the design-stage fleet returned 9 blockers against the first draft: Dallas cut scope to manual, non-recurring sends, which removes the dispatcher architecture that generated most of them. The compliance and file-size findings survive the cut and are folded in below.
+**Status:** Approved (section-by-section, 2026-08-11 brainstorm). **Third revision.** Draft 1 (dispatcher-based multi-day sends) drew 9 fleet blockers. Draft 2 (hand-picked manual sends) drew 12 more and became phase 2 of this document. Dallas then took the whole section to claude.ai/design and approved the returned IA, which supersedes both drafts.
+
+**Design source:** claude.ai/design project `c41f6ef1-f03b-4a0e-84b9-de533b8af077`, file `Marketing - Redesign.dc.html`. Local copy at `docs/design-artifacts/2026-08-11-marketing-redesign.dc.html`. Design system: Dr. Bartender OS (`72035042-c993-47e2-9dc8-c452b7bf5fa4`), After Hours dark / House Lights light.
 
 ## 1. Problem
 
-Dallas wants to solicit repeat business, corporate first, by sending designed emails to hand-picked past clients and cold leads. He is fine with the email marketing section as it exists. He wants to choose the contacts for each campaign and send.
+The Marketing section is scaffolding for a product nobody uses. Its four tabs (Leads, Campaigns, Analytics, Conversations) are all organized around `email_leads`, a table with 15 rows of which 4 are real people, the rest being duplicates of existing clients, two internal test accounts, `test@drbartender.com`, and one typo'd dead address. The audience query is hardcoded at `emailMarketing.js:457`. One marketing email has ever been sent.
 
-Two facts make this necessary rather than cosmetic.
+The real contact base is in `clients` and the section cannot see it: 233 people have paid, 188 quoted and never booked, ~400 reachable by email. Nobody has ever asked a past client for a second event. Of every client on a company email domain with a booked proposal, exactly one has more than one event date, and those two dates are consecutive.
 
-**The blast tool is pointed at an empty table.** `server/routes/emailMarketing.js` has campaigns, a block builder, analytics, unsubscribe, and a Resend webhook. Its audience is hardcoded at `emailMarketing.js:457` to `SELECT id, email, name FROM email_leads WHERE status = 'active'`. `email_leads` holds 15 rows, of which 9 already exist as clients, 2 are internal test accounts, 1 is `test@drbartender.com`, and 1 is a typo'd dead address, leaving 4 real people. Lifetime sends through this engine: 1.
+The deeper problem is that the section is organized around tools rather than around a job. The redesign reorganizes it around occasions that repeat.
 
-**The real audience is in `clients` and cannot be reached.** 49 clients with a booked proposal, 184 imported from Check Cherry (all mailable, all `marketing_enabled: true`), 198 who quoted and never booked. Roughly 233 people have paid Dr. Bartender and roughly 188 asked and walked. Nobody has ever asked any of them for a second event: of every client on a company email domain with a booked proposal, exactly one has more than one event date, and those two dates are consecutive.
+## 2. The information architecture
 
-**The picker pattern already exists but is wired to the wrong things.** `EmailCampaignDetail.js:41` sends a blast with no request body, so it fires at the whole targeted lead set with no selection. A contact picker sits at `:108`, wired to `/enroll` for sequences, over `email_leads`.
+Four tabs replace the old four: **Overview** (default), **Audiences**, **Compose**, **Sent**, plus a primary "New send" action. Page subtitle is live: "Tuesday, August 11 · 3 moments open · 66 sends left today".
 
-## 2. Scope
+**"Campaign" is no longer the primary object. "Moment" is.** Overview leads with moments open now, each carrying a closing window, an audience, a headcount, and authored reasoning. Its action is "Review recipients", which opens Compose with the audience already resolved. The screen answers "what should I do today" rather than "here is a list of things you made".
 
-**Manual, non-recurring sends only.** Dallas picks the recipients for each campaign and presses send. No automation, no recurrence, no scheduling, no saved audiences.
+## 3. Build order
 
-**Explicitly not built:** the scheduled-message dispatcher path, saved segment definitions, daily send budgets, multi-day deferral, recurring or triggered campaigns, extending `retention_nudge` to the Check Cherry cohort, the ~970 Check Cherry dead-quote addresses, recovering Check Cherry event types, A/B testing, SMS, email visual design (Dallas is taking that to claude.ai/design), and a corporate landing page (decided: corporate traffic routes to the existing quote wizard).
+Driven by a date. The design's first moment reads "Holiday parties are booked in September. Send by Sep 5." Three things must exist for that send to leave safely: corporate clients tagged, an email composed, and a send that cannot damage the invoice channel. Nothing else is on the critical path.
 
-The `email_leads` sequence engine stays untouched and still paused. Its legacy all-leads send path is addressed in section 6.
+- **Phase 1, the spine.** Tags, the Do-not-contact backing, the audience resolver, the Audiences tab, the contact drawer, and the client-keyed comms view. Unblocks Dallas to start classifying 184 contacts by hand while phase 2 is built.
+- **Phase 2, sending.** Compose, send, and the compliance and safety fixes that must ship with it. Gets the September send out.
+- **Phase 3, the payoff.** Overview with moments, the year-honestly numbers, the Needs You queue, and Sent with booked attribution.
 
-## 3. Suppression: two independent gates
+## 4. Phase 1: tags, suppression, resolver, contacts
 
-**Gate 1, the client's own voice, exists and does not change.** `communication_preferences.marketing_enabled` is flipped false by the unsubscribe route (`emailMarketing.js:955-966`, already correct for the `{clientId, marketing}` token shape) and honored by `scheduledMessageDispatcher.js:514` and `channelFallback.js:48`. Nothing in this feature may set it back to true. Verified during review: no code path in the repo currently can. Keep it that way, with a regression test.
+### 4.1 Tags
 
-**Gate 2, the house rule, is new.** `clients.marketing_excluded BOOLEAN NOT NULL DEFAULT false`, plus `marketing_excluded_reason TEXT`, `marketing_excluded_at TIMESTAMPTZ`, `marketing_excluded_by INTEGER REFERENCES users(id)`. Reason is required when setting, enforced server-side. **Marketing only** (Dallas's explicit decision): an excluded client who books still receives proposals, invoices, and every operational message.
+A general multi-tag system on clients, not a corporate boolean. The design's vocabulary is a fixed enum: **Corporate, Wedding, Birthday, Graduation, Thumbtack, Do not contact**. Contacts carry several at once.
 
-Gate 2 needs a dedicated endpoint. `PUT /api/clients/:id` (`clients.js:121-150`) destructures a fixed 5-field body and updates via `COALESCE($n, col)`, where null means "leave unchanged", so it structurally cannot clear the flag or null the reason. Write `marketing_excluded_by = req.user.id` and log to `admin_audit_log`.
+Alongside human tags the UI shows **derived states** that are computed, never stored: `Paid client`, `Quoted only`, `Untagged`. Untagged means no human has ever set a tag, which is distinct from "tagged as not corporate".
 
-**A third check, added by the fleet:** the mailability test must also honor `communication_preferences.email_enabled`, not only `marketing_enabled`. The first draft omitted it.
+Tags are edited inline in the contact table. Per the design's own copy: "Click any tag cell to change it. Edits save to the contact, not the audience."
 
-**Because sends are one-shot, there is no enqueue-versus-delivery gap.** Both gates and the deliverability checks are evaluated once, at send time, against the live rows. This is the main thing the scope cut bought.
+**Corporate must be human-set, never inferred.** Measured across every client with a proposal:
 
-**Not built: temporary event-scoped suppression.** The one historical instance was Luva Dorris (client 1651), a Check Cherry event transferred in on 2026-07-14 for an event on 2026-07-18, where Dallas killed automated comms so os would not duplicate messaging she had already received in Check Cherry. He retired it himself on 2026-08-06: "her event is over, none of this matters. If she does another event we'll want to send her all the things." Her row correctly reads all channels enabled. She is a target, not an exclusion.
+| | corporate events only | personal events only |
+|---|---|---|
+| company email domain | 16 | 10 |
+| free mail domain | 14 | 119 |
 
-## 4. The recipient picker
+Of the 30 clients who have booked corporate work, 14 used a personal address; one is a community college booking from a gmail account. Of the 26 on company domains, 10 were booking their own weddings and birthdays. The domain heuristic is close to a coin flip in both directions and is disqualified as a classifier.
 
-One screen, three parts, and a basket.
+It survives as a **suggestion**. A contact carries suggestion text with its reasoning ("Booked a 180-guest event at a college address. Looks corporate.") and a one-click apply. Suggestions are computed from event history and domain together, are never auto-applied, and disappear once a human sets any tag.
 
-**Filters** narrow the candidate list: booked versus quoted-never-booked, months since last event, lifetime spend, `clients.source`, and a corporate flag. The corporate flag is an email-domain proxy, verified against real bookings (salesforce.com, mizkan.com, arthrex-chicago.com, omgorange.com, ima.global, wi-tronix.com, marxadvisory.com, sandowdesign.com, hoodieanalytics.com, harriscollect.com, esmproducts.com, lmhexperiences.com, rsbarcelona.com). `clients` has no company column; any address not on a consumer mail provider counts as corporate.
+### 4.2 Do not contact
 
-**A search box** finds any contact by name or email regardless of the active filter, so anyone can be added without first constructing a filter that reaches them.
+Displayed as a tag, backed by dedicated columns. It is the only tag whose accidental removal results in emailing someone who explicitly asked not to be emailed, so it does not behave like a free-text label.
 
-**The basket is independent of the filter view.** Selections persist across filter changes, clears, and searches. Filter to corporate, check eight, clear the filter, search a name, add them, and the original eight remain. The basket shows a running count with a remove per row, and the basket is what sends. If a filter reset wiped selections the feature would be useless; this is the load-bearing behavior.
+`clients.marketing_excluded BOOLEAN NOT NULL DEFAULT false`, `marketing_excluded_reason TEXT`, `marketing_excluded_at TIMESTAMPTZ`, `marketing_excluded_by INTEGER REFERENCES users(id)`. Setting it requires a reason, enforced server-side. Removing it takes a confirmation, not a click. Every other tag stays cheap and freely editable.
 
-**Select-all-matching** applies to the current filtered set and adds to the basket rather than replacing it.
+**Marketing only** (Dallas's explicit decision). An excluded client who books still receives proposals, invoices, and every operational message.
 
-**Suppressed people never appear.** Anyone unsubscribed, `marketing_excluded`, `email_enabled: false`, missing an email, or with `email_status = 'bad'` is absent from both the filtered list and the search results. There is no path where a person who should not be emailed can be checked.
+It needs a dedicated endpoint. `PUT /api/clients/:id` (`clients.js:121-150`) destructures a fixed 5-field body and updates via `COALESCE($n, col)`, where null means "leave unchanged", so it structurally cannot clear the flag or null the reason. Audit to `admin_audit_log` with the client id in `metadata` and `target_user_id` NULL, since that column FKs to `users` (`schema.sql:2532`) and a client is not a user.
 
-**Rows show why they qualified**: booked or quoted, months since last event, lifetime spend, corporate flag. This is derived data the resolver returns alongside membership, not a separate query.
+**Not built: temporary event-scoped suppression.** The one historical instance was Luva Dorris (client 1651), a Check Cherry event transferred in 2026-07-14 for an event on 2026-07-18, where automated comms were killed so os would not duplicate messaging she had already received in Check Cherry. Dallas retired it himself on 2026-08-06: "her event is over, none of this matters. If she does another event we'll want to send her all the things." Her row correctly reads all channels enabled. She is a target, not an exclusion.
 
-**Data notes for the filters.** Check Cherry history comes from `legacy_cc_proposals`, joined on `lower(clients.email) = legacy_cc_proposals.client_email_normalized`, **not** on `client_id`, which is populated on only 197 of its 1,230 rows. Do not parse the `clients.notes` blurb. Event type is deliberately absent from the filter set: `legacy_cc_proposals.event_type` is NULL on all 1,230 rows and `package_name` / `service_name` describe the bar package, not the occasion, so an event-type filter would silently exclude the entire Check Cherry cohort. Normalize event-type casing anywhere `proposals.event_type` is read, since the import left both `corporate-event` and `Corporate Event`. Dedupe by lowercased email, since the same person can hold more than one client row (Ali Smith appears twice).
+### 4.3 The audience resolver
 
-**Empty, loading, and error states** are required on the picker: a filter matching nobody, a search returning nothing, an in-flight resolve, and a failed resolve with a retry.
+One server-side module, named and shared, that every path goes through: audience previews, counts, the recipient list, and the send itself. No client-side reimplementation of the filters.
 
-## 5. The send
+**Mailability is a single predicate.** A contact is mailable only when `marketing_enabled` is not false, `email_enabled` is not false, `marketing_excluded` is false, `email` is present and non-empty, `email_status` is not `'bad'`, the address is not an `emailValidation.isPlaceholderEmail` `.invalid` placeholder, and no `email_leads` row for the same address is `unsubscribed`. That last one matters because 9 of the 15 leads are also clients.
 
-`POST /email-marketing/campaigns/:id/send` accepts `client_ids` and sends the campaign's designed body to exactly those clients. The composer is unchanged: the block builder under `client/src/components/emailBuilder/`, plus the **server-side** `emailDesign.js` and `emailBlockRenderer.js`. Nothing here changes how an email looks.
+`communication_preferences` keys are tri-state in practice: every existing check in the codebase is `prefs.x === false`, and an absent key means enabled. SQL must match that, not `= true`.
 
-**Sends are paced, not concurrent.** The current `sendBlastEmails` (`emailMarketing.js:508`) fires 100 Resend calls at once via `Promise.all`. Even a 40-person list would trip Resend's rate limit. Replace with a serial loop and a small inter-send delay.
+**Suppression is visible, not silent.** An "Always held back" panel shows counts by reason (Do not contact, Unsubscribed, Bounced), and the pre-send screen repeats it. Held-back people never appear in a recipient list.
 
-**Quota behavior is not what the first draft claimed.** `email.js:81-86` already detects Resend quota rejection and throws `QuotaExceededError`; it does not fail silently. But only the dispatcher and `adminNotifications.js` handle it, so every direct `sendEmail` on a money path takes an unhandled throw to a 500. Consequences for this feature: the picker displays the selected count against the 100/day free-tier ceiling and warns above a threshold, and the send loop catches `QuotaExceededError`, stops, and reports how many were sent and who remains, rather than continuing to hammer an exhausted quota. Widening quota handling on the money paths is a real problem but a separate one, recorded in section 9.
+**Audiences are saved rule definitions**, re-resolved every time. The design ships seven: Past clients / corporate, Past clients / everyone, One year on (last event 11-13 months ago), Cold quotes / spring, Quoted never booked, Thumbtack in conversation, and Never classified. Each carries a human-readable rule string and an `includes` list of its criteria, both shown in the UI.
 
-**Per-recipient unsubscribe** uses the `{clientId, marketing: true}` JWT already built in `marketingHandlers.js:51-62`, signed with `UNSUBSCRIBE_SECRET || JWT_SECRET`, 365-day expiry. The unsubscribe route already branches correctly on this shape. Add a `typ` claim so payload shape is not the only thing separating token families.
+**Data notes.** Check Cherry history joins from `legacy_cc_proposals` on `lower(clients.email) = client_email_normalized`, **not** on `client_id`, which is populated on only 197 of its 1,230 rows. Money units differ across the two sources and must be normalized: `proposals.total_price` and `amount_paid` are `NUMERIC(10,2)` **dollars** (units legend at `schema.sql:575`), while `legacy_cc_proposals.total_cost_cents` and `package_amount_cents` are **cents**. A naive lifetime-spend SUM floats the entire 184-person Check Cherry cohort to the top at 100x. Normalize event-type casing everywhere `proposals.event_type` is read, since the import left both `corporate-event` and `Corporate Event`. Dedupe by lowercased email in the resolver **and** on the send, since one person can hold more than one client row.
 
-**Recording.** `email_sends` gains `client_id INTEGER REFERENCES clients(id)`, and `lead_id` (currently `NOT NULL`) is relaxed to nullable with a CHECK that exactly one of the two is set, mirroring how `message_log.client_id` was relaxed at `schema.sql:3564-3580`. A campaign then shows its own send history: who received it, when, and delivery status from the existing Resend webhook.
+### 4.4 Contacts surface
 
-**Not written to `message_log`.** `message_log.proposal_id` is `INTEGER NOT NULL` (`schema.sql:3542`) and `logClientMessage` returns early without one (`messageLog.js:88`), so the 254 proposal-less clients and the Check Cherry cohort would log nothing, while clients who do have proposals would have the blast silently filed against an unrelated recent event. `email_sends` is the record for campaigns. A client-keyed comms view that surfaces campaign history on the client record is worth doing later and is recorded in section 9.
+A table of contact, marketing tags, last event, lifetime, last contacted, with quick filters (All 421, Untagged 184, Corporate 30, Do not contact 4) and inline tag editing. Pagination or virtualization is required; the candidate list is ~700 rows and the only existing precedent (`AudienceSelector.js:29`) hard-codes `limit: 500` with no pagination and would silently truncate.
 
-**Auth.** Every route in `emailMarketing.js` uses `requireAdminOrManager`. Send and the exclusion endpoints must be **admin only**, named explicitly, so a manager cannot blast the client list or clear house-rule exclusions.
+A contact drawer shows tags, event history with dates and amounts, source, lifetime value, and **every message that contact has received, automated ones included and marked as such**. This is load-bearing rather than nice-to-have: the design's promise that automations "show up on the contact's record so you never double-tap someone" rests entirely on it.
 
-## 6. Compliance and correctness fixes that survive the scope cut
+That view cannot be built on `message_log`. `message_log.proposal_id` is `INTEGER NOT NULL` (`schema.sql:3542`) and `logClientMessage` returns early without one (`messageLog.js:88`), so the 254 proposal-less clients and the Check Cherry cohort log nothing, while clients who do have proposals get sends filed against an unrelated recent event. The contact history is a union over `message_log`, `scheduled_messages` (for automated marketing and lifecycle touches), and `email_sends` (for campaigns).
 
-These were fleet blockers against the first draft and are not made moot by manual sending.
+## 5. Phase 2: compose and send
 
-**Postal address in the footer.** `wrapMarketingEmail` (`emailTemplates.js:439-462`) renders only `Dr. Bartender &middot; drbartender.com` plus the unsubscribe link. CAN-SPAM requires a valid physical postal address in every commercial message. One line in the footer. **Dallas must supply the address to use** (see section 9).
+### 5.1 Compose
 
-**Unsubscribe must not be a bare GET.** `emailMarketing.js:940` flips the preference on GET with no confirmation, and the flip is deliberately irreversible. The audience for this feature is corporate work addresses, and corporate link scanners (Defender Safe Links, Proofpoint, Mimecast) prefetch inbound links, so a scanner can permanently destroy a client's marketing channel with no human involvement. Change to a confirmation page that renders on GET and performs the flip on POST, per RFC 8058. The existing `{leadId}` branch gets the same treatment.
+Three steps: **Design → Recipients → Send**.
 
-**Retire the legacy all-leads send path.** `POST /campaigns/:id/send` with no body currently blasts every active lead. Once the route takes `client_ids`, an empty body must be rejected rather than falling back to the old behavior, or a stray click sends to whatever `email_leads` happens to contain.
+Design reuses the existing block palette (`client/src/components/emailBuilder/`, plus the **server-side** `emailDesign.js` and `emailBlockRenderer.js`): Logo bar, Hero image, Heading, Text, Button, Divider, Image + text, Spacer, Footer. A per-block Format panel adds bold/italic/underline, size, alignment, line height, tracking, text color, padding, background, duplicate, move, delete.
 
-**Test send.** The existing test path stamps `token=preview` into the unsubscribe URL, which 400s on click. Either mint a real token for the test recipient or render the footer link as visibly inert; do not ship a preview that misrepresents the real email.
+New scope the current composer does not have: a **Look panel** with theme presets, heading and body font pickers, an accent color, and corner style (square / soft / pill). Brand kit is the default and every send starts there.
+
+Recipients shows the resolved list with tags and per-person Remove. Removals apply to that send only and write nothing to the contact.
+
+Send is a confirmation screen: recipient count, the daily budget broken into transactional versus this send, the held-back list, "Send test to me", and a send button reading "Send to N people. Goes out at once. No scheduling yet."
+
+### 5.2 The send itself
+
+`POST /email-marketing/campaigns/:id/send` takes `client_ids`.
+
+**Backgrounded, with a durable record.** The current route responds before sending and runs `sendBlastEmails(...).catch(console.error)` (`emailMarketing.js:493`), keeping progress only in a loop variable. That stays backgrounded, but every recipient's outcome is written to `email_sends` as it happens, so a mid-send restart leaves a queryable record of who was reached and who was not, and the campaign's status reflects reality rather than being stuck at `sending`.
+
+**Paced, not concurrent.** `sendBlastEmails` currently fires 100 Resend calls at once via `Promise.all`. Replace with a serial loop and an inter-send delay. Per CLAUDE.md's one-pooled-connection rule, the loop's per-recipient writes are autocommit and must not run inside a held `pool.connect()` client.
+
+**Send-once guard.** The route validates only `type === 'blast'`, `subject`, and `html_body`; it never reads `campaign.status`. A double-click, a retry, or a second tab re-blasts the list. Add a status precondition under `FOR UPDATE`.
+
+**Quota handling, corrected twice.** `email.js:25-38` `isQuotaError` matches any 429 **or rate-limit** response, so a serial loop trips its own quota-abort on Resend's per-second throttle. Distinguish a transient rate-limit (back off and continue) from a genuine daily-quota exhaustion (stop, record, report). Do not treat every 429 as terminal.
+
+**Recording.** `email_sends` gains `client_id INTEGER REFERENCES clients(id)`, `lead_id` (currently `NOT NULL`, `schema.sql:1601`) is relaxed to nullable, and a CHECK requires exactly one recipient key. The FK's `ON DELETE` rule and that CHECK interact: `SET NULL` would violate the CHECK, and bare `NO ACTION` blocks the orphan-client delete `calcom.js:315` performs live. Resolve by making the CHECK tolerate a fully-detached row (both keys null = an orphaned historical send) and using `ON DELETE SET NULL` on both FKs.
+
+**Consumers of the changed table** must be swept: the campaign send-history query INNER JOINs `email_leads` (`emailMarketing.js:337-346`) and would hide every client row; `emailMarketingWebhook.js:157-171` updates `email_leads WHERE id = <lead_id>` and needs a null guard; the analytics overview (`emailMarketing.js:826-835`) aggregates the whole table and would dilute lead metrics with campaign sends.
+
+**Auth.** Every route in `emailMarketing.js` uses `requireAdminOrManager`. Send, the exclusion endpoints, and the contact-resolve endpoint (which returns names, emails, and spend across the whole client base) are **admin only**, via `adminOnly` from `server/middleware/auth.js:140`.
+
+### 5.3 Compliance and safety, shipping with phase 2
+
+**A marketing complaint must stop marketing without breaking billing.** `emailMarketingWebhook.js:186-200` flips `clients.email_status = 'bad'` on any hard bounce or spam complaint, and `messageSuppression.js:35` plus `channelFallback.emailUsable` then suppress or SMS-divert that client's proposals, invoices, receipts, and agreements. Nothing ever writes the flag back to `'ok'`. Today a recipient hitting "report spam" on a marketing email permanently breaks their own billing email, with no recovery outside raw SQL. The webhook must distinguish which kind of send the event belongs to: a complaint on a campaign sets `marketing_excluded` (reason: complained) and leaves `email_status` alone; a hard bounce still marks the address bad, since a dead address is dead for every purpose. Ship an admin control to clear `email_status = 'bad'`. **Dallas approved touching the webhook on 2026-08-11.**
+
+**CAN-SPAM postal address.** `wrapMarketingEmail` (`emailTemplates.js:439-462`) renders only "Dr. Bartender · drbartender.com" and an unsubscribe link. A valid physical postal address is required in every commercial message. This footer is also used by the already-live `retention_nudge` and `new_year_hello` touches, so it ships independently and does not wait on this feature. **Dallas must supply the address** (section 9).
+
+**Unsubscribe must not be a bare GET.** `emailMarketing.js:940` flips the preference on GET with no confirmation, irreversibly. Corporate link scanners prefetch inbound links, and the audience is corporate work addresses, so a scanner can destroy a client's marketing channel with no human involved. Render a confirmation page on GET, perform the flip on POST, as a plain `<form method="POST">` since Helmet's CSP (`server/index.js:144-153`) blocks inline JS. The POST stays public with the token as sole auth so one-click can be added later. Same treatment for the `{leadId}` branch. Note this is the scanner fix, not RFC 8058 compliance; `List-Unsubscribe` headers need a `headers` passthrough on `sendEmail` and stay in section 9.
+
+**Unsubscribe token.** Reuse the `{clientId, marketing: true}` JWT from `marketingHandlers.js:51-62`. Add a `typ` claim to newly minted tokens, treated as **advisory on verification**, because every token already delivered carries no `typ` and requiring it would kill live unsubscribe links.
+
+**Retire the legacy all-leads send path.** An empty `client_ids` body must be rejected rather than falling back to blasting every active lead. `POST /campaigns/:id/schedule` (`emailMarketing.js:561-572`) writes a status nothing reads and should be hidden while scheduling is out of scope.
+
+**Test send.** The existing path stamps `token=preview` into the unsubscribe URL, which 400s on click. Mint a real token for the test recipient.
+
+**File-size ratchet.** `server/routes/emailMarketing.js` is **987 lines** against the 1000-line hard cap (`scripts/check-file-size.js`). Extract first, as its own behavior-inert commit. There is no composition router in this file today; it is a flat `express.Router()` mounted at `server/index.js:365`, so this is a conversion to `server/routes/emailMarketing/` following the `server/routes/proposals/` pattern, with exact path preservation. Move the lead CRUD and import (`:30-258`), the sequence handlers (`:743-821`), the sequence-steps block (`:658-742`), and the lead-keyed conversations block (`:856-939`). The resolver is its own file from the start, never inside the route file.
+
+## 6. Phase 3: Overview, moments, Sent
+
+### 6.1 Moments
+
+**The rule and the window are code. The words are data.** Each moment is a built-in definition with an id, a rule resolving to an audience, and a window. Title, window label, and the "why" prose ship as authored defaults.
+
+Editing stores **only the fields changed**, so untouched copy keeps tracking the default while rewritten copy stays permanent even when the stock copy is later improved. A moment can be hidden. Dismissing a moment dismisses **that occurrence only**, so the September holiday push returns next September rather than vanishing because it was cleared once.
+
+The three shipped moments, with the design's own copy as the starting default:
+
+- **Holiday parties are booked in September.** Send by Sep 5. Corporate past clients. "Every corporate client you have ever had books in Q4 and none of them has ever come back. This is the one send with a repeat-revenue thesis behind it."
+- **N people hit their one-year mark this month.** Rolling. Past clients 12 months on. "Anniversary of a finished event. The 11-month automated nudge already went out, this is the human follow-up nobody has ever sent."
+- **N spring quotes said 'keep us in mind'.** Any time. Quoted never booked. Notes when the audience exceeds the daily cap and the send takes more than one pass.
+
+### 6.2 Overview
+
+Moments first. Then "The year, honestly" (marketing emails sent all time, past clients never asked back, repeat corporate bookings) putting the real numbers on the wall. Then "Needs you", a work queue: contacts never classified, someone who asked not to be emailed, addresses hard-bounced. Then the reachable base broken down, and today's send budget.
+
+A "Runs without you" panel names the automations and states they are managed in Settings, not here, and that every one shows on the contact's record.
+
+### 6.3 Sent
+
+A table of name, date, audience, status, sent, opened, replied, **booked**. Booked attribution is defined as: a recipient created a proposal within **30 days** of receiving that campaign, attributed by client id. Both sides are local tables.
+
+Below it, "Also reaching your contacts", listing the four automations with their triggers and 30-day counts: unsigned proposal drip (5 touches), review request (2 days after each event), retention nudge (11 months after an event), New Year touch (January 2). Read-only here; managed in Settings.
 
 ## 7. Schema changes
 
-All idempotent (`ADD COLUMN IF NOT EXISTS`), all in `schema.sql`, which replays on every boot.
+All idempotent. Note Postgres has **no `ADD CONSTRAINT IF NOT EXISTS`**, and `schema.sql` replays on every boot, so every CHECK addition uses the guarded `DO $$ ... IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = ...)` pattern already used at `schema.sql:933`, `:1141`, `:1332`. Existing constraint blocks end `EXCEPTION WHEN OTHERS THEN NULL`, which swallows a failed install silently, and `server/db/index.js:173-225` swallows `42710`/`42P16`, so each new constraint needs a post-apply assertion in the `CRITICAL_INDEXES` style.
 
-- `clients`: `marketing_excluded`, `marketing_excluded_reason`, `marketing_excluded_at`, `marketing_excluded_by`. Default false, no backfill needed.
-- `email_sends`: add `client_id`, relax `lead_id` to nullable, add a CHECK that exactly one recipient key is set.
+- `client_tags` (client_id, tag, set_by, set_at) with the fixed tag enum, or an equivalent array column. One row per human-set tag; derived states are never stored.
+- `clients`: `marketing_excluded`, `marketing_excluded_reason`, `marketing_excluded_at`, `marketing_excluded_by`.
+- `email_sends`: add `client_id`, relax `lead_id` to nullable in **both** the `CREATE TABLE` at `schema.sql:1601` and a guarded `ALTER`, add the recipient CHECK, set `ON DELETE SET NULL` on both recipient FKs.
+- `marketing_moment_overrides` (moment_id, field, value) for edited copy, and `marketing_moment_dismissals` (moment_id, occurrence_key, dismissed_at).
+- `GET /api/clients` uses an explicit column allowlist (`clients.js:30-33`) that omits the new columns and needs updating.
 
-No change to `scheduled_messages` at all. The first draft's entity-type CHECK amendment is gone with the dispatcher path, and with it the `lookupEntity` and `VALID_ENTITY_TYPES` gaps the fleet found.
+No `scheduled_messages` change. The dispatcher path from draft 1 is gone.
 
-## 8. File-size discipline
-
-`server/routes/emailMarketing.js` is **987 lines** against the 1000-line hard cap. `scripts/check-file-size.js` blocks any staged commit that pushes an over-cap file longer. This feature adds a recipient-resolve endpoint, a revised send, and the exclusion endpoints, so something must come out first.
-
-The natural extraction is the lead and sequence surface, which this feature does not touch: the `/leads` CRUD and import, and the sequence `/enroll`, `/enrollments`, `/activate`, `/pause` handlers. Moving those to sibling files behind the existing composition router follows the `server/routes/proposals/` precedent and leaves the campaign surface in the original file. Do the extraction as its own commit, verified behavior-inert, before any feature code lands.
-
-## 9. Verified ground truth (do not re-derive)
+## 8. Verified ground truth (do not re-derive)
 
 Queried against prod (`round-tooth-34649976`, branch `br-noisy-frog-ad99sa6l`) and the working tree on 2026-08-11:
 
-- Audience: 49 past clients with a booked proposal (47 mailable), 198 quoted-never-booked (188 mailable, 9 opted out), 254 with no proposal (173 mailable). By source: thumbtack 288, checkcherry 184, website 12, zola 7, direct 5, calcom 4, referral 1.
-- Corporate 2026: 8 booked events, $5,423, against 58 booked and $39,303 overall. Average ticket $678 for both corporate and non-corporate, so corporate is not currently a premium segment.
+- Audience: 49 past clients with a booked proposal (47 mailable), 198 quoted-never-booked (188 mailable, 9 opted out), 254 with no proposal (173 mailable). Sources: thumbtack 288, checkcherry 184, website 12, zola 7, direct 5, calcom 4, referral 1.
+- Corporate 2026: 8 booked events, $5,423, against 58 booked and $39,303 overall. Average ticket $678 for both corporate and non-corporate.
 - Corporate converts down. Where option sets were sent, the cheapest won every time: Gurnee Hyundai booked $760 with $9,850 and $7,750 archived; Salesforce booked $620 with $2,800 and $1,800 archived. Companies buy their own alcohol and want labor.
-- Transactional email volume, trailing 60 days from `message_log`: 19.4/day average, 37 peak, 4 floor. **Treat as a floor, not a measurement.** `message_log` omits staff mail, admin alerts, and every `skipLog` send, all of which consume the same Resend quota.
-- `email_sends`: `campaign_id` and `sequence_step_id` nullable, `lead_id` NOT NULL.
+- Transactional email, trailing 60 days from `message_log`: 19.4/day average, 37 peak, 4 floor. **A floor, not a measurement**: `message_log` omits staff mail, admin alerts, and every `skipLog` send, all of which consume the same Resend quota. The send-budget display needs a truer denominator or a conservative server-side cap.
+- Resend is on the **free tier, 100/day**, shared with all transactional mail. Pro is $20/month and removes the ceiling.
 - The retention automation is correct and not due: 10 pending `retention_nudge` rows fire 2027-05-16 through 2027-07-05, 1 `new_year_hello` at 2027-01-02, `six_months_out` has zero rows because almost nothing books more than six months out. Do not "fix" it.
 - Verified clean by the fleet: nothing in the repo can flip `marketing_enabled` back to true; the reschedule cascade filters to `entity_type = 'proposal'`; dead-lettering is scoped to staff recipients.
-- `legacy_cc_proposals` population out of 1,230 rows: `package_name`/`service_name`/`source`/`total_cost_cents` 1230, `client_email_normalized` 1210 (1,154 distinct), `venue_name` 275, `client_id` 197, `estimated_guests` 4, `event_type` 0, `lead_type` 0. Booked 190. Range 2024-12-05 to 2027-12-04.
+- `legacy_cc_proposals`, 1,230 rows: `package_name`/`service_name`/`source`/`total_cost_cents` all populated, `client_email_normalized` 1,210 (1,154 distinct), `venue_name` 275, `client_id` 197, `estimated_guests` 4, `event_type` 0, `lead_type` 0. Booked 190. Range 2024-12-05 to 2027-12-04. Event type for the entire Check Cherry era does not exist in prod; `package_name` describes the bar package, not the occasion.
 
-## 10. Open items
+## 9. Open items
 
-- **Postal address for the CAN-SPAM footer.** Needs Dallas's decision on which address to publish. Blocks section 6.
-- **Quota handling on money paths.** `QuotaExceededError` is unhandled by every direct `sendEmail` in `proposals/crud.js`, `proposals/actions.js`, `invoices`, `agreement`, and `publicToken`, each of which becomes a 500 on an exhausted quota. Pre-existing, not caused by this feature, but this feature makes exhaustion more likely. Separate fix.
-- **Sending-domain separation.** `FROM_EMAIL` is `no-reply@drbartender.com` (`email.js:10`), so bulk mail and invoices share a root domain with no `mail.` subdomain split, and a complaint spike degrades invoice deliverability. `sendEmail` also has no `headers` passthrough, so `List-Unsubscribe` / `List-Unsubscribe-Post` cannot be added without changing it.
-- **Client-keyed campaign history.** Surfacing campaign sends on the client record, since `email_sends` is campaign-keyed and `message_log` cannot hold these rows.
-- **Resend Pro.** $20/month removes the 100/day ceiling entirely. Not required for hand-picked sends of a few dozen; recorded because the ceiling is shared with invoices.
-- **Documentation.** Per CLAUDE.md's Mandatory Documentation Updates table: new `clients` and `email_sends` columns go in ARCHITECTURE.md's schema section, new routes in its route table, and any new util or route files in README.md's folder tree.
-- **Deferred from the cut:** recurring campaigns, saved segments, scheduled sends, extending `retention_nudge` to the Check Cherry cohort, the ~970 Check Cherry dead-quote addresses, Check Cherry event types from the 2026-07-06 exports, and a corporate landing page.
+- **Postal address for the CAN-SPAM footer.** Needs Dallas's decision. Blocks the footer fix.
+- **Quota handling on money paths.** `QuotaExceededError` is caught by the money-path callers, but `ensureSideEffects` still flips an invoice `draft` to `sent` before delivery fails, producing an invoice marked sent that nobody received. Pre-existing; this feature makes exhaustion likelier. Separate fix.
+- **Sending-domain separation.** `FROM_EMAIL` is `no-reply@drbartender.com` (`email.js:10`), so bulk mail and invoices share a root domain with no `mail.` subdomain split. `sendEmail` has no `headers` passthrough, so `List-Unsubscribe` / `List-Unsubscribe-Post` cannot be added without changing it. Sequence the 184 never-opted-in Check Cherry addresses last and in small batches, after the warm 49.
+- **Scheduled sends.** Out of scope; "Goes out at once. No scheduling yet." is in the design's own copy.
+- **Recurring and triggered campaigns**, and extending `retention_nudge` to the Check Cherry cohort.
+- **The ~970 Check Cherry dead-quote addresses**, ruled archive-only at import and still out.
+- **Check Cherry event types** from the 2026-07-06 exports.
+- **A corporate landing page.** None exists under `client/src/pages/website/`; corporate traffic routes to the generic quote wizard. Dallas's call 2026-08-11: acceptable for now.
+- **Documentation.** Per CLAUDE.md's table: new columns and tables in ARCHITECTURE.md's schema section, new routes in its route table, new util and route files plus the new pages and components in README.md's folder tree, and the feature itself in README's Key Features.

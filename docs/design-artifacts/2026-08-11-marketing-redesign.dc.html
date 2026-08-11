@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/fonts.css">
+<link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/colors.css">
+<link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/typography.css">
+<link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/layout.css">
+<link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-admin.css">
+<link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-staff.css">
+<link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/styles.css">
+<script src="./image-slot.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .blk { position: relative; cursor: pointer; outline: 1px solid transparent; outline-offset: 2px; transition: outline-color .12s ease; }
+  .blk:hover { outline-color: var(--line-2); }
+  .blk.sel { outline: 2px solid var(--accent); }
+  .blk.sel::after { content: attr(data-name); position: absolute; top: -9px; left: 0; font: 600 9.5px/1 var(--font-ui); letter-spacing: .06em; text-transform: uppercase; color: #fff; background: var(--accent); padding: 3px 6px; border-radius: 3px; }
+  .palette-item { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border: 1px solid var(--line-1); border-radius: 6px; background: var(--bg-2); color: var(--ink-2); font-size: 12px; cursor: grab; transition: background .12s ease, color .12s ease; }
+  .palette-item:hover { background: var(--row-hover); color: var(--ink-1); }
+  .email-canvas {
+    --em-accent: #1D8C89; --em-accent-ink: #ffffff; --em-bar: #12161C; --em-bar-ink: #F0E8D6;
+    --em-bg: #ffffff; --em-paper: #F0E8D6; --em-ink: #1C1610; --em-body: #4a453e;
+    --em-rule: #E6DDCC; --em-muted: #5A5048; --em-link: #134544; --em-radius: 5px;
+    --em-head: 'IM Fell English SC', Georgia, serif; --em-text: 'IM Fell English', Georgia, serif;
+    --em-head-size: 27px; --em-track: .02em;
+  }
+  .swatch { width: 100%; height: 30px; border-radius: 5px; cursor: pointer; border: 1px solid var(--line-2); display: flex; overflow: hidden; padding: 0; }
+  .swatch[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .em-select { width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--bg-2); color: var(--ink-1); font-size: 12px; font-family: inherit; }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&display=swap">
+<script src="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/_ds_bundle.js"></script>
+</helmet>
+
+<div ref="{{ rootRef }}" data-app="admin-os" data-skin="dark" data-density="comfy" data-sidebar="full" style="height:100vh; font-family:var(--font-ui)">
+  <div class="shell" style="height:100%; position:relative">
+    <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Sidebar" prefs="{{ prefs }}" on-pref="{{ onPref }}" active-path="/email-marketing" on-navigate="{{ noop }}" user="{{ user }}" hint-size="240px,100%"></x-import>
+    <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Header" title="Marketing" on-open-palette="{{ noop }}" on-quick-add="{{ noop }}" unread="{{ two }}" hint-size="100%,52px"></x-import>
+
+    <main class="main">
+      <div class="page" style="min-width:1080px">
+
+        <div class="page-header">
+          <div>
+            <div class="page-title">Marketing</div>
+            <div class="page-subtitle">{{ subtitle }}</div>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-secondary" onClick="{{ goAudiences }}">Audiences</button>
+            <button class="btn btn-primary" onClick="{{ goCompose }}">New send</button>
+          </div>
+        </div>
+
+        <div class="hstack" style="gap:8px; flex-wrap:wrap; margin-bottom:16px">
+          <div class="seg">
+            <button class="{{ tabOverview }}" onClick="{{ goOverview }}">This month</button>
+            <button class="{{ tabAudiences }}" onClick="{{ goAudiences }}">Audiences<span class="muted" style="margin-left:6px">7</span></button>
+            <button class="{{ tabContacts }}" onClick="{{ goContacts }}">Contacts<span class="muted" style="margin-left:6px">421</span></button>
+            <button class="{{ tabCompose }}" onClick="{{ goCompose }}">Compose</button>
+            <button class="{{ tabSends }}" onClick="{{ goSends }}">Sent</button>
+          </div>
+          <div class="spacer"></div>
+          <div style="display:flex; align-items:center; gap:10px; padding:6px 12px; border:1px solid var(--line-1); border-radius:6px; background:var(--bg-1)">
+            <span style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600">Today's send budget</span>
+            <span style="display:flex; width:110px; height:6px; border-radius:3px; overflow:hidden; background:var(--bg-3)">
+              <span style="width:34%; background:hsl(var(--info-h) var(--info-s) 58%)"></span>
+            </span>
+            <span style="font-family:var(--font-mono); font-size:12px; color:var(--ink-1)">66<span style="color:var(--ink-3)"> / 100 left</span></span>
+          </div>
+        </div>
+
+        <!-- ══ THIS MONTH ══ -->
+        <sc-if value="{{ isOverview }}" hint-placeholder-val="{{ true }}">
+          <div style="display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; align-items:start">
+            <div>
+              <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px">
+                <div class="section-title" style="margin:0">Moments open now</div>
+                <span class="muted" style="font-size:11.5px">Occasions repeat. Get ahead of them.</span>
+              </div>
+
+              <div style="display:grid; gap:10px">
+                <sc-for list="{{ moments }}" as="m" hint-placeholder-count="3">
+                  <div class="card" style="padding:0; overflow:hidden">
+                    <div style="display:grid; grid-template-columns:4px minmax(0,1fr) auto; align-items:stretch">
+                      <div style="background:{{ m.hue }}"></div>
+                      <div style="padding:14px 16px">
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px">
+                          <span style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600">{{ m.window }}</span>
+                          <span class="tag">{{ m.audience }}</span>
+                        </div>
+                        <div style="font-size:15px; font-weight:600; color:var(--ink-1); margin-bottom:4px">{{ m.title }}</div>
+                        <div style="font-size:12.5px; color:var(--ink-3); line-height:1.55; max-width:52ch; text-wrap:pretty">{{ m.why }}</div>
+                      </div>
+                      <div style="padding:14px 16px; display:flex; flex-direction:column; align-items:flex-end; justify-content:space-between; gap:10px; border-left:1px solid var(--line-1); min-width:158px">
+                        <div style="text-align:right">
+                          <div style="font-family:var(--font-mono); font-size:22px; color:var(--ink-1); line-height:1">{{ m.count }}</div>
+                          <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-3); font-weight:600; margin-top:3px">emailable</div>
+                        </div>
+                        <button class="btn btn-secondary" onClick="{{ goCompose }}">Review recipients</button>
+                      </div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div class="section-title" style="margin-top:22px">The year, honestly</div>
+              <div class="card">
+                <div class="card-body" style="display:flex; align-items:center; gap:24px; flex-wrap:wrap">
+                  <div>
+                    <div class="stat-label">Marketing emails sent, all time</div>
+                    <div class="stat-value" style="font-size:30px">1</div>
+                    <div class="stat-sub">Mar 2025 · to 4 people</div>
+                  </div>
+                  <div style="width:1px; align-self:stretch; background:var(--line-1)"></div>
+                  <div>
+                    <div class="stat-label">Past clients never asked back</div>
+                    <div class="stat-value" style="font-size:30px">233</div>
+                    <div class="stat-sub">$678 average ticket</div>
+                  </div>
+                  <div style="width:1px; align-self:stretch; background:var(--line-1)"></div>
+                  <div>
+                    <div class="stat-label">Repeat corporate bookings</div>
+                    <div class="stat-value" style="font-size:30px">0</div>
+                    <div class="stat-sub">Ever</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:grid; gap:16px">
+              <div class="card">
+                <div class="card-head"><h3>Needs you</h3><span class="k">3</span></div>
+                <div>
+                  <div class="queue-item" onClick="{{ goContacts }}" style="cursor:pointer">
+                    <span class="queue-icon warn"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="users" hint-size="16px,16px"></x-import></span>
+                    <div class="queue-main">
+                      <div class="queue-title">184 contacts never classified</div>
+                      <div class="queue-sub">Check Cherry migration · no event type</div>
+                    </div>
+                    <span class="queue-meta">Tag</span>
+                  </div>
+                  <div class="queue-item" style="cursor:pointer">
+                    <span class="queue-icon danger"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="alert" hint-size="16px,16px"></x-import></span>
+                    <div class="queue-main">
+                      <div class="queue-title">Kara Lindqvist asked not to be emailed</div>
+                      <div class="queue-sub">Replied to review request · Jul 30</div>
+                    </div>
+                    <span class="queue-meta">Record</span>
+                  </div>
+                  <div class="queue-item" style="cursor:pointer">
+                    <span class="queue-icon info"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="mail" hint-size="16px,16px"></x-import></span>
+                    <div class="queue-main">
+                      <div class="queue-title">3 addresses hard-bounced</div>
+                      <div class="queue-sub">Suppressed automatically</div>
+                    </div>
+                    <span class="queue-meta">Review</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-head"><h3>Reachable base</h3><span class="k">421</span></div>
+                <div class="card-body" style="display:grid; gap:9px">
+                  <sc-for list="{{ baseBars }}" as="b" hint-placeholder-count="5">
+                    <div>
+                      <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px">
+                        <span style="color:var(--ink-2)">{{ b.label }}</span>
+                        <span style="font-family:var(--font-mono); color:var(--ink-1)">{{ b.n }}</span>
+                      </div>
+                      <div style="height:5px; border-radius:3px; background:var(--bg-3); overflow:hidden">
+                        <div style="height:100%; width:{{ b.pct }}; background:{{ b.hue }}"></div>
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-head"><h3>Runs without you</h3></div>
+                <div class="card-body" style="font-size:12px; color:var(--ink-3); line-height:1.6; text-wrap:pretty">
+                  Proposal drip, review request, 11-month nudge and the New Year touch all fire from Settings → Automations. They are not managed here — but every one of them shows up on the contact's record so you never double-tap someone.
+                </div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- ══ AUDIENCES ══ -->
+        <sc-if value="{{ isAudiences }}" hint-placeholder-val="{{ true }}">
+          <div style="display:grid; grid-template-columns:288px minmax(0,1fr); gap:16px; align-items:start">
+
+            <div class="card" style="padding:0">
+              <div class="card-head"><h3>Audiences</h3><span class="k">7</span></div>
+              <div>
+                <sc-for list="{{ audiences }}" as="a" hint-placeholder-count="7">
+                  <div class="queue-item" onClick="{{ a.select }}" style="cursor:pointer; background:{{ a.bg }}; box-shadow:{{ a.stripe }}">
+                    <div class="queue-main">
+                      <div class="queue-title">{{ a.name }}</div>
+                      <div class="queue-sub">{{ a.rule }}</div>
+                    </div>
+                    <span class="queue-meta" style="font-family:var(--font-mono)">{{ a.emailable }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="padding:12px; border-top:1px solid var(--line-1)">
+                <button class="btn btn-secondary btn-full">+ New audience</button>
+              </div>
+            </div>
+
+            <div style="display:grid; gap:12px">
+              <div class="card">
+                <div class="card-head">
+                  <h3>{{ audName }}</h3>
+                  <div class="hstack" style="gap:8px">
+                    <span class="k">{{ audRule }}</span>
+                    <button class="btn btn-primary btn-sm" onClick="{{ goCompose }}">Use this audience</button>
+                  </div>
+                </div>
+                <div class="card-body" style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start">
+                  <div>
+                    <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600; margin-bottom:7px">Include</div>
+                    <div style="display:flex; flex-wrap:wrap; gap:6px">{{ audIncludes }}</div>
+                  </div>
+                  <div style="width:1px; align-self:stretch; background:var(--line-1)"></div>
+                  <div>
+                    <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600; margin-bottom:7px">Always held back</div>
+                    <div style="display:flex; gap:16px; font-size:12px; color:var(--ink-3)">
+                      <span>Do not contact <span style="font-family:var(--font-mono); color:var(--ink-2)">4</span></span>
+                      <span>Unsubscribed <span style="font-family:var(--font-mono); color:var(--ink-2)">2</span></span>
+                      <span>Bounced <span style="font-family:var(--font-mono); color:var(--ink-2)">3</span></span>
+                    </div>
+                  </div>
+                  <div class="spacer"></div>
+                  <div style="text-align:right">
+                    <div style="font-family:var(--font-mono); font-size:26px; color:var(--ink-1); line-height:1">{{ audCount }}</div>
+                    <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-3); font-weight:600; margin-top:3px">emailable</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="hstack" style="gap:8px; flex-wrap:wrap">
+                <div class="input-group" style="min-width:220px; flex:1; max-width:300px">
+                  <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="search" hint-size="16px,16px"></x-import>
+                  <input placeholder="Search inside this audience…">
+                </div>
+                <span class="muted" style="font-size:11.5px">Click any tag cell to change it. Edits save to the contact, not the audience.</span>
+              </div>
+
+              <div class="tbl-wrap">
+                <table class="tbl">
+                  <thead><tr><th>Contact</th><th style="width:38%">Marketing tags</th><th>Last event</th><th class="num">Lifetime</th><th class="shrink"></th></tr></thead>
+                  <tbody>
+                    <sc-for list="{{ members }}" as="c" hint-placeholder-count="6">
+                      <tr>
+                        <td><div style="font-weight:600; color:var(--ink-1)">{{ c.name }}</div><div style="font-size:11.5px; color:var(--ink-3)">{{ c.email }}</div></td>
+                        <td style="overflow:visible; position:relative">{{ c.tagEditor }}</td>
+                        <td style="color:var(--ink-3)">{{ c.lastEvent }}</td>
+                        <td class="num">{{ c.ltv }}</td>
+                        <td><button class="btn btn-secondary btn-sm" onClick="{{ c.open }}">Open</button></td>
+                      </tr>
+                    </sc-for>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- ══ CONTACTS ══ -->
+        <sc-if value="{{ isContacts }}" hint-placeholder-val="{{ true }}">
+          <div>
+            <div class="hstack" style="gap:8px; flex-wrap:wrap; margin-bottom:12px">
+              <div class="input-group" style="min-width:240px; flex:1; max-width:340px">
+                <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="search" hint-size="16px,16px"></x-import>
+                <input placeholder="Search contacts…">
+              </div>
+              <div class="seg">
+                <button class="active">All 421</button>
+                <button>Untagged 184</button>
+                <button>Corporate 30</button>
+                <button>Do not contact 4</button>
+              </div>
+            </div>
+
+            <div class="tbl-wrap">
+              <table class="tbl">
+                <thead><tr><th>Contact</th><th style="width:32%">Marketing tags</th><th>Last event</th><th class="num">Lifetime</th><th>Last contacted</th><th class="shrink"></th></tr></thead>
+                <tbody>
+                  <sc-for list="{{ contacts }}" as="c" hint-placeholder-count="8">
+                    <tr>
+                      <td onClick="{{ c.open }}" style="cursor:pointer"><div style="font-weight:600; color:var(--ink-1)">{{ c.name }}</div><div style="font-size:11.5px; color:var(--ink-3)">{{ c.email }}</div></td>
+                      <td style="overflow:visible; position:relative">{{ c.tagEditor }}</td>
+                      <td style="color:var(--ink-3)">{{ c.lastEvent }}</td>
+                      <td class="num">{{ c.ltv }}</td>
+                      <td style="color:var(--ink-3)">{{ c.lastContacted }}</td>
+                      <td><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.KebabMenu" items="{{ rowMenu }}" hint-size="24px,24px"></x-import></td>
+                    </tr>
+                  </sc-for>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- ══ COMPOSE ══ -->
+        <sc-if value="{{ isCompose }}" hint-placeholder-val="{{ true }}">
+          <div>
+            <div class="hstack" style="gap:8px; margin-bottom:12px; flex-wrap:wrap">
+              <div class="seg">
+                <button class="{{ stepDesign }}" onClick="{{ goDesign }}">Design</button>
+                <button class="{{ stepRecipients }}" onClick="{{ goRecipients }}">Recipients<span class="muted" style="margin-left:6px">41</span></button>
+              </div>
+              <span class="muted" style="font-size:11.5px">Holiday parties — corporate · draft, saved just now</span>
+              <div class="spacer"></div>
+              <button class="btn btn-secondary btn-sm">Desktop</button>
+              <button class="btn btn-secondary btn-sm">Mobile</button>
+              <button class="btn btn-secondary btn-sm">Send test</button>
+            </div>
+
+            <sc-if value="{{ isDesign }}" hint-placeholder-val="{{ true }}">
+              <div style="display:grid; grid-template-columns:176px minmax(0,1fr) 300px; gap:14px; align-items:start">
+
+                <div class="card" style="position:sticky; top:0">
+                  <div class="card-head"><h3>Blocks</h3></div>
+                  <div class="card-body" style="display:grid; gap:6px">
+                    <sc-for list="{{ palette }}" as="p" hint-placeholder-count="9">
+                      <div class="palette-item">
+                        <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="{{ p.icon }}" size="{{ fourteen }}" hint-size="14px,14px"></x-import>
+                        <span>{{ p.label }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                  <div style="padding:12px; border-top:1px solid var(--line-1); font-size:11px; color:var(--ink-3); line-height:1.5; text-wrap:pretty">Drag onto the canvas. Same block catalog the composer already ships.</div>
+                </div>
+
+                <div style="background:var(--bg-0); border:1px solid var(--line-1); border-radius:8px; padding:28px 20px; display:flex; justify-content:center">
+                  <div class="email-canvas" ref="{{ canvasRef }}" style="width:600px; max-width:100%; background:var(--em-bg); border-radius:4px; overflow:hidden; box-shadow:var(--shadow-pop); font-family:var(--em-text)">
+
+                    <div class="blk" data-name="Logo bar" onClick="{{ selectBlock }}" style="padding:18px 32px; background:var(--em-bar); display:flex; align-items:center; gap:10px">
+                      <span style="width:26px; height:26px; border-radius:var(--em-radius); background:var(--em-accent); color:var(--em-accent-ink); display:flex; align-items:center; justify-content:center; font-size:15px; line-height:1">℞</span>
+                      <span style="color:var(--em-bar-ink); font-size:15px; letter-spacing:var(--em-track); font-family:var(--em-head)">Dr. Bartender</span>
+                      <span style="margin-left:auto; color:#8b9299; font-size:10.5px; letter-spacing:.08em; text-transform:uppercase">Chicago</span>
+                    </div>
+
+                    <div class="blk" data-name="Hero image" onClick="{{ selectBlock }}" style="height:220px">
+                      <image-slot id="mkt-email-hero" shape="rect" placeholder="Drop a hero image — a bar setup, a crowd, a pour"></image-slot>
+                    </div>
+
+                    <div class="blk" data-name="Heading" onClick="{{ selectBlock }}" style="padding:28px 40px 0; text-align:center">
+                      <div style="font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--em-accent); font-weight:700; margin-bottom:10px">[ Eyebrow ]</div>
+                      <div style="font-size:var(--em-head-size); line-height:1.2; color:var(--em-ink); font-weight:700; font-family:var(--em-head); letter-spacing:var(--em-track); text-wrap:pretty">[ Headline goes here ]</div>
+                    </div>
+
+                    <div class="blk" data-name="Text" onClick="{{ selectBlock }}" style="padding:14px 40px 0; text-align:center">
+                      <div style="font-size:14px; line-height:1.65; color:var(--em-body); text-wrap:pretty">[ Two or three sentences. What the offer is, why now, and what happens when they reply. Keep it under 60 words. ]</div>
+                    </div>
+
+                    <div class="blk" data-name="Button" onClick="{{ selectBlock }}" style="padding:22px 40px; text-align:center">
+                      <span style="display:inline-block; padding:12px 26px; background:var(--em-accent); color:var(--em-accent-ink); border-radius:var(--em-radius); font-size:13.5px; font-weight:600; letter-spacing:.02em; font-family:var(--em-head)">[ Button label ]</span>
+                    </div>
+
+                    <div class="blk" data-name="Divider" onClick="{{ selectBlock }}" style="padding:0 40px">
+                      <div style="height:1px; background:var(--em-rule)"></div>
+                    </div>
+
+                    <div class="blk" data-name="Image + text" onClick="{{ selectBlock }}" style="padding:24px 40px; display:grid; grid-template-columns:170px minmax(0,1fr); gap:18px; align-items:center">
+                      <div style="height:120px">
+                        <image-slot id="mkt-email-side" shape="rounded" radius="4" placeholder="Drop an image"></image-slot>
+                      </div>
+                      <div>
+                        <div style="font-size:15px; font-weight:700; color:var(--em-ink); margin-bottom:6px; font-family:var(--em-head)">[ Section title ]</div>
+                        <div style="font-size:13px; line-height:1.6; color:var(--em-body); text-wrap:pretty">[ A short supporting paragraph. Good spot for the package detail, the labor-only note, or a past-event photo caption. ]</div>
+                      </div>
+                    </div>
+
+                    <div class="blk" data-name="Spacer" onClick="{{ selectBlock }}" style="height:20px"></div>
+
+                    <div class="blk" data-name="Footer" onClick="{{ selectBlock }}" style="padding:20px 40px 26px; background:var(--em-paper); text-align:center">
+                      <div style="font-size:11.5px; color:var(--em-muted); line-height:1.7">Dr. Bartender · Chicago, IL<br>You are getting this because you booked an event with us.<br><span style="color:var(--em-link); text-decoration:underline">Unsubscribe</span> · <span style="color:var(--em-link); text-decoration:underline">Never email me again</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="display:grid; gap:12px; position:sticky; top:0">
+                  <div class="card">
+                    <div class="card-head"><h3>Look</h3><span class="k">Whole email</span></div>
+                    <div class="card-body" style="display:grid; gap:12px">
+                      <div>
+                        <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600; margin-bottom:6px">Preset</div>
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px">
+                          <sc-for list="{{ themes }}" as="th" hint-placeholder-count="4">
+                            <div>
+                              <button class="swatch" onClick="{{ th.apply }}" aria-pressed="{{ th.on }}" title="{{ th.name }}">
+                                <span style="flex:1; background:{{ th.a }}"></span>
+                                <span style="flex:1; background:{{ th.b }}"></span>
+                                <span style="flex:1; background:{{ th.c }}"></span>
+                              </button>
+                              <div style="font-size:10.5px; color:var(--ink-3); margin-top:4px; text-align:center">{{ th.name }}</div>
+                            </div>
+                          </sc-for>
+                        </div>
+                        <div style="font-size:10.5px; color:var(--ink-4); margin-top:8px; line-height:1.5; text-wrap:pretty">Brand kit is the default. Every send starts here unless you change it.</div>
+                      </div>
+
+                      <div style="border-top:1px solid var(--line-1); padding-top:12px; display:grid; gap:8px">
+                        <div>
+                          <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600; margin-bottom:5px">Headings</div>
+                          <select class="em-select" onChange="{{ setHead }}">
+                            <sc-for list="{{ fonts }}" as="f" hint-placeholder-count="4">
+                              <option value="{{ f.stack }}" selected="{{ f.headSel }}">{{ f.name }}</option>
+                            </sc-for>
+                          </select>
+                        </div>
+                        <div>
+                          <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600; margin-bottom:5px">Body</div>
+                          <select class="em-select" onChange="{{ setBody }}">
+                            <sc-for list="{{ fonts }}" as="f" hint-placeholder-count="4">
+                              <option value="{{ f.body }}" selected="{{ f.bodySel }}">{{ f.name }}</option>
+                            </sc-for>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div style="border-top:1px solid var(--line-1); padding-top:12px">
+                        <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600; margin-bottom:6px">Accent</div>
+                        <div class="hstack" style="gap:6px; flex-wrap:wrap">
+                          <sc-for list="{{ accents }}" as="ac" hint-placeholder-count="6">
+                            <button onClick="{{ ac.apply }}" title="{{ ac.name }}" style="width:26px; height:26px; border-radius:5px; cursor:pointer; padding:0; background:{{ ac.hex }}; border:{{ ac.ring }}"></button>
+                          </sc-for>
+                        </div>
+                      </div>
+
+                      <div style="border-top:1px solid var(--line-1); padding-top:12px">
+                        <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600; margin-bottom:6px">Corners</div>
+                        <div class="seg" style="width:100%">
+                          <button class="{{ radSquare }}" onClick="{{ radiusSquare }}">Square</button>
+                          <button class="{{ radSoft }}" onClick="{{ radiusSoft }}">Soft</button>
+                          <button class="{{ radPill }}" onClick="{{ radiusPill }}">Pill</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="card">
+                    <div class="card-head"><h3>{{ selName }}</h3><span class="k">Block</span></div>
+                    <div class="card-body" style="display:grid; gap:12px">
+                      <div>
+                        <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600; margin-bottom:6px">Format</div>
+                        <div class="hstack" style="gap:6px">
+                          <div class="seg">
+                            <button onMouseDown="{{ fmtBold }}" title="Bold" style="font-weight:800; min-width:32px">B</button>
+                            <button onMouseDown="{{ fmtItalic }}" title="Italic" style="font-style:italic; font-family:Georgia,serif; min-width:32px">I</button>
+                            <button onMouseDown="{{ fmtUnderline }}" title="Underline" style="text-decoration:underline; min-width:32px">U</button>
+                          </div>
+                          <div class="seg">
+                            <button onClick="{{ sizeDown }}" title="Smaller" style="min-width:30px">A−</button>
+                            <button onClick="{{ sizeUp }}" title="Larger" style="min-width:30px">A+</button>
+                          </div>
+                          <span style="font-family:var(--font-mono); font-size:11.5px; color:var(--ink-3); align-self:center">{{ sizeLabel }}</span>
+                        </div>
+                        <div style="font-size:10.5px; color:var(--ink-4); margin-top:6px; line-height:1.5">Click into any text on the canvas to edit it. Select a run first to bold or italicize just that part.</div>
+                      </div>
+
+                      <div>
+                        <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600; margin-bottom:6px">Alignment</div>
+                        <div class="seg" style="width:100%">
+                          <button class="{{ alignL }}" onClick="{{ alignLeft }}">Left</button>
+                          <button class="{{ alignC }}" onClick="{{ alignCenter }}">Center</button>
+                          <button class="{{ alignR }}" onClick="{{ alignRight }}">Right</button>
+                        </div>
+                      </div>
+
+                      <div class="hstack" style="gap:10px">
+                        <div style="flex:1">
+                          <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600; margin-bottom:5px">Line height</div>
+                          <input class="em-select" type="number" step="0.05" value="1.5" onChange="{{ setLeading }}">
+                        </div>
+                        <div style="flex:1">
+                          <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600; margin-bottom:5px">Tracking</div>
+                          <input class="em-select" type="number" step="0.01" value="0.02" onChange="{{ setTracking }}">
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600; margin-bottom:6px">Text color</div>
+                        <div class="hstack" style="gap:6px; flex-wrap:wrap">
+                          <sc-for list="{{ textColors }}" as="tc" hint-placeholder-count="6">
+                            <button onClick="{{ tc.apply }}" title="{{ tc.name }}" style="width:24px; height:24px; border-radius:4px; cursor:pointer; padding:0; background:{{ tc.hex }}; border:1px solid var(--line-2)"></button>
+                          </sc-for>
+                        </div>
+                      </div>
+                      <div>
+                        <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600; margin-bottom:6px">Padding</div>
+                        <div class="hstack" style="gap:8px">
+                          <input class="form-input" value="28" style="width:100%; padding:7px 9px; border-radius:6px; border:1px solid var(--line-2); background:var(--bg-2); color:var(--ink-1); font-size:12px; font-family:var(--font-mono); box-sizing:border-box">
+                          <input class="form-input" value="40" style="width:100%; padding:7px 9px; border-radius:6px; border:1px solid var(--line-2); background:var(--bg-2); color:var(--ink-1); font-size:12px; font-family:var(--font-mono); box-sizing:border-box">
+                        </div>
+                      </div>
+                      <div>
+                        <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600; margin-bottom:6px">Background</div>
+                        <div class="hstack" style="gap:6px">
+                          <span style="width:26px; height:26px; border-radius:4px; background:#ffffff; border:2px solid var(--accent)"></span>
+                          <span style="width:26px; height:26px; border-radius:4px; background:#F0E8D6; border:1px solid var(--line-2)"></span>
+                          <span style="width:26px; height:26px; border-radius:4px; background:#12161C; border:1px solid var(--line-2)"></span>
+                          <span style="width:26px; height:26px; border-radius:4px; background:#1D8C89; border:1px solid var(--line-2)"></span>
+                        </div>
+                      </div>
+                      <div class="hstack" style="gap:8px; border-top:1px solid var(--line-1); padding-top:12px">
+                        <button class="btn btn-secondary btn-sm">Duplicate</button>
+                        <button class="btn btn-secondary btn-sm">Move up</button>
+                        <div class="spacer"></div>
+                        <button class="btn btn-secondary btn-sm">Delete</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="card">
+                    <div class="card-head"><h3>Subject line</h3></div>
+                    <div class="card-body" style="display:grid; gap:8px">
+                      <input class="form-input" value="[ Subject line goes here ]" style="width:100%; padding:9px 11px; border-radius:6px; border:1px solid var(--line-2); background:var(--bg-2); color:var(--ink-1); font-size:13px; font-family:inherit; box-sizing:border-box">
+                      <input class="form-input" value="[ Preview text ]" style="width:100%; padding:9px 11px; border-radius:6px; border:1px solid var(--line-2); background:var(--bg-2); color:var(--ink-3); font-size:12px; font-family:inherit; box-sizing:border-box">
+                      <div style="font-size:11px; color:var(--ink-3)">From Dr. Bartender · replies go to your inbox</div>
+                    </div>
+                  </div>
+
+                  <button class="btn btn-primary btn-full" onClick="{{ goRecipients }}">Continue to recipients</button>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ isRecipients }}" hint-placeholder-val="{{ true }}">
+              <div style="display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; align-items:start">
+                <div class="card">
+                  <div class="card-head"><h3>Recipients</h3><span class="k">41 of 41</span></div>
+                  <div class="tbl-wrap">
+                    <table class="tbl">
+                      <tbody>
+                        <sc-for list="{{ recipients }}" as="r" hint-placeholder-count="6">
+                          <tr>
+                            <td><div style="font-weight:600; color:var(--ink-1)">{{ r.name }}</div><div style="font-size:11.5px; color:var(--ink-3)">{{ r.email }}</div></td>
+                            <td>{{ r.tagEls }}</td>
+                            <td style="color:var(--ink-3); font-size:12px">{{ r.note }}</td>
+                            <td class="shrink"><button class="btn btn-secondary btn-sm">Remove</button></td>
+                          </tr>
+                        </sc-for>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div class="card">
+                  <div class="card-head"><h3>Before you send</h3></div>
+                  <div class="card-body" style="display:grid; gap:14px">
+                    <div style="display:flex; justify-content:space-between; align-items:baseline">
+                      <span style="font-size:12.5px; color:var(--ink-2)">Recipients</span>
+                      <span style="font-family:var(--font-mono); font-size:26px; color:var(--ink-1)">41</span>
+                    </div>
+                    <div>
+                      <div style="display:flex; justify-content:space-between; font-size:11.5px; color:var(--ink-3); margin-bottom:5px">
+                        <span>Daily send budget</span><span style="font-family:var(--font-mono)">75 / 100</span>
+                      </div>
+                      <div style="display:flex; height:8px; border-radius:4px; overflow:hidden; background:var(--bg-3)">
+                        <div style="width:34%; background:hsl(var(--info-h) var(--info-s) 58%)"></div>
+                        <div style="width:41%; background:var(--accent)"></div>
+                      </div>
+                      <div style="display:flex; gap:12px; margin-top:7px; font-size:11px; color:var(--ink-3)">
+                        <span style="display:flex; align-items:center; gap:5px"><span style="width:8px; height:8px; border-radius:2px; background:hsl(var(--info-h) var(--info-s) 58%)"></span>34 proposals &amp; invoices</span>
+                        <span style="display:flex; align-items:center; gap:5px"><span style="width:8px; height:8px; border-radius:2px; background:var(--accent)"></span>41 this send</span>
+                      </div>
+                    </div>
+                    <div style="border-top:1px solid var(--line-1); padding-top:12px; display:grid; gap:7px">
+                      <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-3); font-weight:600">Held back</div>
+                      <sc-for list="{{ heldBack }}" as="h" hint-placeholder-count="4">
+                        <div style="display:flex; justify-content:space-between; font-size:12px">
+                          <span style="color:var(--ink-3)">{{ h.label }}</span>
+                          <span style="font-family:var(--font-mono); color:var(--ink-2)">{{ h.n }}</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                    <div style="display:grid; gap:8px">
+                      <button class="btn btn-secondary btn-full">Send test to me</button>
+                      <button class="btn btn-primary btn-full">Send to 41 people</button>
+                    </div>
+                    <div style="font-size:11px; color:var(--ink-3); text-align:center">Goes out at once. No scheduling yet.</div>
+                  </div>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+        </sc-if>
+
+        <!-- ══ SENT ══ -->
+        <sc-if value="{{ isSends }}" hint-placeholder-val="{{ true }}">
+          <div style="display:grid; gap:16px">
+            <div class="tbl-wrap">
+              <table class="tbl">
+                <thead><tr><th>Send</th><th>Audience</th><th>Status</th><th class="num">Sent</th><th class="num">Opened</th><th class="num">Replied</th><th class="num">Booked</th></tr></thead>
+                <tbody>
+                  <sc-for list="{{ sends }}" as="s" hint-placeholder-count="4">
+                    <tr style="cursor:pointer">
+                      <td><div style="font-weight:600; color:var(--ink-1)">{{ s.name }}</div><div style="font-size:11.5px; color:var(--ink-3)">{{ s.date }}</div></td>
+                      <td style="color:var(--ink-3)">{{ s.audience }}</td>
+                      <td>{{ s.chip }}</td>
+                      <td class="num">{{ s.sent }}</td>
+                      <td class="num">{{ s.opened }}</td>
+                      <td class="num">{{ s.replied }}</td>
+                      <td class="num" style="color:var(--ink-1)">{{ s.booked }}</td>
+                    </tr>
+                  </sc-for>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="card">
+              <div class="card-head"><h3>Also reaching your contacts</h3><span class="k">Settings → Automations</span></div>
+              <div>
+                <sc-for list="{{ automations }}" as="a" hint-placeholder-count="4">
+                  <div class="queue-item">
+                    <span class="queue-icon info"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="mail" hint-size="16px,16px"></x-import></span>
+                    <div class="queue-main">
+                      <div class="queue-title">{{ a.name }}</div>
+                      <div class="queue-sub">{{ a.trigger }}</div>
+                    </div>
+                    <span class="queue-meta">{{ a.last30 }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+      </div>
+    </main>
+
+    {{ drawer }}
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+const TAG_HUE = {
+  Corporate: 'violet', Wedding: 'info', Birthday: 'warn', 'Do not contact': 'danger',
+  Thumbtack: 'accent', 'Paid client': 'ok', 'Quoted only': 'neutral',
+};
+const ALL_TAGS = ['Corporate', 'Wedding', 'Birthday', 'Graduation', 'Thumbtack', 'Do not contact'];
+
+const CONTACTS = [
+  { name: 'Renata Alcázar', email: 'renata.alcazar@gmail.com', tags: ['Paid client', 'Corporate'], lastEvent: 'Dec 2024 · Holiday party', ltv: '$1,240', lastContacted: 'Review request · Jan', events: 2, source: 'Thumbtack', history: [{ name: 'Grove Street holiday party', date: 'Dec 14, 2024', amt: '$820' }, { name: 'Team summer social', date: 'Jul 9, 2024', amt: '$420' }], sent: [{ name: 'Review request', date: 'Dec 16, 2024', auto: true }, { name: 'New Year touch', date: 'Jan 2, 2025', auto: true }] },
+  { name: 'Tomás Berrigan', email: 'tberrigan@calderwood.edu', tags: ['Untagged'], lastEvent: 'Jun 2023 · —', ltv: '$1,510', lastContacted: '11-month nudge · May', events: 1, source: 'Check Cherry', suggest: 'Booked a 180-guest event at a college address. Looks corporate.', suggestTag: 'Corporate', history: [{ name: 'Calderwood faculty reception', date: 'Jun 3, 2023', amt: '$1,510' }], sent: [{ name: '11-month nudge', date: 'May 4, 2024', auto: true }] },
+  { name: 'Delphine Okafor', email: 'd.okafor@gmail.com', tags: ['Paid client', 'Wedding'], lastEvent: 'Sep 2024 · Wedding', ltv: '$2,180', lastContacted: 'Review request · Sep', events: 1, source: 'Website', history: [{ name: 'Okafor–Reyes wedding', date: 'Sep 21, 2024', amt: '$2,180' }], sent: [{ name: 'Review request', date: 'Sep 23, 2024', auto: true }] },
+  { name: 'Ines Kowalczyk', email: 'ines@brightsill.co', tags: ['Quoted only', 'Untagged'], lastEvent: '—', ltv: '—', lastContacted: 'Proposal drip · Apr', events: 0, source: 'Thumbtack', suggest: 'Quoted twice, never booked. No event history to seed a tag.', suggestTag: 'Corporate', history: [], sent: [{ name: 'Proposal drip · touch 3', date: 'Apr 18, 2025', auto: true }] },
+  { name: 'Marcus Vell', email: 'marcus.vell@gmail.com', tags: ['Paid client', 'Birthday'], lastEvent: 'Aug 2024 · Birthday', ltv: '$610', lastContacted: 'Review request · Aug', events: 1, source: 'Check Cherry', history: [{ name: '40th birthday', date: 'Aug 17, 2024', amt: '$610' }], sent: [{ name: 'Review request', date: 'Aug 19, 2024', auto: true }] },
+  { name: 'Kara Lindqvist', email: 'klindqvist@gmail.com', tags: ['Paid client', 'Do not contact'], lastEvent: 'May 2024 · Graduation', ltv: '$540', lastContacted: 'Asked to stop · Jul 30', events: 1, source: 'Website', history: [{ name: 'Graduation party', date: 'May 25, 2024', amt: '$540' }], sent: [{ name: 'Review request', date: 'May 27, 2024', auto: true }] },
+  { name: 'Aurélien Bosco', email: 'abosco@meridianpartners.com', tags: ['Untagged'], lastEvent: 'Nov 2023 · —', ltv: '$780', lastContacted: 'New Year touch · Jan', events: 1, source: 'Check Cherry', suggest: 'Company domain, but that is close to a coin flip. Check the event.', suggestTag: 'Corporate', history: [{ name: 'Meridian year-end', date: 'Nov 30, 2023', amt: '$780' }], sent: [{ name: 'New Year touch', date: 'Jan 2, 2024', auto: true }] },
+  { name: 'Sunny Achebe', email: 'sunny.achebe@gmail.com', tags: ['Quoted only'], lastEvent: '—', ltv: '—', lastContacted: 'Proposal drip · Jun', events: 0, source: 'Website', history: [], sent: [{ name: 'Proposal drip · touch 1', date: 'Jun 2, 2025', auto: true }] },
+];
+
+const AUDIENCES = [
+  { name: 'Past clients · corporate', rule: 'Paid us · tagged Corporate', includes: ['Has paid us', 'Tagged Corporate', 'Event finished'], emailable: 41, members: [0, 6, 1] },
+  { name: 'Past clients · everyone', rule: 'Paid us · event finished', includes: ['Has paid us', 'Event finished'], emailable: 224, members: [0, 2, 4, 5, 6] },
+  { name: 'One year on', rule: 'Last event 11–13 months ago', includes: ['Event finished 11–13 months ago'], emailable: 12, members: [2, 4] },
+  { name: 'Cold quotes · spring', rule: 'Quoted Mar–Jun, never booked', includes: ['Has a proposal', 'Never paid', 'Quoted Mar–Jun'], emailable: 63, members: [3, 7] },
+  { name: 'Quoted, never booked', rule: 'Has a proposal · never paid', includes: ['Has a proposal', 'Never paid'], emailable: 181, members: [3, 7] },
+  { name: 'Thumbtack · in conversation', rule: 'Reply in the last 14 days', includes: ['Thumbtack lead', 'Replied in 14 days'], emailable: 0, members: [3] },
+  { name: 'Never classified', rule: 'No marketing tag set by a human', includes: ['No human-set tag'], emailable: 184, members: [1, 6, 3] },
+];
+
+const FONTS = [
+  { name: 'IM Fell English (brand)', stack: "'IM Fell English SC', Georgia, serif", body: "'IM Fell English', Georgia, serif" },
+  { name: 'Libre Caslon', stack: "'Libre Caslon Text', Georgia, serif", body: "'Libre Caslon Text', Georgia, serif" },
+  { name: 'Inter', stack: "'Inter', system-ui, sans-serif", body: "'Inter', system-ui, sans-serif" },
+  { name: 'Georgia', stack: 'Georgia, serif', body: 'Georgia, serif' },
+  { name: 'Helvetica', stack: "'Helvetica Neue', Arial, sans-serif", body: "'Helvetica Neue', Arial, sans-serif" },
+];
+
+const THEMES = {
+  brand: { name: 'Brand kit', a: '#12161C', b: '#1D8C89', c: '#F0E8D6', vars: { '--em-accent': '#1D8C89', '--em-accent-ink': '#ffffff', '--em-bar': '#12161C', '--em-bar-ink': '#F0E8D6', '--em-bg': '#ffffff', '--em-paper': '#F0E8D6', '--em-ink': '#1C1610', '--em-body': '#4a453e', '--em-rule': '#E6DDCC', '--em-muted': '#5A5048', '--em-link': '#134544', '--em-head': "'IM Fell English SC', Georgia, serif", '--em-text': "'IM Fell English', Georgia, serif", '--em-head-size': '27px' } },
+  paper: { name: 'House Lights', a: '#f7f4ec', b: '#2b342b', c: '#b8832a', vars: { '--em-accent': '#2b342b', '--em-accent-ink': '#f7f4ec', '--em-bar': '#f7f4ec', '--em-bar-ink': '#1a1a1a', '--em-bg': '#fcfaf4', '--em-paper': '#e7e3d6', '--em-ink': '#1a1a1a', '--em-body': '#3d3a33', '--em-rule': '#d8d2c2', '--em-muted': '#7a7468', '--em-link': '#2b342b', '--em-head': "'Libre Caslon Text', Georgia, serif", '--em-text': "'Inter', system-ui, sans-serif", '--em-head-size': '28px' } },
+  night: { name: 'After Hours', a: '#0b0d10', b: '#1878c8', c: '#eef1f4', vars: { '--em-accent': '#1878c8', '--em-accent-ink': '#ffffff', '--em-bar': '#0b0d10', '--em-bar-ink': '#eef1f4', '--em-bg': '#111418', '--em-paper': '#1b2028', '--em-ink': '#eef1f4', '--em-body': '#b8c0cc', '--em-rule': '#2c333d', '--em-muted': '#7c8593', '--em-link': '#5aa9e8', '--em-head': "'Inter', system-ui, sans-serif", '--em-text': "'Inter', system-ui, sans-serif", '--em-head-size': '26px' } },
+  plain: { name: 'Plain text', a: '#ffffff', b: '#1C1610', c: '#E6DDCC', vars: { '--em-accent': '#1C1610', '--em-accent-ink': '#ffffff', '--em-bar': '#ffffff', '--em-bar-ink': '#1C1610', '--em-bg': '#ffffff', '--em-paper': '#ffffff', '--em-ink': '#1C1610', '--em-body': '#4a453e', '--em-rule': '#E6DDCC', '--em-muted': '#5A5048', '--em-link': '#134544', '--em-head': 'Georgia, serif', '--em-text': 'Georgia, serif', '--em-head-size': '24px' } },
+};
+
+const ACCENTS = [
+  { name: 'Apothecary teal', hex: '#1D8C89' }, { name: 'Luminous teal', hex: '#2FA7A0' },
+  { name: 'Deep brown', hex: '#1C1610' }, { name: 'Cobalt', hex: '#1878c8' },
+  { name: 'Bordeaux', hex: '#7a2b34' }, { name: 'Camel', hex: '#b8832a' },
+];
+
+class Component extends DCLogic {
+  state = {
+    tab: 'overview', skin: 'dark', openIdx: null, contacts: CONTACTS.map((c) => ({ ...c, tags: [...c.tags] })),
+    aud: 0, tagMenu: null, step: 'design', sel: 'Heading',
+    theme: 'brand', accent: '#1D8C89', head: FONTS[0].stack, body: FONTS[0].body,
+    size: null, align: null, radius: '5px',
+  };
+  rootRef = React.createRef();
+  canvasRef = React.createRef();
+
+  setVars(vars) {
+    const el = this.canvasRef.current;
+    if (!el) return;
+    Object.keys(vars).forEach((k) => el.style.setProperty(k, vars[k]));
+  }
+  componentDidMount() { this.makeEditable(); }
+  componentDidUpdate() { this.makeEditable(); }
+  makeEditable() {
+    const root = this.canvasRef.current;
+    if (!root) return;
+    root.querySelectorAll('.blk div, .blk span').forEach((n) => {
+      if (n.dataset.edit) return;
+      if (n.querySelector('div, span, image-slot')) return;
+      if (!n.textContent.trim()) return;
+      n.dataset.edit = '1';
+      n.contentEditable = 'true';
+      n.spellcheck = false;
+      n.style.outline = 'none';
+      n.addEventListener('focus', () => {
+        const blk = n.closest('.blk');
+        if (blk) { this.pickBlock(blk); this.setState({ sel: blk.getAttribute('data-name') }); }
+      });
+    });
+  }
+  pickBlock(el) {
+    const root = this.canvasRef.current;
+    if (root) root.querySelectorAll('.blk.sel').forEach((n) => n.classList.remove('sel'));
+    el.classList.add('sel');
+    this.selEl = el;
+    const t = this.targets()[0];
+    if (t) {
+      const cs = getComputedStyle(t);
+      let biggest = 0;
+      this.targets().forEach((n) => { biggest = Math.max(biggest, parseFloat(getComputedStyle(n).fontSize)); });
+      this.setState({ size: Math.round(biggest), align: cs.textAlign === 'start' ? 'left' : cs.textAlign });
+    } else {
+      this.setState({ size: null, align: null });
+    }
+  }
+  /* The editable text nodes inside the selected block — what formatting applies to. */
+  targets() {
+    const el = this.selEl || (this.canvasRef.current && this.canvasRef.current.querySelector('.blk.sel'));
+    if (!el) return [];
+    const inner = el.querySelectorAll('[data-edit]');
+    return inner.length ? [...inner] : [el];
+  }
+  exec(cmd, e) {
+    if (e) e.preventDefault();
+    const sel = window.getSelection();
+    const inCanvas = sel && sel.rangeCount && this.canvasRef.current
+      && this.canvasRef.current.contains(sel.anchorNode) && !sel.isCollapsed;
+    if (inCanvas) { document.execCommand(cmd); return; }
+    const prop = { bold: 'fontWeight', italic: 'fontStyle', underline: 'textDecoration' }[cmd];
+    const on = { bold: '800', italic: 'italic', underline: 'underline' }[cmd];
+    this.targets().forEach((n) => { n.style[prop] = n.style[prop] === on ? '' : on; });
+  }
+  /* Each text node steps from its OWN size, so an eyebrow + headline keep their ratio. */
+  bumpSize(d) {
+    const t = this.targets();
+    if (!t.length) return;
+    let biggest = 0;
+    t.forEach((n) => {
+      const next = Math.max(9, Math.round(parseFloat(getComputedStyle(n).fontSize) + d));
+      n.style.fontSize = next + 'px';
+      if (next > biggest) biggest = next;
+    });
+    this.setState({ size: biggest });
+  }
+  segPick(e) {
+    const b = e.currentTarget;
+    b.parentNode.querySelectorAll('button').forEach((n) => n.classList.remove('active'));
+    b.classList.add('active');
+  }
+  applyTheme(id) {
+    const th = THEMES[id];
+    this.setVars(th.vars);
+    this.setState({ theme: id, accent: th.vars['--em-accent'], head: th.vars['--em-head'], body: th.vars['--em-text'] });
+  }
+
+  tag(label, key) {
+    const DS = window.DrBartenderOSDesignSystem_720350;
+    if (label === 'Untagged') {
+      return React.createElement('span', {
+        key: key || label,
+        style: {
+          display: 'inline-block', padding: '1px 7px', fontSize: 10.5, fontWeight: 600,
+          letterSpacing: '.03em', borderRadius: 3,
+          border: '1px dashed hsl(var(--warn-h) var(--warn-s) 46%)',
+          color: 'hsl(var(--warn-h) var(--warn-s) 66%)',
+          background: 'hsl(var(--warn-h) var(--warn-s) 46% / .12)',
+        },
+      }, 'Untagged');
+    }
+    return React.createElement(DS.StatusChip, { key: key || label, kind: TAG_HUE[label] || 'neutral', dot: false }, label);
+  }
+  tags(list) {
+    return React.createElement('span', { style: { display: 'inline-flex', gap: 4, flexWrap: 'wrap' } }, list.map((t) => this.tag(t)));
+  }
+
+  toggleTag(idx, t) {
+    this.setState((s) => {
+      const next = s.contacts.map((c, i) => {
+        if (i !== idx) return c;
+        const has = c.tags.includes(t);
+        let tags = has ? c.tags.filter((x) => x !== t) : [...c.tags.filter((x) => x !== 'Untagged'), t];
+        if (!tags.some((x) => ALL_TAGS.includes(x))) tags = [...tags, 'Untagged'];
+        return { ...c, tags, suggest: has ? c.suggest : null };
+      });
+      return { contacts: next };
+    });
+  }
+
+  /* Inline tag editor: chips + a "+" that opens a checklist popover. */
+  tagEditor(c, idx) {
+    const h = React.createElement;
+    const open = this.state.tagMenu === idx;
+    return h('span', { style: { display: 'inline-flex', gap: 4, flexWrap: 'wrap', alignItems: 'center', position: 'relative' } },
+      c.tags.map((t) => h('span', {
+        key: t, onClick: (e) => { e.stopPropagation(); if (ALL_TAGS.includes(t)) this.toggleTag(idx, t); },
+        title: ALL_TAGS.includes(t) ? 'Remove ' + t : '',
+        style: { cursor: ALL_TAGS.includes(t) ? 'pointer' : 'default', display: 'inline-flex' },
+      }, this.tag(t, t))),
+      h('button', {
+        className: 'btn btn-secondary btn-sm',
+        onClick: (e) => {
+          e.stopPropagation();
+          if (open) { this.setState({ tagMenu: null }); return; }
+          const r = e.currentTarget.getBoundingClientRect();
+          const flip = r.bottom + 232 > window.innerHeight;
+          this.setState({ tagMenu: idx, menuPos: { left: r.left, top: flip ? r.top - 238 : r.bottom + 6 } });
+        },
+        style: { padding: '1px 7px', fontSize: 11, minHeight: 0, lineHeight: 1.6 },
+      }, open ? '×' : '+'),
+      c.suggest ? h('span', {
+        onClick: (e) => { e.stopPropagation(); this.toggleTag(idx, c.suggestTag); },
+        title: c.suggest,
+        style: {
+          cursor: 'pointer', fontSize: 10.5, fontWeight: 600, padding: '1px 7px', borderRadius: 3,
+          border: '1px solid var(--line-2)', color: 'var(--ink-3)', whiteSpace: 'nowrap',
+        },
+      }, 'Suggest: ' + c.suggestTag) : null,
+      open ? h('span', {
+        style: {
+          position: 'fixed', left: (this.state.menuPos || {}).left || 0, top: (this.state.menuPos || {}).top || 0,
+          zIndex: 400, minWidth: 190,
+          background: 'var(--bg-elev)', border: '1px solid var(--line-2)', borderRadius: 6,
+          boxShadow: 'var(--shadow-pop)', padding: 5, display: 'grid', gap: 1,
+        },
+        onClick: (e) => e.stopPropagation(),
+      },
+        ALL_TAGS.map((t) => {
+          const on = c.tags.includes(t);
+          return h('button', {
+            key: t, onClick: () => this.toggleTag(idx, t),
+            style: {
+              display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+              padding: '6px 8px', borderRadius: 4, border: 0, cursor: 'pointer', fontSize: 12,
+              fontFamily: 'inherit', background: 'transparent',
+              color: t === 'Do not contact' ? 'hsl(var(--danger-h) var(--danger-s) 72%)' : 'var(--ink-2)',
+            },
+            onMouseEnter: (e) => { e.currentTarget.style.background = 'var(--row-hover)'; },
+            onMouseLeave: (e) => { e.currentTarget.style.background = 'transparent'; },
+          }, h('span', { style: { width: 11, color: 'var(--accent)' } }, on ? '✓' : ''), t);
+        }),
+        h('span', { style: { borderTop: '1px solid var(--line-1)', margin: '4px 0 0', padding: '6px 8px 2px', fontSize: 10.5, color: 'var(--ink-4)', lineHeight: 1.45 } }, 'Saved on the contact. Audiences recount immediately.')) : null);
+  }
+
+  drawerEl() {
+    const DS = window.DrBartenderOSDesignSystem_720350;
+    const idx = this.state.openIdx;
+    if (idx === null) return null;
+    const c = this.state.contacts[idx];
+    const h = React.createElement;
+    const label = (t) => h('div', { style: { fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.07em', color: 'var(--ink-3)', fontWeight: 600, margin: '18px 0 8px' } }, t);
+    const rows = (items) => items.map((r, i) => h('div', { key: i, className: 'drawer-row' },
+      h('div', null, h('div', { className: 'drawer-row-name' }, r.a), h('div', { className: 'drawer-row-meta' }, r.b)), r.c));
+
+    return h(DS.Drawer, {
+      open: true, onClose: () => this.setState({ openIdx: null }), onOpenPage: () => {},
+      crumb: h(React.Fragment, null, 'Contacts ', h('span', { style: { opacity: .5 } }, '›'), ' ', h('strong', { style: { color: 'var(--ink-1)' } }, c.name)),
+      footer: h('div', { className: 'drawer-head', style: { borderTop: '1px solid var(--line-1)', borderBottom: 0 } },
+        h('button', { className: 'btn btn-secondary' }, 'Open client'),
+        h('button', { className: 'btn btn-primary btn-full' }, 'Add to a send')),
+    },
+      h('div', { className: 'drawer-hero' },
+        h('div', { className: 'hstack', style: { gap: 6, marginBottom: 8, flexWrap: 'wrap' } }, c.tags.map((t) => this.tag(t))),
+        h('h2', null, c.name),
+        h('div', { className: 'sub' }, c.email),
+        h('div', { className: 'meta' },
+          h('div', { className: 'meta-item' }, h('span', { className: 'meta-k' }, 'Events'), h('span', { className: 'meta-v num' }, c.events)),
+          h('div', { className: 'meta-item' }, h('span', { className: 'meta-k' }, 'Lifetime'), h('span', { className: 'meta-v num' }, c.ltv)),
+          h('div', { className: 'meta-item' }, h('span', { className: 'meta-k' }, 'Source'), h('span', { className: 'meta-v' }, c.source)))),
+
+      label('Marketing tags'),
+      c.suggest ? h('div', {
+        style: { display: 'flex', alignItems: 'center', gap: 10, padding: '9px 11px', marginBottom: 10, border: '1px dashed var(--line-2)', borderRadius: 6, background: 'var(--bg-1)', fontSize: 12, color: 'var(--ink-3)' },
+      },
+        h('span', { style: { flex: 1, textWrap: 'pretty' } }, c.suggest),
+        h('button', { className: 'btn btn-secondary btn-sm', onClick: () => this.toggleTag(idx, c.suggestTag) }, 'Apply')) : null,
+      h('div', { className: 'hstack', style: { gap: 6, flexWrap: 'wrap' } },
+        ALL_TAGS.map((t) => h('button', {
+          key: t, className: c.tags.includes(t) ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm',
+          onClick: () => this.toggleTag(idx, t),
+        }, c.tags.includes(t) ? '✓ ' + t : t))),
+      h('div', { style: { fontSize: 11, color: 'var(--ink-4)', marginTop: 8 } }, 'Set by you, changeable any time. Never inferred from the email domain.'),
+
+      label('Event history — the evidence'),
+      rows(c.history.length ? c.history.map((e) => ({ a: e.name, b: e.date, c: h('span', { style: { fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--ink-2)' } }, e.amt) })) : [{ a: 'No events yet', b: 'Quoted only', c: null }]),
+
+      label('Everything we have sent them'),
+      rows(c.sent.map((e) => ({ a: e.name, b: e.date, c: h(DS.StatusChip, { kind: e.auto ? 'neutral' : 'info', dot: false }, e.auto ? 'Automatic' : 'Marketing') }))));
+  }
+
+  renderVals() {
+    const t = this.state.tab;
+    const cls = (id) => (t === id ? 'active' : '');
+    const go = (id) => () => this.setState({ tab: id, openIdx: null, tagMenu: null });
+    const SUB = {
+      overview: 'Tuesday, August 11 · 3 moments open · 66 sends left today',
+      audiences: '7 saved audiences over 421 real contacts',
+      contacts: '421 contacts · 184 never classified',
+      compose: 'Draft · Holiday parties — corporate',
+      sends: '1 send, all time',
+    };
+    const DS = window.DrBartenderOSDesignSystem_720350 || {};
+    const chip = (kind, label) => (DS.StatusChip ? React.createElement(DS.StatusChip, { kind, dot: false }, label) : label);
+    const cs = this.state.contacts;
+    const aud = AUDIENCES[this.state.aud];
+
+    const row = (i) => ({
+      ...cs[i],
+      tagEditor: this.tagEditor(cs[i], i),
+      open: () => this.setState({ openIdx: i, tagMenu: null }),
+    });
+
+    return {
+      rootRef: this.rootRef, two: 2, fourteen: 14, noop: () => {},
+      user: { name: 'Dallas', role: 'Admin' },
+      prefs: { sidebar: 'full', skin: this.state.skin, density: 'comfy' },
+      onPref: (k, v) => {
+        if (this.rootRef.current) this.rootRef.current.setAttribute('data-' + k, v);
+        if (k === 'skin') this.setState({ skin: v });
+      },
+      subtitle: SUB[t],
+      isOverview: t === 'overview', isAudiences: t === 'audiences', isContacts: t === 'contacts',
+      isCompose: t === 'compose', isSends: t === 'sends',
+      tabOverview: cls('overview'), tabAudiences: cls('audiences'), tabContacts: cls('contacts'),
+      tabCompose: cls('compose'), tabSends: cls('sends'),
+      goOverview: go('overview'), goAudiences: go('audiences'), goContacts: go('contacts'),
+      goCompose: go('compose'), goSends: go('sends'),
+
+      moments: [
+        { hue: 'hsl(var(--violet-h) var(--violet-s) 56%)', window: 'Send by Sep 5', audience: 'Corporate · past clients', title: 'Holiday parties are booked in September', count: 41, why: 'Every corporate client you have ever had books in Q4 and none of them has ever come back. This is the one send with a repeat-revenue thesis behind it.' },
+        { hue: 'hsl(var(--warn-h) var(--warn-s) 52%)', window: 'Rolling', audience: 'Past clients · 12 months on', title: '12 people hit their one-year mark this month', count: 12, why: 'Anniversary of a finished event. The 11-month automated nudge already went out — this is the human follow-up nobody has ever sent.' },
+        { hue: 'hsl(var(--info-h) var(--info-s) 58%)', window: 'Send any time', audience: 'Quoted, never booked', title: '63 spring quotes said "keep us in mind"', count: 63, why: 'Quoted between March and June, never signed. Over the daily cap on their own — this one goes out in two passes.' },
+      ],
+      baseBars: [
+        { label: 'Paid us', n: 233, pct: '55%', hue: 'hsl(var(--ok-h) var(--ok-s) 52%)' },
+        { label: 'Quoted, never booked', n: 188, pct: '45%', hue: 'hsl(var(--info-h) var(--info-s) 58%)' },
+        { label: 'Tagged corporate', n: 30, pct: '7%', hue: 'hsl(var(--violet-h) var(--violet-s) 56%)' },
+        { label: 'Never classified', n: 184, pct: '44%', hue: 'hsl(var(--warn-h) var(--warn-s) 52%)' },
+        { label: 'Do not contact', n: 4, pct: '1%', hue: 'hsl(var(--danger-h) var(--danger-s) 66%)' },
+      ],
+
+      audiences: AUDIENCES.map((a, i) => ({
+        ...a,
+        bg: i === this.state.aud ? 'var(--row-active)' : 'transparent',
+        stripe: i === this.state.aud ? 'inset 2px 0 0 var(--accent)' : 'none',
+        select: () => this.setState({ aud: i, tagMenu: null }),
+      })),
+      audName: aud.name, audRule: aud.rule, audCount: aud.emailable,
+      audIncludes: React.createElement('span', { style: { display: 'inline-flex', gap: 6, flexWrap: 'wrap' } },
+        aud.includes.map((x) => React.createElement('span', { key: x, className: 'tag' }, x))),
+      members: aud.members.map(row),
+      contacts: cs.map((c, i) => row(i)),
+      rowMenu: [{ label: 'Open contact', icon: 'eye' }, { label: 'Tag as corporate', icon: 'users' }, { label: 'Add to a send', icon: 'mail' }, { label: 'Never contact', icon: 'x', danger: true }],
+      drawer: this.drawerEl(),
+
+      stepDesign: this.state.step === 'design' ? 'active' : '',
+      stepRecipients: this.state.step === 'recipients' ? 'active' : '',
+      isDesign: this.state.step === 'design', isRecipients: this.state.step === 'recipients',
+      goDesign: () => this.setState({ step: 'design' }),
+      goRecipients: () => this.setState({ step: 'recipients' }),
+      canvasRef: this.canvasRef,
+      themes: Object.keys(THEMES).map((id) => ({
+        ...THEMES[id], on: this.state.theme === id ? 'true' : 'false',
+        apply: () => this.applyTheme(id),
+      })),
+      fonts: FONTS.map((f) => ({
+        ...f,
+        headSel: this.state.head === f.stack ? 'selected' : null,
+        bodySel: this.state.body === f.body ? 'selected' : null,
+      })),
+      setHead: (e) => { this.setVars({ '--em-head': e.target.value }); this.setState({ head: e.target.value }); },
+      setBody: (e) => { this.setVars({ '--em-text': e.target.value }); this.setState({ body: e.target.value }); },
+      accents: ACCENTS.map((a) => ({
+        ...a,
+        ring: this.state.accent === a.hex ? '2px solid var(--ink-1)' : '1px solid var(--line-2)',
+        apply: () => { this.setVars({ '--em-accent': a.hex }); this.setState({ accent: a.hex }); },
+      })),
+      radiusSquare: () => { this.setVars({ '--em-radius': '0px' }); this.setState({ radius: '0px' }); },
+      radiusSoft: () => { this.setVars({ '--em-radius': '5px' }); this.setState({ radius: '5px' }); },
+      radiusPill: () => { this.setVars({ '--em-radius': '999px' }); this.setState({ radius: '999px' }); },
+      selName: this.state.sel,
+      selectBlock: (e) => {
+        this.pickBlock(e.currentTarget);
+        this.setState({ sel: e.currentTarget.getAttribute('data-name') });
+      },
+      sizeLabel: this.state.size ? this.state.size + 'px' : '—',
+      alignL: this.state.align === 'left' ? 'active' : '',
+      alignC: this.state.align === 'center' ? 'active' : '',
+      alignR: this.state.align === 'right' ? 'active' : '',
+      radSquare: this.state.radius === '0px' ? 'active' : '',
+      radSoft: this.state.radius === '5px' ? 'active' : '',
+      radPill: this.state.radius === '999px' ? 'active' : '',
+      fmtBold: (e) => this.exec('bold', e),
+      fmtItalic: (e) => this.exec('italic', e),
+      fmtUnderline: (e) => this.exec('underline', e),
+      sizeUp: () => this.bumpSize(1),
+      sizeDown: () => this.bumpSize(-1),
+      alignLeft: () => { this.targets().forEach((n) => { n.style.textAlign = 'left'; }); this.setState({ align: 'left' }); },
+      alignCenter: () => { this.targets().forEach((n) => { n.style.textAlign = 'center'; }); this.setState({ align: 'center' }); },
+      alignRight: () => { this.targets().forEach((n) => { n.style.textAlign = 'right'; }); this.setState({ align: 'right' }); },
+      setLeading: (e) => { const v = e.target.value; this.targets().forEach((n) => { n.style.lineHeight = v; }); },
+      setTracking: (e) => { const v = e.target.value; this.targets().forEach((n) => { n.style.letterSpacing = v + 'em'; }); },
+      textColors: [
+        { name: 'Ink', hex: '#1C1610' }, { name: 'Body', hex: '#4a453e' },
+        { name: 'Muted', hex: '#5A5048' }, { name: 'Accent', hex: '#1D8C89' },
+        { name: 'Cream', hex: '#F0E8D6' }, { name: 'White', hex: '#ffffff' },
+      ].map((c) => ({ ...c, apply: () => this.targets().forEach((n) => { n.style.color = c.hex; }) })),
+      palette: [
+        { icon: 'pen', label: 'Heading' }, { icon: 'clipboard', label: 'Text' },
+        { icon: 'eye', label: 'Image' }, { icon: 'right', label: 'Button' },
+        { icon: 'chart', label: 'Divider' }, { icon: 'calendar', label: 'Spacer' },
+        { icon: 'users', label: 'Image + text' }, { icon: 'flask', label: 'Two column' },
+        { icon: 'mail', label: 'Footer' },
+      ],
+
+      recipients: [
+        { name: 'Renata Alcázar', email: 'renata.alcazar@gmail.com', tagEls: this.tags(['Corporate']), note: 'Holiday party, Dec 2024' },
+        { name: 'Aurélien Bosco', email: 'abosco@meridianpartners.com', tagEls: this.tags(['Corporate']), note: 'Year-end, Nov 2023' },
+        { name: 'Tomás Berrigan', email: 'tberrigan@calderwood.edu', tagEls: this.tags(['Corporate']), note: 'Tagged 2 min ago' },
+        { name: 'Priya Raman', email: 'priya.raman@gmail.com', tagEls: this.tags(['Corporate']), note: 'Office party, Dec 2023' },
+        { name: 'Devin Ochoa', email: 'devin@ochoa-events.com', tagEls: this.tags(['Corporate']), note: 'Summer social, Jul 2024' },
+        { name: 'Marguerite Vaillancourt', email: 'mvaillancourt@lakeshore.org', tagEls: this.tags(['Corporate']), note: 'Donor reception, Oct 2023' },
+      ],
+      heldBack: [
+        { label: 'Do not contact', n: 4 }, { label: 'Unsubscribed', n: 2 },
+        { label: 'Bounced', n: 3 }, { label: 'Emailed in last 30 days', n: 6 },
+      ],
+      sends: [
+        { name: 'Holiday parties — corporate', date: 'Draft · edited today', audience: 'Past clients · corporate', chip: chip('neutral', 'Draft'), sent: '—', opened: '—', replied: '—', booked: '—' },
+        { name: 'Spring wake-up', date: 'Draft · Aug 4', audience: 'Cold quotes · spring', chip: chip('neutral', 'Draft'), sent: '—', opened: '—', replied: '—', booked: '—' },
+        { name: 'One year on — August', date: 'Draft · Aug 1', audience: 'One year on', chip: chip('neutral', 'Draft'), sent: '—', opened: '—', replied: '—', booked: '—' },
+        { name: 'Spring promo (test)', date: 'Mar 12, 2025', audience: 'Quoted, never booked', chip: chip('ok', 'Sent'), sent: '4', opened: '2', replied: '0', booked: '0' },
+      ],
+      automations: [
+        { name: 'Unsigned proposal drip', trigger: 'Proposal sent, not signed · 5 touches', last30: '18 sent' },
+        { name: 'Review request', trigger: 'Two days after each event', last30: '7 sent' },
+        { name: 'Retention nudge', trigger: '11 months after an event', last30: '4 sent' },
+        { name: 'New Year touch', trigger: 'January 2, all past clients', last30: '0 sent' },
+      ],
+    };
+  }
+}
+
+</script>
+</body>
+</html>
