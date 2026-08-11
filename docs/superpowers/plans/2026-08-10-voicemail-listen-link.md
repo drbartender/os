@@ -269,7 +269,13 @@ async function fetchRecordingMp3(recordingSid) {
     try {
       return await _deps.fetchRecordingMp3Once(recordingSid);
     } catch (err) {
-      lastStatus = err.status || 0;
+      // No `.status` means the request never got a response at all: a network
+      // failure or the AbortSignal timeout. Propagate THAT error rather than
+      // flattening it into "failed (0)", or a DNS outage and a timeout become
+      // indistinguishable in the logs. Only an HTTP status reaches the retry
+      // policy below.
+      if (!err.status) throw err;
+      lastStatus = err.status;
       if (lastStatus !== 404) break;
       if (attempt < MEDIA_FETCH_ATTEMPTS) await _deps.sleep(MEDIA_RETRY_BACKOFF_MS * attempt);
     }
@@ -328,6 +334,22 @@ test('fetchRecordingMp3Once returns the bytes on success', async () => {
     if (savedSid === undefined) delete process.env.TWILIO_ACCOUNT_SID;
     else process.env.TWILIO_ACCOUNT_SID = savedSid;
     vm.__setVoicemailDeps({ fetch: (...a) => globalThis.fetch(...a) });
+  }
+});
+
+test('fetchRecordingMp3 propagates a network failure instead of flattening it', async () => {
+  // The extraction must not turn "DNS failed" or "timed out" into "failed (0)".
+  try {
+    vm.__setVoicemailDeps({
+      fetchRecordingMp3Once: async () => { throw new Error('ETIMEDOUT reaching api.twilio.com'); },
+      sleep: async () => {},
+    });
+    await assert.rejects(() => vm.fetchRecordingMp3(GOOD_SID), /ETIMEDOUT/);
+  } finally {
+    vm.__setVoicemailDeps({
+      fetchRecordingMp3Once: (...a) => vm.fetchRecordingMp3Once(...a),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    });
   }
 });
 
