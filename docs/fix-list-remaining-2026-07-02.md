@@ -977,3 +977,29 @@ merged code 2026-08-04):
   stay retryable; documented in serviceArea.js); create.js now uses the shared curfewMessage;
   serviceExtensionPricing carries its own JS pre-screen; both stale-comment/filename nits
   (test renamed to eventEndInstant.curfew.test.js, smoke list updated).
+
+## Phone 1a — interception canary is aimed at the wrong signature (2026-08-11)
+
+`interceptionSuspicion` (`server/utils/voicemailLine.js`) fires when the dialed leg's
+`DialCallDuration` is <= 3s. That value is the leg's CONNECTED duration, not its
+time-to-answer, so the detector is inverted in practice:
+
+- A REAL Google Voice voicemail interception answers in ~1s and then holds the caller
+  through a greeting and a message — a LONG connected leg. Canary stays silent.
+- A human answering fast and hanging up (a rejected robocall, or Dallas answering his
+  own test call) is a SHORT connected leg. Canary fires.
+
+Confirmed live 2026-08-11: Dallas answered his own 1922 test at ~2s, the canary paged
+(DRBARTENDER-SERVER-20, resolved as a false positive), and the follow-up call that
+genuinely rang out delivered correctly through our path. The pre-merge code review
+predicted this exact false positive; it shipped deliberately and the first real call
+proved it out.
+
+Options, cheapest first: (a) demote to log-only — keep the per-call `dialSec` line for
+Twilio-console reconciliation, drop the Sentry page, which is honest telemetry rather
+than a detector; (b) derive real answer latency by fetching the child call via
+`req.body.DialCallSid` (date_created -> start_time) on a detached path after the TwiML
+is sent; (c) the conclusive fix — a `<Number url=...>` screening whisper on the primary
+dial leg, the same keypress gate the press-1 escalation already uses, which a machine
+cannot satisfy. (c) is the only one that PREVENTS interception rather than reporting it,
+and the code already exists in voiceEscalate.js.
