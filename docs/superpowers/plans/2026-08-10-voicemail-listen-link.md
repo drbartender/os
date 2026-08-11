@@ -1070,8 +1070,13 @@ grep -n "VM_LISTEN_LINK_ENABLED" .claude/CLAUDE.md README.md .env.example
 grep -n "api/voice/vm" ARCHITECTURE.md README.md
 grep -n "listen_token" ARCHITECTURE.md
 grep -rn "listenLinkEnabled" server/utils/voicemail.js server/routes/voicemailListen.js
+grep -n "listenToken && listenLinkEnabled" server/utils/voicemail.js
 ```
-Expected: every command prints hits in every named file, and the last one shows ONE definition with the route consuming it.
+Expected: every command prints hits in every named file. The last two are the ones
+that matter: the first shows ONE definition plus the route consuming it, and the
+SECOND proves the SMS side consumes it too. Two-sidedness is the exact property
+rev 1 documented but did not build, and a grep that only finds the definition and
+the route would have passed on the broken version.
 
 - [ ] **Step 6: Commit**
 
