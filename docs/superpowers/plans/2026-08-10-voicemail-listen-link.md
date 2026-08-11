@@ -353,11 +353,16 @@ test('fetchRecordingMp3 propagates a network failure instead of flattening it', 
   }
 });
 
-test('fetchRecordingMp3 still retries a 404 three times through the shared fetch', async () => {
-  // The delivery pipeline's contract is unchanged by the extraction.
+test('fetchRecordingMp3 still makes three attempts on a 404', async () => {
+  // The delivery pipeline's contract is unchanged by the extraction. `fetch` is
+  // stubbed too even though this test drives the seam one level up: in the RED
+  // phase fetchRecordingMp3 is still the OLD implementation reading _deps.fetch,
+  // and without this stub the red run makes three real authenticated GETs to
+  // api.twilio.com with the credentials from .env.
   let calls = 0;
   try {
     vm.__setVoicemailDeps({
+      fetch: async () => ({ ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) }),
       fetchRecordingMp3Once: async () => { calls += 1; const e = new Error('404'); e.status = 404; throw e; },
       sleep: async () => {},
     });
@@ -365,6 +370,7 @@ test('fetchRecordingMp3 still retries a 404 three times through the shared fetch
     assert.equal(calls, 3);
   } finally {
     vm.__setVoicemailDeps({
+      fetch: (...a) => globalThis.fetch(...a),
       fetchRecordingMp3Once: (...a) => vm.fetchRecordingMp3Once(...a),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     });
@@ -403,6 +409,9 @@ const { pool } = require('../db');
 
 const router = require('./voicemailListen');
 
+const HAS_DB = !!process.env.DATABASE_URL;
+const dbTest = HAS_DB ? test : test.skip;
+
 let _server = null;
 let _baseUrl = null;
 
@@ -422,6 +431,9 @@ before(async () => {
 });
 after(async () => {
   if (_server) await new Promise((r) => _server.close(r));
+  // Guarded like schema.vaCalling.test.js:69-74: without DATABASE_URL the
+  // dbTest is skipped, so the teardown must not touch the pool either.
+  if (!HAS_DB) return;
   await pool.query("DELETE FROM voicemail_delivery WHERE call_sid LIKE 'TEST_VM_listen%'");
   await pool.end();
 });
@@ -443,9 +455,6 @@ function get(path) {
 const TOKEN = '11111111-2222-4333-8444-555555555555';
 const OTHER = '99999999-8888-4777-8666-555555555555';
 const REC = 'RE' + 'a'.repeat(32);
-
-const HAS_DB = !!process.env.DATABASE_URL;
-const dbTest = HAS_DB ? test : test.skip;
 
 let calls;
 beforeEach(() => {
@@ -693,7 +702,7 @@ Confirm the `asyncHandler` import path and shape against an existing route befor
 - [ ] **Step 7: Run to confirm the route tests pass**
 
 Run: `node -r dotenv/config --test server/routes/voicemailListen.test.js`
-Expected: PASS, 12 tests (11 plus the `dbTest`).
+Expected: PASS, 11 tests (10 plus the `dbTest`).
 
 - [ ] **Step 8: Mount it in `server/index.js`**
 
