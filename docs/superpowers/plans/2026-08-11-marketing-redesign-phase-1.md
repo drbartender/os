@@ -37,7 +37,9 @@
 - **Test fixture emails must NOT use `.invalid`.** That is the house fixture domain, and `MAILABLE_SQL` suppresses it, so a `.invalid` fixture can never be mailable and would make a passing test meaningless. Use `@mkt-test.example`.
 - **`clients.communication_preferences` is JSONB NOT NULL** with default `'{"sms_enabled": true, "email_enabled": true, "marketing_enabled": true}'` (verified 2026-08-11). Two consequences. `SET communication_preferences = NULL` raises `23502`, so no test may do it. And a bare `INSERT INTO clients (name, email)` always lands all three keys, so the tri-state "absent key" case is unreachable unless the fixture explicitly writes `'{}'::jsonb`.
 - **An untyped bind parameter inside a `CASE` resolves to text.** `SET int_col = CASE WHEN $1 THEN $2 ELSE NULL END` raises `42804: column is of type integer but expression is of type text` (verified 2026-08-11). Cast it: `$2::int`. A TEXT column in the same shape works, which is exactly why the bug looks symmetric and is not.
-- **Dedupe by lowercased email is a phase 1 requirement, not a send-path one.** Spec 4.3 says the resolver *and* the send. One person can hold more than one client row (Ali Smith is already doubled in prod), so a row-counting list, audience count, or held-back aggregate is simply wrong. Every query that lists or counts contacts resolves one canonical row per lowercased address first.
+- **Resolver-side dedupe is deliberately NOT built.** Spec 4.3 asks for dedupe "in the resolver and on the send", and an earlier revision of this plan built the resolver half. Measured against prod on 2026-08-11: **508 client rows, 508 distinct lowercased addresses, zero collisions.** The example originally used to justify it was wrong. "Ali Smith" twice is `accounting@schmidkeconstruction.com` and `admin@schmidkeconstruction.com`, two different people at one company, and merging them would be the defect. The real duplicate shape in this data is same-name rows where one carries a NULL email (Aarti Deshmukh, Allyson Gietl, Ann Harshbarger, and five more); address-keyed dedupe does nothing for those by design, and they are already held back as `no_address` so they cannot reach a recipient list. The one true same-person duplicate, Cathy Murphy, carries `cmurphy.dup1427@arthrex-chicago.invalid` beside her real address and is already suppressed by the `.invalid` rule.
+
+  Dedupe stays on the **send path only**, declared in lane `mkt-g-send`, where it is genuinely load-bearing: one address must never receive the same campaign twice regardless of how the data drifts later. Accepted consequence: if duplicate addresses ever appear, the contact list and audience counts overstate by that number until the send catches it. Today that number is zero. Do not reintroduce a canonical-row CTE here; two attempts produced four blockers (a `DESC` NULLS-FIRST inversion that let the clean twin win, and a survivor-picking scheme that discarded the loser's proposals and tags) for no benefit against this data.
 
 ## Proven Harness
 
@@ -369,6 +371,13 @@ END $$;
 
 CREATE INDEX IF NOT EXISTS idx_clients_marketing_excluded
   ON clients(marketing_excluded) WHERE marketing_excluded = true;
+
+-- message_log carries only idx_message_log_proposal and idx_message_log_provider_id.
+-- The contact list's last_contacted lateral and the drawer's history both filter
+-- on client_id, and /audiences runs the same lateral once per audience, so
+-- without this every contact-tab page load sequential-scans the table.
+CREATE INDEX IF NOT EXISTS idx_message_log_client_created
+  ON message_log (client_id, created_at DESC) WHERE client_id IS NOT NULL;
 ```
 
 - [ ] **Step 2: Assert the objects installed**
@@ -1220,8 +1229,10 @@ async function getContactMessageHistory(clientId, { limit = 50 } = {}) {
       FROM email_sends es
       LEFT JOIN email_campaigns ec ON ec.id = es.campaign_id
      WHERE es.client_id = $1 AND es.sent_at IS NOT NULL
-       AND es.status NOT IN ('failed', 'bounced', 'queued')
+       AND COALESCE(es.status, '') NOT IN ('failed', 'bounced', 'queued')
   ` : '';
+  // COALESCE because es.status is nullable (DEFAULT 'queued', no NOT NULL), and
+  // a bare NOT IN against NULL evaluates to NULL, silently dropping the row.
   // NOT `status = 'sent'`. The CHECK allows queued/sent/delivered/opened/
   // clicked/bounced/complained/failed, and emailMarketingWebhook.js advances a
   // delivered send past 'sent', so an equality filter would hide most real
@@ -1263,10 +1274,12 @@ Expected: PASS, 6/6.
 
 - [ ] **Step 5: Document and commit**
 
-Add to `ARCHITECTURE.md`, in the relevant section: `contactMessageHistory.js` unions `message_log`, `scheduled_messages`, and (from phase 2) `email_sends`, because `message_log.proposal_id` is NOT NULL and cannot hold a send to a proposal-less client.
+`ARCHITECTURE.md`, in the relevant section: `contactMessageHistory.js` unions `message_log`, `scheduled_messages`, and (from phase 2) `email_sends`, because `message_log.proposal_id` is NOT NULL and cannot hold a send to a proposal-less client.
+
+`README.md` folder tree: add `server/utils/contactMessageHistory.js`. That file lists every server util individually, and CLAUDE.md's doc table makes it mandatory, so a lane that adds a util and skips README is out of compliance even though its own ARCHITECTURE entry is present.
 
 ```bash
-git add server/utils/contactMessageHistory.js server/utils/contactMessageHistory.test.js ARCHITECTURE.md
+git add server/utils/contactMessageHistory.js server/utils/contactMessageHistory.test.js ARCHITECTURE.md README.md
 git commit -m "feat(marketing): contact message history across log, dispatcher, and campaigns"
 ```
 
@@ -1468,11 +1481,15 @@ module.exports = {
 
 This is the test that makes "one predicate" true rather than aspirational. Append to the same file:
 
-```js
-const { pool } = require('../db');
-const { HELD_BACK_SQL, LEAD_UNSUB_LATERAL } = require('./marketingAudience');
-const { after } = require('node:test');
+**Put these requires at the TOP of the file**, extending the existing ones rather than adding a second block mid-file. Task 10 appends more tests to this same file and tells the implementer the requires are already at the top; a mid-file duplicate makes that instruction produce a redeclaration error.
 
+```js
+// At the top: extend the node:test import to { test, after }, extend the
+// marketingAudience destructure with HELD_BACK_SQL and LEAD_UNSUB_LATERAL,
+// and add const { pool } = require('../db');
+
+// node:test runs `after` once every test in the file completes, regardless of
+// where it is registered, so one teardown covers Task 10's additions too.
 after(async () => { await pool.end(); });
 
 test('HELD_BACK_SQL and heldBackReason agree on every case', async () => {
@@ -1940,19 +1957,24 @@ The response carries a `held_back` **aggregate over the whole filtered base**, n
 
 Create `server/routes/marketingContacts.list.test.js` from the **Proven Harness**, with three changes to it:
 
-1. Declare `let dupId;` alongside the other fixture ids.
-2. Create fixtures in `before()` and destroy them in `after()`, never inside a test body. The earlier draft deleted a `legacy_cc_proposals` row inside the *next* test, so any failure in between leaked a `booked` ledger row into the shared dev DB permanently.
-3. Extend the harness `after()`, keeping child-before-parent order and `pool.end()` last:
+**Create every fixture in `before()` and destroy it in `after()`. No test body may create or delete a fixture another test reads.** An earlier draft created a `legacy_cc_proposals` row in one test and deleted it inside the *next* one, which both leaked on failure and coupled the two. Add the ledger row to `before()`:
+
+```js
+  await pool.query(
+    `INSERT INTO legacy_cc_proposals (cc_id, status, client_email_normalized, event_date, total_cost_cents)
+     VALUES ($1, 'booked', $2, CURRENT_DATE - 400, 76000)`,
+    [`cc-${NONCE}`, `mkt-${NONCE}@mkt-test.example`]);
+```
+
+and extend the harness `after()`, children before parents, `pool.end()` last:
 
 ```js
   await pool.query('DELETE FROM legacy_cc_proposals WHERE cc_id LIKE $1', [`cc-${NONCE}%`]);
-  await pool.query('DELETE FROM client_tags WHERE client_id = ANY($1)', [[clientId, dupId].filter(Boolean)]);
-  await pool.query("DELETE FROM admin_audit_log WHERE metadata->>'client_id' = $1", [String(clientId)]);
-  await pool.query('DELETE FROM clients WHERE id = ANY($1)', [[clientId, dupId].filter(Boolean)]);
-  await pool.query('DELETE FROM users WHERE email LIKE $1', [`mkt-%-${NONCE}@mkt-test.example`]);
-  server.close();
-  await pool.end();
+  // ...then the harness's existing client_tags / admin_audit_log / clients /
+  // users deletes, then server.close() and pool.end().
 ```
+
+**Tests must leave the fixture as they found it.** Several mutate `clientId` (tags, exclusion, preferences); each restores it in its own body. A test that mutates and does not restore silently breaks every test after it, which is how an earlier draft made six tests unpassable and one a false green.
 
 Then:
 
@@ -2004,27 +2026,31 @@ test('held_back buckets are exclusive and sum to total minus mailable', async ()
                         email_status = 'ok' WHERE id = $1`, [clientId]);
 });
 
-test('a duplicate client row for the same address is deduped away', async () => {
-  const dup = await pool.query(
-    `INSERT INTO clients (name, email) VALUES ($1, $2) RETURNING id`,
-    [`MKT dup ${NONCE}`, `MKT-${NONCE}@MKT-TEST.EXAMPLE`]);  // same address, different case
-  dupId = dup.rows[0].id;
-  const r = await req('GET', `/api/marketing/contacts?search=${NONCE}`, adminToken);
-  const mine = r.body.contacts.filter(c => c.id === clientId || c.id === dupId);
-  assert.equal(mine.length, 1, 'one person appeared twice; every count on the screen is wrong');
+test('filter_counts are scoped to the base, not to the active filter', async () => {
+  // The chips must answer "what would each filter give", so selecting one
+  // cannot zero the others. Computing them inside the filtered scope makes
+  // Untagged read "All N / Untagged N / Corporate 0".
+  await req('PUT', `/api/marketing/contacts/${clientId}/tags`, adminToken, { tags: ['corporate'] });
+  const r = await req('GET', `/api/marketing/contacts?search=${NONCE}&filter=untagged`, adminToken);
+  assert.equal(r.body.contacts.length, 0, 'the tagged fixture should not match untagged');
+  assert.ok(r.body.filter_counts.all >= 1, 'chips must not collapse to the active filter');
+  assert.ok(r.body.filter_counts.corporate >= 1, 'corporate chip lost its count');
+  await req('PUT', `/api/marketing/contacts/${clientId}/tags`, adminToken, { tags: [] });
 });
 
-test('dedupe keeps the MORE suppressed row, never the clean one', async () => {
-  // If either row is excluded, the survivor must be held back. Picking the
-  // oldest id instead would email someone whose duplicate says do not contact.
-  await pool.query(
-    `UPDATE clients SET marketing_excluded = true, marketing_excluded_reason = 'dup test'
-      WHERE id = $1`, [dupId]);
+test('total reflects the base even on a page past the end', async () => {
+  const r = await req('GET', `/api/marketing/contacts?search=${NONCE}&page=99`, adminToken);
+  assert.equal(r.body.contacts.length, 0);
+  assert.ok(r.body.total >= 1, 'total came from the row window rather than the aggregate');
+});
+
+test('last_contacted and derived are returned, not just computed', async () => {
+  // Both were promoted from "deferred" to "implemented"; without an assertion
+  // their only verification would be a manual walk seven tasks later.
   const r = await req('GET', `/api/marketing/contacts?search=${NONCE}`, adminToken);
-  const mine = r.body.contacts.filter(c => c.id === clientId || c.id === dupId);
-  assert.equal(mine.length, 1);
-  assert.equal(mine[0].id, dupId, 'the suppressed duplicate must win');
-  assert.equal(mine[0].mailable, false);
+  const row = r.body.contacts.find(c => c.id === clientId);
+  assert.ok('last_contacted' in row, 'last_contacted missing from the list response');
+  assert.ok('derived' in row, 'derived state missing from the list response');
 });
 
 test('do-not-contact reports its own reason, outranking unsubscribed', async () => {
@@ -2049,11 +2075,7 @@ test('the held_back aggregate counts the whole base, not the page', async () => 
 });
 
 test('lifetime_dollars converts Check Cherry cents, so $760 is not $76,000', async () => {
-  // Created here for readability; destroyed in after(), never in a later test.
-  await pool.query(
-    `INSERT INTO legacy_cc_proposals (cc_id, status, client_email_normalized, event_date, total_cost_cents)
-     VALUES ($1, 'booked', $2, CURRENT_DATE - 400, 76000)`,
-    [`cc-${NONCE}`, `mkt-${NONCE}@mkt-test.example`]);
+  // The ledger fixture is created in before() and destroyed in after().
   const r = await req('GET', `/api/marketing/contacts?search=${NONCE}`, adminToken);
   const row = r.body.contacts.find(c => c.id === clientId);
   assert.ok(row.lifetime_dollars >= 760 && row.lifetime_dollars < 761,
@@ -2136,30 +2158,11 @@ const {
 const { suggestTag } = require('../utils/marketingSuggestions');
 ```
 
-**Dedupe by lowercased email, spec 4.3.** One person can hold more than one client row (Ali Smith is doubled in prod), so a row-counting list, audience count, or held-back total is simply wrong. Every contact query starts from a canonical row per address.
+**No dedupe here.** See the Global Constraints entry: prod holds 508 client rows and 508 distinct lowercased addresses, so a canonical-row CTE merges nothing while carrying real risk, and two attempts at one produced four blockers. Dedupe lives on the send path, in lane `mkt-g-send`. Contacts are listed and counted one row each.
 
-The canonical row is deliberately **the most suppressed one**, not the oldest. If two rows share an address and either is excluded, unsubscribed, or bounced, the surviving row carries that state, so dedupe can never promote someone to mailable because their duplicate happened to be clean. Ties break on lowest id.
+**Two filter scopes, not one.** The held-back panel describes what you are looking at right now, so it honors every filter. The quick-filter chips must show what each filter *would* give, since the design renders "All 421 · Untagged 184 · Corporate 30 · Do not contact 4" simultaneously with All active. So the chips are scoped to the audience and search but **not** to the active filter. Computing both from one scope makes selecting Untagged read "All 184 / Untagged 184 / Corporate 0", which is nonsense.
 
-Rows with no address cannot be deduped by address and each stand alone; they are held back as `no_address` regardless.
-
-```js
-// Canonical client row per lowercased address. MUST be applied by every query
-// that lists or counts contacts. `key` falls back to the id so address-less
-// rows survive as themselves rather than collapsing into one bucket.
-const CANONICAL_CONTACTS = `
-  WITH canonical AS (
-    SELECT DISTINCT ON (COALESCE(NULLIF(lower(btrim(c.email)), ''), 'id:' || c.id::text))
-           c.id
-      FROM clients c
-     ORDER BY COALESCE(NULLIF(lower(btrim(c.email)), ''), 'id:' || c.id::text),
-              c.marketing_excluded DESC,
-              ((c.communication_preferences->>'marketing_enabled') = 'false') DESC,
-              ((c.communication_preferences->>'email_enabled') = 'false') DESC,
-              (COALESCE(c.email_status, '') = 'bad') DESC,
-              c.id ASC
-  )
-`;
-```
+`buildContactFilters` returns two WHERE strings over one shared parameter list: `whereBase` (audience, search, mailable_only) and `whereFull` (that plus the active filter).
 
 ```js
 /**
@@ -2168,42 +2171,50 @@ const CANONICAL_CONTACTS = `
  */
 function buildContactFilters(query) {
   const params = [];
-  const conds = [];
+  const base = [];   // audience + search + mailable_only. Scopes the chips.
+  const only = [];   // the active quick filter. Scopes the rows and the panel.
+
   if (query.audience) {
     const aud = AUDIENCE_BY_ID.get(query.audience);
     if (!aud) throw new ValidationError({ audience: 'Unknown audience.' });
-    conds.push(`(${aud.where})`);
+    base.push(`(${aud.where})`);
   }
+  if (query.search) {
+    params.push(`%${String(query.search).trim().toLowerCase()}%`);
+    base.push(`(lower(c.name) LIKE $${params.length} OR lower(c.email) LIKE $${params.length})`);
+  }
+  // The recipient picker passes mailable_only. The default view shows everyone
+  // so held-back contacts stay visible and correctable.
+  if (query.mailable_only === 'true') base.push(`(${MAILABLE_SQL})`);
+
   if (query.filter === 'untagged') {
-    conds.push(`COALESCE(array_length(tg.tags, 1), 0) = 0`);
-  } else if (query.filter === 'do-not-contact') {
-    conds.push(`c.marketing_excluded = true`);
+    only.push(`COALESCE(array_length(tg.tags, 1), 0) = 0`);
+  } else if (query.filter === DO_NOT_CONTACT_ID) {
+    only.push(`c.marketing_excluded = true`);
   } else if (query.filter && query.filter !== 'all') {
     // Any other filter value is a tag id. Validated against the vocabulary so
     // a typo is a 400 rather than a silently empty list.
     if (!isValidTag(query.filter)) throw new ValidationError({ filter: 'Unknown filter.' });
     params.push(query.filter);
-    conds.push(`$${params.length} = ANY(tg.tags)`);
+    only.push(`$${params.length} = ANY(tg.tags)`);
   }
-  if (query.search) {
-    params.push(`%${String(query.search).trim().toLowerCase()}%`);
-    conds.push(`(lower(c.name) LIKE $${params.length} OR lower(c.email) LIKE $${params.length})`);
-  }
-  // The recipient picker passes mailable_only. The default view shows everyone
-  // so held-back contacts stay visible and correctable.
-  if (query.mailable_only === 'true') conds.push(`(${MAILABLE_SQL})`);
-  return { params, where: conds.length ? `WHERE ${conds.join(' AND ')}` : '' };
+
+  const clause = (parts) => (parts.length ? `WHERE ${parts.join(' AND ')}` : '');
+  return {
+    params,
+    whereBase: clause(base),                 // chips: what each filter WOULD give
+    whereFull: clause([...base, ...only]),   // rows and held-back panel
+  };
 }
 
 /** GET /api/marketing/contacts */
 router.get('/contacts', auth, adminOnly, asyncHandler(async (req, res) => {
   const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-  const { params, where } = buildContactFilters(req.query);
+  const { params, whereBase, whereFull } = buildContactFilters(req.query);
   const rowParams = [...params, limit, (page - 1) * limit];
 
   const { rows } = await pool.query(`
-    ${CANONICAL_CONTACTS}
     SELECT c.id, c.name, c.email, c.source, c.email_status,
            c.marketing_excluded, c.marketing_excluded_reason, c.communication_preferences,
            COALESCE(lu.unsubscribed, false)  AS lead_unsubscribed,
@@ -2214,45 +2225,51 @@ router.get('/contacts', auth, adminOnly, asyncHandler(async (req, res) => {
            ${LAST_EVENT}                     AS last_event,
            lc.last_contacted,
            (COALESCE(agg.paid_dollars, 0) + COALESCE(cc.paid_dollars, 0))::float8 AS lifetime_dollars,
-           (${MAILABLE_SQL})                 AS mailable,
-           COUNT(*) OVER ()                  AS total_count
+           (${MAILABLE_SQL})                 AS mailable
       FROM clients c
-      JOIN canonical k ON k.id = c.id
-      ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES} ${where}
+      ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES} ${whereFull}
      ORDER BY ${LAST_EVENT} DESC, c.id DESC
      LIMIT $${rowParams.length - 1} OFFSET $${rowParams.length}
   `, rowParams);
 
-  // Aggregate over the WHOLE deduped, filtered base, not the page.
+  // Counts over the whole base, never the page. Two scopes:
+  //   held  = whereFull, describing what you are looking at right now
+  //   chips = whereBase, describing what each filter WOULD give
+  // Computing the chips from whereFull makes selecting Untagged read
+  // "All 184 / Untagged 184 / Corporate 0", which is nonsense.
   //
   // Buckets come from HELD_BACK_SQL, the SQL twin of heldBackReason, so they
-  // are mutually exclusive by construction and sum to total - mailable. The
+  // are mutually exclusive by construction and sum to total - mailable. An
   // earlier draft hand-restated the conditions as independent COUNT FILTERs,
   // which double-counted a row that was both excluded and bounced and
   // disagreed with the chip shown on that same row.
+  //
+  // `total` comes from here, not from a COUNT(*) OVER () on the row query:
+  // the window reports 0 on a page past the end while the base is non-empty.
   const agg = await pool.query(`
-    ${CANONICAL_CONTACTS},
-    scoped AS (
-      SELECT ${HELD_BACK_SQL} AS reason, tg.tags
-        FROM clients c
-        JOIN canonical k ON k.id = c.id
-        ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES} ${where}
+    WITH held AS (
+      SELECT ${HELD_BACK_SQL} AS reason
+        FROM clients c ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES} ${whereFull}
+    ), chips AS (
+      SELECT tg.tags, c.marketing_excluded
+        FROM clients c ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES} ${whereBase}
     )
     SELECT
-      COUNT(*) FILTER (WHERE reason = 'do_not_contact')::int AS do_not_contact,
-      COUNT(*) FILTER (WHERE reason = 'unsubscribed')::int   AS unsubscribed,
-      COUNT(*) FILTER (WHERE reason = 'bounced')::int        AS bounced,
-      COUNT(*) FILTER (WHERE reason = 'no_address')::int     AS no_address,
-      COUNT(*) FILTER (WHERE reason IS NULL)::int            AS mailable,
-      COUNT(*)::int                                          AS total,
-      COUNT(*) FILTER (WHERE COALESCE(array_length(tags,1),0) = 0)::int AS untagged,
-      COUNT(*) FILTER (WHERE 'corporate' = ANY(tags))::int    AS corporate
-      FROM scoped
+      (SELECT COUNT(*) FILTER (WHERE reason = 'do_not_contact') FROM held)::int AS do_not_contact,
+      (SELECT COUNT(*) FILTER (WHERE reason = 'unsubscribed')   FROM held)::int AS unsubscribed,
+      (SELECT COUNT(*) FILTER (WHERE reason = 'bounced')        FROM held)::int AS bounced,
+      (SELECT COUNT(*) FILTER (WHERE reason = 'no_address')     FROM held)::int AS no_address,
+      (SELECT COUNT(*) FILTER (WHERE reason IS NULL)            FROM held)::int AS mailable,
+      (SELECT COUNT(*) FROM held)::int                                          AS total,
+      (SELECT COUNT(*) FROM chips)::int                                         AS chip_all,
+      (SELECT COUNT(*) FILTER (WHERE COALESCE(array_length(tags,1),0) = 0) FROM chips)::int AS chip_untagged,
+      (SELECT COUNT(*) FILTER (WHERE 'corporate' = ANY(tags)) FROM chips)::int  AS chip_corporate,
+      (SELECT COUNT(*) FILTER (WHERE marketing_excluded) FROM chips)::int       AS chip_dnc
   `, params);
 
   const counts = agg.rows[0];
   res.json({
-    total: rows.length ? parseInt(rows[0].total_count, 10) : 0,
+    total: counts.total,
     page, limit,
     // held_back buckets are exclusive and sum to total - mailable.
     held_back: {
@@ -2263,8 +2280,8 @@ router.get('/contacts', auth, adminOnly, asyncHandler(async (req, res) => {
     // Corporate 30 · Do not contact 4" as the design shows, without four
     // extra round trips.
     filter_counts: {
-      all: counts.total, untagged: counts.untagged,
-      corporate: counts.corporate, 'do-not-contact': counts.do_not_contact,
+      all: counts.chip_all, untagged: counts.chip_untagged,
+      corporate: counts.chip_corporate, [DO_NOT_CONTACT_ID]: counts.chip_dnc,
     },
     contacts: rows.map(r => ({
       id: r.id, name: r.name, email: r.email, source: r.source,
@@ -2298,11 +2315,8 @@ router.get('/audiences', auth, adminOnly, asyncHandler(async (_req, res) => {
   const out = [];
   for (const a of AUDIENCES) {
     const { rows } = await pool.query(`
-      ${CANONICAL_CONTACTS}
       SELECT COUNT(*) FILTER (WHERE ${MAILABLE_SQL})::int AS emailable, COUNT(*)::int AS total
-        FROM clients c
-        JOIN canonical k ON k.id = c.id
-        ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES}
+        FROM clients c ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES}
        WHERE ${a.where}`);
     out.push({ id: a.id, name: a.name, rule: a.rule, includes: a.includes, ...rows[0] });
   }
@@ -2449,10 +2463,14 @@ git commit -m "feat(marketing): contact detail with event and message history"
 
 One paragraph: `server/utils/marketingAudience.js` is the single definition of who may receive marketing, exporting a SQL fragment and a JS classifier that a test holds as exact complements across all seven suppression conditions. Audience `where` fragments are executed against the live DB by test, because a typo in one is otherwise invisible until the UI loads.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Add this lane's new utils to README.md's folder tree**
+
+`server/utils/marketingAudience.js` and `server/utils/marketingSuggestions.js`. README lists every server util individually; skipping it leaves the lane out of compliance with CLAUDE.md's mandatory-doc table even with ARCHITECTURE done.
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add ARCHITECTURE.md
+git add ARCHITECTURE.md README.md
 git commit -m "docs(marketing): resolver, audiences, and contact read routes"
 ```
 
@@ -2533,7 +2551,7 @@ This is the view spec section 4.4 calls load-bearing: it is what makes "every au
 
 - [ ] **Step 2: `HeldBackPanel`** renders `held_back` from the list response: Do not contact, Unsubscribed, Bounced, No address, and the mailable count. These are exclusive buckets over the whole deduped, filtered base, not the page, and they sum to the total. The design's panel shows three reasons; `no_address` is the fourth the resolver can produce, and it is shown rather than hidden, because a contact held back with no visible reason is the thing an operator cannot act on.
 
-- [ ] **Step 3: Full manual walk.** The tab loads; an audience filters the table and its emailable count matches the row count; the held-back buckets plus mailable sum to the total shown; a tag toggles and survives a refresh; a suggestion accepts and disappears; a held-back contact shows its reason and cannot be tagged into a mailable state; search finds someone outside the current filter; the drawer opens and shows both histories with automated sends marked; do-not-contact sets with a reason and clears only after a confirm; every empty and error state renders. The dev server is a Claude-managed background process and does **not** auto-reload server edits, so restart it after any server change.
+- [ ] **Step 3: Full manual walk.** The tab loads; an audience filters the table and its emailable count matches `held_back.mailable` (not the row count, which is one page and every real audience exceeds the page limit); the held-back buckets plus mailable sum to the total shown; selecting a quick filter narrows the rows without zeroing the other chips' counts; a tag toggles and survives a refresh; a suggestion accepts and disappears; a held-back contact shows its reason and cannot be tagged into a mailable state; search finds someone outside the current filter; the drawer opens and shows both histories with automated sends marked; do-not-contact sets with a reason and clears only after a confirm; every empty and error state renders. The dev server is a Claude-managed background process and does **not** auto-reload server edits, so restart it after any server change.
 
 - [ ] **Step 4:** `cd client && CI=true npx react-scripts build`, `npm run check:filesize`, then commit.
 
@@ -2557,8 +2575,12 @@ Checked against the spec and against the fleet findings on the first draft.
 
 **Round 2 findings, all folded in.** Two were runtime bugs I verified myself before editing: the untyped `$4` inside a `CASE` (`42804`, needs `::int`), and `clients.communication_preferences` being JSONB NOT NULL with a three-key default, which made a test's `SET ... = NULL` a `23502` and the tri-state case unreachable without `'{}'::jsonb`. The held-back aggregate no longer restates the suppression conditions: `HELD_BACK_SQL` is the SQL twin of `heldBackReason`, pinned to it by a test that runs both legs over the same eight fixture rows, so buckets are exclusive, include `no_address`, and sum to `total - mailable`.
 
-**Dedupe moved into phase 1**, which is what spec 4.3 actually says. The earlier self-review reclassified it as a send-path concern; that was wrong, because the contact list, all seven audience counts, and the held-back aggregate count rows, and one person on two rows makes every number on the screen wrong. The canonical row is the **most suppressed** one rather than the oldest, so dedupe can never promote someone to mailable because their duplicate happened to be clean.
+**Resolver-side dedupe was built, then removed, on evidence.** Round 2 said spec 4.3 requires it in the resolver, so revision 3 built a canonical-row CTE. Round 3 found two blockers in it: a `DESC` NULLS-FIRST inversion that let a clean twin outrank an explicitly-unsubscribed one, and a survivor-picking scheme that discarded the loser's proposals and tags, which is a worse failure than the double-count it fixed.
+
+Measuring before patching a third time settled it: prod holds **508 client rows and 508 distinct lowercased addresses, zero collisions.** The example used to justify the requirement was wrong. "Ali Smith" twice is `accounting@` and `admin@schmidkeconstruction.com`, two colleagues, and merging them would be the defect. The genuine duplicate shape is same-name rows with a NULL email, which address-keyed dedupe cannot touch and which are already held back as `no_address`. The one real same-person duplicate carries a `.invalid` placeholder and is already suppressed. Dedupe therefore lives only on the send path (`mkt-g-send`), where one address must never receive a campaign twice regardless of later drift. Do not rebuild it here.
 
 **Other round 2 fixes:** four footprint gaps that would have aborted a lane; `mkt-a` and `mkt-b` were declared parallel while both run suites against the one shared dev DB, so the run order is now strictly sequential; Task 5 gained a real route test because `clients.js` had none anywhere in the repo; Task 12 extends the cleanup so it stops orphaning a completed proposal into the dev DB every run; Task 11's fixtures are created in `before` and destroyed in `after`, never inside a neighbouring test; `MAILABLE_SQL` gained the `btrim` that `isPlaceholderEmail` already does, closing a whitespace disagreement between the two legs; the drawer's campaign leg no longer filters `status = 'sent'`, which would have hidden every delivered send; `cc.last_event` is filtered to the past, so a 2027 ledger booking no longer makes someone a past client; `last_contacted`, the quick-filter counts, and the derived states are implemented rather than deferred; the Overview placeholder says phase 3; and the stated pass counts are corrected.
 
-**One finding rejected, again.** The CAN-SPAM postal address was flagged as dropped from every lane. It already shipped: `eb82e092` (footer) and `8240dd89` (legal pages). The lane map says so rather than re-scheduling done work.
+**Round 3 findings, folded in.** The dedupe blockers are resolved by deletion, above. `filter_counts` were computed inside the already-filtered scope, so selecting Untagged read "All 184 / Untagged 184 / Corporate 0"; `buildContactFilters` now returns two scopes, `whereBase` for the chips and `whereFull` for the rows and the panel. `total` came from a `COUNT(*) OVER ()` that reports 0 on a page past the end while the base is non-empty; it now comes from the aggregate. Task 11's fixtures move fully into `before`/`after` with an explicit restore-what-you-mutate rule, since an unrestored mutation is what made six tests unpassable and one a false green. The three fields round 2 promoted from deferred to implemented (`last_contacted`, `filter_counts`, `derived`) now carry assertions instead of waiting on a manual walk seven tasks later. `message_log` gains a `client_id` index, without which every contact-tab load sequential-scans it and `/audiences` does so seven times. `email_sends.status` is nullable, so its filter is COALESCE'd rather than silently dropping NULL rows. Task 8's requires move to the top of the file so Task 10's "already required" instruction is true. And `mkt-b` and `mkt-c` now write README, which their footprints declared but their doc steps skipped.
+
+**One finding rejected, three times running.** The CAN-SPAM postal address was flagged as dropped from every lane. It already shipped: `eb82e092` (footer) and `8240dd89` (legal pages). The lane map says so rather than re-scheduling done work.
