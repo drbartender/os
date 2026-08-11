@@ -233,6 +233,10 @@ export default function EventDetailPage() {
               {/* Back-of-house setup time (server-derived; never on public surfaces) */}
               {proposal.setup_time_display && ` · setup ${proposal.setup_time_display}`}
               {timeRange && ` · service ${timeRange}`}
+              {/* Guest count belongs above the fold: it drives staffing, ice, and
+                  glassware calls. The pricing card also shows it, but only when
+                  event_duration_hours is set too, so it can vanish entirely. */}
+              {proposal.guest_count != null && ` · ${proposal.guest_count} guests`}
             </div>
             {proposal.event_location && (
               <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
