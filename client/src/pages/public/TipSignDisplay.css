@@ -1,0 +1,85 @@
+/* TipSignDisplay — the tip sign shown full screen on a propped-up phone or
+   tablet at /tip/:token/display. Public, token-gated, no login. */
+
+.tsd-root {
+  position: fixed;
+  inset: 0;
+  /* Chalkboard, matching the colour the redesigned sign paints to its own
+     edges, so the bands left over from fitting a 2:3 sheet onto a tall phone
+     read as more sign rather than a frame.
+     NOTE (2026-08-11): only true once the dark artwork lands. The current sign
+     is aged paper with a chalkboard band at the top, so today the top edge
+     blends and the bottom shows a visible cream-to-dark seam. Deliberate: this
+     is coded to the artwork lane D delivers, not to what renders right now. */
+  background: var(--drb-chalkboard, #12161C);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: pointer;
+  /* Kill the tap highlight and double-tap zoom: this is a display surface. */
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.tsd-stage {
+  transform-origin: center center;
+  flex: 0 0 auto;
+}
+
+.tsd-msg {
+  position: fixed;
+  inset: 0;
+  background: var(--drb-chalkboard, #12161C);
+  color: var(--drb-cream-text, #F0E8D6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  font-family: var(--drb-font-body, Georgia, serif);
+  font-size: 17px;
+}
+
+.tsd-hint {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 18px 20px calc(18px + env(safe-area-inset-bottom, 0px));
+  text-align: center;
+  font-family: var(--drb-font-body, Georgia, serif);
+  font-size: 14px;
+  line-height: 1.45;
+  color: rgba(240, 232, 214, 0.72);
+  background: linear-gradient(to top, rgba(18, 22, 28, 0.92), rgba(18, 22, 28, 0));
+  pointer-events: none;
+}
+
+.tsd-hint-warn {
+  color: rgba(240, 232, 214, 0.92);
+}
+
+.tsd-exit {
+  position: fixed;
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  right: 14px;
+  padding: 9px 16px;
+  border: 1px solid rgba(240, 232, 214, 0.35);
+  border-radius: 999px;
+  background: rgba(18, 22, 28, 0.55);
+  color: rgba(240, 232, 214, 0.9);
+  font-family: var(--drb-font-body, Georgia, serif);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  opacity: 1;
+  transition: opacity 600ms ease;
+}
+
+/* Fades back rather than disappearing: a control nobody can find is worse than
+   a faint one, and this sits on a bar all night. */
+.tsd-exit.is-idle { opacity: 0.15; }
+.tsd-exit:hover,
+.tsd-exit:focus-visible { opacity: 1; }

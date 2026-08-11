@@ -20,6 +20,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { formatMoney } from '../../utils/formatMoney';
+import TipCardActions from '../../components/staff/TipCardActions';
 
 /**
  * TipCardPage — staff portal v2 Tip Card tab (spec §6.8).
@@ -175,6 +176,14 @@ export default function TipCardPage() {
     window.open('/my-tip-page/download', '_blank', 'noopener,noreferrer');
   }, []);
 
+  // data.url is the server-built tip URL, so appending /display needs no token
+  // handling here. Display mode is the PUBLIC page deliberately: a portal
+  // session would expire mid-shift and drop a bar-top tablet to a login screen.
+  const handleOpenDisplay = useCallback(() => {
+    if (!data?.url) return;
+    window.open(`${data.url}/display`, '_blank', 'noopener,noreferrer');
+  }, [data?.url]);
+
   const handleShare = useCallback(async () => {
     const url = data?.url;
     if (!url) return;
@@ -292,21 +301,12 @@ export default function TipCardPage() {
         </div>
       </div>
 
-      {/* Action buttons row */}
-      <div className="sp-tipcard-actions">
-        <button type="button" className="sp-btn sp-btn-sm" onClick={handleOpenDownload}>
-          <ExternalIcon size={12} />
-          Download your sign
-        </button>
-        <button type="button" className="sp-btn sp-btn-sm" onClick={handleShare}>
-          <SendIcon size={12} />
-          Share link
-        </button>
-        <button type="button" className="sp-btn sp-btn-sm" onClick={handleCopy}>
-          <CopyIcon size={12} />
-          Copy URL
-        </button>
-      </div>
+      <TipCardActions
+        onDownload={handleOpenDownload}
+        onDisplay={handleOpenDisplay}
+        onShare={handleShare}
+        onCopy={handleCopy}
+      />
 
       {/* How it's shown on your card — reorderable list */}
       <section className="sp-card">
@@ -655,34 +655,6 @@ function ArrowDownIcon({ size = 12 }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
       strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <polyline points="6 9 12 15 18 9" />
-    </svg>
-  );
-}
-
-function ExternalIcon({ size = 12 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M10 5H5v14h14v-5M14 4h6v6M20 4l-9 9" />
-    </svg>
-  );
-}
-
-function SendIcon({ size = 12 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 12 21 4l-7 17-3-7-7-2Z" />
-    </svg>
-  );
-}
-
-function CopyIcon({ size = 12 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="8" y="8" width="12" height="12" rx="2" />
-      <path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" />
     </svg>
   );
 }

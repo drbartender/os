@@ -91,6 +91,7 @@ const ProposalCompare = lazy(() => import('./pages/proposal/compare/ProposalComp
 const InvoicePage = lazy(() => import('./pages/invoice/InvoicePage'));
 const TipPage = lazy(() => import('./pages/public/TipPage'));
 const TipPageThanks = lazy(() => import('./pages/public/TipPageThanks'));
+const TipSignDisplay = lazy(() => import('./pages/public/TipSignDisplay'));
 const FeedbackPage = lazy(() => import('./pages/public/FeedbackPage'));
 
 // Lazy-loaded: onboarding, staff portal, admin shell — not needed on public marketing site
@@ -352,6 +353,7 @@ function PublicWebsiteRoutes() {
         <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
         <Route path="/tip/:token" element={<TipPage />} />
         <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
+        <Route path="/tip/:token/display" element={<TipSignDisplay />} />
         <Route path="/feedback/:token" element={<FeedbackPage />} />
         <Route path="/verify-email/:token" element={<StaffV2EmailVerifyPage />} />
         <Route path="/labnotes" element={<Blog />} />
@@ -425,6 +427,7 @@ function HiringRoutes() {
         <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
         <Route path="/tip/:token" element={<TipPage />} />
         <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
+        <Route path="/tip/:token/display" element={<TipSignDisplay />} />
         <Route path="/feedback/:token" element={<FeedbackPage />} />
         <Route path="/verify-email/:token" element={<StaffV2EmailVerifyPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -487,6 +490,7 @@ function StaffSiteRoutes() {
         <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
         <Route path="/tip/:token" element={<TipPage />} />
         <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
+        <Route path="/tip/:token/display" element={<TipSignDisplay />} />
         <Route path="/feedback/:token" element={<FeedbackPage />} />
         <Route path="/verify-email/:token" element={<StaffV2EmailVerifyPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -515,6 +519,7 @@ function AppRoutes() {
       <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
       <Route path="/tip/:token" element={<TipPage />} />
       <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
+      <Route path="/tip/:token/display" element={<TipSignDisplay />} />
       <Route path="/feedback/:token" element={<FeedbackPage />} />
       <Route path="/verify-email/:token" element={<StaffV2EmailVerifyPage />} />
       {/* Website accessible on admin domain for preview */}
