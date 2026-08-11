@@ -667,7 +667,7 @@ On-site service extension (spec 2026-07-25): an assigned bartender requests adde
 ### Public Tip Pages — `/api/public/tip`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/:token` | No (token-gated) | Fetch active tip page by token — bartender display name, photo, tip rails (Venmo/CashApp deep links + Stripe Payment Link). Returns 404 for missing or deactivated pages. |
+| GET | `/:token` | No (token-gated) | Fetch active tip page by token — bartender display name, canonical `url`, photo, tip rails (Venmo/CashApp deep links + Stripe Payment Link), and the ordered `methods` array. Returns 404 for missing or deactivated pages. Add `?view=sign` for the display-mode projection: exactly `display_name`, `url`, and `methods`, carrying no payment handle (that view renders on a tablet left unattended on a bar) and skipping the R2 headshot signing. The `?view=sign` projection sits below the same activation guard, so a deactivated page still 404s. |
 | POST | `/:token/feedback` | No (token-gated, rate-limited) | Submit post-tip feedback from the thank-you page (rating + free-text). Inserts into `tip_page_feedback` and emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL`. |
 
 ### Post-Event Feedback — `/api/public/feedback`
@@ -679,7 +679,7 @@ On-site service extension (spec 2026-07-25): an assigned bartender requests adde
 ### Authenticated Self — `/api/me`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/tip-page` | Yes | Get the current bartender's tip-page record (token, display name, photo URL, payment rails, activation state). |
+| GET | `/tip-page` | Yes | Get the current bartender's tip-page record (token, display name, photo URL, payment rails, activation state), plus the ordered `methods` array. `methods` comes from `server/utils/tipMethods.js`, the single derivation this route shares with `GET /api/public/tip/:token`: read-side handle normalization, then availability, then the staffer's saved order. The two endpoints returning identical `methods` is what keeps a downloadable printed tip sign from advertising a payment method the post-scan chooser page refuses to render. Note the raw stored `paypal_url` is still returned unchanged for the edit form; only `methods` is normalized. |
 | PATCH | `/tip-page` | Yes | Update bartender-editable fields on the tip page (display name override, Venmo/CashApp handles, opt-in flags). |
 | GET | `/tips` | Yes | Paginated list of recent successful tips for the current bartender (amount, source, created_at). |
 | GET | `/notification-preferences` | Yes | Current user's notification category subscriptions. |

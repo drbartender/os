@@ -217,9 +217,15 @@ const ALLOWED_RESPONSE_KEYS = [
   'methods',
   'paypal_url',
   'stripe_payment_link_url',
+  'url',
   'venmo_handle',
   'zelle_handle',
 ].sort();
+
+// The ?view=sign projection (spec 2026-08-10) feeds display mode, which runs
+// on a tablet left unattended on a bar. It must carry NO payment handle: the
+// zelle handle in particular normalizes to a personal phone number or email.
+const SIGN_VIEW_KEYS = ['display_name', 'methods', 'url'].sort();
 
 test('GET /api/public/tip/:token > unknown token returns 404', async () => {
   const res = await request('GET', `/api/public/tip/${crypto.randomUUID()}`);
@@ -251,6 +257,64 @@ test('GET /api/public/tip/:token > PII guard: response keys are exactly the allo
   assert.strictEqual(res.status, 200);
   const actual = Object.keys(res.body).sort();
   assert.deepStrictEqual(actual, ALLOWED_RESPONSE_KEYS);
+});
+
+test('GET /api/public/tip/:token > url is the canonical PUBLIC_SITE_URL form, not a request-derived origin', async () => {
+  const res = await request('GET', `/api/public/tip/${tipTokenA}`);
+  assert.strictEqual(res.status, 200);
+  const { PUBLIC_SITE_URL } = require('../utils/urls');
+  assert.strictEqual(res.body.url, `${PUBLIC_SITE_URL}/tip/${tipTokenA}`);
+});
+
+test('GET /api/public/tip/:token?view=sign > returns exactly display_name, url, methods', async () => {
+  const res = await request('GET', `/api/public/tip/${tipTokenA}?view=sign`);
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(Object.keys(res.body).sort(), SIGN_VIEW_KEYS);
+});
+
+test('GET /api/public/tip/:token?view=sign > leaks no payment handle', async () => {
+  const res = await request('GET', `/api/public/tip/${tipTokenA}?view=sign`);
+  assert.strictEqual(res.status, 200);
+  for (const leaky of [
+    'zelle_handle', 'venmo_handle', 'cashapp_handle',
+    'paypal_url', 'stripe_payment_link_url', 'headshot_url',
+  ]) {
+    assert.ok(!(leaky in res.body), `${leaky} must not appear in the sign projection`);
+  }
+});
+
+test('GET /api/public/tip/:token > the sign projection fails CLOSED on odd view shapes', async () => {
+  // Express hands `view` back as a string, an array, or an object, and does
+  // not normalize case or whitespace. Each of these used to fall through to
+  // the full handle-bearing payload, which is the opposite of what the
+  // projection is for. Anything unambiguously "sign" gets the safe response.
+  for (const qs of ['view=SIGN', 'view=Sign', 'view=sign%20', 'view=sign&view=sign', 'view[]=sign']) {
+    const res = await request('GET', `/api/public/tip/${tipTokenA}?${qs}`);
+    assert.equal(res.status, 200, `${qs} should still 200`);
+    assert.deepEqual(
+      Object.keys(res.body).sort(), SIGN_VIEW_KEYS,
+      `${qs} must get the sign projection, not the full payload`
+    );
+  }
+});
+
+test('GET /api/public/tip/:token > an unrelated view value still gets the full chooser payload', async () => {
+  // A stray/tracking query param must never 400 the QR-scan money path.
+  const res = await request('GET', `/api/public/tip/${tipTokenA}?view=whatever`);
+  assert.equal(res.status, 200);
+  assert.deepEqual(Object.keys(res.body).sort(), ALLOWED_RESPONSE_KEYS);
+});
+
+test('GET /api/public/tip/:token?view=sign > methods match the full response exactly', async () => {
+  const full = await request('GET', `/api/public/tip/${tipTokenA}`);
+  const sign = await request('GET', `/api/public/tip/${tipTokenA}?view=sign`);
+  assert.strictEqual(sign.status, 200);
+  assert.deepStrictEqual(sign.body.methods, full.body.methods);
+});
+
+test('GET /api/public/tip/:token?view=sign > a deactivated token still 404s', async () => {
+  const res = await request('GET', `/api/public/tip/${tipTokenDeactivated}?view=sign`);
+  assert.strictEqual(res.status, 404);
 });
 
 test('GET /api/public/tip/:token > zelle_handle present + valid appears in body and methods', async () => {

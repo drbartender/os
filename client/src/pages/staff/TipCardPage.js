@@ -29,12 +29,14 @@ import { formatMoney } from '../../utils/formatMoney';
  * Data fetches (lean — three round-trips on first paint):
  *   1. GET /api/me/tip-page — public tip URL (built server-side via PUBLIC_SITE_URL
  *      so we don't second-guess origin), `active` flag, `has_stripe_link` for the
- *      card row, display_name for the QR card head. Note: this route predates
- *      the Zelle column and does NOT project zelle_handle — that's why we also
- *      hit /payment-methods below.
- *   2. GET /api/me/payment-methods — canonical "what handles are on file" source.
+ *      card row, display_name for the QR card head, plus `methods`, the server's
+ *      authoritative token list (server/utils/tipMethods.js) that the printed
+ *      sign and the chooser page both use. Does not project zelle_handle.
+ *   2. GET /api/me/payment-methods — the handle STRINGS shown as row subtitles.
  *      It's the ONLY route that returns zelle_handle, plus venmo / cashapp / paypal.
- *      Card method is always considered on file (it's the default rail).
+ *      KNOWN DIVERGENCE (parked 2026-08-11): the reorder set below is built from
+ *      these RAW handles with card assumed always-on, so it can list a method
+ *      `methods` omits (card with no Stripe link; an unnormalizable paypal_url).
  *   3. GET /api/me/tips — recent tips for the "this week" card. Filtered to the
  *      last 7 days client-side (the endpoint orders newest-first; we walk until
  *      we cross the 7-day boundary).
@@ -308,7 +310,7 @@ export default function TipCardPage() {
       {/* How it's shown on your card — reorderable list */}
       <section className="sp-card">
         <div className="sp-card-head">
-          <div className="sp-card-title">How it’s shown on your card</div>
+          <div className="sp-card-title">How it’s shown after they scan</div>
           <button
             type="button"
             className="sp-card-link"
@@ -319,7 +321,7 @@ export default function TipCardPage() {
         </div>
         <div className="sp-reorder-help">
           Drag (or use the arrows) to reorder. Top of the list shows first on the
-          printed card and on the chooser page guests see after scanning.
+          chooser page guests see after scanning.
         </div>
         <DndContext
           sensors={sensors}

@@ -1,20 +1,29 @@
-// Pure: given a bartender's saved tip handles + whether a Stripe Payment Link
-// exists, return which payment-method marks the printed QR card may show.
+// Pure: given the server's computed tip-method tokens, return which payment
+// marks the printed sign may show.
 //
-// The card-network group (Apple/Google Pay + Visa/MC/Amex) is gated on the
-// Stripe link because that link is what actually accepts cards. Each P2P mark
-// appears only when that handle is set. Print layouts intersect this list with
-// their own curated mark order, so an unavailable method simply drops out and
-// the card never advertises a payment route that doesn't work.
+// Availability comes from the server (server/utils/tipMethods.js), which both
+// /api/me/tip-page and the public tip endpoint call, so the sign a bartender
+// downloads and the sign on their tablet cannot disagree about which methods
+// exist. Passing raw handles here instead of the server's `methods` array
+// reintroduces exactly that drift.
+//
+// This function is also the methods-to-marks translation: the single `card`
+// token becomes five brand glyphs, and `zelle` becomes none. A zelle-only
+// bartender therefore gets a sign with no mark row, which is correct: the QR
+// still leads to the chooser page, where Zelle does render.
+//
+// ORDER here is the sign's own, deliberately fixed. The staffer's saved
+// tip_card_order governs the chooser page guests land on after scanning, which
+// is where their preference actually matters; it does not reorder the artwork.
 
 const CARD_NETWORK_MARKS = ['apple', 'google', 'visa', 'mc', 'amex'];
 
-export function buildTipCardMarks(handles) {
-  const h = handles || {};
+export function buildTipCardMarks(methods) {
+  const available = new Set(Array.isArray(methods) ? methods : []);
   const marks = [];
-  if (h.venmo_handle) marks.push('venmo');
-  if (h.cashapp_handle) marks.push('cashapp');
-  if (h.paypal_url) marks.push('paypal');
-  if (h.has_stripe_link) marks.push(...CARD_NETWORK_MARKS);
+  if (available.has('venmo')) marks.push('venmo');
+  if (available.has('cashapp')) marks.push('cashapp');
+  if (available.has('paypal')) marks.push('paypal');
+  if (available.has('card')) marks.push(...CARD_NETWORK_MARKS);
   return marks;
 }

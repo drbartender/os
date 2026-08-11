@@ -8,6 +8,9 @@ const { ValidationError } = require('../utils/errors');
 const { PUBLIC_SITE_URL } = require('../utils/urls');
 const { getSignedUrl } = require('../utils/storage');
 const { normalizeTipHandlesInPlace } = require('../utils/tipHandleValidation');
+const {
+  computeOrderedMethods, readSideNormalize, deriveAvailableMethods,
+} = require('../utils/tipMethods');
 const { refreshDisplayName } = require('../utils/refreshDisplayName');
 const { validatePreferredNameChange } = require('../utils/staffDisplayName.validate');
 
@@ -84,6 +87,11 @@ router.get('/tip-page', asyncHandler(async (req, res) => {
       pp.paypal_url,
       pp.preferred_payment_method,
       pp.stripe_payment_link_url,
+      pp.zelle_handle,
+      -- tip_card_order is a JSONB key on users.ui_preferences, NOT a
+      -- payment_profiles column. Same projection publicTip.js uses, so both
+      -- endpoints feed computeOrderedMethods the identical saved order.
+      u.ui_preferences->'tip_card_order' AS tip_card_order,
       (SELECT COUNT(*)::int FROM tips WHERE target_user_id = $1
         AND tipped_at >= date_trunc('month', NOW())) AS tips_this_month_count,
       (SELECT COALESCE(SUM(amount_cents), 0)::int FROM tips WHERE target_user_id = $1
@@ -116,11 +124,37 @@ router.get('/tip-page', asyncHandler(async (req, res) => {
     }
   }
 
+  // Same derivation the public tip page uses, read-side normalization
+  // included, so the sign a bartender downloads shows the same methods the
+  // sign on their tablet shows. Building `available` from the raw columns here
+  // would reintroduce exactly the drift tipMethods.js exists to prevent: a
+  // stored paypal_url that fails read-side validation renders no PayPal button
+  // on the chooser page, and must not print one onto photo paper either.
+  const { paypalUrl, zelleHandle } = readSideNormalize(row, {
+    route: 'me.tip-page',
+    tokenPrefix: String(row.tip_page_token || '').slice(0, 8),
+  });
+  // Inputs listed explicitly, not spread from `row`: a future edit that drops
+  // a column from the SELECT would otherwise silently remove that method here
+  // while the public endpoint kept it, which is the exact drift this shares
+  // code to prevent.
+  const methods = computeOrderedMethods(
+    deriveAvailableMethods({
+      stripe_payment_link_url: row.stripe_payment_link_url,
+      venmo_handle: row.venmo_handle,
+      cashapp_handle: row.cashapp_handle,
+      paypalUrl,
+      zelleHandle,
+    }),
+    row.tip_card_order
+  );
+
   res.json({
     url,
     headshot_url: headshotUrl,
     active: !!row.tip_page_active,
     has_stripe_link: !!row.stripe_payment_link_url,
+    methods,
     preferred_name: row.preferred_name || null,
     display_name: row.display_name || null,
     venmo_handle: row.venmo_handle || null,

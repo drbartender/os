@@ -433,6 +433,7 @@ dr-bartender/
 │   │   ├── telegram.js         # Telegram Bot API wrapper (VA calling): sendTelegramMessage/setTelegramWebhook/getTelegramWebhookInfo (raw fetch, no dep), verifyTelegramSecret (constant-time), isNewUpdate (update_id de-dupe), sendTelegramAudio (multipart voicemail mp3 upload, 120s timeout vs 8s for messages)
 │   │   ├── thumbtackProposalDraft.js # Thumbtack auto-draft builder (createDraftProposalFromLead) + pure field mappers (event-type keyword map, ET date/time split, admin-notes block)
 │   │   ├── tipHandleValidation.js # Validates + normalizes venmo/cashapp handles + paypal.me URLs before persist
+│   │   ├── tipMethods.js       # Shared tip-method derivation for /api/me/tip-page + /api/public/tip/:token: read-side handle re-validation (drops unnormalizable stored values, Sentry-warns), availability, then saved-order resolution. One derivation so a downloadable printed sign can't advertise a method the post-scan chooser page refuses to render
 │   │   ├── tipPageLifecycle.js # Tip page activate/deactivate transitions on hire/onboarding/offboard
 │   │   ├── presence.js         # Pure presence helpers: lead-pointer derivation, taking-leads transition matrix, nudge/flip predicates, Central-time bucketing
 │   │   ├── presenceActivity.js # In-memory sign-of-life map + throttled presence_last_seen_at flush (stamped by the auth middleware for tracked users)
@@ -496,7 +497,7 @@ dr-bartender/
 │   │   │   ├── timeOptions.js  # Time option generator + 12h formatter + input parser
 │   │   │   ├── uploadLimits.js # Upload size cap + per-kind extension allowlist (mirrors fileValidation.js)
 │   │   │   ├── downscaleImage.js # Browser-side photo downscaler run before upload
-│   │   │   └── tipCardMarks.js # Derives printable QR-card payment marks from saved handles (Stripe link + handles → mark list)
+│   │   │   └── tipCardMarks.js # Maps the server's computed tip-method tokens to printable sign marks (card → 5 brand glyphs, zelle → none)
 │   │   ├── components/         # AdminLayout, Layout, PublicLayout,
 │   │   │                       # comms/NotifyConfirmModal (confirm-before-messaging popup: edit saves quiet-primary, receipts send-primary),
 │   │   │                       # InvoiceDropdown, SignaturePad, FileUpload, DrinkPlanCard,

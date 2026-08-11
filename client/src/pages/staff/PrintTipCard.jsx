@@ -52,8 +52,11 @@ export default function PrintTipCard() {
   if (!data.url) return <p style={{ padding: 24 }}>Your tip page isn't active yet.</p>;
 
   const { renderFront: Front, renderBack: Back } = SIZES[size];
-  const name = data.preferred_name || 'your bartender';
-  const marks = buildTipCardMarks(data);
+  // Mirror the public endpoint's COALESCE(display_name, preferred_name). Using
+  // preferred_name alone printed one name on the card while the chooser page
+  // guests land on showed another.
+  const name = data.display_name || data.preferred_name || 'your bartender';
+  const marks = buildTipCardMarks(data.methods);
 
   return (
     <div className="print-tip-card-root drb">
