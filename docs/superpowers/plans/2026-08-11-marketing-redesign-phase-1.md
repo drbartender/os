@@ -35,6 +35,9 @@
 - **File-size discipline:** `server/routes/emailMarketing.js` is at **987 lines** against the 1000-line hard cap. **No task may add a line to it.** Every new route goes in a new file. `npm run check:filesize` reports it under YELLOW (>700), which is expected; RED is >1000.
 - **Do not touch `scheduled_messages`.** Phase 1 reads it and never writes it.
 - **Test fixture emails must NOT use `.invalid`.** That is the house fixture domain, and `MAILABLE_SQL` suppresses it, so a `.invalid` fixture can never be mailable and would make a passing test meaningless. Use `@mkt-test.example`.
+- **`clients.communication_preferences` is JSONB NOT NULL** with default `'{"sms_enabled": true, "email_enabled": true, "marketing_enabled": true}'` (verified 2026-08-11). Two consequences. `SET communication_preferences = NULL` raises `23502`, so no test may do it. And a bare `INSERT INTO clients (name, email)` always lands all three keys, so the tri-state "absent key" case is unreachable unless the fixture explicitly writes `'{}'::jsonb`.
+- **An untyped bind parameter inside a `CASE` resolves to text.** `SET int_col = CASE WHEN $1 THEN $2 ELSE NULL END` raises `42804: column is of type integer but expression is of type text` (verified 2026-08-11). Cast it: `$2::int`. A TEXT column in the same shape works, which is exactly why the bug looks symmetric and is not.
+- **Dedupe by lowercased email is a phase 1 requirement, not a send-path one.** Spec 4.3 says the resolver *and* the send. One person can hold more than one client row (Ali Smith is already doubled in prod), so a row-counting list, audience count, or held-back aggregate is simply wrong. Every query that lists or counts contacts resolves one canonical row per lowercased address first.
 
 ## Proven Harness
 
@@ -157,6 +160,7 @@ Also executed on 2026-08-11, inside a transaction that was rolled back.
   ```
 - **`legacy_cc_proposals`** accepts `(cc_id, status, client_email_normalized, event_date, total_cost_cents)`; `raw_import_id`'s NOT NULL was dropped.
 - **`GREATEST(NULL::date, '-infinity'::date)`** returns a JS **number** (`-Infinity`), not a string. Comparing it to `'-infinity'` is dead code. Guard with `Number.isFinite()` or let `JSON.stringify` serialize it to `null`, which it does.
+- **`email_sends.status` CHECK** is `('queued','sent','delivered','opened','clicked','bounced','complained','failed')`. `emailMarketingWebhook.js` monotonically advances a delivered send past `'sent'`, so any history query filtering `status = 'sent'` misses most real sends. Filter on `sent_at IS NOT NULL AND status NOT IN ('failed','bounced','queued')` instead.
 
 ## Lane map
 
@@ -176,6 +180,8 @@ lanes:
       - server/routes/marketingContacts.js
       - server/routes/marketingContacts.tags.test.js
       - server/routes/clients.js
+      - server/routes/clients.list.test.js
+      - server/scripts/verify-marketing-schema.js
       - server/index.js
       - client/src/utils/marketingTags.js
       - ARCHITECTURE.md
@@ -193,7 +199,8 @@ lanes:
       - server/utils/contactMessageHistory.js
       - server/utils/contactMessageHistory.test.js
       - ARCHITECTURE.md
-    depends_on: []
+      - README.md
+    depends_on: [mkt-a-tags]
     review_fleet: [code-review, consistency-check, database-review]
 
   - id: mkt-c-resolver
@@ -212,7 +219,8 @@ lanes:
       - server/routes/marketingContacts.list.test.js
       - server/routes/marketingContacts.detail.test.js
       - ARCHITECTURE.md
-    # DEPENDS ON BOTH: Task 13 imports getContactMessageHistory from mkt-b, and
+      - README.md
+    # DEPENDS ON BOTH: Task 12 imports getContactMessageHistory from mkt-b, and
     # the router is already mounted in server/index.js by mkt-a, so merging
     # mkt-c without mkt-b is MODULE_NOT_FOUND at boot, not a 500.
     depends_on: [mkt-a-tags, mkt-b-history]
@@ -231,6 +239,7 @@ lanes:
       - client/src/App.js
       - client/src/index.css
       - README.md
+      - ARCHITECTURE.md
     depends_on: [mkt-a-tags, mkt-b-history, mkt-c-resolver]
     review_fleet: [code-review, consistency-check, ui-ux-review]
 
@@ -286,7 +295,11 @@ lanes:
     review_fleet: [code-review, consistency-check]
 ```
 
-**Run order:** `mkt-a-tags` and `mkt-b-history` in parallel, then `mkt-c-resolver`, then `mkt-d-contacts-ui`.
+**Run order: strictly sequential.** `mkt-a-tags` → `mkt-b-history` → `mkt-c-resolver` → `mkt-d-contacts-ui`.
+
+An earlier draft declared the first two parallel because they share no files. They cannot actually run concurrently: every server suite in both lanes runs against the one shared dev DB, which this plan's own Global Constraints require to be one at a time, and Task 1 Step 2 replays `initDb()` against it. Declaring a parallelism the test constraint forbids is how two lanes corrupt each other's fixtures. `mkt-b-history` therefore declares `depends_on: [mkt-a-tags]` for sequencing, not for code.
+
+Phase 2 and 3 lanes below intentionally carry no `footprint` key: their file lists are unknown until their own plans exist. Do not treat the absence as an empty footprint.
 
 ---
 
@@ -897,7 +910,11 @@ router.put('/contacts/:id/do-not-contact', auth, adminOnly, asyncHandler(async (
        marketing_excluded = $2,
        marketing_excluded_reason = CASE WHEN $2 THEN $3 ELSE NULL END,
        marketing_excluded_at = CASE WHEN $2 THEN NOW() ELSE NULL END,
-       marketing_excluded_by = CASE WHEN $2 THEN $4 ELSE NULL END,
+       -- $4::int is load-bearing. An untyped bind parameter inside a CASE
+       -- resolves to text, and this column is integer, so without the cast
+       -- every write raises 42804 (verified 2026-08-11). The $3 branch above
+       -- needs no cast only because that column is TEXT.
+       marketing_excluded_by = CASE WHEN $2 THEN $4::int ELSE NULL END,
        updated_at = NOW()
      WHERE id = $1
      RETURNING marketing_excluded, marketing_excluded_reason`,
@@ -943,26 +960,52 @@ Spec section 7 names this explicitly. `GET /api/clients` (`clients.js:30-33`) us
 
 In `clients.js`, in the `GET /` allowlist, add `c.marketing_excluded` after `c.cc_id`.
 
-- [ ] **Step 2: Verify the list route returns it**
+- [ ] **Step 2: Write a real route test, because none exists**
 
-```bash
-node -r dotenv/config -e "
-const { pool } = require('./server/db');
-(async () => {
-  const { rows } = await pool.query(
-    'SELECT c.id, c.marketing_excluded FROM clients c ORDER BY c.id LIMIT 3');
-  console.log(rows);
-  await pool.end();
-})();
-"
+`server/routes/clients.js` has no test file anywhere in the repo, and it serves the live ClientsDashboard. A bare `SELECT` proves Task 1's column exists, not that this route's SQL string is valid, and `require()` proves only that the file parses. A typo would ship green. Create `server/routes/clients.list.test.js` from the **Proven Harness**, mounting `require('./clients')` at `/api/clients` and signing a **manager** token too, since this route is `requireAdminOrManager`:
+
+```js
+test('the clients list returns marketing_excluded', async () => {
+  const r = await req('GET', `/api/clients?search=${NONCE}`, adminToken);
+  assert.equal(r.status, 200);
+  const row = (r.body.clients || r.body).find(c => c.id === clientId);
+  assert.ok(row, 'fixture client missing from the list');
+  assert.equal(row.marketing_excluded, false);
+});
+
+test('it reflects an exclusion', async () => {
+  await pool.query(
+    `UPDATE clients SET marketing_excluded = true, marketing_excluded_reason = 'x' WHERE id = $1`,
+    [clientId]);
+  const r = await req('GET', `/api/clients?search=${NONCE}`, adminToken);
+  assert.equal((r.body.clients || r.body).find(c => c.id === clientId).marketing_excluded, true);
+});
+
+test('it does NOT leak the exclusion reason to the list', async () => {
+  // The list is requireAdminOrManager; the reason is free text about a client
+  // relationship and stays on the detail route and the admin-only marketing
+  // endpoints.
+  const r = await req('GET', `/api/clients?search=${NONCE}`, adminToken);
+  const row = (r.body.clients || r.body).find(c => c.id === clientId);
+  assert.equal(row.marketing_excluded_reason, undefined);
+});
+
+test('a manager can still read the clients list', async () => {
+  assert.equal((await req('GET', '/api/clients', managerToken)).status, 200);
+});
 ```
 
-Expected: three rows, each with `marketing_excluded: false`. Then confirm the route file compiles: `node -e "require('./server/routes/clients')"` exits 0.
+Check the route's actual response envelope before writing the first assertion; adapt `r.body.clients || r.body` to whatever it really returns rather than guessing.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Run it**
+
+Run: `node -r dotenv/config --test server/routes/clients.list.test.js`
+Expected: PASS, 4/4.
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add server/routes/clients.js
+git add server/routes/clients.js server/routes/clients.list.test.js
 git commit -m "feat(marketing): expose marketing_excluded on the clients list"
 ```
 
@@ -1176,8 +1219,14 @@ async function getContactMessageHistory(clientId, { limit = 50 } = {}) {
            'email_sends' AS source
       FROM email_sends es
       LEFT JOIN email_campaigns ec ON ec.id = es.campaign_id
-     WHERE es.client_id = $1 AND es.status = 'sent' AND es.sent_at IS NOT NULL
+     WHERE es.client_id = $1 AND es.sent_at IS NOT NULL
+       AND es.status NOT IN ('failed', 'bounced', 'queued')
   ` : '';
+  // NOT `status = 'sent'`. The CHECK allows queued/sent/delivered/opened/
+  // clicked/bounced/complained/failed, and emailMarketingWebhook.js advances a
+  // delivered send past 'sent', so an equality filter would hide most real
+  // campaign sends from the drawer. A phase 2 test inserting a fresh 'sent'
+  // row would pass while the feature was broken.
 
   const { rows } = await pool.query(`
     SELECT * FROM (
@@ -1185,6 +1234,8 @@ async function getContactMessageHistory(clientId, { limit = 50 } = {}) {
              ml.message_type AS label, false AS automated, 'message_log' AS source
         FROM message_log ml
        WHERE ml.client_id = $1 AND ml.status = 'sent'
+       -- message_log.status is terminal ('sent'|'failed'|'bounced'|'complained'),
+       -- unlike email_sends.status below, which advances past 'sent'.
 
       UNION ALL
 
@@ -1338,9 +1389,33 @@ const MAILABLE_SQL = `
   AND c.marketing_excluded = false
   AND c.email IS NOT NULL
   AND btrim(c.email) <> ''
-  AND lower(c.email) NOT LIKE '%.invalid'
+  -- btrim before the suffix test, because isPlaceholderEmail trims first
+  -- (emailValidation.js:82). Without it 'x@y.invalid ' is mailable in SQL and
+  -- held back in JS, which is exactly the drift the one-predicate rule exists
+  -- to prevent.
+  AND lower(btrim(c.email)) NOT LIKE '%.invalid'
   AND COALESCE(c.email_status, '') <> 'bad'
   AND NOT COALESCE(lu.unsubscribed, false)
+`;
+
+/**
+ * The SQL twin of heldBackReason, with the SAME precedence, returning exactly
+ * one bucket per row or NULL when mailable. Aggregates use this instead of
+ * restating the conditions, so the panel's counts are mutually exclusive by
+ * construction, sum to `total - mailable`, and cannot disagree with the chip
+ * shown on the row. A test asserts the two legs agree on identical fixtures.
+ */
+const HELD_BACK_SQL = `
+  CASE
+    WHEN c.marketing_excluded THEN 'do_not_contact'
+    WHEN (c.communication_preferences->>'marketing_enabled') = 'false' THEN 'unsubscribed'
+    WHEN (c.communication_preferences->>'email_enabled') = 'false' THEN 'unsubscribed'
+    WHEN COALESCE(lu.unsubscribed, false) THEN 'unsubscribed'
+    WHEN c.email IS NULL OR btrim(c.email) = '' THEN 'no_address'
+    WHEN lower(btrim(c.email)) LIKE '%.invalid' THEN 'no_address'
+    WHEN COALESCE(c.email_status, '') = 'bad' THEN 'bounced'
+    ELSE NULL
+  END
 `;
 
 /**
@@ -1384,20 +1459,86 @@ function heldBackReason(row) {
 }
 
 module.exports = {
-  MAILABLE_SQL, LEAD_UNSUB_LATERAL, HELD_BACK_REASONS, isMailable, heldBackReason,
+  MAILABLE_SQL, HELD_BACK_SQL, LEAD_UNSUB_LATERAL, HELD_BACK_REASONS,
+  isMailable, heldBackReason,
 };
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 4: Pin the SQL and JS legs against each other**
+
+This is the test that makes "one predicate" true rather than aspirational. Append to the same file:
+
+```js
+const { pool } = require('../db');
+const { HELD_BACK_SQL, LEAD_UNSUB_LATERAL } = require('./marketingAudience');
+const { after } = require('node:test');
+
+after(async () => { await pool.end(); });
+
+test('HELD_BACK_SQL and heldBackReason agree on every case', async () => {
+  const NONCE = `hb-${Date.now()}`;
+  const mk = async (patch) => {
+    const { rows } = await pool.query(
+      `INSERT INTO clients (name, email, email_status, marketing_excluded,
+                            marketing_excluded_reason, communication_preferences)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb) RETURNING id`,
+      [`HB ${NONCE}`, patch.email ?? `${NONCE}-${Math.random()}@mkt-test.example`,
+       patch.email_status ?? 'ok', patch.marketing_excluded ?? false,
+       patch.marketing_excluded ? 'test' : null,
+       JSON.stringify(patch.prefs ?? {})]);
+    return rows[0].id;
+  };
+  const cases = [
+    {},                                                            // mailable
+    { marketing_excluded: true },
+    { prefs: { marketing_enabled: false } },
+    { prefs: { email_enabled: false } },
+    { email_status: 'bad' },
+    { email: `${NONCE}@thing.invalid` },
+    { marketing_excluded: true, email_status: 'bad' },              // precedence
+    { prefs: { marketing_enabled: false }, email_status: 'bad' },   // precedence
+  ];
+  const ids = [];
+  try {
+    for (const c of cases) ids.push(await mk(c));
+    const { rows } = await pool.query(`
+      SELECT c.id, c.email, c.email_status, c.marketing_excluded, c.communication_preferences,
+             COALESCE(lu.unsubscribed, false) AS lead_unsubscribed,
+             ${HELD_BACK_SQL} AS sql_reason
+        FROM clients c ${LEAD_UNSUB_LATERAL}
+       WHERE c.id = ANY($1)`, [ids]);
+    assert.equal(rows.length, cases.length);
+    for (const r of rows) {
+      assert.equal(r.sql_reason, heldBackReason(r),
+        `disagreement on client ${r.id}: SQL said ${r.sql_reason}, JS said ${heldBackReason(r)}`);
+    }
+  } finally {
+    if (ids.length) await pool.query('DELETE FROM clients WHERE id = ANY($1)', [ids]);
+  }
+});
+
+test('HELD_BACK_SQL returns exactly one bucket, never two', () => {
+  // Structural, not empirical: a CASE returns the first matching branch, so
+  // mutual exclusivity is guaranteed by construction. This test documents why
+  // the aggregate must use it rather than N independent COUNT FILTERs, which
+  // double-count a row that is both excluded and bounced.
+  assert.match(HELD_BACK_SQL, /^\s*CASE/, 'must be a CASE so buckets are exclusive');
+  for (const r of HELD_BACK_REASONS) {
+    assert.ok(HELD_BACK_SQL.includes(`'${r}'`), `${r} unreachable in SQL`);
+  }
+});
+```
+
+- [ ] **Step 5: Run the test to verify it passes**
 
 Run: `node -r dotenv/config --test server/utils/marketingAudience.test.js`
-Expected: PASS, 14/14.
+Expected: PASS, 15/15 (2 base + 8 loop cases + 3 complement/declaration + 2 SQL-agreement).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add server/utils/marketingAudience.js server/utils/marketingAudience.test.js
-git commit -m "feat(marketing): single mailability predicate and held-back classifier"
+git commit -m "feat(marketing): single mailability predicate, SQL and JS legs pinned"
 ```
 
 ---
@@ -1603,10 +1744,24 @@ const CONTACT_AGGREGATES = `
     SELECT
       COUNT(*)                                     AS booked_count,
       COALESCE(SUM(l.total_cost_cents), 0) / 100.0 AS paid_dollars,
-      MAX(l.event_date)                            AS last_event
+      -- PAST events only. This ledger runs to 2027-12-04; without the filter a
+      -- future-only booking makes someone a "past client" and sorts them first.
+      MAX(l.event_date) FILTER (WHERE l.event_date < CURRENT_DATE) AS last_event
     FROM legacy_cc_proposals l
     WHERE l.client_email_normalized = lower(c.email) AND l.status = 'booked'
   ) cc ON true
+  LEFT JOIN LATERAL (
+    -- Last contacted, spec 4.4's named column. Phase 1 covers the two sources
+    -- that exist now; the campaign leg joins in phase 2 with email_sends.client_id.
+    SELECT MAX(t.at) AS last_contacted FROM (
+      SELECT ml.created_at AS at FROM message_log ml
+       WHERE ml.client_id = c.id AND ml.status = 'sent'
+      UNION ALL
+      SELECT sm.sent_at FROM scheduled_messages sm
+       WHERE sm.recipient_type = 'client' AND sm.recipient_id = c.id
+         AND sm.status = 'sent' AND sm.sent_at IS NOT NULL
+    ) t
+  ) lc ON true
   LEFT JOIN LATERAL (
     -- Inbound Thumbtack activity. thumbtack_messages has no client_id, so the
     -- path is thumbtack_leads.client_id -> negotiation_id -> messages, filtered
@@ -1635,6 +1790,9 @@ const CONTACT_AGGREGATES = `
  * package, not the occasion, so an event-type rule would drop that same cohort.
  */
 const HAS_PAID = `(agg.paid_count > 0 OR cc.booked_count > 0)`;
+// cc.last_event is filtered to the past in CONTACT_AGGREGATES. The Check Cherry
+// ledger runs to 2027-12-04, so without that filter a client whose only booking
+// is in the FUTURE qualifies as a past client and sorts to the top of the list.
 const LAST_EVENT = `GREATEST(COALESCE(agg.last_finished, '-infinity'::date),
                              COALESCE(cc.last_event, '-infinity'::date))`;
 
@@ -1701,11 +1859,11 @@ Add `CONTACT_AGGREGATES`, `AUDIENCES`, `AUDIENCE_BY_ID`, and `LAST_EVENT` to the
 
 The highest-value test here is the one that runs each `where` against the real DB. A typo in a fragment is otherwise invisible until the UI loads, which is exactly how `agg.last_inbound` survived the first draft.
 
+Append to the SAME file. `MAILABLE_SQL`, `LEAD_UNSUB_LATERAL`, `pool`, and `after` are already required at the top of it by Tasks 8's steps; **extend those existing destructures rather than adding a second `const`**, or the paste is `SyntaxError: Identifier 'MAILABLE_SQL' has already been declared`. Only the three new names below are new.
+
 ```js
-const {
-  AUDIENCES, AUDIENCE_BY_ID, CONTACT_AGGREGATES, MAILABLE_SQL, LEAD_UNSUB_LATERAL,
-} = require('./marketingAudience');
-const { pool } = require('../db');
+// Add AUDIENCES, AUDIENCE_BY_ID, CONTACT_AGGREGATES to the EXISTING
+// require('./marketingAudience') destructure at the top of this file.
 
 test('ships the seven audiences from the design, in order', () => {
   assert.deepEqual(AUDIENCES.map(a => a.id), [
@@ -1753,12 +1911,12 @@ test('lookup by id works', () => {
 });
 ```
 
-Add `after(async () => { await pool.end(); });` to this file, since it now opens a pool.
+Task 8 Step 4 already added the `pool` require and the `after(async () => { await pool.end(); })` teardown, so do not add a second one.
 
 - [ ] **Step 3: Run and verify**
 
 Run: `node -r dotenv/config --test server/utils/marketingAudience.test.js`
-Expected: PASS, 20/20. A `42703` from the execute-every-audience test names the undefined column directly.
+Expected: PASS, 21/21 (15 from Task 8, 6 added here). A `42703` from the execute-every-audience test names the undefined column directly, which is exactly how `agg.last_inbound` should have been caught the first time.
 
 - [ ] **Step 4: Commit**
 
@@ -1780,7 +1938,23 @@ The response carries a `held_back` **aggregate over the whole filtered base**, n
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `server/routes/marketingContacts.list.test.js` from the **Proven Harness**, then:
+Create `server/routes/marketingContacts.list.test.js` from the **Proven Harness**, with three changes to it:
+
+1. Declare `let dupId;` alongside the other fixture ids.
+2. Create fixtures in `before()` and destroy them in `after()`, never inside a test body. The earlier draft deleted a `legacy_cc_proposals` row inside the *next* test, so any failure in between leaked a `booked` ledger row into the shared dev DB permanently.
+3. Extend the harness `after()`, keeping child-before-parent order and `pool.end()` last:
+
+```js
+  await pool.query('DELETE FROM legacy_cc_proposals WHERE cc_id LIKE $1', [`cc-${NONCE}%`]);
+  await pool.query('DELETE FROM client_tags WHERE client_id = ANY($1)', [[clientId, dupId].filter(Boolean)]);
+  await pool.query("DELETE FROM admin_audit_log WHERE metadata->>'client_id' = $1", [String(clientId)]);
+  await pool.query('DELETE FROM clients WHERE id = ANY($1)', [[clientId, dupId].filter(Boolean)]);
+  await pool.query('DELETE FROM users WHERE email LIKE $1', [`mkt-%-${NONCE}@mkt-test.example`]);
+  server.close();
+  await pool.end();
+```
+
+Then:
 
 ```js
 test('a clean contact is mailable with no held-back reason', async () => {
@@ -1793,7 +1967,10 @@ test('a clean contact is mailable with no held-back reason', async () => {
 });
 
 test('a client with NO preference keys is mailable (tri-state)', async () => {
-  await pool.query('UPDATE clients SET communication_preferences = NULL WHERE id = $1', [clientId]);
+  // communication_preferences is JSONB NOT NULL with a three-key default, so
+  // the absent-key case is only reachable by writing an empty object. Setting
+  // it to NULL raises 23502 (verified 2026-08-11).
+  await pool.query(`UPDATE clients SET communication_preferences = '{}'::jsonb WHERE id = $1`, [clientId]);
   const r = await req('GET', `/api/marketing/contacts?search=${NONCE}`, adminToken);
   assert.equal(r.body.contacts.find(c => c.id === clientId).mailable, true);
 });
@@ -1801,13 +1978,53 @@ test('a client with NO preference keys is mailable (tri-state)', async () => {
 test('marketing_enabled false reports unsubscribed', async () => {
   await pool.query(
     `UPDATE clients SET communication_preferences =
-       jsonb_set(COALESCE(communication_preferences, '{}'::jsonb), '{marketing_enabled}', 'false')
-     WHERE id = $1`, [clientId]);
+       jsonb_set(communication_preferences, '{marketing_enabled}', 'false') WHERE id = $1`, [clientId]);
   const r = await req('GET', `/api/marketing/contacts?search=${NONCE}`, adminToken);
   const row = r.body.contacts.find(c => c.id === clientId);
   assert.equal(row.mailable, false);
   assert.equal(row.held_back_reason, 'unsubscribed');
-  await pool.query('UPDATE clients SET communication_preferences = NULL WHERE id = $1', [clientId]);
+  await pool.query(`UPDATE clients SET communication_preferences = '{}'::jsonb WHERE id = $1`, [clientId]);
+});
+
+test('held_back buckets are exclusive and sum to total minus mailable', async () => {
+  // A row that is BOTH excluded and bounced must land in exactly one bucket.
+  // The earlier draft's independent COUNT FILTERs counted it twice.
+  await pool.query(
+    `UPDATE clients SET marketing_excluded = true, marketing_excluded_reason = 'both',
+                        email_status = 'bad' WHERE id = $1`, [clientId]);
+  const r = await req('GET', `/api/marketing/contacts?search=${NONCE}`, adminToken);
+  const h = r.body.held_back;
+  const held = h.do_not_contact + h.unsubscribed + h.bounced + h.no_address;
+  assert.equal(held + h.mailable, r.body.total, 'buckets do not partition the base');
+  assert.equal(h.do_not_contact, 1);
+  assert.equal(h.bounced, 0, 'the same row was counted in two buckets');
+  assert.equal(r.body.contacts.find(c => c.id === clientId).held_back_reason, 'do_not_contact');
+  await pool.query(
+    `UPDATE clients SET marketing_excluded = false, marketing_excluded_reason = NULL,
+                        email_status = 'ok' WHERE id = $1`, [clientId]);
+});
+
+test('a duplicate client row for the same address is deduped away', async () => {
+  const dup = await pool.query(
+    `INSERT INTO clients (name, email) VALUES ($1, $2) RETURNING id`,
+    [`MKT dup ${NONCE}`, `MKT-${NONCE}@MKT-TEST.EXAMPLE`]);  // same address, different case
+  dupId = dup.rows[0].id;
+  const r = await req('GET', `/api/marketing/contacts?search=${NONCE}`, adminToken);
+  const mine = r.body.contacts.filter(c => c.id === clientId || c.id === dupId);
+  assert.equal(mine.length, 1, 'one person appeared twice; every count on the screen is wrong');
+});
+
+test('dedupe keeps the MORE suppressed row, never the clean one', async () => {
+  // If either row is excluded, the survivor must be held back. Picking the
+  // oldest id instead would email someone whose duplicate says do not contact.
+  await pool.query(
+    `UPDATE clients SET marketing_excluded = true, marketing_excluded_reason = 'dup test'
+      WHERE id = $1`, [dupId]);
+  const r = await req('GET', `/api/marketing/contacts?search=${NONCE}`, adminToken);
+  const mine = r.body.contacts.filter(c => c.id === clientId || c.id === dupId);
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].id, dupId, 'the suppressed duplicate must win');
+  assert.equal(mine[0].mailable, false);
 });
 
 test('do-not-contact reports its own reason, outranking unsubscribed', async () => {
@@ -1832,6 +2049,7 @@ test('the held_back aggregate counts the whole base, not the page', async () => 
 });
 
 test('lifetime_dollars converts Check Cherry cents, so $760 is not $76,000', async () => {
+  // Created here for readability; destroyed in after(), never in a later test.
   await pool.query(
     `INSERT INTO legacy_cc_proposals (cc_id, status, client_email_normalized, event_date, total_cost_cents)
      VALUES ($1, 'booked', $2, CURRENT_DATE - 400, 76000)`,
@@ -1912,10 +2130,35 @@ Add imports, then:
 
 ```js
 const {
-  MAILABLE_SQL, LEAD_UNSUB_LATERAL, CONTACT_AGGREGATES, LAST_EVENT,
+  MAILABLE_SQL, HELD_BACK_SQL, LEAD_UNSUB_LATERAL, CONTACT_AGGREGATES, LAST_EVENT,
   AUDIENCES, AUDIENCE_BY_ID, heldBackReason,
 } = require('../utils/marketingAudience');
 const { suggestTag } = require('../utils/marketingSuggestions');
+```
+
+**Dedupe by lowercased email, spec 4.3.** One person can hold more than one client row (Ali Smith is doubled in prod), so a row-counting list, audience count, or held-back total is simply wrong. Every contact query starts from a canonical row per address.
+
+The canonical row is deliberately **the most suppressed one**, not the oldest. If two rows share an address and either is excluded, unsubscribed, or bounced, the surviving row carries that state, so dedupe can never promote someone to mailable because their duplicate happened to be clean. Ties break on lowest id.
+
+Rows with no address cannot be deduped by address and each stand alone; they are held back as `no_address` regardless.
+
+```js
+// Canonical client row per lowercased address. MUST be applied by every query
+// that lists or counts contacts. `key` falls back to the id so address-less
+// rows survive as themselves rather than collapsing into one bucket.
+const CANONICAL_CONTACTS = `
+  WITH canonical AS (
+    SELECT DISTINCT ON (COALESCE(NULLIF(lower(btrim(c.email)), ''), 'id:' || c.id::text))
+           c.id
+      FROM clients c
+     ORDER BY COALESCE(NULLIF(lower(btrim(c.email)), ''), 'id:' || c.id::text),
+              c.marketing_excluded DESC,
+              ((c.communication_preferences->>'marketing_enabled') = 'false') DESC,
+              ((c.communication_preferences->>'email_enabled') = 'false') DESC,
+              (COALESCE(c.email_status, '') = 'bad') DESC,
+              c.id ASC
+  )
+`;
 ```
 
 ```js
@@ -1960,6 +2203,7 @@ router.get('/contacts', auth, adminOnly, asyncHandler(async (req, res) => {
   const rowParams = [...params, limit, (page - 1) * limit];
 
   const { rows } = await pool.query(`
+    ${CANONICAL_CONTACTS}
     SELECT c.id, c.name, c.email, c.source, c.email_status,
            c.marketing_excluded, c.marketing_excluded_reason, c.communication_preferences,
            COALESCE(lu.unsubscribed, false)  AS lead_unsubscribed,
@@ -1968,34 +2212,64 @@ router.get('/contacts', auth, adminOnly, asyncHandler(async (req, res) => {
            agg.corporate_events::int, agg.personal_events::int,
            agg.largest_guests::int, agg.a_venue,
            ${LAST_EVENT}                     AS last_event,
+           lc.last_contacted,
            (COALESCE(agg.paid_dollars, 0) + COALESCE(cc.paid_dollars, 0))::float8 AS lifetime_dollars,
            (${MAILABLE_SQL})                 AS mailable,
            COUNT(*) OVER ()                  AS total_count
-      FROM clients c ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES} ${where}
+      FROM clients c
+      JOIN canonical k ON k.id = c.id
+      ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES} ${where}
      ORDER BY ${LAST_EVENT} DESC, c.id DESC
      LIMIT $${rowParams.length - 1} OFFSET $${rowParams.length}
   `, rowParams);
 
-  // Aggregate over the WHOLE filtered base, not the page, so the panel is honest.
+  // Aggregate over the WHOLE deduped, filtered base, not the page.
+  //
+  // Buckets come from HELD_BACK_SQL, the SQL twin of heldBackReason, so they
+  // are mutually exclusive by construction and sum to total - mailable. The
+  // earlier draft hand-restated the conditions as independent COUNT FILTERs,
+  // which double-counted a row that was both excluded and bounced and
+  // disagreed with the chip shown on that same row.
   const agg = await pool.query(`
+    ${CANONICAL_CONTACTS},
+    scoped AS (
+      SELECT ${HELD_BACK_SQL} AS reason, tg.tags
+        FROM clients c
+        JOIN canonical k ON k.id = c.id
+        ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES} ${where}
+    )
     SELECT
-      COUNT(*) FILTER (WHERE c.marketing_excluded)::int AS do_not_contact,
-      COUNT(*) FILTER (WHERE NOT c.marketing_excluded AND (
-        (c.communication_preferences->>'marketing_enabled') = 'false'
-        OR (c.communication_preferences->>'email_enabled') = 'false'
-        OR COALESCE(lu.unsubscribed, false)))::int      AS unsubscribed,
-      COUNT(*) FILTER (WHERE COALESCE(c.email_status,'') = 'bad')::int AS bounced,
-      COUNT(*) FILTER (WHERE ${MAILABLE_SQL})::int      AS mailable
-      FROM clients c ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES} ${where}
+      COUNT(*) FILTER (WHERE reason = 'do_not_contact')::int AS do_not_contact,
+      COUNT(*) FILTER (WHERE reason = 'unsubscribed')::int   AS unsubscribed,
+      COUNT(*) FILTER (WHERE reason = 'bounced')::int        AS bounced,
+      COUNT(*) FILTER (WHERE reason = 'no_address')::int     AS no_address,
+      COUNT(*) FILTER (WHERE reason IS NULL)::int            AS mailable,
+      COUNT(*)::int                                          AS total,
+      COUNT(*) FILTER (WHERE COALESCE(array_length(tags,1),0) = 0)::int AS untagged,
+      COUNT(*) FILTER (WHERE 'corporate' = ANY(tags))::int    AS corporate
+      FROM scoped
   `, params);
 
+  const counts = agg.rows[0];
   res.json({
     total: rows.length ? parseInt(rows[0].total_count, 10) : 0,
     page, limit,
-    held_back: agg.rows[0],
+    // held_back buckets are exclusive and sum to total - mailable.
+    held_back: {
+      do_not_contact: counts.do_not_contact, unsubscribed: counts.unsubscribed,
+      bounced: counts.bounced, no_address: counts.no_address, mailable: counts.mailable,
+    },
+    // Quick-filter counts, so the chips can read "All 421 · Untagged 184 ·
+    // Corporate 30 · Do not contact 4" as the design shows, without four
+    // extra round trips.
+    filter_counts: {
+      all: counts.total, untagged: counts.untagged,
+      corporate: counts.corporate, 'do-not-contact': counts.do_not_contact,
+    },
     contacts: rows.map(r => ({
       id: r.id, name: r.name, email: r.email, source: r.source,
       tags: r.tags || [],
+      last_contacted: r.last_contacted,
       // Derived states are computed here and NEVER stored.
       derived: (r.paid_count > 0 || r.booked_count > 0) ? 'paid'
              : (r.proposal_count > 0 ? 'quoted' : null),
@@ -2024,8 +2298,11 @@ router.get('/audiences', auth, adminOnly, asyncHandler(async (_req, res) => {
   const out = [];
   for (const a of AUDIENCES) {
     const { rows } = await pool.query(`
+      ${CANONICAL_CONTACTS}
       SELECT COUNT(*) FILTER (WHERE ${MAILABLE_SQL})::int AS emailable, COUNT(*)::int AS total
-        FROM clients c ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES}
+        FROM clients c
+        JOIN canonical k ON k.id = c.id
+        ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES}
        WHERE ${a.where}`);
     out.push({ id: a.id, name: a.name, rule: a.rule, includes: a.includes, ...rows[0] });
   }
@@ -2036,7 +2313,7 @@ router.get('/audiences', auth, adminOnly, asyncHandler(async (_req, res) => {
 - [ ] **Step 4: Run and verify**
 
 Run: `node -r dotenv/config --test server/routes/marketingContacts.list.test.js`
-Expected: PASS, 14/14.
+Expected: PASS, 18/18. The four highest-value ones are the tri-state case, the exclusive-buckets partition, and the two dedupe tests; each pins a defect an earlier draft of this plan actually shipped.
 
 - [ ] **Step 5: Commit**
 
@@ -2058,7 +2335,18 @@ Split from Task 11 because it is separately revertible and is the only place lan
 
 - [ ] **Step 1: Write the failing test**
 
-Create `server/routes/marketingContacts.detail.test.js` from the **Proven Harness**, adding a proposal and a `message_log` row to the fixtures (shapes in Verified Fixture Shapes above), then:
+Create `server/routes/marketingContacts.detail.test.js` from the **Proven Harness**, adding a proposal and a `message_log` row to the fixtures (shapes in Verified Fixture Shapes above).
+
+**Extend the harness `after()`.** Its verbatim form deletes only `client_tags`, `admin_audit_log`, `clients`, and `users`. Both `proposals.client_id` (`schema.sql:845`) and `message_log.client_id` (`schema.sql:3543`) are `ON DELETE SET NULL`, so deleting the client **succeeds** and silently orphans a `status='completed'` proposal carrying `total_price=500` into the shared dev DB on every run. Children first:
+
+```js
+  await pool.query('DELETE FROM message_log WHERE client_id = $1', [clientId]);
+  await pool.query('DELETE FROM proposals WHERE client_id = $1', [clientId]);
+  // ...then the harness's existing client_tags / admin_audit_log / clients /
+  // users deletes, then server.close() and pool.end() last.
+```
+
+Then:
 
 ```js
 test('returns tags, lifetime, events, and message history', async () => {
@@ -2180,7 +2468,7 @@ git commit -m "docs(marketing): resolver, audiences, and contact read routes"
 
 The existing `EmailMarketingDashboard.js` is the layout element for the `/email-marketing` mount (`App.js:592`), and its `TABS` array is the **only** navigation to Leads, Campaigns, Analytics, and Conversations. Replacing that array in place breaks the lead surface the phase 2 extraction still needs. Add a **new** layout component instead and leave the old one untouched.
 
-- [ ] **Step 1: Create `MarketingLayout.js`** with tabs Overview, Audiences, Compose, Sent, matching `EmailMarketingDashboard.js`'s structure and class names. Audiences is the only one implemented in phase 1; Overview, Compose, and Sent render a short "Coming in phase 2" panel rather than 404ing, so the nav matches the approved design from day one.
+- [ ] **Step 1: Create `MarketingLayout.js`** with tabs Overview, Audiences, Compose, Sent, matching `EmailMarketingDashboard.js`'s structure and class names. Audiences is the only one implemented in phase 1. The placeholders name the right phase: **Compose and Sent say phase 2, Overview says phase 3** (spec section 3 and lane `mkt-h-overview`). Getting that backwards sets a wrong expectation about the September send.
 
 - [ ] **Step 2: Mount `/marketing` in `App.js`** beside the existing `/email-marketing` route at line 592, with the same admin guard, `AudiencesTab` as the `audiences` child and placeholders for the rest. Do not remove or edit the `/email-marketing` route.
 
@@ -2194,13 +2482,22 @@ The existing `EmailMarketingDashboard.js` is the layout element for the `/email-
 
 - [ ] **Step 1: `TagCell`** renders the contact's tags, plus an `Untagged` chip when empty and a `Do not contact` chip when excluded. Opening it shows a checkbox per `MARKETING_TAGS` entry. `DO_NOT_CONTACT_ID` is **not** in the menu; it has its own control in Task 16. Toggling is optimistic against `PUT /marketing/contacts/:id/tags`, with rollback to the previous set and a toast on failure, because classifying 184 contacts is a long grind and a round trip per click makes it unusable, while a silent failed save is worse than a slow one.
 
-- [ ] **Step 2: `ContactTable`** columns: Contact (name over email), Marketing tags, Last event, Lifetime, **Last contacted**, with a row click that opens the drawer. Held-back rows get a muted class and their `held_back_reason` as a chip. A row with a `suggestion` shows the reason text and an Accept button calling the same tag endpoint.
+- [ ] **Step 2: `ContactTable`** columns: Contact (name over email), Marketing tags, Last event, Lifetime, **Last contacted** (from the list response's `last_contacted`, which Task 11 now returns), with a row click that opens the drawer. Held-back rows get a muted class and their `held_back_reason` as a chip. A row with a `suggestion` shows the reason text and an Accept button calling the same tag endpoint.
 
-  `last_contacted` comes from the newest entry in the drawer's message history. Phase 1 renders it from the detail call when the drawer opens and leaves the column showing a dash in the list; adding it to the list response is a phase 2 refinement, recorded here so it is not silently dropped.
+  Render the **derived state** beside the tags: `Paid client`, `Quoted only`, or nothing, from the response's `derived` field via `DERIVED_STATES`. Spec 4.1 requires these shown alongside human tags, and they are visually distinct from tags because nobody can set or remove them.
 
 - [ ] **Step 3: All four states, no exceptions.** Loading (spinner), error (message plus a working retry button), empty (distinct copy for "no contacts match that filter" versus "no contacts yet"), and in-flight disabling on the tag control. Pagination is required; the base is ~700 rows and `AudienceSelector.js:29` shows the local precedent hard-codes `limit: 500` with no pagination and would silently truncate.
 
-- [ ] **Step 4: Verify in the browser**, then `cd client && CI=true npx react-scripts build`, then commit.
+- [ ] **Step 4: Verify each of these concretely**, not "check the browser":
+  - A contact with two tags shows both, in vocabulary order.
+  - Toggling a tag updates immediately and survives a page refresh.
+  - **Force the rollback path**: stop the dev server, toggle a tag, confirm the chip reverts and a toast appears, restart, confirm the tag is still unset.
+  - A held-back contact shows its reason chip and its tag control is disabled.
+  - A `Paid client` and a `Quoted only` contact each render their derived state.
+  - Page 2 loads a different set and the total does not change.
+  - An impossible filter shows the "no contacts match" copy, not the "no contacts yet" copy.
+
+- [ ] **Step 5:** `cd client && CI=true npx react-scripts build`, then commit.
 
 ## Task 16: Do-not-contact control
 
@@ -2232,11 +2529,11 @@ This is the view spec section 4.4 calls load-bearing: it is what makes "every au
 
 **Files:** Create `client/src/pages/admin/marketing/AudiencesTab.js`, `HeldBackPanel.js`
 
-- [ ] **Step 1: `AudiencesTab`** composes the screen: audience list from `GET /marketing/audiences` showing name, rule, and emailable count; quick filters (All, Untagged, Corporate, Do not contact); search; `ContactTable`; `HeldBackPanel`. Selecting an audience passes `audience=<id>` to the contact list. Selecting an audience shows its `includes` criteria, as the design does.
+- [ ] **Step 1: `AudiencesTab`** composes the screen: audience list from `GET /marketing/audiences` showing name, rule, and emailable count; quick filters carrying their counts from the response's `filter_counts` (All, Untagged, Corporate, Do not contact), as the design shows; search; `ContactTable`; `HeldBackPanel`. Selecting an audience passes `audience=<id>` and shows its `includes` criteria.
 
-- [ ] **Step 2: `HeldBackPanel`** renders `held_back` from the list response: Do not contact, Unsubscribed, Bounced, and the mailable count. These are aggregates over the whole filtered base, not the page.
+- [ ] **Step 2: `HeldBackPanel`** renders `held_back` from the list response: Do not contact, Unsubscribed, Bounced, No address, and the mailable count. These are exclusive buckets over the whole deduped, filtered base, not the page, and they sum to the total. The design's panel shows three reasons; `no_address` is the fourth the resolver can produce, and it is shown rather than hidden, because a contact held back with no visible reason is the thing an operator cannot act on.
 
-- [ ] **Step 3: Full manual walk.** The tab loads; an audience filters the table and its count matches; a tag toggles and survives a refresh; a suggestion accepts and disappears; a held-back contact shows its reason and cannot be tagged into a mailable state; search finds someone outside the current filter; the drawer opens and shows both histories; do-not-contact sets with a reason and clears with a confirm; every empty and error state renders. The dev server is a Claude-managed background process and does **not** auto-reload server edits, so restart it after any server change.
+- [ ] **Step 3: Full manual walk.** The tab loads; an audience filters the table and its emailable count matches the row count; the held-back buckets plus mailable sum to the total shown; a tag toggles and survives a refresh; a suggestion accepts and disappears; a held-back contact shows its reason and cannot be tagged into a mailable state; search finds someone outside the current filter; the drawer opens and shows both histories with automated sends marked; do-not-contact sets with a reason and clears only after a confirm; every empty and error state renders. The dev server is a Claude-managed background process and does **not** auto-reload server edits, so restart it after any server change.
 
 - [ ] **Step 4:** `cd client && CI=true npx react-scripts build`, `npm run check:filesize`, then commit.
 
@@ -2258,6 +2555,10 @@ Checked against the spec and against the fleet findings on the first draft.
 
 **Fleet findings from draft 1, all addressed.** The harness was executed before this plan was written. Fixture shapes were executed. `agg.last_inbound` now has a real join path. The Check Cherry cohort is no longer excluded from past-client audiences, and a test pins that. `heldBackReason` covers all seven conditions. Held-back counts are a real aggregate. `mkt-c-resolver` declares its dependency on `mkt-b-history`. Task 9 of draft 1 is split into Tasks 10, 11, and 12. Each lane carries its own doc task. The `TABS` replacement is replaced by a new layout component. Fixture emails avoid `.invalid`. The `-infinity` guard uses `Number.isFinite`. Task 1's verification uses one pooled client. `filter=corporate` is implemented and tested.
 
-**Two findings deliberately handled rather than fixed.** Dedupe by lowercased email is a send-path concern and is declared in lane `mkt-g-send`; phase 1 has no send. The `contactMessageHistory` campaign leg cannot be exercised until `email_sends.client_id` exists, and `mkt-g-send` now explicitly owns that test rather than leaving it unowned.
+**Round 2 findings, all folded in.** Two were runtime bugs I verified myself before editing: the untyped `$4` inside a `CASE` (`42804`, needs `::int`), and `clients.communication_preferences` being JSONB NOT NULL with a three-key default, which made a test's `SET ... = NULL` a `23502` and the tri-state case unreachable without `'{}'::jsonb`. The held-back aggregate no longer restates the suppression conditions: `HELD_BACK_SQL` is the SQL twin of `heldBackReason`, pinned to it by a test that runs both legs over the same eight fixture rows, so buckets are exclusive, include `no_address`, and sum to `total - mailable`.
 
-**One finding rejected.** The CAN-SPAM postal address was flagged as dropped from every lane. It already shipped: `eb82e092` (footer) and `8240dd89` (legal pages). The lane map says so rather than re-scheduling done work.
+**Dedupe moved into phase 1**, which is what spec 4.3 actually says. The earlier self-review reclassified it as a send-path concern; that was wrong, because the contact list, all seven audience counts, and the held-back aggregate count rows, and one person on two rows makes every number on the screen wrong. The canonical row is the **most suppressed** one rather than the oldest, so dedupe can never promote someone to mailable because their duplicate happened to be clean.
+
+**Other round 2 fixes:** four footprint gaps that would have aborted a lane; `mkt-a` and `mkt-b` were declared parallel while both run suites against the one shared dev DB, so the run order is now strictly sequential; Task 5 gained a real route test because `clients.js` had none anywhere in the repo; Task 12 extends the cleanup so it stops orphaning a completed proposal into the dev DB every run; Task 11's fixtures are created in `before` and destroyed in `after`, never inside a neighbouring test; `MAILABLE_SQL` gained the `btrim` that `isPlaceholderEmail` already does, closing a whitespace disagreement between the two legs; the drawer's campaign leg no longer filters `status = 'sent'`, which would have hidden every delivered send; `cc.last_event` is filtered to the past, so a 2027 ledger booking no longer makes someone a past client; `last_contacted`, the quick-filter counts, and the derived states are implemented rather than deferred; the Overview placeholder says phase 3; and the stated pass counts are corrected.
+
+**One finding rejected, again.** The CAN-SPAM postal address was flagged as dropped from every lane. It already shipped: `eb82e092` (footer) and `8240dd89` (legal pages). The lane map says so rather than re-scheduling done work.
