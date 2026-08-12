@@ -1507,3 +1507,54 @@ SCOPE (this is a project, not a drive-by; it is a money-reporting surface):
 - Decide the product question first: at day granularity over a 12-month range you get 365
   buckets. Either the granularity is derived from the range length, or the range picker and
   the granularity picker have to constrain each other.
+
+### Added 2026-08-12 (found by Dallas during the duty-pay walkthrough)
+
+**A. LIVE + ESCALATING: duty accrual is permanently disabled once a pay period leaves
+`open`, so attributing a duty after that silently pays nobody.**
+
+`payrollAccrual.js:191` is `if (payPeriod.status !== 'open') { skip }`. The transition map has
+no path back: a period goes `open -> processing -> reopened -> processing -> paid`, and
+Reopen only ever produces `reopened`, never `open`. So the moment a period is Processed,
+accrual is off for it forever, and every later duty attribution saves the attribution row and
+accrues **zero money**. The only signal is a Sentry warning.
+
+Live evidence, Sentry `DRBARTENDER-SERVER-21` ("accrual skipped: pay period not open",
+route `PUT /api/admin/payroll/duty-attributions`, **substatus escalating**): 14 occurrences
+since 2026-08-11T21:36, most recent 2026-08-12T18:59, tagged
+`pay_period_status: "reopened"`, `proposalId: 598`.
+
+Proposal 598 (Eliana Stoyanoff, event 2026-08-01, **hosted** — The Primary Culture,
+`completed`, 1 shift) has **ZERO** `payout_duty_lines` and its payout period is `paid`. A
+hosted event with a shift should carry a `hosted_supplies` line. Dallas has been trying to
+attribute it repeatedly and each attempt is silently discarded.
+
+THE DESIGN CONTRADICTION: `reopened` exists precisely so a closed period can be corrected,
+and the correction mechanism (accrual) is disabled in exactly that state. Either accrual must
+accept `reopened`, or Reopen must return the period to `open`, or the UI must refuse the
+attribution loudly instead of accepting it and dropping the money.
+
+**B. A stale duty line survives a package change once the period freezes (real overpay).**
+Proposal 642 (Brittany Welch, event 2026-08-08) is **BYOB** (The Core Reaction, category
+`byob`) yet carries BOTH `bar_rental` $20 AND `hosted_supplies` $50 = $70 on shift 366. The
+rule is that hosted pays a flat $50 and never the $20; BYOB pays the $20 and never the $50.
+Its two sibling BYOB events (666, 700) correctly show `bar_rental` alone, and the one genuine
+hosted event (51) correctly shows `hosted_supplies` + `menu_print` with no `bar_rental`.
+The derivation is NOT wrong — `dutyLines.js:117` is a strict either/or on `isHostedPackage`,
+so one pass cannot emit both. The proposal was edited twice on 2026-08-06 (activity log,
+`new_total` 400 both times, so a non-price field moved). `reconcileDutyLines` then wanted to
+remove the now-undesired line but hit `dutyLines.js:~388`: a no-longer-desired line whose
+payout is `paid` or whose period is closed is pushed to `frozenSkips` and skipped, never
+deleted. `reportFrozenSkips` sends it to Sentry — correct posture (never rewrite frozen
+money) but it means the overpay is only ever caught by someone reading Sentry.
+$50 overpaid, already disbursed. Recovery is a conversation, not a code change. The code
+question is whether a frozen-skip should raise something louder than a Sentry warning, e.g.
+land in the payroll needs-attention feed.
+
+**C. Also live, same feature:** Sentry `DRBARTENDER-SERVER-1N` "pricingSnapshot: legacy
+snapshot without _version", 56 events, culprit `GET /api/admin/payroll/periods/:id/unattributed-duties`.
+Not triaged here.
+
+**VERIFIED GOOD (the money math itself):** all six production duty lines sit at exactly the
+specced flat amounts — `bar_rental` 3 x $20, `hosted_supplies` 2 x $50, `menu_print` 1 x $5.
+The flat-$50 hosted decision (Dallas 2026-08-07) is live and correct.
