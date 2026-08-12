@@ -73,10 +73,17 @@ so tick items off as you confirm them rather than assuming the list is current.
       calendar feed, the client portal, the Money Board, and the events list.
 - [ ] **Duty pay walks.** In progress. Flat $50 hosted supplies, the out-of-area knob, and
       the ShiftDrawer knob.
-- [ ] **Money Board eyeball + the manager walk.** Live since 2026-07-10 and still unwalked.
-      Both skins, the rainbow palette, 390px, chart hover/zoom/Compare. The manager walk
-      needs a prod manager account, and the network tab must show **zero** `/admin/payroll/*`
-      calls.
+- [~] **Money Board — MOBILE/SKIN HALF WALKED 2026-08-12.** Dallas found the House Lights
+      sidebar drawer rendering see-through; root-caused as the same defect as the modal bug
+      and BOTH FIXED + confirmed the same day (fix list, 2026-08-12). Note the drawer
+      breakpoint is `max-width: 900px`, so that bug was hitting tablets, not just phones.
+      STILL OWED, desktop width: the chart and palette pass in both skins — rainbow series
+      legibility in House Lights, axis/legend text, and chart hover / zoom / Compare, plus
+      whether any card figure disagrees with the chart.
+      MANAGER WALK IS BLOCKED, not skipped: prod has **zero** manager accounts (only two
+      admins, `admin@` and `zul@`), so the "network tab shows zero `/admin/payroll/*` calls"
+      check cannot run in prod without creating a real manager. Do it on dev, or accept it
+      stays unverified in prod.
 
 ## Tier 2 — client-facing, shipped, unseen
 

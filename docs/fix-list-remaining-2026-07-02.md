@@ -1389,7 +1389,8 @@ tier disagreeing.
 **FIXED 2026-08-12 (both instances, one change, on main — not yet pushed).** CSS-only plus a
 marker class; behavior-inert, admin-only, no money path. CI client build exit 0 and both
 rules verified in the built `main.*.css`, including that the sidebar override lands AFTER the
-transparent rule in source order. Still owed: Dallas's eyeball on both surfaces.
+transparent rule in source order. **Dallas confirmed both surfaces fixed in the app
+2026-08-12.** Closed.
 Correction to the original entry below: **StaffReviews.js is NOT affected** — its modal
 styles the panel inline (`background: var(--bg-1)`) rather than borrowing `.card`, same as
 PackageIncludesModal. Real blast radius was 9 files / 11 panels, not 10 files
