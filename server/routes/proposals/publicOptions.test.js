@@ -265,6 +265,36 @@ test("add-on quantity is priced, not flattened to one", async () => {
     [proposalId, barback]);
 });
 
+test("the client's own price does not drift when they toggle something else", async () => {
+  // Dallas's add-ons include ones a client can never see (parking fee is hidden
+  // outright). Those must ride the current option on EVERY quote, or the
+  // "Yours" card gets cheaper than the total printed above it the instant the
+  // client touches an extra — for a reason they cannot see.
+  const hidden = await addonIdBySlug('parking-fee');
+  const visible = await addonIdBySlug('champagne-toast');
+  assert.ok(hidden && visible, 'seeded hidden + visible add-ons exist');
+  await pool.query(
+    `INSERT INTO proposal_addons (proposal_id, addon_id, quantity) VALUES ($1, $2, 1)
+     ON CONFLICT (proposal_id, addon_id) DO NOTHING`, [proposalId, hidden]);
+
+  const first = await request('POST', `/api/proposals/t/${token}/options`, { body: {} });
+  const firstTotal = first.body.options.find((o) => o.is_current).total;
+  assert.ok(!first.body.extras.some((x) => x.addon_id === hidden),
+    'the hidden add-on is never offered to the client');
+
+  // Re-quote carrying exactly what the client was offered — the hidden one
+  // cannot be in the body because it was never in the list.
+  const offered = first.body.extras.filter((x) => x.selected).map((x) => x.addon_id);
+  const reQuote = await request('POST', `/api/proposals/t/${token}/options`, {
+    body: { extra_addon_ids: offered, tier_addon_id: null },
+  });
+  const reTotal = reQuote.body.options.find((o) => o.is_current).total;
+  assert.equal(reTotal, firstTotal, 'the current option holds its price across a re-quote');
+
+  await pool.query('DELETE FROM proposal_addons WHERE proposal_id = $1 AND addon_id = $2',
+    [proposalId, hidden]);
+});
+
 test('an unknown token 404s rather than leaking', async () => {
   const res = await request('POST', `/api/proposals/t/${crypto.randomUUID()}/options`, { body: {} });
   assert.equal(res.status, 404);

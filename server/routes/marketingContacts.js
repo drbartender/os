@@ -57,7 +57,11 @@ router.put('/contacts/:id/tags', auth, adminOnly, asyncHandler(async (req, res) 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const exists = await client.query('SELECT 1 FROM clients WHERE id = $1', [clientId]);
+    // FOR UPDATE, not a bare existence check: this is replace-the-set, so two
+    // admins saving different sets for the same contact at once can interleave
+    // delete-then-insert and land on the UNION of both — a set neither of them
+    // asked for. Locking the contact row serializes tag edits per contact.
+    const exists = await client.query('SELECT 1 FROM clients WHERE id = $1 FOR UPDATE', [clientId]);
     if (exists.rowCount === 0) {
       await client.query('ROLLBACK');
       throw new NotFoundError('Contact not found.');

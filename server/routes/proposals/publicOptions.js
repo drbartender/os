@@ -141,13 +141,32 @@ router.post(
       const tierForPkg = isByob && requestedTier ? requestedTier : null;
       let addonIds;
 
-      if (!bodyGiven && pkg.id === proposal.package_id) {
+      if (pkg.id === proposal.package_id) {
         // The option the client is STANDING ON must reproduce the total printed
-        // above it, to the penny. Its add-ons were set by Dallas, not chosen
-        // here, so they never pass through the client-choice visibility gate —
-        // that gate would strip e.g. real glassware on a 120-guest proposal and
-        // quote the client's own bar below its stated price.
-        addonIds = [...currentAddonIds];
+        // above it, to the penny — on the first load AND after every re-quote.
+        //
+        // Its add-ons were set by Dallas, not chosen here. Some of them are
+        // deliberately invisible to a client (a parking fee; real glassware on a
+        // 120-guest event), so they are never in the offered `extras` list and
+        // can never come back in the request body. Filtering this option through
+        // the client-choice gate would therefore drop them the moment the client
+        // toggles anything, and the "Yours" card would quietly get CHEAPER than
+        // the total printed directly above it for a reason the client cannot
+        // see. So: the client owns the visible selection, Dallas's invisible
+        // ones always ride along.
+        const clientVisible = new Set(
+          visibleAddonsFor({
+            addons: catalog.addons, pkg, guestCount: Number(proposal.guest_count),
+            addonIds: tierForPkg ? [...selectedExtras, tierForPkg] : selectedExtras,
+          }).map(a => a.id)
+        );
+        const ownHidden = currentAddonIds.filter(id => !clientVisible.has(id) && !tierIds.has(id));
+        addonIds = [...new Set([...selectedExtras.filter(id => clientVisible.has(id)), ...ownHidden])];
+        if (tierForPkg) addonIds.push(tierForPkg);
+        else if (!bodyGiven) {
+          const ownTier = currentAddonIds.find(id => tierIds.has(id));
+          if (ownTier) addonIds.push(ownTier);
+        }
       } else {
         // The visibility gate DOES apply to add-ons carried onto a different
         // package. Pass the tier alongside, because rules like mocktail-bar's
