@@ -1386,11 +1386,26 @@ tier disagreeing.
 
 ### Added 2026-08-12 (found by Dallas during the walkthroughs)
 
+**FIXED 2026-08-12 (both instances, one change, on main — not yet pushed).** CSS-only plus a
+marker class; behavior-inert, admin-only, no money path. CI client build exit 0 and both
+rules verified in the built `main.*.css`, including that the sidebar override lands AFTER the
+transparent rule in source order. Still owed: Dallas's eyeball on both surfaces.
+Correction to the original entry below: **StaffReviews.js is NOT affected** — its modal
+styles the panel inline (`background: var(--bg-1)`) rather than borrowing `.card`, same as
+PackageIncludesModal. Real blast radius was 9 files / 11 panels, not 10 files
+(RemoteStaffingFeePrompt and ProposalDetail carry two panels each).
+Fix as landed: a `.modal-card` marker class beside `.card` on all 11 floating panels, plus
+one rule giving them `var(--bg-elev)` (the floating-surface token, defined in BOTH skins —
+dark's own comment calls it "floating (modal/palette)"); and inside the `max-width: 900px`
+block, a light-skin `.sidebar` override restoring an opaque drawer. Both rules carry the
+`[data-skin="light"]` attribute deliberately, per the specificity note below.
+
 **THE PATTERN: House Lights sets surfaces transparent by design, and every component that
 reuses such a surface as a FLOATING OVERLAY goes see-through.** Two confirmed instances,
-found within hours of each other by two different walkthroughs. Fix them together; they are
-one defect wearing two hats, and a third will appear the next time someone borrows a light-skin
-surface for an overlay.
+found within hours of each other by two different walkthroughs. They are one defect wearing
+two hats, and a third will appear the next time someone borrows a light-skin surface for an
+overlay — reach for `.modal-card` (or the same `--bg-elev` treatment) rather than inventing
+a third private background.
 
 Shared trap for whoever fixes it: `html[data-app="admin-os"][data-skin="light"] .x` outranks
 the responsive block's `html[data-app="admin-os"] .x`, and **media queries contribute no

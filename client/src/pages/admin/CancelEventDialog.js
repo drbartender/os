@@ -125,7 +125,7 @@ export default function CancelEventDialog({ proposalId, clientName, onClose, onC
 
   return (
     <div style={OVERLAY} onClick={() => !busy && onClose()}>
-      <div className="card" style={{ width: '100%', maxWidth: 540, maxHeight: '85vh', overflow: 'auto' }}
+      <div className="card modal-card" style={{ width: '100%', maxWidth: 540, maxHeight: '85vh', overflow: 'auto' }}
         onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
           <h3>Cancel event</h3>

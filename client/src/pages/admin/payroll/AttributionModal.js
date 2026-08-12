@@ -108,7 +108,7 @@ export default function AttributionModal({ periodId, onDone, onCancel }) {
     // trap the admin — the writes that landed are refreshed by the caller).
     <div style={OVERLAY} role="dialog" aria-modal="true" onClick={cancel}>
       <div
-        className="card"
+        className="card modal-card"
         style={{ width: '100%', maxWidth: 560, maxHeight: '85vh', overflow: 'auto' }}
         onClick={(e) => e.stopPropagation()}
       >

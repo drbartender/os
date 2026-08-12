@@ -152,7 +152,7 @@ export default function CancelLineDialog({ proposalId, entry, clientEmail, clien
   return (
     <>
     <div style={OVERLAY} onClick={() => !busy && onClose()}>
-      <div className="card" style={{ width: '100%', maxWidth: 520, maxHeight: '85vh', overflow: 'auto' }}
+      <div className="card modal-card" style={{ width: '100%', maxWidth: 520, maxHeight: '85vh', overflow: 'auto' }}
         onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
           <h3>Remove {entry.label}</h3>

@@ -42,7 +42,7 @@ export default function RejectModal({ open, onClose, onConfirm }) {
         display: 'grid', placeItems: 'center',
       }}
     >
-      <div onClick={e => e.stopPropagation()} className="card" style={{ width: 420, maxWidth: '92vw' }}>
+      <div onClick={e => e.stopPropagation()} className="card modal-card" style={{ width: 420, maxWidth: '92vw' }}>
         <div className="card-head"><h3>Reject application</h3></div>
         <div className="card-body vstack" style={{ gap: 12 }}>
           <p className="tiny muted">A short reason helps when reviewing later. Visible only to admins.</p>

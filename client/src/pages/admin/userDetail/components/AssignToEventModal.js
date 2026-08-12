@@ -76,7 +76,7 @@ export default function AssignToEventModal({ userId, staffName, onClose, onAssig
       onClick={onClose}
     >
       <div
-        className="card"
+        className="card modal-card"
         style={{
           maxWidth: 720, width: '100%',
           maxHeight: '85vh',

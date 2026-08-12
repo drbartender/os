@@ -850,7 +850,7 @@ export default function ProposalDetail() {
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
           }}
           onClick={() => !archiving && setShowArchiveModal(false)}>
-          <div className="card" style={{ width: '100%', maxWidth: 460 }}
+          <div className="card modal-card" style={{ width: '100%', maxWidth: 460 }}
             onClick={(e) => e.stopPropagation()}>
             <div className="card-head">
               <h3>Archive proposal</h3>
@@ -924,7 +924,7 @@ export default function ProposalDetail() {
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
           }}
           onClick={() => setShowActivityPopup(false)}>
-          <div className="card" style={{ width: '100%', maxWidth: 640, maxHeight: '80vh', overflow: 'auto' }}
+          <div className="card modal-card" style={{ width: '100%', maxWidth: 640, maxHeight: '80vh', overflow: 'auto' }}
             onClick={(e) => e.stopPropagation()}>
             <div className="card-head">
               <h3>Activity log</h3>

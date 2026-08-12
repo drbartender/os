@@ -149,7 +149,7 @@ export default function RemoteStaffingFeePrompt({ proposalId, onProceed }) {
   if (mode === 'loading' || !check) {
     return (
       <div style={OVERLAY}>
-        <div className="card" role="status" aria-live="polite" style={{ padding: '18px 22px' }}>
+        <div className="card modal-card" role="status" aria-live="polite" style={{ padding: '18px 22px' }}>
           <span className="muted">Checking staffing for this venue…</span>
         </div>
       </div>
@@ -166,7 +166,7 @@ export default function RemoteStaffingFeePrompt({ proposalId, onProceed }) {
   return (
     <div style={OVERLAY}>
       <div
-        className="card"
+        className="card modal-card"
         role="dialog"
         aria-modal="true"
         aria-label="Remote Staffing Fee"

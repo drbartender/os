@@ -12591,6 +12591,35 @@ html[data-app="admin-os"] .card {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
 }
+
+/* Dialog panels borrow .card for their chrome. House Lights deliberately
+   restyles .card as a FLAT PAGE SECTION (transparent, no border, no radius,
+   hairline top rule) — right on a page, invisible when the same element is
+   floating over a 50%-black scrim, which is what every admin dialog does.
+   Dallas hit it on the cancel-line dialog (2026-08-12): "you can't see the
+   dialog box in the House Lights skin."
+
+   .modal-card marks a card that is acting as a floating panel and restores a
+   real elevated surface. --bg-elev is the floating-surface token and is
+   defined in BOTH skins (dark's own comment calls it "floating
+   (modal/palette)"), so this one rule serves both.
+
+   SPECIFICITY, load-bearing: the light-skin .card rule is (0,3,1). Media
+   queries and source order alone are not enough to beat it reliably, so the
+   second selector below carries the skin attribute to reach (0,4,1). Do not
+   "simplify" this to a bare .modal-card — it will silently stop working on
+   House Lights, which is the only skin that needs it.
+
+   Sibling instance of the same root cause: the mobile sidebar drawer, fixed in
+   the responsive block near the end of this file. */
+html[data-app="admin-os"] .card.modal-card,
+html[data-app="admin-os"][data-skin="light"] .card.modal-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.30);
+}
+
 html[data-app="admin-os"] .card-body { padding: 0.9rem 1rem; }
 html[data-app="admin-os"] .card-head {
   padding: 0.7rem 1rem;
@@ -13353,6 +13382,26 @@ html[data-app="admin-os"] .field-block {
   /* Hidden-pref keeps display:none on desktop; on mobile the drawer must render. */
   html[data-app="admin-os"][data-sidebar="hidden"] .sidebar { display: flex; }
   html[data-app="admin-os"] .shell.mobile-nav-open .sidebar { transform: translateX(0); }
+
+  /* House Lights styles .sidebar transparent for its flat desktop column (the
+     [data-skin="light"] .sidebar rule far above). Here the SAME element is a
+     drawer floating over the page, so transparent means the page content reads
+     straight through the nav items. Dallas hit it during the Money Board
+     walkthrough (2026-08-12): "the sidebar is effed in house lights in mobile."
+     After Hours is unaffected — it has no .sidebar override and keeps the
+     opaque base fill.
+
+     SPECIFICITY, load-bearing: the light-skin rule is (0,3,1) and MEDIA QUERIES
+     ADD NO SPECIFICITY, so this override must carry the skin attribute to match
+     it. A bare `.sidebar { background: ... }` in here loses and changes nothing.
+
+     Same root cause as .modal-card above: a House Lights surface that is
+     transparent by design breaks the moment a component reuses it as an
+     overlay. */
+  html[data-app="admin-os"][data-skin="light"] .sidebar {
+    background: var(--bg-elev);
+    border-right: 1px solid var(--line-2);
+  }
 
   /* Undo rail compaction so the drawer is always full-labeled regardless of saved pref */
   html[data-app="admin-os"][data-sidebar="rail"] .sidebar-brand-text { display: block; }

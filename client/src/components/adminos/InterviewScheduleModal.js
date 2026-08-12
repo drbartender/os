@@ -74,7 +74,7 @@ export default function InterviewScheduleModal({ open, applicant, onClose, onSav
       }}
       data-app="admin-os"
     >
-      <div onClick={e => e.stopPropagation()} className="card" style={{ width: 460, maxWidth: '92vw' }}>
+      <div onClick={e => e.stopPropagation()} className="card modal-card" style={{ width: 460, maxWidth: '92vw' }}>
         <div className="card-head">
           <h3>
             {applicant.interview_at ? 'Reschedule' : 'Schedule'} interview ·{' '}

@@ -646,7 +646,7 @@ export default function AdminUserDetail() {
           onClick={() => { setConfirmAction(null); setCustomMessage(''); }}
         >
           <div
-            className="card"
+            className="card modal-card"
             style={{ maxWidth: 480, width: '100%', padding: '1.25rem 1.5rem' }}
             onClick={(e) => e.stopPropagation()}
           >
