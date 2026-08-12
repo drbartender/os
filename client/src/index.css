@@ -1095,6 +1095,17 @@ html[data-app="admin-os"] .file-upload-name {
    forced true horizontal page scroll on /apply (425px vs 390 viewport).
    The email is redundant to an applicant on their own phone; drop it,
    tighten padding, and let the row wrap as a belt. */
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) {
   .site-header {
     padding: 0.75rem 1rem;
@@ -1133,6 +1144,17 @@ html[data-app="admin-os"] .file-upload-name {
   color: var(--parchment);
   padding: 2px 0 6px;
 }
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) {
   .steps-track { display: none; }
   .steps-compact { display: block; }
@@ -1355,6 +1377,17 @@ html[data-app="admin-os"] .file-upload-name {
 }
 
 /* Hide description column on small screens */
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) {
   .data-table .col-desc,
   .data-table .col-spirit {
@@ -4839,6 +4872,17 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   justify-content: center;
 }
 
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) {
   .ws-faq-q { padding: 14px 18px; }
   .ws-faq-q-inner { gap: 10px; }
@@ -6643,6 +6687,17 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 }
 
 /* Extras step — single-column grids on small screens */
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) {
   .wz-bundle-grid { grid-template-columns: 1fr; }
   .wz-acc-list { grid-template-columns: 1fr; }
@@ -8423,6 +8478,17 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 }
 .client-btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
 
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) {
   .client-login-section {
     padding: 32px 18px 56px;
@@ -9612,6 +9678,17 @@ html[data-app="admin-os"] .location-suggest-item.active {
 .invoice-extension-terms p { font-size: 0.92rem; line-height: 1.5; }
 .invoice-extension-accepted { font-weight: 600; }
 
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) {
   .invoice-document { padding: 22px 24px; }
   .invoice-header { grid-template-columns: 1fr; gap: 16px; }
@@ -10069,6 +10146,17 @@ html[data-app="admin-os"] .location-suggest-item.active {
 }
 .proposal-paid-link:hover { color: var(--brass-bright); }
 
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) {
   .proposal-hero { padding: 16px 0 22px; gap: 10px; }
   .wax-seal.lg { width: 92px; height: 92px; }
@@ -10264,6 +10352,17 @@ html[data-app="admin-os"] .location-suggest-item.active {
 }
 .pkg-explore-toggle:hover { background: rgba(184, 146, 74, 0.12); }
 .pkg-explore-panel { margin-top: 16px; text-align: left; }
+
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
 
 @media (max-width: 640px) {
   .pkg-matrix-scroll { display: none; }
@@ -10619,6 +10718,17 @@ html[data-app="admin-os"] .time-picker .time-picker-input {
 .time-picker-disabled { opacity: 0.6; }
 
 /* Mobile: bigger touch targets */
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) {
   .time-picker-steppers { width: 28px; right: 32px; }
   .time-picker-chevron { width: 30px; }
@@ -10713,6 +10823,17 @@ html[data-app="admin-os"] .number-stepper .number-stepper-input {
 }
 
 .number-stepper-disabled { opacity: 0.6; }
+
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
 
 @media (max-width: 640px) {
   .number-stepper-steppers { width: 28px; }
@@ -17531,6 +17652,17 @@ html[data-app="staff"] main {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) {
   /* Tighter cells so the third tab visibly peeks past the edge at 390px. */
   .cp-tab { padding: 14px 15px 12px; letter-spacing: 0.13em; }
@@ -18071,6 +18203,17 @@ html[data-app="admin-os"] .presence-row-main--static { cursor: default; }
 .potions-preview-scrim { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
 .potions-preview-modal { width: min(680px, 96vw); max-height: 84vh; display: flex; flex-direction: column; gap: 0.6rem; }
 .potions-preview-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; overflow-y: auto; }
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) { .potions-preview-cols { grid-template-columns: 1fr; } }
 .potions-preview-label { text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.3rem; }
 .potions-preview-line { display: flex; justify-content: space-between; gap: 0.6rem; padding: 0.15rem 0; border-bottom: 1px dashed var(--border); font-size: 0.85rem; }
@@ -18113,6 +18256,17 @@ html[data-app="admin-os"] .ov-cohort-note button {
   cursor: pointer;
 }
 html[data-app="admin-os"] .ov-cohort-note button:hover { color: var(--ink-1); }
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) {
   html[data-app="admin-os"] .ov-filter-row {
     flex-wrap: nowrap;
@@ -18206,6 +18360,17 @@ html[data-app="admin-os"] .ov-payroll-link:focus-visible .nat-payroll {
 html[data-app="admin-os"] .nat-payroll.is-warn {
   box-shadow: inset 3px 0 0 hsl(var(--warn-h) var(--warn-s) 50%);
 }
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) {
   html[data-app="admin-os"] .ov-band1 { grid-template-columns: 1fr; }
   /* Tab seg scrolls inside its own container, never the page. */
@@ -18367,6 +18532,17 @@ html[data-app="admin-os"] .ov-era-note {
 /* Mobile (spec §10 / B2.7b): tiles 2-up, tables collapse to the queue-item row
    pattern (client + type stacked left, amount right). Wide tables still scroll in
    their own tbl-wrap above this breakpoint; no page-level horizontal scroll. */
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) {
   html[data-app="admin-os"] .money-tiles { grid-template-columns: repeat(2, 1fr); }
   html[data-app="admin-os"] .mtile + .mtile { border-left: 0; }
@@ -18506,6 +18682,17 @@ html[data-app="admin-os"] .ov-chart-footer b {
 html[data-app="admin-os"] .ov-delta.up { color: hsl(var(--ok-h) var(--ok-s) 50%); font-weight: 600; }
 html[data-app="admin-os"] .ov-delta.down { color: hsl(var(--danger-h) var(--danger-s) 60%); font-weight: 600; }
 html[data-app="admin-os"] .ov-foot-caption { margin-left: auto; }
+
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
 
 @media (max-width: 640px) {
   html[data-app="admin-os"] .ov-chart-card .card-head { flex-wrap: wrap; gap: 8px; }
@@ -18739,6 +18926,17 @@ html[data-app="admin-os"] .splitby-note {
   color: var(--ink-3);
 }
 html[data-app="admin-os"] .splitby-state { padding: 0.9rem 0.5rem; font-size: 12.5px; }
+
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
 
 @media (max-width: 640px) {
   html[data-app="admin-os"] .splitby-head { display: none; }
@@ -19442,6 +19640,17 @@ html[data-app="admin-os"] .pay-qr-tile {
 /* Phone widths: trim the decorative eyebrow and tighten the shell. The header
    plus announce bar alone cost ~205px here, so this page has less room to spend
    than any other on the site. */
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
 @media (max-width: 640px) {
   .ws-press-pagehero.sms-optin-hero { padding: 20px 0 14px; }
   .ws-press-pagehero.sms-optin-hero .ws-press-eyebrow { display: none; }
@@ -19509,3 +19718,232 @@ html[data-app="admin-os"] .pay-qr-tile {
 }
 .ext-row { padding: 10px 0; }
 .ext-row + .ext-row { border-top: 1px solid var(--line-1); }
+
+/* ─── Other options on the proposal page ────────────────────────────────────
+   "Same night, different bar." Chalkboard ground, parchment cards, brass rules
+   — the same apothecary vocabulary the proposal above it already speaks, so the
+   comparison reads as part of the same document rather than a bolted-on tool.
+   Ported from the Proposal Other Options design (claude.ai/design, 2026-08-11).
+   Scoped entirely under .oo-*; shares tokens with .proposal-* and .pkg-*. */
+/* Muted ink for parchment cards. Was five copies of a raw hex; tokenized so a
+   palette change cannot strand them. */
+.oo-pick, .oo-compare { --oo-ink-quiet: #785d26; }
+.oo-status { color: var(--cream-text); font-style: italic; text-align: center; padding: 22px 0; }
+.oo-pick { padding: 26px 0 40px; }
+.oo-busy { opacity: 0.55; transition: opacity 0.15s ease; }
+.oo-h2 {
+  font-family: var(--font-display); font-weight: 400;
+  font-size: clamp(1.5rem, 5vw, 1.95rem); line-height: 1.1;
+  color: var(--cream-text); margin: 0 0 6px;
+}
+.oo-h2 em { color: var(--brass-bright); }
+.oo-h3 { font-family: var(--font-display); font-weight: 400; font-size: 1.15rem; color: var(--cream-text); margin: 0 0 4px; }
+.oo-sub { margin: 0; font-size: 0.9rem; font-style: italic; color: rgba(240, 232, 214, 0.62); }
+
+.oo-pick-head, .oo-compare-head {
+  display: flex; flex-wrap: wrap; align-items: flex-end;
+  justify-content: space-between; gap: 20px; margin-bottom: 22px;
+}
+.oo-fixed {
+  border: 1px solid rgba(184, 146, 74, 0.4); border-radius: 8px;
+  background: rgba(184, 146, 74, 0.08); padding: 11px 16px;
+}
+.oo-fixed-k {
+  font-family: var(--font-display); font-size: 10px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--brass); margin-bottom: 4px;
+}
+.oo-fixed-v { font-size: 0.92rem; color: var(--cream-text); }
+
+.oo-lane { display: flex; align-items: center; gap: 14px; margin: 0 0 14px; }
+.oo-lane span {
+  font-family: var(--font-display); font-size: 11px; letter-spacing: 0.26em;
+  text-transform: uppercase; color: var(--brass); white-space: nowrap;
+}
+.oo-lane i { flex: 1; height: 1px; background: rgba(184, 146, 74, 0.35); }
+
+.oo-cards {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
+  gap: 14px; margin-bottom: 30px; align-items: stretch;
+}
+.oo-card {
+  position: relative; display: flex; flex-direction: column;
+  background: linear-gradient(180deg, var(--paper) 0%, var(--card-bg) 100%);
+  border: 2px solid var(--brass); border-radius: 10px; color: var(--deep-brown);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(184, 146, 74, 0.22);
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+.oo-card:hover { transform: translateY(-2px); }
+.oo-card-on { border-color: var(--amber); box-shadow: 0 4px 18px rgba(29, 140, 137, 0.28); }
+.oo-card-capped { opacity: 0.45; }
+.oo-card-off { opacity: 0.6; }
+.oo-card-hit {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; text-align: left; background: none; border: none;
+  padding: 16px 15px 10px; cursor: pointer; color: inherit; font: inherit;
+}
+.oo-card-hit:disabled { cursor: not-allowed; }
+.oo-check {
+  position: absolute; top: -11px; left: 13px; width: 23px; height: 23px;
+  border-radius: 50%; background: var(--amber); color: var(--cream-text);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-display); font-size: 13px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+.oo-yours {
+  display: inline-block; font-family: var(--font-display); font-size: 0.58rem;
+  letter-spacing: 0.16em; text-transform: uppercase; color: var(--cream-text);
+  background: var(--amber); border-radius: 999px; padding: 2px 9px; margin-bottom: 6px;
+}
+.oo-badge {
+  font-family: var(--font-display); font-size: 0.58rem; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--oo-ink-quiet);
+}
+.oo-card-name { font-family: var(--font-display); font-size: 1.08rem; line-height: 1.2; }
+.oo-card-price { font-family: var(--font-display); font-size: 1.45rem; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.oo-card-delta { font-size: 0.72rem; color: var(--oo-ink-quiet); }
+.oo-card-foot {
+  margin-top: auto; padding: 8px 15px 12px; font-size: 0.7rem;
+  font-family: var(--font-display); letter-spacing: 0.12em; text-transform: uppercase; color: var(--oo-ink-quiet);
+}
+
+.oo-tiers { border-top: 1px dotted rgba(28, 22, 16, 0.25); margin: 0 15px; padding: 9px 0 2px; }
+.oo-tiers-k {
+  font-family: var(--font-display); font-size: 0.62rem; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--oo-ink-quiet); margin-bottom: 6px;
+}
+.oo-tier {
+  display: flex; width: 100%; justify-content: space-between; gap: 10px;
+  background: none; border: 1px solid rgba(28, 22, 16, 0.18); border-radius: 6px;
+  padding: 6px 9px; margin-bottom: 5px; cursor: pointer;
+  font: inherit; font-size: 0.78rem; color: var(--deep-brown); text-align: left;
+}
+.oo-tier-on { border-color: var(--amber); background: rgba(29, 140, 137, 0.1); }
+.oo-tier-total { font-variant-numeric: tabular-nums; }
+
+.oo-extras { margin: 8px 0 30px; }
+.oo-extras-head { margin-bottom: 12px; }
+.oo-extras-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+.oo-extra {
+  display: flex; align-items: center; gap: 10px; text-align: left;
+  background: rgba(184, 146, 74, 0.07); border: 1px solid rgba(184, 146, 74, 0.32);
+  border-radius: 8px; padding: 10px 12px; cursor: pointer; font: inherit;
+  color: var(--cream-text);
+}
+.oo-extra-on { border-color: var(--amber); background: rgba(29, 140, 137, 0.14); }
+.oo-extra:disabled { cursor: wait; }
+.oo-extra-check {
+  width: 18px; height: 18px; flex: none; border-radius: 4px;
+  border: 1px solid rgba(184, 146, 74, 0.5); display: inline-flex;
+  align-items: center; justify-content: center; font-size: 12px; color: var(--cream-text);
+}
+.oo-extra-on .oo-extra-check { background: var(--amber); border-color: var(--amber); }
+.oo-extra-body { display: flex; flex-direction: column; min-width: 0; }
+.oo-extra-name { font-size: 0.88rem; }
+.oo-extra-rate { font-size: 0.72rem; color: var(--brass); font-style: italic; }
+
+.oo-tray {
+  position: sticky; bottom: 0; z-index: 4; display: flex; flex-wrap: wrap;
+  align-items: center; justify-content: space-between; gap: 12px;
+  background: rgba(14, 18, 24, 0.94); border: 1px solid rgba(184, 146, 74, 0.4);
+  border-radius: 10px; padding: 12px 16px; margin-top: 8px;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.45);
+}
+.oo-tray-names { color: var(--cream-text); font-size: 0.85rem; }
+.oo-tray-actions { display: flex; gap: 10px; align-items: center; }
+.oo-back, .oo-compare-btn, .oo-choose, .oo-addmore {
+  font-family: var(--font-display); letter-spacing: 0.14em; text-transform: uppercase;
+  border-radius: 8px; cursor: pointer; font-size: 0.76rem; padding: 11px 18px;
+}
+.oo-back, .oo-addmore {
+  background: transparent; border: 1px solid var(--brass); color: var(--brass);
+}
+.oo-back:hover, .oo-addmore:hover { background: rgba(184, 146, 74, 0.14); color: var(--brass-bright); }
+.oo-compare-btn, .oo-choose { background: var(--amber); border: none; color: var(--cream-text); }
+.oo-compare-btn:hover, .oo-choose:hover { background: var(--warm-brown); }
+
+/* Screen-reader-only status line: exists before its content changes so the first
+   announcement is not swallowed. */
+.oo-sr {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+.oo-error {
+  border: 1px solid rgba(196, 92, 74, 0.6); background: rgba(196, 92, 74, 0.12);
+  color: var(--cream-text); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px;
+  font-size: 0.86rem;
+}
+.oo-open { margin: 26px 0 8px; text-align: center; }
+.oo-open-btn {
+  font-family: var(--font-display); letter-spacing: 0.14em; text-transform: uppercase;
+  font-size: 0.78rem; padding: 13px 22px; border-radius: 8px; cursor: pointer;
+  background: transparent; border: 1px solid var(--brass); color: var(--brass);
+}
+.oo-open-btn:hover { background: rgba(184, 146, 74, 0.14); color: var(--brass-bright); }
+.oo-open-btn:focus-visible { outline: 2px solid var(--brass-bright); outline-offset: 2px; }
+
+.oo-compare { padding: 20px 0 40px; }
+.oo-table-scroll { overflow-x: auto; }
+/* Row elements exist ONLY to carry role="row" — display:contents keeps every
+   cell a direct grid child, so the layout is byte-identical to the flat grid
+   while a screen reader can finally associate a value with its column. */
+.oo-row { display: contents; }
+.oo-table {
+  display: grid; grid-template-columns: 150px repeat(var(--oo-cols), minmax(190px, 1fr));
+  width: max-content; min-width: 100%; border: 1px solid rgba(184, 146, 74, 0.35);
+  border-radius: 10px; overflow: hidden;
+}
+.oo-cell {
+  padding: 11px 13px; border-bottom: 1px solid rgba(184, 146, 74, 0.18);
+  border-right: 1px solid rgba(184, 146, 74, 0.12); color: var(--cream-text); font-size: 0.85rem;
+}
+.oo-rowlabel {
+  font-family: var(--font-display); font-size: 0.62rem; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--brass); background: rgba(184, 146, 74, 0.06);
+}
+.oo-colhead { background: rgba(184, 146, 74, 0.1); }
+.oo-colname { font-family: var(--font-display); font-size: 1.02rem; line-height: 1.2; margin-top: 3px; }
+.oo-price { font-family: var(--font-display); font-size: 1.3rem; font-variant-numeric: tabular-nums; }
+.oo-note, .oo-quiet { font-size: 0.72rem; color: rgba(240, 232, 214, 0.72); font-style: italic; }
+.oo-gap { font-size: 0.78rem; color: rgba(240, 232, 214, 0.6); font-style: italic; }
+.oo-items { list-style: none; margin: 0; padding: 0; }
+.oo-item { padding: 2px 0; font-size: 0.8rem; line-height: 1.35; }
+.oo-item-unique { color: var(--brass-bright); }
+.oo-tag {
+  display: inline-block; margin-left: 6px; font-family: var(--font-display);
+  font-size: 0.55rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--brass); white-space: nowrap;
+}
+.oo-tag-quiet { color: rgba(240, 232, 214, 0.62); }
+/* .oo-badge is brass-ink (sized for parchment cards). On the dark table head it
+   measured 1.9:1, which erased the single most important distinction in the
+   comparison — hosted vs BYOB. */
+.oo-colhead .oo-badge { color: var(--brass); }
+.oo-current-note { font-size: 0.75rem; font-style: italic; color: var(--brass); }
+
+.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
+.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
+.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
+  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oo-card, .oo-busy { transition: none; }
+  .oo-card:hover { transform: none; }
+}
+
+@media (max-width: 640px) {
+  .oo-pick-head, .oo-compare-head { flex-direction: column; align-items: stretch; }
+  .oo-table { grid-template-columns: 118px repeat(var(--oo-cols), minmax(160px, 1fr)); }
+  .oo-lane span { white-space: normal; letter-spacing: 0.16em; }
+  .oo-tray { flex-direction: column; align-items: stretch; }
+  .oo-tray-actions { justify-content: space-between; }
+}
+
+/* Card contents: readable at a glance, not a wall. Dotted rules echo the
+   parchment pricing table on the proposal above it. */
+.oo-card-groups { padding: 0 15px; }
+.oo-card-group { border-top: 1px dotted rgba(28, 22, 16, 0.25); padding-top: 8px; margin-bottom: 9px; }
+.oo-card-group-k {
+  font-family: var(--font-display); font-size: 0.62rem; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--oo-ink-quiet); margin-bottom: 4px;
+}
+.oo-card-groups .oo-item { font-size: 0.74rem; color: var(--deep-brown); line-height: 1.3; }

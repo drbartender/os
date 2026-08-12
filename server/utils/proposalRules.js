@@ -126,10 +126,54 @@ function validateProposalRules({ pkg, guestCount, addonIds, addons, clientProvid
   }
 }
 
+// Server twin of filterAddons() in client/src/utils/proposalRules.js — KEEP IN
+// SYNC with it, same discipline as the bundle constants above.
+//
+// Why this exists: filterAddons decides which add-ons a client is allowed to
+// see, and until now it lived ONLY in browser code. validateProposalRules
+// enforces the interaction rules (mutexes, prerequisites, floors) but none of
+// the VISIBILITY rules, so nothing server-side stopped a crafted request from
+// putting a hosted-only add-on on a BYOB booking or billing a parking fee the
+// UI deliberately hides. Any server path that prices or persists a
+// client-chosen add-on set must gate on this first; the client copy is a
+// convenience, never the boundary.
+//
+// Selection-dependent by design: a dependent add-on is invisible until its
+// parent is chosen, which is how the client surfaces requires_addon_slug
+// without an error state.
+function visibleAddonsFor({ addons, pkg, guestCount, addonIds = [] }) {
+  const rows = Array.isArray(addons) ? addons : [];
+  const ids = Array.isArray(addonIds) ? addonIds : [];
+  const packageCategory = pkg ? pkg.category : null;
+  const isHosted = !!pkg && pkg.pricing_type === 'per_guest';
+  const gc = Number(guestCount) || 0;
+  const hasSlug = (slug) => ids.some((id) => {
+    const a = rows.find((x) => x.id === id);
+    return !!a && a.slug === slug;
+  });
+
+  return rows.filter((a) => {
+    if (a.applies_to !== 'all' && a.applies_to !== packageCategory) return false;
+    if (a.slug === 'garnish-package-only' && isHosted) return false;
+    if (a.slug === 'mocktail-bar' && packageCategory === 'byob'
+        && !hasSlug('the-formula') && !hasSlug('the-full-compound')) return false;
+    if ((a.slug === 'real-glassware' || a.slug === 'champagne-coupe-upgrade') && gc > 100) return false;
+    if (a.requires_addon_slug) {
+      const parent = rows.find((x) => x.slug === a.requires_addon_slug);
+      if (!parent || !ids.includes(parent.id)) return false;
+    }
+    if (a.slug === 'handcrafted-syrups-3pack') return false;
+    if (a.slug === 'parking-fee') return false;
+    return true;
+  });
+}
+
 module.exports = {
   BYOB_BUNDLE_SLUGS,
+  BUNDLE_INCLUDED,
   MIXER_SLUGS,
   getSelectedBundleSlug,
   stripIncludedAddons,
   validateProposalRules,
+  visibleAddonsFor,
 };

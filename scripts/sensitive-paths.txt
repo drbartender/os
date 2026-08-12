@@ -251,3 +251,15 @@ server/routes/contractor.js
 # Global upload middleware: the size limit and its 413/abort behavior apply to EVERY
 # upload route in the app, so a change here has app-wide blast radius.
 server/index.js
+
+# Public pricing surface for the proposal page (2026-08-11). publicOptions.js is
+# an unauthenticated token-gated endpoint that QUOTES prices a client then acts
+# on, and changeRequests.js holds priceProposedState — the one function that
+# turns a client-chosen configuration into a number, now shared by the change
+# request flow AND that public quote. Neither matched a glob here (the
+# server/utils/* patterns never cross '/', and neither filename ends in a
+# listed suffix), so a change to the money math behind a public quote would
+# have scaled to a light look. Same "sensitivity follows the code" rule as the
+# drinkPlans and stripeWebhook splits above.
+server/routes/proposals/publicOptions.js
+server/utils/changeRequests.js

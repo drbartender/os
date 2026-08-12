@@ -10,6 +10,7 @@ const express = require('express');
 const router = express.Router();
 
 router.use('/', require('./publicToken'));
+router.use('/', require('./publicOptions')); // /t/:token/options — public compare data
 router.use('/', require('./compareGroup'));
 router.use('/', require('./public'));
 router.use('/', require('./metadata'));

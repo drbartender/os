@@ -36,6 +36,25 @@ const drinkPlanWriteLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// The proposal "other options" comparison re-quotes on every extras toggle and
+// every BYOB tier change, so a browsing client legitimately spends dozens of
+// requests. It CANNOT share publicReadLimiter: that bucket is IP-keyed and is
+// the same one the proposal page load and the Stripe publishable-key fetch draw
+// on, so a curious client browsing combinations could exhaust it and then be
+// told their proposal "was not found or has expired" on the next reload, with
+// the payment form refusing to mount for the rest of the window. Browsing must
+// never be able to spend the budget that paying depends on. Keyed by token,
+// same reasoning as drinkPlanWriteLimiter above. Read-only and cheap server-side
+// (three queries, then pure pricing), so the cap is generous.
+const optionsQuoteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => req.params?.token || req.ip,
+  message: { error: 'Too many pricing requests. Please try again in a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Logo upload/proxy is keyed by token AND much tighter than the autosave
 // limiter — each POST writes up to 5 MB to R2 (paid storage), each GET
 // proxies bytes through Node from R2 (paid egress). The previous shared
@@ -193,6 +212,7 @@ module.exports = {
   publicReadLimiter,
   signLimiter,
   drinkPlanWriteLimiter,
+  optionsQuoteLimiter,
   logoUploadLimiter,
   clientPortalWriteLimiter,
   adminWriteLimiter,

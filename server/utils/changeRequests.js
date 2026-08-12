@@ -54,12 +54,24 @@ async function currentAddonIds(proposalId, db) {
 // Price a full proposed end-state. Preserves admin-locked fields (adjustments,
 // total_price_override, syrups) from the current proposal. Throws ValidationError
 // on a rule violation. Returns the pricing snapshot. db is a pool or in-tx client.
-async function priceProposedState(proposal, proposed, db = pool) {
+//
+// `catalog` is an optional { packages, addons } of pre-fetched rows. Callers
+// pricing ONE end-state omit it and the two lookups happen here exactly as they
+// always have. The compare surface prices a dozen-plus end-states for a single
+// page load, so it fetches both tables once and passes them in rather than
+// issuing 2N round trips on a public endpoint. Behaviour is otherwise identical
+// by construction: the same rows reach the same rule gate and the same engine,
+// which is what lets the preview and the eventual commit agree on a number.
+async function priceProposedState(proposal, proposed, db = pool, catalog = null) {
   const packageId = proposed.package_id ?? proposal.package_id;
-  const pkg = (await db.query('SELECT * FROM service_packages WHERE id = $1', [packageId])).rows[0];
+  const pkg = catalog
+    ? catalog.packages.find(p => p.id === Number(packageId))
+    : (await db.query('SELECT * FROM service_packages WHERE id = $1', [packageId])).rows[0];
   if (!pkg) throw new ValidationError({ package_id: 'Package not found' });
 
-  const allActive = (await db.query('SELECT * FROM service_addons WHERE is_active = true')).rows;
+  const allActive = catalog
+    ? catalog.addons
+    : (await db.query('SELECT * FROM service_addons WHERE is_active = true')).rows;
   const rawIds = Array.isArray(proposed.addon_ids) ? proposed.addon_ids : await currentAddonIds(proposal.id, db);
   const strippedIds = stripIncludedAddons(rawIds, allActive);
   const variants = proposed.addon_variants || {};

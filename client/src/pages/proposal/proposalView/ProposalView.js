@@ -13,7 +13,7 @@ import ProposalHeader from './ProposalHeader';
 import ProposalPricingBreakdown from './ProposalPricingBreakdown';
 import SignAndPaySection from './SignAndPaySection';
 import { isGratuityBelowFloor, gratuityFloorMessage, gratuityFloorDollars } from './gratuityFloor';
-import { ExplorePackagesSection } from '../compare/PackageMatrix';
+import OtherOptionsPanel from '../otherOptions/OtherOptionsPanel';
 
 // ─── Main component ───────────────────────────────────────────────
 
@@ -24,12 +24,10 @@ export default function ProposalView() {
   const [proposal, setProposal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  // True when the resolver says this proposal is one option in a comparison
-  // group. Gates the explore-packages section off: a curated comparison
-  // already exists for this event, and the generic full-catalog matrix would
-  // muddy it (the ?choose=1 hand-off keeps the client on this page, so the
-  // status gate alone is not enough).
-  const [inOptionGroup, setInOptionGroup] = useState(false);
+  // Whether the client has opened the other-options panel. Closed by default:
+  // most clients want the bar we quoted and should never have to step around a
+  // comparison to sign for it.
+  const [showOptions, setShowOptions] = useState(false);
 
   // Form-level error banner (sign-and-pay section). Stripe card errors are
   // handled by Stripe Elements' own messaging inside <PaymentForm/>.
@@ -116,7 +114,10 @@ export default function ProposalView() {
       .then((res) => {
         if (cancelled) return true;
         const r = res.data || {};
-        if (r.grouped) setInOptionGroup(true);
+        // NOTE: grouped-ness no longer gates anything on this page. It used to
+        // suppress the package comparison, which had it exactly backwards — a
+        // client sent alternatives is the one most likely to want to compare.
+        // The redirects below are untouched; only the suppression is gone.
         if (r.decided && r.chosen_token && r.chosen_token !== token) {
           navigate(`/proposal/${r.chosen_token}?choose=1`, { replace: true });
           return true;
@@ -303,6 +304,24 @@ export default function ProposalView() {
   }, [serverFullRequired, paymentOption]);
 
   // Sign the proposal — called by PaymentForm before confirming payment
+  // A client picking a different bar from the comparison.
+  //
+  // DELIBERATE SEAM: this is a hand-off, not a self-serve swap, for exactly as
+  // long as the sign-time commit is unbuilt. The comparison is honest — every
+  // price on it comes from the pricing engine against this event — but the
+  // signature still commits the configuration on the proposal as it stands, so
+  // silently re-rendering the page as the new package would let someone sign
+  // for a bar we never recorded. When the commit lands, this callback becomes
+  // the real selection and the mailto goes away.
+  const handleWantOption = (option) => {
+    const subject = `About my ${option.name} option`;
+    const body = `Hi, I'd like to go with the ${option.name} option for my event.\n\n`
+      + `Name: ${proposal?.client_name || ''}\n`
+      + `Proposal: ${window.location.href.split('?')[0]}\n`;
+    window.location.href = `mailto:contact@drbartender.com?subject=${encodeURIComponent(subject)}`
+      + `&body=${encodeURIComponent(body)}`;
+  };
+
   const handleSign = async () => {
     setFormError('');
     setFieldErrors({});
@@ -650,10 +669,21 @@ export default function ProposalView() {
           </aside>
         </div>
 
-        {/* Explore other packages priced for this event. Pre-booking only (the
-            section self-gates on status) AND never on an option-group member,
-            where the admin-curated /compare comparison is the one to show. */}
-        {!inOptionGroup && <ExplorePackagesSection proposal={proposal} />}
+        {/* "See other options": every bar we could run for this event, priced
+            for their real numbers, with this proposal marked as the one we
+            recommend. Opt-in — a client who wants what we sent never has to
+            open it, which is the whole reason it is a button and not the page.
+
+            The old !inOptionGroup gate is deliberately gone: suppressing the
+            comparison precisely when Dallas had sent alternatives was backwards.
+            The panel self-gates server-side (custom-priced and already-signed
+            proposals get nothing back). */}
+        <div className="oo-open">
+          <button type="button" className="oo-open-btn" onClick={() => setShowOptions((v) => !v)}>
+            {showOptions ? 'Hide other options' : 'See other options'}
+          </button>
+        </div>
+        {showOptions && <OtherOptionsPanel token={token} onWantOption={handleWantOption} />}
 
         {/* Footer */}
         <div style={styles.footer}>

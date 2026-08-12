@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { API_BASE_URL as BASE_URL } from '../../../utils/api';
-import { getPackageBySlug } from '../../../data/packages';
+import { SECTION_ORDER, bucketsForSlug } from '../catalogBuckets';
 import { fmt, formatDateShort, DEPOSIT_DOLLARS } from '../proposalView/helpers';
 
 // Aligned package-compare matrix (P8, fix #3 Phase B). Two callers, two pricing
@@ -19,37 +19,6 @@ import { fmt, formatDateShort, DEPOSIT_DOLLARS } from '../proposalView/helpers';
 //     Promise.allSettled; per-column error state renders "Price unavailable").
 // Both render one aligned CSS grid on desktop + stacked cards under 640px.
 // Public token pages use raw axios + BASE_URL (no JWT), matching ProposalView.
-
-// Catalog section headings vary per package ("Beer & Wine" combined in some,
-// "Beer" / "Wine" / "Beer & Seltzer" separate in others). Map every heading to
-// a fixed, ordered bucket so the matrix rows stay aligned across columns.
-const SECTION_ORDER = ['Spirits', 'Beer & Wine', 'Mixers & Extras', 'Non-Alcoholic'];
-function bucketFor(heading) {
-  const h = (heading || '').toLowerCase();
-  if (h.includes('spirit')) return 'Spirits';
-  if (h.includes('beer') || h.includes('wine') || h.includes('seltzer')) return 'Beer & Wine';
-  if (h.includes('non') && h.includes('alc')) return 'Non-Alcoholic';
-  return 'Mixers & Extras'; // "Mixers & Modifiers" + any unexpected heading
-}
-
-// Catalog items carry witty descriptions after an en-dash separator
-// ("Tito's Vodka – ..."). Show just the names so tiers scan cleanly.
-function itemName(item) {
-  return item.split(' – ')[0];
-}
-
-// Build { bucket: [names...] } for a column from its catalog detail (or null).
-function bucketsForSlug(slug) {
-  const detail = getPackageBySlug(slug);
-  if (!detail) return null;
-  const out = {};
-  for (const section of detail.sections) {
-    const key = bucketFor(section.heading);
-    const names = section.items.map(itemName);
-    out[key] = (out[key] || []).concat(names);
-  }
-  return out;
-}
 
 function badgeFor(col) {
   return col.category === 'hosted' || col.pricing_type === 'per_guest' ? 'Hosted Bar' : 'BYOB';
