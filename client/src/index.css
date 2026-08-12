@@ -1095,17 +1095,6 @@ html[data-app="admin-os"] .file-upload-name {
    forced true horizontal page scroll on /apply (425px vs 390 viewport).
    The email is redundant to an applicant on their own phone; drop it,
    tighten padding, and let the row wrap as a belt. */
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) {
   .site-header {
     padding: 0.75rem 1rem;
@@ -1144,17 +1133,6 @@ html[data-app="admin-os"] .file-upload-name {
   color: var(--parchment);
   padding: 2px 0 6px;
 }
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) {
   .steps-track { display: none; }
   .steps-compact { display: block; }
@@ -1377,17 +1355,6 @@ html[data-app="admin-os"] .file-upload-name {
 }
 
 /* Hide description column on small screens */
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) {
   .data-table .col-desc,
   .data-table .col-spirit {
@@ -4872,17 +4839,6 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
   justify-content: center;
 }
 
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) {
   .ws-faq-q { padding: 14px 18px; }
   .ws-faq-q-inner { gap: 10px; }
@@ -6687,17 +6643,6 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 }
 
 /* Extras step — single-column grids on small screens */
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) {
   .wz-bundle-grid { grid-template-columns: 1fr; }
   .wz-acc-list { grid-template-columns: 1fr; }
@@ -8478,17 +8423,6 @@ html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: v
 }
 .client-btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
 
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) {
   .client-login-section {
     padding: 32px 18px 56px;
@@ -9678,17 +9612,6 @@ html[data-app="admin-os"] .location-suggest-item.active {
 .invoice-extension-terms p { font-size: 0.92rem; line-height: 1.5; }
 .invoice-extension-accepted { font-weight: 600; }
 
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) {
   .invoice-document { padding: 22px 24px; }
   .invoice-header { grid-template-columns: 1fr; gap: 16px; }
@@ -10146,17 +10069,6 @@ html[data-app="admin-os"] .location-suggest-item.active {
 }
 .proposal-paid-link:hover { color: var(--brass-bright); }
 
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) {
   .proposal-hero { padding: 16px 0 22px; gap: 10px; }
   .wax-seal.lg { width: 92px; height: 92px; }
@@ -10352,17 +10264,6 @@ html[data-app="admin-os"] .location-suggest-item.active {
 }
 .pkg-explore-toggle:hover { background: rgba(184, 146, 74, 0.12); }
 .pkg-explore-panel { margin-top: 16px; text-align: left; }
-
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
 
 @media (max-width: 640px) {
   .pkg-matrix-scroll { display: none; }
@@ -10718,17 +10619,6 @@ html[data-app="admin-os"] .time-picker .time-picker-input {
 .time-picker-disabled { opacity: 0.6; }
 
 /* Mobile: bigger touch targets */
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) {
   .time-picker-steppers { width: 28px; right: 32px; }
   .time-picker-chevron { width: 30px; }
@@ -10823,17 +10713,6 @@ html[data-app="admin-os"] .number-stepper .number-stepper-input {
 }
 
 .number-stepper-disabled { opacity: 0.6; }
-
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
 
 @media (max-width: 640px) {
   .number-stepper-steppers { width: 28px; }
@@ -17652,17 +17531,6 @@ html[data-app="staff"] main {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) {
   /* Tighter cells so the third tab visibly peeks past the edge at 390px. */
   .cp-tab { padding: 14px 15px 12px; letter-spacing: 0.13em; }
@@ -18203,17 +18071,6 @@ html[data-app="admin-os"] .presence-row-main--static { cursor: default; }
 .potions-preview-scrim { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
 .potions-preview-modal { width: min(680px, 96vw); max-height: 84vh; display: flex; flex-direction: column; gap: 0.6rem; }
 .potions-preview-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; overflow-y: auto; }
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) { .potions-preview-cols { grid-template-columns: 1fr; } }
 .potions-preview-label { text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.3rem; }
 .potions-preview-line { display: flex; justify-content: space-between; gap: 0.6rem; padding: 0.15rem 0; border-bottom: 1px dashed var(--border); font-size: 0.85rem; }
@@ -18256,17 +18113,6 @@ html[data-app="admin-os"] .ov-cohort-note button {
   cursor: pointer;
 }
 html[data-app="admin-os"] .ov-cohort-note button:hover { color: var(--ink-1); }
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) {
   html[data-app="admin-os"] .ov-filter-row {
     flex-wrap: nowrap;
@@ -18360,17 +18206,6 @@ html[data-app="admin-os"] .ov-payroll-link:focus-visible .nat-payroll {
 html[data-app="admin-os"] .nat-payroll.is-warn {
   box-shadow: inset 3px 0 0 hsl(var(--warn-h) var(--warn-s) 50%);
 }
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) {
   html[data-app="admin-os"] .ov-band1 { grid-template-columns: 1fr; }
   /* Tab seg scrolls inside its own container, never the page. */
@@ -18532,17 +18367,6 @@ html[data-app="admin-os"] .ov-era-note {
 /* Mobile (spec §10 / B2.7b): tiles 2-up, tables collapse to the queue-item row
    pattern (client + type stacked left, amount right). Wide tables still scroll in
    their own tbl-wrap above this breakpoint; no page-level horizontal scroll. */
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) {
   html[data-app="admin-os"] .money-tiles { grid-template-columns: repeat(2, 1fr); }
   html[data-app="admin-os"] .mtile + .mtile { border-left: 0; }
@@ -18682,17 +18506,6 @@ html[data-app="admin-os"] .ov-chart-footer b {
 html[data-app="admin-os"] .ov-delta.up { color: hsl(var(--ok-h) var(--ok-s) 50%); font-weight: 600; }
 html[data-app="admin-os"] .ov-delta.down { color: hsl(var(--danger-h) var(--danger-s) 60%); font-weight: 600; }
 html[data-app="admin-os"] .ov-foot-caption { margin-left: auto; }
-
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
 
 @media (max-width: 640px) {
   html[data-app="admin-os"] .ov-chart-card .card-head { flex-wrap: wrap; gap: 8px; }
@@ -18926,17 +18739,6 @@ html[data-app="admin-os"] .splitby-note {
   color: var(--ink-3);
 }
 html[data-app="admin-os"] .splitby-state { padding: 0.9rem 0.5rem; font-size: 12.5px; }
-
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
 
 @media (max-width: 640px) {
   html[data-app="admin-os"] .splitby-head { display: none; }
@@ -19640,17 +19442,6 @@ html[data-app="admin-os"] .pay-qr-tile {
 /* Phone widths: trim the decorative eyebrow and tighten the shell. The header
    plus announce bar alone cost ~205px here, so this page has less room to spend
    than any other on the site. */
-.oo-card-hit:focus-visible, .oo-tier:focus-visible, .oo-extra:focus-visible,
-.oo-back:focus-visible, .oo-compare-btn:focus-visible, .oo-choose:focus-visible,
-.oo-addmore:focus-visible, .oo-table-scroll:focus-visible {
-  outline: 2px solid var(--brass-bright); outline-offset: 2px; border-radius: 8px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .oo-card, .oo-busy { transition: none; }
-  .oo-card:hover { transform: none; }
-}
-
 @media (max-width: 640px) {
   .ws-press-pagehero.sms-optin-hero { padding: 20px 0 14px; }
   .ws-press-pagehero.sms-optin-hero .ws-press-eyebrow { display: none; }
