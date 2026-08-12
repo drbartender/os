@@ -31,11 +31,29 @@ so tick items off as you confirm them rather than assuming the list is current.
       so there is nothing to refund against. The trigger needs a client who has paid in full
       and then drops a line before their event. When that next happens, do it deliberately
       and watch, rather than manufacturing a case.
-- [ ] **Gratuity election-at-payment: 2 walks.** Complete 2026-08-04. The election now
-      rides PaymentIntent metadata and persists only on payment success. Confirm a normal
-      tip-jar checkout and a skip-the-jar checkout both land the right gratuity.
-- [ ] **Admin gratuity mandate on Lauren Karcz (proposal 719).** Live 2026-08-10. The
-      mandate path has never run on a real booking.
+- [x] **Gratuity election-at-payment — PASSED 2026-08-12.** Verified two ways. (1) From prod
+      data, the invariant this feature exists to enforce holds table-wide: ZERO unpaid
+      proposals carry a client-elected gratuity, ZERO carry an unpaid no-jar election, and
+      all 7 no-jar proposals sit exactly at the $50 floor. Seven real checkouts since 8/04
+      all landed `tip_jar=true` with a coherent rate. (2) Dallas walked the no-jar path on
+      proposal 731 (the branch none of those 7 exercised, since all predate the rewrite):
+      UI showed $150 gratuity, total $300 → $450, then abandoned. The PaymentIntent carried
+      `tip_jar:"false"` / `gratuity_rate:"50"` / amount 45000 — so it WOULD have applied —
+      while the proposal row stayed `tip_jar=true`, `rate=0`, `total=300`, and the activity
+      log recorded only a `viewed`. Both halves proven without spending anything.
+      Bonus: the prior $300 intent was CANCELED one second before the $450 one was minted,
+      so the stale-election replacement path works rather than stacking duplicates.
+- [x] **Admin gratuity mandate — PASSED 2026-08-12 on Lauren Karcz (719).** Dallas removed
+      a hand-rolled $100 surcharge line and ticked "Require prepaid gratuity" instead. The
+      mandate reproduced his manual figure exactly: snapshot reads
+      `rate 50 / hours 2 / staff_count 1 / total 100 / tip_jar true / floor_rate 50`, the
+      breakdown carries a clean `Gratuity 100` line with no remnant of the old surcharge,
+      and `total_price` held at $350 (350 base − 100 short-event discount + 100 gratuity).
+      Critically `floor_rate` IS persisted into `pricing_snapshot.gratuity` — the writer
+      that, if it dropped the key, would strip the checkout floor client-side while the
+      server still enforced. Was prod's FIRST mandate ever (count was 0).
+      Still unproven: the client-side half — that her checkout renders the $100 as
+      non-removable. Cheap to close next time someone is in there.
 - [ ] **Owner no-draw payouts, post-deploy walk.** Pushed 2026-08-07 with prod DDL and a
       backfill (4 rows `no_draw`, period 72 paid). Confirm the payroll screen reflects it.
 - [ ] **Service extension, in-app pass.** Pushed 2026-08-04. Code-level verification of the
