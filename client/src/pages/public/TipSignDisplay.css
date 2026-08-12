@@ -4,13 +4,10 @@
 .tsd-root {
   position: fixed;
   inset: 0;
-  /* Chalkboard, matching the colour the redesigned sign paints to its own
-     edges, so the bands left over from fitting a 2:3 sheet onto a tall phone
-     read as more sign rather than a frame.
-     NOTE (2026-08-11): only true once the dark artwork lands. The current sign
-     is aged paper with a chalkboard band at the top, so today the top edge
-     blends and the bottom shows a visible cream-to-dark seam. Deliberate: this
-     is coded to the artwork lane D delivers, not to what renders right now. */
+  /* Chalkboard, matching the colour the sign paints to its own edges, so the
+     bands left over from fitting a 5:7 sheet onto a tall phone read as more
+     sign rather than a frame. Verified once the dark artwork landed: the seam
+     is genuinely invisible, which is what the dark ground was chosen for. */
   background: var(--drb-chalkboard, #12161C);
   display: flex;
   align-items: center;

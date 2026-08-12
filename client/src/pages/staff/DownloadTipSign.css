@@ -37,11 +37,14 @@
   color: #5a5048;
 }
 
-/* Preview: the real 4x6 component scaled down for the screen only. The capture
-   surfaces below are the ones that get downloaded, always at full size. */
+/* Preview: the real 5x7 component scaled down for the screen only. The capture
+   surfaces below are the ones that get downloaded, always at full size.
+   The box and the scale have to move together with sizes.js: when the sheet
+   grew from 600x900 to 750x1050 this stayed at 0.4 in a 240x360 clip and cut
+   31% off the sign, marks and brand lockup included. */
 .dts-preview {
   width: 240px;
-  height: 360px;
+  height: 336px;
   margin: 0 auto 24px;
   overflow: hidden;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
@@ -49,7 +52,7 @@
 }
 
 .dts-preview-inner {
-  transform: scale(0.4); /* 600x900 → 240x360 */
+  transform: scale(0.32); /* 750x1050 → 240x336 */
   transform-origin: top left;
   position: absolute;
   top: 0;

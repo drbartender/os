@@ -1,203 +1,186 @@
-// BizCardLayout.jsx — the two-sided hand-out card. Moved verbatim out of
-// PrintTipCard.layouts.jsx 2026-08-11 (BizCardFrontA / BizCardBackA), with the
-// QR swapped from SVG to canvas for html2canvas fidelity and the literal
-// 525x300 replaced by CARD_SIZE.
+// BizCardLayout.jsx — the two-sided hand-out card.
 //
-// This is a different object from the bar sign: it goes to a print shop as a
-// PDF (front and back on pages 1 and 2), never to a photo counter as an image.
+// A different object from the bar sign: it is handed over AFTER service, so it
+// carries a past-tense thank-you the sign cannot (a sign sits out all night and
+// is read by people who have not been served yet, and pre-service tip asks
+// measurably lower both tips and ratings). It goes to a print shop as a PDF,
+// front and back on pages 1 and 2, never to a photo counter as an image.
 
 import React from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { CARD_SIZE } from './sizes';
-import {
-  PrintSheet, PaperBg, ChalkBg, BrassRule, PaymentRow, LogoMedallion, labelStyle,
-} from './PaymentMarks';
+import { PrintSheet, TealWash, PaymentRow, BrandLockup, labelStyle } from './PaymentMarks';
 
-// ─ Business card · FRONT (Tip QR) ──────────────────────────
-// 3.5" × 2"  landscape · 525 × 300 at 150dpi
-const BIZ_MARKS = ['apple', 'venmo', 'cashapp', 'paypal', 'visa'];
+const QR_PLATE = 186;
+const QR_PAD = 8;
 
 export function BizCardFront({ name = 'your bartender', tipUrl = '', marks = null }) {
-  // marks === null → no caller passed it: keep the original full row (back-compat).
-  const shownMarks = marks == null ? BIZ_MARKS : BIZ_MARKS.filter((m) => marks.includes(m));
+  const shown = marks == null ? [] : marks;
   return (
     <PrintSheet width={CARD_SIZE.w} height={CARD_SIZE.h}>
-      <PaperBg />
+      <TealWash at="74% 44%" size="ellipse 58% 72%" />
       <div style={{
-        position: 'absolute', inset: 14,
-        border: '2px solid var(--drb-brass)',
-        borderRadius: 8,
+        position: 'absolute', inset: 0,
         display: 'grid',
-        gridTemplateColumns: '1fr 156px',
-        alignItems: 'center',
-        padding: '0 22px',
-        gap: 18,
+        gridTemplateColumns: `1fr ${QR_PLATE}px`,
+        gridTemplateRows: '1fr auto',
+        columnGap: 20,
+        rowGap: 14,
+        padding: '26px 28px',
       }}>
         <div style={{
-          position: 'absolute', inset: 6,
-          border: '1px solid var(--drb-brass)',
-          opacity: 0.55,
-          pointerEvents: 'none',
-          borderRadius: 4,
-        }} />
-        {/* left — copy */}
-        <div>
-          <div style={{
-            fontFamily: 'var(--drb-font-display)',
-            fontSize: 9,
-            letterSpacing: '0.32em',
-            textTransform: 'uppercase',
-            color: 'var(--drb-brass)',
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            marginBottom: 6,
-          }}>
-            <span style={{ width: 18, height: 1, background: 'var(--drb-brass)' }} />
-            Dr. Bartender
-            <span style={{ width: 18, height: 1, background: 'var(--drb-brass)' }} />
+          display: 'flex', flexDirection: 'column',
+          alignItems: 'flex-start', justifyContent: 'center',
+        }}>
+          <div style={{ marginBottom: 8 }}>
+            <BrandLockup logo={22} label={9} gap={7} opacity={1} />
           </div>
           <div style={{
             fontFamily: 'var(--drb-font-display)',
-            fontSize: 30,
-            color: 'var(--drb-deep-brown)',
-            letterSpacing: '0.02em',
-            lineHeight: 1.05,
-            marginBottom: 4,
-          }}>Tip {name}</div>
+            fontSize: 40,
+            lineHeight: 1.04,
+            color: 'var(--drb-cream-text)',
+            maxWidth: 245,
+          }}>{name}</div>
+          {/* Past tense is correct here and only here: the card is handed over
+              after the drink, so the thank-you has already been earned. */}
           <div style={{
+            marginTop: 9,
             fontFamily: 'var(--drb-font-body)',
-            fontStyle: 'italic',
-            fontSize: 11,
-            color: 'var(--drb-text-muted)',
-            marginBottom: 10,
-          }}>your bartender tonight</div>
-          <BrassRule width={70} />
-          {shownMarks.length > 0 && (
-            <>
-              <div style={{
-                fontFamily: 'var(--drb-font-display)',
-                fontSize: 10,
-                letterSpacing: '0.24em',
-                textTransform: 'uppercase',
-                color: 'var(--drb-warm-brown)',
-                marginTop: 6,
-                marginBottom: 6,
-              }}>Scan to Tip</div>
-              <PaymentRow size={20} gap={4} marks={shownMarks} align="flex-start" />
-            </>
-          )}
+            fontSize: 13,
+            lineHeight: 1.4,
+            color: 'rgba(240,232,214,0.82)',
+            maxWidth: 238,
+          }}>Thanks for tonight. Every scan goes straight to me.</div>
         </div>
-        {/* right — QR plate */}
+
         <div style={{
-          width: 138, height: 138,
-          background: '#fff',
-          border: '1.5px solid var(--drb-brass)',
-          borderRadius: 6,
-          padding: 7,
-          justifySelf: 'center',
+          width: QR_PLATE, height: QR_PLATE,
+          background: '#FFFFFF',
+          borderRadius: 8,
+          padding: QR_PAD,
+          boxShadow: '0 0 40px rgba(240,232,214,0.14)',
+          alignSelf: 'center',
         }}>
-          {/* 2x backing store, 1x display — see the note in SignLayout.jsx. */}
+          {/* Level Q + a 4-module quiet zone, 2x backing store displayed at 1x.
+              See the note in SignLayout.jsx. */}
           <QRCodeCanvas
             value={tipUrl}
-            size={248}
-            style={{ width: 124, height: 124 }}
-            bgColor="#FFFFFF" fgColor="#12161C" level="M"
+            size={(QR_PLATE - QR_PAD * 2) * 2}
+            style={{ width: QR_PLATE - QR_PAD * 2, height: QR_PLATE - QR_PAD * 2 }}
+            bgColor="#FFFFFF"
+            fgColor="#12161C"
+            level="Q"
+            marginSize={4}
           />
+        </div>
+
+        <div style={{
+          gridColumn: '1 / -1',
+          display: 'flex', alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+        }}>
+          <PaymentRow
+            marks={shown}
+            height={16}
+            tileHeight={26}
+            gap={7}
+            radius={5}
+            padX={8}
+            align="flex-start"
+          />
+          {/* One instruction on the card, not two: the sign carries the ask, the
+              card carries the thank-you above. */}
+          <span style={{
+            fontFamily: 'var(--drb-font-display)',
+            fontSize: 11,
+            letterSpacing: '0.03em',
+            color: 'rgba(240,232,214,0.9)',
+            whiteSpace: 'nowrap',
+          }}>Point your camera here</span>
         </div>
       </div>
     </PrintSheet>
   );
 }
 
-// ─ Business card · BACK (contact info) ────────────────────
 export function BizCardBack({
   name = 'your bartender',
   title = 'Bartender',
   company = 'Dr. Bartender',
   tagline = 'Mobile Bar · Cocktail Lab',
-  phone = '',
-  email = '',
+  phone = '(224) 222-0082',
+  email = 'contact@drbartender.com',
   web = 'drbartender.com',
   address = '',
 }) {
   return (
     <PrintSheet width={CARD_SIZE.w} height={CARD_SIZE.h}>
-      <ChalkBg />
       <div style={{
-        position: 'absolute', inset: 14,
-        border: '1.5px solid var(--drb-brass)',
-        borderRadius: 8,
+        position: 'absolute', inset: 0,
         display: 'grid',
         gridTemplateColumns: '104px 1fr',
         alignItems: 'center',
-        padding: '0 20px',
-        gap: 16,
-        color: 'var(--drb-cream-text)',
+        gap: 24,
+        padding: '28px 32px',
       }}>
-        <div style={{
-          position: 'absolute', inset: 6,
-          border: '1px solid var(--drb-brass)',
-          opacity: 0.45,
-          borderRadius: 4,
-          pointerEvents: 'none',
-        }} />
-        {/* left — flask-character medallion (logo already includes gold ring) */}
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <LogoMedallion size={96} />
-        </div>
-        {/* right — info */}
-        <div>
+        <img
+          src="/tip-page/logo-gold.png"
+          alt=""
+          style={{ width: 104, height: 104, objectFit: 'contain', display: 'block' }}
+        />
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
           <div style={{
             fontFamily: 'var(--drb-font-display)',
-            fontSize: 8,
+            fontSize: 10,
             letterSpacing: '0.34em',
             textTransform: 'uppercase',
             color: 'var(--drb-brass-bright)',
-            marginBottom: 4,
           }}>{company}</div>
           <div style={{
             fontFamily: 'var(--drb-font-display)',
-            fontSize: 22,
-            letterSpacing: '0.02em',
-            lineHeight: 1.05,
+            fontSize: 26,
+            lineHeight: 1.1,
             color: 'var(--drb-cream-text)',
+            marginTop: 4,
           }}>{name}</div>
           <div style={{
             fontFamily: 'var(--drb-font-body)',
+            fontSize: 14,
             fontStyle: 'italic',
-            fontSize: 11,
             color: 'var(--drb-teal-light)',
-            marginBottom: 8,
+            marginTop: 2,
           }}>{title}</div>
           <div style={{
-            height: 1, width: 50,
+            width: 56, height: 1,
             background: 'var(--drb-brass)',
             opacity: 0.55,
-            margin: '0 0 8px',
+            margin: '12px 0',
           }} />
           <div style={{
             display: 'grid',
             gridTemplateColumns: 'auto 1fr',
-            columnGap: 10,
-            rowGap: 2,
+            columnGap: 12,
+            rowGap: 3,
             fontFamily: 'var(--drb-font-body)',
-            fontSize: 10,
+            fontSize: 13,
             lineHeight: 1.45,
             color: 'rgba(240,232,214,0.92)',
           }}>
-            <span style={labelStyle}>WEB</span>   <span>{web}</span>
-            {phone && <><span style={labelStyle}>TEL</span>   <span>{phone}</span></>}
-            {email && <><span style={labelStyle}>EMAIL</span> <span>{email}</span></>}
-            {address && <><span style={labelStyle}>BASE</span>  <span>{address}</span></>}
+            <span style={{ ...labelStyle, alignSelf: 'center' }}>Web</span>
+            <span>{web}</span>
+            {phone && <><span style={{ ...labelStyle, alignSelf: 'center' }}>Tel</span><span>{phone}</span></>}
+            {email && <><span style={{ ...labelStyle, alignSelf: 'center' }}>Email</span><span>{email}</span></>}
+            {address && <><span style={{ ...labelStyle, alignSelf: 'center' }}>Base</span><span>{address}</span></>}
           </div>
           <div style={{
+            marginTop: 12,
             fontFamily: 'var(--drb-font-body)',
+            fontSize: 12,
             fontStyle: 'italic',
-            fontSize: 9,
-            color: 'rgba(240,232,214,0.55)',
             letterSpacing: '0.06em',
-            marginTop: 8,
+            color: 'rgba(240,232,214,0.55)',
           }}>{tagline}</div>
         </div>
       </div>

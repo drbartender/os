@@ -74,7 +74,7 @@ export function downloadCanvasImage(canvas, filename, format) {
 export async function downloadCanvasesPdf(canvases, filename, { inW, inH }) {
   if (!canvases.length) throw new Error('Nothing to put in the PDF.');
   const { jsPDF } = await import('jspdf');
-  // 3.5x2 is landscape; 4x6 and 5x7 are portrait. Derived, never assumed.
+  // 3.5x2 is landscape; the 5x7 sign is portrait. Derived, never assumed.
   const orientation = inW > inH ? 'landscape' : 'portrait';
   const doc = new jsPDF({ unit: 'in', format: [inW, inH], orientation });
   canvases.forEach((canvas, i) => {

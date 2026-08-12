@@ -4,11 +4,11 @@ import api from '../../utils/api';
 import './TipSignDisplay.css';
 
 import SignLayout from '../staff/tipCard/SignLayout';
-import { SIGN_SIZES } from '../staff/tipCard/sizes';
+import { SIGN_SIZES, DISPLAY_SIGN_SIZE } from '../staff/tipCard/sizes';
 import { buildTipCardMarks } from '../../utils/tipCardMarks';
 import { useWakeLock } from '../../hooks/useWakeLock';
 
-const SIGN = SIGN_SIZES['4x6'];
+const SIGN = SIGN_SIZES[DISPLAY_SIGN_SIZE];
 const IDLE_FADE_MS = 4000;
 
 /**
@@ -149,7 +149,7 @@ export default function TipSignDisplay() {
         style={{ width: SIGN.w, height: SIGN.h, transform: `scale(${scale})` }}
       >
         <SignLayout
-          size="4x6"
+          size={DISPLAY_SIGN_SIZE}
           name={data.display_name}
           tipUrl={data.url}
           marks={marks}

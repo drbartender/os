@@ -5,7 +5,7 @@ import './DownloadTipSign.css';
 
 import SignLayout from './tipCard/SignLayout';
 import { BizCardFront, BizCardBack } from './tipCard/BizCardLayout';
-import { SIGN_SIZES, CARD_SIZE } from './tipCard/sizes';
+import { SIGN_SIZES, CARD_SIZE, DISPLAY_SIGN_SIZE } from './tipCard/sizes';
 import { captureNode, downloadCanvasImage, downloadCanvasesPdf } from './tipCard/renderToFile';
 import { buildTipCardMarks } from '../../utils/tipCardMarks';
 import { buildDownloadFilename } from '../../utils/downloadFilename';
@@ -38,7 +38,7 @@ export default function DownloadTipSign() {
   // guest lands on showed another.
   const name = data?.display_name || data?.preferred_name || 'your bartender';
   // Filenames take the raw name, so a bartender with none set gets
-  // "Tip Sign 4x6.jpg" rather than "Tip Sign 4x6 - your bartender.jpg".
+  // "Tip Sign 5x7.jpg" rather than "Tip Sign 5x7 - your bartender.jpg".
   const filePart = data?.display_name || data?.preferred_name || '';
 
   const downloadSign = useCallback(async (size, format) => {
@@ -102,13 +102,13 @@ export default function DownloadTipSign() {
       <div className="dts-panel">
         <h1>Download your sign</h1>
         <p className="dts-help">
-          Take the 4 × 6 or 5 × 7 to any photo counter (Walmart, CVS, Walgreens)
-          and print it like a photo. JPG is the safest bet at a kiosk.
+          Take the 5 × 7 to any photo counter (Walmart, CVS, Walgreens) and
+          print it like a photo. JPG is the safest bet at a kiosk.
         </p>
 
         <div className="dts-preview" aria-hidden="true">
           <div className="dts-preview-inner">
-            <SignLayout size="4x6" name={name} tipUrl={data.url} marks={marks} />
+            <SignLayout size={DISPLAY_SIGN_SIZE} name={name} tipUrl={data.url} marks={marks} />
           </div>
         </div>
 

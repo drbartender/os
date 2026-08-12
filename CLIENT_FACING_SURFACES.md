@@ -131,7 +131,7 @@ The redesigned v2 portal is now the live staff portal, mounted at root on `staff
 | `client/src/pages/staff/ShiftsPage.js` + `ShiftDetail.js` | Shifts tab — open + requested + assigned shifts; per-shift detail with request/approve/drop flows. |
 | `client/src/pages/staff/PayPage.js` + `PayoutDetail.js` | Pay tab — payout history list (`GET /api/me/payouts`) and per-pay-period detail (`GET /api/me/payouts/:periodId`). |
 | `client/src/pages/staff/TipCardPage.js` | Tip Card tab — bartender's tip-page settings (handles, photo, opt-ins) and the bar-sign download entry point. |
-| `client/src/pages/staff/DownloadTipSign.jsx` + `.css` + `tipCard/` | Bar-sign download surface: 4x6 / 5x7 as JPG, PNG, or PDF for a photo counter, plus a two-sided hand-out card as a print-shop PDF, all at 300 DPI off one html2canvas capture. Replaced the v1 print flow 2026-08-11, which never worked (a global `@media print` rule blanked every non-invoice page). |
+| `client/src/pages/staff/DownloadTipSign.jsx` + `.css` + `tipCard/` | Bar-sign download surface: a 5x7 as JPG, PNG, or PDF for a photo counter, plus a two-sided hand-out card as a print-shop PDF, all at 300 DPI off one html2canvas capture. Replaced the v1 print flow 2026-08-11, which never worked (a global `@media print` rule blanked every non-invoice page). |
 | `client/src/pages/staff/EmailVerifyPage.js` | Email-change confirm landing page for the `request-email-change → emailed token → POST /api/me/confirm-email-change` flow. |
 | `client/src/pages/staff/account/AccountPage.js` | Account overlay shell + sub-nav. |
 | `client/src/pages/staff/account/ProfileSection.js` | Profile sub-tab — name, phone, address, emergency contact, pending-email-change banner. |

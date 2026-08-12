@@ -7,23 +7,46 @@
 // exist. Passing raw handles here instead of the server's `methods` array
 // reintroduces exactly that drift.
 //
-// This function is also the methods-to-marks translation: the single `card`
-// token becomes five brand glyphs, and `zelle` becomes none. A zelle-only
-// bartender therefore gets a sign with no mark row, which is correct: the QR
-// still leads to the chooser page, where Zelle does render.
+// ORDER AND CAP (2026-08-11, from the tipping research):
 //
-// ORDER here is the sign's own, deliberately fixed. The staffer's saved
-// tip_card_order governs the chooser page guests land on after scanning, which
-// is where their preference actually matters; it does not reorder the artwork.
+//   Apple Pay leads because wallet availability is the measured conversion
+//   driver, and a card emblem is what the tip-tray studies actually measured
+//   (a credit-card insignia on the tray raised tips ~4.29%, even from people
+//   paying cash). Recognition is the mechanism, so the marks have to be
+//   real emblems, not initials.
+//
+//   Visa stands in for the whole card rail and Mastercard/Amex are omitted:
+//   Apple Pay, Google Pay, Visa, Mastercard and Amex all resolve to the SAME
+//   Stripe payment link, so listing all five says one thing five times.
+//
+//   Capped at five, because acceptance badges past that read as clutter
+//   rather than reassurance and the sign's job is to point at the QR. Be
+//   clear about what the cap costs: a bartender with every rail set up shows
+//   Apple Pay, Google Pay, Visa, Venmo, Cash App, and PayPal drops off. That
+//   is deliberate. The wallets are the measured conversion driver and the
+//   card emblem is the cue the tip-tray study actually tested, so they earn
+//   their slots ahead of the weakest P2P option for a bar tip. Moving PayPal
+//   ahead of Visa would trade tested lift for rail variety.
+//
+// zelle is deliberately absent: it is offered on the chooser page but never
+// shown as a mark on the sign.
 
-const CARD_NETWORK_MARKS = ['apple', 'google', 'visa', 'mc', 'amex'];
+const SIGN_MARK_CAP = 5;
+
+// Canonical order. Each entry is [method token, mark].
+const MARK_ORDER = [
+  ['card', 'apple'],
+  ['card', 'google'],
+  ['card', 'visa'],
+  ['venmo', 'venmo'],
+  ['cashapp', 'cashapp'],
+  ['paypal', 'paypal'],
+];
 
 export function buildTipCardMarks(methods) {
   const available = new Set(Array.isArray(methods) ? methods : []);
-  const marks = [];
-  if (available.has('venmo')) marks.push('venmo');
-  if (available.has('cashapp')) marks.push('cashapp');
-  if (available.has('paypal')) marks.push('paypal');
-  if (available.has('card')) marks.push(...CARD_NETWORK_MARKS);
-  return marks;
+  return MARK_ORDER
+    .filter(([method]) => available.has(method))
+    .map(([, mark]) => mark)
+    .slice(0, SIGN_MARK_CAP);
 }
