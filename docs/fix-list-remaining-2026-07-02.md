@@ -1510,29 +1510,36 @@ SCOPE (this is a project, not a drive-by; it is a money-reporting surface):
 
 ### Added 2026-08-12 (found by Dallas during the duty-pay walkthrough)
 
-**A. LIVE + ESCALATING: duty accrual is permanently disabled once a pay period leaves
-`open`, so attributing a duty after that silently pays nobody.**
+**A. A blocked duty attribution is a SILENT no-op. No money is owed; the guard is right, the
+silence is the defect.**
 
-`payrollAccrual.js:191` is `if (payPeriod.status !== 'open') { skip }`. The transition map has
-no path back: a period goes `open -> processing -> reopened -> processing -> paid`, and
-Reopen only ever produces `reopened`, never `open`. So the moment a period is Processed,
-accrual is off for it forever, and every later duty attribution saves the attribution row and
-accrues **zero money**. The only signal is a Sentry warning.
+CORRECTED 2026-08-12 after Dallas: "I don't owe anybody any money. Nobody is owed for 'duty'
+except for the most recent pay period. It didn't exist before that." Duty pay shipped
+2026-08-07. Period 80 is 2026-07-28..08-03 and ENDED before the feature existed, so proposal
+598 (Eliana Stoyanoff, event 08-01, in period 80) could never have accrued a duty line and
+nothing is owed to its staffer (user 212). The earlier draft of this entry called that an
+unpaid bartender; that was wrong.
 
-Live evidence, Sentry `DRBARTENDER-SERVER-21` ("accrual skipped: pay period not open",
-route `PUT /api/admin/payroll/duty-attributions`, **substatus escalating**): 14 occurrences
-since 2026-08-11T21:36, most recent 2026-08-12T18:59, tagged
-`pay_period_status: "reopened"`, `proposalId: 598`.
+WHAT IS ACTUALLY WRONG: `payrollAccrual.js:191` is `if (payPeriod.status !== 'open') { skip }`,
+and the transition map has no path back to `open` (`open -> processing -> reopened ->
+processing -> paid`; Reopen only ever produces `reopened`). The refusal is CORRECT. It is
+also invisible: `PUT /api/admin/payroll/duty-attributions` accepts the request, saves nothing
+that pays, and returns as if it worked. The only trace is a Sentry warning.
 
-Proposal 598 (Eliana Stoyanoff, event 2026-08-01, **hosted** — The Primary Culture,
-`completed`, 1 shift) has **ZERO** `payout_duty_lines` and its payout period is `paid`. A
-hosted event with a shift should carry a `hosted_supplies` line. Dallas has been trying to
-attribute it repeatedly and each attempt is silently discarded.
+Live evidence, Sentry `DRBARTENDER-SERVER-21` (substatus **escalating**): 14 occurrences
+2026-08-11T21:36 .. 2026-08-12T18:59, `pay_period_status: "reopened"`, `proposalId: 598`.
+Fourteen attempts is the tell — an admin re-trying because nothing told him why it did not
+take.
 
-THE DESIGN CONTRADICTION: `reopened` exists precisely so a closed period can be corrected,
-and the correction mechanism (accrual) is disabled in exactly that state. Either accrual must
-accept `reopened`, or Reopen must return the period to `open`, or the UI must refuse the
-attribution loudly instead of accepting it and dropping the money.
+FIX: option (c) only. Make the endpoint refuse loudly — a 409 with the period status and a
+plain-language reason ("this pay period is closed; duty pay only accrues in an open period"),
+surfaced in the UI. Do NOT make accrual accept `reopened`, and do NOT make Reopen return a
+period to `open`: both were considered and rejected 2026-08-12 because they would open a path
+for retroactive accrual into periods that predate the feature, which is exactly the wrong
+direction.
+
+DO NOT resolve `DRBARTENDER-SERVER-21` as noise. It is correctly reporting a real gap; the
+gap is the silence, not the skip.
 
 **B. RETRACTED 2026-08-12 — there was no overpay and no reconcile bug.** This slot
 originally claimed proposal 642 (Brittany Welch) carried a stale `hosted_supplies` $50 beside
