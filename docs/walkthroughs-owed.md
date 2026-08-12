@@ -19,9 +19,18 @@ so tick items off as you confirm them rather than assuming the list is current.
 
 ## Tier 1 — money moved, and nobody watched it land
 
-- [ ] **A real refund through cancel-line-item.** Shipped 2026-08-01. The fold-first
-      overpayment rule has never been exercised against real money. This is the one with
-      the most ways to be quietly wrong.
+- [~] **cancel-line-item — PREVIEW HALF WALKED 2026-08-12** (Dallas, proposal 678, Real
+      Glassware Upgrade $125). Target matching, the fold, and the invoice math all correct:
+      total $750 → $625, Balance invoice $650 → $525, Deposit untouched, no refund offered.
+      Close and "Never mind" both work. **Found a real bug:** every admin modal is a boxless
+      ghost in House Lights — see the 2026-08-12 section of the fix list.
+      **The Stripe refund half is still owed, and cannot be walked on demand.** Checked prod
+      2026-08-12: no live booking can produce it. Every fully-paid proposal carrying real
+      `proposal_payments` rows is a past `completed` event, and the only fully-paid FUTURE
+      booking (604, $550) has zero payment rows and zero invoices — the CC-transfer shape,
+      so there is nothing to refund against. The trigger needs a client who has paid in full
+      and then drops a line before their event. When that next happens, do it deliberately
+      and watch, rather than manufacturing a case.
 - [ ] **Gratuity election-at-payment: 2 walks.** Complete 2026-08-04. The election now
       rides PaymentIntent metadata and persists only on payment success. Confirm a normal
       tip-jar checkout and a skip-the-jar checkout both land the right gratuity.

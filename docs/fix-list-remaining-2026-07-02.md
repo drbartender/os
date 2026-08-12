@@ -1383,3 +1383,38 @@ changed. Deferred because prod is unaffected and a live pricing fix should not
 wait on it. Related: the BYOB tier strip under the card is always engine-priced,
 so on a BYOB current proposal the same drift shows as the card and its selected
 tier disagreeing.
+
+### Added 2026-08-12 (found by Dallas during the cancel-line-item walkthrough)
+
+**Every admin modal is a boxless ghost in House Lights.** Dallas, walking cancel-line-item
+on proposal 678: the math was right and both Close and "Never mind" worked, but "you can't
+see the dialog box in the House Lights skin."
+
+ROOT CAUSE, confirmed in CSS: `html[data-app="admin-os"][data-skin="light"] .card`
+(`client/src/index.css:11346`) is deliberately `background: transparent; border: 0;
+border-top: 1px solid var(--ink-1); border-radius: 0; box-shadow: none` — the light skin's
+design language, where a card is a flat page section with a hairline rule, not a box. That
+is right on a page and wrong in a modal: every admin dialog reuses `className="card"` as
+its floating panel over an inline `rgba(0,0,0,0.5)` scrim, so on House Lights the panel has
+no surface at all and the content floats on the dimmer. After Hours is fine because
+`html[data-app="admin-os"] .card` gives it an opaque `var(--bg-1)` (`:12588`).
+
+BLAST RADIUS — ten files, every one a `className="card"` panel inside a `position: 'fixed'`
+overlay: `CancelLineDialog.js`, `CancelEventDialog.js`, `payroll/AttributionModal.js`,
+`RemoteStaffingFeePrompt.js`, `applicationDetail/components/RejectModal.js`,
+`userDetail/components/AssignToEventModal.js`, `components/adminos/InterviewScheduleModal.js`,
+`StaffReviews.js`, `userDetail/AdminUserDetail.js`, `ProposalDetail.js`.
+`components/adminos/PackageIncludesModal.js` is NOT affected: it styles its panel inline
+instead of borrowing `.card`, which is exactly why it survives.
+
+SAME FAMILY as the 2026-05-17 deferral carried into the re-triaged ledger ("systemic
+`.card > *` stacking-context bug across ~6-8 modals, separate broader sweep needed"). That
+entry closes with this fix.
+
+FIX SHAPE: do NOT patch ten files with ten inline backgrounds — that is how the copies
+drifted in the first place (`AttributionModal.js:7` literally says "Overlay idiom copied
+from CancelLineDialog.js"). Introduce ONE shared modal surface: a `modal-overlay` /
+`modal-card` pair defined once, opaque in both skins, replacing the duplicated inline
+`OVERLAY` const and the bare `className="card"` in all ten. Behavior-inert, admin-only, no
+money path — a quick fix on main, but a ten-file one, so run the CI client build before it
+lands.
