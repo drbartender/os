@@ -71,8 +71,19 @@ so tick items off as you confirm them rather than assuming the list is current.
       `event_duration_hours` consumers is done; the browser pass was explicitly deferred.
       With a settled extension on a dev event, check staff event details, the admin BEO, the
       calendar feed, the client portal, the Money Board, and the events list.
-- [ ] **Duty pay walks.** In progress. Flat $50 hosted supplies, the out-of-area knob, and
-      the ShiftDrawer knob.
+- [x] **Duty pay — MONEY VERIFIED 2026-08-12.** All six production duty lines sit at exactly
+      the specced flat amounts: `bar_rental` 3 x $20, `hosted_supplies` 2 x $50 (the flat-$50
+      hosted decision of 2026-08-07 is live and correct), `menu_print` 1 x $5. The
+      hosted/BYOB either/or held on every event: the three BYOB events got `bar_rental` only,
+      the one hosted event got `hosted_supplies` + `menu_print` and no `bar_rental`. Two
+      admin-added lines behaved correctly, including one Dallas removed and did not pay.
+      **NOTHING IS OWED to anyone for duty.** Duty pay shipped 2026-08-07; any event or
+      period ending before that could never accrue, so a missing pre-feature duty line is
+      correct, not an unpaid staffer. See [[reference-duty-pay-effective-date]].
+      ONE DEFECT FOUND, logged: a duty attribution into a non-`open` period is a SILENT
+      no-op — the endpoint accepts it, accrues nothing, and only warns to Sentry. Fix is to
+      refuse loudly; do NOT let accrual accept `reopened` (fix list, 2026-08-12 section A).
+      Not walked: the out-of-area knob and the ShiftDrawer knob.
 - [~] **Money Board — MOBILE/SKIN HALF WALKED 2026-08-12.** Dallas found the House Lights
       sidebar drawer rendering see-through; root-caused as the same defect as the modal bug
       and BOTH FIXED + confirmed the same day (fix list, 2026-08-12). Note the drawer
