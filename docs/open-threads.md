@@ -90,12 +90,18 @@ These are not from the original ledger. They surfaced while verifying its
 - **Vite migration.** Decision locked (Vite, not Next). Confirmed still on
   `react-scripts 5.0.1` with zero vite references. 15-16 CRA-tied HIGH advisories are
   accept-and-document until this happens.
-- **Mobile remediation C1 and Batches 5-8.** C1 is confirmed untouched: no hamburger, no
-  mobile nav, no `isMobile` anywhere in `client/src/components/adminos/Sidebar.js`. Fixed
-  220px columns still crush every admin page on a phone. **This has been the single
-  largest untouched item since 2026-05-19** and it is the only Critical-rated mobile
-  finding never started. Batches 5-8 (tablet band 768-1024, 4 standalone Highs, post-C1
-  residual, Med/Low cleanup) follow it.
+- **Mobile remediation: C1 is DONE, Batches 5-8 remain.** CORRECTED 2026-08-12. My
+  2026-08-11 re-triage said C1 was untouched, based on grepping `Sidebar.js` for
+  "hamburger/mobile-nav/isMobile" and finding nothing. That was the wrong place to look —
+  the work lives in CSS, not the component. `index.css` ~13340 has the whole off-canvas
+  drawer: `.sidebar` goes `position: fixed`, 280px, `translateX(-100%)`, slid in by
+  `.shell.mobile-nav-open`, with `.header-menu-btn` and `.sidebar-close-btn` revealed and
+  the rail compaction undone. The 220px-column-crush description is obsolete.
+  What IS still broken is a skin bug, not a responsive one: the drawer is transparent in
+  House Lights, so page content reads through the nav items. Filed in the fix list
+  (2026-08-12) alongside the identical modal defect, since they share one root cause.
+  Batches 5-8 (tablet band 768-1024, 4 standalone Highs, post-C1 residual, Med/Low cleanup)
+  are still genuinely unstarted.
 - **Cocktail Menu page redesign.** `CocktailMenuDashboard.js` at 931 lines, double-mounted,
   ~90% duplicate code between Cocktails and Mocktails. Pull it out of Settings entirely.
 

@@ -1384,11 +1384,37 @@ wait on it. Related: the BYOB tier strip under the card is always engine-priced,
 so on a BYOB current proposal the same drift shows as the card and its selected
 tier disagreeing.
 
-### Added 2026-08-12 (found by Dallas during the cancel-line-item walkthrough)
+### Added 2026-08-12 (found by Dallas during the walkthroughs)
 
-**Every admin modal is a boxless ghost in House Lights.** Dallas, walking cancel-line-item
-on proposal 678: the math was right and both Close and "Never mind" worked, but "you can't
-see the dialog box in the House Lights skin."
+**THE PATTERN: House Lights sets surfaces transparent by design, and every component that
+reuses such a surface as a FLOATING OVERLAY goes see-through.** Two confirmed instances,
+found within hours of each other by two different walkthroughs. Fix them together; they are
+one defect wearing two hats, and a third will appear the next time someone borrows a light-skin
+surface for an overlay.
+
+Shared trap for whoever fixes it: `html[data-app="admin-os"][data-skin="light"] .x` outranks
+the responsive block's `html[data-app="admin-os"] .x`, and **media queries contribute no
+specificity**, so a mobile/overlay rule cannot override the transparent background unless it
+matches or exceeds that selector's specificity. Both fixes must be written with that in mind.
+
+**Instance 2 — the mobile sidebar drawer is see-through in House Lights.** Dallas, during the
+Money Board walkthrough: "the sidebar is effed in house lights in mobile." NOT the old C1
+responsive item — the mobile drawer exists and works (`index.css` ~13340: `.sidebar` becomes
+`position: fixed`, `width: 280px`, `transform: translateX(-100%)`, slid in by
+`.shell.mobile-nav-open`, with `.header-menu-btn` / `.sidebar-close-btn` revealed). The
+defect is purely the skin: `html[data-app="admin-os"][data-skin="light"] .sidebar`
+(`index.css:11127`) sets `background: transparent; border-right: 1px solid var(--line-1);
+padding: 0 0.1rem`. Correct for a flat desktop column; on mobile that element is a drawer
+floating over the page, so the page content reads straight through the nav items. The drawer
+carries a `box-shadow` but no fill. After Hours is unaffected because it has **zero**
+`[data-skin="dark"] .sidebar` rules and keeps the opaque base.
+FIX: give the drawer an opaque surface inside the mobile media query at light-skin
+specificity. C1 in the open-threads ledger should be re-described: the responsive work is
+DONE, only this skin bug remains.
+
+**Instance 1 — every admin modal is a boxless ghost in House Lights.** Dallas, walking
+cancel-line-item on proposal 678: the math was right and both Close and "Never mind" worked,
+but "you can't see the dialog box in the House Lights skin."
 
 ROOT CAUSE, confirmed in CSS: `html[data-app="admin-os"][data-skin="light"] .card`
 (`client/src/index.css:11346`) is deliberately `background: transparent; border: 0;
