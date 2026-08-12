@@ -54,8 +54,19 @@ so tick items off as you confirm them rather than assuming the list is current.
       server still enforced. Was prod's FIRST mandate ever (count was 0).
       Still unproven: the client-side half — that her checkout renders the $100 as
       non-removable. Cheap to close next time someone is in there.
-- [ ] **Owner no-draw payouts, post-deploy walk.** Pushed 2026-08-07 with prod DDL and a
-      backfill (4 rows `no_draw`, period 72 paid). Confirm the payroll screen reflects it.
+- [x] **Owner no-draw payouts — PASSED 2026-08-12.** Exactly one contractor carries
+      `takes_draw = false` (user 12, Dallas). His four payouts (80, 83, 92, 98) all sit at
+      `status = 'no_draw'` with `paid_at` null — tracked, never owed — and the payroll screen
+      renders the line correctly rather than as an outstanding balance. Confirmed structurally
+      that a `no_draw` row does NOT block period closure: `maybeFinalizePeriod` counts only
+      `pending`, and periods 72 and 89 both closed while holding one.
+      SIDE CATCH, now cleared: periods 76 (7/21-7/27) and 80 (7/28-8/03) had been sitting in
+      `processing` for weeks with zero pending payouts. NOT a bug — `POST /payroll/periods/:id/process`
+      re-runs the finalize check precisely for the "all paid pre-reopen" case and is the only
+      place that flip can happen, since mark-paid can never run on a period with nothing
+      pending. Reopen → Process closed both immediately. Worth knowing as an ops move: a
+      period stranded in `processing` with nothing pending is closed by Reopen then Process,
+      not by SQL.
 - [ ] **Service extension, in-app pass.** Pushed 2026-08-04. Code-level verification of the
       `event_duration_hours` consumers is done; the browser pass was explicitly deferred.
       With a settled extension on a dev event, check staff event details, the admin BEO, the
