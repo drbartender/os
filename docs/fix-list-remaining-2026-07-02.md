@@ -1534,22 +1534,25 @@ and the correction mechanism (accrual) is disabled in exactly that state. Either
 accept `reopened`, or Reopen must return the period to `open`, or the UI must refuse the
 attribution loudly instead of accepting it and dropping the money.
 
-**B. A stale duty line survives a package change once the period freezes (real overpay).**
-Proposal 642 (Brittany Welch, event 2026-08-08) is **BYOB** (The Core Reaction, category
-`byob`) yet carries BOTH `bar_rental` $20 AND `hosted_supplies` $50 = $70 on shift 366. The
-rule is that hosted pays a flat $50 and never the $20; BYOB pays the $20 and never the $50.
-Its two sibling BYOB events (666, 700) correctly show `bar_rental` alone, and the one genuine
-hosted event (51) correctly shows `hosted_supplies` + `menu_print` with no `bar_rental`.
-The derivation is NOT wrong — `dutyLines.js:117` is a strict either/or on `isHostedPackage`,
-so one pass cannot emit both. The proposal was edited twice on 2026-08-06 (activity log,
-`new_total` 400 both times, so a non-price field moved). `reconcileDutyLines` then wanted to
-remove the now-undesired line but hit `dutyLines.js:~388`: a no-longer-desired line whose
-payout is `paid` or whose period is closed is pushed to `frozenSkips` and skipped, never
-deleted. `reportFrozenSkips` sends it to Sentry — correct posture (never rewrite frozen
-money) but it means the overpay is only ever caught by someone reading Sentry.
-$50 overpaid, already disbursed. Recovery is a conversation, not a code change. The code
-question is whether a frozen-skip should raise something louder than a Sentry warning, e.g.
-land in the payroll needs-attention feed.
+**B. RETRACTED 2026-08-12 — there was no overpay and no reconcile bug.** This slot
+originally claimed proposal 642 (Brittany Welch) carried a stale `hosted_supplies` $50 beside
+its `bar_rental` $20, and reasoned backwards to a package change on 8/06 that `reconcileDutyLines`
+could not undo because the period had frozen. All of that was wrong, and wrong because the
+query behind it selected `kind`/`amount_cents` and omitted the row's own bookkeeping columns.
+
+The actual row: `origin: 'admin'`, `admin_owned: true`, `removed_at: 2026-08-11 17:04:13`,
+`removed_by: 1`. It was HAND-ADDED by an admin, so the derivation never emitted it and the
+strict either/or at `dutyLines.js:117` was never violated. Dallas then removed it and did not
+pay it. Confirmed by him: "brittney wasn't overpaid I removed that line item and didn't pay
+it. Its not showing up in the closed payroll now." Money is correct; the soft-delete is
+working exactly as designed.
+
+LESSON, worth more than the retracted finding: `payout_duty_lines` rows carry `origin`,
+`admin_owned`, `removed_at`, `removed_by` and `held_state`, and a row is NOT live money just
+because it exists. Any audit of duty money must filter on `removed_at IS NULL` and read
+`origin` before drawing a conclusion — an `origin='admin'` row says a human decided, not that
+the deriver misfired. This is the same failure shape as the retracted ClickableRow diagnosis
+in the 8/10 drop: a story that fit the symptom, believed before reading the whole row.
 
 **C. Also live, same feature:** Sentry `DRBARTENDER-SERVER-1N` "pricingSnapshot: legacy
 snapshot without _version", 56 events, culprit `GET /api/admin/payroll/periods/:id/unattributed-duties`.
