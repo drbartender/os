@@ -327,6 +327,43 @@ test("THE CARD MATCHES THE CONTRACT: the current option is the stored total, ver
   await pool.query('UPDATE proposals SET total_price = $1 WHERE id = $2', [orig.total_price, proposalId]);
 });
 
+test('REGRESSION: a per-guest add-on is not re-multiplied by the guest count', async () => {
+  // THE bug. proposal_addons.quantity for a per_guest add-on stores the GUEST
+  // COUNT (that is what the engine computes and crud.js persists). Feeding it
+  // back as an input multiplier makes the engine bill guests x rate x guests.
+  // Seeded exactly the way the engine writes it, so only a correct inverter
+  // passes: at 120 guests a $2.50/guest extra must add $300, not $300 x 20
+  // (safeAddonQty caps the multiplier at 20).
+  const toast = await addonIdBySlug('champagne-toast');
+  assert.ok(toast, 'seeded per_guest add-on exists');
+  const { rows: [a] } = await pool.query('SELECT rate FROM service_addons WHERE id = $1', [toast]);
+  const rate = Number(a.rate);
+  const guests = 120;
+  const expected = rate * guests;
+
+  const sel = { extra_addon_ids: [], tier_addon_id: null };
+  const without = await request('POST', `/api/proposals/t/${token}/options`, { body: sel });
+  const withoutTotal = without.body.options.find((o) => o.is_current).total;
+
+  await pool.query(
+    `INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
+     VALUES ($1, $2, 'Champagne Toast', 'per_guest', $3, $4, $5)
+     ON CONFLICT (proposal_id, addon_id) DO UPDATE SET quantity = $4, line_total = $5, rate = $3`,
+    [proposalId, toast, rate, guests, expected]
+  );
+  const withIt = await request('POST', `/api/proposals/t/${token}/options`, {
+    body: { extra_addon_ids: [toast], tier_addon_id: null },
+  });
+  const withTotal = withIt.body.options.find((o) => o.is_current).total;
+  const delta = +(withTotal - withoutTotal).toFixed(2);
+
+  assert.equal(delta, expected,
+    `a $${rate}/guest extra on ${guests} guests must add $${expected}, got $${delta}`);
+
+  await pool.query('DELETE FROM proposal_addons WHERE proposal_id = $1 AND addon_id = $2',
+    [proposalId, toast]);
+});
+
 test('an unknown token 404s rather than leaking', async () => {
   const res = await request('POST', `/api/proposals/t/${crypto.randomUUID()}/options`, { body: {} });
   assert.equal(res.status, 404);

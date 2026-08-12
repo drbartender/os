@@ -1364,3 +1364,22 @@ batch shipped and these did not.
     contain the joiner letters. What is still unpinned is the APPLICATION of it at the ~100
     call sites. The cheap version is one rendered-output assertion per template FILE rather
     than per function.
+
+## Compare surface: contract-vs-engine delta re-baselines on first toggle (2026-08-12)
+
+The current option shows `total_price` verbatim on first load and an engine price
+after any selection change. When those two disagree, the "Yours" card jumps on the
+client's first tap, and every "$X more than yours" delta shifts with it.
+
+They disagree only when the stored total was not produced by today's engine: a
+legacy row with a null `pricing_snapshot`, or a catalog rate edited after the
+quote went out. Prod has ZERO null-snapshot comparable proposals, so this does
+not occur there today; dev has two April rows that do (ids 12 and 15).
+
+The fix is to anchor on the contract rather than swap off it: show
+`total_price + (engine price of the client's selection − engine price of the
+stored selection)`, so the number only ever moves by what the client actually
+changed. Deferred because prod is unaffected and a live pricing fix should not
+wait on it. Related: the BYOB tier strip under the card is always engine-priced,
+so on a BYOB current proposal the same drift shows as the card and its selected
+tier disagreeing.

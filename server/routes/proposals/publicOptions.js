@@ -34,6 +34,7 @@ const { NotFoundError, ValidationError } = require('../../utils/errors');
 const { requireUuidToken } = require('../../utils/tokens');
 const { priceProposedState } = require('../../utils/changeRequests');
 const { BYOB_BUNDLE_SLUGS, BUNDLE_INCLUDED, visibleAddonsFor } = require('../../utils/proposalRules');
+const { storedToInputCount } = require('../../utils/addonQuantity');
 
 const router = express.Router();
 
@@ -103,39 +104,41 @@ router.post(
         [proposal.package_id]
       ),
       pool.query('SELECT * FROM service_addons WHERE is_active = true ORDER BY sort_order'),
-      pool.query('SELECT addon_id, variant, quantity FROM proposal_addons WHERE proposal_id = $1', [proposal.id]),
+      pool.query('SELECT addon_id, variant, quantity, line_total, rate FROM proposal_addons WHERE proposal_id = $1', [proposal.id]),
     ]);
     const catalog = { packages: pkgRes.rows, addons: addonRes.rows };
     const currentAddonIds = currentAddonRes.rows.map(r => r.addon_id);
-    // `proposal_addons.quantity` is an OUTPUT column, not an input multiplier.
-    // crud.js writes `snapshot.addons[].quantity`, which calculateAddonCost
-    // DERIVES per billing type: for per_guest it is the GUEST COUNT, for
-    // per_staff the staff count, for per_100_guests the block count. Feeding
-    // those back in as `addon_quantities` makes the engine multiply by them a
-    // second time — a $2/guest extra on a 50-guest event priced at 50x.
+    // `proposal_addons.quantity` is an OUTPUT column, not an input multiplier —
+    // the engine's computed display quantity, which for per_guest is the GUEST
+    // COUNT. Feeding it back in makes the engine multiply by it a second time.
     //
-    // It is a true input multiplier for only two billing types:
-    //   flat      — stored quantity IS the input qty
-    //   per_hour  — stored is effectiveHours x qty, so divide the hours back out
-    //               (same recovery pricingEngine.js already does for the
-    //               additional-bartender gratuity basis)
-    // Everything else must be left alone and re-derived from the event.
+    // storedToInputCount is the ONE sanctioned server-side inverter for this
+    // column (utils/addonQuantity.js) and is already used by proposalExtrasFold,
+    // lineItemCancel, and serviceExtensionPricing. Its header says it exists
+    // "so the two definitions cannot drift apart again", and it handles four
+    // cases a hand-rolled version gets wrong: additional-bartender's bespoke
+    // raw-duration divisor, an unknown/NULL billing_type (which the engine
+    // prices flat-like, so the stored value IS a count), a zero duration, and
+    // per_guest recovery from the row's own line_total and rate.
+    //
+    // Looked up against ALL add-ons, not just active ones: a retired add-on
+    // still on the proposal must recover its real count rather than silently
+    // reprice at 1.
     const durationHours = Number(proposal.event_duration_hours) || 0;
+    const allAddonRows = (await pool.query(
+      'SELECT id, slug, billing_type, minimum_hours FROM service_addons WHERE id = ANY($1::int[])',
+      [currentAddonRes.rows.map(r => r.addon_id)]
+    )).rows;
     const currentQuantities = {};
     const currentVariants = {};
     for (const r of currentAddonRes.rows) {
       if (r.variant !== null && r.variant !== undefined) currentVariants[String(r.addon_id)] = r.variant;
-      const qty = Number(r.quantity);
-      if (!Number.isFinite(qty) || qty <= 0) continue;
-      const a = addonRes.rows.find(x => x.id === r.addon_id);
-      if (!a) continue;
-      if (a.billing_type === 'flat') {
-        currentQuantities[String(r.addon_id)] = qty;
-      } else if (a.billing_type === 'per_hour') {
-        const effectiveHours = Math.max(durationHours, Number(a.minimum_hours || 0));
-        const raw = effectiveHours > 0 ? Math.round(qty / effectiveHours) : qty;
-        if (raw > 1) currentQuantities[String(r.addon_id)] = raw;
-      }
+      const addon = allAddonRows.find(a => a.id === r.addon_id);
+      if (!addon) continue;
+      const count = storedToInputCount(addon, r.quantity, durationHours, {
+        lineTotal: r.line_total, rate: r.rate,
+      });
+      if (count !== null && count > 1) currentQuantities[String(r.addon_id)] = count;
     }
 
     const tierAddons = catalog.addons.filter(a => BYOB_BUNDLE_SLUGS.includes(a.slug));
@@ -238,9 +241,13 @@ router.post(
       // they start configuring, everything on screen is a quote, including
       // theirs. Alternatives are always priced; only this one has a contract.
       const isCurrent = pkg.id === proposal.package_id;
-      const contractTotal = !bodyGiven && isCurrent && proposal.total_price !== null
-        ? Number(proposal.total_price)
-        : priced.total;
+      // Deliberately NOT gated on priced.available: catalog or rule drift can
+      // make a legitimately-sent proposal fail today's validation, and the
+      // client is still being asked to pay this number. Showing their contract
+      // total is always honest; suppressing it would be the surface calling
+      // their own booked proposal impossible.
+      const echoContract = !bodyGiven && isCurrent && proposal.total_price !== null;
+      const contractTotal = echoContract ? Number(proposal.total_price) : priced.total;
       options.push({
         package_id: pkg.id,
         slug: pkg.slug,
@@ -248,8 +255,8 @@ router.post(
         category: pkg.category,
         pricing_type: pkg.pricing_type,
         is_current: isCurrent,
-        total: priced.available ? contractTotal : null,
-        available: priced.available,
+        total: echoContract ? contractTotal : (priced.available ? priced.total : null),
+        available: echoContract ? true : priced.available,
         reason: priced.reason,
       });
     }
