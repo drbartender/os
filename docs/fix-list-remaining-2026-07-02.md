@@ -1460,3 +1460,50 @@ from CancelLineDialog.js"). Introduce ONE shared modal surface: a `modal-overlay
 `OVERLAY` const and the bare `className="card"` in all ten. Behavior-inert, admin-only, no
 money path — a quick fix on main, but a ten-file one, so run the CI client build before it
 lands.
+
+### Added 2026-08-12 (found by Dallas during the Money Board walkthrough)
+
+**The revenue chart silently shows a WHOLE MONTH of money under any sub-month filter, and
+only escapes notice because it fails to draw.** Dallas: "the day and week filters don't work
+on the chart so anything shorter than a month doesn't show. I think that whole chart is gonna
+need a bit of work."
+
+MEASURED against prod 2026-08-12:
+
+| Filter | Buckets returned | Label | What the bucket sums |
+|---|---|---|---|
+| week 8/06-8/12 | 1 | 2026-08-01 | ALL of August ($4,230) |
+| day 8/12 | 1 | 2026-08-01 | ALL of August ($4,230) |
+
+ROOT CAUSE: `qRevenue` (`server/utils/metricsQueries.js:344`) has no granularity concept.
+Month is hardcoded in four independent places: the range bounds
+(`lo`/`hi` = `date_trunc('month', $n::date)`), the series
+(`generate_series(lo, hi, INTERVAL '1 month')`), every one of the ~8 value subqueries
+(`>= ms AND < ms + INTERVAL '1 month'`), and the CC-era legs on `legacy_cc_payments` /
+`legacy_cc_proposals`. A sub-month range collapses `lo` and `hi` to the same month start, so
+`generate_series` yields exactly ONE row and the subqueries sum that entire month.
+
+WHY IT LOOKS LIKE "nothing shows": one data point. `RevenueChartCard.js:256` only renders
+"No revenue in this range" at `n === 0`, and n is 1 here, so no message appears — a line
+chart just cannot draw a single vertex.
+
+**TRAP, do not fix the symptom.** Making the chart render a point at `n === 1` would EXPOSE
+the wrong number rather than fix it: the user would see a full month of revenue labelled as
+one day or one week. The blank plot is currently the only thing preventing a wrong money
+figure from being read off the dashboard. Either fix the granularity or leave it blank —
+never make it draw without fixing the query.
+
+SCOPE (this is a project, not a drive-by; it is a money-reporting surface):
+- `qRevenue` needs a real granularity parameter threading through all four hardcoded sites
+  plus the CC-era legs.
+- Client-side assumes months too: `RevenueChartCard.js:8` documents the series as monthly,
+  the x-axis keys are month strings, and the era test is the literal `ERA_MONTH = '2026-05'`
+  (`:19`).
+- Compare shifts by a whole prior period and mirrors `metricsQueries.priorPeriod`; equal-length
+  windows must stay equal-length under day/week granularity.
+- LAW constraint: `dashboard-stats` / `financials` response shapes are byte-frozen (see the
+  split-by metrics note), so this wants a sibling endpoint or an additive opt-in param, not a
+  reshape of the existing response.
+- Decide the product question first: at day granularity over a 12-month range you get 365
+  buckets. Either the granularity is derived from the range length, or the range picker and
+  the granularity picker have to constrain each other.
