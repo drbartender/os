@@ -107,16 +107,35 @@ router.post(
     ]);
     const catalog = { packages: pkgRes.rows, addons: addonRes.rows };
     const currentAddonIds = currentAddonRes.rows.map(r => r.addon_id);
-    // Quantity and variant are part of what an add-on COSTS: `additional-bartender`
-    // x2 is not the same money as x1, and dropping them re-prices the client's own
-    // proposal below the total printed above it on the same page. Carried on every
-    // quote so a client-added extra defaults to 1 while Dallas's stored quantities
-    // survive untouched.
+    // `proposal_addons.quantity` is an OUTPUT column, not an input multiplier.
+    // crud.js writes `snapshot.addons[].quantity`, which calculateAddonCost
+    // DERIVES per billing type: for per_guest it is the GUEST COUNT, for
+    // per_staff the staff count, for per_100_guests the block count. Feeding
+    // those back in as `addon_quantities` makes the engine multiply by them a
+    // second time — a $2/guest extra on a 50-guest event priced at 50x.
+    //
+    // It is a true input multiplier for only two billing types:
+    //   flat      — stored quantity IS the input qty
+    //   per_hour  — stored is effectiveHours x qty, so divide the hours back out
+    //               (same recovery pricingEngine.js already does for the
+    //               additional-bartender gratuity basis)
+    // Everything else must be left alone and re-derived from the event.
+    const durationHours = Number(proposal.event_duration_hours) || 0;
     const currentQuantities = {};
     const currentVariants = {};
     for (const r of currentAddonRes.rows) {
-      if (r.quantity !== null && r.quantity !== undefined) currentQuantities[String(r.addon_id)] = r.quantity;
       if (r.variant !== null && r.variant !== undefined) currentVariants[String(r.addon_id)] = r.variant;
+      const qty = Number(r.quantity);
+      if (!Number.isFinite(qty) || qty <= 0) continue;
+      const a = addonRes.rows.find(x => x.id === r.addon_id);
+      if (!a) continue;
+      if (a.billing_type === 'flat') {
+        currentQuantities[String(r.addon_id)] = qty;
+      } else if (a.billing_type === 'per_hour') {
+        const effectiveHours = Math.max(durationHours, Number(a.minimum_hours || 0));
+        const raw = effectiveHours > 0 ? Math.round(qty / effectiveHours) : qty;
+        if (raw > 1) currentQuantities[String(r.addon_id)] = raw;
+      }
     }
 
     const tierAddons = catalog.addons.filter(a => BYOB_BUNDLE_SLUGS.includes(a.slug));
@@ -210,14 +229,26 @@ router.post(
     const options = [];
     for (const pkg of catalog.packages) {
       const priced = await priceOption(pkg);
+      // THE CARD MATCHES THE CONTRACT. Until the client changes something, the
+      // option they are standing on shows `total_price` verbatim — the number
+      // their proposal asks them to pay — never a re-price of it. A re-price
+      // can legitimately differ (a catalog rate moved after the quote was sent,
+      // a hand-set total, an older pricing regime) and any difference means the
+      // comparison contradicts the document printed directly above it. Once
+      // they start configuring, everything on screen is a quote, including
+      // theirs. Alternatives are always priced; only this one has a contract.
+      const isCurrent = pkg.id === proposal.package_id;
+      const contractTotal = !bodyGiven && isCurrent && proposal.total_price !== null
+        ? Number(proposal.total_price)
+        : priced.total;
       options.push({
         package_id: pkg.id,
         slug: pkg.slug,
         name: pkg.name,
         category: pkg.category,
         pricing_type: pkg.pricing_type,
-        is_current: pkg.id === proposal.package_id,
-        total: priced.total,
+        is_current: isCurrent,
+        total: priced.available ? contractTotal : null,
         available: priced.available,
         reason: priced.reason,
       });

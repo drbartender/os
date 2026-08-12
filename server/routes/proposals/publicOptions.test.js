@@ -231,11 +231,14 @@ test('an admin bartender override is carried into the quote', async () => {
   // priceProposedState does not fall back to the stored column for this field,
   // so without an explicit pass-through the quote silently re-derives crew from
   // the 1:100 ratio and undercharges the client's own package.
-  const base = await request('POST', `/api/proposals/t/${token}/options`, { body: {} });
+  // A body is present, so the current option is PRICED rather than echoing the
+  // contract total — which is the path this test is about.
+  const sel = { extra_addon_ids: [], tier_addon_id: null };
+  const base = await request('POST', `/api/proposals/t/${token}/options`, { body: sel });
   const baseTotal = base.body.options.find((o) => o.is_current).total;
 
   await pool.query('UPDATE proposals SET num_bartenders = 4 WHERE id = $1', [proposalId]);
-  const withOverride = await request('POST', `/api/proposals/t/${token}/options`, { body: {} });
+  const withOverride = await request('POST', `/api/proposals/t/${token}/options`, { body: sel });
   const overrideTotal = withOverride.body.options.find((o) => o.is_current).total;
 
   assert.ok(overrideTotal > baseTotal,
@@ -251,16 +254,20 @@ test("add-on quantity is priced, not flattened to one", async () => {
      ON CONFLICT (proposal_id, addon_id) DO UPDATE SET quantity = 1`,
     [proposalId, barback]
   );
-  const one = await request('POST', `/api/proposals/t/${token}/options`, { body: {} });
+  // Stored quantity for a per_hour add-on is effectiveHours x realQty, so at 4
+  // hours a real quantity of 2 is stored as 8. Written the way the engine
+  // writes it, not as a raw multiplier, or the test pins fiction.
+  const sel = { extra_addon_ids: [barback], tier_addon_id: null };
+  const one = await request('POST', `/api/proposals/t/${token}/options`, { body: sel });
   const oneTotal = one.body.options.find((o) => o.is_current).total;
 
-  await pool.query('UPDATE proposal_addons SET quantity = 3 WHERE proposal_id = $1 AND addon_id = $2',
+  await pool.query('UPDATE proposal_addons SET quantity = 8 WHERE proposal_id = $1 AND addon_id = $2',
     [proposalId, barback]);
-  const three = await request('POST', `/api/proposals/t/${token}/options`, { body: {} });
+  const three = await request('POST', `/api/proposals/t/${token}/options`, { body: sel });
   const threeTotal = three.body.options.find((o) => o.is_current).total;
 
   assert.ok(threeTotal > oneTotal,
-    `three barbacks must cost more than one (got ${threeTotal} vs ${oneTotal})`);
+    `two barbacks must cost more than one (got ${threeTotal} vs ${oneTotal})`);
   await pool.query('DELETE FROM proposal_addons WHERE proposal_id = $1 AND addon_id = $2',
     [proposalId, barback]);
 });
@@ -277,14 +284,17 @@ test("the client's own price does not drift when they toggle something else", as
     `INSERT INTO proposal_addons (proposal_id, addon_id, quantity) VALUES ($1, $2, 1)
      ON CONFLICT (proposal_id, addon_id) DO NOTHING`, [proposalId, hidden]);
 
-  const first = await request('POST', `/api/proposals/t/${token}/options`, { body: {} });
-  const firstTotal = first.body.options.find((o) => o.is_current).total;
-  assert.ok(!first.body.extras.some((x) => x.addon_id === hidden),
+  const listing = await request('POST', `/api/proposals/t/${token}/options`, { body: {} });
+  assert.ok(!listing.body.extras.some((x) => x.addon_id === hidden),
     'the hidden add-on is never offered to the client');
+  const offered = listing.body.extras.filter((x) => x.selected).map((x) => x.addon_id);
 
-  // Re-quote carrying exactly what the client was offered — the hidden one
-  // cannot be in the body because it was never in the list.
-  const offered = first.body.extras.filter((x) => x.selected).map((x) => x.addon_id);
+  // Both reads take the PRICED path, so this isolates drift across a re-quote
+  // rather than comparing a priced total against the contract echo.
+  const first = await request('POST', `/api/proposals/t/${token}/options`, {
+    body: { extra_addon_ids: offered, tier_addon_id: null },
+  });
+  const firstTotal = first.body.options.find((o) => o.is_current).total;
   const reQuote = await request('POST', `/api/proposals/t/${token}/options`, {
     body: { extra_addon_ids: offered, tier_addon_id: null },
   });
@@ -293,6 +303,28 @@ test("the client's own price does not drift when they toggle something else", as
 
   await pool.query('DELETE FROM proposal_addons WHERE proposal_id = $1 AND addon_id = $2',
     [proposalId, hidden]);
+});
+
+test("THE CARD MATCHES THE CONTRACT: the current option is the stored total, verbatim", async () => {
+  // The client is being asked to pay `total_price`. Whatever the catalog says
+  // today, the card for their own bar must show the number on their proposal —
+  // a re-price that lands even a dollar off means the comparison contradicts
+  // the document directly above it. Pinned with a stored total the engine would
+  // never produce on its own, so only a verbatim read can pass.
+  const { rows: [orig] } = await pool.query('SELECT total_price FROM proposals WHERE id = $1', [proposalId]);
+  await pool.query('UPDATE proposals SET total_price = 1234.56 WHERE id = $1', [proposalId]);
+
+  const res = await request('POST', `/api/proposals/t/${token}/options`, { body: {} });
+  const current = res.body.options.find((o) => o.is_current);
+  assert.equal(current.total, 1234.56, 'the current option shows what the proposal says');
+
+  // Alternatives are still genuinely priced — the guarantee is scoped to the
+  // one option that has a contract behind it.
+  const others = res.body.options.filter((o) => !o.is_current && o.available);
+  assert.ok(others.length > 0 && others.every((o) => o.total !== 1234.56),
+    'other options are priced, not echoed');
+
+  await pool.query('UPDATE proposals SET total_price = $1 WHERE id = $2', [orig.total_price, proposalId]);
 });
 
 test('an unknown token 404s rather than leaking', async () => {
