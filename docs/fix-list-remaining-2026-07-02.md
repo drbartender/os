@@ -1688,3 +1688,44 @@ ADDS applications, uncertified and name-notice items on top. Any future attempt 
 queue's count must read `client/src/pages/admin/overview/OverviewPage.js` +
 `queueItems.js` rather than re-deriving from the database, or it will disagree with a correct
 screen and look like a bug.
+
+### Added 2026-08-13 (skin sweep — the real finding)
+
+**The rich text editor never got a skin pass, and it is on FIVE admin surfaces.** Dallas,
+looking at the blog editor: "Its in the old skin before there was a difference between
+marketing and admin... house lights is totally in the old skin while after hours content box
+is in old skin as well."
+
+`client/src/components/RichTextEditor.js` (the `.rte-*` block, `client/src/index.css:7995+`)
+is styled entirely in the LEGACY marketing/apothecary vocabulary — `--parchment`,
+`--parchment-dark`, `--dark-ink`, `--amber`, `--border`, `--radius` — and has **zero**
+`html[data-app="admin-os"]` or `[data-skin]` scoped rules. Verified: 0 adminos-scoped `.rte-*`
+rules, 0 `.ProseMirror` rules, and 0 of its five tokens remapped for the dark skin.
+
+That last part is by DESIGN and is the whole mechanism: the After Hours token-remap block
+(`index.css` ~10830) says outright that surface tokens "(`--paper`, `--parchment`, `--card-bg`,
+`--cream`) ... are deliberately NOT remapped: light islands stay light and get per-island
+treatment in the restores section below." The editor is such an island and its per-island
+treatment was never written. So on After Hours it renders as a light parchment box on a
+near-black page; on House Lights it blends but keeps old-skin chrome (wrong radius, wrong
+fonts, and an active-toolbar-button in `--amber`, which is the token that is actually teal
+`#1D8C89`).
+
+BLAST RADIUS — five admin surfaces, not just the blog:
+`pages/admin/BlogDashboard.js`, `pages/admin/EmailCampaignCreate.js`,
+`components/SequenceStepEditor.js`, `components/emailBuilder/BlockSettings.js`,
+`components/emailBuilder/CampaignBlastEditor.js`.
+
+**Sequencing note:** three of those five are marketing/campaign tooling, and the marketing
+section redesign (spec approved 2026-08-11, building on lane `mkt-a-tags`, Sep 5 deadline)
+will be working in exactly that area. Skin the editor as part of that work rather than
+separately, or the redesign lands on top of an unskinned component and the fix has to be
+redone.
+
+SUPERSEDES the contrast angle I opened this sweep with. I computed `--ink-4` at 2.16 (House
+Lights) and 2.78 (After Hours) against the admin tokens and pointed Dallas at the blog editor
+to see it. Those ratios are real for admin surfaces generally, but they were the WRONG lens
+here: this page does not use the admin tokens at all. Measuring the tokens a surface does not
+consume proves nothing about that surface. The old ledger figures (House Lights muted ~4.22,
+danger ~2.56) came from the same era — muted still reproduces at 4.22, danger does NOT
+(bordeaux `#9e3a2a` on card computes 6.51, comfortably passing), so that one is stale.
