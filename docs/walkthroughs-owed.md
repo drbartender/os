@@ -114,7 +114,21 @@ so tick items off as you confirm them rather than assuming the list is current.
 
 ## Tier 2 — client-facing, shipped, unseen
 
-- [ ] **Notify-client confirmation, browser walk.** All 3 lanes live 2026-07-24.
+- [x] **Notify-client confirmation — PASSED 2026-08-12 on dev** (proposal 16301, a booked
+      `deposit_paid` fixture). Modal appears on a notifiable change; the notify box is
+      **ticked by default**, i.e. the product decision is opt-OUT; the draft renders
+      old-vs-new; the text is editable; it renders correctly in House Lights.
+      MONEY HALF VERIFIED FROM THE DB, which is better than the screen: the save moved
+      `event_start_time` 18:00 -> 19:00 and `event_date` 09-09 -> 09-10, and re-anchored
+      `balance_due_date` to **2026-08-27** — exactly the documented no-existing-due-date rule
+      (`event_date - 14d`). The reschedule's balance recompute is correct.
+      FIRST ATTEMPT WAS A BAD FIXTURE, not a bug: proposal 7368 is status `viewed`, and
+      `reschedulableStatusOk` requires `BOOKED_STATUSES = deposit_paid | balance_paid |
+      confirmed | completed`. A client who has only viewed a quote correctly gets no
+      "your event moved" notice.
+      STILL UNVERIFIABLE ON DEV: the actual send + `message_log` row. `email.js:64` returns
+      `{id:'dev-skipped'}` BEFORE `logClientMessage`, so a gated send writes no row, and the
+      dev server's stdout is a socket with no readable log. Proving the send needs prod.
 - [ ] **Staff event-details redesign walkthrough.** Shipped 2026-08-03.
 - [ ] **Mobile: real-phone wizard walk + signing.** Live 2026-07-04. Needs an actual phone,
       not a viewport emulator.
