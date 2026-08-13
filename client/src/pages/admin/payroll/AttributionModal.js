@@ -25,6 +25,12 @@ export default function AttributionModal({ periodId, onDone, onCancel }) {
   const [proposals, setProposals] = useState({});
   const [picks, setPicks] = useState({});
   const [rowErrors, setRowErrors] = useState({});
+  // Accrual-skip messages live OUTSIDE rowErrors: a skipped accrual means the
+  // attribution row itself SAVED, so the post-submit load() drops that duty
+  // from `items` and a row-keyed error would render nowhere — the modal would
+  // flash "All duties are attributed" over a silent no-op again (push-review
+  // 2026-08-13). These render in their own block, independent of the list.
+  const [notices, setNotices] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   // Cancel-during-submit must stop the run: without this flag the detached
   // confirm() loop would still call onDone() after an explicit Cancel and
@@ -69,6 +75,7 @@ export default function AttributionModal({ periodId, onDone, onCancel }) {
 
   const confirm = async () => {
     setRowErrors({});
+    setNotices([]);
     const unset = items.filter((it) => !picks[keyOf(it)]);
     if (unset.length) {
       setRowErrors(Object.fromEntries(unset.map((it) => [keyOf(it), 'Pick a staffer'])));
@@ -76,6 +83,7 @@ export default function AttributionModal({ periodId, onDone, onCancel }) {
     }
     setSubmitting(true);
     const errs = {};
+    const skips = [];
     for (const it of items) {
       if (aborted.current) return; // dismissed mid-run; caller already refreshed
       try {
@@ -86,13 +94,15 @@ export default function AttributionModal({ periodId, onDone, onCancel }) {
         // attribution row itself DID save — only the money line did not. Left
         // unread, that reads as success and the modal closes on a no-op: Dallas
         // retried one attribution 14 times on 2026-08-12 with nothing to tell
-        // him why (Sentry DRBARTENDER-SERVER-21). Surface it as a row error.
+        // him why (Sentry DRBARTENDER-SERVER-21). Surface it to the admin.
+        // Labels are baked in NOW because load() replaces the proposals map
+        // this label reads (and drops the row itself; see notices state).
         const accrual = res && res.data && res.data.accrual;
         if (accrual && accrual.skipped) {
-          const status = accrual.pay_period_status;
-          errs[keyOf(it)] = accrual.reason === 'pay_period_not_open'
-            ? `Attribution saved, but no pay line was created: this pay period is ${status || 'closed'}, not open. Duty pay only accrues while a period is open.`
-            : `Attribution saved, but no pay line was created (${accrual.reason || 'accrual skipped'}).`;
+          const who = `${proposalLabel(it.proposal_id)} · ${it.label || it.kind}`;
+          skips.push(accrual.reason === 'pay_period_not_open'
+            ? `${who}: attribution saved, but no pay line was created. This pay period is ${accrual.pay_period_status || 'closed'}, not open, and duty pay only accrues while a period is open.`
+            : `${who}: attribution saved, but no pay line was created (${accrual.reason || 'accrual skipped'}).`);
         }
       } catch (e) {
         errs[keyOf(it)] = e.message;
@@ -101,7 +111,8 @@ export default function AttributionModal({ periodId, onDone, onCancel }) {
     if (aborted.current) return; // never process a period the admin cancelled
     setSubmitting(false);
     setRowErrors(errs);
-    if (Object.keys(errs).length === 0) onDone();
+    setNotices(skips);
+    if (Object.keys(errs).length === 0 && skips.length === 0) onDone();
     else load(); // roster may have moved under us; re-render truth + row errors
   };
 
@@ -132,6 +143,17 @@ export default function AttributionModal({ periodId, onDone, onCancel }) {
             These booked duties need a name before the period can process. The
             pay line lands on whoever you pick.
           </div>
+          {notices.length > 0 && (
+            // Deliberately outside the row list and not gated on `loading`:
+            // these duties are attributed now, so the refresh removes their
+            // rows, and this block is the only thing keeping the explanation
+            // on screen (push-review 2026-08-13).
+            <div className="vstack" style={{ gap: 4 }}>
+              {notices.map((n) => (
+                <div key={n} className="tiny" style={{ color: 'var(--danger, #b91c1c)' }}>{n}</div>
+              ))}
+            </div>
+          )}
           {loading && <div className="muted">Loading…</div>}
           {error && !loading && (
             <div className="vstack" style={{ gap: 8 }}>
