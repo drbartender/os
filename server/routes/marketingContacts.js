@@ -3,8 +3,14 @@ const { pool } = require('../db');
 const { auth, adminOnly } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../utils/errors');
-const { MARKETING_TAGS, isValidTag } = require('../utils/marketingTags');
+const { MARKETING_TAGS, isValidTag, DO_NOT_CONTACT_ID } = require('../utils/marketingTags');
 const { logAdminAction } = require('../utils/adminAuditLog');
+const {
+  MAILABLE_SQL, HELD_BACK_SQL, LEAD_UNSUB_LATERAL, CONTACT_AGGREGATES,
+  LAST_EVENT, AUDIENCES, AUDIENCE_BY_ID, heldBackReason,
+} = require('../utils/marketingAudience');
+const { suggestTag } = require('../utils/marketingSuggestions');
+const { getContactMessageHistory } = require('../utils/contactMessageHistory');
 
 const router = express.Router();
 
@@ -113,19 +119,18 @@ router.put('/contacts/:id/tags', auth, adminOnly, asyncHandler(async (req, res) 
  * ONLY: an excluded client who books still gets proposals, invoices, and every
  * operational message.
  *
- * RECORDED ONLY, NOT YET ENFORCED. Nothing reads this column today. The live
- * marketing gate is scheduledMessageDispatcher.js's marketing-category check,
- * which consults communication_preferences.marketing_enabled and nothing else.
+ * HALF ENFORCED. Two gates exist and only one honors this column:
+ *   - The audience resolver's MAILABLE_SQL (marketingAudience.js) DOES read it,
+ *     as of this lane, so an excluded contact is out of every audience, every
+ *     count, and every recipient list on the marketing surface.
+ *   - scheduledMessageDispatcher.js's marketing-category gate does NOT. It
+ *     consults communication_preferences.marketing_enabled and nothing else, so
+ *     an excluded contact STILL RECEIVES the drip, the retention nudge, and the
+ *     New Year touch. Lane mkt-f-compliance owns closing that, deliberately
+ *     deferred so a comms-critical file is opened by the lane already in it.
  *
- * Two lanes close that, and they are NOT the same lane:
- *   - mkt-c-resolver adds MAILABLE_SQL, which keeps an excluded contact out of
- *     new campaigns.
- *   - mkt-f-compliance patches the DISPATCHER gate, which is what stops the
- *     automated touches. That one is deliberately deferred here so a
- *     comms-critical file is opened by the lane that already touches it.
- *
- * Until both land the flag only records intent. It can be set by a direct API
- * call; no UI writes it before lane mkt-d.
+ * Do not remove the marketing_excluded clause from MAILABLE_SQL on the belief
+ * that this column is inert. It is not, and has not been since mkt-c.
  *
  * Deliberately its own endpoint rather than a field on PUT /api/clients/:id,
  * which destructures a fixed 5-field body and updates via COALESCE($n, col)
@@ -177,6 +182,246 @@ router.put('/contacts/:id/do-not-contact', auth, adminOnly, asyncHandler(async (
   });
 
   res.json({ excluded: rows[0].marketing_excluded, reason: rows[0].marketing_excluded_reason });
+}));
+
+
+// ─── Read surface: contacts and audiences ──────────────────────────
+
+const MAX_PAGE_SIZE = 200;
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE = 100000;
+
+/**
+ * Builds the two WHERE scopes every contact query needs, over ONE shared
+ * parameter list.
+ *
+ *   whereFull = audience + search + mailable_only + the active quick filter.
+ *               Scopes the rows AND the held-back panel, which describes what
+ *               you are looking at right now.
+ *   whereBase = the same MINUS the active filter. Scopes the quick-filter
+ *               chips, which must answer "what would each filter give".
+ *
+ * Computing the chips from whereFull makes selecting Untagged read
+ * "All N / Untagged N / Corporate 0" for whatever N the untagged filter
+ * returned, which is nonsense: every chip collapses onto the active one.
+ */
+function buildContactFilters(query) {
+  const params = [];
+  const base = [];
+  const only = [];
+
+  if (query.audience) {
+    const aud = AUDIENCE_BY_ID.get(query.audience);
+    if (!aud) throw new ValidationError({ audience: 'Unknown audience.' });
+    base.push(`(${aud.where})`);
+  }
+  if (query.search) {
+    params.push(`%${String(query.search).trim().toLowerCase()}%`);
+    base.push(`(lower(c.name) LIKE $${params.length} OR lower(c.email) LIKE $${params.length})`);
+  }
+  // The recipient picker passes mailable_only. The default view shows everyone,
+  // so held-back contacts stay visible and correctable.
+  if (query.mailable_only === 'true') base.push(`(${MAILABLE_SQL})`);
+
+  if (query.filter === 'untagged') {
+    only.push('COALESCE(array_length(tg.tags, 1), 0) = 0');
+  } else if (query.filter === DO_NOT_CONTACT_ID) {
+    only.push('c.marketing_excluded = true');
+  } else if (query.filter && query.filter !== 'all') {
+    // Anything else is a tag id, validated against the vocabulary so a typo is
+    // a 400 rather than a silently empty list.
+    if (!isValidTag(query.filter)) throw new ValidationError({ filter: 'Unknown filter.' });
+    params.push(query.filter);
+    only.push(`$${params.length} = ANY(tg.tags)`);
+  }
+
+  const clause = (parts) => (parts.length ? `WHERE ${parts.join(' AND ')}` : '');
+  return { params, whereBase: clause(base), whereFull: clause([...base, ...only]) };
+}
+
+/** GET /api/marketing/contacts */
+router.get('/contacts', auth, adminOnly, asyncHandler(async (req, res) => {
+  const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, parseInt(req.query.limit, 10) || DEFAULT_PAGE_SIZE));
+  // Bound the ceiling too. parseClientId documents this exact class one
+  // function up: an unbounded page overflows OFFSET into 22P02 and a generic
+  // 500 + Sentry noise, rather than an empty list.
+  const page = Math.min(MAX_PAGE, Math.max(1, parseInt(req.query.page, 10) || 1));
+  const { params, whereBase, whereFull } = buildContactFilters(req.query);
+  const rowParams = [...params, limit, (page - 1) * limit];
+
+  const { rows } = await pool.query(`
+    SELECT c.id, c.name, c.email, c.source, c.email_status,
+           c.marketing_excluded, c.marketing_excluded_reason, c.communication_preferences,
+           COALESCE(lu.unsubscribed, false)  AS lead_unsubscribed,
+           tg.tags,
+           agg.proposal_count::int, agg.paid_count::int, cc.booked_count::int,
+           agg.corporate_events::int, agg.personal_events::int,
+           agg.largest_guests::int, agg.a_venue,
+           ${LAST_EVENT}                     AS last_event,
+           lc.last_contacted,
+           (COALESCE(agg.paid_dollars, 0) + COALESCE(cc.paid_dollars, 0))::float8 AS lifetime_dollars,
+           (${MAILABLE_SQL})                 AS mailable
+      FROM clients c ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES} ${whereFull}
+     ORDER BY ${LAST_EVENT} DESC, c.id DESC
+     LIMIT $${rowParams.length - 1} OFFSET $${rowParams.length}
+  `, rowParams);
+
+  // Counts over the whole base, never the page. Buckets come from
+  // HELD_BACK_SQL, the SQL twin of heldBackReason, so they are mutually
+  // exclusive by construction and sum to total - mailable. Independent
+  // COUNT FILTERs would double-count a row that is both excluded and bounced.
+  //
+  // `total` comes from here rather than a COUNT(*) OVER () on the row query,
+  // which reports 0 on a page past the end while the base is non-empty.
+  const agg = await pool.query(`
+    WITH held AS (
+      SELECT ${HELD_BACK_SQL} AS reason
+        FROM clients c ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES} ${whereFull}
+    ), chips AS (
+      SELECT tg.tags, c.marketing_excluded
+        FROM clients c ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES} ${whereBase}
+    )
+    SELECT
+      (SELECT COUNT(*) FILTER (WHERE reason = 'do_not_contact') FROM held)::int AS do_not_contact,
+      (SELECT COUNT(*) FILTER (WHERE reason = 'unsubscribed')   FROM held)::int AS unsubscribed,
+      (SELECT COUNT(*) FILTER (WHERE reason = 'bounced')        FROM held)::int AS bounced,
+      (SELECT COUNT(*) FILTER (WHERE reason = 'no_address')     FROM held)::int AS no_address,
+      (SELECT COUNT(*) FILTER (WHERE reason IS NULL)            FROM held)::int AS mailable,
+      (SELECT COUNT(*) FROM held)::int                                          AS total,
+      (SELECT COUNT(*) FROM chips)::int                                         AS chip_all,
+      (SELECT COUNT(*) FILTER (WHERE COALESCE(array_length(tags,1),0) = 0) FROM chips)::int AS chip_untagged,
+      (SELECT COUNT(*) FILTER (WHERE 'corporate' = ANY(tags)) FROM chips)::int  AS chip_corporate,
+      (SELECT COUNT(*) FILTER (WHERE marketing_excluded) FROM chips)::int       AS chip_dnc
+  `, params);
+
+  const counts = agg.rows[0];
+  res.json({
+    total: counts.total,
+    page,
+    limit,
+    held_back: {
+      do_not_contact: counts.do_not_contact,
+      unsubscribed: counts.unsubscribed,
+      bounced: counts.bounced,
+      no_address: counts.no_address,
+      mailable: counts.mailable,
+    },
+    filter_counts: {
+      all: counts.chip_all,
+      untagged: counts.chip_untagged,
+      corporate: counts.chip_corporate,
+      [DO_NOT_CONTACT_ID]: counts.chip_dnc,
+    },
+    contacts: rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      source: r.source,
+      tags: r.tags || [],
+      // Derived states are computed here and NEVER stored.
+      derived: (r.paid_count > 0 || r.booked_count > 0) ? 'paid'
+        : (r.proposal_count > 0 ? 'quoted' : null),
+      untagged: (r.tags || []).length === 0,
+      // GREATEST(-infinity) comes back as the JS number -Infinity, not a
+      // string, so Number.isFinite is the correct guard.
+      last_event: Number.isFinite(Date.parse(r.last_event)) ? r.last_event : null,
+      last_contacted: r.last_contacted,
+      lifetime_dollars: r.lifetime_dollars,
+      mailable: r.mailable,
+      held_back_reason: r.mailable ? null : heldBackReason(r),
+      do_not_contact: r.marketing_excluded,
+      do_not_contact_reason: r.marketing_excluded_reason,
+      suggestion: (r.tags || []).length === 0 ? suggestTag({
+        email: r.email,
+        corporateEventCount: r.corporate_events,
+        personalEventCount: r.personal_events,
+        largestGuestCount: r.largest_guests,
+        venueName: r.a_venue,
+      }) : null,
+    })),
+  });
+}));
+
+/** GET /api/marketing/audiences — the seven definitions with live counts. */
+router.get('/audiences', auth, adminOnly, asyncHandler(async (_req, res) => {
+  const out = [];
+  for (const a of AUDIENCES) {
+    const { rows } = await pool.query(`
+      SELECT COUNT(*) FILTER (WHERE ${MAILABLE_SQL})::int AS emailable, COUNT(*)::int AS total
+        FROM clients c ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES}
+       WHERE ${a.where}`);
+    out.push({ id: a.id, name: a.name, rule: a.rule, includes: a.includes, ...rows[0] });
+  }
+  res.json(out);
+}));
+
+/**
+ * GET /api/marketing/contacts/:id — the drawer.
+ *
+ * The message history here is what makes the design's promise true: an
+ * operator deciding whether to reach out can see the system already nudged
+ * this person. Automated and human sends are distinguished per row.
+ */
+router.get('/contacts/:id', auth, adminOnly, asyncHandler(async (req, res) => {
+  const id = parseClientId(req.params.id);
+
+  const { rows } = await pool.query(`
+    SELECT c.id, c.name, c.email, c.phone, c.source, c.email_status,
+           c.marketing_excluded, c.marketing_excluded_reason, c.marketing_excluded_at,
+           c.communication_preferences,
+           COALESCE(lu.unsubscribed, false) AS lead_unsubscribed,
+           tg.tags,
+           agg.proposal_count::int, agg.paid_count::int, cc.booked_count::int,
+           agg.corporate_events::int, agg.personal_events::int,
+           agg.largest_guests::int, agg.a_venue,
+           ${LAST_EVENT}                    AS last_event,
+           lc.last_contacted,
+           (COALESCE(agg.paid_dollars, 0) + COALESCE(cc.paid_dollars, 0))::float8 AS lifetime_dollars,
+           (${MAILABLE_SQL})                AS mailable
+      FROM clients c ${LEAD_UNSUB_LATERAL} ${CONTACT_AGGREGATES}
+     WHERE c.id = $1`, [id]);
+  if (rows.length === 0) throw new NotFoundError('Contact not found.');
+  const r = rows[0];
+
+  // Native proposals only. Check Cherry history has no event_type in prod
+  // (NULL on all 1,230 rows), so it cannot be rendered as an event list; it is
+  // already reflected in lifetime_dollars and last_event above.
+  const events = await pool.query(`
+    SELECT p.id, p.event_date, p.event_type, p.event_type_custom, p.venue_name,
+           p.status, p.amount_paid::float8 AS amount
+      FROM proposals p
+     WHERE p.client_id = $1 AND p.status <> 'archived'
+     ORDER BY p.event_date DESC NULLS LAST LIMIT 20`, [id]);
+
+  const messages = await getContactMessageHistory(id, { limit: 50 });
+
+  res.json({
+    id: r.id,
+    name: r.name,
+    email: r.email,
+    phone: r.phone,
+    source: r.source,
+    tags: r.tags || [],
+    derived: (r.paid_count > 0 || r.booked_count > 0) ? 'paid'
+      : (r.proposal_count > 0 ? 'quoted' : null),
+    last_event: Number.isFinite(Date.parse(r.last_event)) ? r.last_event : null,
+    last_contacted: r.last_contacted,
+    lifetime_dollars: r.lifetime_dollars,
+    mailable: r.mailable,
+    held_back_reason: r.mailable ? null : heldBackReason(r),
+    do_not_contact: r.marketing_excluded,
+    do_not_contact_reason: r.marketing_excluded_reason,
+    do_not_contact_at: r.marketing_excluded_at,
+    suggestion: (r.tags || []).length === 0 ? suggestTag({
+      email: r.email,
+      corporateEventCount: r.corporate_events,
+      personalEventCount: r.personal_events,
+      largestGuestCount: r.largest_guests,
+      venueName: r.a_venue,
+    }) : null,
+    events: events.rows,
+    messages,
+  });
 }));
 
 module.exports = router;

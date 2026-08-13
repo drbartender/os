@@ -357,6 +357,8 @@ dr-bartender/
 │   │   ├── eventEveSms.js      # Event-eve SMS touch (T-24h from event start) and timing helper
 │   │   ├── contactMessageHistory.js # Everything one contact actually received. message_log is primary (automated derived from sent_by); scheduled_messages is anti-joined as a safety net so a dispatcher send is not listed twice; email_sends joins in phase 2
 │   │   ├── eventTypes.js       # Event type id→label resolver (mirrors client)
+│   │   ├── marketingAudience.js # THE single definition of who may receive marketing: MAILABLE_SQL, HELD_BACK_SQL, the JS predicate, and the seven audience rules (all three legs pinned against each other by test)
+│   │   ├── marketingSuggestions.js # Tag suggestions with reasoning; never auto-applies (the email-domain shortcut measured as a coin flip)
 │   │   ├── marketingTags.js    # Marketing tag vocabulary (mirrors client + the client_tags CHECK; Corporate is never inferred)
 │   │   ├── outstandingDocuments.js # Which onboarding documents a worker still owes (one predicate, two surfaces)
 │   │   ├── fileValidation.js   # Magic-byte file type validation
