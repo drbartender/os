@@ -1654,3 +1654,37 @@ is lost, and the remaining target becomes comfortably tappable. Alternatives con
 the targets under a media query (fights the input height), or swap to native
 `<input type="time">` on mobile (better native pickers, but loses the minHour/maxHour clamp
 the component enforces).
+
+### Added 2026-08-13 (needs-attention tabs prod smoke)
+
+**The Money tab holds nothing but payroll, and payroll does not belong there (Dallas's call,
+2026-08-13):** "money tab is just payroll and needs to go elsewhere."
+
+Why it is empty of everything else: `buildMoneyItems(payoutBadge)` emits exactly one kind of
+item, unmatched Stripe payout lines — and as of 2026-08-13 prod has **213 of 213 payout lines
+matched, zero unmatched, zero acknowledged-unmatched**. The payout mirror has fully caught up,
+so that item never fires any more and the tab collapses to the payroll-overdue entry alone.
+(This also retires the long-standing "119 unmatched pre-cutover expected" note — obsolete.)
+
+DECISION NEEDED, not a bug: where payroll-overdue belongs. Options are its own surface, folding
+it into Staffing, or a persistent header badge rather than a queue tab. Note that if the Money
+tab is removed outright, the unmatched-payout item needs a new home for the day it fires again
+(a restore, a historical import, or any payment the mirror cannot attribute) — it is currently
+the only surface for that alarm.
+
+**The rest of the tabs were verified ACCURATE against prod the same day**, after three
+approximations of mine disagreed with them and the tabs turned out right every time:
+- Staffing 14 reconciles exactly: 10 short-staffed upcoming shifts + 1 applications item +
+  3 uncertified staffable users + 0 preferred-name notices.
+- Clients 0 is correct: of 116 unread inbound SMS, 92 carry `metadata->>'thumbtack_relay' =
+  'true'` and are deliberately excluded by `GET /sms/conversations` as relay traffic rather
+  than the client speaking; the remaining 24 belong to ZERO distinct clients (no `client_id`).
+- Sales shows sent-unviewed-past-72h by design.
+
+METHOD NOTE, the reason this took four tries: the Overview does NOT use
+`GET /shifts/unstaffed-upcoming`. It computes client-side from the full `/shifts` feed as
+`upcoming.filter(e => approvedCount(e) < parsePositionsCount(e))`, and the Staffing tab then
+ADDS applications, uncertified and name-notice items on top. Any future attempt to predict a
+queue's count must read `client/src/pages/admin/overview/OverviewPage.js` +
+`queueItems.js` rather than re-deriving from the database, or it will disagree with a correct
+screen and look like a bug.
