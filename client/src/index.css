@@ -19819,3 +19819,89 @@ html[data-app="admin-os"] .pay-qr-tile {
   text-transform: uppercase; color: var(--oo-ink-quiet); margin-bottom: 4px;
 }
 .oo-card-groups .oo-item { font-size: 0.74rem; color: var(--deep-brown); line-height: 1.3; }
+
+/* ============================================================
+   Marketing redesign: audiences, contact base, drawer
+   Follows the .em-* idiom above (same tokens, same table shape)
+   because this section sits beside it in the product.
+   ============================================================ */
+.mkt-audiences { display: grid; gap: 1.5rem; }
+.mkt-audience-list h2 { margin: 0 0 0.75rem; font-family: var(--font-display); color: var(--deep-brown); font-size: 1.1rem; }
+.mkt-audience-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.75rem; }
+.mkt-audience-card { display: flex; flex-direction: column; gap: 0.2rem; text-align: left; padding: 0.75rem; border: 1px solid var(--border-light); border-radius: 6px; background: var(--cream); cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.mkt-audience-card:hover { border-color: var(--amber); }
+.mkt-audience-card.is-selected { border-color: var(--amber); background: var(--parchment); }
+.mkt-audience-name { font-weight: 700; color: var(--deep-brown); }
+.mkt-audience-count { font-size: 0.85rem; font-weight: 600; color: var(--deep-brown); }
+.mkt-audience-includes { margin: 0.75rem 0 0; font-size: 0.85rem; }
+
+.mkt-toolbar { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+.mkt-filters { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.mkt-filter { padding: 0.35rem 0.75rem; border: 1px solid var(--border-light); border-radius: 999px; background: transparent; color: var(--warm-brown); font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+.mkt-filter:hover { border-color: var(--amber); color: var(--deep-brown); }
+.mkt-filter.is-active { background: var(--deep-brown); border-color: var(--deep-brown); color: var(--cream); }
+.mkt-search { flex: 1; min-width: 200px; }
+
+.mkt-contacts-body { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 1.5rem; align-items: start; }
+.mkt-contacts-table { min-width: 0; overflow-x: auto; }
+
+.mkt-table { width: 100%; border-collapse: collapse; }
+.mkt-table th { text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--warm-brown); border-bottom: 2px solid var(--border); }
+.mkt-table td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--parchment); font-size: 0.9rem; vertical-align: top; }
+.mkt-table tbody tr:hover td { background: var(--cream); }
+.mkt-row-held td { opacity: 0.65; }
+.mkt-name { font-weight: 600; color: var(--deep-brown); }
+.mkt-email { font-size: 0.85rem; color: var(--text-muted); }
+.mkt-muted { color: var(--text-muted); font-size: 0.85rem; }
+.mkt-warn { color: #721c24; }
+
+.mkt-chips { display: flex; gap: 0.3rem; flex-wrap: wrap; align-items: center; }
+.mkt-chip { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; background: var(--parchment); color: var(--deep-brown); }
+.mkt-chip-muted { background: #f0f0f0; color: #666; }
+.mkt-chip-danger { background: #f8d7da; color: #721c24; }
+/* Derived states are computed, never set by a human, so they read differently
+   from the tags beside them on purpose. */
+.mkt-chip-derived { background: transparent; border: 1px dashed var(--border-light); color: var(--warm-brown); font-weight: 500; }
+
+.mkt-tagcell { position: relative; }
+.mkt-tag-edit { background: none; border: none; color: var(--warm-brown); font-size: 0.75rem; font-weight: 600; cursor: pointer; text-decoration: underline; padding: 0 0.2rem; }
+.mkt-tag-edit:disabled { opacity: 0.6; cursor: default; }
+.mkt-tag-menu { position: absolute; z-index: 20; top: 100%; left: 0; margin-top: 0.3rem; padding: 0.4rem; min-width: 160px; background: var(--cream); border: 1px solid var(--border-light); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.15); }
+.mkt-tag-option { display: flex; gap: 0.5rem; align-items: center; padding: 0.25rem 0.35rem; font-size: 0.85rem; cursor: pointer; }
+.mkt-tag-option:hover { background: var(--parchment); }
+.mkt-suggestion { display: flex; gap: 0.4rem; align-items: baseline; flex-wrap: wrap; margin-top: 0.3rem; font-size: 0.8rem; color: var(--text-muted); }
+
+.mkt-dnc-prompt { display: flex; flex-direction: column; gap: 0.4rem; min-width: 220px; }
+.mkt-dnc-prompt label { font-size: 0.8rem; font-weight: 600; color: var(--deep-brown); }
+.mkt-dnc-confirm { margin: 0; font-size: 0.85rem; color: var(--deep-brown); }
+.mkt-dnc-actions { display: flex; gap: 0.5rem; }
+
+.mkt-pager { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-top: 1rem; font-size: 0.85rem; color: var(--text-muted); flex-wrap: wrap; }
+.mkt-pager > div { display: flex; gap: 0.5rem; align-items: center; }
+.mkt-pager-page { color: var(--deep-brown); font-weight: 600; }
+
+.mkt-state { display: flex; flex-direction: column; gap: 0.75rem; align-items: flex-start; padding: 2rem 1rem; color: var(--text-muted); }
+.mkt-state h2 { margin: 0; font-family: var(--font-display); color: var(--deep-brown); }
+.mkt-state p { margin: 0; }
+.mkt-state-error { color: #721c24; }
+
+.mkt-heldback { padding: 1rem; }
+.mkt-heldback h3 { margin: 0 0 0.6rem; font-size: 0.95rem; color: var(--deep-brown); }
+.mkt-heldback-mailable { font-size: 1.1rem; color: var(--deep-brown); margin-bottom: 0.6rem; }
+.mkt-heldback-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.mkt-heldback-list li { display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--warm-brown); }
+.mkt-heldback-total { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid var(--parchment); }
+
+.mkt-drawer-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.35); display: flex; justify-content: flex-end; }
+.mkt-drawer { width: min(520px, 100%); height: 100%; overflow-y: auto; background: var(--cream); padding: 1.25rem; box-shadow: -8px 0 24px rgba(0,0,0,0.2); }
+.mkt-drawer-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 0.75rem; }
+.mkt-drawer-head h2 { margin: 0; font-family: var(--font-display); color: var(--deep-brown); }
+.mkt-drawer-identity { display: flex; flex-direction: column; gap: 0.2rem; align-items: flex-start; font-size: 0.9rem; color: var(--deep-brown); }
+.mkt-drawer-section { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--parchment); display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start; }
+.mkt-drawer-section h3 { margin: 0; font-size: 0.95rem; color: var(--deep-brown); }
+.mkt-list { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 0.4rem; }
+.mkt-list li { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; font-size: 0.85rem; color: var(--deep-brown); padding-bottom: 0.4rem; border-bottom: 1px solid var(--parchment); }
+
+@media (max-width: 900px) {
+  .mkt-contacts-body { grid-template-columns: minmax(0, 1fr); }
+}

@@ -88,7 +88,10 @@ function suggestTag(facts) {
   if (isCompanyDomain) {
     return {
       tag: 'corporate',
-      reason: `Uses a company address (${dom}), but nothing booked yet, so this is a guess.`,
+      // "no corporate work booked yet", NOT "nothing booked yet": this branch is
+      // reached by people who have booked plenty, just nothing corporate, and the
+      // row beside it may well read Paid client.
+      reason: `Uses a company address (${dom}), but no corporate work booked yet, so this is a guess.`,
     };
   }
 

@@ -64,7 +64,7 @@ export default function Sidebar({ badges = {}, presence, onPresenceChange, onClo
         {NAV.map(group => (
           <React.Fragment key={group.section}>
             <div className="sidebar-section">{group.section}</div>
-            {group.items.map(item => {
+            {group.items.filter(item => !item.adminOnly || user?.role === 'admin').map(item => {
               const active = isActive(pathname, item.path);
               const count = item.badgeKey ? badges[item.badgeKey] || 0 : 0;
               return (

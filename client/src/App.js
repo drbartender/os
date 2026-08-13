@@ -150,6 +150,9 @@ const ClientDetail = lazy(() => import('./pages/admin/ClientDetail'));
 const OverviewPage = lazy(() => import('./pages/admin/overview/OverviewPage'));
 const BlogDashboard = lazy(() => import('./pages/admin/BlogDashboard'));
 const EmailMarketingDashboard = lazy(() => import('./pages/admin/EmailMarketingDashboard'));
+const MarketingLayout = lazy(() => import('./pages/admin/MarketingLayout'));
+const AudiencesTab = lazy(() => import('./pages/admin/marketing/AudiencesTab'));
+const MarketingPlaceholder = lazy(() => import('./pages/admin/marketing/MarketingPlaceholder'));
 const EmailLeadsDashboard = lazy(() => import('./pages/admin/EmailLeadsDashboard'));
 const EmailLeadDetail = lazy(() => import('./pages/admin/EmailLeadDetail'));
 const EmailCampaignsDashboard = lazy(() => import('./pages/admin/EmailCampaignsDashboard'));
@@ -603,6 +606,25 @@ function AppRoutes() {
           <Route path="campaigns/:id" element={<EmailCampaignDetail />} />
           <Route path="analytics" element={<EmailAnalyticsDashboard />} />
           <Route path="conversations" element={<EmailConversations />} />
+        </Route>
+
+        {/* The redesigned Marketing section. Mounted alongside /email-marketing
+            rather than replacing it: the old tabs are still the only way into
+            Leads, which the phase 2 extraction needs.
+
+            adminStrict, not the shell's adminOnly. Every /api/marketing route
+            uses the server's adminOnly, which rejects managers outright, so a
+            manager reaching this page would get a fully rendered screen where
+            every single request 403s. Bounce them at the route instead. */}
+        <Route
+          path="/marketing"
+          element={<ProtectedRoute adminStrict><MarketingLayout /></ProtectedRoute>}
+        >
+          <Route index element={<AudiencesTab />} />
+          <Route path="audiences" element={<AudiencesTab />} />
+          <Route path="overview" element={<MarketingPlaceholder />} />
+          <Route path="compose" element={<MarketingPlaceholder />} />
+          <Route path="sent" element={<MarketingPlaceholder />} />
         </Route>
       </Route>
 
