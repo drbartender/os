@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const { clientOptedOutByEmail } = require('./marketingAudience');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');
@@ -70,6 +71,20 @@ async function processSequenceSteps() {
         AND e.next_step_due_at <= NOW()
         AND l.status = 'active'
         AND c.status = 'active'
+        -- The drip is MARKETING, so it owes the same suppression every other
+        -- marketing sender owes. This query joins email_leads only, and the
+        -- house do-not-contact flag lives on clients.marketing_excluded, so
+        -- without this clause the scheduler cannot see it: the exact defect
+        -- that retired the blast send, on the sender that runs unattended.
+        --
+        -- Reachable with nobody clicking anything. The PUBLIC capture-lead
+        -- handler (routes/proposals/public.js) auto-enrols a new lead into
+        -- 'Abandoned Quote Followup', so an excluded contact who starts a quote
+        -- would enrol and be drip-mailed with no human in the loop.
+        --
+        -- Matched on the ADDRESS, not lead_id -> client_id, because that column
+        -- is populated on only a minority of rows.
+        AND NOT ${clientOptedOutByEmail('l.email')}
     `);
 
     if (dueEnrollments.rows.length === 0) return;
@@ -141,7 +156,8 @@ async function processSequenceSteps() {
 
         // Build unsubscribe URL — use UNSUBSCRIBE_SECRET if set, else JWT_SECRET fallback
         const unsubscribeToken = jwt.sign(
-          { leadId: enrollment.lead_id },
+          // typ is advisory; see marketingHandlers.buildUnsubscribeUrl.
+          { leadId: enrollment.lead_id, typ: 'unsub' },
           process.env.UNSUBSCRIBE_SECRET || process.env.JWT_SECRET,
           { expiresIn: '365d' }
         );

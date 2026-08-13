@@ -112,30 +112,11 @@ router.put('/contacts/:id/tags', auth, adminOnly, asyncHandler(async (req, res) 
 }));
 
 /**
- * PUT /api/marketing/contacts/:id/do-not-contact
- * Body: { excluded: boolean, reason?: string }
- *
- * The house rule, distinct from the client's own unsubscribe. Gates MARKETING
- * ONLY: an excluded client who books still gets proposals, invoices, and every
- * operational message.
- *
- * HALF ENFORCED. Two gates exist and only one honors this column:
- *   - The audience resolver's MAILABLE_SQL (marketingAudience.js) DOES read it,
- *     as of this lane, so an excluded contact is out of every audience, every
- *     count, and every recipient list on the marketing surface.
- *   - scheduledMessageDispatcher.js's marketing-category gate does NOT. It
- *     consults communication_preferences.marketing_enabled and nothing else, so
- *     an excluded contact STILL RECEIVES the drip, the retention nudge, and the
- *     New Year touch. Lane mkt-f-compliance owns closing that, deliberately
- *     deferred so a comms-critical file is opened by the lane already in it.
- *
- * Do not remove the marketing_excluded clause from MAILABLE_SQL on the belief
- * that this column is inert. It is not, and has not been since mkt-c.
- *
- * Deliberately its own endpoint rather than a field on PUT /api/clients/:id,
- * which destructures a fixed 5-field body and updates via COALESCE($n, col)
- * where null means "leave unchanged" — so that route structurally cannot clear
- * this flag or null the reason (clients.js:121-150).
+ * The house do-not-contact rule, ENFORCED on all three marketing senders as of
+ * lane mkt-f: the campaign resolver (MAILABLE_SQL), the scheduled-message
+ * dispatcher (drip / retention / New Year), and the sequence scheduler.
+ * Operational mail is deliberately unaffected: an excluded client still gets
+ * their invoice.
  */
 router.put('/contacts/:id/do-not-contact', auth, adminOnly, asyncHandler(async (req, res) => {
   const clientId = parseClientId(req.params.id);
@@ -182,6 +163,59 @@ router.put('/contacts/:id/do-not-contact', auth, adminOnly, asyncHandler(async (
   });
 
   res.json({ excluded: rows[0].marketing_excluded, reason: rows[0].marketing_excluded_reason });
+}));
+
+/**
+ * PUT /contacts/:id/email-status — clear a bad address flag.
+ *
+ * `email_status = 'bad'` is set by the Resend webhook on a permanent bounce and
+ * gates far more than marketing: proposals, invoices and service agreements all
+ * check it. Nothing in the product ever wrote it back, so a single bounce was a
+ * one-way door, and the only repair was hand-editing the database.
+ *
+ * That happens for recoverable reasons. A full mailbox, a typo the client later
+ * fixed, a domain that was briefly misconfigured. When the address is corrected
+ * or the client says "try again", an operator needs a way to say so.
+ *
+ * Deliberately narrow: this only ever sets 'ok', and only from 'bad'. It cannot
+ * mark an address bad (that is the webhook's job, from real delivery evidence)
+ * and it does not touch marketing_excluded, which is a separate decision with
+ * its own endpoint and its own reason.
+ */
+router.put('/contacts/:id/email-status', auth, adminOnly, asyncHandler(async (req, res) => {
+  const clientId = parseClientId(req.params.id);
+
+  const { status } = req.body || {};
+  if (status !== 'ok') {
+    throw new ValidationError({
+      status: "Only 'ok' can be set here. An address is marked bad by delivery evidence, never by hand.",
+    });
+  }
+
+  // Guarded so a no-op repair does not write an audit row, but the guard must
+  // not make a repeat call look like a missing contact: two admins clicking, or
+  // one double-submit, would get a 404 that lies about existence. Check the row
+  // separately and treat an already-ok address as success.
+  const { rows, rowCount } = await pool.query(
+    `UPDATE clients SET email_status = 'ok', updated_at = NOW()
+      WHERE id = $1 AND COALESCE(email_status, '') = 'bad'
+      RETURNING email_status`,
+    [clientId]
+  );
+  if (rowCount === 0) {
+    const existing = await pool.query('SELECT email_status FROM clients WHERE id = $1', [clientId]);
+    if (existing.rowCount === 0) throw new NotFoundError('Contact not found.');
+    return res.json({ email_status: existing.rows[0].email_status, changed: false });
+  }
+
+  await logAdminAction({
+    actorUserId: req.user.id,
+    targetUserId: null,
+    action: 'marketing.email_status.cleared',
+    metadata: { client_id: clientId },
+  });
+
+  res.json({ email_status: rows[0].email_status, changed: true });
 }));
 
 

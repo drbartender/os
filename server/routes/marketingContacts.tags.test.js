@@ -287,3 +287,71 @@ test('a manager cannot set do-not-contact', async () => {
     { excluded: true, reason: 'nope' });
   assert.equal(r.status, 403);
 });
+
+// ─── Clearing a bad email_status (lane mkt-f) ──────────────────────
+
+test('an admin can clear a bad email_status, and only to ok', async () => {
+  // email_status='bad' gates proposals, invoices and agreements, and nothing in
+  // the product ever wrote it back: one bounce was a one-way door repairable
+  // only by hand-editing the database.
+  await pool.query("UPDATE clients SET email_status = 'bad' WHERE id = $1", [clientId]);
+
+  const ok = await req('PUT', `/api/marketing/contacts/${clientId}/email-status`, adminToken, { status: 'ok' });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.body.email_status, 'ok');
+
+  const { rows } = await pool.query('SELECT email_status FROM clients WHERE id = $1', [clientId]);
+  assert.equal(rows[0].email_status, 'ok');
+});
+
+test('the endpoint refuses to MARK an address bad', async () => {
+  // An address is marked bad by delivery evidence from the webhook, never by
+  // hand. Allowing it here would let a stray click gate someone's invoices.
+  const bad = await req('PUT', `/api/marketing/contacts/${clientId}/email-status`, adminToken, { status: 'bad' });
+  assert.equal(bad.status, 400);
+  const junk = await req('PUT', `/api/marketing/contacts/${clientId}/email-status`, adminToken, {});
+  assert.equal(junk.status, 400);
+});
+
+test('clearing email_status does not touch the do-not-contact flag', async () => {
+  // Two separate decisions: "your address works again" and "we still do not
+  // market to you". Collapsing them would quietly re-enrol an excluded contact.
+  await req('PUT', `/api/marketing/contacts/${clientId}/do-not-contact`, adminToken,
+    { excluded: true, reason: 'separate decision' });
+  await pool.query("UPDATE clients SET email_status = 'bad' WHERE id = $1", [clientId]);
+
+  const r = await req('PUT', `/api/marketing/contacts/${clientId}/email-status`, adminToken, { status: 'ok' });
+  assert.equal(r.status, 200);
+
+  const { rows } = await pool.query(
+    'SELECT email_status, marketing_excluded FROM clients WHERE id = $1', [clientId]);
+  assert.equal(rows[0].email_status, 'ok');
+  assert.equal(rows[0].marketing_excluded, true, 'do-not-contact must survive an email_status repair');
+
+  await req('PUT', `/api/marketing/contacts/${clientId}/do-not-contact`, adminToken, { excluded: false });
+});
+
+test('a manager cannot clear an email_status', async () => {
+  assert.equal(
+    (await req('PUT', `/api/marketing/contacts/${clientId}/email-status`, managerToken, { status: 'ok' })).status,
+    403);
+});
+
+test('clearing an already-ok email_status is idempotent, not a 404', async () => {
+  // The bad-only guard must not make a repeat call look like a missing contact.
+  await pool.query("UPDATE clients SET email_status = 'bad' WHERE id = $1", [clientId]);
+  const first = await req('PUT', `/api/marketing/contacts/${clientId}/email-status`, adminToken, { status: 'ok' });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.changed, true);
+
+  const second = await req('PUT', `/api/marketing/contacts/${clientId}/email-status`, adminToken, { status: 'ok' });
+  assert.equal(second.status, 200, 'a repeat repair must not 404 — the contact exists');
+  assert.equal(second.body.email_status, 'ok');
+  assert.equal(second.body.changed, false);
+});
+
+test('a genuinely missing contact still 404s', async () => {
+  assert.equal(
+    (await req('PUT', '/api/marketing/contacts/99999999/email-status', adminToken, { status: 'ok' })).status,
+    404);
+});

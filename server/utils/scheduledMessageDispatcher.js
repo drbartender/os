@@ -3,6 +3,7 @@ const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const { esc } = require('./htmlEscape');
 const { resolveChannelFallback } = require('./channelFallback');
+const { leadUnsubscribedByEmail } = require('./marketingAudience');
 const { suspendClientAutomation } = require('./clientAutomationSuspension');
 const { SuppressMessageError, QuotaExceededError } = require('./errors');
 const { deferRowForQuota, maybeAlertQuotaOnce } = require('./emailQuotaDefer');
@@ -378,8 +379,19 @@ async function lookupEntity(entityType, entityId) {
 async function lookupRecipient(recipientType, recipientId) {
   if (recipientType === 'client') {
     const r = await pool.query(
-      `SELECT id, name, email, phone, communication_preferences, email_status, phone_status
-       FROM clients WHERE id = $1`,
+      // lead_unsubscribed is the THIRD fact MAILABLE_SQL gates on, and the one
+      // this dispatcher was blind to. A person can hold both a clients row and
+      // an email_leads row joined only by address; unsubscribing from a
+      // campaign email writes the LEAD row, so without this the campaign gate
+      // dropped them while the drip kept going.
+      //
+      // Imported, not hand-copied: three copies of this predicate is exactly
+      // the drift that produced the bug.
+      `SELECT c.id, c.name, c.email, c.phone, c.communication_preferences,
+              c.email_status, c.phone_status, c.marketing_excluded,
+              ${leadUnsubscribedByEmail('c.email')} AS lead_unsubscribed
+         FROM clients c
+        WHERE c.id = $1`,
       [recipientId]
     );
     return r.rows[0] || null;
@@ -494,20 +506,22 @@ async function dispatchRow(row) {
       return;
     }
 
-    // Delivery resolution (spec 7.3 / 7.5): channel substitution + both-bad
-    // suspension. May rewrite row.channel, or terminal-mark the row and stop.
-    const delivery = await resolveDelivery(row, recipient);
-    if (!delivery.proceed) {
-      return;
-    }
-
-    // Marketing-class gate (Gemini Finding 5). The handler registry carries a
-    // `category` metadata field; marketing-class messages are suppressed when
-    // the client opted out of marketing comms. Operational messages bypass
-    // this gate (CAN-SPAM allows transactional follow-ups regardless of
-    // marketing preference). Plan 2d's marketing handlers all register with
-    // category='marketing'; review_request stays operational because it's a
-    // post-sale transactional follow-up.
+    // TWO suppression sources, deliberately reported apart:
+    //
+    //   marketing_enabled = false   the CLIENT opted out
+    //   marketing_excluded = true   WE decided not to contact them (house rule,
+    //                               carries a required reason and an actor)
+    //
+    // The second arrived with the marketing redesign (lane mkt-a) and was
+    // honored only by the campaign resolver's MAILABLE_SQL (lane mkt-c). This
+    // dispatcher is the LIVE gate for the drip, the retention nudge and the
+    // New Year touch, so until this check existed, marking someone do-not-
+    // contact stopped campaigns and let every automated touch through. That is
+    // the gap lane mkt-f owns closing.
+    //
+    // Distinct error_message values on purpose: "they unsubscribed" and "we
+    // blacklisted them" need different answers when someone asks why a message
+    // never went out, and a merged reason cannot be un-merged after the fact.
     const meta = handlerMeta.get(row.message_type);
     if (meta?.category === 'marketing' && row.recipient_type === 'client') {
       const prefs = recipient.communication_preferences || {};
@@ -518,7 +532,41 @@ async function dispatchRow(row) {
         );
         return;
       }
+      if (recipient.marketing_excluded === true) {
+        await pool.query(
+          "UPDATE scheduled_messages SET status = 'suppressed', error_message = $2 WHERE id = $1",
+          [row.id, 'do_not_contact: client.marketing_excluded is true']
+        );
+        return;
+      }
+      // The third fact. Someone who clicked unsubscribe in a campaign email has
+      // their email_leads row flipped and their clients row untouched, so
+      // without this the campaign resolver correctly dropped them while this
+      // dispatcher kept sending the drip, the retention nudge and the New Year
+      // touch. That is an unhonored opt-out, not a cosmetic gap.
+      if (recipient.lead_unsubscribed === true) {
+        await pool.query(
+          "UPDATE scheduled_messages SET status = 'suppressed', error_message = $2 WHERE id = $1",
+          [row.id, 'lead_unsubscribed: a matching email_leads row is unsubscribed']
+        );
+        return;
+      }
     }
+
+    // The marketing gate runs BEFORE delivery resolution on purpose. A
+    // marketing row for a suppressed client whose email and SMS are both
+    // unusable would otherwise take resolveDelivery's no-working-channel
+    // branch first: that suspends client automation and emails an admin
+    // alert about somebody we already decided never to market to, and it
+    // records the row as 'no working contact channel' instead of the
+    // distinct suppression reason this gate exists to leave behind.
+    // Delivery resolution (spec 7.3 / 7.5): channel substitution + both-bad
+    // suspension. May rewrite row.channel, or terminal-mark the row and stop.
+    const delivery = await resolveDelivery(row, recipient);
+    if (!delivery.proceed) {
+      return;
+    }
+
 
     // Overlap prevention (spec 7.4): defer a colliding lower-priority touch by
     // 24h. The row goes 'deferred' and its scheduled_for moves forward a day;

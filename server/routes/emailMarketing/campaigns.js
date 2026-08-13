@@ -1,23 +1,20 @@
 /**
- * Campaign CRUD, the blast send, and scheduling.
- * sendBlastEmails is the background sender the send route fires and
- * deliberately does not await.
+ * Campaign CRUD. The blast send and its scheduler were RETIRED in lane mkt-f:
+ * their audience query read email_leads only and so could not honor
+ * clients.marketing_excluded. Both routes now refuse; lane mkt-g owns the
+ * replacement that takes explicit client_ids and re-checks each recipient.
  *
  * Extracted from the single 987-line emailMarketing.js. Paths and mount
  * order are unchanged; see ./index.js for why the order still matters.
  */
 
 const express = require('express');
-const jwt = require('jsonwebtoken');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
-const { sendEmail } = require('../../utils/email');
-const { wrapMarketingEmail } = require('../../utils/emailTemplates');
 const { sanitizeHtml } = require('../../utils/emailSanitize');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { compileEmailDesign } = require('./shared');
-const { ValidationError, NotFoundError } = require('../../utils/errors');
-const { API_URL } = require('../../utils/urls');
+const { ValidationError, NotFoundError, ConflictError } = require('../../utils/errors');
 
 const router = express.Router();
 // ─── Campaign Management ──────────────────────────────────────────
@@ -197,146 +194,45 @@ router.delete('/campaigns/:id', auth, requireAdminOrManager, asyncHandler(async 
   res.json(result.rows[0]);
 }));
 
-/** POST /campaigns/:id/send — execute blast send */
-router.post('/campaigns/:id/send', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const campaign = await client.query('SELECT * FROM email_campaigns WHERE id = $1', [req.params.id]);
-    if (!campaign.rows[0]) {
-      await client.query('ROLLBACK');
-      throw new NotFoundError('Campaign not found.');
-    }
-    const c = campaign.rows[0];
-    if (c.type !== 'blast') {
-      await client.query('ROLLBACK');
-      throw new ValidationError({ type: 'Only blast campaigns can be sent this way. Use activate for sequences.' });
-    }
-    const fieldErrors = {};
-    if (!c.subject) fieldErrors.subject = 'Subject is required to send.';
-    if (!c.html_body) fieldErrors.html_body = 'Email body is required to send.';
-    if (Object.keys(fieldErrors).length > 0) {
-      await client.query('ROLLBACK');
-      throw new ValidationError(fieldErrors);
-    }
-
-    // Build audience query
-    let leadQuery = "SELECT id, email, name FROM email_leads WHERE status = 'active'";
-    const leadParams = [];
-
-    if (c.target_sources && c.target_sources.length > 0) {
-      leadParams.push(c.target_sources);
-      leadQuery += ` AND lead_source = ANY($${leadParams.length})`;
-    }
-    if (c.target_event_types && c.target_event_types.length > 0) {
-      leadParams.push(c.target_event_types);
-      leadQuery += ` AND event_type = ANY($${leadParams.length})`;
-    }
-
-    // Allow manual lead selection via request body
-    if (req.body.lead_ids && req.body.lead_ids.length > 0) {
-      leadParams.push(req.body.lead_ids);
-      leadQuery += ` AND id = ANY($${leadParams.length})`;
-    }
-
-    const leads = await client.query(leadQuery, leadParams);
-
-    if (leads.rows.length === 0) {
-      await client.query('ROLLBACK');
-      throw new ValidationError({ audience: 'No active leads match the targeting criteria.' });
-    }
-
-    // Update campaign status
-    await client.query(
-      `UPDATE email_campaigns SET status = 'sending', sent_at = NOW() WHERE id = $1`,
-      [req.params.id]
-    );
-
-    await client.query('COMMIT');
-
-    // Send emails in background (don't block response). Unsubscribe is
-    // server-rendered by Express — must hit API_URL, not the Vercel SPA.
-    const unsubscribeBase = `${API_URL}/api/email-marketing/unsubscribe`;
-    sendBlastEmails(c, leads.rows, unsubscribeBase).catch(err => {
-      console.error('Blast send error:', err);
-    });
-
-    res.json({ message: `Sending to ${leads.rows.length} leads...`, count: leads.rows.length });
-  } catch (err) {
-    // Only rollback if we haven't already done so above
-    try { await client.query('ROLLBACK'); } catch (_e) { /* already rolled back or committed */ }
-    throw err;
-  } finally {
-    client.release();
-  }
+/**
+ * POST /campaigns/:id/send — RETIRED (lane mkt-f).
+ *
+ * This path cannot honor the suppression rules, and the reason is structural
+ * rather than an oversight: its audience query reads `email_leads` and nothing
+ * else, while the house do-not-contact flag lives on `clients.marketing_excluded`.
+ * A different table cannot be filtered by a column it does not have. Nine of
+ * the sixteen `email_leads` rows are also clients, so a contact marked
+ * do-not-contact in the Marketing screen would still be blasted from here, with
+ * the operator reasonably believing the exclusion held.
+ *
+ * That was survivable while nothing used the marketing surface. It stops being
+ * survivable the moment the redesign teaches an operator that excluding
+ * somebody means something.
+ *
+ * Refuses BEFORE opening a transaction or reading anything. The replacement is
+ * lane mkt-g's send, which takes explicit client_ids, re-checks isMailable per
+ * recipient, and dedupes by lowercased address. Deliberately disabled rather
+ * than deleted, so mkt-g replaces a named thing instead of resurrecting one.
+ */
+router.post('/campaigns/:id/send', auth, requireAdminOrManager, asyncHandler(async (_req, _res) => {
+  throw new ConflictError(
+    'This send path is retired: it mails the lead list without checking the '
+    + 'do-not-contact list, so it can email someone you excluded. Use the new '
+    + 'Marketing section to pick recipients.'
+  );
 }));
 
-/** Background blast email sender */
-async function sendBlastEmails(campaign, leads, unsubscribeBase) {
-  const BATCH_SIZE = 100;
-  const BATCH_DELAY = 600; // ms between batches
-
-  for (let i = 0; i < leads.length; i += BATCH_SIZE) {
-    const batch = leads.slice(i, i + BATCH_SIZE);
-
-    const emailPromises = batch.map(async (lead) => {
-      const unsubscribeToken = jwt.sign({ leadId: lead.id }, process.env.UNSUBSCRIBE_SECRET || process.env.JWT_SECRET, { expiresIn: '365d' });
-      const unsubscribeUrl = `${unsubscribeBase}?token=${unsubscribeToken}`;
-      const html = wrapMarketingEmail(campaign.html_body, unsubscribeUrl);
-
-      try {
-        const result = await sendEmail({
-          to: lead.email,
-          subject: campaign.subject,
-          html,
-          text: campaign.text_body || undefined,
-          from: campaign.from_email || undefined,
-          replyTo: campaign.reply_to || undefined,
-          meta: { skipLog: true }, // lead campaign blast — never enters the client message log
-        });
-
-        await pool.query(
-          `INSERT INTO email_sends (campaign_id, lead_id, resend_id, subject, status, sent_at)
-           VALUES ($1, $2, $3, $4, 'sent', NOW())`,
-          [campaign.id, lead.id, result.id, campaign.subject]
-        );
-      } catch (err) {
-        console.error(`Failed to send to ${lead.email}:`, err);
-        await pool.query(
-          `INSERT INTO email_sends (campaign_id, lead_id, subject, status, error_message, sent_at)
-           VALUES ($1, $2, $3, 'failed', $4, NOW())`,
-          [campaign.id, lead.id, campaign.subject, err.message]
-        );
-      }
-    });
-
-    await Promise.all(emailPromises);
-
-    if (i + BATCH_SIZE < leads.length) {
-      await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
-    }
-  }
-
-  // Mark campaign as sent
-  await pool.query(
-    `UPDATE email_campaigns SET status = 'sent' WHERE id = $1`,
-    [campaign.id]
+/**
+ * POST /campaigns/:id/schedule — RETIRED (lane mkt-f).
+ *
+ * Scheduling only ever armed the send path above, so it inherits exactly the
+ * same defect and hiding one without the other would leave the hole reachable
+ * on a timer instead of a click.
+ */
+router.post('/campaigns/:id/schedule', auth, requireAdminOrManager, asyncHandler(async (_req, _res) => {
+  throw new ConflictError(
+    'Scheduling is retired along with the old send path. Use the new Marketing section.'
   );
-}
-
-/** POST /campaigns/:id/schedule — schedule blast for future */
-router.post('/campaigns/:id/schedule', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { scheduled_at } = req.body;
-  if (!scheduled_at) {
-    throw new ValidationError({ scheduled_at: 'Scheduled date/time is required.' });
-  }
-  const result = await pool.query(
-    `UPDATE email_campaigns SET status = 'scheduled', scheduled_at = $1 WHERE id = $2 RETURNING *`,
-    [scheduled_at, req.params.id]
-  );
-  if (!result.rows[0]) throw new NotFoundError('Campaign not found.');
-  res.json(result.rows[0]);
 }));
 
 module.exports = router;

@@ -51,7 +51,10 @@ function dayOfWeek(eventDate) {
 function buildUnsubscribeUrl(clientId) {
   if (!clientId) return '';
   const token = jwt.sign(
-    { clientId, marketing: true },
+    // typ is ADVISORY: it labels what this token was minted for. The reader
+    // does not require it, because 365-day tokens are already in inboxes
+    // without it and rejecting those would break live unsubscribe links.
+    { clientId, marketing: true, typ: 'unsub' },
     process.env.UNSUBSCRIBE_SECRET || process.env.JWT_SECRET,
     { expiresIn: '365d' }
   );

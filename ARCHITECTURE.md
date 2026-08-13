@@ -566,9 +566,9 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | GET | `/campaigns/:id` | Admin | Campaign detail with stats, sends, steps, enrollments |
 | PUT | `/campaigns/:id` | Admin | Update campaign |
 | DELETE | `/campaigns/:id` | Admin | Archive campaign |
-| POST | `/campaigns/:id/send` | Admin | Execute blast send |
-| POST | `/campaigns/:id/schedule` | Admin | Schedule blast for future |
-| POST | `/campaigns/:id/test` | Admin | Send the campaign to a single address (defaults to the requester) before blasting |
+| POST | `/campaigns/:id/send` | Admin | **RETIRED (409).** Its audience read `email_leads` only, so it could not honor `clients.marketing_excluded` and would mail someone you excluded. Replaced by lane mkt-g's send |
+| POST | `/campaigns/:id/schedule` | Admin | **RETIRED (409).** Same defect as `/send`; hiding one without the other would leave the hole reachable on a timer |
+| POST | `/campaigns/:id/test` | Admin | Send the campaign to a single address (defaults to the requester). Mints a REAL unsubscribe token, and refuses an address that is opted out |
 | POST | `/upload-image` | Admin | Designed-email image upload (magic-byte validated, R2; returns `/api/blog/images/...` URL) |
 | POST | `/preview` | Admin | Render a design (or raw HTML) into the branded email shell for an exactly-as-sent preview |
 | GET | `/campaigns/:id/steps` | Admin | List sequence steps |
@@ -585,7 +585,8 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | POST | `/conversations/:leadId/reply` | Admin | Admin sends reply email |
 | PUT | `/conversations/:conversationId/read` | Admin | Mark conversation as read |
 | POST | `/conversations/:leadId/mark-replied` | Admin | Manual mark reply received |
-| GET | `/unsubscribe` | Public | JWT-verified unsubscribe |
+| GET | `/unsubscribe` | Public | JWT-verified. Renders a confirmation form and CHANGES NOTHING: mail gateways and scanners GET every link in an email |
+| POST | `/unsubscribe` | Public | The acting verb. Writes BOTH identity rows (clients + email_leads) in one transaction, so one click silences the whole person |
 | POST | `/webhook/resend` | Resend | Webhook receiver (tracking events, svix-verified) |
 
 ### Marketing Contacts — `/api/marketing`
@@ -600,11 +601,12 @@ client base.
 |---|---|---|---|
 | PUT | `/contacts/:id/tags` | Admin | Replace a contact's marketing tag set (full set, not a delta) |
 | PUT | `/contacts/:id/do-not-contact` | Admin | Set or clear the house do-not-contact rule; setting requires a reason |
+| PUT | `/contacts/:id/email-status` | Admin | Clear a bad `email_status` back to `ok` (one-way; marking bad stays with the webhook). No UI yet, wire it in lane mkt-d |
 | GET | `/contacts` | Admin | Paginated contacts with tags, derived state, mailability, held-back buckets, quick-filter counts, and suggestions |
 | GET | `/contacts/:id` | Admin | Contact drawer: identity, event history, and message history with automated/human per row |
 | GET | `/audiences` | Admin | The seven audience definitions with live emailable counts |
 
-**The audience resolver.** `server/utils/marketingAudience.js` is the single definition of who may receive marketing. It exports three expressions of the same seven suppression conditions: `MAILABLE_SQL` for filtering, `HELD_BACK_SQL` (a CASE, so buckets are mutually exclusive and sum to `total - mailable`) for the held-back panel, and `isMailable`/`heldBackReason` for a send-time re-check. A test runs all three over identical database rows, including precedence cases, and requires the same answer from each; `isMailable` is defined as `heldBackReason() === null` so those two cannot drift.
+**The audience resolver.** `server/utils/marketingAudience.js` is the single definition of who may receive marketing. It exports the suppression conditions as reusable expressions: `MAILABLE_SQL` for filtering, `HELD_BACK_SQL` (a CASE, so buckets are mutually exclusive and sum to `total - mailable`) for the held-back panel, and `isMailable`/`heldBackReason` for a send-time re-check. A test runs all three over identical database rows, including precedence cases, and requires the same answer from each; `isMailable` is defined as `heldBackReason() === null` so those two cannot drift.
 
 - `CONTACT_AGGREGATES` carries the traps: `proposals.amount_paid` is DOLLARS while `legacy_cc_proposals.total_cost_cents` is CENTS; the Check Cherry join is on lowercased email because `client_id` is populated on only 197 of its 1,230 rows; `cc.last_event` is filtered to the past because that ledger runs to 2027; event-type casing is normalized because the import left both `corporate-event` and `Corporate Event`; and Thumbtack inbound resolves through `thumbtack_leads.client_id` to `negotiation_id` to `thumbtack_messages` where `from_type = 'Customer'`, since `thumbtack_messages` has no client id.
 - "Has paid us" accepts a Check Cherry ledger booking, not only a native proposal. Gating on proposals alone silently drops the 184-person imported cohort.
@@ -1482,14 +1484,16 @@ Admin entry points: "Shopping List" button on Drink Plan Detail (visible wheneve
 - Derived states (Paid client, Quoted only, Untagged) are computed at read time and never stored.
 
 **clients.marketing_excluded / _reason / _at / _by** — the house do-not-contact rule
-- **HALF ENFORCED. It governs campaigns; it does NOT yet govern the automated lifecycle touches.** Written by `PUT /api/marketing/contacts/:id/do-not-contact` and returned by the clients list. Of the two gates that must honor it, one now does:
-  - **Enforced (lane mkt-c, shipped):** the audience resolver's `MAILABLE_SQL` in `server/utils/marketingAudience.js` carries `c.marketing_excluded = false`, so an excluded contact is not mailable, is bucketed `do_not_contact` by `HELD_BACK_SQL`, and cannot enter a campaign audience. Do not remove that clause on the belief this column is inert.
-  - **Still open (lane `mkt-f-compliance`):** `scheduledMessageDispatcher.js`'s marketing-category check, the LIVE gate for the drip, the retention nudge, and the New Year touch, consults `communication_preferences.marketing_enabled` and nothing else. Deliberately deferred out of mkt-a and mkt-c so a comms-critical file is opened by the lane that already touches that file family and already carries `security-review`.
-- **Consequence of the gap:** a contact marked do-not-contact today is excluded from campaigns and still receives the automated touches. The UI that writes the flag lands in lane mkt-d, so until mkt-f closes the dispatcher gate, treat the flag as "no campaigns" rather than "no email".
+- **ENFORCED ON ALL THREE MARKETING SENDERS as of lane mkt-f.** Written by `PUT /api/marketing/contacts/:id/do-not-contact` and by the Resend complaint handler; returned by the clients list. Each sender gates itself:
+  - **Campaigns:** `MAILABLE_SQL` in `server/utils/marketingAudience.js` carries `c.marketing_excluded = false`, so an excluded contact is not mailable and buckets as `do_not_contact`.
+  - **The lifecycle touches** (drip, retention nudge, New Year): `scheduledMessageDispatcher.js` suppresses any `category: 'marketing'` handler, with a DISTINCT `error_message` per cause: `marketing_disabled:` (the client unsubscribed), `do_not_contact:` (we excluded them), `lead_unsubscribed:` (a matching `email_leads` row is unsubscribed). Distinct because "they opted out" and "we excluded them" need different answers, and a merged reason cannot be un-merged later. The gate runs BEFORE delivery resolution, so a suppressed row never triggers the no-working-channel admin alert.
+  - **The sequence drip:** `emailSequenceScheduler.js` gates its due-enrollment query on the client identity. It joins `email_leads`, not `clients`, so before mkt-f it honored nothing at all, and the PUBLIC `capture-lead` handler auto-enrolls: an excluded contact could be drip-mailed with no human in the loop.
+- **THREE facts, not two.** A person can hold both a `clients` row and an `email_leads` row, joined only by address (`email_leads.client_id` is populated on a minority of rows). Suppression lives in three places: `communication_preferences.marketing_enabled`, `clients.marketing_excluded`, and an unsubscribed `email_leads` row. A sender that checks only the table it happens to join is the recurring bug here. `POST /unsubscribe` now writes BOTH identity rows in one transaction, so one click silences the whole person.
+  - **Scope:** marketing only. An OPERATIONAL message (invoice, balance reminder, agreement) still reaches an excluded client, and a test pins that. Widening the gate would silently break billing for anyone excluded, which is worse than the gap it closed.
 - Distinct from the client's own `communication_preferences.marketing_enabled` unsubscribe, which only the unsubscribe route may write.
 - **Marketing only.** An excluded client who books still receives proposals, invoices, and every operational message.
 - Displayed as a tag in the UI but deliberately not a `client_tags` value: it is the only classification whose accidental removal emails someone who asked not to be emailed, so it carries a required reason (enforced by `clients_marketing_excluded_reason_check`) and an actor, and removal is a confirmed action. `isValidTag` and the tag CHECK both reject it.
-- Sole writer: `PUT /api/marketing/contacts/:id/do-not-contact`. `PUT /api/clients/:id` structurally cannot clear it, since it updates via `COALESCE($n, col)`.
+- Writers: `PUT /api/marketing/contacts/:id/do-not-contact` (a human, required reason) and the Resend complaint handler in `emailMarketingWebhook.js` (system; `marketing_excluded_by` NULL, guarded so it never overwrites a hand-written reason). `PUT /api/clients/:id` structurally cannot clear it, since it updates via `COALESCE($n, col)`.
 - Both CHECKs use `DROP CONSTRAINT IF EXISTS` + `ADD`, not a guarded `IF NOT EXISTS`. A guard makes an enumerated CHECK write-once: widening the tag list would never reach an already-booted database while every other guard still reported green, and the new tag would `23514` in prod.
 - Run `node server/scripts/verify-marketing-schema.js` after any deploy that replays `schema.sql`. It is strictly read-only (catalog queries, no DDL, no locks, safe against prod) and compares the tag CHECK's *definition* against the code vocabulary, not just its name, so it detects a stale constraint rather than healing one.
 

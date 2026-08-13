@@ -272,13 +272,13 @@ dr-bartender/
 │   │   ├── emailMarketing/     # Composition router for /api/email-marketing/* (was one 987-line file at the hard cap)
 │   │   │   ├── index.js        # Mount order mirrors the original file order and is load-bearing: designer.js (/campaigns/:id/test) and sequences.js (/campaigns/:id/steps) are more specific than campaigns.js's /campaigns/:id
 │   │   │   ├── leads.js        # Lead CRUD + CSV import
-│   │   │   ├── campaigns.js    # Campaign CRUD, blast send, scheduling
+│   │   │   ├── campaigns.js    # Campaign CRUD. Blast send + schedule RETIRED in lane mkt-f: their audience read email_leads only and so could not honor clients.marketing_excluded
 │   │   │   ├── designer.js     # Image upload, live preview, single-address test send
 │   │   │   ├── sequences.js    # Sequence steps, activate/pause
 │   │   │   ├── enrollment.js   # Enroll leads into a sequence, read enrollments
 │   │   │   ├── analytics.js    # Aggregate analytics
 │   │   │   ├── conversations.js # Two-way lead threads, replies, read/replied state
-│   │   │   ├── unsubscribe.js  # PUBLIC unsubscribe (no auth by design: the JWT is the credential)
+│   │   │   ├── unsubscribe.js  # PUBLIC unsubscribe, no auth by design (the JWT is the credential). GET renders a confirmation and changes NOTHING; POST performs the flip and is also the RFC 8058 one-click target. Mail scanners GET every link in an email, so a mutating GET silently unsubscribed people
 │   │   │   └── shared.js       # compileEmailDesign, used by campaigns + designer
 │   │   ├── emailMarketingWebhook.js  # Resend webhook receiver (email tracking events)
 │   │   ├── marketingContacts.js # Marketing tags + do-not-contact + the audience/contact read routes (admin ONLY, stricter than emailMarketing/, which allows managers)

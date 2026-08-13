@@ -15,13 +15,25 @@ const { isPlaceholderEmail } = require('./emailValidation');
  * `IS DISTINCT FROM 'false'` rather than `= 'true'`: a row whose JSONB lacks
  * the key would otherwise be silently excluded.
  *
- * SCOPE: this governs the MARKETING surface. The live gate for the automated
- * lifecycle touches (drip, retention nudge, New Year) is
- * scheduledMessageDispatcher.js, which reads only
- * communication_preferences.marketing_enabled and does NOT yet honor
- * marketing_excluded. Lane mkt-f-compliance owns closing that gap; until it
- * does, an excluded contact is out of campaigns and still gets the automated
- * touches. See ARCHITECTURE.md.
+ * SCOPE: this file governs CAMPAIGNS. There are THREE marketing senders, and
+ * each has to gate itself:
+ *
+ *   1. campaigns            -> MAILABLE_SQL, here
+ *   2. the lifecycle touches (drip, retention nudge, New Year)
+ *                           -> scheduledMessageDispatcher.js
+ *   3. the sequence drip    -> emailSequenceScheduler.js
+ *
+ * Several gates is not a violation of the one-predicate rule: they answer
+ * different questions over different inputs (a recipient SET in SQL, a single
+ * already-scheduled ROW in JS, a due-enrollment JOIN). What they must agree on
+ * is the FACTS, and the facts are three, not two:
+ * communication_preferences.marketing_enabled, clients.marketing_excluded, AND
+ * a matching unsubscribed email_leads row.
+ *
+ * That third one is the one every reader forgets, because it lives in a
+ * different table reachable only by address. Lane mkt-f found the dispatcher
+ * blind to it and emailSequenceScheduler blind to all three. See
+ * CLIENT_OPTED_OUT_BY_EMAIL below, and ARCHITECTURE.md.
  */
 
 // Alias `c` = clients. Alias `lu` = LEAD_UNSUB_LATERAL, which MUST be joined.
@@ -74,6 +86,44 @@ const LEAD_UNSUB_LATERAL = `
 `;
 
 const HELD_BACK_REASONS = ['do_not_contact', 'unsubscribed', 'bounced', 'no_address'];
+
+/**
+ * "Is this person opted out of marketing?" as reusable SQL, keyed on an EMAIL.
+ *
+ * One human can hold two identity rows: a `clients` row and an `email_leads`
+ * row, joined by nothing but the address (`email_leads.client_id` is populated
+ * on a minority of rows). Every marketing sender therefore has to ask about
+ * BOTH, and the ones that asked about only one are how an opt-out got ignored:
+ *
+ *   - the retired blast send read email_leads only, so it never saw
+ *     clients.marketing_excluded
+ *   - emailSequenceScheduler read email_leads only, same blind spot
+ *   - the dispatcher read clients only, so it never saw a lead unsubscribe
+ *
+ * These take the address EXPRESSION rather than hard-coding `$1`, because the
+ * callers need a correlated column (`l.email`) as often as a bind parameter,
+ * and a version that only accepted `$1` is exactly why the first draft of these
+ * ended up hand-copied into three files instead of imported.
+ *
+ * SAFETY: `emailExpr` is interpolated into SQL, so it must be a column
+ * reference or a `$n` placeholder written by us. NEVER pass user input.
+ */
+const clientOptedOutByEmail = (emailExpr) => `
+  EXISTS (
+    SELECT 1 FROM clients c2
+     WHERE lower(btrim(c2.email)) = lower(btrim(${emailExpr}))
+       AND (c2.marketing_excluded = true
+            OR (c2.communication_preferences->>'marketing_enabled') = 'false'
+            OR (c2.communication_preferences->>'email_enabled') = 'false')
+  )`;
+
+/** The lead-side half. Same contract, same safety rule. */
+const leadUnsubscribedByEmail = (emailExpr) => `
+  EXISTS (
+    SELECT 1 FROM email_leads el2
+     WHERE lower(btrim(el2.email)) = lower(btrim(${emailExpr}))
+       AND el2.status = 'unsubscribed'
+  )`;
 
 /**
  * One normalization for every event-type comparison. The Check Cherry import
@@ -311,6 +361,8 @@ module.exports = {
   PERSONAL_EVENT_TYPES,
   UNCLASSIFIED_EVENT_TYPES,
   HELD_BACK_REASONS,
+  clientOptedOutByEmail,
+  leadUnsubscribedByEmail,
   AUDIENCES,
   AUDIENCE_BY_ID,
   HAS_PAID,

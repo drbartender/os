@@ -7,6 +7,7 @@
  */
 
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const sharp = require('sharp');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../../db');
@@ -18,6 +19,7 @@ const { uploadFile } = require('../../utils/storage');
 const { isValidUpload } = require('../../utils/fileValidation');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { compileEmailDesign } = require('./shared');
+const { clientOptedOutByEmail, leadUnsubscribedByEmail } = require('../../utils/marketingAudience');
 const { ValidationError, NotFoundError, ExternalServiceError } = require('../../utils/errors');
 const { API_URL } = require('../../utils/urls');
 
@@ -78,7 +80,45 @@ router.post('/campaigns/:id/test', auth, requireAdminOrManager, asyncHandler(asy
   const to = (req.body.email && String(req.body.email).trim()) || req.user.email;
   if (!to) throw new ValidationError({ email: 'No test recipient — enter an email address.' });
 
-  const sampleUnsub = `${API_URL}/api/email-marketing/unsubscribe?token=preview`;
+  // A test send lands in a REAL inbox, so its unsubscribe link has to be real.
+  // The composer preview can keep the placeholder (nobody clicks a link inside
+  // a preview pane), but shipping token=preview in an actual email means the
+  // one legally required element is the one element that does not work, and an
+  // admin checking the footer gets "invalid or expired".
+  //
+  // Resolve the recipient to whatever they actually are. A lead token and a
+  // client token unsubscribe different things, so guessing is not an option.
+  // If the address matches nothing we have, fall back to the placeholder: there
+  // is no record to unsubscribe, and minting a token for a non-existent row
+  // would be a link that 400s just as loudly.
+  // A test send is a REAL marketing send: same campaign body, real inbox, and
+  // since this lane, a real unsubscribe token. So it owes the same suppression
+  // every other marketing sender owes. Without this it is the fourth ungated
+  // sender, and the argument that retired the blast send ("it can email someone
+  // you excluded") is true of it verbatim, one address at a time.
+  const optedOut = await pool.query(
+    `SELECT ${clientOptedOutByEmail('$1')} OR ${leadUnsubscribedByEmail('$1')} AS blocked`, [to]
+  );
+  if (optedOut.rows[0]?.blocked) {
+    throw new ValidationError({
+      email: 'That address is unsubscribed or on the do-not-contact list. Test sends honor it too.',
+    });
+  }
+
+  const unsubSecret = process.env.UNSUBSCRIBE_SECRET || process.env.JWT_SECRET;
+  let unsubToken = 'preview';
+  const leadRow = await pool.query(
+    'SELECT id FROM email_leads WHERE lower(btrim(email)) = lower(btrim($1)) LIMIT 1', [to]);
+  if (leadRow.rows[0]) {
+    unsubToken = jwt.sign({ leadId: leadRow.rows[0].id, typ: 'unsub' }, unsubSecret, { expiresIn: '365d' });
+  } else {
+    const clientRow = await pool.query(
+      'SELECT id FROM clients WHERE lower(btrim(email)) = lower(btrim($1)) LIMIT 1', [to]);
+    if (clientRow.rows[0]) {
+      unsubToken = jwt.sign({ clientId: clientRow.rows[0].id, marketing: true, typ: 'unsub' }, unsubSecret, { expiresIn: '365d' });
+    }
+  }
+  const sampleUnsub = `${API_URL}/api/email-marketing/unsubscribe?token=${unsubToken}`;
   const html = wrapMarketingEmail(c.html_body, sampleUnsub);
   let result;
   try {

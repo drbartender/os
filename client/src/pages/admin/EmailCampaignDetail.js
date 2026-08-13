@@ -14,7 +14,6 @@ export default function EmailCampaignDetail() {
   const toast = useToast();
   const [campaign, setCampaign] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
   const [showAddStep, setShowAddStep] = useState(false);
   const [editingStep, setEditingStep] = useState(null);
   const [showEnroll, setShowEnroll] = useState(false);
@@ -33,20 +32,6 @@ export default function EmailCampaignDetail() {
   }, [id, toast]);
 
   useEffect(() => { fetchCampaign(); }, [fetchCampaign]);
-
-  const handleSend = async () => {
-    if (!window.confirm(`Send this campaign to all matching leads? This cannot be undone.`)) return;
-    setSending(true);
-    try {
-      await api.post(`/email-marketing/campaigns/${id}/send`);
-      toast.success('Campaign queued for sending.');
-      fetchCampaign();
-    } catch (err) {
-      toast.error(err.message || 'Failed to send.');
-    } finally {
-      setSending(false);
-    }
-  };
 
   const handleAddStep = async (stepData) => {
     try {
@@ -138,10 +123,18 @@ export default function EmailCampaignDetail() {
           </div>
         </div>
         <div className="em-actions">
+          {/* Send Now is retired (lane mkt-f). The old blast path built its
+              audience from email_leads alone, so it could not honor
+              clients.marketing_excluded and would email someone marked
+              do-not-contact. The server refuses it; showing an enabled button
+              that always fails just moves the discovery to after the click. */}
           {canSend && (
-            <button className="btn btn-primary" onClick={handleSend} disabled={sending}>
-              {sending ? 'Sending...' : 'Send Now'}
-            </button>
+            <span className="em-retired-send">
+              <button className="btn btn-primary" disabled title="Retired: this path cannot honor the do-not-contact list">
+                Send Now
+              </button>
+              <small>Use the Marketing section to choose recipients.</small>
+            </span>
           )}
           {canActivate && (
             <button className="btn btn-primary" onClick={handleActivate}>Activate Sequence</button>

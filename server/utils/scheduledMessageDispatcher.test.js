@@ -260,6 +260,103 @@ test('dispatcher > suppresses marketing-category handler when marketing_enabled=
   );
 });
 
+test('dispatcher > suppresses a marketing touch when marketing_excluded is true', async () => {
+  // The do-not-contact gap (lane mkt-f). marketing_excluded is the HOUSE rule:
+  // we decided not to contact them, it carries a required reason and an actor,
+  // and it is a different fact from the client unsubscribing. Before this gate
+  // existed the flag stopped campaigns and let every automated touch through,
+  // so someone marked do-not-contact still got the drip and the New Year email.
+  const handler = mock.fn(async () => undefined);
+  registerHandler('disp_test_dnc', handler, { category: 'marketing', anchor: 'created_at', offsetFromEventDate: null });
+
+  await pool.query(
+    `UPDATE clients SET marketing_excluded = true, marketing_excluded_reason = 'dispatcher gate test' WHERE id = $1`,
+    [testClientId]
+  );
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_dnc', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
+
+  await dispatchPending();
+  assert.strictEqual(handler.mock.callCount(), 0, 'a do-not-contact client must not be touched');
+  const { rows } = await pool.query(
+    "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_dnc'"
+  );
+  assert.strictEqual(rows[0].status, 'suppressed');
+  assert.match(rows[0].error_message, /do_not_contact/);
+  // Must NOT be reported as an unsubscribe: "they opted out" and "we excluded
+  // them" need different answers when someone asks why nothing was sent.
+  assert.ok(!/marketing_disabled/.test(rows[0].error_message),
+    'do-not-contact must not masquerade as a client unsubscribe');
+
+  await pool.query(
+    `UPDATE clients SET marketing_excluded = false, marketing_excluded_reason = NULL WHERE id = $1`,
+    [testClientId]
+  );
+});
+
+test('dispatcher > honors a LEAD-side unsubscribe, the third fact', async () => {
+  // The gap the security review found. A person can hold a clients row AND an
+  // email_leads row joined only by address. Clicking unsubscribe in a campaign
+  // email flips the LEAD row, so the campaign resolver correctly dropped them
+  // while this dispatcher, reading only clients, kept sending the drip, the
+  // retention nudge and the New Year touch. An unhonored opt-out.
+  const handler = mock.fn(async () => undefined);
+  registerHandler('disp_test_leadunsub', handler, { category: 'marketing', anchor: 'created_at', offsetFromEventDate: null });
+
+  const { rows: cr } = await pool.query('SELECT email FROM clients WHERE id = $1', [testClientId]);
+  const lead = await pool.query(
+    `INSERT INTO email_leads (name, email, status, lead_source)
+     VALUES ($1, $2, 'unsubscribed', 'quote_wizard') RETURNING id`,
+    ['Lead unsub fixture', cr[0].email]
+  );
+  try {
+    await pool.query(
+      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+       VALUES ($1, 'proposal', 'disp_test_leadunsub', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+      [testProposalId, testClientId]
+    );
+    await dispatchPending();
+    assert.strictEqual(handler.mock.callCount(), 0, 'a lead-side unsubscribe must stop the touch');
+    const { rows } = await pool.query(
+      "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_leadunsub'"
+    );
+    assert.strictEqual(rows[0].status, 'suppressed');
+    assert.match(rows[0].error_message, /lead_unsubscribed/);
+  } finally {
+    await pool.query('DELETE FROM email_leads WHERE id = $1', [lead.rows[0].id]);
+  }
+});
+
+test('dispatcher > an OPERATIONAL message still reaches a do-not-contact client', async () => {
+  // marketing_excluded is a MARKETING rule, not a global mute. A client who
+  // owes a balance still gets their invoice. Widening this gate to operational
+  // messages would silently break billing for anyone Dallas excluded, which is
+  // a far worse failure than the one this lane is fixing.
+  const handler = mock.fn(async () => undefined);
+  registerHandler('disp_test_dnc_op', handler, { category: 'operational', anchor: 'created_at', offsetFromEventDate: null });
+
+  await pool.query(
+    `UPDATE clients SET marketing_excluded = true, marketing_excluded_reason = 'dispatcher gate test' WHERE id = $1`,
+    [testClientId]
+  );
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_dnc_op', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
+
+  await dispatchPending();
+  assert.strictEqual(handler.mock.callCount(), 1, 'operational mail must bypass the do-not-contact gate');
+
+  await pool.query(
+    `UPDATE clients SET marketing_excluded = false, marketing_excluded_reason = NULL WHERE id = $1`,
+    [testClientId]
+  );
+});
+
 test('dispatcher > skips a concurrent tick while a prior dispatch is still in flight', async () => {
   // Reproduces the overlap bug: dispatchPending is fired on a 5-min setInterval;
   // if one run overruns the interval, the next tick re-SELECTs rows the prior

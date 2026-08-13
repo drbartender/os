@@ -171,31 +171,66 @@ router.post('/resend', asyncHandler(async (req, res) => {
           );
         }
 
-        // Delivery-failure fallback (spec 7.5): a hard bounce on a client-facing
-        // address flips clients.email_status to 'bad' so the dispatcher's channel
-        // substitution falls future touches over to SMS. Client-facing emails are
-        // not tracked in email_sends, so match the recipient address from the
-        // Resend payload (data.to is an array) against clients.email.
+        // A BOUNCE and a COMPLAINT are different facts and get different
+        // treatment. Merging them cost real money.
         //
-        // Only PERMANENT bounces mark an address bad. Resend's email.bounced is
-        // permanent-only today; if a future payload carries an explicit transient
-        // type, skip the flip. Complaints (spam reports) also flip email_status,
-        // continuing to email someone who reported us as spam is harmful.
+        // BOUNCE (spec 7.5): the address is dead, so operational mail cannot
+        // reach them either. clients.email_status = 'bad' is correct: the
+        // dispatcher's channel substitution falls future touches over to SMS.
+        // Only PERMANENT bounces count. Resend's email.bounced is
+        // permanent-only today; if a future payload carries an explicit
+        // transient type, skip the flip.
+        //
+        // COMPLAINT: they hit "spam" on a MARKETING email. Their address still
+        // works. Flipping email_status = 'bad' here (which is what this code
+        // used to do) gates proposals, invoices and service agreements, so one
+        // spam click silently stopped a paying client's BILLING email, and
+        // nothing ever wrote the flag back. The right response is to stop
+        // marketing them: set the house do-not-contact flag and leave
+        // operational mail alone. Dallas approved this split 2026-08-11.
+        //
+        // Client-facing emails are not tracked in email_sends, so match the
+        // recipient address from the Resend payload (data.to is an array)
+        // against clients.email.
         const bounceTypeRaw = String(
           data?.bounce?.type || data?.bounce_type || data?.type || ''
         ).toLowerCase();
         const isTransient = bounceTypeRaw.includes('transient')
           || bounceTypeRaw.includes('temporary')
           || bounceTypeRaw.includes('soft');
-        if (!isTransient) {
-          const recipients = Array.isArray(data?.to)
-            ? data.to
-            : (data?.to ? [data.to] : []);
-          for (const addr of recipients) {
-            if (!addr || typeof addr !== 'string') continue;
+        const recipients = Array.isArray(data?.to)
+          ? data.to
+          : (data?.to ? [data.to] : []);
+
+        for (const addr of recipients) {
+          if (!addr || typeof addr !== 'string') continue;
+
+          if (newStatus === 'bounced' && !isTransient) {
             await client.query(
               `UPDATE clients SET email_status = 'bad'
-                WHERE LOWER(email) = LOWER($1) AND email_status <> 'bad'`,
+                WHERE lower(btrim(email)) = lower(btrim($1)) AND email_status <> 'bad'`,
+              [addr.trim()]
+            );
+          }
+
+          if (newStatus === 'complained') {
+            // marketing_excluded_by stays NULL: no human set this, the system
+            // did. The reason is required by clients_marketing_excluded_reason_check
+            // and is written for a person reading the contact record later.
+            //
+            // Guarded on marketing_excluded = false so a later complaint can
+            // never overwrite a reason Dallas wrote by hand.
+            await client.query(
+              `UPDATE clients
+                  SET marketing_excluded = true,
+                      -- Class-neutral on purpose. This webhook fires for EVERY
+                      -- Resend send, so a client who spam-flags an invoice
+                      -- would otherwise get a contact record asserting they
+                      -- reported a marketing email. That string is exactly what
+                      -- a human reads off the record months later.
+                      marketing_excluded_reason = 'Reported an email as spam (Resend complaint)',
+                      marketing_excluded_at = NOW()
+                WHERE lower(btrim(email)) = lower(btrim($1)) AND marketing_excluded = false`,
               [addr.trim()]
             );
           }

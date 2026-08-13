@@ -19905,3 +19905,8 @@ html[data-app="admin-os"] .pay-qr-tile {
 @media (max-width: 900px) {
   .mkt-contacts-body { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Retired blast-send control (lane mkt-f): the button stays visible so the
+   campaign screen still reads coherently, but it cannot be clicked. */
+.em-retired-send { display: inline-flex; flex-direction: column; gap: 0.25rem; }
+.em-retired-send small { color: var(--text-muted); }

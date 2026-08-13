@@ -96,3 +96,80 @@ test('a concurrent tick that already advanced the step wins; the real claim lose
   );
   assert.equal(rows[0].current_step, 1, 'current_step must advance exactly once (not skip to 2)');
 });
+
+// ─── Marketing suppression (review finding H2) ─────────────────────
+
+const { pool: seqPool } = require('../db');
+const { clientOptedOutByEmail } = require('./marketingAudience');
+
+// These drive the SHARED predicate the scheduler interpolates, not a re-typed
+// copy of it. The first draft of these tests pasted the SQL into the test, so
+// deleting the clause from the scheduler would have left them green.
+
+async function wouldSend(leadId) {
+  const { rows } = await seqPool.query(
+    `SELECT NOT ${clientOptedOutByEmail('l.email')} AS would_send
+       FROM email_leads l WHERE l.id = $1`, [leadId]);
+  return rows[0].would_send;
+}
+
+test('the scheduler query text actually contains the suppression clause', async () => {
+  // Guards the case the previous draft missed: the predicate could be correct
+  // and simply not wired into the query the scheduler runs.
+  const src = require('fs').readFileSync(__dirname + '/emailSequenceScheduler.js', 'utf8');
+  assert.match(src, /clientOptedOutByEmail\('l\.email'\)/,
+    'emailSequenceScheduler must gate its due-enrollment query on the client identity');
+});
+
+test('a due enrollment is skipped when the matching client is excluded', async () => {
+  // Before lane mkt-f this scheduler honored NOTHING: it joins email_leads, and
+  // the house do-not-contact flag lives on clients.marketing_excluded. It is
+  // also reachable with nobody clicking: the PUBLIC capture-lead handler
+  // auto-enrols new leads into 'Abandoned Quote Followup'.
+  const nonce = `seqsupp-${Date.now()}`;
+  const addr = `${nonce}@mkt-test.example`;
+  const c = await seqPool.query(
+    `INSERT INTO clients (name, email, marketing_excluded, marketing_excluded_reason)
+     VALUES ($1,$2,true,'sequence gate test') RETURNING id`, [nonce, addr]);
+  const l = await seqPool.query(
+    `INSERT INTO email_leads (name,email,status,lead_source)
+     VALUES ($1,$2,'active','quote_wizard') RETURNING id`, [nonce, addr]);
+  try {
+    assert.strictEqual(await wouldSend(l.rows[0].id), false,
+      'an excluded client must not be drip-mailed through the lead identity');
+  } finally {
+    await seqPool.query('DELETE FROM email_leads WHERE id=$1', [l.rows[0].id]);
+    await seqPool.query('DELETE FROM clients WHERE id=$1', [c.rows[0].id]);
+  }
+});
+
+test('whitespace around a stored address does not defeat the gate', async () => {
+  // The whole lane matches on lower(btrim(...)) for this reason.
+  const nonce = `seqws-${Date.now()}`;
+  const addr = `${nonce}@mkt-test.example`;
+  const c = await seqPool.query(
+    `INSERT INTO clients (name, email, marketing_excluded, marketing_excluded_reason)
+     VALUES ($1,$2,true,'whitespace test') RETURNING id`, [nonce, `  ${addr.toUpperCase()} `]);
+  const l = await seqPool.query(
+    `INSERT INTO email_leads (name,email,status,lead_source)
+     VALUES ($1,$2,'active','quote_wizard') RETURNING id`, [nonce, addr]);
+  try {
+    assert.strictEqual(await wouldSend(l.rows[0].id), false,
+      'a padded, differently-cased client address must still suppress');
+  } finally {
+    await seqPool.query('DELETE FROM email_leads WHERE id=$1', [l.rows[0].id]);
+    await seqPool.query('DELETE FROM clients WHERE id=$1', [c.rows[0].id]);
+  }
+});
+
+test('an ordinary lead with no excluded client still sends', async () => {
+  const nonce = `seqok-${Date.now()}`;
+  const l = await seqPool.query(
+    `INSERT INTO email_leads (name,email,status,lead_source)
+     VALUES ($1,$2,'active','quote_wizard') RETURNING id`, [nonce, `${nonce}@mkt-test.example`]);
+  try {
+    assert.strictEqual(await wouldSend(l.rows[0].id), true, 'the gate must not over-suppress');
+  } finally {
+    await seqPool.query('DELETE FROM email_leads WHERE id=$1', [l.rows[0].id]);
+  }
+});
