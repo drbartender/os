@@ -52,8 +52,10 @@ so tick items off as you confirm them rather than assuming the list is current.
       Critically `floor_rate` IS persisted into `pricing_snapshot.gratuity` — the writer
       that, if it dropped the key, would strip the checkout floor client-side while the
       server still enforced. Was prod's FIRST mandate ever (count was 0).
-      Still unproven: the client-side half — that her checkout renders the $100 as
-      non-removable. Cheap to close next time someone is in there.
+      CLOSED 2026-08-13: Dallas checked her checkout on a real phone — the $100 renders as
+      required and an error appears on any attempt to set it to $0. The client-side floor
+      holds. The mandate is now verified end to end: admin entry, snapshot persistence,
+      derived rate, and client-side enforcement.
 - [x] **Owner no-draw payouts — PASSED 2026-08-12.** Exactly one contractor carries
       `takes_draw = false` (user 12, Dallas). His four payouts (80, 83, 92, 98) all sit at
       `status = 'no_draw'` with `paid_at` null — tracked, never owed — and the payroll screen
@@ -140,8 +142,14 @@ so tick items off as you confirm them rather than assuming the list is current.
       ACCESS RECIPE (supersedes the 54-day-old localStorage workaround in memory):
       `staff.localhost:3000` just works — `getSiteContext()` keys on the `staff.` prefix and
       CRA's host check does not block it. No code override needed.
-- [ ] **Mobile: real-phone wizard walk + signing.** Live 2026-07-04. Needs an actual phone,
-      not a viewport emulator.
+- [x] **Mobile: real-phone wizard walk + signing — WALKED 2026-08-13** on a real phone over
+      cellular, against prod. (Dev was ruled out: the dev CORS rule is
+      `^http://(?:[a-z0-9-]+\.)?localhost(:\d+)?$` so a LAN IP origin is rejected, and
+      `client/.env` points the client at `localhost:5000`, which on a phone means the phone.
+      Making it work needs two config changes and two restarts on a shared box.)
+      SIGNING SURFACE: clean. Signature pad, terms and payment fields all work on a phone.
+      FOUND: the quote wizard's TimePicker crowds three sub-minimum tap targets into 48px
+      with no responsive rules at all — fix list, 2026-08-13. Public lead-capture surface.
 - [ ] **Needs-attention tabs, prod smoke.** Live 2026-07-14.
 - [ ] **Global search / ⌘K palette smoke.** Live 2026-07-09.
 - [ ] **Quote-wizard Extras UI.** 8 fixes shipped; 4 of them are `schema.sql` copy changes
