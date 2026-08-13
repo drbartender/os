@@ -107,7 +107,7 @@ export default function ShoppingListButton({
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
           paddingTop: '60px',
         }}>
-          <div className="card" style={{ maxWidth: 340, width: '100%', margin: '1rem' }}>
+          <div className="card modal-card" style={{ maxWidth: 340, width: '100%', margin: '1rem' }}>
             <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>
               Guest Count
             </h3>

@@ -1391,10 +1391,16 @@ marker class; behavior-inert, admin-only, no money path. CI client build exit 0 
 rules verified in the built `main.*.css`, including that the sidebar override lands AFTER the
 transparent rule in source order. **Dallas confirmed both surfaces fixed in the app
 2026-08-12.** Closed.
-Correction to the original entry below: **StaffReviews.js is NOT affected** — its modal
-styles the panel inline (`background: var(--bg-1)`) rather than borrowing `.card`, same as
-PackageIncludesModal. Real blast radius was 9 files / 11 panels, not 10 files
-(RemoteStaffingFeePrompt and ProposalDetail carry two panels each).
+Corrections to the original entry below: **StaffReviews.js is NOT affected** — its modal
+styles the panel inline (`background: var(--bg-1)`), same as PackageIncludesModal and
+NotifyConfirmModal.jsx. **And the first sweep MISSED a file**: it grepped `--include=*.js`,
+which silently skips `.jsx`. Re-swept 2026-08-12 with `--include=*.jsx` added and found
+`client/src/components/ShoppingList/ShoppingListButton.jsx:110`, a `className="card"` panel
+inside a portalled fixed overlay, mounted from `pages/admin/DrinkPlanDetail.js` so it IS
+admin-skinned and was genuinely broken. Patched. Final blast radius: **10 files / 12 panels**
+(RemoteStaffingFeePrompt and ProposalDetail carry two each).
+LESSON: this codebase mixes `.js` and `.jsx` for components. Any component-wide sweep must
+pass BOTH or it will under-report and the fix will look complete when it is not.
 Fix as landed: a `.modal-card` marker class beside `.card` on all 11 floating panels, plus
 one rule giving them `var(--bg-elev)` (the floating-surface token, defined in BOTH skins —
 dark's own comment calls it "floating (modal/palette)"); and inside the `max-width: 900px`
