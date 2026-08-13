@@ -1574,3 +1574,33 @@ Not triaged here.
 **VERIFIED GOOD (the money math itself):** all six production duty lines sit at exactly the
 specced flat amounts — `bar_rental` 3 x $20, `hosted_supplies` 2 x $50, `menu_print` 1 x $5.
 The flat-$50 hosted decision (Dallas 2026-08-07) is live and correct.
+
+### Added 2026-08-13 (found by Dallas during the staff event-details walkthrough)
+
+**The staff event-details page throws away the equipment the server already sends it.**
+Dallas, walking shift 14 as a staffer: "doesn't say what equipment is needed."
+
+The data reaches the client. `server/utils/eventDetailsPayload.js:162` selects
+`s.equipment_required, s.supply_run_required` and `server/routes/eventDetails.js:88` returns
+`equipment_required` in the payload. The staff UI never reads either one: the ONLY client
+references to `equipment_required` anywhere are in `client/src/pages/admin/EventsDashboard.js`,
+which is the admin editor that WRITES it. No staff component renders it.
+
+This is the long-logged "Bucket 2 wirings: equipment picker — backend done, last-mile UI
+missing for `shifts.equipment_required`" item (open-threads, 2026-06-09), now confirmed on the
+surface where it actually costs something.
+
+**Why it is worse than when it was logged:** duty pay shipped 2026-08-07 and pays staff
+specifically for equipment and supply handling — $20 `bar_rental`, $50 `hosted_supplies`. So
+the system now pays a bartender to bring and haul equipment, and the page that briefs them on
+the shift does not list what to bring. The money side and the information side disagree.
+
+FIX: render `equipment_required` (and decide about `supply_run_required`) in the staff event
+details. No server work — the payload already carries both. Check the shape first:
+`shifts.equipment_required` is TEXT holding a JSON array (shift 14 reads `"[]"`), and
+`EventsDashboard.js` parses it through `parseEquipmentArray`, so the staff side needs the same
+parse rather than a bare render. Note the tech-debt entry proposing TEXT -> JSONB for this
+column; do not let that block the UI wiring.
+
+NOT A BUG, checked at the same time: the page showed no drink specs because drink plan 11 is
+`status: 'pending'` with `finalized_at` NULL. Specs are correctly gated on a finalized plan.
