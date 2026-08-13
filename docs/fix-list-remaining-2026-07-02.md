@@ -1759,3 +1759,36 @@ Both were "verified" by me as CI-build-green with the rules present in the compi
 fix, verify the cascade outcome at the target viewport/pointer, not that the selector exists in
 the bundle. For a UI message, verify it against the state AFTER the refresh that follows the
 action, not the state at the moment of writing.
+
+### Added 2026-08-13 (quote-wizard Extras deployed-copy check)
+
+**`soft-drink-addon`'s description has drifted permanently out of schema.sql, and a rebuilt
+environment would ship different client-facing copy than production.**
+
+Verified against prod 2026-08-13. Three of the four guarded copy UPDATEs applied cleanly:
+`non-alcoholic-beer` (now Athletic Brewing only, Heineken correctly gone),
+`zero-proof-spirits` (Lyre's), and `specialty-niche-liqueurs`. The fourth did not and cannot.
+
+`schema.sql:760-762` reads
+`UPDATE service_addons SET description = '<~600 char version>' WHERE slug = 'soft-drink-addon'
+AND description = 'Soft drinks for all guests.'`. Prod's description is now a THIRD text, 257
+chars, that matches neither the guard nor the replacement:
+
+> "For designated drivers, kids, and anyone skipping the spirits but still sipping. Includes
+> Coke, Diet Coke, Sprite, OJ, cranberry juice, pineapple juice, soda water, tonic water, and
+> grenadine. Required for hosted parties expecting more than 10 non-drinkers."
+
+It is BETTER than the schema version (shorter, plainer, same facts), so the live copy is not
+the problem. The problem is the divergence: the guard can never match again, so schema.sql is
+now permanently wrong about this row, and on a fresh database the seed INSERT would set the old
+text, the guard WOULD match, and the environment would come up with the ~600-char version
+instead of what clients read today.
+
+FIX: promote the live 257-char text into `schema.sql` as the seeded value (and drop or re-point
+the now-dead guarded UPDATE). This is the same class as the `service_packages.includes` prose
+hazard already logged for `applyPackageLineup2026`: client-facing copy that lives only in the
+database, with the file that claims to define it disagreeing.
+
+WORTH A SWEEP: every guarded `UPDATE service_addons SET description = ... WHERE ... AND
+description = '<old>'` in schema.sql is load-bearing exactly once and silently dead afterwards.
+Check the rest for the same drift rather than assuming they applied.
