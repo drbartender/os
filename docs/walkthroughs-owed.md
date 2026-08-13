@@ -67,10 +67,24 @@ so tick items off as you confirm them rather than assuming the list is current.
       pending. Reopen → Process closed both immediately. Worth knowing as an ops move: a
       period stranded in `processing` with nothing pending is closed by Reopen then Process,
       not by SQL.
-- [ ] **Service extension, in-app pass.** Pushed 2026-08-04. Code-level verification of the
-      `event_duration_hours` consumers is done; the browser pass was explicitly deferred.
-      With a settled extension on a dev event, check staff event details, the admin BEO, the
-      calendar feed, the client portal, the Money Board, and the events list.
+- [~] **Service extension, in-app pass — FIXTURE READY ON DEV 2026-08-12, walk not done.**
+      `service_extensions` is EMPTY in prod (the feature has never once run there), so this
+      can only be walked on dev. Seeded via the REAL `settleExtension()` on dev proposal 7
+      (Sean Parent, event 8/30, shift 14, staffer `marcus.j@test`): 5.0h -> **6.0h**, shift
+      end 10:00 PM -> **11:00 PM**, extension id 714 `paid` + `finalized_at` stamped.
+      Six surfaces still to eyeball on `localhost:3000`, each must show 6h / 11:00 PM:
+      staff event details (shift 14), admin BEO (proposal 7), client portal
+      (`/proposal/346bdebd-54c1-4439-832a-eeb68354eed4`), calendar feed, Money Board, events
+      list. Anything still reading 5h / 10:00 PM is a stale-read bug.
+      BONUS ALREADY VERIFIED: calling `settleExtension` directly leaves the documented
+      crash-casualty shape (status `paid`, `finalized_at` NULL) because the post-settle tail
+      lives in the webhook handler. Rather than paper over it, the **heal sweep** was left to
+      fix it and did — `healUnfinalizedExtensions` stamped `finalized_at`, sent the staff
+      greenlight, and alerted admins. That heal path had never run in prod either. Note its
+      deliberate `updated_at < NOW() - INTERVAL '2 minutes'` grace, so a fresh settle is not
+      healed out from under its own tail. Alert recipients checked: all admin/manager roles,
+      staffer got the greenlight not the admin alert. No leak.
+      CLEANUP OWED: dev extension 714 and proposal 7's bumped hours are still in place.
 - [x] **Duty pay — MONEY VERIFIED 2026-08-12.** All six production duty lines sit at exactly
       the specced flat amounts: `bar_rental` 3 x $20, `hosted_supplies` 2 x $50 (the flat-$50
       hosted decision of 2026-08-07 is live and correct), `menu_print` 1 x $5. The
@@ -91,10 +105,12 @@ so tick items off as you confirm them rather than assuming the list is current.
       STILL OWED, desktop width: the chart and palette pass in both skins — rainbow series
       legibility in House Lights, axis/legend text, and chart hover / zoom / Compare, plus
       whether any card figure disagrees with the chart.
-      MANAGER WALK IS BLOCKED, not skipped: prod has **zero** manager accounts (only two
-      admins, `admin@` and `zul@`), so the "network tab shows zero `/admin/payroll/*` calls"
-      check cannot run in prod without creating a real manager. Do it on dev, or accept it
-      stays unverified in prod.
+      MANAGER WALK — UNBLOCKED ON DEV 2026-08-12, walk not done. Prod has **zero** manager
+      accounts (only admins `admin@` and `zul@`), so it cannot run there without creating a
+      real manager. Dev HAS them: `manager-test@drbartender.com` (id 4569), plus
+      `aisha.m@test`, `zul@`, `slparent@gmail.com` all at role `manager`. Log in as one on
+      `localhost:3000`, open `/dashboard`, and confirm the network tab shows **zero**
+      `/admin/payroll/*` requests. One stray call is a real exposure.
 
 ## Tier 2 — client-facing, shipped, unseen
 
