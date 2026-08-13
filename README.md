@@ -269,9 +269,19 @@ dr-bartender/
 │   │   ├── stripeCreateIntent.js # POST /api/stripe/create-intent/:token (extracted from stripe.js)
 │   │   ├── stripePayouts.js    # GET/POST /api/stripe-payouts — DB-only payout mirror list/detail + rate-limited sweep trigger (read-side; admin/manager)
 │   │   ├── emailChange.js      # Unauthenticated POST /api/me/confirm-email-change — email-link token proves intent, bumps token_version to invalidate old JWTs (mounted at /api/me before me.js)
-│   │   ├── emailMarketing.js   # Email marketing leads, campaigns, sequences, conversations
+│   │   ├── emailMarketing/     # Composition router for /api/email-marketing/* (was one 987-line file at the hard cap)
+│   │   │   ├── index.js        # Mount order mirrors the original file order and is load-bearing: designer.js (/campaigns/:id/test) and sequences.js (/campaigns/:id/steps) are more specific than campaigns.js's /campaigns/:id
+│   │   │   ├── leads.js        # Lead CRUD + CSV import
+│   │   │   ├── campaigns.js    # Campaign CRUD, blast send, scheduling
+│   │   │   ├── designer.js     # Image upload, live preview, single-address test send
+│   │   │   ├── sequences.js    # Sequence steps, activate/pause
+│   │   │   ├── enrollment.js   # Enroll leads into a sequence, read enrollments
+│   │   │   ├── analytics.js    # Aggregate analytics
+│   │   │   ├── conversations.js # Two-way lead threads, replies, read/replied state
+│   │   │   ├── unsubscribe.js  # PUBLIC unsubscribe (no auth by design: the JWT is the credential)
+│   │   │   └── shared.js       # compileEmailDesign, used by campaigns + designer
 │   │   ├── emailMarketingWebhook.js  # Resend webhook receiver (email tracking events)
-│   │   ├── marketingContacts.js # Marketing tags + do-not-contact (admin only; separate router, emailMarketing.js is at the line cap)
+│   │   ├── marketingContacts.js # Marketing tags + do-not-contact + the audience/contact read routes (admin ONLY, stricter than emailMarketing/, which allows managers)
 │   │   ├── invoices.js         # Invoice CRUD, public token view, client portal
 │   │   ├── me.js               # Authenticated self endpoints (tip page settings, my-tips listing)
 │   │   ├── staffPortal.js      # Staff portal v2 /api/me/* composite + account-mgmt endpoints (staff-home, tip-card-order, profile, ui-preferences, staff-notifications, push-subscriptions, documents/:doc_type/replace, request-email-change, cancel-pending-email-change); mounts the per-concern subrouters below
@@ -344,7 +354,7 @@ dr-bartender/
 │   │   ├── email.js            # Resend email wrapper (send + batch)
 │   │   ├── emailBlockRenderer.js # Designed-email block → email-safe HTML renderer (tables + inline styles; single source of truth for how a designed campaign looks)
 │   │   ├── emailDesign.js      # Design compiler: sanitizes block rich-text + renders design_json → html_body/text_body
-│   │   ├── emailSanitize.js    # Shared allowlist DOMPurify sanitizer for admin-authored email HTML (extracted from emailMarketing.js)
+│   │   ├── emailSanitize.js    # Shared allowlist DOMPurify sanitizer for admin-authored email HTML (extracted from emailMarketing)
 │   │   ├── emailSequenceScheduler.js # Drip sequence step processor (every 15 min)
 │   │   ├── emailTemplates.js   # Email template helpers (transactional + marketing)
 │   │   ├── emailValidation.js  # Warn-only typo-domain heuristic (flags a domain one edit from a common TLD/provider); client twin kept in manual sync
