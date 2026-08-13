@@ -129,7 +129,17 @@ so tick items off as you confirm them rather than assuming the list is current.
       STILL UNVERIFIABLE ON DEV: the actual send + `message_log` row. `email.js:64` returns
       `{id:'dev-skipped'}` BEFORE `logClientMessage`, so a gated send writes no row, and the
       dev server's stdout is a socket with no readable log. Proving the send needs prod.
-- [ ] **Staff event-details redesign walkthrough.** Shipped 2026-08-03.
+- [x] **Staff event-details redesign — WALKED 2026-08-13 on dev** (as `marcus.j@test`, shift
+      14, via `http://staff.localhost:3000`). Also closes the staff-details surface of the
+      service-extension pass: the page correctly reflects the settled extension at **6 hours
+      / service to 11:00 PM**, so no stale read.
+      FOUND: the page never lists required equipment even though the server sends it — see the
+      2026-08-13 fix-list entry. Matters more since duty pay now pays for equipment handling.
+      NOT A BUG: no drink specs shown because plan 11 is `pending` / not finalized, which is
+      the correct gate.
+      ACCESS RECIPE (supersedes the 54-day-old localStorage workaround in memory):
+      `staff.localhost:3000` just works — `getSiteContext()` keys on the `staff.` prefix and
+      CRA's host check does not block it. No code override needed.
 - [ ] **Mobile: real-phone wizard walk + signing.** Live 2026-07-04. Needs an actual phone,
       not a viewport emulator.
 - [ ] **Needs-attention tabs, prod smoke.** Live 2026-07-14.
