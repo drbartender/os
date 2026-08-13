@@ -151,9 +151,25 @@ so tick items off as you confirm them rather than assuming the list is current.
       FOUND: the quote wizard's TimePicker crowds three sub-minimum tap targets into 48px
       with no responsive rules at all — fix list, 2026-08-13. Public lead-capture surface.
 - [ ] **Needs-attention tabs, prod smoke.** Live 2026-07-14.
-- [ ] **Global search / ⌘K palette smoke.** Live 2026-07-09.
-- [ ] **Quote-wizard Extras UI.** 8 fixes shipped; 4 of them are `schema.sql` copy changes
-      that only become visible on deploy. Nobody has confirmed the deployed copy reads right.
+- [x] **Global search palette — PASSED 2026-08-13.** Staff search groups correctly (`Teah`
+      under Staff), client search resolves the record plus its proposal (`Lauren Karcz` ->
+      proposal 719), and the empty-state Jump to list is complete. Note the shortcut is
+      **Ctrl+K on Linux** — `AdminLayout.js:110` accepts `metaKey || ctrlKey`, so Cmd+K is
+      Mac-only.
+      FALSE ALARM I CAUSED: I first gave `Marcus` as the staff target, which returned "no
+      matches" — correctly, because Marcus is a DEV-only fixture (`marcus.j@test`) and prod
+      has zero users matching him. Verify a search target exists in the environment being
+      walked before calling a miss a bug.
+- [~] **Quote-wizard Extras UI — DATA VERIFIED 2026-08-13, render check outstanding.** All
+      four guarded `schema.sql` description UPDATEs checked against prod directly. Three are
+      live and correct: `non-alcoholic-beer` (Athletic Brewing only, Heineken gone),
+      `zero-proof-spirits` (Lyre's), `specialty-niche-liqueurs`. The fourth,
+      `soft-drink-addon`, never applied and never can — prod holds a third, better, 257-char
+      text that matches neither the guard nor the replacement, so schema.sql is permanently
+      wrong about that row and a rebuilt environment would ship different copy than
+      production. Logged in the fix list (2026-08-13).
+      STILL OWED: read the three descriptions on the live Extras step to confirm they render
+      and read well to a client.
 - [ ] **After Hours skin sweep, both skins:** the event page, a dashboard, blog-editor
       fields, primary-button hover.
 - [ ] **Doc-preview modal, both skins,** with a real W-9 PDF and a real headshot.
