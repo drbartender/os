@@ -1729,3 +1729,33 @@ here: this page does not use the admin tokens at all. Measuring the tokens a sur
 consume proves nothing about that surface. The old ledger figures (House Lights muted ~4.22,
 danger ~2.56) came from the same era — muted still reproduces at 4.22, danger does NOT
 (bordeaux `#9e3a2a` on card computes 6.51, comfortably passing), so that one is stale.
+
+### Added 2026-08-13 (doc-preview walkthrough)
+
+**Zul's W-9 on file is a screenshot, and it is the same file as her headshot.** `payment_profiles`
+for user 2 holds `w9_filename = "Screenshot 2026-01-29 at 14.14.51.png"`, and
+`contractor_profiles.headshot_filename` for the same user is the identical name. So the W-9 slot
+almost certainly received a mis-upload rather than a signed W-9. Data issue, not code — but it
+is a 1099 input, so it wants fixing before tax season rather than during it. Worth a sweep of
+`payment_profiles.w9_filename` for other non-PDF entries at the same time.
+
+**VERIFIED GOOD, same walk:** the document preview modal renders correctly in both skins with a
+real W-9 PDF and a real headshot (Dallas, 2026-08-13). Unlike the rich text editor, this surface
+is properly built — every rule scoped under `html[data-app="admin-os"]` and using the adaptive
+tokens (`--bg-elev`, `--ink-1`, `--line-2`, `--shadow-pop`), so it follows the skin instead of
+fighting it. It is the model for what an admin overlay should look like.
+
+**METHOD FAILURE worth keeping (both of my 2026-08-13 fixes shipped broken and were corrected
+by a later session, `54fb77cb` and `fc5e6ca2`):**
+- The AttributionModal skip message went into `rowErrors`, keyed by a row that the post-submit
+  refresh REMOVES (a skipped accrual still saves the attribution), so it rendered nowhere and
+  the modal returned to claiming success over the same silent no-op.
+- The TimePicker `@media (pointer: coarse)` block was placed BEFORE an existing
+  `@media (max-width: 640px)` block that re-sets the same two properties at equal specificity,
+  so on a phone — coarse AND narrow, the exact target device — source order kept the old sizing.
+
+Both were "verified" by me as CI-build-green with the rules present in the compiled CSS.
+**Presence is not precedence, and a rule rendering is not a rule being reachable.** For a CSS
+fix, verify the cascade outcome at the target viewport/pointer, not that the selector exists in
+the bundle. For a UI message, verify it against the state AFTER the refresh that follows the
+action, not the state at the moment of writing.
