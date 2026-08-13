@@ -1604,3 +1604,32 @@ column; do not let that block the UI wiring.
 
 NOT A BUG, checked at the same time: the page showed no drink specs because drink plan 11 is
 `status: 'pending'` with `finalized_at` NULL. Specs are correctly gated on a finalized plan.
+
+### Added 2026-08-13 (found by Dallas on the real-phone walkthrough)
+
+**The quote wizard's TimePicker puts three sub-minimum tap targets in 48px, on the public
+lead-capture form.** Dallas, on a phone: "the drop down arrow and up and down arrows for start
+time are overlapping each other although both are functional, they don't look clean and can be
+annoying when you want to click on a specific arrow."
+
+Not literal overlap — crowding. Measured from `client/src/index.css:10527-10582`:
+`.time-picker-chevron` is `right: 1px; width: 24px` (full input height);
+`.time-picker-steppers` is `right: 26px; width: 22px` split into TWO stacked buttons, so each
+stepper is ~22px wide by HALF the input height (~19px). All three carry the same `#f9fafb`
+background and `#d1d5db` divider, so they read as one strip rather than three controls.
+
+**There is NO `@media` rule for `.time-picker` anywhere in the stylesheet** — the desktop
+geometry ships to phones unchanged. ~22x19px is under half the 44pt iOS / 48dp Android
+minimum in both dimensions.
+
+Surface: `client/src/components/TimePicker.js`, used by
+`client/src/pages/website/quoteWizard/steps/EventDetailsStep.js:60` — the PUBLIC quote wizard,
+the most phone-heavy surface in the product and the top of the lead funnel.
+
+FIX DIRECTION (recommended): drop the +/- steppers on narrow/touch viewports and let the
+chevron dropdown own the full 48px. The dropdown already lists every valid time between
+`minHour` and `maxHour`, so the steppers are a desktop convenience, not a capability — nothing
+is lost, and the remaining target becomes comfortably tappable. Alternatives considered: grow
+the targets under a media query (fights the input height), or swap to native
+`<input type="time">` on mobile (better native pickers, but loses the minHour/maxHour clamp
+the component enforces).
