@@ -24,6 +24,12 @@ server/utils/payroll*.js
 # (push-fleet 2026-08-07).
 server/routes/admin/payroll.js
 server/routes/staffPortal/payouts.js
+# Sensitivity follows the code (2026-08-13): the duty routes were split OUT of
+# payroll.js, taking the attribution write, the duty-line add/remove, and the
+# accrual re-derivation with them — so the file that actually moves duty money
+# was invisible to review-scaling while its emptied-out parent stayed listed.
+# Same gap shape as the drinkPlans and stripeWebhook splits documented below.
+server/routes/admin/payrollDuty.js
 
 # Staffing money seam: shift_requests.position resolution feeds the payroll tip
 # split (LOWER(position)='bartender'). shifts.approval.js resolves + writes it;

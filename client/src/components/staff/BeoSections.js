@@ -5,6 +5,10 @@ import {
   rosterCounts,
   CANONICAL_LABELS,
 } from '../../utils/staffingRoles';
+// Deliberately the admin editor's own option list, not a staff-side copy: it is
+// the single place equipment tokens and their labels are defined, and a second
+// copy is how the two sides start disagreeing about what "portable_bar" reads as.
+import { SHIFT_EQUIPMENT_OPTIONS } from '../adminos/shifts';
 
 /**
  * Body blocks for the staff Event Details page (spec 2026-07-22, which retired
@@ -194,6 +198,14 @@ export function GratuityTipsCard({ tipJar, gratuityPrepaid, staffNoun }) {
  * staffer needs this BEFORE requesting, because it decides whether they can
  * physically do the job (and it is what the request sheet makes them ack).
  */
+// Token -> human label, from the SAME list the admin editor writes with, so a
+// new equipment option can never be human-readable on one side and snake_case
+// on the other. Unknown tokens fall back to a de-underscored form rather than
+// vanishing: a staffer seeing "weird thing" beats a staffer seeing nothing.
+const EQUIPMENT_LABELS = new Map(SHIFT_EQUIPMENT_OPTIONS);
+const equipmentLabel = (token) =>
+  EQUIPMENT_LABELS.get(token) || String(token).replace(/_/g, ' ');
+
 export function EquipmentCard({ equipment, supplyRun }) {
   const list = safeParseArray(equipment);
   if (list.length === 0 && !supplyRun) return null;
@@ -208,7 +220,7 @@ export function EquipmentCard({ equipment, supplyRun }) {
           className="sp-row"
           style={{ padding: '0.4rem 0', fontSize: 13, borderBottom: '1px solid var(--sp-line-1)' }}
         >
-          {item}
+          {equipmentLabel(item)}
         </div>
       ))}
       {supplyRun && (

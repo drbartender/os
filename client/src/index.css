@@ -10582,6 +10582,31 @@ html[data-app="admin-os"] .time-picker .time-picker-input {
 .time-picker-chevron:hover:not(:disabled) { background: #f3f4f6; }
 .time-picker-chevron:disabled { color: #d1d5db; cursor: not-allowed; }
 
+/* TOUCH: the picker ships three controls inside 48px — a 24px chevron plus two
+   stacked steppers that are ~22px wide by HALF the input height each. On a
+   mouse that is fine; under a finger they are well under the 44pt/48dp minimum
+   and read as one crowded strip, so aiming at a specific arrow is a coin flip.
+   Found on a real phone on the PUBLIC quote wizard (2026-08-13), which is the
+   top of the lead funnel and the most phone-heavy surface we have.
+
+   Drop the steppers here and give the chevron the whole gutter. Nothing is
+   lost: the dropdown the chevron opens already lists every valid time between
+   minHour and maxHour, so +/- is a desktop convenience, not a capability.
+
+   `pointer: coarse` rather than a width breakpoint on purpose — the constraint
+   is the finger, not the viewport. A tablet in landscape has plenty of width
+   and exactly the same problem. */
+@media (pointer: coarse) {
+  .time-picker-steppers { display: none; }
+  .time-picker-chevron { width: 44px; font-size: 13px; }
+  /* Must clear the widened chevron (1px offset + 44px) or the time text runs
+     under it. Same double selector as the base rule, to beat .input shorthand. */
+  .time-picker-input,
+  html[data-app="admin-os"] .time-picker .time-picker-input {
+    padding-right: 52px;
+  }
+}
+
 .time-picker-dropdown {
   position: absolute;
   top: calc(100% + 2px);

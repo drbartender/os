@@ -79,9 +79,21 @@ export default function AttributionModal({ periodId, onDone, onCancel }) {
     for (const it of items) {
       if (aborted.current) return; // dismissed mid-run; caller already refreshed
       try {
-        await api.put('/admin/payroll/duty-attributions', {
+        const res = await api.put('/admin/payroll/duty-attributions', {
           proposal_id: it.proposal_id, kind: it.kind, user_id: picks[keyOf(it)],
         });
+        // The server answers 200 even when accrual refused, because the
+        // attribution row itself DID save — only the money line did not. Left
+        // unread, that reads as success and the modal closes on a no-op: Dallas
+        // retried one attribution 14 times on 2026-08-12 with nothing to tell
+        // him why (Sentry DRBARTENDER-SERVER-21). Surface it as a row error.
+        const accrual = res && res.data && res.data.accrual;
+        if (accrual && accrual.skipped) {
+          const status = accrual.pay_period_status;
+          errs[keyOf(it)] = accrual.reason === 'pay_period_not_open'
+            ? `Attribution saved, but no pay line was created: this pay period is ${status || 'closed'}, not open. Duty pay only accrues while a period is open.`
+            : `Attribution saved, but no pay line was created (${accrual.reason || 'accrual skipped'}).`;
+        }
       } catch (e) {
         errs[keyOf(it)] = e.message;
       }

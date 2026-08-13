@@ -1537,7 +1537,21 @@ Live evidence, Sentry `DRBARTENDER-SERVER-21` (substatus **escalating**): 14 occ
 Fourteen attempts is the tell — an admin re-trying because nothing told him why it did not
 take.
 
-FIX: option (c) only. Make the endpoint refuse loudly — a 409 with the period status and a
+**PARTIALLY FIXED 2026-08-13 (the silence, not the policy).** Root cause was more precise than
+this entry first said: the SERVER already answers honestly. `payrollDuty.js:335` returns 200
+with `accrual.skipped` and `accrual.reason` in the body, and `:333` even audit-logs
+`accrual_skipped`. The CLIENT threw it away — `AttributionModal.js` awaited the PUT, caught
+only thrown errors, and a 200 carrying `skipped: true` passed as success, so the modal closed
+on a no-op. Now read: a skipped accrual becomes a per-row error naming the period status
+("Attribution saved, but no pay line was created: this pay period is reopened, not open").
+A 200 stays correct because the attribution row genuinely DID save; only the money line did
+not, and the copy says exactly that. CI build exit 0.
+ALSO 2026-08-13: `server/routes/admin/payrollDuty.js` was NOT on `sensitive-paths.txt` — the
+duty routes were split out of `payroll.js` and took the money with them while the emptied
+parent kept the listing, so the file that moves duty money was invisible to review-scaling.
+Added; matcher test still 6/6.
+Remaining policy question, unchanged: whether accrual should ever accept `reopened`. Original
+fix direction: make the endpoint refuse loudly — a 409 with the period status and a
 plain-language reason ("this pay period is closed; duty pay only accrues in an open period"),
 surfaced in the UI. Do NOT make accrual accept `reopened`, and do NOT make Reopen return a
 period to `open`: both were considered and rejected 2026-08-12 because they would open a path
@@ -1577,30 +1591,32 @@ The flat-$50 hosted decision (Dallas 2026-08-07) is live and correct.
 
 ### Added 2026-08-13 (found by Dallas during the staff event-details walkthrough)
 
-**The staff event-details page throws away the equipment the server already sends it.**
-Dallas, walking shift 14 as a staffer: "doesn't say what equipment is needed."
+**RETRACTED, and replaced with the smaller real defect: the staff equipment card renders raw
+snake_case tokens.**
 
-The data reaches the client. `server/utils/eventDetailsPayload.js:162` selects
-`s.equipment_required, s.supply_run_required` and `server/routes/eventDetails.js:88` returns
-`equipment_required` in the payload. The staff UI never reads either one: the ONLY client
-references to `equipment_required` anywhere are in `client/src/pages/admin/EventsDashboard.js`,
-which is the admin editor that WRITES it. No staff component renders it.
+The original claim here — "the server sends `equipment_required` and the staff UI never reads
+it" — was WRONG. `EquipmentCard` exists (`client/src/components/staff/BeoSections.js:197`),
+is mounted at `client/src/pages/staff/ShiftDetail.js:576`, and receives
+`equipment={myShift?.equipment_required}` plus `supplyRun={...}`. It is wired end to end. It
+rendered nothing on shift 14 because that shift's `equipment_required` is `"[]"` — there was
+no equipment to show, and `EquipmentCard` correctly returns null when the list is empty and
+there is no supply run.
 
-This is the long-logged "Bucket 2 wirings: equipment picker — backend done, last-mile UI
-missing for `shifts.equipment_required`" item (open-threads, 2026-06-09), now confirmed on the
-surface where it actually costs something.
+The claim came from grepping the client for the literal string `equipment_required` and
+finding only the admin editor. It is passed as a prop named `equipment`, so the grep missed
+it. Same failure shape as the `--include=*.js` miss earlier the same day: searched one
+spelling, concluded absence.
 
-**Why it is worse than when it was logged:** duty pay shipped 2026-08-07 and pays staff
-specifically for equipment and supply handling — $20 `bar_rental`, $50 `hosted_supplies`. So
-the system now pays a bartender to bring and haul equipment, and the page that briefs them on
-the shift does not list what to bring. The money side and the information side disagree.
-
-FIX: render `equipment_required` (and decide about `supply_run_required`) in the staff event
-details. No server work — the payload already carries both. Check the shape first:
-`shifts.equipment_required` is TEXT holding a JSON array (shift 14 reads `"[]"`), and
-`EventsDashboard.js` parses it through `parseEquipmentArray`, so the staff side needs the same
-parse rather than a bare render. Note the tech-debt entry proposing TEXT -> JSONB for this
-column; do not let that block the UI wiring.
+THE REAL DEFECT, found while checking: `EquipmentCard` rendered `{item}` directly, so a
+staffer read the raw token. Three live PROD shifts carry `["portable_bar"]`, meaning three
+bartenders saw **`portable_bar`** on their shift briefing. The label map
+(`SHIFT_EQUIPMENT_OPTIONS`, `portable_bar` -> "Portable Bar") already existed but only the
+admin editor used it.
+FIXED 2026-08-13: `BeoSections.js` now imports `SHIFT_EQUIPMENT_OPTIONS` from the admin
+module — deliberately the same list rather than a staff-side copy — and maps each token
+through it, with an unknown token falling back to a de-underscored form so a future option
+degrades to "weird thing" rather than vanishing. CI build exit 0. Owed: an eyeball on one of
+the three affected shifts.
 
 NOT A BUG, checked at the same time: the page showed no drink specs because drink plan 11 is
 `status: 'pending'` with `finalized_at` NULL. Specs are correctly gated on a finalized plan.
@@ -1626,7 +1642,12 @@ Surface: `client/src/components/TimePicker.js`, used by
 `client/src/pages/website/quoteWizard/steps/EventDetailsStep.js:60` — the PUBLIC quote wizard,
 the most phone-heavy surface in the product and the top of the lead funnel.
 
-FIX DIRECTION (recommended): drop the +/- steppers on narrow/touch viewports and let the
+**FIXED 2026-08-13.** Dropped the +/- steppers under `@media (pointer: coarse)` and gave the
+chevron the whole 48px gutter (44px wide, input padding-right 52px to clear it). `pointer:
+coarse` rather than a width breakpoint on purpose: the constraint is the finger, not the
+viewport, and a landscape tablet has plenty of width and the same problem. CI build exit 0.
+Owed: an eyeball on a real phone.
+Original fix direction, for the record: drop the +/- steppers on narrow/touch viewports and let the
 chevron dropdown own the full 48px. The dropdown already lists every valid time between
 `minHour` and `maxHour`, so the steppers are a desktop convenience, not a capability — nothing
 is lost, and the remaining target becomes comfortably tappable. Alternatives considered: grow
