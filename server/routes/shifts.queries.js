@@ -17,6 +17,21 @@
 // per-role approved-active aggregate the staff card needs to compute per-role fill
 // (the staff feed does not return the full requests list, so it cannot count
 // client-side the way the admin drawer does).
+// The staffer-facing "you are hauling a bar" fact, matching the duty deriver's
+// money predicates EXACTLY (server/utils/dutyLines.js): a hosted (per_guest)
+// package carries the bar whenever the booking has one; BYOB only when the
+// client actually paid bar rental. Bare `num_bars > 0` is NOT enough — the
+// column DEFAULTS to 1, so 17 prod proposals carry a defaulted bar and no bar
+// money (schema.sql:2243 zeroes bar fees on exactly those packages).
+// ONE fragment, three queries (staff feed, request transport gate, event
+// details payload), so the ack, the card, and the duty pay can never disagree.
+// Reads pricing_snapshot inside the boolean only; no money field is returned.
+const barRequiredSql = (p, spk) =>
+  `(COALESCE(${p}.num_bars, 0) > 0 AND (
+      ${spk}.pricing_type = 'per_guest'
+      OR COALESCE((${p}.pricing_snapshot->'bar_rental'->>'total')::numeric, 0) > 0
+    ))`;
+
 const STAFF_OPEN_SHIFTS_SQL = `
   SELECT
     s.id, s.event_date, s.start_time, s.end_time, s.location, s.positions_needed,
@@ -34,7 +49,9 @@ const STAFF_OPEN_SHIFTS_SQL = `
     cov.cover_requested_at,
     cov.cover_for_first_initial,
     abr.approved_by_role,
-    spk.pricing_type AS package_pricing_type
+    spk.pricing_type AS package_pricing_type,
+    -- Derived, never stored (fix list 2026-08-13): see barRequiredSql above.
+    ${barRequiredSql('pp', 'spk')} AS bar_required
   FROM shifts s
   LEFT JOIN shift_requests sr ON sr.shift_id = s.id AND sr.user_id = $1
   LEFT JOIN drink_plans dp ON dp.proposal_id = s.proposal_id
@@ -102,4 +119,4 @@ const USER_EVENTS_SQL = `
   ORDER BY s.event_date DESC LIMIT 500
 `;
 
-module.exports = { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL };
+module.exports = { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL, barRequiredSql };

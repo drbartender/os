@@ -206,14 +206,25 @@ const EQUIPMENT_LABELS = new Map(SHIFT_EQUIPMENT_OPTIONS);
 const equipmentLabel = (token) =>
   EQUIPMENT_LABELS.get(token) || String(token).replace(/_/g, ' ');
 
-export function EquipmentCard({ equipment, supplyRun }) {
+export function EquipmentCard({ equipment, supplyRun, barRequired }) {
   const list = safeParseArray(equipment);
-  if (list.length === 0 && !supplyRun) return null;
+  if (list.length === 0 && !supplyRun && !barRequired) return null;
   return (
     <div className="sp-card tight">
       <div className="sp-card-head">
         <div className="sp-card-title">Equipment &amp; supplies</div>
       </div>
+      {/* Derived from the booking (proposals.num_bars), not from the hand-set
+          equipment list — the same fact that pays the bar_rental duty. Shifts
+          used to show nothing here while paying the duty (fix list 2026-08-13). */}
+      {barRequired && (
+        <div
+          className="sp-row"
+          style={{ padding: '0.4rem 0', fontSize: 13, borderBottom: '1px solid var(--sp-line-1)', fontWeight: 600 }}
+        >
+          Portable bar — DRB bar pickup at the Pilsen storage unit, or bring your own
+        </div>
+      )}
       {list.map((item, i) => (
         <div
           key={`${item}-${i}`}
@@ -228,10 +239,14 @@ export function EquipmentCard({ equipment, supplyRun }) {
           Supply run required for this event.
         </div>
       )}
+      {/* "Brought empty" is load-bearing copy (Dallas 2026-08-13): the old
+          phrasing read as if beer and ice came WITH the kit. The case/bag
+          figures describe what the cooler can HOLD, not what you bring. */}
       <div style={{ fontSize: 12, color: 'var(--sp-ink-3)', marginTop: 6, lineHeight: 1.55 }}>
-        Your standard bar kit includes a small handled cooler (about 3 cases of beer plus
-        ice, or two 20 lb bags). Bar mats, ice bins, and the tip jar ride inside it. Bring
-        it even when the client has coolers of their own.
+        Your standard bar kit includes a small handled cooler, brought empty — ice and beer
+        are not part of the kit. It should be big enough to hold about 3 cases of beer plus
+        ice, or two 20 lb ice bags. Bar mats, ice bins, and the tip jar ride inside it.
+        Bring it even when the client has coolers of their own.
       </div>
     </div>
   );

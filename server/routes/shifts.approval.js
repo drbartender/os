@@ -18,6 +18,7 @@ const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const { subtractMinutesFromTime } = require('../utils/setupTime');
 const { ValidationError, NotFoundError } = require('../utils/errors');
+const { barRequiredSql } = require('./shifts.queries');
 const { ADMIN_URL } = require('../utils/urls');
 const { scheduleStaffShiftMessages } = require('../utils/staffShiftHandlers');
 const { confirmStaffingIfFullyStaffed } = require('../utils/lastMinuteStaffingConfirmation');
@@ -54,9 +55,22 @@ function parseEquipment(raw) {
   return arr.filter((t) => typeof t === 'string');
 }
 
-/** A shift requires transport when it lists equipment OR needs a supply run. */
+/** A shift requires transport when it lists equipment, needs a supply run, OR
+ *  the BOOKING brings a bar (`bar_required`, computed in SQL by
+ *  `barRequiredSql` from shifts.queries.js — hosted packages with a bar, or
+ *  BYOB with paid bar rental; bare `num_bars > 0` over-claims because the
+ *  column defaults to 1). Derived at read, never prefilled into
+ *  `equipment_required`: the hand-set field stays the admin's, and this fact
+ *  must track the proposal (fix list 2026-08-13 — staff were being PAID the
+ *  bar_rental duty while requesting shifts that showed no bar). Manual shifts
+ *  have no proposal → bar arm false → unchanged.
+ *  Client mirror: `requiresTransport` in components/staff/RequestSheet.js —
+ *  keep the two in agreement or the server 400s a request the sheet never
+ *  gated. */
 function shiftRequiresTransport(shift) {
-  return parseEquipment(shift.equipment_required).length > 0 || shift.supply_run_required === true;
+  return parseEquipment(shift.equipment_required).length > 0
+    || shift.supply_run_required === true
+    || shift.bar_required === true;
 }
 
 /** Parse a shift_requests.requested_positions TEXT column to canonical roles. */
@@ -88,12 +102,15 @@ async function requestShiftHandler(req, res) {
   const shiftRes = await pool.query(
     `SELECT s.id, s.positions_needed, s.equipment_required, s.supply_run_required,
             s.event_type, s.event_type_custom, s.event_date, s.proposal_id,
+            ${barRequiredSql('p', 'spk')} AS bar_required,
             (SELECT COALESCE(jsonb_object_agg(position, c), '{}'::jsonb)
                FROM (SELECT position, COUNT(*) c FROM shift_requests
                       WHERE shift_id = s.id AND status = 'approved' AND dropped_at IS NULL
                         AND position IS NOT NULL
                       GROUP BY position) g) AS approved_by_role
        FROM shifts s
+       LEFT JOIN proposals p ON p.id = s.proposal_id
+       LEFT JOIN service_packages spk ON spk.id = p.package_id
       WHERE s.id = $1 AND s.status = 'open'`,
     [req.params.id]
   );

@@ -253,23 +253,29 @@ export default function RequestSheet({ open, shift, busy = false, onClose, onSub
 }
 
 /**
- * The shift requires transport when it lists any equipment OR a supply run is
- * flagged. Mirrors the server's shiftRequiresTransport so the client gate and
- * the server gate agree.
+ * The shift requires transport when it lists any equipment, a supply run is
+ * flagged, OR the booking includes a bar (`bar_required`, derived server-side
+ * from `proposals.num_bars`). Mirrors the server's shiftRequiresTransport so
+ * the client gate and the server gate agree — if they drift, the server 400s
+ * a request this sheet never asked about.
  */
 function requiresTransport(shift) {
   if (!shift) return false;
   const equip = parseEquipment(shift.equipment_required);
-  return equip.length > 0 || shift.supply_run_required === true;
+  return equip.length > 0 || shift.supply_run_required === true || shift.bar_required === true;
 }
 
 function transportLine(shift) {
-  const equip = parseEquipment(shift.equipment_required);
-  const hasEquip = equip.length > 0;
-  const hasSupplies = shift?.supply_run_required === true;
-  if (hasEquip && hasSupplies) return 'This event needs equipment hauled and a supply run.';
-  if (hasEquip) return 'This event needs equipment hauled.';
-  return 'This event needs a supply run.';
+  const parts = [];
+  // Bar first: it is the heaviest haul and the one staff most need to plan for
+  // (DRB bar pickup at the Pilsen storage unit, or bring your own).
+  if (shift?.bar_required === true) parts.push('a portable bar (DRB pickup or bring your own)');
+  if (parseEquipment(shift?.equipment_required).length > 0) parts.push('equipment hauled');
+  if (shift?.supply_run_required === true) parts.push('a supply run');
+  if (parts.length === 0) return '';
+  const list = parts.length === 1 ? parts[0]
+    : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `This event needs ${list}.`;
 }
 
 function parseEquipment(raw) {

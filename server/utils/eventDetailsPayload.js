@@ -26,6 +26,7 @@
 const { pool } = require('../db');
 const { NotFoundError } = require('./errors');
 const { computeDisplayName } = require('./staffDisplayName');
+const { barRequiredSql } = require('../routes/shifts.queries');
 
 /**
  * Read auth for any event-details surface. Throws NotFoundError when the
@@ -64,6 +65,7 @@ async function buildEventDetailsPayload(req, proposalId) {
             p.event_duration_hours, p.event_timezone, p.event_location, p.guest_count,
             p.venue_street, p.venue_city, p.venue_state, p.venue_zip,
             p.num_bars, p.num_bartenders, p.setup_minutes_before, p.status,
+            ${barRequiredSql('p', 'sp')} AS bar_required,
             p.balance_due_date, p.client_id,
             p.tip_jar, p.gratuity_rate, (p.pricing_snapshot->>'staff_noun') AS staff_noun,
             p.menu_print_key, p.menu_not_required,
@@ -288,6 +290,10 @@ async function buildEventDetailsPayload(req, proposalId) {
       venue_zip: p.venue_zip,
       guest_count: p.guest_count,
       num_bars: p.num_bars,
+      // Server-computed "a bar comes to this event" (barRequiredSql — the duty
+      // deriver's money predicates), so the client never re-derives it and the
+      // request ack, the equipment card, and duty pay stay one fact.
+      bar_required: p.bar_required === true,
       num_bartenders: p.num_bartenders,
       setup_minutes_before: p.setup_minutes_before,
       // Gratuity / tip jar (§9) — crew-facing, NOT gated on funding. Defaults

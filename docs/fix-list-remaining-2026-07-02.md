@@ -2317,9 +2317,22 @@ a single text to the 1922 closes it (now in walkthroughs-owed).
   `shifts.equipment_required` is `'[]'` on both. Yet BOTH shifts paid him the $20
   `bar_rental` duty, derived from the booking (`num_bars > 0` + snapshot bar_rental total).
   So the system knows a bar is coming for PAY purposes while the staffer-facing equipment
-  list stays empty unless an admin hand-sets it. Decision then a small build: prefill or
-  derive `portable_bar` onto the shift when `num_bars > 0` (write-once prefill at shift
-  creation is probably right; a live derivation would fight admin hand-edits).
+  list stays empty unless an admin hand-sets it.
+  **FIXED 2026-08-13 — derive-at-read won, not prefill** (a prefill snapshots a booking fact
+  that can change; derivation tracks the proposal and fixed every existing shift instantly).
+  One shared SQL fragment, `barRequiredSql` in `shifts.queries.js`, matching the duty
+  deriver's MONEY predicates exactly — hosted (per_guest) with `num_bars > 0`, or BYOB with
+  `num_bars > 0` AND snapshot bar-rental money — because bare `num_bars > 0` over-claims
+  (the column DEFAULTS to 1; 17 prod proposals carry a defaulted bar and no bar money; the
+  first draft used it and correctly broke four bare-request tests). Consumed by the staff
+  feed, the request transport gate (`shiftRequiresTransport` + RequestSheet mirror, so
+  staff must ACKNOWLEDGE the bar before requesting), and the event-details payload
+  (EquipmentCard renders "Portable bar — DRB pickup at Pilsen, or bring your own").
+  Cooler copy fixed at the same time (Dallas: kit includes an EMPTY cooler — ice and beer
+  are not part of it): EquipmentCard note + FieldGuide standard-kit list (which had no
+  cooler line at all). Suites: approval 30/30 incl. a new booked-bar-alone ack test,
+  beo 29/29, eventDetails 17/17, CI build green. `shifts.approval.js` is a sensitive path
+  → full fleet at push.
 - **NA beer copy law extended (Dallas 2026-08-13): name the BRAND only, never varieties.**
   "Upside Dawn / Free Wave" removed everywhere; prod UPDATEd directly, schema seed + both
   guarded UPDATEs aligned, converging IN() guard added. Athletic's lineup changes; variety

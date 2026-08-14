@@ -228,6 +228,12 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       item). The three shifts that actually carry `["portable_bar"]` are 368 (kpduffy),
       347 (loryn), 366 (jaszyjay) — all past events, other staffers. Verify via one of
       their views, or on dev by setting equipment on a fixture shift.
+- [ ] **Bar-required transport ack + card (built 2026-08-13, unseen).** On dev
+      (`staff.localhost:3000`, marcus.j): open shift 14 (Sean Parent) — the Equipment card
+      must lead with "Portable bar — DRB bar pickup at the Pilsen storage unit, or bring
+      your own", and hitting Request on any bar-carrying open shift must demand the
+      transport acknowledgment naming the bar. Also read the corrected cooler copy (brought
+      EMPTY) on the card and in the FieldGuide kit list.
 - [ ] **Shopping-list guest-count prompt in House Lights.** `ShoppingListButton.jsx`'s modal
       was the panel my `--include=*.js` sweep missed and was patched with `.modal-card`
       AFTER the other eleven were confirmed — it has never been seen. Open a drink plan in

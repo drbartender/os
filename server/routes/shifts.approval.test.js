@@ -191,6 +191,43 @@ test('request: actionable open slot -> 201, pending, position NULL, no waitlist 
   assert.deepEqual(JSON.parse(row.rows[0].requested_positions), ['Bartender']);
 });
 
+test('request: a BOOKED BAR alone (num_bars > 0, no hand-set equipment) requires the ack', async () => {
+  // The bar arm is derived from the proposal at read time, never prefilled into
+  // equipment_required (fix list 2026-08-13: staff were paid the bar_rental
+  // duty off num_bars while the request flow showed no transport at all). A
+  // second proposal keeps num_bars off the shared fixture, whose other tests
+  // pin the bare no-ack 201.
+  // num_bars alone is NOT enough (the column defaults to 1): the predicate also
+  // wants BYOB bar-rental money in the snapshot, or a hosted package. Seed the
+  // BYOB arm the way a real paid bar looks.
+  const p2 = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, event_start_time, event_duration_hours, event_timezone, status, event_type, num_bars, pricing_snapshot)
+     VALUES ($1, CURRENT_DATE + 12, '18:00', 4, 'America/Chicago', 'confirmed', 'birthday-party', 1,
+             '{"bar_rental": {"total": 50}}'::jsonb) RETURNING id`,
+    [clientId]
+  );
+  const barProposalId = p2.rows[0].id;
+  const s = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, end_time, status, proposal_id, location, client_name,
+                         positions_needed, equipment_required, supply_run_required)
+     VALUES (CURRENT_DATE + 12, '18:00', '22:00', 'open', $1, '123 Main', $2, $3::jsonb, '[]', false) RETURNING id`,
+    [barProposalId, `Approval Bar Test ${NONCE}`, JSON.stringify(['Bartender'])]
+  );
+  const shiftId = s.rows[0].id;
+  try {
+    const noAck = await req('POST', `/api/shifts/${shiftId}/request`, { token: s1Token, body: { requested_positions: ['Bartender'] } });
+    assert.equal(noAck.status, 400, 'a booked bar with an empty equipment list must still gate on the ack');
+
+    const withAck = await req('POST', `/api/shifts/${shiftId}/request`, { token: s1Token, body: { requested_positions: ['Bartender'], transport_acknowledged: true } });
+    assert.equal(withAck.status, 201, JSON.stringify(withAck.body));
+  } finally {
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [shiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+    await pool.query('DELETE FROM proposal_activity_log WHERE proposal_id = $1', [barProposalId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [barProposalId]);
+  }
+});
+
 test('request: transport-required shift rejects without ack, accepts with ack', async () => {
   const shiftId = await mkShift({ positions: ['Bartender'], equipment: '["portable_bar"]' });
   const noAck = await req('POST', `/api/shifts/${shiftId}/request`, { token: s1Token, body: { requested_positions: ['Bartender'] } });

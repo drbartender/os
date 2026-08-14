@@ -260,8 +260,10 @@ export default function ShiftDetail() {
   });
 
   // A row shaped like an open-shifts feed row, for RequestSheet. It reads
-  // positions/equipment/supply-run off the shift and the hosted flag off the
-  // package, which is exactly what the sheet's warnings gate on.
+  // positions/equipment/supply-run off the shift, the hosted flag off the
+  // package, and the bar flag off the PROPOSAL (num_bars — same derivation as
+  // the feed's bar_required and the server's transport gate; this page is
+  // single-proposal so the top-level value applies to every shift row).
   const requestSheetShift = useMemo(() => {
     if (!myShift) return null;
     return {
@@ -270,10 +272,11 @@ export default function ShiftDetail() {
       approved_by_role: myShift.approved_by_role,
       equipment_required: myShift.equipment_required,
       supply_run_required: myShift.supply_run_required,
+      bar_required: proposal?.bar_required === true,
       my_requested_positions: myShift.my_requested_positions,
       package_pricing_type: pkg?.pricing_type || null,
     };
-  }, [myShift, pkg?.pricing_type]);
+  }, [myShift, pkg?.pricing_type, proposal?.bar_required]);
 
   // ── Confirm action ───────────────────────────────────────────────────
 
@@ -576,6 +579,7 @@ export default function ShiftDetail() {
       <EquipmentCard
         equipment={myShift?.equipment_required}
         supplyRun={myShift?.supply_run_required === true}
+        barRequired={proposal?.bar_required === true}
       />
       <RolesCard
         positionsNeeded={myShift?.positions_needed}
