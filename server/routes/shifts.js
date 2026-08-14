@@ -8,6 +8,7 @@ const { ValidationError, NotFoundError, PermissionError, ConflictError } = requi
 const { findOrCreateClient } = require('../utils/clientDedup');
 const { suppressBeoNudgesForStaffers } = require('../utils/beoHandlers');
 const { logAdminAction } = require('../utils/adminAuditLog');
+const { chicagoTodayYmd } = require('../utils/businessTime');
 // Out-of-Area Bonus: bands, distances, lock lifecycle, duty re-derivation.
 // The bands are server-only by design (spec §6 published-ambiguity rule), so
 // the payloads below carry derived cents and the client never computes one.
@@ -220,7 +221,15 @@ router.get('/user/:userId/events', auth, asyncHandler(async (req, res) => {
   // for deep-linking each past row into a payout breakdown.
   const result = await pool.query(USER_EVENTS_SQL, [userId]);
 
-  const today = new Date().toISOString().slice(0, 10);
+  // "Today" is the CHICAGO business day, not the server's UTC day. Render runs
+  // UTC, so new Date().toISOString().slice(0,10) rolled over at 7pm Chicago and
+  // bucketed a shift starting in 30 minutes as PAST.
+  const today = chicagoTodayYmd();
+  // event_date is a bare SQL DATE (schema.sql:306), which pg builds at LOCAL
+  // midnight — toISOString() recovers the same calendar day on any machine at
+  // or west of UTC (Render is UTC, the dev box is Chicago), so this stays
+  // correct. It would shift a day early only on a process timezone EAST of UTC,
+  // which this deployment never runs; deliberately left alone here.
   const getDateStr = (d) => {
     if (!d) return null;
     if (typeof d === 'string') return d.slice(0, 10);

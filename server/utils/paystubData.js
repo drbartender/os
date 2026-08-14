@@ -11,10 +11,18 @@
 // NOT enforce caller identity.
 
 const { pool } = require('../db');
+const { chicagoYmdOf } = require('./businessTime');
 
 // pg returns DATE columns as JS Date objects; normalize to YYYY-MM-DD so the
 // renderer never has to second-guess the format. Mirrors ymd() in
 // server/routes/staffPortal/payouts.js.
+//
+// DATE COLUMNS ONLY. A SQL DATE carries no zone, so pg builds it at LOCAL
+// midnight and toISOString() recovers the same calendar day on any machine at
+// or west of UTC (Render is UTC, the dev box is Chicago). A TIMESTAMPTZ is a
+// true instant and must NOT come through here — toISOString() would render its
+// GMT day, one day late for any Chicago evening. Use chicagoYmdOf() for those
+// (see the paid_at call site below, and proposals/cancel.js:511).
 function ymd(d) {
   if (!d) return null;
   if (d instanceof Date) return d.toISOString().slice(0, 10);
@@ -144,7 +152,12 @@ async function assemblePaystubData(contractorId, periodId) {
     // payment_handle is intentionally omitted — it is PII (can hold bank hints
     // for direct_deposit) and the list/detail endpoints omit it too. Showing the
     // method on the paystub is enough; the staffer knows their own handle.
-    paid: { at: ymd(h.paid_at), method: h.payment_method },
+    // paid_at is a TIMESTAMPTZ (schema.sql:3112) written by NOW() at mark-paid,
+    // i.e. a true instant — NOT a bare DATE like start_date/end_date/payday
+    // above. ymd()'s toISOString() reads the GMT day, so a payout marked paid
+    // at 8:30pm Chicago printed the NEXT day on the stub. Same trap, same fix
+    // as proposals/cancel.js:511.
+    paid: { at: h.paid_at ? chicagoYmdOf(h.paid_at) : null, method: h.payment_method },
     events: ev.rows.map((r) => ({
       event_date: ymd(r.event_date),
       client_name: r.client_name || null,
