@@ -2858,6 +2858,46 @@ The stale-response race in ProposalsDashboard (codex) was fixed at the gate. The
   error strings, and the version-frozen `contractorAgreement.js` (punctuation edits
   to a signed document mean a v4, never a sweep).
 
+# SESSION WRAP 2026-08-14 — read this first if you are picking the work back up
+
+**NOTHING IS PUSHED.** Everything below is on LOCAL main or in a lane. `origin/main` is
+untouched, so a push carries all of it at once and needs the full gate.
+
+**Merged to local main, reviewed clean:**
+- `3155625c` lane `drop-email-enabled` — `communication_preferences.email_enabled` removed
+  (Dallas: "drop"). 3/3 lenses PASS, incl. a campaign-audience compliance lens that re-derived
+  the truth tables and confirmed the 12 live opt-outs still bucket via `marketing_enabled`.
+- `d2380803` lane `date-trap-live-fixes` — two LIVE prod bugs: the paystub paid date (UTC day
+  off a TIMESTAMPTZ, wrong on 9 of 25 issued stubs) and staff shifts bucketing 'past' at 19:00
+  Chicago on the day of the event. 3/3 PASS, tests fail-before/pass-after at TZ=UTC AND Chicago.
+
+**Prod data changed by hand this session** (all recorded inline above with before-values):
+user 61 preferred_name/display_name -> "Taylor Hogan" / "Taylor H."; user 31 deactivated
+(fired, notice deliberately suppressed, audit rows written with `via=manual_sql_offboarding`).
+
+**Open lanes — none merged, all hold real work:**
+| lane | HEAD | state |
+|---|---|---|
+| `shift-lifecycle` | (building) | THE re-cut, per spec `0b54f138`. Supersedes the two below. |
+| `shift-closure` | `b8512e15` | 3 rounds, 2 FAILs outstanding. Superseded; keep until the re-cut merges. |
+| `current-date-shift-visibility` | `18768c72` | 2 rounds, P0 outstanding. Superseded; keep until the re-cut merges. |
+| `admin-os-legacy-palette` | `0fc3b26f` | **CSS half PASSED 3/3 and is mergeable.** The bundled CSS checker failed fuzzing twice: now warn-only (cannot block) but reports GREEN on real leaks (`input[type="text"]`, `p:not(.class)`, and a parse desync that silently drops to 0 rules checked). STANDING CALL: if one more round does not clear it, DROP the checker and merge the stylesheet alone. |
+| `misquote-qualifier` | `0d4ee8fb` | Review-clean. Owes `publicOptions.test.js` (DB-backed, run serially). |
+| `wave2-residuals` | `cafc5751` | Review-clean. Owes 5 DB-backed suites. |
+| `mkt-perf` | `b410d374` | FAILED review. Font preload lands in the ONE index.html served to every host, so admin/staff would pull 173 KB of marketing fonts. Needs rework. |
+
+Do NOT scrap `shift-closure` or `current-date-shift-visibility` without Dallas's okay:
+`git log main..<branch>` is non-empty on both. The re-cut lane is salvaging their tests.
+
+**Owed by a human, not by Claude:**
+- The admin two-skin eyeball on House Lights. No browser has been run in ANY of this work; every
+  contrast figure is arithmetic on token values. The lane produced a screen-by-screen list.
+- POST-DEPLOY ONLY: clear `paystub_storage_key` on the 9 wrong paystubs so they re-render.
+  Doing it BEFORE the fix deploys just re-renders the same wrong date.
+
+**Still undecided:** nothing blocking. The shift-lifecycle design question was resolved
+("your call" -> end-instant re-cut, spec `0b54f138`).
+
 # Decisions landed 2026-08-14
 
 - **The 312 in staff auto-replies STAYS (Dallas: "312 is still being used").** The
