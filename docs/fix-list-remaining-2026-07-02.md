@@ -2328,3 +2328,52 @@ a single text to the 1922 closes it (now in walkthroughs-owed).
   answered with the freeform staff auto-reply. That reply also live-demonstrated the
   `smsInbound.js:9` 312-handout item above: the automated line told Dallas to contact
   Dallas at the 312. Phone-1a cutover is now fully verified, voice and messaging.
+
+
+# Added 2026-08-13 (marketing phases 1+2 push-gate, non-blocking findings)
+
+The HIGH (compose resume dying at unmount) and two MEDIUMs (fieldErrors never rendered,
+Sent placeholder naming the wrong phase) were fixed at the gate before the push. These are
+the LOWs that rode to this list instead:
+
+- **Campaign archive doesn't guard against mid-send** (`emailMarketing/campaigns.js:207`):
+  DELETE archives unconditionally, including a campaign whose run is in flight. The run
+  keeps mailing (per-recipient claims still arbitrate, so no duplicates), but the release
+  UPDATE matches nothing and the campaign strands archived with a claim-stamp `sent_at`.
+  Guard the archive on `status <> 'sending'`.
+- **CSV lead import: one bad row poisons the transaction and the response lies**
+  (`emailMarketing/leads.js:130-166`, pre-existing, carried through the file split): the
+  per-row catch sits inside one transaction, so a genuine row error aborts it, every later
+  row fails 25P02, COMMIT silently rolls back, and the response still reports
+  `imported > 0`. Same block echoes raw Postgres error text (constraint/column names) to
+  the admin. Per-row savepoints or batch-validate first.
+- **CommandPalette offers Marketing to managers** (`CommandPalette.js:148`): the palette
+  has no role filter, so a manager picking Marketing is bounced home by adminStrict.
+  Mirror the Sidebar's `adminOnly` filtering.
+- **Sequence drip can miss single-row lead suppression on case-variant twins**
+  (`emailSequenceScheduler.js:72-87`): `email_leads` is unique on RAW email, so
+  case-variant rows for one address coexist; the Resend webhook flips exactly one row by
+  `lead_id`, and the drip gates only on its own row's `status='active'` while campaigns
+  suppress by normalized address. Narrow (the unsubscribe POST flips all rows by address);
+  gate the drip through the shared `leadUnsubscribedByEmail` to close it.
+- **`marketingAudience.js:18-24` sender registry says THREE senders; there are FOUR.**
+  The designer test send became a gated sender in this batch. The registry comment is what
+  a future "audit all senders" pass reads; add the fourth entry.
+- **Send loop trusts mailability resolved at run start** (`marketingSend.js:235`, codex):
+  a contact who unsubscribes mid-run (a multi-minute window at 600ms pacing) is still
+  mailed. The per-recipient claim moment could re-check the two shared suppression
+  helpers cheaply.
+- **Sent-but-recorded-failed duplicate seam** (`marketingSend.js:336-359`, codex): a
+  successful Resend call followed by a transient failure of the `status='sent'` UPDATE
+  lands in the catch and marks the row `'failed'`; a later retry reclaims and re-sends
+  that one recipient. Needs a single-query DB blip, so rare, and at-least-once is the
+  deliberate lean here; a targeted fix is separating send-success bookkeeping failures
+  from send failures.
+- **`schema.sql:1634-1637` re-creates the email_sends CHECK every boot**: the DROP+ADD
+  pair replays per deploy (ACCESS EXCLUSIVE + validation scan). Fine at current table
+  size; convert to a guarded DO block when email_sends grows.
+- **Deploy-mid-send is recoverable but reads wrong** (`server/index.js:762` +
+  `marketingSend.js`): SIGTERM's 15s hard-exit can kill an in-flight blast; claims protect
+  everyone mailed and the campaign unlocks after the 15-min stale window, but the UI toast
+  says "The send failed." for a half-completed run and retry 409s until the window lapses.
+  Operational rule meanwhile: don't push to prod while a campaign is sending.
