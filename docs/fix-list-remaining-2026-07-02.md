@@ -994,14 +994,37 @@ merged code 2026-08-04):
 ## 8/06 push aftermath (display-name + seniority batch shipped 677baf95)
 
 - `sanitizeProfile` `preferred_name_reviewed_at` item ABOVE is DONE (shipped in gate-fixes-0805). (done)
-- Prod data hygiene: two probable duplicate-person pairs share a phone AND a name —
+- ~~Prod data hygiene: two probable duplicate-person pairs share a phone AND a name —
   users 39/40 ("Felicia", 40 has the trailing-space variant, 219-804-3426) and 51/62
   ("Adelle", two emails, 312-371-6554). The smsInbound shared-number tiebreak between each
   pair was a literal updated_at TIE pre-backfill (already arbitrary); 40 now wins its pair
-  (trim stamp). Real fix is a human merge/deactivate of the dupes, not code. (med, ops)
+  (trim stamp). Real fix is a human merge/deactivate of the dupes, not code. (med, ops)~~
+  **LARGELY STALE — re-verified against PROD 2026-08-14.** The dedupe already happened:
+  in BOTH pairs the second row is `onboarding_status='deactivated'` (40 and 62, both stamped
+  2026-08-06) and the first is `hired` (39 and 51). And the tiebreak worry is moot by
+  construction, not by luck: `findStaffCandidatesByPhone` (`smsInbound.js:188`) and its
+  sibling at `:156` both exclude `deactivated/rejected/suspended`, so each number now
+  resolves to exactly ONE candidate and the `ORDER BY cp.updated_at DESC` never arbitrates.
+  Note the deactivated rows carry the LATER `updated_at`, so without that exclusion the
+  dead account would have won both pairs; the block-list is load-bearing here, not cosmetic.
+  Neither pair has any `shift_requests`, so there is no work history to merge.
+  **The one real residual:** the good data is split across the Adelle pair. Live 51 holds
+  `hire_date` 2025-06-26 and `historical_events_worked=2` but `can_staff=false`; dead 62
+  holds `can_staff=true` and no hire_date. If Adelle is meant to be staffable, that flag
+  belongs on 51. One-row fix, but it is a roster/permission call, not a cleanup.
 - Backfill hand-fix names (script report, informational): users 15 "Ariel D. Smith",
   31 "Nicholas or Nick", 61 "Miss Taylor", 62 "Adelle M. Reynolds" — malformed preferred
   names to settle with the humans; users 1/61/62/237 have no legal name on file. (ops)
+  **TRIAGED against PROD 2026-08-14 — only TWO of these are live, and one of them is
+  visible to everyone today.** 61 "Miss Taylor" is `hired`, `can_staff=true`, hire_date
+  2025-10-24, 3 historical events, and renders as **"Miss T."** on every roster, BEO and
+  staff-facing surface that reads display_name. That is the one costing something. 31
+  "Nicholas or Nick" is `hired` but has zero shift requests and no hire_date, and renders
+  "Nicholas or Nick D."; it reads like someone hedging the "what do you go by" field.
+  Dead and therefore not worth a human's time: 15 (deactivated) and 62 (deactivated).
+  237 is NOT a malformed name at all, it is an import placeholder
+  (`import_source='payment_history_import'`, `@imported.invalid` email, `pre_hired`,
+  `in_progress`) and belongs with the import backlog, not here.
 - ~~`toYmd` in applySeniorityBackfill/generateSeniorityMapping assumes UTC-or-negative offset
   (`toISOString().slice(0,10)` on a local-midnight Date shifts a day on UTC+X boxes). Fails
   CLOSED (false PARTIAL, exit 1), never corrupts. Fine on Chicago box + Render/UTC.~~
