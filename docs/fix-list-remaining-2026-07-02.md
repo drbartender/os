@@ -1015,16 +1015,42 @@ merged code 2026-08-04):
 - Backfill hand-fix names (script report, informational): users 15 "Ariel D. Smith",
   31 "Nicholas or Nick", 61 "Miss Taylor", 62 "Adelle M. Reynolds" — malformed preferred
   names to settle with the humans; users 1/61/62/237 have no legal name on file. (ops)
-  **TRIAGED against PROD 2026-08-14 — only TWO of these are live, and one of them is
-  visible to everyone today.** 61 "Miss Taylor" is `hired`, `can_staff=true`, hire_date
-  2025-10-24, 3 historical events, and renders as **"Miss T."** on every roster, BEO and
-  staff-facing surface that reads display_name. That is the one costing something. 31
-  "Nicholas or Nick" is `hired` but has zero shift requests and no hire_date, and renders
-  "Nicholas or Nick D."; it reads like someone hedging the "what do you go by" field.
-  Dead and therefore not worth a human's time: 15 (deactivated) and 62 (deactivated).
-  237 is NOT a malformed name at all, it is an import placeholder
-  (`import_source='payment_history_import'`, `@imported.invalid` email, `pre_hired`,
-  `in_progress`) and belongs with the import backlog, not here.
+  **TRIAGED + LARGELY SETTLED against PROD 2026-08-14.** Only two of the five were live,
+  and only two rows in the whole table rendered a bad display name.
+  - **61 — FIXED IN PROD 2026-08-14 (Dallas supplied the name: "Taylor Hogan").** She is
+    `hired`, `can_staff=true`, hire_date 2025-10-24, 3 events worked, and was rendering as
+    **"Miss T."** on every roster, BEO and staff surface that reads `display_name`. She has
+    NO legal name anywhere (no `agreements` row, no `applications` row), so
+    `computeDisplayName` takes the `initialSource='preferred'` fallback and draws the
+    initial from the preferred name's own last token. Set `preferred_name='Taylor Hogan'`,
+    `display_name='Taylor H.'`, `preferred_name_reviewed_at=NOW()` (stamped, NOT cleared:
+    the owner just blessed this name, so re-raising the §3.5 notice would be a lie), guarded
+    with `IS DISTINCT FROM`. Her phone is unique in the table, so the `updated_at` trigger
+    stamp cannot re-aim any smsInbound tiebreak. Old value banked here for reversibility:
+    `preferred_name='Miss Taylor'`, `display_name='Miss T.'`, reviewed_at 2026-08-06.
+  - **31 — the last bad display name in prod, still OPEN.** `hired`, but zero shift
+    requests and no hire_date. `preferred_name='Nicholas or Nick'` renders
+    **"Nicholas or Nick D."**. Unlike 61 he DOES have a legal name on his signed
+    agreement, "Nicholas George DiCristina", so the initial is already correct and the only
+    defect is the hedged preferred name. Setting `preferred_name='Nick'` yields "Nick D."
+    (hand-traced through `computeDisplayName`). Needs Dallas's word, since it is a person's
+    name.
+  - **15 and 62 are NOT broken and need nothing.** Both are `deactivated`, and both already
+    render correctly anyway ("Ariel D. Smith" -> "Ariel S.", "Adelle M. Reynolds" ->
+    "Adelle R."): the middle-initial pop and the legal-surname pop both did their job. They
+    were flagged for having over-long *stored* values, not bad output.
+  - **237 is not a name problem at all.** It is an import placeholder
+    (`import_source='payment_history_import'`, `@imported.invalid` email, `pre_hired`,
+    `in_progress`) and belongs with the import backlog.
+
+  **Class check, so this does not come back:** a prod sweep for title-prefixed or 3+ word
+  preferred names returns exactly the rows above. Taylor was the ONLY title-prefixed row in
+  the table, and after her fix user 31 is the only remaining bad `display_name` in prod.
+  Worth knowing why she survived: `validatePreferredName` rejects a leading title and caps
+  at two words, but `computeDisplayName` never STRIPS one, and the change-validator
+  deliberately grandfathers an unchanged legacy value so nobody is locked out of editing
+  their own phone. So pre-validator rows keep their titles forever unless an admin settles
+  them by hand. That is working as designed, but it means the fix is always ops, never code.
 - ~~`toYmd` in applySeniorityBackfill/generateSeniorityMapping assumes UTC-or-negative offset
   (`toISOString().slice(0,10)` on a local-midnight Date shifts a day on UTC+X boxes). Fails
   CLOSED (false PARTIAL, exit 1), never corrupts. Fine on Chicago box + Render/UTC.~~
