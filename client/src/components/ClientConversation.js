@@ -13,6 +13,15 @@ export default function ClientConversation({ clientId, phone, markReadOnOpen = t
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
   const messagesRef = useRef(null);
+  // Mount-scoped liveness flag for the async reply path. The load effect below
+  // carries its own per-run `alive` flag; handleReply is not an effect, so it
+  // needs one that spans the mount. Armed in the effect body rather than only
+  // at ref creation so a StrictMode (or key) remount re-arms it after cleanup.
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
 
   // Load the thread when the client changes. Marking read is a deliberate view
   // action, so it is gated on markReadOnOpen (the inbox passes false when it
@@ -58,15 +67,19 @@ export default function ClientConversation({ clientId, phone, markReadOnOpen = t
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, loading]);
 
+  // Only this component's own setState calls are guarded. The toasts, the
+  // mark-read PUT, and onActivity all deliberately still run after an unmount:
+  // the reply really was sent, so the host's badge refresh and the user-facing
+  // confirmation are still correct (the toast provider outlives this pane).
   const handleReply = async () => {
     if (!replyText.trim() || !clientId) return;
     setReplying(true);
     try {
       await api.post(`/sms/conversations/${clientId}/reply`, { body: replyText });
-      setReplyText('');
+      if (aliveRef.current) setReplyText('');
       toast.success('Reply sent.');
       const res = await api.get(`/sms/conversations/${clientId}`);
-      setMessages(res.data);
+      if (aliveRef.current) setMessages(res.data);
       // Replying is engagement: clear any lingering unread badge.
       await api.put(`/sms/conversations/${clientId}/read`);
       if (onActivity) onActivity();
@@ -75,10 +88,10 @@ export default function ClientConversation({ clientId, phone, markReadOnOpen = t
       // The reply endpoint saves a failed send as a row; re-fetch to show it.
       try {
         const res = await api.get(`/sms/conversations/${clientId}`);
-        setMessages(res.data);
+        if (aliveRef.current) setMessages(res.data);
       } catch (_) { /* ignore secondary failure */ }
     } finally {
-      setReplying(false);
+      if (aliveRef.current) setReplying(false);
     }
   };
 

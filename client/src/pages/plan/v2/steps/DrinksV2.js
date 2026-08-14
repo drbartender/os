@@ -9,8 +9,11 @@ import ScopeBanner from '../../components/ScopeBanner';
 export default function DrinksV2({ plan, selections, updateSelections, catalog, quickPick }) {
   const mocktailsOnly = quickPick === 'mocktails';
   const showCocktails = !mocktailsOnly;
-  const selected = selections.signatureDrinks || [];
-  const selectedMocktails = selections.mocktails || [];
+  // Memoized so the `|| []` fallback cannot hand a fresh array to the count
+  // memo below on every render (which would defeat it entirely). Identical
+  // values, stable identity.
+  const selected = useMemo(() => selections.signatureDrinks || [], [selections.signatureDrinks]);
+  const selectedMocktails = useMemo(() => selections.mocktails || [], [selections.mocktails]);
   const customs = selections.customCocktails || [];
 
   const tabs = useMemo(() => {
@@ -31,13 +34,23 @@ export default function DrinksV2({ plan, selections, updateSelections, catalog, 
 
   const totalPicked = selected.length + selectedMocktails.length + customs.length;
 
-  const countFor = (t) => {
-    if (t.key === 'your-menu') return totalPicked;
-    if (t.table === 'mocktails') {
-      return catalog.mocktails.filter((d) => d.category_id === t.catId && selectedMocktails.includes(d.id)).length;
+  // Picked-count per tab, rendered twice (pills + sidebar) on every render. As
+  // a plain function that was one full catalog scan per tab per surface per
+  // render, including every keystroke in the custom-request box below; memoized
+  // it recomputes only when the tabs or the picks actually move.
+  const tabCounts = useMemo(() => {
+    const counts = new Map();
+    for (const t of tabs) {
+      if (t.key === 'your-menu') {
+        counts.set(t.key, totalPicked);
+      } else if (t.table === 'mocktails') {
+        counts.set(t.key, catalog.mocktails.filter((d) => d.category_id === t.catId && selectedMocktails.includes(d.id)).length);
+      } else {
+        counts.set(t.key, catalog.cocktails.filter((d) => d.category_id === t.key && selected.includes(d.id)).length);
+      }
     }
-    return catalog.cocktails.filter((d) => d.category_id === t.key && selected.includes(d.id)).length;
-  };
+    return counts;
+  }, [tabs, catalog, selected, selectedMocktails, totalPicked]);
 
   const toggleCocktail = (id) => {
     updateSelections('signatureDrinks', selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
@@ -49,15 +62,18 @@ export default function DrinksV2({ plan, selections, updateSelections, catalog, 
   // Custom request typeahead: match against the live catalog so "we found it"
   // adds the real drink; a miss stays free text for the bar lead to source.
   const [customInput, setCustomInput] = useState('');
+  // The searchable pool is a copy of the whole catalog and never changes with
+  // the query, so it is built once per catalog rather than re-mapped on every
+  // keystroke inside `matches`.
+  const searchPool = useMemo(() => [
+    ...(showCocktails ? catalog.cocktails.map((d) => ({ ...d, table: 'cocktails' })) : []),
+    ...catalog.mocktails.map((d) => ({ ...d, table: 'mocktails' })),
+  ], [catalog, showCocktails]);
   const matches = useMemo(() => {
     const q = customInput.trim().toLowerCase();
     if (q.length < 2) return [];
-    const pool = [
-      ...(showCocktails ? catalog.cocktails.map((d) => ({ ...d, table: 'cocktails' })) : []),
-      ...catalog.mocktails.map((d) => ({ ...d, table: 'mocktails' })),
-    ];
-    return pool.filter((d) => d.name.toLowerCase().includes(q)).slice(0, 5);
-  }, [customInput, catalog, showCocktails]);
+    return searchPool.filter((d) => d.name.toLowerCase().includes(q)).slice(0, 5);
+  }, [customInput, searchPool]);
 
   const addCustom = () => {
     const name = customInput.trim();
@@ -117,7 +133,7 @@ export default function DrinksV2({ plan, selections, updateSelections, catalog, 
 
       <div className="category-pills">
         {tabs.map((t) => {
-          const count = countFor(t);
+          const count = tabCounts.get(t.key) ?? 0;
           return (
             <button key={t.key} className={`category-pill${tab === t.key ? ' active' : ''}`} onClick={() => changeTab(t.key)}>
               {t.label}{count > 0 && <span style={{ marginLeft: '0.3rem', fontWeight: 700 }}>({count})</span>}
@@ -129,7 +145,7 @@ export default function DrinksV2({ plan, selections, updateSelections, catalog, 
       <div className="drink-picker-layout">
         <div className="category-sidebar">
           {tabs.map((t) => {
-            const count = countFor(t);
+            const count = tabCounts.get(t.key) ?? 0;
             return (
               <button key={t.key} className={`category-sidebar-btn${tab === t.key ? ' active' : ''}`} onClick={() => changeTab(t.key)}>
                 <span>{t.label}</span>

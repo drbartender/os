@@ -59,11 +59,46 @@ function withActiveModules(sel, pick, isHosted, barType) {
   return am ? { ...sel, activeModules: am } : sel;
 }
 
+// Step position across a refresh. sessionStorage, never localStorage: the
+// position must die with the tab so a shared computer can never resurrect
+// another client's place in the wizard, and it is keyed by plan token for the
+// same reason. The answers themselves were always durable (autosave); only the
+// position was lost on reload.
+const stepStorageKey = (token) => `pp2_step_${token}`;
+function readSavedStep(token, queue) {
+  if (!token) return null;
+  try {
+    const saved = window.sessionStorage.getItem(stepStorageKey(token));
+    // Restorable only if the CURRENT queue actually contains it. A step from
+    // another serving type (or an older build) has no index in this queue, so
+    // it would render with no Back/Next nav and strand the client — anything
+    // unrecognized falls back to welcome.
+    return saved && queue.includes(saved) ? saved : null;
+  } catch (_e) {
+    return null; // storage blocked (private mode) — start at welcome
+  }
+}
+
 export default function PlannerV2({ token, initialPlan }) {
   const toast = useToast();
   const plan = initialPlan;
 
-  const [step, setStep] = useState(plan.status === 'submitted' || plan.status === 'reviewed' ? 'submitted' : 'welcome');
+  const isHosted = plan.package_category === 'hosted';
+  const hostedReady = isHosted && plan.hosted_coverage && plan.hosted_coverage.has_contents === true;
+  // Content-readiness switch (spec §7): a hosted package without entered
+  // contents renders the LEGACY hosted flow. PlannerRouter can't know this
+  // before the fetch, so the fallback lives here as a hard redirect of shape.
+  const hostedShape = hostedReady
+    ? (plan.package_slot_kind ? 'slots' : (plan.package_bar_type === 'beer_and_wine' ? 'display' : 'coverage'))
+    : null;
+
+  const [step, setStep] = useState(() => {
+    // The submitted/reviewed branch is authoritative; a stored position never
+    // overrides it.
+    if (plan.status === 'submitted' || plan.status === 'reviewed') return 'submitted';
+    const startQueue = buildQueue({ isHosted, hostedShape, quickPick: plan.serving_type || null });
+    return readSavedStep(token, startQueue) || 'welcome';
+  });
   const [quickPick, setQuickPick] = useState(plan.serving_type || null);
   const [selections, setSelections] = useState(() => {
     const saved = (plan.status === 'draft' || plan.status === 'submitted') && plan.selections
@@ -78,15 +113,6 @@ export default function PlannerV2({ token, initialPlan }) {
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [paidFromRedirect] = useState(() => new URLSearchParams(window.location.search).get('paid') === 'true');
-
-  const isHosted = plan.package_category === 'hosted';
-  const hostedReady = isHosted && plan.hosted_coverage && plan.hosted_coverage.has_contents === true;
-  // Content-readiness switch (spec §7): a hosted package without entered
-  // contents renders the LEGACY hosted flow. PlannerRouter can't know this
-  // before the fetch, so the fallback lives here as a hard redirect of shape.
-  const hostedShape = hostedReady
-    ? (plan.package_slot_kind ? 'slots' : (plan.package_bar_type === 'beer_and_wine' ? 'display' : 'coverage'))
-    : null;
 
   const queue = buildQueue({ isHosted, hostedShape, quickPick });
   // Pickable-pool size for the slots shape (empty pool = explicit none in the
@@ -169,6 +195,17 @@ export default function PlannerV2({ token, initialPlan }) {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [token]);
 
+  // Mirror the step position into sessionStorage (see readSavedStep above).
+  // welcome and submitted are cleared rather than stored: welcome IS the
+  // default, and the submitted screen is driven by plan.status on reload.
+  useEffect(() => {
+    if (!token) return;
+    try {
+      if (step === 'welcome' || step === 'submitted') window.sessionStorage.removeItem(stepStorageKey(token));
+      else window.sessionStorage.setItem(stepStorageKey(token), step);
+    } catch (_e) { /* storage blocked — the position just won't survive a refresh */ }
+  }, [token, step]);
+
   // ── Navigation (browser back navigates steps, never leaves) ───────
   const goToStep = useCallback((next) => {
     setStep(next);
@@ -178,7 +215,10 @@ export default function PlannerV2({ token, initialPlan }) {
 
   const handleBackRef = useRef(null);
   useEffect(() => {
-    window.history.replaceState({ step: 'welcome' }, '', '');
+    // Base entry mirrors the step actually mounted on (a restored position, not
+    // necessarily welcome), so a back from it falls into the no-state branch
+    // below and walks the wizard backwards instead of jumping to welcome.
+    window.history.replaceState({ step: stateRef.current.step }, '', '');
     const onPop = (e) => {
       if (e.state?.step) {
         setStep(e.state.step);

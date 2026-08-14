@@ -21,6 +21,7 @@ import { EnhancementsSection, FlagsSyrupsSection } from './RecipeEditorSections'
 //   - layout="tabbed"  (default; shopping-list Add-recipe drawer, design 1b):
 //     Formula / Enhancements / Flags & syrups behind in-card tabs.
 const UNITS = ['oz', 'dash', 'each', 'splash'];
+const NO_SUGGESTIONS = []; // stable empty list for every row but the open one
 export const REVIEW = {
   reviewed: { label: 'Reviewed', short: 'OK', kind: 'ok' },
   draft:    { label: 'Draft, needs review', short: 'Draft', kind: 'warn' },
@@ -92,6 +93,11 @@ function buildSuggestions(text, pars, limit = 6) {
 // a non-empty amount that is not a positive number. A blank amount is fine
 // (par-scaled). A row with no name at all is dropped before send but still
 // blocks the debounce so the user sees "fix highlighted rows".
+//
+// Unit is checked only on an amount row: that is the only shape carrying a unit
+// on the wire (a blank amount serializes to a bare string, no unit). The input
+// is a <select> over UNITS, so this can only fire on a legacy/hydrated row
+// holding a value the server's RECIPE_UNITS would reject. Defense in depth.
 function rowProblems(row) {
   const problems = {};
   if (!String(row.ingredient || '').trim()) problems.ingredient = 'Name this ingredient to save.';
@@ -100,6 +106,9 @@ function rowProblems(row) {
     const amount = Number(raw);
     if (!Number.isFinite(amount) || amount <= 0) {
       problems.amount = 'Amount must be above 0, or leave it blank for par scaling.';
+    }
+    if (!UNITS.includes(row.unit)) {
+      problems.unit = `Pick a unit: ${UNITS.join(', ')}.`;
     }
   }
   return problems;
@@ -181,6 +190,16 @@ const RecipeEditor = forwardRef(function RecipeEditor(
 
   const aliasIndex = useMemo(() => buildAliasIndex(pars || []), [pars]);
   const parsById = useMemo(() => new Map((pars || []).map((p) => [p.id, p])), [pars]);
+
+  // Typeahead for the ONE open row (only one dropdown is open at a time, so one
+  // list covers the table), memoized on the text being typed — same idiom as
+  // aliasIndex/parsById. Unmemoized, every unrelated render (save-state flips,
+  // dossier edits, the add-par form) re-walked the whole par catalog.
+  const suggestText = activeSuggestRow == null ? '' : (rows[activeSuggestRow]?.ingredient || '');
+  const activeSuggestions = useMemo(
+    () => (activeSuggestRow == null ? NO_SUGGESTIONS : buildSuggestions(suggestText, pars || [])),
+    [activeSuggestRow, suggestText, pars]
+  );
 
   // Focus by element id after the next paint (batch entry keyboard flow).
   const focusEl = useCallback((id) => {
@@ -473,7 +492,7 @@ const RecipeEditor = forwardRef(function RecipeEditor(
             const problems = rowProblems(row);
             const resolved = resolveDisplay(row, aliasIndex, parsById);
             const noAmount = String(row.amount ?? '').trim() === '';
-            const suggestions = activeSuggestRow === i ? buildSuggestions(row.ingredient, pars || []) : [];
+            const suggestions = activeSuggestRow === i ? activeSuggestions : NO_SUGGESTIONS;
             return (
               <tr key={i}>
                 <td className="potions-ing-cell">
@@ -522,10 +541,12 @@ const RecipeEditor = forwardRef(function RecipeEditor(
                   {problems.amount && <div className="potions-cell-error">{problems.amount}</div>}
                 </td>
                 <td>
-                  <select className="select potions-cell potions-cell-unit" value={row.unit}
+                  <select className={`select potions-cell potions-cell-unit ${problems.unit ? 'potions-cell-bad' : ''}`} value={row.unit}
+                    aria-label="Unit"
                     onChange={(e) => { updateRow(i, { unit: e.target.value }); setStickyUnit(e.target.value); onStickyUnitChange?.(e.target.value); }}>
                     {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
                   </select>
+                  {problems.unit && <div className="potions-cell-error">{problems.unit}</div>}
                 </td>
                 <td className="potions-resolved">
                   {resolved ? (
