@@ -120,6 +120,16 @@ The user picks the track by how the work opens:
 - **Spec.** A byproduct of the live brainstorm, committed to `main`, fed to the spec-review agents. The user does not re-read it.
 - **Plan = lane map.** The plan comes out as the work broken into independent, individually buildable-and-reviewable lanes, plus a dependency/parallelism graph, in structured front-matter (see schema below). That graph IS the run-order, co-designed with the user.
 
+## Design artifacts are contracts
+
+When a surface goes through claude.ai/design, the returned design is TWO deliverables: the decisions (IA, copy, semantics) and the visual system (layout composition, component vocabulary, tokens). Both must survive the pipeline:
+
+- **Spec.** A spec whose surface has a design source carries a **Visual contract** section in its body: it names the artifact (repo snapshot under `docs/design-artifacts/` plus the design-project id) as the build benchmark and states the visual requirements — per-screen layout and composition, the component vocabulary, and the token-translation rule (design-system tokens → `index.css` tokens, or adopt the system's tokens). A bare "Design source:" citation in the header is provenance, not a contract, and does not count.
+- **Plan.** Visual fidelity is an owned scope: some named lane's scope says "match the artifact," with the artifact as its declared input. That lane pulls the real generated screen files from the design project via DesignSync (`list_files` → `get_file`) and folds their CSS in. The vendored `.dc.html` is a for-the-record snapshot, not the working input.
+- **Review.** `ui-ux-review` on any lane of a designed surface is pointed at the artifact and judges adherence to it, not just usability. Usability-clean but off-design is a finding, not a pass.
+
+*Why:* the 2026-08-14 marketing incident. The approved design was vendored and cited but never made a requirement. Every downstream gate faithfully validated against its immediate upstream artifact (plan vs spec, build vs plan), each lane correctly styled to match the surrounding old CSS, and the section shipped to prod with zero visual fidelity to the design. The pipeline's root of truth is the spec — anything that exists only upstream of the spec effectively doesn't exist.
+
 ## Lane lifecycle and stale lanes
 
 - Claude auto-handles the safe moves: create the lane, merge it when clean, clean it up after merge. No asking. ("Manage it for me.")

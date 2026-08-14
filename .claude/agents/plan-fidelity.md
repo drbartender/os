@@ -29,6 +29,10 @@ For every behavioral requirement in the spec:
 
 If a spec requirement has no corresponding step, that is a scope drop finding. Cite the spec section.
 
+### Design artifact (a special scope-drop case)
+
+If the spec names a design source or visual contract (a claude.ai/design project, a file under `docs/design-artifacts/`), the artifact's visual system IS a spec requirement set. Some named plan lane or task must own visual fidelity, with the artifact as its declared input (a DesignSync pull of the generated screens — see CLAUDE.md "Design artifacts are contracts"). No lane owning it is a scope-drop **Blocker**, even when every behavioral requirement maps cleanly. The 2026-08 marketing plan mapped 100% of the behavior and 0% of the design; do not let a plan pass on behavior alone.
+
 ### Plan to spec (no scope creep)
 
 For every plan step:

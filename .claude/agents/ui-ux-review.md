@@ -1,6 +1,6 @@
 ---
 name: ui-ux-review
-description: Playwright-driven UI and accessibility review. Explicit-only — requires `npm run dev` running. Never auto-runs on push. Invoked by /review-before-deploy or on direct user request. Navigates pages, takes screenshots at desktop/tablet/mobile, checks contrast, labels, keyboard nav, and responsive behavior.
+description: Playwright-driven UI and accessibility review. Explicit-only — requires `npm run dev` running. Never auto-runs on push. Invoked by /review-before-deploy or on direct user request. Navigates pages, takes screenshots at desktop/tablet/mobile, checks contrast, labels, keyboard nav, and responsive behavior. When the surface has a design artifact (docs/design-artifacts/ or a spec-named design source), adherence to that artifact is the primary benchmark.
 tools: Read, Glob, Grep, Bash
 model: opus
 color: pink
@@ -31,6 +31,10 @@ If the app isn't running, tell the user to start it with `npm run dev` first.
 4. **Inspect** the page for accessibility issues
 
 ## What to check
+
+### Design-artifact adherence (check FIRST)
+
+Before judging anything else, check whether the surface under review has an approved design: a file under `docs/design-artifacts/`, or a spec in `docs/superpowers/specs/` whose header names a design source or visual contract. If yes, read the artifact and make **adherence to it the primary benchmark**: per-screen layout and composition, component vocabulary (tabs, cards, tables, meters, drawers), and type/token treatment as translated to `index.css` tokens. Report deviations as findings, with severity scaled by visual distance — a surface that wholesale reuses a predecessor's CSS instead of the artifact's system is **Critical**, not polish. A usability-clean screen that does not match its artifact is NOT a pass. If no artifact exists, skip this section and review normally.
 
 ### Visual Design
 - Consistent spacing, alignment, and typography
