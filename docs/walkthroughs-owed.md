@@ -305,8 +305,9 @@ is written and built.)
 - [ ] **Thumbtack first-reply: the next real lead.** The programmatic draft-clear fix is
       live on the box but has only been proven against captured diagnostics, never a live
       lead. Until one lands, the pipeline is unproven.
-- [ ] **`refreshDisplayNames.js --check` against prod** after the first week of organic
-      writes (display names shipped 2026-08-06).
+- [x] **`refreshDisplayNames.js --check` — PASSED 2026-08-14 against prod:** 62 rows, no
+      drift, after 8 days of organic writes. The display-name single-writer discipline holds
+      under real use.
 - [ ] **CC seniority mapping**: generate, hand-review, then `--apply`. Human-gated.
 - [ ] **Display-name walkthroughs T6 and T10-T13**, plus the seniority panel smoke.
 - [ ] **Deactivate the two Stripe test Payment Links** (`plink_1U0nVQ…`, `plink_1U0nVP…`).
