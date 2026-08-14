@@ -1924,3 +1924,44 @@ git commit -m "docs(mobile-admin): PWA surface docs and owed on-device walkthrou
 2. **Placeholder scan:** the icon art is an explicit placeholder with a stable-filename contract and a named replacing lane (ma-g-design-fit); no TBDs elsewhere.
 3. **Type consistency:** `useMobileView` returns `{ isPhone, desktopView(screenKey), setDesktopView(screenKey, on) }` everywhere it is consumed (Tasks 4, 5, 8); `markStaleFromHeaders` / `formatStaleAt` / `announceAdminSwUser` / `purgeMobileAdminState` are defined and consumed under one name each; screen keys flow `routeScreenKey` -> `desktopView`/`setDesktopView`/`screenTitle` with the same strings.
 4. **Fleet round:** the 2026-08-14 plan fleet's 9 blockers and 10 warnings are folded (benchmark inputs + ui-ux-review, adminOnly filter, purge of phone local state, dead-route fallback, Task 4 checkpoint, SW rollback recipe + kill-path verification, jest-dom imports, hashed-filename cache-first guard, announce ordering, activate-purge version prefix, late-response stamp refresh, full-suite run on the interceptor change, icon tofu check, harness-pattern wording, theme-color mutation, exact-URL offline precondition).
+
+## Lane review round, as-built deltas (ma-a-shell, 2026-08-14)
+
+The lane's three-agent fleet (code-review, consistency-check, ui-ux-review)
+returned findings after Tasks 1-6; commit `0b7db1dc` in the lane applied them.
+Where this section disagrees with a Task snippet above, AS-BUILT WINS:
+
+- **Restore ordering (critical):** the plan's Step 5 effect pair was dead on
+  arrival; the record effect flushes first and overwrites the saved route.
+  As built, the restore target is captured in a lazy `useState` initializer
+  during the first render, then navigated in a mount effect.
+- **`mobile-route-dead` contract:** persistent listener (not once) gated on
+  `mobileChrome`, so every dead route falls back and desktop can never be
+  yanked. Screen lanes dispatch as planned.
+- **Back arrow:** falls back to the parent list when `history.state.idx` is 0
+  (a restored cold launch has no in-app history; `navigate(-1)` would exit
+  the PWA).
+- **Sentry tag:** cleared on unmount.
+- **`desktopViewStore` API:** `readOverrides()` + `persistOverrides(map)`;
+  the context owns the merge (storage-blocked browsers no longer drop other
+  screens' overrides). `writeOverride` no longer exists.
+- **MorePage:** Payroll row admin-gated (payroll API is admin-only; managers
+  got a page of 403s); per-row neutral badges from the chrome's
+  `<Outlet context={{ badges }}>`; a Lighting section (After Hours / House
+  Lights via `useUserPrefs`) because the phone otherwise has no skin control.
+- **MobileHeader:** title is a `.m-title` span (desktop pages inside the
+  chrome bring their own h1); detail variant drops the search button; the
+  More screen drops the Desktop-view escape.
+- **MobileTabBar:** active tab derived from the pathname (More lights up on
+  every More-reached surface); badges aria-hidden with the count in the
+  NavLink's aria-label.
+- **screenTitle:** falls through to nav LABELS by first URL segment
+  ("staffing" is "Staff", "blog" is "Lab Notes"), `financials` mapped to
+  "Payroll" by hand.
+- **CSS:** `.m-main` sets `background: var(--bg-0)` + `min-height: 0` (the
+  unscoped legacy `main {}` chalkboard rule leaks in otherwise); House Lights
+  geometry ported for `.m-*`; `.m-more-row` 13px and heading tracking 0.1em
+  per the design system; return pill `z-index: 39` (deliberately below the
+  mobile-nav drawer tier); new `.m-more-badge` / `.m-seg*` rules.
+- **Note for ma-b:** `--fs-meta` does not exist in `index.css`; `.m-stale`
+  ships with a literal fallback. Do not lean on that token.
