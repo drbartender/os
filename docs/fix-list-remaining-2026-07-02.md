@@ -3658,3 +3658,49 @@ string INTO the `oo-card-hit` button under the delta, and leave the foot as a
 state-only line.
 
 Client-facing copy plus interaction on a money surface: worth the full fleet.
+
+## The September corporate-holiday moment is invisible in prod, and the window closes Sep 5 (found 2026-08-14)
+
+Time-boxed revenue, not a UI nitpick. Found while scripting the marketing restyle
+walk; verified against prod (`br-noisy-frog-ad99sa6l`, SELECT only).
+
+**What is happening.** The `holiday-corporate` moment ("Holiday parties are booked
+in September") is OPEN right now — its window is `month === 8 || (month === 9 && day
+<= 5)`, i.e. Aug 1 through Sep 5 (`server/utils/marketingMoments.js:61-70`). It does
+not appear on the Marketing Overview. It is not dismissed. It is filtered out by
+`client/src/pages/admin/marketing/OverviewTab.js:180`:
+
+    const live = data.moments.filter(m => m.open && !m.dismissed && m.emailable > 0)
+
+Its audience is `past-corporate`, which requires the Corporate tag, and **`client_tags`
+is completely empty in prod: 0 rows, 0 distinct tags, across 526 clients.** So
+`emailable` is 0 and the card silently vanishes.
+
+**Why this is the expensive one.** The code's own comment states the stakes:
+"Corporate holiday work is booked in September, so a prompt arriving in October is a
+post-mortem." This is the annual corporate holiday push — plausibly the highest-value
+send of the year — and the surface built to prompt it shows nothing, while looking
+completely healthy. There are 54 past paying clients in prod and none are classified,
+so the audience exists; it is unreachable only because nobody has tagged anyone.
+Roughly three weeks remain on the window.
+
+**Two separate fixes; do not conflate them.**
+
+1. OPERATIONAL, and urgent: tag the corporate past clients. The Audiences tab already
+   supports it (per-row tag editing, and some rows even render a reason line with a
+   "Tag Corporate" ghost button), so this is data entry, not a build. Until it is
+   done, "Past clients · corporate" stays at 0 while "Past clients · everyone" reads
+   195.
+
+2. PRODUCT, so this cannot recur silently: a moment whose window is open but whose
+   audience is empty should not vanish. It should render in a needs-setup state
+   saying why — "no contacts are tagged Corporate yet" with a link to the filter —
+   or at minimum surface in "Needs you", which already tracks
+   `contacts never classified: 421`. Right now the difference between "there is no
+   moment this month" and "there is a moment worth thousands and its audience is
+   unconfigured" is invisible on screen. That is the actual defect; the empty tag
+   table is just what exposed it.
+
+Note the ordering risk if this is fixed as stated: once tags exist, this moment
+starts appearing, and its audience must be checked against `RESEND_DAILY_CAP` (100 on
+the free tier) before anyone hits send.
