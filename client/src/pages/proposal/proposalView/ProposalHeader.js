@@ -38,6 +38,11 @@ export default function ProposalHeader({ proposal, bartenders }) {
               <span style={styles.detailLabel}>Service Time</span>
               <span style={styles.detailValue}>
                 {formatTime(proposal.event_start_time)} – {calcEndTime(proposal.event_start_time, proposal.event_duration_hours)}
+                {/* Explicit hours beside the range (Dallas, 2026-08-14): the
+                    client buys hours, so say the number, not just the span.
+                    Number() drops a trailing .0 ("6", "5.5"). */}
+                {proposal.event_duration_hours != null &&
+                  ` (${Number(proposal.event_duration_hours)} ${Number(proposal.event_duration_hours) === 1 ? 'hour' : 'hours'})`}
               </span>
             </div>
           )}
