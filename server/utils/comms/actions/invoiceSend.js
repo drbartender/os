@@ -207,8 +207,9 @@ async function dispatch(invoiceId, message, channels, ctx = {}) {
 // concurrent-confirm dispatch guard (05d3ebd) would otherwise skip, because
 // ensureSideEffects returns applied:false on a non-draft. The flag lets those
 // re-sends dispatch. TRADEOFF: double-click protection drops to the modal's
-// in-flight lockout + adminWriteLimiter — exactly the level the legacy send path
-// had. Inert in-lane (this branch's comms.js predates the guard), active on merge.
+// in-flight lockout + adminWriteLimiter — the same posture the deprecated
+// resend-nudge route runs with (invoice send is new; it never had a legacy send
+// path). Inert in-lane (this branch's comms.js predates the guard), active on merge.
 module.exports = {
   key, messageType, defaultChannels,
   resolveRecipient, buildMessages, ensureSideEffects, dispatch,

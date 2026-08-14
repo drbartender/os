@@ -15,13 +15,15 @@ const { isPlaceholderEmail } = require('./emailValidation');
  * `IS DISTINCT FROM 'false'` rather than `= 'true'`: a row whose JSONB lacks
  * the key would otherwise be silently excluded.
  *
- * SCOPE: this file governs CAMPAIGNS. There are THREE marketing senders, and
+ * SCOPE: this file governs CAMPAIGNS. There are FOUR marketing senders, and
  * each has to gate itself:
  *
  *   1. campaigns            -> MAILABLE_SQL, here
  *   2. the lifecycle touches (drip, retention nudge, New Year)
  *                           -> scheduledMessageDispatcher.js
  *   3. the sequence drip    -> emailSequenceScheduler.js
+ *   4. the designer test send -> emailMarketing/designer.js (gates itself at
+ *                              send time)
  *
  * Several gates is not a violation of the one-predicate rule: they answer
  * different questions over different inputs (a recipient SET in SQL, a single

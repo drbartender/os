@@ -127,7 +127,7 @@ Copy `.env.example` and fill in values. All variables:
 | `VA_CALL_TIME_LIMIT_SEC` | No | Per-call hard `timeLimit` on both legs (default 1800 = 30 min). |
 | `PENDING_CALL_TTL_SEC` | No | Confirm-before-dial pending-record TTL in seconds (default 120). |
 | `LEAD_CALL_ENABLED` | No | Lead call bridge kill switch: `false` disables the new-lead auto-call trigger entirely (redeploy-free). Default on. |
-| `LEAD_CALL_DAILY_CAP` | No | Max lead-call attempt chains opened per rolling 24h (default 25; toll-fraud backstop). |
+| `LEAD_CALL_DAILY_CAP` | No | Max lead-call attempt chains opened per rolling 24h (default 25; toll-fraud backstop). `0` is treated as unset and falls back to 25 — the only off switch is `LEAD_CALL_ENABLED=false`. |
 | `VOICEMAIL_ENABLED` | No | 224-inbound voicemail master switch. **Default OFF**; only `'true'` enables. Off restores pre-feature behavior exactly (no ping, no recording). |
 | `VM_MAX_LENGTH_SEC` | No | Max voicemail recording length in seconds (default 120, clamped 30..300). |
 | `VM_DAILY_CAP` | No | Max voicemail-path calls per rolling 24h (default 50, counted from `voicemail_delivery`). Inbound analog of `VA_CALL_DAILY_CAP`. |

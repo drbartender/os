@@ -30,7 +30,9 @@
 
 // Billing types whose stored OUTPUT is NOT the input count: they store guests,
 // staff, or 100-guest blocks instead. Stated as an exclusion list on purpose.
-// billing_type is a bare VARCHAR(20) with no CHECK, and the engine's `default:`
+// proposal_addons.billing_type is a bare VARCHAR(20) with no CHECK (the CATALOG
+// column, service_addons.billing_type — which the reprice SELECT actually
+// delivers — does carry a six-value CHECK), and the engine's `default:`
 // branch prices `rate x qty` exactly like `flat`, so an unrecognized or NULL
 // type stores the count and must keep being read as one.
 const STORED_IS_NOT_A_COUNT = new Set(['per_guest', 'per_guest_timed', 'per_staff', 'per_100_guests']);
@@ -45,8 +47,11 @@ function storedIsInputCount(billingType) {
  * `additional-bartender` is bespoke: calculateProposal gives it its own branch
  * (pricingEngine.js:387-405) that multiplies by RAW durationHours and never
  * consults minimum_hours. Every other per_hour add-on goes through
- * calculateAddonCost's max(durationHours, minimum_hours). eventCreation.js:52-54
- * and formState.js:80-91 both encode the same split; keep all three in step.
+ * calculateAddonCost's max(durationHours, minimum_hours). formState.js:80-91
+ * encodes the same split; eventCreation.js does NOT read the catalog — it
+ * hardcodes STAFFING_ADDON_MIN_HOURS = 4, a fourth site that agrees with the
+ * others only while the staffing catalog rows carry minimum_hours = 4. Keep
+ * all four in step.
  */
 function effectiveHoursFor(addon, durationHours) {
   const hours = Number(durationHours) || 0;
