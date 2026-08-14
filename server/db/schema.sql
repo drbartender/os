@@ -2090,6 +2090,41 @@ CREATE INDEX IF NOT EXISTS idx_thumbtack_leads_first_reply_pending
   ON thumbtack_leads(first_reply_attempted_at)
   WHERE first_reply_status = 'pending';
 
+-- created_at shipped nullable (DEFAULT NOW() only, no constraint), but the
+-- first-reply machinery treats it as always present: the agent offer query
+-- (routes/thumbtackAgent.js) filters on it in four predicates (both night-window
+-- EXTRACT(HOUR ...) arms, the per-lead jitter release, and the freshness bound),
+-- and the sweep's retirement arm (utils/firstReplySweepScheduler.js) compares
+-- against it too. Every one of those predicates evaluates to NULL, never TRUE,
+-- on a NULL row, so such a lead would sit first_reply_status = 'pending'
+-- forever: never offered to the agent, never retired by the sweep, invisible to
+-- both. Zero such rows exist in prod today; this makes the state unreachable.
+--
+-- Two steps, in this order. The UPDATE first, because SET NOT NULL validates
+-- the existing rows and a single NULL aborts it with 23502. This file runs on
+-- EVERY boot via initDb, which does not stop on a failed statement: it logs,
+-- pages Sentry, and boots anyway, so a skipped ALTER leaves the column nullable
+-- while everything reads as fine. Healing to NOW() is the same value the column
+-- default would have written. The ALTER then closes the door.
+--
+-- Guarded on is_nullable so the 2nd..Nth boot skips both statements outright:
+-- no per-boot seq scan for the UPDATE, and no ACCESS EXCLUSIVE lock for an
+-- ALTER that Postgres would already treat as a catalog no-op. The guard is what
+-- makes this re-runnable on its own terms rather than leaning on initDb's
+-- IDEMPOTENT_PG_CODES swallow (which includes 42P16 "NOT NULL re-add" and would
+-- hide a genuine failure). Same idiom as the proposal_refunds NUMERIC(10,2)
+-- tighten above.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'thumbtack_leads' AND column_name = 'created_at'
+      AND is_nullable = 'YES'
+  ) THEN
+    UPDATE thumbtack_leads SET created_at = NOW() WHERE created_at IS NULL;
+    ALTER TABLE thumbtack_leads ALTER COLUMN created_at SET NOT NULL;
+  END IF;
+END $$;
+
 -- Extend proposal_payments.payment_type CHECK to accept drink-plan payment kinds.
 -- The Stripe webhook inserts payment_type='drink_plan_extras' or 'drink_plan_with_balance'
 -- for Potion Planning Lab payments; the original constraint only allowed deposit/balance/full,

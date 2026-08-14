@@ -24,14 +24,23 @@ function csvCell(v) {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 // A DATE column comes back from `pg` as a JS Date at LOCAL midnight, and
-// `String(thatDate).slice(0,10)` is "Tue Jun 10", not "2025-06-10". Use the
-// codebase's idiom (server/utils/paystubData.js:20, admin/payroll.js:129):
-// branch on `instanceof Date` and go through toISOString. Chicago is behind
-// UTC, so local midnight lands at 05:00/06:00Z on the SAME calendar day and
-// the YMD round-trips exactly. Strings pass through untouched.
+// `String(thatDate).slice(0,10)` is "Tue Jun 10", not "2025-06-10". So branch on
+// `instanceof Date`. Strings pass through untouched.
+//
+// LOCAL getters, never toISOString: toISOString renders the UTC instant, so on
+// a box at a POSITIVE UTC offset a local-midnight Date is still the PREVIOUS
+// calendar day in UTC and .slice(0,10) shifted the answer back a day. That was
+// invisible on Chicago and on Render (both at or behind UTC) and failed CLOSED
+// elsewhere (a false PARTIAL, exit 1), but the local getters are simply correct
+// on any box. Keep byte-identical to the copy in applySeniorityBackfill.js.
 function toYmd(v) {
   if (!v) return '';
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (v instanceof Date) {
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, '0');
+    const d = String(v.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
   return String(v).slice(0, 10);
 }
 // Name the database being read, so a forgotten or stale DATABASE_URL is visible

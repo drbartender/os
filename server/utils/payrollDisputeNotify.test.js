@@ -309,25 +309,53 @@ describe('notifyDisputeWon', () => {
     const id = TEST_TIP_PREFIX - 10;
     await seedTip({ id, dispute_email_attempts: 0 });
 
+    // What this test protects is that notifyDisputeWon abandons a hung send
+    // rather than blocking on it: Promise.race does NOT cancel the loser, so a
+    // future `await sendPromise` (or an allSettled) after the race would make
+    // every disputed-tip webhook wait out the full send.
+    //
+    // That used to be asserted as a wall-clock `elapsed < 400ms` against a
+    // 500ms slow send, which conflated the thing under test with the DB
+    // round-trips in the same call (connect, BEGIN, SELECT FOR UPDATE, UPDATE,
+    // COMMIT). Against the shared dev DB under serial-suite load those alone
+    // reached 477ms and reddened a correct implementation. It is now structural
+    // and load-independent: the slow send is pushed far out (SLOW_SEND_MS) and
+    // flips a flag when it finally resolves, and the assertion is that the flag
+    // is still false when notifyDisputeWon returns, i.e. the call did not wait
+    // for the send. A blocking implementation fails no matter how fast or slow
+    // the database is that day; a non-blocking one passes on any box.
+    const SEND_TIMEOUT_MS = 50;
+    const SLOW_SEND_MS = 10_000;
+    let sendResolved = false;
+    let slowTimer = null;
+
     __setDeps({
-      sendEmail: () => new Promise(resolve => setTimeout(() => resolve({ id: 'late' }), 500)),
+      sendEmail: () => new Promise((resolve) => {
+        slowTimer = setTimeout(() => { sendResolved = true; resolve({ id: 'late' }); }, SLOW_SEND_MS);
+        // Never hold the event loop open on this suite's behalf: if the assert
+        // below passes, this timer is dead weight the process should not wait on.
+        slowTimer.unref?.();
+      }),
       Sentry: { captureException: captureExceptionMock, captureMessage: captureMessageMock },
-      sendTimeoutMs: 50,
+      sendTimeoutMs: SEND_TIMEOUT_MS,
       pool,
     });
 
-    const startedAt = Date.now();
-    await notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() });
-    const elapsed = Date.now() - startedAt;
+    try {
+      await notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() });
 
-    assert.ok(elapsed < 400, `expected < 400ms, got ${elapsed}ms`);
-    assert.strictEqual(captureExceptionMock.mock.callCount(), 1);
-    const errArg = captureExceptionMock.mock.calls[0].arguments[0];
-    assert.match(errArg.message, /timed out/);
+      assert.strictEqual(sendResolved, false,
+        `notifyDisputeWon waited for the ${SLOW_SEND_MS}ms send instead of abandoning it at the ${SEND_TIMEOUT_MS}ms timeout`);
+      assert.strictEqual(captureExceptionMock.mock.callCount(), 1);
+      const errArg = captureExceptionMock.mock.calls[0].arguments[0];
+      assert.match(errArg.message, /timed out/);
 
-    const after = await readTip(id);
-    assert.strictEqual(after.dispute_email_attempts, 1);
-    assert.strictEqual(after.dispute_won_at, null);
+      const after = await readTip(id);
+      assert.strictEqual(after.dispute_email_attempts, 1);
+      assert.strictEqual(after.dispute_won_at, null);
+    } finally {
+      if (slowTimer) clearTimeout(slowTimer);
+    }
   });
 
   test('post-commit Sentry capture failure: DB committed, console.error fired', async () => {

@@ -84,3 +84,12 @@ server/routes/admin/staffReviews.test.js
 # gates + extension-side curfew clamp (eventEndInstant + serviceExtensionPricing).
 server/utils/serviceCurfew.test.js
 server/utils/eventEndInstant.curfew.test.js
+
+# 1099 tax surfaces (display-name batch 677baf95, added to the gate 2026-08-14):
+# /payroll/tax-totals must label a contractor by their LEGAL name (agreements
+# .full_name), never the portal nickname, and the contractor payment-history
+# blended total must count REAL money only. The second test drives the actual
+# paidPayoutCents path through the route and pins the owner no-draw exclusion
+# (spec 2026-08-07) at the TAX surface, which payroll.test.js/payouts.test.js
+# cover only at the payout surface. A wrong 1099 is a filed government document.
+server/routes/admin/payrollTax.legalName.test.js

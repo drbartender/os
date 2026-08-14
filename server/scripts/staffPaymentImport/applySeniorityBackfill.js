@@ -29,9 +29,21 @@ function expand(p) { return path.resolve(p.replace(/^~(?=$|\/)/, process.env.HOM
 // arrives as a Date at local midnight; String(...).slice(0,10) would write
 // "Tue Jun 10" into the rollback snapshot below and quietly destroy the only
 // artifact that makes an --apply run reversible.
+//
+// LOCAL getters, never toISOString: toISOString renders the UTC instant, so on
+// a box at a POSITIVE UTC offset a local-midnight Date is still the PREVIOUS
+// calendar day in UTC and .slice(0,10) shifted the answer back a day. That was
+// invisible on Chicago and on Render (both at or behind UTC) and failed CLOSED
+// elsewhere (a false PARTIAL, exit 1), but the local getters are simply correct
+// on any box. Keep byte-identical to the copy in generateSeniorityMapping.js.
 function toYmd(v) {
   if (!v) return '';
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (v instanceof Date) {
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, '0');
+    const d = String(v.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
   return String(v).slice(0, 10);
 }
 
