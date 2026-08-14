@@ -1008,10 +1008,16 @@ merged code 2026-08-04):
   Note the deactivated rows carry the LATER `updated_at`, so without that exclusion the
   dead account would have won both pairs; the block-list is load-bearing here, not cosmetic.
   Neither pair has any `shift_requests`, so there is no work history to merge.
-  **The one real residual:** the good data is split across the Adelle pair. Live 51 holds
-  `hire_date` 2025-06-26 and `historical_events_worked=2` but `can_staff=false`; dead 62
-  holds `can_staff=true` and no hire_date. If Adelle is meant to be staffable, that flag
-  belongs on 51. One-row fix, but it is a roster/permission call, not a cleanup.
+  **No residual, and a correction worth keeping.** A first pass here read the Adelle pair as
+  having its good data split, because live 51 holds `hire_date` 2025-06-26 and
+  `historical_events_worked=2` with `can_staff=false`, while dead 62 holds `can_staff=true`
+  and no hire_date. That is NOT a split: `can_staff` is a MANAGER permission, not a
+  "this person can be staffed" flag. Every guard reads it as
+  `role === 'manager' && can_staff` (`shifts.js:41`, `admin/users.js:464`), and it is only
+  ever written by the manager routes (`admin/managers.js:33,44`, `admin/users.js:452`).
+  On a `role='staff'` row it is inert, so both Adelle rows are correct as they sit and
+  nothing needs moving. Same for user 61, whose `can_staff=true` is equally inert.
+  Both pairs are fully closed.
 - Backfill hand-fix names (script report, informational): users 15 "Ariel D. Smith",
   31 "Nicholas or Nick", 61 "Miss Taylor", 62 "Adelle M. Reynolds" — malformed preferred
   names to settle with the humans; users 1/61/62/237 have no legal name on file. (ops)
@@ -1028,13 +1034,27 @@ merged code 2026-08-04):
     with `IS DISTINCT FROM`. Her phone is unique in the table, so the `updated_at` trigger
     stamp cannot re-aim any smsInbound tiebreak. Old value banked here for reversibility:
     `preferred_name='Miss Taylor'`, `display_name='Miss T.'`, reviewed_at 2026-08-06.
-  - **31 — the last bad display name in prod, still OPEN.** `hired`, but zero shift
-    requests and no hire_date. `preferred_name='Nicholas or Nick'` renders
-    **"Nicholas or Nick D."**. Unlike 61 he DOES have a legal name on his signed
-    agreement, "Nicholas George DiCristina", so the initial is already correct and the only
-    defect is the hedged preferred name. Setting `preferred_name='Nick'` yields "Nick D."
-    (hand-traced through `computeDisplayName`). Needs Dallas's word, since it is a person's
-    name.
+  - **31 — CLOSED 2026-08-14 as an OFFBOARDING, not a name fix. Dallas: "nick can be
+    removed he got fired... no notice. its been like a year."** The name was never the
+    issue. Deactivated in prod by hand: `onboarding_status='deactivated'`,
+    `pre_hired=false` (that flag is a one-time bypass of the admin-review gate, so leaving
+    it set would let him re-register himself later), guarded `IS DISTINCT FROM`.
+    `preferred_name` deliberately LEFT as "Nicholas or Nick" — he is off the roster, so
+    rewriting a fired person's name buys nothing.
+    Verified before the flip that this was a clean one-field change: NO `payment_profiles`
+    row, so `deactivateTipPage` would have been a no-op with no tip page or Stripe link to
+    tear down; zero `shift_requests`, zero payouts, no `hire_date`. He signed an agreement
+    ("Nicholas George DiCristina") and never worked a shift. The agreement row is kept.
+    **Why by hand instead of the UI:** `PUT /admin/users/:id/status` sends
+    `applicationDeactivated` to the person ("...if you believe this was done in error, or
+    if you have questions, please reply to this email"), and Dallas explicitly did not want
+    a notice a year after the fact. The route's other side effects were reproduced
+    faithfully: the `interview_notes` status_change row ("Hired → Deactivated") and the
+    `application_activity` row, both actor 12. The activity `via` is recorded honestly as
+    `manual_sql_offboarding`, NOT the route's `admin_users_endpoint`, and carries
+    `notice_suppressed: true` so the missing email is a recorded decision rather than a gap.
+    Lockout is immediate and needs no `token_version` bump: `middleware/auth.js` re-reads
+    `onboarding_status` per request and `auth.js:339` blocks the login outright.
   - **15 and 62 are NOT broken and need nothing.** Both are `deactivated`, and both already
     render correctly anyway ("Ariel D. Smith" -> "Ariel S.", "Adelle M. Reynolds" ->
     "Adelle R."): the middle-initial pop and the legal-surname pop both did their job. They
