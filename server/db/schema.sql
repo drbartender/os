@@ -19,10 +19,16 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Expand status constraint to include application statuses
+-- Expand status constraint to include application statuses.
+-- PAIRING LAW: this constraint is defined AGAIN further down (the 'suspended'
+-- widening). Both lists must match. This site is a BARE DROP-then-ADD with no DO
+-- wrapper, which is the worst shape in the file: the two statements are separate
+-- autocommit transactions, so an ADD that fails leaves the column with NO
+-- constraint at all, committed, silently accepting anything. Aligned 2026-08-14
+-- to include 'suspended', matching prod.
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_onboarding_status_check;
 ALTER TABLE users ADD CONSTRAINT users_onboarding_status_check
-  CHECK (onboarding_status IN ('in_progress','applied','interviewing','hired','rejected','submitted','reviewed','approved','deactivated'));
+  CHECK (onboarding_status IN ('in_progress','applied','interviewing','hired','rejected','submitted','reviewed','approved','suspended','deactivated'));
 
 -- pre_hired marks contractors who registered via the open /onboarding URL
 -- (hiring.drbartender.com/onboarding). They still complete the application
@@ -891,8 +897,12 @@ DO $$ BEGIN
     SELECT 1 FROM information_schema.table_constraints
     WHERE constraint_name = 'drink_plans_proposal_id_fkey' AND table_name = 'drink_plans'
   ) THEN
+    -- PAIRING LAW: also defined further down, WITH ON DELETE CASCADE. This site
+    -- is IF NOT EXISTS-guarded so it never drops an existing FK and the pair
+    -- self-converges, but a fresh DB briefly got the non-cascading version.
+    -- Aligned 2026-08-14 so a fresh boot lands on the right shape immediately.
     ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_proposal_id_fkey
-      FOREIGN KEY (proposal_id) REFERENCES proposals(id);
+      FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE;
   END IF;
 END $$;
 
@@ -2862,16 +2872,26 @@ DO $$ BEGIN
     CHECK (recipient_type IN ('client','staff','admin'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
+-- PAIRING LAW: these two constraints are each defined MORE THAN ONCE in this
+-- file (channel_check again at the 'push' widening; status_check again at the
+-- cascade widening and again at the 'processing' claim-state widening). Every
+-- definition MUST carry the SAME value list. schema.sql is re-executed on every
+-- boot and is not transactional end to end, so a narrower earlier definition is
+-- live for the seconds between the two blocks — on EVERY boot, not just an
+-- interrupted one. Prod has zero rows in the newer states, so it has no data
+-- protection to fall back on. A new value goes in EVERY definition, and the
+-- CONSTRAINT_CONTRACT check in server/db/index.js fails the boot loudly if one
+-- is narrowed or absent. See the 2026-08-14 schema-trap sweep.
 DO $$ BEGIN
   ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_channel_check;
   ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_channel_check
-    CHECK (channel IN ('email','sms'));
+    CHECK (channel IN ('email','sms','push'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 DO $$ BEGIN
   ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_status_check;
   ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_status_check
-    CHECK (status IN ('pending','sent','failed','suppressed','deferred'));
+    CHECK (status IN ('pending','sent','failed','suppressed','deferred','suppressed_by_sibling','dead_letter','processing'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_messages_pending
@@ -3498,10 +3518,13 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 -- scheduled_messages.status adds 'suppressed_by_sibling' and 'dead_letter' for the
 -- dispatcher cascade (spec §6.13). Without this widening, the cascade's first
 -- UPDATE crashes on the existing CHECK.
+-- PAIRING LAW (see the first definition of this constraint): every definition
+-- carries the SAME list, including 'processing' from the claim-state widening
+-- further down. Aligned 2026-08-14.
 DO $$ BEGIN
   ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_status_check;
   ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_status_check
-    CHECK (status IN ('pending','sent','failed','suppressed','deferred','suppressed_by_sibling','dead_letter'));
+    CHECK (status IN ('pending','sent','failed','suppressed','deferred','suppressed_by_sibling','dead_letter','processing'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 -- ─── scheduled_messages: suppression_key + payload columns ───

@@ -186,6 +186,52 @@ const CRITICAL_INDEXES = [
   'idx_duty_lines_event_kinds',
   'idx_duty_lines_bounty',
   'idx_duty_lines_contest',
+  // Added 2026-08-14 (schema-trap sweep). Both are DEDUPE guards created by a
+  // bare DROP-then-CREATE that re-runs on EVERY boot, so each boot has a window
+  // with no guard, and a CREATE that fails on duplicate data raises 23505 —
+  // which IDEMPOTENT_PG_CODES swallows, leaving the guard permanently absent and
+  // the boot green. Listing them here is what turns that into a loud alert.
+  'idx_scheduled_messages_pending_uniq', // enqueue dedupe; absence = duplicate sends
+  'idx_sms_messages_twilio_sid',         // Twilio webhook-retry dedupe; absence = double-logged inbound SMS
+];
+
+// Constraints whose VALUE LIST is load-bearing and which schema.sql defines more
+// than once. schema.sql is re-executed on every boot and is not transactional end
+// to end, so if two definitions of the same constraint disagree, the narrower one
+// is live for the seconds between them — on every boot, not only an interrupted
+// one. Worse, the DO $$ ... EXCEPTION WHEN OTHERS THEN NULL wrapper these use
+// swallows the failure, so a narrowed or entirely absent constraint boots green.
+//
+// This is the gap the 2026-08-14 sweep found and nothing covered: an index that
+// vanishes is caught by CRITICAL_INDEXES above, but a CHECK that quietly loses a
+// value was invisible. The dispatcher's own claim state ('processing') lives in
+// one of these, and a narrowed constraint there makes every claim raise 23514,
+// which the dispatcher's generic catch records as status='failed' — a TERMINAL
+// value — so a collision does not retry, it permanently drops that batch.
+//
+// `mustContain` is deliberately a subset, not the full list: it names the values
+// a NARROWED definition would drop. Adding a new value to a constraint does not
+// require touching this manifest; REMOVING one from schema.sql while it stays
+// here is meant to fail loudly.
+const CONSTRAINT_CONTRACT = [
+  { constraint: 'scheduled_messages_status_check',
+    mustContain: ['processing', 'dead_letter', 'suppressed_by_sibling'] },
+  { constraint: 'scheduled_messages_channel_check', mustContain: ['push'] },
+  { constraint: 'proposals_archive_reason_check', mustContain: ['option_not_chosen'] },
+  // Same BARE DROP-then-ADD shape as archive_reason, and schema.sql calls it the
+  // worst shape in the file for good reason: the two statements are separate
+  // autocommit transactions, so an ADD that fails leaves users.onboarding_status
+  // with NO constraint at all, committed. That is not theoretical — it is what
+  // happened whenever a 'suspended' row existed, before the value was added to
+  // the earlier site. 'suspended' has no live writer today (admin/users.js
+  // validStatuses excludes it and the route throws first), so it is NOT asserted
+  // here; the values that ARE written are.
+  { constraint: 'users_onboarding_status_check',
+    mustContain: ['in_progress', 'hired', 'deactivated'] },
+  // Not a duplicate-definition case, but the same failure mode: its DO-block ADD
+  // has failed outright on a populated DB (three pre-existing 'confirmed' rows on
+  // dev) and left the table with NO status constraint at all, silently, forever.
+  { constraint: 'shifts_status_check', mustContain: ['open', 'completed', 'cancelled'] },
 ];
 
 // Returns the names of CRITICAL_INDEXES absent from the DB. Exported for unit
@@ -200,6 +246,39 @@ async function findMissingCriticalIndexes(db = pool) {
   );
   const present = new Set(rows.map((r) => r.indexname));
   return CRITICAL_INDEXES.filter((name) => !present.has(name));
+}
+
+// Returns human-readable violations of CONSTRAINT_CONTRACT: an entry per absent
+// or narrowed constraint. Empty array = healthy. Exported for unit testing;
+// called by initDb after the schema apply, same as the index check.
+async function findViolatedConstraintContracts(db = pool) {
+  // pg_get_constraintdef renders a CHECK ... IN (...) as
+  // "CHECK ((status = ANY (ARRAY['pending'::text, ...])))", so a required value
+  // is matched as the quoted literal. That holds for varchar columns too, where
+  // the cast reads ::character varying but the quoted literal is unchanged.
+  const { rows } = await db.query(
+    `SELECT c.conname, pg_get_constraintdef(c.oid) AS def
+       FROM pg_constraint c
+       JOIN pg_class t ON t.oid = c.conrelid
+       JOIN pg_namespace n ON n.oid = t.relnamespace
+      WHERE n.nspname = 'public' AND c.conname = ANY($1)`,
+    [CONSTRAINT_CONTRACT.map((c) => c.constraint)]
+  );
+  const defByName = new Map(rows.map((r) => [r.conname, r.def]));
+
+  const violations = [];
+  for (const { constraint, mustContain } of CONSTRAINT_CONTRACT) {
+    const def = defByName.get(constraint);
+    if (!def) {
+      violations.push(`${constraint} is ABSENT — the column accepts anything`);
+      continue;
+    }
+    const missing = mustContain.filter((v) => !def.includes(`'${v}'`));
+    if (missing.length > 0) {
+      violations.push(`${constraint} is NARROWED — missing: ${missing.join(', ')}`);
+    }
+  }
+  return violations;
 }
 
 async function initDb() {
@@ -255,6 +334,31 @@ async function initDb() {
       console.error('Money-integrity index check FAILED (non-fatal):', checkErr.message.split('\n')[0]);
     }
 
+    // Schema-trap sweep (2026-08-14): assert the load-bearing CHECK constraints
+    // still carry their required values. A constraint defined twice with
+    // differing bodies is live in its NARROW form for the seconds between the two
+    // blocks on every boot, and the DO-block wrapper swallows any failure — so
+    // before this check, a narrowed or absent constraint booted green. Same
+    // alert-don't-wedge contract as the index check above: route into
+    // `unexpected` (Sentry + loud log), never a hard boot crash.
+    try {
+      for (const violation of await findViolatedConstraintContracts(client)) {
+        unexpected.push({
+          code: 'CONSTRAINT_CONTRACT_VIOLATED',
+          message: `constraint contract violated after schema apply: ${violation}`,
+          stmt: violation,
+        });
+        console.error(`Constraint contract VIOLATED after schema apply: ${violation}`);
+      }
+    } catch (checkErr) {
+      unexpected.push({
+        code: 'CONSTRAINT_CONTRACT_CHECK_FAILED',
+        message: `constraint contract check failed: ${checkErr.message.split('\n')[0]}`,
+        stmt: 'findViolatedConstraintContracts',
+      });
+      console.error('Constraint contract check FAILED (non-fatal):', checkErr.message.split('\n')[0]);
+    }
+
     if (unexpected.length > 0) {
       // Surface to Sentry so deploys with broken migrations are visible without
       // requiring someone to read server logs.
@@ -280,4 +384,8 @@ async function initDb() {
 // manifest instead of restating it — the restated copies went stale the first
 // time an index was added (duty_lines, 2026-08) and the guard's own suite was
 // then red on every run, which is a guard nobody reads.
-module.exports = { pool, initDb, splitStatements, findMissingCriticalIndexes, CRITICAL_INDEXES };
+module.exports = {
+  pool, initDb, splitStatements,
+  findMissingCriticalIndexes, CRITICAL_INDEXES,
+  findViolatedConstraintContracts, CONSTRAINT_CONTRACT,
+};

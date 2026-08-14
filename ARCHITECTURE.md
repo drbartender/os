@@ -770,6 +770,45 @@ _(tips/tip-feedback rows in `server/routes/admin/contractorTipPage.js`; the stub
 
 ## Database Schema
 
+### Boot-time integrity guards, and the constraint pairing law
+
+`schema.sql` is re-executed on EVERY boot by `initDb` and is **not transactional end to end**.
+That makes a constraint defined more than once, with differing bodies, a live hazard rather
+than a cosmetic duplication: the narrower definition is in force for the seconds between the
+two blocks, on every boot, not only an interrupted one. The `DO $$ ... EXCEPTION WHEN OTHERS
+THEN NULL` wrapper most of them use then swallows any failure, so before 2026-08-14 a narrowed
+— or entirely absent — constraint booted green.
+
+**The pairing law: if a constraint is defined more than once, every definition carries the
+same body.** Adding a value means adding it at every site. Two guards enforce this:
+
+- **`CONSTRAINT_CONTRACT` / `findViolatedConstraintContracts`** (`server/db/index.js`) runs
+  after the schema apply and reports any contracted constraint that is absent or has lost a
+  required value. Misses route into `initDb`'s `unexpected` array — Sentry alert plus a loud
+  log — never a hard boot crash, matching the `CRITICAL_INDEXES` check beside it.
+- **A DB-free static check** (`server/db/constraintContract.test.js`) parses `schema.sql` and
+  fails if any constraint declared via `ALTER TABLE ... ADD CONSTRAINT` has divergent bodies. It
+  compares semantics, not formatting, and carries an `ADJUDICATED_DIVERGENCE` allowlist for the
+  pairs that are provably safe; a stale allowlist entry fails the suite so the list cannot rot.
+  **Known gap, deliberately not closed here:** it does not see an unnamed inline `CHECK` inside
+  `CREATE TABLE`, which Postgres auto-names with the same `<table>_<col>_check` string a later
+  `ADD CONSTRAINT` uses. Five constraints diverge that way today, including a money one
+  (`proposal_payments_payment_type_check`) and an auth one (`users_role_check`); the list is in
+  the test's scope comment. `CREATE TABLE IF NOT EXISTS` is a no-op on a populated database, so
+  the live blast radius is fresh-DB-only and prod is unaffected — but a value list widened
+  inline-first would pass both this check and the boot, which is the failure this guard exists
+  to end. Extending the collector to inline CHECKs wants its own lane.
+
+Why it matters concretely: `scheduled_messages_status_check` holds the dispatcher's own claim
+state (`processing`). Under a narrowed definition every claim raises 23514, and the
+dispatcher's generic catch records `status='failed'` — a **terminal** value — so a collision
+does not retry, it permanently drops that batch of due messages.
+
+`CRITICAL_INDEXES` covers the same shape for indexes. Note both dedupe guards
+(`idx_scheduled_messages_pending_uniq`, `idx_sms_messages_twilio_sid`) are created by a bare
+DROP-then-CREATE that re-runs every boot, and a CREATE failing on duplicate data raises 23505,
+which `IDEMPOTENT_PG_CODES` swallows — listing them is what makes that absence loud.
+
 ### Core User Tables
 
 **users** — All accounts (staff, admin, manager)
