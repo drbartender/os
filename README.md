@@ -586,7 +586,7 @@ dr-bartender/
 │   │                           #   sensitive-match.js (+ .test.js) : matcher that reads sensitive-paths.txt
 │   │                           #   testdb-smoke.js                 : pre-push money-smoke gate (npm run test:smoke); resets Neon ci-smoke + runs the money suites (see README > Test gate)
 │   │                           #   money-smoke-list.txt            : the money-path suite list testdb-smoke.js runs
-│   │                           #   push-gate.js (+ .test.js)       : owns BOTH pre-push gates + the receipt (npm run gate); the hook calls it and skips when the receipt matches the exact tree
+│   │                           #   push-gate.js (+ .test.js)       : owns BOTH pre-push gates + the receipt (npm run gate); the hook calls it and skips only when HEAD, every dirty file's CONTENT, and the pushed sha all match what was gated
 │   │                           #   check-claudemd-invariants.sh    : paired keyword/regex coverage check over CLAUDE.md
 │   │                           #   claudemd-invariants.txt         : the invariant manifest it checks
 │   │                           # one-time CheckCherry migration operator scripts (phases 1-3, each with co-located tests):
@@ -618,7 +618,7 @@ dr-bartender/
 | `npm run lint` | Run ESLint on all server code |
 | `npm run lint:fix` | Run ESLint with auto-fix on server code |
 | `npm run test:smoke` | Run the pre-push money-path smoke gate manually (`scripts/testdb-smoke.js`): reset the isolated Neon `ci-smoke` branch, apply the schema, and run the money suites serially. No `NEON_API_KEY` → prints a loud SKIP banner and exits 0. See [Test gate](#test-gate). |
-| `npm run gate` | Run BOTH pre-push gates now (money smoke + Vercel client build, whichever the diff needs) and write a receipt, so the push itself is instant. Strongly recommended before any push: `git push` opens its connection before running the hook, so an 8-minute hook makes GitHub close that connection and the push fails *after* passing everything. The hook re-runs the full gate whenever the receipt is missing, stale (>12h), or for different bytes, so this never weakens the gate. See [Test gate](#test-gate). |
+| `npm run gate` | Run BOTH pre-push gates now (money smoke + Vercel client build, whichever the diff needs) and write a receipt, so the push itself is instant. Strongly recommended before any push: `git push` opens its connection before running the hook, so an 8-minute hook makes GitHub close that connection and the push fails *after* passing everything. The hook re-runs the full gate whenever the receipt is missing, expired (>12h), for a different HEAD, for changed file contents, or for a pushed sha that is not HEAD, so this never weakens the gate. See [Test gate](#test-gate). |
 | `npm run audit:check` | Check for known dependency vulnerabilities |
 | `npm run check:filesize` | Report every source file by line-count zone (RED over 1000, YELLOW 700-1000) |
 | `npm run mobile:check` | Dev-only phone-viewport (390x844) screenshot + overflow probe of every client-facing surface (`scripts/mobile-capture.js`); merge gate for the mobile-fixes lanes. EXPECTED to stay red on main until the mobile-sweep lane lands: the baseline failures are the audited P0s, not regressions |
