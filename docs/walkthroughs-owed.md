@@ -441,10 +441,29 @@ is written and built.)
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
-- [ ] **Potions recipe review pass** — 6 low-confidence drafts of ~41. **This gates the prod
+- [ ] **Potions recipe review pass — READY FOR DALLAS, 2026-08-14.** **This gates the prod
       `seedRecipeDrafts` run** (dry-run first), because `package_items` existence flips
       hosted coverage live and `coverageContext` has no recipe-review filter, so fence
       charges would derive from unreviewed recipes.
+      COUNT CORRECTED: it is **5** low-confidence drafts of 41, not 6 — `seedRecipeDrafts.js`
+      carries exactly five `low: true` entries.
+      They are not five separate questions. THREE of them are one decision: the drink is
+      named for an ingredient the par list does not carry, so the draft substitutes and the
+      name stops being true.
+      · **Paloma** pours **Sprite** as the "stand-in for grapefruit soda (Squirt / Jarritos)"
+        — as drafted there is no grapefruit in it at all.
+      · **Sidecar** is built on **Bourbon**, with the draft's own note: "Sidecar is Cognac;
+        no brandy par row yet, swap when added."
+      · **Lavender Cream Soda** pours **vanilla syrup**, noted "lavender syrup preferred; no
+        lavender par row yet."
+      So the one call is: add the three par rows (grapefruit soda, Cognac/brandy, lavender
+      syrup), or rename/drop those drinks. Everything else follows from it.
+      The remaining two are house originals with nothing to check them against, so they need
+      only your "yes, that is what I pour":
+      · **Berry Vodka Lemonade** — vodka 1.5, real lemonade 3, two muddled strawberries,
+        plus grenadine 0.25 "for the pink pop" (grenadine on top of the strawberries is the
+        part worth a second look — it may be sweet twice).
+      · **Smokey Pina** — mezcal 2, pineapple 1.5, lime 0.5, agave 0.25.
 - [ ] **Potion Planner v2: both gates before the lineup script's prod run.** (1) Extend
       `applyPackageLineup2026.js` to also UPDATE the changed packages'
       `service_packages.includes` prose and refresh the stale seed copy, or four public
