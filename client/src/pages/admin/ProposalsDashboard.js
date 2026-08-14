@@ -69,6 +69,9 @@ export default function ProposalsDashboard() {
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState({ active: 0, draft: 0, accepted: 0, paid: 0, archived: 0 });
   const [loading, setLoading] = useState(true);
+  // Distinguishes "the fetch failed" from "this filter genuinely matches nothing".
+  // Both leave the table empty, and only one of them is worth retrying.
+  const [loadError, setLoadError] = useState(false);
   const [listState, setListState] = useUrlListState(LIST_DEFAULTS);
   const tab = TAB_IDS.includes(listState.tab) ? listState.tab : 'active';
   const sourceFilter = SOURCE_IDS.includes(listState.source) ? listState.source : '';
@@ -171,10 +174,19 @@ export default function ProposalsDashboard() {
       // the number of rows we actually got if the header is missing (older server).
       const headerTotal = Number(list.headers?.['x-total-count']);
       setTotal(Number.isFinite(headerTotal) ? headerTotal : rows.length);
+      setLoadError(false);
     } catch (err) {
       if (activeQuery.current !== queryString) return; // superseded mid-flight
       console.error('Failed to fetch proposals:', err);
       toast.error('Failed to load proposals. Try refreshing.');
+      // Drop the previous query's rows and total rather than leaving them under
+      // the new page's controls. A failed page-2 fetch used to keep page 1's
+      // rows on screen captioned "Page 2 of 5", which reads as data rather than
+      // as a failure. We do not know the counts after a failure, so we claim
+      // none: the table shows the error, and the pager hides until a load wins.
+      setProposals([]);
+      setTotal(0);
+      setLoadError(true);
     } finally {
       // A superseded call must not clear the newer call's loading state.
       if (activeQuery.current === queryString) setLoading(false);
@@ -462,7 +474,16 @@ export default function ProposalsDashboard() {
               {loading && (
                 <tr><td colSpan={9} className="muted">Loading…</td></tr>
               )}
-              {!loading && rows.length === 0 && (
+              {!loading && loadError && (
+                <tr>
+                  <td colSpan={9} className="muted">
+                    Could not load proposals
+                    {' · '}
+                    <button type="button" className="btn-ghost" onClick={fetchProposals}>Try again</button>
+                  </td>
+                </tr>
+              )}
+              {!loading && !loadError && rows.length === 0 && (
                 <tr>
                   <td colSpan={9} className="muted">
                     No proposals match these filters
@@ -545,7 +566,7 @@ export default function ProposalsDashboard() {
           body on every page change. Staying mounted across the fetch keeps the
           node identity, so focus survives paging. Still hidden on a cold load
           (total 0 while loading), which is how it read before. */}
-      {(!loading || total > 0) && (
+      {!loadError && (!loading || total > 0) && (
         <div className="hstack tiny muted" style={{ padding: '8px 2px' }}>
           <span aria-live="polite">
             {pageCount > 1 ? `Page ${safePage} of ${pageCount} · ` : ''}
