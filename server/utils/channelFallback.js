@@ -5,8 +5,9 @@
  * passes the already-loaded client row.
  *
  * Channel availability for a client:
- *   - email usable: communication_preferences.email_enabled !== false
- *       AND email_status !== 'bad'
+ *   - email usable: email_status !== 'bad'. There is no per-client email
+ *       kill switch: communication_preferences.email_enabled had no writer
+ *       and was dropped 2026-08-14.
  *   - sms usable:   communication_preferences.sms_enabled !== false
  *       AND phone_status !== 'bad' AND a non-empty phone number on file
  *
@@ -18,8 +19,6 @@
 
 function emailUsable(client) {
   if (!client) return false;
-  const prefs = client.communication_preferences || {};
-  if (prefs.email_enabled === false) return false;
   if (client.email_status === 'bad') return false;
   return true;
 }

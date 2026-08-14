@@ -35,7 +35,10 @@ before(async () => {
   )).rows[0].id;
   clientOkId = await mk(`refund-ok-${nonce}`, `refund-ok-${nonce}@example.test`);
   clientBadId = await mk(`refund-bad-${nonce}`, `refund-bad-${nonce}@example.test`);
-  await pool.query(`UPDATE clients SET communication_preferences = '{"email_enabled": false}'::jsonb WHERE id = $1`, [clientBadId]);
+  // Was communication_preferences.email_enabled = false. That key was dropped
+  // 2026-08-14 (no product writer ever set it), so a hard bounce is what kills
+  // the email channel for a client now.
+  await pool.query(`UPDATE clients SET email_status = 'bad' WHERE id = $1`, [clientBadId]);
   clientNoneId = await mk(`refund-none-${nonce}`, null);
   clientPlaceholderId = await mk(`refund-ph-${nonce}`, `refund-ph-${nonce}@ccimport.invalid`);
 
@@ -69,14 +72,14 @@ test('ARCHIVED proposal still sends: the archived gate is deliberately bypassed 
   assert.equal(calls.length, 1);
 });
 
-test('prefs-suppressed client: skipped with reason, nothing sent', async () => {
+test('bad-address client: skipped with reason, nothing sent', async () => {
   const calls = [];
   refundNotify.__setDeps({ sendEmail: async (a) => { calls.push(a); return { id: 'stub' }; } });
   const r = await sendRefundClientNotification({ proposalId: pSuppressed, amountCents: 5000, source: 'test' });
   assert.equal(r.email, 'skipped');
   // Human copy from messageSuppression.suppressionMessage, not the raw enum:
-  // this used to read "Suppressed: channel_disabled." in the admin toast.
-  assert.match(r.skip_reasons.email, /email is switched off/i);
+  // this used to read "Suppressed: bad_contact." in the admin toast.
+  assert.match(r.skip_reasons.email, /marked bad/i);
   assert.doesNotMatch(r.skip_reasons.email, /channel_disabled|bad_contact|undefined/);
   assert.equal(calls.length, 0);
 });

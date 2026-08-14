@@ -193,7 +193,7 @@ async function handleEventEveEmail({ entity }) {
     `SELECT p.id, p.status, p.event_date, p.event_start_time, p.event_location,
             p.event_timezone,
             c.id AS client_id, c.name AS client_name, c.email AS client_email,
-            c.communication_preferences AS comm_prefs, c.email_status
+            c.email_status
        FROM proposals p
        LEFT JOIN clients c ON c.id = p.client_id
       WHERE p.id = $1`,
@@ -204,8 +204,6 @@ async function handleEventEveEmail({ entity }) {
   if (ctx.status === 'archived') throw new Error('event_eve_email: proposal archived');
   if (!ctx.client_email) throw new SuppressMessageError('client_no_email');
   if (ctx.email_status === 'bad') throw new SuppressMessageError('email_status_bad');
-  const prefs = ctx.comm_prefs || {};
-  if (prefs.email_enabled === false) throw new SuppressMessageError('email_opted_out');
 
   const bartender = await resolveBartender(proposalId);
   const tpl = emailTemplates.eventEveEmail({

@@ -330,7 +330,7 @@ async function setSmsEnabled(sender, enabled) {
     await pool.query(
       `UPDATE clients
        SET communication_preferences = jsonb_set(
-             jsonb_set(COALESCE(communication_preferences, '{"sms_enabled":true,"email_enabled":true,"marketing_enabled":true}'::jsonb), '{sms_enabled}', $2::jsonb),
+             jsonb_set(COALESCE(communication_preferences, '{"sms_enabled":true,"marketing_enabled":true}'::jsonb), '{sms_enabled}', $2::jsonb),
              ${auditPath}, to_jsonb(NOW()::text))
        WHERE id = $1`,
       [sender.client.id, JSON.stringify(enabled)]
@@ -339,7 +339,7 @@ async function setSmsEnabled(sender, enabled) {
     await pool.query(
       `UPDATE users
        SET communication_preferences = jsonb_set(
-             jsonb_set(COALESCE(communication_preferences, '{"sms_enabled":true,"email_enabled":true,"marketing_enabled":true}'::jsonb), '{sms_enabled}', $2::jsonb),
+             jsonb_set(COALESCE(communication_preferences, '{"sms_enabled":true,"marketing_enabled":true}'::jsonb), '{sms_enabled}', $2::jsonb),
              ${auditPath}, to_jsonb(NOW()::text))
        WHERE id = $1`,
       [sender.staffUserId, JSON.stringify(enabled)]

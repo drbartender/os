@@ -114,7 +114,7 @@ async function recordSmsConsent(db, {
   const { value: phone10 } = validatePhone(phone);
   if (!phone10) return { applied: false, logged: false, reason: 'no_phone' };
 
-  const DEFAULT_PREFS = '\'{"sms_enabled":true,"email_enabled":true,"marketing_enabled":true}\'::jsonb';
+  const DEFAULT_PREFS = '\'{"sms_enabled":true,"marketing_enabled":true}\'::jsonb';
   const auditPath = consented ? "'{sms_opt_in_at}'" : "'{sms_opt_out_at}'";
 
   const upd = await db.query(

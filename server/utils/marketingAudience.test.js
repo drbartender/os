@@ -30,9 +30,21 @@ test('absent preference keys mean enabled (tri-state)', () => {
   assert.equal(isMailable({ ...ok, communication_preferences: { marketing_enabled: true } }), true);
 });
 
+test('an orphaned email_enabled:false is ignored, and never masks marketing_enabled', () => {
+  // email_enabled was dropped 2026-08-14: it had no product writer, and all
+  // 525 live rows carry it as true. The key stays on existing rows on purpose,
+  // so it must read as inert. The second assertion is the one that matters:
+  // the real unsubscribe signal is marketing_enabled, and it still holds the
+  // contact back on its own.
+  assert.equal(isMailable({ ...ok, communication_preferences: { email_enabled: false } }), true);
+  assert.equal(
+    heldBackReason({ ...ok, communication_preferences: { email_enabled: false, marketing_enabled: false } }),
+    'unsubscribed'
+  );
+});
+
 const CASES = [
   ['marketing opt-out', { communication_preferences: { marketing_enabled: false } }, 'unsubscribed'],
-  ['email opt-out', { communication_preferences: { email_enabled: false } }, 'unsubscribed'],
   ['house rule', { marketing_excluded: true }, 'do_not_contact'],
   ['null address', { email: null }, 'no_address'],
   ['blank address', { email: '   ' }, 'no_address'],
@@ -106,6 +118,9 @@ test('HELD_BACK_SQL and heldBackReason agree on every case, in the database', as
     {},                                                            // mailable
     { marketing_excluded: true },
     { prefs: { marketing_enabled: false } },
+    // An orphaned email_enabled:false must NOT hold anyone back: the key was
+    // dropped 2026-08-14 and existing rows deliberately keep it. This case
+    // pins that the SQL and JS legs BOTH ignore it, and agree while doing so.
     { prefs: { email_enabled: false } },
     { email_status: 'bad' },
     { email: `${NONCE}@thing.invalid` },

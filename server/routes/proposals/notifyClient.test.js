@@ -440,8 +440,13 @@ test('change-request save: requested notice is a 400 (save half of the CR rule)'
 });
 
 test('suppressed recipient reports skipped even when requested (real send path)', async () => {
+  // Suppression is driven by email_status here. It used to use
+  // communication_preferences.email_enabled, dropped 2026-08-14: that key had no
+  // product writer, so a hard bounce is the only thing that can kill the email
+  // channel for a client now. The behavior under test — the notify path reports
+  // 'skipped' with human copy instead of a raw enum — is unchanged.
   crudModule.__setDeps({ sendRescheduleEmail: require('../../utils/rescheduleProposal').sendRescheduleEmail });
-  await pool.query(`UPDATE clients SET communication_preferences = '{"email_enabled": false}'::jsonb WHERE id = $1`, [clientId]);
+  await pool.query(`UPDATE clients SET email_status = 'bad' WHERE id = $1`, [clientId]);
   try {
     const res = await request('PATCH', `/api/proposals/${proposalId}`, {
       token: adminToken2,
@@ -454,10 +459,10 @@ test('suppressed recipient reports skipped even when requested (real send path)'
     const entry = res.body.notifications.find((n) => n.type === 'event_details_changed');
     assert.equal(entry.email, 'skipped');
     // Human copy from messageSuppression.suppressionMessage, not the raw enum.
-    assert.match(entry.skip_reasons.email, /email is switched off/i);
+    assert.match(entry.skip_reasons.email, /marked bad/i);
     assert.doesNotMatch(entry.skip_reasons.email, /channel_disabled|bad_contact|undefined/);
   } finally {
-    await pool.query(`UPDATE clients SET communication_preferences = '{}'::jsonb WHERE id = $1`, [clientId]);
+    await pool.query(`UPDATE clients SET email_status = 'ok' WHERE id = $1`, [clientId]);
   }
 });
 
@@ -546,13 +551,15 @@ test('record-payment notify_client=true on a .invalid client: skipped, never sen
   assert.equal(emailCalls.length, 0);
 });
 
-test('record-payment notify_client=true on a prefs-suppressed client: skipped with reason', async () => {
+test('record-payment notify_client=true on a suppressed client: skipped with reason', async () => {
   const emailCalls = [];
   actionsModule.__setDeps({
     notifyAdminCategory: async () => {},
     sendEmail: async (a) => { emailCalls.push(a); return { id: 'stub' }; },
   });
-  await pool.query(`UPDATE clients SET communication_preferences = '{"email_enabled": false}'::jsonb WHERE id = $1`, [clientId]);
+  // email_status, not communication_preferences.email_enabled: that key was
+  // dropped 2026-08-14 (no product writer). Same assertion, same seam.
+  await pool.query(`UPDATE clients SET email_status = 'bad' WHERE id = $1`, [clientId]);
   try {
     const pid = await seedPayProposal(clientId);
     const res = await request('POST', `/api/proposals/${pid}/record-payment`, {
@@ -562,11 +569,11 @@ test('record-payment notify_client=true on a prefs-suppressed client: skipped wi
     const entry = res.body.notifications.find((n) => n.type === 'payment_receipt');
     assert.equal(entry.email, 'skipped');
     // Human copy from messageSuppression.suppressionMessage, not the raw enum.
-    assert.match(entry.skip_reasons.email, /email is switched off/i);
+    assert.match(entry.skip_reasons.email, /marked bad/i);
     assert.doesNotMatch(entry.skip_reasons.email, /channel_disabled|bad_contact|undefined/);
     assert.equal(emailCalls.length, 0);
   } finally {
-    await pool.query(`UPDATE clients SET communication_preferences = '{}'::jsonb WHERE id = $1`, [clientId]);
+    await pool.query(`UPDATE clients SET email_status = 'ok' WHERE id = $1`, [clientId]);
   }
 });
 

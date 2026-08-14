@@ -177,7 +177,7 @@ router.post('/unsubscribe', asyncHandler(async (req, res) => {
     await db.query(
       `UPDATE clients
        SET communication_preferences = jsonb_set(
-             COALESCE(communication_preferences, '{"sms_enabled":true,"email_enabled":true,"marketing_enabled":true}'::jsonb),
+             COALESCE(communication_preferences, '{"sms_enabled":true,"marketing_enabled":true}'::jsonb),
              '{marketing_enabled}', 'false'::jsonb)
        WHERE ($1::int IS NOT NULL AND id = $1::int)
           OR ($2::text IS NOT NULL AND lower(btrim(email)) = lower(btrim($2::text)))`,

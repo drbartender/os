@@ -116,13 +116,19 @@ test('dispatcher > marks status suppressed when proposal is archived', async () 
   await pool.query("UPDATE proposals SET status = 'deposit_paid', archive_reason = NULL WHERE id = $1", [testProposalId]);
 });
 
-test('dispatcher > suppresses when the client has opted out of both channels', async () => {
+test('dispatcher > suppresses when the client has opted out of SMS and email is dead', async () => {
+  // Was "opted out of both channels" via sms_enabled + email_enabled. The email
+  // half of that pair was dropped 2026-08-14 (no product writer), so the only
+  // way both channels are unusable is the surviving SMS opt-out plus a bad
+  // email address. The behavior under test is unchanged: no usable channel,
+  // no substitution, suppressed.
   const handler = mock.fn(async () => {});
   registerHandler('disp_test_optout', handler);
 
   await pool.query(
     `UPDATE clients SET communication_preferences =
-       jsonb_set(jsonb_set(communication_preferences, '{email_enabled}', 'false'::jsonb), '{sms_enabled}', 'false'::jsonb)
+       jsonb_set(communication_preferences, '{sms_enabled}', 'false'::jsonb),
+       email_status = 'bad'
      WHERE id = $1`,
     [testClientId]
   );
@@ -142,7 +148,8 @@ test('dispatcher > suppresses when the client has opted out of both channels', a
 
   await pool.query(
     `UPDATE clients SET communication_preferences =
-       jsonb_set(jsonb_set(communication_preferences, '{email_enabled}', 'true'::jsonb), '{sms_enabled}', 'true'::jsonb)
+       jsonb_set(communication_preferences, '{sms_enabled}', 'true'::jsonb),
+       email_status = 'ok'
      WHERE id = $1`,
     [testClientId]
   );

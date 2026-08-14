@@ -31,7 +31,6 @@ async function shouldSendImmediate({ proposal, client, channel }) {
   }
   const prefs = client.communication_preferences || {};
   if (channel === 'email') {
-    if (prefs.email_enabled === false) return { ok: false, reason: 'channel_disabled' };
     if (client.email_status === 'bad') return { ok: false, reason: 'bad_contact' };
   } else if (channel === 'sms') {
     if (prefs.sms_enabled === false) return { ok: false, reason: 'channel_disabled' };
@@ -60,9 +59,12 @@ async function shouldSendImmediate({ proposal, client, channel }) {
  *   channel_disabled  communication_preferences.sms_enabled === false, set when
  *                     the client replies STOP (utils/smsInbound.js) or via the
  *                     /sms opt-in page (utils/smsConsent.js); START opts back
- *                     in. Or email_enabled === false, which no product path
- *                     writes today (the unsubscribe route only clears
- *                     marketing_enabled), so it is purely a stored preference.
+ *                     in. SMS is the ONLY channel this reason can describe:
+ *                     there is no email kill-switch preference (the retired
+ *                     email_enabled key had no writer and was dropped
+ *                     2026-08-14), so email suppression comes from
+ *                     email_status === 'bad' or the marketing-scoped
+ *                     marketing_enabled, never from here.
  *   bad_contact       email_status === 'bad', set by the Resend webhook on a
  *                     permanent bounce; phone_status === 'bad', set by
  *                     utils/smsDeliveryStatus.js on a failed delivery; or no

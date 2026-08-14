@@ -199,7 +199,7 @@ async function notifyStaffOfOutcome({ staffUserIds, outcome, newEndDisplay, cont
       }
     }
 
-    if (prefs.email_enabled !== false && r.email) {
+    if (r.email) {
       const sent = await safe(`staff_email_${r.id}`, () => sendEmail({
         to: r.email,
         subject,

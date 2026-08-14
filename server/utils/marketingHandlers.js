@@ -69,7 +69,6 @@ async function loadProposalForHandler(proposalId) {
     SELECT p.id, p.token, p.event_date, p.event_type, p.event_type_custom,
            p.event_timezone, p.status, p.client_id, p.created_at,
            c.name AS client_name, c.email AS client_email,
-           c.communication_preferences AS comm_prefs,
            c.email_status, c.phone_status
     FROM proposals p
     LEFT JOIN clients c ON c.id = p.client_id
@@ -337,9 +336,6 @@ async function loadHandlerContext(scheduledMessage) {
   // 'client has no email' Sentry noise, DRBARTENDER-SERVER-X.)
   if (!proposal.client_email) throw new SuppressMessageError('client_no_email');
   if (proposal.email_status === 'bad') throw new SuppressMessageError('email_status_bad');
-
-  const prefs = proposal.comm_prefs || {};
-  if (prefs.email_enabled === false) throw new SuppressMessageError('email_opted_out');
 
   return { proposal };
 }

@@ -43,7 +43,6 @@ async function load(planId) {
             dp.consult_selections, dp.consult_filled_at,
             p.status AS proposal_status,
             c.id AS client_id, c.email AS live_email, c.email_status,
-            c.communication_preferences,
             sp.pricing_type
        FROM drink_plans dp
        LEFT JOIN proposals p ON p.id = dp.proposal_id
@@ -59,9 +58,7 @@ async function load(planId) {
 function resolveFromRow(row) {
   const email = row.live_email || row.snapshot_email || null;
   const source = row.live_email ? 'client' : 'snapshot';
-  const prefs = row.communication_preferences || {};
   const archived = row.proposal_status === 'archived';
-  const optedOut = prefs.email_enabled === false;
   const emailBad = row.email_status === 'bad';
   // RFC-2606 import placeholders (CC import): sendEmail silently drops them, so
   // offering the channel would report a send that never happens (mirrors 937ba35).
@@ -78,17 +75,17 @@ function resolveFromRow(row) {
   if (isPlaceholder) warnings.push('Address is a CC-import placeholder (.invalid); no real email exists for this client.');
 
   // Automatic-send suppression (legacy shouldSendImmediate parity): no email, a
-  // .invalid CC-import placeholder, archived event, email opt-out, or a known-bad
-  // address all make the email channel unavailable with an honest reason.
+  // .invalid CC-import placeholder, archived event, or a known-bad address all
+  // make the email channel unavailable with an honest reason. There is no
+  // per-client email opt-out to check: communication_preferences.email_enabled
+  // had no writer and was dropped 2026-08-14.
   const emailReason = !email
     ? 'No email on file.'
     : (isPlaceholder
       ? 'Placeholder address (.invalid) from the CC import; no real email exists.'
       : (archived
         ? 'This event is archived; recap not sent.'
-        : (optedOut
-          ? 'Client has opted out of email.'
-          : (emailBad ? 'A previous email to this address hard-bounced.' : null))));
+        : (emailBad ? 'A previous email to this address hard-bounced.' : null)));
   const emailAvailable = !emailReason;
 
   return {

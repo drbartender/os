@@ -7,7 +7,7 @@ const okClient = {
   id: 99,
   email: 'ok@example.com',
   phone: '+15551234567',
-  communication_preferences: { email_enabled: true, sms_enabled: true, marketing_enabled: true },
+  communication_preferences: { sms_enabled: true, marketing_enabled: true },
   email_status: 'ok',
   phone_status: 'ok',
 };
@@ -31,20 +31,13 @@ test('shouldSendImmediate > archived proposal blocks everything', async () => {
   assert.deepStrictEqual(result, { ok: false, reason: 'archived' });
 });
 
-test('shouldSendImmediate > email_enabled=false blocks email', async () => {
+test('shouldSendImmediate > an orphaned email_enabled=false does NOT block email', async () => {
+  // The key was dropped 2026-08-14 (no product writer ever set it) but stays on
+  // existing rows. Nothing may read it back into a suppression decision.
   const result = await shouldSendImmediate({
     proposal: okProposal,
     client: { ...okClient, communication_preferences: { ...okClient.communication_preferences, email_enabled: false } },
     channel: 'email',
-  });
-  assert.deepStrictEqual(result, { ok: false, reason: 'channel_disabled' });
-});
-
-test('shouldSendImmediate > email_enabled=false does NOT block sms', async () => {
-  const result = await shouldSendImmediate({
-    proposal: okProposal,
-    client: { ...okClient, communication_preferences: { ...okClient.communication_preferences, email_enabled: false } },
-    channel: 'sms',
   });
   assert.deepStrictEqual(result, { ok: true });
 });

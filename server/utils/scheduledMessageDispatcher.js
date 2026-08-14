@@ -159,16 +159,14 @@ async function checkSuppression({ row, entity, recipient }) {
   // Phase 4a's recipient_type IN ('staff','admin') branch (if present) stays.
   // Per-channel comm-prefs for staff and admin recipients (Phase 4a). Staff
   // SMS opt-out is set by the STOP keyword flipping
-  // users.communication_preferences.sms_enabled. `users` has no
-  // email_status / phone_status columns, so only the prefs flags are checked
-  // here — there is no bad-contact branch for staff/admin.
+  // users.communication_preferences.sms_enabled. That is the only per-channel
+  // flag left: email_enabled had no writer and was dropped 2026-08-14. `users`
+  // has no email_status / phone_status columns either, so there is no
+  // bad-contact branch and no email branch for staff/admin.
   if ((row.recipient_type === 'staff' || row.recipient_type === 'admin') && recipient) {
     const prefs = recipient.communication_preferences || {};
     if (row.channel === 'sms' && prefs.sms_enabled === false) {
       return `suppressed: ${row.recipient_type}.communication_preferences.sms_enabled is false`;
-    }
-    if (row.channel === 'email' && prefs.email_enabled === false) {
-      return `suppressed: ${row.recipient_type}.communication_preferences.email_enabled is false`;
     }
   }
   return null;

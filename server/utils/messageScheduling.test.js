@@ -132,8 +132,14 @@ test('enqueueCategorizedMessage > fans out one row per resolved channel', async 
   rows.forEach(r => assert.strictEqual(Number(r.rc), 0));
 });
 
-test('enqueueCategorizedMessage > deadLetter return for critical category with all channels blocked', async () => {
-  // Mute everything for this user + flip comms-prefs off (no push subs by default)
+test('enqueueCategorizedMessage > critical category with everything muted still lands on email', async () => {
+  // Was "deadLetter return for critical category with all channels blocked",
+  // driven by sms_enabled + email_enabled both false. email_enabled was dropped
+  // 2026-08-14 (it had no product writer), and `users` has no email_status
+  // column, so email can no longer be blocked for a staff recipient and the
+  // resolver's dead_letter is unreachable from here. The critical-path promise
+  // this test guards is the one that still matters: a critical category with
+  // every explicit channel muted is never silently dropped.
   await pool.query(
     `UPDATE users SET
         staff_notification_preferences = jsonb_set(
@@ -154,7 +160,13 @@ test('enqueueCategorizedMessage > deadLetter return for critical category with a
     entityId: 99002,
     messageType: 'test_dead_letter_beo',
   });
-  assert.deepEqual(result, { enqueued: [], deadLetter: true });
+  assert.equal(result.deadLetter, false);
+  assert.equal(result.enqueued.length, 1);
+  const { rows } = await pool.query(
+    'SELECT channel FROM scheduled_messages WHERE id = ANY($1::int[])',
+    [result.enqueued]
+  );
+  assert.deepEqual(rows.map(r => r.channel), ['email']);
 });
 
 test('enqueueCategorizedMessage > empty for non-critical category with no opted channels', async () => {

@@ -41,7 +41,6 @@ const { isPlaceholderEmail } = require('./emailValidation');
 // Alias `c` = clients. Alias `lu` = LEAD_UNSUB_LATERAL, which MUST be joined.
 const MAILABLE_SQL = `
   (c.communication_preferences->>'marketing_enabled') IS DISTINCT FROM 'false'
-  AND (c.communication_preferences->>'email_enabled') IS DISTINCT FROM 'false'
   AND c.marketing_excluded = false
   AND c.email IS NOT NULL
   AND btrim(c.email) <> ''
@@ -63,7 +62,6 @@ const HELD_BACK_SQL = `
   CASE
     WHEN c.marketing_excluded THEN 'do_not_contact'
     WHEN (c.communication_preferences->>'marketing_enabled') = 'false' THEN 'unsubscribed'
-    WHEN (c.communication_preferences->>'email_enabled') = 'false' THEN 'unsubscribed'
     WHEN COALESCE(lu.unsubscribed, false) THEN 'unsubscribed'
     WHEN c.email IS NULL OR btrim(c.email) = '' THEN 'no_address'
     WHEN lower(btrim(c.email)) LIKE '%.invalid' THEN 'no_address'
@@ -123,8 +121,7 @@ const clientOptedOutByEmail = (emailExpr) => `
     SELECT 1 FROM clients c2
      WHERE lower(btrim(c2.email)) = lower(btrim(${emailExpr}))
        AND (c2.marketing_excluded = true
-            OR (c2.communication_preferences->>'marketing_enabled') = 'false'
-            OR (c2.communication_preferences->>'email_enabled') = 'false')
+            OR (c2.communication_preferences->>'marketing_enabled') = 'false')
   )`;
 
 /** The lead-side half. Same contract, same safety rule. */
@@ -356,7 +353,6 @@ function heldBackReason(row) {
   if (row.marketing_excluded === true) return 'do_not_contact';
   const prefs = row.communication_preferences || {};
   if (prefs.marketing_enabled === false) return 'unsubscribed';
-  if (prefs.email_enabled === false) return 'unsubscribed';
   if (row.lead_unsubscribed === true) return 'unsubscribed';
   const email = typeof row.email === 'string' ? row.email.trim() : '';
   if (!email) return 'no_address';

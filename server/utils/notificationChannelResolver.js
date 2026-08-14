@@ -16,6 +16,14 @@ const { pool } = require('../db');
 const CRITICAL_CATEGORIES = new Set(['beo_finalized', 'schedule_change', 'payday']);
 
 // Tried in order when every requested channel is blocked AND category is critical.
+//
+// SMS is the only channel with a global kill switch left (the STOP keyword
+// flipping communication_preferences.sms_enabled). `users` carries no
+// email_status column and, since email_enabled was dropped 2026-08-14, no email
+// mute either — so 'email' always passes this loop and the 'push' step and the
+// all_channels_blocked dead letter below are unreachable in practice. Both are
+// kept as the declared contract of this function rather than deleted, because
+// the day an email-side block returns they are the correct behavior.
 const CRITICAL_FALLBACK_ORDER = ['sms', 'email', 'push'];
 
 const DEFAULT_CHANNELS = Object.freeze({
@@ -51,7 +59,6 @@ async function pickChannelsForUserAndCategory(userId, category) {
 
   const filtered = requested.filter(ch => {
     if (ch === 'sms' && comms?.sms_enabled === false) return false;
-    if (ch === 'email' && comms?.email_enabled === false) return false;
     return true;
   });
 
@@ -63,7 +70,6 @@ async function pickChannelsForUserAndCategory(userId, category) {
     const pushSubs = Array.isArray(prefs?.push_subscriptions) ? prefs.push_subscriptions : [];
     for (const ch of CRITICAL_FALLBACK_ORDER) {
       if (ch === 'sms' && comms?.sms_enabled === false) continue;
-      if (ch === 'email' && comms?.email_enabled === false) continue;
       if (ch === 'push' && pushSubs.length === 0) continue;
       return { kind: 'channels', channels: [ch] };
     }

@@ -68,47 +68,42 @@ test('resolver > sms_enabled=false filters SMS from every result', async () => {
   assert.deepEqual(out, { kind: 'channels', channels: ['push', 'email'] });
 });
 
-test('resolver > email_enabled=false filters email', async () => {
-  await setPrefs({ shift_offered: ['sms', 'email'] }, { email_enabled: false, sms_enabled: true });
-  const out = await pickChannelsForUserAndCategory(testUserId, 'shift_offered');
-  assert.deepEqual(out, { kind: 'channels', channels: ['sms'] });
-});
-
 test('resolver > missing category key falls back to DEFAULT_CHANNELS', async () => {
   // shift_offered key is omitted; resolver should use DEFAULT_CHANNELS.shift_offered
-  await setPrefs({ payday: ['email'] }, { sms_enabled: true, email_enabled: true });
+  await setPrefs({ payday: ['email'] }, { sms_enabled: true });
   const out = await pickChannelsForUserAndCategory(testUserId, 'shift_offered');
   assert.deepEqual(out.channels.sort(), DEFAULT_CHANNELS.shift_offered.slice().sort());
 });
 
 test('resolver > critical-path override prefers SMS when all channels muted', async () => {
-  await setPrefs({ beo_finalized: [] }, { sms_enabled: true, email_enabled: true });
+  await setPrefs({ beo_finalized: [] }, { sms_enabled: true });
   const out = await pickChannelsForUserAndCategory(testUserId, 'beo_finalized');
   assert.deepEqual(out, { kind: 'channels', channels: ['sms'] });
 });
 
 test('resolver > critical-path override degrades to email when SMS globally off', async () => {
-  await setPrefs({ beo_finalized: [] }, { sms_enabled: false, email_enabled: true });
+  await setPrefs({ beo_finalized: [] }, { sms_enabled: false });
   const out = await pickChannelsForUserAndCategory(testUserId, 'beo_finalized');
   assert.deepEqual(out, { kind: 'channels', channels: ['email'] });
 });
 
-test('resolver > critical-path override degrades to push when SMS+email both off AND push subs exist', async () => {
-  await setPrefs({ beo_finalized: [] }, { sms_enabled: false, email_enabled: false });
-  await setPushSubs([{ endpoint: 'https://example.test/sub', keys: { p256dh: 'x', auth: 'y' }, subscribed_at: new Date().toISOString() }]);
-  const out = await pickChannelsForUserAndCategory(testUserId, 'beo_finalized');
-  assert.deepEqual(out, { kind: 'channels', channels: ['push'] });
-});
-
-test('resolver > critical-path override returns dead_letter when SMS+email+push all blocked', async () => {
+test('resolver > an orphaned email_enabled=false does not block email, so the critical path always lands', async () => {
+  // email_enabled was dropped 2026-08-14 (no product writer ever set it), and
+  // existing rows keep the key on purpose. Deliberate consequence: `users`
+  // carries no email_status column either, so 'email' can no longer be blocked
+  // for a staff recipient. The CRITICAL_FALLBACK_ORDER 'push' step and the
+  // all_channels_blocked dead letter are therefore unreachable in practice —
+  // they stay in the resolver as its declared contract. The two tests that used
+  // to reach them (via sms_enabled+email_enabled both false) were removed with
+  // the key; this one pins what happens instead.
   await setPrefs({ beo_finalized: [] }, { sms_enabled: false, email_enabled: false });
   await setPushSubs([]);
   const out = await pickChannelsForUserAndCategory(testUserId, 'beo_finalized');
-  assert.deepEqual(out, { kind: 'dead_letter', reason: 'all_channels_blocked' });
+  assert.deepEqual(out, { kind: 'channels', channels: ['email'] });
 });
 
 test('resolver > non-critical category with all channels muted returns empty channels (NOT dead_letter)', async () => {
-  await setPrefs({ tip_received: [] }, { sms_enabled: true, email_enabled: true });
+  await setPrefs({ tip_received: [] }, { sms_enabled: true });
   const out = await pickChannelsForUserAndCategory(testUserId, 'tip_received');
   assert.deepEqual(out, { kind: 'channels', channels: [] });
 });
