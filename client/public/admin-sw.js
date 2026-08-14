@@ -27,7 +27,7 @@
 //       .map((n) => caches.delete(n)));
 //     await self.registration.unregister();
 //   })()));
-const SW_VERSION = 'admin-sw-2026-08-14-v6';
+const SW_VERSION = 'admin-sw-2026-08-14-v7';
 const SHELL_CACHE = `admin-shell-${SW_VERSION}`;
 const API_CACHE = `admin-api-${SW_VERSION}`;
 
@@ -104,6 +104,13 @@ async function stampAndPut(cache, key, response) {
 // meta cache so it survives SW restarts.
 let userId = null;
 let userIdLoad = null; // in-flight/settled load promise; a boolean raced
+// Identity epoch: bumped by every announce/logout. In-flight closures that
+// captured an older epoch must neither assign userId nor serve a cached
+// Response they resolved under the previous identity (push-gate findings:
+// a held Response stays valid after caches.delete, and a stale meta read
+// could resurrect the old user after logout).
+let epoch = 0;
+let msgQueue = Promise.resolve(); // serializes announce/logout handling
 const META_CACHE = 'admin-meta';
 const apiCacheName = () => `${API_CACHE}-u${userId || 'anon'}`;
 
@@ -120,6 +127,7 @@ function loadUserId() {
   // admin-meta, and fell into the shared anon namespace (re-confirm round).
   if (!userIdLoad) {
     userIdLoad = (async () => {
+      const startEpoch = epoch;
       try {
         // caches.open CREATES a missing cache, so a read racing the logout
         // purge would resurrect an empty admin-meta. Only the announce
@@ -127,7 +135,12 @@ function loadUserId() {
         if (!(await caches.keys()).includes(META_CACHE)) return;
         const meta = await caches.open(META_CACHE);
         const hit = await meta.match('/__admin-user');
-        if (hit) userId = (await hit.text()) || null;
+        if (hit) {
+          const id = (await hit.text()) || null;
+          // A logout/announce that landed mid-read owns the identity now;
+          // a stale read must never resurrect the previous user.
+          if (epoch === startEpoch) userId = id;
+        }
       } catch (e) { /* stay anon */ }
     })();
   }
@@ -136,21 +149,27 @@ function loadUserId() {
 
 self.addEventListener('message', (event) => {
   const msg = event.data || {};
+  const run = (fn) => {
+    msgQueue = msgQueue.then(fn).catch(() => {});
+    event.waitUntil(msgQueue);
+  };
   if (msg.type === 'admin-user' && /^\d+$/.test(String(msg.id))) {
-    event.waitUntil((async () => {
+    run(async () => {
+      epoch += 1;
       userId = String(msg.id);
       userIdLoad = Promise.resolve();
       const meta = await caches.open(META_CACHE);
       await meta.put('/__admin-user', new Response(userId));
       await purgeApiCaches({ keepCurrent: true }); // evict other users' data
-    })());
+    });
   } else if (msg.type === 'admin-logout') {
-    event.waitUntil((async () => {
+    run(async () => {
+      epoch += 1;
       userId = null;
       userIdLoad = Promise.resolve();
       await caches.delete(META_CACHE);
       await purgeApiCaches(); // spec section 7: full purge on logout
-    })());
+    });
   }
 });
 
@@ -199,13 +218,16 @@ self.addEventListener('fetch', (event) => {
     event.respondWith((async () => {
       try {
         const fresh = await fetch(req);
-        // Only a GOOD document may become the offline shell: a transient 500
-        // page cached here would be what every later offline launch boots.
+        // Only a GOOD HTML document may become the offline shell: a
+        // transient 500 page, OR a direct address-bar navigation to a JSON
+        // asset like /admin-manifest.json (a same-origin `navigate` with a
+        // 200), cached here would be what every later offline launch boots.
         // The clone MUST happen synchronously before `return fresh` resolves
         // respondWith: once the browser drains the body, clone() throws and
         // the write silently dies (re-confirm round caught exactly that).
         // waitUntil keeps the SW alive for the deferred write.
-        if (fresh.ok) {
+        const contentType = fresh.headers.get('content-type') || '';
+        if (fresh.ok && contentType.includes('text/html')) {
           const copy = fresh.clone();
           event.waitUntil(
             caches.open(SHELL_CACHE)
@@ -257,8 +279,10 @@ self.addEventListener('fetch', (event) => {
       // fail a healthy network request over a cache error.
       let cache = null;
       let cached;
+      let startEpoch;
       try {
         await loadUserId();
+        startEpoch = epoch;
         cache = await caches.open(apiCacheName());
         cached = await cache.match(req);
       } catch (e) {
@@ -275,7 +299,10 @@ self.addEventListener('fetch', (event) => {
       try {
         return cached ? await raceWithTimeout(live) : await live;
       } catch (e) {
-        if (cached) return cached;
+        // Identity changed while this read was in flight: the held cached
+        // Response may belong to the PREVIOUS user (it stays readable even
+        // after its cache was purged). Refuse the stale serve.
+        if (cached && epoch === startEpoch) return cached;
         throw e;
       }
     })());
@@ -336,10 +363,15 @@ self.addEventListener('notificationclick', (event) => {
 
       // A bare default ('/') means "just focus the app": match any open
       // admin window. A real targetPath focuses the window already on it.
+      // Exact pathname equality: a substring test would focus /shifts/10
+      // when the notification targets /shifts/1 (push-gate finding; the
+      // same latent bug ships in staff-sw.js and is tracked separately).
       const isRootDefault = targetPath === '/';
       for (const client of allClients) {
         if (!('focus' in client)) continue;
-        if (isRootDefault || client.url.includes(targetPath)) {
+        let clientPath = null;
+        try { clientPath = new URL(client.url).pathname; } catch (e) { clientPath = null; }
+        if (isRootDefault || clientPath === targetPath) {
           return client.focus();
         }
       }

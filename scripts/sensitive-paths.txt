@@ -298,3 +298,15 @@ client/src/components/SessionExpiryHandler.js
 client/public/admin-sw.js
 client/public/admin-manifest.json
 client/src/utils/installAdminPwaMeta.js
+
+# The mailability predicate + suppression helpers (2026-08-14, push-gate
+# finding). marketingAudience.js is the SINGLE place the suppression
+# conditions live; the fix-list's own words: dropping the wrong arm of that
+# CASE silently re-adds unsubscribed people to a campaign audience, a
+# compliance problem. The email_enabled removal touched it and the fleet
+# would not have fired mechanically. The three helpers route every automated
+# send's channel/suppression decision.
+server/utils/marketingAudience.js
+server/utils/messageSuppression.js
+server/utils/channelFallback.js
+server/utils/notificationChannelResolver.js

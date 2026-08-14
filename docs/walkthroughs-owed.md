@@ -377,6 +377,12 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
 
 ## Tier 6 — queued: will owe a walkthrough the moment it ships
 
+- [ ] **Admin palette baseline eyeball sweep (palette lanes, merged 2026-08-14).** The
+  text-colour baseline moved for every admin surface in both skins with zero browser
+  verification (all contrast numbers were token arithmetic). Walk the screen list in the
+  fix list; /change-requests is the cleanest single proof case; check House Lights
+  specifically.
+
 - [ ] **Mobile admin shell + PWA (lanes ma-a/ma-b, merged 2026-08-14, unpushed).** On the
   Pixel after the push: install from More > Install app (or Chrome's banner), confirm the
   DrB OS icon + standalone launch, tab nav + badges, Desktop-view toggle round trip,

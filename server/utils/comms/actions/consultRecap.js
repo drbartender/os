@@ -14,7 +14,7 @@
 // Email only. Recap is an AUTOMATIC send fired on consult save (no admin in the
 // loop to read a warning), so unlike shoppingListApprove it HARD-suppresses the
 // email channel on the same rules the legacy path applied via shouldSendImmediate:
-// archived event, email opt-out, or a known-bad address. The stale-snapshot and
+// archived event, a missing or .invalid placeholder address, or a known-bad address. The stale-snapshot and
 // typo-domain signals stay warnings.
 //
 // dispatch OWNS its ledger write (sendEmail called with skipLog) so a provider
