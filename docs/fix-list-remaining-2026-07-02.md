@@ -3704,3 +3704,40 @@ Roughly three weeks remain on the window.
 Note the ordering risk if this is fixed as stated: once tags exist, this moment
 starts appearing, and its audience must be checked against `RESEND_DAILY_CAP` (100 on
 the free tier) before anyone hits send.
+
+### Addendum 2026-08-14: it is NINE contacts, not 54, and the app already knows which
+
+Resolved against prod using the exact predicates `marketingAudience.js` uses
+(`NORM_EVENT_TYPE`, `CORPORATE_EVENT_TYPES`, status in the paid set, excluding
+archived). Exactly **9** clients have actually booked and paid for corporate work:
+
+  1424 Jesse Burns — jesse@hoodieanalytics.com — 2 corporate events (only repeat)
+  1740 Brianna Modugno — brianna@omgorange.com
+  1436 Cathy Murphy — cmurphy@arthrex-chicago.com
+  1579 Dora Travaglio — dora.travaglio@mizkan.com
+  1783 Drew Mathew — amathew@salesforce.com
+  1796 Tyler Anderson — tyler@facecardmedspa.com
+  1510 Joanne Korzynski — joannak1120@hmail.com
+  1439 Patricia Johnson — pattynbstaffing@gmail.com
+  1449 Allyson Gietl — allyson.gietl@gmail.com — 1 corporate + 1 personal
+
+All 9 have an address and none is marketing-excluded, so tagging them yields a clean
+9-person emailable audience — the moment appears, and it is far under the 100/day
+Resend cap.
+
+`suggestTag` fires its CONFIDENT branch on every one of them ("Booked a corporate
+event before"), because `corporateEventCount > 0` is checked first. So this is nine
+one-click accepts of a suggestion the app is already rendering, not 54 judgment
+calls. Allyson Gietl is the only one worth a second look: she carries one corporate
+and one personal event, and the corporate branch wins before the personal-suppression
+check is reached.
+
+**Do NOT script this.** `marketingSuggestions.js:4-6` is explicit: "A suggestion is
+NEVER applied. It renders next to the contact with its reasoning and a one-click
+accept, and accepting goes through the ordinary tag endpoint as a human write.
+Nothing here may set a tag." A batch writer would route around a deliberate
+human-in-the-loop gate, and at nine contacts it would save nothing anyway.
+
+Separately: `suggestTag` has a second branch that suggests corporate for a company
+domain with NO event history, and it says out loud that it is guessing. Those are a
+stretch list for a wider net, not part of the nine.
