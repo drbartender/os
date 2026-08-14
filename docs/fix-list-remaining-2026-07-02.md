@@ -2889,19 +2889,38 @@ user 61 preferred_name/display_name -> "Taylor Hogan" / "Taylor H."; user 31 dea
   source. Re-verified against the NEW main HEAD, which carries 245 lines of mobile-admin CSS the
   lane never saw: checker green, CI client build exit 0.
 
-**Open lanes:**
-| lane | HEAD | state |
+**ALL LANES MERGED 2026-08-14 (after the push landed; `origin/main` was `bab7fba5`).** Zero open
+lanes, zero worktrees. Merged clean on a healthy main: CI client build exit 0, and
+constraintContract 11/11, criticalIndexes 6/6, shiftEndInstant 15/15, shiftClosureSweep 5/5,
+staffPortal 65/65.
+| lane | squash | what landed |
 |---|---|---|
-| `shift-lifecycle` | `4762b481` | THE re-cut, per spec `0b54f138`. Built; review in flight. Supersedes the two below. |
-| `shift-closure` | `b8512e15` | 3 rounds, 2 FAILs outstanding. Superseded; keep until the re-cut merges. |
-| `current-date-shift-visibility` | `18768c72` | 2 rounds, P0 outstanding. Superseded; keep until the re-cut merges. |
-| `mkt-perf` | `b410d374` | FAILED review. Font preload lands in the ONE index.html served to every host, so admin/staff would pull 173 KB of marketing fonts. Needs rework. |
+| `schema-traps` | `e7e12c7a` | Paired constraint definitions aligned + the boot-time `CONSTRAINT_CONTRACT` guard + a static pairing check. Reviewed PASS. |
+| `shift-lifecycle` | `22c550ea` | The end-instant re-cut per spec `0b54f138`, plus the closure sweep. Two review rounds; the second FAIL closed. Supersedes the two superseded branches below. |
+| `mkt-perf` | `4312bf55` | Marketing photos moved `client/public/` → `client/src/` so webpack content-hashes them into `/static/media/`, which Vercel already serves `immutable`. Font preload DELETED. |
 
-Do NOT scrap `shift-closure` or `current-date-shift-visibility` without Dallas's okay:
-`git log main..<branch>` is non-empty on both. The re-cut lane is salvaging their tests.
-Branches `admin-os-legacy-palette`, `misquote-qualifier` and `wave2-residuals` are merged; the
-first is kept (its byte-identical check is non-empty only because main is AHEAD on `index.css`
-and `README.md`, verified: all 193 of its added lines are present on main).
+**Branches are all still present and NONE were deleted.** For every one the byte-identical check
+(`git diff main <branch> -- <lane files>`) is non-empty, so the standing `-D` pre-approval does
+not apply — but it is non-empty ONLY because main is now AHEAD on `ARCHITECTURE.md` / `README.md`,
+carrying all three lanes' doc edits plus a conflict resolution while each branch has only its own.
+Each lane's own content was verified present on main by hand. Kept: `schema-traps`,
+`shift-lifecycle`, `mkt-perf`, `admin-os-legacy-palette`, plus the two superseded ones
+(`shift-closure`, `current-date-shift-visibility`) whose work was salvaged into `shift-lifecycle`
+and which still need Dallas's okay before any scrap.
+
+**Verification lesson worth keeping:** the line-match check reported "missing" doc lines on two
+lanes and both were false alarms. It compared against each lane's FIRST commit, whose text the
+lane's SECOND commit had reworded — so the old string is legitimately absent while the corrected
+version is present. Grep the distinctive phrase on main, do not diff against a superseded revision.
+
+**The `mkt-perf` solution is better than the one that was briefed and worth understanding.** The
+brief asked for a `vercel.json` cache-header rule on `/images/marketing/(.*)`. Moving the images
+under `src/` instead solves three findings at once: the content hash IS the invalidation path, no
+header rule can accidentally cache the SPA catch-all's `index.html` on a typo'd URL, and the
+existing `/static/` immutable rule already does the work. Verified by build: they emit as
+`hero-cocktails.3b9fd70e….jpg`. The font preload was deleted rather than narrowed because there is
+ONE `index.html` for all four hosts and admin sets `--font-ui` to Inter, so admin/staff/hiring
+would have force-downloaded 173 KB of a typeface they never render.
 
 ## The CSS palette checker ships with KNOWN BLIND SPOTS — do not trust its green tick
 
