@@ -1577,6 +1577,7 @@ Admin entry points: "Shopping List" button on Drink Plan Detail (visible wheneve
 - `status`: new | contacted | converted | lost
 - `first_reply_status`: not_needed | pending | sent | failed, `first_reply_template` (day | night), `first_reply_attempted_at` (lease), `first_reply_attempts` (offer-side bump), `first_reply_sent_at` — TT auto first-reply queue (spec 2026-07-21); partial index `idx_thumbtack_leads_first_reply_pending` powers the agent offer + 60s sweep
 - `raw_payload` JSONB — full original webhook body
+- `created_at` TIMESTAMPTZ NOT NULL DEFAULT NOW() — the NOT NULL was added 2026-08-14 (guarded DO block on `is_nullable`, so it runs once). Load-bearing: the agent offer query filters on it in four predicates and the 60s sweep's retirement arm compares against it, and every one of those evaluates to NULL rather than TRUE on a null row, which would strand that lead `first_reply_status = 'pending'` forever, invisible to both.
 
 **lead_call_attempts** — Lead call bridge: one row per lead, the ring-chain state machine AND the call log (spec 2026-07-18)
 - `id` BIGSERIAL PK, `lead_id` INTEGER UNIQUE FK → thumbtack_leads (`ON DELETE CASCADE`) — the UNIQUE is the at-most-once guard under webhook retries

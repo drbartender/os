@@ -134,8 +134,11 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 - Reuse-before-create lookup downloads both full admin drink lists (ingredients
   JSONB included) for a name match; fine at ~43 drinks, wants a lean lookup
   endpoint as the off-menu pool grows.
-- RecipeEditor renders every par (83) as an option per row; memoize the row
-  component or hoist options if the catalog grows several-fold.
+- ~~RecipeEditor renders every par (83) as an option per row; memoize the row
+  component or hoist options if the catalog grows several-fold.~~
+  **FIXED 2026-08-14 (46d2974c)**: one `useMemo` hoists the option list out of the
+  per-row render. Note the original was slightly less bad than logged: `buildSuggestions`
+  was already gated on the open row, so only the option list was recomputing.
 - `loadRecipeCandidates` awaits serially after the resolveDrinkIds Promise.all
   in `buildPlannerGeneratorInput` (~one extra Neon round-trip per regenerate).
 - ~~`server/routes/drinkPlans.js` is ~795 lines (soft cap 700); next change in
@@ -211,7 +214,7 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 
 - ~~LIVE BUG: submit.js slow-path drink_plan_ready emailed the stale drink_plans.client_email snapshot (dead proposal.client_email fallback)~~ **FOLDED into lane pp2-planner 2026-07-18**: the existing-plan SELECT now JOINs live `c.email`/`c.name` (live first, snapshot fallback), mirroring the fast path. Ships with the lane's squash merge.
 - ~~Compare-send toast reads "Text skipped: Compare sends have no text message" (truthful, noisy).~~ **FIXED 2026-08-14 (7b5be986)**: 'not selected' unless SMS was actually requested; both behaviors test-pinned. (P fleet code-review.)
-- ProposalDetailPaymentPanel double-fetches `/invoices/proposal/:id` (its own list + InvoiceDropdown's self-fetch, keyed together). Lift the fetch and pass the list down. (N fleet code-review.)
+- ~~ProposalDetailPaymentPanel double-fetches `/invoices/proposal/:id` (its own list + InvoiceDropdown's self-fetch, keyed together). Lift the fetch and pass the list down.~~ **FIXED 2026-08-14 (2233a1b6)**: InvoiceDropdown takes an optional `invoices` prop and only self-fetches without it; the `key` remount went away with the double-fetch, so the dropdown no longer snaps shut. (N fleet code-review.)
 - Deprecated resend-nudge delegation makes 3 DB round-trips (resolve + ensure + dispatch loads) vs legacy 1; archived case is now 409 vs legacy 400. Compat-only route, low traffic; tidy if ever touched. (N fleet.)
 - ~~invoiceSend docblock: "the level the legacy send path had" should reference the nudge route's posture (invoice send is new, no legacy).~~ **DONE 2026-08-14 (982e6f5a).** (N fleet.)
 - paymentReminder/drinkPlanNudge email availability does not require the token although the email body embeds it (937ba35 only added the guard to SMS + placeholder email). Harmless (no-token proposals are rare and the CTA link just dies), tidy with the next comms touch. (Psync report.)
@@ -227,7 +230,7 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 **Tech-debt / small residuals:**
 - ~~server/routes/drinkPlans/submit.js at 865 lines (soft cap 700): split by the established per-concern pattern on next touch~~ **DONE 2026-07-22** (lane fs-split-drinkplans): submitSanitize.js + submitNotify.js extracted; submit.js 830→599.
 - Jack-rule corner (code-review low): on hosted non-mocktail packages, a client submit with zero resolved mocktails clears BOTH pair rows, so an admin-seeded Mocktail Bar addon would be removed by a client submit. Consistent with picks-are-authoritative design; revisit if admins start seeding mocktail addons.
-- Perf quick-wins (performance fleet, optional): narrow coverageContext's SELECT * FROM par_items; hoist DrinksV2 typeahead pool memo; precompute DrinksV2 tab counts.
+- Perf quick-wins (performance fleet, optional): **the two DrinksV2 items are FIXED 2026-08-14 (46d2974c)**, namely ~~hoist DrinksV2 typeahead pool memo~~ and ~~precompute DrinksV2 tab counts~~. **STILL OPEN: narrow coverageContext's `SELECT * FROM par_items`** (server-side, untouched by the wave).
 - QR lane residuals: per-item admin_set flag rides the public payload (inert); no un-hold UI for admin-set quantities; buffer chips informational only (per-event override deferred by metadata-only scope).
 - Legacy planner drain: delete client/src/pages/plan/steps/ + data/drinkUpgrades.js + DRINK_SYRUP_MAP/pricing exports in data/syrups.js after the last planner_version=1 draft submits (query: SELECT COUNT(*) FROM drink_plans WHERE planner_version=1 AND status IN ('pending','draft')).
 - **pp2-lab fleet advisories (all non-blocking, 2026-07-18):** (1) pay-then-add delta invoice line items list the cumulative lab set with the drift folded into the last line — amount_due is exact, labels warp; consider delta-scoped selections or an explicit "less previously invoiced" credit line. (2) Client removes additions AFTER paying the lab invoice → over-collection silently retained (admin refunds manually; DRB-favorable, surfaced at list re-approval). (3) ~~Lab PUT accepts any active non-Jack addon slug~~ **FIXED** (fc3780fc: `offeredSlugs` allowlist at `lab.js:189-196`; `sanitizeLabAddOns` throws on out-of-list — 2026-08-14 audit). (4) refreshListAfterLabChange fires per save with no per-plan coalescing (correct, off-response-path; cheap robustness win). (5) No in-flight guard on the debounced client save (server FOR UPDATE serializes; self-heals). (6) Syrup shopping-list strip matches by normalized-name substring — admin re-approval is the backstop. (7) ~~A syrup already priced into pricing_snapshot.syrups is still offered by GET but bills $0~~ **FIXED** (`contractSyrupSet` at `labHelpers.js:64-69` excludes snapshot syrups on GET `lab.js:78,88` and PUT `:199-203` — 2026-08-14 audit).
@@ -262,17 +265,23 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 - HostedDrinksV2 hardcodes "$2.00 per guest" for the pre-batched fence line while
   billing uses live service_addons.rate — carry pair rates in the hosted_coverage
   payload and render from data. (addendum F3.)
-- v2 wizard refresh resets to the Welcome step (answers preserved via autosave);
-  polish: persist/restore step position. (addendum client F3.)
+- ~~v2 wizard refresh resets to the Welcome step (answers preserved via autosave);
+  polish: persist/restore step position.~~ **FIXED 2026-08-14 (46d2974c)**: step position
+  persists in sessionStorage keyed by plan token, and the restore validates the stored step
+  against the live queue so an unknown or stale step falls back to the start rather than
+  stranding a client on a screen that no longer exists. (addendum client F3.)
 - Margin sketch (decorative, admin-only): (a) `||` fallbacks treat an explicit 0
   labor-rate/supplies setting or slider value as unset — needs ?? + query-param
   presence checks (gemini); (b) flat-package revenue ignores extra hours while labor
   cost scales with them (codex LOW); (c) PackagesTab fires one margin request per
   package on tab open, each re-reading all of par_items — fold margin_pct into the
   list response or add a batch margins endpoint (perf fleet).
-- RecipeEditor small pair (code-review Consider): unit validation dropped from
+- ~~RecipeEditor small pair (code-review Consider): unit validation dropped from
   rowProblems (server still rejects bad units; defense-in-depth only);
-  ClientConversation handleReply setState-after-unmount unguarded (React 18 benign).
+  ClientConversation handleReply setState-after-unmount unguarded (React 18 benign).~~
+  **BOTH FIXED 2026-08-14 (46d2974c)**: unit validation is back in rowProblems, checked
+  only on rows that carry an amount so a half-typed row does not shout; ClientConversation
+  guards its post-await setState with an `aliveRef`.
 
 ## Push-review residuals (2026-07-20 push gate: fleet + codex/gemini, Claude-verified)
 
@@ -334,8 +343,8 @@ row to the invoice.
 
 ## Push-review residuals (2026-07-22, unverified suggestions, deferred)
 - googlePlaces.js: out-of-area guard + pick() shortText fallback not routed through normalizeVenueState (two spots; Places flow only).
-- proposalEditor: blank guest_count previews at 50 but PATCHes 0; add client-side required validation.
-- repriceSummary: already-overpaid + price-increase edge shows consequence lines the server will not perform (copy precision).
+- ~~proposalEditor: blank guest_count previews at 50 but PATCHes 0; add client-side required validation.~~ **FIXED 2026-08-14 (2233a1b6)**: blocked at the submit gate, mirroring the existing package_id guard; the preview's `|| 50` is deliberately kept so an empty field still renders a sane estimate.
+- ~~repriceSummary: already-overpaid + price-increase edge shows consequence lines the server will not perform (copy precision).~~ **FIXED 2026-08-14 (2233a1b6)**: the overpaid case now splits three ways (overpayment still covers the increase, covers it exactly, increase outruns it). The fix also caught a second untruth this entry did not name: the demotion line was unconditional, while `reconcileProposalPaymentStatus` does not demote while `paid >= total`.
 - leadCallTrigger: reply_stale/reply_confirmed_late fault rows consume LEAD_CALL_DAILY_CAP headroom (status 'failed' counts as non-skipped); irrelevant at current volume, revisit if cap ever tightens.
 
 ---
@@ -372,11 +381,14 @@ docs/superpowers/{specs,plans}/2026-07-21-notify-client-confirmation*. Deferred 
   shrank 853→819.
 - **ProposalEditorForm.js at ~790 lines** (soft cap 700; 852 as of 2026-08-14, still
   growing): plan a split on the next substantial touch.
-- **Suppression skip-reasons surface enum tokens** ("Suppressed: channel_disabled.") in admin
+- ~~**Suppression skip-reasons surface enum tokens** ("Suppressed: channel_disabled.") in admin
   toasts, on both the receipt path (actions.js) and the refund path (refundClientNotify.js).
   Map to human copy at the source, both call sites together. (code-review, lane-3 fleet.)
   (2026-08-14: two MORE call sites leak the same tokens — `lineItemRemovedNotify.js:87`
-  and `rescheduleProposal.js:412-471`; fix all four together or the leak survives.)
+  and `rescheduleProposal.js:412-471`; fix all four together or the leak survives.)~~
+  **FIXED 2026-08-14 (ed08114f)**: fixed at the source with `suppressionMessage(reason, channel)`
+  in `messageSuppression.js`, routed through all 7 occurrences across the 4 files, so a new
+  caller gets human copy for free instead of leaking the next enum.
 
 ---
 
@@ -780,11 +792,14 @@ All non-blocking; the blockers found in review were fixed pre-push.
 
 ## TT first-reply push-review residuals (2026-08-03, fleet on 61abacf3/7161e8bf/e3e16899)
 
-- `thumbtack_leads.created_at` is nullable while the offer query leans on it
+- ~~`thumbtack_leads.created_at` is nullable while the offer query leans on it
   in four predicates and the sweep's retirement arm; a NULL row would sit
   `pending` forever, invisible to both. Zero such rows exist today. One
   idempotent line closes it: `ALTER TABLE thumbtack_leads ALTER COLUMN
-  created_at SET NOT NULL;` (db-review, low)
+  created_at SET NOT NULL;`~~ **FIXED 2026-08-14 (9b695af0)**: closed with a guarded
+  `DO` block that checks `is_nullable` first, so it is a no-op on an already-tightened
+  DB, and runs a defensive UPDATE before the `SET NOT NULL` so a stray NULL cannot
+  fail the migration. (db-review, low)
 - `server/routes/thumbtackAgent.js` crossed the 700-line soft cap (~790 after
   the 8/06 delay + clamp work);
   split candidate: the first-reply queue section into
@@ -927,9 +942,11 @@ merged code 2026-08-04):
 - ~~`server/utils/balanceReminderScheduling.test.js` hardcodes `balance_due_date = '2026-07-15'`~~
   **FIXED** (bf4139f4, 2026-08-13: re-fixtured with rolling years, 2/2 green; the DST math was
   never wrong). Found by the display-name Task 14 gate, 2026-08-04.
-- `server/utils/payrollDisputeNotify.test.js:323` asserts elapsed < 400ms; observed 477ms under
+- ~~`server/utils/payrollDisputeNotify.test.js:323` asserts elapsed < 400ms; observed 477ms under
   serial-suite load, 12/12 green in isolation. Loosen the bound or restructure the timing
-  assertion. (low)
+  assertion.~~ **FIXED 2026-08-14 (9b695af0)**: restructured rather than loosened. The test now
+  asserts structurally, on a flag proving the call returned without awaiting the slow send,
+  so it pins the actual property instead of a wall-clock number that drifts with load. (low)
 - Whole-tree serial suite runs need `NODE_ENV=test` (calcom.test.js + drinkPlanConsult.test.js
   self-guard and abort at module load without it) — plan gates citing "run the full server
   suite" must carry the env var; display-name plan rev 3.3 records it. (note)
@@ -966,9 +983,13 @@ merged code 2026-08-04):
   ''-keep path~~ **FIXED** (c10ae187: `AdminUserDetail.js:295-303` sends raw trimmed strings,
   "leave blank to keep current · type 0 to zero" helper copy at `PayoutsTab.js:209` —
   2026-08-14 audit).
-- New batch suites are NOT on `scripts/money-smoke-list.txt` (incl. payrollTax.legalName.test.js —
+- ~~New batch suites are NOT on `scripts/money-smoke-list.txt` (incl. payrollTax.legalName.test.js —
   the 1099 name path). Add deliberately, not mid-push: the gate would immediately run them
-  prod-shaped. (note)
+  prod-shaped.~~ **RESOLVED BY DECISION 2026-08-14 (9b695af0)**: `payrollTax.legalName` added
+  (it is the 1099 name path, and it qualifies: 3/3 in 1.5s). The other three are deliberately
+  left off, each with a reason, so this is settled rather than open: `smsOptIn` is
+  rate-limiter-bound, `displayName` is not a money path, and `seniority` execFiles a CLI that
+  does DDL. (note)
 
 ## 8/06 push aftermath (display-name + seniority batch shipped 677baf95)
 
@@ -981,9 +1002,12 @@ merged code 2026-08-04):
 - Backfill hand-fix names (script report, informational): users 15 "Ariel D. Smith",
   31 "Nicholas or Nick", 61 "Miss Taylor", 62 "Adelle M. Reynolds" — malformed preferred
   names to settle with the humans; users 1/61/62/237 have no legal name on file. (ops)
-- `toYmd` in applySeniorityBackfill/generateSeniorityMapping assumes UTC-or-negative offset
+- ~~`toYmd` in applySeniorityBackfill/generateSeniorityMapping assumes UTC-or-negative offset
   (`toISOString().slice(0,10)` on a local-midnight Date shifts a day on UTC+X boxes). Fails
-  CLOSED (false PARTIAL, exit 1), never corrupts. Fine on Chicago box + Render/UTC. (low)
+  CLOSED (false PARTIAL, exit 1), never corrupts. Fine on Chicago box + Render/UTC.~~
+  **FIXED 2026-08-14 (9b695af0)**: both copies now read the local calendar date and are
+  byte-identical to each other; verified under `TZ=Asia/Tokyo`. **The same shape is repo-wide
+  and one instance is a MONEY path: see the 8/14 wave-2 findings section at the end.** (low)
 - Admin profile PUT omitted-vs-cleared now protects ONLY preferred_name; a partial payload
   still nulls phone/email/address/emergency contact (bare $3..$22). Latent — the sole caller
   round-trips every field — but phone feeds smsInbound sender resolution, so it is the
@@ -995,8 +1019,10 @@ merged code 2026-08-04):
   and the seniority PUT's no-op-guard property (no updated_at restamp) is hand-verified only.
   The scripts' invariant IS pinned (seniorityBackfill.test re-run updated_at assert). (med)
 - `gratuityStaffNotice.js:67` + `eventDetailsPayload.js` team_roster recompute: two surviving
-  bare/second-source name reads flagged by the display-name code review — gratuityStaffNotice
-  selects bare preferred_name on a money-adjacent notice; the roster recomputes display name
+  bare/second-source name reads flagged by the display-name code review — ~~gratuityStaffNotice
+  selects bare preferred_name on a money-adjacent notice~~ **FIXED 2026-08-14 (ed08114f)**: now
+  `COALESCE(display_name, preferred_name)`; 4 of 79 rows were being greeted "Hi there," and now
+  get a name. **STILL OPEN:** the roster recomputes display name
   live (util-based, but `--check` cannot see drift there, and JS || vs SQL COALESCE diverge on
   empty-string legal names — 0 such rows today). Sensitive paths; deliberate no-touch at the
   gate. (low)
@@ -2136,7 +2162,7 @@ These are not from the original ledger. They surfaced while verifying its
   (2026-08-14: half-done — `setupTime.js:68-70` `effectiveSetupMinutes` honors a
   per-proposal `setup_minutes_before` override and branches 90 hosted / 60 otherwise;
   the fallback literals are still hardcoded, no settings-table source.)
-- `BundlePicker` hardcodes "popular" to `the-foundation`.
+- `BundlePicker` hardcodes "popular" to `the-foundation`. **PARTIAL 2026-08-14 (2233a1b6)**: the literal is hoisted to a named `POPULAR_BUNDLE_SLUG` constant with a comment saying where the real fix lives. Data-driving it stays OPEN: it needs a new schema column, a seed, and the server twin in `server/utils/proposalRules.js` moved to the same source, which is a lane not a ride-along.
 - Client-side gratuity floor still duplicates the literal 50; the server has
   `GRATUITY_FLOOR_RATE` (`pricingEngine.js:236`). Lift the client to a shared constant.
 
@@ -2650,10 +2676,15 @@ The stale-response race in ProposalsDashboard (codex) was fixed at the gate. The
   lack Han/Cyrillic (browser per-glyph fallback at 300 DPI). Latin accents fine in both.
 - Client `computeDisplayName` port lacks the server's surrogate hardening
   (preview-only surface; `charAt(0)` last-initial).
-- The `.staffing-stat strong` ink fix is DEAD CSS — zero consumers in client/src;
-  delete the rule (or the block) whenever that area is next touched.
-- 15cc4df0's message overstates: the inert 38% `th` width hint survives at
-  `ContactTable.js:59` (harmless; no `table-layout: fixed`).
+- ~~The `.staffing-stat strong` ink fix is DEAD CSS — zero consumers in client/src;
+  delete the rule (or the block) whenever that area is next touched.~~
+  **DONE 2026-08-14 (2233a1b6)**: the whole `.staffing-stats` / `.staffing-stat` block was
+  deleted, not just the one rule, since it had zero consumers. This supersedes the earlier
+  same-day ink fix (8045743e) on that selector.
+- ~~15cc4df0's message overstates: the inert 38% `th` width hint survives at
+  `ContactTable.js:59` (harmless; no `table-layout: fixed`).~~
+  **FIXED 2026-08-14 (2233a1b6)**: the inert hint is removed, so the commit message and the
+  code agree now.
 - **tip-e-redesign merged without a declared lane** in its plan (lanes a-d only) and
   outside tip-d's declared footprint; its design-artifact README documents the
   re-scope deliberately, but the custody chain is incomplete (no .dc.html snapshot;
@@ -2663,3 +2694,79 @@ The stale-response race in ProposalsDashboard (codex) was fixed at the gate. The
 - NFD-normalized input (decomposed é) and iOS curly-apostrophe names still reject
   with the generic letters-only error (pre-existing; the widening is strictly
   additive). Candidate fix: `.normalize('NFC')` + a U+2019→' fold in `norm()`.
+
+# Added 2026-08-14 (small-fix wave 2 findings)
+
+Surfaced while shipping the four wave-2 commits (ed08114f, 9b695af0, 2233a1b6, 46d2974c).
+None of these were in scope for that wave; each is logged here rather than fixed in passing.
+
+- **The `toYmd` shape is repo-wide and one instance is a MONEY path.**
+  `server/utils/paystubData.js:18-22` (the function is named `ymd`, the body is
+  byte-for-byte the pre-fix `toYmd`, the bad line is `:20`) feeds paystub PDF dates.
+  Unlike the seniority scripts, it does NOT fail closed: there is no exit code and no
+  PARTIAL, it would simply render the wrong date on a paystub. Verified count is 26
+  `toISOString().slice(0,10)` occurrences across 21 non-test files. The dangerous subset
+  is narrower than that: only sites fed a pg `DATE`/`TIMESTAMP` column, which the driver
+  parses to LOCAL midnight, can shift a day. Sites fed a `Date.UTC` value or a real
+  instant are correct as written. First five to check, in order:
+  `server/utils/paystubData.js:20`, `server/routes/admin/payroll.js:150`,
+  `server/utils/shiftTime.js:92`, `server/utils/staffCalendarFeedExt.js:62`,
+  `server/utils/balanceScheduler.js:77`. Nothing is wrong in prod today: every one of
+  these is correct on a Chicago box and on Render/UTC, so this is latent, not live.
+  Two things make it cheaper than it looks. The trap is already half-known:
+  `server/utils/preEventScheduling.js:23` and `server/utils/rescheduleProposal.js:39`
+  carry docblocks warning about exactly this failure. And the correct helper already
+  exists, written independently FOUR times, as `toCalendarYmd` in
+  `preEventScheduling.js:30`, `rescheduleProposal.js:46`, `staffShiftHandlers.js:52`,
+  and `payrollAccrual.js:100`. The fix is to lift one of those into a shared util and
+  retarget the dangerous subset, not to write a fifth copy. Note also that
+  `paystubData.js`'s own comment says it mirrors `ymd()` in
+  `server/routes/staffPortal/payouts.js:32`, so that third copy moves with it.
+
+- **repriceSummary's new overpaid branches are untested.**
+  `client/src/pages/admin/proposalEditor/repriceSummary.test.js` has no
+  overpaid-plus-increase case: every existing increase test runs with
+  `amountPaid <= totalPrice` (1000/1000, 100/1606.25, 0/1000, 100/1606.25). So all three
+  shapes 2233a1b6 introduced are unpinned: overpayment still covers the increase,
+  overpayment covers it exactly, and the increase outruns the overpayment. The demotion
+  suppression is unpinned for the same reason. Cheap to add, and this is admin-facing
+  money copy, so it should not stay on trust.
+
+- **`createAdditionalInvoiceIfNeeded` mints the full `newTotal - oldTotal` without
+  netting an existing overpayment.** `server/utils/invoiceLifecycle.js:338` computes
+  `diffCents = newTotalCents - oldTotalCents` and passes it straight to the invoice as
+  `amountDueCents` (`:346`), with no read of `amount_paid`. On an already-overpaid,
+  fully-locked proposal that invoices the client for money DRB is already holding. This
+  is server behavior and was out of scope for the wave's copy fix, but it is the same
+  defect the copy fix was describing, one layer down. It rhymes with the standing
+  "Refunds: overpayment never clears" entry above and should be picked up with it, not
+  on its own: both turn on the system having no single notion of credit-on-hand.
+
+- **`communication_preferences.email_enabled` has NO product writer.** Every writer in
+  the codebase sets something else: `smsConsent.js:122` and `smsInbound.js:332,341` write
+  `sms_enabled`, `emailMarketing/unsubscribe.js:179` writes `marketing_enabled`, and
+  `proposals/public.js:364` writes `sms_enabled`. Yet `email_enabled === false` is read
+  and honored in at least five places (`messageSuppression.js:34`, `eventEveSms.js:208`,
+  `channelFallback.js:22`, `notificationChannelResolver.js:54,66`,
+  `marketingAudience.js:359`). So the flag can only ever become false via a manual DB
+  edit, which makes it invisible ops state that silently mutes a client. Two honest
+  outcomes: wire a writer, where the "Do not contact" toggle already on this list is the
+  natural home, or drop the field and let the readers collapse. Note
+  `messageSuppression.js:63` already carries a comment saying no product path sets it,
+  so the code knows.
+
+- **`PUT /contacts/:id/email-status` can clear a bad-email flag but has no admin UI wired
+  to it.** The route is real and tested (`server/routes/marketingContacts.js:185`, covered
+  in `marketingContacts.tags.test.js`), but nothing in `client/src` calls it. An admin who
+  fixes a bounced address therefore has no way to un-mark it from a screen, and the contact
+  stays flagged until someone hits the API by hand. `messageSuppression.js:70` already
+  carries this as advice in a comment. Small win: one control on the contact row.
+
+- **Client-side name handling has two residuals, both worth one pass.** The client
+  `computeDisplayName` port lacks the server's surrogate hardening (`charAt(0)` for the
+  last initial, which splits an astral-plane letter), preview-only surface. Separately,
+  NFD-normalized input (decomposed accents) and iOS curly apostrophes still bounce off the
+  widened name regex in both copies. Candidate fix for the second: `.normalize('NFC')` plus
+  a U+2019 to `'` fold inside `norm()`, applied to both the server and client copies
+  together per the keep-in-sync comments. These consolidate the two name notes in the
+  8/14 push-gate section above; track them here.
