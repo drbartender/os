@@ -3,7 +3,7 @@ const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const { resolveEventTimezone, formatEventLocalTime } = require('./eventTimezone');
 const { getHandlerMeta } = require('./scheduledMessageDispatcher');
-const { shouldSendImmediate } = require('./messageSuppression');
+const { shouldSendImmediate, suppressionMessage } = require('./messageSuppression');
 const { computeScheduledFor, schedulePreEventReminders } = require('./preEventScheduling');
 const { getBookingWindow } = require('./bookingWindow');
 const { BOOKED_SET } = require('./proposalStatus');
@@ -409,8 +409,8 @@ async function sendRescheduleEmail({ proposalId, channels, message }) {
   });
   if (!emailCheck.ok && !smsCheck.ok) {
     console.log(`[rescheduleNotification] both channels suppressed for proposal ${proposalId}: email=${emailCheck.reason} sms=${smsCheck.reason}`);
-    if (wantEmail) results.skip_reasons.email = `Suppressed: ${emailCheck.reason}.`;
-    if (wantSms) results.skip_reasons.sms = `Suppressed: ${smsCheck.reason}.`;
+    if (wantEmail) results.skip_reasons.email = suppressionMessage(emailCheck.reason, 'email');
+    if (wantSms) results.skip_reasons.sms = suppressionMessage(smsCheck.reason, 'sms');
     return results;
   }
 
@@ -430,7 +430,7 @@ async function sendRescheduleEmail({ proposalId, channels, message }) {
       results.skip_reasons.email = 'Placeholder address (.invalid) from the CC import; no real email exists.';
     } else if (!emailCheck.ok) {
       console.log(`[rescheduleNotification] email suppressed for proposal ${proposalId}: ${emailCheck.reason}`);
-      results.skip_reasons.email = `Suppressed: ${emailCheck.reason}.`;
+      results.skip_reasons.email = suppressionMessage(emailCheck.reason, 'email');
     } else {
       const { renderPartsEmail } = require('./comms/render');
       const rendered = renderPartsEmail({
@@ -469,7 +469,7 @@ async function sendRescheduleEmail({ proposalId, channels, message }) {
       results.skip_reasons.sms = 'No usable phone on file.';
     } else if (!smsCheck.ok) {
       console.log(`[rescheduleNotification] SMS suppressed for proposal ${proposalId}: ${smsCheck.reason}`);
-      results.skip_reasons.sms = `Suppressed: ${smsCheck.reason}.`;
+      results.skip_reasons.sms = suppressionMessage(smsCheck.reason, 'sms');
     } else {
       try {
         const { sendAndLogSms } = require('./sms');

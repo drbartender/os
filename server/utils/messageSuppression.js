@@ -40,4 +40,87 @@ async function shouldSendImmediate({ proposal, client, channel }) {
   return { ok: true };
 }
 
-module.exports = { shouldSendImmediate };
+/**
+ * Admin-facing copy for a suppression reason.
+ *
+ * Lives here, at the source of the reason tokens, so every call site renders
+ * the same sentence and no future site can regress to interpolating the raw
+ * enum into a toast. Admins were literally reading "Suppressed: channel_disabled."
+ *
+ * The strings are reason clauses, NOT full announcements: every consumer
+ * already supplies its own lead-in ("Removed. Notice not sent: ...",
+ * "Email skipped: ..."), so a "Not sent:" prefix here would double up. This
+ * matches the sibling copy at the same call sites ("No email on file for this
+ * client.").
+ *
+ * Semantics each string describes, read off shouldSendImmediate above and the
+ * writers that set the underlying columns:
+ *   archived          proposal.status === 'archived'. A restore (archived ->
+ *                     draft) exists in routes/proposals/lifecycle.js.
+ *   channel_disabled  communication_preferences.sms_enabled === false, set when
+ *                     the client replies STOP (utils/smsInbound.js) or via the
+ *                     /sms opt-in page (utils/smsConsent.js); START opts back
+ *                     in. Or email_enabled === false, which no product path
+ *                     writes today (the unsubscribe route only clears
+ *                     marketing_enabled), so it is purely a stored preference.
+ *   bad_contact       email_status === 'bad', set by the Resend webhook on a
+ *                     permanent bounce; phone_status === 'bad', set by
+ *                     utils/smsDeliveryStatus.js on a failed delivery; or no
+ *                     client row at all. Deliberately no "clear the flag"
+ *                     advice: PUT /contacts/:id/email-status exists but has no
+ *                     admin UI wired to it.
+ */
+const SUPPRESSION_COPY = {
+  archived: () =>
+    'This proposal is archived, and archived proposals hold all client messages. '
+    + 'Restore it first if the client should still hear from us.',
+  channel_disabled: (channel) => {
+    if (channel === 'sms') {
+      return 'This client opted out of text messages, usually by replying STOP. '
+        + 'They have to text START before we can text them again.';
+    }
+    if (channel === 'email') {
+      return 'Email is switched off in this client\'s communication preferences, '
+        + 'so nothing can go out by email. Reach them by phone or text instead.';
+    }
+    return 'This client has that channel switched off in their communication preferences.';
+  },
+  bad_contact: (channel) => {
+    if (channel === 'sms') {
+      return 'This client\'s phone number is marked bad after a text failed to deliver. '
+        + 'Confirm the number with them before trying again.';
+    }
+    if (channel === 'email') {
+      return 'This client\'s email address is marked bad after a message permanently bounced. '
+        + 'Confirm the address with them before trying again.';
+    }
+    return 'The contact we have for this client is marked bad after a delivery failure, '
+      + 'so nothing would reach them.';
+  },
+};
+
+/**
+ * Turn a suppression reason token into one plain-English admin-facing sentence.
+ *
+ * Never returns a bare enum token and never returns 'undefined': an unknown or
+ * missing reason falls back to generic copy. Debuggability is not lost, because
+ * most call sites console.log the raw reason alongside this string.
+ *
+ * @param {string} reason - a `reason` from shouldSendImmediate's ok:false result
+ * @param {'email'|'sms'} [channel] - sharpens the wording; omit for channel-neutral copy
+ * @returns {string}
+ */
+function suppressionMessage(reason, channel) {
+  // hasOwnProperty, not a bare lookup: a reason of 'toString' or 'constructor'
+  // would otherwise resolve to an Object.prototype member and render
+  // "[object Object]" into an admin toast.
+  const build = Object.prototype.hasOwnProperty.call(SUPPRESSION_COPY, reason)
+    ? SUPPRESSION_COPY[reason]
+    : null;
+  if (!build) {
+    return 'This message was held by the client contact rules. Check the client record before trying again.';
+  }
+  return build(channel);
+}
+
+module.exports = { shouldSendImmediate, suppressionMessage };

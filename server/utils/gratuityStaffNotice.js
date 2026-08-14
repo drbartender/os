@@ -63,9 +63,14 @@ async function sendGratuityRemovedStaffNotice({ proposalId, newRate }) {
   const result = { sent: 0, failed: 0 };
   let recipients = [];
   try {
+    // staff_name uses the derived display name, falling back to the raw
+    // preferred name, exactly as the sibling staff notices do
+    // (staffShiftHandlers.notifyStaffOfScheduleChange, beoHandlers). Both NULL
+    // (no contractor_profiles row) degrades to firstNameOf's 'there' fallback
+    // rather than an empty greeting.
     const { rows } = await pool.query(
       `SELECT DISTINCT sr.user_id, u.email AS staff_email,
-              cp.preferred_name AS staff_name,
+              COALESCE(cp.display_name, cp.preferred_name) AS staff_name,
               p.event_type, p.event_type_custom, p.event_date, p.event_timezone
          FROM shifts s
          JOIN shift_requests sr ON sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL

@@ -74,7 +74,10 @@ test('prefs-suppressed client: skipped with reason, nothing sent', async () => {
   refundNotify.__setDeps({ sendEmail: async (a) => { calls.push(a); return { id: 'stub' }; } });
   const r = await sendRefundClientNotification({ proposalId: pSuppressed, amountCents: 5000, source: 'test' });
   assert.equal(r.email, 'skipped');
-  assert.match(r.skip_reasons.email, /suppressed/i);
+  // Human copy from messageSuppression.suppressionMessage, not the raw enum:
+  // this used to read "Suppressed: channel_disabled." in the admin toast.
+  assert.match(r.skip_reasons.email, /email is switched off/i);
+  assert.doesNotMatch(r.skip_reasons.email, /channel_disabled|bad_contact|undefined/);
   assert.equal(calls.length, 0);
 });
 

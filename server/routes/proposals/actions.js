@@ -12,7 +12,7 @@ const { createEventShifts } = require('../../utils/eventCreation');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { notifyAdminCategory } = require('../../utils/adminNotifications');
-const { shouldSendImmediate } = require('../../utils/messageSuppression');
+const { shouldSendImmediate, suppressionMessage } = require('../../utils/messageSuppression');
 const { isPlaceholderEmail } = require('../../utils/emailValidation');
 
 // Dependency seam for tests (mirrors crud.js's __setDeps): stub sendEmail /
@@ -344,7 +344,7 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
         if (!gate.ok) {
           notifications.push({
             type: 'payment_receipt', email: 'skipped', sms: null,
-            skip_reasons: { email: `Suppressed: ${gate.reason}.` },
+            skip_reasons: { email: suppressionMessage(gate.reason, 'email') },
           });
         } else {
           try {

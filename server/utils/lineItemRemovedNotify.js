@@ -15,7 +15,7 @@
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');
-const { shouldSendImmediate } = require('./messageSuppression');
+const { shouldSendImmediate, suppressionMessage } = require('./messageSuppression');
 const { isPlaceholderEmail } = require('./emailValidation');
 const { firstNameOf } = require('./firstName');
 
@@ -84,7 +84,7 @@ async function sendLineItemRemovedNotice({ proposalId, removedLabel, newTotal, m
     });
     if (!gate.ok) {
       console.log(`[lineItemRemovedNotify] suppressed for proposal ${proposalId}: ${gate.reason}`);
-      return { email: 'skipped', skip_reasons: { email: `Suppressed: ${gate.reason}.` } };
+      return { email: 'skipped', skip_reasons: { email: suppressionMessage(gate.reason, 'email') } };
     }
     const tpl = lineItemRemovedNotice({
       clientName: a.client_name,

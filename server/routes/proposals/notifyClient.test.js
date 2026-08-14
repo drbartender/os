@@ -453,7 +453,9 @@ test('suppressed recipient reports skipped even when requested (real send path)'
     assert.equal(res.status, 200, res.raw);
     const entry = res.body.notifications.find((n) => n.type === 'event_details_changed');
     assert.equal(entry.email, 'skipped');
-    assert.match(entry.skip_reasons.email, /suppressed/i);
+    // Human copy from messageSuppression.suppressionMessage, not the raw enum.
+    assert.match(entry.skip_reasons.email, /email is switched off/i);
+    assert.doesNotMatch(entry.skip_reasons.email, /channel_disabled|bad_contact|undefined/);
   } finally {
     await pool.query(`UPDATE clients SET communication_preferences = '{}'::jsonb WHERE id = $1`, [clientId]);
   }
@@ -559,7 +561,9 @@ test('record-payment notify_client=true on a prefs-suppressed client: skipped wi
     assert.equal(res.status, 200, res.raw);
     const entry = res.body.notifications.find((n) => n.type === 'payment_receipt');
     assert.equal(entry.email, 'skipped');
-    assert.match(entry.skip_reasons.email, /suppressed/i);
+    // Human copy from messageSuppression.suppressionMessage, not the raw enum.
+    assert.match(entry.skip_reasons.email, /email is switched off/i);
+    assert.doesNotMatch(entry.skip_reasons.email, /channel_disabled|bad_contact|undefined/);
     assert.equal(emailCalls.length, 0);
   } finally {
     await pool.query(`UPDATE clients SET communication_preferences = '{}'::jsonb WHERE id = $1`, [clientId]);

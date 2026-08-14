@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { shouldSendImmediate } = require('./messageSuppression');
+const { shouldSendImmediate, suppressionMessage } = require('./messageSuppression');
 
 const okProposal = { id: 1, status: 'deposit_paid' };
 const okClient = {
@@ -102,4 +102,43 @@ test('shouldSendImmediate > unknown channel throws', async () => {
     () => shouldSendImmediate({ proposal: okProposal, client: okClient, channel: 'fax' }),
     /channel/i
   );
+});
+
+// ── suppressionMessage: the admin-facing copy layer ──────────────────────────
+// The whole point of this helper is that a raw enum token can never reach an
+// admin toast again, so every case asserts the absence of the tokens as well as
+// the presence of the copy.
+// 'archived' is deliberately absent: it is a real English word the copy uses on
+// purpose. The length + sentence checks below are what catch a bare token there.
+const RAW_TOKENS = /channel_disabled|bad_contact|undefined/;
+
+test('suppressionMessage > every reason shouldSendImmediate can return has copy', () => {
+  for (const reason of ['archived', 'channel_disabled', 'bad_contact']) {
+    for (const channel of ['email', 'sms', undefined]) {
+      const msg = suppressionMessage(reason, channel);
+      assert.equal(typeof msg, 'string');
+      assert.ok(msg.length > 20, `${reason}/${channel} copy is too short to be a sentence`);
+      assert.ok(/\.$/.test(msg), `${reason}/${channel} copy should end in a period`);
+      assert.doesNotMatch(msg, RAW_TOKENS, `${reason}/${channel} leaked a raw token`);
+      // Copy law: no em dashes in user-facing copy.
+      assert.doesNotMatch(msg, /—/, `${reason}/${channel} contains an em dash`);
+    }
+  }
+});
+
+test('suppressionMessage > channel sharpens the wording', () => {
+  assert.match(suppressionMessage('channel_disabled', 'sms'), /text messages/i);
+  assert.match(suppressionMessage('channel_disabled', 'email'), /email is switched off/i);
+  assert.match(suppressionMessage('bad_contact', 'sms'), /phone number/i);
+  assert.match(suppressionMessage('bad_contact', 'email'), /email address/i);
+  assert.match(suppressionMessage('archived'), /archived/i);
+});
+
+test('suppressionMessage > unknown or missing reason falls back, never prints the token', () => {
+  for (const bad of ['who_knows', '', null, undefined, 'toString']) {
+    const msg = suppressionMessage(bad, 'email');
+    assert.equal(typeof msg, 'string');
+    assert.ok(msg.length > 20);
+    assert.doesNotMatch(msg, /who_knows|undefined|null|function/i);
+  }
 });

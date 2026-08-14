@@ -2,7 +2,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const emailTemplates = require('./emailTemplates');
-const { shouldSendImmediate } = require('./messageSuppression');
+const { shouldSendImmediate, suppressionMessage } = require('./messageSuppression');
 const { isPlaceholderEmail } = require('./emailValidation');
 
 // Dependency seam for tests (mirrors crud.js/actions.js __setDeps).
@@ -52,7 +52,7 @@ async function sendRefundClientNotification({ proposalId, amountCents, source })
     });
     if (!gate.ok) {
       console.log(`[refundClientNotify] suppressed for proposal ${proposalId}: ${gate.reason}`);
-      return { email: 'skipped', skip_reasons: { email: `Suppressed: ${gate.reason}.` } };
+      return { email: 'skipped', skip_reasons: { email: suppressionMessage(gate.reason, 'email') } };
     }
     const newBalance = Number(a.total_price) - Number(a.amount_paid);
     const tpl = emailTemplates.refundNotificationClient({
