@@ -45,8 +45,10 @@ export default function SentTab() {
   return (
     <div style={{ display: 'grid', gap: 16 }}>
       {data.campaigns.length === 0 ? (
-        <div className="mkt-state">
-          Nothing sent yet. Campaigns appear here once they go out.
+        <div className="card">
+          <div className="mkt-state">
+            Nothing sent yet. Campaigns appear here once they go out.
+          </div>
         </div>
       ) : (
         <div>

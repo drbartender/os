@@ -106,8 +106,8 @@ function MomentCard({ moment, hue, onEdit, onDismiss, onCompose, busy }) {
             <p className="mkt-moment-note">Wording edited: {moment.edited_fields.join(', ')}.</p>
           )}
           <div className="mkt-moment-foot">
-            <button type="button" className="btn btn-ghost btn-sm" onClick={openEditor}>Edit wording</button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => onDismiss(moment)} disabled={busy}>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={openEditor}>Edit wording</button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => onDismiss(moment)} disabled={busy}>
               Not this time
             </button>
           </div>
@@ -229,16 +229,14 @@ export default function OverviewTab() {
             <div className="mkt-vr" />
             <div>
               <div className="stat-label">Past clients never asked back</div>
-              <div className={n.past_clients_never_asked_back > 0 ? 'stat-value mkt-warn' : 'stat-value'}>
-                {n.past_clients_never_asked_back}
-              </div>
+              {/* Plain ink per the artifact: these numbers are the argument for
+                  the section, not a system error. mkt-warn stays out. */}
+              <div className="stat-value">{n.past_clients_never_asked_back}</div>
             </div>
             <div className="mkt-vr" />
             <div>
               <div className="stat-label">Repeat corporate bookings</div>
-              <div className={n.repeat_corporate_bookings === 0 ? 'stat-value mkt-warn' : 'stat-value'}>
-                {n.repeat_corporate_bookings}
-              </div>
+              <div className="stat-value">{n.repeat_corporate_bookings}</div>
             </div>
           </div>
         </div>

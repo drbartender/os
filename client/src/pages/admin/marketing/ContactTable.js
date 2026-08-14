@@ -56,10 +56,10 @@ export default function ContactTable({
           <thead>
             <tr>
               <th>Contact</th>
-              <th style={{ width: '32%' }}>Marketing tags</th>
+              <th style={{ width: '38%' }}>Marketing tags</th>
               <th>Last event</th>
               <th className="num">Lifetime</th>
-              <th>Last contacted</th>
+              <th className="mkt-col-contacted">Last contacted</th>
               <th className="shrink" aria-label="Actions" />
             </tr>
           </thead>
@@ -81,8 +81,10 @@ export default function ContactTable({
                 </td>
                 <td className="muted">{formatDay(c.last_event)}</td>
                 <td className="num">{formatDollars(c.lifetime_dollars)}</td>
-                {/* last_contacted is a timestamptz, so it renders in local time. */}
-                <td className="muted">{formatLocalDay(c.last_contacted)}</td>
+                {/* last_contacted is a timestamptz, so it renders in local time.
+                    Folds away under 1400px (mkt-col-contacted); the drawer
+                    still carries the full history. */}
+                <td className="muted mkt-col-contacted">{formatLocalDay(c.last_contacted)}</td>
                 <td className="shrink" onClick={e => e.stopPropagation()}>
                   <DoNotContactControl contact={c} onChange={onContactChange} compact />
                 </td>

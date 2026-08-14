@@ -13014,7 +13014,10 @@ html[data-app="admin-os"] .drawer-hero {
   border-bottom: 1px solid var(--line-1);
   margin-bottom: 1.25rem;
 }
-html[data-app="admin-os"] .drawer-hero h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+/* color is load-bearing: the legacy global `h1..h4 { color: var(--cream-text) }`
+   otherwise reaches in and renders the hero name cream-on-paper (1.17:1) in
+   House Lights. Hit on ContactDrawer AND ShiftDrawer (ui-ux review 2026-08-14). */
+html[data-app="admin-os"] .drawer-hero h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-1); }
 html[data-app="admin-os"] .drawer-hero .sub { color: var(--ink-3); font-size: 13px; margin-top: 4px; }
 html[data-app="admin-os"] .drawer-hero .meta {
   display: flex;
@@ -20107,7 +20110,10 @@ html[data-app="admin-os"] .mkt-resume {
   border: 1px solid var(--accent-line); background: var(--accent-soft);
   border-radius: 6px; font-size: 12.5px; color: var(--ink-1);
 }
-html[data-app="admin-os"] .mkt-resume p { margin: 0; flex: 1; min-width: 240px; }
+/* color is load-bearing: the legacy global `p { color: var(--cream-text) }`
+   otherwise beats the inherited ink and blanks the resume copy (1.04:1 on the
+   accent-soft banner in House Lights). */
+html[data-app="admin-os"] .mkt-resume p { margin: 0; flex: 1; min-width: 240px; color: var(--ink-1); }
 html[data-app="admin-os"] .mkt-design-well {
   background: var(--bg-0); border: 1px solid var(--line-1); border-radius: 8px;
   padding: 28px 20px; display: flex; justify-content: center;
@@ -20176,7 +20182,19 @@ html[data-app="admin-os"] .mkt-state .spinner {
   html[data-app="admin-os"] .mkt-recipients-grid { grid-template-columns: 1fr; }
   html[data-app="admin-os"] .mkt-moment-rail { min-width: 120px; }
 }
+/* House Lights' uppercase + tracking widens the tabs past a phone's content
+   box; the seg scrolls inside itself instead of dragging the page sideways. */
+html[data-app="admin-os"] .mkt-tabrow .seg { max-width: 100%; overflow-x: auto; }
+
+/* Six columns don't fit beside the 288px rail until ~1400px; Last contacted
+   folds first (it survives in the drawer), giving the tag cells their 38%. */
+@media (max-width: 1400px) {
+  html[data-app="admin-os"] .mkt-col-contacted { display: none; }
+}
+
 @media (max-width: 600px) {
+  /* Stacked stats leave the vertical hairlines stranded mid-air. */
+  html[data-app="admin-os"] .mkt-vr { display: none; }
   /* The meter takes the full row and its track flexes instead of clipping. */
   html[data-app="admin-os"] .mkt-budget { width: 100%; }
   html[data-app="admin-os"] .mkt-budget-track { flex: 1; width: auto; }
