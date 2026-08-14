@@ -1243,7 +1243,7 @@ Items 8-11 are unstarted.
 
 ### Added 2026-08-11 (found while running the vm-listen-link merge gate)
 
-13. **`criticalIndexes.test.js` has been red on main since the duty-pay lane.** Two
+13. ~~**`criticalIndexes.test.js` has been red on main since the duty-pay lane.**~~ **CLOSED 2026-08-13** by `bf4139f4` ("un-redden the two permanently-red suites on main") in another window. Verified green: 6 pass / 0 fail. Original report follows. Two
     assertions in `server/db/criticalIndexes.test.js` compare against hardcoded expected
     arrays that were never updated when `duty_lines` indexes joined the critical list:
     "DB has none of them" expects `['uq_invoice_payments_positive_link']` but gets that
@@ -1266,7 +1266,7 @@ Items 8-11 are unstarted.
     (plus a new one-absent case); adding an index can never redden the suite again. 6/6
     green, verified by running it.
 
-14. **`balanceReminderScheduling.test.js` CDT case is red on main.** "summer (CDT) anchors
+14. ~~**`balanceReminderScheduling.test.js` CDT case is red on main.**~~ **CLOSED 2026-08-13** by the same commit `bf4139f4`. Verified green: 2 pass / 0 fail. So it was the fixture, not the DST math — balance reminders were never firing at the wrong hour. Original report follows. "summer (CDT) anchors
     each reminder to 10:00am Chicago = 15:00Z" asserts `actual: 0, expected: 1`. Also
     reproduced on clean `main`. Reads like a DB-state dependency (it wants a row the
     shared dev DB no longer has) rather than a DST math bug, but that is a guess — it
