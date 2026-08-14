@@ -104,6 +104,10 @@ describe('buildRepriceSummary', () => {
       expect(all).toContain('$300.00 becomes the new balance due');
       // ...but the invoice is the RAW delta, and the admin must be told.
       expect(all).toContain('the full $500.00');
+      // The claim must be about RECORDED PAYMENTS, not "the overpayment":
+      // refreshUnlockedInvoices nets external_paid, so the broader wording
+      // would be false on a CheckCherry proposal with an unlocked invoice.
+      expect(all).toContain('not reduced by recorded payments');
       // The overpayment absorbs part of it, so the bare "will be billed" copy is wrong here.
       expect(all).not.toContain('increase will be billed to the client');
       // paid ($1,200) genuinely IS short of the new total ($1,500), so the
@@ -135,7 +139,10 @@ describe('buildRepriceSummary', () => {
       });
       // reconcileProposalPaymentStatus leaves status alone while paid >= total,
       // so promising a demotion (and an autopay unenroll) would be a lie.
-      expect(s.lines.join(' ')).not.toMatch(/no longer (be )?marked|paid in full.*demot|autopay/i);
+      // Literal, not a regex alternation: verified that the demotion line is
+      // the only thing this gate emits, and a bare /autopay/i would also fail a
+      // future CORRECT line such as "autopay stays armed".
+      expect(s.lines.join(' ')).not.toContain('drop back to deposit paid');
     });
   });
 });
