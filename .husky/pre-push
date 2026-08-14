@@ -15,8 +15,12 @@
 # idle until GitHub closed it, and the push then failed after passing
 # everything (2026-08-14; see the header in scripts/push-gate.js).
 #
-# Fail-closed is unchanged: no receipt, a receipt for different bytes, or a
-# stale one, and the full gate runs right here exactly as it always did.
+# Fail-closed is unchanged, and the receipt is only honoured when ALL of these
+# hold: same HEAD, byte-identical content for every modified/untracked file,
+# under 12h old, covering the gates this push needs, and the sha being pushed
+# IS HEAD (both gates test the WORKING TREE, so they cannot vouch for
+# `git push origin <other-sha>:main`). Anything else and the full gate runs
+# right here exactly as it always did.
 # Emergencies only: git push --no-verify.
 set -e
 

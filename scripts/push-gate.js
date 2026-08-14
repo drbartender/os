@@ -394,8 +394,17 @@ function main() {
   }
   const ok = runGates(needed, fp);
   if (ok) {
+    // Report what was actually BANKED, not a blanket pass: a money gate that
+    // skipped for want of a key must not read as green here either.
+    const banked = readReceipt();
+    const covered = banked && banked.gates.length ? banked.gates.join(' + ') : 'nothing';
+    const shortfall = needed.filter((g) => !banked || !banked.gates.includes(g));
     console.log('');
-    console.log('✓ gate PASSED. The next push of this exact tree, at this HEAD, skips the hook.');
+    if (shortfall.length) {
+      console.log(`gate finished, but ${shortfall.join(' + ')} was NOT banked — the hook will re-run it.`);
+    } else {
+      console.log(`✓ gate PASSED (${covered}). The next push of this exact tree, at this HEAD, skips the hook.`);
+    }
     console.log(`  Receipt: ${receiptPath()}`);
   }
   process.exit(ok ? 0 : 1);
