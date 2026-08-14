@@ -245,18 +245,24 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       package compare on the proposal page) the same night as everything else; no record of
       anyone opening it in prod since. One look at a real proposal's compare link. Note the
       compare-and-book spec will eventually replace this surface.
-- [ ] **Marketing redesign phases 1+2 — LIVE as of the 2026-08-13 evening push (tip
-      `5adeb0b3`).** The campaign create/send flow owes a full walk BEFORE real sends: tags,
-      resolver, contacts UI, extract, compliance, send pacing. Include the three gate-fix
-      surfaces, all corrected blind and never seen: (1) compose resume — save a draft, send
-      to a tiny audience, then simulate the retryable path by leaving `/marketing/compose`
-      and returning; the "Resuming campaign #N" banner and its "Start fresh instead" button
-      must appear after a quota-stopped or partly-failed run, never after a clean one;
-      (2) actionable toasts — select over 500 recipients ("Send at most 500 at a time")
-      and an all-suppressed audience ("Check the held-back panel"), each must show its
-      real message, not "Please fix the errors below"; (3) the Sent tab placeholder must
-      say phase 3. (Sep 5 deadline pressure is exactly the condition that buries
-      walkthroughs — this one gates real sends.)
+- [ ] **Marketing redesign — all 3 phases live, RESTYLED to the approved design 2026-08-14
+      (lane `mkt-restyle`, merged `19a9298e` + polish `be555426`, unpushed).** The campaign
+      create/send flow owes a full walk BEFORE real sends: tags, resolver, contacts UI,
+      extract, compliance, send pacing. Include the three gate-fix surfaces, all corrected
+      blind and never seen: (1) compose resume — save a draft, send to a tiny audience,
+      then simulate the retryable path by leaving `/marketing/compose` and returning; the
+      "Resuming campaign #N" banner and its "Start fresh instead" button must appear after
+      a quota-stopped or partly-failed run, never after a clean one; (2) actionable
+      toasts — select over 500 recipients ("Send at most 500 at a time") and an
+      all-suppressed audience ("Check the held-back panel"), each must show its real
+      message, not "Please fix the errors below". RESTYLE-specific checks for the same
+      walk: both skins (the moment title deliberately goes serif on House Lights, like
+      every heading); the Audiences table at 1280 scrolls horizontally for its last two
+      columns inside `tbl-wrap` — judge whether that is livable; the 375px moment cards
+      and budget meter (fixed be555426, re-shot clean). Headless coverage so far: 31
+      screenshots both skins at 1280/900/375, zero console errors. (Sep 5 deadline
+      pressure is exactly the condition that buries walkthroughs — this one gates real
+      sends.)
 - [ ] **Proposals list pagination — LIVE as of the 2026-08-13 evening push (`1dc72df6` +
       stale-response guard `92efc663`).** **Never opened in a browser**, deliberately:
       the build-time walk needed a second dev server and a local admin token, both denied
