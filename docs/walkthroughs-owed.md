@@ -423,10 +423,32 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       with the freeform staff auto-reply, closing the last unverified half of the phone-1a
       cutover. Bonus: the reply live-demoed the 312-handout backlog item by telling Dallas
       to contact Dallas at the 312.
-- [ ] **"See other options" compare strip.** Pushed live 2026-08-11 (41d3206c, read-only
-      package compare on the proposal page) the same night as everything else; no record of
-      anyone opening it in prod since. One look at a real proposal's compare link. Note the
-      compare-and-book spec will eventually replace this surface.
+- [ ] **"See other options" compare strip — SCRIPTED 2026-08-14. The prose below described
+      the wrong surface.** It said "one look at a real proposal's compare link". There is no
+      link: what shipped 8/11 is a BUTTON on the proposal page reading "See other options"
+      (`ProposalView.js:683`) which mounts `OtherOptionsPanel`. `/compare/:token` is a
+      DIFFERENT and OLDER surface, the option-GROUP page, in the tree since 7/13. Also
+      `41d3206c` is the push-gate fix inside the lane, not the lane; the merge is `d945656a`,
+      and it deliberately deleted the old `!inOptionGroup` gate so the panel now appears on
+      grouped proposals too.
+      WALK IT ON **proposal 733** (Julia Gutnik, token `eb616114-6e11-4b0e-b35f-d77f9d45ddff`,
+      $1,250.00, 50 guests / 5 hours, event Sep 5). Already status `viewed`, so opening it
+      flips no status; it does bump `view_count` and `last_viewed_at` and log a `viewed` row
+      with the viewer's IP. Zero-footprint alternative if that matters: proposal 482, DRB's
+      own Test Client, token `cc6c3ab6-2eb8-41a9-9a69-65b983707c0f` — but it is past-dated so
+      it shows pay-in-full copy, which is expected noise, not a panel bug.
+      PASS, five things: the strip opens and prices 11 options across exactly TWO lanes
+      (hosted 10 + BYOB 1; "Also available" correctly never appears); the BYOB card reads
+      "The Core Reaction with The Full Compound" / "Yours · recommended" / $1,250.00;
+      pinning three caps with "Three is the most we can line up"; "Compare these 2" renders
+      the table with "only on this one" / "on all of them" tags and a "+ Add one more" slot;
+      and THE MONEY PROBE — toggle an extra on and back off, and the Yours price must return
+      to exactly $1,250.00. That last one is a live reconciliation between the stored
+      contract total and today's engine, because once any body is sent the current option is
+      live-priced rather than echoed. Any other number is a finding; write it down.
+      JUDGEMENT CALL FOR DALLAS, not a bug: lane order puts hosted FIRST, so a BYOB client
+      scrolls past ten hosted cards before reaching their own recommended one.
+      Note the compare-and-book spec will eventually replace this surface.
 - [ ] **Marketing redesign, FUNCTIONAL walk — all 3 phases live in prod; gates real
       sends.** The
       campaign create/send flow owes a full walk BEFORE real sends: tags, resolver,
