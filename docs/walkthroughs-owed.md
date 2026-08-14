@@ -111,19 +111,39 @@ so tick items off as you confirm them rather than assuming the list is current.
       delete". It is deliberate (undo affordance + the record that derivation must never
       resurrect it), and it is correctly hidden on paid/History views. If it keeps reading
       wrong, the fix is a visible "Removed — restore" label, not deletion.
-- [ ] **Duty-pay knobs: out-of-area + ShiftDrawer.** The two knob surfaces from the
-      duty-residuals lane (merged afb6e5e6): the out-of-area no-op/auto-lock semantics and
-      the ShiftDrawer knob (spec §9). Money math around them verified 2026-08-12; the knobs
-      themselves have never been touched in the app.
-      PROD CHECK 2026-08-14: `shifts.out_of_area_bonus_cents` is non-null on **zero** rows.
-      Not one bonus has ever been attached since the feature shipped 8/07, so this cannot be
-      walked by finding a live example — either attach one deliberately on a real far shift,
-      or walk it on dev (fixture: proposal 24131 / shift 10726, two approved bartenders).
-      The sequence that matters, because it is the bug the residuals lane fixed: attach $25
-      with 2+ approved and confirm the warning plus a GREYED-OUT same-value Save; drop one
-      staffer so exactly one remains and confirm Save turns clickable at the same value;
-      save and confirm it locks to the survivor; then confirm a reduce 409s with the
-      lock sentence. Do it in BOTH mounts — Event Detail's staffing card and the ShiftDrawer.
+- [x] **Duty-pay knobs: out-of-area + ShiftDrawer — PASSED 2026-08-14 on dev**, full
+      sequence, both mounts (fixture: proposal 24131 / shift 10726, two approved
+      bartenders). Spec §9 turns out to name the SAME knob for both halves of this item
+      ("Shift page: Out-of-Area knob, suggested amount, requester home distances beside
+      approvals, locked indicator"), so the ShiftDrawer half was not a separate control.
+      The bug the residuals lane fixed is now proven, not just reviewed:
+      (1) attach $25 with 2 approved → saved UNLOCKED (`out_of_area_locked_at` null, so
+      the auto-lock correctly refused an ambiguous roster), warning reads "locked to no one
+      and will not pay", and the same-value Save is GREYED OUT;
+      (2) drop one staffer → the warning REWORDS itself to "Save the amount to lock it to
+      them" and Save turns clickable at the identical value — the exact dead end the fix
+      removed;
+      (3) Save → locks to the survivor (`locked_user_id = 12926`, Walk Bartender A), UI
+      swaps to the "Locked" chip;
+      (4) reduce to $10 → 409 carrying the server's sentence verbatim, DB untouched at
+      2500. Re-run in the Event Detail mount at $5: same refusal, same untouched row.
+      ALSO covered, beyond the prescribed steps: the $250 cap (a $300 save is refused with
+      "Enter a bonus between $0.01 and $250.", surfaced verbatim from the server, row
+      untouched), and the two §9 elements that had never rendered anywhere because the
+      fixture had no coordinates — after setting the shift to Rockford the knob shows
+      "Venue is 78.9 mi out." with a "Use suggested $20.00" button (correct band), and
+      after giving Walk Bartender A a Chicago home the approval row shows "home: 79.9 mi".
+      The published-ambiguity rule holds: no band literal or band arithmetic exists in
+      `client/src/`, the number arrives on the payload. The staff-privacy claim holds
+      empirically too — the requester object carries `home_distance_miles` and NO lat/lng.
+      FIXTURE STATE AFTER THE WALK, so nobody is surprised: shift 10726 is now locked at
+      $25 to user 12926 and carries Rockford coordinates; 12926 has a Chicago home. The
+      lock is deliberately irreversible from the UI, so re-walking this sequence needs a
+      SQL reset of the four `out_of_area_*` columns or a fresh fixture.
+      ONE DEFECT FOUND, logged to the fix list (bottom section, 2026-08-14): the card and
+      the drawer disagree on the "N staffed" denominator when `positions_needed` is `[]`
+      (card `|| 1`, drawer `roster.length`). Cosmetic; 6 prod shifts reach it, and all 6
+      are the past-dated `open` rows the shift-closure sweep is about to close.
 - [ ] **Review money: bounty + quarterly contest (spec §7). NEVER EXECUTED IN PROD.**
       Verified 2026-08-14: `staff_reviews` 0 rows, `staff_review_credits` 0, `review_bounty`
       duty lines 0, `review_contest` duty lines 0, Thumbtack-sourced reviews 0. The entire

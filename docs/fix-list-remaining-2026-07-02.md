@@ -3385,3 +3385,31 @@ history is in the commit messages of 74a95bfd..db6f7b10.
 run moves the fingerprint and the receipt is refused (by design; it happened
 twice on 8/14, once from my own edits and once from a spec-doc commit). The
 recovery is just rerunning `npm run gate` on the settled tree.
+
+## "N staffed" denominator disagrees between the two shift surfaces (found 2026-08-14, out-of-area walk)
+
+Cosmetic, prod-reachable, low priority. The same shift reads a different
+"needed" count on the Event Detail staffing card and in the ShiftDrawer one
+click away, whenever `positions_needed` is an empty array:
+
+- `client/src/components/adminos/shifts.js:98` `parsePositionsCount` returns
+  `arr.length || 1`, so the card shows **2/1 staffed**.
+- `client/src/components/adminos/drawers/ShiftDrawer.js:213`
+  `totalNeeded = roster.length`, so the drawer shows **2/0 staffed** (and
+  "Assigned 2/0") for that same shift.
+
+Two definitions of the same number, and the `|| 1` is a guess ("assume at least
+one is needed") while `roster.length` is literal. Pick one and share it; the
+literal reading is probably right, but the card's chip colour logic keys off
+"fully staffed", so check that a 0 denominator does not paint every such shift
+green before switching.
+
+**Prod reach: 6 shifts of 78** (297, 288, 248, 262, 306, 296), all
+`positions_needed = '[]'`, all dated 2026-05-15, all still `status = 'open'`.
+Note their six proposals (412, 400, 322, 334, 420, 411) are ALL `completed`, so
+these are exactly the rows the in-flight shift-closure sweep is built to close —
+worth knowing as concrete first-run fodder for that lane, and it means this
+cosmetic bug's only live instances are about to become past/closed anyway.
+
+Found while walking the duty-pay out-of-area knob (walkthroughs-owed Tier 1);
+not a defect in the knob itself, which passed clean.
