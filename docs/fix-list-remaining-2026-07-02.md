@@ -2978,6 +2978,50 @@ None of these were in scope for that wave; each is logged here rather than fixed
   - `orientationData.js:60` carries a factually wrong comment that will mislead the next
     reader.
 
+  **FIXED 2026-08-14, lane `date-trap-live-fixes`, merged `d2380803`** (3/3 review lenses PASS;
+  tests fail before and pass after at BOTH `TZ=UTC` and `TZ=America/Chicago`, which is the
+  point, since the whole bug class is timezone-dependent and the one pre-existing TZ-pinned
+  suite pins UTC, the value at which these are silent). `paystubData.js:147` now uses
+  `chicagoYmdOf`, null-guarded so an unpaid payout does not render the 1969 epoch;
+  `shifts.js:223` now uses `chicagoTodayYmd()`. The sibling `ymd()` in
+  `staffPortal/payouts.js` was checked and needed NO change: all five of its call sites take
+  pg `DATE` columns, and `paid_at` is projected raw to the client and never passes through it.
+
+  **STILL OPEN, and the first of these is arguably worse than what was just fixed. Found by
+  two independent reviewers, and NOT introduced by that lane:**
+  - **`shifts.queries.js:84` (`STAFF_OPEN_SHIFTS_SQL`) and `shifts.js:199`
+    (`GET /shifts/unstaffed-upcoming`) filter `s.event_date >= CURRENT_DATE`, and the
+    Postgres session TimeZone is `GMT` — verified, not assumed (`SHOW timezone` returns GMT;
+    `SELECT current_date` returned 2026-08-14 at 12:06 Chicago).** So `CURRENT_DATE` is the
+    UTC day: the identical trap, in SQL instead of JS, 25 lines from the one just fixed.
+    From 19:00 Chicago (18:00 in winter) an open shift TONIGHT is dropped from both lists for
+    five hours. **The admin side is the real damage:** `unstaffed-upcoming` feeds
+    `AssignToEventModal`, so at 19:01 an under-staffed shift starting at 20:00 is invisible to
+    the person trying to cover a no-show, at exactly the hour that matters. This is LIVE today
+    and was live before the fix. Consequence of fixing only the JS half: the staffer's Mine tab
+    now says the shift is upcoming while the Available tab and the admin modal say it does not
+    exist. Fix is the same shape (`chicagoTodayYmd()` bound as a parameter, or
+    `CURRENT_DATE AT TIME ZONE 'America/Chicago'`).
+  - **`client/src/pages/staff/PayPage.js:581` and `PayoutDetail.js:422`** both do
+    `String(iso).slice(0,10)` on the RAW `paid_at` the API returns, i.e. the UTC day again, one
+    layer out. Before the lane the PDF and the Pay screen were wrong together; now only the PDF
+    is right and they disagree. Worked example: paid 2026-12-31 18:01 CST renders "Paid Fri
+    Jan 1" on screen while the PDF says 2026-12-31 and the 1099 counts it in 2026 (SQL extracts
+    the year `AT TIME ZONE 'America/Chicago'`).
+  - **The 9 already-issued paystubs are NOT repaired by the code fix.**
+    `staffPortal/payouts.js:325` early-returns the cached R2 PDF whenever
+    `paystub_storage_key` is set, so the assembler is never called. Their storage keys must be
+    cleared AFTER the fix deploys (clearing them before just re-renders the same wrong date).
+    Post-deploy step, owner-owned.
+  - **Sensitivity gap:** `paystubData.js`, `paystubPdf.js` and `businessTime.js` are not on
+    `sensitive-paths.txt`, so a change to the money content of a tax document does not pull the
+    push-time full fleet. Only `payrollAccrual.js` matched, via the `payroll*.js` glob, which
+    does not cover `paystub*`.
+  - **Shared-dev-DB test hygiene:** `paystubData.paidDate.test.js:57` adopts a `pay_periods`
+    row via `ON CONFLICT (start_date) DO UPDATE` and `after()` deletes that id, so an
+    interrupted run can rewrite another lane's period boundary and then fail its own cleanup on
+    the FK. Dev-only, no prod path, but this DB is explicitly shared.
+
 - **repriceSummary's new overpaid branches are untested.**
   `client/src/pages/admin/proposalEditor/repriceSummary.test.js` has no
   overpaid-plus-increase case: every existing increase test runs with
