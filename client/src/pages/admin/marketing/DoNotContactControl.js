@@ -53,6 +53,7 @@ export default function DoNotContactControl({ contact, onChange, compact = false
         <label htmlFor={`dnc-reason-${contact.id}`}>Why are we not contacting them?</label>
         <input
           id={`dnc-reason-${contact.id}`}
+          className="input"
           type="text"
           value={reason}
           autoFocus
@@ -61,12 +62,12 @@ export default function DoNotContactControl({ contact, onChange, compact = false
           onChange={e => setReason(e.target.value)}
         />
         <div className="mkt-dnc-actions">
-          <button type="button" className="btn-secondary" onClick={close} disabled={busy}>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={close} disabled={busy}>
             Cancel
           </button>
           <button
             type="button"
-            className="btn-danger"
+            className="btn btn-danger btn-sm"
             onClick={() => submit(true)}
             disabled={busy || !reason.trim()}
           >
@@ -87,10 +88,10 @@ export default function DoNotContactControl({ contact, onChange, compact = false
           {' '}Clearing it makes them eligible for campaigns again.
         </p>
         <div className="mkt-dnc-actions">
-          <button type="button" className="btn-secondary" onClick={close} disabled={busy}>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={close} disabled={busy}>
             Keep excluded
           </button>
-          <button type="button" className="btn-danger" onClick={() => submit(false)} disabled={busy}>
+          <button type="button" className="btn btn-danger btn-sm" onClick={() => submit(false)} disabled={busy}>
             {busy ? 'Saving…' : 'Clear it'}
           </button>
         </div>
@@ -101,7 +102,7 @@ export default function DoNotContactControl({ contact, onChange, compact = false
   return contact.do_not_contact ? (
     <button
       type="button"
-      className={compact ? 'btn-link' : 'btn-secondary'}
+      className={compact ? 'btn btn-ghost btn-sm' : 'btn btn-secondary btn-sm'}
       onClick={() => setMode('clear')}
     >
       Clear do not contact
@@ -109,7 +110,7 @@ export default function DoNotContactControl({ contact, onChange, compact = false
   ) : (
     <button
       type="button"
-      className={compact ? 'btn-link' : 'btn-secondary'}
+      className={compact ? 'btn btn-ghost btn-sm' : 'btn btn-secondary btn-sm'}
       onClick={() => setMode('set')}
     >
       Do not contact

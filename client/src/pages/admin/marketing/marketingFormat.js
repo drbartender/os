@@ -101,3 +101,27 @@ export function errorText(err, fallback) {
   if (fieldMsgs.length) return fieldMsgs.join(' ');
   return err?.message || fallback;
 }
+
+/**
+ * DS chip hues for marketing tags, from the design artifact's TAG_HUE map
+ * (spec §10 Tags bullet). The vehicle is the Admin OS `.chip` kinds, which
+ * carry House Lights overrides; `.tag` has no hue variants. Anything not in
+ * these maps renders neutral; Untagged and held-back reasons use the dashed
+ * `chip derived` variant (visually distinct because nobody can set them).
+ */
+export const TAG_HUES = {
+  corporate: 'violet',
+  wedding: 'info',
+  birthday: 'warn',
+  graduation: 'neutral',
+  thumbtack: 'accent',
+};
+
+export const DERIVED_HUES = {
+  paid: 'ok',
+  quoted: 'neutral',
+};
+
+export function tagHue(id) {
+  return TAG_HUES[id] || 'neutral';
+}

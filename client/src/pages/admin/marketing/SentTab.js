@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import api from '../../../utils/api';
+import Icon from '../../../components/adminos/Icon';
 import { formatLocalDay, errorText } from './marketingFormat';
 
 /**
@@ -36,25 +37,29 @@ export default function SentTab() {
     return (
       <div className="mkt-state mkt-state-error" role="alert">
         <p>{error}</p>
-        <button type="button" className="btn-secondary" onClick={load}>Try again</button>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={load}>Try again</button>
       </div>
     );
   }
 
   return (
-    <div className="mkt-sent">
-      <section>
-        <h2>Sent</h2>
-        {data.campaigns.length === 0 ? (
-          <div className="mkt-state">
-            Nothing sent yet. Campaigns appear here once they go out.
-          </div>
-        ) : (
-          <>
-            <table className="mkt-table">
+    <div style={{ display: 'grid', gap: 16 }}>
+      {data.campaigns.length === 0 ? (
+        <div className="mkt-state">
+          Nothing sent yet. Campaigns appear here once they go out.
+        </div>
+      ) : (
+        <div>
+          <div className="tbl-wrap">
+            <table className="tbl mkt-tbl-static">
               <thead>
                 <tr>
-                  <th>Campaign</th><th>Sent</th><th>To</th><th>Opened</th><th>Clicked</th><th>Booked</th>
+                  <th>Campaign</th>
+                  <th>Sent</th>
+                  <th className="num">To</th>
+                  <th className="num">Opened</th>
+                  <th className="num">Clicked</th>
+                  <th className="num">Booked</th>
                 </tr>
               </thead>
               <tbody>
@@ -64,40 +69,47 @@ export default function SentTab() {
                       <div className="mkt-name">{c.name}</div>
                       <div className="mkt-email">{c.subject}</div>
                     </td>
-                    <td>{formatLocalDay(c.sent_at)}</td>
-                    <td>{c.sent}</td>
-                    <td>{c.opened}</td>
-                    <td>{c.clicked}</td>
-                    <td><strong>{c.booked}</strong></td>
+                    <td className="muted">{formatLocalDay(c.sent_at)}</td>
+                    <td className="num">{c.sent}</td>
+                    <td className="num">{c.opened}</td>
+                    <td className="num">{c.clicked}</td>
+                    <td className="num"><strong>{c.booked}</strong></td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="mkt-muted">
-              Booked means a recipient started a quote within 30 days of getting that
-              email, counted once per person. It is a coincidence in time, not proof the
-              email caused it.
-            </p>
-          </>
-        )}
-      </section>
+          </div>
+          <p className="muted tiny">
+            Booked means a recipient started a quote within 30 days of getting that
+            email, counted once per person. It is a coincidence in time, not proof the
+            email caused it.
+          </p>
+        </div>
+      )}
 
-      <section>
-        <h2>Also reaching your contacts</h2>
-        <p className="mkt-muted">
+      <div className="card mkt-card-flush mkt-queue-static">
+        <div className="card-head">
+          <h3>Also reaching your contacts</h3>
+          <span className="k">Server configuration</span>
+        </div>
+        <div className="card-body muted tiny">
           These send on their own, controlled by server configuration rather than by any
           screen. They are listed here so this page accounts for every email a contact gets
           from you, not just the ones sent from this screen.
-        </p>
-        <ul className="mkt-heldback-list">
+        </div>
+        <div>
           {data.automations.map(a => (
-            <li key={a.name}>
-              <span>{a.name}</span>
-              <span className="mkt-muted">{a.trigger} · {a.touches}</span>
-            </li>
+            <div className="queue-item" key={a.name}>
+              <span className="queue-icon info"><Icon name="mail" size={16} /></span>
+              <div className="queue-main">
+                <div className="queue-title">{a.name}</div>
+                <div className="queue-sub">{a.trigger}</div>
+              </div>
+              <span className="queue-meta">{a.touches}</span>
+            </div>
           ))}
-        </ul>
-      </section>
+        </div>
+      </div>
     </div>
   );
 }

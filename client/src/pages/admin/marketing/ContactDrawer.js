@@ -14,11 +14,22 @@ import { formatDollars, formatDay, formatStamp, heldBackLabel, errorText } from 
  * emailed them" and "I emailed them" are different facts when you are deciding
  * whether to reach out again. Without this view the history endpoints have no
  * consumer at all.
+ *
+ * Chrome is the DS drawer contract: `.drawer` sits off-canvas until `.open`
+ * is added, so the class is toggled one frame after mount to play the
+ * slide-in. Close unmounts immediately (no exit animation, matching the
+ * shipped behavior).
  */
 export default function ContactDrawer({ contactId, onClose, onTagsChange, onContactChange }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setOpen(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -53,91 +64,102 @@ export default function ContactDrawer({ contactId, onClose, onTagsChange, onCont
   };
 
   return (
-    <div className="mkt-drawer-backdrop" onClick={onClose}>
+    <>
+      <div className={`drawer-scrim${open ? ' open' : ''}`} onClick={onClose} />
       <aside
-        className="mkt-drawer"
+        className={`drawer${open ? ' open' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-label="Contact record"
-        onClick={e => e.stopPropagation()}
       >
-        <div className="mkt-drawer-head">
-          <h2>{data?.name || 'Contact'}</h2>
-          <button type="button" className="btn-link" onClick={onClose} aria-label="Close">Close</button>
+        <div className="drawer-head">
+          <span className="crumb">Marketing · Contact record</span>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close">
+            Close
+          </button>
         </div>
 
-        {loading && (
-          <div className="mkt-state" role="status" aria-live="polite">
-            <div className="spinner" /> Loading…
-          </div>
-        )}
-
-        {error && !loading && (
-          <div className="mkt-state mkt-state-error" role="alert">
-            <p>{error}</p>
-            <button type="button" className="btn-secondary" onClick={load}>Try again</button>
-          </div>
-        )}
-
-        {data && !loading && !error && (
-          <>
-            <div className="mkt-drawer-identity">
-              <div>{data.email || 'No address'}</div>
-              {data.phone && <div>{data.phone}</div>}
-              {data.source && <div className="mkt-muted">Source: {data.source}</div>}
-              <div className="mkt-muted">Lifetime: {formatDollars(data.lifetime_dollars)}</div>
-              {!data.mailable && data.held_back_reason && (
-                <div className="mkt-chip mkt-chip-muted">
-                  Held back: {heldBackLabel(data.held_back_reason)}
-                </div>
-              )}
+        <div className="drawer-body">
+          {loading && (
+            <div className="mkt-state" role="status" aria-live="polite">
+              <div className="spinner" /> Loading…
             </div>
+          )}
 
-            <div className="mkt-drawer-section">
-              <TagCell contact={data} onTagsChange={handleTags} />
-              <DoNotContactControl contact={data} onChange={handleContact} />
+          {error && !loading && (
+            <div className="mkt-state mkt-state-error" role="alert">
+              <p>{error}</p>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={load}>Try again</button>
             </div>
+          )}
 
-            <div className="mkt-drawer-section">
-              <h3>Event history</h3>
-              {(data.events || []).length === 0 ? (
-                <p className="mkt-muted">No events yet.</p>
-              ) : (
-                <ul className="mkt-list">
-                  {(data.events || []).map(e => (
-                    <li key={e.id}>
-                      <span>{formatDay(e.event_date)}</span>
-                      <span>{getEventTypeLabel(e)}</span>
-                      <span className="mkt-muted">{e.venue_name || ''}</span>
-                      <span>{formatDollars(e.amount)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="mkt-drawer-section">
-              <h3>Message history</h3>
-              {(data.messages || []).length === 0 ? (
-                <p className="mkt-muted">Nothing sent yet.</p>
-              ) : (
-                <ul className="mkt-list">
-                  {(data.messages || []).map((m, i) => (
-                    <li key={`${m.at}-${i}`}>
-                      <span>{formatStamp(m.at)}</span>
-                      <span className="mkt-muted">{m.channel}</span>
-                      <span>{m.subject || m.kind}</span>
-                      <span className={m.automated ? 'mkt-chip mkt-chip-muted' : 'mkt-chip'}>
-                        {m.automated ? 'Automated' : 'Sent by us'}
+          {data && !loading && !error && (
+            <>
+              <div className="drawer-hero">
+                <h2>{data.name || 'Contact'}</h2>
+                <div className="mkt-drawer-identity" style={{ marginTop: 6 }}>
+                  <div>{data.email || 'No address'}</div>
+                  {data.phone && <div>{data.phone}</div>}
+                  {data.source && <div className="muted tiny">Source: {data.source}</div>}
+                  <div className="muted tiny">Lifetime: {formatDollars(data.lifetime_dollars)}</div>
+                  {!data.mailable && data.held_back_reason && (
+                    <div style={{ marginTop: 4 }}>
+                      <span className="chip derived">
+                        Held back: {heldBackLabel(data.held_back_reason)}
                       </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </>
-        )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="mkt-drawer-section">
+                <TagCell contact={data} onTagsChange={handleTags} />
+                <div style={{ marginTop: 10 }}>
+                  <DoNotContactControl contact={data} onChange={handleContact} />
+                </div>
+              </div>
+
+              <div className="mkt-drawer-section">
+                <h3 className="section-title">Event history</h3>
+                {(data.events || []).length === 0 ? (
+                  <p className="muted tiny">No events yet.</p>
+                ) : (
+                  <ul className="mkt-list">
+                    {(data.events || []).map(e => (
+                      <li key={e.id}>
+                        <span className="num">{formatDay(e.event_date)}</span>
+                        <span>{getEventTypeLabel(e)}</span>
+                        <span className="muted">{e.venue_name || ''}</span>
+                        <span className="num">{formatDollars(e.amount)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="mkt-drawer-section">
+                <h3 className="section-title">Message history</h3>
+                {(data.messages || []).length === 0 ? (
+                  <p className="muted tiny">Nothing sent yet.</p>
+                ) : (
+                  <ul className="mkt-list">
+                    {(data.messages || []).map((m, i) => (
+                      <li key={`${m.at}-${i}`}>
+                        <span className="num">{formatStamp(m.at)}</span>
+                        <span className="muted">{m.channel}</span>
+                        <span>{m.subject || m.kind}</span>
+                        <span className={m.automated ? 'chip derived' : 'chip neutral'}>
+                          {m.automated ? 'Automated' : 'Sent by us'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </>
+          )}
+        </div>
       </aside>
-    </div>
+    </>
   );
 }

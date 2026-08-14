@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import api from '../../../utils/api';
+import Icon from '../../../components/adminos/Icon';
 import ContactTable from './ContactTable';
 import ContactDrawer from './ContactDrawer';
 import HeldBackPanel from './HeldBackPanel';
@@ -13,12 +15,18 @@ const PAGE_SIZE = 50;
  *
  * Two scopes of count are in play and they are deliberately different. The
  * quick-filter chips count WITHOUT the active filter applied, so they answer
- * "what would each filter give me"; the rows and the held-back panel count WITH
- * it, so they describe what you are looking at. Computing the chips the same
- * way as the rows makes selecting Untagged read "All 184 / Untagged 184 /
+ * "what would each filter give me"; the rows and the held-back region count
+ * WITH it, so they describe what you are looking at. Computing the chips the
+ * same way as the rows makes selecting Untagged read "All 184 / Untagged 184 /
  * Corporate 0", which tells you nothing.
+ *
+ * The big emailable number on the audience card is the view's own
+ * `held_back.mailable`, not the rail's audience-wide count, so it always
+ * agrees with the held-back identity check beside it.
  */
 export default function AudiencesTab() {
+  const navigate = useNavigate();
+  const { overview } = useOutletContext();
   const [audiences, setAudiences] = useState([]);
   const [audiencesError, setAudiencesError] = useState(null);
   const [audience, setAudience] = useState('');
@@ -109,88 +117,137 @@ export default function AudiencesTab() {
     { id: DO_NOT_CONTACT_ID, label: 'Do not contact', count: counts[DO_NOT_CONTACT_ID] },
   ];
 
+  const pickAudience = (id) => { setAudience(id); setPage(1); };
+
   return (
     <div className="mkt-audiences">
-      <section className="mkt-audience-list">
-        <h2>Audiences</h2>
+      <div className="card mkt-card-flush mkt-aud-list">
+        <div className="card-head"><h3>Audiences</h3><span className="k num">{audiences.length}</span></div>
         {audiencesError ? (
           <div className="mkt-state mkt-state-error" role="alert">
             <p>{audiencesError}</p>
-            <button type="button" className="btn-secondary" onClick={loadAudiences}>Try again</button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={loadAudiences}>Try again</button>
           </div>
         ) : (
-          <div className="mkt-audience-cards">
+          <div>
             <button
               type="button"
-              className={`mkt-audience-card${audience === '' ? ' is-selected' : ''}`}
-              onClick={() => { setAudience(''); setPage(1); }}
+              className={`queue-item${audience === '' ? ' is-selected' : ''}`}
+              onClick={() => pickAudience('')}
             >
-              <span className="mkt-audience-name">Everyone</span>
-              <span className="mkt-muted">The whole contact base</span>
+              <div className="queue-main">
+                <div className="queue-title">Everyone</div>
+                <div className="queue-sub">The whole contact base</div>
+              </div>
+              {/* Whole-base EMAILABLE count from the shared overview, so this
+                  row is comparable with the audience rows below it and never
+                  re-scopes itself to the active filter (review 2026-08-14). */}
+              {Number.isFinite(overview?.base?.mailable) && (
+                <span className="queue-meta">{overview.base.mailable}</span>
+              )}
             </button>
             {audiences.map(a => (
               <button
                 type="button"
                 key={a.id}
-                className={`mkt-audience-card${audience === a.id ? ' is-selected' : ''}`}
-                onClick={() => { setAudience(a.id); setPage(1); }}
+                className={`queue-item${audience === a.id ? ' is-selected' : ''}`}
+                onClick={() => pickAudience(a.id)}
               >
-                <span className="mkt-audience-name">{a.name}</span>
-                <span className="mkt-muted">{a.rule}</span>
-                <span className="mkt-audience-count">{a.emailable} emailable</span>
+                <div className="queue-main">
+                  <div className="queue-title">{a.name}</div>
+                  <div className="queue-sub">{a.rule}</div>
+                </div>
+                <span className="queue-meta">{a.emailable}</span>
               </button>
             ))}
           </div>
         )}
-        {selected?.includes && (
-          <p className="mkt-muted mkt-audience-includes">Includes: {selected.includes}</p>
-        )}
-      </section>
+      </div>
 
-      <section className="mkt-contacts">
+      <div className="mkt-aud-main">
+        <div className="card">
+          <div className="card-head">
+            <h3>{selected ? selected.name : 'Everyone'}</h3>
+            <div className="hstack">
+              <span className="k">{selected ? selected.rule : 'The whole contact base'}</span>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => navigate(`/marketing/compose${audience ? `?audience=${audience}` : ''}`)}
+              >
+                Use this audience
+              </button>
+            </div>
+          </div>
+          <div className="card-body mkt-audcard-body">
+            {selected?.includes && (
+              <div style={{ maxWidth: '30ch' }}>
+                <div className="mkt-eyebrow">Include</div>
+                <div className="mkt-chips">
+                  {/* includes is an ARRAY from the resolver (marketingAudience.js),
+                      one entry per predicate. */}
+                  {(Array.isArray(selected.includes) ? selected.includes : [selected.includes]).map(part => (
+                    <span key={part} className="chip neutral">{part}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {selected?.includes && <div className="mkt-vr" />}
+            {/* Held-back counts and the big emailable number are gated on a
+                CURRENT view: stale numbers beside a loading/erroring table are
+                exactly what an operator must not trust before a send. */}
+            <HeldBackPanel heldBack={loading || error ? null : data?.held_back} total={data?.total} />
+            <div className="spacer" />
+            <div className="mkt-audcard-count">
+              <span className="num">
+                {loading || error ? '—' : (data?.held_back?.mailable ?? '—')}
+              </span>
+              <div className="mkt-moment-count-sub">emailable</div>
+            </div>
+          </div>
+        </div>
+
         <div className="mkt-toolbar">
-          <div className="mkt-filters">
+          <div className="input-group">
+            <Icon name="search" size={16} />
+            <input
+              type="search"
+              placeholder="Search name or email"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              aria-label="Search contacts"
+            />
+          </div>
+          <div className="seg">
             {chips.map(c => (
               <button
                 type="button"
                 key={c.id}
-                className={`mkt-filter${filter === c.id ? ' is-active' : ''}`}
+                className={filter === c.id ? 'active' : undefined}
                 onClick={() => { setFilter(c.id); setPage(1); }}
               >
                 {c.label}{Number.isFinite(c.count) ? ` ${c.count}` : ''}
               </button>
             ))}
           </div>
-          <input
-            type="search"
-            className="mkt-search"
-            placeholder="Search name or email"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            aria-label="Search contacts"
-          />
+          <span className="mkt-hint">Use Edit on any tag cell to change it. Edits save to the contact, not the audience.</span>
         </div>
 
-        <div className="mkt-contacts-body">
-          <div className="mkt-contacts-table">
-            <ContactTable
-              contacts={data?.contacts || []}
-              loading={loading}
-              error={error}
-              onRetry={loadContacts}
-              total={data?.total || 0}
-              page={data?.page || page}
-              limit={data?.limit || PAGE_SIZE}
-              onPageChange={p => setPage(p)}
-              onTagsChange={handleTagsChange}
-              onContactChange={handleExclusionChange}
-              onOpen={setOpenId}
-              filtered={Boolean(audience || debouncedSearch || filter !== 'all')}
-            />
-          </div>
-          {!loading && !error && <HeldBackPanel heldBack={data?.held_back} total={data?.total} />}
-        </div>
-      </section>
+        <ContactTable
+          contacts={data?.contacts || []}
+          loading={loading}
+          error={error}
+          onRetry={loadContacts}
+          total={data?.total || 0}
+          page={data?.page || page}
+          limit={data?.limit || PAGE_SIZE}
+          onPageChange={p => setPage(p)}
+          onTagsChange={handleTagsChange}
+          onContactChange={handleExclusionChange}
+          onOpen={setOpenId}
+          filtered={Boolean(audience || debouncedSearch || filter !== 'all')}
+        />
+      </div>
 
       {openId && (
         <ContactDrawer

@@ -28,7 +28,7 @@ export default function ContactTable({
     return (
       <div className="mkt-state mkt-state-error" role="alert">
         <p>{error}</p>
-        <button type="button" className="btn-secondary" onClick={onRetry}>Try again</button>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={onRetry}>Try again</button>
       </div>
     );
   }
@@ -51,52 +51,53 @@ export default function ContactTable({
 
   return (
     <>
-      <table className="mkt-table">
-        <thead>
-          <tr>
-            <th>Contact</th>
-            <th>Marketing tags</th>
-            <th>Last event</th>
-            <th>Lifetime</th>
-            <th>Last contacted</th>
-            <th aria-label="Actions" />
-          </tr>
-        </thead>
-        <tbody>
-          {contacts.map(c => (
-            <tr
-              key={c.id}
-              className={c.mailable ? '' : 'mkt-row-held'}
-              onClick={() => onOpen(c.id)}
-              style={{ cursor: 'pointer' }}
-            >
-              <td>
-                <div className="mkt-name">{c.name || 'No name'}</div>
-                <div className="mkt-email">{c.email || 'No address'}</div>
-              </td>
-              {/* The tag control and the do-not-contact control both live inside
-                  the row, so their clicks must not also open the drawer. */}
-              <td onClick={e => e.stopPropagation()}>
-                <TagCell contact={c} onTagsChange={onTagsChange} />
-              </td>
-              <td>{formatDay(c.last_event)}</td>
-              <td>{formatDollars(c.lifetime_dollars)}</td>
-              {/* last_contacted is a timestamptz, so it renders in local time. */}
-              <td>{formatLocalDay(c.last_contacted)}</td>
-              <td onClick={e => e.stopPropagation()}>
-                <DoNotContactControl contact={c} onChange={onContactChange} compact />
-              </td>
+      <div className="tbl-wrap">
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Contact</th>
+              <th style={{ width: '32%' }}>Marketing tags</th>
+              <th>Last event</th>
+              <th className="num">Lifetime</th>
+              <th>Last contacted</th>
+              <th className="shrink" aria-label="Actions" />
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {contacts.map(c => (
+              <tr
+                key={c.id}
+                className={c.mailable ? '' : 'mkt-row-held'}
+                onClick={() => onOpen(c.id)}
+              >
+                <td>
+                  <div className="mkt-name">{c.name || 'No name'}</div>
+                  <div className="mkt-email">{c.email || 'No address'}</div>
+                </td>
+                {/* The tag control and the do-not-contact control both live inside
+                    the row, so their clicks must not also open the drawer. */}
+                <td onClick={e => e.stopPropagation()} style={{ overflow: 'visible', position: 'relative' }}>
+                  <TagCell contact={c} onTagsChange={onTagsChange} />
+                </td>
+                <td className="muted">{formatDay(c.last_event)}</td>
+                <td className="num">{formatDollars(c.lifetime_dollars)}</td>
+                {/* last_contacted is a timestamptz, so it renders in local time. */}
+                <td className="muted">{formatLocalDay(c.last_contacted)}</td>
+                <td className="shrink" onClick={e => e.stopPropagation()}>
+                  <DoNotContactControl contact={c} onChange={onContactChange} compact />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       <div className="mkt-pager">
         <span>{from} to {to} of {total}</span>
         <div>
           <button
             type="button"
-            className="btn-secondary"
+            className="btn btn-secondary btn-sm"
             onClick={() => onPageChange(page - 1)}
             disabled={page <= 1}
           >
@@ -105,7 +106,7 @@ export default function ContactTable({
           <span className="mkt-pager-page">Page {page} of {pages}</span>
           <button
             type="button"
-            className="btn-secondary"
+            className="btn btn-secondary btn-sm"
             onClick={() => onPageChange(page + 1)}
             disabled={page >= pages}
           >

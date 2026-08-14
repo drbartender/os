@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
 import { MARKETING_TAGS, DERIVED_STATES, tagLabel } from '../../../utils/marketingTags';
-import { HELD_BACK_LABELS, heldBackLabel, errorText } from './marketingFormat';
+import { HELD_BACK_LABELS, heldBackLabel, errorText, tagHue, DERIVED_HUES } from './marketingFormat';
 
 /**
  * The contact's marketing tags, with an inline picker.
@@ -76,24 +76,26 @@ export default function TagCell({ contact, onTagsChange }) {
     <div className="mkt-tagcell" ref={wrapRef}>
       <div className="mkt-chips">
         {excluded && (
-          <span className="mkt-chip mkt-chip-danger" title={contact.do_not_contact_reason || ''}>
+          <span className="chip danger" title={contact.do_not_contact_reason || ''}>
             {/* NOT tagLabel(DO_NOT_CONTACT_ID): that id is deliberately absent
                 from MARKETING_TAGS, so tagLabel falls through to returning the
                 raw slug and the chip reads "do-not-contact". */}
             {HELD_BACK_LABELS.do_not_contact}
           </span>
         )}
-        {tags.map(t => <span key={t} className="mkt-chip">{tagLabel(t)}</span>)}
+        {tags.map(t => <span key={t} className={`chip ${tagHue(t)}`}>{tagLabel(t)}</span>)}
         {tags.length === 0 && !excluded && (
-          <span className="mkt-chip mkt-chip-muted">{DERIVED_STATES.untagged}</span>
+          <span className="chip derived">{DERIVED_STATES.untagged}</span>
         )}
         {/* Derived state sits beside the human tags but is visually distinct,
             because nobody can set or remove it. */}
         {contact.derived && DERIVED_STATES[contact.derived] && (
-          <span className="mkt-chip mkt-chip-derived">{DERIVED_STATES[contact.derived]}</span>
+          <span className={`chip ${DERIVED_HUES[contact.derived] || 'derived'}`}>
+            {DERIVED_STATES[contact.derived]}
+          </span>
         )}
         {!contact.mailable && contact.held_back_reason && !excluded && (
-          <span className="mkt-chip mkt-chip-muted">{heldBackLabel(contact.held_back_reason)}</span>
+          <span className="chip derived">{heldBackLabel(contact.held_back_reason)}</span>
         )}
         <button
           type="button"
@@ -111,7 +113,7 @@ export default function TagCell({ contact, onTagsChange }) {
       {contact.suggestion && (
         <div className="mkt-suggestion">
           <span>{contact.suggestion.reason}</span>
-          <button type="button" className="btn-link" onClick={acceptSuggestion} disabled={saving || locked}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={acceptSuggestion} disabled={saving || locked}>
             Tag {tagLabel(contact.suggestion.tag)}
           </button>
         </div>

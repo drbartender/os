@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import api from '../../../utils/api';
+import Icon from '../../../components/adminos/Icon';
 import { formatDollars, formatDay, heldBackLabel, errorText } from './marketingFormat';
 
 const PAGE_SIZE = 50;
@@ -98,10 +99,10 @@ export default function RecipientPicker({ audiences, selected, onChange, initial
   const pages = Math.max(1, Math.ceil((data?.total || 0) / PAGE_SIZE));
 
   return (
-    <div className="mkt-recipients">
-      <div className="mkt-toolbar">
+    <div>
+      <div className="mkt-toolbar" style={{ marginBottom: 12 }}>
         <select
-          className="mkt-filter-select"
+          className="select"
           value={audience}
           onChange={e => { setAudience(e.target.value); setPage(1); }}
           aria-label="Audience"
@@ -111,18 +112,20 @@ export default function RecipientPicker({ audiences, selected, onChange, initial
             <option key={a.id} value={a.id}>{a.name} ({a.emailable})</option>
           ))}
         </select>
-        <input
-          type="search"
-          className="mkt-search"
-          placeholder="Search name or email"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          aria-label="Search contacts"
-        />
-        <button type="button" className="btn-secondary" onClick={selectAllMatching} disabled={bulkBusy || loading}>
+        <div className="input-group" style={{ minWidth: 180 }}>
+          <Icon name="search" size={16} />
+          <input
+            type="search"
+            placeholder="Search name or email"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            aria-label="Search contacts"
+          />
+        </div>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={selectAllMatching} disabled={bulkBusy || loading}>
           {bulkBusy ? 'Selecting…' : 'Select all matching'}
         </button>
-        <button type="button" className="btn-link" onClick={() => onChange(new Set())} disabled={selected.size === 0}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => onChange(new Set())} disabled={selected.size === 0}>
           Clear ({selected.size})
         </button>
       </div>
@@ -130,7 +133,7 @@ export default function RecipientPicker({ audiences, selected, onChange, initial
       {error && (
         <div className="mkt-state mkt-state-error" role="alert">
           <p>{error}</p>
-          <button type="button" className="btn-secondary" onClick={load}>Try again</button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={load}>Try again</button>
         </div>
       )}
 
@@ -144,47 +147,49 @@ export default function RecipientPicker({ audiences, selected, onChange, initial
         </div>
       ) : (
         <>
-          <table className="mkt-table">
-            <thead>
-              <tr>
-                <th aria-label="Selected" />
-                <th>Contact</th>
-                <th>Last event</th>
-                <th>Lifetime</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(c => (
-                <tr key={c.id}>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(c.id)}
-                      onChange={() => toggle(c.id)}
-                      aria-label={`Include ${c.name || c.email}`}
-                    />
-                  </td>
-                  <td>
-                    <div className="mkt-name">{c.name || 'No name'}</div>
-                    <div className="mkt-email">{c.email}</div>
-                    {!c.mailable && (
-                      <span className="mkt-chip mkt-chip-muted">{heldBackLabel(c.held_back_reason)}</span>
-                    )}
-                  </td>
-                  <td>{formatDay(c.last_event)}</td>
-                  <td>{formatDollars(c.lifetime_dollars)}</td>
+          <div className="tbl-wrap">
+            <table className="tbl mkt-tbl-static">
+              <thead>
+                <tr>
+                  <th className="shrink" aria-label="Selected" />
+                  <th>Contact</th>
+                  <th>Last event</th>
+                  <th className="num">Lifetime</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map(c => (
+                  <tr key={c.id}>
+                    <td className="shrink">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(c.id)}
+                        onChange={() => toggle(c.id)}
+                        aria-label={`Include ${c.name || c.email}`}
+                      />
+                    </td>
+                    <td>
+                      <div className="mkt-name">{c.name || 'No name'}</div>
+                      <div className="mkt-email">{c.email}</div>
+                      {!c.mailable && (
+                        <span className="chip derived">{heldBackLabel(c.held_back_reason)}</span>
+                      )}
+                    </td>
+                    <td className="muted">{formatDay(c.last_event)}</td>
+                    <td className="num">{formatDollars(c.lifetime_dollars)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <div className="mkt-pager">
             <span>{data.total} emailable match this filter</span>
             <div>
-              <button type="button" className="btn-secondary" onClick={() => setPage(p => p - 1)} disabled={page <= 1}>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setPage(p => p - 1)} disabled={page <= 1}>
                 Previous
               </button>
               <span className="mkt-pager-page">Page {page} of {pages}</span>
-              <button type="button" className="btn-secondary" onClick={() => setPage(p => p + 1)} disabled={page >= pages}>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setPage(p => p + 1)} disabled={page >= pages}>
                 Next
               </button>
             </div>

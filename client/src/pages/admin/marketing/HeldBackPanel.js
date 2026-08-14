@@ -2,7 +2,8 @@ import React from 'react';
 import { HELD_BACK_LABELS } from './marketingFormat';
 
 /**
- * Who in the current view cannot be emailed, and why.
+ * Who in the current view cannot be emailed, and why. Renders as the
+ * "Always held back" region inside the selected-audience card (spec §10).
  *
  * The buckets are exclusive by construction (the server classifies each row
  * with a single CASE, not four independent counts) and they are computed over
@@ -24,13 +25,10 @@ export default function HeldBackPanel({ heldBack, total }) {
   const sum = rows.reduce((a, r) => a + r.count, 0) + (heldBack.mailable || 0);
 
   return (
-    <aside className="mkt-heldback card">
-      <h3>Who gets this</h3>
-      <div className="mkt-heldback-mailable">
-        <strong>{heldBack.mailable}</strong> emailable
-      </div>
+    <div>
+      <div className="mkt-eyebrow">Always held back</div>
       {rows.length === 0 ? (
-        <p className="mkt-muted">Nobody in this view is held back.</p>
+        <p className="muted tiny" style={{ margin: 0 }}>Nobody in this view is held back.</p>
       ) : (
         <ul className="mkt-heldback-list">
           {rows.map(r => (
@@ -41,8 +39,8 @@ export default function HeldBackPanel({ heldBack, total }) {
           ))}
         </ul>
       )}
-      <div className="mkt-muted mkt-heldback-total">
-        {sum} in this view
+      <div className="mkt-heldback-total">
+        {sum} in this view, {heldBack.mailable || 0} emailable
         {/* If this ever disagrees with `total`, the buckets have stopped being
             exclusive and the emailable number can no longer be trusted. Say so
             rather than rendering a quietly wrong total. */}
@@ -50,6 +48,6 @@ export default function HeldBackPanel({ heldBack, total }) {
           <strong className="mkt-warn"> (does not match the list total of {total})</strong>
         )}
       </div>
-    </aside>
+    </div>
   );
 }

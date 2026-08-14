@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useOutletContext, useSearchParams } from 'react-router-dom';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
 import RecipientPicker from './RecipientPicker';
@@ -8,11 +8,15 @@ import { errorText } from './marketingFormat';
 /**
  * Write a campaign, pick who gets it, send it.
  *
- * Three steps in one screen rather than a wizard, because the operator needs to
- * see the recipient count while writing: "125 people" and "3 people" are
- * different emails.
+ * Two steps (Design, Recipients) per the approved design, with the send
+ * confirmation living in the "Before you send" rail beside the recipient
+ * list. The recipient count stays visible while writing via the live count
+ * in the Recipients step label — which is the reason the earlier revision
+ * kept everything on one screen, so the step control satisfies that
+ * requirement rather than reversing it. BOTH steps stay mounted (inactive
+ * one hidden) so the picker's audience/search/page state survives switching.
  *
- * The Send step deliberately shows what the server will do BEFORE it does it,
+ * The Send rail deliberately shows what the server will do BEFORE it does it,
  * and the server re-checks anyway. Both matter. The preview is so an operator
  * is never surprised by the number; the re-check is because the preview is a
  * snapshot and somebody may be excluded in between.
@@ -38,8 +42,38 @@ function readResume() {
   }
 }
 
+/** Email preview on the DS drawer chrome (same .open dance as ContactDrawer). */
+function PreviewDrawer({ html, onClose }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setOpen(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return (
+    <>
+      <div className={`drawer-scrim${open ? ' open' : ''}`} onClick={onClose} />
+      <aside className={`drawer${open ? ' open' : ''}`} role="dialog" aria-modal="true" aria-label="Email preview">
+        <div className="drawer-head">
+          <span className="crumb">Marketing · Email preview</span>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
+        </div>
+        <div className="drawer-body" style={{ display: 'flex' }}>
+          {/* The preview is server-rendered from the same wrapper the send
+              uses, and the body is admin-authored and server-sanitized. */}
+          {/* sandbox="" with no allow-scripts. A srcDoc frame is same-origin,
+              so anything scriptable inside it could reach this app's JWT in
+              localStorage. The server already sanitizes the body; this makes
+              that sanitizer defense-in-depth rather than load-bearing. */}
+          <iframe title="Email preview" srcDoc={html} sandbox="" className="mkt-preview-frame" />
+        </div>
+      </aside>
+    </>
+  );
+}
+
 export default function ComposeTab() {
   const toast = useToast();
+  const { overview, refresh } = useOutletContext();
   // Lazy initializer so the storage read happens once, not on every render.
   const [restored] = useState(readResume);
   const [audiences, setAudiences] = useState([]);
@@ -66,6 +100,9 @@ export default function ComposeTab() {
   // different audience would hide already-selected people, making the selection
   // look smaller than it is right before somebody presses Send.
   const initialAudience = restored ? '' : (searchParams.get('audience') || '');
+  // Arriving to review a moment's recipients opens the Recipients step; an
+  // in-progress draft (resumed or fresh) starts where the writing happens.
+  const [step, setStep] = useState(initialAudience ? 'recipients' : 'design');
 
   const loadAudiences = useCallback(async () => {
     setLoadError(null);
@@ -208,152 +245,205 @@ export default function ComposeTab() {
     } finally {
       inFlight.current = false;
       setSending(false);
+      // The shell's budget meter and subtitle read the layout's overview
+      // fetch, which otherwise runs once per visit; a send attempt may have
+      // consumed budget even on a failure path, so re-read it either way
+      // (fire-and-forget; refresh never rejects, the layout owns its errors).
+      refresh();
     }
   };
 
   const canSend = subject.trim() && body.trim() && selected.size > 0 && !sending;
+  const budget = overview?.send_budget;
+  const thisSend = budget ? Math.min(selected.size, Math.max(0, budget.cap - budget.used)) : 0;
+  const usedPct = budget && budget.cap > 0 ? Math.min(100, Math.round((budget.used / budget.cap) * 100)) : 0;
+  const sendPct = budget && budget.cap > 0 ? Math.min(100 - usedPct, Math.round((thisSend / budget.cap) * 100)) : 0;
+  const heldBackCount = result ? result.requested - result.eligible - (result.deduped || 0) : 0;
 
   return (
-    <div className="mkt-compose">
+    <div>
       {loadError && (
         <div className="mkt-state mkt-state-error" role="alert">
           <p>{loadError}</p>
-          <button type="button" className="btn-secondary" onClick={loadAudiences}>Try again</button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={loadAudiences}>Try again</button>
         </div>
       )}
       {resuming && (
-        <div className="mkt-state" role="status">
+        <div className="mkt-resume" role="status">
           <p>
             Resuming campaign #{campaignId}. Your draft and selection were restored,
             and anyone this campaign already reached is skipped automatically.
           </p>
-          <button type="button" className="btn-secondary" onClick={startFresh}>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={startFresh}>
             Start fresh instead
           </button>
         </div>
       )}
 
-      <section className="mkt-compose-section">
-        <h2>Write it</h2>
-        <label htmlFor="cmp-subject">Subject</label>
-        <input
-          id="cmp-subject" type="text" value={subject} maxLength={200}
-          onChange={e => setSubject(e.target.value)}
-          placeholder="Planning your holiday party?"
-        />
-        <label htmlFor="cmp-body">Body</label>
-        <textarea
-          id="cmp-body" rows={10} value={body}
-          onChange={e => setBody(e.target.value)}
-          placeholder="<p>Write the email here. Basic HTML is fine.</p>"
-        />
-        <div className="mkt-compose-actions">
-          <button type="button" className="btn-secondary" onClick={saveDraft} disabled={saving}>
-            {saving ? 'Saving…' : campaignId ? 'Save draft' : 'Create draft'}
+      <div className="mkt-compose-head">
+        <div className="seg">
+          <button type="button" className={step === 'design' ? 'active' : undefined}
+            onClick={() => setStep('design')}>
+            Design
           </button>
-          <button type="button" className="btn-secondary" onClick={showPreview} disabled={!body.trim()}>
-            Preview
+          <button type="button" className={step === 'recipients' ? 'active' : undefined}
+            onClick={() => setStep('recipients')}>
+            Recipients<span className="muted" style={{ marginLeft: 6 }}>{selected.size}</span>
           </button>
         </div>
-      </section>
+        <span className="muted tiny">
+          {saving ? 'Saving…' : campaignId ? `Draft #${campaignId}` : 'Not saved yet'}
+        </span>
+        <div className="spacer" />
+      </div>
 
-      <section className="mkt-compose-section">
-        <h2>Who gets it</h2>
-        <p className="mkt-muted">
-          Only contacts who can be emailed are listed. Anyone unsubscribed, bounced,
-          or on the do-not-contact list is already out, and the send re-checks.
-        </p>
-        <RecipientPicker
-          audiences={audiences}
-          selected={selected}
-          onChange={setSelected}
-          initialAudience={initialAudience}
-        />
-      </section>
-
-      <section className="mkt-compose-section">
-        <h2>Send it</h2>
-        {!confirming ? (
-          <>
-            <p><strong>{selected.size}</strong> {selected.size === 1 ? 'person' : 'people'} selected.</p>
-            <button type="button" className="btn-primary" onClick={() => setConfirming(true)} disabled={!canSend}>
-              Send campaign
-            </button>
-          </>
-        ) : (
-          <div className="mkt-dnc-prompt">
-            <p className="mkt-dnc-confirm">
-              Send &quot;{subject.trim()}&quot; to {selected.size}{' '}
-              {selected.size === 1 ? 'person' : 'people'}? This cannot be undone.
-            </p>
-            <div className="mkt-dnc-actions">
-              <button type="button" className="btn-secondary" onClick={() => setConfirming(false)} disabled={sending}>
-                Not yet
+      <div hidden={step !== 'design'}>
+        <div className="mkt-design-well">
+          <div className="mkt-design-col">
+            <label htmlFor="cmp-subject">Subject</label>
+            <input
+              id="cmp-subject" className="input" type="text" value={subject} maxLength={200}
+              onChange={e => setSubject(e.target.value)}
+              placeholder="Planning your holiday party?"
+            />
+            <label htmlFor="cmp-body">Body</label>
+            <textarea
+              id="cmp-body" className="mkt-textarea" rows={10} value={body}
+              onChange={e => setBody(e.target.value)}
+              placeholder="<p>Write the email here. Basic HTML is fine.</p>"
+            />
+            <div className="mkt-design-actions">
+              <button type="button" className="btn btn-secondary btn-sm" onClick={saveDraft} disabled={saving}>
+                {saving ? 'Saving…' : campaignId ? 'Save draft' : 'Create draft'}
               </button>
-              <button type="button" className="btn-danger" onClick={doSend} disabled={sending || saving}>
-                {sending ? 'Sending…' : 'Send it'}
+              <button type="button" className="btn btn-secondary btn-sm" onClick={showPreview} disabled={!body.trim()}>
+                Preview
+              </button>
+              <div className="spacer" />
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => setStep('recipients')}>
+                Continue to recipients
               </button>
             </div>
           </div>
-        )}
-
-        {result && (
-          <div className="mkt-send-result">
-            <h3>Sent</h3>
-            <ul className="mkt-heldback-list">
-              <li><span>Delivered to Resend</span><span>{result.sent}</span></li>
-              {result.requested - result.eligible - (result.deduped || 0) > 0 && (
-                <li>
-                  <span>Held back by suppression</span>
-                  <span>{result.requested - result.eligible - (result.deduped || 0)}</span>
-                </li>
-              )}
-              {result.deduped > 0 && (
-                <li><span>Duplicate rows for one person</span><span>{result.deduped}</span></li>
-              )}
-              {result.skipped_already_sent > 0 && (
-                <li><span>Already had this campaign</span><span>{result.skipped_already_sent}</span></li>
-              )}
-              {result.failed > 0 && (
-                <li><span className="mkt-warn">Failed</span><span className="mkt-warn">{result.failed}</span></li>
-              )}
-            </ul>
-            {result.failed > 0 && !result.stopped_early && (
-              <p className="mkt-muted">
-                Press Send again to retry just the failures. Everyone already delivered is
-                skipped, so nobody receives it twice.
-              </p>
-            )}
-            {result.stopped_early === 'quota' && (
-              <p className="mkt-warn">
-                Stopped early: the daily sending quota was reached. Nobody remaining was
-                charged a send, so running this again tomorrow picks up exactly who is left.
-                Your draft and selection are saved on this device, so it is safe to leave
-                this page.
-              </p>
-            )}
-          </div>
-        )}
-      </section>
-
-      {preview && (
-        <div className="mkt-drawer-backdrop" onClick={() => setPreview(null)}>
-          <aside className="mkt-drawer" role="dialog" aria-modal="true" aria-label="Email preview"
-            onClick={e => e.stopPropagation()}>
-            <div className="mkt-drawer-head">
-              <h2>Preview</h2>
-              <button type="button" className="btn-link" onClick={() => setPreview(null)}>Close</button>
-            </div>
-            {/* The preview is server-rendered from the same wrapper the send
-                uses, and the body is admin-authored and server-sanitized. */}
-            {/* sandbox="" with no allow-scripts. A srcDoc frame is same-origin,
-                so anything scriptable inside it could reach this app's JWT in
-                localStorage. The server already sanitizes the body; this makes
-                that sanitizer defense-in-depth rather than load-bearing. */}
-            <iframe title="Email preview" srcDoc={preview} sandbox="" className="mkt-preview-frame" />
-          </aside>
         </div>
-      )}
+      </div>
+
+      <div hidden={step !== 'recipients'}>
+        <div className="mkt-recipients-grid">
+          <div className="card">
+            <div className="card-head">
+              <h3>Recipients</h3>
+              <span className="k num">{selected.size} selected</span>
+            </div>
+            <div className="card-body">
+              <p className="muted tiny" style={{ marginTop: 0 }}>
+                Only contacts who can be emailed are listed. Anyone unsubscribed, bounced,
+                or on the do-not-contact list is already out, and the send re-checks.
+              </p>
+              <RecipientPicker
+                audiences={audiences}
+                selected={selected}
+                onChange={setSelected}
+                initialAudience={initialAudience}
+              />
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-head"><h3>Before you send</h3></div>
+            <div className="card-body" style={{ display: 'grid', gap: 14 }}>
+              <div className="mkt-rail-count">
+                <span>Recipients</span>
+                <span className="num">{selected.size}</span>
+              </div>
+
+              {budget && (
+                <div>
+                  <div className="mkt-railbar-head">
+                    <span>Daily send budget</span>
+                    <span className="num">{Math.min(budget.cap, budget.used + thisSend)} / {budget.cap}</span>
+                  </div>
+                  <div className="mkt-railbar">
+                    <div className="mkt-railbar-used" style={{ width: `${usedPct}%` }} />
+                    <div className="mkt-railbar-send" style={{ width: `${sendPct}%` }} />
+                  </div>
+                  <div className="mkt-legend">
+                    <span><span className="mkt-legend-dot mkt-railbar-used" />{budget.used} sent today</span>
+                    <span><span className="mkt-legend-dot mkt-railbar-send" />{thisSend} this send</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="mkt-rail-rule">
+                {!confirming ? (
+                  <button type="button" className="btn btn-primary btn-full"
+                    onClick={() => setConfirming(true)} disabled={!canSend}>
+                    Send campaign
+                  </button>
+                ) : (
+                  <div className="mkt-dnc-prompt">
+                    <p className="mkt-dnc-confirm">
+                      Send &quot;{subject.trim()}&quot; to {selected.size}{' '}
+                      {selected.size === 1 ? 'person' : 'people'}? This cannot be undone.
+                    </p>
+                    <div className="mkt-dnc-actions">
+                      <button type="button" className="btn btn-secondary btn-sm"
+                        onClick={() => setConfirming(false)} disabled={sending}>
+                        Not yet
+                      </button>
+                      <button type="button" className="btn btn-danger btn-sm"
+                        onClick={doSend} disabled={sending || saving}>
+                        {sending ? 'Sending…' : 'Send it'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div className="mkt-rail-note">Goes out at once. No scheduling yet.</div>
+              </div>
+
+              {result && (
+                <div className="mkt-send-result mkt-rail-rule">
+                  <h3>Sent</h3>
+                  <ul className="mkt-heldback-list">
+                    <li><span>Delivered to Resend</span><span>{result.sent}</span></li>
+                    {heldBackCount > 0 && (
+                      <li>
+                        <span>Held back by suppression</span>
+                        <span>{heldBackCount}</span>
+                      </li>
+                    )}
+                    {result.deduped > 0 && (
+                      <li><span>Duplicate rows for one person</span><span>{result.deduped}</span></li>
+                    )}
+                    {result.skipped_already_sent > 0 && (
+                      <li><span>Already had this campaign</span><span>{result.skipped_already_sent}</span></li>
+                    )}
+                    {result.failed > 0 && (
+                      <li><span className="mkt-warn">Failed</span><span className="mkt-warn">{result.failed}</span></li>
+                    )}
+                  </ul>
+                  {result.failed > 0 && !result.stopped_early && (
+                    <p className="muted tiny">
+                      Press Send again to retry just the failures. Everyone already delivered is
+                      skipped, so nobody receives it twice.
+                    </p>
+                  )}
+                  {result.stopped_early === 'quota' && (
+                    <p className="mkt-warn" style={{ fontSize: 11.5 }}>
+                      Stopped early: the daily sending quota was reached. Nobody remaining was
+                      charged a send, so running this again tomorrow picks up exactly who is left.
+                      Your draft and selection are saved on this device, so it is safe to leave
+                      this page.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {preview && <PreviewDrawer html={preview} onClose={() => setPreview(null)} />}
     </div>
   );
 }
