@@ -8,7 +8,6 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 
 <!-- plan written + reviewed, no lane cut. One line per item, linking its spec + plan. -->
 
-- **proposals-pagination** — client-only paging on the Proposals dashboard; server side already done (`?page`/`?limit` + `X-Total-Count`). Specced and planned in another window 2026-08-12, surfaced by the 2026-08-13 consolidation sweep — it had never reached this board. [spec](superpowers/specs/2026-08-12-proposals-pagination-design.md) / [plan](superpowers/plans/2026-08-12-proposals-pagination.md)
 - **proposal-compare-and-book** — compare and book on the proposal page. Spec only, no plan yet, so this is not lane-ready; carried here so it is not lost behind the marketing phases. Absorbs the parked compare-page reskin and Dallas's 8/10 item 8 (the client-facing compare surface is unreadable at 3 options, worse at more). [spec](superpowers/specs/2026-08-11-proposal-compare-and-book-design.md)
 
 ## In flight
@@ -20,6 +19,8 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 ## Recently shipped
 
 <!-- merged + shipped lanes, newest first. Ages off over time. One line per item. -->
+
+- **proposals-pagination** — MERGED to main 2026-08-14 (another window): Prev/Next paging on the Proposals dashboard, client-only over the existing `?page`/`X-Total-Count` server support. Two follow-up steps recorded in walkthroughs-owed by that window. [spec](superpowers/specs/2026-08-12-proposals-pagination-design.md) / [plan](superpowers/plans/2026-08-12-proposals-pagination.md)
 
 - **vm-listen-link** — merged + PUSHED 2026-08-11 in the 34-commit batch (`e0f777b7..b27b6d4e`). Token-gated route streams the retained primary recording; the alert SMS carries the URL, both sides fed by one `listenLinkEnabled()` so the kill switch cannot drift. Transcription considered and declined. Push fleet clean, codex + gemini both NO FINDINGS; residuals as fix-list 17 and 19. [spec](superpowers/specs/2026-08-10-voicemail-listen-link-design.md) / [plan](superpowers/plans/2026-08-10-voicemail-listen-link.md)
 - **tip-sign-download** — both lanes (tip-a-methods, tip-b-download) merged + PUSHED 2026-08-11 in the same batch. Shared tip-method derivation extracted so the downloaded sign and the chooser page cannot disagree on normalization; print replaced by jpg/png/pdf download. [spec](superpowers/specs/2026-08-10-tip-sign-download-and-display-design.md) / [plan](superpowers/plans/2026-08-10-tip-sign-download-and-display.md)

@@ -2430,3 +2430,10 @@ The stale-response race in ProposalsDashboard (codex) was fixed at the gate. The
   cooler line, code lens): the recorded copy law scopes to client copy and spec prose;
   staff surfaces are unruled. Dallas's call whether the law extends; mechanical sweep if
   so.
+
+# Decisions landed 2026-08-14
+
+- **The 312 in staff auto-replies STAYS (Dallas: "312 is still being used").** The
+  `smsInbound.js` item from 2026-08-13 is closed as decided-keep, not fixed: the 312 GV is
+  staffed by Dallas/Zul and remains the human-contact line for STAFF, while clients get the
+  1922. Do not re-raise; revisit only if the 312 is ever retired.
