@@ -6,20 +6,27 @@
 //   npm run worktree:new -- <name>
 //
 // Creates ../worktrees/<name>/ on a new branch <name> taken from main, then
-// symlinks in the three things a worktree needs to edit, lint, and commit:
+// symlinks in the things a worktree needs to edit, lint, commit, and RUN:
 //
 //   <worktree>/node_modules        -> <main>/node_modules
 //   <worktree>/client/node_modules -> <main>/client/node_modules
 //   <worktree>/.husky/_            -> <main>/.husky/_
 //   <worktree>/.env                -> <main>/.env
+//   <worktree>/client/.env         -> <main>/client/.env
 //
-// All three are needed even by a worktree that only edits and commits: the
+// All of them are needed even by a worktree that only edits and commits: the
 // pre-commit hook runs eslint, the root eslint.config.mjs imports a plugin out
 // of client/node_modules, .env carries DATABASE_URL (without it every server test
 // dies with ECONNREFUSED 127.0.0.1:5432, because dotenv finds nothing and pg falls
 // back to a local socket — hit while building the upload-honesty lane 2026-07-26),
 // and .husky/_ is husky's hook runner (without it the
 // commit silently skips the hook). Symlinks are instant and cost no disk.
+//
+// client/.env carries REACT_APP_API_URL. It is gitignored, so a worktree is
+// born without it, and CRA then bakes an EMPTY api base into the bundle: every
+// call goes relative to the dev server instead of :5000 and comes back 500,
+// which reads as a code bug rather than a missing file. Cost a real detour on
+// the tip-sign download lane, 2026-08-11.
 //
 // Re-running on an existing worktree just creates any missing links.
 
@@ -113,6 +120,7 @@ link('node_modules', path.join(mainRoot, 'node_modules'));
 link(path.join('client', 'node_modules'), path.join(mainRoot, 'client', 'node_modules'));
 link(path.join('.husky', '_'), path.join(mainRoot, '.husky', '_'));
 link('.env', path.join(mainRoot, '.env'));
+link(path.join('client', '.env'), path.join(mainRoot, 'client', '.env'));
 
 // --- done -------------------------------------------------------------------
 console.log('');

@@ -621,7 +621,7 @@ dr-bartender/
 | `npm run check:filesize` | Report every source file by line-count zone (RED over 1000, YELLOW 700-1000) |
 | `npm run mobile:check` | Dev-only phone-viewport (390x844) screenshot + overflow probe of every client-facing surface (`scripts/mobile-capture.js`); merge gate for the mobile-fixes lanes. EXPECTED to stay red on main until the mobile-sweep lane lands: the baseline failures are the audited P0s, not regressions |
 | `npm run optimize:assets` | One-shot asset optimization (PNG→WebP at tile size, TTF→WOFF2). Idempotent — skips already-converted outputs. |
-| `npm run worktree:new -- <name>` | Create a parallel-dev worktree at `../worktrees/<name>` on a new branch off `main`, with `node_modules` + husky symlinks wired up |
+| `npm run worktree:new -- <name>` | Create a parallel-dev worktree at `../worktrees/<name>` on a new branch off `main`, with `node_modules`, husky, and BOTH env files (`.env` + `client/.env`) symlinked in. `client/.env` matters for running, not just committing: it carries `REACT_APP_API_URL`, and without it CRA bakes an empty API base into the bundle and every call 500s against the dev server |
 | `npm run worktree:rm -- <name>` | Tear down a worktree: remove its symlinks, the worktree, then the branch (`--force` to discard an unmerged branch) |
 | `npm run lane:status` | List open lanes (worktrees) and flag stale ones (48h no-commit, 15+ main commits since cut, or a sensitive path landed on main since cut); run at session start and in the push sweep |
 
