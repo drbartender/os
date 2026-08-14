@@ -1,12 +1,18 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import * as Sentry from '@sentry/react';
 import api from '../utils/api';
 import Sidebar from './adminos/Sidebar';
 import Header from './adminos/Header';
 import CommandPalette from './adminos/CommandPalette';
 import PaletteContext from '../context/PaletteContext';
+import { MobileViewProvider, useMobileView } from '../context/MobileViewContext';
+import { routeScreenKey, screenTitle } from '../utils/screenKey';
+import { recordRoute, consumeRestoredRoute } from '../utils/routeRestore';
+import MobileHeader from './mobile/MobileHeader';
+import MobileTabBar from './mobile/MobileTabBar';
 
-export default function AdminLayout() {
+function AdminLayoutInner() {
   const navigate = useNavigate();
   const location = useLocation();
   const [badges, setBadges] = useState({});
@@ -142,6 +148,87 @@ export default function AdminLayout() {
   const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
   const openMobileNav = useCallback(() => setMobileNavOpen(true), []);
 
+  // ---- Phone fork (spec 2026-08-13-mobile-admin section 3) -----------------
+  const { isPhone, desktopView, setDesktopView } = useMobileView();
+  const screenKey = routeScreenKey(location.pathname);
+  const mobileChrome = isPhone && !desktopView(screenKey);
+
+  // Resume-where-I-left-off (spec section 9). The restore target is captured
+  // DURING THE FIRST RENDER, before any effect runs: the record effect below
+  // flushes first on mount and would overwrite the saved route with the
+  // current one before an effect-based restore could read it (lane review
+  // proved the effect-ordered version dead on arrival). consumeRestoredRoute
+  // memoizes per JS load, so StrictMode's double-invoked initializer gets the
+  // same answer twice. Both gates live HERE so a non-qualifying launch never
+  // consumes the one-shot.
+  const [restoreTarget] = useState(() => {
+    const standalone =
+      typeof window !== 'undefined' &&
+      window.matchMedia &&
+      window.matchMedia('(display-mode: standalone)').matches;
+    if (!standalone || !isPhone) return null;
+    return consumeRestoredRoute(location.pathname);
+  });
+  useEffect(() => {
+    if (restoreTarget) navigate(restoreTarget, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Record every admin route AFTER the restore capture above. recordRoute
+  // lives INSIDE the AdminLayout element on purpose: /login and the
+  // auth/reset pages mount outside it and can never be recorded.
+  useEffect(() => {
+    recordRoute(location.pathname, location.search);
+  }, [location.pathname, location.search]);
+
+  // Dead-route fallback (spec section 9): a restored route whose entity is
+  // gone (archived proposal, role change) must fall back to /events, never
+  // strand. The chrome owns the listener; the screen lanes dispatch
+  // `mobile-route-dead` from their 404/403 read handlers. Persistent (every
+  // dead route falls back, not just the first) and gated on the phone chrome
+  // being live, so shared screen code dispatching at desktop width can never
+  // yank a desktop user off their page.
+  useEffect(() => {
+    if (!mobileChrome) return undefined;
+    const onDead = () => navigate('/events', { replace: true });
+    window.addEventListener('mobile-route-dead', onDead);
+    return () => window.removeEventListener('mobile-route-dead', onDead);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mobileChrome]);
+
+  // Phone-specific breakage must be independently visible (spec section 10).
+  // Cleared on unmount so post-logout surfaces are never mistagged.
+  useEffect(() => {
+    Sentry.setTag('surface', mobileChrome ? 'mobile-admin' : undefined);
+    return () => Sentry.setTag('surface', undefined);
+  }, [mobileChrome]);
+
+  if (mobileChrome) {
+    const isDetail = screenKey === 'event-detail' || screenKey === 'proposal-detail';
+    // On a restored cold launch history has no in-app entry behind the detail
+    // screen; navigate(-1) would exit the PWA. Fall back to the parent list.
+    const backTarget = screenKey === 'proposal-detail' ? '/proposals' : '/events';
+    const onBack = () => {
+      if (window.history.state && window.history.state.idx > 0) navigate(-1);
+      else navigate(backTarget, { replace: true });
+    };
+    return (
+      <PaletteContext.Provider value={paletteCtx}>
+        <a href="#main-content" className="skip-nav">Skip to main content</a>
+        <div className="m-shell">
+          <MobileHeader
+            title={screenTitle(screenKey)}
+            screenKey={screenKey}
+            onBack={isDetail ? onBack : null}
+          />
+          <main className="m-main" id="main-content"><Outlet context={{ badges }} /></main>
+          <MobileTabBar badges={badges} />
+        </div>
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      </PaletteContext.Provider>
+    );
+  }
+
   return (
     <PaletteContext.Provider value={paletteCtx}>
       <a href="#main-content" className="skip-nav">Skip to main content</a>
@@ -162,6 +249,25 @@ export default function AdminLayout() {
         />
       </div>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {isPhone && (
+        <button
+          type="button"
+          className="m-return-pill"
+          onClick={() => setDesktopView(screenKey, false)}
+        >
+          <span className="m-return-pill-rx" aria-hidden="true">&#8478;</span> Phone view
+        </button>
+      )}
     </PaletteContext.Provider>
+  );
+}
+
+// The provider wraps the inner layout so every admin page, current and
+// future, can fork on useMobileView() (spec section 3).
+export default function AdminLayout() {
+  return (
+    <MobileViewProvider>
+      <AdminLayoutInner />
+    </MobileViewProvider>
   );
 }

@@ -129,6 +129,7 @@ const StaffV2AccountPage = lazy(() => import('./pages/staff/account/AccountPage'
 // from any local JWT.
 const StaffV2EmailVerifyPage = lazy(() => import('./pages/staff/EmailVerifyPage'));
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
+const MorePage = lazy(() => import('./pages/mobile/MorePage'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminStaffDashboard = lazy(() => import('./pages/admin/StaffDashboard'));
 const AdminUserDetail = lazy(() => import('./pages/admin/userDetail/AdminUserDetail'));
@@ -573,6 +574,7 @@ function AppRoutes() {
       {/* Admin + Manager shell — mounted at root on admin.drbartender.com */}
       <Route element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}>
         <Route path="/dashboard" element={<OverviewPage />} />
+        <Route path="/more" element={<MorePage />} />
         <Route path="/staffing" element={<AdminStaffDashboard />} />
         <Route path="/staffing/legacy" element={<AdminDashboard />} />
         <Route path="/staffing/users/:id" element={<AdminUserDetail />} />
