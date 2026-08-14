@@ -110,12 +110,63 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
-body {
+/* ==========================================================================
+   LEGACY PALETTE SCOPE — read before adding ANY colour rule below.
+   --------------------------------------------------------------------------
+   The Apothecary Press palette (chalkboard ground, --cream-text type) is the
+   MARKETING/PUBLIC and STAFF-PORTAL palette. It is NOT the Admin OS palette.
+   Admin OS (html[data-app="admin-os"]) has its own skin-aware --ink-* tokens
+   and paints its own ground; --cream-text (#F0E8D6) on House Lights' warm
+   paper (#f7f4ec) is roughly 1:1, i.e. invisible text.
+
+   So every UNSCOPED rule that sets `color` on a BARE ELEMENT (no class, no id,
+   no attribute) is wrapped in :where(html:not([data-app="admin-os"])).
+
+     - :where() contributes ZERO specificity, so each rule keeps the exact
+       specificity it had before this wrapper existed. Nothing about the
+       marketing or staff cascade moves — .card h1 (0,1,1) still beats the
+       bare h1 (0,0,1), same as always. A plain
+       `html:not([data-app="admin-os"]) h1` would have been (0,1,2) and would
+       have silently STOLEN the cascade from every .card/.alert/.hero rule.
+     - :not([data-app="admin-os"]) matches <html> with NO data-app (marketing /
+       public / auth) AND <html data-app="staff"> (the staff portal, which has
+       only 13 rules of its own and leans on this palette for nearly all of
+       its text colour). Both keep exactly what they had. Do NOT "tighten"
+       this to html:not([data-app]) — that would de-colour the entire staff
+       portal, and a grep would not notice.
+
+   Admin OS gets its colour from html[data-app="admin-os"] body { color:
+   var(--ink-1) } (near the "Base" section) and INHERITANCE. That is why there
+   is no element-by-element admin list: h5, h6, li, td, th, dt, dd, label,
+   small, strong and every tag nobody has written yet inherit --ink-1 for
+   free.
+
+   THE CLASS-GATED HALF IS THE SAME BUG. A bare-element rule is only the most
+   obvious way to leak this palette into admin; an UNSCOPED CLASS rule does it
+   just as hard, and hits more screens. .text-muted (78 admin call sites) and
+   .loading (10 admin screens) both painted --parchment for years and were
+   invisible on House Lights; each had an After Hours twin and no House Lights
+   twin, which is exactly why the dark-skin sweep never caught them. Both are
+   scoped at their own definitions now, each with an admin twin on a skin-aware
+   --ink-* token.
+
+   THIS IS ENFORCED, NOT REQUESTED. scripts/check-css-palette-scope.js runs on
+   pre-commit whenever this file is staged and fails the commit on either
+   shape: (a) any unscoped bare-element `color` rule, (b) any admin-reachable
+   class rule painting an Apothecary :root token below 3:1 in a skin that has
+   no skin-aware admin override. Run it any time with `npm run check:css-scope`;
+   `npm run test:css-scope` proves it can still go red. Two prior call-site
+   patches (.drawer-hero h2, .mkt-resume p) show a comment alone does not hold.
+   ========================================================================== */
+
+/* Not palette — applies on every surface including admin. */
+body { min-height: 100dvh; }
+
+:where(html:not([data-app="admin-os"])) body {
   font-family: var(--font-body);
   background-color: var(--chalkboard);
   color: var(--cream-text);
   line-height: 1.65;
-  min-height: 100dvh;
 }
 
 /* Auth pages (Login/Register) — full chalkboard */
@@ -145,10 +196,19 @@ main > * {
 }
 
 /* Typography */
+/* Non-colour half stays global: display face + rhythm are shared, and Admin OS
+   already overrides font-family/weight/letter-spacing at (0,1,2). */
 h1, h2, h3, h4 {
   font-family: var(--font-display);
   font-weight: 400;
   line-height: 1.25;
+}
+
+/* Palette half — marketing/public/auth + staff only. See LEGACY PALETTE SCOPE. */
+:where(html:not([data-app="admin-os"])) h1,
+:where(html:not([data-app="admin-os"])) h2,
+:where(html:not([data-app="admin-os"])) h3,
+:where(html:not([data-app="admin-os"])) h4 {
   color: var(--cream-text);
 }
 
@@ -157,12 +217,17 @@ h2 { font-size: clamp(1.4rem, 3vw, 1.9rem); letter-spacing: 0.015em; }
 h3 { font-size: clamp(1.15rem, 2.5vw, 1.4rem); letter-spacing: 0.015em; }
 h4 { font-size: 1rem; letter-spacing: 0.1em; text-transform: uppercase; font-family: var(--font-display); }
 
-.page-container h1,
-.page-container h2,
-.page-container h3,
-.page-container h4 { color: var(--cream-text); }
+/* Same palette family as the bare h1–h4 above, and the SAME trap: .page-container
+   is used inside Admin OS too (CocktailMenuDashboard), where at (0,1,1) it beat
+   the admin h1–h4 baseline and painted headings --cream-text. Scoped with the
+   rest; :where() keeps it at (0,1,1) for marketing/staff. */
+:where(html:not([data-app="admin-os"])) .page-container h1,
+:where(html:not([data-app="admin-os"])) .page-container h2,
+:where(html:not([data-app="admin-os"])) .page-container h3,
+:where(html:not([data-app="admin-os"])) .page-container h4 { color: var(--cream-text); }
 
-p { margin-bottom: 0.75rem; color: var(--cream-text); }
+p { margin-bottom: 0.75rem; }
+:where(html:not([data-app="admin-os"])) p { color: var(--cream-text); }
 p:last-child { margin-bottom: 0; }
 
 .card p { color: var(--deep-brown); }
@@ -193,8 +258,13 @@ p:last-child { margin-bottom: 0; }
   background: var(--parchment);
 }
 
-a { color: var(--amber-light); text-decoration: none; }
-a:hover { color: var(--cream-text); text-decoration: underline; }
+/* Link palette — marketing/public/auth + staff only. Admin OS has taken links
+   to `color: inherit` at (0,1,2) since the shell landed (see the "Base" section),
+   so these two never actually reached admin text; they are scoped anyway so the
+   next person reading this block does not think the palette is global. */
+a { text-decoration: none; }
+:where(html:not([data-app="admin-os"])) a { color: var(--amber-light); }
+:where(html:not([data-app="admin-os"])) a:hover { color: var(--cream-text); text-decoration: underline; }
 
 /* Layout */
 .page-container {
@@ -1374,15 +1444,30 @@ html[data-app="admin-os"] .file-upload-name {
 }
 
 /* Loading */
+/* Non-palette half is global. The colour half is the CLASS-GATED twin of the
+   bare-element leak at the top of this file (see LEGACY PALETTE SCOPE):
+   --parchment (#E6DDCC) is 1.23:1 on House Lights paper, i.e. the word
+   "Loading…" was invisible on 10 admin screens — including /change-requests,
+   four lines above the <h1> the bare-element pass already fixed. Scoped at the
+   source; the admin twin is html[data-app="admin-os"] .loading in the Misc
+   block near the end of this file. :where() keeps this at (0,1,0), exactly
+   what the unscoped rule carried, so on marketing / public / staff nothing in
+   the cascade moves at all — .em-dashboard .loading (0,2,0) still wins there,
+   same as before. Inside admin it deliberately does NOT: the twin is (0,2,1)
+   and outranks .em-dashboard .loading, so the email dashboard's "Loading…"
+   goes from the legacy teal --warm-brown to the admin muted ink in both skins.
+   That is the intent — the whole point is that admin stops speaking
+   Apothecary — and After Hours already resolved --warm-brown to --ink-3 via
+   the dark-skin token remap, so only House Lights visibly changes here. */
 .loading {
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 200px;
-  color: var(--parchment);
   font-style: italic;
   font-family: var(--font-display);
 }
+:where(html:not([data-app="admin-os"])) .loading { color: var(--parchment); }
 
 .spinner {
   width: 24px;
@@ -1678,7 +1763,18 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 
 /* Utility */
 .text-center { text-align: center; }
-.text-muted { color: var(--parchment); }
+/* .text-muted is the single biggest CLASS-GATED survivor of the legacy palette
+   (78 call sites across pages/admin, components/adminos and
+   components/ShoppingList). --parchment (#E6DDCC) is 1.23:1 on House Lights
+   paper — invisible. It had an After Hours twin and no House Lights twin,
+   which is exactly why it survived the dark-skin sweep. Scoped at the source
+   like its bare-element siblings; the admin twin is
+   html[data-app="admin-os"] .text-muted in the Misc block near the end of this
+   file, and it uses --ink-3 (the admin MUTED ink) not --ink-1, because the
+   whole point of the class is de-emphasis. :where() keeps this at (0,1,0), so
+   .card .text-muted / .admin-table .text-muted (0,2,0) still win exactly as
+   before on every non-admin surface. */
+:where(html:not([data-app="admin-os"])) .text-muted { color: var(--parchment); }
 .text-amber { color: var(--amber); }
 .text-small { font-size: 0.85rem; }
 .mt-1 { margin-top: 0.5rem; }
@@ -10489,6 +10585,21 @@ html[data-app="admin-os"][data-skin="light"] .field-error {
   color: hsl(var(--danger-h) var(--danger-s) 35%);
 }
 
+/* Same shape, same fix: .form-error (near the top of this file) and
+   .em-import-errors (the email-marketing block) both paint the legacy --error
+   (#8B2020), which is 2.15:1 on the After Hours page — dark red on near-black.
+   Both are rendered by components/LeadImportModal.js, which is admin-only, so
+   they get the .field-error treatment above rather than a source scope: the
+   danger hue is already skin-aware, and no non-admin surface renders them. */
+html[data-app="admin-os"] .form-error,
+html[data-app="admin-os"] .em-import-errors {
+  color: hsl(var(--danger-h) var(--danger-s) 65%);
+}
+html[data-app="admin-os"][data-skin="light"] .form-error,
+html[data-app="admin-os"][data-skin="light"] .em-import-errors {
+  color: hsl(var(--danger-h) var(--danger-s) 35%);
+}
+
 /* ─── ErrorBoundary fallback ───────────────────────────────── */
 .error-boundary-fallback {
   max-width: 520px;
@@ -11837,6 +11948,57 @@ html[data-app="admin-os"] input, html[data-app="admin-os"] select, html[data-app
 html[data-app="admin-os"] a { color: inherit; text-decoration: none; }
 html[data-app="admin-os"] h1, html[data-app="admin-os"] h2, html[data-app="admin-os"] h3, html[data-app="admin-os"] h4 { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; margin: 0; }
 
+/* ── Admin OS type colour baseline ──────────────────────────────────────────
+   The real baseline is the `color: var(--ink-1)` on html[data-app="admin-os"]
+   + body a few rules up: colour INHERITS, so every element — h5, h6, li, td,
+   th, dt, dd, label, small, strong, and every tag not written yet — is already
+   covered with no list to maintain. That is why there is no list here.
+
+   h1–h4 and p are stated explicitly because they are the two the legacy
+   Apothecary palette used to seize (bare `h1,h2,h3,h4` and bare `p` both set
+   --cream-text, which on House Lights is ~1:1 against the paper). Those rules
+   are now scoped away from admin (see LEGACY PALETTE SCOPE at the top), so
+   these lines are the belt to that fix's braces, and they make the intent
+   greppable from inside the admin block.
+
+   SPECIFICITY IS DELIBERATE, do not "clean this up" to a plain
+   html[data-app="admin-os"] prefix. :where() makes this (0,0,1) — the same
+   weight the bare marketing rules carry on their own surfaces — so it fills
+   the inheritance hole and outranks NOTHING. At (0,1,2) it would instead beat
+   .text-muted (0,1,0) and blow the muted styling off every
+   <p className="text-muted"> in the admin (66 call sites), and beat
+   .card h1–h4 (0,1,1) as well. Weakest rule that does the job wins.
+
+   Links need nothing here: html[data-app="admin-os"] a { color: inherit } sits
+   at (0,1,2) two lines up and already outranked BOTH legacy a (0,0,1) and
+   legacy a:hover (0,1,1) even before they were scoped. A duplicate at (0,0,1)
+   would be dead weight; a stronger a:hover would start stomping .link:hover
+   style classes. Left alone on purpose.
+
+   THE VALUE IS `inherit`, NOT var(--ink-1), and that is load-bearing. At
+   (0,0,1) this rule only ever wins against another bare-element rule, so what
+   it must do is take the value the element WOULD have had by inheritance and
+   restate it — which is exactly `inherit`. Naming --ink-1 instead hard-codes
+   the PAGE foreground onto every h1–h4 and p in the shell, including the ones
+   sitting inside admin's deliberate stay-light islands. The concrete case:
+   pages/admin/EmailCampaignDetail.js renders sanitised campaign HTML (bare
+   <p>) into .em-preview-frame, which is background:#fff and is restored to
+   color:#1C1610 on After Hours (see the stay-light restores). With --ink-1
+   those paragraphs render #eef1f4 on #fff — 1.13:1, light-on-light. With
+   `inherit` they take the frame's own #1C1610 (17.9:1). Same story for the
+   parchment .admin-table / .data-table cells and every other island that
+   re-establishes its own colour. Nothing is lost: the real baseline is the
+   `color: var(--ink-1)` on html[data-app="admin-os"] + body ~40 lines up, and
+   colour inherits, so on an ordinary admin page `inherit` resolves to exactly
+   --ink-1 anyway. */
+:where(html[data-app="admin-os"]) h1,
+:where(html[data-app="admin-os"]) h2,
+:where(html[data-app="admin-os"]) h3,
+:where(html[data-app="admin-os"]) h4,
+:where(html[data-app="admin-os"]) p {
+  color: inherit;
+}
+
 /* numerals + tabular */
 html[data-app="admin-os"] .num, html[data-app="admin-os"] .mono { font-family: var(--font-numeric); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 
@@ -13163,6 +13325,37 @@ html[data-app="admin-os"] .tweaks-fab:hover { color: var(--accent); border-color
    ========================================================================== */
 
 html[data-app="admin-os"] .muted { color: var(--ink-3); }
+/* .text-muted and .loading are the class-gated half of the legacy-palette leak.
+   Both painted --parchment unscoped, which is 1.23:1 on House Lights paper.
+   --ink-3 is the admin MUTED ink and it is skin-aware by construction: #7a7468
+   on House Lights (4.22:1 on --bg-0) and #7c8593 on After Hours (5.22:1 on
+   --bg-0). It is the same token html[data-app="admin-os"] .muted already uses
+   two lines up, so muted text reads identically whichever class a page
+   reached for. (4.22:1 is AA for large text and just under the 4.5:1 normal-
+   text bar; that is a property of the House Lights --ink-3 token itself, which
+   every .muted in the shell already carries — a skin-token call for Dallas,
+   not something to fork per class here.)
+   Deliberately NOT --ink-1 — these classes exist to de-emphasise, and
+   body-coloured muted text is a different bug. Both skins in one rule, so a
+   future skin gets the right value for free. (There is an older After Hours
+   duplicate of the .text-muted line in the stay-light restores block; it sets
+   the same --ink-3 and is harmless, left in place rather than churned.)
+   Specificity (0,2,1): one attribute + one class + the html type selector.
+   That clears every competitor it needs to and no more —
+     - beats the legacy .text-muted / .loading (0,1,0), which is the fix;
+     - beats .card .text-muted (0,2,0), so admin cards get admin muted ink in
+       BOTH skins rather than the #5C3319 brown meant for parchment cards;
+     - loses to html[data-app="admin-os"][data-skin="dark"] .text-muted
+       (0,3,1) in the stay-light restores, which sets the same --ink-3;
+     - loses to .admin-table/.data-table .text-muted, which is !important and
+       therefore untouchable — correct, because those cells really are
+       parchment in both skins and #5C3319 is the right ink on them. */
+html[data-app="admin-os"] .text-muted,
+html[data-app="admin-os"] .loading { color: var(--ink-3); }
+/* Drag grips (.tbl rows on /potions and the cocktail-menu editor) painted the
+   legacy --border-dark (#313842): 1.64:1 on the After Hours page. Same muted
+   ink as the rest of the admin chrome. */
+html[data-app="admin-os"] .drag-handle { color: var(--ink-3); }
 html[data-app="admin-os"] .tiny { font-size: 11.5px; }
 html[data-app="admin-os"] .hstack { display: flex; align-items: center; gap: 0.5rem; }
 html[data-app="admin-os"] .vstack { display: flex; flex-direction: column; gap: 0.5rem; }

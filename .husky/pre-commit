@@ -1,5 +1,17 @@
 #!/usr/bin/env sh
 bash scripts/check-docs-drift.sh
 node scripts/check-file-size.js --staged || exit 1
+# No-ops instantly unless client/src/index.css is staged. Reports a commit that
+# re-arms the legacy-palette trap (unscoped bare-element colour rules, or an
+# admin-reachable class rule painting an Apothecary token into invisibility).
+#
+# DELIBERATELY WARN-ONLY (2026-08-14), do not "fix" this back to || exit 1.
+# It is a brand-new 600-line CSS parser and index.css is the largest file in the
+# repo; a false positive here costs the author --no-verify, which ALSO skips
+# check-file-size, lint-staged and guard-os-main. It prints, it does not veto.
+# The exit code still means something: npm run check:css-scope exits non-zero on
+# the same finding, so CI can gate on it and the hook can be promoted to
+# blocking once the parser has a burn-in period behind it.
+node scripts/check-css-palette-scope.js --staged || true
 npx lint-staged
 bash scripts/guard-os-main.sh || exit 1

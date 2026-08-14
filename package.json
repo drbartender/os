@@ -16,6 +16,8 @@
     "gate": "node scripts/push-gate.js run",
     "audit:check": "npm audit --omit=dev || true",
     "check:filesize": "node scripts/check-file-size.js --all",
+    "check:css-scope": "node scripts/check-css-palette-scope.js",
+    "test:css-scope": "node --test scripts/check-css-palette-scope.test.js",
     "mobile:check": "node scripts/mobile-capture.js",
     "optimize:assets": "node scripts/optimize-assets.js",
     "worktree:new": "node scripts/worktree-new.js",
