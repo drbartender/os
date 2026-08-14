@@ -98,10 +98,48 @@ so tick items off as you confirm them rather than assuming the list is current.
       refuse loudly; do NOT let accrual accept `reopened` (fix list, 2026-08-12 section A).
       Not walked: the out-of-area knob and the ShiftDrawer knob — pulled out as their own
       item below so they cannot hide inside a checked box.
+      PAY-RUN UI ALSO PASSED, live, 2026-08-14. Dallas ran the editing surface on real
+      payroll rather than the dev fixture. Every payout in period 89 foots exactly against
+      the single-writer formula (events + payable duty, clamped): Jasmine 8000+2000=10000,
+      Nevver 15090+5500=20590, Dallas 35279+4000=39279 (no_draw), Fareed 20279+0=20279.
+      His remove behaved correctly end to end — an admin-added $50 hosted line added 17:04:10
+      and pulled 17:04:13, `removed_by` set, excluded from her total, row retained struck
+      through. Two $20 bar rentals on one payout looked like a duplicate and are not: shifts
+      367 and 373, two separate events. The removal also landed ~5h before the payout was
+      marked paid, so the frozen-period guard was never tested by it and remains unproven.
+      UX NOTE, not a defect: Dallas read the retained struck-through row as "it didn't
+      delete". It is deliberate (undo affordance + the record that derivation must never
+      resurrect it), and it is correctly hidden on paid/History views. If it keeps reading
+      wrong, the fix is a visible "Removed — restore" label, not deletion.
 - [ ] **Duty-pay knobs: out-of-area + ShiftDrawer.** The two knob surfaces from the
       duty-residuals lane (merged afb6e5e6): the out-of-area no-op/auto-lock semantics and
       the ShiftDrawer knob (spec §9). Money math around them verified 2026-08-12; the knobs
       themselves have never been touched in the app.
+      PROD CHECK 2026-08-14: `shifts.out_of_area_bonus_cents` is non-null on **zero** rows.
+      Not one bonus has ever been attached since the feature shipped 8/07, so this cannot be
+      walked by finding a live example — either attach one deliberately on a real far shift,
+      or walk it on dev (fixture: proposal 24131 / shift 10726, two approved bartenders).
+      The sequence that matters, because it is the bug the residuals lane fixed: attach $25
+      with 2+ approved and confirm the warning plus a GREYED-OUT same-value Save; drop one
+      staffer so exactly one remains and confirm Save turns clickable at the same value;
+      save and confirm it locks to the survivor; then confirm a reduce 409s with the
+      lock sentence. Do it in BOTH mounts — Event Detail's staffing card and the ShiftDrawer.
+- [ ] **Review money: bounty + quarterly contest (spec §7). NEVER EXECUTED IN PROD.**
+      Verified 2026-08-14: `staff_reviews` 0 rows, `staff_review_credits` 0, `review_bounty`
+      duty lines 0, `review_contest` duty lines 0, Thumbtack-sourced reviews 0. The entire
+      §7 money path — log, credit, confirm, the $10 bounty, the $100 quarterly split — has
+      run exactly zero times since shipping 8/07. It is reviewed code that has never moved a
+      cent.
+      THE WALK (dev is fine; a real bounty in prod is real money): log a manual Google
+      5-star naming a staffer, credit them, Confirm, and verify a $10 `review_bounty` line
+      lands in the CURRENT open period for that person. Then try to Dismiss the confirmed
+      review — it must refuse while the bounty is paid. Then the leaderboard: confirm the
+      4-events + 2-named-reviews floor holds someone under it OFF the winners list, and that
+      awarding an in-progress quarter refuses without force.
+      SEPARATELY UNPROVEN, and it cannot be forced: the Thumbtack webhook ingest that bridges
+      a real TT review into `staff_reviews` via `tt_review_id`. It fires only on a real
+      review landing. Until one does, the automatic half of §7 is unproven — the manual walk
+      above does not exercise it.
 - [x] **Money Board — CLOSED 2026-08-14.** Mobile/skin half walked 8/12 (found and fixed
       the see-through House Lights drawer). Desktop chart pass effectively done by finding:
       Dallas hit the day/week granularity hole and ruled "that whole chart is gonna need a
@@ -116,6 +154,31 @@ so tick items off as you confirm them rather than assuming the list is current.
       — the `staff.localhost` host is the staff portal for every role by design).
 
 ## Tier 2 — client-facing, shipped, unseen
+
+- [ ] **Remote Staffing Fee prompt at Send. NEVER FIRED IN PROD.** Verified 2026-08-14:
+      `proposals.remote_fee_prompted_at` is set on **zero** rows and `venue_lat` on zero —
+      so the popup has never appeared, and the on-demand geocode has never run, since
+      shipping 8/07. Correct-looking, because the gate is narrow (venue 40+ miles out AND
+      fewer than 3 active staff homes within 40 miles AND not already answered AND not yet
+      accepted), and DRB books mostly in-city. But narrow-and-never-fired is also what a
+      silently-broken gate looks like, which is the point of walking it.
+      WALK ON DEV (a prod Send emails a real client): proposal 24132, "Walk Far Venue" in
+      Rockford. Click Send, expect the "Checking staffing for this venue…" overlay, then the
+      popup with ~80 miles / no staff within 40 / suggested $20. Take **Add suggested fee**
+      and confirm the total rises $20 through the normal editor path. Send again and confirm
+      it does NOT re-ask — the answer is stamped once per proposal, deliberately.
+      To walk it in prod instead, wait for a genuinely far booking and do it on the real
+      send rather than manufacturing one.
+- [ ] **Duty-pay policy text: Field Guide §17 + contractor agreement v3.** The staff-facing
+      half of the whole duty-pay project, and the only part staff actually read. Never
+      opened by anyone since shipping 8/07 (v3 also stamps into signature rows, so a bad
+      render is durable).
+      Read §17 in the portal as a bartender: $20 bar rental, $20 parking, $20 supplies with
+      the **flat $50 hosted** carve-out (changed 8/07, announced), $5 menu print, $10 named
+      5-star bounty, $100 quarterly contest, and travel as ONE deliberately vague sentence
+      (no bands, no mileage — the published-ambiguity rule). Confirm no duration estimates
+      survive anywhere near the hosted money after the 2026-08-10 copy change. Then sign the
+      agreement with the dummy staff account and confirm the signature row stamps version 3.
 
 - [x] **Notify-client confirmation — PASSED 2026-08-12 on dev** (proposal 16301, a booked
       `deposit_paid` fixture). Modal appears on a notifiable change; the notify box is
