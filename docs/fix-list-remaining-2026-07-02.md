@@ -2246,11 +2246,25 @@ The live Sentry queue, triaged into this list so it stops being a sixth list nob
 Do NOT resolve `DRBARTENDER-SERVER-21` as noise (see the 2026-08-12 duty-accrual entry).
 
 **Needs a real look:**
-- **`WILDLIGHT-E` — `db.pool_connection_error`, 98 events over 17 days, still firing (last
-  seen minutes before this sweep), culprit `GET /index`.** A steady connection-pool drip on
-  Dan's LIVE storefront that was on no list until now. Likely Neon serverless pool
-  exhaustion under Next 16; needs its own diagnosis session. Highest-priority item in this
-  section.
+- ~~**`WILDLIGHT-E`**~~ **DIAGNOSED 2026-08-14: designed telemetry of a handled condition,
+  not an outage — ARCHIVED-UNTIL-ESCALATING in Sentry.** The full mechanism, from
+  `wildlight/lib/db.ts`: Neon idle-kills pooled connections while Vercel has the lambda
+  FROZEN, so pg's reaper cannot notice; the dead socket surfaces as a pool `'error'` event
+  on thaw. With no listener that was an uncaughtException crashing in-flight requests
+  (WILDLIGHT-1, already fixed); the listener now logs `db.pool_connection_error`, and
+  `logger.warn` unconditionally pipes to Sentry `captureMessage` — which is the entire
+  "issue". Evidence it is harmless: pg-pool evicts the dead client before any request can
+  draw it; Users Impacted 0 on all 99 events; ~5/day matching the freeze-thaw rhythm; and a
+  month of the event stream contains ZERO error-level "Connection terminated"/ECONNRESET —
+  no visitor has ever eaten the request-time version. Archive-until-escalating keeps the
+  tripwire: a genuine Neon incident bursts the rate and re-pages.
+  LOW, optional hardening left behind: `withConnRetry` (built for exactly this drop class)
+  has exactly ONE consumer, an admin draft route — the shop's read paths are unwrapped.
+  Zero observed failures in a month says do NOT churn the live storefront for it now
+  (protect-working-paths law); wrap the hot reads opportunistically the next time that code
+  is open. Also note `logger.warn`→Sentry means any recurring expected warn becomes an
+  issue — same shape as WILDLIGHT-2's login noise; consider a `logger.expected()` tier if a
+  third one appears.
 - **`WILDLIGHT-G` — Anthropic API 400: "credit balance is too low".** The AI-studio generate
   feature on Wildlight has been DEAD from billing since 2026-08-12. Ops action for Dallas:
   top up the Anthropic credits (or decide the feature hibernates). No code change.
