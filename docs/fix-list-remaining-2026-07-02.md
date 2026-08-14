@@ -3609,3 +3609,52 @@ doubt every time; and any future server-rendered link that IS client-facing
 host.
 
 Fix: set `API_URL=https://api.drbartender.com` in Render. No code change.
+
+## "Tap to compare" is printed on the one part of the card that is not tappable (found 2026-08-14, live client-facing)
+
+Dallas hit this walking the "See other options" panel on prod: tapping the cards
+did nothing. Pinning works — but only if you tap the TOP of the card. The label
+telling you to tap is at the bottom, outside the hit target.
+
+**Root cause, exactly.** `client/src/pages/proposal/otherOptions/OtherOptionsPanel.js`
+`OptionCard` renders a `<div className="oo-card">` containing, in order:
+
+1. `<button className="oo-card-hit">` (`:281-300`) — the ONLY thing wired to
+   `onToggle`. Holds the check, the "Yours · recommended" flag, the badge, the
+   name, the price and the delta. This is the top block.
+2. `<div className="oo-card-groups">` (`:305-320`) — the ingredient lists.
+   Deliberately outside the button, and the comment at `:302-304` explains why: a
+   `<ul>` inside a `<button>` is invalid markup.
+3. `<div className="oo-tiers">` (`:322-338`) — on BYOB cards, four tier buttons
+   that DO respond, but to a different action (re-price, not pin).
+4. `<div className="oo-card-foot">` (`:340-342`) — the string
+   `'Tap to compare'`. A plain div. Not interactive.
+
+So the affordance text and its hit target are at opposite ends of a tall card, with
+a block of prose and a row of *working* buttons in between. On the BYOB card the gap
+is the worst: the client taps a tier button and it responds, then taps the words
+"Tap to compare" directly below and nothing happens.
+
+**Why this matters more than it looks.** This is the public proposal page, live
+since 2026-08-11. The entire purpose of the panel is letting a client line up
+options. A client who follows the printed instruction concludes the feature is
+broken and stops — they have no reason to guess that the price area is the button.
+The person who BUILT it could not pin on first try. Nobody has opened this in prod
+since it shipped, so we do not know how many clients have already bounced off it.
+
+**Note for the automated lane: this is invisible to Playwright.** A test clicking
+`getByRole('button')` passes every time, because the button works. Only a human
+reading the label and tapping where it says finds the dead zone. Same shape as the
+Wildlight off-wall tray that shipped broken behind green gates.
+
+**Recommended fix.** Keep the markup valid; do not wrap the lists in a button.
+Make `.oo-card-foot` its own `<button>` calling the same `onToggle` with the same
+`disabled={!option.available || atCap}`, and mark it `aria-hidden` (or give the two
+a shared label) so screen readers do not announce the toggle twice. That preserves
+the design exactly, keeps the state strings it already renders
+(`✓ Added to compare` / `Unpin one to add this`), and makes the instruction true.
+Cheaper alternative if a second control is unwanted: move the "Tap to compare"
+string INTO the `oo-card-hit` button under the delta, and leave the foot as a
+state-only line.
+
+Client-facing copy plus interaction on a money surface: worth the full fleet.

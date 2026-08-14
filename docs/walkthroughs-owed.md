@@ -448,6 +448,15 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       live-priced rather than echoed. Any other number is a finding; write it down.
       JUDGEMENT CALL FOR DALLAS, not a bug: lane order puts hosted FIRST, so a BYOB client
       scrolls past ten hosted cards before reaching their own recommended one.
+      **DEFECT FOUND ON THE FIRST TRY 2026-08-14 — the walk paid for itself here.** Dallas
+      could not pin an option: the cards only respond at the TOP. The card's sole hit target
+      is `<button className="oo-card-hit">` (`OtherOptionsPanel.js:281-300`, the badge/name/
+      price block), while the words **"Tap to compare"** print at `:340-342` in a plain
+      `oo-card-foot` div at the BOTTOM, separated from it by the ingredients list and, on
+      BYOB cards, a row of tier buttons that DO work. The instruction sits on dead space, on
+      a live public client-facing page, since 8/11. Fix list, 2026-08-14.
+      This is the exact class the 8/14 lane split reserved for a human: a Playwright click on
+      `getByRole('button')` passes every time, because the button works.
       Note the compare-and-book spec will eventually replace this surface.
 - [ ] **Marketing redesign, FUNCTIONAL walk — all 3 phases live in prod; gates real
       sends.** The
