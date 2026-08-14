@@ -272,6 +272,15 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       controls must always match the controls (the `92efc663` guard; a mismatch means a
       stale response won). Full steps in
       `docs/superpowers/plans/2026-08-12-proposals-pagination.md`, Task 2 Step 6.
+      **A THIRD commit is committed but NOT in that push: `9dc29682`** (failed fetch no
+      longer captions stale rows). It adds two walk steps that the plan predates, so do
+      them only after it ships: with devtools set to offline, click Next and confirm the
+      table reads "Could not load proposals · Try again" with the pager GONE, rather than
+      the previous page's rows sitting under a "Page 2 of N" label; then go back online and
+      click Try again and confirm the list restores. Second, confirm a filter that genuinely
+      matches nothing still reads "No proposals match these filters" with Clear filters, NOT
+      the error row — before this commit those two states rendered identically, and that
+      distinction is the point of the change.
       One known cosmetic edge, plan-accepted but now logged on the fix list (2026-08-13,
       round-3 section) for a design call: an option group whose members straddle a page
       boundary renders on both pages with a split "N options" badge. Worth trying to catch
