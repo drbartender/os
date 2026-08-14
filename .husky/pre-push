@@ -2,52 +2,22 @@
 # pre-push — two mechanical gates before a push reaches prod:
 #   1. MONEY SMOKE  (runs when server/ changed) — the money-path test suites
 #      against an isolated Neon ci-smoke branch (scripts/testdb-smoke.js).
-#      Runs FIRST because it fails faster than the ~1 min client build. Until a
-#      NEON_API_KEY is configured it prints a loud SKIP banner and allows the
-#      push (see README > Test gate); once the key exists it is a HARD gate.
+#      Runs FIRST because it fails faster than the ~1 min client build.
 #   2. CLIENT BUILD (runs when client/ changed) — the EXACT command Vercel runs
 #      (CI=true react-scripts build), where ESLint warnings are FATAL. Nothing
 #      else local catches that: lint-staged only covers server/, and a plain
 #      `eslint` run treats it as a non-fatal warning.
 #
-# Server-only or docs-only pushes skip the client build; client-only or
-# docs-only pushes skip the money smoke. Emergencies only: git push --no-verify.
+# Both now live in scripts/push-gate.js so the hook and `npm run gate` can
+# never drift, and so a gate that ALREADY passed for this exact tree is not
+# re-run here. That re-run is what was breaking pushes: git opens the SSH
+# connection before this hook runs, so an 8-minute hook left the connection
+# idle until GitHub closed it, and the push then failed after passing
+# everything (2026-08-14; see the header in scripts/push-gate.js).
+#
+# Fail-closed is unchanged: no receipt, a receipt for different bytes, or a
+# stale one, and the full gate runs right here exactly as it always did.
+# Emergencies only: git push --no-verify.
 set -e
 
-# Resolve the diff base once (origin/main when it exists; empty on first push).
-if git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
-  BASE=origin/main
-else
-  BASE=""
-fi
-
-# ── Gate 1: money smoke (server/ or the smoke list changed) — runs FIRST ──
-if [ -n "$BASE" ] && git diff --quiet "$BASE" HEAD -- server/ scripts/money-smoke-list.txt; then
-  echo "pre-push: no server/ changes vs origin/main — skipping money smoke gate."
-else
-  echo "pre-push: server/ changed — running the money-path smoke gate…"
-  node scripts/testdb-smoke.js
-fi
-
-# ── Gate 2: client build (unchanged from the original client-only gate) ──
-if [ -n "$BASE" ] && git diff --quiet "$BASE" HEAD -- client/; then
-  echo "pre-push: no client/ changes vs origin/main — skipping client build gate."
-  exit 0
-fi
-
-echo "pre-push: client/ changed — running the Vercel-equivalent gate (CI=true react-scripts build, ~1 min)…"
-LOG="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/drb-prepush-build.$$.log")"
-if ( cd client && CI=true npx react-scripts build ) >"$LOG" 2>&1; then
-  echo "✓ pre-push: client build passed — the Vercel client deploy will not fail-compile."
-  rm -f "$LOG"
-  exit 0
-fi
-
-echo ""
-echo "✗ pre-push BLOCKED — the client build failed. This WOULD fail the Vercel deploy."
-echo "  ── last 25 lines ──────────────────────────────────────────"
-tail -25 "$LOG"
-echo "  ───────────────────────────────────────────────────────────"
-echo "  Fix the errors above. Emergencies only: git push --no-verify"
-rm -f "$LOG"
-exit 1
+node scripts/push-gate.js verify
