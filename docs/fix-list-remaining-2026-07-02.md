@@ -2865,31 +2865,84 @@ The stale-response race in ProposalsDashboard (codex) was fixed at the gate. The
 Surfaced while shipping the four wave-2 commits (ed08114f, 9b695af0, 2233a1b6, 46d2974c).
 None of these were in scope for that wave; each is logged here rather than fixed in passing.
 
-- **The `toYmd` shape is repo-wide and one instance is a MONEY path.**
-  `server/utils/paystubData.js:18-22` (the function is named `ymd`, the body is
-  byte-for-byte the pre-fix `toYmd`, the bad line is `:20`) feeds paystub PDF dates.
-  Unlike the seniority scripts, it does NOT fail closed: there is no exit code and no
-  PARTIAL, it would simply render the wrong date on a paystub. Verified count is 26
-  `toISOString().slice(0,10)` occurrences across 21 non-test files. The dangerous subset
-  is narrower than that: only sites fed a pg `DATE`/`TIMESTAMP` column, which the driver
-  parses to LOCAL midnight, can shift a day. Sites fed a `Date.UTC` value or a real
-  instant are correct as written. First five to check, in order:
-  `server/utils/paystubData.js:20`, `server/routes/admin/payroll.js:150`,
-  `server/utils/shiftTime.js:92`, `server/utils/staffCalendarFeedExt.js:62`,
-  `server/utils/balanceScheduler.js:77`. Nothing is wrong in prod today: every one of
-  these is correct on a Chicago box and on Render/UTC, so this is latent, not live.
-  Two things make it cheaper than it looks. The trap is already half-known:
-  `server/utils/preEventScheduling.js:23` and `server/utils/rescheduleProposal.js:39`
-  carry docblocks warning about exactly this failure. And the correct helper already
-  exists, written independently **FIVE** times (corrected at the 2026-08-14 push gate,
-  which caught this entry undercounting), as `toCalendarYmd` in
-  `preEventScheduling.js:30`, `rescheduleProposal.js:46`, `staffShiftHandlers.js:52`,
-  `payrollAccrual.js:100`, and `proposals/cancel.js:57` (that fifth one is defined
-  locally rather than imported, so a retargeting pass that greps imports will miss it).
-  The fix is to lift one into a shared util and retarget the dangerous subset; the
-  "do not write a fifth" framing is already overtaken. Note also that
-  `paystubData.js`'s own comment says it mirrors `ymd()` in
-  `server/routes/staffPortal/payouts.js:32`, so that third copy moves with it.
+- **The `toYmd` shape is repo-wide, and TWO instances are LIVE ON PROD — not latent.**
+  **Fully re-audited 2026-08-14. The version of this entry written earlier that day was
+  wrong on the most important point and is corrected below; read this, not it.**
+
+  **The "nothing is wrong in prod today, this is latent" claim was FALSE. Two sites are
+  broken on Render right now, and both are being fixed in lane `date-trap-live-fixes`
+  (owner approved 2026-08-14, "yes fix both"):**
+  1. **The paystub paid date, wrong on 9 of 25 issued stubs.** `paystubData.js:147`
+     renders `ymd(h.paid_at)`, but `payouts.paid_at` is `TIMESTAMPTZ` (`schema.sql:3112`)
+     written by `NOW()` at `admin/payroll.js:581`, i.e. a true instant, and `ymd`
+     (`:18-22`) takes the UTC day off it. A payout marked paid at 8:30pm Chicago prints
+     the NEXT day. Wrong on a Chicago box AND on Render, because `toISOString()` is UTC
+     regardless of process TZ, so no timezone change is needed to trigger it. Counted
+     against prod: 9 of the 25 paid payouts have a Chicago date differing from their UTC
+     date. **The PDFs are cached in R2** (`staffPortal/payouts.js:326` serves the stored
+     key and only re-renders on a miss), so fixing the code does NOT repair the nine
+     already issued: their `paystub_storage_key` must be cleared AFTER the fix deploys,
+     never before, or they re-render just as wrong. Correct helper is `chicagoYmdOf`
+     (`businessTime.js:67`), NOT `toCalendarYmd`. This same bug was already found and
+     fixed once at `proposals/cancel.js:511-513`, whose comment reads "toCalendarYmd on a
+     TIMESTAMPTZ reads the GMT day on prod".
+  2. **Staff shifts bucket as "past" 30 minutes before the event.** `shifts.js:223` is
+     `new Date().toISOString().slice(0,10)`, UTC today, compared against event dates at
+     `:224-231` (route `GET /shifts/user/:userId/events`, consumed by
+     `staff/ShiftsPage.js:141`). On Render every staffer's event silently leaves Upcoming
+     at 7pm Chicago (6pm in winter) ON THE DAY OF THE EVENT. Fix is `chicagoTodayYmd()`
+     (`businessTime.js:55`). Note `:227` in the same block needs `toCalendarYmd` instead
+     and the two errors point in OPPOSITE directions, so they do not cancel.
+
+  **DO NOT retarget `balanceScheduler.js:77` on its own.** It and `server/routes/stripe.js:340`
+  build the SAME Stripe idempotency key (`autopay-balance-<id>-<balanceDueIso>`) from this
+  expression, deliberately mirrored (see the comments at `balanceScheduler.js:73-76` and
+  `stripe.js:337-338`) so a manual click racing a scheduler tick returns the same
+  PaymentIntent. Changing one and not the other makes the keys diverge and removes the only
+  guard against a second real balance charge. One commit, its own lane, nothing else in it.
+  Both are on `sensitive-paths.txt`. The earlier "first five to check" ordering listed
+  `balanceScheduler` fifth and never mentioned `stripe.js` at all, which is exactly how that
+  fix would have gone wrong.
+
+  **Corrected facts:**
+  - **Direction.** A pg `DATE` parsed at local midnight shifts back a day EAST of UTC
+    (UTC+X), not west; west is the safe side for a DATE. Proven across
+    UTC/Chicago/Manila/Sydney/Kiritimati. Separately a `TIMESTAMP WITHOUT TIME ZONE` with
+    an evening time shifts FORWARD west of UTC. Lumping "DATE/TIMESTAMP" together hides
+    two opposite hazards. (`:1075` and four in-repo docblocks already had this right.)
+  - **Count.** 32 occurrences across 28 non-test files, plus 9 test files. The old "26
+    across 21" was right for `server/**` + `scripts/**` only and missed SIX client-side
+    sites (`useMetricsFilter.js:12`, `RevenueChartCard.js:63`, `DocumentsSection.js:92`,
+    `ReplaceConfirmModal.js:76`, `ClassWizard.js:401`, `EventDetailsStep.js:53`).
+    Classified: 14 dangerous, 13 safe-by-construction, 3 safe-by-design, 1 unclear.
+  - **The helper is hand-rolled SIXTEEN times, not five, and the five `toCalendarYmd`
+    copies are THREE different implementations with three different behaviors.**
+    `preEventScheduling.js:30` has no guards and returns the literal string `"null"` on
+    null input; `rescheduleProposal.js:46` and `staffShiftHandlers.js:52` are
+    byte-identical with full guards; `payrollAccrual.js:100` and `cancel.js:57` are
+    byte-identical with a falsy guard but NO NaN guard, returning `"NaN-NaN-NaN"` on an
+    Invalid Date. Eleven more open-coded under other names: `coverBroadcast.js:83`,
+    `balanceReminderScheduling.js:38`, `serviceCurfew.js:100`, `smsEventDate.js:20`,
+    `staffShiftActions.js:132` and `:849`, `eventEveSms.js:69`, `importValidation.js:118`,
+    `generateSeniorityMapping.js:40`, `applySeniorityBackfill.js:43`, client
+    `PayPage.js:576`.
+  - **The 1099 tax-year worry is NOT real** and must not drive urgency here. The 1099 comes
+    from `GET /payroll/tax-totals`, which buckets entirely in SQL (`payrollTax.js:109,131`)
+    and never touches the JS helper; the paystub does not feed the 1099; and
+    `payrollTax.js:125-130` already documents and fixes the Chicago/GMT year skew on
+    `paid_at` in SQL.
+  - **Sensitivity gap (same shape the list documents four times elsewhere):**
+    `paystubData.js` — the file this entry calls a MONEY path — is NOT on
+    `sensitive-paths.txt`, and neither is `admin/payrollTax.js`, the 1099 surface. Both
+    scale to a light look. Also unlisted: `shifts.js`, `shiftTime.js`,
+    `staffCalendarFeedExt.js`, `orientationData.js`, `balanceInvoiceMonitor.js`,
+    `calendar.js`. And `staffPortal/payouts.paystub.test.js`, the only direct paystub
+    suite, is not on `money-smoke-list.txt` (though `payouts.test.js` is).
+  - **No existing test can catch any of this**: the one TZ-pinned suite pins UTC, which is
+    the value at which several of these bugs are silent. Any fix here needs tests at two
+    or more TZ values or it proves nothing.
+  - `orientationData.js:60` carries a factually wrong comment that will mislead the next
+    reader.
 
 - **repriceSummary's new overpaid branches are untested.**
   `client/src/pages/admin/proposalEditor/repriceSummary.test.js` has no
@@ -3038,50 +3091,83 @@ status_check` was already collapsed for a related reason (b9c5e4c4). Worth grepp
 for every `DROP CONSTRAINT IF EXISTS` that appears more than once with differing
 bodies and collapsing or aligning each pair.
 
-### The same trap exists FIVE more times (swept 2026-08-14, NOT fixed, ranked)
+### The same trap: DEFINITIVE sweep 2026-08-14 (supersedes the "FIVE more times" list)
 
-The push-gate sweep of all 846 schema.sql statements found five more constraints
-ADDed more than once with DIFFERING bodies. All pre-existing, none introduced by
-that batch, none fixed. Ranked by what a partial boot actually costs:
+**A full re-sweep replaced the earlier ranked list. Two of its five were NOT traps, its
+worst-case reasoning was wrong in both directions, and it missed two indexes and a live
+dev regression. Read this; the old list is kept in git history only.** Confirmed counts:
+**8** constraints added more than once (not 5+1), and exactly **20** bare DROP-then-ADD
+pairs (the "~20" was right).
 
-1. **`scheduled_messages_status_check` (lines ~2871 / ~3501 / ~4175) — WORST.**
-   THREE definitions spanning ~1300 lines; the earliest omits `processing`,
-   `dead_letter`, and `suppressed_by_sibling`. All three values are written in
-   live code, and `processing` is the DISPATCHER'S OWN CLAIM STATE, so a boot
-   interrupted in that gap 23514s every claim and stops the entire
-   scheduled-message pipeline (balance reminders, event-week, event-eve, nudges).
-2. **`proposals_gratuity_jar_check` (~1316 / ~1338) — MONEY.** The earlier body is
-   `tip_jar OR gratuity_rate >= 50` and is missing the floor-rate arm, so a
-   mandated no-jar proposal at or above its own floor but under $50/staff/hr is
-   rejected. `gratuity_floor_rate` is read by 8 server modules including
-   `stripeCreateIntent.js` and the mandate is live. Mitigated only by the two
-   blocks sitting 22 lines apart, so the window is tiny.
-3. **`scheduled_messages_channel_check` (~2865 / ~3492)** — earlier omits `'push'`,
-   which `notificationChannelResolver.js` returns and two schedulers bind.
-4. **`users_onboarding_status_check` (~24 / ~3482)** — earlier omits `'suspended'`,
-   which `middleware/auth.js:60` branches on. The gap is essentially the whole
-   file, and this pair is ALSO the bare non-atomic shape.
-5. **`drink_plans_proposal_id_fkey` (~889 / ~1826)** — earlier lacks
-   `ON DELETE CASCADE`, so deleting a proposal with a drink plan raises 23503
-   instead of cascading. Different symptom, same class.
+**REAL, ranked by what it actually costs:**
+1. **`scheduled_messages_status_check` — still the worst, but for a different reason.**
+   Three definitions; the earliest omits `processing`, `dead_letter`,
+   `suppressed_by_sibling`. The old entry's "stops the entire pipeline" OVERSTATED the
+   ordinary case: the dispatcher ticks every 300s (`server/index.js:735-737`) against a
+   ~7s window, so roughly 3% of deploys collide and the next tick would normally recover.
+   It UNDERSTATED the consequence of a collision: the 23514 lands in the generic catch at
+   `scheduledMessageDispatcher.js:638-647`, which marks the row `'failed'` — a value the
+   NARROW list still permits — and `'failed'` is TERMINAL. So a collision does not skip a
+   tick, it **permanently drops every due message in that batch**. Balance reminders,
+   event-week, event-eve, nudges, silently gone.
+2. **`scheduled_messages_channel_check`** — narrowed to `(email, sms)` for ~4s of every
+   boot; the earlier body omits `'push'`, which `notificationChannelResolver.js` returns.
+3. **`idx_scheduled_messages_pending_uniq` (`schema.sql:2890` narrow → `4212/4213` wide)**
+   — the same trap shape on an INDEX, and `4212/4213` is a bare DROP-then-CREATE that
+   removes the enqueue-dedupe guard on EVERY boot. Not in `CRITICAL_INDEXES`, so its
+   absence boots clean. Missed entirely by the earlier sweep.
+4. **`idx_sms_messages_twilio_sid` (`2998/2999`)** — bare DROP-then-CREATE every boot on
+   the Twilio dedupe guard. Also not in `CRITICAL_INDEXES`. Also missed.
+5. **20 bare DROP-then-ADD constraint pairs**; `email_sends_recipient_check` and the three
+   tip FKs rank highest.
+6. **`users_onboarding_status_check` — demoted to P3.** There is NO live writer of
+   `'suspended'`: `admin/users.js:108` `validStatuses` excludes it and the route throws
+   first, and the other writers never emit it. `middleware/auth.js:60` only READS it as a
+   deny-list. Prod has zero suspended rows.
 
-NOT traps, checked and cleared: `proposals_status_check` (2704/2747) is
-direction-safe, since the earlier definition is the WIDER transitional one and a
-partial run accepts everything live code writes; `proposal_payments_payment_type_check`
-(2132/2273) has identical bodies, redundant but harmless.
+**NOT traps, corrected:**
+- **`proposals_gratuity_jar_check` is NOT a trap and was wrongly ranked #2 MONEY.**
+  `schema.sql:1316-1320` is `IF NOT EXISTS (...) THEN ADD`, so on any DB that already has
+  the constraint it is a pure no-op and never drops. The narrow body can only be created
+  on a fresh database, and `:1338-1346` swaps it under a `pg_get_constraintdef ... NOT
+  LIKE '%gratuity_floor_rate%'` guard, so even an interrupted fresh boot self-heals next
+  boot. The guards are what make it safe, not the 22-line distance. Prod and dev both
+  carry the correct three-clause definition. (Minor: `gratuity_floor_rate` is read by 9
+  server modules, not 8.)
+- **`drink_plans_proposal_id_fkey` is NOT a trap** — same `IF NOT EXISTS` guard shape at
+  `:889-893`; the earlier site never drops. Prod and dev both have `ON DELETE CASCADE`.
+- `proposals_status_check` (direction-safe, earlier is wider) and
+  `proposal_payments_payment_type_check` (identical bodies) remain cleared.
 
-**Correction to the root-cause note above, from the same sweep:** the trap has TWO
-failure modes, not one, and the more dangerous one is the shape my fix did not
-change. Proven against Postgres with a temp table: the `DO $$ ... EXCEPTION WHEN
-OTHERS THEN NULL ... END $$` form is ATOMIC, so a failing ADD rolls the DROP back
-and the prior constraint survives (its real cost is silence: the failure never
-reaches initDb's `unexpected` array, so it never logs and never pages Sentry,
-which is how the lists diverged unnoticed). The BARE `DROP CONSTRAINT;` +
-`ADD CONSTRAINT;` pair runs as two autocommit transactions, so a failing ADD
-leaves the table with NO constraint at all, committed, silently accepting
-anything. There are ~20 bare DROP-then-ADD pairs in the file. A proper fix keys
-on the shape, not on individual constraints: wrap every re-add in the atomic form
-AND make paired definitions identical.
+**The shape claim was BACKWARDS.** Proven live: a failing BARE `ADD` raises 23514, which
+is NOT in `IDEMPOTENT_PG_CODES`, so it DOES reach initDb's `unexpected` array and DOES page
+Sentry. The bare form trades safety for visibility; the `DO $$ ... EXCEPTION WHEN OTHERS
+THEN NULL` form trades visibility for safety. Neither is uniformly worse, so "wrap
+everything in the atomic form" is the wrong prescription on its own. And the DO form has a
+worse case nobody identified: **when a constraint has never successfully existed, atomic
+rollback protects nothing, and you get a permanently absent constraint with zero output
+forever.** 37 DO-blocks currently swallow every failure to NULL. `RAISE WARNING` plus a
+notice listener fixes that at zero boot noise.
+
+**LIVE STATE (verified 2026-08-14):**
+- **PROD IS CLEAN.** No repair needed now, but re-check after the deploy that ships any fix.
+- **DEV IS REGRESSED RIGHT NOW**: `users_onboarding_status_check` is missing `'suspended'`.
+- **`shifts_status_check` has been silently ABSENT from dev forever** (`schema.sql:1861-1864`,
+  blocked by three `shifts` rows with `status='confirmed'`) — the DO-form worst case, live,
+  and initDb still prints its success line.
+- Correcting the earlier "prod was unaffected only by luck": for `archive_reason` prod had
+  REAL protection (10 rows carry `option_not_chosen`, so a narrow re-add 23514s and rolls
+  back). But for the scheduled-message constraints prod has ZERO rows in the new states and
+  therefore NO data protection at all, so those are genuinely narrowed for ~4 to 22 seconds
+  of EVERY boot, not only interrupted ones. With `render.yaml:8` `healthCheckPath` giving a
+  zero-downtime rollover with the OLD dispatcher still live, that is a real concurrency
+  window on every single deploy.
+
+**What the fix needs that nobody has built:** a `CONSTRAINT_CONTRACT` check, because today a
+silently absent or narrowed constraint boots clean and nothing notices; and a static linter
+over `schema.sql`, because without one any collapse decays back into duplicates. The
+verification harness already exists: `testdb-smoke` resets `ci-smoke` from the prod parent
+and runs initDb, so a partial-boot regression can be proven rather than argued.
 
 # Push-gate receipt system SHIPPED 2026-08-14 (pushed in 316a43b3) — residuals
 
