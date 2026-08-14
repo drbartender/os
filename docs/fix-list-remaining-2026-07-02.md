@@ -3553,3 +3553,41 @@ Nothing leaks either way — neither response reveals whether a given token exis
 which is the property that actually matters — so this is a comment accuracy fix,
 not a security fix. Worth correcting because the next person to touch that route
 will trust the comment over the code.
+
+## The drop alert is the one staff alert that does not name the staffer (found 2026-08-14, SMS walk scripting)
+
+The 2026-08-11 fix `5f3671fa` "name the staffer in inbound admin alerts" named four
+alert paths: ambiguous CONFIRM/CANT, CANT-with-no-shift, the CANT race, and a
+free-form staff text. Those all now read like `Dallas (user 1) texted ...`.
+
+It did not cover `alertStaffCant` — the SUCCESSFUL drop — which still sends
+`A bartender texted CANT for the <event> on <date>` with no name and no user id
+(`server/utils/smsInbound.js:635-636`).
+
+That is the instance where the name matters most. The other four are informational;
+this one fires when a shift has just been released and someone has to restaff it,
+and the first question any human asks is which bartender dropped. Right now the
+answer requires opening the shift.
+
+It also sets a trap for the walkthrough: anyone proving the "alerts name the
+staffer" item by dropping a real shift will see no name and conclude the fix never
+shipped. Recorded in `docs/walkthroughs-owed.md` so the walk uses one of the four
+paths that do name.
+
+Fix: pass the resolved staffer through to `alertStaffCant` and use the same
+`describeStaff` label the other four use, in the subject as well as the body. Note
+this alert also texts admins when the event is under 7 days out (`smsLine`,
+`:631`), so the name should go in that SMS too, where it is worth the most.
+
+## Admin Messages empty state promises staff texts it will never show (found 2026-08-14)
+
+`client/src/pages/admin/Messages.js:62` reads "No SMS conversations yet. Client and
+staff texts to the business number appear here."
+
+Staff texts never appear there, by design. `GET /api/sms/conversations` selects FROM
+`clients`, and staff inbound rows carry `client_id NULL`, so they are structurally
+excluded. Staff texts surface as an admin EMAIL instead.
+
+Cosmetic, but it actively misleads during exactly the walk that checks this path:
+the correct absence of a staff text on that page reads as a missing feature. Drop
+"and staff" from the sentence, or say where staff texts actually go.

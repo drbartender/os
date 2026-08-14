@@ -312,7 +312,12 @@ so tick items off as you confirm them rather than assuming the list is current.
 
 ## Tier 3 — new in the 2026-08-11 push, never seen by anyone
 
-- [ ] **Voicemail listen link — SCRIPTED 2026-08-14, and the prose below was wrong twice.**
+- [~] **Voicemail listen link — ROUTE HALF PASSED 2026-08-14 (Dallas: "it worked").** He
+      opened the backfilled listen link on his phone and the audio played, and a tampered
+      token 404'd. STILL OPEN: the SMS half (a real missed call producing the FIRST alert
+      that carries a link) and the two-sided kill switch, which needs two Render redeploys
+      plus a second missed call. Everything below still applies to those.
+      SCRIPTED 2026-08-14, and the original prose was wrong twice.
       CORRECTION 1, the headline: this said "confirm the alert SMS arrives with a working
       link" as though links had been arriving. **No listen link has ever been sent, once.**
       `voicemail_delivery` holds exactly ONE primary-line row ever (2026-08-11T02:49:25Z),
@@ -348,7 +353,27 @@ so tick items off as you confirm them rather than assuming the list is current.
       "Hi Aubrey & Dominic,". The couples case was fixed at the push gate and has unit
       coverage, but no rendered email has been read by a human.
 - [x] **Guest count in the event header — PASSED 2026-08-13** ("yes").
-- [ ] **Inbound SMS alerts naming the staffer.**
+- [ ] **Inbound SMS alerts naming the staffer — SCRIPTED 2026-08-14, and it may already be
+      closeable from the inbox with zero texts sent.** Shipped `5f3671fa` (2026-08-11), an
+      ancestor of `origin/main`, so it is live.
+      THE SHORTCUT: an inbound "test" from the 312 (+13125889401) already took exactly this
+      path on 2026-08-13 21:13 CT (`sms_messages` id 1501, `client_id` NULL, processed).
+      The naming email should be sitting in admin@drbartender.com already. Reading it ticks
+      this item. PASS = the body names the sender as **"Dallas (user 1)"**, a real name plus
+      user id, rather than "A staff member" or a bare "user 1".
+      To reproduce instead: text `hello` from the 312 to the 888 (+18882314320). Expect the
+      automated reply, then an email subject "Staff texted Dr. Bartender".
+      TRAPS: the alert is EMAIL only (category `routine_admin`, no `smsBody`) so do not wait
+      for a text; and the texts correctly never appear on the admin Messages page, because
+      `GET /api/sms/conversations` selects FROM `clients` and staff rows carry a null
+      `client_id` (the page's own empty-state copy claims otherwise — fix list, 2026-08-14).
+      **DO NOT prove this by dropping a real shift.** `alertStaffCant`, the SUCCESSFUL drop
+      alert, is the one path the naming fix never covered: it still says "A bartender texted
+      CANT" with no name, so that route would make a shipped fix look unshipped. Fix list,
+      2026-08-14. The four paths that DO name are ambiguous CONFIRM/CANT, CANT-with-no-shift,
+      the CANT race, and free-form staff text.
+      Text from the 312 rather than the personal cell: user 1 has zero approved unfinished
+      shifts, so nothing can be dropped by accident.
 
 ## Tier 3b — shipped 2026-08-13, live in prod, never eyeballed
 
