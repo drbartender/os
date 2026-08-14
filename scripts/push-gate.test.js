@@ -186,68 +186,6 @@ test('an empty pushedShas list cannot satisfy the foreign-sha check by vacuity',
 
 // ── The gate lock (the money gate resets a SHARED Neon branch) ──
 
-test('a stale lock from a dead process does not block the gate forever', () => {
-  // The dangerous failure is not contention, it is a crashed run leaving a lock
-  // that wedges every future push.
-  const fs = require('fs');
-  const path = require('path');
-  const { execFileSync, spawnSync } = require('child_process');
-  const commonDir = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim();
-  const lockFile = path.join(commonDir, 'drb-push-gate.lock');
-  if (fs.existsSync(lockFile)) return; // a real gate is running; never disturb it
-
-  // A pid that cannot exist: kill(0) throws ESRCH, so the holder reads as dead.
-  fs.writeFileSync(lockFile, JSON.stringify({ pid: 2147483646, token: 'deadbeef', at: new Date().toISOString() }));
-  try {
-    const r = spawnSync(process.execPath, ['scripts/push-gate.js', 'run', 'HEAD'], { encoding: 'utf8' });
-    assert.doesNotMatch(`${r.stderr || ''}`, /another push gate is already running/,
-      'a lock held by a dead pid must be reclaimed, not treated as live');
-  } finally {
-    try { fs.unlinkSync(lockFile); } catch { /* the run released it */ }
-  }
-});
-
-test('a FRESH unreadable lock is treated as live, not reclaimed', () => {
-  // This is the empty-file window of another starter mid-acquire. Reclaiming it
-  // is exactly the race that let two gates run at once, so within the grace
-  // period an unreadable lock must be respected.
-  const fs = require('fs');
-  const path = require('path');
-  const { execFileSync, spawnSync } = require('child_process');
-  const commonDir = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim();
-  const lockFile = path.join(commonDir, 'drb-push-gate.lock');
-  if (fs.existsSync(lockFile)) return;
-
-  fs.writeFileSync(lockFile, 'not json at all');
-  try {
-    const r = spawnSync(process.execPath, ['scripts/push-gate.js', 'run', 'HEAD'], { encoding: 'utf8' });
-    assert.equal(r.status, 1, 'a fresh unreadable lock must block, not be reclaimed');
-    assert.match(`${r.stderr || ''}`, /another push gate is already running|starting/);
-  } finally {
-    try { fs.unlinkSync(lockFile); } catch { /* released */ }
-  }
-});
-
-test('an OLD unreadable lock is reclaimed rather than wedging the gate forever', () => {
-  const fs = require('fs');
-  const path = require('path');
-  const { execFileSync, spawnSync } = require('child_process');
-  const commonDir = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim();
-  const lockFile = path.join(commonDir, 'drb-push-gate.lock');
-  if (fs.existsSync(lockFile)) return;
-
-  fs.writeFileSync(lockFile, 'not json at all');
-  const old = new Date(Date.now() - 10 * 60 * 1000); // well past the grace window
-  fs.utimesSync(lockFile, old, old);
-  try {
-    const r = spawnSync(process.execPath, ['scripts/push-gate.js', 'run', 'HEAD'], { encoding: 'utf8' });
-    assert.doesNotMatch(`${r.stderr || ''}`, /another push gate is already running/,
-      'an aged unreadable lock has no live holder and must not wedge the gate');
-  } finally {
-    try { fs.unlinkSync(lockFile); } catch { /* released */ }
-  }
-});
-
 test('EMPTY stdin is its own kind: nothing ships, so nothing to gate', () => {
   // git feeds no lines only when no ref is being updated. Blocking here would
   // fail a no-op push for nothing.
@@ -264,17 +202,24 @@ test('MALFORMED stdin stays unknown so the caller can BLOCK', () => {
   assert.equal(parsePushedShas(undefined).kind, 'unknown');
 });
 
-test('the lock lives in the COMMON git dir so lanes cannot both hold one', () => {
-  // Every lane is a linked worktree with its own --absolute-git-dir, but they
-  // all reset the SAME Neon ci-smoke branch, so a per-worktree lock let two
-  // lanes run concurrently. The receipt stays per-worktree on purpose.
+test('the gate serializes with flock, not a hand-rolled pidfile', () => {
   const src = require('fs').readFileSync(require('path').join(__dirname, 'push-gate.js'), 'utf8');
-  // Strip comments first: lockPath's own comment EXPLAINS the per-worktree dir
-  // it deliberately avoids, and matching prose would fail on correct code.
-  const codeOnly = (t) => t.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
-  const lockFn = codeOnly(src.slice(src.indexOf('function lockPath'), src.indexOf('function readHolder')));
-  assert.match(lockFn, /--git-common-dir/, 'lockPath must use the common git dir');
-  assert.doesNotMatch(lockFn, /--absolute-git-dir/, 'lockPath must not use the per-worktree git dir');
-  const receiptFn = codeOnly(src.slice(src.indexOf('function receiptPath'), src.indexOf('function dirtyEntries')));
-  assert.match(receiptFn, /--absolute-git-dir/, 'the receipt stays per-worktree');
+  const code = src.split('\n').filter((l) => !l.trim().startsWith('*') && !l.trim().startsWith('//')).join('\n');
+  assert.match(code, /spawnSync\('flock'/, 'must re-exec under flock');
+  assert.match(code, /'-n'/, 'must refuse rather than wait: waiting inside pre-push is the original bug');
+  assert.match(code, /--git-common-dir/, 'the lock must span every worktree, they share one Neon branch');
+  // The pidfile machinery must be gone: it leaked on every signal and its
+  // stale-reclaim let two gates run at once.
+  assert.doesNotMatch(code, /pidAlive|readHolder|acquireLock/, 'no hand-rolled lock may remain');
+});
+
+test('flock -n genuinely refuses a second holder (the property we rely on)', () => {
+  const { spawnSync } = require('child_process');
+  const os = require('os');
+  const path = require('path');
+  const lock = path.join(os.tmpdir(), `drb-gate-locktest-${process.pid}`);
+  // Hold the lock in one process for a moment, and try to take it in another.
+  const held = spawnSync('sh', ['-c', `flock -n ${lock} sh -c 'flock -n ${lock} true; echo inner=$?'`], { encoding: 'utf8' });
+  assert.match(`${held.stdout}`, /inner=1/, 'a second flock -n on a held lock must fail');
+  try { require('fs').unlinkSync(lock); } catch { /* fine */ }
 });

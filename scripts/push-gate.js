@@ -113,87 +113,56 @@ const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
  * leaves git's connection idle until GitHub closes it, which is the whole bug
  * this file exists to fix. Refusing exits non-zero, so the push is BLOCKED, not
  * allowed. Same posture as scripts/merge-lane.sh, which flocks the merge.
+ *
+ * WHY flock AND NOT A PIDFILE (rewritten after the 2026-08-14 delta review took
+ * the pidfile version apart): the stale-reclaim unlink was blind, so two
+ * starters could both reclaim and BOTH run — reproduced 4 times in 25 trials,
+ * once with three concurrent gates. Every signal leaked the file, so a plain
+ * Ctrl-C on an 8-minute run made "stale lock present" the routine state, and
+ * recovery then ran straight back through the racy reclaim. A reused pid could
+ * wedge every future push with no recovery path. flock has none of those
+ * failure modes because the KERNEL drops it when the fd closes, kill -9
+ * included: nothing to leak, no liveness check, no TTL, no reclaim, no race.
+ * merge-lane.sh already does exactly this and its header says why; this file
+ * had reimplemented a strictly weaker version of the lock it cites as
+ * precedent.
  */
-// A gate run is ~8 minutes. Past this a lock is presumed abandoned even if its
-// pid still answers, which bounds the damage from PID REUSE: after a crash an
-// unrelated process can inherit the pid and kill(pid,0) would report the dead
-// holder as alive forever, wedging every push.
-const MAX_LOCK_AGE_MS = 60 * 60 * 1000;
-// A lock whose content is unreadable is almost always a starter mid-acquire,
-// not corruption, so it is treated as LIVE briefly rather than reclaimed.
-const LOCK_GRACE_MS = 30 * 1000;
-
-function lockPath() {
-  // The COMMON git dir, deliberately: the resource being protected is the one
-  // shared Neon ci-smoke branch, and linked worktrees (every lane) each have
-  // their own --absolute-git-dir. Scoping the lock there let two lanes both
-  // "acquire" and reset the same branch underneath each other. The RECEIPT
-  // stays per-worktree, since each worktree has its own tree and HEAD.
-  return path.join(git(['rev-parse', '--path-format=absolute', '--git-common-dir']), 'drb-push-gate.lock');
-}
-
-function readHolder(lockFile) {
-  try {
-    const holder = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
-    if (holder && typeof holder.pid === 'number' && holder.token) return holder;
-    return null;
-  } catch {
-    return null;
+function reexecUnderFlock() {
+  if (process.env.DRB_GATE_LOCKED === '1') return; // already holding it
+  // The COMMON git dir, deliberately: the protected resource is the ONE shared
+  // Neon ci-smoke branch, while every lane is a linked worktree with its own
+  // --absolute-git-dir. Scoping there let an os gate and a lane gate run at
+  // once. The RECEIPT stays per-worktree, since each has its own tree and HEAD.
+  const lockFile = path.join(
+    git(['rev-parse', '--path-format=absolute', '--git-common-dir']), 'drb-push-gate.lock');
+  const r = spawnSync('flock', ['-n', lockFile, process.execPath, __filename, ...process.argv.slice(2)], {
+    stdio: 'inherit',
+    env: { ...process.env, DRB_GATE_LOCKED: '1' },
+  });
+  if (r.error) {
+    // flock missing or unstartable: fail CLOSED. Running unlocked risks two
+    // gates resetting ci-smoke under each other, which can bank a receipt for
+    // a gate that never coherently ran.
+    console.error('');
+    console.error(`✗ BLOCKED — could not acquire the gate lock (${r.error.code || r.error.message}).`);
+    console.error('  flock (util-linux) is required so two gate runs cannot reset the shared');
+    console.error('  Neon ci-smoke branch under each other. Emergencies only: git push --no-verify');
+    process.exit(1);
   }
-}
-
-function pidAlive(pid) {
-  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
-}
-
-function acquireLock() {
-  const lockFile = lockPath();
-  const token = crypto.randomBytes(8).toString('hex'); // proves OUR ownership on release
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const tmp = `${lockFile}.${process.pid}.${token}.tmp`;
-    try {
-      // Write the owner record FIRST, then publish it atomically with link().
-      // openSync('wx') then writeSync leaves a window where the file exists but
-      // is EMPTY, and a second starter reading that empty file called it corrupt,
-      // reclaimed it, and both ran. link() makes the name appear only once the
-      // content is already there, and fails EEXIST if anyone holds it.
-      fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, token, at: new Date().toISOString() }));
-      fs.linkSync(tmp, lockFile);
-      fs.unlinkSync(tmp);
-      return {
-        ok: true,
-        release: () => {
-          // Ownership-checked: a blind unlink could delete a lock another run
-          // legitimately acquired after ours was reclaimed as stale.
-          const h = readHolder(lockFile);
-          if (h && h.token === token) { try { fs.unlinkSync(lockFile); } catch { /* already gone */ } }
-        },
-      };
-    } catch (err) {
-      try { fs.unlinkSync(tmp); } catch { /* nothing to clean */ }
-      if (err.code !== 'EEXIST') throw err;
-
-      const holder = readHolder(lockFile);
-      let ageMs = 0;
-      try { ageMs = Date.now() - fs.statSync(lockFile).mtimeMs; } catch { ageMs = 0; }
-
-      if (!holder) {
-        // Unreadable: a starter mid-acquire (live) until the grace passes.
-        if (ageMs < LOCK_GRACE_MS) return { ok: false, holder: null, reason: 'another gate is starting' };
-      } else if (pidAlive(holder.pid) && ageMs < MAX_LOCK_AGE_MS) {
-        return { ok: false, holder, reason: null };
-      }
-
-      if (attempt > 0) return { ok: false, holder, reason: 'could not reclaim a stale lock' };
-      console.log(`gate: reclaiming a stale lock (${holder ? `pid ${holder.pid}` : 'unreadable'}, ${Math.round(ageMs / 1000)}s old).`);
-      try { fs.unlinkSync(lockFile); } catch { /* another starter reclaimed it first */ }
-      // Retry once. Two starters can both reach here and race; the loser's
-      // link() then fails EEXIST against the winner's fresh lock and it gives
-      // up rather than running, which is the safe direction.
-    }
+  if (r.status === 1 && !r.signal) {
+    console.error('');
+    console.error('✗ BLOCKED — another push gate is already running.');
+    console.error('  They share one Neon ci-smoke branch, so running both corrupts each other.');
+    console.error(`  Check: fuser ${lockFile}   (lists the holding PID, if any)`);
+    console.error('  Wait for it to finish, then retry. Emergencies only: git push --no-verify');
   }
-  return { ok: false, holder: null, reason: 'could not acquire the gate lock' };
+  process.exit(r.status === null ? 1 : r.status);
 }
+
+// NOT covered by this lock, deliberately: `npm run test:smoke` runs
+// testdb-smoke.js directly and takes none, and no file lock can cover a second
+// clone or machine (that would need a Neon-side lock).
+
 
 function receiptPath() {
   // --absolute-git-dir resolves correctly inside a linked worktree, where .git
@@ -398,26 +367,9 @@ function runClientGate() {
  * a shared checkout can finish against a different tree than it started on, and
  * banking that would vouch for bytes nothing ever gated.
  */
+// Serialization happens in reexecUnderFlock() before main() dispatches, so by
+// the time anything here runs we already hold the lock for the whole process.
 function runGates(needed, fpBefore) {
-  // Serialize: the money gate resets the shared ci-smoke branch, so a second
-  // run would delete this one's rows mid-suite (see acquireLock).
-  const lock = acquireLock();
-  if (!lock.ok) {
-    const who = lock.holder && lock.holder.pid ? `pid ${lock.holder.pid}, started ${lock.holder.at}` : 'unknown holder';
-    console.error('');
-    console.error(`✗ BLOCKED — another push gate is already running (${who}).`);
-    console.error('  They share one Neon ci-smoke branch, so running both corrupts each other.');
-    console.error('  Wait for it to finish, then retry. Emergencies only: git push --no-verify');
-    return false;
-  }
-  try {
-    return runGatesLocked(needed, fpBefore);
-  } finally {
-    lock.release();
-  }
-}
-
-function runGatesLocked(needed, fpBefore) {
   const passed = [];
   if (needed.includes('money')) {
     const r = runMoneyGate();
@@ -487,6 +439,7 @@ function readStdin() {
 }
 
 function main() {
+  reexecUnderFlock(); // does not return unless we hold the gate lock
   const mode = process.argv[2] || 'run';
   const fp = treeFingerprint();
 
