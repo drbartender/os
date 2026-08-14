@@ -69,25 +69,21 @@ so tick items off as you confirm them rather than assuming the list is current.
       pending. Reopen → Process closed both immediately. Worth knowing as an ops move: a
       period stranded in `processing` with nothing pending is closed by Reopen then Process,
       not by SQL.
-- [~] **Service extension, in-app pass — FIXTURE READY ON DEV 2026-08-12, walk not done.**
-      `service_extensions` is EMPTY in prod (the feature has never once run there), so this
-      can only be walked on dev. Seeded via the REAL `settleExtension()` on dev proposal 7
-      (Sean Parent, event 8/30, shift 14, staffer `marcus.j@test`): 5.0h -> **6.0h**, shift
-      end 10:00 PM -> **11:00 PM**, extension id 714 `paid` + `finalized_at` stamped.
-      FIVE surfaces still to eyeball on `localhost:3000`, each must show 6h / 11:00 PM
-      (staff event details CLOSED 2026-08-13 by the staff event-details walk — it read
-      6h / 11:00 PM correctly): admin BEO (proposal 7), client portal
-      (`/proposal/346bdebd-54c1-4439-832a-eeb68354eed4`), calendar feed, Money Board, events
-      list. Anything still reading 5h / 10:00 PM is a stale-read bug.
-      BONUS ALREADY VERIFIED: calling `settleExtension` directly leaves the documented
-      crash-casualty shape (status `paid`, `finalized_at` NULL) because the post-settle tail
-      lives in the webhook handler. Rather than paper over it, the **heal sweep** was left to
-      fix it and did — `healUnfinalizedExtensions` stamped `finalized_at`, sent the staff
-      greenlight, and alerted admins. That heal path had never run in prod either. Note its
-      deliberate `updated_at < NOW() - INTERVAL '2 minutes'` grace, so a fresh settle is not
-      healed out from under its own tail. Alert recipients checked: all admin/manager roles,
-      staffer got the greenlight not the admin alert. No leak.
-      CLEANUP OWED: dev extension 714 and proposal 7's bumped hours are still in place.
+- [x] **Service extension, in-app pass — PASSED 2026-08-13/14 on dev** (fixture: Sean
+      Parent, Aug 30, 5h -> 6h, end 10 -> 11 PM, settled via the real `settleExtension()`
+      then finalized by the heal sweep — which had also never run and verified itself in
+      the process; see git history of this entry for the full fixture story).
+      All six surfaces read the extension correctly: staff event details (walk, 8/13),
+      admin event page/BEO + Money Board render + events list (Dallas, "admin looks good"),
+      calendar feed (verified by curl: DTEND 23:00 America/Chicago, SEQUENCE advanced), and
+      the client view — where the correct 5:00 PM – 11:00 PM range is itself the PROOF,
+      because `ProposalHeader.js:40` computes the end time from `event_duration_hours`; a
+      stale read would have shown 10:00 PM. No stale read anywhere.
+      NOTE, not a defect: the client page shows duration as the time range, never as an
+      explicit "N hours" label. Dallas noticed; adding "(6 hours)" to the header is a
+      one-liner awaiting his call on the copy.
+      CLEANUP still owed: dev extension 714 + proposal 7's bumped hours (now safe to revert
+      any time, or keep as a standing extension fixture).
 - [x] **Duty pay — MONEY VERIFIED 2026-08-12.** All six production duty lines sit at exactly
       the specced flat amounts: `bar_rental` 3 x $20, `hosted_supplies` 2 x $50 (the flat-$50
       hosted decision of 2026-08-07 is live and correct), `menu_print` 1 x $5. The
