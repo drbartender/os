@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import Icon from './Icon';
 import api from '../../utils/api';
 import useDebounce from '../../hooks/useDebounce';
+import { useAuth } from '../../context/AuthContext';
 
 // Result groups, in display order. `key` matches the endpoint response;
 // `type` matches each result's `type` field and keys into PATH_BY_TYPE.
@@ -32,6 +33,7 @@ function firstRecord(results) {
 
 export default function CommandPalette({ open, onClose }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -145,7 +147,7 @@ export default function CommandPalette({ open, onClose }) {
       { label: 'Staff',       icon: 'userplus',  onClick: go('/staffing') },
       { label: 'Hiring',      icon: 'pen',       onClick: go('/hiring') },
       { label: 'Payouts',     icon: 'dollar',    onClick: go('/dashboard?tab=payouts') },
-      { label: 'Marketing',   icon: 'mail',      onClick: go('/marketing') },
+      { label: 'Marketing',   icon: 'mail',      onClick: go('/marketing'), adminOnly: true },
       { label: 'Email leads', icon: 'mail',      onClick: go('/email-marketing') },
       { label: 'Potions',     icon: 'flask',     onClick: go('/potions') },
       { label: 'Lab Notes',   icon: 'pen',       onClick: go('/blog') },
@@ -158,7 +160,14 @@ export default function CommandPalette({ open, onClose }) {
   ];
 
   const filteredNav = navGroups
-    .map(g => ({ ...g, items: g.items.filter(it => !q || it.label.toLowerCase().includes(q.toLowerCase())) }))
+    .map(g => ({
+      ...g,
+      items: g.items.filter(it =>
+        // Mirror the Sidebar's role gate: a manager picking Marketing here is
+        // bounced home by adminStrict, so don't offer it.
+        (!it.adminOnly || user?.role === 'admin')
+        && (!q || it.label.toLowerCase().includes(q.toLowerCase()))),
+    }))
     .filter(g => g.items.length);
 
   const recordGroups = results

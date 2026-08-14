@@ -86,7 +86,8 @@ export default function PantryParsTab() {
       await api.put(`/potions/pars/${row.id}`, patch);
     } catch (err) {
       setPars(prev);
-      toast.error(err.response?.data?.fieldErrors ? Object.values(err.response.data.fieldErrors)[0] : 'Save failed.');
+      // api.js rejects with a flat {message, fieldErrors} — there is no .response
+      toast.error(err?.fieldErrors ? Object.values(err.fieldErrors)[0] : (err?.message || 'Save failed.'));
     }
   };
 
@@ -96,7 +97,7 @@ export default function PantryParsTab() {
       await api.delete(`/potions/pars/${row.id}`);
       setPars((p) => p.filter((r) => r.id !== row.id));
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Could not remove item.');
+      toast.error(err?.message || 'Could not remove item.');
     }
   };
 
@@ -132,8 +133,8 @@ export default function PantryParsTab() {
       setAdding(null);
       setAddForm({ item: '', size: '', qty_per_100: 1, role: 'mixer' });
     } catch (err) {
-      const fe = err.response?.data?.fieldErrors;
-      toast.error(fe ? Object.values(fe)[0] : (err.response?.data?.error || 'Could not add item.'));
+      const fe = err?.fieldErrors;
+      toast.error(fe ? Object.values(fe)[0] : (err?.message || 'Could not add item.'));
     }
   };
 

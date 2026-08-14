@@ -100,7 +100,13 @@ export default function EnhancementLab() {
       }
     };
     window.addEventListener('pagehide', flush);
-    return () => window.removeEventListener('pagehide', flush);
+    // Also flush on SPA unmount (route change): clears the debounce timer so no
+    // stray PUT fires after unmount, and the keepalive fetch saves the pending
+    // edit without touching state. No-op when nothing is pending.
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      flush();
+    };
   }, [token]);
 
   const priceOf = useMemo(() => {

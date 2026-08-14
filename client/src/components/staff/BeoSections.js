@@ -215,8 +215,9 @@ export function EquipmentCard({ equipment, supplyRun, barRequired }) {
         <div className="sp-card-title">Equipment &amp; supplies</div>
       </div>
       {/* Derived from the booking (proposals.num_bars), not from the hand-set
-          equipment list — the same fact that pays the bar_rental duty. Shifts
-          used to show nothing here while paying the duty (fix list 2026-08-13). */}
+          equipment list — the same fact that pays the bar duty (bar_rental on
+          BYOB, hosted_supplies on hosted; see dutyLines.js). Shifts used to
+          show nothing here while paying the duty (fix list 2026-08-13). */}
       {barRequired && (
         <div
           className="sp-row"
@@ -225,7 +226,9 @@ export function EquipmentCard({ equipment, supplyRun, barRequired }) {
           Portable bar — DRB bar pickup at the Pilsen storage unit, or bring your own
         </div>
       )}
-      {list.map((item, i) => (
+      {/* When the derived bar row renders, drop a hand-set portable_bar token
+          so the card never shows the bar twice. */}
+      {list.filter((item) => !(barRequired && item === 'portable_bar')).map((item, i) => (
         <div
           key={`${item}-${i}`}
           className="sp-row"
