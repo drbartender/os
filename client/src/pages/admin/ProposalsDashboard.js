@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { getEventTypeLabel, EVENT_TYPES } from '../../utils/eventTypes';
@@ -153,10 +153,18 @@ export default function ProposalsDashboard() {
       .catch(() => { /* leave counts at zero — graceful degradation */ });
   }, [sourceFilter]);
 
+  // The latest query owns the screen. Responses are not guaranteed to resolve
+  // in request order: a slow page-2 response landing after a fast new-filter
+  // response would otherwise overwrite the newer list (and its total) with the
+  // previous query's rows, under controls that say otherwise (push-review
+  // 2026-08-13, codex). Every state write below checks it still owns the slot.
+  const activeQuery = useRef(null);
   const fetchProposals = useCallback(async () => {
+    activeQuery.current = queryString;
     setLoading(true);
     try {
       const list = await api.get(`/proposals?${queryString}`);
+      if (activeQuery.current !== queryString) return; // superseded mid-flight
       const rows = list.data || [];
       setProposals(rows);
       // X-Total-Count is the unpaginated total for this filtered set. Fall back to
@@ -164,10 +172,12 @@ export default function ProposalsDashboard() {
       const headerTotal = Number(list.headers?.['x-total-count']);
       setTotal(Number.isFinite(headerTotal) ? headerTotal : rows.length);
     } catch (err) {
+      if (activeQuery.current !== queryString) return; // superseded mid-flight
       console.error('Failed to fetch proposals:', err);
       toast.error('Failed to load proposals. Try refreshing.');
     } finally {
-      setLoading(false);
+      // A superseded call must not clear the newer call's loading state.
+      if (activeQuery.current === queryString) setLoading(false);
     }
   }, [toast, queryString]);
 
