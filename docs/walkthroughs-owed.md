@@ -436,14 +436,19 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
   fix list; /change-requests is the cleanest single proof case; check House Lights
   specifically.
 
-- [ ] **Mobile admin shell + PWA (lanes ma-a/ma-b, merged 2026-08-14, unpushed).** On the
-  Pixel after the push: install from More > Install app (or Chrome's banner), confirm the
-  DrB OS icon + standalone launch, tab nav + badges, Desktop-view toggle round trip,
-  airplane-mode reopen (the app boots from cache; NOTE it lands on Login until lane
-  ma-d-auth fixes AuthContext's clear-token-on-transport-failure, the known spec
-  section 8 defect, so the full offline resume walk waits for ma-d), sign out wipes
-  it. Dev-verified via the lane browser passes; the phone in the hand is the point
-  of the whole project.
+- [ ] **Mobile admin shell + PWA (lanes ma-a/ma-b) — NOW UNBLOCKED, PUSHED 2026-08-14.**
+  Both merges (`0bf3eb30` ma-a-shell, `30405f97` ma-b-pwa) are on `origin/main` as of the
+  8/14 evening push, so this is live and the walk no longer waits on anything. Give the
+  deploy a few minutes, then do it on the Pixel:
+  install from More > Install app (or Chrome's banner), confirm the DrB OS icon +
+  standalone launch, tab nav + badges, Desktop-view toggle round trip, airplane-mode
+  reopen, sign out wipes it.
+  **DO NOT REPORT THE AIRPLANE-MODE LOGIN AS A BUG.** The app boots from cache but lands
+  on Login, because `AuthContext` clears the token on transport failure — the known spec
+  §8 defect that lane ma-d-auth exists to fix. Confirm it boots from cache at all; the
+  full offline-resume walk waits for ma-d. Everything else on that list is fair game.
+  Dev-verified via the lane browser passes; the phone in the hand is the point of the
+  whole project.
 
 (Tier now populated; previously empty as of the 2026-08-13 evening push — both former occupants shipped and moved to
 Tier 3b. Next expected occupant: marketing phase 3 (mkt-h, Overview + Sent) once its plan
