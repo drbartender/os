@@ -312,9 +312,34 @@ so tick items off as you confirm them rather than assuming the list is current.
 
 ## Tier 3 — new in the 2026-08-11 push, never seen by anyone
 
-- [ ] **Voicemail listen link.** Miss a call to the 1922, confirm the alert SMS arrives with
-      a working link, and confirm the audio plays on a phone. Also confirm
-      `VM_LISTEN_LINK_ENABLED=false` kills BOTH the route and the link line in the SMS.
+- [ ] **Voicemail listen link — SCRIPTED 2026-08-14, and the prose below was wrong twice.**
+      CORRECTION 1, the headline: this said "confirm the alert SMS arrives with a working
+      link" as though links had been arriving. **No listen link has ever been sent, once.**
+      `voicemail_delivery` holds exactly ONE primary-line row ever (2026-08-11T02:49:25Z),
+      and the lane that added the link (`56d0fcd1`) committed about five hours AFTER it; the
+      real sent body in the Twilio log has no link line. So this is "produce the FIRST alert
+      SMS that carries a link", not a re-check.
+      CORRECTION 2: the two-sided kill switch cannot be done in one pass. The route half is
+      instant, but the SMS half needs a whole extra missed call while the var is false,
+      because the alert body is only built at delivery time (`voicemail.js:290-293`) and
+      nothing replays it. Each env flip is also a Render redeploy.
+      FREE HALF, no phone call needed: the primary line never deletes its recordings, and
+      `listen_token` was added `DEFAULT gen_random_uuid()`, which backfilled a working token
+      onto the pre-feature 8/11 row. The prod route was confirmed live on 8/14 (HTTP 200,
+      `audio/mpeg`, 8777 bytes, and a `Range: bytes=0-1` probe returning 206, so the iOS
+      media path works). Steps 1, 2, 7 and 9 of the script therefore prove the route and its
+      kill switch in about five minutes; only the SMS half costs a real call.
+      TRAPS THAT WILL READ AS BUGS: a recording under 2 seconds is silently discarded
+      (`voice.js:646-651` writes status `empty`, deletes it, sends nothing) so speak 5+
+      seconds; the alert never appears in the admin Messages page (`skipLog: true`, by
+      design); and if Google Voice's own voicemail answers the forwarded leg first you get
+      no greeting, no recording and no SMS, which is exactly what `VM_PRIMARY_RING_SEC=18`
+      exists to outrun — the tell is hearing the GV greeting instead of the Dallas one.
+      PASS = tapped a real alert's link and heard the audio; then with
+      `VM_LISTEN_LINK_ENABLED=false` that URL 404s AND a fresh miss produces a two-line
+      alert with no URL; then restored and the URL plays again. All three.
+      Link expiry is 30 days from `created_at` enforced in the route's own SQL, so the 8/11
+      row's shortcut token dies 2026-09-10.
 - [ ] **Tip sign download.** Download a sign as jpg, png, and pdf, and the two-sided card as
       pdf. Confirm a bartender with no Stripe link is not offered Card.
 - [ ] **Staff recipes.** Open a spec at the bar and confirm real ingredients render, not

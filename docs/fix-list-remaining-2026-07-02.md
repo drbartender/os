@@ -3528,3 +3528,28 @@ code change is a money-path lane and needs the full fleet:
    comment. Then the per-suite stubs become belt-and-braces instead of the only belt.
 
 `stripeClient.js` is a money path: full fleet plus the cross-LLM second opinion.
+
+## Two small voice-stack items found while scripting the voicemail walk (2026-08-14)
+
+Neither is urgent; both were found by reading the live Twilio config and probing
+the prod route rather than by trusting the docs.
+
+**1. The 888's voiceUrl still points at the dead CheckCherry webhook.**
+Verified in the Twilio console on 2026-08-14: `+18882314320` is voice-routed to
+the old CheckCherry endpoint. CheckCherry is retired, so this is harmless in
+practice because nobody calls the 888 (its job is SMS, which correctly points at
+`/api/sms/inbound`). But it is a live number pointing at a dead third party, which
+is the kind of thing that is embarrassing precisely when someone finally does dial
+it. Point it at a hangup or at the primary handler.
+
+**2. A code comment overstates the 404 uniformity in the listen route.**
+`server/routes/voicemailListen.js:78-79` says every 404 is byte-identical so a
+prober cannot distinguish them. That holds among the `notFound()` cases, but a
+NON-UUID path segment is rejected earlier by `requireUuidToken` and returns JSON:
+a live GET of `/api/voice/vm/notauuid` returns
+`{"error":"Not found","code":"NOT_FOUND"}`, not the plain-text `Not found`.
+
+Nothing leaks either way — neither response reveals whether a given token exists,
+which is the property that actually matters — so this is a comment accuracy fix,
+not a security fix. Worth correcting because the next person to touch that route
+will trust the comment over the code.
