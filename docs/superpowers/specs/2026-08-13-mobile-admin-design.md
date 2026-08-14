@@ -48,7 +48,7 @@ Per the settled 2026-08-04 workflow: these are brand-new surfaces, so each goes 
 
 - Card list, not a table. Same upcoming/past tabs, URL-backed as today.
 - **Date-ordered, period.** Upcoming opens on today, next event first. No status filter, no sort controls on the phone; that apparatus is desk work and stays desktop.
-- Card = three lines, one big tap target: client + event name; date and time; staffing chip (the existing colored chip). "Am I covered Saturday" is the one non-date signal that earns a place on the card. No balance, no guests, no location on cards.
+- Card layout (superseded 2026-08-14 by Dallas's design-session decisions, which win over the earlier three-line rule): a left date rail (DOW / day / month, TODAY in accent), then client + event type, guest count, time · venue meta, a color-coded staffing fraction (filled/slots: ok when full, warn partial, danger empty; jewel tones on House Lights per the contrast audit), a pending-request chip when a cover request needs approval, and Bar / Supplies tags. Still no balance on event cards. Reference: `Phone Admin Shell.dc.html` in design project 8d8da3a4-97b1-4aa4-8999-0fec9f2a5f99.
 - Tap opens detail.
 
 ### Detail (`/events/:id`, phone)
@@ -139,7 +139,7 @@ The one place phase 1 touches auth. Gets max-effort treatment and the 5-agent pr
 | Target | Android Chrome (Pixel); iOS = staff portal only, out of scope |
 | Surfaces | Phone-first components, route-level fork at 700px; not CSS retrofits |
 | Escape hatch | Per-screen persisted Desktop-view toggle; "no dead ends" |
-| Events list | Date-ordered only; staffing chip is the sole non-date signal; no status/filter/sort apparatus |
+| Events list | Date-ordered only; no status/filter/sort apparatus; card carries the design-session layout (date rail, guests, venue, staffing fraction, request chip, tags), no balance |
 | Proposals list | Same, plus pipeline-stage chip |
 | Free text | Android dictation; no snippet system in phase 1 |
 | Money edits | Reuse `proposalEditor/` form/patch/reprice logic; overrides and custom lines stay Desktop-view |
