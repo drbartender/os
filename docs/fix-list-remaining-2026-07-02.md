@@ -2969,3 +2969,39 @@ leaves the table with NO constraint at all, committed, silently accepting
 anything. There are ~20 bare DROP-then-ADD pairs in the file. A proper fix keys
 on the shape, not on individual constraints: wrap every re-add in the atomic form
 AND make paired definitions identical.
+
+# Push-gate receipt system SHIPPED 2026-08-14 (pushed in 316a43b3) — residuals
+
+The push-hang root cause is FIXED: git push opens its SSH connection before the
+pre-push hook runs, and the ~8-minute hook (money smoke went live ~8/11) left it
+idle until GitHub closed it. Now `npm run gate` runs the gates once and banks a
+receipt keyed on HEAD + the sha256 content of every dirty file, and the hook
+skips in under a second when the receipt covers the exact tree and the pushed
+sha IS HEAD. First fully self-service push landed 316a43b3 the same day. Five
+review rounds (fleet + codex + gemini) broke four drafts before this one; the
+history is in the commit messages of 74a95bfd..db6f7b10.
+
+**Known cosmetics, both fail closed, next-batch material:**
+- The run-mode summary can print "gate PASSED, skips the hook" right after "no
+  receipt was written" when the tree moved mid-run: the summary re-reads the
+  STALE receipt from disk and its gates cover `needed`, so the shortfall check
+  passes. The hook itself correctly refuses that stale receipt, so this is
+  message-only. Fix: compare the banked receipt's fingerprint to fpAfter before
+  claiming a pass.
+- flock exit-code conflation: a gate that legitimately FAILS with exit 1 also
+  prints "another push gate is already running" after its real diagnostic,
+  because flock -n uses exit 1 for lock-held. Exit code and blocking behavior
+  are right either way. Fix: `flock -n -E 99` and branch on 99.
+
+**Acknowledged non-coverage (documented in push-gate.js, deliberate):**
+- `npm run test:smoke` calls testdb-smoke.js directly and takes NO lock, so a
+  manual smoke run can still collide with a gate run.
+- No file lock can cover a second clone or machine; serializing ci-smoke across
+  machines would need a Neon-side lock.
+- Gitignored files (.env, client/.env*, ~/.secrets) are outside the receipt
+  fingerprint; the 12h expiry is the only backstop.
+
+**Operational reality:** any commit from ANY window during the ~7-minute gate
+run moves the fingerprint and the receipt is refused (by design; it happened
+twice on 8/14, once from my own edits and once from a spec-doc commit). The
+recovery is just rerunning `npm run gate` on the settled tree.
