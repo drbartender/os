@@ -3591,3 +3591,21 @@ excluded. Staff texts surface as an admin EMAIL instead.
 Cosmetic, but it actively misleads during exactly the walk that checks this path:
 the correct absence of a staff text on that page reads as a missing feature. Drop
 "and staff" from the sentence, or say where staff texts actually go.
+
+## API_URL is unset in Render, so operator links are built on the bare onrender.com host (found 2026-08-14)
+
+Cosmetic and low risk, but easy to fix and slightly embarrassing.
+
+`server/utils/urls.js:13-15` falls back to `RENDER_EXTERNAL_URL` when `API_URL` is
+unset. `API_URL` is not declared in `render.yaml`, and the voicemail alert SMS
+delivered on 2026-08-14 confirms the fallback is live: the listen link in it was
+built on the `*.onrender.com` host, not `https://api.drbartender.com`.
+
+Both hosts work, and this particular link only ever goes to the operator, so
+nothing is broken. The reasons to set it anyway: an unfamiliar hosting domain
+arriving by SMS is exactly what a phishing link looks like, so it costs a beat of
+doubt every time; and any future server-rendered link that IS client-facing
+(unsubscribe already routes through this same helper) would inherit the same bare
+host.
+
+Fix: set `API_URL=https://api.drbartender.com` in Render. No code change.

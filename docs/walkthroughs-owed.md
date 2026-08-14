@@ -312,12 +312,33 @@ so tick items off as you confirm them rather than assuming the list is current.
 
 ## Tier 3 — new in the 2026-08-11 push, never seen by anyone
 
-- [~] **Voicemail listen link — ROUTE HALF PASSED 2026-08-14 (Dallas: "it worked").** He
-      opened the backfilled listen link on his phone and the audio played, and a tampered
-      token 404'd. STILL OPEN: the SMS half (a real missed call producing the FIRST alert
-      that carries a link) and the two-sided kill switch, which needs two Render redeploys
-      plus a second missed call. Everything below still applies to those.
-      SCRIPTED 2026-08-14, and the original prose was wrong twice.
+- [x] **Voicemail listen link — PASSED 2026-08-14, BOTH HALVES (Dallas: "it worked").**
+      Route half: he opened the backfilled 8/11 token on his phone, the audio played, and a
+      tampered token 404'd.
+      SMS half, and this is the milestone: he made a real missed call to the 1922 and **the
+      first listen link this system has ever sent went out and was tapped.** Prod row
+      `CA257c2c7f2fa58a4908c05a9fea932d9a`, line `primary`, 16 seconds recorded, status
+      `delivered`, created 2026-08-14T22:51:49Z and the alert delivered 31 seconds later at
+      22:52:20Z. Before today `voicemail_delivery` held exactly one primary row, from 8/11,
+      whose alert predated the link lane by about five hours and carried no link line.
+      KILL SWITCH: NOT walked, and **deliberately not owed.** Both halves are already pinned
+      by direct unit tests — `voicemail.test.js:608` ("listenLinkEnabled defaults ON and only
+      the literal false disables it") and `:638` ("the kill switch drops the link line, not
+      just the route") — and the route and the SMS builder read the same single
+      `listenLinkEnabled()`, so there is no drift path between them. Walking it manually
+      costs TWO Render redeploys of the single web service, which takes every Twilio voice
+      and SMS webhook and every Stripe webhook down across both restarts, to re-prove
+      something already covered. Not worth the blast radius. If it is ever walked anyway,
+      note a cold start returns 502/503 or a Cloudflare page, NOT the plain-text `Not found`,
+      so testing inside the deploy window produces a false pass.
+      FOUND: `API_URL` is unset in Render, so the link in the alert is built on the
+      `RENDER_EXTERNAL_URL` `*.onrender.com` host rather than `api.drbartender.com`
+      (`urls.js:13-15`). It works, and the link only ever goes to the operator, but it is
+      worth setting so the ops link carries the real domain — fix list, 2026-08-14.
+      The original prose was wrong twice, kept here because it explains the above: it read as
+      though links had been arriving and needed an eyeball (none had), and it implied the
+      kill switch could be proven in one pass (the SMS half needs its own extra missed call,
+      because the alert body is only built at delivery time and nothing replays it).
       CORRECTION 1, the headline: this said "confirm the alert SMS arrives with a working
       link" as though links had been arriving. **No listen link has ever been sent, once.**
       `voicemail_delivery` holds exactly ONE primary-line row ever (2026-08-11T02:49:25Z),
@@ -353,16 +374,11 @@ so tick items off as you confirm them rather than assuming the list is current.
       "Hi Aubrey & Dominic,". The couples case was fixed at the push gate and has unit
       coverage, but no rendered email has been read by a human.
 - [x] **Guest count in the event header — PASSED 2026-08-13** ("yes").
-- [ ] **Inbound SMS alerts naming the staffer — SCRIPTED 2026-08-14, and it may already be
-      closeable from the inbox with zero texts sent.** Shipped `5f3671fa` (2026-08-11), an
-      ancestor of `origin/main`, so it is live.
-      THE SHORTCUT: an inbound "test" from the 312 (+13125889401) already took exactly this
-      path on 2026-08-13 21:13 CT (`sms_messages` id 1501, `client_id` NULL, processed).
-      The naming email should be sitting in admin@drbartender.com already. Reading it ticks
-      this item. PASS = the body names the sender as **"Dallas (user 1)"**, a real name plus
-      user id, rather than "A staff member" or a bare "user 1".
-      To reproduce instead: text `hello` from the 312 to the 888 (+18882314320). Expect the
-      automated reply, then an email subject "Staff texted Dr. Bartender".
+- [x] **Inbound SMS alerts naming the staffer — PASSED 2026-08-14.** Dallas found the alert
+      email from the 2026-08-13 21:13 CT inbound and confirmed the body reads
+      **"Dallas (user 1)"** — a real name plus the user id, which is exactly what the fix
+      `5f3671fa` (2026-08-11) set out to replace "A staff member" with. Closed from the
+      inbox with zero texts sent.
       TRAPS: the alert is EMAIL only (category `routine_admin`, no `smsBody`) so do not wait
       for a text; and the texts correctly never appear on the admin Messages page, because
       `GET /api/sms/conversations` selects FROM `clients` and staff rows carry a null
