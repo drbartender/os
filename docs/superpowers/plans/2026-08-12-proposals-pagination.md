@@ -34,6 +34,10 @@ lanes:
 
 **One lane, two tasks, sequential** (1 → 2): task 2's control renders state that task 1 creates.
 
+**Commit unit:** both tasks commit inside the lane as checkpoints. The squash merge is the unit that reaches `main`, so neither commit lands on `main` on its own and CLAUDE.md's one-commit-per-logical-feature rule is satisfied by the squash, not by the checkpoints.
+
+**Review checkpoint:** `code-review` fires once, after Task 2 Step 6, against the full lane diff. Task 1 alone is behavior-inert (it changes what the request carries but ships no control), so reviewing it in isolation buys nothing.
+
 **Review level: light look, not the full fleet.** Verified 2026-08-12 with
 `node scripts/sensitive-match.js client/src/pages/admin/ProposalsDashboard.js`,
 which exits 1 (no match; `server/utils/clientNotices.js` exits 0 as a control).
@@ -48,7 +52,8 @@ sweep still applies as normal.
 - Modify: `client/src/pages/admin/ProposalsDashboard.js`
 
 **Interfaces:**
-- Produces, for Task 2: `PAGE_SIZE` (module constant, `50`), `page` (derived number, >= 1), `pageCount` (derived number, >= 1), and `setListState` used directly for page writes.
+- Produces, for Task 2: `PAGE_SIZE` (module constant, `50`), `page` (derived number, >= 1), and `setListState`, used directly for page writes.
+- **`pageCount` is NOT created here.** Task 2 Step 1 declares it. Do not add it in this task, or Task 2 redeclares the same `const` and the build fails.
 
 - [ ] **Step 1: Add `page` to the URL defaults and a `PAGE_SIZE` constant**
 
@@ -102,7 +107,7 @@ Leave the `useUrlListState` call at `:66` alone.
 
 - [ ] **Step 4: Reset the page on sort**
 
-Sort is ephemeral state rather than URL state, so it needs the reset explicitly. Replace `onSort` at `:77`:
+Sort is ephemeral state rather than URL state, so it needs the reset explicitly. Replace the `onSort` callback, which **begins at `:78`**. Do not touch `:77`, which is `const [sort, setSort] = useState(null);`; a literal replace starting there deletes the sort state.
 
 ```js
   const onSort = useCallback((key) => {
@@ -135,20 +140,26 @@ Then add `page` to the memo's dependency array (`PAGE_SIZE` is a module constant
 
 - [ ] **Step 6: Verify by hand before there is a control**
 
-Start the dev server if it is not already running, sign in as admin, and open `/proposals`.
+Start the dev server with `npm run dev` from the repo root if it is not already running. Client edits hot-reload under CRA, so the project's usual "restart the managed dev server after an edit" rule does not apply to this change; it applies to server edits only. Sign in as admin and open `/proposals`.
 
 1. Note the first client name in the table.
-2. Edit the URL to `/proposals?page=2` and press Enter.
-3. Expected: a different set of rows, and the footer still reads `219 proposals · showing first 50` (the old footer, unchanged until Task 2).
-4. Click the Draft tab. Expected: the URL loses `?page=2` and the table shows Draft rows, not an empty table.
-5. Back to `/proposals?page=2`, then click the Total column header. Expected: `?page=2` disappears from the URL and the table re-sorts from the top.
+2. Open devtools Network, reload, and find the `/api/proposals?...` request. Expected: the query string contains `limit=50`, and the response carries 50 rows. This is the only check that the Global Constraint on explicit `limit` actually holds; without it, dropping Step 5's `p.set('limit', ...)` would pass every other step in this plan, because the server's default is also 50.
+3. Edit the URL to `/proposals?page=2` and press Enter.
+4. Expected: a different set of rows, and the footer still reads `219 proposals · showing first 50` (the old footer, unchanged until Task 2).
+5. Click the Draft tab. Expected: the URL loses `?page=2` and the table shows Draft rows, not an empty table.
+6. Back to `/proposals?page=2`, then click the Total column header. Expected: `?page=2` disappears from the URL and the table re-sorts from the top.
 
-If step 4 or 5 leaves `?page=2` in the URL, a call site in Step 3 was missed.
+If step 5 or 6 leaves `?page=2` in the URL, a call site in Step 3 was missed.
 
-- [ ] **Step 7: Lint gate**
+- [ ] **Step 7: Lint gate and hook suite**
 
 Run: `cd client && CI=true npx react-scripts build`
 Expected: `Compiled successfully.` Any ESLint warning is CI-fatal and must be fixed here, most likely an exhaustive-deps warning on `onSort` or `queryString`.
+
+Then run the hook suite, because Step 1 is what makes `useUrlListState`'s default-omission behavior load-bearing:
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/hooks/useUrlListState.test.js`
+Expected: PASS.
 
 - [ ] **Step 8: Commit**
 
@@ -165,7 +176,9 @@ git commit -m "feat(proposals): page number in URL state, reset on every filter 
 - Modify: `client/src/pages/admin/ProposalsDashboard.js`
 
 **Interfaces:**
-- Consumes from Task 1: `PAGE_SIZE`, `page`, `setListState`, plus the existing `total` state (`:63`) and `loading` (`:64`).
+- Consumes from Task 1: `PAGE_SIZE`, `page`, `setListState`, plus the existing `total` state (`:63`) and `loading` (`:65`).
+
+> **Line anchors in this task are pre-Task-1 numbers.** Task 1 inserts roughly a dozen lines above every one of them, so by the time this task runs the footer block sits near `:487` rather than `:475`. Match on the surrounding code, never on the number.
 
 - [ ] **Step 1: Derive `pageCount`**
 
@@ -179,7 +192,7 @@ Add next to the `page` derivation from Task 1:
 
 - [ ] **Step 2: Add the stale-page guard**
 
-Place it after the `useEffect(() => { fetchProposals(); }, [fetchProposals]);` line at `:148`.
+Place it after the `useEffect(() => { fetchProposals(); }, [fetchProposals]);` line (pre-Task-1 `:149`).
 
 ```js
   // Archive a proposal while sitting on the last page, refresh, and the server
@@ -196,7 +209,7 @@ Place it after the `useEffect(() => { fetchProposals(); }, [fetchProposals]);` l
 
 - [ ] **Step 3: Replace the footer**
 
-Replace the whole `{!loading && (...)}` footer block at `:475-480`:
+Replace the whole `{!loading && (...)}` footer block (pre-Task-1 `:475-480`, and see the anchor note above):
 
 ```jsx
       {!loading && (
@@ -239,9 +252,9 @@ The label is a page counter, not a `51-100 of 219` row range, and that is delibe
 Run: `cd client && CI=true npx react-scripts build`
 Expected: `Compiled successfully.`
 
-- [ ] **Step 5: Run the hook suite**
+- [ ] **Step 5: Re-run the hook suite**
 
-This change makes `useUrlListState`'s default-omission behavior load-bearing for keeping the URL clean on page 1, so run its suite:
+Same suite as Task 1 Step 7, re-run because this task adds two more `setListState` writers (the Prev/Next buttons and the stale-page guard):
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/hooks/useUrlListState.test.js`
 Expected: PASS.
@@ -252,11 +265,15 @@ On `/proposals`, signed in as admin:
 
 1. Active tab: expect `Page 1 of 5 · 219 proposals · Click a row to open`, Prev disabled, Next enabled. (The exact counts will differ if prod data has moved; what matters is that `pageCount` equals `ceil(total / 50)`.)
 2. Click Next to page 2. Expect the URL to gain `?page=2`, the rows to change, and Prev to enable.
-3. Page to the last page. Expect Next to disable and the row count to be the remainder, not 50.
+3. Page to the last page. Expect Next to disable and the row count to be fewer than 50. Do not expect an exact remainder: the option-group rollup can collapse a few of the fetched rows away.
 4. From page 3, click a proposal row to open it, then press Back. Expect to return to **page 3**, not page 1. This is the Back that matters and the reason page lives in the URL. Note that Back does NOT step backwards through pages: `useUrlListState` writes with `replace: true`, so paging creates no history entries, exactly like flipping a filter today.
 5. From page 3, click the Draft tab. Expect page 1 of Draft with rows visible.
-6. Pick a tab with fewer than 50 rows. Expect no Prev/Next at all and a footer identical to today's.
-7. Visit `/proposals?page=99` directly. Expect it to snap back to the last real page rather than showing an empty table.
+6. Pick a tab with fewer than 50 rows. Expect no Prev/Next at all and a footer identical to today's (`40 proposals · Click a row to open`).
+7. From page 2, click the Total column header. Expect the URL to drop `?page=2`, the table to re-sort from the top, and Prev to be disabled again. (Task 1 Step 6 walked this before the control existed; this confirms it with the control.)
+8. Visit `/proposals?page=99` directly. Expect a briefly empty table, then a snap back to the last real page once the fetch resolves and the guard fires. A momentary empty state is correct, a persistent one is not.
+9. Apply a filter that matches nothing (for example the Draft tab plus an event type no draft uses). Expect an empty table, the pager absent, and **no URL churn**: the guard's `total > 0` gate is what keeps a zero-result view from looping, and this is the only step that exercises that branch.
+
+Note on step 2 and 3: the pager lives inside the existing `{!loading && ...}` wrapper, so Prev/Next unmount briefly during each fetch. That flicker is pre-existing footer behavior, not a defect introduced here.
 
 - [ ] **Step 7: Commit**
 
@@ -271,6 +288,11 @@ git commit -m "feat(proposals): Prev/Next pager with stale-page guard"
 
 **Spec coverage.** Page in the URL: Task 1 Steps 1 and 5. Query builder: Task 1 Step 5. Filter reset: Task 1 Steps 2, 3, 4. The control: Task 2 Step 3. Stale-page guard: Task 2 Step 2. Verification: Task 1 Step 7, Task 2 Steps 4, 5, 6. Events/shifts explicitly out of footprint. Option-group straddle accepted, restated as a Global Constraint so no implementer "fixes" it.
 
-**One deliberate addition beyond the spec.** The spec did not say to send `limit` explicitly; it assumed the server default of 50. Sending it makes the client's `pageCount` arithmetic and the server's actual page size agree by construction instead of by coincidence. One line, no behavior change today.
+**Two deliberate deviations from the spec**, both disclosed here rather than smuggled:
+
+1. The spec did not say to send `limit` explicitly; it assumed the server default of 50. Sending it makes the client's `pageCount` arithmetic and the server's actual page size agree by construction instead of by coincidence. One line, no behavior change today. Verified at Task 1 Step 6 item 2.
+2. The spec's stale-page guard triggers on "rows come back empty and page is above 1". This plan triggers on `total > 0 && page > pageCount` instead. It is strictly more robust: it fires off the authoritative count rather than off an empty render, it cannot be confused by an option-group collapse, and it provably terminates because `pageCount < page` whenever it fires. The spec's version would also work; this one is better, and the difference is behavioral, so it is called out.
+
+**Review-fleet findings folded in (2026-08-12).** Plan fleet returned 0 blockers. Corrected: the `onSort` anchor (`:78`, not `:77`, where `:77` is the sort state declaration and a literal replace would have deleted it), `loading` (`:65`), the fetch effect (`:149`), and Task 2's anchors are now flagged as pre-Task-1. Task 1's Interfaces block no longer claims to produce `pageCount`, which would have caused a duplicate `const`. Added checkpoints for the explicit `limit=50`, the guard's zero-result branch, and the sort reset with the control present. One fleet finding was **rejected**: the claim that the new footer drops `showing first N` on single-page views is wrong, because that clause keys on `proposals.length` (rows fetched), not the collapsed `rows` the table renders, so on any tab under 50 it never fires today either.
 
 **Names used consistently:** `PAGE_SIZE`, `page`, `pageCount`, `setFilters`, `setListState`, `total`, `loading` are spelled the same in both tasks.
