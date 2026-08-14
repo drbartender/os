@@ -214,7 +214,7 @@ so tick items off as you confirm them rather than assuming the list is current.
 - [x] **Guest count in the event header — PASSED 2026-08-13** ("yes").
 - [ ] **Inbound SMS alerts naming the staffer.**
 
-## Tier 3b — fixes shipped 2026-08-13, live in prod, never eyeballed
+## Tier 3b — shipped 2026-08-13, live in prod, never eyeballed
 
 The walkthrough fixes themselves now need the same medicine. Both of the first two shipped
 BROKEN on the first attempt and were corrected blind by a later session (`54fb77cb`,
@@ -250,32 +250,43 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       package compare on the proposal page) the same night as everything else; no record of
       anyone opening it in prod since. One look at a real proposal's compare link. Note the
       compare-and-book spec will eventually replace this surface.
-
-## Tier 6 — queued: will owe a walkthrough the moment it ships
-
-- [ ] **Marketing redesign phase 1.** Seven lanes (mkt-a..g) merged to main, UNPUSHED, as of
-      2026-08-13. When it pushes, the campaign create/send flow owes a full walk — tags,
-      resolver, contacts UI, extract, compliance, send pacing — BEFORE real sends. Listed now
-      so it cannot ship-and-bury like everything else in this file did. (Sep 5 deadline
-      pressure is exactly the condition that buries walkthroughs.)
-
-- [ ] **Proposals list pagination.** Lane `prop-pagination` squash-merged to main as
-      `1dc72df6` on 2026-08-13, UNPUSHED. **Never opened in a browser**, deliberately and
-      explicitly: the walk needed a second dev server and a local admin token, both denied by
-      the permission classifier mid-build, and nothing was routed around. Static gates that
-      DID pass: ESLint clean on the file, `CI=true react-scripts build` on merged main, the
-      `useUrlListState` suite (5/5), and a `code-review` pass that found no critical bugs and
-      proved the stale-page guard terminates. So the code is reviewed, not witnessed.
+- [ ] **Marketing redesign phases 1+2 — LIVE as of the 2026-08-13 evening push (tip
+      `5adeb0b3`).** The campaign create/send flow owes a full walk BEFORE real sends: tags,
+      resolver, contacts UI, extract, compliance, send pacing. Include the three gate-fix
+      surfaces, all corrected blind and never seen: (1) compose resume — save a draft, send
+      to a tiny audience, then simulate the retryable path by leaving `/marketing/compose`
+      and returning; the "Resuming campaign #N" banner and its "Start fresh instead" button
+      must appear after a quota-stopped or partly-failed run, never after a clean one;
+      (2) actionable toasts — select over 500 recipients ("Send at most 500 at a time")
+      and an all-suppressed audience ("Check the held-back panel"), each must show its
+      real message, not "Please fix the errors below"; (3) the Sent tab placeholder must
+      say phase 3. (Sep 5 deadline pressure is exactly the condition that buries
+      walkthroughs — this one gates real sends.)
+- [ ] **Proposals list pagination — LIVE as of the 2026-08-13 evening push (`1dc72df6` +
+      stale-response guard `92efc663`).** **Never opened in a browser**, deliberately:
+      the build-time walk needed a second dev server and a local admin token, both denied
+      by the permission classifier, and nothing was routed around. Static gates that DID
+      pass: ESLint, the Vercel-exact build, the `useUrlListState` suite (5/5), the round-3
+      push fleet, and codex. So the code is reviewed, not witnessed.
       The walk, on `/proposals`: page through Active to the last page and back; from page 3
       flip to the Draft tab and confirm it lands on page 1 with rows (a missed filter writer
       shows up as an empty table); sort by price from page 2 and confirm the same reset;
       confirm a sub-50 tab shows no pager and reads exactly as before; hit `/proposals?page=99`
-      and confirm it snaps back rather than sitting empty; and apply a zero-match filter and
-      confirm no URL churn. Full steps in
+      and confirm it snaps back rather than sitting empty; apply a zero-match filter and
+      confirm no URL churn; and flip between tabs/filters rapidly — the list under the
+      controls must always match the controls (the `92efc663` guard; a mismatch means a
+      stale response won). Full steps in
       `docs/superpowers/plans/2026-08-12-proposals-pagination.md`, Task 2 Step 6.
-      One known, accepted cosmetic edge: an option group whose members straddle a page
-      boundary renders on both pages with a split "N options" badge. That is by design, not
-      a bug to report.
+      One known cosmetic edge, plan-accepted but now logged on the fix list (2026-08-13,
+      round-3 section) for a design call: an option group whose members straddle a page
+      boundary renders on both pages with a split "N options" badge. Worth trying to catch
+      one live during the walk; report what it looks like, not as a bug.
+
+## Tier 6 — queued: will owe a walkthrough the moment it ships
+
+(Empty as of the 2026-08-13 evening push — both former occupants shipped and moved to
+Tier 3b. Next expected occupant: marketing phase 3 (mkt-h, Overview + Sent) once its plan
+is written and built.)
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
