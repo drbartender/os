@@ -2065,8 +2065,18 @@ These are not from the original ledger. They surfaced while verifying its
 - ~~**Two-step DROP COLUMN safety.**~~ **DONE (2026-08-14 audit)** — `notifications_opt_in`
   dropped at `schema.sql:4341` (aebd5562, lane p0-schema-hygiene) with the two-step
   reasoning written out at :4334-4340; no duplicate agreement columns remain in schema.
-- **Settings page direction**: lean two-card (Auto-Assign + Calendar Feed) vs a read-only
-  integrations status board. Not locked.
+- ~~**Settings page direction**: lean two-card (Auto-Assign + Calendar Feed) vs a read-only
+  integrations status board. Not locked.~~ **DEFERRED 2026-08-14 (Dallas: "defer settings").**
+  Not a decision against either shape, just not now. Context banked for whoever reopens it:
+  the two-card layout was never actually a choice, it is the status quo. `SettingsDashboard.js`
+  already renders Calendar Feed (URL + how to subscribe) and Auto-Assign (algorithm weights +
+  geocode backfill), and it works. The only live question is whether anything gets added on
+  top. Recommendation on the table when it reopens: NOT an integrations health board, which
+  goes stale and then lies, and which Stripe/Twilio/Resend's own dashboards plus Sentry
+  already beat on truthfulness. The narrow version that would pay is a config-PRESENCE board:
+  which env vars are actually SET on Render and Vercel, presence only, no values, no health
+  checks. That is the one fact neither Dallas nor Claude can see today, and it is a standing
+  debug tax (see the Env-var debug discipline section of CLAUDE.md, which exists because of it).
 - **Deposit invoice gap.** First-post-cutover bookings skipped `createInvoiceOnSend`; that
   was Ketan's symptom. Whether other early bookings share the shape was never checked.
   Proposal 54 itself is now clean (`completed`, 450/450), so the original repair is
