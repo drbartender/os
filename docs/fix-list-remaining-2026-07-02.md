@@ -3741,3 +3741,36 @@ human-in-the-loop gate, and at nine contacts it would save nothing anyway.
 Separately: `suggestTag` has a second branch that suggests corporate for a company
 domain with NO event history, and it says out loud that it is guessing. Those are a
 stretch list for a wider net, not part of the nine.
+
+### Addendum 2026-08-14 (2): the corporate audience reads 7 of 9, correctly — but its displayed rule hides why
+
+After tagging all nine, the "Past clients · corporate" audience resolved to 7. That
+is correct behaviour. The predicate is three conditions, not two
+(`marketingAudience.js:290-295`):
+
+    HAS_PAID AND LAST_EVENT > '-infinity'::date AND 'corporate' = ANY(tg.tags)
+
+`LAST_EVENT` is the most recent event **already in the past**. Two of the nine have
+paid for corporate work whose event has not happened yet, so they are not past
+clients:
+
+  1740 Brianna Modugno — corporate event 2026-08-24
+  1796 Tyler Anderson  — corporate event 2026-08-30
+
+Both roll into the audience automatically the day after their event, i.e. Aug 25 and
+Aug 31 — **both before the Sep 5 send window closes.** So a send made at the designed
+deadline reaches all nine; a send made tonight reaches seven and misses the two
+freshest corporate relationships on the books. That is an argument for the date, not
+against it.
+
+**The small real defect: the rule string shown in the rail is incomplete.** That
+audience renders as `rule: 'Paid us · tagged Corporate'` while its own `includes`
+array is `['Has paid us', 'Tagged Corporate', 'Event finished']`. The third condition
+is the one that actually decides the count, and it is missing from the line the admin
+reads. Its sibling `past-all` gets this right (`'Paid us · event finished'`). This
+cost real confusion tonight: nine tagged, seven shown, and the displayed rule
+accounted for neither.
+
+Fix: `rule: 'Paid us · tagged Corporate · event finished'`. One string, and it makes
+the count self-explaining. Worth a sweep of the other five audiences for the same
+drift between `rule` and `includes`.
