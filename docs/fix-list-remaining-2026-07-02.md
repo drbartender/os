@@ -1758,6 +1758,11 @@ almost certainly received a mis-upload rather than a signed W-9. Data issue, not
 is a 1099 input, so it wants fixing before tax season rather than during it. Worth a sweep of
 `payment_profiles.w9_filename` for other non-PDF entries at the same time.
 
+**W-9 status (updated 2026-08-14): CLEARED from the active list by Dallas** — he is
+chasing Zul's real W-9 offline. The row is UNCHANGED in prod (still the screenshot, last
+touched March); the standing TRIPWIRE is 1099 season: no 1099 run should proceed while
+`payment_profiles.w9_filename` for user 2 is a .png. Original finding follows.
+
 **VERIFIED GOOD, same walk:** the document preview modal renders correctly in both skins with a
 real W-9 PDF and a real headshot (Dallas, 2026-08-13). Unlike the rich text editor, this surface
 is properly built — every rule scoped under `html[data-app="admin-os"]` and using the adaptive
@@ -2265,9 +2270,10 @@ Do NOT resolve `DRBARTENDER-SERVER-21` as noise (see the 2026-08-12 duty-accrual
   is open. Also note `logger.warn`→Sentry means any recurring expected warn becomes an
   issue — same shape as WILDLIGHT-2's login noise; consider a `logger.expected()` tier if a
   third one appears.
-- **`WILDLIGHT-G` — Anthropic API 400: "credit balance is too low".** The AI-studio generate
-  feature on Wildlight has been DEAD from billing since 2026-08-12. Ops action for Dallas:
-  top up the Anthropic credits (or decide the feature hibernates). No code change.
+- ~~**`WILDLIGHT-G` — Anthropic credits**~~ **CLEARED by Dallas 2026-08-14** (handling the
+  top-up himself; it was ONE handled event when a journal generate was tried on 8/13, the
+  app degraded gracefully). Sentry issue marked RESOLVED as the tripwire: if a generate
+  fails on credits again it reopens as a regression and pages. No code change.
 - **`DRBARTENDER-SERVER-22` — `AggregateError` on `GET /api/admin/thumbtack/pending-first-replies`**
   (new 2026-08-13, 1 event). The box agent's polling call threw. Same pipeline that still
   owes its next-lead proof — check `journalctl --user -u thumbtack-agent` on the box before
