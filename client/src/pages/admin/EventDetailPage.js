@@ -224,7 +224,7 @@ export default function EventDetailPage() {
               </span>
             )}
             {proposal.tip_jar === false && (
-              <span className="lm-hold-badge" title="The client paid to skip the tip jar. Staff must not set one out.">
+              <span className="nojar-badge" title="The client paid to skip the tip jar. Staff must not set one out.">
                 ⚠ No tip jar (client paid to skip it)
               </span>
             )}

@@ -516,6 +516,10 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   cursor: pointer;
 }
 
+/* The shared :focus rule above resets padding with a shorthand, which would
+   run the option text under the chevron; re-assert the chevron clearance. */
+.form-select:focus { padding-right: 2.5rem; }
+
 .form-textarea { resize: vertical; min-height: 100px; }
 
 .form-helper {
@@ -3312,7 +3316,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   font-size: 0.85rem;
   color: var(--deep-brown);
 }
-.staffing-stat strong { color: var(--warm-brown); }
+.staffing-stat strong { color: var(--ink); }
 .assigned-staff-item {
   display: flex;
   align-items: center;
@@ -10003,8 +10007,11 @@ html[data-app="admin-os"] .location-suggest-item.active {
 }
 
 /* Admin proposal detail — over-stated-budget badge (Thumbtack lead): red
-   family, sits beside the orange lm-hold-badge in the proposal header. */
-.budget-over-badge {
+   family, sits beside the orange lm-hold-badge in the proposal header.
+   .nojar-badge shares the red family so "no tip jar" (a hard staff directive)
+   reads differently from the amber last-minute advisory beside it. */
+.budget-over-badge,
+.nojar-badge {
   display: inline-block;
   margin-left: 0.5rem;
   padding: 0.15rem 0.5rem;
@@ -19569,7 +19576,8 @@ html[data-app="admin-os"] .pay-qr-tile {
 .sms-optin-next { margin-bottom: 0; }
 .sms-optin-next a { text-decoration: underline; }
 
-/* ── Service extension (staff request skeleton + admin panel) ── */
+/* ── Service extension (staff request skeleton; the admin panel deliberately
+   renders no skeleton — it returns null on first load) ── */
 .sp-skeleton {
   border-radius: 10px;
   background: var(--sp-bg-2);
