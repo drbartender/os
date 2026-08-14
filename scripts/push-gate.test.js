@@ -83,3 +83,41 @@ test('treeFingerprint is stable across calls and reports HEAD', () => {
   assert.equal(typeof a.dirty, 'boolean');
   assert.equal(a.fingerprint.length, 64);
 });
+
+// ── Which sha is being pushed (git feeds this on the hook's stdin) ──
+// The safety property: "I could not tell" must NEVER read as "nothing to do".
+// Getting these two confused silently disables the entire gate.
+
+const { parsePushedSha } = require('./push-gate');
+const ZERO = '0'.repeat(40);
+const SHA = 'e612a8d430c8ace52cbfde6d12bd92c814018223';
+
+test('reads the local sha from a normal push line', () => {
+  const r = parsePushedSha(`refs/heads/main ${SHA} refs/heads/main ${ZERO}`);
+  assert.deepEqual(r, { kind: 'sha', sha: SHA });
+});
+
+test('reads the pushed sha from the literal-sha refspec form the push model uses', () => {
+  // git push origin <sha>:main — the local ref is the sha itself.
+  const r = parsePushedSha(`${SHA} ${SHA} refs/heads/main 9acd6694bad2e9a31b9e361d4dc8ef1070c0a84d`);
+  assert.deepEqual(r, { kind: 'sha', sha: SHA });
+});
+
+test('a deletion-only push is nothing to gate', () => {
+  const r = parsePushedSha(`(delete) ${ZERO} refs/heads/stale ${SHA}`);
+  assert.equal(r.kind, 'deletes');
+});
+
+test('picks the real sha when a delete and a real push arrive together', () => {
+  const r = parsePushedSha(`(delete) ${ZERO} refs/heads/stale ${SHA}\nrefs/heads/main ${SHA} refs/heads/main ${ZERO}`);
+  assert.deepEqual(r, { kind: 'sha', sha: SHA });
+});
+
+test('EMPTY stdin is unknown, not a free pass', () => {
+  // The caller must fall back to gating HEAD. If this ever returned 'deletes'
+  // the hook would skip every gate on every push and nobody would notice.
+  assert.equal(parsePushedSha('').kind, 'unknown');
+  assert.equal(parsePushedSha('\n  \n').kind, 'unknown');
+  assert.equal(parsePushedSha(null).kind, 'unknown');
+  assert.equal(parsePushedSha(undefined).kind, 'unknown');
+});

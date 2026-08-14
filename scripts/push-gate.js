@@ -172,20 +172,38 @@ function runGates(needed, fp) {
   return true;
 }
 
-/** The sha actually being pushed, read from the hook's stdin. */
+/**
+ * The sha actually being pushed, read from the hook's stdin, which git feeds as
+ * `<local ref> <local sha> <remote ref> <remote sha>` per updated ref.
+ *
+ * Returns a DISCRIMINATED result, because the two "no sha" cases must not be
+ * treated alike and getting that backwards silently disables the whole gate:
+ *   {kind:'sha'}      a real ref is being pushed, gate it
+ *   {kind:'deletes'}  every line was an all-zero local sha, i.e. branch
+ *                     deletions only, so no code ships and there is nothing
+ *                     to gate
+ *   {kind:'unknown'}  stdin was empty, a TTY, or unreadable. NOT a free pass:
+ *                     the caller falls back to gating HEAD, because "I could
+ *                     not tell what is being pushed" must fail closed.
+ */
+function parsePushedSha(input) {
+  if (input === null || input === undefined) return { kind: 'unknown' };
+  const lines = String(input).split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return { kind: 'unknown' };
+  for (const line of lines) {
+    const [, localSha] = line.split(/\s+/);
+    if (localSha && !/^0+$/.test(localSha)) return { kind: 'sha', sha: localSha };
+  }
+  return { kind: 'deletes' };
+}
+
 function pushedShaFromStdin() {
-  let input = '';
+  if (process.stdin.isTTY) return { kind: 'unknown' };
   try {
-    input = fs.readFileSync(0, 'utf8');
+    return parsePushedSha(fs.readFileSync(0, 'utf8'));
   } catch {
-    return null;
+    return { kind: 'unknown' };
   }
-  for (const line of input.split('\n')) {
-    const [, localSha] = line.trim().split(/\s+/);
-    // All-zero local sha means a branch DELETE: nothing to gate.
-    if (localSha && !/^0+$/.test(localSha)) return localSha;
-  }
-  return null;
 }
 
 function main() {
@@ -194,12 +212,14 @@ function main() {
 
   if (mode === 'verify') {
     const pushed = pushedShaFromStdin();
-    if (pushed === null && process.env.DRB_GATE_ALLOW_NO_STDIN !== '1') {
-      // A delete-only push, or no refs on stdin: nothing ships, nothing to gate.
-      console.log('pre-push: no updated refs on stdin — nothing to gate.');
+    if (pushed.kind === 'deletes') {
+      // Branch deletions only: no code ships, so there is nothing to gate.
+      console.log('pre-push: deletions only — nothing to gate.');
       process.exit(0);
     }
-    const ref = pushed || 'HEAD';
+    // 'unknown' falls back to HEAD rather than passing: not knowing what is
+    // being pushed is the one case that must never skip the gate.
+    const ref = pushed.kind === 'sha' ? pushed.sha : 'HEAD';
     const { gates: needed } = neededGates(ref);
     const receipt = readReceipt();
     const why = checkReceipt(receipt, { fingerprint: fp.fingerprint, needed });
@@ -230,4 +250,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { checkReceipt, neededGates, treeFingerprint, RECEIPT_VERSION, MAX_AGE_MS };
+module.exports = { checkReceipt, neededGates, treeFingerprint, parsePushedSha, RECEIPT_VERSION, MAX_AGE_MS };
