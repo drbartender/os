@@ -93,7 +93,7 @@ export default function ShiftCard({ shift, showConfirmFlag = false, onClick, var
       tabIndex={onClick ? 0 : undefined}
     >
       <div className="sp-shift-head">
-        <span className="sp-shift-when">{dateLabel}{shift.start_time ? ` · ${shift.start_time}` : ''}</span>
+        <span className="sp-shift-when">{dateLabel}{shift.start_time ? ` · ${shift.start_time}${shift.end_time ? `–${shift.end_time}` : ''}` : ''}</span>
         <span className={'sp-shift-rel' + (isToday ? ' today' : '')}>{rel.label}</span>
       </div>
       <div>
@@ -250,6 +250,7 @@ function ShiftRoster({ shift }) {
       <LogisticsTag
         equipment_required={shift.equipment_required}
         supply_run_required={shift.supply_run_required}
+        bar_required={shift.bar_required === true}
       />
     </div>
   );

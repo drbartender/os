@@ -391,7 +391,10 @@ function OpenShiftsTab({ mode, loading, error, onRetry, shifts, busyKey, onOpenS
             <div className="sp-shift-head">
               <span className="sp-shift-when">
                 {fmtShortDate(s.event_date)}
-                {s.start_time ? ` · ${s.start_time}` : ''}
+                {/* Range, not just start (Dallas 2026-08-13): the card said
+                    "5pm" while the detail said 5–11 PM. End time matters most
+                    on extended events. */}
+                {s.start_time ? ` · ${s.start_time}${s.end_time ? `–${s.end_time}` : ''}` : ''}
               </span>
               <span className="sp-shift-rel">{relDayLabel(s.event_date)}</span>
             </div>
@@ -444,6 +447,7 @@ function OpenShiftsTab({ mode, loading, error, onRetry, shifts, busyKey, onOpenS
                 <LogisticsTag
                   equipment_required={raw.equipment_required}
                   supply_run_required={raw.supply_run_required}
+                  bar_required={raw.bar_required === true}
                 />
               </div>
             )}
@@ -581,7 +585,7 @@ function PendingRow({ shift, busy, onWithdraw }) {
       <div className="sp-shift-head">
         <span className="sp-shift-when">
           {fmtShortDate(shift.event_date)}
-          {shift.start_time ? ` · ${shift.start_time}` : ''}
+          {shift.start_time ? ` · ${shift.start_time}${shift.end_time ? `–${shift.end_time}` : ''}` : ''}
         </span>
         <span className="sp-shift-rel">{relDayLabel(shift.event_date)}</span>
       </div>

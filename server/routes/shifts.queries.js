@@ -93,6 +93,7 @@ const USER_EVENTS_SQL = `
   SELECT s.id, s.proposal_id, s.event_date, s.start_time, s.end_time, s.location,
          s.setup_minutes_before,
          s.event_type, s.event_type_custom,
+         ${barRequiredSql('p', 'spk')} AS bar_required,
          sr.position, sr.status AS request_status,
          sr.beo_acknowledged_at AS my_beo_acknowledged_at,
          p.event_type AS proposal_event_type,
@@ -107,6 +108,7 @@ const USER_EVENTS_SQL = `
   FROM shift_requests sr
   JOIN shifts s ON s.id = sr.shift_id
   LEFT JOIN proposals p ON p.id = s.proposal_id
+  LEFT JOIN service_packages spk ON spk.id = p.package_id
   LEFT JOIN clients c ON c.id = p.client_id
   LEFT JOIN drink_plans dp ON dp.proposal_id = s.proposal_id
   LEFT JOIN LATERAL (
