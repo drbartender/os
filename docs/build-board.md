@@ -14,11 +14,13 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 
 <!-- lane open and building. Stale-lane flags surface here. One line per item. -->
 
-- **marketing-redesign-phase-1** — campaign section rebuild, phase 1 of 3 against a Sep 5 deadline. Spec approved from a claude.ai/design session; plan through three fleet-review rounds. As of 2026-08-13 SEVEN lanes (mkt-a through mkt-g) have merged to main — tags, resolver, contacts UI, extract, compliance, send — all UNPUSHED; the build looks near-complete and awaits its push gate. Phases 2–3 remain unplanned. [spec](superpowers/specs/2026-08-11-marketing-campaigns-design.md) / [plan](superpowers/plans/2026-08-11-marketing-redesign-phase-1.md)
 
 ## Recently shipped
 
 <!-- merged + shipped lanes, newest first. Ages off over time. One line per item. -->
+
+- **marketing-redesign phases 1+2** — LIVE IN PROD via the 2026-08-13 evening push: seven lanes (mkt-a..g) — tags, resolver, contacts UI, extract, compliance, send. Phase 3 (mkt-h overview) MERGED 2026-08-14 (`a0360039`), awaiting the next push. Sep 5 deadline. [spec](superpowers/specs/2026-08-11-marketing-campaigns-design.md) / [plan](superpowers/plans/2026-08-11-marketing-redesign-phase-1.md)
+- **bar-card** — merged 2026-08-14 (`2a40d00d`), awaiting push: the shift-card chip stops calling bar-hauling shifts "Bar Kit Only" (server-derived bar_required, matching duty pay), and card headers show the time range. Companion to the bar-required ack feature that went LIVE in the 8/13 push. [plan-ref](fix-list-remaining-2026-07-02.md)
 
 - **proposals-pagination** — MERGED to main 2026-08-14 (another window): Prev/Next paging on the Proposals dashboard, client-only over the existing `?page`/`X-Total-Count` server support. Two follow-up steps recorded in walkthroughs-owed by that window. [spec](superpowers/specs/2026-08-12-proposals-pagination-design.md) / [plan](superpowers/plans/2026-08-12-proposals-pagination.md)
 

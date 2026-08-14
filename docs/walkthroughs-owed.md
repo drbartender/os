@@ -335,6 +335,14 @@ is written and built.)
 
 ---
 
+## Dev walk credentials
+
+The dev test accounts `marcus.j@test.drbartender.com` (staff) and
+`manager-test@drbartender.com` (manager) had their DEV passwords reset by Claude on
+2026-08-13/14 for the walkthroughs. If a future session doesn't know them, re-reset with a
+one-line bcrypt UPDATE against the dev branch (guard on the email first) — never on prod.
+Staff portal is `staff.localhost:3000`; admin context is plain `localhost:3000`.
+
 ## How to use this
 
 Work top-down. Tier 1 is where being wrong costs money, and Tier 4 items are gates — doing
