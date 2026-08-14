@@ -369,9 +369,29 @@ docs/superpowers/{specs,plans}/2026-07-21-notify-client-confirmation*. Deferred 
   scoped to `meta?.category === 'marketing'`, so neither touches an `operational` message.
   `email_enabled` is the only system-wide email mute. (Note `marketing_excluded` is `false`
   for every client in prod, so that control has never actually been exercised either.)
-  Two honest outcomes, and the recommendation is the first: wire a writer, or drop the field
-  and let the dozen readers collapse. `messageSuppression.js:63` already carries a comment
-  saying no product path sets it, so the code knows.
+  **DECIDED 2026-08-14 (Dallas): "drop".** Against my recommendation to wire it, and taken
+  with the trade-off stated: dropping it means there is no system-wide email mute at all, and
+  the marketing-scoped controls (`marketing_excluded`, `marketing_enabled`) cannot reach an
+  `operational` send. That is the accepted cost. The "do not contact toggle" line item is
+  closed with it; do not re-propose either.
+
+  **This is a careful removal, not a delete, and it is a LANE not a quick fix.** What makes it
+  delicate is `marketingAudience.js`: `email_enabled` appears at `:44`, `:66`, `:127` and
+  `:359` interleaved with `marketing_enabled` and `lead_unsubscribed`, and `:66`/`:359` fold
+  it into the same `'unsubscribed'` label as the real unsubscribe signal. Twelve prod rows
+  carry `marketing_enabled=false` and those are LIVE opt-outs. Dropping the wrong arm of that
+  CASE silently re-adds twelve unsubscribed people to a campaign audience, which is a
+  compliance problem, not a cosmetic one. Every removal there must be proven a no-op against
+  the other two signals.
+  Everything else is mechanical: the guards at `messageSuppression.js:34`,
+  `notificationChannelResolver.js:54,66`, `eventEveSms.js:208`, `channelFallback.js:22`,
+  `scheduledMessageDispatcher.js:170`, `serviceExtensionNotify.js:202`,
+  `marketingHandlers.js:342`, `consultRecap.js:64`, plus the key in the DEFAULT_PREFS literals
+  at `smsConsent.js:117` and `smsInbound.js:333,342`, plus the stale comments at
+  `messageSuppression.js:63` and `channelFallback.js:8`.
+  **Existing data is deliberately left alone.** All 525 rows keep an orphaned `email_enabled`
+  key that nothing reads. A 525-row jsonb rewrite of the clients table to tidy a harmless
+  orphan is not worth the blast radius; new rows simply stop getting the key.
 - **PATCH /api/proposals/:id has no adminWriteLimiter** while now carrying admin-composed
   client sends; the comms send path and even the read-only notify-preflight are throttled
   10/min. Deferred from the lane because bolting a limiter onto the busiest admin endpoint
