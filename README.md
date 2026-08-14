@@ -499,6 +499,7 @@ dr-bartender/
 │   │   ├── constants/
 │   │   │   └── smsConsent.js   # The SMS consent sentence, split LEAD + TAIL so the checkbox can link the tail while /privacy renders it as prose. Single source for the wizard checkbox AND the privacy page
 │   │   ├── utils/
+│   │   │   ├── addonRateLabel.js # The ONE qualified label for a per_guest_timed add-on rate ("$8/guest (4hr) + $2/guest/hr after"). That rate column is the FOUR-HOUR price, so every surface that prints it (quote wizard, proposal compare panel, both admin add-on pickers) routes through this instead of hand-rolling the qualifier. Keys on the billing type, never on a bundle slug.
 │   │   │   ├── api.js          # Axios instance with JWT interceptor
 │   │   │   ├── buildTipDeepLink.js # Builds Venmo/CashApp deep links + Stripe fallback URL for tip pages
 │   │   │   ├── clientSources.js # Canonical client source list (mirrors schema CHECK + server VALID_SOURCES)

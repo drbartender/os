@@ -328,6 +328,15 @@ router.post(
         description: a.description,
         billing_type: a.billing_type,
         rate: a.rate === null || a.rate === undefined ? null : Number(a.rate),
+        // DISPLAY ONLY, and load-bearing for honesty: on a per_guest_timed
+        // add-on `rate` is the FOUR-HOUR rate and every hour past four bills
+        // this per guest on top (pricingEngine.calculateAddonCost). Without it
+        // the panel can only print the four-hour number, which is a quote the
+        // client can hold us to. Nothing here prices anything; the option
+        // totals above already run through the engine.
+        extra_hour_rate: a.extra_hour_rate === null || a.extra_hour_rate === undefined
+          ? null
+          : Number(a.extra_hour_rate),
         category: a.category,
         selected: selectedExtras.includes(a.id),
       }));

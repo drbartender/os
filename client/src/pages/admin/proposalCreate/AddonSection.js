@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { isQuantityCapable } from '../../../utils/proposalRules';
 import SyrupPicker from '../../../components/SyrupPicker';
 import Icon from '../../../components/adminos/Icon';
-import { fmt$ } from '../../../components/adminos/format';
+import { fmt$, fmt$2dp } from '../../../components/adminos/format';
+import { isTimedPerGuestAddon, timedPerGuestRateLabel } from '../../../utils/addonRateLabel';
 import { AddonQtyStepper, BundleBadge, clampAddonQty } from '../../../components/AddonControls';
 
 export default function AddonSection({ form, addons, toggleAddon, setForm, update, preview, isIncludedMap, isUnavailableMap }) {
@@ -34,10 +35,19 @@ export default function AddonSection({ form, addons, toggleAddon, setForm, updat
     return Number(addon.rate);
   };
 
+  // RATES render at 2dp (fmt$2dp), not whole dollars. service_addons.rate is a
+  // NUMERIC(10,2) dollars column and several catalog rows are fractional
+  // ($0.50 bottled water, $1.50 cups, $0.75 extra-hour on The Foundation);
+  // fmt$ rounds those to "$1", which is a misquote in the quote builder. Line
+  // TOTALS below stay on fmt$ (whole dollars is the house style for totals).
   const labelFor = (addon) => {
-    if (addon.billing_type === 'per_guest') return `${form.guest_count} × ${fmt$(addon.rate)}/g`;
-    if (addon.billing_type === 'per_guest_timed') return `${form.guest_count} × ${fmt$(addon.rate)}/g (4hr)`;
-    if (addon.billing_type === 'per_hour') return `${form.event_duration_hours} × ${fmt$(addon.rate)}/hr`;
+    if (addon.billing_type === 'per_guest') return `${form.guest_count} × ${fmt$2dp(addon.rate)}/g`;
+    // The four-hour qualifier plus the extra-hour term, so this breakdown
+    // reconciles with the line total beside it on an event over four hours.
+    if (isTimedPerGuestAddon(addon)) {
+      return `${form.guest_count} × ${timedPerGuestRateLabel(addon, { money: fmt$2dp, unit: '/g' })}`;
+    }
+    if (addon.billing_type === 'per_hour') return `${form.event_duration_hours} × ${fmt$2dp(addon.rate)}/hr`;
     return Number(addon.rate) ? 'flat' : 'included';
   };
 
@@ -208,10 +218,10 @@ export default function AddonSection({ form, addons, toggleAddon, setForm, updat
                       {aUnavailable && <BundleBadge text="Unavailable with bundle" />}
                     </span>
                     <span className="tiny mono" style={{ color: 'var(--ink-3)' }}>
-                      {!aBlocked && a.billing_type === 'per_guest'       && `${fmt$(a.rate)}/guest`}
-                      {!aBlocked && a.billing_type === 'per_guest_timed' && `${fmt$(a.rate)}/guest`}
-                      {!aBlocked && a.billing_type === 'per_hour'        && `${fmt$(a.rate)}/hr`}
-                      {!aBlocked && a.billing_type === 'flat'            && (Number(a.rate) ? `${fmt$(a.rate)} flat` : 'included')}
+                      {!aBlocked && a.billing_type === 'per_guest' && `${fmt$2dp(a.rate)}/guest`}
+                      {!aBlocked && isTimedPerGuestAddon(a) && timedPerGuestRateLabel(a, { money: fmt$2dp })}
+                      {!aBlocked && a.billing_type === 'per_hour' && `${fmt$2dp(a.rate)}/hr`}
+                      {!aBlocked && a.billing_type === 'flat' && (Number(a.rate) ? `${fmt$2dp(a.rate)} flat` : 'included')}
                     </span>
                   </div>
                   );

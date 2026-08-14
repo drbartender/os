@@ -1,5 +1,6 @@
 import React from 'react';
 import { fmt } from '../proposalView/helpers';
+import { isTimedPerGuestAddon, timedPerGuestRateLabel } from '../../../utils/addonRateLabel';
 
 // Extras apply to EVERY option at once, which is the point: toggling a
 // champagne toast moves all the prices together, so the comparison the client
@@ -12,7 +13,10 @@ import { fmt } from '../proposalView/helpers';
 function rateLabel(x, hours) {
   if (x.rate === null) return '';
   if (x.billing_type === 'per_guest') return `${fmt(x.rate)} per guest`;
-  if (x.billing_type === 'per_guest_timed') return `${fmt(x.rate)} per guest`;
+  // The listed per_guest_timed rate covers four hours; hours past four bill
+  // extra_hour_rate per guest on top. This panel is what a client compares
+  // options against, so it never shows the bare four-hour number.
+  if (isTimedPerGuestAddon(x)) return timedPerGuestRateLabel(x, { money: fmt });
   if (x.billing_type === 'per_hour') return `${fmt(x.rate)} an hour${hours ? ` · ${hours} hours` : ''}`;
   if (x.billing_type === 'per_100_guests') return `${fmt(x.rate)} per 100 guests`;
   if (x.billing_type === 'per_staff') return `${fmt(x.rate)} per staff member`;

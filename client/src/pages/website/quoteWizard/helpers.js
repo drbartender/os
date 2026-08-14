@@ -1,3 +1,5 @@
+import { isTimedPerGuestAddon, timedPerGuestRateLabel } from '../../../utils/addonRateLabel';
+
 // Build the dynamic step list based on alcohol choice
 export function getSteps(alcoholProvider) {
   const steps = [{ key: 'event', label: 'Event Details' }];
@@ -49,9 +51,11 @@ export function priceLabel(addon) {
   // Syrups price via calculateSyrupCost (flavor count + 3-for-$75 tier), not the
   // flat add-on rate; show the tier explicitly, matching the current step.
   if (addon.slug === 'handcrafted-syrups') return '$30/bottle · 3 for $75';
+  // A per_guest_timed rate is the FOUR-HOUR rate, not the whole per-guest
+  // price. Printing it bare here is a quote the client can hold us to.
+  if (isTimedPerGuestAddon(addon)) return timedPerGuestRateLabel(addon);
   switch (addon.billing_type) {
-    case 'per_guest':
-    case 'per_guest_timed': return `$${Number(addon.rate)}/guest`;
+    case 'per_guest':       return `$${Number(addon.rate)}/guest`;
     case 'per_hour':        return `$${Number(addon.rate)}/hr`;
     case 'per_staff':       return `$${Number(addon.rate)}/staff member`;
     case 'per_100_guests':  return `$${Number(addon.rate)}/100 guests`;

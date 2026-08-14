@@ -2,6 +2,7 @@ import React from 'react';
 import { AddonQtyStepper } from '../../../components/AddonControls';
 import SyrupPicker from '../../../components/SyrupPicker';
 import { isQuantityCapable } from '../../../utils/proposalRules';
+import { isTimedPerGuestAddon, timedPerGuestRateLabel } from '../../../utils/addonRateLabel';
 
 // Package, Add-ons, Glassware, Class options, and Syrups sections of the
 // proposal/event editor. Moved verbatim from ProposalDetailEditForm so
@@ -83,7 +84,7 @@ export default function PackageSection({
                       </div>
                       <div className="tiny muted">
                         {addon.billing_type === 'per_guest' && `$${Number(addon.rate)}/guest`}
-                        {addon.billing_type === 'per_guest_timed' && `$${Number(addon.rate)}/guest (4hr) + $${Number(addon.extra_hour_rate)}/guest/hr after`}
+                        {isTimedPerGuestAddon(addon) && timedPerGuestRateLabel(addon)}
                         {addon.billing_type === 'per_hour' && `$${Number(addon.rate)}/hr${isBanquet ? ' · 4hr min' : ''}`}
                         {addon.billing_type === 'flat' && `$${Number(addon.rate)} flat`}
                       </div>
