@@ -13,6 +13,15 @@ const BUNDLE_FOOT = {
   'the-full-compound': 'The works',
 };
 
+// Which bundle wears the "Most picked" badge. This is a CURATION CHOICE, not
+// data: `service_addons` has no popularity/featured column and bundleConfig.js
+// carries only slug + inclusion rules, so nothing in the catalog can drive it
+// today. Making it data-driven means a new schema column plus a seed (and the
+// server twin in server/utils/proposalRules.js), which is a bigger change than
+// this badge earns. Hoisted out of the render so the choice is one named
+// constant to edit, not a literal buried in a map.
+const POPULAR_BUNDLE_SLUG = 'the-foundation';
+
 // The 3 BYOB bundles, hoisted out of the a-la-carte list into a featured band.
 // No bundle is pre-selected; selecting a card routes through the wizard's
 // toggleAddon, which runs the existing bundle mutex + include/unavailable rules.
@@ -40,7 +49,7 @@ export default function BundlePicker({ bundles, nameBySlug, selectedIds, onToggl
       <div className="wz-bundle-grid">
         {ordered.map(b => {
           const isSel = !!selected && selected.id === b.id;
-          const popular = b.slug === 'the-foundation';
+          const popular = b.slug === POPULAR_BUNDLE_SLUG;
           const included = BUNDLE_INCLUDED[b.slug] || [];
           return (
             <button

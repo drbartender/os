@@ -8,17 +8,33 @@ function formatCurrency(cents) {
 
 /**
  * Dropdown showing invoices for a proposal.
+ *
+ * Two modes, so a parent that already holds the list never pays for a second
+ * GET of the same endpoint:
+ *  - CONTROLLED: pass `invoices` (an array) and this renders from it, no fetch.
+ *    ProposalDetailPaymentPanel does exactly this — it needs the same
+ *    /invoices/proposal/:id response for its Send/Resend/Void rows, so the two
+ *    used to fetch it twice, keyed together.
+ *  - SELF-FETCHING: omit `invoices` and this loads its own list. Kept working
+ *    for any caller with no list of its own (notably the client/token mode,
+ *    which has no other owner).
+ *
  * @param {number|string} props.proposalId - The proposal ID (admin mode)
  * @param {string} [props.proposalToken] - The proposal token (client mode)
  * @param {boolean} [props.isClient] - If true, uses client auth endpoint
  * @param {string} [props.clientToken] - JWT for client auth header
+ * @param {Array} [props.invoices] - Already-loaded list; suppresses the fetch
  */
-export default function InvoiceDropdown({ proposalId, proposalToken, isClient = false, clientToken }) {
-  const [invoices, setInvoices] = useState([]);
-  const [loading, setLoading] = useState(true);
+export default function InvoiceDropdown({
+  proposalId, proposalToken, isClient = false, clientToken, invoices: invoicesProp,
+}) {
+  const controlled = Array.isArray(invoicesProp);
+  const [fetchedInvoices, setFetchedInvoices] = useState([]);
+  const [loading, setLoading] = useState(!controlled);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
+    if (controlled) return undefined;
     let cancelled = false;
     const fetchInvoices = async () => {
       try {
@@ -32,7 +48,7 @@ export default function InvoiceDropdown({ proposalId, proposalToken, isClient = 
           setLoading(false);
           return;
         }
-        if (!cancelled) setInvoices(res.data.invoices || []);
+        if (!cancelled) setFetchedInvoices(res.data.invoices || []);
       } catch (err) {
         console.error('Failed to load invoices:', err);
       } finally {
@@ -41,9 +57,11 @@ export default function InvoiceDropdown({ proposalId, proposalToken, isClient = 
     };
     fetchInvoices();
     return () => { cancelled = true; };
-  }, [proposalId, proposalToken, isClient, clientToken]);
+  }, [controlled, proposalId, proposalToken, isClient, clientToken]);
 
-  if (loading || invoices.length === 0) return null;
+  const invoices = controlled ? invoicesProp : fetchedInvoices;
+
+  if ((!controlled && loading) || invoices.length === 0) return null;
 
   return (
     <div className="invoice-dropdown-wrapper">

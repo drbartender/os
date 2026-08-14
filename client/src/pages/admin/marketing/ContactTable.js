@@ -56,7 +56,7 @@ export default function ContactTable({
           <thead>
             <tr>
               <th>Contact</th>
-              <th style={{ width: '38%' }}>Marketing tags</th>
+              <th>Marketing tags</th>
               <th>Last event</th>
               <th className="num">Lifetime</th>
               <th className="mkt-col-contacted">Last contacted</th>

@@ -62,9 +62,12 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
   const [newInvoiceAmount, setNewInvoiceAmount] = useState('');
   const [newInvoiceDueDate, setNewInvoiceDueDate] = useState('');
   const [creatingInvoice, setCreatingInvoice] = useState(false);
-  // Own copy of the invoice list, just to drive the per-invoice Send/Resend
-  // affordance. Keyed on the same invoiceRefreshKey the create flow and the
-  // InvoiceDropdown use, so a send (draft -> sent) re-reads and re-labels here.
+  // THE invoice list for this panel: ONE GET /invoices/proposal/:id, shared by
+  // the per-invoice Send/Resend/Void rows below AND by InvoiceDropdown (passed
+  // down as a prop, which suppresses its self-fetch). Both used to fetch this
+  // same endpoint, keyed together. invoiceRefreshKey re-reads it after a
+  // create/send/void, so a send (draft -> sent) re-labels here and in the
+  // dropdown at once.
   const [invoices, setInvoices] = useState([]);
   const [sendInvoice, setSendInvoice] = useState(null);
   const [voidingId, setVoidingId] = useState(null);
@@ -406,7 +409,11 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate, onFully
 
         {/* Invoices */}
         <div style={{ marginTop: 14 }}>
-          <InvoiceDropdown proposalId={proposal.id} key={invoiceRefreshKey} />
+          {/* Controlled: renders from the list above, so it does not re-fetch
+              the endpoint this panel already read. No `key` remount either —
+              the prop carries every refresh, and the open/closed state now
+              survives a create/send/void instead of snapping shut. */}
+          <InvoiceDropdown proposalId={proposal.id} invoices={invoices} />
           {sendableInvoices.length > 0 && (
             <div className="vstack" style={{ gap: 6, marginTop: 8 }}>
               {sendableInvoices.map(inv => (

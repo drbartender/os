@@ -3305,18 +3305,8 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 }
 .service-config-toggle:hover { text-decoration: underline; }
 
-/* Staffing summary */
-.staffing-stats {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 0.75rem;
-  flex-wrap: wrap;
-}
-.staffing-stat {
-  font-size: 0.85rem;
-  color: var(--deep-brown);
-}
-.staffing-stat strong { color: var(--ink); }
+/* Staffing summary: .staffing-stats/.staffing-stat deleted 2026-08-14, dead
+   since the staffing surfaces were rebuilt (zero consumers in client/src). */
 .assigned-staff-item {
   display: flex;
   align-items: center;

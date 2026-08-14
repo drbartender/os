@@ -481,6 +481,19 @@ export default function ProposalEditorForm({
       setFieldErrors({ package_id: 'Please select a package' });
       return;
     }
+    // Guest count is REQUIRED here, because blank does not fail the same way on
+    // both sides: the live preview falls back to 50 (so mid-typing cannot 400
+    // the calculate call), while patchBody.js sends Number('') = 0 and the
+    // server writes it (crud.js `guest_count ?? old.guest_count` takes 0 as a
+    // real value). A blank field therefore previewed a 50-guest price and saved
+    // a 0-guest event. Block the save instead of letting the two disagree.
+    const guests = Number(editForm.guest_count);
+    if (editForm.guest_count === '' || editForm.guest_count == null
+      || !Number.isFinite(guests) || guests < 1) {
+      setError('Please enter a guest count.');
+      setFieldErrors({ guest_count: 'Enter a guest count of at least 1' });
+      return;
+    }
     // Booked + price moved = confirm first. buildRepriceSummary returns null
     // for every other case, so unbooked proposals and pure logistics edits
     // save exactly as before.
@@ -590,7 +603,9 @@ export default function ProposalEditorForm({
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Guest count</label>
             <input className="input" type="number" min="1" max="1000" style={{ width: '100%' }}
               value={editForm.guest_count}
-              onChange={e => update('guest_count', e.target.value)} />
+              onChange={e => { update('guest_count', e.target.value); clearFieldError('guest_count'); }}
+              aria-invalid={!!fieldErrors?.guest_count} />
+            <FieldError error={fieldErrors?.guest_count} />
           </div>
           <div>
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Setup time (min before)</label>
