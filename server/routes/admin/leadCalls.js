@@ -25,6 +25,7 @@ router.get('/lead-call-attention', auth, requireAdminOrManager, asyncHandler(asy
       AND a.created_at > NOW() - INTERVAL '7 days'
       AND l.status = 'new'
     ORDER BY a.created_at DESC, a.id DESC
+    LIMIT 200
   `);
   res.json(result.rows);
 }));

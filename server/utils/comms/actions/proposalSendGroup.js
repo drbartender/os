@@ -175,8 +175,11 @@ async function dispatch(proposalId, message, channels, ctx = {}) {
   const results = { email: 'skipped', sms: 'skipped', skip_reasons: {} };
 
   const wantEmail = channels.includes('email');
-  // SMS is never a channel for compare sends; report it honestly.
-  results.skip_reasons.sms = SMS_UNAVAILABLE;
+  // SMS is never a channel for compare sends. Only surface the loud reason if
+  // the caller actually asked for SMS; otherwise 'not selected', which the
+  // send-result toast suppresses (it was rendering "Text skipped: Compare
+  // sends have no text message" on every ordinary email-only send).
+  results.skip_reasons.sms = channels.includes('sms') ? SMS_UNAVAILABLE : 'not selected';
 
   if (wantEmail && !recipient.channels.email.available) {
     results.skip_reasons.email = recipient.channels.email.unavailable_reason;

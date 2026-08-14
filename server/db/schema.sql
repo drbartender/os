@@ -761,11 +761,14 @@ UPDATE service_addons
 SET description = 'For designated drivers, kids, and anyone skipping the spirits but still sipping. Includes Coke, Diet Coke, Sprite, OJ, cranberry juice, pineapple juice, soda water, tonic water, and grenadine. Required for hosted parties expecting more than 10 non-drinkers.'
 WHERE slug = 'soft-drink-addon'
   AND description IN ('Soft drinks for all guests.',
-                      'Required if more than 10 guests (or 20% of your headcount) will be drinking soft drinks on their own. Our hosted packages already include Coke, Diet Coke, Sprite, OJ, cranberry, pineapple, soda water, tonic, and grenadine, but those are stocked as mixers (1-3 oz per cocktail), not full pours. Kids, designated drivers, and guests sipping soda or juice straight go through stock fast and can leave your cocktail crowd dry. This add-on bumps up the soft drink supply so everyone stays happy: mixers stay flowing, and the non-drinkers get their own dedicated stash.');
+                      'Required if more than 10 guests (or 20% of your headcount) will be drinking soft drinks on their own. Our hosted packages already include Coke, Diet Coke, Sprite, OJ, cranberry, pineapple, soda water, tonic, and grenadine, but those are stocked as mixers (1-3 oz per cocktail), not full pours. Kids, designated drivers, and guests sipping soda or juice straight go through stock fast and can leave your cocktail crowd dry. This add-on bumps up the soft drink supply so everyone stays happy: mixers stay flowing, and the non-drinkers get their own dedicated stash.',
+                      'Required if more than 10 guests (or 20% of your headcount) will be drinking soft drinks on their own. Our hosted packages already include Coke, Diet Coke, Sprite, OJ, cranberry, pineapple, soda water, tonic, and grenadine — but those are stocked as mixers (1-3 oz per cocktail), not full pours. Kids, designated drivers, and guests sipping soda or juice straight go through stock fast and can leave your cocktail crowd dry. This add-on bumps up the soft drink supply so everyone stays happy — mixers stay flowing, and the non-drinkers get their own dedicated stash.');
 -- 2026-08-13: the seed now carries the text PROD actually serves (a better third
 -- version appeared in prod outside schema.sql and the old guard could never fire
 -- again — see fix list 2026-08-13, "copy has drifted"). The long paragraph in the
--- IN() converges any env that took the previous guarded update.
+-- IN() converges any env that took the previous guarded update. 2026-08-14: the
+-- em-dash-era variant (seeded ~Apr 22 - Jul 11, before the no-em-dashes sweep)
+-- added as a third member, so a restored old snapshot converges too.
 
 -- Gated description updates for NA beer & zero-proof spirits: endorse Athletic
 -- Brewing (Upside Dawn + Free Wave) and Lyre's respectively. Same pattern as

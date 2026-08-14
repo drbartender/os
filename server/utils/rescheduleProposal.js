@@ -419,9 +419,10 @@ async function sendRescheduleEmail({ proposalId, channels, message }) {
   // ── Email half: the admin's REVIEWED text IS the email body, rendered
   // through renderPartsEmail (the same editable-body renderer the comms
   // actions use) so what was read in the popup is what sends. The bespoke
-  // rescheduleNotificationClient template is deliberately not called here:
-  // it returns pre-rendered HTML, so an edited body would reach plaintext
-  // only while mail clients rendered the untouched original. ──
+  // rescheduleNotificationClient template was deliberately never called here
+  // and was DELETED 2026-08-14: it returned pre-rendered HTML, so an edited
+  // body would reach plaintext only while mail clients rendered the
+  // untouched original. Do not reintroduce a pre-rendered template. ──
   if (wantEmail) {
     if (!ctx.client_email) {
       results.skip_reasons.email = 'No email on file for this client.';

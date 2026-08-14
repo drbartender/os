@@ -203,11 +203,18 @@ router.put('/campaigns/:id', auth, requireAdminOrManager, asyncHandler(async (re
 
 /** DELETE /campaigns/:id — archive campaign */
 router.delete('/campaigns/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  // Never archive mid-send: the run would keep mailing while the release
+  // UPDATE matches nothing, stranding the campaign archived with a
+  // claim-stamp sent_at (2026-08-13 push-gate finding).
   const result = await pool.query(
-    `UPDATE email_campaigns SET status = 'archived' WHERE id = $1 RETURNING *`,
+    `UPDATE email_campaigns SET status = 'archived' WHERE id = $1 AND status <> 'sending' RETURNING *`,
     [req.params.id]
   );
-  if (!result.rows[0]) throw new NotFoundError('Campaign not found.');
+  if (!result.rows[0]) {
+    const existing = await pool.query('SELECT status FROM email_campaigns WHERE id = $1', [req.params.id]);
+    if (!existing.rows[0]) throw new NotFoundError('Campaign not found.');
+    throw new ConflictError('This campaign is mid-send; archive it after the run finishes.');
+  }
   res.json(result.rows[0]);
 }));
 

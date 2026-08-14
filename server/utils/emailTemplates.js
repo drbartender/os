@@ -612,43 +612,10 @@ function eventWeekReminderClient({
   };
 }
 
-/**
- * Reschedule notification — fires immediately when admin updates event_date,
- * event_start_time, or event_location on a post-sign+pay proposal.
- */
-function rescheduleNotificationClient({
-  clientName, clientFirstName,
-  oldDateLocal, oldStartTimeLocal, oldLocation,
-  newDateLocal, newStartTimeLocal, newLocation,
-  packageName, guestCount, totalFormatted,
-  balanceDueDateLocal, autopayEnrolled,
-}) {
-  const first = clientFirstName || clientName || 'there';
-  const balanceLine = balanceDueDateLocal
-    ? `<li><strong>${autopayEnrolled ? 'Balance auto-charges' : 'Balance due'}</strong> on ${esc(balanceDueDateLocal)}</li>`
-    : '';
-  const balanceLineText = balanceDueDateLocal
-    ? `${autopayEnrolled ? 'Balance auto-charges' : 'Balance due'} on ${balanceDueDateLocal}\n`
-    : '';
-  return {
-    subject: 'Updated details for your event',
-    html: wrapEmail(`
-      <p>Hi ${esc(firstNameOf(first))}, your event has been moved.</p>
-      <p style="margin:1.5rem 0;"><strong>Old details:</strong> ${esc(oldDateLocal)} at ${esc(oldStartTimeLocal)}, ${esc(oldLocation || 'TBD')}<br/>
-         <strong>New details:</strong> ${esc(newDateLocal)} at ${esc(newStartTimeLocal)}, ${esc(newLocation || 'TBD')}</p>
-      <p>Everything else stays the same:</p>
-      <ul>
-        <li>Package: ${esc(packageName || '')}</li>
-        <li>Guest count: ${esc(String(guestCount ?? ''))}</li>
-        <li>Total: $${esc(String(totalFormatted))}</li>
-        ${balanceLine}
-      </ul>
-      <p>Let me know if you have any questions or need to discuss anything.</p>
-      <p>Cheers, Dallas</p>
-    `),
-    text: `Hi ${firstNameOf(first)}, your event has been moved.\n\nOld details: ${oldDateLocal} at ${oldStartTimeLocal}, ${oldLocation || 'TBD'}\nNew details: ${newDateLocal} at ${newStartTimeLocal}, ${newLocation || 'TBD'}\n\nEverything else stays the same:\nPackage: ${packageName || ''}\nGuest count: ${guestCount ?? ''}\nTotal: $${totalFormatted}\n${balanceLineText}\nLet me know if you have any questions or need to discuss anything.\n\nCheers, Dallas`,
-  };
-}
+// rescheduleNotificationClient was DELETED 2026-08-14 (audit): it returned
+// pre-rendered HTML, which the reschedule spec rejected — the reviewed-text
+// send renders through renderPartsEmail instead (rescheduleProposal.js). Do
+// not resurrect a pre-rendered template for that path.
 
 /**
  * Long-lead T-30 recap — fires at T-30 days for proposals whose booking lead
@@ -848,6 +815,5 @@ module.exports = {
   portalInvite: lifecycle.portalInvite,
   // Pre-event reminder emails (Plan 2c)
   eventWeekReminderClient,
-  rescheduleNotificationClient,
   longLeadT30RecapClient,
 };

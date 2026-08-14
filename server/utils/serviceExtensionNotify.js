@@ -248,7 +248,6 @@ const PROBLEM_SUBJECTS = Object.freeze({
   paid_extension_stranded: 'A PAID extension was never applied: settle or refund it',
   multi_shift: 'Extension on a multi-shift event needs a manual shift edit',
   paid_after_expiry: 'An extension was paid after it expired: refund needed',
-  settle_on_closed_event: 'An extension settled on a completed or archived event',
   settle_failed: 'An extension payment settled but its follow-up work failed',
   settle_healed: 'A crashed extension settle was healed automatically',
   staff_unreachable: 'Could not reach a staffer with an extension outcome',

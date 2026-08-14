@@ -274,6 +274,13 @@ test('proposal_send_group: dispatch sends the compare email, never SMS', async (
   const r = await getAction('proposal_send_group').dispatch(groupProposalId, undefined, ['email'], { sentBy: null });
   assert.equal(r.email, 'sent');
   assert.equal(r.sms, 'skipped');
+  // Email-only send: quiet 'not selected' (toast-suppressed), not the loud reason.
+  assert.equal(r.skip_reasons.sms, 'not selected');
+});
+
+test('proposal_send_group: asking for SMS gets the honest no-text reason', async () => {
+  const r = await getAction('proposal_send_group').dispatch(groupProposalId, undefined, ['email', 'sms'], { sentBy: null });
+  assert.equal(r.sms, 'skipped');
   assert.match(r.skip_reasons.sms, /no text message/i);
 });
 
