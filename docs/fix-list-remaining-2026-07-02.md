@@ -353,8 +353,11 @@ docs/superpowers/{specs,plans}/2026-07-21-notify-client-confirmation*. Deferred 
   client sends; the comms send path and even the read-only notify-preflight are throttled
   10/min. Deferred from the lane because bolting a limiter onto the busiest admin endpoint
   risks every existing edit flow and the rate-limiter-bound test debt (TST-3) for a threat
-  that needs valid admin credentials. Decide deliberately: add the limiter (and budget the
-  tests) or record the parity gap as accepted. (security-review, lane fleet 2026-07-22.)
+  that needs valid admin credentials. ~~Decide deliberately~~ **DECIDED 2026-08-14 (Dallas):
+  parity gap ACCEPTED, no limiter.** The threat needs valid admin credentials (two humans),
+  the client-fan-out paths are already throttled, and a 10/min trip on the busiest editor
+  endpoint costs more than it protects. Revisit only if manager accounts multiply or a
+  portal ever writes through this route. (security-review, lane fleet 2026-07-22.)
 - **Provider idempotency keys (Resend `Idempotency-Key`, Twilio)** are the precondition for
   any future failed-send Retry; without them a timeout-ambiguous retry can double-send. No
   Retry exists by design (spec: rejected alternatives).
