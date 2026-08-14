@@ -2401,3 +2401,32 @@ the LOWs that rode to this list instead:
   hand-converged and dev verified at the final text on 2026-08-13, and fresh DBs seed the
   new text directly. Only a restore of an Apr-Jul snapshot could resurrect it. One-line
   fix when convenient: add the em-dash variant to the IN() list.
+
+# Added 2026-08-13 (round-3 push-gate, non-blocking findings)
+
+The stale-response race in ProposalsDashboard (codex) was fixed at the gate. The rest:
+
+- **Option-group rollup splits across the 50-row page boundary**
+  (`ProposalsDashboard.js` rollup memo, codex): grouping happens client-side over one
+  fetched page, so a group straddling the boundary renders on BOTH pages, each with its
+  local option count. Rare (needs siblings at exactly rows 50/51) and display-only, but a
+  real artifact. Fix needs a design call: group server-side, or fetch group tails, or
+  accept and note it in the pager copy. The owed pagination browser walk should try to
+  catch one live.
+- **`barRequiredSql` casts snapshot money with `::numeric` while the duty deriver
+  tolerates malformed snapshots** (`shifts.queries.js`, database lens): a non-numeric
+  `pricing_snapshot->'bar_rental'->>'total'` would 22P02 the staff feed where
+  `readSnapshot` would shrug. Engine-owned data, not currently reachable; align the
+  tolerance if a snapshot writer ever diversifies.
+- **Double bar row when an admin hand-sets `portable_bar`** (`BeoSections.js`, seam +
+  code lenses): the derived bar row and the equipment-list token both render on the three
+  prod shifts with hand-set tokens. Redundant, not wrong. A
+  `list.filter(t => t !== 'portable_bar')` when barRequired closes it; the owed
+  walkthrough already retargets those shifts.
+- **BeoSections comment names one of two duty kinds** (seam lens): the bar row is paid
+  via `bar_rental` on BYOB but `hosted_supplies` on hosted; the comment says only
+  bar_rental. Two-line comment fix.
+- **Em dashes in new staff-facing copy** (`BeoSections.js` bar row, `FieldGuide.js`
+  cooler line, code lens): the recorded copy law scopes to client copy and spec prose;
+  staff surfaces are unruled. Dallas's call whether the law extends; mechanical sweep if
+  so.
