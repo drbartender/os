@@ -3,6 +3,10 @@ import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate, useSear
 import api from './utils/api';
 import { getHomePath } from './utils/userRoutes';
 import { AuthProvider, useAuth } from './context/AuthContext';
+// Side-effect import, deliberately eager: captures Chrome's one-shot
+// beforeinstallprompt before any lazy chunk could ever load (mobile-admin
+// review: registering it inside MorePage's async chunk misses the event).
+import './utils/installPrompt';
 import { ClientAuthProvider } from './context/ClientAuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { UserPrefsProvider } from './context/UserPrefsContext';

@@ -14,8 +14,19 @@ api.interceptors.request.use(config => {
   return config;
 });
 
+// Offline reads (spec section 7): admin-sw.js stamps cache-served responses
+// with x-sw-cached-at. Surface it as response.staleAt so screens can render
+// "as of <time>" instead of presenting stale data as live.
+export function markStaleFromHeaders(response) {
+  const t = response && response.headers
+    ? response.headers['x-sw-cached-at']
+    : null;
+  if (t) response.staleAt = t;
+  return response;
+}
+
 api.interceptors.response.use(
-  (res) => res,
+  (res) => markStaleFromHeaders(res),
   (err) => {
     // Network failure — no response received
     // eslint-disable-next-line no-restricted-syntax

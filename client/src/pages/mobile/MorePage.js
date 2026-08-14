@@ -4,12 +4,39 @@ import NAV from '../../components/adminos/nav';
 import Icon from '../../components/adminos/Icon';
 import { useAuth } from '../../context/AuthContext';
 import { useUserPrefs } from '../../context/UserPrefsContext';
+import { canInstall, onInstallAvailability, promptInstall } from '../../utils/installPrompt';
 
 // The third tab: every admin surface that is not Events or Proposals, as tap
 // rows. Until a surface gets its phone-first treatment it opens its desktop
 // component inside the mobile chrome: ugly but reachable, which is the
 // no-dead-ends floor (spec section 1).
 const TAB_IDS = new Set(['events', 'proposals']);
+
+// Explicit install row (spec section 7): Chrome's own banner has moods; this
+// row renders whenever the captured beforeinstallprompt is in hand and the
+// app is not already running standalone.
+function InstallRow() {
+  const [available, setAvailable] = React.useState(canInstall());
+  React.useEffect(() => onInstallAvailability(setAvailable), []);
+  const standalone =
+    typeof window !== 'undefined' &&
+    window.matchMedia &&
+    window.matchMedia('(display-mode: standalone)').matches;
+  if (standalone || !available) return null;
+  return (
+    <section>
+      <h2 className="m-more-heading">App</h2>
+      <ul className="m-more-list">
+        <li>
+          <button type="button" className="m-more-row" onClick={() => promptInstall()}>
+            <Icon name="plus" size={20} />
+            <span>Install app</span>
+          </button>
+        </li>
+      </ul>
+    </section>
+  );
+}
 
 export default function MorePage() {
   // Same adminOnly filter as Sidebar.js and CommandPalette.js: the admin
@@ -24,6 +51,7 @@ export default function MorePage() {
   const visible = (i) => !i.adminOnly || user?.role === 'admin';
   return (
     <div className="m-more">
+      <InstallRow />
       {NAV.map((section) => {
         const items = section.items.filter((i) => !TAB_IDS.has(i.id) && visible(i));
         if (!items.length) return null;

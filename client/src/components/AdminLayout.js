@@ -9,12 +9,18 @@ import PaletteContext from '../context/PaletteContext';
 import { MobileViewProvider, useMobileView } from '../context/MobileViewContext';
 import { routeScreenKey, screenTitle } from '../utils/screenKey';
 import { recordRoute, consumeRestoredRoute } from '../utils/routeRestore';
+import { installAdminPwaMeta } from '../utils/installAdminPwaMeta';
+import { registerAdminSw, announceAdminSwUser } from '../utils/adminSw';
+import { useAuth } from '../context/AuthContext';
 import MobileHeader from './mobile/MobileHeader';
 import MobileTabBar from './mobile/MobileTabBar';
 
 function AdminLayoutInner() {
   const navigate = useNavigate();
   const location = useLocation();
+  // ProtectedRoute renders children only after loading is false and user is
+  // truthy, so `user` is non-null here.
+  const { user } = useAuth();
   const [badges, setBadges] = useState({});
   const [presence, setPresence] = useState(null);
   const lastPresenceMutationRef = useRef(0);
@@ -57,10 +63,19 @@ function AdminLayoutInner() {
     const root = document.documentElement;
     const prev = root.getAttribute('data-app');
     root.setAttribute('data-app', 'admin-os');
+    // Admin PWA surface (spec section 7): manifest + metas, then the service
+    // worker. The cache-namespace announce lives in AuthContext (it fires
+    // for WHOEVER the user is, staff-on-admin-origin included, and as soon
+    // as the user is known); re-announcing here after registration covers
+    // the very first load, where the announce may have raced an
+    // unregistered SW.
+    installAdminPwaMeta();
+    registerAdminSw().then(() => announceAdminSwUser(user.id));
     return () => {
       if (prev) root.setAttribute('data-app', prev);
       else root.removeAttribute('data-app');
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Lazy-load the admin-OS font set (Inter / JetBrains Mono / Libre Caslon)

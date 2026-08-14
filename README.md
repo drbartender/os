@@ -522,6 +522,10 @@ dr-bartender/
 │   │   │   ├── uploadLimits.js # Upload size cap + per-kind extension allowlist (mirrors fileValidation.js)
 │   │   │   ├── downscaleImage.js # Browser-side photo downscaler run before upload
 │   │   │   ├── downloadFilename.js # Sanitizes a name into a safe download filename (strips reserved chars and trailing dots; shared by DownloadTipSign + MenuPNG)
+│   │   │   ├── installAdminPwaMeta.js  # Admin PWA metas behind the admin host gate (SENSITIVE-LISTED filename; staff injector untouched)
+│   │   │   ├── adminSw.js           # Admin SW register + message protocol (announce user namespace, purgeMobileAdminState on logout)
+│   │   │   ├── installPrompt.js     # beforeinstallprompt capture for the explicit More > Install app row
+│   │   │   ├── staleTime.js         # "as of 2:14 PM" staleness formatting (device-local by design)
 │   │   │   ├── desktopViewStore.js  # Desktop-view override persistence for the phone admin (read + persist; MobileViewContext owns the merge)
 │   │   │   ├── screenKey.js         # Route -> screen-key mapping + phone header titles (mobile admin)
 │   │   │   ├── routeRestore.js      # Resume-last-route record/consume with once-per-launch guard (mobile admin)
@@ -583,7 +587,7 @@ dr-bartender/
 │   │   └── index.css           # Global styles
 │   ├── vercel.json             # SPA rewrite rule for Vercel
 │   └── package.json            # React deps, proxy: localhost:5000
-├── scripts/                    # Build + workflow scripts (check-file-size.js, check-css-palette-scope.js, optimize-assets.js, worktree-new.js, worktree-rm.js, backfill-duty-lines.js duty-pay ship/period-open re-derive)
+├── scripts/                    # Build + workflow scripts (check-file-size.js, check-css-palette-scope.js, optimize-assets.js, worktree-new.js, worktree-rm.js, backfill-duty-lines.js duty-pay ship/period-open re-derive, make-admin-icon.js admin PWA placeholder icon set)
 │   │                           # think-on-main/build-in-lanes tooling (each with a co-located *.test.js where noted):
 │   │                           #   guard-os-main.sh (+ .test.js)   : pre-commit os-stays-on-main guard
 │   │                           #   merge-lane.sh (+ .test.js)      : flock'd squash-merge wrapper

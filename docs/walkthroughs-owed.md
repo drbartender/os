@@ -377,7 +377,16 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
 
 ## Tier 6 — queued: will owe a walkthrough the moment it ships
 
-(Empty as of the 2026-08-13 evening push — both former occupants shipped and moved to
+- [ ] **Mobile admin shell + PWA (lanes ma-a/ma-b, merged 2026-08-14, unpushed).** On the
+  Pixel after the push: install from More > Install app (or Chrome's banner), confirm the
+  DrB OS icon + standalone launch, tab nav + badges, Desktop-view toggle round trip,
+  airplane-mode reopen (the app boots from cache; NOTE it lands on Login until lane
+  ma-d-auth fixes AuthContext's clear-token-on-transport-failure, the known spec
+  section 8 defect, so the full offline resume walk waits for ma-d), sign out wipes
+  it. Dev-verified via the lane browser passes; the phone in the hand is the point
+  of the whole project.
+
+(Tier now populated; previously empty as of the 2026-08-13 evening push — both former occupants shipped and moved to
 Tier 3b. Next expected occupant: marketing phase 3 (mkt-h, Overview + Sent) once its plan
 is written and built.)
 

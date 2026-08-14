@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { purgeMobileAdminState, announceAdminSwUser } from '../utils/adminSw';
 import api from '../utils/api';
 
 const AuthContext = createContext(null);
@@ -33,8 +34,24 @@ export function AuthProvider({ children }) {
     const token = localStorage.getItem('token');
     if (token) {
       api.get('/auth/me')
-        .then(res => setUser(res.data.user))
-        .catch(() => localStorage.removeItem('token'))
+        .then(res => {
+          setUser(res.data.user);
+          // Announce the SW cache namespace as soon as the user is KNOWN
+          // (security review M1: announcing from AdminLayout misses staff
+          // users on the admin origin and races first-paint fetches).
+          announceAdminSwUser(res.data.user.id);
+        })
+        .catch((err) => {
+          // A dead session must not leave its cached reads on the device
+          // (security review M2), but session death means a REAL 401: a
+          // transport-failed bootstrap is the offline cold launch, and
+          // purging there deletes the exact cache offline mode serves
+          // (caught by the lane's own offline verification). The token
+          // clear below still over-fires on transport failures; that is
+          // the pre-existing defect lane ma-d-auth owns.
+          if (err?.status === 401) purgeMobileAdminState();
+          localStorage.removeItem('token');
+        })
         .finally(() => setLoading(false));
     } else {
       setLoading(false);
@@ -44,9 +61,13 @@ export function AuthProvider({ children }) {
   const login = (token, userData) => {
     localStorage.setItem('token', token);
     setUser(userData);
+    announceAdminSwUser(userData.id);
   };
 
   const logout = () => {
+    // Spec 2026-08-13-mobile-admin section 7: logout purges the phone's SW
+    // caches and shell localStorage (one call, defined in utils/adminSw.js).
+    purgeMobileAdminState();
     localStorage.removeItem('token');
     setUser(null);
   };
@@ -68,6 +89,7 @@ export function AuthProvider({ children }) {
       // Mirror the bootstrap behavior: a dead JWT should sign the user out
       // instead of lingering as a stale token.
       if (err?.status === 401) {
+        purgeMobileAdminState(); // security review M2: cache dies with the session
         localStorage.removeItem('token');
         setUser(null);
       }
