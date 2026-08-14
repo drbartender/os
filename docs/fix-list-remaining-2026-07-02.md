@@ -2875,19 +2875,54 @@ untouched, so a push carries all of it at once and needs the full gate.
 user 61 preferred_name/display_name -> "Taylor Hogan" / "Taylor H."; user 31 deactivated
 (fired, notice deliberately suppressed, audit rows written with `via=manual_sql_offboarding`).
 
-**Open lanes — none merged, all hold real work:**
+**Three more lanes merged to local main (still unpushed):**
+- `5d078096` `misquote-qualifier` — the client-facing `per_guest_timed` misquote. Owed suite run
+  green (`publicOptions.test.js` 14/14). Found a FIFTH bare-rate site the brief missed, and
+  caught that the admin quote builder was already rounding a $0.50 rate to "$1".
+- `697cef2a` `wave2-residuals` — repriceSummary overpaid tests + the consult ingredient-shape
+  guard. All 5 owed suites green (one needed `ALLOW_TEST_DB_WRITES=1`; its refusal is a guard,
+  not a failure). Correctly went BEYOND its brief: `sanitizeConsult` is the ONLY writer of
+  `consult_selections`, so fixing it there stops `[object Object]` being PERSISTED into JSONB
+  rather than merely re-rendered, and `consultRecap.js` is a third reader that puts it in a
+  client-facing email.
+- `3ed7db5f` `admin-os-legacy-palette` — the legacy palette scoped out of admin-os at the
+  source. Re-verified against the NEW main HEAD, which carries 245 lines of mobile-admin CSS the
+  lane never saw: checker green, CI client build exit 0.
+
+**Open lanes:**
 | lane | HEAD | state |
 |---|---|---|
-| `shift-lifecycle` | (building) | THE re-cut, per spec `0b54f138`. Supersedes the two below. |
+| `shift-lifecycle` | `4762b481` | THE re-cut, per spec `0b54f138`. Built; review in flight. Supersedes the two below. |
 | `shift-closure` | `b8512e15` | 3 rounds, 2 FAILs outstanding. Superseded; keep until the re-cut merges. |
 | `current-date-shift-visibility` | `18768c72` | 2 rounds, P0 outstanding. Superseded; keep until the re-cut merges. |
-| `admin-os-legacy-palette` | `0fc3b26f` | **CSS half PASSED 3/3 and is mergeable.** The bundled CSS checker failed fuzzing twice: now warn-only (cannot block) but reports GREEN on real leaks (`input[type="text"]`, `p:not(.class)`, and a parse desync that silently drops to 0 rules checked). STANDING CALL: if one more round does not clear it, DROP the checker and merge the stylesheet alone. |
-| `misquote-qualifier` | `0d4ee8fb` | Review-clean. Owes `publicOptions.test.js` (DB-backed, run serially). |
-| `wave2-residuals` | `cafc5751` | Review-clean. Owes 5 DB-backed suites. |
 | `mkt-perf` | `b410d374` | FAILED review. Font preload lands in the ONE index.html served to every host, so admin/staff would pull 173 KB of marketing fonts. Needs rework. |
 
 Do NOT scrap `shift-closure` or `current-date-shift-visibility` without Dallas's okay:
 `git log main..<branch>` is non-empty on both. The re-cut lane is salvaging their tests.
+Branches `admin-os-legacy-palette`, `misquote-qualifier` and `wave2-residuals` are merged; the
+first is kept (its byte-identical check is non-empty only because main is AHEAD on `index.css`
+and `README.md`, verified: all 193 of its added lines are present on main).
+
+## The CSS palette checker ships with KNOWN BLIND SPOTS — do not trust its green tick
+
+`scripts/check-css-palette-scope.js` merged in `3ed7db5f`. It is **warn-only** in
+`.husky/pre-commit` (`|| true`, with a comment saying reverting that is not a cleanup), so it
+cannot block a commit; `npm run check:css-scope` still exits 1. It catches the exact regression
+that bit twice (an unscoped bare-element rule painting `--cream-text`), which was its purpose.
+It does NOT catch these, all proven by fuzzing with real CLI output:
+- **`input[type="text"] { color: var(--cream-text) }` passes.** Check A treats ANY attribute
+  selector as app-scoping, but `[type="text"]` confines nothing.
+- **`p:not(.mkt-only) { color: var(--cream-text) }` passes.** It escapes check A (contains a dot)
+  and then check B, whose "every class must be admin-reachable" test is logically inverted for
+  `:not()` classes.
+- **A parse desync silently passes.** One stray apostrophe upstream collapses the sheet to 10
+  rules and it still prints the tick with a live leak in the file; the anti-vacuous guard only
+  fires at EXACTLY zero tokens.
+- Lesser: a rule that locally redefines a skin-aware token to a legacy value; a hex literal
+  reached through a `var()` alias chain; `VAR(` uppercase; `[data-app="admin-os" i]` (the only
+  false positive found); and `background`/`border` are not checked at all, only text colour.
+Fixing these is a bounded, well-specified job — the fuzzing report lists the exact inputs.
+Until then treat a green tick as "the known re-arming shapes are absent", not "the leak is closed".
 
 **Owed by a human, not by Claude:**
 - The admin two-skin eyeball on House Lights. No browser has been run in ANY of this work; every
