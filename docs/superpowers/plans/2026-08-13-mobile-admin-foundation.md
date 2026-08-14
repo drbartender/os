@@ -158,7 +158,9 @@ lanes:
       Fitting pass for each refreshed benchmark snapshot, folding the settled
       treatment into index.css, replacing placeholder visuals (including the
       admin icon), and promoting the benchmark's accordion class reuse into
-      proper .m-section classes.
+      proper .m-section classes. Also owns design fit for the ma-d lock
+      screen and enrollment nudge, new phone UI outside the benchmark's
+      screen list (2026-08-14 ma-d plan fleet).
     footprint: []  # declared per pass
     depends_on: [ma-a-shell]
     review_fleet: [code-review, ui-ux-review]

@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-13-mobile-admin-design.md` section 8 (auth), with sections 7 (offline law), 9 (resume), 11 (testing, auth lane owns the auth-route test debt).
 
-**Scope:** Lane ma-d-auth only. Declared in the foundation plan's lane map (`docs/superpowers/plans/2026-08-13-mobile-admin-foundation.md`), inheriting its review fleet. ma-a-shell and ma-b-pwa are merged AND pushed to prod, so this lane cuts from a main that already carries the phone chrome and the v7 service worker.
+**Scope:** Lane ma-d-auth only. Declared in the foundation plan's lane map (`docs/superpowers/plans/2026-08-13-mobile-admin-foundation.md`), inheriting its review fleet. ma-a-shell and ma-b-pwa are merged AND pushed to prod, so this lane cuts from a main that already carries the phone chrome and the v7 service worker. Push-send failure observability (named alongside this lane's events in spec section 8's observability bullet) belongs to lane ma-c-push and is deliberately not built here. Design fit for the lock screen and enrollment nudge, new phone UI outside the benchmark's screen list, is owned by lane ma-g-design-fit (its scope in the foundation plan was amended 2026-08-14 to say so).
 
 **Proven context (verified against the repo 2026-08-14, not from memory):**
 - `server/routes/auth.js` mints 7d JWTs at exactly three sites (register :74, register-pre-hired :157, login :349), each `{ userId, tokenVersion }`. `authLimiter` (max 10 / 15 min) lives in this file and has NO test-env skip today. Password reset already bumps `token_version` (:472).
@@ -24,7 +24,7 @@
 - `client/public/admin-sw.js`: v7; `API_EXACT` allowlist at :182; late 401/403 evicts the cached entry (:297); per-user namespace via announce; the stub deploy is the only real SW kill.
 - `client/src/utils/adminSw.js:46`: `PHONE_LOCAL_KEYS = ['adminDesktopViewOverrides', 'adminLastRoute']`, purged by `purgeMobileAdminState()`.
 - `scripts/sensitive-paths.txt` :287-301 ALREADY lists every section-8 path (webauthn.js, auth.js, AuthContext, SessionExpiryHandler, admin-sw.js, admin-manifest.json, the injector) plus `middleware/rateLimiters.js`, `server/db/schema.sql`, `server/index.js`, `.env.example`. No sensitive-list edit is needed in this lane; the fleet fires mechanically.
-- `server/middleware/rateLimiters.js` is the shared limiter home; five limiters already use `skip: () => process.env.NODE_ENV === 'test'`.
+- `server/middleware/rateLimiters.js` is the shared limiter home; four limiters already use `skip: () => process.env.NODE_ENV === 'test'` (:147, :176, :188, :207).
 - Error classes: `ValidationError` 400, `ConflictError` 409 (login failures are 409 `INVALID_CREDENTIALS`), `NotFoundError` 404. The client sees `err.status` / `err.message` / `err.fieldErrors`.
 - Server route tests: hand-rolled `node:http` harness, `require('dotenv').config()` + `NODE_ENV='test'` first lines, fixture rows in the SHARED dev DB with nonce'd emails, cleanup in `after` (exemplar: `server/routes/auth.preferredName.test.js`). Suites run ONE AT A TIME from repo root.
 - Client tests: no `setupTests.js`; every test imports `'@testing-library/jest-dom'` itself. RTL 13.4.
@@ -83,6 +83,7 @@ lanes:
       - client/src/utils/mobileLock.test.js
       - client/src/utils/webauthnClient.js
       - client/src/utils/adminSw.js
+      - client/src/utils/adminSw.purge.test.js
       - client/public/admin-sw.js
       - client/src/context/AuthContext.js
       - client/src/context/AuthContext.test.js
@@ -92,6 +93,8 @@ lanes:
       - client/src/components/mobile/MobileLockScreen.test.js
       - client/src/components/mobile/PasskeyEnrollNudge.js
       - client/src/components/mobile/PasskeyEnrollNudge.test.js
+      - client/src/components/mobile/MoreSecurityRow.js
+      - client/src/components/mobile/MoreSecurityRow.test.js
       - client/src/components/AdminLayout.js
       - client/src/App.js
       - client/src/pages/mobile/MorePage.js
@@ -122,7 +125,7 @@ lanes:
 - [ ] **Step 1: Install the server library**
 
 Run from repo root: `npm install @simplewebauthn/server@^13.3.2`
-Expected: package.json gains the dependency; `node -e "console.log(Object.keys(require('@simplewebauthn/server')))"` prints the four generate/verify functions.
+Expected: package.json gains the dependency; `node -e "console.log(Object.keys(require('@simplewebauthn/server')))"` INCLUDES the four generate/verify functions (v13.3 exports eight keys; presence of the four is the check, not an exact match).
 
 - [ ] **Step 2: Install the browser library**
 
@@ -165,8 +168,9 @@ CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_expires ON webauthn_challenge
 
 - [ ] **Step 4: Apply to the dev DB**
 
-Restart the Claude-managed dev server (boot runs the idempotent schema), then verify:
-`node -e "const {pool}=require('./server/db'); pool.query(\"SELECT to_regclass('webauthn_credentials') a, to_regclass('webauthn_challenges') b\").then(r=>{console.log(r.rows[0]); pool.end();})"`
+Restart the Claude-managed dev server (boot runs the idempotent schema via initDb), then verify:
+`node -e "require('dotenv').config(); const {pool}=require('./server/db'); pool.query(\"SELECT to_regclass('webauthn_credentials') a, to_regclass('webauthn_challenges') b\").then(r=>{console.log(r.rows[0]); pool.end();})"`
+(The `dotenv` line is load-bearing: `server/db` never loads it itself, only `server/index.js` does, so a bare `node -e` has no `DATABASE_URL`.)
 Expected: both non-null.
 
 - [ ] **Step 5: Add the env contract to `.env.example`** (near the auth/JWT block)
@@ -263,11 +267,9 @@ git commit -m "ma-d-auth: dedicated webauthn rate limiter, separate from the log
 ```js
 const express = require('express');
 const Sentry = require('@sentry/node');
-const jwt = require('jsonwebtoken');
 const {
   generateRegistrationOptions,
   verifyRegistrationResponse,
-  generateAuthenticationOptions,
   verifyAuthenticationResponse,
 } = require('@simplewebauthn/server');
 const { isoBase64URL } = require('@simplewebauthn/server/helpers');
@@ -651,7 +653,13 @@ beforeEach(async () => {
     verified: true,
     authenticationInfo: { newCounter: 0 },
   });
-  await pool.query('DELETE FROM webauthn_challenges');
+  // Scoped like every fixture in this repo: this suite's users' register
+  // challenges, plus assert challenges (user_id NULL): only this suite mints
+  // unbound challenges on the dev DB.
+  await pool.query(
+    'DELETE FROM webauthn_challenges WHERE user_id IN ($1, $2) OR user_id IS NULL',
+    [userA.id, userB.id]
+  );
   await pool.query('DELETE FROM webauthn_credentials WHERE user_id IN ($1, $2)', [userA.id, userB.id]);
   await pool.query('UPDATE users SET token_version = 0 WHERE id IN ($1, $2)', [userA.id, userB.id]);
 });
@@ -798,6 +806,8 @@ git commit -m "ma-d-auth: webauthn registration + credential management, mounted
 - Produces: `POST /assert-options` (unauthenticated, usernameless), `POST /assert-verify` (unauthenticated) returning `{ token, user }` with the SAME user payload shape as `POST /auth/login` (id, email, role, onboarding_status, can_hire, can_staff, pre_hired, preferred_name, has_application). The token is a 12h JWT `{ userId, tokenVersion, credentialId }`. Task 6's `unlockWithPasskey()` consumes this contract.
 
 - [ ] **Step 1: Add the two routes inside `createWebauthnRouter`** (before `return router`)
+
+First extend the file's imports (Task 3 deliberately omitted both; nothing used them until now): add `const jwt = require('jsonwebtoken');` and add `generateAuthenticationOptions` to the `@simplewebauthn/server` destructure.
 
 ```js
   router.post('/assert-options', webauthnLimiter, asyncHandler(async (req, res) => {
@@ -1313,6 +1323,10 @@ git add server/routes/auth.core.test.js server/routes/auth.js
 git commit -m "ma-d-auth: auth-route core suite (spec s11 debt) + test-env skip on authLimiter"
 ```
 
+- [ ] **Step 5: Mid-lane security-review checkpoint (server contract complete)**
+
+The server surface is now final: schema, limiter, six webauthn endpoints, the 12h mint, the authLimiter skip. Before any client task builds on this contract, dispatch a focused security-review agent, FOREGROUND, on the lane's server diff (`git diff main...HEAD -- server/ package.json`). Iron rule: a failed or DOA agent is never a pass; re-dispatch once. Findings go to Dallas as fix-now / proceed. Rationale (plan fleet 2026-08-14): a contract-level finding here costs one task; the same finding at Task 13 costs the six client tasks built on top of it.
+
 ---
 
 ### Task 6: Client lock model + webauthn client + purge keys
@@ -1531,14 +1545,42 @@ const PHONE_LOCAL_KEYS = [
 ];
 ```
 
-- [ ] **Step 8: Client build gate + commit**
+- [ ] **Step 8: Pin the purge contract** (`client/src/utils/adminSw.purge.test.js`; plan fleet 2026-08-14: the key extension needs its own assertion, not just the Task 13 browser proof)
+
+```jsx
+import '@testing-library/jest-dom';
+import { purgeMobileAdminState } from './adminSw';
+import { ENROLLED_KEY, LAST_ACTIVE_KEY, NUDGE_DISMISSED_KEY } from './mobileLock';
+
+// Pins the purge contract: every phone-local key dies on logout. jsdom has no
+// serviceWorker, so postToAdminSw exits early and only the storage side runs.
+test('purgeMobileAdminState removes every phone-local key', () => {
+  const keys = [
+    'adminDesktopViewOverrides',
+    'adminLastRoute',
+    LAST_ACTIVE_KEY,
+    ENROLLED_KEY,
+    NUDGE_DISMISSED_KEY,
+  ];
+  keys.forEach((k) => window.localStorage.setItem(k, 'x'));
+  window.sessionStorage.setItem('adminRouteRestoredThisLaunch', '1');
+  purgeMobileAdminState();
+  keys.forEach((k) => expect(window.localStorage.getItem(k)).toBeNull());
+  expect(window.sessionStorage.getItem('adminRouteRestoredThisLaunch')).toBeNull();
+});
+```
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/adminSw.purge.test.js`
+Expected: PASS.
+
+- [ ] **Step 9: Client build gate + commit**
 
 Run: `cd client && CI=true npx react-scripts build`
 Expected: exit 0.
 
 ```bash
-git add client/src/hooks/useIsPhone.js client/src/utils/mobileLock.js client/src/utils/mobileLock.test.js client/src/utils/webauthnClient.js client/src/utils/adminSw.js
-git commit -m "ma-d-auth: phone lock model, webauthn client, purge keys"
+git add client/src/hooks/useIsPhone.js client/src/utils/mobileLock.js client/src/utils/mobileLock.test.js client/src/utils/webauthnClient.js client/src/utils/adminSw.js client/src/utils/adminSw.purge.test.js
+git commit -m "ma-d-auth: phone lock model, webauthn client, purge keys + purge contract test"
 ```
 
 ---
@@ -2168,15 +2210,15 @@ import { phoneUnlockArmed } from './utils/mobileLock';
 - [ ] **Step 6: CSS** (append to `index.css` next to the existing `.m-*` block)
 
 First verify the stacking inventory and the accent token the tab bar uses:
-`grep -n "z-index" client/src/index.css | tail -20` and `grep -n "m-seg-btn.active\|m-tab" client/src/index.css | head`.
-`.m-lock` must sit above EVERY admin overlay (drawer tier, palette, return pill at 39); pick the value above the highest found (the block below assumes 90 clears it, raise if the grep says otherwise) and reuse the exact accent variable the active tab / seg buttons use for `.m-lock-unlock` (the block below writes `var(--accent)` as a placeholder for whatever the grep names).
+`grep -n "z-index" client/src/index.css | sort -t: -k2 | tail -20` and `grep -n "m-seg-btn.active\|m-tab" client/src/index.css | head`.
+`.m-lock` must sit above EVERY admin overlay. The verified ceiling today (plan fleet 2026-08-14) is the kebab menu at z 1000 (index.css:12537) and the send-modal overlay at 1100 (index.css:19084), so the block below uses 1200: re-run the grep and raise it if anything higher has landed since. Reuse the exact accent variable the active tab / seg buttons use for `.m-lock-unlock` (the block below writes `var(--accent)`; substitute whatever the grep names).
 
 ```css
 /* ---- Mobile admin: lock screen + enrollment (spec 2026-08-13 section 8) ---- */
 html[data-app="admin-os"] .m-lock {
   position: fixed;
   inset: 0;
-  z-index: 90; /* above every admin overlay: verified against the z inventory */
+  z-index: 1200; /* above the kebab menu (1000) and send-modal overlay (1100), the two highest admin overlays; re-verify per Step 6 */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2232,7 +2274,16 @@ html[data-app="admin-os"] .m-enroll-no {
 html[data-app="admin-os"] .m-enroll-yes { background: var(--accent); border-color: var(--accent); color: #fff; }
 ```
 
-- [ ] **Step 7: Run tests, build gate, commit**
+- [ ] **Step 7: Wire check on the dev server** (plan fleet 2026-08-14: the gate and overlay mounts need in-task proof, not just the isolated RTL suite four tasks before the browser pass)
+
+At phone width (devtools device toolbar, under 700px), logged in on the dev server, run in the console:
+`localStorage.setItem('adminPasskeyEnrolled','1'); localStorage.setItem('adminLockLastActiveAt', String(Date.now() - 31*60*1000));` then reload.
+Expected: the solid `.m-lock` overlay renders over the admin chrome (overlay mount), and an open kebab menu cannot paint above it.
+Then force the gate path: `localStorage.setItem('token','h.'+btoa(JSON.stringify({userId:12,exp:1}))+'.s')` and reload.
+Expected: /auth/me answers 401 INVALID_TOKEN, AuthContext keeps the artifact (armed), and the lock renders INSTEAD of a Login redirect (gate mount).
+Clean up: clear the two keys and the garbled token, log back in, confirm normal render returns.
+
+- [ ] **Step 8: Run tests, build gate, commit**
 
 Run the MobileLockScreen suite, then `cd client && CI=true npx react-scripts build`.
 
@@ -2248,8 +2299,10 @@ git commit -m "ma-d-auth: lock screen, gate + overlay mounts, occluding CSS"
 **Files:**
 - Create: `client/src/components/mobile/PasskeyEnrollNudge.js`
 - Create: `client/src/components/mobile/PasskeyEnrollNudge.test.js`
+- Create: `client/src/components/mobile/MoreSecurityRow.js`
+- Create: `client/src/components/mobile/MoreSecurityRow.test.js`
 - Modify: `client/src/components/AdminLayout.js` (render in the mobile chrome branch)
-- Modify: `client/src/pages/mobile/MorePage.js` (Security section)
+- Modify: `client/src/pages/mobile/MorePage.js` (render the Security section)
 
 **Interfaces:**
 - Consumes: `registerPasskey`/`isPasskeySupported` (Task 6), flags (Task 6), `useToast`.
@@ -2381,13 +2434,25 @@ export default function PasskeyEnrollNudge() {
           <main className="m-main" id="main-content"><Outlet context={{ badges }} /></main>
 ```
 
-- [ ] **Step 5: More page Security section** (in `MorePage.js`: add imports for `useToast`, `isPasskeySupported`, `registerPasskey`, `markPasskeyEnrolled`, `passkeyEnrolledHere`, `touchLastActive`; add the component and render `<SecurityRow />` after the NAV sections, before Lighting)
+- [ ] **Step 5: More page Security section as its own component** (`client/src/components/mobile/MoreSecurityRow.js`; plan fleet 2026-08-14: extracted from MorePage so it gets the same RTL treatment as the nudge)
 
 ```jsx
-function SecurityRow() {
+import React, { useState } from 'react';
+import { useToast } from '../../context/ToastContext';
+import { isPasskeySupported, registerPasskey } from '../../utils/webauthnClient';
+import {
+  markPasskeyEnrolled, passkeyEnrolledHere, touchLastActive,
+} from '../../utils/mobileLock';
+
+// The More page's Security section (spec section 8: enrollment stays one tap
+// away after the nudge is gone). Known accepted residual: the enrolled flag
+// is device-local; a revoke from desktop leaves it stale, the next unlock
+// fails into the password path, and re-enrolling resets it. No sync
+// round-trip is worth that edge.
+export default function MoreSecurityRow() {
   const toast = useToast();
-  const [enrolled, setEnrolled] = React.useState(passkeyEnrolledHere());
-  const [busy, setBusy] = React.useState(false);
+  const [enrolled, setEnrolled] = useState(passkeyEnrolledHere());
+  const [busy, setBusy] = useState(false);
   if (!isPasskeySupported()) return null;
   const onEnroll = async () => {
     setBusy(true);
@@ -2423,12 +2488,69 @@ function SecurityRow() {
 }
 ```
 
-Known accepted residual (state it in the code comment): the enrolled flag is device-local; a revoke from desktop leaves it stale, the next unlock fails into the password path, and re-enrolling resets it. No sync round-trip is worth that edge.
+In `MorePage.js`: `import MoreSecurityRow from '../../components/mobile/MoreSecurityRow';` and render `<MoreSecurityRow />` after the NAV sections, before the Lighting section. No other MorePage change.
 
-- [ ] **Step 6: Run tests, build gate, commit**
+- [ ] **Step 6: MoreSecurityRow tests** (`client/src/components/mobile/MoreSecurityRow.test.js`)
+
+```jsx
+import '@testing-library/jest-dom';
+import React from 'react';
+import { act, render, screen, waitFor } from '@testing-library/react';
+
+const mockToast = { success: jest.fn(), error: jest.fn() };
+jest.mock('../../context/ToastContext', () => ({ useToast: () => mockToast }));
+const mockSupported = jest.fn(() => true);
+const mockRegister = jest.fn();
+jest.mock('../../utils/webauthnClient', () => ({
+  isPasskeySupported: (...a) => mockSupported(...a),
+  registerPasskey: (...a) => mockRegister(...a),
+}));
+
+import MoreSecurityRow from './MoreSecurityRow';
+import { ENROLLED_KEY, passkeyEnrolledHere } from '../../utils/mobileLock';
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  window.localStorage.clear();
+});
+
+test('hidden when passkeys are unsupported', () => {
+  mockSupported.mockReturnValueOnce(false);
+  expect(render(<MoreSecurityRow />).container.firstChild).toBeNull();
+});
+
+test('enrolled state renders the on-row, not the button', () => {
+  window.localStorage.setItem(ENROLLED_KEY, '1');
+  render(<MoreSecurityRow />);
+  expect(screen.getByText('Fingerprint unlock is on')).toBeInTheDocument();
+  expect(screen.queryByRole('button')).not.toBeInTheDocument();
+});
+
+test('enroll flips the row and sets the flag', async () => {
+  mockRegister.mockResolvedValue({ id: 1 });
+  render(<MoreSecurityRow />);
+  act(() => { screen.getByRole('button', { name: /set up fingerprint unlock/i }).click(); });
+  await waitFor(() => expect(passkeyEnrolledHere()).toBe(true));
+  expect(screen.getByText('Fingerprint unlock is on')).toBeInTheDocument();
+  expect(mockToast.success).toHaveBeenCalled();
+});
+
+test('a failed enroll keeps the button and reports', async () => {
+  mockRegister.mockRejectedValue({ message: 'nope' });
+  render(<MoreSecurityRow />);
+  act(() => { screen.getByRole('button', { name: /set up fingerprint unlock/i }).click(); });
+  await waitFor(() => expect(mockToast.error).toHaveBeenCalled());
+  expect(passkeyEnrolledHere()).toBe(false);
+});
+```
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/mobile/MoreSecurityRow.test.js`
+Expected: PASS.
+
+- [ ] **Step 7: Run the nudge tests, build gate, commit**
 
 ```bash
-git add client/src/components/mobile/PasskeyEnrollNudge.js client/src/components/mobile/PasskeyEnrollNudge.test.js client/src/components/AdminLayout.js client/src/pages/mobile/MorePage.js
+git add client/src/components/mobile/PasskeyEnrollNudge.js client/src/components/mobile/PasskeyEnrollNudge.test.js client/src/components/mobile/MoreSecurityRow.js client/src/components/mobile/MoreSecurityRow.test.js client/src/components/AdminLayout.js client/src/pages/mobile/MorePage.js
 git commit -m "ma-d-auth: enrollment nudge + More security row"
 ```
 
@@ -2646,3 +2768,7 @@ Run the lane's declared fleet: code-review, consistency-check, security-review, 
 - Spec section 8 coverage: library (T1), credential-is-session (T1/T3/T4), endpoints under /api/auth/webauthn/ (T3), challenges single-use TTL (T3/T4), RP ID pinning (T3), counter + Sentry (T4), dedicated limiter (T2), 12h mint only site + 7d unchanged (T4/T5 tests), lock behavior + SessionExpiryHandler + AuthContext fixes (T7-T9), revocation via token_version with honest global logout (T3/T11), escape hatches (T9-T11), observability events (T3/T4), sensitive-paths (already listed, verified in Proven context), auth test debt (T5), docs law (T12).
 - Spec section 7 tie-in: /auth/me allowlist + purge law keep the offline promises (T7); writes still never queued (untouched).
 - Spec section 9 tie-in: gate unlock preserves the URL; /login still never persisted (untouched).
+
+## Plan-fleet fold (2026-08-14)
+
+/review-plan ran three agents (fidelity, decomposition, feasibility): 0 blockers, 7 warnings, 8 suggestions; Dallas said fold it all. The three spec re-decisions were accepted and the SPEC was amended in the same commit (section 8 lock arming carve-out: enrolled-only, with un-enrolled phones keeping today's re-login; section 8 four-way purge law replacing the clear-on-any-real-401 sentence; section 7 allowlist gaining /auth/me), and the foundation plan's ma-g scope now owns lock-screen + nudge design fit. In-plan folds: z-index 1200 (the kebab menu is 1000, the send-modal overlay 1100; the drafted 90 was wrong), dotenv prepended to the Task 1 dev-DB verify, the Task 9 dev-server wire check, the Task 5 mid-lane security-review checkpoint, the adminSw purge-contract test, MoreSecurityRow extracted and RTL-tested, the jwt/generateAuthenticationOptions imports moved to Task 4, the challenge cleanup scoped, and the cosmetic count/wording fixes (four limiters, "includes the four", v13 exports eight keys).
