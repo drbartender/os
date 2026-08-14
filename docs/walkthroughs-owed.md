@@ -74,8 +74,9 @@ so tick items off as you confirm them rather than assuming the list is current.
       can only be walked on dev. Seeded via the REAL `settleExtension()` on dev proposal 7
       (Sean Parent, event 8/30, shift 14, staffer `marcus.j@test`): 5.0h -> **6.0h**, shift
       end 10:00 PM -> **11:00 PM**, extension id 714 `paid` + `finalized_at` stamped.
-      Six surfaces still to eyeball on `localhost:3000`, each must show 6h / 11:00 PM:
-      staff event details (shift 14), admin BEO (proposal 7), client portal
+      FIVE surfaces still to eyeball on `localhost:3000`, each must show 6h / 11:00 PM
+      (staff event details CLOSED 2026-08-13 by the staff event-details walk — it read
+      6h / 11:00 PM correctly): admin BEO (proposal 7), client portal
       (`/proposal/346bdebd-54c1-4439-832a-eeb68354eed4`), calendar feed, Money Board, events
       list. Anything still reading 5h / 10:00 PM is a stale-read bug.
       BONUS ALREADY VERIFIED: calling `settleExtension` directly leaves the documented
@@ -99,7 +100,12 @@ so tick items off as you confirm them rather than assuming the list is current.
       ONE DEFECT FOUND, logged: a duty attribution into a non-`open` period is a SILENT
       no-op — the endpoint accepts it, accrues nothing, and only warns to Sentry. Fix is to
       refuse loudly; do NOT let accrual accept `reopened` (fix list, 2026-08-12 section A).
-      Not walked: the out-of-area knob and the ShiftDrawer knob.
+      Not walked: the out-of-area knob and the ShiftDrawer knob — pulled out as their own
+      item below so they cannot hide inside a checked box.
+- [ ] **Duty-pay knobs: out-of-area + ShiftDrawer.** The two knob surfaces from the
+      duty-residuals lane (merged afb6e5e6): the out-of-area no-op/auto-lock semantics and
+      the ShiftDrawer knob (spec §9). Money math around them verified 2026-08-12; the knobs
+      themselves have never been touched in the app.
 - [~] **Money Board — MOBILE/SKIN HALF WALKED 2026-08-12.** Dallas found the House Lights
       sidebar drawer rendering see-through; root-caused as the same defect as the modal bug
       and BOTH FIXED + confirmed the same day (fix list, 2026-08-12). Note the drawer
@@ -150,7 +156,14 @@ so tick items off as you confirm them rather than assuming the list is current.
       SIGNING SURFACE: clean. Signature pad, terms and payment fields all work on a phone.
       FOUND: the quote wizard's TimePicker crowds three sub-minimum tap targets into 48px
       with no responsive rules at all — fix list, 2026-08-13. Public lead-capture surface.
-- [ ] **Needs-attention tabs, prod smoke.** Live 2026-07-14.
+- [x] **Needs-attention tabs — PASSED 2026-08-13.** All four data tabs verified accurate
+      against prod after three of my own approximations disagreed with them and the tabs won
+      every time: Staffing 14 = 10 short-staffed + 1 applications + 3 uncertified; Clients 0
+      is right (92 of 116 unread inbound are Thumbtack relay, the other 24 have no
+      client_id); Sales = sent-unviewed-past-72h by design. PRODUCT CALL LOGGED: the Money
+      tab is payroll-only now that all 213 payout lines are matched, and Dallas wants payroll
+      rehomed — fix list 2026-08-13, including the warning that the unmatched-payout alarm
+      needs a new surface if the tab goes away.
 - [x] **Global search palette — PASSED 2026-08-13.** Staff search groups correctly (`Teah`
       under Staff), client search resolves the record plus its proposal (`Lauren Karcz` ->
       proposal 719), and the empty-state Jump to list is complete. Note the shortcut is
@@ -170,9 +183,20 @@ so tick items off as you confirm them rather than assuming the list is current.
       production. Logged in the fix list (2026-08-13).
       STILL OWED: read the three descriptions on the live Extras step to confirm they render
       and read well to a client.
-- [ ] **After Hours skin sweep, both skins:** the event page, a dashboard, blog-editor
-      fields, primary-button hover.
-- [ ] **Doc-preview modal, both skins,** with a real W-9 PDF and a real headshot.
+- [x] **Skin sweep, both skins — DONE 2026-08-13, and it found the day's biggest structural
+      item:** the rich text editor never got a skin pass and sits on FIVE admin surfaces
+      (blog, campaign create, sequence steps, email builder x2) in the old pre-split
+      marketing vocabulary — fix list 2026-08-13, sequenced into the marketing redesign.
+      Salvage from the contrast pass: `--ink-4` placeholder/disabled text genuinely fails in
+      BOTH skins (2.16 / 2.78); the old "danger ~2.56" ledger figure no longer reproduces
+      (6.51, passes). The event-page/dashboard/button-hover legs were folded into the Money
+      Board and doc-preview walks rather than repeated.
+- [x] **Doc-preview modal — PASSED 2026-08-13**, both skins, with Dallas's real W-9 PDF and
+      headshot. Properly adminos-scoped with adaptive tokens (`--bg-elev`/`--ink-1`/
+      `--line-2`) — the model for what an admin overlay should be.
+      DATA FIND while picking the target: **Zul's W-9 slot holds a screenshot .png that is
+      the same file as her headshot** — a mis-upload, and a 1099 input. Fix list 2026-08-13,
+      with a sweep of `w9_filename` for other non-PDFs.
 
 ## Tier 3 — new in the 2026-08-11 push, never seen by anyone
 
@@ -188,6 +212,44 @@ so tick items off as you confirm them rather than assuming the list is current.
       coverage, but no rendered email has been read by a human.
 - [ ] **Guest count in the event header.**
 - [ ] **Inbound SMS alerts naming the staffer.**
+
+## Tier 3b — fixes shipped 2026-08-13, live in prod, never eyeballed
+
+The walkthrough fixes themselves now need the same medicine. Both of the first two shipped
+BROKEN on the first attempt and were corrected blind by a later session (`54fb77cb`,
+`fc5e6ca2`) — nobody has seen any of these render.
+
+- [ ] **TimePicker on a real phone.** The steppers should be GONE and the chevron a full-width
+      easy tap on the public wizard's Start Time field. This is the fix that shipped inert
+      once (coarse-pointer block placed before the 640px block); presence-in-bundle was
+      already "verified" twice, so only a phone counts as proof.
+- [ ] **Equipment label on a staff shift.** One of the three prod shifts carrying
+      `["portable_bar"]` should now read "Portable Bar", not `portable_bar`, on the staff
+      event details Equipment & supplies card.
+- [ ] **Shopping-list guest-count prompt in House Lights.** `ShoppingListButton.jsx`'s modal
+      was the panel my `--include=*.js` sweep missed and was patched with `.modal-card`
+      AFTER the other eleven were confirmed — it has never been seen. Open a drink plan in
+      House Lights and hit the shopping-list button with no guest count set.
+- [ ] **Attribution skip-notice (conditional).** The corrected notice renders only when a
+      duty attribution hits a closed period. Cannot be forced in prod without doing exactly
+      that; verify the next time one happens (or deliberately on dev against a processed
+      period). Until seen, treat it as unproven — its first version also "worked".
+- [ ] **Text the 1922 once.** The 1922 voice cutover is proven (live test calls 2026-08-11)
+      but its MESSAGING webhook (`/api/sms/inbound`) has no recorded live test. One text to
+      (224) 222-1922 that lands in the inbound pipeline closes the last unverified half of
+      the phone-1a cutover.
+- [ ] **"See other options" compare strip.** Pushed live 2026-08-11 (41d3206c, read-only
+      package compare on the proposal page) the same night as everything else; no record of
+      anyone opening it in prod since. One look at a real proposal's compare link. Note the
+      compare-and-book spec will eventually replace this surface.
+
+## Tier 6 — queued: will owe a walkthrough the moment it ships
+
+- [ ] **Marketing redesign phase 1.** Seven lanes (mkt-a..g) merged to main, UNPUSHED, as of
+      2026-08-13. When it pushes, the campaign create/send flow owes a full walk — tags,
+      resolver, contacts UI, extract, compliance, send pacing — BEFORE real sends. Listed now
+      so it cannot ship-and-bury like everything else in this file did. (Sep 5 deadline
+      pressure is exactly the condition that buries walkthroughs.)
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 

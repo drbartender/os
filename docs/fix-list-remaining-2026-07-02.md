@@ -2272,3 +2272,25 @@ Do NOT resolve `DRBARTENDER-SERVER-21` as noise (see the 2026-08-12 duty-accrual
   board. Events/shifts deliberately stay unpaginated (Dallas 2026-08-12: "I like it all on
   one page"); the spec records the latent `LIMIT 500` hazard on `GET /shifts` for later.
 
+
+---
+
+# Added 2026-08-13 (walkthrough-file audit)
+
+Two open items that were living only in memory entries and had never reached this list:
+
+- **`smsInbound.js:9` still hands staff the old 312 in every auto-reply** ("contact Dallas or
+  Zul at (312) 588-9401") while every client surface now advertises the 1922
+  (`constants.js: COMPANY_PHONE`). The phone-1a plan flagged this as a quick fix "at
+  cutover"; the cutover happened 2026-08-11 and the fix did not. NUANCE before changing it:
+  the 312 GV is still staffed (Dallas/Zul) and the 2026-08-08 GV decision deliberately keeps
+  its mailbox alive, so the current copy WORKS — the question is whether staff should be
+  steered to the 1922 instead. Dallas's call, then a one-line edit.
+- **Archive legacy proposal-options stragglers Ruta 469 + Anna 475** (from
+  [[project-proposal-options]], open since 7/02). Two-minute admin ops action, kept here so
+  it stops living only in a memory entry.
+
+Also corrected during this audit: the phone-1a memory claimed the 1922 cutover was still
+owed — it completed 2026-08-11, proven by the live canary test calls. The one unverified
+half is the 1922's MESSAGING webhook (`/api/sms/inbound`), which has no recorded live test;
+a single text to the 1922 closes it (now in walkthroughs-owed).
