@@ -246,7 +246,18 @@ function runMoneyGate() {
     // write a 'money' receipt turns a loud never-ran into a green checkmark
     // for 12 hours, so run it for the banner but refuse to bank it.
     console.log('gate: server/ changed — running the money-path smoke gate…');
-    spawnSync(process.execPath, ['scripts/testdb-smoke.js'], { stdio: 'inherit' });
+    const skipRun = spawnSync(process.execPath, ['scripts/testdb-smoke.js'], { stdio: 'inherit' });
+    // Still honour a NONZERO exit here. Today this branch is only reached when
+    // testdb-smoke would print its banner and exit 0, because both files
+    // discover the key from the same two sources in the same order. That
+    // equivalence is duplicated code, though, and if either side ever gains
+    // dotenv or the key moves into .env, the branches diverge — at which point
+    // ignoring the status would turn a real failure into a pass.
+    if (skipRun.status !== 0) {
+      console.error(`✗ BLOCKED — money smoke did not pass (${describeSpawn(skipRun)}).`);
+      console.error('  Emergencies only: git push --no-verify');
+      return { ok: false, ran: false };
+    }
     console.log('gate: money smoke SKIPPED (no NEON_API_KEY) — NOT recorded as passed.');
     return { ok: true, ran: false };
   }
@@ -364,11 +375,16 @@ function main() {
     const pushedShas = parsed.kind === 'shas' ? parsed.shas : [];
     const refs = pushedShas.length ? pushedShas : ['HEAD'];
     const { gates: needed } = neededGates(refs);
-    const why = checkReceipt(readReceipt(), {
-      fingerprint: fp.fingerprint, head: fp.head, needed, pushedShas,
-    });
+    const receipt = readReceipt(); // read ONCE: a parallel `npm run gate` between
+                                   // two reads could validate one and print another
+    // An unreadable stdin must invalidate the receipt too, not just fall back to
+    // gating HEAD. Otherwise pushedShas is empty, the foreign-sha check is
+    // vacuous, and a valid HEAD receipt is honoured without ever confirming what
+    // is shipping — which contradicts invariant 4 in the header.
+    const why = parsed.kind === 'unknown'
+      ? 'could not read the pushed refs from stdin'
+      : checkReceipt(receipt, { fingerprint: fp.fingerprint, head: fp.head, needed, pushedShas });
     if (!why) {
-      const receipt = readReceipt();
       const covered = receipt.gates.length ? receipt.gates.join(' + ') : 'nothing to run';
       console.log(`✓ pre-push: gate receipt valid for this exact tree (${covered}) — skipping the re-run.`);
       process.exit(0);
@@ -397,12 +413,16 @@ function main() {
     // Report what was actually BANKED, not a blanket pass: a money gate that
     // skipped for want of a key must not read as green here either.
     const banked = readReceipt();
-    const covered = banked && banked.gates.length ? banked.gates.join(' + ') : 'nothing';
     const shortfall = needed.filter((g) => !banked || !banked.gates.includes(g));
     console.log('');
-    if (shortfall.length) {
+    if (!banked) {
+      // No receipt at all: either nothing could be banked, or the tree moved
+      // mid-run. Never print a pass here, even when `needed` was empty.
+      console.log('gate finished, but NO receipt was written — the next push runs the full gate.');
+    } else if (shortfall.length) {
       console.log(`gate finished, but ${shortfall.join(' + ')} was NOT banked — the hook will re-run it.`);
     } else {
+      const covered = banked.gates.length ? banked.gates.join(' + ') : 'nothing to run';
       console.log(`✓ gate PASSED (${covered}). The next push of this exact tree, at this HEAD, skips the hook.`);
     }
     console.log(`  Receipt: ${receiptPath()}`);

@@ -181,3 +181,21 @@ test('neededGates unions over multiple refs rather than taking the first', () =>
   const many = neededGates(['HEAD', 'HEAD~1']).gates;
   assert.ok(many.length >= one.length, 'a second ref can only add gates, never remove them');
 });
+
+// ── Residuals closed at the second review pass ──
+
+test('unreadable stdin invalidates the receipt, it does not merely fall back to HEAD', () => {
+  // With pushedShas empty the foreign-sha filter is vacuous, so a valid HEAD
+  // receipt would otherwise be honoured without ever confirming what ships.
+  // verify() short-circuits on kind==='unknown' before checkReceipt; this pins
+  // the classification that short-circuit depends on.
+  for (const v of ['', '\n \n', null, undefined, 'refs/heads/main', 'a b c d\ngarbage']) {
+    assert.equal(parsePushedShas(v).kind, 'unknown', `${JSON.stringify(v)} must be unknown`);
+  }
+});
+
+test('an empty pushedShas list cannot satisfy the foreign-sha check by vacuity', () => {
+  // Documents WHY verify must not call checkReceipt with [] on unknown stdin:
+  // this passes, and that is exactly the hole.
+  assert.equal(ask(fresh(), { pushedShas: [] }), null);
+});
