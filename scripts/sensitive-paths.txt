@@ -283,3 +283,18 @@ scripts/push-gate.js
 scripts/testdb-smoke.js
 scripts/money-smoke-list.txt
 .husky/pre-push
+
+# Mobile-admin auth + PWA perimeter (2026-08-14, spec 2026-08-13-mobile-admin
+# section 8). The webauthn routes mint sessions; AuthContext and
+# SessionExpiryHandler decide when a token is destroyed; the admin service
+# worker caches authenticated responses and the manifest/injector decide which
+# hosts get an installable admin surface. The spec fleet found the auth router
+# itself was never listed (and no client path was), so the promised 5-agent
+# fleet on auth changes would not have fired.
+server/routes/webauthn.js
+server/routes/auth.js
+client/src/context/AuthContext.js
+client/src/components/SessionExpiryHandler.js
+client/public/admin-sw.js
+client/public/admin-manifest.json
+client/src/utils/installAdminPwaMeta.js

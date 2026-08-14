@@ -1,8 +1,8 @@
 # Mobile Admin (Phase 1): Installable Phone-First Admin App
 
-**Date:** 2026-08-13
-**Status:** Approved (section-by-section, 2026-08-12/13)
-**Audience:** Dallas only. Admin surface. Android Chrome on a Pixel is the design and test target. iOS remains relevant only to the staff portal, which this project does not touch.
+**Date:** 2026-08-13. Revised 2026-08-14: design-session decisions banked, then the full `/review-spec` fleet output folded in (10 blockers, 8 warnings closed as spec text).
+**Status:** Approved (section-by-section 2026-08-12/14)
+**Audience:** Dallas only (admin + managers share the routes; see the cache-keying rule in §7). Android Chrome on a Pixel is the design and test target. iOS remains relevant only to the staff portal, which this project does not touch.
 
 ## 1. Problem and North Star
 
@@ -10,144 +10,165 @@ The admin console is desktop-first. On a phone, its responsive CSS collapses den
 
 **North star: no dead ends.** The common actions get a genuinely phone-first fast path. Everything else gets an escape hatch (Desktop view) that always exists, even when it is ugly.
 
-**Not the fix:** more responsive CSS retrofits. `client/src/index.css` is ~19,700 lines with 104 ad-hoc media queries at dozens of breakpoints; that path stays "fine" forever and never becomes good.
+**Not the fix:** more responsive CSS retrofits. `client/src/index.css` is ~20,200 lines with 108 ad-hoc media queries; that path stays "fine" forever and never becomes good.
 
 **Chosen approach:** phone-first admin surfaces inside the existing React app, shipped as an installable PWA on the admin host. Native app rejected: the felt gap is phone-first IA versus desktop IA, not web versus native, and a second codebase forever is the wrong trade for a sole developer.
 
 ## 2. Scope and Phasing
 
 - **Phase 1 (this spec):** app shell, Events list + detail, Proposals list + detail, global search, install/push/offline, biometric auth, resume-where-I-left-off.
-- **Phase 2 (later spec):** staffing and payroll. Payroll touches money across 12 files and gets its own design pass.
+- **Phase 2 (later spec):** staffing and payroll surfaces.
 - **Phase 3 (later spec):** rest of Workspace: Messages, Clients, Hiring, Overview.
 
-Explicitly out of phase 1: proposal creation from the phone (the New Proposal button routes to Desktop view), free-text price overrides, composing new custom line items, any offline write queueing, any staff-portal changes.
+Explicitly out of phase 1: proposal creation from the phone (the New Proposal button routes to Desktop view), free-text price overrides, composing new custom line items, **cancel-line-item** (settled 2026-08-14: it is a preview→fingerprint→execute flow with a required free-text reason and an idempotency key that fires real Stripe refunds and a client email; it stays Desktop-view), any offline write queueing, any staff-portal changes.
+
+**Endpoint rule (amended 2026-08-14):** no NEW API endpoints for phase-1 reads and edits, but **parameter and projection extensions to existing endpoints are in scope** where this spec names them (§4 shifts feed, §5 proposals list). The §8 auth endpoints are the deliberate exception and get their own route file.
 
 ## 3. Architecture
 
 Same repo, same React app, same admin host and URLs.
 
-- **Fork point:** a new `useIsPhone` hook: one `matchMedia` check at a single breakpoint constant, **700px**, defined once. No new scattered breakpoints.
-- **Route-level fork:** each phase-1 route keeps its existing desktop component; at phone width the route renders a phone component instead. `/events/:id` stays one URL answering with `EventDetailPage` or the mobile equivalent. Deep links from push, SMS, and the command palette keep working unchanged.
-- **Phone components** live in `client/src/pages/mobile/` with their own small CSS. They share everything below the presentation layer: `utils/api.js`, hooks, `AuthContext`, `components/adminos/format.js`. No new API endpoints for phase-1 reads and edits.
-- **Desktop-view escape hatch:** every mobile screen carries a toggle that forces the desktop component at phone width, persisted per-screen (a real exit, not a one-shot). This is the "no dead ends" guarantee for anything phase 1 does not build natively.
+- **Fork point:** a new `useIsPhone` hook: one `matchMedia` check at a single breakpoint constant, **700px**, defined once. No new scattered breakpoints. (700px matches no existing CSS cluster, which is fine for the JS fork; note the Desktop-view escape hatch will render desktop components inside their existing 600/640px CSS band.)
+- **Route-level fork:** each phase-1 route keeps its existing desktop component; at phone width the route renders a phone component instead. `/events/:id` stays one URL. Deep links from push, SMS, and the command palette keep working unchanged.
+- **Phone components** live in `client/src/pages/mobile/` and share everything below the presentation layer: `utils/api.js`, hooks, `AuthContext`, `components/adminos/format.js`. URL-backed list state uses the existing `useUrlListState` hook; sheet state uses `useDrawerParam`.
+- **Desktop-view escape hatch:** every mobile screen carries a toggle that forces the desktop component at phone width, persisted per-screen in `localStorage` (key `adminDesktopViewOverrides`, a JSON map of screen-key → true), cleared on logout along with the rest of the phone's local state (§7 purge rule).
 
-### Shell
+### Visual contract
 
-- Bottom tab bar: **Events**, **Proposals**, **More**. The `unstaffed_events` badge moves from the sidebar to the Events tab; `pending_proposals` to the Proposals tab.
-- Top bar carries a global-search magnifier on every tab (see §6).
-- Safe-area insets respected for the Android gesture bar; the tab bar and thumb-zone actions sit above it.
-- Shell ships **first**, before any screen: standalone mode changes viewport height (no URL bar) and adds bottom insets, so screens are designed inside the real container and tested from the actual installed icon.
+Per CLAUDE.md "Design artifacts are contracts":
 
-### Visual design round-trip
-
-Per the settled 2026-08-04 workflow: these are brand-new surfaces, so each goes through claude.ai/design against the **Dr. Bartender OS Design System** project (`72035042-c993-47e2-9dc8-c452b7bf5fa4`). Lean prompts out (paths + plain descriptions; the design project carries the token law), DesignSync MCP back, then the generated screens are fitted to the stack here: real endpoints via `utils/api.js`, CSS folded in, routes and auth guards, real data. The **shell goes out first** so the design project learns the mobile idiom (bottom tabs, sheets, thumb zone) before the four screens are prompted.
+- **Benchmark artifact:** `docs/design-artifacts/2026-08-14-mobile-admin-shell.dc.html`, the repo snapshot of `Phone Admin Shell.dc.html` from design project **8d8da3a4-97b1-4aa4-8999-0fec9f2a5f99** ("Dr. Bartender admin shell", Dallas's working session). If the session continues, the snapshot is refreshed and this line's date updates; the snapshot in the repo is always the build benchmark.
+- **Token and component law:** the **Dr. Bartender OS Design System** project `72035042-c993-47e2-9dc8-c452b7bf5fa4`, whose mobile family (`components/mobile/*`, `components-mobile.css`, `guidelines/mobile-idiom.html`, authored 2026-08-13) carries the idiom. Its tokens are the product's own `[data-app="admin-os"][data-skin]` tokens extracted verbatim, so the token-translation rule is: **none needed**; mobile CSS consumes the existing `index.css` custom properties directly, and new mobile rules land in `index.css` under the `.m-*` namespace.
+- **Component vocabulary:** `.m-shell` / `.m-header` / `.m-main` / `.m-tabbar` / `.m-tab(-icon/-badge/-label)` / `.m-card(-title/-meta/-chip)` / `.m-stale` / `.m-sheet(-scrim/-handle/-title/-row)` / `.m-stepper(-label/-ctl/-btn/-value)` / `.m-more(-heading/-list/-row)` / `.m-return-pill`, composing the existing `chip`/`chip-dot` and `Icon` primitives. The benchmark's accordion reuse of `.m-more-list`/`.m-sheet-row` inside detail screens gets promoted to proper `.m-section` classes at fit-back rather than shipped as class abuse.
+- **Per-screen composition (from the benchmark):** shell = top bar (℞ mark, title, search, Desktop-view escape) + bottom tabs (Events / Proposals / More; needs-you badges, neutral aggregate on More) + active-tab top stripe. Events list = date-rail cards (DOW/day/month, TODAY in accent) with client · type, guests, time · venue meta, color-coded staffing fraction, pending-request chip, Bar/Supplies tags. Proposals list = same card family with pipeline chip and total. Detail screens = collapsible Contacts / Staffing / Financials sections under a back-arrow header. Assignment sheet = bottom sheet with roster context and candidate rows. Desktop escape = full desktop chrome plus the floating "℞ Phone view" return pill.
+- **Where this spec overrides the benchmark:** no one-tap auto-assign; suggestions are unranked (§4); the Waitlist section wires to real waitlist semantics (§4); the filter apparatus of §4/§5 is added; role-selection rows are added to the sheet (§4); the benchmark's "Desktop escape" screen is a mockup placeholder, in the real app the desktop chrome itself renders.
 
 ## 4. Events
 
 ### List (`/events`, phone)
 
-- Card list, not a table.
-- **Date-ordered.** Upcoming opens on today, next event first.
-- Phone filter apparatus (settled 2026-08-14, supersedes the earlier "no filters" call): an **Upcoming / Past** switch under the header (upcoming default) and one tap-chip, **Needs staff** (events with open or pending slots, same data as the tab badge). Chips, not dropdowns; URL-backed. Everything else stays desk work.
-- Card layout (superseded 2026-08-14 by Dallas's design-session decisions, which win over the earlier three-line rule): a left date rail (DOW / day / month, TODAY in accent), then client + event type, guest count, time · venue meta, a color-coded staffing fraction (filled/slots: ok when full, warn partial, danger empty; jewel tones on House Lights per the contrast audit), a pending-request chip when a cover request needs approval, and Bar / Supplies tags. Still no balance on event cards. Reference: `Phone Admin Shell.dc.html` in design project 8d8da3a4-97b1-4aa4-8999-0fec9f2a5f99.
-- Tap opens detail.
+- Card list, not a table, **date-ordered**, card layout per the Visual contract. No balance on cards.
+- Filter apparatus (settled 2026-08-14): an **Upcoming / Past** switch under the header (upcoming default, opens on today) and one tap-chip, **Needs staff**. Chips, not dropdowns; URL-backed via `useUrlListState`. Everything else stays desk work.
+- **Needs-staff chip definition = the badge definition, verbatim** (settled 2026-08-14): the chip filters to events having a shift that matches the `unstaffed_events` SQL in `server/routes/admin/settings.js` (status `open`, `event_date >= CURRENT_DATE`, approved-and-not-dropped < `positions_needed`; pending requests deliberately NOT counted). Chip and badge can never disagree because they share one definition; if pending-awareness is ever wanted it changes in both places at once. The chip is hidden on the Past tab (the definition is upcoming-only by construction).
+- **Feed grounding:** the list rides the admin branch of `GET /shifts`, which today returns one row **per shift**, `ORDER BY event_date ASC LIMIT 500` with no lower bound. Phase 1 extends it (parameter extension per §2): `scope=upcoming|past` (upcoming = `event_date >= CURRENT_DATE` ascending; past = descending), server-side `limit`/`offset` with a bounded default, and the admin branch additionally projects `cover_requested_at` (already projected on the staff branch) so the pending-request chip has a data source. The phone groups rows into one card per event by `proposal_id`; **manual shifts (`proposal_id IS NULL`) render as cards that open the shift's assignment sheet directly**, never a dead tap into a nonexistent event page.
 
 ### Detail (`/events/:id`, phone)
 
-Keeps the existing four-block structure, stacked in priority order: **header, staffing, pricing, activity**.
+Keeps the existing four-block structure, stacked: **header, staffing, pricing, activity**, rendered per the Visual contract's collapsible-section composition.
 
-- **Header:** client, date, time, venue. Venue address opens Google Maps (extend `AddressLink` behavior); client phone is tap-to-call / tap-to-text. Existing page actions (edit, send invite, re-enroll, cancel) become full-width tap targets.
-- **Staffing:** keeps `ShiftDrawer` semantics as a bottom sheet. Tap a shift; assign / approve / remove are rows you tap. No dropdowns.
-- **Assignment sheet scope (settled 2026-08-14):** candidate suggestions render as a plain ranked list; **no one-tap "Auto-assign top match"** (the auto-assign / seniority ranking systems are early-project machinery Dallas is de-emphasizing; do not build admin UI on that data). The design's Waitlist section is kept but wires to the REAL staffing waitlist (`position` is a money seam; 'approved' requires `dropped_at IS NULL`), not the suggestion pool the mockup used.
-- **Structured edits:** date and time use native Android pickers; counts use steppers; statuses are chips. Event note is a plain textarea that behaves with Android dictation (dictation is the accepted answer for free text; no snippet/template system in phase 1).
-- **Pricing:** read-heavy. Line items listed; cancel-line behind a kebab. Anything deeper is a Desktop-view case in phase 1.
+- **Header:** client, date, time, venue, guests. Venue address opens Google Maps via the existing `AddressLink` markup; in standalone display mode the link must open externally (verify `target="_blank"` behavior inside the installed app). Client phone is tap-to-call / tap-to-text. Existing page actions (edit, send invite, re-enroll, cancel) become full-width tap targets.
+- **Staffing:** keeps `ShiftDrawer` semantics as a bottom sheet. Tap a shift; assign / approve / remove are rows you tap.
+- **Role selection (settled 2026-08-14, closes the position money seam):** `POST /shifts/:id/assign` 400s without a canonical `position`, and waitlist approval 400s whenever no ranked role is open, which is the definition of a waitlisted request. So the sheet's assign and approve actions carry a **role row step**: when more than one role is open (or none ranks), the sheet shows one tap-row per role (Bartender / Barback / Server, from `positionsNeeded`), and the chosen role is sent explicitly. Never defaulted, never a dropdown, never inferred: `shift_requests.position` keys payroll tip splits.
+- **Candidate list:** plain **alphabetical** active-staff (same `GET /admin/active-staff` feed the desktop drawer uses). The word "ranked" is retired: no one-tap "Auto-assign top match", no seniority/distance/kit machinery in admin UI (settled 2026-08-14; that early-project data is de-emphasized). The Waitlist section wires to the real derivation: requests from `GET /shifts/detail/:id` classified via `staffingClassification.classifyRequest` client-side, exactly as `ShiftDrawer` does today; 'approved' requires `dropped_at IS NULL`.
+- **Structured edits:** date and time use native Android pickers; counts use steppers; statuses are chips. Event-side edits reuse the event editor's existing update path, which owns the cross-cutting rule (event detail change → linked shifts). Event note is a plain textarea that behaves with Android dictation.
+- **Pricing:** read-heavy. Line items listed. Cancel-line is Desktop-view (§2). Anything deeper is a Desktop-view case in phase 1.
 - **Activity:** plain feed, unchanged shape.
 
 ## 5. Proposals
 
 ### List (`/proposals`, phone)
 
-Same treatment as events: card list, tap to open. Proposals keep the pipeline-stage chip on the card (draft / sent / viewed / modified / accepted), because a proposal's identity is its funnel position. Phone apparatus (settled 2026-08-14): a sort toggle **Event date / Newest lead** (event date default) and one tap-chip, **Unviewed** (sent but never viewed). A Modified chip was considered and deliberately left out: the card chips and tab badge already carry it; add later only if missed.
+Card list per the Visual contract, pipeline-stage chip on the card. Apparatus (settled 2026-08-14): a sort toggle **Event date / Newest lead** and one tap-chip, **Unviewed**. A Modified chip was considered and deliberately left out (card chips + tab badge already carry it; add later only if missed).
+
+**Feed grounding:** `GET /api/proposals` is server-paginated (50/page) with a whitelisted sort map. "Event date" maps to the existing `event_date` key; "Newest lead" maps to `created_at DESC` (added to the whitelist; it is already the default order, the toggle just makes it explicit). **Unviewed** is a new server-side predicate param (`unviewed=1` → `last_viewed_at IS NULL AND status = 'sent'`; the column exists at `schema.sql:867`, and `modified` implies viewed). A client-side filter over a paginated page would return a wrong subset; the predicate must be server-side.
 
 ### Detail (`/proposals/:id`, phone)
 
-- **Read view:** stacked blocks: client, event basics, package and line items, payment state, activity. Tap-to-act carries over (call, text, maps). Actions row: send, remind, archive as tap targets.
-- **Edits:** structured edits only, with pickers and steppers: date, times, guest count, bar count, add-on quantities. All edits run through the **existing** `proposalEditor/` logic (`formState.js`, `patchBody.js`, `repriceSummary.js`) so the money math has exactly one implementation. A reprice-triggering edit shows the same before/after confirmation as the desktop modal, as a bottom sheet.
-- **Desktop-view cases in phase 1:** free-text price overrides, new custom line items, proposal creation. Rare, money-bearing, already served by the tested desktop path.
+- **Read view:** stacked blocks per the Visual contract. Tap-to-act carries over. Actions row: send, remind, archive as tap targets.
+- **Edits:** structured edits only, with pickers and steppers: date, times, guest count, bar count, add-on quantities. All edits run through the existing `proposalEditor/` logic (`formState.js`, `patchBody.js`, `repriceSummary.js`), **with full hydration required** (settled 2026-08-14): the PATCH is a full replace, so a phone sheet editing one field must be hydrated by the same loader the desktop editor uses — `recoverAddonQuantities` against the add-on catalog, the detected `numBartendersOverride`, and carry-forward of `total_price_override`, `adjustments`, `syrup_selections`, `setup_minutes_before`. Module reuse without full hydration is the known add-on-quantity/free-bartender bug class and is forbidden.
+- **No money-bearing edit sheet opens from a cache-served read** (settled 2026-08-14): opening any sheet that can change a price requires a fresh, non-cache fetch to succeed first. Offline, money edits are simply unavailable; the sheet says so.
+- A reprice-triggering edit shows the same before/after confirmation as the desktop modal, as a bottom sheet.
+- **Desktop-view cases in phase 1:** free-text price overrides, new custom line items, cancel-line, proposal creation.
 
 ## 6. Global Search
 
-- Magnifier in the shell top bar on every tab. Backed by the **same global-search endpoint the ⌘K palette uses**. No per-screen filter boxes.
-- Full-screen search takes over on tap; results grouped as the palette groups them (events, proposals, clients) rendered as large tap rows. Keyboard appears only when the field is focused; dictation works in the field.
+- Magnifier in the shell top bar on every tab, backed by the same `/admin/search` endpoint the ⌘K palette uses. Full-screen takeover, results grouped as the palette groups them, large tap rows.
+- **Grounding:** the endpoint returns max 6 rows per group, empty under 2 characters, and is rate-limited 60/min per user. The phone search reuses the palette's debounce, renders an explicit no-results state, and each group with 6 results ends in a "More on desktop" row (Desktop-view escape) rather than pretending the list is complete.
 
 ## 7. Install, Push, Offline
 
 ### Install
 
-- New `client/public/admin-manifest.json`: name "DrB OS", its own icon (visually distinct from the staff app), `display: standalone`, `start_url: /events` (route-restore then takes over, §9).
-- Injected at runtime the same way `installStaffPwaMeta.js` does, **gated to the admin host**. The `staff.` gate and staff manifest are untouched; the injector generalizes so each host gets its own manifest and the installs never collide.
-- Chrome's install banner will fire on its own; an explicit "Install app" row in **More** removes any dependence on Chrome's mood.
+- New `client/public/admin-manifest.json`: name "DrB OS", its own icon, `display: standalone`, `start_url: /events` (route restore then takes over, §9).
+- Injected at runtime by a **new sibling module** of `installStaffPwaMeta.js`, gated by the same host mapping `getSiteContext()` uses for the admin surface: `admin.*` prefixes AND bare `localhost`/`127.0.0.1` (so dev installs work). The staff gate and staff files are untouched. Known dev-only caveat: on bare localhost the admin SW registers at scope `/` and can evict a locally-tested staff SW registration; prod hosts are separate origins and unaffected.
+- Chrome's install banner plus an explicit "Install app" row in **More**.
 
-### Push
+### Push (rewritten 2026-08-14; the fleet found the reuse claim false)
 
-- Server side unchanged: `pushDispatch.js` + existing VAPID keys.
-- New `client/public/admin-sw.js` registered on the admin host: handles push display and notification clicks with deep links into the tapped entity.
-- Phase-1 push events (already admin-alert shaped): new lead, proposal accepted, payment received, staffing drop. Each toggleable in More → Notifications; all default-on. Android Chrome: permission grant just works; no install-first nagging needed.
+Real server work, stated honestly:
 
-### Offline
+- **One integration point:** `notifyAdminCategory` (`server/utils/adminNotifications.js`) is where every phase-1 trigger already flows (Thumbtack lead, proposal accepted via the public routes, payment via the Stripe webhook handlers, staffing drop via `shifts.approval.js`). It gains a **push channel** beside email/SMS: direct, at-call-time dispatch to the admin user's stored subscriptions via the existing `pushSender`/VAPID plumbing. **Never** via `scheduled_messages` (5-minute scheduler latency defeats a lead alert). Push send is fire-and-forget after the caller's transaction commits and can never fail the calling money path.
+- **Subscriptions:** reuse the existing `POST /api/me/push-subscriptions` storage (auth-only; subscriptions are per-device). `client/src/utils/pushSubscribe.js` is generalized to take the SW path (`/staff-sw.js` is currently hardcoded in register/getRegistration/unsubscribe) so the admin surface registers `/admin-sw.js`.
+- **Toggles:** More → Notifications, one per category (new lead, proposal accepted, payment received, staffing drop), stored in a new `users.admin_push_preferences JSONB NOT NULL DEFAULT '{}'` (idempotent DDL; absent key = enabled, mirroring the tri-state convention).
+- **Deep links:** `notificationclick` focuses/opens the target route. If the lock (§8) applies at tap time, the deep link is **held through unlock**, not dropped.
+- New `client/public/admin-sw.js` handles push display + clicks (pattern from `staff-sw.js`) plus the offline duties below.
 
-- `admin-sw.js` precaches the app shell (JS, CSS, fonts, icons): instant open, works as a container with no signal.
-- **Reads:** network-first with cache fallback. Every GET the phone surfaces make is cached; on fetch failure the cached copy renders with a staleness line ("as of 2:14 PM"), never a spinner or bare error.
-- **Writes: never queued.** A failed save keeps the sheet open with input intact and says plainly "no connection, didn't save"; retry when signal returns. No background sync, no conflict resolution, no IndexedDB mirror. The SW response cache is the entire mechanism.
+### Offline (law tightened 2026-08-14)
 
-## 8. Auth: Biometric Unlock
+- `admin-sw.js` caches the app shell for instant open. Mechanics per the foundation plan: runtime cache-on-fetch (network-first navigations falling back to cached `index.html`; cache-first for content-hashed `/static/` assets), versioned cache names purged on activate. No workbox, no hand-written precache manifest (CRA's hashed names make one impossible to maintain; runtime caching sidesteps it, and a fresh navigation always fetches the current `index.html`, so `skipWaiting` cannot mix asset versions).
+- **Reads:** network-first with cache fallback, under these rules:
+  - Fallback fires **only on transport failure** (no response at all). A server-answered non-2xx — especially 401/403 after expiry or revocation — is NEVER answered from cache; a dead session renders no data.
+  - **Allowlist:** the SW caches only the phone surfaces' GET paths (events/shifts feed, event detail, proposals list/detail, badge-counts, search). Desktop-view traffic through the escape hatch (payroll, users, paystubs) is never cached.
+  - **Weak signal:** the fetch races a short timeout (~4s); on timeout with a cached copy present, serve the cache with the staleness line. No cached copy = normal loading state (the "never a spinner" promise applies only when a cached copy exists; a cold cache may spin).
+  - Cached responses carry `x-sw-cached-at`; the client surfaces it as the "as of 2:14 PM" line (device-local time: it answers "how old is what I'm seeing"). Because the SW synthesizes the cached Response, this header is readable regardless of the cross-origin API host.
+  - **Cache keying and purge:** the API cache name embeds the authenticated user id; on boot with a different user, old namespaces are purged (managers share these routes; one device must never show another user's cached data). Full purge on logout. Honest limit, stated as accepted risk: a *remote* credential revoke cannot reach a phone's CacheStorage; revoke kills access to fresh data and live sessions (§8), while the cached snapshot persists on-device until next app open + auth failure, behind the OS device lock. No remote-wipe theater.
+- **Writes: never queued.** The SW fetch handler explicitly ignores non-GET requests (stated so a future edit cannot quietly add replay semantics). A failed save keeps the sheet open with input intact and says "no connection, didn't save."
 
-The one place phase 1 touches auth. Gets max-effort treatment and the 5-agent pre-prod review fleet before merge.
+## 8. Auth: Biometric Unlock (rewritten 2026-08-14 after the fleet review)
 
-- **Mechanism:** WebAuthn passkeys via the Android platform authenticator (fingerprint or face; the OS decides which are enrolled and strong enough, PIN is the OS-level fallback).
-- **Enrollment:** first launch on the phone: password login once, then the app registers a passkey on the device.
-- **Server:** new `webauthn_credentials` table (user id, credential id, public key, signature counter, label, created/last-used) and two endpoints on the existing auth router: register and assert.
-- **Session model (phone only; desktop login unchanged):**
-  - Access JWT drops to **12 hours** on the phone (desktop keeps 7d).
-  - Paired with a long-lived opaque device token, hashed at rest, revocable.
-  - JWT expired, or app backgrounded > **30 minutes** → lock screen. One biometric tap performs a WebAuthn assertion; server verifies against the stored credential and issues a fresh JWT. The phone holds no live token while locked; the unlock is not cosmetic.
-- **Escape hatches:** password login always works on the phone (biometric failure, wiped passkey). Credential list + revoke button in desktop Settings, so the phone's access can be killed from the laptop.
+Max-effort area; 5-agent pre-prod fleet before merge. **Library:** `@simplewebauthn/server` + `@simplewebauthn/browser` (none exists in the repo today; new dependency, documented per the docs law).
+
+- **Mechanism:** WebAuthn passkeys via the Android platform authenticator. First phone launch: password login once, then passkey registration.
+- **The credential IS the device session** (the separately-stored "opaque device token" from the earlier draft is deleted from the design; it was an unexplained second bearer credential). Enrollment creates a `webauthn_credentials` row (user id, credential id, public key, signature counter, label, created/last-used; idempotent DDL in `schema.sql`, prod DDL run before push). Unlock = a WebAuthn assertion against that credential; the server verifies and mints a fresh JWT. Nothing else can mint the phone-lifetime token.
+- **Endpoints:** a NEW route file `server/routes/webauthn.js` (`auth.js` is at ~482 lines and does not grow): register-options, register-verify, assert-options, assert-verify, plus credential list + revoke. Register and the credential-management endpoints require an authenticated session; assert-verify is the unlock path.
+- **Challenges:** server-issued, stored server-side (small DB table, single-use, ~5-minute TTL, deleted on use). Assertions without a live matching challenge are rejected; this is the replay control.
+- **RP ID and origin:** pinned to `admin.drbartender.com` (env-overridable `WEBAUTHN_RP_ID` / `WEBAUTHN_ORIGIN`, localhost defaults in dev). One bundle serves four hosts; a bare-domain RP ID would let an admin passkey assert from the public/hiring/staff origins. It must not.
+- **Signature counter:** stored; if the stored counter is > 0 and an assertion's counter is not greater, reject and Sentry-alert (cloned-credential signal). Android authenticators that always report 0 never trip this (0 stays 0).
+- **Rate limiting:** a dedicated limiter for the webauthn endpoints, separate from `authLimiter`, so unlock retries neither ride nor exhaust the login lockout budget.
+- **Session model:** the assert-verify endpoint is the ONLY minting site for the phone-lifetime token: a **12-hour** JWT carrying the credential id claim. Password login keeps minting 7d everywhere it does today (all three sites), including on the phone as the fallback path; that is exactly today's risk posture, no regression, and it means the server never needs to trust a client-declared "I am a phone" flag: the token's provenance IS the discriminator.
+- **Lock behavior:** app backgrounded > 30 minutes, or JWT expired → full-screen lock that fully occludes content (no cached data visible behind it). One biometric tap asserts and re-enters. **In-scope client changes the fleet caught:** `SessionExpiryHandler` currently force-logs-out and navigates to `/login` on the first 401 and its once-only guard never resets in a long-lived PWA document; on the phone surface a 401 routes to the lock screen instead (desktop behavior unchanged), and the guard resets on re-auth. `AuthContext` currently clears the stored token on ANY `/auth/me` rejection; it must clear only on a real 401/`TOKEN_VERSION_MISMATCH`, never on a transport failure — otherwise an offline cold launch permanently signs the phone out, which the §7/§9 offline promises cannot survive.
+- **Revocation, tied to the mechanism that actually kills JWTs:** live tokens die via the existing `token_version` bump in `middleware/auth.js`. Desktop credential revoke = delete the credential row AND bump `token_version` (kills the phone's live 12h JWT immediately). Password reset also bumps `token_version` (stolen-phone standard response works). Passkeys survive a password reset (possession + biometric factor); explicit revoke is the kill switch.
+- **Escape hatches:** password login always works on the phone. Credential list + revoke in desktop Settings.
+- **Observability:** Sentry events for registration, failed assertions, counter regressions, and revocations; push-send failures (§7) likewise. These are the records needed two weeks after a phone goes missing.
+- **Review scaling:** `scripts/sensitive-paths.txt` gains `server/routes/webauthn.js`, `server/routes/auth.js`, `client/src/context/AuthContext.js`, `client/src/components/SessionExpiryHandler.js`, `client/public/admin-sw.js`, `client/public/admin-manifest.json`, and the PWA meta injector, so the promised fleet actually fires (the file currently lists neither the auth router nor any client path; its own comments document that failure mode).
 
 ## 9. Resume Where I Left Off
 
-- Current route persisted on navigation; cold launch restores the saved route (behind the lock screen when the lock applies; unlock lands exactly where you were).
+- Current route persisted on navigation; cold standalone launch restores it (behind the lock when the lock applies; unlock lands exactly where you were, including a held push deep link).
+- **Never persisted:** `/login` and the auth/reset pages (the expiry handler navigates there; persisting it would defeat resume).
+- **Restore fallback:** a saved route that now 404s or is denied (archived proposal, role change) falls back to `/events` instead of stranding on an error screen.
 - Events and Proposals lists remember scroll position.
-- A half-finished edit sheet does **not** survive a cold start: restoring stale form state over changed data is how wrong numbers get saved. Interrupted edits reopen fresh with the sheet closed. Ordinary backgrounding (app still in memory) keeps everything, sheets included, with the 30-minute lock as an overlay.
+- A half-finished edit sheet does not survive a cold start; stale form state over changed data is how wrong numbers get saved (§5 extends this: money sheets also never open from cache-served reads while live).
 
 ## 10. Error Handling
 
-- Every write reports failure **inline in the sheet or form it came from**, keeps input, offers retry. Nothing fails silently into a missable toast.
-- API errors surface the server's message per the existing `AppError.statusCode` convention, unchanged.
-- Reads degrade to cached-with-staleness (§7).
-- Phone components report to Sentry with a `surface: mobile-admin` tag so phone-specific breakage is independently visible.
+- Every write reports failure inline in the sheet or form it came from, keeps input, offers retry. Nothing fails silently into a missable toast. (Cancel-line's retry-with-idempotency-key subtleties are moot in phase 1: Desktop-view.)
+- API errors surface the server's message via the client's normalized error shape from `utils/api.js` — `err.status` / `err.message` / `err.fieldErrors` (the server-side `AppError.statusCode` never reaches the client; components must not read `err.statusCode`).
+- Reads degrade per the §7 offline law (cached-with-staleness on transport failure only; cold cache may load normally).
+- Phone components report to Sentry with a `surface: mobile-admin` tag.
 
 ## 11. Testing
 
-- **Unit tests:** new pure logic only: route-restore, staleness formatting, the `useIsPhone` fork. Money math is deliberately reused, already-tested code; no duplicate suites.
-- **Per-screen gate:** Playwright pass at phone viewport using dev JWTs per the existing mobile-review recipe, including `elementFromPoint` checks on primary actions (clipped-control false-pass lesson), then a walkthrough by Dallas on the actual Pixel against dev data before the screen is called done.
-- **Auth changes additionally get:** the full server auth-route test suite plus the 5-agent pre-prod review fleet.
-- Owed on-device walkthroughs are logged in `docs/walkthroughs-owed.md`, the single file.
+- **Unit tests:** new pure logic (route-restore, staleness formatting, `useIsPhone` fork, screen keys). Money math is reused, already-tested code; no duplicate suites.
+- **Per-screen gate:** Playwright at phone viewport with dev JWTs per the existing mobile-review recipe, `elementFromPoint` checks on primary actions, then a walkthrough by Dallas on the actual Pixel against dev data. Owed walks logged in `docs/walkthroughs-owed.md`.
+- **Auth lane owns its test debt:** the "full server auth-route test suite" does not exist today (only preferred-name and client-auth files). The auth lane writes it: login, register, forgot/reset password, plus the full webauthn register/assert/revoke/counter/challenge matrix, and the `SessionExpiryHandler`/`AuthContext` behavior changes. Plus the 5-agent pre-prod fleet.
+- **Docs law (per CLAUDE.md, not optional):** README folder tree (pages/mobile, hooks, SW, manifest, icons, scripts) + Tech Stack (`@simplewebauthn`); ARCHITECTURE route table (webauthn routes, push channel), Database Schema (`webauthn_credentials`, challenge table, `admin_push_preferences`), PWA/integrations section; CLAUDE.md env-vars table (`WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGIN`).
 
 ## 12. Decisions Log
 
 | Decision | Call |
 | --- | --- |
 | App form | Installable PWA on admin host; native rejected |
-| Target | Android Chrome (Pixel); iOS = staff portal only, out of scope |
+| Target | Android Chrome (Pixel); iOS = staff portal only |
 | Surfaces | Phone-first components, route-level fork at 700px; not CSS retrofits |
 | Escape hatch | Per-screen persisted Desktop-view toggle; "no dead ends" |
-| Events list | Date-ordered; card carries the design-session layout (date rail, guests, venue, staffing fraction, request chip, tags), no balance; Upcoming/Past switch + Needs-staff chip are the whole filter apparatus |
-| Proposals apparatus | Sort toggle Event date / Newest lead + Unviewed chip; Modified chip deliberately omitted |
-| Assignment sheet | Ranked list only; no one-tap auto-assign; waitlist wires to the real roster waitlist |
-| Proposals list | Same, plus pipeline-stage chip |
-| Free text | Android dictation; no snippet system in phase 1 |
-| Money edits | Reuse `proposalEditor/` form/patch/reprice logic; overrides and custom lines stay Desktop-view |
-| Offline | Cached reads with staleness marker; writes never queue |
-| Auth | WebAuthn biometric unlock; 12h phone JWT; 30-min background lock; desktop revoke |
-| Resume | Route + list scroll restore; edit sheets never restored across cold start |
-| Visual design | claude.ai/design round-trip against the OS design system; shell prompt first |
+| Visual contract | Benchmark snapshot in docs/design-artifacts + OS design system as token law; overrides listed in §3 |
+| Events list | Date-ordered; design-session card layout; Upcoming/Past switch + Needs-staff chip (chip = badge SQL, verbatim); grouped per event; manual shifts open the sheet |
+| Proposals apparatus | Sort toggle Event date / Newest lead (created_at) + server-side Unviewed predicate; Modified chip omitted |
+| Assignment sheet | Alphabetical candidates, no ranking machinery; explicit role rows on assign AND waitlist approval (position = payroll seam); waitlist via classifyRequest |
+| Money edits | Full formState hydration required; no money sheet from a cache-served read; overrides, custom lines, cancel-line stay Desktop-view |
+| Offline | Transport-failure-only cache fallback; allowlisted GETs; per-user cache namespace; purge on logout; remote-revoke residual stated, not hidden |
+| Push | Channel inside notifyAdminCategory, direct send, fire-and-forget post-commit; admin_push_preferences JSONB; pushSubscribe generalized |
+| Auth | Passkey = device session (no second bearer token); assert-verify is the only 12h mint; challenges single-use server-side; RP ID pinned to admin host; revocation via token_version; 401/transport handling fixed in SessionExpiryHandler + AuthContext |
+| Resume | Route + list scroll restore; /login never persisted; dead-route fallback to /events; edit sheets never restored |
+| Fleet trigger | Auth + SW + manifest paths added to scripts/sensitive-paths.txt |

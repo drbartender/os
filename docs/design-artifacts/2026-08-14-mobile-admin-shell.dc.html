@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/styles.css">
+  <script src="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/_ds_bundle.js"></script>
+  <style>
+    body { margin: 0; -webkit-font-smoothing: antialiased; background: #0b0d10; }
+    a { color: hsl(212 60% 62%); text-decoration: none; }
+    a:hover { color: hsl(212 70% 72%); }
+  </style>
+</helmet>
+<div data-app="admin-os" data-skin="{{ skin }}" data-density="comfy" style="min-height: 100dvh; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 20px; background: var(--bg-0); font-family: var(--font-ui, sans-serif);">
+  <div style="width: 100%; max-width: 393px; height: 852px; max-height: calc(100dvh - 90px); min-height: 560px; display: flex; flex-direction: column; overflow: hidden; position: relative; transform: translateZ(0); border: 1px solid var(--line-3); border-radius: 20px; box-shadow: var(--shadow-pop); background: var(--bg-0);">
+    <div class="m-shell" style="flex: 1; min-height: 0;">
+      <sc-if value="{{ listHeader }}" hint-placeholder-val="{{ true }}">
+        <header class="m-header">
+          <span style="display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: none; margin-right: 8px; border-radius: var(--radius-sm); background: var(--accent); color: #fff; font-size: 13px; line-height: 1;">&#8478;</span>
+          <h1>{{ title }}</h1>
+          <button type="button" class="m-iconbtn" aria-label="Search" onClick="{{ onSearch }}">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="search" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+          </button>
+          <button type="button" class="m-iconbtn" aria-label="Switch to desktop view" onClick="{{ onDesktop }}">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+          </button>
+        </header>
+      </sc-if>
+      <sc-if value="{{ isDetail }}" hint-placeholder-val="{{ false }}">
+        <header class="m-header" style="min-height: 60px; padding: 8px 8px 8px 2px;">
+          <button type="button" class="m-iconbtn" aria-label="Back to Events" onClick="{{ onBack }}">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="left" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+          </button>
+          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+            <span style="display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+              <h1 style="flex: 1; min-width: 0;">{{ dClient }} <span style="color: var(--ink-3); font-weight: 400;">&#183; {{ dKind }}</span></h1>
+              <span style="flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3);">{{ dGuests }} <span style="font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4);">GUESTS</span></span>
+            </span>
+            <span style="font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ dVenue }}</span>
+          </span>
+          <button type="button" class="m-iconbtn" aria-label="Switch to desktop view" onClick="{{ onDesktop }}">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+          </button>
+        </header>
+      </sc-if>
+      <sc-if value="{{ isPropDetail }}" hint-placeholder-val="{{ false }}">
+        <header class="m-header" style="min-height: 60px; padding: 8px 8px 8px 2px;">
+          <button type="button" class="m-iconbtn" aria-label="Back to Proposals" onClick="{{ onBack }}">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="left" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+          </button>
+          <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+            <span style="display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+              <h1 style="flex: 1; min-width: 0;">{{ ppClient }} <span style="color: var(--ink-3); font-weight: 400;">&#183; {{ ppKind }}</span></h1>
+              <span style="flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3);">{{ ppGuests }} <span style="font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4);">GUESTS</span></span>
+            </span>
+            <span style="font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ ppVenue }}</span>
+          </span>
+          <button type="button" class="m-iconbtn" aria-label="Switch to desktop view" onClick="{{ onDesktop }}">
+            <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+          </button>
+        </header>
+      </sc-if>
+      <sc-if value="{{ isEvents }}" hint-placeholder-val="{{ true }}">
+        <main class="m-main" data-screen-label="Events">
+          <div class="m-stale" style="display: flex; align-items: center; gap: 6px;">
+            <sc-if value="{{ staleDot }}" hint-placeholder-val="{{ false }}">
+              <span style="width: 6px; height: 6px; flex: none; border-radius: 50%; background: hsl(var(--warn-h) var(--warn-s) 52%);"></span>
+            </sc-if>
+            <span>{{ staleLabel }} <span class="m-stale-time">{{ staleTime }}</span></span>
+          </div>
+          <sc-for list="{{ events }}" as="e" hint-placeholder-count="4">
+            <button type="button" class="m-card" onClick="{{ e.onTap }}" style="flex-direction: row; align-items: stretch; gap: 12px; padding: 10px 14px 10px 10px;">
+              <span style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; width: 46px; flex: none; border-right: 1px solid var(--line-1); padding-right: 10px;">
+                <span style="font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; color: var(--ink-3);">{{ e.dow }}</span>
+                <sc-if value="{{ e.isToday }}" hint-placeholder-val="{{ false }}">
+                  <span style="font-family: var(--font-numeric); font-size: 20px; font-weight: 600; line-height: 1.1; color: var(--accent);">{{ e.day }}</span>
+                  <span style="font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em; color: var(--accent);">TODAY</span>
+                </sc-if>
+                <sc-if value="{{ e.notToday }}" hint-placeholder-val="{{ true }}">
+                  <span style="font-family: var(--font-numeric); font-size: 20px; font-weight: 600; line-height: 1.1; color: var(--ink-1);">{{ e.day }}</span>
+                  <span style="font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em; color: var(--ink-4);">{{ e.mon }}</span>
+                </sc-if>
+              </span>
+              <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; justify-content: center;">
+                <span style="display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+                  <span style="flex: 1; min-width: 0; font-size: var(--fs-body); font-weight: 600; color: var(--ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ e.client }} <span style="color: var(--ink-3); font-weight: 400;">&#183; {{ e.kind }}</span></span>
+                  <span style="flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3);">{{ e.guests }} <span style="font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4);">GUESTS</span></span>
+                </span>
+                <span class="m-card-meta">{{ e.meta }}</span>
+                <span style="display: flex; align-items: center; gap: 6px; margin-top: 3px;">
+                  <span style="font-family: var(--font-numeric); font-size: 12.5px; font-weight: 600; color: {{ e.countColor }};">{{ e.count }}</span>
+                  <sc-if value="{{ e.hasRequest }}" hint-placeholder-val="{{ false }}">
+                    <span class="chip warn"><span class="chip-dot"></span>{{ e.requestLabel }}</span>
+                  </sc-if>
+                  <span style="margin-left: auto; display: inline-flex; gap: 4px;">
+                    <sc-if value="{{ e.barRental }}" hint-placeholder-val="{{ false }}"><span class="tag">Bar</span></sc-if>
+                    <sc-if value="{{ e.supplies }}" hint-placeholder-val="{{ false }}"><span class="tag">Supplies</span></sc-if>
+                  </span>
+                </span>
+              </span>
+            </button>
+          </sc-for>
+        </main>
+      </sc-if>
+      <sc-if value="{{ isProposals }}" hint-placeholder-val="{{ false }}">
+        <main class="m-main" data-screen-label="Proposals">
+          <div class="m-stale">{{ staleLabel }} <span class="m-stale-time">{{ staleTime }}</span></div>
+          <sc-for list="{{ proposals }}" as="pr" hint-placeholder-count="4">
+            <button type="button" class="m-card" onClick="{{ pr.onTap }}" style="flex-direction: row; align-items: stretch; gap: 12px; padding: 10px 14px 10px 10px;">
+              <span style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; width: 46px; flex: none; border-right: 1px solid var(--line-1); padding-right: 10px;">
+                <span style="font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; color: var(--ink-3);">{{ pr.dow }}</span>
+                <span style="font-family: var(--font-numeric); font-size: 20px; font-weight: 600; line-height: 1.1; color: var(--ink-1);">{{ pr.day }}</span>
+                <span style="font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.14em; color: var(--ink-4);">{{ pr.mon }}</span>
+              </span>
+              <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; justify-content: center;">
+                <span style="display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+                  <span style="flex: 1; min-width: 0; font-size: var(--fs-body); font-weight: 600; color: var(--ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ pr.client }} <span style="color: var(--ink-3); font-weight: 400;">&#183; {{ pr.kind }}</span></span>
+                  <span style="flex: none; font-family: var(--font-numeric); font-size: 11.5px; color: var(--ink-3);">{{ pr.guests }} <span style="font-family: var(--font-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-4);">GUESTS</span></span>
+                </span>
+                <span class="m-card-meta">{{ pr.meta }}</span>
+                <span style="display: flex; align-items: center; gap: 6px; margin-top: 3px;">
+                  <span style="font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2);">{{ pr.total }}</span>
+                  <span class="chip {{ pr.chipKind }}" style="margin-left: auto;"><span class="chip-dot"></span>{{ pr.chipLabel }}</span>
+                </span>
+              </span>
+            </button>
+          </sc-for>
+        </main>
+      </sc-if>
+      <sc-if value="{{ isMore }}" hint-placeholder-val="{{ false }}">
+        <main class="m-main m-more" data-screen-label="More">
+          <sc-for list="{{ moreGroups }}" as="g" hint-placeholder-count="3">
+            <section>
+              <h2 class="m-more-heading">{{ g.heading }}</h2>
+              <ul class="m-more-list">
+                <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="4">
+                  <li>
+                    <button type="button" class="m-more-row" onClick="{{ r.onTap }}">
+                      <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="{{ r.icon }}" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+                      <span>{{ r.label }}</span>
+                      <sc-if value="{{ r.hasBadge }}" hint-placeholder-val="{{ false }}">
+                        <span style="flex: none; font-family: var(--font-numeric); font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 8px; background: var(--bg-3); border: 1px solid var(--line-2); color: var(--ink-2);">{{ r.badge }}</span>
+                      </sc-if>
+                      <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import>
+                    </button>
+                  </li>
+                </sc-for>
+              </ul>
+            </section>
+          </sc-for>
+          <section>
+            <h2 class="m-more-heading">Lighting</h2>
+            <div style="display: flex; border: 1px solid var(--line-2); border-radius: var(--radius); overflow: hidden;">
+              <button type="button" onClick="{{ onSkinDark }}" style="{{ segDarkStyle }}">After Hours</button>
+              <button type="button" onClick="{{ onSkinLight }}" style="{{ segLightStyle }}">House Lights</button>
+            </div>
+            <div style="margin-top: 6px; font-size: var(--fs-micro); color: var(--ink-4); font-family: var(--font-mono); letter-spacing: 0.04em;">follows the desktop preference &#183; saved per device</div>
+          </section>
+        </main>
+      </sc-if>
+      <sc-if value="{{ isDetail }}" hint-placeholder-val="{{ false }}">
+        <main class="m-main" data-screen-label="Event detail">
+          <div class="m-stale">{{ staleLabel }} <span class="m-stale-time">{{ staleTime }}</span></div>
+          <div style="display: flex; align-items: center; gap: 8px; margin: 0 0 10px;">
+            <span style="font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2);">{{ dWhen }}</span>
+            <sc-if value="{{ dIsToday }}" hint-placeholder-val="{{ false }}"><span class="chip accent"><span class="chip-dot"></span>Today</span></sc-if>
+          </div>
+          <div class="m-more-list" style="margin-bottom: 0.5rem;">
+            <button type="button" class="m-more-row" onClick="{{ tContact }}">
+              <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="users" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+              <span>Contacts</span>
+              <span style="flex: none; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-4);">{{ contactSummary }}</span>
+              <sc-if value="{{ pContactClosed }}" hint-placeholder-val="{{ true }}"><span style="flex: none; color: var(--ink-4); display: flex;"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span></sc-if>
+              <sc-if value="{{ pContact }}" hint-placeholder-val="{{ false }}"><span style="flex: none; color: var(--ink-4); display: flex; transform: rotate(90deg);"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span></sc-if>
+            </button>
+            <sc-if value="{{ pContact }}" hint-placeholder-val="{{ false }}">
+              <div style="border-top: 1px solid var(--line-1); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); padding: 10px 16px 4px;">Client</div>
+              <div style="padding: 4px 16px 10px; display: flex; flex-direction: column; gap: 2px;">
+                <span style="font-family: var(--font-numeric); font-size: 12px; color: var(--ink-2);">{{ cPhone }}</span>
+                <span style="font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3);">{{ cEmail }}</span>
+              </div>
+              <div style="border-top: 1px solid var(--line-1); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); padding: 10px 16px 4px;">Day-of contact</div>
+              <sc-if value="{{ hasDayOf }}" hint-placeholder-val="{{ false }}">
+                <div style="padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 2px;">
+                  <span style="font-size: var(--fs-body); font-weight: 600; color: var(--ink-1);">{{ doName }} <span style="color: var(--ink-3); font-weight: 400;">&#183; {{ doNote }}</span></span>
+                  <span style="font-family: var(--font-numeric); font-size: 12px; color: var(--ink-2);">{{ doPhone }}</span>
+                </div>
+              </sc-if>
+              <sc-if value="{{ noDayOf }}" hint-placeholder-val="{{ false }}">
+                <div style="padding: 4px 16px 12px; display: flex; align-items: center; gap: 8px;">
+                  <span style="color: var(--ink-4); display: flex;"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="clock" size="{{ n16 }}" hint-size="16px,16px"></x-import></span>
+                  <span style="font-size: var(--fs-meta); color: var(--ink-3); line-height: 1.5;">Not received yet &#8212; collected with the drink plan; often the client themselves.</span>
+                </div>
+              </sc-if>
+            </sc-if>
+          </div>
+          <div class="m-more-list" style="margin-bottom: 0.5rem;">
+            <button type="button" class="m-more-row" onClick="{{ tStaff }}">
+              <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="userplus" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+              <span>Staffing</span>
+              <span style="flex: none; font-family: var(--font-numeric); font-size: 12px; font-weight: 600; color: {{ dCountColor }};">{{ dCount }}</span>
+              <sc-if value="{{ pStaffClosed }}" hint-placeholder-val="{{ true }}"><span style="flex: none; color: var(--ink-4); display: flex;"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span></sc-if>
+              <sc-if value="{{ pStaff }}" hint-placeholder-val="{{ false }}"><span style="flex: none; color: var(--ink-4); display: flex; transform: rotate(90deg);"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span></sc-if>
+            </button>
+            <sc-if value="{{ pStaff }}" hint-placeholder-val="{{ false }}">
+              <sc-for list="{{ rosterD }}" as="ro" hint-placeholder-count="2">
+                <div class="m-sheet-row" style="cursor: default; padding-top: 7px; padding-bottom: 7px;">
+                  <span style="width: 30px; height: 30px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); background: var(--bg-3); color: var(--ink-2); font-family: var(--font-mono); font-size: 11px; font-weight: 600;">{{ ro.initials }}</span>
+                  <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;">
+                    <span>{{ ro.name }}</span>
+                    <span style="font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3);">{{ ro.meta }}</span>
+                  </span>
+                  <sc-if value="{{ ro.pending }}" hint-placeholder-val="{{ false }}"><span class="chip warn"><span class="chip-dot"></span>Pending</span></sc-if>
+                  <sc-if value="{{ ro.notPending }}" hint-placeholder-val="{{ true }}"><span style="color: hsl(var(--ok-h) var(--ok-s) 52%); display: flex;"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="check" size="{{ n16 }}" hint-size="16px,16px"></x-import></span></sc-if>
+                </div>
+              </sc-for>
+              <sc-if value="{{ dHasOpen }}" hint-placeholder-val="{{ false }}">
+                <button type="button" class="m-sheet-row" onClick="{{ onAssignOpen }}" style="color: var(--accent); font-weight: 600;">
+                  <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="users" size="{{ n18 }}" hint-size="18px,18px"></x-import>
+                  {{ dAssignLabel }}
+                </button>
+              </sc-if>
+              <sc-if value="{{ hasWaitlist }}" hint-placeholder-val="{{ false }}">
+                <button type="button" class="m-more-row" onClick="{{ tWaitlist }}" style="border-top: 1px solid var(--line-1);">
+                  <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="clock" size="{{ n18 }}" hint-size="18px,18px"></x-import>
+                  <span>Waitlist</span>
+                  <span style="flex: none; font-family: var(--font-numeric); font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 8px; background: var(--bg-3); border: 1px solid var(--line-2); color: var(--ink-2);">{{ wlCount }}</span>
+                  <sc-if value="{{ wlClosed }}" hint-placeholder-val="{{ true }}"><span style="flex: none; color: var(--ink-4); display: flex;"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span></sc-if>
+                  <sc-if value="{{ wlOpen }}" hint-placeholder-val="{{ false }}"><span style="flex: none; color: var(--ink-4); display: flex; transform: rotate(90deg);"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span></sc-if>
+                </button>
+                <sc-if value="{{ wlOpen }}" hint-placeholder-val="{{ false }}">
+                  <sc-for list="{{ waitlist }}" as="wl" hint-placeholder-count="2">
+                    <button type="button" class="m-sheet-row" onClick="{{ wl.onTap }}" style="padding-top: 7px; padding-bottom: 7px;">
+                      <span style="width: 30px; height: 30px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent); font-family: var(--font-mono); font-size: 11px; font-weight: 600;">{{ wl.initials }}</span>
+                      <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;">
+                        <span>{{ wl.name }}</span>
+                        <span style="font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3);">{{ wl.meta }}</span>
+                      </span>
+                      <span style="color: var(--accent); font-size: 12.5px; font-weight: 600;">Assign</span>
+                    </button>
+                  </sc-for>
+                </sc-if>
+              </sc-if>
+            </sc-if>
+          </div>
+          <div class="m-more-list" style="margin-bottom: 0.5rem;">
+            <button type="button" class="m-more-row" onClick="{{ tPay }}">
+              <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="dollar" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+              <span>Financials</span>
+              <span style="flex: none; font-family: var(--font-numeric); font-size: 12px; color: var(--ink-2);">{{ pkgTotal }}</span>
+              <span class="chip {{ payChipKind }}" style="flex: none;"><span class="chip-dot"></span>{{ payChipLabel }}</span>
+              <sc-if value="{{ pPayClosed }}" hint-placeholder-val="{{ true }}"><span style="flex: none; color: var(--ink-4); display: flex;"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span></sc-if>
+              <sc-if value="{{ pPay }}" hint-placeholder-val="{{ false }}"><span style="flex: none; color: var(--ink-4); display: flex; transform: rotate(90deg);"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span></sc-if>
+            </button>
+            <sc-if value="{{ pPay }}" hint-placeholder-val="{{ false }}">
+              <div style="border-top: 1px solid var(--line-1); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); padding: 10px 16px 4px;">Package &amp; extras</div>
+              <sc-for list="{{ pkgRows }}" as="k" hint-placeholder-count="3">
+                <div style="padding: 7px 16px; display: flex; align-items: center; gap: 8px;">
+                  <span style="flex: 1; min-width: 0; font-size: var(--fs-body); color: var(--ink-2);">{{ k.label }}</span>
+                  <span style="font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-1);">{{ k.price }}</span>
+                </div>
+              </sc-for>
+              <div style="border-top: 1px solid var(--line-2); padding: 9px 16px; display: flex; align-items: center; gap: 8px;">
+                <span style="flex: 1; font-size: var(--fs-body); font-weight: 600; color: var(--ink-1);">Updated total</span>
+                <span style="font-family: var(--font-numeric); font-size: 12.5px; font-weight: 600; color: var(--ink-1);">{{ pkgTotal }}</span>
+              </div>
+              <div style="border-top: 1px solid var(--line-1); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); padding: 10px 16px 4px;">Payments</div>
+              <sc-for list="{{ payRows }}" as="y" hint-placeholder-count="2">
+                <div style="padding: 6px 16px; display: flex; align-items: center; gap: 8px;">
+                  <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;">
+                    <span style="font-size: var(--fs-body); color: var(--ink-2);">{{ y.label }}</span>
+                    <span style="font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3);">{{ y.date }}</span>
+                  </span>
+                  <span style="font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-1);">{{ y.amount }}</span>
+                </div>
+              </sc-for>
+              <sc-if value="{{ hasBal }}" hint-placeholder-val="{{ false }}">
+                <div style="border-top: 1px solid var(--line-2); padding: 8px 16px 10px; display: flex; align-items: center; gap: 8px;">
+                  <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;">
+                    <span style="font-size: var(--fs-body); font-weight: 600; color: {{ balColor }};">Balance due</span>
+                    <span style="font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3);">{{ balDue }}</span>
+                  </span>
+                  <span style="font-family: var(--font-numeric); font-size: 12.5px; font-weight: 600; color: {{ balColor }};">{{ balAmount }}</span>
+                </div>
+              </sc-if>
+              <sc-if value="{{ isPaid }}" hint-placeholder-val="{{ false }}">
+                <div style="border-top: 1px solid var(--line-2); padding: 9px 16px 11px; display: flex; align-items: center; gap: 8px;">
+                  <span style="flex: 1; font-size: var(--fs-body); font-weight: 600; color: {{ okColor }};">Paid in full</span>
+                  <span style="font-family: var(--font-numeric); font-size: 12.5px; font-weight: 600; color: {{ okColor }};">{{ payTotal }}</span>
+                </div>
+              </sc-if>
+            </sc-if>
+          </div>
+        </main>
+      </sc-if>
+      <sc-if value="{{ isPropDetail }}" hint-placeholder-val="{{ false }}">
+        <main class="m-main" data-screen-label="Proposal detail">
+          <div class="m-stale">{{ staleLabel }} <span class="m-stale-time">{{ staleTime }}</span></div>
+          <div style="display: flex; align-items: center; gap: 8px; margin: 0 0 10px;">
+            <span style="font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-2);">{{ ppWhen }}</span>
+            <span class="chip {{ ppChipKind }}"><span class="chip-dot"></span>{{ ppChipLabel }}</span>
+          </div>
+          <div class="m-more-list" style="margin-bottom: 0.5rem;">
+            <button type="button" class="m-more-row" onClick="{{ tContact }}">
+              <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="users" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+              <span>Contacts</span>
+              <sc-if value="{{ pContactClosed }}" hint-placeholder-val="{{ true }}"><span style="flex: none; color: var(--ink-4); display: flex;"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span></sc-if>
+              <sc-if value="{{ pContact }}" hint-placeholder-val="{{ false }}"><span style="flex: none; color: var(--ink-4); display: flex; transform: rotate(90deg);"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span></sc-if>
+            </button>
+            <sc-if value="{{ pContact }}" hint-placeholder-val="{{ false }}">
+              <div style="border-top: 1px solid var(--line-1); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); padding: 10px 16px 4px;">Client</div>
+              <div style="padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 2px;">
+                <span style="font-family: var(--font-numeric); font-size: 12px; color: var(--ink-2);">{{ ppPhone }}</span>
+                <span style="font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3);">{{ ppEmail }}</span>
+              </div>
+            </sc-if>
+          </div>
+          <div class="m-more-list" style="margin-bottom: 0.5rem;">
+            <button type="button" class="m-more-row" onClick="{{ tPay }}">
+              <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="dollar" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+              <span>Package &amp; extras</span>
+              <span style="flex: none; font-family: var(--font-numeric); font-size: 12px; color: var(--ink-2);">{{ ppPkgTotal }}</span>
+              <sc-if value="{{ pPayClosed }}" hint-placeholder-val="{{ true }}"><span style="flex: none; color: var(--ink-4); display: flex;"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span></sc-if>
+              <sc-if value="{{ pPay }}" hint-placeholder-val="{{ false }}"><span style="flex: none; color: var(--ink-4); display: flex; transform: rotate(90deg);"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="right" size="{{ n16 }}" hint-size="16px,16px"></x-import></span></sc-if>
+            </button>
+            <sc-if value="{{ pPay }}" hint-placeholder-val="{{ false }}">
+              <sc-for list="{{ ppPkgRows }}" as="pk" hint-placeholder-count="3">
+                <div style="border-top: 1px solid var(--line-1); padding: 8px 16px; display: flex; align-items: center; gap: 8px;">
+                  <span style="flex: 1; min-width: 0; font-size: var(--fs-body); color: var(--ink-2);">{{ pk.label }}</span>
+                  <span style="font-family: var(--font-numeric); font-size: 12.5px; color: var(--ink-1);">{{ pk.price }}</span>
+                </div>
+              </sc-for>
+              <div style="border-top: 1px solid var(--line-2); padding: 9px 16px 11px; display: flex; align-items: center; gap: 8px;">
+                <span style="flex: 1; font-size: var(--fs-body); font-weight: 600; color: var(--ink-1);">Total</span>
+                <span style="font-family: var(--font-numeric); font-size: 12.5px; font-weight: 600; color: var(--ink-1);">{{ ppPkgTotal }}</span>
+              </div>
+            </sc-if>
+          </div>
+        </main>
+      </sc-if>
+      <sc-if value="{{ desktop }}" hint-placeholder-val="{{ false }}">
+        <main class="m-main" data-screen-label="Desktop escape" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center;">
+          <span style="color: var(--ink-4);"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="external" size="{{ n28 }}" hint-size="28px,28px"></x-import></span>
+          <div style="font-size: var(--fs-body); font-weight: 600; color: var(--ink-2);">Desktop chrome takes over</div>
+          <div style="font-size: var(--fs-meta); color: var(--ink-3); max-width: 240px; line-height: 1.55;">Full tables, filters and the &#8984;K palette at phone width &#8212; pinch and squint. The pill stays in reach; it is the way back.</div>
+        </main>
+        <button type="button" class="m-return-pill" onClick="{{ onReturn }}" style="display: flex; align-items: center; gap: 8px;">
+          <span style="color: var(--accent);">&#8478;</span> Phone view
+        </button>
+      </sc-if>
+      <sc-if value="{{ notDesktop2 }}" hint-placeholder-val="{{ true }}">
+        <nav class="m-tabbar" aria-label="Primary">
+          <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="3">
+            <button type="button" class="m-tab {{ t.activeCls }}" onClick="{{ t.onTap }}" style="position: relative;">
+              <sc-if value="{{ t.active }}" hint-placeholder-val="{{ false }}">
+                <span style="position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 28px; height: 2px; background: var(--accent);"></span>
+              </sc-if>
+              <span class="m-tab-icon">
+                <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="{{ t.icon }}" size="{{ n20 }}" hint-size="20px,20px"></x-import>
+                <sc-if value="{{ t.hasDanger }}" hint-placeholder-val="{{ false }}"><span class="m-tab-badge">{{ t.badge }}</span></sc-if>
+                <sc-if value="{{ t.hasNeutral }}" hint-placeholder-val="{{ false }}"><span class="m-tab-badge" style="background: var(--bg-3); color: var(--ink-2); border: 1px solid var(--line-2);">{{ t.badge }}</span></sc-if>
+              </span>
+              <span class="m-tab-label">{{ t.label }}</span>
+            </button>
+          </sc-for>
+        </nav>
+      </sc-if>
+    </div>
+    <div class="m-sheet-scrim" onClick="{{ closeSheet }}" aria-hidden="true" style="opacity: {{ scrimO }}; pointer-events: {{ scrimPE }}; transition: opacity 180ms ease;"></div>
+    <div class="m-sheet" role="dialog" aria-modal="true" data-screen-label="Assignment sheet" style="transform: {{ sheetY }}; transition: transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1); max-height: 80%; display: flex; flex-direction: column;">
+      <div class="m-sheet-handle" style="flex: none;"></div>
+      <sc-if value="{{ hasSheet }}" hint-placeholder-val="{{ false }}">
+        <div style="flex: none; padding: 2px 16px 10px; border-bottom: 1px solid var(--line-1);">
+          <div style="font-size: var(--fs-h3); font-weight: 600; color: var(--ink-1);">{{ sClient }} <span style="color: var(--ink-3); font-weight: 400;">&#183; {{ sKind }}</span></div>
+          <div style="display: flex; align-items: center; gap: 8px; margin-top: 5px;">
+            <span style="font-family: var(--font-numeric); font-size: var(--fs-meta); color: var(--ink-3);">{{ sWhen }}</span>
+            <span style="margin-left: auto; display: inline-flex; align-items: center;">
+              <span class="staff-pills"><sc-for list="{{ sPills }}" as="sp" hint-placeholder-count="3"><span class="staff-pill {{ sp.cls }}"></span></sc-for></span>
+              <span class="staff-count">{{ sCount }}</span>
+            </span>
+          </div>
+        </div>
+        <div style="flex: 1; min-height: 0; overflow-y: auto;">
+          <sc-if value="{{ sHasOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); padding: 12px 16px 6px;">Open slot &#183; {{ sRole }}</div>
+            <button type="button" class="m-sheet-row" onClick="{{ onAuto }}" style="color: var(--accent); font-weight: 600;">
+              <x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="users" size="{{ n18 }}" hint-size="18px,18px"></x-import>
+              Auto-assign top match
+            </button>
+            <sc-for list="{{ suggestions }}" as="s" hint-placeholder-count="3">
+              <button type="button" class="m-sheet-row" onClick="{{ s.onTap }}" style="padding-top: 7px; padding-bottom: 7px;">
+                <span style="width: 30px; height: 30px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent); font-family: var(--font-mono); font-size: 11px; font-weight: 600;">{{ s.initials }}</span>
+                <span style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;">
+                  <span>{{ s.name }}</span>
+                  <span style="font-family: var(--font-numeric); font-size: 11px; color: var(--ink-3);">{{ s.meta }}</span>
+                </span>
+                <span style="color: var(--accent); font-size: 12.5px; font-weight: 600;">Assign</span>
+              </button>
+            </sc-for>
+          </sc-if>
+          <div style="height: 6px;"></div>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+  <div style="font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.06em; color: var(--ink-3); text-align: center; max-width: 420px; line-height: 1.6;">admin.drbartender.com &#183; installed PWA &#183; tap a card for the assignment sheet &#183; lighting toggle lives in More</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 460, &quot;height&quot;: 960}, &quot;skin&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;dark&quot;, &quot;light&quot;], &quot;default&quot;: &quot;dark&quot;, &quot;tsType&quot;: &quot;'dark' | 'light'&quot;, &quot;section&quot;: &quot;Skin&quot;}, &quot;offline&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: false, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Data&quot;}}">
+class Component extends DCLogic {
+  state = { tab: 'events', sheetId: null, sheetShown: false, assignments: {}, desktop: false, skinOverride: null,
+    detailId: null, propId: null, panes: { staffing: true, pkg: false, pay: false, contact: false }, waitlistOpen: false };
+
+  openProp(id) {
+    this.setState({ propId: id, panes: { staffing: false, pkg: false, pay: true, contact: false }, waitlistOpen: false });
+  }
+
+  detail() {
+    return {
+      1: { pkg: { label: 'Classic bar \u00b7 4 hr', price: 1600 }, extras: [{ label: 'Supplies kit', price: 120 }],
+        payments: [{ label: 'Deposit', amount: 100, date: 'MAY 20' }, { label: 'Balance', amount: 1620, date: 'AUG 7' }], due: null,
+        contact: { name: 'Marcus Keller', phone: '(312) 555-0142', email: 'mkeller@gmail.com' },
+        dayOf: { name: 'Marcus Keller', phone: '(312) 555-0142', note: 'the client' } },
+      2: { pkg: { label: 'Signature bar \u00b7 5 hr', price: 2800 }, extras: [{ label: 'Mobile bar rental', price: 450 }, { label: 'Glassware & supplies', price: 180 }, { label: 'Champagne service', price: 220 }],
+        payments: [{ label: 'Deposit', amount: 100, date: 'JUN 2' }, { label: 'Balance 1 of 2', amount: 1800, date: 'AUG 1' }], due: 'AUG 8',
+        contact: { name: 'Alexis Henderson', phone: '(312) 555-0184', email: 'alexis.hend@gmail.com' }, dayOf: null },
+      3: { pkg: { label: 'Classic bar \u00b7 4 hr', price: 1900 }, extras: [],
+        payments: [{ label: 'Deposit', amount: 100, date: 'JUL 9' }, { label: 'Balance', amount: 1800, date: 'AUG 10' }], due: null,
+        contact: { name: 'Dana Whitmore', phone: '(312) 555-0117', email: 'dana@nautilusgroup.com' },
+        dayOf: { name: 'Priya Shah', phone: '(872) 555-0165', note: 'office manager' } },
+      4: { pkg: { label: 'Signature bar \u00b7 4 hr', price: 2200 }, extras: [{ label: 'Mobile bar rental', price: 450 }],
+        payments: [{ label: 'Deposit', amount: 100, date: 'AUG 2' }], due: 'AUG 17',
+        contact: { name: 'June Marrow', phone: '(773) 555-0139', email: 'june@marrowgallery.com' }, dayOf: null },
+      5: { pkg: { label: 'Premium bar \u00b7 6 hr', price: 3600 }, extras: [{ label: 'Mobile bar rental', price: 450 }, { label: 'Glassware & supplies', price: 180 }, { label: 'Signature cocktails', price: 320 }],
+        payments: [{ label: 'Deposit', amount: 100, date: 'MAY 30' }, { label: 'Balance 1 of 2', amount: 2200, date: 'JUL 15' }], due: 'AUG 15',
+        contact: { name: 'Chidi Okafor', phone: '(312) 555-0128', email: 'c.okafor@outlook.com' },
+        dayOf: { name: 'Amara Okafor', phone: '(312) 555-0129', note: 'sister of the groom' } },
+      6: { pkg: { label: 'Classic bar \u00b7 4 hr', price: 1500 }, extras: [],
+        payments: [{ label: 'Deposit', amount: 100, date: 'AUG 4' }], due: 'AUG 23',
+        contact: { name: 'R. Beaumont', phone: '(847) 555-0170', email: 'rbeaumont@me.com' }, dayOf: null },
+    };
+  }
+  openDetail(id) {
+    this.setState({ detailId: id, panes: { staffing: true, pkg: false, pay: false, contact: false }, waitlistOpen: false });
+  }
+  togglePane(k) { this.setState(s => ({ panes: { ...s.panes, [k]: !s.panes[k] } })); }
+  rosterFor(ev) {
+    if (!ev) return [];
+    return [
+      ...ev.roster.map(n => ({ name: n, initials: this.initials(n), meta: 'Bartender', pending: false, notPending: true })),
+      ...(ev.pendingName ? [{ name: ev.pendingName, initials: this.initials(ev.pendingName), meta: 'requested cover \u00b7 needs approval', pending: true, notPending: false }] : []),
+      ...ev.assigned.map(n => ({ name: n, initials: this.initials(n), meta: 'just assigned', pending: false, notPending: true })),
+    ];
+  }
+
+  base() {
+    return [
+      { id: 1, dow: 'FRI', day: '14', mon: 'AUG', today: true, client: 'Keller', kind: 'Private party', time: '19:00\u201323:00', venue: 'The Whistler', guests: 45, slots: 2, filled: 2, roster: ['Sam Ortiz', 'Lena Park'], barRental: false, supplies: true },
+      { id: 2, dow: 'SAT', day: '15', mon: 'AUG', client: 'Henderson', kind: 'Wedding', time: '18:00\u201323:00', venue: 'Grove on the River', guests: 140, slots: 3, filled: 2, roster: ['Sam Ortiz', 'Priya Nair'], barRental: true, supplies: true },
+      { id: 3, dow: 'SAT', day: '15', mon: 'AUG', client: 'Nautilus Group', kind: 'Corporate', time: '17:00\u201321:00', venue: 'Fulton Market', guests: 80, slots: 2, filled: 2, roster: ['Devon Cole', 'Lena Park'], barRental: false, supplies: false },
+      { id: 4, dow: 'THU', day: '20', mon: 'AUG', client: 'Marrow Gallery', kind: 'Launch party', time: '19:00\u201323:00', venue: 'West Town', guests: 65, slots: 2, filled: 0, pendingName: 'Jo Ellis', roster: [], barRental: true, supplies: false },
+      { id: 5, dow: 'SAT', day: '22', mon: 'AUG', client: 'Okafor', kind: 'Wedding', time: '16:00\u201322:00', venue: 'Bridgeport Art Center', guests: 175, slots: 3, filled: 3, roster: ['Sam Ortiz', 'Devon Cole', 'Lena Park'], barRental: true, supplies: true },
+      { id: 6, dow: 'SUN', day: '30', mon: 'AUG', client: 'Beaumont', kind: 'Anniversary', time: '17:00\u201321:00', venue: 'Thalia Hall', guests: 30, slots: 2, filled: 1, roster: ['Priya Nair'], barRental: false, supplies: false },
+    ];
+  }
+  sugg() {
+    return [
+      { name: 'Mara Reyes', meta: '1.9 mi \u00b7 senior \u00b7 full kit' },
+      { name: 'Devon Cole', meta: '4.2 mi \u00b7 owns kit' },
+      { name: 'Jo Ellis', meta: '6.8 mi \u00b7 new hire' },
+    ];
+  }
+  initials(n) { return n.split(' ').map(w => w[0]).join(''); }
+
+  mapEvents() {
+    const st = this.state;
+    return this.base().map(e => {
+      const assigned = st.assignments[e.id] || [];
+      const done = e.filled + assigned.length;
+      const pend = e.pendingName ? 1 : 0;
+      const open = Math.max(0, e.slots - done);
+      const pills = [];
+      for (let i = 0; i < e.slots; i++) pills.push({ cls: i < done ? 'filled' : i < done + pend ? 'pending' : '' });
+      const light = (this.state.skinOverride || this.props.skin || 'dark') === 'light';
+      const countColor = done >= e.slots ? (light ? 'var(--ms-emerald)' : 'hsl(var(--ok-h) var(--ok-s) 52%)')
+        : done === 0 ? (light ? 'var(--ms-bordeaux)' : 'hsl(var(--danger-h) var(--danger-s) 70%)')
+        : (light ? 'var(--ms-camel)' : 'hsl(var(--warn-h) var(--warn-s) 55%)');
+      return { ...e, assigned, done, open, pills, count: done + '/' + e.slots,
+        countColor, hasRequest: pend > 0,
+        requestLabel: pend + (pend === 1 ? ' request' : ' requests'),
+        isToday: !!e.today, notToday: !e.today,
+        meta: e.time + ' \u00b7 ' + e.venue, onTap: () => this.openDetail(e.id) };
+    });
+  }
+  suggestionsFor(ev) {
+    if (!ev || ev.open <= 0) return [];
+    return this.sugg()
+      .filter(s => !ev.roster.includes(s.name) && !ev.assigned.includes(s.name) && s.name !== ev.pendingName)
+      .map(s => ({ ...s, initials: this.initials(s.name), onTap: () => this.assign(ev.id, s.name) }));
+  }
+  assign(id, name) {
+    this.setState(s => {
+      const ev = this.base().find(e => e.id === id);
+      const cur = s.assignments[id] || [];
+      if (!ev || ev.filled + cur.length >= ev.slots || cur.includes(name)) return null;
+      return { assignments: { ...s.assignments, [id]: [...cur, name] } };
+    });
+  }
+  openSheet(id) { clearTimeout(this._t); this.setState({ sheetId: id, sheetShown: true }); }
+  componentWillUnmount() { clearTimeout(this._t); }
+
+  renderVals() {
+    const st = this.state;
+    const skin = st.skinOverride || this.props.skin || 'dark';
+    const offline = this.props.offline ?? false;
+    const events = this.mapEvents();
+    const unstaffed = events.filter(e => e.open > 0).length;
+
+    const se = events.find(e => e.id === st.sheetId) || null;
+    const suggestions = this.suggestionsFor(se);
+
+    const de = st.detailId ? events.find(e => e.id === st.detailId) || null : null;
+    const fmt = n => '$' + n.toLocaleString('en-US');
+    let dv = { isDetail: false, listHeader: !st.desktop };
+    if (de) {
+      const d = this.detail()[de.id];
+      const light = skin === 'light';
+      const totalN = d.pkg.price + d.extras.reduce((a, x) => a + x.price, 0);
+      const paidN = d.payments.reduce((a, p) => a + p.amount, 0);
+      const balN = totalN - paidN;
+      const okC = light ? 'var(--ms-emerald)' : 'hsl(var(--ok-h) var(--ok-s) 52%)';
+      const warnC = light ? 'var(--ms-camel)' : 'hsl(var(--warn-h) var(--warn-s) 58%)';
+      const wl = this.suggestionsFor(de);
+      const p = st.panes;
+      dv = {
+        isDetail: !st.desktop, listHeader: false,
+        dClient: de.client, dKind: de.kind,
+        dGuests: de.guests, dVenue: de.venue,
+        dWhen: de.dow + ' ' + de.mon + ' ' + de.day + ' \u00b7 ' + de.time,
+        dIsToday: !!de.today,
+        dPills: de.pills, dCount: de.count, dCountColor: de.countColor,
+        dHasOpen: de.open > 0, dAssignLabel: 'Assign staff \u00b7 ' + de.open + ' open',
+        rosterD: this.rosterFor(de),
+        waitlist: wl, wlCount: wl.length, hasWaitlist: wl.length > 0,
+        wlOpen: st.waitlistOpen, wlClosed: !st.waitlistOpen,
+        tWaitlist: () => this.setState(s => ({ waitlistOpen: !s.waitlistOpen })),
+        pStaff: p.staffing, pStaffClosed: !p.staffing, tStaff: () => this.togglePane('staffing'),
+        pPkg: p.pkg, pPkgClosed: !p.pkg, tPkg: () => this.togglePane('pkg'),
+        pPay: p.pay, pPayClosed: !p.pay, tPay: () => this.togglePane('pay'),
+        pContact: p.contact, pContactClosed: !p.contact, tContact: () => this.togglePane('contact'),
+        onAssignOpen: () => this.openSheet(de.id),
+        onBack: () => this.setState({ detailId: null }),
+        pkgRows: [{ label: d.pkg.label, price: fmt(d.pkg.price) }, ...d.extras.map(x => ({ label: x.label, price: fmt(x.price) }))],
+        pkgTotal: fmt(totalN),
+        payRows: d.payments.map(pm => ({ label: pm.label, date: 'paid ' + pm.date, amount: fmt(pm.amount) })),
+        hasBal: balN > 0, isPaid: balN <= 0,
+        balDue: d.due ? 'due ' + d.due : 'due date not set',
+        balAmount: fmt(balN), balColor: warnC, okColor: okC,
+        payTotal: fmt(totalN),
+        payChipKind: balN <= 0 ? 'ok' : 'warn',
+        payChipLabel: balN <= 0 ? 'Paid' : 'Balance due',
+        cName: d.contact.name, cPhone: d.contact.phone, cEmail: d.contact.email,
+        hasDayOf: !!d.dayOf, noDayOf: !d.dayOf,
+        doName: d.dayOf ? d.dayOf.name : '', doNote: d.dayOf ? d.dayOf.note : '', doPhone: d.dayOf ? d.dayOf.phone : '',
+        contactSummary: d.dayOf ? 'day-of set' : 'day-of pending',
+      };
+    }
+
+    const closeSheet = () => {
+      this.setState({ sheetShown: false });
+      clearTimeout(this._t);
+      this._t = setTimeout(() => this.setState(s => (s.sheetShown ? null : { sheetId: null })), 280);
+    };
+    const onAuto = () => { if (suggestions.length) this.assign(se.id, suggestions[0].name); };
+
+    const tabs = [
+      { id: 'events', label: 'Events', icon: 'calendar', badge: unstaffed, neutral: false },
+      { id: 'proposals', label: 'Proposals', icon: 'clipboard', badge: 4, neutral: false },
+      { id: 'more', label: 'More', icon: 'menu', badge: 4, neutral: true },
+    ].map(t => ({ ...t,
+      active: st.tab === t.id, activeCls: st.tab === t.id ? 'active' : '',
+      hasDanger: !t.neutral && t.badge > 0, hasNeutral: t.neutral && t.badge > 0,
+      onTap: () => this.setState({ tab: t.id, desktop: false, detailId: null, propId: null }) }));
+
+    const propBase = [
+      { id: 1, dow: 'SAT', day: '05', mon: 'SEP', client: 'Whitfield', kind: 'Corporate', guests: 120, venue: 'The Dalcy', meta: 'expires in 2 days', chipKind: 'warn', chipLabel: 'Expiring',
+        pkg: { label: 'Signature bar \u00b7 5 hr', price: 4270 }, extras: [{ label: 'Mobile bar rental', price: 450 }, { label: 'Glassware & supplies', price: 180 }],
+        contact: { phone: '(312) 555-0193', email: 'nora@whitfieldco.com' } },
+      { id: 2, dow: 'SAT', day: '19', mon: 'SEP', client: 'Tran', kind: 'Engagement', guests: 60, venue: 'Salvage One', meta: 'modified by client', chipKind: 'violet', chipLabel: 'Modified',
+        pkg: { label: 'Classic bar \u00b7 4 hr', price: 2010 }, extras: [{ label: 'Signature cocktails', price: 320 }, { label: 'Supplies kit', price: 130 }],
+        contact: { phone: '(773) 555-0121', email: 'mai.tran@gmail.com' } },
+      { id: 3, dow: 'SAT', day: '03', mon: 'OCT', client: 'Ferreira', kind: 'Wedding', guests: 150, venue: 'The Haight', meta: 'sent 2d ago \u00b7 no reply', chipKind: 'info', chipLabel: 'Sent',
+        pkg: { label: 'Premium bar \u00b7 6 hr', price: 4290 }, extras: [{ label: 'Mobile bar rental', price: 450 }, { label: 'Glassware & supplies', price: 180 }, { label: 'Champagne service', price: 320 }],
+        contact: { phone: '(312) 555-0176', email: 'gabi.ferreira@gmail.com' } },
+      { id: 4, dow: 'SAT', day: '12', mon: 'DEC', client: 'Bright Labs', kind: 'Holiday party', guests: 90, venue: 'Morgan MFG', meta: 'viewed 5h ago', chipKind: 'accent', chipLabel: 'Viewed',
+        pkg: { label: 'Signature bar \u00b7 4 hr', price: 2550 }, extras: [{ label: 'Mobile bar rental', price: 450 }, { label: 'Supplies kit', price: 180 }],
+        contact: { phone: '(312) 555-0158', email: 'sam@brightlabs.io' } },
+    ];
+    const proposals = propBase.map(pb => ({ ...pb,
+      total: fmt(pb.pkg.price + pb.extras.reduce((a, x) => a + x.price, 0)),
+      onTap: () => this.openProp(pb.id) }));
+
+    const pd = st.propId ? proposals.find(x => x.id === st.propId) || null : null;
+    let dv2 = { isPropDetail: false };
+    if (pd) {
+      dv2 = {
+        isPropDetail: !st.desktop, listHeader: false,
+        ppClient: pd.client, ppKind: pd.kind, ppGuests: pd.guests, ppVenue: pd.venue,
+        ppWhen: pd.dow + ' ' + pd.mon + ' ' + pd.day + ' \u00b7 ' + pd.meta,
+        ppChipKind: pd.chipKind, ppChipLabel: pd.chipLabel,
+        ppPkgRows: [{ label: pd.pkg.label, price: fmt(pd.pkg.price) }, ...pd.extras.map(x => ({ label: x.label, price: fmt(x.price) }))],
+        ppPkgTotal: pd.total,
+        ppPhone: pd.contact.phone, ppEmail: pd.contact.email,
+      };
+    }
+
+    const moreGroups = [
+      { heading: 'Workspace', rows: [
+        { icon: 'home', label: 'Overview' }, { icon: 'users', label: 'Clients' },
+        { icon: 'chat', label: 'Messages', badge: 2 }, { icon: 'userplus', label: 'Staff' },
+        { icon: 'pen', label: 'Hiring', badge: 1 } ] },
+      { heading: 'Revenue', rows: [
+        { icon: 'dollar', label: 'Tips & Feedback' }, { icon: 'dollar', label: 'Reviews' },
+        { icon: 'mail', label: 'Marketing' }, { icon: 'mail', label: 'Email leads' } ] },
+      { heading: 'Content', rows: [
+        { icon: 'flask', label: 'Potions', badge: 1 }, { icon: 'pen', label: 'Lab Notes' },
+        { icon: 'gear', label: 'Settings' } ] },
+    ].map(g => ({ ...g, rows: g.rows.map(r => ({ ...r, hasBadge: !!r.badge, onTap: () => {} })) }));
+
+    const segBase = 'flex:1;min-height:44px;border:none;cursor:pointer;font-family:var(--font-ui);font-size:12.5px;font-weight:600;';
+    const activeInk = skin === 'light' ? 'var(--bg-0)' : '#fff';
+    const segOn = segBase + 'background:var(--accent);color:' + activeInk + ';';
+    const segOff = segBase + 'background:var(--bg-2);color:var(--ink-3);';
+
+    return {
+      skin, n28: 28, n20: 20, n18: 18, n16: 16,
+      title: st.desktop ? 'Desktop view' : ({ events: 'Events', proposals: 'Proposals', more: 'More' })[st.tab],
+      desktop: st.desktop, notDesktop: !st.desktop, notDesktop2: !st.desktop,
+      isEvents: !st.desktop && st.tab === 'events' && !de,
+      isProposals: !st.desktop && st.tab === 'proposals' && !pd,
+      isMore: !st.desktop && st.tab === 'more',
+      staleLabel: offline ? 'offline copy \u00b7 as of' : 'as of',
+      staleTime: offline ? '9:12 PM yesterday' : '7:41 AM',
+      staleDot: offline,
+      events, tabs, proposals, moreGroups,
+      onSearch: () => {}, onDesktop: () => this.setState({ desktop: true }),
+      onReturn: () => this.setState({ desktop: false }),
+      onSkinDark: () => this.setState({ skinOverride: 'dark' }),
+      onSkinLight: () => this.setState({ skinOverride: 'light' }),
+      segDarkStyle: skin === 'dark' ? segOn : segOff,
+      segLightStyle: skin === 'light' ? segOn : segOff,
+      closeSheet, onAuto, suggestions,
+      pPay: st.panes.pay, pPayClosed: !st.panes.pay, tPay: () => this.togglePane('pay'),
+      pContact: st.panes.contact, pContactClosed: !st.panes.contact, tContact: () => this.togglePane('contact'),
+      ...dv, ...dv2,
+      onBack: () => this.setState({ detailId: null, propId: null }),
+      hasSheet: !!se, sHasOpen: !!se && se.open > 0,
+      sClient: se ? se.client : '', sKind: se ? se.kind : '', sRole: 'Bartender',
+      sWhen: se ? se.dow + ' ' + se.mon + ' ' + se.day + ' \u00b7 ' + se.time : '',
+      sPills: se ? se.pills : [], sCount: se ? se.count : '',
+      sheetY: st.sheetShown ? 'translateY(0)' : 'translateY(105%)',
+      scrimO: st.sheetShown ? 1 : 0, scrimPE: st.sheetShown ? 'auto' : 'none',
+    };
+  }
+}
+</script>
+</body>
+</html>
