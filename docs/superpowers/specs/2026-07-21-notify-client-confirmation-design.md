@@ -271,10 +271,12 @@ All three join the gate. An explicit Send never overrides it: a suppressed chann
 `skipped` with the reason. This is what makes a do-not-contact client mechanically safe
 instead of memory-safe.
 
-**Ops step, owner-approved:** after deploy, set
-`communication_preferences = {"email_enabled": false, "sms_enabled": false}` on Luva's client
-row (prod, Neon). No admin UI exists for these fields (only the marketing unsubscribe writes
-them); a "do not contact" toggle on the client page goes to the fix list.
+**Ops step: CANCELLED 2026-08-06, do not run it.** It called for hand-setting
+`communication_preferences` on one named client's row after deploy. That client's condition
+was scoped to a single event that has since passed and the owner retired the rule; there are
+no named-client comms exceptions. What remains true and general: no admin UI exists for these
+fields (only the marketing unsubscribe writes any of them), so a "do not contact" toggle on
+the client page is on the fix list.
 
 ### Supplied text validation
 

@@ -58,7 +58,7 @@ Displayed as a tag, backed by dedicated columns. It is the only tag whose accide
 
 It needs a dedicated endpoint. `PUT /api/clients/:id` (`clients.js:121-150`) destructures a fixed 5-field body and updates via `COALESCE($n, col)`, where null means "leave unchanged", so it structurally cannot clear the flag or null the reason. Audit to `admin_audit_log` with the client id in `metadata` and `target_user_id` NULL, since that column FKs to `users` (`schema.sql:2532`) and a client is not a user.
 
-**Not built: temporary event-scoped suppression.** The one historical instance was Luva Dorris (client 1651), a Check Cherry event transferred in 2026-07-14 for an event on 2026-07-18, where automated comms were killed so os would not duplicate messaging she had already received in Check Cherry. Dallas retired it himself on 2026-08-06: "her event is over, none of this matters. If she does another event we'll want to send her all the things." Her row correctly reads all channels enabled. She is a target, not an exclusion.
+**Not built: temporary event-scoped suppression.** The one historical instance came out of the Check Cherry migration in July 2026, where automated comms were held off for a single transferred event so os would not duplicate messaging the client had already received in Check Cherry. Dallas retired it on 2026-08-06 once that event passed: the condition was event-scoped, not permanent, and a future booking gets the full treatment. That row reads all channels enabled and is a target, not an exclusion. There are no named-client comms exceptions anywhere in the system, and none should be reintroduced: suppression belongs in `marketing_excluded` / `communication_preferences`, not in a person's name.
 
 ### 4.3 The audience resolver
 

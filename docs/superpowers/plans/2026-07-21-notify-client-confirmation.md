@@ -1608,16 +1608,17 @@ decision, whole flow.
 - [ ] **Step 3: Fix-list + ARCHITECTURE + ops**
 
 Fix-list entries: (1) "do not contact" toggle on the client admin page writing
-`communication_preferences` (no UI exists today; Luva's row is set by hand, see ops step);
+`communication_preferences` (no UI exists today, so `email_enabled` has readers everywhere
+and no writer anywhere);
 (2) provider idempotency keys as the precondition for any future failed-send Retry;
 (3) `utils/groupSend.js` is require-dead, delete when convenient.
 ARCHITECTURE: annotate the two refund routes' new flags.
 
-**Ops step (owner approved 2026-07-22), after this lane is LIVE in prod:** on the prod Neon
-`production` branch, set Luva's client row
-`communication_preferences = '{"email_enabled": false, "sms_enabled": false}'::jsonb`,
-verify by reading it back, and note it in the session log. This is what converts the
-"never message Luva" rule from memory into mechanism.
+**Ops step: CANCELLED 2026-08-06, do not run it.** This step used to flip one named client's
+`communication_preferences` by hand. The condition behind it was scoped to a single event
+that has since passed, the owner retired the rule himself, and that client is ordinary with
+all channels enabled. There are no named-client comms exceptions. The general need it was
+standing in for is the do-not-contact toggle in entry (1) above.
 
 - [ ] **Step 4: Build + manual + commit**
 

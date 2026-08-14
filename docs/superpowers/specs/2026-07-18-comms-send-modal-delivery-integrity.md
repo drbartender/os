@@ -152,7 +152,7 @@ Thumbtack create-proposal page (and admin client-create form): on email blur, ru
 1. Client #1436 email `.conm` to `.com`; same fix on `drink_plans` 76. #1427 stays dormant for manual archive (see 3, nondeterminism note).
 2. Re-send Cathy's shopping list (after 1).
 3. Siddhant plan 91: re-approve once Dallas confirms content, before 7/23.
-4. Backfill stale `drink_plans.client_email` from the live client record, future events only (expected: plan 86 Brandon, plan 57 Aaran; sweep for others). **Do not touch Luva Dorris** (zero-comms CC import, manual by design).
+4. Backfill stale `drink_plans.client_email` from the live client record, future events only (expected: plan 86 Brandon, plan 57 Aaran; sweep for others). (A per-client carve-out written here was retired 2026-08-06; there are no named-client exceptions.)
 5. Dallas manual: Resend webhook registration + `RESEND_WEBHOOK_SECRET` in Render.
 
 ## 6. Out-of-band notes

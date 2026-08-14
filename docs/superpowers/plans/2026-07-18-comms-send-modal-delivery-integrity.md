@@ -125,7 +125,7 @@ lanes:
 - [ ] R1. Cathy: `UPDATE clients SET email='cmurphy@arthrex-chicago.com' WHERE id=1436 AND email='cmurphy@arthrex-chicago.conm'`; same-guard update on plan 76 `drink_plans.client_email`. Verify before/after. #1427 stays dormant for manual archive.
 - [ ] R2. Re-send Cathy's shopping list (Dallas picks timing; event 7/25).
 - [ ] R3. Siddhant plan 91: Dallas confirms content, re-approve before 7/23. Do NOT wait for the snapshot lane.
-- [ ] R4. Stale-email backfill, future events only, SELECT-first (expected: 86 Brandon, 57 Aaran). **Never touch Luva Dorris** (zero-comms CC import).
+- [ ] R4. Stale-email backfill, future events only, SELECT-first (expected: 86 Brandon, 57 Aaran). (A per-client carve-out that used to sit here was retired 2026-08-06 and is gone: there are no named-client exceptions, and the future-events-only filter is the whole scope.)
 - [ ] R5. Dallas manual: register Resend webhook (sent/delivered/bounced/complained) + set `RESEND_WEBHOOK_SECRET` in Render. Precondition for bounce-pipeline VERIFICATION only.
 
 ## Lane comms-registry

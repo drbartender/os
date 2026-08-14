@@ -354,10 +354,24 @@ row to the invoice.
 Shipped across three lanes (notify-server / notify-client / notify-refunds); spec + plan under
 docs/superpowers/{specs,plans}/2026-07-21-notify-client-confirmation*. Deferred with reasons:
 
-- **"Do not contact" toggle on the client admin page** writing `communication_preferences`
-  (no UI exists today; only the marketing unsubscribe writes those fields). Luva's row is set
-  by hand post-deploy (ops step in the plan); the toggle converts that class of rule to
-  something visible and reversible on screen.
+- **"Do not contact" toggle on the client admin page** writing `communication_preferences`.
+  **Re-verified and sharpened 2026-08-14.** `communication_preferences.email_enabled` has NO
+  product writer anywhere: `smsConsent.js:122` and `smsInbound.js:332,341` write only
+  `sms_enabled`, and the marketing unsubscribe writes only `marketing_enabled`. Yet
+  `email_enabled === false` is read and honored in about a dozen places
+  (`messageSuppression.js:34`, `notificationChannelResolver.js:54,66`, `eventEveSms.js:208`,
+  `channelFallback.js:22`, `marketingAudience.js:44,66,127,359`,
+  `scheduledMessageDispatcher.js:170`, `serviceExtensionNotify.js:202`,
+  `marketingHandlers.js:342`, `consultRecap.js:64`). Prod: all 525 clients carry the key and
+  all 525 are `true`, so the only way to set it is a manual DB edit.
+  It is NOT redundant with the controls that DO have writers, and this is the reason to build
+  rather than drop it: the dispatcher's `marketing_excluded` / `marketing_enabled` gates are
+  scoped to `meta?.category === 'marketing'`, so neither touches an `operational` message.
+  `email_enabled` is the only system-wide email mute. (Note `marketing_excluded` is `false`
+  for every client in prod, so that control has never actually been exercised either.)
+  Two honest outcomes, and the recommendation is the first: wire a writer, or drop the field
+  and let the dozen readers collapse. `messageSuppression.js:63` already carries a comment
+  saying no product path sets it, so the code knows.
 - **PATCH /api/proposals/:id has no adminWriteLimiter** while now carrying admin-composed
   client sends; the comms send path and even the read-only notify-preflight are throttled
   10/min. Deferred from the lane because bolting a limiter onto the busiest admin endpoint
