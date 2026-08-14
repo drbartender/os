@@ -2,6 +2,9 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import PublicLayout from '../../components/PublicLayout';
 
+// Imported so webpack content-hashes it into /static/media/ (see HomePage.js).
+import proprietorPortrait from '../../images/marketing/proprietor-portrait.jpg';
+
 const CREDENTIALS = [
   ['Certified', 'BASSET-trained bartenders'],
   ['Insured', 'General + Liquor Liability'],
@@ -51,7 +54,7 @@ export default function AboutPage() {
                 <div className="img-placeholder on-paper-tile has-photo" style={{ aspectRatio: '4 / 5' }}>
                   <img
                     className="ws-photo"
-                    src="/images/marketing/proprietor-portrait.jpg"
+                    src={proprietorPortrait}
                     alt="Dallas Raby, founder and lead bartender of Dr. Bartender"
                     loading="lazy"
                   />

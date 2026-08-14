@@ -2,6 +2,11 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import PublicLayout from '../../components/PublicLayout';
 
+// Imported so webpack content-hashes them into /static/media/ (see HomePage.js).
+import serviceByobBar from '../../images/marketing/service-byob-bar.jpg';
+import serviceHostedBar from '../../images/marketing/service-hosted-bar.jpg';
+import serviceCocktailClass from '../../images/marketing/service-cocktail-class.jpg';
+
 const FORMULAS = [
   {
     num: 'Formula I',
@@ -16,7 +21,7 @@ const FORMULAS = [
       ['Shopping list', 'sent when your menu is set'],
       ['Bespoke menu', 'two signature drinks · included'],
     ],
-    photo: '/images/marketing/service-byob-bar.jpg',
+    photo: serviceByobBar,
     alt: "A fully stocked BYOB bar with the client's bottles and prepared cocktails",
   },
   {
@@ -33,7 +38,7 @@ const FORMULAS = [
       ['Garnish prep', 'fresh, day-of'],
       ['Bespoke menu', 'two signature drinks · included'],
     ],
-    photo: '/images/marketing/service-hosted-bar.jpg',
+    photo: serviceHostedBar,
     alt: 'A Dr. Bartender bartender running a built, hosted bar at an event',
   },
   {
@@ -50,7 +55,7 @@ const FORMULAS = [
       ['Recipe cards', 'take-home set'],
       ['Travel', 'within Chicago: IL, IN, MI by quote'],
     ],
-    photo: '/images/marketing/service-cocktail-class.jpg',
+    photo: serviceCocktailClass,
     alt: 'A flight of cocktails from a private Dr. Bartender cocktail class',
   },
 ];

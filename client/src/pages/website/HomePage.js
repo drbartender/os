@@ -3,6 +3,17 @@ import { Link } from 'react-router-dom';
 import PublicLayout from '../../components/PublicLayout';
 import api from '../../utils/api';
 
+/* Imported, not referenced as /images/marketing/*.jpg out of public/: webpack
+   emits these to /static/media/<name>.<contenthash>.jpg, which Vercel already
+   serves `s-maxage=31536000, immutable`. The hash IS the invalidation path —
+   replace the file and the URL changes — so no vercel.json cache rule is
+   needed and none can be attached to a path that does not exist. */
+import heroCocktails from '../../images/marketing/hero-cocktails.jpg';
+import proprietorPortrait from '../../images/marketing/proprietor-portrait.jpg';
+import serviceByobBar from '../../images/marketing/service-byob-bar.jpg';
+import serviceHostedBar from '../../images/marketing/service-hosted-bar.jpg';
+import serviceCocktailClass from '../../images/marketing/service-cocktail-class.jpg';
+
 /* ── FadeUp animation (preserved IntersectionObserver) ── */
 function useFadeUp() {
   const ref = useRef(null);
@@ -47,21 +58,21 @@ const SERVICES = [
     n: 'Formula I',
     t: 'BYOB Bar',
     body: "You supply the spirits, mixers, ice, and bar. We bring the tools, the cups, the garnish prep, and the BASSET-trained professionals to pour it all. Most popular.",
-    photo: '/images/marketing/service-byob-bar.jpg',
+    photo: serviceByobBar,
     alt: "A fully stocked BYOB bar with the client's bottles and prepared cocktails",
   },
   {
     n: 'Formula II',
     t: 'Hosted Bar',
     body: 'Booze, ice, garnish, mixers, cups, and BASSET-trained bartenders. Plus a built-out menu and the staff to run it. Bespoke menu included.',
-    photo: '/images/marketing/service-hosted-bar.jpg',
+    photo: serviceHostedBar,
     alt: 'A Dr. Bartender bartender running a hosted bar at an event',
   },
   {
     n: 'Formula III',
     t: 'Cocktail Classes',
     body: 'Private classes: kits, syrups, garnishes, and a host with twenty years in the industry. Two hours, eight guests.',
-    photo: '/images/marketing/service-cocktail-class.jpg',
+    photo: serviceCocktailClass,
     alt: 'A flight of cocktails from a private Dr. Bartender cocktail class',
   },
 ];
@@ -162,7 +173,7 @@ export default function HomePage() {
       <section className="ws-press-hero">
         <img
           className="ws-press-hero-bg"
-          src="/images/marketing/hero-cocktails.jpg"
+          src={heroCocktails}
           alt=""
           aria-hidden="true"
           fetchPriority="high"
@@ -226,7 +237,7 @@ export default function HomePage() {
                   <div className="img-placeholder on-paper-tile has-photo" style={{ aspectRatio: '4 / 5' }}>
                     <img
                       className="ws-photo"
-                      src="/images/marketing/proprietor-portrait.jpg"
+                      src={proprietorPortrait}
                       alt="Dallas Raby, founder and lead bartender of Dr. Bartender"
                       loading="lazy"
                     />

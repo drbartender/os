@@ -2,13 +2,18 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import PublicLayout from '../../components/PublicLayout';
 
+// Imported so webpack content-hashes them into /static/media/ (see HomePage.js).
+import methodInstantQuotePhone from '../../images/marketing/method-instant-quote-phone.jpg';
+import methodPlannerTablet from '../../images/marketing/method-planner-tablet.jpg';
+import methodEventBar from '../../images/marketing/method-event-bar.jpg';
+
 const STEPS = [
   {
     n: 'I',
     kicker: 'Step One · The Prescription',
     t: 'Build an instant quote.',
     body: 'Five questions. Live pricing as you choose. We send a real proposal. Sign and pay in one breath. No 30-minute discovery call required.',
-    photo: '/images/marketing/method-instant-quote-phone.jpg',
+    photo: methodInstantQuotePhone,
     alt: 'A phone showing the Dr. Bartender instant quote',
     bullets: [
       'Live pricing as you adjust',
@@ -21,7 +26,7 @@ const STEPS = [
     kicker: 'Step Two · The Potion Planner',
     t: 'Plan the menu.',
     body: 'A short questionnaire builds a menu around your taste: colors, flavors, allergens, what your guests actually want. Browse our cocktail catalogue. Mark favorites. Add a smoke bubble or two.',
-    photo: '/images/marketing/method-planner-tablet.jpg',
+    photo: methodPlannerTablet,
     alt: 'A tablet showing the Dr. Bartender menu planner',
     bullets: [
       'Two signature drinks · always included',
@@ -34,7 +39,7 @@ const STEPS = [
     kicker: 'Step Three · The Big Experiment',
     t: 'The night, run tight.',
     body: 'On the day, we arrive 30–90 minutes early depending on the size of the build, set up the bar, and run a tight, smiling, well-lit shift. You meet your guests; we pour. Tear-down is on us.',
-    photo: '/images/marketing/method-event-bar.jpg',
+    photo: methodEventBar,
     alt: 'Dr. Bartender bartenders running a built bar at an event',
     bullets: [
       'Arrive 30–90 min early · setup included',
