@@ -2160,6 +2160,31 @@ These are not from the original ledger. They surfaced while verifying its
   **That sweep must exclude proposal 600 / shift 348** per the legal hold above — scope it
   to `p.status = 'completed'`, which excludes 600 (`confirmed`) by construction, and confirm
   the row count before running anything.
+
+  **IN PROGRESS 2026-08-14, lane `shift-closure`. Scope widened from a sweep to the root
+  cause, on Dallas's routing ("this seems like something for fable").** Re-measured against
+  prod first, and the sweep alone was the wrong shape: **nothing in this system EVER closes a
+  shift.** Only 5 shifts in the entire prod database have ever reached `completed`, and
+  `filled` has never been used once (live distribution: 71 open / 5 completed / 2 cancelled,
+  against a CHECK permitting open/filled/completed/cancelled). Sweep the 50 and the bucket
+  refills. Also more real than "cosmetic": of the 50, **42 carry `shift_requests` and 31 carry
+  `payout_events`** — those shifts were worked and PAID while the row still reads `open`.
+  Staff genuinely do not see them (the feed's `event_date >= CURRENT_DATE` filter), so it is
+  data honesty and a latent trap, not a live staff-facing bug.
+  The hook already exists: `processEventCompletions` in `balanceScheduler.js` (hourly
+  `autocomplete` scheduler, wired at `index.js:487`) already flips the proposal AND drives
+  that shift's payout accrual, so closure belongs in a transaction already touching these
+  rows. Lane does that plus a dry-run-default backfill script for the 50.
+  **HARD CONSTRAINT on any lane in that file:** `balanceScheduler.js:77` holds the Stripe
+  idempotency key mirrored by `stripe.js:340`; it must be byte-identical to main, including
+  its known latent date bug, which is deliberately owned by a different lane together with its
+  twin. A dedicated reviewer gates exactly that.
+  Open design question the lane must answer honestly rather than assume: an unworked,
+  unstaffed shift on a completed event arguably did not "complete", so `cancelled` may be the
+  truer terminal value than `completed`. Note that choice is NOT inert — `eventDetailsPayload`
+  and `beoHandlers` both filter `status != 'cancelled'`, so it changes what a BEO renders.
+  Build was dispatched to Fable, reviews kept at Opus, per [[subagent-model-tiering]]'s
+  execution-versus-judgment split.
 - Shift #31 itself (the original entry) is **confirmed still open**, event date 2026-05-16,
   on a `completed` proposal. It is one of the 50 above.
 
