@@ -1,9 +1,19 @@
-# Fix List: What's Left (refreshed 2026-07-07)
+# The Backlog (consolidated 2026-08-13)
 
-The 2026-07-01 brain dump is fully processed and shipped. As of 2026-07-07 the
-tree is clean and everything below the line is either LIVE, a design session
-Dallas drives, a scope call, a prod-confirmed bug, or an operational tail.
-Re-verify line numbers before building anything.
+**This is the ONE list.** Dallas's ask (2026-08-12): "those 5 fix lists or whatever turned
+into one." As of 2026-08-13 the former `tech-debt.md`, `open-threads.md`, and
+`staff-ops-backlog-2026-07-22.md` are folded in below (their standalone files are deleted;
+git history keeps every prior revision). Exactly three tracking files remain, one job each:
+
+- **THIS FILE** — every defect, deferral, decision, unbuilt project, and tech-debt item.
+- **`build-board.md`** — lane state only: what is being built right now.
+- **`walkthroughs-owed.md`** — verification only: shipped work awaiting human eyes. Shrinks.
+
+Reading conventions: the file accretes chronologically, newest sections at the bottom, and
+push-review residual sections carry their review date. Retractions and corrections are kept
+inline (marked RETRACTED / CORRECTED) as provenance — several plausible findings here died
+on inspection, and the reasoning is worth more than a clean page. Re-verify line numbers
+before building anything; other windows edit both the code and this file.
 
 ## Shipped & LIVE (was the backlog, now done)
 - **cc-import rework — ALL 3 PHASES LIVE 2026-07-07.** Phase 1: 187 CheckCherry clients. Phase 2: frozen CC-era ledger (P&L penny-tie) + v1 demolition (13.5K lines) + blended dashboard/financials metrics (include_cc tri-state, close rate). Phase 3: 13 future events transferred to native confirmed proposals (money override-locked, external_paid folded, durable nudge suppression, comms-guarded). Post-transfer fix: 3 events' rosters (Cody/Shazana/Cecilia) had a spurious additional-bartender add-on stripped -> 2 bartenders each. See [[project-cc-clients-import]].
@@ -1792,3 +1802,473 @@ database, with the file that claims to define it disagreeing.
 WORTH A SWEEP: every guarded `UPDATE service_addons SET description = ... WHERE ... AND
 description = '<old>'` in schema.sql is load-bearing exactly once and silently dead afterwards.
 Check the rest for the same drift rather than assuming they applied.
+
+---
+---
+
+# FOLDED IN 2026-08-13 (consolidation)
+
+The three standalone lists below were merged into this file and deleted. Content is
+near-verbatim from each file's last revision; git history holds the originals, including
+open-threads' closed-item audit trail.
+
+## From `staff-ops-backlog-2026-07-22.md` — the two unbuilt projects
+
+Project A (staff event details) SHIPPED 2026-08-03 and Project B (logistics duties + duty
+pay) SHIPPED 2026-08-07; only C and D below remain, both verified unbuilt (zero code hits,
+2026-08-11).
+
+### Staff ops: Project C: receipt reimbursements
+
+- Staff submit a receipt image plus a chosen amount. Receipt must be itemized. Submit goes to admin for approve or deny. Approved amounts land in the staffer's payout.
+- Fraud edges to design for: duplicate receipt submissions, amount vs receipt mismatch.
+
+### Staff ops: Project D: staff directory + comms shift
+
+- Staff directory for covers, bonding, and good fun. Phone-visibility rule TBD.
+- Context: many staff do not have or do not check WhatsApp and miss group messages. Direction: DRB comms move mostly to SMS; WhatsApp becomes a relic/backup, possibly last-minute staffing only. Not yet decided.
+
+## From `open-threads.md` — decisions, unbuilt projects, verified loose ends
+
+Re-triaged against code/schema/prod on 2026-08-11; every surviving item was verified, not
+carried forward. The closed-item audit (≈half the original ledger) lives in git history of
+`docs/open-threads.md`.
+
+### Money-adjacent records (from the 2026-08-11 re-triage)
+
+These are not from the original ledger. They surfaced while verifying its
+"Shift #31 still open" entry against production, and both are live.
+
+- ~~**A bartender worked an event on 2026-07-18 and has no payout line.**~~ **CLOSED
+  2026-08-11 by Dallas: user 12 is Dallas himself, and the unpaid invoice on 557 was already
+  known.** No money is owed to anyone. Kept as a record because the SHAPE is still live and
+  the next instance may not be benign: proposal 557 (event 2026-07-18) has an approved shift
+  request and zero `payout_events` lines because it is still `deposit_paid` even though its
+  Deposit ($100) and Balance ($250) invoices are both `paid`. Accrual is completion-only and
+  the status ladder is demote-only, so any past event stuck below `completed` silently never
+  accrues and nothing alerts. For a contractor rather than the owner, that is an unpaid
+  person with no signal. The standing mitigation is the sweep before every payroll run; a
+  real fix would be an alert on "past event, not completed, has approved staff".
+- **Proposal 600 — DO NOT TOUCH. Legal hold (Dallas, 2026-08-11).** Its unpaid balance,
+  `confirmed` status, and still-`open` shift 348 are all to be **left exactly as they are**.
+  Do not archive it, do not reap or close its shift, do not void or re-send its invoice, do
+  not chase the balance, and do not include it in any cleanup, sweep, or reconciliation.
+  Its current state may be evidence. It is listed here only so that nobody "fixes" it.
+  No further detail is recorded in this file and none is needed.
+- **50 more open shifts sit on `completed` proposals** (oldest 2026-04-25, newest
+  2026-08-09). These are cosmetic rather than money: staff never see them, because the
+  open-shifts feed filters `s.event_date >= CURRENT_DATE` (`server/routes/shifts.js:195`).
+  They are the residue of the same "nothing closes a shift" gap. Worth one sweep.
+  **That sweep must exclude proposal 600 / shift 348** per the legal hold above — scope it
+  to `p.status = 'completed'`, which excludes 600 (`confirmed`) by construction, and confirm
+  the row count before running anything.
+- Shift #31 itself (the original entry) is **confirmed still open**, event date 2026-05-16,
+  on a `completed` proposal. It is one of the 50 above.
+
+---
+
+### Blocked on Dallas (decisions, not builds)
+
+- **Contractor agreement v3 re-sign.** Staff payment changed pay terms in the Field Guide
+  and Payday Protocols, but the signed contractor-agreement-v2 lags. Materially changing
+  pay terms means a v3, plus a decision on whether already-signed contractors must
+  re-acknowledge. Open since 2026-05-22 and now further out of date after duty pay,
+  out-of-area pay, and the owner no-draw work.
+- **Wix W9 / resume / gallery backup before CheckCherry sunset.** CC sunset was 2026-07-21.
+  This is now either done or permanently lost, and the ledger never recorded which. Needs a
+  one-word answer; if lost, say so and close it rather than carrying it.
+- **Two-step DROP COLUMN safety.** For `notifications_opt_in` and the old duplicate
+  agreement columns: ship the code that stops using them, wait a day, then drop.
+  Confirmation was never captured.
+- **Settings page direction**: lean two-card (Auto-Assign + Calendar Feed) vs a read-only
+  integrations status board. Not locked.
+- **Deposit invoice gap.** First-post-cutover bookings skipped `createInvoiceOnSend`; that
+  was Ketan's symptom. Whether other early bookings share the shape was never checked.
+  Proposal 54 itself is now clean (`completed`, 450/450), so the original repair is
+  reconciled; the open part is only "did others have this shape".
+
+### Unbuilt projects with thinking already done
+
+- **Comms Phase 5/6 — about 20 LOCKED design decisions, zero code.** Reschedule flow,
+  per-event time zones, notification priority ladder with a 1/channel/client/day cap,
+  delivery-failure fallback rules, 5-touch drip cadence, sentiment-routed post-event
+  review, retention nudges restricted to repeat-likely event types, stale-lead
+  auto-archive, cancellation notice as an admin-discretion toggle, voice conventions,
+  setup-time language. Partially overtaken: STOP-keyword TCPA compliance SHIPPED, and
+  `proposals.event_timezone` now EXISTS in schema (`schema.sql:2554`) so the time-zone
+  decision is half-built. The rest reads like a ready-to-execute plan stub.
+- **Staff payment Phase 4 — 1099 generation.** The ledger keeps YTD totals exportable;
+  the 1099 output itself has no plan and no code. (Phase 3, the staff pay surface, has
+  since shipped: `server/routes/staffPortal/payouts.js` plus the payroll screen redesign.)
+- **Client portal v2 remainder.** The day-of brief slot (#4, decisions captured: preferred
+  name + headshot + "subject to change", no phone/messaging, 30-90 min generic arrival),
+  and deferred sub-projects #7/#8/#9 (multi-event switcher, quote-resume, in-portal
+  sign/pay/lab). Case Files still has 4 tab stubs with no design pass: Prescription, Potion
+  Plan, Big Experiment, Receipts, Account.
+- **Vite migration.** Decision locked (Vite, not Next). Confirmed still on
+  `react-scripts 5.0.1` with zero vite references. 15-16 CRA-tied HIGH advisories are
+  accept-and-document until this happens.
+- **Mobile remediation: C1 is DONE, Batches 5-8 remain.** CORRECTED 2026-08-12. My
+  2026-08-11 re-triage said C1 was untouched, based on grepping `Sidebar.js` for
+  "hamburger/mobile-nav/isMobile" and finding nothing. That was the wrong place to look —
+  the work lives in CSS, not the component. `index.css` ~13340 has the whole off-canvas
+  drawer: `.sidebar` goes `position: fixed`, 280px, `translateX(-100%)`, slid in by
+  `.shell.mobile-nav-open`, with `.header-menu-btn` and `.sidebar-close-btn` revealed and
+  the rail compaction undone. The 220px-column-crush description is obsolete.
+  What IS still broken is a skin bug, not a responsive one: the drawer is transparent in
+  House Lights, so page content reads through the nav items. Filed in the fix list
+  (2026-08-12) alongside the identical modal defect, since they share one root cause.
+  Batches 5-8 (tablet band 768-1024, 4 standalone Highs, post-C1 residual, Med/Low cleanup)
+  are still genuinely unstarted.
+- **Cocktail Menu page redesign.** `CocktailMenuDashboard.js` at 931 lines, double-mounted,
+  ~90% duplicate code between Cocktails and Mocktails. Pull it out of Settings entirely.
+
+### Real loose ends, verified still true
+
+**Money / payments**
+- `amount_paid` vs captured-amount: the webhook sets `amount_paid` on settle without
+  asserting `session.amount_total` matches. The TIP branch does guard
+  (`checkoutSessionCompleted.js:80`); the proposal settle branch still does not.
+- Status demotion covers `balance_paid` but not `confirmed` on a price increase.
+- One-time prod audit of pre-existing `paypal_url` rows never run. Narrowed 2026-08-11:
+  `tipMethods.readSideNormalize` now drops an unnormalizable value on read and Sentry-warns,
+  so bad rows can no longer reach a client-facing sign. The audit is now cleanup, not risk.
+- Payouts endpoint has no LIMIT and no `/ytd`; rated clean at today's volume.
+- `findOpenPeriodForDate` is non-locking (low race window). Multi-admin mark-paid race:
+  the Phase 2 plan said lock the parent period row; nobody confirmed it landed.
+- Late-tip roll-forward into a frozen period is CLOSED (fixed in `dc313d3`). The sibling
+  case, a refunded or disputed tip after payout, still has no admin-alert design.
+
+**Perimeter / correctness**
+- Auto-claim on `/onboarding` is silent: no confirmation UI, no `activity_log` row. Narrowed
+  2026-08-11: the self-promotion hole itself was closed 2026-08-01 by `requireOnboarded` in
+  `middleware/auth.js`, so what remains is only the missing confirmation and audit trail.
+- `proposals_status_check` still has **4 non-transactional CONSTRAINT definitions** in
+  schema.sql, source of a rare 1-in-16 dispatcher-test flake.
+- Pre-hire who already has an account hits the application gate; workaround is the admin
+  Hire button. Documented as accepted.
+- Stripe Dashboard refunds reconcile but never email the client. Spec-scope call.
+- The "accepted before charge" sequencing bug (sign/accept fires before Stripe
+  `confirmPayment`, so a declined card still yields an "accepted" toast and a signed
+  proposal) could NOT be re-located on 2026-08-11 — the cited code has moved. Re-verify
+  before trusting either way.
+
+**File-size ratchet** (`npm run check:filesize`: RED 0, YELLOW 32)
+- `crud.js` is 995 lines and has gone the WRONG way (946 when logged). Closest to the hard
+  cap of anything in the tree.
+- `CocktailMenuDashboard.js` 931, `emailTemplates.js` 853, `QuoteWizard.js` 837 (now at
+  `client/src/pages/website/quoteWizard/`), `ProposalCreate.js` 750, `admin/users.js` 713.
+- `safeAddonQty` is triplicated across `crud.js` / `public.js` / `metadata.js`.
+
+**Housekeeping**
+- `handoff.md` and `handoff.beo.md` still sit in the os root; delete-or-keep never closed.
+- Local Postgres password from the pre-rebase leak (commit `885b074`, scrubbed from
+  history) was never confirmed rotated. Cheap insurance.
+- Neon branch `br-morning-union-ad26nq4r` (prelaunch-scrub-rehearsal) still exists,
+  now `archived` (cold storage) since 2026-07-14. Awaiting an explicit delete cue.
+- Stale Vercel preview branch `preview/claude/change-admin-password-IQlVD` (archived) plus
+  its matching git branch `remotes/origin/claude/change-admin-password-IQlVD`, both from
+  2026-05-20. Safe to delete.
+- `--amber` is still `#1D8C89`, a teal. Rename it or comment it so a design session does
+  not go orange.
+- No admin UI exists to edit `service_addons` descriptions; live client-facing copy is
+  still changed only by ungated `schema.sql` UPDATEs.
+- `qLostValue` will start counting `archive_reason='event_completed'` as lost revenue the
+  moment auto-archival ships. Needs the filter at that time, not before.
+- `crud.test.js` is not parallel-safe (global COUNT); needs `--test-concurrency=1`.
+- A dev `pay_period` stuck in `processing` makes 5 payrollAccrual tests skip. Refactor the
+  test to manage its own period rather than depend on shared dev DB state.
+- Hardcoded 60-minute orientation setup time, flagged as a V1 simplification.
+- `BundlePicker` hardcodes "popular" to `the-foundation`.
+- Client-side gratuity floor still duplicates the literal 50; the server has
+  `GRATUITY_FLOOR_RATE` (`pricingEngine.js:236`). Lift the client to a shared constant.
+
+### Ideas, unscoped
+
+Referral program. Admin permissions / manager-toggle framework. Contractor onboarding flow
+audit. AI responder for staff SMS. Google Reviews monitoring + staff review-forward.
+Newsletter and seasonal campaigns (now partly absorbed by the marketing redesign).
+Thumbtack auto-draft becoming auto-send. Auto-assign weights as one slider instead of two
+"should sum to 1.0" inputs. Editable env-shaped settings (deposit amount, admin SMS phone,
+notification email) behind a real settings table. A `/capture` command to distill a wrapped
+thread into this ledger in one keystroke.
+
+### Pointers, not duplicates
+
+- **Owed walkthroughs** now live in `docs/walkthroughs-owed.md`. Everything in the old
+  ledger of the form "shipped but never eyeballed" moved there.
+- **Anything with a file and line number** lives in `fix-list-remaining-2026-07-02.md`.
+- **Multi-bartender tipping** is absorbed by the staff payment system project. Note the
+  standing rule: tip signs are per-bartender and settled; do not re-raise shared-bar or
+  pooled-QR sign designs.
+- **Lane and project status** is `build-board.md`.
+
+---
+
+## From `tech-debt.md` — deliberate deferrals from the 2026-04-24 full audit
+
+Provenance: the standalone `tech-debt.md` (sourced from the 2026-04-24 `/full-audit`,
+paths refreshed 2026-04-27). All deliberate deferrals; each is eligible to be re-opened as
+its own spec. Line numbers are old — re-grep before surgery.
+CROSS-LINK (2026-08-13): the "pricing_snapshot shape validator" item below is now HALF-built
+— a `_version` check exists and is what fires Sentry `DRBARTENDER-SERVER-1N` ("legacy
+snapshot without _version", 54 events) on every legacy row it meets. Finishing the item now
+means stamping/backfilling legacy snapshots (or demoting the log), not just writing the
+validator.
+
+### Tech debt: Schema migrations — need backup + verification plan
+
+### Tech debt: shifts.positions_needed + equipment_required: TEXT → JSONB
+
+**Source:** audit log, "Follow-up pass" item L; schema-drift scan section 5.
+**What:** Both columns currently store JSON text (default `'[]'`) and require `JSON.stringify`/`JSON.parse` at every callsite and `::json` casts at query time. The 2026-04-15 plan doc flagged this for migration; never executed.
+**Why deferred:** Requires a production data migration (TEXT → JSONB with content coercion) and a sweep of every callsite removing the stringify/parse boilerplate. Belongs in its own spec with a rollback plan.
+**Callsites to update after migration:** `server/utils/autoAssign.js:128-129`, `server/routes/admin/settings.js:129-132` (badge-counts `::jsonb` casts in the unstaffed-events sub-select; remove after migration), `client/src/pages/admin/AdminDashboard.js:400`, `client/src/pages/staff/StaffShifts.js:97`, `client/src/pages/admin/ProposalDetail.js:156`.
+**Next step:** Brainstorm migration script → coordinate with a deploy window → roll codebase sweep.
+
+### Tech debt: Dead column drops
+
+**Source:** audit log, schema-drift scan section 2.
+**What:** Columns that are in schema but unused anywhere in code:
+- `service_addons.is_default` — default `false`, never read or written
+- `users.calendar_token_created_at` — written but never read
+- `shifts.client_email`, `shifts.client_phone` — INSERTed via manual-event path, never SELECTed
+- `applications.favorite_color` — INSERTed + displayed but never used in logic (humor field — confirm intent before dropping)
+
+**Why deferred:** Each drop needs a quick user confirmation ("is this truly dead or scaffold for a future feature?"). Batchable into a single cleanup spec.
+**Next step:** Confirm each column → write a single DROP COLUMN migration with idempotency guards.
+
+---
+
+### Tech debt: Shape validators — cross-cutting refactor
+
+### Tech debt: pricing_snapshot shape validator
+
+**Source:** audit log, item K.
+**What:** `proposals.pricing_snapshot` JSONB is written by `server/utils/pricingEngine.js:343` and read by 6+ distinct files: `server/routes/stripe.js`, `server/utils/invoiceHelpers.js` (twice), `server/routes/clientPortal.js`, `server/routes/proposals/publicToken.js` (GET /t/:token), `server/routes/proposals/crud.js` (PATCH /:id reads `old.pricing_snapshot`), `server/routes/drinkPlans.js` (twice). Any key rename in the pricing engine silently breaks all downstream consumers at runtime.
+**Why deferred:** Requires a `PRICING_SNAPSHOT_VERSION` constant, a validator function, a consumer-side assert on read, and a write-time version stamp. Cross-cutting refactor — not trivial.
+**Next step:** Design the validator contract → add version field → wrap all 6 read sites in version-aware parsing.
+
+### Tech debt: adjustments + class_options shape validators
+
+**Source:** audit log, items N + Phase 2 scope.
+**What:** `proposals.adjustments` (JSONB array of `{label, amount, type?}`) has no server-side shape validation before INSERT. `proposals.class_options` has a whitelist in ONE insert path (`proposals.js:385-388`); other writers could bypass.
+**Why deferred:** Requires extracting `normalizeAdjustments()` and `normalizeClassOptions()` helpers in `server/utils/` and routing every writer through them.
+**Next step:** Write the helpers → find every writer (`rg "adjustments.*JSON.stringify"`, `rg "class_options"`) → route through normalizers.
+
+---
+
+### Tech debt: Architecture refactors — each needs its own design session
+
+### Tech debt: True schedulers-to-worker-process split
+
+**Source:** Codex server `[P1]`, audit top-21 item #6. Bucket B landed the env-guard stopgap (`RUN_SCHEDULERS=false` on additional instances); the ideal is a dedicated worker entrypoint.
+**What:** A dedicated `server/worker.js` that runs ONLY the schedulers (balance/event-completion/auto-assign/email-sequence/quote-draft-cleanup). Render runs one web service (no schedulers) + one worker service (schedulers only). Eliminates every class of "scheduler ran N times because N web instances" bug.
+**Why deferred:** Changes deployment topology on Render; needs a second service or process-group setup; might affect pricing.
+**Next step:** Design doc for worker-process split + Render YAML + migration runbook.
+
+### Tech debt: Drink-plan extras pricing service
+
+**Source:** Codex server `[P2]`.
+**What:** Add-on + bar-rental + syrup charges are recomputed inline in three places: `server/routes/stripe.js:197-216` (create-drink-plan-intent), `server/routes/drinkPlans.js` (mutating `proposal_addons`), and `server/utils/invoiceHelpers.js` (building the extras invoice). One concept, three owners.
+**Why deferred:** Cross-cutting extraction; needs tests around pricing parity.
+**Next step:** Extract to `server/utils/drinkPlanPricing.js`; route all three consumers through it; add golden tests.
+
+### Tech debt: Proposal-creation workflow consolidation
+
+**Source:** Codex server `[P2]`.
+**What:** Public and admin proposal-creation paths in `proposals.js:365` already diverge in validation, side effects, and pricing calculation. Every new field requires manual sync across both branches.
+**Why deferred:** Real refactor; needs behavioral tests to confirm no regression across both flows.
+**Next step:** Design doc; extract `createProposal(ctx, input)` service; both routes consume.
+
+### Tech debt: PotionPlanningLab state-controller split
+
+**Source:** Codex client `[P2]`.
+**What:** `client/src/pages/plan/PotionPlanningLab.js` orchestrates API loading, migration, autosave, browser-history interception, payment-redirect handling, queue derivation, AND step rendering. Steps are thin leaves over shared mutable state — large prop bags.
+**Why deferred:** Large restructure; risk of breaking an already-complex wizard.
+**Next step:** Extract controller hooks (`usePlanAutosave`, `usePlanHistory`, `usePlanQueue`) or a flow context; steps become presentation-only.
+
+### Tech debt: ClientAuthContext via utils/api.js
+
+**Source:** Codex client `[P2]`.
+**What:** `client/src/context/ClientAuthContext.js:13-23` uses raw `fetch` instead of the shared `utils/api.js` axios instance. Two auth domains, two error-handling paths, two base-URL resolutions. Error semantics drift by user type.
+**Why deferred:** Small enough to do standalone but needs verification it doesn't break the client portal.
+**Next step:** Route client auth through `utils/api.js` (preserve separate token storage key); verify client-portal flow end-to-end.
+
+### Tech debt: App.js route manifest dedup
+
+**Source:** Codex client `[P2]`.
+**What:** `HiringRoutes`, `StaffSiteRoutes`, and the admin branch in `AppRoutes` (`client/src/App.js:189-231`) re-declare the same onboarding, portal, and token-based routes with small variations. Three manifests to keep in sync.
+**Why deferred:** Routing refactor; high risk of breaking site-context switching.
+**Next step:** Extract shared route groups and compose them from a single source.
+
+### Tech debt: QuoteWizard ↔ ProposalCreate policy dedup
+
+**Source:** Codex client `[P2]`.
+**What:** `client/src/pages/website/quoteWizard/QuoteWizard.js` (parent + step components in `quoteWizard/steps/`) and `client/src/pages/admin/ProposalCreate.js` both own package/add-on eligibility, draft persistence, pricing preview, event-type lookup, and submission rules. They have already drifted (`filteredAddons`, event-type search, preview payloads/endpoints).
+**Why deferred:** Large refactor.
+**Next step:** Centralize policy + preview/draft adapters in shared modules consumed by both flows.
+
+---
+
+### Tech debt: Perf — low-frequency admin loops (deferred by risk/reward)
+
+### Tech debt: Geocode backfill bulk UPDATE
+
+**Source:** audit follow-up item D.
+**What:** `server/routes/admin/settings.js:68-100` (POST /backfill-geocodes) — per-profile and per-shift geocode backfill loops do sequential 1.1s Nominatim + per-row `UPDATE`. Admin one-off endpoints, rarely hit.
+**Why deferred:** Low frequency; replacing the per-row UPDATE with a bulk `unnest()` CTE is straightforward but not urgent.
+**Next step:** Keep the 1.1s Nominatim throttle, collect successes, bulk UPDATE at end.
+
+### Tech debt: Blog import parallel uploads + batch INSERT
+
+**Source:** audit follow-up item E.
+**What:** `server/routes/admin/blog.js` (POST /blog/import) — sequential image uploads + single-row INSERTs per blog post. Used once every few months at most.
+**Why deferred:** Low frequency.
+**Next step:** Parallelize image uploads with `Promise.all`; single multi-row VALUES INSERT.
+
+---
+
+### Tech debt: Low-value / nice-to-have
+
+### Tech debt: Failed-login DB audit trail
+
+**Source:** audit log A09.
+**What:** Failed logins are logged to console only; Render retention is short. In-memory `loginAttempts` Map provides basic lockout.
+**Why deferred:** Low immediate risk. Sentry captures patterns via rate-limit 429s.
+**Next step:** Optional — add `failed_logins` table if audit/compliance needs grow.
+
+### Tech debt: Pagination on tenure-dependent endpoints
+
+**Source:** 2026-04-24 push pre-review (database-review agent).
+**What:** Five admin/staff endpoints now have `LIMIT 500` added in the bucket-B push to prevent unbounded list returns, but the cap is high enough that long-tenured users won't hit it for 1-2 years:
+- `server/routes/shifts.js:/user/:userId/events` (LIMIT 500) — 2.5+ year bartender at 4 events/week hits it
+- `server/routes/shifts.js:/my-requests` (LIMIT 500) — same tenure threshold
+- `server/routes/emailMarketing.js:/campaigns/:id` sends (LIMIT 500) — hits with a single 10k-lead campaign
+- `server/routes/emailMarketing.js:/campaigns/:id` enrollments (LIMIT 500) — same
+- `server/routes/emailMarketing.js:/campaigns/:id` conversation history — paginated already
+**Why deferred:** Each needs frontend pagination support (paging controls, "load more" button, or infinite scroll). Frontend consumers were not touched in the bucket-B push to keep the commit focused. Once a user hits the cap, the UI silently shows an incomplete list with no indicator.
+**Next step:** Add `?page=` / `?limit=` query support and frontend paging in an incremental PR. Triggered event: first support ticket mentioning "missing old events" or "campaign shows 500 sends but blast went to 10k."
+
+### Tech debt: Campaign-list query performance
+
+**Source:** 2026-04-24 push pre-review (database-review agent).
+**What:** `GET /api/email-marketing/campaigns` list uses three correlated `COUNT(*) FROM email_sends WHERE campaign_id = c.id AND status = ...` subqueries per row. At 100 campaigns × 10k sends per campaign that's 3M row scans per list call.
+**Why deferred:** Scale concern, not a current problem.
+**Next step:** Add partial indexes on `email_sends(campaign_id) WHERE status = 'opened'` / `WHERE status = 'clicked'`, OR refactor to a single aggregated subquery with `COUNT(*) FILTER (WHERE status = ...)`.
+
+### Tech debt: CC-Import: orphan-payment link refund branch — TOCTOU race on concurrent admin clicks
+
+**Source:** 2026-05-28 Task 2 checkpoint review (database-review agent).
+**What:** `server/routes/admin/ccImport/review.js:334-346` reads `cc_event_id, promoted_*_id` outside any txn or row lock, then `:392-395` (refund branch) runs a bare `UPDATE legacy_cc_payments SET cc_event_id = $1` with no `WHERE cc_event_id IS NULL` clause. Two admin clicks racing on the same orphan row can both pass the guards, both run the UPDATE, then both call `promoteSingleLegacyRefund`. The helper's `FOR UPDATE` on `proposals` (phase4.js:585-589) serializes the row-lock contention, but the per-proposal `legacy_charge_id` idempotency index does NOT fire when `legacy_charge_id` is NULL (legitimate per the CC export), so both calls can produce duplicate `proposal_refunds` inserts. Payment branch is NOT affected — shared txn + FOR UPDATE inside `promoteSingleLegacyPayment` makes the second caller block and see `promoted_payment_id` set.
+**Why deferred:** Pre-existing race, not introduced by codex-followups Task 2. The atomicity fix in commit `6455fdb` closes the bigger "non-success status strands cc_event_id" gap; this concurrency hole is narrower and only fires under double-click. Operator UX could mitigate via button-disable-on-click; the durable fix is server-side.
+**Next step:** Tighten the refund-branch UPDATE to `... WHERE id = $1 AND cc_event_id IS NULL`, check `rowCount === 0` → throw `ConflictError('race lost')`. Alternatively, add `SELECT ... FOR UPDATE` to the guard SELECT at `review.js:334-338` to serialize concurrent reads.
+
+### Tech debt: metricsQueries `include_cc` filter join lacks composite index
+
+**Source:** 2026-05-27 push pre-review (performance-review agent, finding L4).
+**What:** `server/utils/metricsQueries.js:200-203, 263-272` — the `include_cc !== 'all'` paid-money branch joins `proposal_payments → proposals` on every Financials/Dashboard call and adds `p.cc_id IS NULL` / `IS NOT NULL`. The join key on `pp.proposal_id` is FK-indexed, but there's no composite `(proposal_id, cc_id)` and the existing partial unique `idx_proposals_cc_id` (schema 2805) only covers the `IS NOT NULL` selectivity path.
+**Why deferred:** Fine at current volumes — `proposals` is small. Only becomes a problem once `proposal_payments` crosses ~100k rows. The `include_cc` chip itself was just wired (commit `c4a18e1`) so usage data starts now.
+**Next step:** Revisit once the financials dashboard slows on a CC-heavy filter. Likely fix: add `CREATE INDEX idx_proposals_id_cc_id ON proposals(id, cc_id)` — covers both `IS NULL` and `IS NOT NULL` branches via index-only scan.
+
+### Tech debt: admin.js applications filter CASE expression blocks index
+
+**Source:** 2026-04-24 push pre-review (database-review agent).
+**What:** `server/routes/admin/applications.js:22-50` (the `ARCHIVED_FILTER` const + its callsite in GET /applications) uses `CASE WHEN $1 THEN u.onboarding_status = 'rejected' ELSE u.onboarding_status IN ('applied','interviewing') END`. The parameterized CASE prevents Postgres from using `idx_users_onboarding_status` — predicate pushdown doesn't apply to parameterized branches.
+**Why deferred:** At current scale (~100s of applicants) seq-scan is faster than index anyway. Parameterization was chosen over string-concat specifically to remove the SQL-injection-adjacent pattern flagged by the audit.
+**Next step:** When application volume exceeds 10k rows, rewrite as two branches selected in JS with const string literals (no user input = no injection surface):
+```js
+const statusPredicate = archived
+  ? `u.onboarding_status = 'rejected'`
+  : `u.onboarding_status IN ('applied','interviewing')`;
+```
+
+### Tech debt: Stripe webhook catch swallows DB errors (returns 200)
+
+**Source:** 2026-04-24 push pre-review (security-review agent, M2).
+**What:** `server/routes/stripe.js:788-798` (and 931-941) — when the DB transaction fails inside the signature-verified webhook handler, the `catch` block captures to Sentry + ROLLBACKs, but falls through to `res.json({ received: true })` on line 961. Stripe sees 200, does not retry. A transient DB outage during `payment_intent.succeeded` processing silently drops the payment record.
+**Why deferred:** Pre-existing behavior (not introduced by bucket B). Narrow-scope remediation was the goal.
+**Next step:** Rethrow from the catch blocks to propagate to asyncHandler → 500 response → Stripe retry.
+
+### Tech debt: Dead-letter readers for forensic blobs
+
+**Source:** schema-drift scan section 5.
+**What:** `email_webhook_events.processed`, `thumbtack_leads.raw_payload`, `thumbtack_messages.raw_payload`, `thumbtack_reviews.raw_payload`, `proposal_activity_log.details` — all written, never read back in any admin UI.
+**Why deferred:** Intentional forensic/audit storage per design.
+**Next step:** Revisit only if a debugging incident requires on-demand access.
+
+### Tech debt: DEFAULT vs always-supplied column duplication
+
+**Source:** schema-drift scan section 7.
+**What:** ~10 columns have schema DEFAULTs that never trigger because every writer supplies a value (`users.notifications_opt_in`, `proposals.guest_count`, `proposals.event_duration_hours`, `stripe_sessions.amount`, etc.).
+**Why deferred:** Harmless code smell. Removing the explicit JS fallback OR the DEFAULT is a one-line cleanup but provides no behavior change.
+**Next step:** Sweep during next routine DB maintenance.
+
+### Tech debt: Dead column: `users.notifications_opt_in`
+
+**Source:** audit batch 5b, L1 (lane audit-5b-notif).
+**What:** `users.notifications_opt_in` was write-only — set by the `/register` and `/register-pre-hired` routes from the PreHire onboarding signup checkbox ("Text me when new shifts post"), but gated NO notification. Real shift-SMS gating is `staff_notification_preferences` JSONB via `notificationChannelResolver.js` (defaults opted-in). The checkbox implied an effect that never happened. Removed the checkbox + both writers (auth routes) + the two admin SELECTs; column is now dead (no writers remain in `client/src` or `server/routes`; only `schema.sql` + test fixtures reference it).
+**Why deferred:** `DROP COLUMN` not done yet — defer one clean deploy so the no-writer change ships first, then drop in a follow-up migration. Test fixtures (`notificationChannelResolver.test.js`, `messageScheduling.test.js`, `scheduledMessageDispatcher.test.js`, `beoHandlers.test.js`) still INSERT the column; update them when the DROP migration lands.
+**Next step:** `ALTER TABLE users DROP COLUMN notifications_opt_in;` migration after one clean deploy, plus drop the column from the test INSERTs.
+
+---
+
+### Tech debt: Accepted risks — document, don't fix
+
+These were identified during audit but are deliberately not addressed:
+
+- **npm audit `react-scripts` transitive CVEs** (14 high / 6 moderate). CRA is abandoned upstream. None ship to production browser bundle (webpack-dev-server is dev-only, svgo/nth-check/workbox are build-time). Migration off CRA to Vite or Next.js is its own project.
+- **Helmet CSP `'unsafe-inline'` in `styleSrc`**. Required by Stripe Elements + inline React styles. Documented compromise.
+- **In-memory `loginAttempts` Map** in `server/routes/auth.js:15-17`. Acceptable for single-instance Render. Multi-instance deploys will bypass the lockout per-IP rotation. Revisit if/when moving to multi-instance.
+- **Email `html_body` shipped to every campaign-step edit request**. Campaign-step detail needs the body to edit; no meaningful optimization available short of a separate `/steps/:id/body` lazy-fetch endpoint. Current scale doesn't warrant.
+- **`uuid` advisory GHSA-w5hq-g745-h8pq (moderate)** — audit batch 3c-deps. The advisory is a missing buffer bounds check in `v3`/`v5`/`v6` **only when a `buf` argument is passed**. Every `require('uuid')` site in the codebase uses `v4` with no `buf` (grep `require('uuid')` — application.js, payment.js, contractor.js, admin/users.js, admin/blog.js, scripts), so the code path is unreachable for us. The only fix npm offers is `uuid@14` (semver-major: ESM-leaning rewrite that would need all 7 CJS `require` sites verified) for zero real-world gain. Deferred — revisit if a future uuid major bump happens for another reason.
+- **`@opentelemetry/core` < 2.8.0 advisory GHSA-8988-4f7v-96qf (moderate)** — audit batch 3c-deps. Unbounded memory allocation in W3C Baggage propagation, pulled transitively by `@sentry/node`'s OTel instrumentation (`instrumentation-http` → `resources` → `sdk-trace-base`). NOT overridden: `@opentelemetry/core` is tightly version-coupled across the OTel packages `@sentry/node` pins, so forcing core alone risks breaking Sentry tracing. The clean fix is a coordinated `@sentry/node` bump to a release on OTel core ≥ 2.8.0 — fold it into the next Sentry upgrade rather than a surgical override.
+- **record-payment reads `currentPaid` pre-transaction** (`server/routes/proposals/actions.js`; flagged non-blocking by the archive-controls push-gate reviewer, 2026-07-02). The `currentPaid === 0` gate for the client-lock hoist and the same-client sweep uses an `amount_paid` value read before `BEGIN`; a concurrent first payment landing in that gap could leave it a stale 0. Consequences are benign (an extra client lock is harmless; a re-sweep is idempotent via the status filter; the amount math itself uses guarded in-tx UPDATEs), so this is documented rather than fixed. If the handler is ever reworked: re-read `amount_paid` under the in-tx row lock and derive the gate from that.
+
+---
+
+# Sentry unresolved — swept 2026-08-13
+
+The live Sentry queue, triaged into this list so it stops being a sixth list nobody reads.
+Do NOT resolve `DRBARTENDER-SERVER-21` as noise (see the 2026-08-12 duty-accrual entry).
+
+**Needs a real look:**
+- **`WILDLIGHT-E` — `db.pool_connection_error`, 98 events over 17 days, still firing (last
+  seen minutes before this sweep), culprit `GET /index`.** A steady connection-pool drip on
+  Dan's LIVE storefront that was on no list until now. Likely Neon serverless pool
+  exhaustion under Next 16; needs its own diagnosis session. Highest-priority item in this
+  section.
+- **`WILDLIGHT-G` — Anthropic API 400: "credit balance is too low".** The AI-studio generate
+  feature on Wildlight has been DEAD from billing since 2026-08-12. Ops action for Dallas:
+  top up the Anthropic credits (or decide the feature hibernates). No code change.
+- **`DRBARTENDER-SERVER-22` — `AggregateError` on `GET /api/admin/thumbtack/pending-first-replies`**
+  (new 2026-08-13, 1 event). The box agent's polling call threw. Same pipeline that still
+  owes its next-lead proof — check `journalctl --user -u thumbtack-agent` on the box before
+  trusting the next lead to it.
+- **`DRBARTENDER-SERVER-1H` — `unresolved_ingredient`, 16 events, ongoing** on the public
+  drink-plan PUT. Potion custom-recipe family; a client-entered ingredient the resolver
+  cannot map. Needs one triage: either a missing alias (data fix) or a resolver gap.
+- **`DRBARTENDER-SERVER-1N`** — see the tech-debt cross-link above (legacy pricing_snapshot
+  rows without `_version`; 54 events).
+
+**Known shape / low:**
+- N+1 query cluster (`SERVER-11`, `-1F`, `-1P`, `-1Q`, `-1C`) on dashboard-stats, financials,
+  staff-home — perf-category, related indexes already itemized in the tech-debt section.
+- `WILDLIGHT-9` / `WILDLIGHT-F` — anthropic URL-fetch retry + image recompress: working
+  fallbacks doing their job, log-noise tier.
+- `WILDLIGHT-2` — `auth.login_failed`, 7 events/29 days: someone poking the admin login;
+  lockout Map covers it.
+
+---
+
+# Ready to build, discovered off-board (2026-08-13 sweep)
+
+- **Proposals list pagination** — spec AND plan committed 2026-08-12 in another window
+  (`superpowers/specs/2026-08-12-proposals-pagination-design.md` /
+  `superpowers/plans/2026-08-12-proposals-pagination.md`, approved in brainstorm), NOT
+  built: `ProposalsDashboard.js:477` still says "showing first 50" with no page control,
+  and ~¾ of the 219 Active proposals are unreachable from the screen. Client-only — the
+  server already accepts `?page`/`?limit` and returns `X-Total-Count`. Now on the build
+  board. Events/shifts deliberately stay unpaginated (Dallas 2026-08-12: "I like it all on
+  one page"); the spec records the latent `LIMIT 500` hazard on `GET /shifts` for later.
+

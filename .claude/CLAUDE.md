@@ -164,7 +164,7 @@ The push to prod is the user's deliberate, explicit call ("push", "deploy", "shi
 
 > TRANSITIONAL (remove once fully off Windows): `.husky/pre-push` runs the exact Vercel client build (`CI=true react-scripts build`) only when a push changes `client/`, catching CI-fatal ESLint warnings that nothing else local catches. It sits below the confirmation gate as the last mechanical gate; emergencies bypass with `git push --no-verify`.
 
-> TRANSITIONAL (not-yet-blocking until `NEON_API_KEY` is configured): the same `.husky/pre-push` also runs the money-path smoke gate (`node scripts/testdb-smoke.js`) when a push changes `server/` — money suites against an isolated Neon `ci-smoke` branch — first (fails faster than the client build); until the key exists it prints a loud SKIP banner and allows the push, then becomes hard/fail-closed. See README > Test gate. Same `--no-verify` escape.
+> The same `.husky/pre-push` also runs the money-path smoke gate (`node scripts/testdb-smoke.js`) when a push changes `server/` — money suites against an isolated Neon `ci-smoke` branch — first (fails faster than the client build). **LIVE and fail-closed since ~2026-08-11**: `NEON_API_KEY` is configured and the gate ran all 42 money suites at both the 2026-08-11 and 2026-08-13 pushes (the old "SKIP banner until the key exists" transitional state is over). See README > Test gate. Same `--no-verify` escape.
 
 ## Plan = lane map (front-matter schema)
 

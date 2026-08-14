@@ -8,13 +8,14 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 
 <!-- plan written + reviewed, no lane cut. One line per item, linking its spec + plan. -->
 
+- **proposals-pagination** — client-only paging on the Proposals dashboard; server side already done (`?page`/`?limit` + `X-Total-Count`). Specced and planned in another window 2026-08-12, surfaced by the 2026-08-13 consolidation sweep — it had never reached this board. [spec](superpowers/specs/2026-08-12-proposals-pagination-design.md) / [plan](superpowers/plans/2026-08-12-proposals-pagination.md)
 - **proposal-compare-and-book** — compare and book on the proposal page. Spec only, no plan yet, so this is not lane-ready; carried here so it is not lost behind the marketing phases. Absorbs the parked compare-page reskin and Dallas's 8/10 item 8 (the client-facing compare surface is unreadable at 3 options, worse at more). [spec](superpowers/specs/2026-08-11-proposal-compare-and-book-design.md)
 
 ## In flight
 
 <!-- lane open and building. Stale-lane flags surface here. One line per item. -->
 
-- **marketing-redesign-phase-1** — campaign section rebuild, phase 1 of 3 against a Sep 5 deadline. Spec approved from a claude.ai/design session; plan taken through three rounds of design-stage fleet review. Lane `mkt-a-tags` cut 2026-08-11. [spec](superpowers/specs/2026-08-11-marketing-campaigns-design.md) / [plan](superpowers/plans/2026-08-11-marketing-redesign-phase-1.md)
+- **marketing-redesign-phase-1** — campaign section rebuild, phase 1 of 3 against a Sep 5 deadline. Spec approved from a claude.ai/design session; plan through three fleet-review rounds. As of 2026-08-13 SEVEN lanes (mkt-a through mkt-g) have merged to main — tags, resolver, contacts UI, extract, compliance, send — all UNPUSHED; the build looks near-complete and awaits its push gate. Phases 2–3 remain unplanned. [spec](superpowers/specs/2026-08-11-marketing-campaigns-design.md) / [plan](superpowers/plans/2026-08-11-marketing-redesign-phase-1.md)
 
 ## Recently shipped
 
