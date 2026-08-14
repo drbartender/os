@@ -257,8 +257,8 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       all-suppressed audience ("Check the held-back panel"), each must show its real
       message, not "Please fix the errors below". RESTYLE-specific checks for the same
       walk: both skins (the moment title deliberately goes serif on House Lights, like
-      every heading); the Audiences table at 1280 scrolls horizontally for its last two
-      columns inside `tbl-wrap` — judge whether that is livable; the 375px moment cards
+      every heading); the Audiences table folds "Last contacted" under 1400px (five columns at
+      1280, six from ~1400 up) — check both widths feel right; the 375px moment cards
       and budget meter (fixed be555426, re-shot clean). Headless coverage so far: 31
       screenshots both skins at 1280/900/375, zero console errors. (Sep 5 deadline
       pressure is exactly the condition that buries walkthroughs — this one gates real

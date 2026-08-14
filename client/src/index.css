@@ -20182,17 +20182,18 @@ html[data-app="admin-os"] .mkt-state .spinner {
   html[data-app="admin-os"] .mkt-recipients-grid { grid-template-columns: 1fr; }
   html[data-app="admin-os"] .mkt-moment-rail { min-width: 120px; }
 }
-/* House Lights' uppercase + tracking widens the tabs past a phone's content
-   box; the seg scrolls inside itself instead of dragging the page sideways. */
-html[data-app="admin-os"] .mkt-tabrow .seg { max-width: 100%; overflow-x: auto; }
-
 /* Six columns don't fit beside the 288px rail until ~1400px; Last contacted
-   folds first (it survives in the drawer), giving the tag cells their 38%. */
+   folds first (it survives in the drawer). */
 @media (max-width: 1400px) {
   html[data-app="admin-os"] .mkt-col-contacted { display: none; }
 }
 
 @media (max-width: 600px) {
+  /* House Lights' uppercase + tracking widens the tabs past a phone's content
+     box; the seg scrolls inside itself instead of dragging the page sideways.
+     Scoped to phones ON PURPOSE: an always-on overflow container clips the
+     keyboard focus ring at every width (ui-ux re-verify 2026-08-14). */
+  html[data-app="admin-os"] .mkt-tabrow .seg { max-width: 100%; overflow-x: auto; }
   /* Stacked stats leave the vertical hairlines stranded mid-air. */
   html[data-app="admin-os"] .mkt-vr { display: none; }
   /* The meter takes the full row and its track flexes instead of clipping. */
