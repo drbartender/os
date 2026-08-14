@@ -66,7 +66,7 @@ built in 8 file-disjoint lanes (kb-a..kb-h), each per-lane review-fleet clean
 - **B14 un-TRIMmed position** — FIXED at cancel.js (money) + autoAssign + coverBroadcast; the shift_requests CHECK made padded rows unseedable, so it landed as P3 idiom alignment.
 
 **Accepted residuals + follow-ups recorded from this batch (deliberately not built):**
-- **W1 (from kb-a review): a THIRD archive door does not reap.** `PATCH /proposals/:id/status -> 'archived'` (lifecycle.js, admin, `?force=true` from any status) reaps only marketing/change-requests, never shifts/messages/invoices. NOT reachable from the UI (ProposalDetail only posts sent/accepted through it; the Archive button uses `/:id/archive`), and the dispatcher archived-cascade backstops comms, but a raw-API archive of a shift-bearing booking keeps the shift live — the B1 symptom via a different door. Fix: route lifecycle->archived through `reapShiftsForProposal` or block it for shift-bearing proposals. Small; do in a later proposals-touching lane.
+- ~~**W1 (from kb-a review): a THIRD archive door does not reap.**~~ **FIXED 2026-08-14 (84812517)** — lifecycle->archived now runs the shared `reapShiftsForProposal` (transactional, best-effort) + the email-only staff notify; regression test in archive.test.js pins shift soft-cancel, request denial, and comms suppression through this door. Original: `PATCH /proposals/:id/status -> 'archived'` (lifecycle.js, admin, `?force=true` from any status) reaps only marketing/change-requests, never shifts/messages/invoices. NOT reachable from the UI (ProposalDetail only posts sent/accepted through it; the Archive button uses `/:id/archive`), and the dispatcher archived-cascade backstops comms, but a raw-API archive of a shift-bearing booking keeps the shift live — the B1 symptom via a different door. Fix: route lifecycle->archived through `reapShiftsForProposal` or block it for shift-bearing proposals. Small; do in a later proposals-touching lane.
 - **B5 cross-cycle residual:** after cancel -> refund -> restore -> re-book -> re-pay -> re-cancel, the second cancellation's snapshot is computed from a gross SUM of all succeeded payments (refunds never demote payment rows), so the forfeited cycle-1 retainer can partially leak back into the cycle-2 cap. Visible in the preview before money moves. Snapshot-per-cycle or a payment-row demotion would close it.
 - **B9 edge:** a reschedule landing in the seconds-wide mid-send window whose send then hangs >10 min gets reaper-redispatched with the hardcoded "tomorrow" copy for an event now days out (details otherwise fresh). Double-rare; part of the notification-dup cluster.
 - **B4/B13:** a held reimbursement clawed to exactly 0 while the worker is still off-roster is deleted by the next sweep's adj==0 path (loses only the audit note, zero money). B11 NULL-CallSid dead legs (non-prod, forged posts fail signature) no longer write a forensic audit row.
@@ -121,7 +121,7 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 - ~~Refunds-on-invoice: a payment split across multiple invoices shows the FULL refund on each (rare, informational). Apportion if it bites.~~ **DONE** (lane refund-attribution c89fe834: `invoices.js:105-119` two-regime LATERAL, `invoices.refunds.test.js` — 2026-08-14 audit).
 - Payment accounting: non-flat add-on comp residual (brief owed).
 - ~~Audit leftover: manager iCal in `calendar.js` (last open audit item).~~ **CLOSED** — confirmed intended 2026-07-13 (`docs/audit-2026-07-13/tech-debt-register.md` F-ICAL); manager treated as admin at `calendar.js:348,488` (2026-08-14 audit).
-- Tech debt: ~~`notifications_opt_in` dead column DROP (4 test fixtures still INSERT it)~~ **DONE** (aebd5562, `schema.sql:4341`; zero fixture INSERTs remain — 2026-08-14 audit); still open: `.form-select` focus padding-right; no-tip-jar badge redness vs last-minute badge; `.staffing-stat strong` ink emphasis.
+- Tech debt: ~~`notifications_opt_in` dead column DROP (4 test fixtures still INSERT it)~~ **DONE** (aebd5562, `schema.sql:4341`; zero fixture INSERTs remain — 2026-08-14 audit); ~~`.form-select` focus padding-right; no-tip-jar badge redness vs last-minute badge; `.staffing-stat strong` ink emphasis~~ **all three FIXED 2026-08-14 (8045743e)**: focus rule re-asserts chevron clearance, no-jar badge joins the red family (`.nojar-badge`), stat strong uses `--ink`.
 - Empty v1 tables (`legacy_cc_raw_imports`, `cc_import_runs`, `cc_import_phase0_failures`) stay as harmless scaffolding. Dev v1 junk SCRUBBED 2026-07-14: 176 v1 proposals (+ shifts/refunds/scheduled messages) and 1,199 v1 clients deleted transactionally with verification; 16 CC-marked clients with real proposals kept; ~1,207 dev `legacy_cc_proposals.client_id` links nulled (no live consumer); 22 `users.cc_id` rows deliberately untouched.
 
 ## Potion custom-recipe flow residuals (2026-07-16, full-fleet accepted-not-fixed)
@@ -142,9 +142,11 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
   **DONE** — split landed, drinkPlans.js is now 622 (coverageContext/lab/submit/
   regenerate/shoppingList extracted). **NEW 2026-08-14: `drinkPlans/submit.js` has
   regrown 599→717, back over the soft cap; next touch there carries a trim.**
-- PantryParsTab.js reads `err.response?.data?.*` (lines ~83/93/129), always
+- ~~PantryParsTab.js reads `err.response?.data?.*` (lines ~83/93/129), always
   undefined under the api.js interceptor, so its toasts degrade to generic
-  copy; same defect class fixed in RecipeEditor. Quick fix on main.
+  copy; same defect class fixed in RecipeEditor. Quick fix on main.~~
+  **FIXED 2026-08-14 (4d8a5394)**: all three catches read the flat
+  {message, fieldErrors} shape.
 - `generateLineItemsFromProposal` is override-blind: it always itemizes from
   catalog, so any proposal whose `total_price_override` differs from catalog
   gets an invoice with a correct total sitting over line items that do not add
@@ -200,16 +202,17 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
   terminal-invisible: no reap, no email, not in needs-attention. Spec accepts
   with a week-one bridge_duration_sec eyeball; make a permanent low-duration
   attention filter after launch week.
-- LEAD_CALL_DAILY_CAP=0 silently means 25 (NaN-guard); the kill switch is the
-  only off path. Doc note whenever the env table is next touched.
+- ~~LEAD_CALL_DAILY_CAP=0 silently means 25 (NaN-guard); the kill switch is the
+  only off path. Doc note whenever the env table is next touched.~~
+  **DONE 2026-08-14 (982e6f5a)**: noted in .env.example, README, and CLAUDE.md.
 
 ## Comms send-modal lanes P+N residuals (2026-07-18, post-merge 80da937 + f1d2e88)
 
 - ~~LIVE BUG: submit.js slow-path drink_plan_ready emailed the stale drink_plans.client_email snapshot (dead proposal.client_email fallback)~~ **FOLDED into lane pp2-planner 2026-07-18**: the existing-plan SELECT now JOINs live `c.email`/`c.name` (live first, snapshot fallback), mirroring the fast path. Ships with the lane's squash merge.
-- Compare-send toast reads "Text skipped: Compare sends have no text message" (truthful, noisy). Set the sms skip reason to 'not selected' when SMS is not in channels, or gate the toast on submitted channels. (P fleet code-review.)
+- ~~Compare-send toast reads "Text skipped: Compare sends have no text message" (truthful, noisy).~~ **FIXED 2026-08-14 (7b5be986)**: 'not selected' unless SMS was actually requested; both behaviors test-pinned. (P fleet code-review.)
 - ProposalDetailPaymentPanel double-fetches `/invoices/proposal/:id` (its own list + InvoiceDropdown's self-fetch, keyed together). Lift the fetch and pass the list down. (N fleet code-review.)
 - Deprecated resend-nudge delegation makes 3 DB round-trips (resolve + ensure + dispatch loads) vs legacy 1; archived case is now 409 vs legacy 400. Compat-only route, low traffic; tidy if ever touched. (N fleet.)
-- invoiceSend docblock: "the level the legacy send path had" should reference the nudge route's posture (invoice send is new, no legacy). (N fleet.)
+- ~~invoiceSend docblock: "the level the legacy send path had" should reference the nudge route's posture (invoice send is new, no legacy).~~ **DONE 2026-08-14 (982e6f5a).** (N fleet.)
 - paymentReminder/drinkPlanNudge email availability does not require the token although the email body embeds it (937ba35 only added the guard to SMS + placeholder email). Harmless (no-token proposals are rare and the CTA link just dies), tidy with the next comms touch. (Psync report.)
 
 ## Planner v2 residuals (2026-07-18, post-merge of all 6 pp2 lanes)
@@ -302,13 +305,13 @@ decrement, Balance lockedTotal excluded the label.
 - ~~submit.js at 830 lines / lab.js at 721 lines (both over the 700 soft cap) — plan a split on next substantial touch~~ **DONE 2026-07-22** (lane fs-split-drinkplans, behavior-inert moves, 31/31 suites green): submit.js 830→599 (+submitSanitize.js, submitNotify.js), lab.js 721→488 (+labHelpers.js, labListRefresh.js). Both money transactions untouched.
 - Lab GET serves the full shelf payload even in not_ready/locked states (client gates rendering; same token audience — API-payload tightening only). (low.)
 - Lab invoice find-or-create has no DB unique constraint (plan-row FOR UPDATE covers the realistic path; only the fully-paid branch mints one); optional partial unique index on invoices(proposal_id) WHERE label='Enhancement Lab' AND status IN ('sent','partially_paid'). (database advisory, low.)
-- EnhancementLab debounced save timer not cleared on SPA route-change unmount — a pending 500ms save can fire one stray idempotent PUT after unmount (the pagehide flush already covers tab-close). React 18 benign; trivial.
+- ~~EnhancementLab debounced save timer not cleared on SPA route-change unmount~~ **FIXED 2026-08-14 (4d8a5394)**: unmount now runs the same keepalive flush as pagehide — timer cleared, pending edit saved, no post-unmount setState.
 
 **CLEARED 2026-07-21 — verified moot under the balance-fold (removed from deferred):** off-ledger webhook/refund test (OFF_LEDGER set is empty; lab money rides the standard contract paths their suites cover); planRefund's `EXCEEDS_AMOUNT_PAID` guard "excludes lab dollars" (lab payments now roll into `amount_paid`, so the guard already includes them — verified refundHelpers.js:59 + empty OFF_LEDGER); multi-invoice lab delta negative-final-line (the fold prices the CURRENT additions via buildLabLineItems, not a cumulative breakdown, so remainder ≈ line sum and foldLinesTo can't go negative in the fully-paid branch); GET `computeExtrasBreakdown` round-trip (replaced by sync `priceLabAdditions`, 0 occurrences); desired-state overpay edges (removing paid additions now flows through general proposal-overpay + `reconcileProposalPaymentStatus`, not a lab-specific gap; the approval-race Sentry warn shipped at lab.js:363).
 
 **Deferred (non-lab):**
 - Lead-call: a VA leg Twilio PLACED but reports terminal CallStatus='failed' (carrier/route failure; known PH-route quirk) classifies as quiet 'missed' — no alert, not in the attention feed. Option: treat agent-leg 'failed' as fault-class, or include va/admin_call_status='failed' in the feed WHERE. (security advisory.)
-- admin/leadCalls attention query has no LIMIT (near-empty at steady state; add LIMIT 200 someday for a Twilio-outage worst case).
+- ~~admin/leadCalls attention query has no LIMIT~~ **DONE 2026-08-14 (7b5be986)**: LIMIT 200.
 
 ---
 
@@ -356,9 +359,10 @@ docs/superpowers/{specs,plans}/2026-07-21-notify-client-confirmation*. Deferred 
   Retry exists by design (spec: rejected alternatives).
 - **`server/utils/groupSend.js` is require-dead** (superseded by the proposalSendGroup comms
   action); delete when convenient.
-- **`emailTemplates.rescheduleNotificationClient` is orphaned** (the reviewed-text send
-  renders via renderPartsEmail); delete or mark deprecated so nobody resurrects the
-  pre-rendered-HTML path the spec rejected.
+- ~~**`emailTemplates.rescheduleNotificationClient` is orphaned**~~ **DELETED 2026-08-14
+  (7b5be986)**: function + export removed, tombstone comments left at both sites so
+  nobody resurrects the pre-rendered-HTML path the spec rejected. emailTemplates.js
+  shrank 853→819.
 - **ProposalEditorForm.js at ~790 lines** (soft cap 700; 852 as of 2026-08-14, still
   growing): plan a split on the next substantial touch.
 - **Suppression skip-reasons surface enum tokens** ("Suppressed: channel_disabled.") in admin
@@ -637,7 +641,7 @@ tracked and went away with its worktree.
   transaction. Catalog flips are not hypothetical: `schema.sql:785` and `:788` did
   exactly that to `parking-fee` and `garnish-package-only`. Deciding which source
   is authoritative is the actual fix; today they simply differ.
-- **Two docstring over-reaches in `addonQuantity.js`**, both cheap, design
+- ~~**Two docstring over-reaches in `addonQuantity.js`**~~ **FIXED 2026-08-14 (982e6f5a)** — both comments corrected (service_addons CHECK acknowledged; eventCreation named as the hardcoded fourth site). Original, both cheap, design
   unaffected in each case. The exclusion list's stated rationale, "billing_type is
   a bare VARCHAR(20) with no CHECK" (`:33`), is true of
   `proposal_addons.billing_type` (`schema.sql:866`) but false of
@@ -885,11 +889,9 @@ merged code 2026-08-04):
   natural first extraction, matching the `stripeWebhookHandlers/` split
   pattern. The hard-cap ratchet forces this at the next substantial addition
   anyway.
-- **Dead `settle_on_closed_event` subject entry.**
-  `server/utils/serviceExtensionNotify.js:251` defines the PROBLEM_SUBJECTS
-  entry but no caller ever passes that kind (verified by grep). Delete it, or
-  wire the alert it was minted for (a settle landing on a completed or archived
-  event) if that check is still wanted.
+- ~~**Dead `settle_on_closed_event` subject entry.**~~ **DELETED 2026-08-14 (7b5be986)**
+  — no caller ever passed the kind; the entry is gone from PROBLEM_SUBJECTS. If the
+  closed-event settle check is ever wanted, wire it fresh.
 - **Admin panel renders no loading skeleton (cosmetic, deliberate).**
   `ServiceExtensionPanel.js:137-143` returns null on first load (merge-gate
   perf finding: most events have zero extensions, so a skeleton card would
@@ -897,9 +899,9 @@ merged code 2026-08-04):
   the merge-gate note that called the skeleton class "unused": `.sp-skeleton`
   (`index.css:19431`) IS still used by the two staff surfaces
   (`RequestMoreTime.js:70`, `ShiftDetail.js:639`); only the admin-panel usage
-  is gone, and the CSS comment at `index.css:19430` still says "+ admin
-  panel", which now overstates. Trim the comment whenever that block is next
-  touched.
+  is gone. ~~The CSS comment at `index.css:19430` still says "+ admin panel",
+  which now overstates.~~ **Comment trimmed 2026-08-14 (8045743e)**; the
+  no-skeleton panel itself stays deliberate.
 
 **Gratuity election, push-review note (2026-08-04)**
 - `stripeCreateIntent.js` mints a second identical intent when a pending
@@ -1399,7 +1401,8 @@ batch shipped and these did not.
     downloads per playback, plus another per seek.
     Requires a valid token to reach any of it, so this is hardening, not a live hole.
 
-20. **`client/src/utils/downloadFilename.js` is absent from `ARCHITECTURE.md`.**
+20. ~~**`client/src/utils/downloadFilename.js` is absent from `ARCHITECTURE.md`.**~~
+    **DONE 2026-08-14 (982e6f5a)** — added to the tip-page route row in ARCHITECTURE.
     (consistency-check, MED — the one real docs-law miss in the batch.) The docs table
     requires a new util to be mentioned in ARCHITECTURE; it landed in the README tree only.
     The file's own comment says a second private copy "is how two exports start disagreeing
@@ -2472,7 +2475,7 @@ The HIGH (compose resume dying at unmount) and two MEDIUMs (fieldErrors never re
 Sent placeholder naming the wrong phase) were fixed at the gate before the push. These are
 the LOWs that rode to this list instead:
 
-- **Campaign archive doesn't guard against mid-send** (`emailMarketing/campaigns.js:207`):
+- ~~**Campaign archive doesn't guard against mid-send**~~ **FIXED 2026-08-14 (7b5be986)**: the archive UPDATE excludes `status = 'sending'` and 409s with a plain-language message; not-found still 404s. Original (`emailMarketing/campaigns.js:207`):
   DELETE archives unconditionally, including a campaign whose run is in flight. The run
   keeps mailing (per-recipient claims still arbitrate, so no duplicates), but the release
   UPDATE matches nothing and the campaign strands archived with a claim-stamp `sent_at`.
@@ -2483,7 +2486,7 @@ the LOWs that rode to this list instead:
   row fails 25P02, COMMIT silently rolls back, and the response still reports
   `imported > 0`. Same block echoes raw Postgres error text (constraint/column names) to
   the admin. Per-row savepoints or batch-validate first.
-- **CommandPalette offers Marketing to managers** (`components/adminos/CommandPalette.js:148`): the palette
+- ~~**CommandPalette offers Marketing to managers**~~ **FIXED 2026-08-14 (4d8a5394)**: the palette now mirrors the Sidebar's adminOnly gate via useAuth. Original (`components/adminos/CommandPalette.js:148`): the palette
   has no role filter, so a manager picking Marketing is bounced home by adminStrict.
   Mirror the Sidebar's `adminOnly` filtering.
 - **Sequence drip can miss single-row lead suppression on case-variant twins**
@@ -2492,7 +2495,7 @@ the LOWs that rode to this list instead:
   `lead_id`, and the drip gates only on its own row's `status='active'` while campaigns
   suppress by normalized address. Narrow (the unsubscribe POST flips all rows by address);
   gate the drip through the shared `leadUnsubscribedByEmail` to close it.
-- **`marketingAudience.js:18-24` sender registry says THREE senders; there are FOUR.**
+- ~~**`marketingAudience.js:18-24` sender registry says THREE senders; there are FOUR.**~~ **FIXED 2026-08-14 (982e6f5a)**: registry counts four, designer test send listed.
   The designer test send became a gated sender in this batch. The registry comment is what
   a future "audit all senders" pass reads; add the fourth entry.
 - **Send loop trusts mailability resolved at run start** (`marketingSend.js:235`, codex):
@@ -2516,7 +2519,7 @@ the LOWs that rode to this list instead:
 
 # Added 2026-08-13 (growth-gate, codex)
 
-- **Soft-drink convergence guard misses the em-dash-era variant**
+- ~~**Soft-drink convergence guard misses the em-dash-era variant**~~ **FIXED 2026-08-14 (7b5be986)**: the em-dash variant (recovered from June history) is the IN() list's third member. Original:
   (`server/db/schema.sql` ~:761): the IN() list converges the terse original seed and the
   comma/colon long paragraph, but a third historical state exists: the em-dash punctuation
   variant seeded roughly Apr 22 to Jul 11 (the no-em-dashes sweep re-guarded only against
@@ -2541,12 +2544,12 @@ The stale-response race in ProposalsDashboard (codex) was fixed at the gate. The
   `pricing_snapshot->'bar_rental'->>'total'` would 22P02 the staff feed where
   `readSnapshot` would shrug. Engine-owned data, not currently reachable; align the
   tolerance if a snapshot writer ever diversifies.
-- **Double bar row when an admin hand-sets `portable_bar`** (`BeoSections.js`, seam +
+- ~~**Double bar row when an admin hand-sets `portable_bar`**~~ **FIXED 2026-08-14 (4d8a5394)**: the equipment list drops a hand-set `portable_bar` token whenever the derived row renders. Original (`BeoSections.js`, seam +
   code lenses): the derived bar row and the equipment-list token both render on the three
   prod shifts with hand-set tokens. Redundant, not wrong. A
   `list.filter(t => t !== 'portable_bar')` when barRequired closes it; the owed
   walkthrough already retargets those shifts.
-- **BeoSections comment names one of two duty kinds** (seam lens): the bar row is paid
+- ~~**BeoSections comment names one of two duty kinds**~~ **FIXED 2026-08-14 (4d8a5394)**: comment names both bar_rental (BYOB) and hosted_supplies (hosted). Original (seam lens): the bar row is paid
   via `bar_rental` on BYOB but `hosted_supplies` on hosted; the comment says only
   bar_rental. Two-line comment fix.
 - **Em dashes in new staff-facing copy** (`BeoSections.js` bar row, `pages/FieldGuide.js`
