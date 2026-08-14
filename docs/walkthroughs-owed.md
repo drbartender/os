@@ -144,22 +144,45 @@ so tick items off as you confirm them rather than assuming the list is current.
       the drawer disagree on the "N staffed" denominator when `positions_needed` is `[]`
       (card `|| 1`, drawer `roster.length`). Cosmetic; 6 prod shifts reach it, and all 6
       are the past-dated `open` rows the shift-closure sweep is about to close.
-- [ ] **Review money: bounty + quarterly contest (spec §7). NEVER EXECUTED IN PROD.**
-      Verified 2026-08-14: `staff_reviews` 0 rows, `staff_review_credits` 0, `review_bounty`
-      duty lines 0, `review_contest` duty lines 0, Thumbtack-sourced reviews 0. The entire
-      §7 money path — log, credit, confirm, the $10 bounty, the $100 quarterly split — has
-      run exactly zero times since shipping 8/07. It is reviewed code that has never moved a
-      cent.
-      THE WALK (dev is fine; a real bounty in prod is real money): log a manual Google
-      5-star naming a staffer, credit them, Confirm, and verify a $10 `review_bounty` line
-      lands in the CURRENT open period for that person. Then try to Dismiss the confirmed
-      review — it must refuse while the bounty is paid. Then the leaderboard: confirm the
-      4-events + 2-named-reviews floor holds someone under it OFF the winners list, and that
-      awarding an in-progress quarter refuses without force.
-      SEPARATELY UNPROVEN, and it cannot be forced: the Thumbtack webhook ingest that bridges
+- [~] **Review money: bounty + quarterly contest (spec §7) — MANUAL HALF PASSED 2026-08-14
+      on dev**, the whole chain, first time this code has ever moved a cent anywhere.
+      (Prod remains at zero rows by design; the file's own instruction was that dev is fine
+      because a real bounty in prod is real money.)
+      THE MONEY MOMENT: logged a manual Google 5-star, credited Marcus (user 5), and
+      crediting alone paid NOTHING — the bounty appeared only on Confirm, which is the
+      correct seam. The line landed as $10.00 / `origin=auto` / `kind=review_bounty` in
+      payout 8465 of period **7303 (Aug 11-24)** — the period covering today, not the other
+      open period 7174 (Aug 28-Sep 11), so `findOpenPeriodForDate` picks the right one. It
+      then showed up on the real pay-run screen as "$10.00 owed, paid 0 of 1".
+      DISMISS, BOTH SIDES, which is where the subtle bug lived:
+      unfrozen Dismiss genuinely pulls the money — line tombstoned with `removed_by` NULL
+      (a SYSTEM tombstone, revivable) and the payout total recomputed to **$0**, not merely
+      hidden. Re-Confirm then RESTORED the same row 686 (note flipped to "credit restored",
+      total back to $10) with `review_bounty` row count still exactly 1 — so the
+      dismiss-then-re-confirm path neither silently pays nothing (the `ON CONFLICT DO
+      NOTHING` trap `settleBounty` exists to dodge) nor double-pays.
+      THE FROZEN REFUSAL, which the duty-pay entry above records as never having been
+      tested: processed period 7303 to freeze the line, clicked Dismiss, and got a clean
+      refusal — review stayed `confirmed`, line stayed active, payout stayed $10, and the
+      admin sees a toast carrying the server sentence verbatim. That guard is now proven.
+      LEADERBOARD + CONTEST: Marcus renders at a 100% rate ("1 of 1 events reviewed") and
+      still reads **"below the floor"**, so a perfect rate cannot buy past the 4-events /
+      2-named-reviews floor. The floor numbers come off the payload
+      (`data.min_events_worked`), not hardcoded in the bundle. Awarding an in-progress
+      quarter is refused THREE deep: the button is disabled, the server 409s
+      `QUARTER_IN_PROGRESS` without force, and **even WITH force it 409s "no eligible
+      contractors this quarter"** — the floor holds against a deliberate override. Zero
+      `review_contest` rows were written.
+      STILL UNPROVEN, and it cannot be forced: the Thumbtack webhook ingest that bridges
       a real TT review into `staff_reviews` via `tt_review_id`. It fires only on a real
       review landing. Until one does, the automatic half of §7 is unproven — the manual walk
-      above does not exercise it.
+      above does not exercise it. That is the only reason this is [~] and not [x].
+      DEV FIXTURE LEFT BEHIND: review 259 (confirmed, 5-star, crediting Marcus) and its live
+      $10 line 686 in period 7303. The period was processed to test the freeze and then
+      REOPENED, so it now sits `reopened` (processable, not frozen) rather than the `open`
+      it started at. Nothing is stranded.
+      COPY NIT, logged to the fix list: the refusal says the bounty is "already paid" when
+      the state that actually froze it was a period merely `processing`.
 - [x] **Money Board — CLOSED 2026-08-14.** Mobile/skin half walked 8/12 (found and fixed
       the see-through House Lights drawer). Desktop chart pass effectively done by finding:
       Dallas hit the day/week granularity hole and ruled "that whole chart is gonna need a

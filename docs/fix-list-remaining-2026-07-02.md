@@ -3432,3 +3432,27 @@ cosmetic bug's only live instances are about to become past/closed anyway.
 
 Found while walking the duty-pay out-of-area knob (walkthroughs-owed Tier 1);
 not a defect in the knob itself, which passed clean.
+
+## Review-bounty dismiss refusal says "already paid" when the period is only processing (found 2026-08-14, §7 walk)
+
+Copy accuracy, one line, no money at risk. `server/routes/admin/staffReviews.js`
+refuses a dismiss whenever the bounty line is frozen, and `isFrozen` is three
+states wide:
+
+    payout_status === 'paid' || period_status === 'paid' || period_status === 'processing'
+
+but the message names only one of them:
+
+    'a review bounty for this review is already paid; dismiss is refused'
+
+Walked it on dev by processing (not paying) the period: the refusal is correct
+and the toast surfaces the sentence verbatim, so the admin is told the bounty is
+"already paid" about money that has not been paid and, after a Reopen, may never
+be. The same admin can then reopen the period and dismiss successfully, which
+makes the first message read like a bug rather than a guard.
+
+Suggested: say what is actually true of all three states, e.g. "this period is
+being processed or already paid, so its review bounty is locked; reopen the
+period to change it." Note the sibling message on the credit-removal path
+(`staffReviews.js`, `frozen_credit_removals`) carries the same "already paid"
+wording and should move with it.
