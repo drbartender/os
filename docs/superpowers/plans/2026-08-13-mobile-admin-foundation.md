@@ -29,7 +29,7 @@
 - **Desktop width is byte-identical.** Every fork is guarded by `isPhone`; at desktop width the rendered tree must be exactly today's. The existing small-width hamburger drawer stays intact: it is the chrome a Desktop-view override shows at phone width.
 - **Staff surface untouched.** `installStaffPwaMeta.js`, `staff-manifest.json`, `staff-sw.js` must not change. The admin injector is a NEW sibling module, not a generalization of the staff one.
 - **CSS:** vanilla CSS appended to `client/src/index.css`, every rule scoped `html[data-app="admin-os"] .m-...`. No new CSS files, no other selectors touched.
-- **Service worker law (spec §7):** `admin-sw.js` never intercepts non-GET requests and never queues writes. Reads are network-first; cached copies carry `x-sw-cached-at`.
+- **Service worker law (spec §7, tightened 2026-08-14 by the fleet fold-in):** `admin-sw.js` never intercepts non-GET requests and never queues writes. API reads are network-first over an explicit **allowlist** of phone-surface GET paths only; cache fallback fires ONLY on transport failure (a server-answered non-2xx, especially 401/403, is never answered from cache); the live fetch races a ~4s timeout when a cached copy exists; cached copies carry `x-sw-cached-at`; the API cache name embeds the authenticated user id, other users' namespaces are purged on boot, and a logout message purges everything.
 - **Frontend API calls** go through `client/src/utils/api.js`. Never raw fetch/axios in components.
 - **Client tests:** `cd client && CI=true npx react-scripts test --watchAll=false <path>`. **Before any commit touching `client/`:** `cd client && CI=true npx react-scripts build` (the only local gate catching CI-fatal warnings).
 - **File size:** new files aim under 300 lines.
@@ -91,6 +91,7 @@ lanes:
       - client/src/utils/api.stale.test.js
       - client/src/pages/mobile/MorePage.js
       - client/src/components/AdminLayout.js
+      - client/src/context/AuthContext.js
       - README.md
       - ARCHITECTURE.md
       - docs/walkthroughs-owed.md
@@ -1180,7 +1181,7 @@ git commit -m "feat(mobile-admin): admin PWA meta injector behind the admin host
 
 **Files:**
 - Create: `client/public/admin-sw.js`, `client/src/utils/adminSw.js`
-- Modify: `client/src/utils/api.js`
+- Modify: `client/src/utils/api.js`, `client/src/context/AuthContext.js` (logout purge message only; AuthContext is a sensitive path, keep the diff to that one hook)
 - Test: `client/src/utils/api.stale.test.js`
 
 **Interfaces:**
@@ -1287,9 +1288,78 @@ async function stampAndPut(cache, key, response) {
   }
 }
 
+// Per-user API cache namespace (spec §7: managers share these routes; one
+// device must never show another user's cached data). The client posts the
+// authenticated user id after registration; it is persisted in a tiny meta
+// cache so it survives SW restarts.
+let userId = null;
+const META_CACHE = 'admin-meta';
+const apiCacheName = () => `${API_CACHE}-u${userId || 'anon'}`;
+
+async function purgeApiCaches({ keepCurrent = false } = {}) {
+  const names = await caches.keys();
+  await Promise.all(names
+    .filter((n) => n.startsWith('admin-api-') && !(keepCurrent && n === apiCacheName()))
+    .map((n) => caches.delete(n)));
+}
+
+async function loadUserId() {
+  if (userId !== null) return;
+  try {
+    const meta = await caches.open(META_CACHE);
+    const hit = await meta.match('/__admin-user');
+    if (hit) userId = (await hit.text()) || null;
+  } catch (e) { /* stay anon */ }
+}
+
+self.addEventListener('message', (event) => {
+  const msg = event.data || {};
+  if (msg.type === 'admin-user' && msg.id) {
+    event.waitUntil((async () => {
+      userId = String(msg.id);
+      const meta = await caches.open(META_CACHE);
+      await meta.put('/__admin-user', new Response(userId));
+      await purgeApiCaches({ keepCurrent: true }); // evict other users' data
+    })());
+  } else if (msg.type === 'admin-logout') {
+    event.waitUntil((async () => {
+      userId = null;
+      await caches.delete(META_CACHE);
+      await purgeApiCaches(); // spec §7: full purge on logout
+    })());
+  }
+});
+
+// Only phone-surface reads are ever cached (spec §7 allowlist). Desktop-view
+// traffic through the escape hatch (payroll, users, paystubs) must never
+// land in Cache Storage.
+const API_ALLOWLIST = [
+  '/api/shifts',
+  '/api/proposals',
+  '/api/admin/badge-counts',
+  '/api/admin/search',
+  '/api/admin/active-staff',
+];
+const isAllowlisted = (pathname) =>
+  API_ALLOWLIST.some((p) => pathname === p || pathname.startsWith(`${p}/`) || pathname.startsWith(`${p}?`));
+
+// Race a live fetch against a timeout. Weak signal hangs rather than failing
+// (cross-origin API + CORS preflight); with a cached copy in hand we prefer
+// stale-with-a-label over a spinner (spec §7). Without one, wait it out.
+const TIMEOUT_MS = 4000;
+function fetchWithTimeout(req) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('sw-timeout')), TIMEOUT_MS);
+    fetch(req).then(
+      (res) => { clearTimeout(timer); resolve(res); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  if (req.method !== 'GET') return; // writes are never intercepted
+  if (req.method !== 'GET') return; // writes are never intercepted, never queued
   const url = new URL(req.url);
 
   // App-shell navigations (same-origin only).
@@ -1325,15 +1395,20 @@ self.addEventListener('fetch', (event) => {
 
   // API reads. Matched by path, not origin: dev talks to localhost:5000/api,
   // prod to the api host, and the SW sees both because the page is the client.
-  if (url.pathname.startsWith('/api/')) {
+  // Cache law (spec §7): allowlisted paths only; fallback ONLY on transport
+  // failure or timeout-with-cache. A server-answered non-2xx (401/403 after
+  // expiry or revocation) is returned as-is, NEVER answered from cache: a
+  // dead session renders no data.
+  if (url.pathname.startsWith('/api/') && isAllowlisted(url.pathname)) {
     event.respondWith((async () => {
-      const cache = await caches.open(API_CACHE);
+      await loadUserId();
+      const cache = await caches.open(apiCacheName());
+      const cached = await cache.match(req);
       try {
-        const fresh = await fetch(req);
+        const fresh = cached ? await fetchWithTimeout(req) : await fetch(req);
         if (fresh.ok) await stampAndPut(cache, req, fresh);
         return fresh;
       } catch (e) {
-        const cached = await cache.match(req);
         if (cached) return cached;
         throw e;
       }
@@ -1348,8 +1423,9 @@ Then append the `push` and `notificationclick` handlers: copy both handler block
 
 ```js
 // client/src/utils/adminSw.js
-// Register the admin service worker. Callers do not await anything useful
-// from failure: an unregistered SW just means no offline shell this session.
+// Register the admin service worker and speak its message protocol.
+// Callers do not await anything useful from failure: an unregistered SW just
+// means no offline shell this session.
 import { isAdminHost } from './installAdminPwaMeta';
 
 export async function registerAdminSw() {
@@ -1361,9 +1437,27 @@ export async function registerAdminSw() {
     return null;
   }
 }
+
+// Post to whichever admin SW controls the page (active registration is fine
+// even before controllerchange). Fire-and-forget by design.
+async function postToAdminSw(message) {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration('/admin-sw.js');
+    const target = (reg && (reg.active || reg.waiting)) || navigator.serviceWorker.controller;
+    if (target) target.postMessage(message);
+  } catch (e) { /* no SW, nothing to scope or purge */ }
+}
+
+// Spec section 7: the API cache is namespaced per authenticated user, and a
+// logout purges every admin cache namespace.
+export const announceAdminSwUser = (userId) =>
+  postToAdminSw({ type: 'admin-user', id: String(userId) });
+export const purgeAdminSwCaches = () =>
+  postToAdminSw({ type: 'admin-logout' });
 ```
 
-In `AdminLayoutInner`'s mount effect (same one as Task 8): `registerAdminSw();`.
+Wiring: in `AdminLayoutInner`'s mount effect (same one as Task 8): `registerAdminSw();`, and once the authed user is known (AdminLayout renders only under `ProtectedRoute`, so `useAuth().user` is present): `announceAdminSwUser(user.id);`. In `client/src/context/AuthContext.js`, the existing `logout` function gains ONE line before it clears state: `purgeAdminSwCaches();` (import from `../utils/adminSw`). That is the entire AuthContext diff in this lane; the 401/transport-failure rework belongs to lane ma-d-auth per the spec.
 
 - [ ] **Step 7: Build gate + commit**
 
@@ -1371,8 +1465,10 @@ In `AdminLayoutInner`'s mount effect (same one as Task 8): `registerAdminSw();`.
 cd client && CI=true npx react-scripts build && cd ..
 git add client/public/admin-sw.js client/src/utils/adminSw.js \
         client/src/utils/api.js client/src/utils/api.stale.test.js \
-        client/src/components/AdminLayout.js
-git commit -m "feat(mobile-admin): admin service worker with offline shell and stamped read cache"
+        client/src/components/AdminLayout.js client/src/context/AuthContext.js
+git commit -F - <<'MSG'
+feat(mobile-admin): admin service worker with allowlisted, user-scoped offline read cache
+MSG
 ```
 
 ---
@@ -1516,6 +1612,8 @@ git commit -m "feat(mobile-admin): explicit install row backed by beforeinstallp
   - Load `/events`, `await page.evaluate(() => navigator.serviceWorker.ready)`, confirm `(await page.evaluate(() => navigator.serviceWorker.controller?.scriptURL))` ends with `/admin-sw.js` (first load may need one reload for the SW to take control).
   - `context.setOffline(true)`, reload: the shell renders (`.m-tabbar` present) and the events list shows data served from the API cache, not a network error screen.
   - Confirm a write fails loudly, not silently: while offline, `page.evaluate(() => fetch('/api/admin/badge-counts', { method: 'POST' }))` rejects (the SW must not answer non-GET).
+  - Allowlist check: online, visit a Desktop-view surface (e.g. `/financials/payroll`), then `caches.keys()` + `cache.keys()` in the page must show NO cached entry for any non-allowlisted `/api/` path.
+  - Purge check: trigger logout, then `caches.keys()` contains no `admin-api-*` or `admin-meta` cache.
   - `context.setOffline(false)`, reload, confirm live data returns.
   - Confirm `/admin-manifest.json` loads with status 200 and Chrome sees the manifest link (`document.querySelector('link[rel="manifest"]').href`).
 
