@@ -2377,3 +2377,14 @@ the LOWs that rode to this list instead:
   everyone mailed and the campaign unlocks after the 15-min stale window, but the UI toast
   says "The send failed." for a half-completed run and retry 409s until the window lapses.
   Operational rule meanwhile: don't push to prod while a campaign is sending.
+
+# Added 2026-08-13 (growth-gate, codex)
+
+- **Soft-drink convergence guard misses the em-dash-era variant**
+  (`server/db/schema.sql` ~:761): the IN() list converges the terse original seed and the
+  comma/colon long paragraph, but a third historical state exists: the em-dash punctuation
+  variant seeded roughly Apr 22 to Jul 11 (the no-em-dashes sweep re-guarded only against
+  the terse seed, so em-dash-era DBs kept it). Zero live impact today: prod was
+  hand-converged and dev verified at the final text on 2026-08-13, and fresh DBs seed the
+  new text directly. Only a restore of an Apr-Jul snapshot could resurrect it. One-line
+  fix when convenient: add the em-dash variant to the IN() list.
