@@ -1938,6 +1938,58 @@ case the seed INSERT already carries the post-update text, so a fresh DB comes u
 live copy and each guard is a genuine no-op, not a drift source.
 
 ---
+
+### Added 2026-08-14 (marketing-site perf pass, measured against a slow competitor site)
+
+Context: Dallas hit a painfully slow Squarespace site (thecluttercurator.com) and asked whether
+ours is in the same category. It is not. Same harness, 4x CPU throttle + fast-4G, headless
+Chrome 151, `www.drbartender.com` measured LCP 1,324 ms / TBT 181 ms / FCP 1,088 ms / 3 long
+tasks (331 ms total) / 17 requests, against their 10,268 ms / 5,234 ms / 4,120 ms / 28 long
+tasks (6,634 ms) / 111 requests. Nothing below is a regression or a user-visible bug. Both are
+cheap wins found while confirming that.
+
+**1. Marketing photos in `client/public/images/marketing/` are served
+`cache-control: public, max-age=0, must-revalidate`, so every repeat visitor revalidates
+~1.35 MB of photos on every page load.**
+
+Verified 2026-08-14 by header fetch against prod:
+
+- `/images/marketing/service-byob-bar.jpg` → `cache-control: public, max-age=0, must-revalidate`,
+  `content-type: image/jpeg`, 334,058 bytes
+- `/static/media/chalkboard_background.728db7f949e93f7f0d93.png` → `s-maxage=31536000, immutable`,
+  242,623 bytes
+
+So the CRA-hashed `/static/media/` assets are cached correctly and the hand-placed `public/`
+folder is not. That is the whole bug: files under `public/` ship with no content hash, so
+Vercel's default for unhashed static assets is revalidate-every-time. The seven marketing
+images measured 1,353 KB transferred, the two largest at 326 KB and 298 KB.
+
+Two parts to the fix, both independent:
+
+- Add a `headers` rule in `vercel.json` for `/images/marketing/(.*)` with a long
+  `max-age`. These filenames are stable and the photos change roughly never, so a long TTL
+  plus a manual rename on the rare swap is the right trade. Do NOT mark them `immutable`
+  without renaming on change, since the names carry no hash.
+- Serve modern formats. These are raw JPEG with no WebP or AVIF variant and no `srcset`.
+  Per the existing marketing-photos convention (mozjpeg q82, see
+  `project-marketing-photos`), add WebP siblings and a `<picture>` source, or move them
+  behind Vercel's image optimizer. Expect roughly 25 to 35 percent off 1.35 MB.
+
+**2. Zero `rel="preload"` hints in the client's `index.html`, so three IM Fell English woff2
+files (267 KB total) are discovered late in the CSS and each took 900 to 975 ms.**
+
+Verified 2026-08-14: `grep -c 'rel="preload"' ` on the deployed `index.html` returns 0.
+Measured font timings on the throttled run: `IMFellEnglish-Italic` 94 KB / 975 ms,
+`IMFellEnglish-Regular` 90 KB / 901 ms, `IMFellEnglishSC-Regular` 83 KB / 925 ms.
+
+The font files themselves are correctly `s-maxage=31536000, immutable`, so this only costs
+first-time visitors, which is exactly the visitor who matters on a marketing site. Fix is a
+`<link rel="preload" as="font" type="font/woff2" crossorigin>` for the one or two faces used
+above the fold (Regular, and SC if the hero uses small caps), not all three. Confirm which
+faces the hero actually renders before adding the tags, since preloading a font the first
+screen does not use makes things worse, not better.
+
+---
 ---
 
 # FOLDED IN 2026-08-13 (consolidation)
