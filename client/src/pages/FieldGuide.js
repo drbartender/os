@@ -41,7 +41,7 @@ const SECTIONS = [
         <p className="guide-sub-heading">Bare Minimum (for new recruits)</p>
         <ul><li>Wine Key</li><li>Bar Key / Opener</li><li>Ice Scoop</li><li>Clean Ice Bin</li></ul>
         <p className="guide-sub-heading">Standard Bar Kit (expected at most events)</p>
-        <ul><li>Shaker + Strainer</li><li>Knife + Cutting Board</li><li>Bar Spoon</li><li>Muddler</li><li>Jigger</li><li>Small handled cooler — brought empty (ice and beer are not part of the kit; bar mats, ice bins, and the tip jar ride inside it)</li></ul>
+        <ul><li>Shaker + Strainer</li><li>Knife + Cutting Board</li><li>Bar Spoon</li><li>Muddler</li><li>Jigger</li><li>Small handled cooler, brought empty (ice and beer are not part of the kit; bar mats, ice bins, and the tip jar ride inside it)</li></ul>
         <p className="guide-sub-heading">Optional (but super nice to have)</p>
         <ul><li>Pour Spouts</li><li>Tongs</li><li>Bar Towels</li><li>Bar Mats</li></ul>
         <p style={{marginTop:'0.5rem'}}>Most events use the Standard Kit. Always check the Event Details Page.</p>

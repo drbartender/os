@@ -1768,11 +1768,12 @@ matched, zero unmatched, zero acknowledged-unmatched**. The payout mirror has fu
 so that item never fires any more and the tab collapses to the payroll-overdue entry alone.
 (This also retires the long-standing "119 unmatched pre-cutover expected" note — obsolete.)
 
-DECISION NEEDED, not a bug: where payroll-overdue belongs. Options are its own surface, folding
-it into Staffing, or a persistent header badge rather than a queue tab. Note that if the Money
-tab is removed outright, the unmatched-payout item needs a new home for the day it fires again
-(a restore, a historical import, or any payment the mirror cannot attribute) — it is currently
-the only surface for that alarm.
+~~DECISION NEEDED~~ **DECIDED 2026-08-14 (Dallas): "leave it be for now."** The Money tab
+stays as-is — a quiet money-alarm panel holding payroll-overdue plus the dormant
+unmatched-payout alarm (still the only mounted surface for the day that fires again on a
+restore, historical import, or unattributable payment). No new surface, no Staffing fold,
+no header badge. Historical options considered: own surface / fold into Staffing /
+persistent header badge.
 
 **The rest of the tabs were verified ACCURATE against prod the same day**, after three
 approximations of mine disagreed with them and the tabs turned out right every time:
@@ -2593,10 +2594,12 @@ The stale-response race in ProposalsDashboard (codex) was fixed at the gate. The
 - ~~**BeoSections comment names one of two duty kinds**~~ **FIXED 2026-08-14 (4d8a5394)**: comment names both bar_rental (BYOB) and hosted_supplies (hosted). Original (seam lens): the bar row is paid
   via `bar_rental` on BYOB but `hosted_supplies` on hosted; the comment says only
   bar_rental. Two-line comment fix.
-- **Em dashes in new staff-facing copy** (`BeoSections.js` bar row, `pages/FieldGuide.js`
-  cooler line, code lens): the recorded copy law scopes to client copy and spec prose;
-  staff surfaces are unruled. Dallas's call whether the law extends; mechanical sweep if
-  so.
+- ~~**Em dashes in new staff-facing copy**~~ **DECIDED + SWEPT 2026-08-14 (Dallas:
+  "extend it")**: the law now covers staff-facing copy. Swept: BeoSections bar row
+  (colon), BeoSections cooler note (colon), FieldGuide cooler line (comma). Exempt by
+  scope: lone '—' empty-value placeholders (glyphs, not prose), comments, internal
+  error strings, and the version-frozen `contractorAgreement.js` (punctuation edits
+  to a signed document mean a v4, never a sweep).
 
 # Decisions landed 2026-08-14
 

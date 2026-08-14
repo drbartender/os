@@ -223,7 +223,7 @@ export function EquipmentCard({ equipment, supplyRun, barRequired }) {
           className="sp-row"
           style={{ padding: '0.4rem 0', fontSize: 13, borderBottom: '1px solid var(--sp-line-1)', fontWeight: 600 }}
         >
-          Portable bar — DRB bar pickup at the Pilsen storage unit, or bring your own
+          Portable bar: DRB bar pickup at the Pilsen storage unit, or bring your own
         </div>
       )}
       {/* When the derived bar row renders, drop a hand-set portable_bar token
@@ -246,7 +246,7 @@ export function EquipmentCard({ equipment, supplyRun, barRequired }) {
           phrasing read as if beer and ice came WITH the kit. The case/bag
           figures describe what the cooler can HOLD, not what you bring. */}
       <div style={{ fontSize: 12, color: 'var(--sp-ink-3)', marginTop: 6, lineHeight: 1.55 }}>
-        Your standard bar kit includes a small handled cooler, brought empty — ice and beer
+        Your standard bar kit includes a small handled cooler, brought empty: ice and beer
         are not part of the kit. It should be big enough to hold about 3 cases of beer plus
         ice, or two 20 lb ice bags. Bar mats, ice bins, and the tip jar ride inside it.
         Bring it even when the client has coolers of their own.
