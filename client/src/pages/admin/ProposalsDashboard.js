@@ -48,9 +48,15 @@ const ARCHIVE_REASON_LABELS = {
   option_not_chosen: 'Option not chosen',
   other: 'Other',
 };
+// Server page size, sent explicitly as `limit` rather than leaning on the
+// server's default also being 50 (list.js clamps to [1,200], default 50). If the
+// two ever disagree, pageCount below is silently wrong with no error anywhere.
+const PAGE_SIZE = 50;
 // View state lives in the URL (admin cross-nav): every control writes through
 // setListState so drill-outs are plain links and Back restores the filters.
-const LIST_DEFAULTS = { tab: 'active', q: '', source: '', from: '', to: '', axis: 'event', status: '', event_type: '', balance: '', cohort: '' };
+// `page` is URL state too, so a refresh, or a drill-out and Back, lands on the
+// page you were on rather than snapping to the top of the list.
+const LIST_DEFAULTS = { tab: 'active', q: '', source: '', from: '', to: '', axis: 'event', status: '', event_type: '', balance: '', cohort: '', page: '1' };
 
 export default function ProposalsDashboard() {
   const navigate = useNavigate();
@@ -68,6 +74,20 @@ export default function ProposalsDashboard() {
   const sourceFilter = SOURCE_IDS.includes(listState.source) ? listState.source : '';
   const axis = AXIS_IDS.includes(listState.axis) ? listState.axis : 'event';
   const cohort = COHORT_IDS.includes(listState.cohort) ? listState.cohort : '';
+  const page = Math.max(1, parseInt(listState.page, 10) || 1);
+  // total is the unpaginated count from X-Total-Count. Floored at 1 so an empty
+  // result reads "Page 1 of 1" rather than "of 0".
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  // What the pager DISPLAYS and steps from. `page` still drives the query (the
+  // guard below is what corrects it); clamping here keeps the one render before
+  // that guard fires coherent, so an out-of-range ?page never paints "Page 99 of
+  // 5" or offers a Prev that steps to 98.
+  const safePage = Math.min(page, pageCount);
+  // Every filter/tab/sort write goes through setFilters, never setListState
+  // directly: changing the filtered set while sitting on page 4 would otherwise
+  // drop you on an empty table. The pager buttons and the stale-page guard are
+  // the only legitimate writers of `page`.
+  const setFilters = useCallback((patch) => setListState({ ...patch, page: '1' }), [setListState]);
   const [copyMessage, setCopyMessage] = useState('');
   // Custom-range date inputs reveal on the Custom chip (or off-preset URL dates).
   const [showCustom, setShowCustom] = useState(false);
@@ -79,7 +99,10 @@ export default function ProposalsDashboard() {
     setSort(prev => (prev && prev.key === key
       ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
       : { key, dir: 'asc' }));
-  }, []);
+    // Re-sorting reorders the whole filtered set server-side, so page 4 of the
+    // old order means nothing in the new one.
+    setListState({ page: '1' });
+  }, [setListState]);
 
   // Compose the server query from URL-truth listState. Precedence mirrors the
   // server: cohort supersedes everything; else status chips (a CSV) override the
@@ -104,9 +127,11 @@ export default function ProposalsDashboard() {
     // Ephemeral sort → server params. Whitelisted server-side (list.js SORT_COLUMNS);
     // absent = server default (created_at desc).
     if (sort) { p.set('sort', sort.key); p.set('dir', sort.dir); }
+    p.set('limit', String(PAGE_SIZE));
+    if (page > 1) p.set('page', String(page));
     return p.toString();
   }, [cohort, listState.status, listState.q, listState.from, listState.to,
-    listState.event_type, listState.balance, axis, sourceFilter, tab, sort]);
+    listState.event_type, listState.balance, axis, sourceFilter, tab, sort, page]);
 
   // Tab counts come from /dashboard-stats, re-fetched when the source filter
   // changes so the counts stay consistent with the filtered list. Failing the
@@ -147,6 +172,34 @@ export default function ProposalsDashboard() {
   }, [toast, queryString]);
 
   useEffect(() => { fetchProposals(); }, [fetchProposals]);
+
+  // Stale page: archive a proposal while sitting on the last page, refresh, and
+  // the server hands back an empty page for a page that no longer exists. Snap
+  // to the last page that does. Gated on total > 0 so a genuinely empty filter
+  // result is left alone, and it terminates because it only ever DECREASES page
+  // (to pageCount, which is floored at 1) and the predicate is false afterward.
+  //
+  // INVARIANT this depends on: `page` can never exceed the CURRENT query's
+  // pageCount by more than a stale render. `total` is not keyed to the query
+  // that produced it, so on the render where page changes this can briefly see
+  // the previous query's total. That is harmless only because nothing can push
+  // page above the live ceiling: Next is disabled at pageCount, every filter and
+  // sort write goes through setFilters (page := 1), a cold load has total 0, and
+  // useUrlListState writes with replace:true so history cannot restore a foreign
+  // filter+page pair. Any NEW control that writes `page` directly must preserve
+  // that, or this guard needs to key off the queryString that produced `total`.
+  useEffect(() => {
+    if (!loading && total > 0 && page > pageCount) {
+      setListState({ page: String(pageCount) });
+    }
+  }, [loading, total, page, pageCount, setListState]);
+
+  // Paging keeps your scroll position at the bottom of the table otherwise,
+  // where the pager lives, so the new page's first rows open off-screen above.
+  const goToPage = useCallback((n) => {
+    setListState({ page: String(n) });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [setListState]);
 
   const copyLink = (e, token) => {
     e.stopPropagation();
@@ -211,18 +264,18 @@ export default function ProposalsDashboard() {
   );
 
   const applyPreset = (key) => {
-    if (key === 'all') { setShowCustom(false); setListState({ from: '', to: '' }); return; }
+    if (key === 'all') { setShowCustom(false); setFilters({ from: '', to: '' }); return; }
     if (key === 'custom') {
       setShowCustom(true);
       if (!listState.from || !listState.to) {
         const seed = presetRange('last-12');
-        setListState({ from: seed.from, to: seed.to });
+        setFilters({ from: seed.from, to: seed.to });
       }
       return;
     }
     setShowCustom(false);
     const r = presetRange(key);
-    setListState({ from: r.from, to: r.to });
+    setFilters({ from: r.from, to: r.to });
   };
   const presetActive = (key) => (showCustom
     ? key === 'custom'
@@ -231,10 +284,10 @@ export default function ProposalsDashboard() {
   const toggleStatus = (s) => {
     const next = new Set(statusSet);
     if (next.has(s)) next.delete(s); else next.add(s);
-    setListState({ status: [...next].join(',') });
+    setFilters({ status: [...next].join(',') });
   };
 
-  const clearFilters = () => { setShowCustom(false); setListState(LIST_DEFAULTS); };
+  const clearFilters = () => { setShowCustom(false); setFilters(LIST_DEFAULTS); };
 
   const cohortRange = (listState.from && listState.to)
     ? ` · ${fmtDate(listState.from)} to ${fmtDate(listState.to)}`
@@ -258,7 +311,7 @@ export default function ProposalsDashboard() {
         </div>
       </div>
 
-      <Toolbar tabs={tabs} tab={tab} setTab={(t) => setListState({ tab: t })} />
+      <Toolbar tabs={tabs} tab={tab} setTab={(t) => setFilters({ tab: t })} />
 
       <div className="hstack" style={{ gap: 8, marginBottom: 12 }}>
         <label className="tiny muted" htmlFor="source-filter">Source</label>
@@ -267,7 +320,7 @@ export default function ProposalsDashboard() {
           className="input"
           style={{ maxWidth: 200 }}
           value={sourceFilter}
-          onChange={(e) => setListState({ source: e.target.value })}
+          onChange={(e) => setFilters({ source: e.target.value })}
         >
           <option value="">All sources</option>
           <option value="thumbtack">Thumbtack</option>
@@ -298,7 +351,7 @@ export default function ProposalsDashboard() {
               aria-label="From date"
               value={listState.from || ''}
               max={listState.to || undefined}
-              onChange={(e) => setListState({ from: e.target.value })}
+              onChange={(e) => setFilters({ from: e.target.value })}
             />
             <span className="muted tiny">to</span>
             <input
@@ -307,7 +360,7 @@ export default function ProposalsDashboard() {
               aria-label="To date"
               value={listState.to || ''}
               min={listState.from || undefined}
-              onChange={(e) => setListState({ to: e.target.value })}
+              onChange={(e) => setFilters({ to: e.target.value })}
             />
           </>
         )}
@@ -317,7 +370,7 @@ export default function ProposalsDashboard() {
             type="button"
             className={`metrics-seg-btn${axis === 'event' ? ' is-active' : ''}`}
             aria-pressed={axis === 'event'}
-            onClick={() => setListState({ axis: 'event' })}
+            onClick={() => setFilters({ axis: 'event' })}
           >
             Event date
           </button>
@@ -325,7 +378,7 @@ export default function ProposalsDashboard() {
             type="button"
             className={`metrics-seg-btn${axis === 'sent' ? ' is-active' : ''}`}
             aria-pressed={axis === 'sent'}
-            onClick={() => setListState({ axis: 'sent' })}
+            onClick={() => setFilters({ axis: 'sent' })}
           >
             Sent
           </button>
@@ -350,7 +403,7 @@ export default function ProposalsDashboard() {
           style={{ maxWidth: 200 }}
           aria-label="Event type"
           value={listState.event_type}
-          onChange={(e) => setListState({ event_type: e.target.value })}
+          onChange={(e) => setFilters({ event_type: e.target.value })}
         >
           <option value="">All event types</option>
           {EVENT_TYPES.map((t) => (
@@ -363,7 +416,7 @@ export default function ProposalsDashboard() {
             type="button"
             className={`metrics-seg-btn${listState.balance === 'open' ? ' is-active' : ''}`}
             aria-pressed={listState.balance === 'open'}
-            onClick={() => setListState({ balance: listState.balance === 'open' ? '' : 'open' })}
+            onClick={() => setFilters({ balance: listState.balance === 'open' ? '' : 'open' })}
           >
             Open balance
           </button>
@@ -373,7 +426,7 @@ export default function ProposalsDashboard() {
       {cohort && (
         <div className="ov-cohort-note">
           <span>{COHORT_LABELS[cohort]} cohort{cohortRange}</span>
-          <button type="button" aria-label="Clear cohort" onClick={() => setListState({ cohort: '' })}>
+          <button type="button" aria-label="Clear cohort" onClick={() => setFilters({ cohort: '' })}>
             &times;
           </button>
         </div>
@@ -472,10 +525,45 @@ export default function ProposalsDashboard() {
         </div>
       </div>
 
-      {!loading && (
-        <div className="tiny muted" style={{ padding: '8px 2px' }}>
-          {`${total} ${total === 1 ? 'proposal' : 'proposals'}${proposals.length < total ? ` · showing first ${proposals.length}` : ''}`}
-          {' · Click a row to open'}
+      {/* Page counter, not a "51-100 of 219" row range: the option-group rollup
+          above collapses siblings in the browser, so a 50-row fetch can render
+          fewer than 50 rows and a row range would contradict the table. A page
+          counter cannot be wrong that way. Hidden entirely at one page, so every
+          view that already fit on one screen reads exactly as it did before. */}
+      {/* Rendered once total is known, NOT gated on !loading alone: the pager is
+          interactive, and unmounting it mid-fetch drops keyboard focus to the
+          body on every page change. Staying mounted across the fetch keeps the
+          node identity, so focus survives paging. Still hidden on a cold load
+          (total 0 while loading), which is how it read before. */}
+      {(!loading || total > 0) && (
+        <div className="hstack tiny muted" style={{ padding: '8px 2px' }}>
+          <span aria-live="polite">
+            {pageCount > 1 ? `Page ${safePage} of ${pageCount} · ` : ''}
+            {`${total} ${total === 1 ? 'proposal' : 'proposals'} · Click a row to open`}
+          </span>
+          {pageCount > 1 && (
+            <>
+              <div className="spacer" />
+              <nav className="hstack" aria-label="Proposal pages">
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={safePage <= 1}
+                  onClick={() => goToPage(safePage - 1)}
+                >
+                  Prev
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={safePage >= pageCount}
+                  onClick={() => goToPage(safePage + 1)}
+                >
+                  Next
+                </button>
+              </nav>
+            </>
+          )}
         </div>
       )}
     </div>
