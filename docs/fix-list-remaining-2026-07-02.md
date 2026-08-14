@@ -39,8 +39,8 @@ open in code, so an unmarked entry is a verified-open entry as of that date.
 - **Menu design page (QUEUED 2026-07-14, from Needs-Attention-tabs spec §7)** — real workflow over the planner-captured menu prefs (`menuStyle`/`menuTheme`/`drinkNaming`/`menuDesignNotes`); produces a real artifact and the done-state that then powers "menu to design" Prep queue items (deliberately NOT hand-flagged in the tabs build). Dallas has page ideas to brainstorm.
 
 ## Scope calls needed before scoping
-- **Classes / field guide** — restyle existing (`ClassWizard.js` booking wizard + `FieldGuide.js` staff doc; redesign brief already covers restyles) OR new marketing/content pages? Unresolved.
-- **Staff payment system** — quiet for weeks; superseded by the shipped paystub/payroll work, or still queued (minimal-first, absorbs multi-bartender tipping)?
+- ~~**Classes / field guide** — restyle existing OR new marketing/content pages? Unresolved.~~ **DECIDED 2026-08-14 (Dallas): classes are ON HOLD pending a full rework of structure and design** — no restyle, no new pages, no class work at all until that project opens. `FieldGuide.js` (the staff manual, not a classes surface) stays tracked under the staff-portal skin item in the 8/10 drop.
+- ~~**Staff payment system** — superseded or still queued?~~ **DECIDED 2026-08-14 (Dallas): RETIRED as superseded** — the payroll screen redesign, paystub PDFs, duty pay, clawback/late-tip, payout tracking, and owner no-draw shipped the substance piecemeal. The one surviving piece is **1099 generation, now queued in its own right** (see the Phase 4 entry in the folded-in section; recipient copies due ~Jan 31, and the standing W-9 tripwire applies: no 1099 run while Zul's W-9 is a .png). The multi-bartender tipping thread is closed with it — tip signs are per-bartender and settled.
 
 ## Known-bugs batch — FIXED on main 2026-07-14, since PUSHED (header corrected 2026-08-14)
 The 14-bug sweep below (B1-B14) was re-verified against HEAD by a parallel
@@ -1978,6 +1978,11 @@ These are not from the original ledger. They surfaced while verifying its
 - **Staff payment Phase 4 — 1099 generation.** The ledger keeps YTD totals exportable;
   the 1099 output itself has no plan and no code. (Phase 3, the staff pay surface, has
   since shipped: `server/routes/staffPortal/payouts.js` plus the payroll screen redesign.)
+  **PROMOTED 2026-08-14 (Dallas): this is now the QUEUED successor to the retired
+  staff-payment-system umbrella.** Clock: recipient copies due ~Jan 31; needs a spec
+  first (form generation vs export-for-accountant is an open design call). Gates:
+  Zul's real W-9 (no run while `payment_profiles.w9_filename` for user 2 is a .png)
+  and the `users.exclude_from_1099` flag honored.
 - **Client portal v2 remainder.** The day-of brief slot (#4, decisions captured: preferred
   name + headshot + "subject to change", no phone/messaging, 30-90 min generic arrival),
   and deferred sub-projects #7/#8/#9 (multi-event switcher, quote-resume, in-portal
