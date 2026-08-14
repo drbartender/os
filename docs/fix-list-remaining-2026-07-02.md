@@ -919,6 +919,10 @@ merged code 2026-08-04):
   election is not stale, so returning the existing intent's clientSecret is
   safe and removes the double-charge window. Behavior change on a money path;
   do it deliberately, with the gratuityApply suite extended. (low)
+  **DECIDED 2026-08-14 (Dallas): leave it, documented-as-accepted.** Protect-working-paths:
+  the gratuity machinery is freshly reworked and prod-verified, no double-charge has ever
+  occurred, and the edge is self-announcing + cleanly refundable when it fires. Revisit
+  only if it actually bites; then it's a small deliberate lane + money fleet.
 
 - ~~`server/utils/balanceReminderScheduling.test.js` hardcodes `balance_due_date = '2026-07-15'`~~
   **FIXED** (bf4139f4, 2026-08-13: re-fixtured with rolling years, 2/2 green; the DST math was
