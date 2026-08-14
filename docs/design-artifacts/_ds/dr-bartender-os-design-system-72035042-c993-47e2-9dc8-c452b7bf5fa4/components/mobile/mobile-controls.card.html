@@ -1,0 +1,101 @@
+<!-- @dsCard group="Mobile" viewport="760x520" name="Mobile admin — controls" subtitle="Bottom sheet, steppers, More rows; both skins" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font-family: var(--font-ui, sans-serif); }
+  .frame { display: grid; grid-template-columns: 1fr 1fr; height: 520px; }
+  /* transform contains the sheet's position:fixed to each pane */
+  .phone { display: flex; flex-direction: column; height: 100%; overflow: hidden; border-right: 1px solid #000; transform: translateZ(0); }
+</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    // Icon comes from the compiled namespace; mobile components are defined
+    // inline (self-contained card; source of truth components/mobile/*.jsx).
+    const { Icon } = window.DrBartenderOSDesignSystem_720350;
+
+    function BottomSheet({ open, title, onClose = () => {}, children }) {
+      if (!open) return null;
+      return (
+        <>
+          <div className="m-sheet-scrim" onClick={onClose} aria-hidden="true" />
+          <div className="m-sheet" role="dialog" aria-modal="true">
+            <div className="m-sheet-handle" />
+            {title && <div className="m-sheet-title">{title}</div>}
+            {children}
+          </div>
+        </>
+      );
+    }
+    function SheetRow({ icon = null, tone, onPress = () => {}, children }) {
+      return (
+        <button type="button" className={`m-sheet-row${tone === 'danger' ? ' danger' : ''}`} onClick={onPress}>
+          {icon}{children}
+        </button>
+      );
+    }
+    function Stepper({ label, value = 0, onChange = () => {}, min = 0, max = Infinity }) {
+      return (
+        <div className="m-stepper">
+          <span className="m-stepper-label">{label}</span>
+          <span className="m-stepper-ctl">
+            <button type="button" className="m-stepper-btn" aria-label={`Decrease ${label}`}
+              disabled={value <= min}>−</button>
+            <span className="m-stepper-value">{value}</span>
+            <button type="button" className="m-stepper-btn" aria-label={`Increase ${label}`}
+              disabled={value >= max}>+</button>
+          </span>
+        </div>
+      );
+    }
+    function MoreRow({ icon, label }) {
+      return (
+        <button type="button" className="m-more-row">
+          {icon && <Icon name={icon} size={20} />}
+          <span>{label}</span>
+          <Icon name="right" size={18} />
+        </button>
+      );
+    }
+
+    function Phone({ skin }) {
+      return (
+        <div className="phone" data-app="admin-os" data-skin={skin}>
+          <div className="m-shell">
+            <main className="m-main">
+              <Stepper label="Bartenders" value={2} min={1} />
+              <Stepper label="Bars" value={1} min={1} />
+              <div className="m-more" style={{ marginTop: '0.5rem' }}>
+                <section>
+                  <h2 className="m-more-heading">Workspace</h2>
+                  <ul className="m-more-list">
+                    <li><MoreRow icon="users" label="Clients" /></li>
+                    <li><MoreRow icon="chat" label="Messages" /></li>
+                    <li><MoreRow icon="dollar" label="Payroll" /></li>
+                  </ul>
+                </section>
+              </div>
+            </main>
+            <BottomSheet open title="Sat · Bar 1 · 6:00 PM">
+              <SheetRow>Assign Mara Reyes</SheetRow>
+              <SheetRow>Approve Devon Cole</SheetRow>
+              <SheetRow tone="danger">Remove from shift</SheetRow>
+            </BottomSheet>
+          </div>
+        </div>
+      );
+    }
+    ReactDOM.createRoot(document.getElementById('root')).render(
+      <div className="frame"><Phone skin="dark" /><Phone skin="light" /></div>
+    );
+  </script>
+</body>
+</html>

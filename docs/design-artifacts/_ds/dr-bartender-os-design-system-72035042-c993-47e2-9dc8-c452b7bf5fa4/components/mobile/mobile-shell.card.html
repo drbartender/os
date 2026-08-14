@@ -1,0 +1,98 @@
+<!-- @dsCard group="Mobile" viewport="760x560" name="Mobile admin — shell" subtitle="Bottom tabs, header, date-ordered event cards, staleness line; both skins" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font-family: var(--font-ui, sans-serif); }
+  .frame { display: grid; grid-template-columns: 1fr 1fr; height: 560px; }
+  .phone { display: flex; flex-direction: column; height: 100%; overflow: hidden; border-right: 1px solid #000; }
+</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    // Icon + StatusChip come from the compiled namespace; the mobile
+    // components are defined inline (self-contained card, the source of
+    // truth is components/mobile/*.jsx).
+    const { Icon, StatusChip } = window.DrBartenderOSDesignSystem_720350;
+
+    const MOBILE_TABS = [
+      { id: 'events', label: 'Events', icon: 'calendar' },
+      { id: 'proposals', label: 'Proposals', icon: 'clipboard' },
+      { id: 'more', label: 'More', icon: 'menu' },
+    ];
+    function MobileTabBar({ tabs = MOBILE_TABS, active, onChange = () => {}, badges = {} }) {
+      return (
+        <nav className="m-tabbar" aria-label="Primary">
+          {tabs.map((t) => {
+            const isActive = active === t.id;
+            const badge = badges[t.id];
+            return (
+              <button key={t.id} type="button" className={`m-tab${isActive ? ' active' : ''}`}
+                onClick={() => onChange(t.id)} aria-current={isActive ? 'page' : undefined}>
+                <span className="m-tab-icon">
+                  <Icon name={t.icon} size={20} />
+                  {badge > 0 && <span className="m-tab-badge">{badge}</span>}
+                </span>
+                <span className="m-tab-label">{t.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      );
+    }
+    function MobileHeader({ title, onSearch = () => {}, onDesktopView = () => {} }) {
+      return (
+        <header className="m-header">
+          <h1>{title}</h1>
+          <button type="button" className="m-iconbtn" onClick={onSearch} aria-label="Search">
+            <Icon name="search" size={20} />
+          </button>
+          <button type="button" className="m-iconbtn" onClick={onDesktopView}
+            aria-label="Switch to desktop view" title="Desktop view">
+            <Icon name="external" size={20} />
+          </button>
+        </header>
+      );
+    }
+    function CardListRow({ title, meta, chip = null, onPress = () => {} }) {
+      return (
+        <button type="button" className="m-card" onClick={onPress}>
+          <span className="m-card-title">{title}</span>
+          {meta && <span className="m-card-meta">{meta}</span>}
+          {chip && <span className="m-card-chip">{chip}</span>}
+        </button>
+      );
+    }
+
+    function Phone({ skin }) {
+      return (
+        <div className="phone" data-app="admin-os" data-skin={skin}>
+          <div className="m-shell">
+            <MobileHeader title="Events" />
+            <main className="m-main">
+              <div className="m-stale">as of <span className="m-stale-time">2:14 PM</span></div>
+              <CardListRow title="Henderson · Wedding" meta="Sat Jun 14 · 6–11 PM"
+                chip={<StatusChip kind="ok">Staffed</StatusChip>} />
+              <CardListRow title="Vantage Rooftop · Corporate" meta="Sat Jun 21 · 5–10 PM"
+                chip={<StatusChip kind="warn">2 open</StatusChip>} />
+              <CardListRow title="Gallery 9 · Launch party" meta="Fri Jun 27 · 7–11 PM"
+                chip={<StatusChip kind="danger">Unstaffed</StatusChip>} />
+            </main>
+            <MobileTabBar active="events" badges={{ events: 2 }} />
+          </div>
+        </div>
+      );
+    }
+    ReactDOM.createRoot(document.getElementById('root')).render(
+      <div className="frame"><Phone skin="dark" /><Phone skin="light" /></div>
+    );
+  </script>
+</body>
+</html>

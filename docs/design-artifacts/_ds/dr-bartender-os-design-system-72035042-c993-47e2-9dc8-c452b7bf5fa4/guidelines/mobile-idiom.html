@@ -1,0 +1,51 @@
+<!-- @dsCard group="Mobile" viewport="700x430" name="Mobile idiom · the law" subtitle="700px fork · 44px targets · sheets · steppers · no offline writes · no dead ends" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin: 0; font-family: var(--font-ui, sans-serif); }
+  .wrap { display: grid; grid-template-columns: 1fr 220px; gap: 24px; padding: 20px 24px; }
+  .hd { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; font-family: var(--font-mono); color: var(--ink-3); margin-bottom: 10px; }
+  .hd b { color: var(--accent); }
+  ul.law { margin: 0; padding: 0 0 0 1.1em; font-size: 12.5px; line-height: 1.7; color: var(--ink-2); }
+  ul.law b { color: var(--ink-1); font-weight: 600; }
+  /* thumb-zone diagram */
+  .device { width: 200px; height: 380px; border: 1px solid var(--line-3); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; background: var(--bg-1); }
+  .z { display: flex; align-items: center; justify-content: center; text-align: center; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+  .z-header { height: 44px; background: var(--bg-2); color: var(--ink-4); border-bottom: 1px solid var(--line-1); }
+  .z-content { flex: 1; color: var(--ink-3); background: var(--bg-0); }
+  .z-thumb { height: 96px; background: var(--accent-soft); color: var(--accent); border-top: 1px dashed var(--accent-line); }
+  .z-tabs { height: 46px; background: var(--bg-2); color: var(--ink-2); border-top: 1px solid var(--line-2); }
+  .z-safe { height: 16px; background: var(--bg-3); color: var(--ink-4); font-size: 8px; }
+</style>
+</head>
+<body data-app="admin-os" data-skin="dark" style="background:var(--bg-0);color:var(--ink-1)">
+  <div class="wrap">
+    <div>
+      <div class="hd">Mobile idiom · <b>phone-first admin</b> · spec 2026-08-13-mobile-admin</div>
+      <ul class="law">
+        <li><b>One fork.</b> 700px, in the app's <code>useIsPhone</code> hook. Never a scattered media query.</li>
+        <li><b>44px targets,</b> primary actions in the thumb zone, tabs and sheets pad the safe-area inset.</li>
+        <li><b>Sheets over dropdowns.</b> Rows you tap, not menus you aim at. Scrim tap closes.</li>
+        <li><b>No typing.</b> Steppers for counts, chips for status, native pickers for date and time. Free text is a dictation-friendly textarea, last resort.</li>
+        <li><b>Lists are date-ordered cards,</b> never tables. Status filters and column sorts are desk work.</li>
+        <li><b>Offline reads, never writes.</b> Cache-served data carries an "as of" staleness line; a failed save keeps input and says so. Nothing queues.</li>
+        <li><b>No dead ends.</b> Every screen keeps the per-screen Desktop-view escape hatch, and the return pill floats in the thumb zone.</li>
+        <li><b>Still the OS.</b> Same tokens, both skins, nouns for labels, mono for numbers, no emoji.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="hd">Reach zones</div>
+      <div class="device">
+        <div class="z z-header">header · reach poor</div>
+        <div class="z z-content">content · scroll</div>
+        <div class="z z-thumb">thumb zone<br>primary actions · sheets</div>
+        <div class="z z-tabs">tab bar</div>
+        <div class="z z-safe">safe-area inset</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
