@@ -10995,6 +10995,10 @@ html[data-app="admin-os"] .form-textarea:focus {
   padding: 12px 14px;
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
+/* The focus shorthand above resets padding; the admin-os select inherits the
+   global 2.5rem chevron clearance, so re-assert it (same fix as the global
+   .form-select:focus rule; push-gate 2026-08-14). */
+html[data-app="admin-os"] .form-select:focus { padding-right: 2.5rem; }
 
 /* Status badges (legacy admin chips) */
 html[data-app="admin-os"][data-skin="dark"] .badge-inprogress { background: hsl(40 60% 14%);  color: hsl(40 80% 75%);  border-color: hsl(40 35% 28%); }

@@ -160,6 +160,7 @@ server/routes/comms.js
 # to a light look. Explicit entries:
 server/routes/proposals/crud.js
 server/routes/proposals/actions.js
+server/routes/proposals/lifecycle.js
 server/utils/rescheduleProposal.js
 
 # Same contract, the halves the entries above missed (push review, 2026-07-22).

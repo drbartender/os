@@ -130,9 +130,10 @@ function vmDailyCap() {
 
 // Per-window Sentry claims. The rate limiter cannot cap Sentry emission (a
 // well-formed random CallSid mints a fresh bucket every request), and both a
-// hostile unsigned flood and a PERSISTENT condition (a re-enabled carrier
-// voicemail, a missing dial target) recur 1:1 with call volume, which is an
-// amplifier straight into the org's Sentry quota. Each claim allows a fixed
+// hostile unsigned flood and a PERSISTENT condition (a missing dial target)
+// recur 1:1 with call volume, which is an
+// amplifier straight into the org's Sentry quota. (The re-enabled-carrier-
+// voicemail canary lost its claim 2026-08-14 when it was demoted to log-only.) Each claim allows a fixed
 // number of events per window and carries the suppressed count.
 function makeWindowClaim(windowMs, allowance) {
   let start = 0;

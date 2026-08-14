@@ -2611,3 +2611,55 @@ The stale-response race in ProposalsDashboard (codex) was fixed at the gate. The
   `smsInbound.js` item from 2026-08-13 is closed as decided-keep, not fixed: the 312 GV is
   staffed by Dallas/Zul and remains the human-contact line for STAFF, while clients get the
   1922. Do not re-raise; revisit only if the 312 is ever retired.
+
+# Push-gate 2026-08-14 (fleet 5/5 + codex/gemini on the 34-commit batch)
+
+**Blocking findings FIXED pre-push (same day):**
+- **F1 (fleet, money):** the new lifecycle archive reap had no source-status gate — a
+  `?force=true` archive from `completed` denied the shift_requests roster the tip
+  clawback reads, so a later `charge.refunded` would claw NOTHING and mark itself done,
+  permanently. Fixed: `REAP_SOURCE_STATUSES` gate (matching actions.js's door) + an
+  in-tx archived re-check under FOR UPDATE (also closes codex's archive-vs-restore
+  race) + `reapedShifts` assigned only post-COMMIT (F2: no "cancelled" emails for a
+  rolled-back reap). New regression test pins the completed-source no-reap; the test
+  helper now forwards query strings (`u.search`) so `?force=true` actually arrives.
+- **Voice docs lied post-demotion (fleet):** ARCHITECTURE ×2, voice.js's window-claim
+  rationale, and the 1a plan's operational note all still said the canary pages Sentry.
+  Corrected to log-only at all four sites.
+- **BizCardLayout surrogate split (fleet seam):** `word[0]`/`slice(1)` small-caps would
+  split an astral-plane first letter across two spans on a pressed card — made
+  reachable by the unicode-names widening in the same batch. `capSplit` now
+  spread-iterates code points (mirrors the server's staffDisplayName hardening).
+- **admin-os `.form-select:focus`** had the same padding-shorthand chevron clobber the
+  global fix addressed; re-asserted. (Potion's rest/focus values agree; left alone.)
+- **`proposals/lifecycle.js` added to sensitive-paths.txt** — it gates status
+  transitions including force-archive and was invisible to review scaling.
+
+**Non-blocking, recorded for later:**
+- marketingSend's run claim (`status <> 'sending' OR ...`) accepts an ARCHIVED campaign
+  (codex HIGH; PRE-EXISTING, ms race window, DELETE has no UI caller). Harden someday:
+  `AND status <> 'archived'` on the claim WHERE.
+- `DELETE /campaigns/:id` has NO client caller at all — the new 409 guard is API-only
+  and the marketing UI offers no archive control (coverage gap, pre-existing).
+- A campaign stranded `sending` by a process death is un-archivable until a re-send
+  recovers the stale claim (recoverable by design; note only).
+- SMS cost line: one non-GSM-7 letter in a bartender's preferred name (Zoë, Núñez,
+  李娜) flips the event-eve SMS from 2 to 4 segments. Cost, not correctness.
+- Paystub PDF renders CJK preferred names as mojibake on the fallback path only (no
+  crash; agreement/application full_name wins when present). Tip-sign display fonts
+  lack Han/Cyrillic (browser per-glyph fallback at 300 DPI). Latin accents fine in both.
+- Client `computeDisplayName` port lacks the server's surrogate hardening
+  (preview-only surface; `charAt(0)` last-initial).
+- The `.staffing-stat strong` ink fix is DEAD CSS — zero consumers in client/src;
+  delete the rule (or the block) whenever that area is next touched.
+- 15cc4df0's message overstates: the inert 38% `th` width hint survives at
+  `ContactTable.js:59` (harmless; no `table-layout: fixed`).
+- **tip-e-redesign merged without a declared lane** in its plan (lanes a-d only) and
+  outside tip-d's declared footprint; its design-artifact README documents the
+  re-scope deliberately, but the custody chain is incomplete (no .dc.html snapshot;
+  README and Task 8 name DIFFERENT design-project ids). Accepted for this push
+  (per-lane reviewed, nothing sensitive-listed); reconcile the ids and tighten the
+  footprint discipline on the next tip lane.
+- NFD-normalized input (decomposed é) and iOS curly-apostrophe names still reject
+  with the generic letters-only error (pre-existing; the widening is strictly
+  additive). Candidate fix: `.normalize('NFC')` + a U+2019→' fold in `norm()`.

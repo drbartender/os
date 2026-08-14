@@ -22,6 +22,17 @@ import { useFontsReady, measureContext, DISPLAY_STACK } from './typeFit';
 import { COMPANY_PHONE } from '../../../utils/constants';
 
 const CREAM = 'var(--drb-cream-text)';
+
+// Surrogate-safe faux-small-caps split. word[0]/word.slice(1) index UTF-16
+// code units, so an astral-plane first letter (CJK-extension Han, 𝔸-style
+// letters — settable since the 2026-08-14 unicode name widening) would split
+// a surrogate pair across two spans and print replacement glyphs on a pressed
+// card. Spread iterates code points; same hazard staffDisplayName.js hardened
+// server-side.
+const capSplit = (word) => {
+  const chars = [...String(word)];
+  return [chars[0] || '', chars.slice(1).join('')];
+};
 const BRASS = 'var(--drb-brass)';
 
 // Faux small caps per the print spec: first letter full size, the rest
@@ -64,11 +75,12 @@ function fauxFit(name, base) {
     const s2 = Math.round(s1 * 0.73);
     let w = 0;
     words.forEach((word, i) => {
+      const [first, rest] = capSplit(word);
       ctx.font = `400 ${s1}px ${DISPLAY_STACK}`;
-      w += ctx.measureText(word[0].toUpperCase()).width + 1;
+      w += ctx.measureText(first.toUpperCase()).width + 1;
       ctx.font = `400 ${s2}px ${DISPLAY_STACK}`;
-      w += ctx.measureText(word.slice(1).toUpperCase()).width
-        + Math.max(0, word.length - 1);
+      w += ctx.measureText(rest.toUpperCase()).width
+        + Math.max(0, [...word].length - 1);
       if (i < words.length - 1) w += s1 * 0.28;
     });
     return w;
@@ -103,8 +115,8 @@ function FauxSmallCaps({ name, fit }) {
               to be. */}
           {i > 0 && <wbr />}
           <span style={{ marginRight: i < words.length - 1 ? Math.round(fit.s1 * 0.28) : 0 }}>
-            <span style={{ fontSize: fit.s1 }}>{word[0].toUpperCase()}</span>
-            <span style={{ fontSize: fit.s2 }}>{word.slice(1).toUpperCase()}</span>
+            <span style={{ fontSize: fit.s1 }}>{capSplit(word)[0].toUpperCase()}</span>
+            <span style={{ fontSize: fit.s2 }}>{capSplit(word)[1].toUpperCase()}</span>
           </span>
         </React.Fragment>
       ))}

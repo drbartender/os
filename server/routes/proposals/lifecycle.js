@@ -192,25 +192,47 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
     // Route it through the SAME shared reap as the archive endpoint and the
     // cancel flow. Best-effort like the siblings (a reap failure never rolls
     // back the status change), but the reap itself is transactional.
+    //
+    // SOURCE-STATUS GATE (push-gate 2026-08-14, money seam): reap ONLY when the
+    // proposal was archived from an unpaid source — the same set actions.js's
+    // archive door accepts. A ?force=true archive from a paid/completed status
+    // (the ledger-corrected-refund escape) must NOT tear down staffing: denying
+    // the shift_requests strips the approved-bartender roster that the tip
+    // clawback (payrollClawback.js) and late-tip roll-forward read, so a later
+    // charge.refunded would silently claw NOTHING and mark itself done. Paid
+    // teardown belongs to the cancel flow, which captures the roster first.
+    const REAP_SOURCE_STATUSES = ['draft', 'sent', 'viewed', 'modified', 'accepted'];
     let reapedShifts = [];
-    try {
-      const { reapShiftsForProposal } = require('../../utils/shiftReap');
-      const reapClient = await pool.connect();
+    if (REAP_SOURCE_STATUSES.includes(currentStatus)) {
       try {
-        await reapClient.query('BEGIN');
-        reapedShifts = await reapShiftsForProposal(Number(req.params.id), reapClient, 'proposal archived');
-        await reapClient.query('COMMIT');
-      } catch (txErr) {
-        try { await reapClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
-        throw txErr;
-      } finally {
-        reapClient.release();
+        const { reapShiftsForProposal } = require('../../utils/shiftReap');
+        const reapClient = await pool.connect();
+        try {
+          await reapClient.query('BEGIN');
+          // Re-check under lock: a concurrent restore (archived -> draft) in the
+          // post-COMMIT gap must not have its shifts reaped out from under it.
+          const { rows: [cur] } = await reapClient.query(
+            'SELECT status FROM proposals WHERE id = $1 FOR UPDATE', [Number(req.params.id)]);
+          let reaped = [];
+          if (cur && cur.status === 'archived') {
+            reaped = await reapShiftsForProposal(Number(req.params.id), reapClient, 'proposal archived');
+          }
+          await reapClient.query('COMMIT');
+          // Assigned only after COMMIT: a commit failure must not email staff
+          // "cancelled" about shifts the rollback just resurrected.
+          reapedShifts = reaped;
+        } catch (txErr) {
+          try { await reapClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+          throw txErr;
+        } finally {
+          reapClient.release();
+        }
+      } catch (reapErr) {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(reapErr, { tags: { route: 'proposals/status', issue: 'shift-reap' } });
+        }
+        console.error('Shift reap on archive failed (non-blocking):', reapErr);
       }
-    } catch (reapErr) {
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(reapErr, { tags: { route: 'proposals/status', issue: 'shift-reap' } });
-      }
-      console.error('Shift reap on archive failed (non-blocking):', reapErr);
     }
     // Email-only staff notify (SMS costs), mirroring the archive endpoint.
     // Runs after the reap client is released: notifyStaffOfCancellation takes

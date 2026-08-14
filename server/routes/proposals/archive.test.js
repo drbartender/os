@@ -120,7 +120,7 @@ function reqBody(method, path, token, payload) {
     const headers = { 'Content-Type': 'application/json', 'Content-Length': buf.length };
     if (token) headers.Authorization = `Bearer ${token}`;
     const r = http.request(
-      { hostname: u.hostname, port: u.port, path: u.pathname, method, headers },
+      { hostname: u.hostname, port: u.port, path: u.pathname + u.search, method, headers },
       (res) => { let b = ''; res.on('data', (c) => { b += c; }); res.on('end', () => { let j = null; try { j = JSON.parse(b); } catch { /* non-JSON */ } resolve({ status: res.statusCode, body: j }); }); }
     );
     r.on('error', reject);
@@ -336,4 +336,25 @@ test('W1: lifecycle PATCH -> archived soft-cancels shifts, denies requests, supp
   assert.equal(reqRow.status, 'denied', 'approved request denied by the reap');
   const sm = (await pool.query('SELECT status FROM scheduled_messages WHERE id = $1', [smId])).rows[0];
   assert.equal(sm.status, 'suppressed', 'pending shift_reminder suppressed by the reap');
+});
+
+// ── Push-gate 2026-08-14 (F1): the lifecycle reap must NOT fire on a
+// force-archive from a paid/completed source — denying the shift_requests
+// would strip the approved-bartender roster the tip clawback reads, so a
+// later refund would claw nothing. Paid teardown belongs to the cancel flow.
+test('W1 gate: force-archive from completed does NOT reap (clawback roster preserved)', async () => {
+  const clientId = await makeClient();
+  const pid = await makeProposal(clientId, { status: 'completed' });
+  const btId = await makeBartender();
+  const shiftId = await makeShift(pid);
+  await makeShiftRequest(shiftId, btId);
+
+  const r = await patchBody(`/api/proposals/${pid}/status?force=true`, adminToken, JSON.stringify({ status: 'archived' }));
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(await statusOf(pid), 'archived');
+
+  const shift = (await pool.query('SELECT status FROM shifts WHERE id = $1', [shiftId])).rows[0];
+  assert.equal(shift.status, 'open', 'a completed-source archive must leave the shift untouched');
+  const reqRow = (await pool.query('SELECT status FROM shift_requests WHERE shift_id = $1', [shiftId])).rows[0];
+  assert.equal(reqRow.status, 'approved', 'the approved roster must survive for the clawback');
 });
