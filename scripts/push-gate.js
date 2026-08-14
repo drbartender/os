@@ -95,6 +95,48 @@ function gitQuiet(args) {
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
+/**
+ * Exclusive lock for the whole gate run.
+ *
+ * WHY (learned the hard way, 2026-08-14): the money gate RESETS the shared Neon
+ * `ci-smoke` branch to its parent and then runs suites against it. Two gate runs
+ * at once therefore delete each other's rows mid-test. Observed exactly that
+ * with two overlapping runs: one died on payrollClawback, the other on
+ * balanceInvoiceMonitor with `proposal_activity_log_proposal_id_fkey`
+ * violations, i.e. its own seeded proposal vanished underneath it. Different
+ * suites failing in each run is the tell: a real regression fails the same one.
+ *
+ * A false FAILURE is the mild outcome; the bad one is a reset landing between a
+ * suite's setup and its assertions in a way that passes. So the gate serializes.
+ *
+ * It REFUSES rather than waits: this runs inside pre-push, and waiting is what
+ * leaves git's connection idle until GitHub closes it, which is the whole bug
+ * this file exists to fix. Refusing exits non-zero, so the push is BLOCKED, not
+ * allowed. Same posture as scripts/merge-lane.sh, which flocks the merge.
+ */
+function acquireLock() {
+  const lockFile = path.join(git(['rev-parse', '--absolute-git-dir']), 'drb-push-gate.lock');
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const fd = fs.openSync(lockFile, 'wx'); // O_CREAT|O_EXCL: atomic
+      fs.writeSync(fd, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+      fs.closeSync(fd);
+      return { ok: true, release: () => { try { fs.unlinkSync(lockFile); } catch { /* already gone */ } } };
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      let holder = null;
+      try { holder = JSON.parse(fs.readFileSync(lockFile, 'utf8')); } catch { /* unreadable/corrupt */ }
+      const alive = holder && holder.pid && (() => {
+        try { process.kill(holder.pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+      })();
+      if (alive) return { ok: false, holder };
+      // Stale (crashed run, or a corrupt lock file): clear it and retry once.
+      try { fs.unlinkSync(lockFile); } catch { /* raced with the holder's own cleanup */ }
+    }
+  }
+  return { ok: false, holder: null };
+}
+
 function receiptPath() {
   // --absolute-git-dir resolves correctly inside a linked worktree, where .git
   // is a file, so each worktree keeps its own receipt.
@@ -299,6 +341,25 @@ function runClientGate() {
  * banking that would vouch for bytes nothing ever gated.
  */
 function runGates(needed, fpBefore) {
+  // Serialize: the money gate resets the shared ci-smoke branch, so a second
+  // run would delete this one's rows mid-suite (see acquireLock).
+  const lock = acquireLock();
+  if (!lock.ok) {
+    const who = lock.holder && lock.holder.pid ? `pid ${lock.holder.pid}, started ${lock.holder.at}` : 'unknown holder';
+    console.error('');
+    console.error(`✗ BLOCKED — another push gate is already running (${who}).`);
+    console.error('  They share one Neon ci-smoke branch, so running both corrupts each other.');
+    console.error('  Wait for it to finish, then retry. Emergencies only: git push --no-verify');
+    return false;
+  }
+  try {
+    return runGatesLocked(needed, fpBefore);
+  } finally {
+    lock.release();
+  }
+}
+
+function runGatesLocked(needed, fpBefore) {
   const passed = [];
   if (needed.includes('money')) {
     const r = runMoneyGate();

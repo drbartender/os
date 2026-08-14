@@ -199,3 +199,47 @@ test('an empty pushedShas list cannot satisfy the foreign-sha check by vacuity',
   // this passes, and that is exactly the hole.
   assert.equal(ask(fresh(), { pushedShas: [] }), null);
 });
+
+// ── The gate lock (the money gate resets a SHARED Neon branch) ──
+
+test('a stale lock from a dead process does not block the gate forever', () => {
+  // The dangerous failure here is not contention, it is a crashed run leaving a
+  // lock that wedges every future push. Liveness is checked by pid, so a lock
+  // owned by a pid that no longer exists must be reclaimed.
+  const fs = require('fs');
+  const path = require('path');
+  const { execFileSync, spawnSync } = require('child_process');
+  const gitDir = execFileSync('git', ['rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
+  const lockFile = path.join(gitDir, 'drb-push-gate.lock');
+  const hadLock = fs.existsSync(lockFile);
+  if (hadLock) return; // a real gate is running; never disturb it
+
+  // A pid that cannot exist: kill(0) throws ESRCH, so the lock reads as stale.
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: 2147483646, at: new Date().toISOString() }));
+  try {
+    // Docs-only ref => no gates run, so this exercises lock acquisition alone.
+    const r = spawnSync(process.execPath, ['scripts/push-gate.js', 'run', 'HEAD'], { encoding: 'utf8' });
+    assert.doesNotMatch(`${r.stderr || ''}`, /another push gate is already running/,
+      'a lock held by a dead pid must be reclaimed, not treated as live');
+  } finally {
+    try { fs.unlinkSync(lockFile); } catch { /* the run released it */ }
+  }
+});
+
+test('a corrupt lock file is reclaimed rather than wedging the gate', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { execFileSync, spawnSync } = require('child_process');
+  const gitDir = execFileSync('git', ['rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
+  const lockFile = path.join(gitDir, 'drb-push-gate.lock');
+  if (fs.existsSync(lockFile)) return;
+
+  fs.writeFileSync(lockFile, 'not json at all');
+  try {
+    const r = spawnSync(process.execPath, ['scripts/push-gate.js', 'run', 'HEAD'], { encoding: 'utf8' });
+    assert.doesNotMatch(`${r.stderr || ''}`, /another push gate is already running/,
+      'an unparseable lock has no live holder and must not wedge the gate');
+  } finally {
+    try { fs.unlinkSync(lockFile); } catch { /* released */ }
+  }
+});
