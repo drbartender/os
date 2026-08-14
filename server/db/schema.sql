@@ -1616,6 +1616,68 @@ CREATE INDEX IF NOT EXISTS idx_email_sends_resend_id ON email_sends(resend_id);
 CREATE INDEX IF NOT EXISTS idx_email_sends_campaign ON email_sends(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_email_sends_lead ON email_sends(lead_id);
 
+-- ─── Marketing sends to CLIENTS (lane mkt-g) ───────────────────────
+-- email_sends was lead-only: `lead_id INTEGER NOT NULL`. The marketing
+-- redesign sends to `clients`, which are a different table and the larger
+-- cohort, so the row needs to be able to name either one.
+--
+-- lead_id loses NOT NULL and a client_id arrives beside it, with a CHECK that
+-- EXACTLY ONE is set. Not "at least one": a row naming both would be counted
+-- twice by the analytics aggregate and would make the webhook's bounce
+-- suppression ambiguous about whose status to flip.
+ALTER TABLE email_sends ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE;
+ALTER TABLE email_sends ALTER COLUMN lead_id DROP NOT NULL;
+
+-- DROP + ADD, never a guarded IF NOT EXISTS. A guard makes an enumerated CHECK
+-- write-once: the constraint would be created on the first boot that ran this
+-- file and then never updated again, so widening it later silently does
+-- nothing. Existing rows all carry lead_id with client_id NULL, so they
+-- satisfy this the moment it is added.
+ALTER TABLE email_sends DROP CONSTRAINT IF EXISTS email_sends_recipient_check;
+ALTER TABLE email_sends ADD CONSTRAINT email_sends_recipient_check
+  CHECK (
+    (lead_id IS NOT NULL AND client_id IS NULL)
+    OR (lead_id IS NULL AND client_id IS NOT NULL)
+  );
+
+-- An earlier revision of this file created a bare idx_email_sends_client. The
+-- composite below covers every query that one did, so drop it rather than pay
+-- for two indexes on the same leading column. Idempotent and safe to replay.
+DROP INDEX IF EXISTS idx_email_sends_client;
+
+-- Composite, not a bare client_id index: the contact drawer's campaign leg
+-- filters on client_id and orders by sent_at DESC, and that table grows by one
+-- row per recipient per blast. ARCHITECTURE.md called for this shape.
+-- NOTE THE NAME. An earlier revision of this lane created a non-partial
+-- idx_email_sends_client_sent. `CREATE INDEX IF NOT EXISTS` does not ALTER an
+-- existing index, so re-declaring the same name with a predicate is a silent
+-- no-op on any database that already ran the old statement: prod would get the
+-- partial index and dev would keep the full one. Renaming forces the create,
+-- and the DROP retires the old shape wherever it landed.
+DROP INDEX IF EXISTS idx_email_sends_client_sent;
+CREATE INDEX IF NOT EXISTS idx_email_sends_client_sent_partial
+  ON email_sends(client_id, sent_at DESC)
+  WHERE client_id IS NOT NULL;
+
+-- The send-once guard. One campaign must never send twice to the same client,
+-- even if two operators click at the same moment: the send path claims a row
+-- here before it calls Resend, and the unique index is what makes the claim
+-- atomic rather than advisory.
+--
+-- The predicate is a SIZE optimization, not a correctness requirement. NULLs
+-- are always distinct in a unique index unless NULLS NOT DISTINCT is given, so
+-- lead-side rows (client_id NULL) could never collide anyway. Stated plainly
+-- because an earlier revision of this comment claimed the predicate was load
+-- bearing, which would mislead the next person into keeping or dropping it for
+-- the wrong reason.
+--
+-- Listed in CRITICAL_INDEXES (server/db/index.js): a failed build raises 23505,
+-- which initDb's idempotency swallow would otherwise treat as success.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_email_sends_campaign_client_once
+  ON email_sends(campaign_id, client_id)
+  WHERE campaign_id IS NOT NULL AND client_id IS NOT NULL;
+
+
 -- ─── Email Marketing: Conversations ────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS email_conversations (

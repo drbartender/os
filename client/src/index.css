@@ -19910,3 +19910,16 @@ html[data-app="admin-os"] .pay-qr-tile {
    campaign screen still reads coherently, but it cannot be clicked. */
 .em-retired-send { display: inline-flex; flex-direction: column; gap: 0.25rem; }
 .em-retired-send small { color: var(--text-muted); }
+
+/* Compose (lane mkt-g) */
+.mkt-compose { display: flex; flex-direction: column; gap: 1.75rem; }
+.mkt-compose-section { display: flex; flex-direction: column; gap: 0.5rem; }
+.mkt-compose-section h2 { margin: 0; font-family: var(--font-display); color: var(--deep-brown); font-size: 1.05rem; }
+.mkt-compose-section h3 { margin: 0.5rem 0 0; font-size: 0.95rem; color: var(--deep-brown); }
+.mkt-compose-section label { font-size: 0.8rem; font-weight: 600; color: var(--deep-brown); }
+.mkt-compose-section textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
+.mkt-compose-actions { display: flex; gap: 0.5rem; margin-top: 0.25rem; }
+.mkt-recipients { display: flex; flex-direction: column; gap: 0.5rem; }
+.mkt-filter-select { min-width: 200px; }
+.mkt-send-result { margin-top: 1rem; padding: 0.75rem 1rem; border: 1px solid var(--border-light); border-radius: 6px; background: var(--cream); }
+.mkt-preview-frame { width: 100%; height: 70vh; border: 1px solid var(--border-light); border-radius: 4px; background: #fff; }

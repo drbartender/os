@@ -368,6 +368,7 @@ app.use('/api/email-marketing/webhook', require('./routes/emailMarketingWebhook'
 // resolver's read routes. Separate from emailMarketing.js, which is at 987 of
 // the 1000-line hard cap and cannot grow.
 app.use('/api/marketing', require('./routes/marketingContacts'));
+app.use('/api/marketing', require('./routes/marketingSend'));
 app.use('/api/public/reviews', require('./routes/publicReviews'));
 app.use('/api/public/tip', require('./routes/publicTip'));
 app.use('/api/public/feedback', require('./routes/publicFeedback'));

@@ -103,9 +103,16 @@ router.get('/campaigns/:id', auth, requireAdminOrManager, asyncHandler(async (re
     `SELECT es.id, es.campaign_id, es.lead_id, es.subject, es.status,
             es.sent_at, es.opened_at, es.clicked_at, es.bounced_at, es.complained_at,
             es.error_message,
-            el.name AS lead_name, el.email AS lead_email
+            -- A send names EITHER a lead or a client (email_sends_recipient_check).
+            -- These were INNER JOINs, so every client send disappeared from this
+            -- table while the stats block above still counted it: the page read
+            -- "40 sends" over an empty list. COALESCE so one column pair serves
+            -- both recipient kinds.
+            COALESCE(el.name, cl.name) AS lead_name,
+            COALESCE(el.email, cl.email) AS lead_email
      FROM email_sends es
-     JOIN email_leads el ON el.id = es.lead_id
+     LEFT JOIN email_leads el ON el.id = es.lead_id
+     LEFT JOIN clients cl ON cl.id = es.client_id
      WHERE es.campaign_id = $1 ORDER BY es.sent_at DESC LIMIT 500`,
     [req.params.id]
   );
@@ -172,7 +179,17 @@ router.put('/campaigns/:id', auth, requireAdminOrManager, asyncHandler(async (re
       from_email = COALESCE($5, from_email), reply_to = COALESCE($6, reply_to),
       target_sources = COALESCE($7, target_sources),
       target_event_types = COALESCE($8, target_event_types),
-      status = COALESCE($9, status),
+      -- 'sending' is the campaign send's MUTEX (marketingSend.js), so this PUT
+      -- must not be able to set it or clear it. Setting it parks a campaign as
+      -- permanently sending and blocks admin sends; clearing it mid-run lets a
+      -- second run claim alongside the first. This route is
+      -- requireAdminOrManager while the send is adminOnly, so without this a
+      -- manager could do either to an admin's send.
+      status = CASE
+                 WHEN $9::text = 'sending' THEN status
+                 WHEN status = 'sending' THEN status
+                 ELSE COALESCE($9, status)
+               END,
       design_json = CASE WHEN $12::boolean THEN NULL ELSE COALESCE($11, design_json) END
     WHERE id = $10 RETURNING *
   `, [name, subject, nextHtml, nextText, from_email, reply_to,

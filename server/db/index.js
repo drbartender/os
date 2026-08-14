@@ -179,6 +179,9 @@ const IDEMPOTENT_PG_CODES = new Set([
 // IDEMPOTENT_PG_CODES swallow above treats as "already applied" — so a
 // silently-absent guard would boot clean with no alert (F7 review follow-up).
 const CRITICAL_INDEXES = [
+  // The marketing send-once guard. If this index is silently absent, the send
+  // route's 23505 catch never fires and a re-run mails the whole list again.
+  'idx_email_sends_campaign_client_once',
   'uq_invoice_payments_positive_link',
   'idx_duty_lines_event_kinds',
   'idx_duty_lines_bounty',

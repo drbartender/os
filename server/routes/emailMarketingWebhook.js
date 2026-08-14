@@ -159,7 +159,12 @@ router.post('/resend', asyncHandler(async (req, res) => {
           'SELECT lead_id FROM email_sends WHERE resend_id = $1',
           [resendId]
         );
-        if (sendResult.rows[0]) {
+        // lead_id is NULLABLE since lane mkt-g: a campaign send to a CLIENT
+        // carries client_id instead. Without this guard the UPDATE runs with a
+        // NULL id, matches nothing, and quietly does nothing while looking like
+        // it suppressed someone. The client side of that same event is handled
+        // below, by address, where bounces and complaints are split.
+        if (sendResult.rows[0] && sendResult.rows[0].lead_id) {
           await client.query(
             `UPDATE email_leads SET status = $1 WHERE id = $2`,
             [newStatus, sendResult.rows[0].lead_id]

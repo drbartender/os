@@ -17,7 +17,7 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { pool } = require('../db');
-const { getContactMessageHistory, MAX_LIMIT } = require('./contactMessageHistory');
+const { getContactMessageHistory, MAX_LIMIT, _resetCampaignLegProbe } = require('./contactMessageHistory');
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const EMAIL = `cmh-${NONCE}@mkt-test.example`;
@@ -252,4 +252,79 @@ test('scopes to the client: another contact history never leaks in', async () =>
 
   await pool.query('DELETE FROM message_log WHERE client_id = $1', [emptyClientId]);
   await pool.query('DELETE FROM proposals WHERE client_id = $1', [emptyClientId]);
+});
+
+// ─── The campaign leg (lane mkt-g) ─────────────────────────────────
+//
+// Phase 1 wrote this leg behind a column probe and could not reach it:
+// email_sends had no client_id, so the probe returned false and the branch
+// never ran. mkt-g adds the column, which activates it. These are the first
+// tests that actually execute that SQL.
+
+test('a campaign send to a client appears in their history', async () => {
+  const nonce = `cmh-camp-${Date.now()}`;
+  const c = await pool.query('INSERT INTO clients (name,email) VALUES ($1,$2) RETURNING id',
+    [nonce, `${nonce}@mkt-test.example`]);
+  const camp = await pool.query(
+    `INSERT INTO email_campaigns (name,type,status,subject,html_body)
+     VALUES ($1,'blast','sent','Spring open house','<p>hi</p>') RETURNING id`, [nonce]);
+  const send = await pool.query(
+    `INSERT INTO email_sends (campaign_id, client_id, subject, status, sent_at)
+     VALUES ($1,$2,'Spring open house','sent', NOW() - INTERVAL '1 hour') RETURNING id`,
+    [camp.rows[0].id, c.rows[0].id]);
+  try {
+    _resetCampaignLegProbe();
+    const rows = await getContactMessageHistory(c.rows[0].id);
+    const hit = rows.find(r => r.subject === 'Spring open house');
+    assert.ok(hit, 'the campaign send must show on the contact record');
+    assert.equal(hit.channel, 'email');
+    assert.equal(hit.kind, 'campaign', 'the row identifies itself as a campaign, not a lifecycle touch');
+    // automated=false is deliberate and worth stating, because the instinct is
+    // the opposite. `automated` means "the system decided to send this", and a
+    // campaign is the one bulk send a human chose: Dallas picked the audience
+    // and pressed send. The drip, the retention nudge and the New Year touch
+    // fire without him, and those are the automated ones. The `kind` field is
+    // what tells the drawer this was bulk rather than a personal note.
+  } finally {
+    await pool.query('DELETE FROM email_sends WHERE id=$1', [send.rows[0].id]);
+    await pool.query('DELETE FROM email_campaigns WHERE id=$1', [camp.rows[0].id]);
+    await pool.query('DELETE FROM clients WHERE id=$1', [c.rows[0].id]);
+  }
+});
+
+test('a failed, bounced, or unsent campaign row is NOT shown as a send', async () => {
+  // The drawer answers "have we already talked to this person". A queued row
+  // that never left, or one that bounced, is not a conversation, and showing
+  // it would make an operator skip someone they never actually reached.
+  const nonce = `cmh-neg-${Date.now()}`;
+  const c = await pool.query('INSERT INTO clients (name,email) VALUES ($1,$2) RETURNING id',
+    [nonce, `${nonce}@mkt-test.example`]);
+  const camp = await pool.query(
+    `INSERT INTO email_campaigns (name,type,status,subject,html_body)
+     VALUES ($1,'blast','sent','Never arrived','<p>hi</p>') RETURNING id`, [nonce]);
+  // ASSERT INSIDE THE LOOP. The send-once index is partial on
+  // (campaign_id, client_id), so only one row per pair can exist and each case
+  // must be cleared before the next. An earlier version of this test deleted
+  // three of the four cases and only asserted at the end, so 'failed',
+  // 'bounced' and 'queued' were pinned by nothing: dropping them from the SQL
+  // filter would have left it green.
+  try {
+    for (const [status, sentAt] of [
+      ['failed', 'NOW()'], ['bounced', 'NOW()'], ['queued', 'NOW()'], ['sent', 'NULL'],
+    ]) {
+      const r = await pool.query(
+        `INSERT INTO email_sends (campaign_id, client_id, subject, status, sent_at)
+         VALUES ($1,$2,'Never arrived',$3, ${sentAt}) RETURNING id`,
+        [camp.rows[0].id, c.rows[0].id, status]);
+      _resetCampaignLegProbe();
+      const rows = await getContactMessageHistory(c.rows[0].id);
+      assert.equal(rows.filter(x => x.subject === 'Never arrived').length, 0,
+        `a '${status}' row (sent_at ${sentAt}) must not count as a send`);
+      await pool.query('DELETE FROM email_sends WHERE id=$1', [r.rows[0].id]);
+    }
+  } finally {
+    await pool.query('DELETE FROM email_sends WHERE campaign_id=$1', [camp.rows[0].id]);
+    await pool.query('DELETE FROM email_campaigns WHERE id=$1', [camp.rows[0].id]);
+    await pool.query('DELETE FROM clients WHERE id=$1', [c.rows[0].id]);
+  }
 });

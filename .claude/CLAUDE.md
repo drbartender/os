@@ -275,6 +275,7 @@ See `.env.example` for the full list. Key ones:
 | `API_URL` | Backend origin for server-rendered email links (unsubscribe). Optional — defaults to `RENDER_EXTERNAL_URL` in prod, `localhost:5000` in dev. |
 | `R2_*` | Cloudflare R2 credentials |
 | `RESEND_API_KEY` | Resend email |
+| `MARKETING_SEND_GAP_MS` | Optional. Milliseconds between recipients in a campaign send (`server/routes/marketingSend.js`, default 600). Resend's published limit is 2 requests/second; the send is paced SERIALLY rather than bursting, because a burst that trips the limit fails an arbitrary subset and leaves a partially-sent campaign nobody can resume confidently. Set to `0` in tests. Raising it makes a 500-recipient send take proportionally longer in one open HTTP request. |
 | `RESEND_WEBHOOK_SECRET` | Resend webhook signing secret (svix) |
 | `TWILIO_*` | Twilio SMS. `TWILIO_AUTH_TOKEN` is also used to verify the inbound-SMS webhook signature (`POST /api/sms/inbound`). |
 | `STRIPE_SECRET_KEY` / `STRIPE_PUBLISHABLE_KEY` / `STRIPE_WEBHOOK_SECRET` | Stripe live payments |

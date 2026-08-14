@@ -548,6 +548,10 @@ async function onProposalSignedAndPaid(proposalId) {
 }
 
 module.exports = {
+  // Exported for the campaign send (lane mkt-g), which needs the same client
+  // unsubscribe token the lifecycle touches use. A second minting site is how
+  // the payload shape drifts and a live link stops being honored.
+  buildUnsubscribeUrl,
   registerMarketingHandlers,
   scheduleDripForProposal,
   scheduleReviewRequest,

@@ -17,7 +17,7 @@ const router = express.Router();
 router.get('/analytics/overview', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const [leadsResult, campaignsResult, sendsResult] = await Promise.all([
     pool.query(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE status = 'active') AS active FROM email_leads`),
-    pool.query(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE status = 'sent' OR status = 'active') AS active FROM email_campaigns`),
+    pool.query(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE status IN ('sent', 'active', 'sending')) AS active FROM email_campaigns`),
     pool.query(`
       SELECT
         COUNT(*) AS total_sends,

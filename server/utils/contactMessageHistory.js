@@ -17,14 +17,15 @@ const { pool } = require('../db');
  * for. So this leg is anti-joined: a dispatcher row appears only when no
  * ledger twin exists, which today means only when a ledger write failed.
  *
- * `email_sends` covers campaign blasts and joins in phase 2, once
- * `mkt-g-send` adds its `client_id`.
+ * `email_sends` covers campaign blasts and JOINED IN lane mkt-g, which added
+ * its `client_id`.
  *
- * HONEST SCOPE NOTE: a contact with no proposal has nothing in either phase-1
- * source. `logClientMessage` returns early without a `proposal_id`, and every
- * client-directed `scheduled_messages` row is proposal-anchored too. The ~254
- * proposal-less clients therefore get an empty history until the phase-2 leg
- * lands. Do not claim otherwise in docs.
+ * HONEST SCOPE NOTE: a contact with no proposal has nothing in either of the
+ * first two legs. `logClientMessage` returns early without a `proposal_id`, and
+ * every client-directed `scheduled_messages` row is proposal-anchored too. The
+ * campaign leg (lane mkt-g) is the only one that can show history for the ~254
+ * proposal-less clients, and only once they have actually been sent a campaign.
+ * Until then their history is genuinely empty. Do not claim otherwise in docs.
  *
  * `automated` is derived, never assumed: `message_log.sent_by` is NULL for a
  * scheduler send and set for a human one (2,165 of 2,200 prod rows are NULL).
@@ -49,7 +50,9 @@ const PG_INT4_MAX = 2147483647;
 // message_log captures the send either way.
 const TWIN_WINDOW = '2 minutes';
 
-// email_sends.client_id arrives in phase 2. Probe once per process rather than
+// email_sends.client_id arrived in lane mkt-g. The probe is retained so this
+// module still works against a database that predates that migration (a fresh
+// clone, a restored backup). Probe once per process rather than
 // once per call: schema.sql replays at boot before any call, and a deploy
 // restarts the process, so a cached answer cannot go stale in a way that
 // matters. Exported for tests to reset.

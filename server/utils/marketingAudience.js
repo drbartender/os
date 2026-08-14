@@ -238,9 +238,12 @@ const CONTACT_AGGREGATES = `
       FROM client_tags ct WHERE ct.client_id = c.id
   ) tg ON true
   LEFT JOIN LATERAL (
-    -- Last contacted. Mirrors contactMessageHistory.js's two phase-1 legs; the
-    -- campaign leg joins when email_sends.client_id lands in phase 2. Any
-    -- change to the status treatment there must be mirrored here.
+    -- Last contacted. Mirrors ALL THREE legs of contactMessageHistory.js,
+    -- including the campaign leg that lane mkt-g activated. Without that third
+    -- leg the contact list would say "never contacted" for someone the contact
+    -- drawer shows a campaign send for, and the two surfaces would disagree
+    -- about the one fact an operator uses to decide whether to reach out again.
+    -- The status filters here must stay identical to that file's.
     SELECT MAX(t.at) AS last_contacted FROM (
       SELECT ml.created_at AS at FROM message_log ml
        WHERE ml.client_id = c.id AND ml.status NOT IN ('failed', 'bounced')
@@ -248,6 +251,11 @@ const CONTACT_AGGREGATES = `
       SELECT sm.sent_at FROM scheduled_messages sm
        WHERE sm.recipient_type = 'client' AND sm.recipient_id = c.id
          AND sm.status = 'sent' AND sm.sent_at IS NOT NULL
+      UNION ALL
+      SELECT es.sent_at FROM email_sends es
+       WHERE es.client_id = c.id
+         AND es.sent_at IS NOT NULL
+         AND COALESCE(es.status, '') NOT IN ('failed', 'bounced', 'queued')
     ) t
   ) lc ON true
 `;

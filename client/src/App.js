@@ -153,6 +153,7 @@ const EmailMarketingDashboard = lazy(() => import('./pages/admin/EmailMarketingD
 const MarketingLayout = lazy(() => import('./pages/admin/MarketingLayout'));
 const AudiencesTab = lazy(() => import('./pages/admin/marketing/AudiencesTab'));
 const MarketingPlaceholder = lazy(() => import('./pages/admin/marketing/MarketingPlaceholder'));
+const ComposeTab = lazy(() => import('./pages/admin/marketing/ComposeTab'));
 const EmailLeadsDashboard = lazy(() => import('./pages/admin/EmailLeadsDashboard'));
 const EmailLeadDetail = lazy(() => import('./pages/admin/EmailLeadDetail'));
 const EmailCampaignsDashboard = lazy(() => import('./pages/admin/EmailCampaignsDashboard'));
@@ -623,7 +624,7 @@ function AppRoutes() {
           <Route index element={<AudiencesTab />} />
           <Route path="audiences" element={<AudiencesTab />} />
           <Route path="overview" element={<MarketingPlaceholder />} />
-          <Route path="compose" element={<MarketingPlaceholder />} />
+          <Route path="compose" element={<ComposeTab />} />
           <Route path="sent" element={<MarketingPlaceholder />} />
         </Route>
       </Route>
