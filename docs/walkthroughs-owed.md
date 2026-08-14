@@ -310,8 +310,10 @@ is written and built.)
       under real use.
 - [ ] **CC seniority mapping**: generate, hand-review, then `--apply`. Human-gated.
 - [ ] **Display-name walkthroughs T6 and T10-T13**, plus the seniority panel smoke.
-- [ ] **Deactivate the two Stripe test Payment Links** (`plink_1U0nVQ…`, `plink_1U0nVP…`).
-      Admin-blocked for Claude; only Dallas can do it.
+- [x] **Stripe test Payment Links — ALREADY DEACTIVATED (verified 2026-08-14).** Both
+      (`plink_1U0nVQ…`, `plink_1U0nVP…` — test tips for a test user) read `active: false`
+      via the live API; the TODO had gone stale, same as the Ruta/Anna archive. Every other
+      active link in the account is a real bartender's tip-page link, as designed.
 
 ## Tier 5 — never exercised end-to-end
 
