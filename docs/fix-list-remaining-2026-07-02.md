@@ -2185,6 +2185,34 @@ These are not from the original ledger. They surfaced while verifying its
   and `beoHandlers` both filter `status != 'cancelled'`, so it changes what a BEO renders.
   Build was dispatched to Fable, reviews kept at Opus, per [[subagent-model-tiering]]'s
   execution-versus-judgment split.
+
+  **FIRST PASS FAILED REVIEW 2026-08-14, and the catch is worth keeping.** The build chose
+  worked -> `completed`, never-staffed -> `cancelled`, reasoning that an unworked shift did not
+  complete. Defensible in isolation, WRONG here: `shifts.status = 'cancelled'` is overloaded as
+  an EVENT-cancelled signal by two verified consumers. `isCancelledEvent(e)` at
+  `client/src/components/adminos/shifts.js:79` tests `e.status === 'cancelled'`, and on the
+  admin `GET /shifts` feed that IS the shift status, so the Events dashboard renders a Cancelled
+  chip; `calendar.js:432` sets `cancelled: s.status === 'closed' || s.status === 'cancelled'`,
+  which becomes `STATUS:CANCELLED` in the iCal VEVENT with a bumped SEQUENCE, striking the event
+  off the owner's subscribed Google Calendar.
+  Not hypothetical. Of the 8 never-staffed candidates in prod, 6 are $0 seed junk (null
+  `client_name`, most with `positions_needed='[]'`) but TWO are real and paid in full:
+  **shift 31 / proposal 54 (Ketan Patel, 2026-05-16, $450/$450)** and **shift 19 / proposal 21
+  (Stef D., 2026-04-25, $400/$400)**. Both would have been labelled cancelled and struck from
+  the calendar.
+  **CORRECTION: the terminal status from this path is ALWAYS `completed`, never `cancelled`,
+  worked or not.** The event completed; an unrecorded roster is a data gap, not a cancellation.
+  Reasoning is written into the code so nobody re-adds the `cancelled` arm.
+
+  **Why those two have no roster — ANSWERED by Dallas 2026-08-14: "I worked them both."** Not a
+  data error, and not an ongoing pattern. He began rostering himself on 2026-05-15 and has 24
+  approved non-dropped `shift_requests` since, through 2026-10-17; these two sit at the boundary
+  (4/25 predates it, 5/16 was an early-days miss). So going forward, "completed and paid in full
+  with ZERO shift_requests of any status" IS a genuine anomaly, which is why the backfill's
+  dry-run surfaces that combination loudly rather than closing it silently. Expect it to fire on
+  exactly these two known rows and nothing else. Related: [[project-owner-no-draw-payouts]],
+  which covers the money side (he works events and takes no draw); this note covers the ROSTER
+  side, which that entry does not.
 - Shift #31 itself (the original entry) is **confirmed still open**, event date 2026-05-16,
   on a `completed` proposal. It is one of the 50 above.
 
