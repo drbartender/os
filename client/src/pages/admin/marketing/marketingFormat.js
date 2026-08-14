@@ -83,10 +83,21 @@ export function heldBackLabel(reason) {
  * utils/api.js's response interceptor never rejects with a raw axios error: it
  * normalizes everything to `{message, code, fieldErrors, status}`, using the
  * server's `error` field when there is a response and "Network error. Check
- * your connection." when there is not. So `message` is the only field to read;
- * reaching for `err.response.data.error` here would be dead code that quietly
- * fell through to the fallback on every real failure.
+ * your connection." when there is not. Reaching for `err.response.data.error`
+ * here would be dead code that quietly fell through to the fallback on every
+ * real failure.
+ *
+ * fieldErrors wins over message when present: a ValidationError's envelope
+ * message is the generic "Please fix the errors below", while the text an
+ * operator can act on ("Send at most 500 at a time") rides in fieldErrors,
+ * and these surfaces render toasts, not per-field form errors, so an unread
+ * fieldErrors object left the operator with no guidance at all (push-review
+ * 2026-08-13).
  */
 export function errorText(err, fallback) {
+  const fieldMsgs = err?.fieldErrors
+    ? Object.values(err.fieldErrors).filter((m) => typeof m === 'string' && m)
+    : [];
+  if (fieldMsgs.length) return fieldMsgs.join(' ');
   return err?.message || fallback;
 }

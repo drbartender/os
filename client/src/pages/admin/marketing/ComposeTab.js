@@ -16,13 +16,37 @@ import { errorText } from './marketingFormat';
  * is never surprised by the number; the re-check is because the preview is a
  * snapshot and somebody may be excluded in between.
  */
+const RESUME_KEY = 'mkt-compose-resume';
+
+/**
+ * A retryable run (quota stop, per-recipient failures) must survive an unmount:
+ * both server duplicate defenses (the already-sent set and the send-once index)
+ * are keyed on campaign_id, so "run it again tomorrow" is only safe if tomorrow
+ * reuses the SAME campaign. The id, draft, and selection persist here from the
+ * moment a send starts until a run completes clean (push-review 2026-08-13).
+ * Best-effort on purpose: blocked storage degrades to same-mount resume, which
+ * is the old behavior, never an operator-visible error.
+ */
+function readResume() {
+  try {
+    const raw = localStorage.getItem(RESUME_KEY);
+    const r = raw ? JSON.parse(raw) : null;
+    return r && r.campaignId ? r : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function ComposeTab() {
   const toast = useToast();
+  // Lazy initializer so the storage read happens once, not on every render.
+  const [restored] = useState(readResume);
   const [audiences, setAudiences] = useState([]);
-  const [campaignId, setCampaignId] = useState(null);
-  const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
-  const [selected, setSelected] = useState(new Set());
+  const [campaignId, setCampaignId] = useState(restored ? restored.campaignId : null);
+  const [subject, setSubject] = useState(restored ? restored.subject || '' : '');
+  const [body, setBody] = useState(restored ? restored.body || '' : '');
+  const [selected, setSelected] = useState(() => new Set(restored ? restored.selected || [] : []));
+  const [resuming, setResuming] = useState(Boolean(restored));
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
   const [preview, setPreview] = useState(null);
@@ -83,6 +107,28 @@ export default function ComposeTab() {
     }
   };
 
+  const persistResume = (id) => {
+    try {
+      localStorage.setItem(RESUME_KEY, JSON.stringify({
+        campaignId: id, subject, body, selected: [...selected],
+      }));
+    } catch { /* storage blocked: same-mount resume still works */ }
+  };
+  const clearResume = () => {
+    try { localStorage.removeItem(RESUME_KEY); } catch { /* nothing to clear */ }
+  };
+
+  /** Abandon a restored run on purpose: new campaign id, blank slate. */
+  const startFresh = () => {
+    clearResume();
+    setResuming(false);
+    setCampaignId(null);
+    setSubject('');
+    setBody('');
+    setSelected(new Set());
+    setResult(null);
+  };
+
   const doSend = async () => {
     // setSending FIRST, before any await. It used to sit after saveDraft(),
     // which left the confirm button live for the whole round trip: two clicks
@@ -99,6 +145,10 @@ export default function ComposeTab() {
     setConfirming(false);
     const id = await saveDraft();
     if (!id) { inFlight.current = false; setSending(false); return; }
+    // Persist BEFORE the request: a refresh during the multi-minute send loses
+    // this mount, and the restored id is what lets the operator resume instead
+    // of minting a duplicate campaign.
+    persistResume(id);
     try {
       const res = await api.post(`/marketing/campaigns/${id}/send`, {
         client_ids: [...selected],
@@ -136,6 +186,8 @@ export default function ComposeTab() {
       // in the run, mailed twice.
       const retryable = res.data.stopped_early || res.data.failed > 0;
       if (!retryable) {
+        clearResume();
+        setResuming(false);
         setCampaignId(null);
         setSelected(new Set());
       }
@@ -155,6 +207,17 @@ export default function ComposeTab() {
         <div className="mkt-state mkt-state-error" role="alert">
           <p>{loadError}</p>
           <button type="button" className="btn-secondary" onClick={loadAudiences}>Try again</button>
+        </div>
+      )}
+      {resuming && (
+        <div className="mkt-state" role="status">
+          <p>
+            Resuming campaign #{campaignId}. Your draft and selection were restored,
+            and anyone this campaign already reached is skipped automatically.
+          </p>
+          <button type="button" className="btn-secondary" onClick={startFresh}>
+            Start fresh instead
+          </button>
         </div>
       )}
 
@@ -244,12 +307,12 @@ export default function ComposeTab() {
                 skipped, so nobody receives it twice.
               </p>
             )}
-            <ul className="mkt-heldback-list">
-            </ul>
             {result.stopped_early === 'quota' && (
               <p className="mkt-warn">
                 Stopped early: the daily sending quota was reached. Nobody remaining was
                 charged a send, so running this again tomorrow picks up exactly who is left.
+                Your draft and selection are saved on this device, so it is safe to leave
+                this page.
               </p>
             )}
           </div>

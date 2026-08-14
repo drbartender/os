@@ -2,13 +2,14 @@ import React from 'react';
 import { useLocation } from 'react-router-dom';
 
 /**
- * Placeholder for the Marketing tabs phase 1 does not build.
+ * Placeholder for the Marketing tabs not built yet: Overview and Sent, both
+ * phase 3 (the plan's lane map assigns them to mkt-h). Compose shipped in
+ * phase 2 and mounts the real ComposeTab, so it has no entry here.
  *
  * Each names the phase that delivers it, because a bare "coming soon" on a tab
- * bar reads as "next week" and sets a wrong expectation about the send. Compose
- * and Sent are phase 2 (the send path); Overview is phase 3.
+ * bar reads as "next week" and sets a wrong expectation about the send.
  *
- * One component keyed by route rather than three near-identical files, and a
+ * One component keyed by route rather than near-identical files, and a
  * default export because React.lazy resolves default exports only.
  */
 const CONTENT = {
@@ -17,14 +18,9 @@ const CONTENT = {
     phase: 3,
     blurb: 'How the last campaign did, who replied, and what to send next.',
   },
-  compose: {
-    title: 'Compose',
-    phase: 2,
-    blurb: 'Write a campaign, pick an audience, and preview it before it goes out.',
-  },
   sent: {
     title: 'Sent',
-    phase: 2,
+    phase: 3,
     blurb: 'Everything that has gone out, who received it, and what came back.',
   },
 };
