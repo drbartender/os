@@ -1736,6 +1736,15 @@ SCOPE (this is a project, not a drive-by; it is a money-reporting surface):
 - Decide the product question first: at day granularity over a 12-month range you get 365
   buckets. Either the granularity is derived from the range length, or the range picker and
   the granularity picker have to constrain each other.
+  **ASKED AND SKIPPED 2026-08-14 (Dallas: "skip for now").** Not decided either way, so the
+  project stays unscoped. Recommendation left on the table for whoever picks it up: DERIVE
+  the granularity from the range (roughly a month or less draws daily, six months or less
+  weekly, longer monthly). One control instead of two, no invalid combinations to design
+  around or explain, and it lands on the granularity a human would have picked by hand
+  nearly every time; an explicit picker mostly buys the ability to build a bad chart on
+  purpose. Reminder for the pickup: the blank chart is PROTECTIVE. Do not make it render at
+  `n === 1` without fixing the query, or it will draw a whole month of revenue labelled as
+  one day.
 
 ### Added 2026-08-12 (found by Dallas during the duty-pay walkthrough)
 
