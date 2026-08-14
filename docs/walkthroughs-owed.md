@@ -475,7 +475,33 @@ is written and built.)
       drift, after 8 days of organic writes. The display-name single-writer discipline holds
       under real use.
 - [ ] **CC seniority mapping**: generate, hand-review, then `--apply`. Human-gated.
-- [ ] **Display-name walkthroughs T6 and T10-T13**, plus the seniority panel smoke.
+- [~] **Display-name walkthroughs: T6 PASSED + seniority panel smoke PASSED, 2026-08-14.**
+      T10-T13 REASSIGNED, see below.
+      **T6 (stop step 5 from asking for a name)** — the TwistidTreets fix — proven on both
+      halves, because the page looking right proves only half of it:
+      · SERVER: `payment.noNameWrite.test.js` runs green against the dev DB, including the
+        case that matters, "POST /api/payment ignores a preferred_name in the body". The
+        route no longer even destructures the field (`payment.js:57-59`), so a stale client
+        or a hand-rolled POST cannot overwrite the step 4 answer.
+      · UI: `/payday-protocols` has NO name input. It renders a read-only "Your tip page
+        will read **Marcus**." with a "Change this" link to `/contractor-profile`, i.e. it
+        displays what step 4 owns and sends you back there to change it.
+      · TRAP for whoever walks this next: the page DOES still show name fields — "1. Name as
+        shown on your income tax return" and "2. Business name / DBA". Those are the W-9's
+        LEGAL name for tax purposes and they belong there. Do not read them as step 5
+        asking for a name again.
+      **Seniority panel smoke** — went at the invariant rather than the render, because the
+      panel's real hazard is `contractor_profiles.updated_at`, which orders SMS STOP
+      attribution on a shared inbound number. An idle Save (identical values re-submitted)
+      returned `{"success":true}` / HTTP 200 and left `updated_at` **10 days old**, so the
+      `IS DISTINCT FROM` guard in the PUT's WHERE clause (`admin/users.js:683-697`) really
+      does write nothing. `users.seniority.test.js` is 7/7 green besides.
+      FOUND, logged to the fix list: that no-op guard is NOT pinned by any test — the whole
+      seniority suite never mentions `updated_at`, and the only test that does is the
+      BACKFILL script's. Delete the WHERE clause and every suite still passes.
+      T10-T13 (client helper port + onboarding copy/live preview, staff portal copy, client
+      read-site swaps + admin legal-name row, the admin visibility notice) are copy and
+      render checks, so by the 2026-08-14 split they belong in the automated lane, not here.
 - [x] **Stripe test Payment Links — ALREADY DEACTIVATED (verified 2026-08-14).** Both
       (`plink_1U0nVQ…`, `plink_1U0nVP…` — test tips for a test user) read `active: false`
       via the live API; the TODO had gone stale, same as the Ruta/Anna archive. Every other

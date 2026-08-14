@@ -3456,3 +3456,28 @@ being processed or already paid, so its review bounty is locked; reopen the
 period to change it." Note the sibling message on the credit-removal path
 (`staffReviews.js`, `frozen_credit_removals`) carries the same "already paid"
 wording and should move with it.
+
+## The seniority PUT's no-op guard is unpinned by tests (found 2026-08-14, Tier 4 smoke)
+
+Test coverage, not a live bug. The guard itself works — verified by hand on dev:
+an idle Save (identical values re-submitted to
+`PUT /api/admin/users/:id/seniority`) returns 200 and leaves
+`contractor_profiles.updated_at` untouched, still ten days old.
+
+The problem is what protects it. That behavior lives entirely in one WHERE clause
+(`server/routes/admin/users.js:683-697`, the three `IS DISTINCT FROM` terms), and
+`server/routes/admin/users.seniority.test.js` — 7 tests, all green — does not
+contain the string `updated_at` anywhere. The only test in the repo pinning this
+invariant is `staffPaymentImport/seniorityBackfill.test.js`, which covers the
+BACKFILL SCRIPT, not the route.
+
+So the WHERE clause can be simplified away by anyone tidying that query and the
+entire suite still passes. What breaks is not seniority: `updated_at` orders
+`ORDER BY cp.updated_at DESC` in `smsInbound.js` `lookupSender` /
+`findStaffCandidatesByPhone`, so every idle admin Save would silently re-aim
+where a STOP lands on a shared inbound number. That is a compliance hazard
+reached through a button an admin clicks without changing anything.
+
+Fix: one test in the seniority suite — read `updated_at`, PUT the same values,
+assert it did not move — plus a second asserting a real change DOES move it, so
+the guard cannot be "fixed" by disabling the write altogether.
