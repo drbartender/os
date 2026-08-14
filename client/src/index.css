@@ -19958,7 +19958,11 @@ html[data-app="admin-os"] .mkt-moment-editing label {
 }
 
 /* The honest numbers: stat blocks side by side with hairline dividers. */
-html[data-app="admin-os"] .mkt-year { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+html[data-app="admin-os"] .mkt-year { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+/* Equal shares so all three stats sit on one line beside the 340px rail;
+   long uppercase labels wrap inside their share instead of pushing a stat
+   onto a second row. */
+html[data-app="admin-os"] .mkt-year > div:not(.mkt-vr) { flex: 1 1 0; min-width: 130px; }
 html[data-app="admin-os"] .mkt-year .stat-value { font-size: 30px; }
 html[data-app="admin-os"] .mkt-vr { width: 1px; align-self: stretch; background: var(--line-1); }
 
@@ -20171,4 +20175,20 @@ html[data-app="admin-os"] .mkt-state .spinner {
   html[data-app="admin-os"] .mkt-audiences,
   html[data-app="admin-os"] .mkt-recipients-grid { grid-template-columns: 1fr; }
   html[data-app="admin-os"] .mkt-moment-rail { min-width: 120px; }
+}
+@media (max-width: 600px) {
+  /* The meter takes the full row and its track flexes instead of clipping. */
+  html[data-app="admin-os"] .mkt-budget { width: 100%; }
+  html[data-app="admin-os"] .mkt-budget-track { flex: 1; width: auto; }
+  /* Moment cards stack: the count/action rail drops below the body as a row,
+     keeping the hue spine down the full left edge. */
+  html[data-app="admin-os"] .mkt-moment-grid { grid-template-columns: 4px minmax(0, 1fr); }
+  html[data-app="admin-os"] .mkt-moment-rail {
+    grid-column: 2;
+    flex-direction: row;
+    align-items: center;
+    border-left: 0;
+    border-top: 1px solid var(--line-1);
+    min-width: 0;
+  }
 }
