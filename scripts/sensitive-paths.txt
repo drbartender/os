@@ -270,3 +270,16 @@ server/index.js
 # drinkPlans and stripeWebhook splits above.
 server/routes/proposals/publicOptions.js
 server/utils/changeRequests.js
+
+# The GATE MACHINERY itself (2026-08-14). These decide WHETHER the money suites
+# run, so a bug here does not weaken one money path, it silently removes the
+# check on ALL of them, and the failure is invisible: a push that skips the gate
+# looks exactly like a push that passed it. push-gate.js added the receipt that
+# lets the hook skip a re-run (the fix for the 8-minute hook killing the SSH
+# connection), so its "is this receipt valid" logic is now load-bearing for
+# every push. money-smoke-list.txt is the suite list: testdb-smoke.js fails hard
+# on a listed file that is MISSING, but nothing notices a line quietly deleted.
+scripts/push-gate.js
+scripts/testdb-smoke.js
+scripts/money-smoke-list.txt
+.husky/pre-push
