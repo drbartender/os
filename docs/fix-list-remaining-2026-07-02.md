@@ -2313,9 +2313,12 @@ Two open items that were living only in memory entries and had never reached thi
   the 312 GV is still staffed (Dallas/Zul) and the 2026-08-08 GV decision deliberately keeps
   its mailbox alive, so the current copy WORKS — the question is whether staff should be
   steered to the 1922 instead. Dallas's call, then a one-line edit.
-- **Archive legacy proposal-options stragglers Ruta 469 + Anna 475** (from
-  [[project-proposal-options]], open since 7/02). Two-minute admin ops action, kept here so
-  it stops living only in a memory entry.
+- ~~**Archive legacy proposal-options stragglers Ruta 469 + Anna 475**~~ **CLOSED
+  2026-08-14 — they were ALREADY archived** (the July TODO went stale; someone did them
+  along the way). Checked prod: both `archived`, $0 paid, zero shifts / live invoices /
+  pending messages. Only blemish was `archive_reason` NULL (pre-reason-picker era);
+  backfilled to `option_not_chosen` via a guarded UPDATE so the archive bucket reads
+  truthfully. Nothing else to do.
 
 Also corrected during this audit: the phone-1a memory claimed the 1922 cutover was still
 owed — it completed 2026-08-11, proven by the live canary test calls. The one unverified
