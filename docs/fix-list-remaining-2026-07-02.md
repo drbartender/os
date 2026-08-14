@@ -1255,9 +1255,14 @@ Items 8-11 are unstarted.
    marketing/admin hybrid skin." `client/src/pages/FieldGuide.js` is reachable from the
    staff portal but is not wearing the staff skin. There is an existing unresolved scope
    call above ("Classes / field guide: restyle existing OR new marketing/content pages?")
-   that this collides with, so settle that first. **Dallas's sentence about the staff
-   portal menu was cut off mid-thought ("staff portal menu is") and needs re-asking
-   before this is scopeable.**
+   that this collides with, so settle that first. ~~Dallas's sentence about the staff
+   portal menu was cut off mid-thought ("staff portal menu is") and needs re-asking.~~
+   **RE-ASKED 2026-08-14 — the sentence finishes: the staff portal menu "works, but is
+   icky. maybe a pass with the claude.ai/design."** And the classes collision resolved
+   the same day (classes ON HOLD), so item 9 is now scopeable as: a Dallas-driven
+   claude.ai/design session over the staff-portal skin — the menu/nav plus FieldGuide —
+   subject to the design-artifacts-are-contracts custody rules in CLAUDE.md (visual
+   contract in the spec, a lane that owns match-the-artifact, ui-ux-review against it).
 
 10. **Price guide lookup tool.** Dallas: "If somebody wants to know how much xyz or what
     comes in 'the Full Compound' I want to be able to look it up real quick." Admin for
@@ -1268,15 +1273,21 @@ Items 8-11 are unstarted.
     different and much bigger thing: public pricing is a business decision, and it would
     need to stay in sync with the engine or it becomes a liability. Recommend building
     the admin lookup first and deciding on public exposure after seeing it.
+    **2026-08-14 (Dallas): "this needs a proper brainstorm at some point"** — no scope
+    decision taken; queued for a real brainstorm session, admin-first recommendation
+    on the table when it happens.
 
 ### Scope call, not yet a build
 
-11. **Monitor Wedding Pro / The Knot.** Ambiguous as written. Could mean (a) harvest
-    leads from them the way the Thumbtack agent does, (b) watch them for competitor or
-    pricing intel, or (c) just track whether the paid listings are producing. Each is a
-    completely different build. Needs one question answered before it can be scoped.
-    Worth noting (a) would inherit the whole Thumbtack fragility surface, item 1 is the
-    second time a UI change silently broke that pipeline in a week.
+11. **Wedding Pro / The Knot leads — PROMOTED to a queued project (2026-08-14).**
+    Dallas: "we need to do it soonish, but its a whole project. We get leads, but don't
+    really do anything with them." So the answer to the old ambiguity is (a)-shaped:
+    real leads arrive on those platforms today and go unworked — revenue on the floor.
+    Whole-project treatment: brainstorm → spec → plan when picked up (soonish), not a
+    quick fix. Design should decide how much of the Thumbtack pipeline shape to reuse
+    (harvest → auto first-reply → call bridge) vs start simpler (e.g. lead-email capture
+    + notify first), remembering (a) inherits the whole scraper-fragility surface — a UI
+    change silently broke the TT pipeline twice in one week.
 
 ### Added 2026-08-10 (cross-LLM push review, admin gratuity mandate)
 
