@@ -423,8 +423,13 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       with the freeform staff auto-reply, closing the last unverified half of the phone-1a
       cutover. Bonus: the reply live-demoed the 312-handout backlog item by telling Dallas
       to contact Dallas at the 312.
-- [ ] **"See other options" compare strip — SCRIPTED 2026-08-14. The prose below described
-      the wrong surface.** It said "one look at a real proposal's compare link". There is no
+- [x] **"See other options" compare strip — PASSED 2026-08-14 (Dallas: "all true"), and it
+      found a live client-facing defect on the first try.** All five pass conditions held,
+      including the money probe: toggling Real Glassware off and back on returned the Yours
+      price to exactly $1,250.00, so the live-priced current option reconciles to the penny
+      against the stored contract total. The defect is below and is logged to the fix list;
+      the surface itself is verified.
+      SCRIPTED 2026-08-14. The prose originally here described the wrong surface.** It said "one look at a real proposal's compare link". There is no
       link: what shipped 8/11 is a BUTTON on the proposal page reading "See other options"
       (`ProposalView.js:683`) which mounts `OtherOptionsPanel`. `/compare/:token` is a
       DIFFERENT and OLDER surface, the option-GROUP page, in the tree since 7/13. Also
