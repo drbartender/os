@@ -1683,6 +1683,40 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_email_sends_campaign_client_once
   ON email_sends(campaign_id, client_id)
   WHERE campaign_id IS NOT NULL AND client_id IS NOT NULL;
 
+-- ─── Marketing moments (lane mkt-h) ────────────────────────────────
+-- A moment's RULE and WINDOW are code (server/utils/marketingMoments.js). Only
+-- its words are data, and only the fields actually rewritten are stored: an
+-- untouched field keeps tracking the authored default, so improving the stock
+-- copy later still reaches every moment nobody has edited. Storing the whole
+-- record on first edit would freeze all three fields the moment someone fixed
+-- a typo in one.
+CREATE TABLE IF NOT EXISTS marketing_moment_overrides (
+  id SERIAL PRIMARY KEY,
+  moment_id VARCHAR(64) NOT NULL,
+  field VARCHAR(32) NOT NULL,
+  value TEXT NOT NULL,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_moment_overrides_unique
+  ON marketing_moment_overrides(moment_id, field);
+
+-- DISMISSAL IS PER OCCURRENCE, never per moment. `occurrence_key` is the year
+-- for an annual moment and the month for a rolling one, so clearing the
+-- September holiday push clears THIS September and it returns next year. A
+-- moment-level dismissal would silently delete a recurring revenue prompt
+-- because somebody tidied their screen once.
+CREATE TABLE IF NOT EXISTS marketing_moment_dismissals (
+  id SERIAL PRIMARY KEY,
+  moment_id VARCHAR(64) NOT NULL,
+  occurrence_key VARCHAR(32) NOT NULL,
+  dismissed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  dismissed_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_moment_dismissals_unique
+  ON marketing_moment_dismissals(moment_id, occurrence_key);
+
+
 
 -- ─── Email Marketing: Conversations ────────────────────────────────
 

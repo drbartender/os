@@ -276,6 +276,7 @@ See `.env.example` for the full list. Key ones:
 | `R2_*` | Cloudflare R2 credentials |
 | `RESEND_API_KEY` | Resend email |
 | `MARKETING_SEND_GAP_MS` | Optional. Milliseconds between recipients in a campaign send (`server/routes/marketingSend.js`, default 600). Resend's published limit is 2 requests/second; the send is paced SERIALLY rather than bursting, because a burst that trips the limit fails an arbitrary subset and leaves a partially-sent campaign nobody can resume confidently. Set to `0` in tests. Raising it makes a 500-recipient send take proportionally longer in one open HTTP request. |
+| `RESEND_DAILY_CAP` | Optional. Resend's daily sending allowance (default 100, the free tier). Surfaced on the Marketing Overview as today's send budget and used to flag a moment whose audience will not fit in one day. NOTE the budget counts CAMPAIGN sends only (`email_sends`); the real allowance is also consumed by proposals, invoices and the lifecycle touches, so remaining is an upper bound. |
 | `RESEND_WEBHOOK_SECRET` | Resend webhook signing secret (svix) |
 | `TWILIO_*` | Twilio SMS. `TWILIO_AUTH_TOKEN` is also used to verify the inbound-SMS webhook signature (`POST /api/sms/inbound`). |
 | `STRIPE_SECRET_KEY` / `STRIPE_PUBLISHABLE_KEY` / `STRIPE_WEBHOOK_SECRET` | Stripe live payments |

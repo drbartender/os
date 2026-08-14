@@ -88,6 +88,14 @@ const LEAD_UNSUB_LATERAL = `
 const HELD_BACK_REASONS = ['do_not_contact', 'unsubscribed', 'bounced', 'no_address'];
 
 /**
+ * The proposal statuses that mean "they actually paid us". Exported because
+ * this enumeration was being hand-restated in dashboard queries, which would
+ * silently strand those numbers the first time the list changed.
+ */
+const PAID_STATUSES = ['deposit_paid', 'balance_paid', 'confirmed', 'completed'];
+const PAID_STATUS_IN = PAID_STATUSES.map(s => `'${s}'`).join(',');
+
+/**
  * "Is this person opted out of marketing?" as reusable SQL, keyed on an EMAIL.
  *
  * One human can hold two identity rows: a `clients` row and an `email_leads`
@@ -369,6 +377,8 @@ module.exports = {
   PERSONAL_EVENT_TYPES,
   UNCLASSIFIED_EVENT_TYPES,
   HELD_BACK_REASONS,
+  PAID_STATUSES,
+  PAID_STATUS_IN,
   clientOptedOutByEmail,
   leadUnsubscribedByEmail,
   AUDIENCES,

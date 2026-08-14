@@ -152,8 +152,9 @@ const BlogDashboard = lazy(() => import('./pages/admin/BlogDashboard'));
 const EmailMarketingDashboard = lazy(() => import('./pages/admin/EmailMarketingDashboard'));
 const MarketingLayout = lazy(() => import('./pages/admin/MarketingLayout'));
 const AudiencesTab = lazy(() => import('./pages/admin/marketing/AudiencesTab'));
-const MarketingPlaceholder = lazy(() => import('./pages/admin/marketing/MarketingPlaceholder'));
 const ComposeTab = lazy(() => import('./pages/admin/marketing/ComposeTab'));
+const OverviewTab = lazy(() => import('./pages/admin/marketing/OverviewTab'));
+const SentTab = lazy(() => import('./pages/admin/marketing/SentTab'));
 const EmailLeadsDashboard = lazy(() => import('./pages/admin/EmailLeadsDashboard'));
 const EmailLeadDetail = lazy(() => import('./pages/admin/EmailLeadDetail'));
 const EmailCampaignsDashboard = lazy(() => import('./pages/admin/EmailCampaignsDashboard'));
@@ -621,11 +622,11 @@ function AppRoutes() {
           path="/marketing"
           element={<ProtectedRoute adminStrict><MarketingLayout /></ProtectedRoute>}
         >
-          <Route index element={<AudiencesTab />} />
+          <Route index element={<OverviewTab />} />
           <Route path="audiences" element={<AudiencesTab />} />
-          <Route path="overview" element={<MarketingPlaceholder />} />
+          <Route path="overview" element={<OverviewTab />} />
           <Route path="compose" element={<ComposeTab />} />
-          <Route path="sent" element={<MarketingPlaceholder />} />
+          <Route path="sent" element={<SentTab />} />
         </Route>
       </Route>
 

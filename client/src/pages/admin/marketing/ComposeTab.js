@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
 import RecipientPicker from './RecipientPicker';
@@ -54,6 +55,17 @@ export default function ComposeTab() {
   const [confirming, setConfirming] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const inFlight = useRef(false);
+  // Overview's "Review recipients" deep-links here with the moment's audience
+  // already chosen. Without honoring it the button would drop the operator into
+  // an unfiltered list and quietly lose the one decision the moment had made.
+  const [searchParams] = useSearchParams();
+  // SEAM between two lanes: mkt-h added this deep link (Overview's "Review
+  // recipients" carries the moment's audience) while another window added the
+  // localStorage resume above. When both apply, the RESUME wins. An unfinished
+  // retryable run is the stronger intent, and filtering the picker to a
+  // different audience would hide already-selected people, making the selection
+  // look smaller than it is right before somebody presses Send.
+  const initialAudience = restored ? '' : (searchParams.get('audience') || '');
 
   const loadAudiences = useCallback(async () => {
     setLoadError(null);
@@ -251,7 +263,12 @@ export default function ComposeTab() {
           Only contacts who can be emailed are listed. Anyone unsubscribed, bounced,
           or on the do-not-contact list is already out, and the send re-checks.
         </p>
-        <RecipientPicker audiences={audiences} selected={selected} onChange={setSelected} />
+        <RecipientPicker
+          audiences={audiences}
+          selected={selected}
+          onChange={setSelected}
+          initialAudience={initialAudience}
+        />
       </section>
 
       <section className="mkt-compose-section">

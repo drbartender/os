@@ -4,6 +4,9 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom';
 /**
  * The redesigned Marketing section.
  *
+ * Overview is the landing tab: the section answers "what should I do today"
+ * before it offers a list of contacts to sort through.
+ *
  * This is a NEW layout mounted at /marketing. EmailMarketingDashboard.js keeps
  * its own tabs at /email-marketing untouched: its TABS array is the only
  * navigation to Leads, Campaigns, Analytics and Conversations, and the phase 2
@@ -32,7 +35,7 @@ export default function MarketingLayout() {
             key={tab.path}
             to={tab.path}
             className={({ isActive }) =>
-              `em-tab${isActive || (isRoot && tab.path.endsWith('/audiences')) ? ' em-tab-active' : ''}`
+              `em-tab${isActive || (isRoot && tab.path.endsWith('/overview')) ? ' em-tab-active' : ''}`
             }
           >
             {tab.label}

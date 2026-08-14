@@ -19923,3 +19923,19 @@ html[data-app="admin-os"] .pay-qr-tile {
 .mkt-filter-select { min-width: 200px; }
 .mkt-send-result { margin-top: 1rem; padding: 0.75rem 1rem; border: 1px solid var(--border-light); border-radius: 6px; background: var(--cream); }
 .mkt-preview-frame { width: 100%; height: 70vh; border: 1px solid var(--border-light); border-radius: 4px; background: #fff; }
+
+/* Overview + Sent (lane mkt-h) */
+.mkt-overview, .mkt-sent { display: flex; flex-direction: column; gap: 2rem; }
+.mkt-overview h2, .mkt-sent h2 { margin: 0 0 0.5rem; font-family: var(--font-display); color: var(--deep-brown); font-size: 1.05rem; }
+.mkt-moment { border: 1px solid var(--border-light); border-left: 3px solid var(--amber); border-radius: 6px; padding: 1rem; margin-bottom: 0.75rem; background: var(--cream); }
+.mkt-moment-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.mkt-moment-head h3 { margin: 0; font-family: var(--font-display); color: var(--deep-brown); font-size: 1rem; }
+.mkt-moment-why { margin: 0.4rem 0; color: var(--warm-brown); font-size: 0.9rem; }
+.mkt-moment-count { margin: 0.4rem 0; color: var(--deep-brown); font-size: 0.9rem; }
+.mkt-moment-actions { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.6rem; flex-wrap: wrap; }
+.mkt-moment-editing { display: flex; flex-direction: column; gap: 0.4rem; }
+.mkt-moment-editing label { font-size: 0.8rem; font-weight: 600; color: var(--deep-brown); }
+/* The honest numbers are bigger on purpose: they are the argument for the
+   whole section, not a footnote to it. */
+.mkt-numbers li { font-size: 1rem; padding: 0.3rem 0; }
+.mkt-numbers li span:last-child { font-weight: 700; }

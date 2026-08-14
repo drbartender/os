@@ -324,11 +324,18 @@ test('no event-type spelling in the database falls through every list', async ()
     ...CORPORATE_EVENT_TYPES, ...PERSONAL_EVENT_TYPES, ...UNCLASSIFIED_EVENT_TYPES,
     'walk-fixture', // a dev-only test fixture, not a real event type
   ]);
+  // Server suites share ONE dev database, and other windows run their suites
+  // concurrently. Their fixtures appear in this table mid-run, so an assertion
+  // over live state has to ignore anything self-identifying as a fixture or it
+  // fails for reasons that have nothing to do with the vocabulary. Narrow on
+  // purpose: only spellings that literally say "test" are skipped, so a real
+  // event type can never hide behind this.
+  const looksLikeFixture = (n) => /(^|-)test(-|$)|(^|-)fixture(-|$)/.test(n);
   const { rows } = await pool.query(`
     SELECT DISTINCT btrim(lower(regexp_replace(event_type, '[^a-zA-Z0-9]+', '-', 'g')), '-') AS n
       FROM proposals
      WHERE status <> 'archived' AND event_type IS NOT NULL AND btrim(event_type) <> ''`);
-  const unclassified = rows.map(r => r.n).filter(n => !known.has(n)).sort();
+  const unclassified = rows.map(r => r.n).filter(n => !known.has(n) && !looksLikeFixture(n)).sort();
   assert.deepEqual(unclassified, [],
     `unclassified event types: add each to CORPORATE_EVENT_TYPES, ` +
     `PERSONAL_EVENT_TYPES, or UNCLASSIFIED_EVENT_TYPES: ${unclassified.join(', ')}`);

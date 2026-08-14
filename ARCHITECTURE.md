@@ -601,6 +601,10 @@ client base.
 |---|---|---|---|
 | PUT | `/contacts/:id/tags` | Admin | Replace a contact's marketing tag set (full set, not a delta) |
 | PUT | `/contacts/:id/do-not-contact` | Admin | Set or clear the house do-not-contact rule; setting requires a reason |
+| GET | `/overview` | Admin | Moments (derived, never stored), the year-honestly numbers, the Needs-You queue, the reachable base, today's send budget |
+| PUT | `/moments/:id` | Admin | Rewrite a moment's WORDS. The rule, audience and window are code and are rejected here. Stores only the fields sent; null clears one back to the authored default |
+| POST/DELETE | `/moments/:id/dismiss` | Admin | Dismiss THIS OCCURRENCE only (year for an annual moment, month for a rolling one), so a recurring prompt returns rather than vanishing |
+| GET | `/sent` | Admin | Campaigns with sent/opened/clicked and BOOKED: a recipient created a proposal within 30 days of receiving it, counted once per client |
 | POST | `/campaigns/:id/send` | Admin | The campaign send. Body `{client_ids}`. Re-checks mailability, dedupes by lowercased address, claims each recipient before calling Resend, paces serially, stops resumably on a quota 429 |
 | PUT | `/contacts/:id/email-status` | Admin | Clear a bad `email_status` back to `ok` (one-way; marking bad stays with the webhook). No UI yet, wire it in lane mkt-d |
 | GET | `/contacts` | Admin | Paginated contacts with tags, derived state, mailability, held-back buckets, quick-filter counts, and suggestions |
@@ -1544,6 +1548,15 @@ Admin entry points: "Shopping List" button on Drink Plan Detail (visible wheneve
 - `resend_id` — Resend message ID for webhook correlation
 - `subject`, `status`: queued | sent | delivered | opened | clicked | bounced | complained | failed
 - `opened_at`, `clicked_at`, `bounced_at`, `complained_at`, `error_message`
+
+**marketing_moment_overrides** — Rewritten moment copy (lane mkt-h)
+- `id` SERIAL PK, `moment_id` VARCHAR(64), `field` VARCHAR(32), `value` TEXT, `updated_by` FK users ON DELETE SET NULL, `updated_at`
+- UNIQUE on `(moment_id, field)`. **One row per field actually rewritten**, never a whole record: an untouched field keeps tracking the authored default in `server/utils/marketingMoments.js`, so improving the stock copy later still reaches every moment nobody edited. Storing the record on first edit would freeze all three fields the moment somebody fixed a typo in one. The client enforces the same thing by sending only changed fields.
+- A moment's RULE, AUDIENCE and WINDOW are code and are rejected by `PUT /api/marketing/moments/:id`. A moment whose rule drifted from its prose would put authored reasoning in front of the wrong people.
+
+**marketing_moment_dismissals** — Per-occurrence dismissal (lane mkt-h)
+- `id` SERIAL PK, `moment_id` VARCHAR(64), `occurrence_key` VARCHAR(32), `dismissed_by` FK users ON DELETE SET NULL, `dismissed_at`
+- UNIQUE on `(moment_id, occurrence_key)`. **`occurrence_key` is the whole point**: the year for an annual moment, the month for a rolling one. Clearing the September holiday push clears THIS September and it returns next year. A moment-level dismissal would silently delete a recurring revenue prompt because somebody tidied their screen once, and nobody would ever learn why it stopped appearing.
 
 **email_conversations** — Two-way conversation records
 - `id` SERIAL PK, `lead_id` FK, `email_send_id` FK

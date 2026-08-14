@@ -17,8 +17,8 @@ const PAGE_SIZE = 50;
  * time is not a real workflow, and a control that silently means "this page
  * only" is how someone sends to 50 people believing they sent to 300.
  */
-export default function RecipientPicker({ audiences, selected, onChange }) {
-  const [audience, setAudience] = useState('');
+export default function RecipientPicker({ audiences, selected, onChange, initialAudience = '' }) {
+  const [audience, setAudience] = useState(initialAudience);
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [page, setPage] = useState(1);
