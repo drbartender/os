@@ -259,6 +259,24 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       so it cannot ship-and-bury like everything else in this file did. (Sep 5 deadline
       pressure is exactly the condition that buries walkthroughs.)
 
+- [ ] **Proposals list pagination.** Lane `prop-pagination` squash-merged to main as
+      `1dc72df6` on 2026-08-13, UNPUSHED. **Never opened in a browser**, deliberately and
+      explicitly: the walk needed a second dev server and a local admin token, both denied by
+      the permission classifier mid-build, and nothing was routed around. Static gates that
+      DID pass: ESLint clean on the file, `CI=true react-scripts build` on merged main, the
+      `useUrlListState` suite (5/5), and a `code-review` pass that found no critical bugs and
+      proved the stale-page guard terminates. So the code is reviewed, not witnessed.
+      The walk, on `/proposals`: page through Active to the last page and back; from page 3
+      flip to the Draft tab and confirm it lands on page 1 with rows (a missed filter writer
+      shows up as an empty table); sort by price from page 2 and confirm the same reset;
+      confirm a sub-50 tab shows no pager and reads exactly as before; hit `/proposals?page=99`
+      and confirm it snaps back rather than sitting empty; and apply a zero-match filter and
+      confirm no URL churn. Full steps in
+      `docs/superpowers/plans/2026-08-12-proposals-pagination.md`, Task 2 Step 6.
+      One known, accepted cosmetic edge: an option group whose members straddle a page
+      boundary renders on both pages with a split "N options" badge. That is by design, not
+      a bug to report.
+
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
 - [ ] **Potions recipe review pass** — 6 low-confidence drafts of ~41. **This gates the prod
