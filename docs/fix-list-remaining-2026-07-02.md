@@ -15,6 +15,10 @@ inline (marked RETRACTED / CORRECTED) as provenance — several plausible findin
 on inspection, and the reasoning is worth more than a clean page. Re-verify line numbers
 before building anything; other windows edit both the code and this file.
 
+2026-08-14 full audit: every open entry below was verified against code on main (e6e6edaf).
+Stale entries are marked inline with that date; ~190 open items were re-confirmed genuinely
+open in code, so an unmarked entry is a verified-open entry as of that date.
+
 ## Shipped & LIVE (was the backlog, now done)
 - **cc-import rework — ALL 3 PHASES LIVE 2026-07-07.** Phase 1: 187 CheckCherry clients. Phase 2: frozen CC-era ledger (P&L penny-tie) + v1 demolition (13.5K lines) + blended dashboard/financials metrics (include_cc tri-state, close rate). Phase 3: 13 future events transferred to native confirmed proposals (money override-locked, external_paid folded, durable nudge suppression, comms-guarded). Post-transfer fix: 3 events' rosters (Cody/Shazana/Cecilia) had a spurious additional-bartender add-on stripped -> 2 bartenders each. See [[project-cc-clients-import]].
 - **Admin cross-navigation — LIVE 2026-07-07.** 6 lanes: clickable EntityLink entity refs + useUrlListState URL view-state across proposals/clients/events/staffing/comms/money surfaces. Shared primitives (EntityLink, useUrlListState, ScrollToTop, useDrawerParam).
@@ -28,23 +32,23 @@ before building anything; other windows edit both the code and this file.
 - **Dashboard / Financials redesign (Money Board)** — SHIPPED, PUSHED LIVE 2026-07-10 (f6c9c90, batch e99fbb6..f6c9c90; sweep CLEAN on the 3 seam files, zero sensitive paths): all 7 lanes merged (a list-filters 8aff846, b1 shell 5560d16, b2 analysis 16a4fed, b3 rainbow chart 345592e, c payroll card f80057c, d payouts focus cbb83dc, e prep queue 6c9ae0b), each per-lane reviewed (3 review FAILs found real bugs, all fixed pre-merge). Suites green on merged main (13+2+6), CI build exit 0, backend boots. Spec/plan: `docs/superpowers/specs/2026-07-09-money-board-design.md`, `docs/superpowers/plans/2026-07-09-money-board.md`. Owed now on PROD: Dallas eyeball smoke (both skins + rainbow palette + 390px + chart hover/zoom/Compare) and the manager walk (manager-test login exists on DEV only; prod walk needs a prod manager account or do it on the dev box, network tab must show zero /admin/payroll/* calls). NEXT PICK: the committed split-by metrics lane (spec section 11).
 - **Split-by metrics lane (COMMITTED follow-up, per Dallas 2026-07-09)** — MERGED to main 2026-07-13 (0861a41, lane splitby-a): close rate + revenue split by event type and lead source on the Funnel card. New native-only `GET /api/proposals/metrics-split` sibling (LAW dashboard-stats/financials byte-frozen); query-time vocabulary normalization merges the twin event-type vocabularies + `__untyped` sentinel; list-route `event_type` filter now normalizes both sides for the drill-outs; Funnel card gains a URL-backed `Split: None | Source | Type` seg. Server suites green (metricsSplit 12, crud.filters 17), CI client build exit 0, `metadata.shapes` LAW untouched. Spec/plan: `docs/superpowers/specs/2026-07-13-split-by-metrics-design.md`, `docs/superpowers/plans/2026-07-13-split-by-metrics.md`. Chart split DEFERRED per spec §10.
 - **Bar Program -> POTIONS** — BUILT 2026-07-09 per `docs/superpowers/specs/2026-07-09-potions-bar-program-design.md` + plan `docs/superpowers/plans/2026-07-09-potions-bar-program.md`; PUSHED LIVE 2026-07-09 (ba83407). /potions home (Menu + Recipes + Pars + plans drawer), single par catalog with call-on conditions, 41 draft recipes ready to seed, generator catalog-driven, client mirror killed. Owed: Dallas recipe review pass (6 low-confidence drafts), prod seedRecipeDrafts run (dry-run first). See [[project-bar-program]].
-  - **SEED-RUN GATE: CLEARED 2026-07-09** (lane potions-g-gatefixes, merged a0c2a8a; awaiting next push). All 4 second-opinion findings fixed + regression-tested (28/28): (1) mocktails-only serving merges recipes; (2) seed script post-write parity validates LIVE rows + drift report; (3) Peychaud's normalized aliases (script + dev row); (4) matching-mixers pulls from the new pairableItems slice (all active mixer/garnish rows). Prod seed run is un-gated once this push ships.
+  - **SEED-RUN GATE: CLEARED 2026-07-09** (lane potions-g-gatefixes, merged a0c2a8a; SHIPPED — on origin/main, 2026-08-14 audit). All 4 second-opinion findings fixed + regression-tested (28/28): (1) mocktails-only serving merges recipes; (2) seed script post-write parity validates LIVE rows + drift report; (3) Peychaud's normalized aliases (script + dev row); (4) matching-mixers pulls from the new pairableItems slice (all active mixer/garnish rows). Prod seed run is un-gated (the push shipped); the run itself is still owed, after Dallas's recipe pass.
 - **Compare-page reskin** — `docs/compare-page-design-prompt.md`, sitting since 7/2; can ride either session above.
-- **Potion Planner rework (client wizard)** — prompt doc committed 2026-07-15: `docs/potion-planner-design-prompt.md` (current-state map, file refs, ranked confusion inventory incl. Dallas's balance-questions ask, money-path law). Flow/comprehension redesign in the existing skin, claude.ai/design session next. Absorbs the deferred 7/13 items #1 (custom drinks/mocktails on shopping list) and #2 (better balance questions).
-- **Client-detail messaging (QUEUED 2026-07-14, from Needs-Attention-tabs spec §7)** — full SMS history + reply on the client details page; Messages nav demotes to an "All messages" link; the overview's unread-SMS queue items retarget to the client page (one-line change). Driver: finding a thread in the Messages tab is too tedious. Endpoints already exist (`/sms/conversations/:clientId` + reply route).
+- **Potion Planner rework (client wizard)** — prompt doc committed 2026-07-15: `docs/potion-planner-design-prompt.md` (current-state map, file refs, ranked confusion inventory incl. Dallas's balance-questions ask, money-path law). Flow/comprehension redesign in the existing skin, claude.ai/design session next. Absorbs the deferred 7/13 items #1 (custom drinks/mocktails on shopping list) and #2 (better balance questions). **BUILT & SHIPPED 2026-07-18 as Planner v2** (pp2 lanes: `client/src/pages/plan/v2/PlannerV2.js` via PlannerRouter, `planner_version >= 2` branch at `drinkPlans/submit.js:92` — 2026-08-14 audit). Residuals live in the Planner v2 sections below; this design session is done.
+- **Client-detail messaging (QUEUED 2026-07-14, from Needs-Attention-tabs spec §7)** — full SMS history + reply on the client details page; Messages nav demotes to an "All messages" link; the overview's unread-SMS queue items retarget to the client page (one-line change). Driver: finding a thread in the Messages tab is too tedious. Endpoints already exist (`/sms/conversations/:clientId` + reply route). **CORE SHIPPED** (lane sms-client-panel 9020c68a: `ClientDetail.js:271` renders the Messages card + ClientConversation reply — 2026-08-14 audit; the Messages-nav demotion and overview-retarget halves of this entry were not separately verified).
 - **Menu design page (QUEUED 2026-07-14, from Needs-Attention-tabs spec §7)** — real workflow over the planner-captured menu prefs (`menuStyle`/`menuTheme`/`drinkNaming`/`menuDesignNotes`); produces a real artifact and the done-state that then powers "menu to design" Prep queue items (deliberately NOT hand-flagged in the tabs build). Dallas has page ideas to brainstorm.
 
 ## Scope calls needed before scoping
 - **Classes / field guide** — restyle existing (`ClassWizard.js` booking wizard + `FieldGuide.js` staff doc; redesign brief already covers restyles) OR new marketing/content pages? Unresolved.
 - **Staff payment system** — quiet for weeks; superseded by the shipped paystub/payroll work, or still queued (minimal-first, absorbs multi-bartender tipping)?
 
-## Known-bugs batch — FIXED on main 2026-07-14 (UNPUSHED, awaiting Dallas push cue)
+## Known-bugs batch — FIXED on main 2026-07-14, since PUSHED (header corrected 2026-08-14)
 The 14-bug sweep below (B1-B14) was re-verified against HEAD by a parallel
 investigation, specced + plan-reviewed (docs/superpowers/{specs,plans}/2026-07-14-known-bugs-batch*),
 built in 8 file-disjoint lanes (kb-a..kb-h), each per-lane review-fleet clean
 (full fleet on the 7 money/sensitive lanes, light on kb-h), and squash-merged
-(90f3029..419f585 + docs c1bfd2c). NOT PUSHED. At push: full fleet +
-/second-opinion on the sensitive commits + money-smoke gate.
+(90f3029..419f585 + docs c1bfd2c). CORRECTED 2026-08-14: long since pushed —
+419f585 is an ancestor of origin/main; the old "NOT PUSHED / at push" state is history.
 - **B1 refund-leaves-booking-live** — FIXED (M-1 archive-does-the-reaping): shared `shiftReap.js`, archive endpoint reaps shifts + pending messages + voids invoices, refund UI prompts archive at amount_paid=0, eventStatusChip 'Cancelled' branch, email-only staff notify on reap.
 - **B2 archive_reason** — FIXED: reason picker (allowlist, default no_hire, client_cancelled default on the refund-prompt path), written + displayed in the archived list.
 - **B3 post-cancel money doors** — FIXED: 409 EVENT_CANCELLED on the invoice AND drink-plan public intent routes; settle-on-archived Sentry+admin alert in both webhook handlers; cancel cancels PIs on surviving invoices too.
@@ -68,29 +72,37 @@ built in 8 file-disjoint lanes (kb-a..kb-h), each per-lane review-fleet clean
 - **B4/B13:** a held reimbursement clawed to exactly 0 while the worker is still off-roster is deleted by the next sweep's adj==0 path (loses only the audit note, zero money). B11 NULL-CallSid dead legs (non-prod, forged posts fail signature) no longer write a forensic audit row.
 - **B10:** if Thumbtack counts repeated 503s toward webhook health/auto-disable, a crash-strand whose only retry lands inside the 10-min window stays unhealed until manual replay (lead+client rows are committed and visible). B6: an ambiguous-error pending row blocks that charge's headroom for ~45 min and is invisible in refund history until the sweeper resolves it.
 
-## Known bugs (prod-confirmed, unbuilt)
+## Known bugs (prod-confirmed, unbuilt) — STALE SECTION, both FIXED (2026-08-14 audit)
+
+Written before the known-bugs batch above landed; both entries shipped with it, and the
+batch is pushed. Refund-leaves-booking-live = B1 (`shiftReap.js`; `actions.js:498` reaps
+shifts/messages/invoices in the archive tx; the panel prompts archive at amount_paid=0).
+`archive_reason` = B2 (`actions.js:444-446` validates + `:491-492` writes it; also
+`cancel.js:306`; pinned by `archive.test.js`). The `actions.js:397` pointers below are
+stale (the archive endpoint now sits ~`:440`). Kept as provenance; nothing below is open.
+
 - **A refund on a paid proposal leaves the entire booking live.** Found 2026-07-09 on proposal 500 (Shruti Parekh: refunded 7/1, still sitting on the Events board 8 days later with 11 pending client reminders queued). `issueRefund` (`server/utils/refundHelpers.js`) reverses the payment, reverses the linked invoice(s), and downgrades `proposals.status` back to `accepted` (`refundHelpers.js:282-283`). It touches nothing else: that file has zero references to `shifts` or `scheduled_messages`. So a fully-refunded booking keeps (1) its auto-created shift at `status='open'`, visible on the Events board *and* in the staff open-shifts feed, where a bartender can and did apply to work a cancelled event; (2) its balance invoice at `status='sent'`, still dunnable; (3) its whole pending `scheduled_messages` ladder. The dispatcher's `checkSuppression` gates only on `proposal.status === 'archived'` (`scheduledMessageDispatcher.js:140`), and `accepted` is not `archived`, so balance reminders (which recompute `total_price - amount_paid > 0`), drink-plan nudges, event-week and event-eve reminders all keep firing at the refunded client.
   - Compounding it: `POST /proposals/:id/archive` (`actions.js:397`) voids invoices and suppresses messages but **never touches shifts**; and neither the admin Events feed (`shifts.js:40`) nor `EventsDashboard.js` filters on `shifts.status` or `proposals.status`. So archiving the proposal does not remove the row, and soft-cancelling the shift does not either. Only a hard `DELETE FROM shifts` does.
   - Manual cleanup performed for 500: archive via the UI (Dallas) + `DELETE FROM shifts WHERE id=337` (cascaded one pending `shift_requests` row; no `payout_events`, so no payroll exposure). The staffer who had applied was never notified, since no code path does that.
   - Fix directions, unscoped: reap on refund-to-zero (shift + invoice + scheduled_messages together), or widen `checkSuppression` past its archived-only gate; teach the archive endpoint to reap shifts; filter cancelled shifts and archived proposals out of the Events feed. Same family as the open seam-sweep `record-payment status-downgrade` item.
 - **`archive_reason` is never written by the archive endpoint.** `actions.js:397` sets `status='archived'` and leaves the column NULL. The CHECK constraint allows `no_hire`, `client_cancelled`, `we_cancelled`, `event_completed`, `other`, `option_not_chosen`, but only `option_not_chosen` has a live writer (`proposalGroupCommit.js`). Every manually archived proposal therefore shows no reason in the archive bucket. Small: wants a reason picker on the archive action.
 
-## Post-push review 2026-07-13 residuals (confirmed P2s, deliberately deferred)
+## Post-push review 2026-07-13 residuals (confirmed P2s) — 6 of 8 since FIXED (2026-08-14 audit)
 The 27-commit batch (031fb6d..77005c5) got its push-time fleet + /second-opinion pass AFTER the push; the two P1s it found (drink-plan rails unreachable by /cancel/refund; UTC-vs-Chicago notice date) plus the pending-refund retry double-issue were fixed same-day in lane `cancel-refund-hotfix` (merged e97dfec, all confirmed by regression tests that fail pre-fix). These confirmed P2s remain, all conservative-direction or narrow-window:
-- **Post-cancel money doors.** A partially-paid invoice survives cancel as `partially_paid`, and `create-intent-for-invoice/:token` (`stripe.js:~536`) has no archived-proposal guard, so a client on a stale emailed link can keep paying a cancelled event; likewise an intent already `processing` at cancel time settles later (the webhook credits archived proposals unconditionally — only status promotion is guarded). Money lands outside the refund math; a /cancel/refund re-run picks it up, but nothing prompts one. Fix direction: archived guard on the public invoice intent route + Sentry/admin alert when a payment lands on an archived proposal.
-- **`payout_events.held_state` is invisible to the clawback/late-tip ON CONFLICT upserts** (`payrollClawback.js:196-212`, `payrollLateTip.js:168-182`): their DO UPDATE recomputes `line_total` with no held awareness, so a narrow remove→re-approve→tip-refund chain can resurrect a HELD reimbursement as payable with `held_state='held'` (breaks paystub footing). Fix direction: make both upserts preserve held zeroing, or trigger re-accrual on shift_request approval.
-- **Cancel-refund retry can over-refund via the retainer feedback loop**: `applyRefundReconciliation` decrements `invoices.amount_paid`, and `retainerCents` reads live from the Deposit invoice, so a second /cancel/refund run after a mid-loop failure computes a higher client-mode target (~+5% of retainer). Converges after one extra run; pending-netting (now shipped) narrows it. Fix direction: snapshot the agreement target at cancel time (activity log already records `refund_owed_cents`) and cap lifetime cancel refunds against it.
-- **Stranded pre-Stripe `pending` refund row has no healer.** Pending rows now (correctly) block refund headroom; a row orphaned by a crash BEFORE the Stripe call can never be webhook-adopted and permanently under-refunds until a manual `UPDATE ... SET status='failed'`. Also invisible in the refunds history (`stripe.js:399` filters pending). Fix direction: stale-pending sweeper that reconciles rows older than N minutes against Stripe. Related inverse hole (pre-existing): `refundExecute.js:68` marks 'failed' on ANY Stripe error including ambiguous timeouts where the refund may exist — only definitive rejections should fail the row.
-- **`shortfall_cents` isn't surfaced in CancelEventDialog** — server returns it + Sentry warns, but the admin toast still reads as complete. One-line UI add whenever the dialog is next touched. (Legacy-CC / manual payments are the live trigger: refund those by hand.)
+- **Post-cancel money doors — FIXED** (= B3: `stripe.js:564-570` throws EVENT_CANCELLED for archived proposals on the public intent route; `stripe.invoiceIntentArchived.test.js` + `stripeWebhook.archivedSettle.test.js`). Original: A partially-paid invoice survives cancel as `partially_paid`, and `create-intent-for-invoice/:token` (`stripe.js:~536`) has no archived-proposal guard, so a client on a stale emailed link can keep paying a cancelled event; likewise an intent already `processing` at cancel time settles later (the webhook credits archived proposals unconditionally — only status promotion is guarded). Money lands outside the refund math; a /cancel/refund re-run picks it up, but nothing prompts one. Fix direction: archived guard on the public invoice intent route + Sentry/admin alert when a payment lands on an archived proposal.
+- **`payout_events.held_state` is invisible to the clawback/late-tip ON CONFLICT upserts — FIXED** (= B4: both DO UPDATEs now branch on held, `payrollClawback.js:207-215` + `payrollLateTip.js:177-185`). Original (`payrollClawback.js:196-212`, `payrollLateTip.js:168-182`): their DO UPDATE recomputes `line_total` with no held awareness, so a narrow remove→re-approve→tip-refund chain can resurrect a HELD reimbursement as payable with `held_state='held'` (breaks paystub footing). Fix direction: make both upserts preserve held zeroing, or trigger re-accrual on shift_request approval.
+- **Cancel-refund retry can over-refund via the retainer feedback loop — FIXED** (= B5: `cancel.js:529-547` caps against the cancelled-row `refund_owed_cents` snapshot + post-cancel headroom). Original: `applyRefundReconciliation` decrements `invoices.amount_paid`, and `retainerCents` reads live from the Deposit invoice, so a second /cancel/refund run after a mid-loop failure computes a higher client-mode target (~+5% of retainer). Converges after one extra run; pending-netting (now shipped) narrows it. Fix direction: snapshot the agreement target at cancel time (activity log already records `refund_owed_cents`) and cap lifetime cancel refunds against it.
+- **Stranded pre-Stripe `pending` refund row has no healer — FIXED** (= B6: `refundSweepScheduler.js` wired at `index.js:572`; and `refundExecute.js:84-95` now fails rows only on definitive Stripe rejections, closing the inverse hole too). Original: Pending rows now (correctly) block refund headroom; a row orphaned by a crash BEFORE the Stripe call can never be webhook-adopted and permanently under-refunds until a manual `UPDATE ... SET status='failed'`. Also invisible in the refunds history (`stripe.js:399` filters pending). Fix direction: stale-pending sweeper that reconciles rows older than N minutes against Stripe. Related inverse hole (pre-existing): `refundExecute.js:68` marks 'failed' on ANY Stripe error including ambiguous timeouts where the refund may exist — only definitive rejections should fail the row.
+- **`shortfall_cents` isn't surfaced in CancelEventDialog — FIXED** (= B7: `CancelEventDialog.js:108-111` toast + `:268-270` persistent warning; `CancelEventDialog.test.js:76,93`). Original: server returns it + Sentry warns, but the admin toast still reads as complete. One-line UI add whenever the dialog is next touched. (Legacy-CC / manual payments are the live trigger: refund those by hand.)
 - **Cancel-path frozen-period clawback deferral retry loses the pre-denial bartender list** (`payrollDeferredRetry.js:28` replays without opts; by then shift_requests are denied → marker advances with zero clawed). Defense-in-depth path only; near-unreachable by construction.
 - **Boot re-asserts P4 floor values** (`schema.sql:2119` UPDATE runs at every initDb): hand-tuning `min_total`/`min_billed_guests` in SQL silently reverts on next deploy. By design for a seed-managed table — just know the only way to change floors is editing schema.sql.
-- **`checkoutSessionCompleted.lastMinute.test.js` never calls `registerAll()`** — the deposit-paid reminder scheduling errors (swallowed, non-blocking) in every smoke run, so the suite isn't asserting reminders get scheduled. Prod is safe (`server/index.js:518` registers before any webhook can dispatch). One-line `before()` fix mirroring `preEventScheduling.test.js:23`.
+- **`checkoutSessionCompleted.lastMinute.test.js` never calls `registerAll()` — FIXED** (= B8: `before()` calls `preEventHandlers.registerAll()` at `:127`). Original — the deposit-paid reminder scheduling errors (swallowed, non-blocking) in every smoke run, so the suite isn't asserting reminders get scheduled. Prod is safe (`server/index.js:518` registers before any webhook can dispatch). One-line `before()` fix mirroring `preEventScheduling.test.js:23`.
 
 ## Specced, deliberately parked
 - **Drink-plan edit lock (Option A)** — decouple the lock from submit (currently `status IN ('submitted','reviewed')` in `drinkPlans/submit.js`), tie to `shopping_list_status`, add an admin "reopen for client" control. Option B (autosave tracking) already exists. Medium; event-side-canonical drink-plan territory.
 
 ## Dallas-owned / skipped by his call
-- **Intro message: remove phone, add cal.com link** — candidates: `smsInbound.js:15` HUMAN_CONTACT_LINE + client `COMPANY_PHONE` (`constants.js`). `CAL_BOOKING_URL` already wired.
+- ~~**Intro message: remove phone, add cal.com link**~~ **CLOSED 2026-08-14** — the 8/14 decision (bottom of this file) keeps the 312 in staff auto-replies, and the client `COMPANY_PHONE` already moved to the 1922 with phone 1a (`constants.js:5`). `CAL_BOOKING_URL` already wired.
 - **Syrup picker** — suspected bug: generators never cross-check `syrupSelfProvided` vs comped/paid `proposalSyrups` (`addSelfProvidedSyrups`, both mirrored generators). Re-diagnose fresh; pay-now-extras comp-fold touched this territory.
 
 ---
@@ -106,10 +118,10 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 
 ## Small deferred / tech-debt
 - **crud.js `/:id/legacy-cc-payments`** — now clientless (CC demolition deleted its only consumer); dead endpoint in sensitive `proposals/`, remove in a later proposals-touching lane.
-- Refunds-on-invoice: a payment split across multiple invoices shows the FULL refund on each (rare, informational). Apportion if it bites.
+- ~~Refunds-on-invoice: a payment split across multiple invoices shows the FULL refund on each (rare, informational). Apportion if it bites.~~ **DONE** (lane refund-attribution c89fe834: `invoices.js:105-119` two-regime LATERAL, `invoices.refunds.test.js` — 2026-08-14 audit).
 - Payment accounting: non-flat add-on comp residual (brief owed).
-- Audit leftover: manager iCal in `calendar.js` (last open audit item).
-- Tech debt: `notifications_opt_in` dead column DROP (4 test fixtures still INSERT it); `.form-select` focus padding-right; no-tip-jar badge redness vs last-minute badge; `.staffing-stat strong` ink emphasis.
+- ~~Audit leftover: manager iCal in `calendar.js` (last open audit item).~~ **CLOSED** — confirmed intended 2026-07-13 (`docs/audit-2026-07-13/tech-debt-register.md` F-ICAL); manager treated as admin at `calendar.js:348,488` (2026-08-14 audit).
+- Tech debt: ~~`notifications_opt_in` dead column DROP (4 test fixtures still INSERT it)~~ **DONE** (aebd5562, `schema.sql:4341`; zero fixture INSERTs remain — 2026-08-14 audit); still open: `.form-select` focus padding-right; no-tip-jar badge redness vs last-minute badge; `.staffing-stat strong` ink emphasis.
 - Empty v1 tables (`legacy_cc_raw_imports`, `cc_import_runs`, `cc_import_phase0_failures`) stay as harmless scaffolding. Dev v1 junk SCRUBBED 2026-07-14: 176 v1 proposals (+ shifts/refunds/scheduled messages) and 1,199 v1 clients deleted transactionally with verification; 16 CC-marked clients with real proposals kept; ~1,207 dev `legacy_cc_proposals.client_id` links nulled (no live consumer); 22 `users.cc_id` rows deliberately untouched.
 
 ## Potion custom-recipe flow residuals (2026-07-16, full-fleet accepted-not-fixed)
@@ -125,8 +137,11 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
   component or hoist options if the catalog grows several-fold.
 - `loadRecipeCandidates` awaits serially after the resolveDrinkIds Promise.all
   in `buildPlannerGeneratorInput` (~one extra Neon round-trip per regenerate).
-- `server/routes/drinkPlans.js` is ~795 lines (soft cap 700); next change in
-  that file should carry the split (per-concern extraction, proposals/ pattern).
+- ~~`server/routes/drinkPlans.js` is ~795 lines (soft cap 700); next change in
+  that file should carry the split (per-concern extraction, proposals/ pattern).~~
+  **DONE** — split landed, drinkPlans.js is now 622 (coverageContext/lab/submit/
+  regenerate/shoppingList extracted). **NEW 2026-08-14: `drinkPlans/submit.js` has
+  regrown 599→717, back over the soft cap; next touch there carries a trim.**
 - PantryParsTab.js reads `err.response?.data?.*` (lines ~83/93/129), always
   undefined under the api.js interceptor, so its toasts degrade to generic
   copy; same defect class fixed in RecipeEditor. Quick fix on main.
@@ -167,7 +182,10 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
   "concurrent confirm" reason; recoverable by editing the list (PUT reverts
   to pending_review). Rare; strictly better than the double-email it replaced.
 - Route-level tests for POST /api/comms/send (T5 debt): subject caps, header
-  hygiene, empty-channel rule, retry guard, partial-failure shape.
+  hygiene, empty-channel rule, retry guard, partial-failure shape. (2026-08-14:
+  `comms.silent.test.js` now covers the empty-channel rule + a retry-guard
+  interaction at route level; still missing subject caps, header hygiene, and
+  the partial-failure shape.)
 - messageLog proposalId foot-gun: any future admin-alert send that passes
   meta.proposalId lands on the client-facing Messages card.
 
@@ -200,7 +218,7 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 - CONFIRM: F5 ginger-ale removal was extrapolated from the Midrange/Enhanced purge (flagged by the lineup script; DB + prose already reflect removal).
 - RECONCILE: Grand Experiment stocks Miller Lite in package_items but the marketing prose omits it — add to prose or drop from lineup.
 - CONTENT CALL: Enhanced has no triple sec, so Margarita is FENCED on Enhanced (old marketing copy said "sharp enough for margaritas"); and no citrus add-on exists, so a Midrange margarita reads unmakeable rather than fenced. Options: add triple sec to Enhanced contents, create a citrus/liqueur add-on, or accept the honest fence/unmakeable readings.
-- pp2 lane branches await the -D nod (worktrees removed; shared-file tails make the byte-diff check inapplicable): pp2-recipe-card, pp2-package-editor, pp2-lineup, pp2-quantity-review, pp2-planner (+ pp2-core already deleted).
+- ~~pp2 lane branches await the -D nod (worktrees removed; shared-file tails make the byte-diff check inapplicable): pp2-recipe-card, pp2-package-editor, pp2-lineup, pp2-quantity-review, pp2-planner (+ pp2-core already deleted).~~ **DONE — all five branches deleted** (`git branch` lists none, 2026-08-14 audit).
 
 **Tech-debt / small residuals:**
 - ~~server/routes/drinkPlans/submit.js at 865 lines (soft cap 700): split by the established per-concern pattern on next touch~~ **DONE 2026-07-22** (lane fs-split-drinkplans): submitSanitize.js + submitNotify.js extracted; submit.js 830→599.
@@ -208,14 +226,15 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 - Perf quick-wins (performance fleet, optional): narrow coverageContext's SELECT * FROM par_items; hoist DrinksV2 typeahead pool memo; precompute DrinksV2 tab counts.
 - QR lane residuals: per-item admin_set flag rides the public payload (inert); no un-hold UI for admin-set quantities; buffer chips informational only (per-event override deferred by metadata-only scope).
 - Legacy planner drain: delete client/src/pages/plan/steps/ + data/drinkUpgrades.js + DRINK_SYRUP_MAP/pricing exports in data/syrups.js after the last planner_version=1 draft submits (query: SELECT COUNT(*) FROM drink_plans WHERE planner_version=1 AND status IN ('pending','draft')).
-- **pp2-lab fleet advisories (all non-blocking, 2026-07-18):** (1) pay-then-add delta invoice line items list the cumulative lab set with the drift folded into the last line — amount_due is exact, labels warp; consider delta-scoped selections or an explicit "less previously invoiced" credit line. (2) Client removes additions AFTER paying the lab invoice → over-collection silently retained (admin refunds manually; DRB-favorable, surfaced at list re-approval). (3) Lab PUT accepts any active non-Jack addon slug, wider than the UI advertises — priced correctly, input-surface note only. (4) refreshListAfterLabChange fires per save with no per-plan coalescing (correct, off-response-path; cheap robustness win). (5) No in-flight guard on the debounced client save (server FOR UPDATE serializes; self-heals). (6) Syrup shopping-list strip matches by normalized-name substring — admin re-approval is the backstop. (7) A syrup already priced into pricing_snapshot.syrups is still offered by GET but bills $0 (v1-snapshot plans only; v2 has no planner syrup picker).
+- **pp2-lab fleet advisories (all non-blocking, 2026-07-18):** (1) pay-then-add delta invoice line items list the cumulative lab set with the drift folded into the last line — amount_due is exact, labels warp; consider delta-scoped selections or an explicit "less previously invoiced" credit line. (2) Client removes additions AFTER paying the lab invoice → over-collection silently retained (admin refunds manually; DRB-favorable, surfaced at list re-approval). (3) ~~Lab PUT accepts any active non-Jack addon slug~~ **FIXED** (fc3780fc: `offeredSlugs` allowlist at `lab.js:189-196`; `sanitizeLabAddOns` throws on out-of-list — 2026-08-14 audit). (4) refreshListAfterLabChange fires per save with no per-plan coalescing (correct, off-response-path; cheap robustness win). (5) No in-flight guard on the debounced client save (server FOR UPDATE serializes; self-heals). (6) Syrup shopping-list strip matches by normalized-name substring — admin re-approval is the backstop. (7) ~~A syrup already priced into pricing_snapshot.syrups is still offered by GET but bills $0~~ **FIXED** (`contractSyrupSet` at `labHelpers.js:64-69` excludes snapshot syrups on GET `lab.js:78,88` and PUT `:199-203` — 2026-08-14 audit).
 - Rollout runbook (at push): run server/scripts/applyPackageLineup2026.js on PROD (dry-run first) + server/scripts/migrateDrinkMeta.js on PROD; both idempotent, snapshot/skip-guarded. **TWO GATES before the lineup script's prod run: (1) the `includes`-prose item in the push-review section below; (2) the recipe pass on the ~40 drafts — package_items existence flips hosted coverage live (coverageContext has no recipe_review filter), so fence charges would derive from unreviewed recipes.** migrateDrinkMeta has no such gate.
 
 ## Push-review residuals (2026-07-18 push gate: fleet + codex/gemini, Claude-verified)
 
 - **BEFORE applyPackageLineup2026's prod run:** extend the script to UPDATE the changed
   packages' `service_packages.includes` prose (and refresh the stale seed copy at
-  schema.sql ~602-611). Four public surfaces serve `includes` live (proposals
+  schema.sql ~623-660 — pointer re-verified 2026-08-14: stale "Dewar's" at :635,
+  "Ginger Ale" at :641; the script still has no `includes` write). Four public surfaces serve `includes` live (proposals
   publicToken/getOne/public + clientPortal) and no route can write it, so running the
   script as-is leaves client-facing proposal/portal copy on the retired lineup
   (Dewar's/ginger-ale era) while the marketing site shows 2026. (consistency MED.)
@@ -304,7 +323,7 @@ Shape: a `GET /api/proposals/:id/payments` plus a compact table in `ProposalDeta
 (date, amount, type, method, status). Natural home for a per-payment Send receipt action and for
 refund attribution, which today is also invisible per-payment.
 
-Ride-along when this is built: `actions.js:286` re-reads the just-inserted payment via
+Ride-along when this is built: `actions.js:293` (drifted from :286) re-reads the just-inserted payment via
 `SELECT id FROM proposal_payments WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 1`
 instead of `RETURNING id` on the INSERT. Under concurrent inserts that links the wrong payment
 row to the invoice.
@@ -340,11 +359,13 @@ docs/superpowers/{specs,plans}/2026-07-21-notify-client-confirmation*. Deferred 
 - **`emailTemplates.rescheduleNotificationClient` is orphaned** (the reviewed-text send
   renders via renderPartsEmail); delete or mark deprecated so nobody resurrects the
   pre-rendered-HTML path the spec rejected.
-- **ProposalEditorForm.js at ~790 lines** (soft cap 700): plan a split on the next
-  substantial touch.
+- **ProposalEditorForm.js at ~790 lines** (soft cap 700; 852 as of 2026-08-14, still
+  growing): plan a split on the next substantial touch.
 - **Suppression skip-reasons surface enum tokens** ("Suppressed: channel_disabled.") in admin
   toasts, on both the receipt path (actions.js) and the refund path (refundClientNotify.js).
   Map to human copy at the source, both call sites together. (code-review, lane-3 fleet.)
+  (2026-08-14: two MORE call sites leak the same tokens — `lineItemRemovedNotify.js:87`
+  and `rescheduleProposal.js:412-471`; fix all four together or the leak survives.)
 
 ---
 
@@ -406,7 +427,11 @@ them; none is a money-wrong path.
   walk decrements it — `excess = paid - total - Σ amount_paid on non-CONTRACT_LABELS
   invoices (status <> 'void')`. Verify it against the multi-split loops in
   `proposals/cancel.js` and the cancel-line route for order-independence, and
-  against the RC1 fixtures in `refundHelpers.scope.test.js`.
+  against the RC1 fixtures in `refundHelpers.scope.test.js`. (2026-08-14: the
+  netting term now EXISTS — `sumOffContractPaidCents`, `invoiceExtras.js:340-361`,
+  shipped in 28f0134f — but is wired only into cancel-line's `overpaymentCents`
+  (`lineItemCancel.js:701`); the payment-panel refund path still issues 'contract'
+  scope and still shrinks the total. Half the fix is on the shelf.)
 - Related, same cause: after a FAILED cancel-line refund the dialog sends the
   admin to the payment panel, which can only issue `'contract'` scope and would
   therefore lower a total the fold already corrected. Until the above is fixed,
@@ -415,7 +440,9 @@ them; none is a money-wrong path.
 
 **Cancel-line feature**
 - `matchCancelTargets` (the ambiguity refusal and amount corroboration) has no
-  test: the client has no test runner, and the new server-side test only pins
+  test: ~~the client has no test runner~~ (stale premise — 2026-08-14: react-scripts
+  test + ~20 client test files exist now, so a component test is the natural home),
+  and the new server-side test only pins
   the override target's label/amount. The collision case is reproducible with a
   throwaway node script against the exported function.
 - `POST /:id/cancel-line/preview` runs the whole mutation (proposals FOR UPDATE,
@@ -578,7 +605,10 @@ tracked and went away with its worktree.
   behavior-preserving by reading the schema (`payment_type` is
   `VARCHAR(30) NOT NULL`, so no NULL can change the predicate) rather than by a
   test. A two-line unit test asserting the default call EXCLUDES a seeded
-  `drink_plan_extras` row would pin it. (Task 6 review.)
+  `drink_plan_extras` row would pin it. (Task 6 review.) (2026-08-14: partially
+  closed — `refundHelpers.extensionScope.test.js` now exercises the real query on
+  the default panel rails four times plus the wide-rails seam; the specific
+  `drink_plan_extras` exclusion assert is still missing.)
 - **`lab.js`'s pre-fold upsert and post-fold re-sync are pinned only by prose.**
   Both (`lab.js:303-314` and `:379-386`) are near-duplicate hand-copied logic of
   their `submit.js` twins (`:318-336` and `:424-431`), not shared code, so they
@@ -719,6 +749,7 @@ All non-blocking; the blockers found in review were fixed pre-push.
 - `ShiftDetail.js` fetches the full cocktail + mocktail catalogs on every
   detail-page view; a module-level cache would drop 2 requests per view. Also
   the file is at 795 lines (soft cap 700): split candidate. (low)
+  (2026-08-14: now 810 lines, still growing.)
 - `server/routes/proposals/menuPrint.js:26` duplicates fileValidation.js's
   PDF/JPEG/PNG magic bytes because it needs the canonical extension; a
   sniff-to-extension helper in fileValidation.js would keep one copy. (low)
@@ -732,6 +763,9 @@ All non-blocking; the blockers found in review were fixed pre-push.
 - On an in-place shift-A→shift-B nav across different events, stale `details`
   can flash the "no longer on the schedule" card until B's fetch lands
   (details is never cleared on shiftId change; pre-existing shape). (low)
+  (2026-08-14: half closed — a `fetchSeqRef` in-flight guard landed in
+  ShiftDetail.js, so an older response can no longer paint over a newer one;
+  `details` is still never cleared on shiftId change, so the flash remains.)
 
 ## TT first-reply push-review residuals (2026-08-03, fleet on 61abacf3/7161e8bf/e3e16899)
 
@@ -815,10 +849,12 @@ None found:
   until the admin edits the right shift by hand: known, alerted, by design.
 - **Client portal**: `server/routes/clientPortal.js:86` selects
   `p.event_duration_hours` live in the proposal-detail allowlist.
-- **DEFERRED to the orchestrator's post-merge walkthrough**: the in-app browser
+- ~~**DEFERRED to the orchestrator's post-merge walkthrough**: the in-app browser
   pass over these surfaces with a settled extension on a dev event, plus
   confirming the Money Board and the events list render that event without
-  error. Code-level verification above is done; the eyeball pass is not.
+  error.~~ **DONE 2026-08-13** (b323b821: all six surfaces passed, ticked in
+  `docs/walkthroughs-owed.md` — staff event details, admin BEO/event page, Money
+  Board, events list, calendar feed via curl, client view).
 
 **Deferred follow-ups from the ext-* merge gates** (recorded here because the
 lanes' review ledgers died with their worktrees; all verified against the
@@ -845,7 +881,7 @@ merged code 2026-08-04):
   recompute on payroll-line existence for the proposal, not on this run's
   update counters.
 - **Settle-tail extraction next time `paymentIntentSucceeded.js` grows.** The
-  file is at 850 lines (soft cap 700); the extension tail (`:649-765`) is the
+  file is at 850 lines (soft cap 700; 869 as of 2026-08-14); the extension tail (`:649-765`) is the
   natural first extraction, matching the `stripeWebhookHandlers/` split
   pattern. The hard-cap ratchet forces this at the next substantial addition
   anyway.
@@ -875,10 +911,9 @@ merged code 2026-08-04):
   safe and removes the double-charge window. Behavior change on a money path;
   do it deliberately, with the gratuityApply suite extended. (low)
 
-- `server/utils/balanceReminderScheduling.test.js` hardcodes `balance_due_date = '2026-07-15'`; the
-  function skips past-due dates, so the suite has been red in whole-tree serial runs since ~7/16.
-  Re-fixture with rolling dates (Chicago local frame per test law). Found by the display-name
-  Task 14 gate, 2026-08-04. (med-low)
+- ~~`server/utils/balanceReminderScheduling.test.js` hardcodes `balance_due_date = '2026-07-15'`~~
+  **FIXED** (bf4139f4, 2026-08-13: re-fixtured with rolling years, 2/2 green; the DST math was
+  never wrong). Found by the display-name Task 14 gate, 2026-08-04.
 - `server/utils/payrollDisputeNotify.test.js:323` asserts elapsed < 400ms; observed 477ms under
   serial-suite load, 12/12 green in isolation. Loosen the bound or restructure the timing
   assertion. (low)
@@ -892,16 +927,16 @@ merged code 2026-08-04):
   per-statement errors and RESOLVES, so the child exits 0 and the gate passes while a
   constraint silently didn't build. Make the smoke child assert zero unexpected failures.
   The gate's strongest claim is currently unenforceable. (med, gate hardening)
-- Post-commit `refreshDisplayName` is try/catch-contained in contractor.js + agreement.js but
-  UNCONTAINED at admin/users.js:382, me.js:183, staffPortal.js:343/345, contractorTipPage.js:78 —
-  a transient refresh failure 500s a save that already committed. Mirror the contractor.js
-  containment at all five. (low; also flagged by codex)
+- ~~Post-commit `refreshDisplayName` UNCONTAINED at admin/users.js, me.js, staffPortal.js,
+  contractorTipPage.js~~ **FIXED** (c10ae187, lane gate-fixes-0805: try/catch +
+  Sentry.captureException at all five sites, each carrying the "Contained (contractor.js
+  pattern)" comment — 2026-08-14 audit).
 - `refreshDisplayName` SELECT-then-UPDATE is unlocked: two concurrent name saves for the SAME
   user can persist a stale display_name (adjudicated acceptable at checkpoint 1; `--check`
   detects, next save heals). Optional: `SELECT ... FOR UPDATE` inside a tx. (low)
-- `sanitizeProfile` (contractor.js) policy drift: `preferred_name_reviewed_at` (admin ack stamp)
-  rides the staff self-profile response; the sanitizer's own header says admin-only columns
-  belong in the destructure. One-word fix. (low)
+- ~~`sanitizeProfile` (contractor.js) policy drift: `preferred_name_reviewed_at` rides the staff
+  self-profile response~~ **DONE** (`contractor.js:29` destructures it out; see the 8/06
+  aftermath note below).
 - `email_leads` unique index is on raw `email` (not LOWER): the "can't resurrect an unsubscribed
   lead" guard is defeatable via any uppercase-stored row (PUT /leads/:id writes verbatim;
   legacy rows). Pre-existing (capture-lead has it live); smsOptIn now relies on it. Normalize
@@ -911,9 +946,10 @@ merged code 2026-08-04):
 - `staffDisplayName.validate.js` NAME_CHARS is ASCII-only: "José"/"Renée" cannot be SET as a
   preferred name (grandfathering covers only unchanged values). Product call: widen to
   `/^[\p{L}][\p{L} .'-]*$/u` keeping length/shape rules. (low, gemini catch)
-- Seniority panel: clearing the Historical-events box sends 0 (parseInt||0), bypassing the PUT's
-  ''-keep path — one-keystroke zeroing of a backfilled baseline (plan-mandated snippet; open
-  decision w/ Dallas; ~3-line client fix + "leave blank to keep" helper copy). (low, decision)
+- ~~Seniority panel: clearing the Historical-events box sends 0 (parseInt||0), bypassing the PUT's
+  ''-keep path~~ **FIXED** (c10ae187: `AdminUserDetail.js:295-303` sends raw trimmed strings,
+  "leave blank to keep current · type 0 to zero" helper copy at `PayoutsTab.js:209` —
+  2026-08-14 audit).
 - New batch suites are NOT on `scripts/money-smoke-list.txt` (incl. payrollTax.legalName.test.js —
   the 1099 name path). Add deliberately, not mid-push: the gate would immediately run them
   prod-shaped. (note)
@@ -948,10 +984,11 @@ merged code 2026-08-04):
   live (util-based, but `--check` cannot see drift there, and JS || vs SQL COALESCE diverge on
   empty-string legal names — 0 such rows today). Sensitive paths; deliberate no-touch at the
   gate. (low)
-- Post-deploy owed: `refreshDisplayNames.js --check` against prod after the first week of
-  organic writes; Dallas walkthroughs T6/T10-T13 + seniority panel smoke; CC seniority
-  mapping generation → hand review → --apply (human-gated, Chicago box); Stripe test
-  Payment Links deactivation (plink_1U0nVQ... / plink_1U0nVP..., admin-blocked for Claude). (ops)
+- Post-deploy owed — 2 of 4 DONE (2026-08-14 audit): ~~`refreshDisplayNames.js --check` against
+  prod~~ **DONE** (93875bd9, 8/14: 62 rows clean); ~~Stripe test Payment Links deactivation~~
+  **DONE** (06552c8c, 8/14: verified inactive via live API). Still owed: Dallas walkthroughs
+  T6/T10-T13 + seniority panel smoke; CC seniority mapping generation → hand review → --apply
+  (human-gated, Chicago box). (ops)
 
 ## From the duty-pay review fleet (2026-08-06)
 
@@ -1108,6 +1145,9 @@ Items 8-11 are unstarted.
    `{ingredient, amount, unit, note?}`. New `ingredientParts()` in BeoSections.js
    normalizes object OR string rows to `{qty, name}`; `unit: 'each'` drops the unit so a
    card reads "2 Strawberries" not "2 each Strawberries", and `note` renders in parens.
+   (2026-08-14 audit: the ALSO-CHECK guard was never added — `shoppingList.js:535,541`
+   still run `String(i).trim()` over `customCocktails[].ingredients`; strings-only holds
+   today, but an object-shaped custom recipe would still poison a real shopping list.)
    Every row now goes through the aligned two-span markup (the old string fallback used a
    bare `· ` line), which `.sp-drink-ings-qty { min-width: 56px }` already columnizes.
    The shoppingList.js custom-drink coercion is still UNCHECKED.
@@ -1565,6 +1605,10 @@ on a no-op. Now read: a skipped accrual becomes a per-row error naming the perio
 ("Attribution saved, but no pay line was created: this pay period is reopened, not open").
 A 200 stays correct because the attribution row genuinely DID save; only the money line did
 not, and the copy says exactly that. CI build exit 0.
+(2026-08-14 audit — final shape after the 54fb77cb repair: skips render from their own
+`notices` state OUTSIDE the row list, proposal label baked in pre-refresh; the per-row
+version described above died to the post-submit refresh, see METHOD FAILURE below. The
+silence half of this item is genuinely CLOSED; only the policy question remains.)
 ALSO 2026-08-13: `server/routes/admin/payrollDuty.js` was NOT on `sensitive-paths.txt` — the
 duty routes were split out of `payroll.js` and took the money with them while the emptied
 parent kept the listing, so the file that moves duty money was invisible to review-scaling.
@@ -1740,6 +1784,9 @@ section redesign (spec approved 2026-08-11, building on lane `mkt-a-tags`, Sep 5
 will be working in exactly that area. Skin the editor as part of that work rather than
 separately, or the redesign lands on top of an unskinned component and the fix has to be
 redone.
+(2026-08-14: that window CLOSED — the marketing redesign shipped all three phases
+2026-08-14 without touching the editor; zero adminos-scoped `.rte-*` rules exist. The
+skin pass is now standalone work, exactly the outcome this note warned about.)
 
 SUPERSEDES the contrast angle I opened this sweep with. I computed `--ink-4` at 2.16 (House
 Lights) and 2.78 (After Hours) against the admin tokens and pointed Dallas at the blog editor
@@ -1817,9 +1864,12 @@ Original fix direction: promote the live 257-char text into `schema.sql` as the 
 hazard already logged for `applyPackageLineup2026`: client-facing copy that lives only in the
 database, with the file that claims to define it disagreeing.
 
-WORTH A SWEEP: every guarded `UPDATE service_addons SET description = ... WHERE ... AND
+~~WORTH A SWEEP: every guarded `UPDATE service_addons SET description = ... WHERE ... AND
 description = '<old>'` in schema.sql is load-bearing exactly once and silently dead afterwards.
-Check the rest for the same drift rather than assuming they applied.
+Check the rest for the same drift rather than assuming they applied.~~ **SWEPT 2026-08-14
+(code side clean)**: four guarded description UPDATEs + one gated restore exist, and in every
+case the seed INSERT already carries the post-update text, so a fresh DB comes up with the
+live copy and each guard is a genuine no-op, not a drift source.
 
 ---
 ---
@@ -1887,17 +1937,16 @@ These are not from the original ledger. They surfaced while verifying its
 
 ### Blocked on Dallas (decisions, not builds)
 
-- **Contractor agreement v3 re-sign.** Staff payment changed pay terms in the Field Guide
-  and Payday Protocols, but the signed contractor-agreement-v2 lags. Materially changing
-  pay terms means a v3, plus a decision on whether already-signed contractors must
-  re-acknowledge. Open since 2026-05-22 and now further out of date after duty pay,
-  out-of-area pay, and the owner no-draw work.
+- ~~**Contractor agreement v3 re-sign.**~~ **DONE (2026-08-14 audit)** — v3 is live
+  (`contractorAgreement.js:3` CURRENT_VERSION = v3, defined at :102 with the duty-pay
+  clause) and the re-acknowledge DECISION is recorded in-code at :99: v3 applies to new
+  signers, already-signed contractors stay on v2, both versions frozen.
 - **Wix W9 / resume / gallery backup before CheckCherry sunset.** CC sunset was 2026-07-21.
   This is now either done or permanently lost, and the ledger never recorded which. Needs a
   one-word answer; if lost, say so and close it rather than carrying it.
-- **Two-step DROP COLUMN safety.** For `notifications_opt_in` and the old duplicate
-  agreement columns: ship the code that stops using them, wait a day, then drop.
-  Confirmation was never captured.
+- ~~**Two-step DROP COLUMN safety.**~~ **DONE (2026-08-14 audit)** — `notifications_opt_in`
+  dropped at `schema.sql:4341` (aebd5562, lane p0-schema-hygiene) with the two-step
+  reasoning written out at :4334-4340; no duplicate agreement columns remain in schema.
 - **Settings page direction**: lean two-card (Auto-Assign + Calendar Feed) vs a read-only
   integrations status board. Not locked.
 - **Deposit invoice gap.** First-post-cutover bookings skipped `createInvoiceOnSend`; that
@@ -1915,6 +1964,11 @@ These are not from the original ledger. They surfaced while verifying its
   setup-time language. Partially overtaken: STOP-keyword TCPA compliance SHIPPED, and
   `proposals.event_timezone` now EXISTS in schema (`schema.sql:2554`) so the time-zone
   decision is half-built. The rest reads like a ready-to-execute plan stub.
+  (2026-08-14 audit: MORE than half-built now — the reschedule flow shipped
+  (`rescheduleProposal.js` + the notify-staff toggle), `event_timezone` is genuinely
+  consumed (staffShiftHandlers, drinkPlanNudge), and the drip sequence shipped
+  (`emailSequenceScheduler.js`). Genuinely absent: the priority ladder + 1/channel/
+  client/day cap, sentiment-routed post-event review, stale-lead auto-archive.)
 - **Staff payment Phase 4 — 1099 generation.** The ledger keeps YTD totals exportable;
   the 1099 output itself has no plan and no code. (Phase 3, the staff pay surface, has
   since shipped: `server/routes/staffPortal/payouts.js` plus the payroll screen redesign.)
@@ -1922,7 +1976,11 @@ These are not from the original ledger. They surfaced while verifying its
   name + headshot + "subject to change", no phone/messaging, 30-90 min generic arrival),
   and deferred sub-projects #7/#8/#9 (multi-event switcher, quote-resume, in-portal
   sign/pay/lab). Case Files still has 4 tab stubs with no design pass: Prescription, Potion
-  Plan, Big Experiment, Receipts, Account.
+  Plan, Big Experiment, Receipts, Account. (2026-08-14 audit: partially stale — the tabs
+  under `pages/public/portal/tabs/` are real now: Overview, Potion (fetches the live drink
+  plan), Receipts, Prescription (with its own test), and a per-event route token +
+  ArchiveList give a partial multi-event switcher. Still absent entirely: Big Experiment
+  and Account tabs, the day-of brief slot, quote-resume, in-portal sign/pay/lab.)
 - **Vite migration.** Decision locked (Vite, not Next). Confirmed still on
   `react-scripts 5.0.1` with zero vite references. 15-16 CRA-tied HIGH advisories are
   accept-and-document until this happens.
@@ -1933,9 +1991,10 @@ These are not from the original ledger. They surfaced while verifying its
   drawer: `.sidebar` goes `position: fixed`, 280px, `translateX(-100%)`, slid in by
   `.shell.mobile-nav-open`, with `.header-menu-btn` and `.sidebar-close-btn` revealed and
   the rail compaction undone. The 220px-column-crush description is obsolete.
-  What IS still broken is a skin bug, not a responsive one: the drawer is transparent in
-  House Lights, so page content reads through the nav items. Filed in the fix list
-  (2026-08-12) alongside the identical modal defect, since they share one root cause.
+  ~~What IS still broken is a skin bug, not a responsive one: the drawer is transparent in
+  House Lights, so page content reads through the nav items.~~ **FIXED (2026-08-14 audit)**:
+  `index.css:13433-13436` gives the House Lights drawer `background: var(--bg-elev)` +
+  border inside the drawer media block, with the specificity note above it.
   Batches 5-8 (tablet band 768-1024, 4 standalone Highs, post-C1 residual, Med/Low cleanup)
   are still genuinely unstarted.
 - **Cocktail Menu page redesign.** `CocktailMenuDashboard.js` at 931 lines, double-mounted,
@@ -1948,38 +2007,63 @@ These are not from the original ledger. They surfaced while verifying its
   asserting `session.amount_total` matches. The TIP branch does guard
   (`checkoutSessionCompleted.js:80`); the proposal settle branch still does not.
 - Status demotion covers `balance_paid` but not `confirmed` on a price increase.
+  (2026-08-14: now explicitly by design — the ladder was extracted to
+  `proposalStatus.js`, and `proposalStatus.test.js:33` pins "lifecycle states
+  (confirmed/completed) are never demoted." Closed-by-decision unless re-opened.)
 - One-time prod audit of pre-existing `paypal_url` rows never run. Narrowed 2026-08-11:
   `tipMethods.readSideNormalize` now drops an unnormalizable value on read and Sentry-warns,
   so bad rows can no longer reach a client-facing sign. The audit is now cleanup, not risk.
 - Payouts endpoint has no LIMIT and no `/ytd`; rated clean at today's volume.
 - `findOpenPeriodForDate` is non-locking (low race window). Multi-admin mark-paid race:
-  the Phase 2 plan said lock the parent period row; nobody confirmed it landed.
+  ~~the Phase 2 plan said lock the parent period row; nobody confirmed it landed.~~
+  **it landed** (2026-08-14 audit: `admin/payroll.js:538` and `:631` take
+  `FOR UPDATE OF po, pp`, `:432` locks the period before finalize). Only
+  `findOpenPeriodForDate` itself (`payrollProcessing.js:12`) remains non-locking.
 - Late-tip roll-forward into a frozen period is CLOSED (fixed in `dc313d3`). The sibling
   case, a refunded or disputed tip after payout, still has no admin-alert design.
+  (2026-08-14: the MECHANISM is fully built — `payrollClawback.js:295-323` even rewinds a
+  dispute-WON ledger, and every degraded path Sentry-alerts. What's missing is only the
+  admin-FACING alert: no email/SMS/UI, Sentry only.)
 
 **Perimeter / correctness**
 - Auto-claim on `/onboarding` is silent: no confirmation UI, no `activity_log` row. Narrowed
   2026-08-11: the self-promotion hole itself was closed 2026-08-01 by `requireOnboarded` in
   `middleware/auth.js`, so what remains is only the missing confirmation and audit trail.
-- `proposals_status_check` still has **4 non-transactional CONSTRAINT definitions** in
-  schema.sql, source of a rare 1-in-16 dispatcher-test flake.
-- Pre-hire who already has an account hits the application gate; workaround is the admin
-  Hire button. Documented as accepted.
-- Stripe Dashboard refunds reconcile but never email the client. Spec-scope call.
+  (2026-08-14: the AUDIT TRAIL now exists — `auth.js:255-286` writes a `pre_hire_claimed`
+  activity row + interview note post-COMMIT. Only the confirmation UI is still missing;
+  `PreHireOnboarding.js` fires the claim in an effect and renders just a loader.)
+- ~~`proposals_status_check` still has **4 non-transactional CONSTRAINT definitions** in
+  schema.sql, source of a rare 1-in-16 dispatcher-test flake.~~ **FIXED** (b9c5e4c4:
+  collapsed to 2 definitions, each wrapped in a guarded DO block — the flake source is
+  gone. 2026-08-14 audit.)
+- ~~Pre-hire who already has an account hits the application gate; workaround is the admin
+  Hire button.~~ **FIXED** (2026-08-14 audit: `POST /auth/claim-pre-hire`, `auth.js:183-240`,
+  self-claims — `in_progress` sets pre_hired, `applied` promotes to hired under FOR UPDATE.
+  The admin workaround is no longer required.)
+- ~~Stripe Dashboard refunds reconcile but never email the client.~~ **FIXED** (2026-08-14
+  audit: `chargeRefunded.js:62-75` sends `sendRefundClientNotification({source:'webhook'})`
+  when the webhook applied the reconcile — exactly the dashboard-issued case — and skips
+  when the in-app route already handled it, so no double-send.)
 - The "accepted before charge" sequencing bug (sign/accept fires before Stripe
   `confirmPayment`, so a declined card still yields an "accepted" toast and a signed
-  proposal) could NOT be re-located on 2026-08-11 — the cited code has moved. Re-verify
-  before trusting either way.
+  proposal) ~~could NOT be re-located on 2026-08-11~~ **RE-LOCATED 2026-08-14**:
+  `client/src/pages/proposal/proposalView/PaymentForm.js:28-55` — `await onSubmit()`
+  (which signs) runs first, then `stripe.confirmPayment`; a confirm error only sets
+  `payError`, leaving the proposal signed. The ordering is documented as DELIBERATE
+  in-code at :7-9 ("Preserve this exactly"), so this is a known trade-off, not a lost bug.
 
 **File-size ratchet** (`npm run check:filesize`: RED 0, YELLOW 32)
 - `crud.js` is 995 lines and has gone the WRONG way (946 when logged). Closest to the hard
   cap of anything in the tree.
 - `CocktailMenuDashboard.js` 931, `emailTemplates.js` 853, `QuoteWizard.js` 837 (now at
   `client/src/pages/website/quoteWizard/`), `ProposalCreate.js` 750, `admin/users.js` 713.
-- `safeAddonQty` is triplicated across `crud.js` / `public.js` / `metadata.js`.
+- ~~`safeAddonQty` is triplicated across `crud.js` / `public.js` / `metadata.js`.~~
+  **DONE** (single definition at `proposalMoneyShared.js:12`, imported by all four
+  consumers — 2026-08-14 audit).
 
 **Housekeeping**
 - `handoff.md` and `handoff.beo.md` still sit in the os root; delete-or-keep never closed.
+  (2026-08-14: a THIRD sibling exists too — `handoff.audit.md`. Same decision covers it.)
 - Local Postgres password from the pre-rebase leak (commit `885b074`, scrubbed from
   history) was never confirmed rotated. Cheap insurance.
 - Neon branch `br-morning-union-ad26nq4r` (prelaunch-scrub-rehearsal) still exists,
@@ -1987,16 +2071,22 @@ These are not from the original ledger. They surfaced while verifying its
 - Stale Vercel preview branch `preview/claude/change-admin-password-IQlVD` (archived) plus
   its matching git branch `remotes/origin/claude/change-admin-password-IQlVD`, both from
   2026-05-20. Safe to delete.
-- `--amber` is still `#1D8C89`, a teal. Rename it or comment it so a design session does
-  not go orange.
+- ~~`--amber` is still `#1D8C89`, a teal. Rename it or comment it so a design session does
+  not go orange.~~ **DONE (comment arm)** — `index.css:27-29` now explains the stable-name/
+  shifted-value situation right above the token (760c8be3; 2026-08-14 audit).
 - No admin UI exists to edit `service_addons` descriptions; live client-facing copy is
   still changed only by ungated `schema.sql` UPDATEs.
 - `qLostValue` will start counting `archive_reason='event_completed'` as lost revenue the
   moment auto-archival ships. Needs the filter at that time, not before.
-- `crud.test.js` is not parallel-safe (global COUNT); needs `--test-concurrency=1`.
+- ~~`crud.test.js` is not parallel-safe (global COUNT); needs `--test-concurrency=1`.~~
+  **DONE** — replaced by an email-scoped `proposalCountForEmail()` (`crud.test.js:110-120`,
+  comment names the exact flake); no concurrency flag needed (2026-08-14 audit).
 - A dev `pay_period` stuck in `processing` makes 5 payrollAccrual tests skip. Refactor the
   test to manage its own period rather than depend on shared dev DB state.
 - Hardcoded 60-minute orientation setup time, flagged as a V1 simplification.
+  (2026-08-14: half-done — `setupTime.js:68-70` `effectiveSetupMinutes` honors a
+  per-proposal `setup_minutes_before` override and branches 90 hosted / 60 otherwise;
+  the fallback literals are still hardcoded, no settings-table source.)
 - `BundlePicker` hardcodes "popular" to `the-foundation`.
 - Client-side gratuity floor still duplicates the literal 50; the server has
   `GRATUITY_FLOOR_RATE` (`pricingEngine.js:236`). Lift the client to a shared constant.
@@ -2041,14 +2131,14 @@ validator.
 **Source:** audit log, "Follow-up pass" item L; schema-drift scan section 5.
 **What:** Both columns currently store JSON text (default `'[]'`) and require `JSON.stringify`/`JSON.parse` at every callsite and `::json` casts at query time. The 2026-04-15 plan doc flagged this for migration; never executed.
 **Why deferred:** Requires a production data migration (TEXT → JSONB with content coercion) and a sweep of every callsite removing the stringify/parse boilerplate. Belongs in its own spec with a rollback plan.
-**Callsites to update after migration:** `server/utils/autoAssign.js:128-129`, `server/routes/admin/settings.js:129-132` (badge-counts `::jsonb` casts in the unstaffed-events sub-select; remove after migration), `client/src/pages/admin/AdminDashboard.js:400`, `client/src/pages/staff/StaffShifts.js:97`, `client/src/pages/admin/ProposalDetail.js:156`.
+**Callsites to update after migration:** `server/utils/autoAssign.js:128-129` (2026-08-14: drifted to :141), `server/routes/admin/settings.js:129-132` (now :132-135; badge-counts `::jsonb` casts in the unstaffed-events sub-select; remove after migration), `client/src/pages/admin/AdminDashboard.js:400`, `client/src/pages/staff/StaffShifts.js:97`, `client/src/pages/admin/ProposalDetail.js:156`. Note `shifts.js:198` has since added an `IS JSON ARRAY` guard on top of the still-TEXT column.
 **Next step:** Brainstorm migration script → coordinate with a deploy window → roll codebase sweep.
 
 ### Tech debt: Dead column drops
 
 **Source:** audit log, schema-drift scan section 2.
 **What:** Columns that are in schema but unused anywhere in code:
-- `service_addons.is_default` — default `false`, never read or written
+- ~~`service_addons.is_default` — default `false`, never read or written~~ **DROPPED** (`schema.sql:4342`, aebd5562 — 2026-08-14 audit)
 - `users.calendar_token_created_at` — written but never read
 - `shifts.client_email`, `shifts.client_phone` — INSERTed via manual-event path, never SELECTed
 - `applications.favorite_color` — INSERTed + displayed but never used in logic (humor field — confirm intent before dropping)
@@ -2066,6 +2156,7 @@ validator.
 **What:** `proposals.pricing_snapshot` JSONB is written by `server/utils/pricingEngine.js:343` and read by 6+ distinct files: `server/routes/stripe.js`, `server/utils/invoiceHelpers.js` (twice), `server/routes/clientPortal.js`, `server/routes/proposals/publicToken.js` (GET /t/:token), `server/routes/proposals/crud.js` (PATCH /:id reads `old.pricing_snapshot`), `server/routes/drinkPlans.js` (twice). Any key rename in the pricing engine silently breaks all downstream consumers at runtime.
 **Why deferred:** Requires a `PRICING_SNAPSHOT_VERSION` constant, a validator function, a consumer-side assert on read, and a write-time version stamp. Cross-cutting refactor — not trivial.
 **Next step:** Design the validator contract → add version field → wrap all 6 read sites in version-aware parsing.
+**2026-08-14 audit — HALF-DONE, matching the cross-link above:** `pricingSnapshot.js` exists (`PRICING_SNAPSHOT_VERSION = 1`, `readSnapshot` with legacy tolerance + the SERVER-1N Sentry warn + future-version throw; stamped on write at `pricingEngine.js:557`) and is routed through invoiceExtras, preEventHandlers, payrollAccrual, setupTime, eventCreation, lineItemCancel, dutyLines. Still parsing raw: `routes/stripe.js`, `serviceExtensionSettle.js`, `payrollMath.js`, `eventDetailsPayload.js`, `proposalExtrasFold.js`, `invoiceLineItems.js`, `proposalGroups.js`, `changeRequests.js`, `gratuityLabels.js`, `routes/shifts.js`. Legacy rows still unstamped.
 
 ### Tech debt: adjustments + class_options shape validators
 
@@ -2098,6 +2189,7 @@ validator.
 **What:** Public and admin proposal-creation paths in `proposals.js:365` already diverge in validation, side effects, and pricing calculation. Every new field requires manual sync across both branches.
 **Why deferred:** Real refactor; needs behavioral tests to confirm no regression across both flows.
 **Next step:** Design doc; extract `createProposal(ctx, input)` service; both routes consume.
+**2026-08-14 audit — PARTIAL:** a shared `proposalInsert.js` (`insertProposalRecord`) now exists, consumed by `crud.js`, `proposalGroups.js`, `thumbtackProposalDraft.js` — but the PUBLIC path still hand-rolls its own INSERT at `public.js:458`, so the two branches still diverge. No `createProposal(ctx, input)` service yet.
 
 ### Tech debt: PotionPlanningLab state-controller split
 
@@ -2105,6 +2197,7 @@ validator.
 **What:** `client/src/pages/plan/PotionPlanningLab.js` orchestrates API loading, migration, autosave, browser-history interception, payment-redirect handling, queue derivation, AND step rendering. Steps are thin leaves over shared mutable state — large prop bags.
 **Why deferred:** Large restructure; risk of breaking an already-complex wizard.
 **Next step:** Extract controller hooks (`usePlanAutosave`, `usePlanHistory`, `usePlanQueue`) or a flow context; steps become presentation-only.
+**2026-08-14 audit:** worse — the file is now 998 lines; none of the hooks exist.
 
 ### Tech debt: ClientAuthContext via utils/api.js
 
@@ -2112,6 +2205,7 @@ validator.
 **What:** `client/src/context/ClientAuthContext.js:13-23` uses raw `fetch` instead of the shared `utils/api.js` axios instance. Two auth domains, two error-handling paths, two base-URL resolutions. Error semantics drift by user type.
 **Why deferred:** Small enough to do standalone but needs verification it doesn't break the client portal.
 **Next step:** Route client auth through `utils/api.js` (preserve separate token storage key); verify client-portal flow end-to-end.
+**2026-08-14 audit — PARTIAL:** `ClientAuthContext.js:2` now imports `API_BASE_URL` from `../utils/api` (base-URL resolution shared), but :15-25 still uses raw `fetch` with its own error path, so the two-error-semantics half stands.
 
 ### Tech debt: App.js route manifest dedup
 
@@ -2160,10 +2254,10 @@ validator.
 
 **Source:** 2026-04-24 push pre-review (database-review agent).
 **What:** Five admin/staff endpoints now have `LIMIT 500` added in the bucket-B push to prevent unbounded list returns, but the cap is high enough that long-tenured users won't hit it for 1-2 years:
-- `server/routes/shifts.js:/user/:userId/events` (LIMIT 500) — 2.5+ year bartender at 4 events/week hits it
-- `server/routes/shifts.js:/my-requests` (LIMIT 500) — same tenure threshold
-- `server/routes/emailMarketing.js:/campaigns/:id` sends (LIMIT 500) — hits with a single 10k-lead campaign
-- `server/routes/emailMarketing.js:/campaigns/:id` enrollments (LIMIT 500) — same
+- `server/routes/shifts.js:/user/:userId/events` (LIMIT 500) — 2.5+ year bartender at 4 events/week hits it (2026-08-14: SQL extracted to `shifts.queries.js:85`)
+- `server/routes/shifts.js:/my-requests` (LIMIT 500) — same tenure threshold (now `shifts.js:248`; sibling query at `shifts.queries.js:121`)
+- `server/routes/emailMarketing.js:/campaigns/:id` sends (LIMIT 500) — hits with a single 10k-lead campaign (file split: now `emailMarketing/campaigns.js:116`)
+- `server/routes/emailMarketing.js:/campaigns/:id` enrollments (LIMIT 500) — same (now `emailMarketing/campaigns.js:137`)
 - `server/routes/emailMarketing.js:/campaigns/:id` conversation history — paginated already
 **Why deferred:** Each needs frontend pagination support (paging controls, "load more" button, or infinite scroll). Frontend consumers were not touched in the bucket-B push to keep the commit focused. Once a user hits the cap, the UI silently shows an incomplete list with no indicator.
 **Next step:** Add `?page=` / `?limit=` query support and frontend paging in an incremental PR. Triggered event: first support ticket mentioning "missing old events" or "campaign shows 500 sends but blast went to 10k."
@@ -2175,7 +2269,9 @@ validator.
 **Why deferred:** Scale concern, not a current problem.
 **Next step:** Add partial indexes on `email_sends(campaign_id) WHERE status = 'opened'` / `WHERE status = 'clicked'`, OR refactor to a single aggregated subquery with `COUNT(*) FILTER (WHERE status = ...)`.
 
-### Tech debt: CC-Import: orphan-payment link refund branch — TOCTOU race on concurrent admin clicks
+### Tech debt: CC-Import: orphan-payment link refund branch — TOCTOU race — MOOT (2026-08-14 audit)
+
+**`ccImport/review.js` was DELETED in the cc-demolition lane (f39de178); `promoteSingleLegacyRefund` and `phase4.js` have zero hits repo-wide, and `legacy_cc_payments` survives only as a read-side metrics table with no writer to race. Kept below as provenance.**
 
 **Source:** 2026-05-28 Task 2 checkpoint review (database-review agent).
 **What:** `server/routes/admin/ccImport/review.js:334-346` reads `cc_event_id, promoted_*_id` outside any txn or row lock, then `:392-395` (refund branch) runs a bare `UPDATE legacy_cc_payments SET cc_event_id = $1` with no `WHERE cc_event_id IS NULL` clause. Two admin clicks racing on the same orphan row can both pass the guards, both run the UPDATE, then both call `promoteSingleLegacyRefund`. The helper's `FOR UPDATE` on `proposals` (phase4.js:585-589) serializes the row-lock contention, but the per-proposal `legacy_charge_id` idempotency index does NOT fire when `legacy_charge_id` is NULL (legitimate per the CC export), so both calls can produce duplicate `proposal_refunds` inserts. Payment branch is NOT affected — shared txn + FOR UPDATE inside `promoteSingleLegacyPayment` makes the second caller block and see `promoted_payment_id` set.
@@ -2201,7 +2297,9 @@ const statusPredicate = archived
   : `u.onboarding_status IN ('applied','interviewing')`;
 ```
 
-### Tech debt: Stripe webhook catch swallows DB errors (returns 200)
+### Tech debt: Stripe webhook catch swallows DB errors (returns 200) — FIXED (2026-08-14 audit)
+
+**The handler moved out of `stripe.js` into `stripeWebhook.js` + `stripeWebhookHandlers/`, and the catches now RETHROW so asyncHandler returns 5xx and Stripe retries (`paymentIntentSucceeded.js:626-637`, `chargeRefunded.js:58`, each with the retry comment). Original below.**
 
 **Source:** 2026-04-24 push pre-review (security-review agent, M2).
 **What:** `server/routes/stripe.js:788-798` (and 931-941) — when the DB transaction fails inside the signature-verified webhook handler, the `catch` block captures to Sentry + ROLLBACKs, but falls through to `res.json({ received: true })` on line 961. Stripe sees 200, does not retry. A transient DB outage during `payment_intent.succeeded` processing silently drops the payment record.
@@ -2211,18 +2309,20 @@ const statusPredicate = archived
 ### Tech debt: Dead-letter readers for forensic blobs
 
 **Source:** schema-drift scan section 5.
-**What:** `email_webhook_events.processed`, `thumbtack_leads.raw_payload`, `thumbtack_messages.raw_payload`, `thumbtack_reviews.raw_payload`, `proposal_activity_log.details` — all written, never read back in any admin UI.
+**What:** `email_webhook_events.processed`, `thumbtack_leads.raw_payload`, `thumbtack_messages.raw_payload`, `thumbtack_reviews.raw_payload`, `proposal_activity_log.details` — all written, never read back in any admin UI. (2026-08-14: `email_webhook_events.processed` is now READ and load-bearing — it is the idempotency gate at `emailMarketingWebhook.js:102` `SELECT ... FOR UPDATE`. The three thumbtack blobs + activity-log details remain write-only.)
 **Why deferred:** Intentional forensic/audit storage per design.
 **Next step:** Revisit only if a debugging incident requires on-demand access.
 
 ### Tech debt: DEFAULT vs always-supplied column duplication
 
 **Source:** schema-drift scan section 7.
-**What:** ~10 columns have schema DEFAULTs that never trigger because every writer supplies a value (`users.notifications_opt_in`, `proposals.guest_count`, `proposals.event_duration_hours`, `stripe_sessions.amount`, etc.).
+**What:** ~10 columns have schema DEFAULTs that never trigger because every writer supplies a value (~~`users.notifications_opt_in`~~ (dropped), `proposals.guest_count`, `proposals.event_duration_hours`, `stripe_sessions.amount`, etc.).
 **Why deferred:** Harmless code smell. Removing the explicit JS fallback OR the DEFAULT is a one-line cleanup but provides no behavior change.
 **Next step:** Sweep during next routine DB maintenance.
 
-### Tech debt: Dead column: `users.notifications_opt_in`
+### Tech debt: Dead column: `users.notifications_opt_in` — DONE (2026-08-14 audit)
+
+**Dropped at `schema.sql:4341` (aebd5562) with the two-step rationale written at :4334-4340; zero fixture INSERTs remain. Original below.**
 
 **Source:** audit batch 5b, L1 (lane audit-5b-notif).
 **What:** `users.notifications_opt_in` was write-only — set by the `/register` and `/register-pre-hired` routes from the PreHire onboarding signup checkbox ("Text me when new shifts post"), but gated NO notification. Real shift-SMS gating is `staff_notification_preferences` JSONB via `notificationChannelResolver.js` (defaults opted-in). The checkbox implied an effect that never happened. Removed the checkbox + both writers (auth routes) + the two admin SELECTs; column is now dead (no writers remain in `client/src` or `server/routes`; only `schema.sql` + test fixtures reference it).
@@ -2240,7 +2340,7 @@ These were identified during audit but are deliberately not addressed:
 - **In-memory `loginAttempts` Map** in `server/routes/auth.js:15-17`. Acceptable for single-instance Render. Multi-instance deploys will bypass the lockout per-IP rotation. Revisit if/when moving to multi-instance.
 - **Email `html_body` shipped to every campaign-step edit request**. Campaign-step detail needs the body to edit; no meaningful optimization available short of a separate `/steps/:id/body` lazy-fetch endpoint. Current scale doesn't warrant.
 - **`uuid` advisory GHSA-w5hq-g745-h8pq (moderate)** — audit batch 3c-deps. The advisory is a missing buffer bounds check in `v3`/`v5`/`v6` **only when a `buf` argument is passed**. Every `require('uuid')` site in the codebase uses `v4` with no `buf` (grep `require('uuid')` — application.js, payment.js, contractor.js, admin/users.js, admin/blog.js, scripts), so the code path is unreachable for us. The only fix npm offers is `uuid@14` (semver-major: ESM-leaning rewrite that would need all 7 CJS `require` sites verified) for zero real-world gain. Deferred — revisit if a future uuid major bump happens for another reason.
-- **`@opentelemetry/core` < 2.8.0 advisory GHSA-8988-4f7v-96qf (moderate)** — audit batch 3c-deps. Unbounded memory allocation in W3C Baggage propagation, pulled transitively by `@sentry/node`'s OTel instrumentation (`instrumentation-http` → `resources` → `sdk-trace-base`). NOT overridden: `@opentelemetry/core` is tightly version-coupled across the OTel packages `@sentry/node` pins, so forcing core alone risks breaking Sentry tracing. The clean fix is a coordinated `@sentry/node` bump to a release on OTel core ≥ 2.8.0 — fold it into the next Sentry upgrade rather than a surgical override.
+- **`@opentelemetry/core` < 2.8.0 advisory GHSA-8988-4f7v-96qf (moderate)** — audit batch 3c-deps. Unbounded memory allocation in W3C Baggage propagation, pulled transitively by `@sentry/node`'s OTel instrumentation (`instrumentation-http` → `resources` → `sdk-trace-base`). NOT overridden: `@opentelemetry/core` is tightly version-coupled across the OTel packages `@sentry/node` pins, so forcing core alone risks breaking Sentry tracing. The clean fix is a coordinated `@sentry/node` bump to a release on OTel core ≥ 2.8.0 — fold it into the next Sentry upgrade rather than a surgical override. (2026-08-14: that plan did NOT clear it — `@sentry/node` is now `^10.49.0` but the lockfile still resolves `@opentelemetry/core` at 2.6.1, below the 2.8.0 threshold. Re-check whether a newer Sentry line clears it.)
 - **record-payment reads `currentPaid` pre-transaction** (`server/routes/proposals/actions.js`; flagged non-blocking by the archive-controls push-gate reviewer, 2026-07-02). The `currentPaid === 0` gate for the client-lock hoist and the same-client sweep uses an `amount_paid` value read before `BEGIN`; a concurrent first payment landing in that gap could leave it a stale 0. Consequences are benign (an extra client lock is harmless; a re-sweep is idempotent via the status filter; the amount math itself uses guarded in-tx UPDATEs), so this is documented rather than fixed. If the handler is ever reworked: re-read `amount_paid` under the in-tx row lock and derive the gate from that.
 
 ---
@@ -2296,14 +2396,15 @@ Do NOT resolve `DRBARTENDER-SERVER-21` as noise (see the 2026-08-12 duty-accrual
 
 # Ready to build, discovered off-board (2026-08-13 sweep)
 
-- **Proposals list pagination** — spec AND plan committed 2026-08-12 in another window
-  (`superpowers/specs/2026-08-12-proposals-pagination-design.md` /
-  `superpowers/plans/2026-08-12-proposals-pagination.md`, approved in brainstorm), NOT
-  built: `ProposalsDashboard.js:477` still says "showing first 50" with no page control,
-  and ~¾ of the 219 Active proposals are unreachable from the screen. Client-only — the
-  server already accepts `?page`/`?limit` and returns `X-Total-Count`. Now on the build
-  board. Events/shifts deliberately stay unpaginated (Dallas 2026-08-12: "I like it all on
-  one page"); the spec records the latent `LIMIT 500` hazard on `GET /shifts` for later.
+- ~~**Proposals list pagination** — NOT built~~ **BUILT & SHIPPED (2026-08-14 audit; the
+  entry was never updated)** — lane prop-pagination 1dc72df6, hardened by 92efc663 +
+  9dc29682: `pages/admin/ProposalsDashboard.js` (file moved out of components/) sends
+  explicit `?page`/`?limit`, reads `X-Total-Count`, renders a real pager with a stale-page
+  snap-back guard; the "showing first 50" string no longer exists anywhere in the file.
+  Still standing from the original entry: events/shifts deliberately stay unpaginated
+  (Dallas 2026-08-12: "I like it all on one page"), and the latent `LIMIT 500` hazard on
+  `GET /shifts` is recorded in the spec for later. (Note the cross-page option-group
+  rollup duplicate from the round-3 push-gate findings below is still open.)
 
 
 ---
@@ -2312,13 +2413,10 @@ Do NOT resolve `DRBARTENDER-SERVER-21` as noise (see the 2026-08-12 duty-accrual
 
 Two open items that were living only in memory entries and had never reached this list:
 
-- **`smsInbound.js:9` still hands staff the old 312 in every auto-reply** ("contact Dallas or
-  Zul at (312) 588-9401") while every client surface now advertises the 1922
-  (`constants.js: COMPANY_PHONE`). The phone-1a plan flagged this as a quick fix "at
-  cutover"; the cutover happened 2026-08-11 and the fix did not. NUANCE before changing it:
-  the 312 GV is still staffed (Dallas/Zul) and the 2026-08-08 GV decision deliberately keeps
-  its mailbox alive, so the current copy WORKS — the question is whether staff should be
-  steered to the 1922 instead. Dallas's call, then a one-line edit.
+- ~~**`smsInbound.js:9` still hands staff the old 312 in every auto-reply**~~ **CLOSED BY
+  DECISION 2026-08-14** — see "Decisions landed 2026-08-14" at the bottom of this file:
+  the 312 in staff auto-replies STAYS (the 312 GV is staffed and its mailbox deliberately
+  alive). Code is correctly unchanged (`smsInbound.js:17-18`). No action.
 - ~~**Archive legacy proposal-options stragglers Ruta 469 + Anna 475**~~ **CLOSED
   2026-08-14 — they were ALREADY archived** (the July TODO went stale; someone did them
   along the way). Checked prod: both `archived`, $0 paid, zero shifts / live invoices /
@@ -2327,9 +2425,11 @@ Two open items that were living only in memory entries and had never reached thi
   truthfully. Nothing else to do.
 
 Also corrected during this audit: the phone-1a memory claimed the 1922 cutover was still
-owed — it completed 2026-08-11, proven by the live canary test calls. The one unverified
-half is the 1922's MESSAGING webhook (`/api/sms/inbound`), which has no recorded live test;
-a single text to the 1922 closes it (now in walkthroughs-owed).
+owed — it completed 2026-08-11, proven by the live canary test calls. ~~The one unverified
+half is the 1922's MESSAGING webhook (`/api/sms/inbound`), which has no recorded live test~~
+(SUPERSEDED same day: the messaging webhook was PROVEN 2026-08-13 — see the easy-walk
+bundle entry below and the ticked walkthroughs-owed line; do not re-open it from this
+paragraph).
 
 
 # Added 2026-08-13 (from Dallas's easy-walk bundle)
@@ -2383,7 +2483,7 @@ the LOWs that rode to this list instead:
   row fails 25P02, COMMIT silently rolls back, and the response still reports
   `imported > 0`. Same block echoes raw Postgres error text (constraint/column names) to
   the admin. Per-row savepoints or batch-validate first.
-- **CommandPalette offers Marketing to managers** (`CommandPalette.js:148`): the palette
+- **CommandPalette offers Marketing to managers** (`components/adminos/CommandPalette.js:148`): the palette
   has no role filter, so a manager picking Marketing is bounced home by adminStrict.
   Mirror the Sidebar's `adminOnly` filtering.
 - **Sequence drip can miss single-row lead suppression on case-variant twins**
@@ -2405,7 +2505,7 @@ the LOWs that rode to this list instead:
   that one recipient. Needs a single-query DB blip, so rare, and at-least-once is the
   deliberate lean here; a targeted fix is separating send-success bookkeeping failures
   from send failures.
-- **`schema.sql:1634-1637` re-creates the email_sends CHECK every boot**: the DROP+ADD
+- **`schema.sql:1642-1647` (drifted from 1634-1637) re-creates the email_sends CHECK every boot**: the DROP+ADD
   pair replays per deploy (ACCESS EXCLUSIVE + validation scan). Fine at current table
   size; convert to a guarded DO block when email_sends grows.
 - **Deploy-mid-send is recoverable but reads wrong** (`server/index.js:762` +
@@ -2449,7 +2549,7 @@ The stale-response race in ProposalsDashboard (codex) was fixed at the gate. The
 - **BeoSections comment names one of two duty kinds** (seam lens): the bar row is paid
   via `bar_rental` on BYOB but `hosted_supplies` on hosted; the comment says only
   bar_rental. Two-line comment fix.
-- **Em dashes in new staff-facing copy** (`BeoSections.js` bar row, `FieldGuide.js`
+- **Em dashes in new staff-facing copy** (`BeoSections.js` bar row, `pages/FieldGuide.js`
   cooler line, code lens): the recorded copy law scopes to client copy and spec prose;
   staff surfaces are unruled. Dallas's call whether the law extends; mechanical sweep if
   so.
