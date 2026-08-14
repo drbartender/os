@@ -3774,3 +3774,99 @@ accounted for neither.
 Fix: `rule: 'Paid us · tagged Corporate · event finished'`. One string, and it makes
 the count self-explaining. Worth a sweep of the other five audiences for the same
 drift between `rule` and `includes`.
+
+## Dead-affordance sweep, 2026-08-14: 14 confirmed instances of the "Tap to compare" shape
+
+Ordered after Dallas hit the compare-strip bug, on the reasoning that a label
+divorced from its handler is a habit rather than a one-off. Four surfaces swept, each
+found independently and then adversarially re-checked; the checker rejected several
+reported hits including a padded second finding on the already-known card, so what
+follows survived scrutiny. Full detail in the workflow journal
+(`wf_427514d1-add/journal.jsonl`).
+
+**Nothing here is an emergency. Two are worth doing soon.**
+
+### 1. Staff shift list: pending cards look tappable and are not (medium-high)
+`client/src/pages/staff/ShiftsPage.js:584`
+
+The pending/waitlisted card renders `<div className="sp-shift" style={{opacity:0.85}}>`
+with no `onClick`, `role`, `tabIndex` or `onKeyDown`, and no ancestor handler. But
+`index.css:15030-15041` gives `.sp-shift` `cursor: pointer` AND a `:hover` border
+change, unconditionally — the light-skin override at `:15042-15048` changes padding
+and radius but never resets the cursor, so the pointer promise survives in both skins.
+
+What makes it the same bug rather than a near miss: the identical chassis IS
+interactive everywhere else. `AvailableTab` (`:378-389`) puts
+`onClick`/`onKeyDown`/`role="button"`/`tabIndex={0}` on the same class, and
+`ShiftCard.js:88-94` does the same conditionally. Worse, `MineTab` renders the dead
+pending cards (`:523-530`) and the LIVE upcoming cards (`:531-538`) into the same flex
+column, adjacent siblings. A bartender learns "shift cards open" from one row and taps
+the row above it to nothing.
+
+Not blocking: the Withdraw / Leave-waitlist button inside the card still works, and
+what is withheld is a read-only event brief. Fix: give the pending card the same
+handler treatment the available card already has, or drop `cursor:pointer` for the
+pending variant so it stops promising.
+
+### 2. Field Guide sections cannot be opened by keyboard, but the attestation can be signed (medium)
+`client/src/pages/FieldGuide.js:351`
+
+The section header is `<div className="guide-section-header" onClick={...}
+aria-expanded={...}>` with no `role`, `tabIndex` or `onKeyDown`, while
+`index.css:1518-1530` gives it full button chrome — 2px border, padding, radius,
+hover. `aria-expanded` on an element with the implicit generic role is not supported
+and is dropped, so the author's intent silently fails.
+
+The aggravating part is `:363`: `{open[i] ? section.content : null}`. A collapsed
+section's text is not in the DOM at all. Meanwhile the acknowledgment checkbox
+(`:369-379`) is a real `<input type="checkbox">` in a `<label>` and Continue (`:388`)
+is a real `<button>` — both fully keyboard-reachable. **So a keyboard-only staffer can
+attest "I have reviewed the Dr. Bartender Field Guide" without having been able to
+open a single section.** That is an attestation about a document the person was
+mechanically prevented from reading.
+
+Directly relevant to the still-owed Field Guide §17 / contractor-agreement-v3 walk in
+`docs/walkthroughs-owed.md` — worth fixing before that walk, not after. The house
+pattern to copy is already in `components/Layout.js:69-77` (conditional
+`role`/`tabIndex`/`aria-current` plus an Enter/Space `onKeyDown` with `preventDefault`).
+
+### 3. Client shopping list is a checklist no keyboard can check (low-medium)
+`client/src/pages/public/ClientShoppingList.js:193`
+
+Each line is a bare `<div>` with `onClick` at `:195` — no `role`, `tabIndex`,
+`aria-checked` or `onKeyDown`, and there is no real `<input type="checkbox">` anywhere
+in the file. The chrome is hand-drawn: a 22px teal-bordered box that fills with a ✓,
+plus `line-through` when checked. The only two `<button>`s in the file are the PDF
+download and a retry, so there is no alternative path — this is a total lockout, not a
+redundant control.
+
+Honest severity: pointer and touch users are fine, `cursor:pointer` is truthful, and
+nothing is money-gated. It stays on the list because it is client-facing and the
+checklist IS the feature — a client working a liquor-store aisle. Fix: render a real
+checkbox inside a `<label>` and style that.
+
+### 4. Eleven admin-only instances (medium and below), listed for a future cleanup pass
+Same shape, but only Dallas and Zul ever see these, so they are batch material rather
+than individual tickets:
+
+  medium      admin/EmailConversations.js:106
+  medium      admin/userDetail/tabs/ShiftsTab.js:77
+  medium      admin/StripePayoutsTab.js:146
+  medium      index.css:12851
+  medium      admin/payroll/TaxTotalsTab.js:172
+  low-medium  index.css:12937
+  low-medium  components/adminos/drawers/ShiftDrawer.js:667
+  low         admin/proposalCreate/ClientSection.js:70
+  low         admin/TipsAdmin.js:160
+  low         admin/BlogDashboard.js:330
+  low         admin/StaffReviews.js:495
+
+**Notable negative result: the phone admin shell came back CLEAN.** Zero confirmed in
+`pages/mobile/**` and `components/mobile/**`, which is the surface I most expected to
+be dirty given it shipped the same day. The one candidate (the palette's `Esc` keycap)
+was rejected on good grounds: it carries no `cursor:pointer`, no hover, is the
+codebase's consistent hint vocabulary rather than control vocabulary, and names a key
+rather than commanding a tap. A real adjacent gap did surface there though — the
+command palette hides the desktop `⌘K` hint under `@media (pointer: coarse)` but keeps
+its own `Esc` chip and ships no visible touch dismiss control. That is a missing close
+affordance, a different defect, and worth its own line.
