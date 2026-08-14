@@ -91,4 +91,51 @@ describe('buildRepriceSummary', () => {
     });
     expect(s.lines[0]).toBe('The $1,250.50 increase will be billed to the client (added to the open balance invoice, or as a new Additional Services invoice).');
   });
+
+  // Push-gate 2026-08-14: the overpaid branches shipped untested. Every other
+  // increase case has amountPaid <= totalPrice, so none of these paths ran.
+  describe('price increase against an existing overpayment', () => {
+    it('increase outruns the overpayment: names the balance AND the larger invoice', () => {
+      const s = buildRepriceSummary({
+        status: 'balance_paid', totalPrice: '1000', amountPaid: '1200', newTotal: 1500,
+      });
+      const all = s.lines.join(' ');
+      // Proposal-level balance is the netted figure...
+      expect(all).toContain('$300.00 becomes the new balance due');
+      // ...but the invoice is the RAW delta, and the admin must be told.
+      expect(all).toContain('the full $500.00');
+      // The overpayment absorbs part of it, so the bare "will be billed" copy is wrong here.
+      expect(all).not.toContain('increase will be billed to the client');
+      // paid ($1,200) genuinely IS short of the new total ($1,500), so the
+      // demotion line is correct here and must still appear.
+      expect(all).toContain('drop back to deposit paid');
+    });
+
+    it('overpayment still covers the increase: no balance due, invoice still written', () => {
+      const s = buildRepriceSummary({
+        status: 'balance_paid', totalPrice: '1000', amountPaid: '1200', newTotal: 1150,
+      });
+      const all = s.lines.join(' ');
+      expect(all).toContain('already cover the new total');
+      expect(all).toContain('stays overpaid by $50.00');
+      // No NEW balance is created; the only mention is the copy saying so.
+      expect(all).not.toContain('becomes the new balance due');
+    });
+
+    it('increase lands exactly at the amount paid: paid in full, nothing new due', () => {
+      const s = buildRepriceSummary({
+        status: 'balance_paid', totalPrice: '1000', amountPaid: '1200', newTotal: 1200,
+      });
+      expect(s.lines.join(' ')).toContain('exactly paid in full');
+    });
+
+    it('no demotion line when the overpayment still covers the new total', () => {
+      const s = buildRepriceSummary({
+        status: 'balance_paid', totalPrice: '1000', amountPaid: '1200', newTotal: 1150,
+      });
+      // reconcileProposalPaymentStatus leaves status alone while paid >= total,
+      // so promising a demotion (and an autopay unenroll) would be a lie.
+      expect(s.lines.join(' ')).not.toMatch(/no longer (be )?marked|paid in full.*demot|autopay/i);
+    });
+  });
 });

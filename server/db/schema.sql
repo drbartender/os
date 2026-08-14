@@ -2708,10 +2708,21 @@ DO $$ BEGIN
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 -- archive_reason is only meaningful when status = 'archived'
+--
+-- 2026-08-14: this list MUST stay identical to the later definition of the same
+-- constraint (~line 3977, which added 'option_not_chosen' for losing options
+-- archived at choice). It used to omit that value, which made the pair a
+-- regression trap rather than a redundancy: the statements apply in file order,
+-- so an initDb run that is interrupted or aborts anywhere BETWEEN the two leaves
+-- the constraint at THIS narrower definition, and every option_not_chosen write
+-- then 23514s. That is exactly what happened to the dev database on 2026-08-14
+-- (prod was unaffected, but only by luck of a complete boot). Both lists now
+-- match, so a partial run can no longer regress the constraint. If you add a
+-- reason, add it in BOTH places.
 DO $$ BEGIN
   ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_archive_reason_check;
   ALTER TABLE proposals ADD CONSTRAINT proposals_archive_reason_check
-    CHECK (archive_reason IS NULL OR archive_reason IN ('no_hire','client_cancelled','we_cancelled','event_completed','other'));
+    CHECK (archive_reason IS NULL OR archive_reason IN ('no_hire','client_cancelled','we_cancelled','event_completed','other','option_not_chosen'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 -- ─── Automated Communication: migrate cancelled → archived ───────

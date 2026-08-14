@@ -66,9 +66,18 @@ async function shouldSendImmediate({ proposal, client, channel }) {
  *   bad_contact       email_status === 'bad', set by the Resend webhook on a
  *                     permanent bounce; phone_status === 'bad', set by
  *                     utils/smsDeliveryStatus.js on a failed delivery; or no
- *                     client row at all. Deliberately no "clear the flag"
- *                     advice: PUT /contacts/:id/email-status exists but has no
- *                     admin UI wired to it.
+ *                     client row at all. The copy deliberately does NOT say
+ *                     "try again": NO admin-reachable surface clears these
+ *                     flags today. PUT /clients/:id updates name/email/phone/
+ *                     source/notes and never touches email_status or
+ *                     phone_status; PUT /marketing/contacts/:id/email-status
+ *                     can clear the email flag but has no UI wired to it; and
+ *                     the phone_status reset only fires when an UNSIGNED
+ *                     proposal's client re-confirms their number, which is
+ *                     closed on exactly the booked proposals these notices fire
+ *                     from. Telling an admin to retry would loop them forever,
+ *                     so the copy points at another channel instead. Revisit
+ *                     the day a clear-the-flag control exists.
  */
 const SUPPRESSION_COPY = {
   archived: () =>
@@ -88,11 +97,13 @@ const SUPPRESSION_COPY = {
   bad_contact: (channel) => {
     if (channel === 'sms') {
       return 'This client\'s phone number is marked bad after a text failed to deliver. '
-        + 'Confirm the number with them before trying again.';
+        + 'Reach them another way: nothing will send to that number until the flag is '
+        + 'cleared on the client record.';
     }
     if (channel === 'email') {
       return 'This client\'s email address is marked bad after a message permanently bounced. '
-        + 'Confirm the address with them before trying again.';
+        + 'Reach them another way: nothing will send to that address until the flag is '
+        + 'cleared on the client record.';
     }
     return 'The contact we have for this client is marked bad after a delivery failure, '
       + 'so nothing would reach them.';

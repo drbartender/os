@@ -379,8 +379,8 @@ docs/superpowers/{specs,plans}/2026-07-21-notify-client-confirmation*. Deferred 
   (7b5be986)**: function + export removed, tombstone comments left at both sites so
   nobody resurrects the pre-rendered-HTML path the spec rejected. emailTemplates.js
   shrank 853→819.
-- **ProposalEditorForm.js at ~790 lines** (soft cap 700; 852 as of 2026-08-14, still
-  growing): plan a split on the next substantial touch.
+- **ProposalEditorForm.js at ~790 lines** (soft cap 700; **867** after the 2026-08-14
+  guest-count guard, still growing): plan a split on the next substantial touch.
 - ~~**Suppression skip-reasons surface enum tokens** ("Suppressed: channel_disabled.") in admin
   toasts, on both the receipt path (actions.js) and the refund path (refundClientNotify.js).
   Map to human copy at the source, both call sites together. (code-review, lane-3 fleet.)
@@ -2768,10 +2768,13 @@ None of these were in scope for that wave; each is logged here rather than fixed
   Two things make it cheaper than it looks. The trap is already half-known:
   `server/utils/preEventScheduling.js:23` and `server/utils/rescheduleProposal.js:39`
   carry docblocks warning about exactly this failure. And the correct helper already
-  exists, written independently FOUR times, as `toCalendarYmd` in
+  exists, written independently **FIVE** times (corrected at the 2026-08-14 push gate,
+  which caught this entry undercounting), as `toCalendarYmd` in
   `preEventScheduling.js:30`, `rescheduleProposal.js:46`, `staffShiftHandlers.js:52`,
-  and `payrollAccrual.js:100`. The fix is to lift one of those into a shared util and
-  retarget the dangerous subset, not to write a fifth copy. Note also that
+  `payrollAccrual.js:100`, and `proposals/cancel.js:57` (that fifth one is defined
+  locally rather than imported, so a retargeting pass that greps imports will miss it).
+  The fix is to lift one into a shared util and retarget the dangerous subset; the
+  "do not write a fifth" framing is already overtaken. Note also that
   `paystubData.js`'s own comment says it mirrors `ymd()` in
   `server/routes/staffPortal/payouts.js:32`, so that third copy moves with it.
 
@@ -2882,6 +2885,42 @@ listed rate is the FOUR-HOUR price, and each hour beyond four adds the addon's
 `extra_hour_rate` per guest. So The Full Compound is $8.00/guest at 4 hours and
 **$10.00/guest at 5** (+$2.00/hr); The Formula $5.50 goes to $6.75 (+$1.25); The
 Foundation $3.00 goes to $3.75 (+$0.75). Quoting the bare rate on a five-hour party
-is a 25% error on exactly the kind of small number Dallas says is unforgivable, and
-nothing on any admin surface warns about it today. Worth a one-line label wherever
-those rates are displayed even if the price guide never gets built.
+is a 25% error on exactly the kind of small number Dallas says is unforgivable.
+
+CORRECTED at the 2026-08-14 push gate (this entry originally claimed "nothing on any
+admin surface warns about it," which is false). The admin proposal editor DOES warn:
+`proposalEditor/PackageSection.js:86` renders the complete form, `$8/guest (4hr) +
+$2/guest/hr after`, and `proposalCreate/AddonSection.js:39` shows a partial `(4hr)`.
+The real gap is CLIENT-FACING, where the bare per-guest rate prints with no timing
+qualifier at all: `quoteWizard/helpers.js:54` and
+`proposal/otherOptions/ExtrasPanel.js:15`. Those two are where a client reads $8 and
+holds us to it. Also wider than stated: `mocktail-bar` ($7.50 / +$2.00) is a FOURTH
+`per_guest_timed` addon with the same shape, so a fix should key on the billing type
+rather than on the three bundle slugs.
+
+## Schema regression trap found at the 2026-08-14 push gate (FIXED in the same batch)
+
+`proposals_archive_reason_check` is defined TWICE in `schema.sql`, and the two lists
+disagreed: the earlier definition (~line 2714) omitted `option_not_chosen`, which the
+later one (~line 3977) adds for losing options archived at choice. Statements apply in
+file order, so a complete boot ends on the correct definition and everything looks
+fine. An initDb run that aborts or is interrupted ANYWHERE between the two leaves the
+narrower constraint in place, and every `option_not_chosen` write then fails 23514.
+
+This is not hypothetical: it happened to the DEV database on 2026-08-14, between two
+suite runs in the same session. Symptom was three `notifyClient` record-payment tests
+turning 500, because record-payment's same-client sweep archives siblings with exactly
+that reason. Prod was verified UNAFFECTED at the time (its constraint carried the full
+list), but only by luck of a complete boot, and a prod hit would have broken the
+proposal-options archive flow rather than a test.
+
+Fixed by making the earlier list identical to the later one, so a partial run can no
+longer regress it, with a comment at both sites saying a new reason goes in BOTH. Dev
+was healed by hand to match.
+
+**The general shape is worth a sweep:** any constraint that schema.sql DROPs and
+re-adds more than once is a regression trap if the definitions differ, because the
+file is re-executed on every boot and is not transactional end to end. `proposals_
+status_check` was already collapsed for a related reason (b9c5e4c4). Worth grepping
+for every `DROP CONSTRAINT IF EXISTS` that appears more than once with differing
+bodies and collapsing or aligning each pair.

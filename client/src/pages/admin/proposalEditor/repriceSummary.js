@@ -55,7 +55,14 @@ export function buildRepriceSummary({ status, totalPrice, amountPaid, newTotal }
       // absorbed first, so "billed to the client" overstates it.
       const newlyDue = next - paid;
       if (newlyDue > 0.005) {
-        lines.push(`The ${usd(delta)} increase outruns the ${usd(paid - oldTotal)} the client had overpaid, so ${usd(newlyDue)} becomes the new balance due (added to the open balance invoice, or as a new Additional Services invoice).`);
+        // The proposal-level figure and the INVOICE figure diverge here, and
+        // saying only the first one misleads: on a fully-paid proposal every
+        // balance-bearing invoice is locked, so createAdditionalInvoiceIfNeeded
+        // mints the RAW delta (invoiceLifecycle.js:339 computes
+        // newTotalCents - oldTotalCents with no netting against amount_paid).
+        // The client can therefore receive a demand larger than the balance
+        // this modal reports. Disclose both numbers.
+        lines.push(`The ${usd(delta)} increase outruns the ${usd(paid - oldTotal)} the client had overpaid, so ${usd(newlyDue)} becomes the new balance due. Note the invoice written for the increase is the full ${usd(delta)}: it is not reduced by the overpayment, so the client may see a larger figure than the balance.`);
       } else {
         const stillOver = paid - next;
         lines.push(

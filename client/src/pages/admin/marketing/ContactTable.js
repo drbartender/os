@@ -56,7 +56,10 @@ export default function ContactTable({
           <thead>
             <tr>
               <th>Contact</th>
-              <th>Marketing tags</th>
+              {/* Not inert: index.css sets no table-layout, so under auto
+                  layout this width feeds the column's preferred size. Removing
+                  it reflows the Contact column. */}
+              <th style={{ width: '38%' }}>Marketing tags</th>
               <th>Last event</th>
               <th className="num">Lifetime</th>
               <th className="mkt-col-contacted">Last contacted</th>
