@@ -102,19 +102,18 @@ so tick items off as you confirm them rather than assuming the list is current.
       duty-residuals lane (merged afb6e5e6): the out-of-area no-op/auto-lock semantics and
       the ShiftDrawer knob (spec §9). Money math around them verified 2026-08-12; the knobs
       themselves have never been touched in the app.
-- [~] **Money Board — MOBILE/SKIN HALF WALKED 2026-08-12.** Dallas found the House Lights
-      sidebar drawer rendering see-through; root-caused as the same defect as the modal bug
-      and BOTH FIXED + confirmed the same day (fix list, 2026-08-12). Note the drawer
-      breakpoint is `max-width: 900px`, so that bug was hitting tablets, not just phones.
-      STILL OWED, desktop width: the chart and palette pass in both skins — rainbow series
-      legibility in House Lights, axis/legend text, and chart hover / zoom / Compare, plus
-      whether any card figure disagrees with the chart.
-      MANAGER WALK — UNBLOCKED ON DEV 2026-08-12, walk not done. Prod has **zero** manager
-      accounts (only admins `admin@` and `zul@`), so it cannot run there without creating a
-      real manager. Dev HAS them: `manager-test@drbartender.com` (id 4569), plus
-      `aisha.m@test`, `zul@`, `slparent@gmail.com` all at role `manager`. Log in as one on
-      `localhost:3000`, open `/dashboard`, and confirm the network tab shows **zero**
-      `/admin/payroll/*` requests. One stray call is a real exposure.
+- [x] **Money Board — CLOSED 2026-08-14.** Mobile/skin half walked 8/12 (found and fixed
+      the see-through House Lights drawer). Desktop chart pass effectively done by finding:
+      Dallas hit the day/week granularity hole and ruled "that whole chart is gonna need a
+      bit of work" — the rework is a queued project (fix list 2026-08-12), so further
+      palette/hover polish review of the current chart is moot.
+      MANAGER WALK — BACKBURNERED BY DALLAS 2026-08-14 ("don't really need the manager role
+      rn"), accepted with a TRIPWIRE: prod has zero manager accounts, so the payroll-
+      exposure this checks is unreachable today. **The day anyone is promoted to manager,
+      this walk becomes mandatory before they log in**: dashboard as the manager, devtools
+      Network filtered to `payroll`, zero `/admin/payroll/*` requests. Dev stays ready
+      (`manager-test@drbartender.com`, and note the walk must run on plain `localhost:3000`
+      — the `staff.localhost` host is the staff portal for every role by design).
 
 ## Tier 2 — client-facing, shipped, unseen
 
