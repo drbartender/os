@@ -1041,7 +1041,14 @@ merged code 2026-08-04):
   serviceExtensionPricing carries its own JS pre-screen; both stale-comment/filename nits
   (test renamed to eventEndInstant.curfew.test.js, smoke list updated).
 
-## Phone 1a — interception canary is aimed at the wrong signature (2026-08-11)
+## Phone 1a — interception canary is aimed at the wrong signature (2026-08-11) — RESOLVED: option (a) SHIPPED 2026-08-14
+
+**Dallas picked (a), demote to log-only.** The Sentry page + its claim throttle are gone;
+the per-call `dialSec` console line stays as honest telemetry (SUSPECT still marked in the
+log), `interceptionSuspicion` itself is kept and test-pinned, and the voice.test canary
+case now asserts NO page on a fast human answer (voice 67/67, voicemailLine 9/9). Option
+(c), the press-1 screening whisper, is the on-the-shelf conclusive fix if an interception
+is ever actually observed — the code already exists in voiceEscalate.js. Original finding:
 
 `interceptionSuspicion` (`server/utils/voicemailLine.js`) fires when the dialed leg's
 `DialCallDuration` is <= 3s. That value is the leg's CONNECTED duration, not its
@@ -1630,7 +1637,11 @@ ALSO 2026-08-13: `server/routes/admin/payrollDuty.js` was NOT on `sensitive-path
 duty routes were split out of `payroll.js` and took the money with them while the emptied
 parent kept the listing, so the file that moves duty money was invisible to review-scaling.
 Added; matcher test still 6/6.
-Remaining policy question, unchanged: whether accrual should ever accept `reopened`. Original
+~~Remaining policy question~~ **SETTLED 2026-08-14 (Dallas: "blessed")**: the current shape is
+final — accrual ONLY in `open` periods; a skip is loud (notices) but still saves the
+attribution fact, which the sweep-before-payroll picks up when a period opens; no 409, no
+`reopened` acceptance; Sentry SERVER-21 stays the tripwire. Historical framing: whether
+accrual should ever accept `reopened`. Original
 fix direction: make the endpoint refuse loudly — a 409 with the period status and a
 plain-language reason ("this pay period is closed; duty pay only accrues in an open period"),
 surfaced in the UI. Do NOT make accrual accept `reopened`, and do NOT make Reopen return a

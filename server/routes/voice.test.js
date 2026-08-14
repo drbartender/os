@@ -450,7 +450,7 @@ test('/inbound/missed Gather targets the right line', async () => {
   assert.match(res.text, /action="[^"]*\/api\/voice\/escalate\?line=primary"/);
 });
 
-test('a suspiciously instant answer on the primary line raises the interception canary', async () => {
+test('an instant answer on the primary line logs but never pages Sentry (canary demoted 2026-08-14)', async () => {
   const savedDsn = process.env.SENTRY_DSN_SERVER;
   process.env.SENTRY_DSN_SERVER = 'https://example.invalid/1';
   try {
@@ -462,11 +462,12 @@ test('a suspiciously instant answer on the primary line raises the interception 
     assert.match(res.text, /<Hangup\/>/);
     assert.doesNotMatch(res.text, /<Record/);
     assert.equal(calls.telegram.length, 0);
-    // But it must be VISIBLE, because this is what a re-enabled carrier voicemail
-    // quietly eating our callers looks like.
+    // Log-only by decision (Dallas 2026-08-14): DialCallDuration is connected
+    // time, not time-to-answer, so a short leg is a fast HUMAN, not an
+    // interception. The dialSec console line is the surviving telemetry.
     assert.ok(
-      calls.sentry.some((m) => /interception/i.test(String(m))),
-      'an instant answer on the primary line must be reported'
+      !calls.sentry.some((m) => /interception/i.test(String(m))),
+      'the demoted canary must not page Sentry on a fast human answer'
     );
   } finally {
     if (savedDsn === undefined) delete process.env.SENTRY_DSN_SERVER;

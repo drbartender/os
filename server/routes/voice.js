@@ -152,7 +152,6 @@ function makeWindowClaim(windowMs, allowance) {
   };
 }
 const claimSigFailureReport = makeWindowClaim(60 * 1000, 5);
-const claimCanaryReport = makeWindowClaim(15 * 60 * 1000, 1);
 const claimNoTargetReport = makeWindowClaim(15 * 60 * 1000, 1);
 
 /**
@@ -427,6 +426,15 @@ router.post('/inbound/missed', voicemailWebhookLimiter, async (req, res) => {
   // branch because the case it watches for, DialCallStatus=completed, is exactly
   // what that branch returns on. Observation only: it never changes the outcome,
   // so its own failure is swallowed too; a live caller is waiting on this TwiML.
+  // DEMOTED TO LOG-ONLY 2026-08-14 (Dallas): the detector is inverted in
+  // practice. DialCallDuration is the leg's CONNECTED time, not time-to-answer,
+  // so a real GV interception (answers ~1s, then HOLDS the caller through a
+  // greeting) is a LONG leg the canary never flags, while a human answering
+  // fast and hanging up is the short leg it fired on — proven by the first
+  // real call (DRBARTENDER-SERVER-20, false positive on Dallas's own answer).
+  // The per-call dialSec line stays as honest telemetry for Twilio-console
+  // reconciliation; no Sentry page. The conclusive fix, if interception is
+  // ever actually observed, is the press-1 screening whisper (voiceEscalate).
   try {
     const canary = interceptionSuspicion({
       line, status, dialCallDuration: req.body.DialCallDuration,
@@ -434,20 +442,6 @@ router.post('/inbound/missed', voicemailWebhookLimiter, async (req, res) => {
     if (line === 'primary' && status === 'completed') {
       const say = `[voice/missed] primary answered ${tail} dialSec=${canary.dialSec === null ? 'unknown' : canary.dialSec}`;
       if (canary.suspect) console.warn(`${say} SUSPECT instant answer`); else console.log(say);
-    }
-    if (canary.suspect && process.env.SENTRY_DSN_SERVER) {
-      const claim = claimCanaryReport();
-      if (claim.allowed) {
-        _deps.captureMessage('primary line possible voicemail interception', {
-          level: 'warning',
-          tags: { webhook: 'twilio-voice', route: 'inbound/missed', line: 'primary' },
-          extra: {
-            dialSec: canary.dialSec,
-            suppressedPreviousWindow: claim.suppressedPreviousWindow,
-            hint: 'check that voicemail is still disabled on VM_PRIMARY_DIAL_TARGET',
-          },
-        });
-      }
     }
   } catch (err) {
     console.error(`[voice/missed] canary failed ${tail}: ${err.message}`);

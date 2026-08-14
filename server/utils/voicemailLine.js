@@ -153,6 +153,11 @@ const PRIMARY_INSTANT_ANSWER_SEC = 3;
  * dial target and quietly stealing every caller from our own voicemail. Nothing
  * branches on the result; it exists so the regression cannot be invisible.
  *
+ * 2026-08-14: consumers treat `suspect` as LOG-ONLY (no Sentry page). The
+ * signal is inverted in practice — DialCallDuration is connected time, so a
+ * real interception (instant answer + greeting hold) is a LONG leg, and a
+ * short leg is a fast human. See voice.js's canary block for the full note.
+ *
  * Only meaningful on the primary line, which forwards through a third party. Zul's
  * line dials her cell directly and has always behaved this way.
  */
