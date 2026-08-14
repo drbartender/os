@@ -3481,3 +3481,50 @@ reached through a button an admin clicks without changing anything.
 Fix: one test in the seniority suite — read `updated_at`, PUT the same values,
 assert it did not move — plus a second asserting a real change DOES move it, so
 the guard cannot be "fixed" by disabling the write altogether.
+
+## The dev box is armed against LIVE Stripe, and nothing in the factory stops it (found 2026-08-14)
+
+Highest-severity thing found in the 8/14 walk batch. Not a hypothetical: it has
+already happened once.
+
+**The facts, all verified on 2026-08-14:**
+- The dev `.env` carries a real `sk_live_` secret key. There is no
+  `STRIPE_SECRET_KEY_TEST`, and `STRIPE_TEST_MODE_UNTIL` is unset.
+- `server/utils/stripeClient.js` `getStripe()` has **no `NODE_ENV` gate**. Its only
+  switch is `isTestMode()`, which reads `STRIPE_TEST_MODE_UNTIL`. With that unset,
+  `getStripe()` returns `stripeLive` — on localhost, in dev, always.
+- So the dev server running on this box talks to the PRODUCTION Stripe account.
+- It has already bitten. `server/routes/payment.noNameWrite.test.js:5-19` records
+  it in its own comment: an unstubbed run "creates real Stripe Products, Prices and
+  Payment Links on the production account. It did, once, before this stub existed."
+
+**Why this is worse than it looks.** The mitigation today is per-suite: individual
+tests monkey-patch `require('../utils/stripeClient').getStripe = () => null` before
+requiring the router. That protects the suites that remembered. It protects nothing
+else — not the dev server, not a manual walkthrough, not a new test, not a script.
+Any dev exercise of a refund, a charge, a payment link, or a customer write is a
+live-money action.
+
+**The asymmetry is the tell.** This codebase already has the right instinct
+everywhere else: `SEND_NOTIFICATIONS` and `RUN_SCHEDULERS` both default OFF outside
+`NODE_ENV=production` specifically so a dev server cannot burn real Resend/Twilio
+allotments against the shared Neon DB. Stripe, which moves actual money, has no
+equivalent default. It is the one integration where dev fails OPEN.
+
+**Immediate consequence for the walk list:** the cancel-line-item Stripe refund half
+cannot be rehearsed on dev as a stand-in for prod. A dev refund is a real refund.
+That entry in `docs/walkthroughs-owed.md` has been corrected.
+
+**Recommended fix, two parts.** The env change is Dallas's and takes a minute; the
+code change is a money-path lane and needs the full fleet:
+1. NOW: put Stripe TEST keys in the dev `.env` (`STRIPE_SECRET_KEY_TEST`,
+   `STRIPE_PUBLISHABLE_KEY_TEST`, `STRIPE_WEBHOOK_SECRET_TEST`) and set
+   `STRIPE_TEST_MODE_UNTIL` far in the future. The factory already fails closed if
+   test mode is on and the test key is missing, so this is safe by construction.
+2. DURABLE: give `getStripe()` the same default the notification gates have — outside
+   `NODE_ENV=production`, refuse to return the live client unless something explicit
+   opts in. Fail closed, matching the existing "prevents the misconfigured-test-mode
+   to silent live-charge failure mode" intent already stated in that file's own header
+   comment. Then the per-suite stubs become belt-and-braces instead of the only belt.
+
+`stripeClient.js` is a money path: full fleet plus the cross-LLM second opinion.

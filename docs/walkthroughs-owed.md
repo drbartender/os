@@ -24,13 +24,23 @@ so tick items off as you confirm them rather than assuming the list is current.
       total $750 → $625, Balance invoice $650 → $525, Deposit untouched, no refund offered.
       Close and "Never mind" both work. **Found a real bug:** every admin modal is a boxless
       ghost in House Lights — see the 2026-08-12 section of the fix list.
-      **The Stripe refund half is still owed, and cannot be walked on demand.** Checked prod
-      2026-08-12: no live booking can produce it. Every fully-paid proposal carrying real
-      `proposal_payments` rows is a past `completed` event, and the only fully-paid FUTURE
-      booking (604, $550) has zero payment rows and zero invoices — the CC-transfer shape,
-      so there is nothing to refund against. The trigger needs a client who has paid in full
-      and then drops a line before their event. When that next happens, do it deliberately
-      and watch, rather than manufacturing a case.
+      **The Stripe refund half is still owed, and still cannot be walked on demand — but the
+      REASON changed on 2026-08-14 and the old reason is now wrong.**
+      SUPERSEDED: the 8/12 note said no live booking could produce it. Re-checked prod 8/14
+      and there are now **six** fully-paid FUTURE bookings carrying real `proposal_payments`
+      rows: 728 ($1700, Aug 15), 540 ($350, Aug 15), 436 ($585, Aug 15), 713 ($350, Aug 21),
+      602 ($450, Aug 22), 652 ($760, Aug 24). (604 is still the CC-transfer shape with zero
+      payment rows.) Note three of those events are Aug 15, so they age out of the eligible
+      set the moment they complete. The structural precondition is therefore MET.
+      WHAT ACTUALLY BLOCKS IT NOW is that walking it means issuing a real refund against a
+      real client's real money, which is only legitimate when that client genuinely drops a
+      line. That has not changed: when it next happens, do it deliberately and watch.
+      **AND DEV CANNOT STAND IN — this is the trap.** The dev box is armed against LIVE
+      Stripe: `.env` carries an `sk_live_` secret, there is no `STRIPE_SECRET_KEY_TEST`, and
+      `STRIPE_TEST_MODE_UNTIL` is unset, so `getStripe()` — which has no `NODE_ENV` gate at
+      all — hands back the LIVE client on localhost. A "safe dev refund" would be a real
+      refund on the production Stripe account. See the fix-list entry of 2026-08-14; this
+      has already created real Stripe objects once.
 - [x] **Gratuity election-at-payment — PASSED 2026-08-12.** Verified two ways. (1) From prod
       data, the invariant this feature exists to enforce holds table-wide: ZERO unpaid
       proposals carry a client-elected gratuity, ZERO carry an unpaid no-jar election, and
