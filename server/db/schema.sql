@@ -2710,7 +2710,7 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 -- archive_reason is only meaningful when status = 'archived'
 --
 -- 2026-08-14: this list MUST stay identical to the later definition of the same
--- constraint (~line 3977, which added 'option_not_chosen' for losing options
+-- constraint (~line 3995, which added 'option_not_chosen' for losing options
 -- archived at choice). It used to omit that value, which made the pair a
 -- regression trap rather than a redundancy: the statements apply in file order,
 -- so an initDb run that is interrupted or aborts anywhere BETWEEN the two leaves
@@ -3984,6 +3984,15 @@ ALTER TABLE proposals ADD COLUMN IF NOT EXISTS group_id INTEGER REFERENCES propo
 CREATE INDEX IF NOT EXISTS idx_proposals_group_id ON proposals(group_id);
 
 -- archive_reason gains 'option_not_chosen' for losing options archived at choice.
+--
+-- PAIRED DEFINITION: the SAME constraint is defined earlier in this file (~line
+-- 2722) and the two lists MUST stay identical. Adding a reason here only is the
+-- 2026-08-14 bug: statements apply in file order, so a boot interrupted between
+-- the two leaves the earlier definition and every write of the new value 23514s.
+-- Add a reason in BOTH places. Note this site is two BARE statements rather than
+-- a DO block, so a failure here is the worse of the two shapes: the DROP commits
+-- and the ADD does not, leaving the table with NO constraint at all, silently
+-- accepting anything, rather than falling back to the narrower list.
 ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_archive_reason_check;
 ALTER TABLE proposals ADD CONSTRAINT proposals_archive_reason_check
   CHECK (archive_reason IS NULL OR archive_reason IN

@@ -2924,3 +2924,48 @@ file is re-executed on every boot and is not transactional end to end. `proposal
 status_check` was already collapsed for a related reason (b9c5e4c4). Worth grepping
 for every `DROP CONSTRAINT IF EXISTS` that appears more than once with differing
 bodies and collapsing or aligning each pair.
+
+### The same trap exists FIVE more times (swept 2026-08-14, NOT fixed, ranked)
+
+The push-gate sweep of all 846 schema.sql statements found five more constraints
+ADDed more than once with DIFFERING bodies. All pre-existing, none introduced by
+that batch, none fixed. Ranked by what a partial boot actually costs:
+
+1. **`scheduled_messages_status_check` (lines ~2871 / ~3501 / ~4175) — WORST.**
+   THREE definitions spanning ~1300 lines; the earliest omits `processing`,
+   `dead_letter`, and `suppressed_by_sibling`. All three values are written in
+   live code, and `processing` is the DISPATCHER'S OWN CLAIM STATE, so a boot
+   interrupted in that gap 23514s every claim and stops the entire
+   scheduled-message pipeline (balance reminders, event-week, event-eve, nudges).
+2. **`proposals_gratuity_jar_check` (~1316 / ~1338) — MONEY.** The earlier body is
+   `tip_jar OR gratuity_rate >= 50` and is missing the floor-rate arm, so a
+   mandated no-jar proposal at or above its own floor but under $50/staff/hr is
+   rejected. `gratuity_floor_rate` is read by 8 server modules including
+   `stripeCreateIntent.js` and the mandate is live. Mitigated only by the two
+   blocks sitting 22 lines apart, so the window is tiny.
+3. **`scheduled_messages_channel_check` (~2865 / ~3492)** — earlier omits `'push'`,
+   which `notificationChannelResolver.js` returns and two schedulers bind.
+4. **`users_onboarding_status_check` (~24 / ~3482)** — earlier omits `'suspended'`,
+   which `middleware/auth.js:60` branches on. The gap is essentially the whole
+   file, and this pair is ALSO the bare non-atomic shape.
+5. **`drink_plans_proposal_id_fkey` (~889 / ~1826)** — earlier lacks
+   `ON DELETE CASCADE`, so deleting a proposal with a drink plan raises 23503
+   instead of cascading. Different symptom, same class.
+
+NOT traps, checked and cleared: `proposals_status_check` (2704/2747) is
+direction-safe, since the earlier definition is the WIDER transitional one and a
+partial run accepts everything live code writes; `proposal_payments_payment_type_check`
+(2132/2273) has identical bodies, redundant but harmless.
+
+**Correction to the root-cause note above, from the same sweep:** the trap has TWO
+failure modes, not one, and the more dangerous one is the shape my fix did not
+change. Proven against Postgres with a temp table: the `DO $$ ... EXCEPTION WHEN
+OTHERS THEN NULL ... END $$` form is ATOMIC, so a failing ADD rolls the DROP back
+and the prior constraint survives (its real cost is silence: the failure never
+reaches initDb's `unexpected` array, so it never logs and never pages Sentry,
+which is how the lists diverged unnoticed). The BARE `DROP CONSTRAINT;` +
+`ADD CONSTRAINT;` pair runs as two autocommit transactions, so a failing ADD
+leaves the table with NO constraint at all, committed, silently accepting
+anything. There are ~20 bare DROP-then-ADD pairs in the file. A proper fix keys
+on the shape, not on individual constraints: wrap every re-add in the atomic form
+AND make paired definitions identical.
