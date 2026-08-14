@@ -114,27 +114,85 @@ const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
  * this file exists to fix. Refusing exits non-zero, so the push is BLOCKED, not
  * allowed. Same posture as scripts/merge-lane.sh, which flocks the merge.
  */
+// A gate run is ~8 minutes. Past this a lock is presumed abandoned even if its
+// pid still answers, which bounds the damage from PID REUSE: after a crash an
+// unrelated process can inherit the pid and kill(pid,0) would report the dead
+// holder as alive forever, wedging every push.
+const MAX_LOCK_AGE_MS = 60 * 60 * 1000;
+// A lock whose content is unreadable is almost always a starter mid-acquire,
+// not corruption, so it is treated as LIVE briefly rather than reclaimed.
+const LOCK_GRACE_MS = 30 * 1000;
+
+function lockPath() {
+  // The COMMON git dir, deliberately: the resource being protected is the one
+  // shared Neon ci-smoke branch, and linked worktrees (every lane) each have
+  // their own --absolute-git-dir. Scoping the lock there let two lanes both
+  // "acquire" and reset the same branch underneath each other. The RECEIPT
+  // stays per-worktree, since each worktree has its own tree and HEAD.
+  return path.join(git(['rev-parse', '--path-format=absolute', '--git-common-dir']), 'drb-push-gate.lock');
+}
+
+function readHolder(lockFile) {
+  try {
+    const holder = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+    if (holder && typeof holder.pid === 'number' && holder.token) return holder;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
 function acquireLock() {
-  const lockFile = path.join(git(['rev-parse', '--absolute-git-dir']), 'drb-push-gate.lock');
+  const lockFile = lockPath();
+  const token = crypto.randomBytes(8).toString('hex'); // proves OUR ownership on release
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const tmp = `${lockFile}.${process.pid}.${token}.tmp`;
     try {
-      const fd = fs.openSync(lockFile, 'wx'); // O_CREAT|O_EXCL: atomic
-      fs.writeSync(fd, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
-      fs.closeSync(fd);
-      return { ok: true, release: () => { try { fs.unlinkSync(lockFile); } catch { /* already gone */ } } };
+      // Write the owner record FIRST, then publish it atomically with link().
+      // openSync('wx') then writeSync leaves a window where the file exists but
+      // is EMPTY, and a second starter reading that empty file called it corrupt,
+      // reclaimed it, and both ran. link() makes the name appear only once the
+      // content is already there, and fails EEXIST if anyone holds it.
+      fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, token, at: new Date().toISOString() }));
+      fs.linkSync(tmp, lockFile);
+      fs.unlinkSync(tmp);
+      return {
+        ok: true,
+        release: () => {
+          // Ownership-checked: a blind unlink could delete a lock another run
+          // legitimately acquired after ours was reclaimed as stale.
+          const h = readHolder(lockFile);
+          if (h && h.token === token) { try { fs.unlinkSync(lockFile); } catch { /* already gone */ } }
+        },
+      };
     } catch (err) {
+      try { fs.unlinkSync(tmp); } catch { /* nothing to clean */ }
       if (err.code !== 'EEXIST') throw err;
-      let holder = null;
-      try { holder = JSON.parse(fs.readFileSync(lockFile, 'utf8')); } catch { /* unreadable/corrupt */ }
-      const alive = holder && holder.pid && (() => {
-        try { process.kill(holder.pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
-      })();
-      if (alive) return { ok: false, holder };
-      // Stale (crashed run, or a corrupt lock file): clear it and retry once.
-      try { fs.unlinkSync(lockFile); } catch { /* raced with the holder's own cleanup */ }
+
+      const holder = readHolder(lockFile);
+      let ageMs = 0;
+      try { ageMs = Date.now() - fs.statSync(lockFile).mtimeMs; } catch { ageMs = 0; }
+
+      if (!holder) {
+        // Unreadable: a starter mid-acquire (live) until the grace passes.
+        if (ageMs < LOCK_GRACE_MS) return { ok: false, holder: null, reason: 'another gate is starting' };
+      } else if (pidAlive(holder.pid) && ageMs < MAX_LOCK_AGE_MS) {
+        return { ok: false, holder, reason: null };
+      }
+
+      if (attempt > 0) return { ok: false, holder, reason: 'could not reclaim a stale lock' };
+      console.log(`gate: reclaiming a stale lock (${holder ? `pid ${holder.pid}` : 'unreadable'}, ${Math.round(ageMs / 1000)}s old).`);
+      try { fs.unlinkSync(lockFile); } catch { /* another starter reclaimed it first */ }
+      // Retry once. Two starters can both reach here and race; the loser's
+      // link() then fails EEXIST against the winner's fresh lock and it gives
+      // up rather than running, which is the safe direction.
     }
   }
-  return { ok: false, holder: null };
+  return { ok: false, holder: null, reason: 'could not acquire the gate lock' };
 }
 
 function receiptPath() {
@@ -400,7 +458,12 @@ function runGatesLocked(needed, fpBefore) {
 function parsePushedShas(input) {
   if (input === null || input === undefined) return { kind: 'unknown' };
   const lines = String(input).split('\n').map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return { kind: 'unknown' };
+  // EMPTY is different from MALFORMED and must not be conflated. git feeds no
+  // lines only when no ref is being updated (verified across ten push forms:
+  // --all/--tags with everything already up to date), so nothing ships and
+  // there is nothing to gate. Malformed input, by contrast, means we cannot
+  // tell what ships, which has to block.
+  if (!lines.length) return { kind: 'empty' };
   const shas = [];
   for (const line of lines) {
     const fields = line.split(/\s+/);
@@ -433,6 +496,22 @@ function main() {
       console.log('pre-push: deletions only — nothing to gate.');
       process.exit(0);
     }
+    if (parsed.kind === 'empty') {
+      console.log('pre-push: git listed no updated refs — nothing ships, nothing to gate.');
+      process.exit(0);
+    }
+    if (parsed.kind === 'unknown') {
+      // We could not read WHAT is being pushed. Gating HEAD and allowing would
+      // be a guess, and if git is pushing anything else that commit reaches
+      // prod ungated — the precise condition this parsing exists to prevent.
+      // Refuse; the push is blocked, never silently allowed.
+      console.error('');
+      console.error('✗ BLOCKED — could not read the refs being pushed from the hook\'s stdin.');
+      console.error('  The gates can only vouch for code they can identify, so this fails closed');
+      console.error('  rather than gating a guess. If you know what you are doing:');
+      console.error('  git push --no-verify');
+      process.exit(1);
+    }
     const pushedShas = parsed.kind === 'shas' ? parsed.shas : [];
     const refs = pushedShas.length ? pushedShas : ['HEAD'];
     const { gates: needed } = neededGates(refs);
@@ -442,9 +521,10 @@ function main() {
     // gating HEAD. Otherwise pushedShas is empty, the foreign-sha check is
     // vacuous, and a valid HEAD receipt is honoured without ever confirming what
     // is shipping — which contradicts invariant 4 in the header.
-    const why = parsed.kind === 'unknown'
-      ? 'could not read the pushed refs from stdin'
-      : checkReceipt(receipt, { fingerprint: fp.fingerprint, head: fp.head, needed, pushedShas });
+    // Reaching here means kind === 'shas': deletes, empty and unknown all
+    // returned above, so pushedShas is non-empty and the foreign-sha check in
+    // checkReceipt can never be satisfied by vacuity.
+    const why = checkReceipt(receipt, { fingerprint: fp.fingerprint, head: fp.head, needed, pushedShas });
     if (!why) {
       const covered = receipt.gates.length ? receipt.gates.join(' + ') : 'nothing to run';
       console.log(`✓ pre-push: gate receipt valid for this exact tree (${covered}) — skipping the re-run.`);
