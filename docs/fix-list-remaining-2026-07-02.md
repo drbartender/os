@@ -3870,3 +3870,33 @@ rather than commanding a tap. A real adjacent gap did surface there though — t
 command palette hides the desktop `⌘K` hint under `@media (pointer: coarse)` but keeps
 its own `Esc` chip and ships no visible touch dismiss control. That is a missing close
 affordance, a different defect, and worth its own line.
+
+## The contractor agreement shows raw markdown asterisks on the screen people sign (found 2026-08-14)
+
+Cosmetic, but it is on a legal document at the moment of signing, and the fix is not
+where you would first look.
+
+Clause 6, "Representations & Warranties", renders on the signing screen as literal
+`**Mutual.**` and `**From Contractor.**` — asterisks visible. Source is
+`server/data/contractorAgreement.js:53`.
+
+**The asymmetry is the diagnosis.** Both renderers read the same string:
+
+- `server/utils/agreementPdf.js:11-18` explicitly parses `**bold**` runs and chains
+  them with `continued: true`, so the archived PDF renders proper bold.
+- `client/src/pages/Agreement.js:206-208` renders `{clause.formal}` as raw text in a
+  `<p style={{whiteSpace:'pre-wrap'}}>` with no markdown handling at all.
+
+So the copy is fine and the PDF is fine. The person signing sees a worse document
+than the one that gets filed, which is exactly backwards, and stray `**` on a
+contract reads as sloppiness at the one moment you are asking for trust.
+
+**Do NOT fix this in the data file.** `contractorAgreement.js:119-126` deep-freezes
+both V2 and V3, and V3 spreads V2 and aliases 10 of its 11 clause objects — editing
+the string to strip the asterisks would rewrite the text of already-signed v2
+agreements. The fix belongs in the renderer: teach `Agreement.js` the same
+`**bold**` split the PDF already does, so both surfaces agree and the frozen source
+stays untouched.
+
+Worth doing before the Field Guide §17 / agreement-v3 walk gets repeated, since
+anyone walking it now will see the asterisks and have to be told they are known.

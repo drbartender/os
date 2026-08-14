@@ -654,6 +654,13 @@ The dev test accounts `marcus.j@test.drbartender.com` (staff) and
 one-line bcrypt UPDATE against the dev branch (guard on the email first) — never on prod.
 Staff portal is `staff.localhost:3000`; admin context is plain `localhost:3000`.
 
+**marcus.j@test.drbartender.com — DEV password re-set 2026-08-14 to `WalkTest2026!`**
+(users.id 5, role staff, onboarding_status `approved`, so he reaches `/field-guide` and
+`/agreement` without the onboarding wizard blocking). Verified against the dev API: login
+returns 200. Write it down here rather than re-resetting every session — this is a dev
+fixture on a dev branch and the value is worth less than the twenty minutes each session
+spends rediscovering that nobody knows it.
+
 ## How to use this
 
 Work top-down. Tier 1 is where being wrong costs money, and Tier 4 items are gates — doing
