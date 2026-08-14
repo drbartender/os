@@ -117,7 +117,7 @@ The 27-commit batch (031fb6d..77005c5) got its push-time fleet + /second-opinion
 ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-add + POST /payment zelle support; staffShiftActions frozen-period guard rewritten as correlated EXISTS; emergency-drop past-event 409 (event_started); PayPanel/PayoutRow zelle label shims collapsed. Old-UI zelle null-handle records: prod queried read-only 2026-07-16, ZERO affected rows, closed as no-op.
 
 ## Small deferred / tech-debt
-- **crud.js `/:id/legacy-cc-payments`** — now clientless (CC demolition deleted its only consumer); dead endpoint in sensitive `proposals/`, remove in a later proposals-touching lane.
+- ~~**crud.js `/:id/legacy-cc-payments`** — now clientless (CC demolition deleted its only consumer); dead endpoint in sensitive `proposals/`, remove in a later proposals-touching lane.~~ **REMOVED 2026-08-14 (Dallas-approved)**: route + test deleted; verified dead three ways first (no caller since f39de178, prod has ZERO legacy_charge_id payment rows, and the refund machinery structurally can't select PI-less rows anyway). ARCHITECTURE row dropped; crud.js 995→976.
 - ~~Refunds-on-invoice: a payment split across multiple invoices shows the FULL refund on each (rare, informational). Apportion if it bites.~~ **DONE** (lane refund-attribution c89fe834: `invoices.js:105-119` two-regime LATERAL, `invoices.refunds.test.js` — 2026-08-14 audit).
 - Payment accounting: non-flat add-on comp residual (brief owed).
 - ~~Audit leftover: manager iCal in `calendar.js` (last open audit item).~~ **CLOSED** — confirmed intended 2026-07-13 (`docs/audit-2026-07-13/tech-debt-register.md` F-ICAL); manager treated as admin at `calendar.js:348,488` (2026-08-14 audit).
@@ -357,8 +357,9 @@ docs/superpowers/{specs,plans}/2026-07-21-notify-client-confirmation*. Deferred 
 - **Provider idempotency keys (Resend `Idempotency-Key`, Twilio)** are the precondition for
   any future failed-send Retry; without them a timeout-ambiguous retry can double-send. No
   Retry exists by design (spec: rejected alternatives).
-- **`server/utils/groupSend.js` is require-dead** (superseded by the proposalSendGroup comms
-  action); delete when convenient.
+- ~~**`server/utils/groupSend.js` is require-dead** (superseded by the proposalSendGroup comms
+  action); delete when convenient.~~ **DELETED 2026-08-14 (Dallas-approved)**: file + test
+  removed; the porting-history comments in proposalSendGroup.js/groups.js stay as provenance.
 - ~~**`emailTemplates.rescheduleNotificationClient` is orphaned**~~ **DELETED 2026-08-14
   (7b5be986)**: function + export removed, tombstone comments left at both sites so
   nobody resurrects the pre-rendered-HTML path the spec rejected. emailTemplates.js

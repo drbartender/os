@@ -320,25 +320,6 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
 // GET /api/proposals/:id (single-proposal read) lives in getOne.js — carved out
 // at the file-size ratchet; mounted last in index.js because `/:id` is greedy.
 
-/** GET /api/proposals/:id/legacy-cc-payments — admin-only fetch of
- *  Check-Cherry-imported payment rows for this proposal (those with a
- *  non-null `legacy_charge_id`, i.e. a Stripe charge ID like `ch_...`).
- *  Drives the LegacyCcPaymentsPanel which warns the operator that the
- *  built-in Refund button cannot reach these payments and a manual
- *  Stripe-dashboard refund is required (spec §11). */
-router.get('/:id/legacy-cc-payments', auth, adminOnly, asyncHandler(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!Number.isInteger(id)) throw new ValidationError(undefined, 'id must be an integer');
-  const { rows } = await pool.query(
-    `SELECT id, amount, payment_method, legacy_charge_id, created_at
-       FROM proposal_payments
-      WHERE proposal_id = $1 AND legacy_charge_id IS NOT NULL
-      ORDER BY created_at ASC`,
-    [id]
-  );
-  res.json({ payments: rows });
-}));
-
 /** PATCH /api/proposals/:id — update event details and recalculate */
 router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const {

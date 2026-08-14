@@ -749,11 +749,6 @@ _(tips/tip-feedback rows in `server/routes/admin/contractorTipPage.js`; the stub
 | POST | `/proposals/:id/reenroll-drink-plan-nudge` | Admin | **Deprecated**, kept mounted for API compatibility: delegates to the `drink_plan_nudge_reenroll` comms action's side effects only: clears the durable `nudge_suppressed` flag and re-schedules the T-21 email + SMS nudges for a CC-imported proposal that now has a `drink_plans` row (idempotent; duplicate-pending insert no-ops). It deliberately does NOT auto-dispatch an immediate nudge (schedule-only, preserving the legacy behavior so cc-imported clients aren't cold-sent on a click); the immediate nudge is opt-in via the compose-first `POST /api/comms/send`. Mounted from `routes/admin/ccImport/proposalActions.js`. |
 | POST | `/proposals/:id/reaccrue-payout` | Admin | Re-run `accruePayoutsForProposal` for a CC proposal after stub cleanup. Returns the structured `{ skipped, reason }` result. Mounted from `routes/admin/ccImport/proposalActions.js`. |
 
-### Proposal-level legacy CC payments — `/api/proposals`
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET | `/:id/legacy-cc-payments` | `auth, adminOnly` | CLIENTLESS since the 2026-07-07 cc-demolition (its only consumer, `LegacyCcPaymentsPanel`, was deleted). Lists CC-imported `proposal_payments` rows (`legacy_charge_id IS NOT NULL`); prod has zero such rows. Deferred removal — it lives in sensitive `proposals/` and comes out in a future proposals-touching lane. |
-
 ### Other
 | Method | Path | Auth | Description |
 |---|---|---|---|

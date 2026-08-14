@@ -2,7 +2,8 @@
 
 // Comms action: proposal_send_group (plan P1). Ports POST
 // /api/proposals/:id/send-group (server/routes/proposals/groups.js ->
-// utils/groupSend.js). EMAIL ONLY: a comparison goes out as one
+// utils/groupSend.js, since deleted 2026-08-14 — this action is the only
+// implementation now). EMAIL ONLY: a comparison goes out as one
 // proposalOptionsSent "compare your options" email; there is deliberately no
 // per-option text message. ensureSideEffects runs the exact groupSend
 // transaction (FOR UPDATE lock — the AB-BA-safe ordering — transition every
