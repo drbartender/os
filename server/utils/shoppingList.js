@@ -9,7 +9,7 @@
 // Pure functions, no DB calls.
 
 const crypto = require('crypto');
-const { resolveRecipeRow, normalizeName } = require('./potionCatalog');
+const { resolveRecipeRow, normalizeName, recipeRowLabel } = require('./potionCatalog');
 
 // ─── 100-guest baselines (mirror shoppingListPars.js) ────────────
 
@@ -262,8 +262,8 @@ function mergeSignatureRecipes(signatureCocktails, liquorBeerWine, everythingEls
     for (const row of (drink.ingredients || [])) {
       const resolved = resolveRecipeRow(row, slices);
       if (!resolved) {
-        const label = typeof row === 'string' ? row : (row && row.ingredient) || '';
-        if (String(label).trim()) unresolved.push({ drink: drink.name, ingredient: String(label).trim() });
+        const label = recipeRowLabel(row);
+        if (label) unresolved.push({ drink: drink.name, ingredient: label });
         continue;
       }
       // Merge-size rule (spec §3.2): sig-drink spirits are added as 750mL
@@ -529,18 +529,20 @@ function generateShoppingList(eventData, catalog) {
 // signatureCocktails list.
 function buildGeneratorInputFromConsult(consult, eventCtx, resolvedSigs = [], resolvedMocktails = []) {
   const safe = consult || {};
-  const customSigs = (safe.customCocktails || []).map(c => ({
-    name: String(c.name || '').trim(),
-    ingredients: Array.isArray(c.ingredients)
-      ? c.ingredients.map(i => String(i).trim()).filter(Boolean)
+  // recipeRowLabel, not String(): consult_selections is JSONB, so a custom
+  // drink's ingredients can hold structured { ingredient, amount, unit } rows
+  // (the shape cocktails.ingredients uses) and not just the form's free text.
+  // String() on one of those yields '[object Object]', which resolves to no
+  // catalog item and lands in a REAL shopping list. Same fork mergeSignatureRecipes
+  // makes, via the same helper.
+  const customDrinks = (list) => (Array.isArray(list) ? list : []).map(c => ({
+    name: String((c && c.name) || '').trim(),
+    ingredients: Array.isArray(c && c.ingredients)
+      ? c.ingredients.map(recipeRowLabel).filter(Boolean)
       : [],
   })).filter(c => c.name);
-  const customMocktails = (safe.customMocktails || []).map(c => ({
-    name: String(c.name || '').trim(),
-    ingredients: Array.isArray(c.ingredients)
-      ? c.ingredients.map(i => String(i).trim()).filter(Boolean)
-      : [],
-  })).filter(c => c.name);
+  const customSigs = customDrinks(safe.customCocktails);
+  const customMocktails = customDrinks(safe.customMocktails);
 
   // mocktail-only mode always includes mocktails regardless of mocktailsEnabled
   // — the consult form coerces the flag to true on submit, but a hand-crafted

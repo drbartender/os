@@ -12,7 +12,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildCatalogSlices, resolveIngredient, resolveRecipeRow, normalizeName } = require('./potionCatalog');
+const {
+  buildCatalogSlices, resolveIngredient, resolveRecipeRow, normalizeName, recipeRowLabel,
+} = require('./potionCatalog');
 const {
   generateShoppingList, buildGeneratorInputFromConsult,
   PARS_100, SPIRIT_PARS, INGREDIENT_MAP, BEER_STYLE_MAP, WINE_STYLE_MAP,
@@ -2377,6 +2379,121 @@ test('legacy generator still reproduces the frozen snapshots (capture is faithfu
     // before comparing — lane B's own suite asserts their contents.
     const { needsRecipe, _unresolvedIngredients, ...clean } = out[name];
     assert.deepEqual(clean, SNAPSHOTS[name], `snapshot ${name}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Recipe-row shape guard. cocktails.ingredients / mocktails.ingredients are
+// JSONB arrays of OBJECTS ({ingredient, amount, unit, note?}); the consult
+// form's custom drinks are bare strings. Any site that flattens a row with
+// String() or Array.join() emits '[object Object]' — that exact coercion
+// already printed to a bartender once on the staff-portal side, and on this
+// path it would poison a real shopping list.
+// ---------------------------------------------------------------------------
+
+test('recipeRowLabel: reads the ingredient key off a structured row', () => {
+  assert.equal(recipeRowLabel({ ingredient: 'gin', amount: '2', unit: 'oz' }), 'gin');
+  // note is an extra key the DB shape carries; it must not leak into the label.
+  assert.equal(recipeRowLabel({ ingredient: ' lime juice ', amount: '0.75', unit: 'oz', note: 'fresh' }), 'lime juice');
+});
+
+test('recipeRowLabel: passes a plain string through, trimmed', () => {
+  assert.equal(recipeRowLabel('bourbon'), 'bourbon');
+  assert.equal(recipeRowLabel('  ginger beer  '), 'ginger beer');
+});
+
+test('recipeRowLabel: never yields the [object Object] coercion', () => {
+  // The whole point. String({...}) is '[object Object]', which resolves to no
+  // catalog item and would print to a bartender / ride a client email.
+  for (const row of [
+    { ingredient: 'rye' },
+    { ingredient: '', amount: '1' },
+    {},
+    { amount: '2', unit: 'oz' },
+  ]) {
+    assert.doesNotMatch(recipeRowLabel(row), /\[object Object\]/, JSON.stringify(row));
+  }
+});
+
+test('recipeRowLabel: unusable rows collapse to empty string, not a placeholder', () => {
+  // Callers .filter(Boolean), so '' is the "drop me" signal. A row with no
+  // ingredient text must never become a fake catalog term.
+  assert.equal(recipeRowLabel(null), '');
+  assert.equal(recipeRowLabel(undefined), '');
+  assert.equal(recipeRowLabel({}), '');
+  assert.equal(recipeRowLabel({ amount: '2', unit: 'oz' }), '');
+  assert.equal(recipeRowLabel('   '), '');
+});
+
+test('buildGeneratorInputFromConsult: object-shaped custom ingredients resolve like strings', () => {
+  const ctx = { clientName: 'Shape Test', guestCount: 100, eventDate: '2026-08-01' };
+  const asStrings = buildGeneratorInputFromConsult({
+    customCocktails: [{ name: 'House Mule', ingredients: ['vodka', 'ginger beer', 'lime'] }],
+  }, ctx, [], []);
+  const asObjects = buildGeneratorInputFromConsult({
+    customCocktails: [{
+      name: 'House Mule',
+      ingredients: [
+        { ingredient: 'vodka', amount: '2', unit: 'oz' },
+        { ingredient: 'ginger beer', amount: '4', unit: 'oz' },
+        { ingredient: 'lime', amount: '0.5', unit: 'oz', note: 'fresh' },
+      ],
+    }],
+  }, ctx, [], []);
+  // The two shapes are the SAME recipe and must reach the generator identically.
+  assert.deepEqual(asObjects.signatureCocktails, asStrings.signatureCocktails);
+  assert.deepEqual(asObjects.signatureCocktails[0].ingredients, ['vodka', 'ginger beer', 'lime']);
+});
+
+test('buildGeneratorInputFromConsult: object-shaped custom MOCKTAIL ingredients too', () => {
+  // Same bug, second call site — the mocktail branch was a copy of the cocktail
+  // one, so a fix applied to only one of them leaves half the hole open.
+  const out = buildGeneratorInputFromConsult({
+    mocktailsEnabled: true,
+    customMocktails: [{
+      name: 'Garden Fizz',
+      ingredients: [{ ingredient: 'cucumber', amount: '3', unit: 'slices' }, { ingredient: 'soda water' }],
+    }],
+  }, { clientName: 'Shape Test', guestCount: 80, eventDate: '2026-08-01' }, [], []);
+  const drink = out.signatureCocktails.find(d => d.name === 'Garden Fizz');
+  assert.deepEqual(drink.ingredients, ['cucumber', 'soda water']);
+});
+
+test('buildGeneratorInputFromConsult: unusable ingredient rows are dropped, not stringified', () => {
+  const out = buildGeneratorInputFromConsult({
+    customCocktails: [{
+      name: 'Half Written',
+      ingredients: ['gin', { amount: '2', unit: 'oz' }, null, { ingredient: '  ' }, { ingredient: 'tonic' }],
+    }],
+  }, { clientName: 'Shape Test', guestCount: 100, eventDate: '2026-08-01' }, [], []);
+  assert.deepEqual(out.signatureCocktails[0].ingredients, ['gin', 'tonic']);
+});
+
+test('buildGeneratorInputFromConsult: a bad custom ingredient never reaches the shopping list', () => {
+  // End-to-end: the failure this guard exists to prevent is a REAL list with a
+  // '[object Object]' line on it. Generate one and prove the string is absent.
+  const out = buildGeneratorInputFromConsult({
+    barType: 'sig_beer_wine', mixers: 'full',
+    customCocktails: [{
+      name: 'Structured Mule',
+      ingredients: [
+        { ingredient: 'vodka', amount: '2', unit: 'oz' },
+        { ingredient: 'ginger beer', amount: '4', unit: 'oz' },
+      ],
+    }],
+  }, { clientName: 'Shape Test', guestCount: 100, eventDate: '2026-08-01' }, [], []);
+  const list = generateShoppingList(out, catalog);
+  const blob = JSON.stringify(list);
+  assert.doesNotMatch(blob, /\[object Object\]/);
+  // And it actually resolved rather than silently vanishing: vodka is a real
+  // catalog item, so it must appear as a purchasable line.
+  assert.ok(
+    (list.liquorBeerWine || []).some(i => /vodka/i.test(i.item)),
+    'structured vodka row should resolve to a catalog line'
+  );
+  // Nothing bogus got reported as unresolved either.
+  for (const u of (list._unresolvedIngredients || [])) {
+    assert.doesNotMatch(String(u.ingredient), /\[object Object\]/);
   }
 });
 

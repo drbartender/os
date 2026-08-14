@@ -144,5 +144,99 @@ describe('buildRepriceSummary', () => {
       // future CORRECT line such as "autopay stays armed".
       expect(s.lines.join(' ')).not.toContain('drop back to deposit paid');
     });
+
+    // The four cases above prove the three branches EXIST, but each sits $50
+    // from the covers/outruns boundary — 10,000x the 0.005 epsilon the code
+    // actually switches on. A regression that widened that epsilon, flipped a
+    // > to a >=, or rounded to whole dollars would pass every one of them and
+    // still misreport a real one-cent balance. These pin the boundary itself.
+    describe('at the exact covers/outruns boundary', () => {
+      it('one cent short of covered: a real balance is due and the demotion is real', () => {
+        const s = buildRepriceSummary({
+          status: 'balance_paid', totalPrice: '1000', amountPaid: '1200', newTotal: 1200.01,
+        });
+        const all = s.lines.join(' ');
+        // A penny IS a balance. reconcileProposalPaymentStatus compares rounded
+        // CENTS (paidCents 120000 < totalCents 120001), so it genuinely demotes
+        // and disarms autopay here; the modal must not round the penny away.
+        expect(all).toContain('$0.01 becomes the new balance due');
+        expect(all).toContain('drop back to deposit paid');
+        expect(all).not.toContain('already cover the new total');
+        expect(s.newBalance).toBeCloseTo(0.01, 6);
+      });
+
+      it('one cent inside covered: no balance due, no demotion', () => {
+        const s = buildRepriceSummary({
+          status: 'balance_paid', totalPrice: '1000', amountPaid: '1200', newTotal: 1199.99,
+        });
+        const all = s.lines.join(' ');
+        // paidCents 120000 >= totalCents 119999, so the server leaves the status
+        // alone. The mirror of the case above, one cent the other way.
+        expect(all).toContain('stays overpaid by $0.01');
+        expect(all).not.toContain('becomes the new balance due');
+        expect(all).not.toContain('drop back to deposit paid');
+      });
+
+      it('exactly covered is the only case that claims paid in full', () => {
+        // Pins which side each neighbor of the boundary falls on, so the
+        // "exactly" copy cannot silently widen to swallow a penny either way.
+        const at = buildRepriceSummary({
+          status: 'balance_paid', totalPrice: '1000', amountPaid: '1200', newTotal: 1200,
+        });
+        const under = buildRepriceSummary({
+          status: 'balance_paid', totalPrice: '1000', amountPaid: '1200', newTotal: 1199.99,
+        });
+        const over = buildRepriceSummary({
+          status: 'balance_paid', totalPrice: '1000', amountPaid: '1200', newTotal: 1200.01,
+        });
+        expect(at.lines.join(' ')).toContain('exactly paid in full');
+        expect(under.lines.join(' ')).not.toContain('exactly paid in full');
+        expect(over.lines.join(' ')).not.toContain('exactly paid in full');
+        expect(at.newBalance).toBe(0);
+      });
+
+      it('sub-cent float noise above the old total is not treated as an overpayment', () => {
+        // wasOverpaid uses the same 0.005 half-cent epsilon as the delta gate.
+        // Float noise must take the plain "will be billed" copy, not the
+        // overpaid copy, which would name a nonsense fraction-of-a-cent figure.
+        const s = buildRepriceSummary({
+          status: 'deposit_paid', totalPrice: '1000', amountPaid: 1000.004, newTotal: 1250,
+        });
+        expect(s.lines.join(' ')).toContain('increase will be billed to the client');
+        expect(s.lines.join(' ')).not.toContain('had overpaid');
+      });
+    });
+
+    it('returned newBalance agrees with the copy, including when it is negative', () => {
+      // RepriceConfirmModal renders summary.newBalance directly in its "New
+      // balance" row (with a Unicode-minus convention). Nothing else pinned it
+      // on an overpaid case, so clamping it to 0 would leave the modal showing
+      // "$0.00" beside copy that says the proposal stays overpaid by $50.00.
+      const s = buildRepriceSummary({
+        status: 'balance_paid', totalPrice: '1000', amountPaid: '1200', newTotal: 1150,
+      });
+      expect(s.newBalance).toBe(-50);
+      expect(s.lines.join(' ')).toContain('stays overpaid by $50.00');
+      expect(s.paid).toBe(1200);
+      expect(s.oldTotal).toBe(1000);
+      expect(s.delta).toBe(150);
+    });
+
+    it('overpaid increase on a non-balance_paid status: same copy, never a demotion', () => {
+      // The demotion gate is an AND of two conditions. The suppression test
+      // above only exercises the balance half; this exercises the status half,
+      // and proves the overpaid copy itself is status-independent.
+      for (const status of ['deposit_paid', 'confirmed', 'completed']) {
+        const s = buildRepriceSummary({
+          status, totalPrice: '1000', amountPaid: '1200', newTotal: 1500,
+        });
+        const all = s.lines.join(' ');
+        expect(all).toContain('$300.00 becomes the new balance due');
+        expect(all).toContain('the full $500.00');
+        // confirmed/completed are lifecycle states reconcile never touches, and
+        // deposit_paid cannot drop below itself. Promising a demotion lies.
+        expect(all).not.toContain('drop back to deposit paid');
+      }
+    });
   });
 });

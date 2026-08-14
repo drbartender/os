@@ -193,4 +193,32 @@ function resolveRecipeRow(row, catalog) {
   return resolveIngredient(row.ingredient, catalog);
 }
 
-module.exports = { normalizeName, buildCatalogSlices, resolveIngredient, resolveRecipeRow };
+/**
+ * Flatten one recipe row to its plain-text ingredient label.
+ *
+ * THE shape rule, in one place. A recipe row arrives in exactly two shapes and
+ * every consumer must fork on both:
+ *   - structured, as stored in cocktails.ingredients / mocktails.ingredients
+ *     (JSONB array of { ingredient, amount, unit, note? })
+ *   - a bare free-text string, as the consult form's custom drinks produce
+ * resolveRecipeRow above already forks this way for CATALOG resolution; this is
+ * the same fork for the DISPLAY/persist side, so the two can never drift.
+ *
+ * Why it is a shared function and not another inline ternary: String({...})
+ * yields '[object Object]', and that exact coercion already shipped once on the
+ * staff-portal side and printed '[object Object]' to a bartender at the bar. A
+ * row missing its `ingredient` key degrades to '' (callers drop empties) rather
+ * than to a placeholder string that would poison a real shopping list.
+ *
+ * @returns {string} trimmed label, or '' when the row carries no usable text
+ */
+function recipeRowLabel(row) {
+  if (row === null || row === undefined) return '';
+  if (typeof row === 'string') return row.trim();
+  if (typeof row === 'object') return String(row.ingredient ?? '').trim();
+  return String(row).trim();
+}
+
+module.exports = {
+  normalizeName, buildCatalogSlices, resolveIngredient, resolveRecipeRow, recipeRowLabel,
+};

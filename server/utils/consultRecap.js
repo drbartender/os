@@ -1,3 +1,5 @@
+const { recipeRowLabel } = require('./potionCatalog');
+
 const BAR_TYPE_LABELS = {
   full_bar: 'Full bar',
   sig_beer_wine: 'Signature cocktails plus beer and wine',
@@ -9,6 +11,17 @@ function titleCase(s) {
   return String(s || '')
     .toLowerCase()
     .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// " (gin, lime, simple syrup)" for a custom drink's ingredient rows, or '' when
+// there is nothing usable to name. Array.join() stringifies each element, so a
+// structured { ingredient, amount, unit } row (the shape cocktails.ingredients
+// uses) would join as '[object Object]' — in an email a client reads. Fork on
+// the row shape through the one shared helper instead.
+function ingredientSuffix(rows) {
+  if (!Array.isArray(rows)) return '';
+  const labels = rows.map(recipeRowLabel).filter(Boolean);
+  return labels.length ? ` (${labels.join(', ')})` : '';
 }
 
 /**
@@ -39,10 +52,7 @@ function formatConsultRecap(consult = {}) {
   if (Array.isArray(consult.customCocktails) && consult.customCocktails.length) {
     for (const c of consult.customCocktails) {
       if (!c || !c.name) continue;
-      const ingredients = Array.isArray(c.ingredients) && c.ingredients.length
-        ? ` (${c.ingredients.join(', ')})`
-        : '';
-      lines.push(`Custom cocktail: ${c.name}${ingredients}`);
+      lines.push(`Custom cocktail: ${c.name}${ingredientSuffix(c.ingredients)}`);
     }
   }
 
@@ -57,10 +67,7 @@ function formatConsultRecap(consult = {}) {
   if (Array.isArray(consult.customMocktails) && consult.customMocktails.length) {
     for (const c of consult.customMocktails) {
       if (!c || !c.name) continue;
-      const ingredients = Array.isArray(c.ingredients) && c.ingredients.length
-        ? ` (${c.ingredients.join(', ')})`
-        : '';
-      lines.push(`Custom mocktail: ${c.name}${ingredients}`);
+      lines.push(`Custom mocktail: ${c.name}${ingredientSuffix(c.ingredients)}`);
     }
   }
 

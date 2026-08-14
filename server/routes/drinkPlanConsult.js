@@ -15,6 +15,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
 const { ensureNotFinalized } = require('../utils/beoFinalize');
 const { generateShoppingList } = require('../utils/shoppingList');
+const { recipeRowLabel } = require('../utils/potionCatalog');
 const {
   buildPlannerGeneratorInput,
   buildConsultGeneratorInput,
@@ -117,7 +118,17 @@ function sanitizeConsult(raw) {
           [key]: `${key}[${i}].ingredients exceeds ${MAX_INGREDIENTS_PER_DRINK}.`,
         });
       }
-      const ingredients = ingredientsRaw.map(s => String(s).slice(0, MAX_INGREDIENT_LEN));
+      // recipeRowLabel, not String(): this is the ONLY writer of
+      // consult_selections, so a String() here does not just mis-render once,
+      // it PERSISTS '[object Object]' into JSONB, round-trips back into the
+      // form on re-open, and poisons every regenerated shopping list from that
+      // row forever. A structured { ingredient, amount, unit } row (the shape
+      // cocktails.ingredients uses) flattens to its ingredient text instead.
+      // Empties are dropped so the stored contract stays a clean string[] and
+      // the recap email cannot render "(gin, , lime)".
+      const ingredients = ingredientsRaw
+        .map(s => recipeRowLabel(s).slice(0, MAX_INGREDIENT_LEN))
+        .filter(Boolean);
       return { name, ingredients };
     });
   };
@@ -354,3 +365,7 @@ router.patch('/:id/shopping-list-source', auth, requireAdminOrManager, asyncHand
 
 module.exports = router;
 module.exports.performConsultsCompletionFlip = performConsultsCompletionFlip;
+// Exported for the DB-free shape test (same reason as the flip helper above):
+// sanitizeConsult is the only writer of consult_selections, so its coercion
+// rules are worth pinning without standing up a plan row.
+module.exports.sanitizeConsult = sanitizeConsult;

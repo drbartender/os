@@ -49,6 +49,52 @@ test('formatConsultRecap: custom-cocktail ingredients render inline in parens', 
   assert.match(lines.find(l => /Smoky Maria/.test(l)), /\(mezcal, tomato, lime\)/);
 });
 
+test('formatConsultRecap: structured ingredient rows render as names, not [object Object]', () => {
+  // consult_selections is JSONB. Array.join() stringifies each element, so a
+  // structured { ingredient, amount, unit } row (the shape cocktails.ingredients
+  // uses) used to join as '[object Object]' in an email a CLIENT reads.
+  const lines = formatConsultRecap({
+    customCocktails: [{
+      name: 'Structured Mule',
+      ingredients: [
+        { ingredient: 'vodka', amount: '2', unit: 'oz' },
+        { ingredient: 'ginger beer', amount: '4', unit: 'oz' },
+        { ingredient: 'lime', amount: '0.5', unit: 'oz', note: 'fresh' },
+      ],
+    }],
+    customMocktails: [{
+      name: 'Garden Fizz',
+      ingredients: [{ ingredient: 'cucumber' }, { ingredient: 'soda water' }],
+    }],
+  });
+  const blob = lines.join(' | ');
+  assert.doesNotMatch(blob, /\[object Object\]/);
+  assert.match(lines.find(l => /Structured Mule/.test(l)), /\(vodka, ginger beer, lime\)/);
+  assert.match(lines.find(l => /Garden Fizz/.test(l)), /\(cucumber, soda water\)/);
+  // Amount/unit/note are recipe detail, not shopping copy: they must not leak.
+  assert.doesNotMatch(blob, /\boz\b|fresh/);
+});
+
+test('formatConsultRecap: unusable ingredient rows drop rather than leaving empty slots', () => {
+  // Guards the rendering hazard the filter exists for: "(gin, , tonic)".
+  const lines = formatConsultRecap({
+    customCocktails: [{
+      name: 'Half Written',
+      ingredients: ['gin', { amount: '2', unit: 'oz' }, null, '   ', { ingredient: 'tonic' }],
+    }],
+  });
+  assert.match(lines.find(l => /Half Written/.test(l)), /\(gin, tonic\)/);
+});
+
+test('formatConsultRecap: a custom drink with no usable ingredients still names the drink', () => {
+  const lines = formatConsultRecap({
+    customCocktails: [{ name: 'Bartender Choice', ingredients: [{}, null] }],
+  });
+  const line = lines.find(l => /Bartender Choice/.test(l));
+  // No trailing empty parens, and the drink is not silently dropped.
+  assert.equal(line, 'Custom cocktail: Bartender Choice');
+});
+
 test('pickNextStepLine: byob picks the shopping-list line', () => {
   assert.equal(
     pickNextStepLine('byob'),
