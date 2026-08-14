@@ -308,24 +308,41 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       package compare on the proposal page) the same night as everything else; no record of
       anyone opening it in prod since. One look at a real proposal's compare link. Note the
       compare-and-book spec will eventually replace this surface.
-- [ ] **Marketing redesign — all 3 phases live, RESTYLED to the approved design 2026-08-14
-      (lane `mkt-restyle`, merged `19a9298e` + polish `be555426`, unpushed).** The campaign
-      create/send flow owes a full walk BEFORE real sends: tags, resolver, contacts UI,
-      extract, compliance, send pacing. Include the three gate-fix surfaces, all corrected
-      blind and never seen: (1) compose resume — save a draft, send to a tiny audience,
-      then simulate the retryable path by leaving `/marketing/compose` and returning; the
-      "Resuming campaign #N" banner and its "Start fresh instead" button must appear after
-      a quota-stopped or partly-failed run, never after a clean one; (2) actionable
-      toasts — select over 500 recipients ("Send at most 500 at a time") and an
-      all-suppressed audience ("Check the held-back panel"), each must show its real
-      message, not "Please fix the errors below". RESTYLE-specific checks for the same
-      walk: both skins (the moment title deliberately goes serif on House Lights, like
-      every heading); the Audiences table folds "Last contacted" under 1400px (five columns at
-      1280, six from ~1400 up) — check both widths feel right; the 375px moment cards
-      and budget meter (fixed be555426, re-shot clean). Headless coverage so far: 31
-      screenshots both skins at 1280/900/375, zero console errors. (Sep 5 deadline
-      pressure is exactly the condition that buries walkthroughs — this one gates real
-      sends.)
+- [ ] **Marketing redesign, FUNCTIONAL walk — all 3 phases live; gates real sends.** The
+      campaign create/send flow owes a full walk BEFORE real sends: tags, resolver,
+      contacts UI, extract, compliance, send pacing. Include the three gate-fix surfaces,
+      all corrected blind and never seen: (1) compose resume — save a draft, send to a
+      tiny audience, then simulate the retryable path by leaving `/marketing/compose` and
+      returning; the "Resuming campaign #N" banner and its "Start fresh instead" button
+      must appear after a quota-stopped or partly-failed run, never after a clean one;
+      (2) actionable toasts — select over 500 recipients ("Send at most 500 at a time")
+      and an all-suppressed audience ("Check the held-back panel"), each must show its
+      real message, not "Please fix the errors below". Doubles as the data-needing half
+      of the restyle walk below — same session covers both. (Sep 5 deadline pressure is
+      exactly the condition that buries walkthroughs — this one gates real sends.)
+- [ ] **Marketing RESTYLE, visual walk — the whole section moved onto the approved
+      claude.ai/design look 2026-08-14** (lane `mkt-restyle`, squash `19a9298e` +
+      follow-ups `be555426`/`3af0edd9`/`15cc4df0`, unpushed). Benchmark is
+      `docs/design-artifacts/2026-08-11-marketing-redesign.dc.html`; final agent verdict
+      ADHERENT, but no human has seen it. Headless coverage so far: 31+ screenshots, both
+      skins, 1280/900/375, zero console errors. The walk:
+      (1) all four tabs in BOTH skins — After Hours is the artifact's look; House Lights
+      deliberately goes serif on the moment titles like every other heading, judge whether
+      that reads right; (2) widths — at 1280 the Audiences table shows five columns
+      ("Last contacted" folds under 1400px, recorded as a spec §10 deviation), at ≥1400 all
+      six; check both feel right; at 375 the moment cards stack with the spine down the
+      left edge and the budget meter flexes full-width; (3) the contact drawer (DS slide-in,
+      hero name must be full ink on House Lights — this was the cream-leak fix) and the
+      Compose preview drawer; (4) Compose's two steps: count lives in the Recipients tab
+      label while writing, the two-stage confirm and "Before you send" rail on the right;
+      (5) small judgment calls flagged by the adherence review: the light-skin budget-bar
+      legend swatches are two similar darks, and keyboard-Tab the tabs once to confirm the
+      focus ring survives (the always-on scroll container that clipped it was scoped to
+      phones in `15cc4df0`). States that need seeded data (Sent table with rows, resume
+      banner, send-result/quota copy, moment inline editor, tag menu, pager) arrive free
+      during the functional walk above. What is deliberately NOT there: block canvas /
+      Look panel / Send test / Desktop-Mobile toggles — deferred lane `mkt-compose-canvas`,
+      unscheduled, awaiting Dallas's go.
 - [ ] **Proposals list pagination — LIVE as of the 2026-08-13 evening push (`1dc72df6` +
       stale-response guard `92efc663`).** **Never opened in a browser**, deliberately:
       the build-time walk needed a second dev server and a local admin token, both denied
