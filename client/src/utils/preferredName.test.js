@@ -32,12 +32,15 @@ test.each(CASES)('computeDisplayName(%s, %s) === %s', (preferredName, legalFullN
 
 test.each([
   'McKenna', 'DeShawn', 'LaToya', "O'Brien", 'Mary-Kate', 'D.J.', 'DJ', 'LumpyIceCream',
+  // Unicode letters are letters (widened 2026-08-14, mirrors the server).
+  'José', 'Renée', 'Zoë', 'Núñez', "D'Ángelo", 'Søren', '李娜',
 ])('accepts %s', (name) => {
   expect(validatePreferredName(name).valid).toBe(true);
 });
 
 test.each([
   'Miss Taylor', 'Nicholas or Nick', 'Bar2Go', 'J', '', 'Abcdefghijklmnopqrstuvwxyz',
+  'J0sé', '🍸Bartender',
 ])('rejects %s', (name) => {
   expect(validatePreferredName(name).valid).toBe(false);
 });

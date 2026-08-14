@@ -89,8 +89,10 @@ export function computeDisplayName({ preferredName, legalFullName } = {}) {
 export const MIN_LEN = 2;
 export const MAX_LEN = 20;
 // Must start with a letter; may then contain letters, spaces, hyphens,
-// apostrophes and periods. Allows "D.J.", "Mary-Kate", "O'Brien".
-const NAME_CHARS = /^[A-Za-z][A-Za-z .'-]*$/;
+// apostrophes and periods. Allows "D.J.", "Mary-Kate", "O'Brien" — and any
+// Unicode letter (\p{L}), so "José" and "Renée" are settable (widened
+// 2026-08-14; keep in sync with server/utils/staffDisplayName.validate.js).
+const NAME_CHARS = /^[\p{L}][\p{L} .'-]*$/u;
 
 function norm(v) {
   return String(v === null || v === undefined ? '' : v).trim().replace(/\s+/g, ' ');

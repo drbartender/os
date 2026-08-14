@@ -956,9 +956,12 @@ merged code 2026-08-04):
   the column + retarget the index/ON CONFLICTs together. Also: the upsert's
   `COALESCE(email_leads.name, EXCLUDED.name)` is dead (`name` NOT NULL) — an 'Unknown' from
   capture-lead is never upgraded to a real name. (low)
-- `staffDisplayName.validate.js` NAME_CHARS is ASCII-only: "José"/"Renée" cannot be SET as a
-  preferred name (grandfathering covers only unchanged values). Product call: widen to
-  `/^[\p{L}][\p{L} .'-]*$/u` keeping length/shape rules. (low, gemini catch)
+- ~~`staffDisplayName.validate.js` NAME_CHARS is ASCII-only~~ **FIXED 2026-08-14 (Dallas:
+  "widen")**: `/^[\p{L}][\p{L} .'-]*$/u` in BOTH copies — the entry missed that a client
+  mirror exists (`client/src/utils/preferredName.js:93`); both widened together with
+  keep-in-sync comments. Tests extended both sides (José/Renée/Zoë/Núñez/D'Ángelo/Søren/李娜
+  accepted; digit-among-unicode and emoji rejected): server 39/39 + 24/24, client 44/44.
+  (low, gemini catch)
 - ~~Seniority panel: clearing the Historical-events box sends 0 (parseInt||0), bypassing the PUT's
   ''-keep path~~ **FIXED** (c10ae187: `AdminUserDetail.js:295-303` sends raw trimmed strings,
   "leave blank to keep current · type 0 to zero" helper copy at `PayoutsTab.js:209` —

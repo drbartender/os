@@ -10,6 +10,9 @@ const ACCEPTED = [
   // Documented: a well-formed handle passes every mechanical check and always
   // will. The copy prevents it, not this function (spec §9).
   'LumpyIceCream',
+  // Unicode letters are letters (widened 2026-08-14): accented and non-Latin
+  // names must be SETTABLE, not merely grandfathered.
+  'José', 'Renée', 'Zoë', 'Núñez', "D'Ángelo", 'Søren', '李娜',
 ];
 
 for (const name of ACCEPTED) {
@@ -29,6 +32,8 @@ const REJECTED = [
   ['Nicholas or Nick', 'three words'],
   ['Bar2Go', 'contains a digit'],
   ['Chip!', 'contains a symbol'],
+  ['J0sé', 'digit hiding among unicode letters'],
+  ['🍸Bartender', 'emoji is not a letter (\\p{L} excludes it)'],
   ['Abcdefghijklmnopqrstuvwxyzabcd', 'thirty characters, over the 20 cap'],
 ];
 
