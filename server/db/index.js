@@ -276,4 +276,8 @@ async function initDb() {
   }
 }
 
-module.exports = { pool, initDb, splitStatements, findMissingCriticalIndexes };
+// CRITICAL_INDEXES is exported so the test derives its expectations from the
+// manifest instead of restating it — the restated copies went stale the first
+// time an index was added (duty_lines, 2026-08) and the guard's own suite was
+// then red on every run, which is a guard nobody reads.
+module.exports = { pool, initDb, splitStatements, findMissingCriticalIndexes, CRITICAL_INDEXES };

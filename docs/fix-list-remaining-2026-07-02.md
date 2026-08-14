@@ -1262,6 +1262,9 @@ Items 8-11 are unstarted.
     test that touches a real database is among the PASSES; both failures are the two
     mock-driven tests whose expected arrays were frozen in the single-element era. So this
     is cheap to close and carries no hidden DB problem behind it.
+    **FIXED 2026-08-13**: `CRITICAL_INDEXES` is now exported and both mocks derive from it
+    (plus a new one-absent case); adding an index can never redden the suite again. 6/6
+    green, verified by running it.
 
 14. **`balanceReminderScheduling.test.js` CDT case is red on main.** "summer (CDT) anchors
     each reminder to 10:00am Chicago = 15:00Z" asserts `actual: 0, expected: 1`. Also
@@ -1269,6 +1272,12 @@ Items 8-11 are unstarted.
     shared dev DB no longer has) rather than a DST math bug, but that is a guess — it
     needs someone to actually look, because if it IS the DST math then balance reminders
     are firing at the wrong hour for half the year, which is client-facing.
+    **CLOSED 2026-08-13 — it was the fixture, and the DST math is PROVEN FINE.** The winter
+    (CST) case passed at 16:00Z all along; only the summer fixture's hardcoded
+    `balance_due_date '2026-07-15'` had aged into the past, which the scheduler correctly
+    skips. Re-fixtured with rolling years (July 15 always CDT with a June-1 cutoff, the
+    following Jan 15 always CST), so it cannot age out again. 2/2 green, verified by
+    running it. Balance reminders were never firing at the wrong hour.
 
 15. **Two suites need an opt-in env var and silently "fail" without it.**
     `server/routes/calcom.test.js` and `server/routes/drinkPlanConsult.test.js` throw at

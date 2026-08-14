@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { pool, findMissingCriticalIndexes } = require('./index');
+const { pool, findMissingCriticalIndexes, CRITICAL_INDEXES } = require('./index');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('criticalIndexes.test.js refuses to run against production');
@@ -20,16 +20,29 @@ test('present on the real dev DB → returns [] (the F7 index is applied)', asyn
   assert.deepEqual(missing, [], `expected no missing critical indexes, got ${JSON.stringify(missing)}`);
 });
 
-test('DB has none of them → reports the index as missing', async () => {
+// Both mocks derive from CRITICAL_INDEXES rather than restating it. The
+// restated arrays went stale when the duty_lines indexes joined the list
+// (2026-08) and this suite was then red on every run for days — a permanently
+// red guard is a guard nobody reads, so the NEXT genuinely missing index would
+// have landed in the noise. Adding an index can no longer redden these.
+test('DB has none of them → reports EVERY manifest index as missing', async () => {
   const emptyDb = { query: async () => ({ rows: [] }) };
   const missing = await findMissingCriticalIndexes(emptyDb);
-  assert.deepEqual(missing, ['uq_invoice_payments_positive_link']);
+  assert.deepEqual(missing, CRITICAL_INDEXES);
+  assert.ok(missing.length >= 1, 'manifest must never be empty — the guard would be vacuous');
 });
 
-test('DB reports the index present → returns []', async () => {
-  const okDb = { query: async () => ({ rows: [{ indexname: 'uq_invoice_payments_positive_link' }] }) };
+test('DB reports every manifest index present → returns []', async () => {
+  const okDb = { query: async () => ({ rows: CRITICAL_INDEXES.map((indexname) => ({ indexname })) }) };
   const missing = await findMissingCriticalIndexes(okDb);
   assert.deepEqual(missing, []);
+});
+
+test('one manifest index absent → exactly that one is reported', async () => {
+  const [absent, ...present] = CRITICAL_INDEXES;
+  const db = { query: async () => ({ rows: present.map((indexname) => ({ indexname })) }) };
+  const missing = await findMissingCriticalIndexes(db);
+  assert.deepEqual(missing, [absent]);
 });
 
 test('scopes the lookup to the public schema (removes the multi-schema false-negative)', async () => {
