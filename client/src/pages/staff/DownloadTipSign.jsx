@@ -7,7 +7,7 @@ import SignLayout from './tipCard/SignLayout';
 import { BizCardFront, BizCardBack } from './tipCard/BizCardLayout';
 import { SIGN_SIZES, CARD_SIZE, DISPLAY_SIGN_SIZE } from './tipCard/sizes';
 import { captureNode, downloadCanvasImage, downloadCanvasesPdf } from './tipCard/renderToFile';
-import { buildTipCardMarks } from '../../utils/tipCardMarks';
+import { buildTipCardMarks, buildCardMarks } from '../../utils/tipCardMarks';
 import { buildDownloadFilename } from '../../utils/downloadFilename';
 
 const IMAGE_FORMATS = [
@@ -33,6 +33,8 @@ export default function DownloadTipSign() {
   }, []);
 
   const marks = buildTipCardMarks(data?.methods);
+  // The card gets its own order and a higher cap; it is read in the hand.
+  const cardMarks = buildCardMarks(data?.methods);
   // Mirror the public endpoint's COALESCE(display_name, preferred_name). Using
   // preferred_name alone printed one name on the sign while the chooser page a
   // guest lands on showed another.
@@ -46,7 +48,7 @@ export default function DownloadTipSign() {
     setBusy(`${size}:${format}`);
     try {
       const S = SIGN_SIZES[size];
-      const canvas = await captureNode(signRefs.current[size]);
+      const canvas = await captureNode(signRefs.current[size], { scale: S.captureScale });
       const filename = buildDownloadFilename(`Tip Sign ${S.fileLabel}`, filePart, format);
       if (format === 'pdf') {
         await downloadCanvasesPdf([canvas], filename, { inW: S.inW, inH: S.inH });
@@ -69,12 +71,13 @@ export default function DownloadTipSign() {
     setError('');
     setBusy('card:pdf');
     try {
-      const front = await captureNode(cardFrontRef.current);
-      const back = await captureNode(cardBackRef.current);
+      // Native 300 DPI artboard, so scale 1. Capturing at 2 would ship 600.
+      const front = await captureNode(cardFrontRef.current, { scale: CARD_SIZE.captureScale });
+      const back = await captureNode(cardBackRef.current, { scale: CARD_SIZE.captureScale });
       await downloadCanvasesPdf(
         [front, back],
         buildDownloadFilename('Tip Cards', filePart, 'pdf'),
-        { inW: CARD_SIZE.inW, inH: CARD_SIZE.inH }
+        { inW: CARD_SIZE.inWBleed, inH: CARD_SIZE.inHBleed }
       );
     } catch (err) {
       Sentry.captureException(err, { tags: { surface: 'download-tip-sign', kind: 'card-pdf' } });
@@ -138,11 +141,13 @@ export default function DownloadTipSign() {
         <section className="dts-group">
           <h2>Hand-out cards</h2>
           <p className="dts-note">
-            PDF only. A print shop wants a PDF, and a two-sided card cannot be
-            one image. Front and back come down as pages 1 and 2.
+            PDF only, 2 × 3.5in portrait, on a 2.25 × 3.75in page: that extra
+            eighth of an inch all round is print bleed for the shop to trim to.
+            A two-sided card cannot be one image, so front and back come down as
+            pages 1 and 2.
           </p>
           <div className="dts-row">
-            <span className="dts-row-label">3.5 × 2, 2-sided</span>
+            <span className="dts-row-label">2 × 3.5, 2-sided</span>
             <span className="dts-row-buttons">
               <button
                 type="button"
@@ -172,10 +177,10 @@ export default function DownloadTipSign() {
             <SignLayout size={size} name={name} tipUrl={data.url} marks={marks} />
           </div>
         ))}
-        <div ref={cardFrontRef} style={{ width: CARD_SIZE.w, height: CARD_SIZE.h }}>
-          <BizCardFront name={name} tipUrl={data.url} marks={marks} />
+        <div ref={cardFrontRef} style={{ width: CARD_SIZE.wBleed, height: CARD_SIZE.hBleed }}>
+          <BizCardFront name={name} tipUrl={data.url} marks={cardMarks} />
         </div>
-        <div ref={cardBackRef} style={{ width: CARD_SIZE.w, height: CARD_SIZE.h }}>
+        <div ref={cardBackRef} style={{ width: CARD_SIZE.wBleed, height: CARD_SIZE.hBleed }}>
           <BizCardBack name={name} />
         </div>
       </div>

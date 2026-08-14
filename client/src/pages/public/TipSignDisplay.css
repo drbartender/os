@@ -4,25 +4,16 @@
 .tsd-root {
   position: fixed;
   inset: 0;
-  /* Chalkboard, matching the colour the sign paints to its own edges, so the
-     bands left over from fitting a 5:7 sheet onto a tall phone read as more
-     sign rather than a frame. Verified once the dark artwork landed: the seam
-     is genuinely invisible, which is what the dark ground was chosen for. */
+  /* Chalkboard ground. There are no letterbox bands any more: the phone gets
+     its own native layout rather than a scaled 5:7 sheet, so the artwork fills
+     the screen and this colour is simply the same ground the artwork paints. */
   background: var(--drb-chalkboard, #12161C);
-  display: flex;
-  align-items: center;
-  justify-content: center;
   overflow: hidden;
   cursor: pointer;
   /* Kill the tap highlight and double-tap zoom: this is a display surface. */
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   user-select: none;
-}
-
-.tsd-stage {
-  transform-origin: center center;
-  flex: 0 0 auto;
 }
 
 .tsd-msg {

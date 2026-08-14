@@ -3,12 +3,10 @@ import { useParams } from 'react-router-dom';
 import api from '../../utils/api';
 import './TipSignDisplay.css';
 
-import SignLayout from '../staff/tipCard/SignLayout';
-import { SIGN_SIZES, DISPLAY_SIGN_SIZE } from '../staff/tipCard/sizes';
+import PhoneSignLayout from '../staff/tipCard/PhoneSignLayout';
 import { buildTipCardMarks } from '../../utils/tipCardMarks';
 import { useWakeLock } from '../../hooks/useWakeLock';
 
-const SIGN = SIGN_SIZES[DISPLAY_SIGN_SIZE];
 const IDLE_FADE_MS = 4000;
 
 /**
@@ -36,7 +34,6 @@ export default function TipSignDisplay() {
   const [error, setError] = useState(null);
   const [armed, setArmed] = useState(false);
   const [idle, setIdle] = useState(false);
-  const [scale, setScale] = useState(1);
 
   const containerRef = useRef(null);
   const idleTimerRef = useRef(null);
@@ -69,23 +66,6 @@ export default function TipSignDisplay() {
     load(0);
     return () => { cancelled = true; };
   }, [token]);
-
-  // Fit the sign to the viewport, letterboxing against the page colour.
-  useEffect(() => {
-    // `|| 1` guards a zero viewport, which some fullscreen transitions report
-    // mid-flight: scale(0) is an invisible sign that never recovers on its own.
-    const fit = () => setScale(Math.min(
-      window.innerWidth / SIGN.w,
-      window.innerHeight / SIGN.h
-    ) || 1);
-    fit();
-    window.addEventListener('resize', fit);
-    window.addEventListener('orientationchange', fit);
-    return () => {
-      window.removeEventListener('resize', fit);
-      window.removeEventListener('orientationchange', fit);
-    };
-  }, []);
 
   const markIdle = useCallback(() => {
     setIdle(false);
@@ -144,17 +124,11 @@ export default function TipSignDisplay() {
       onClick={arm}
       onPointerMove={armed ? markIdle : undefined}
     >
-      <div
-        className="tsd-stage"
-        style={{ width: SIGN.w, height: SIGN.h, transform: `scale(${scale})` }}
-      >
-        <SignLayout
-          size={DISPLAY_SIGN_SIZE}
-          name={data.display_name}
-          tipUrl={data.url}
-          marks={marks}
-        />
-      </div>
+      <PhoneSignLayout
+        name={data.display_name}
+        tipUrl={data.url}
+        marks={marks}
+      />
 
       {!armed && (
         <div className="tsd-hint">

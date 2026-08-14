@@ -2,8 +2,10 @@
 // the SAME html2canvas capture: if two formats ever disagree, that is a bug in
 // this file, not a reason to give a format its own capture.
 //
-// Layouts are authored at 150 DPI of their real size (see ./sizes.js), so
-// scale 2 is exactly 300 DPI, which is what a photo counter wants.
+// The capture scale is PER SURFACE and comes from ./sizes.js, because the two
+// surfaces are authored at different resolutions: the sign at 150 DPI (scale 2)
+// and the card natively at 300 (scale 1). Hardcoding one scale here silently
+// ships the other surface at 150 or 600 DPI.
 //
 // MenuPNG.jsx is the precedent for the off-screen surface, `useCORS`, and the
 // download anchor. It is NOT a precedent for the scale (it uses 3), for JPG, or
@@ -33,13 +35,14 @@ async function waitForPaint(node) {
   });
 }
 
-export async function captureNode(node, { scale = 2, backgroundColor = '#ffffff' } = {}) {
+export async function captureNode(node, { scale = 2, backgroundColor = '#12161C' } = {}) {
   if (!node) throw new Error('Render surface not ready.');
   await waitForPaint(node);
   const html2canvas = (await import('html2canvas')).default;
   // Opaque background floor: JPEG has no alpha, so a transparent capture
-  // encodes to BLACK. The layouts paint their own opaque backgrounds, so this
-  // only ever shows through as a hairline at the trim edge.
+  // encodes to black. Both surfaces paint chalkboard to their own edges, so
+  // matching it here means even a hairline at the trim edge is the right
+  // colour rather than a white line.
   return html2canvas(node, { scale, backgroundColor, useCORS: true, logging: false });
 }
 
@@ -74,7 +77,7 @@ export function downloadCanvasImage(canvas, filename, format) {
 export async function downloadCanvasesPdf(canvases, filename, { inW, inH }) {
   if (!canvases.length) throw new Error('Nothing to put in the PDF.');
   const { jsPDF } = await import('jspdf');
-  // 3.5x2 is landscape; the 5x7 sign is portrait. Derived, never assumed.
+  // Both surfaces are portrait now (5x7 sign, 2x3.5 card). Derived anyway.
   const orientation = inW > inH ? 'landscape' : 'portrait';
   const doc = new jsPDF({ unit: 'in', format: [inW, inH], orientation });
   canvases.forEach((canvas, i) => {
