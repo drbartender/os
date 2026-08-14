@@ -46,8 +46,9 @@ Per the settled 2026-08-04 workflow: these are brand-new surfaces, so each goes 
 
 ### List (`/events`, phone)
 
-- Card list, not a table. Same upcoming/past tabs, URL-backed as today.
-- **Date-ordered, period.** Upcoming opens on today, next event first. No status filter, no sort controls on the phone; that apparatus is desk work and stays desktop.
+- Card list, not a table.
+- **Date-ordered.** Upcoming opens on today, next event first.
+- Phone filter apparatus (settled 2026-08-14, supersedes the earlier "no filters" call): an **Upcoming / Past** switch under the header (upcoming default) and one tap-chip, **Needs staff** (events with open or pending slots, same data as the tab badge). Chips, not dropdowns; URL-backed. Everything else stays desk work.
 - Card layout (superseded 2026-08-14 by Dallas's design-session decisions, which win over the earlier three-line rule): a left date rail (DOW / day / month, TODAY in accent), then client + event type, guest count, time · venue meta, a color-coded staffing fraction (filled/slots: ok when full, warn partial, danger empty; jewel tones on House Lights per the contrast audit), a pending-request chip when a cover request needs approval, and Bar / Supplies tags. Still no balance on event cards. Reference: `Phone Admin Shell.dc.html` in design project 8d8da3a4-97b1-4aa4-8999-0fec9f2a5f99.
 - Tap opens detail.
 
@@ -57,6 +58,7 @@ Keeps the existing four-block structure, stacked in priority order: **header, st
 
 - **Header:** client, date, time, venue. Venue address opens Google Maps (extend `AddressLink` behavior); client phone is tap-to-call / tap-to-text. Existing page actions (edit, send invite, re-enroll, cancel) become full-width tap targets.
 - **Staffing:** keeps `ShiftDrawer` semantics as a bottom sheet. Tap a shift; assign / approve / remove are rows you tap. No dropdowns.
+- **Assignment sheet scope (settled 2026-08-14):** candidate suggestions render as a plain ranked list; **no one-tap "Auto-assign top match"** (the auto-assign / seniority ranking systems are early-project machinery Dallas is de-emphasizing; do not build admin UI on that data). The design's Waitlist section is kept but wires to the REAL staffing waitlist (`position` is a money seam; 'approved' requires `dropped_at IS NULL`), not the suggestion pool the mockup used.
 - **Structured edits:** date and time use native Android pickers; counts use steppers; statuses are chips. Event note is a plain textarea that behaves with Android dictation (dictation is the accepted answer for free text; no snippet/template system in phase 1).
 - **Pricing:** read-heavy. Line items listed; cancel-line behind a kebab. Anything deeper is a Desktop-view case in phase 1.
 - **Activity:** plain feed, unchanged shape.
@@ -65,7 +67,7 @@ Keeps the existing four-block structure, stacked in priority order: **header, st
 
 ### List (`/proposals`, phone)
 
-Same treatment as events: card list, ordered by event date, tap to open. Proposals keep **one** state signal on the card: the pipeline-stage chip (draft / sent / viewed / modified / accepted), because a proposal's identity is its funnel position. No filters, no column sorting.
+Same treatment as events: card list, tap to open. Proposals keep the pipeline-stage chip on the card (draft / sent / viewed / modified / accepted), because a proposal's identity is its funnel position. Phone apparatus (settled 2026-08-14): a sort toggle **Event date / Newest lead** (event date default) and one tap-chip, **Unviewed** (sent but never viewed). A Modified chip was considered and deliberately left out: the card chips and tab badge already carry it; add later only if missed.
 
 ### Detail (`/proposals/:id`, phone)
 
@@ -139,7 +141,9 @@ The one place phase 1 touches auth. Gets max-effort treatment and the 5-agent pr
 | Target | Android Chrome (Pixel); iOS = staff portal only, out of scope |
 | Surfaces | Phone-first components, route-level fork at 700px; not CSS retrofits |
 | Escape hatch | Per-screen persisted Desktop-view toggle; "no dead ends" |
-| Events list | Date-ordered only; no status/filter/sort apparatus; card carries the design-session layout (date rail, guests, venue, staffing fraction, request chip, tags), no balance |
+| Events list | Date-ordered; card carries the design-session layout (date rail, guests, venue, staffing fraction, request chip, tags), no balance; Upcoming/Past switch + Needs-staff chip are the whole filter apparatus |
+| Proposals apparatus | Sort toggle Event date / Newest lead + Unviewed chip; Modified chip deliberately omitted |
+| Assignment sheet | Ranked list only; no one-tap auto-assign; waitlist wires to the real roster waitlist |
 | Proposals list | Same, plus pipeline-stage chip |
 | Free text | Android dictation; no snippet system in phase 1 |
 | Money edits | Reuse `proposalEditor/` form/patch/reprice logic; overrides and custom lines stay Desktop-view |
