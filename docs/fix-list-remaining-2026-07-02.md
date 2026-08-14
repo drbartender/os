@@ -2822,3 +2822,66 @@ None of these were in scope for that wave; each is logged here rather than fixed
   a U+2019 to `'` fold inside `norm()`, applied to both the server and client copies
   together per the keep-in-sync comments. These consolidate the two name notes in the
   8/14 push-gate section above; track them here.
+
+# Price guide: what the 2026-08-14 brainstorm produced before Dallas stopped it
+
+Attempted, stopped partway ("that sounds riddled with problems. I dont want to do
+this rn"). Recorded so the next attempt starts here instead of re-treading. Nothing
+was built and no spec was written.
+
+**Why this project keeps stalling (Dallas's own read: "this project keeps getting
+put off because of this").** The information architecture is the hard part, and it
+resists the two obvious answers:
+- Search alone fails, because he often cannot NAME the thing. Verbatim: "WTF did we
+  decide to call the add-on bundles? Full compound?" Search requires the word.
+- Categories alone fail, because when he DOES know it is the Full Compound he should
+  not have to remember it lives under BYOB supplies and click twice to see $8.
+Every design that optimizes one of those is bad at the other. My proposal of one
+page holding the whole catalog was rejected outright and correctly: "one big giant
+scrolling hell. No." Categories, search, or something else entirely are all still
+open. The next attempt should start from the IA, not from a surface.
+
+**Requirements established (these are solid, reuse them):**
+- Desktop first. "I hate using the phone." This is NOT the mobile-admin beachhead,
+  though a later mobile view should inherit the same endpoint.
+- THE governing rule: **small numbers must be exact, the big number can be fuzzy.**
+  Verbatim: "If I say the full compound costs $7/guest and then send a proposal and
+  its $9/guest, that is an error. If I say that brings the total to $555 and really
+  its $600, but the line items were right, that is forgivable." So this is a rate
+  card first and a calculator a distant second, which is the opposite of where the
+  brainstorm started.
+- The real cost of not having it: he says "I'll let you know" and loses the moment on
+  a warm call, or stumbles while hunting. He is not missing the data, he is missing
+  recall: "I have researched and carefully chosen these numbers, but I don't have
+  them memorized."
+- Scope is the WHOLE catalog, not just the call-facing sellables ("I need it all").
+- Read-only by construction: no drafts, no saves, no proposal can ever be created
+  from it. That is what makes it different from the quote wizard.
+- Today's three surfaces all fail because they are transactional: event details is
+  about one booked event, the quote wizard is about building something, and both
+  make you navigate to a specific record before they will tell you a general fact.
+
+**Live numbers pulled during the session** (prod, 2026-08-14; the tool would read
+these live, never a copy, because catalog copy has drifted from schema.sql before):
+hosted per-guest at 4hr, extra hour in parens: Primary Culture $12 (+$4), Clear
+Reaction $14 (+$4), Refined Reaction $14 (+$5), Carbon Suspension $15 (+$5.75),
+Cultivated Complex $17 (+$6.25), Base Compound $18 (+$5), Midrange Reaction $22
+(+$6), Enhanced Solution $28 (+$8), Formula No. 5 $33 (+$9), Grand Experiment $40
+(+$11.25); all hosted carry min_total $550 and min_billed_guests 25. BYOB: Core
+Reaction $350 flat at 4hr (+$100/hr). Six class packages all at $35/guest. Bundles:
+Foundation $3.00, Formula $5.50, Full Compound $8.00. A la carte: Full Mixers $4.50,
+Signature Mixers $2.00, Ice $2.00, Cups & Disposables $1.50, Bottled Water $0.50,
+Garnish $50 per 100 guests. Bundle CONTENTS live in code (client bundleConfig.js
+mirrored by server proposalRules.js), not the DB, so any lookup surface must read
+that shared config rather than restate it.
+
+## LIVE MISQUOTE RISK, independent of whether the tool is ever built
+
+The three BYOB bundles bill `per_guest_timed` (`pricingEngine.js:160-165`): the
+listed rate is the FOUR-HOUR price, and each hour beyond four adds the addon's
+`extra_hour_rate` per guest. So The Full Compound is $8.00/guest at 4 hours and
+**$10.00/guest at 5** (+$2.00/hr); The Formula $5.50 goes to $6.75 (+$1.25); The
+Foundation $3.00 goes to $3.75 (+$0.75). Quoting the bare rate on a five-hour party
+is a 25% error on exactly the kind of small number Dallas says is unforgivable, and
+nothing on any admin surface warns about it today. Worth a one-line label wherever
+those rates are displayed even if the price guide never gets built.
