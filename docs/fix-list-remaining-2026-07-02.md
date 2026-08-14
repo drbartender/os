@@ -1803,8 +1803,12 @@ now permanently wrong about this row, and on a fresh database the seed INSERT wo
 text, the guard WOULD match, and the environment would come up with the ~600-char version
 instead of what clients read today.
 
-FIX: promote the live 257-char text into `schema.sql` as the seeded value (and drop or re-point
-the now-dead guarded UPDATE). This is the same class as the `service_packages.includes` prose
+**FIXED 2026-08-13**: seed now carries the live 257-char text, and the guarded UPDATE's
+IN() also converges any env holding the long paragraph. Verified: prod, dev, and the seed
+all agree (dev turned out to already hold the live text — the "third version" was authored
+on dev and hand-applied to prod, which is exactly how the drift happened).
+Original fix direction: promote the live 257-char text into `schema.sql` as the seeded value
+(and drop or re-point the now-dead guarded UPDATE). This is the same class as the `service_packages.includes` prose
 hazard already logged for `applyPackageLineup2026`: client-facing copy that lives only in the
 database, with the file that claims to define it disagreeing.
 
@@ -2303,3 +2307,24 @@ Also corrected during this audit: the phone-1a memory claimed the 1922 cutover w
 owed — it completed 2026-08-11, proven by the live canary test calls. The one unverified
 half is the 1922's MESSAGING webhook (`/api/sms/inbound`), which has no recorded live test;
 a single text to the 1922 closes it (now in walkthroughs-owed).
+
+
+# Added 2026-08-13 (from Dallas's easy-walk bundle)
+
+- **Bar-rental shifts don't list the bar: the duty deriver and the equipment card don't
+  talk.** Dallas opened his own past bar-rental shifts (367 Jelena, 373 Drew) expecting the
+  Equipment card to show the bar — it showed nothing, correctly, because
+  `shifts.equipment_required` is `'[]'` on both. Yet BOTH shifts paid him the $20
+  `bar_rental` duty, derived from the booking (`num_bars > 0` + snapshot bar_rental total).
+  So the system knows a bar is coming for PAY purposes while the staffer-facing equipment
+  list stays empty unless an admin hand-sets it. Decision then a small build: prefill or
+  derive `portable_bar` onto the shift when `num_bars > 0` (write-once prefill at shift
+  creation is probably right; a live derivation would fight admin hand-edits).
+- **NA beer copy law extended (Dallas 2026-08-13): name the BRAND only, never varieties.**
+  "Upside Dawn / Free Wave" removed everywhere; prod UPDATEd directly, schema seed + both
+  guarded UPDATEs aligned, converging IN() guard added. Athletic's lineup changes; variety
+  names in catalog copy read as a menu we then fail to honor.
+- **1922 messaging webhook PROVEN 2026-08-13** — Dallas texted it, the inbound pipeline
+  answered with the freeform staff auto-reply. That reply also live-demonstrated the
+  `smsInbound.js:9` 312-handout item above: the automated line told Dallas to contact
+  Dallas at the 312. Phone-1a cutover is now fully verified, voice and messaging.

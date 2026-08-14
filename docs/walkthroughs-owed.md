@@ -173,7 +173,7 @@ so tick items off as you confirm them rather than assuming the list is current.
       matches" — correctly, because Marcus is a DEV-only fixture (`marcus.j@test`) and prod
       has zero users matching him. Verify a search target exists in the environment being
       walked before calling a miss a bug.
-- [~] **Quote-wizard Extras UI — DATA VERIFIED 2026-08-13, render check outstanding.** All
+- [x] **Quote-wizard Extras UI — DONE 2026-08-13 (data + render).** All
       four guarded `schema.sql` description UPDATEs checked against prod directly. Three are
       live and correct: `non-alcoholic-beer` (Athletic Brewing only, Heineken gone),
       `zero-proof-spirits` (Lyre's), `specialty-niche-liqueurs`. The fourth,
@@ -181,8 +181,9 @@ so tick items off as you confirm them rather than assuming the list is current.
       text that matches neither the guard nor the replacement, so schema.sql is permanently
       wrong about that row and a rebuilt environment would ship different copy than
       production. Logged in the fix list (2026-08-13).
-      STILL OWED: read the three descriptions on the live Extras step to confirm they render
-      and read well to a client.
+      CLOSED 2026-08-13: Dallas read them live. Two render fine; NA beer named varieties he
+      does not want in catalog copy — fixed the same hour (brand-only, prod + seed + guards
+      aligned; copy law recorded).
 - [x] **Skin sweep, both skins — DONE 2026-08-13, and it found the day's biggest structural
       item:** the rich text editor never got a skin pass and sits on FIVE admin surfaces
       (blog, campaign create, sequence steps, email builder x2) in the old pre-split
@@ -210,7 +211,7 @@ so tick items off as you confirm them rather than assuming the list is current.
 - [ ] **First-name greetings.** Confirm a normal client gets "Hi Monica," and a couple gets
       "Hi Aubrey & Dominic,". The couples case was fixed at the push gate and has unit
       coverage, but no rendered email has been read by a human.
-- [ ] **Guest count in the event header.**
+- [x] **Guest count in the event header — PASSED 2026-08-13** ("yes").
 - [ ] **Inbound SMS alerts naming the staffer.**
 
 ## Tier 3b — fixes shipped 2026-08-13, live in prod, never eyeballed
@@ -219,13 +220,14 @@ The walkthrough fixes themselves now need the same medicine. Both of the first t
 BROKEN on the first attempt and were corrected blind by a later session (`54fb77cb`,
 `fc5e6ca2`) — nobody has seen any of these render.
 
-- [ ] **TimePicker on a real phone.** The steppers should be GONE and the chevron a full-width
-      easy tap on the public wizard's Start Time field. This is the fix that shipped inert
-      once (coarse-pointer block placed before the 640px block); presence-in-bundle was
-      already "verified" twice, so only a phone counts as proof.
-- [ ] **Equipment label on a staff shift.** One of the three prod shifts carrying
-      `["portable_bar"]` should now read "Portable Bar", not `portable_bar`, on the staff
-      event details Equipment & supplies card.
+- [x] **TimePicker on a real phone — PASSED 2026-08-13** ("good"). Steppers gone, chevron
+      tappable. The fix that shipped inert once is now proven on the device it targets.
+- [ ] **Equipment label on a staff shift — RETARGETED 2026-08-13.** Dallas checked his own
+      shifts (367/373) and saw no card at all — CORRECT, their `equipment_required` is
+      `'[]'` (and that mismatch with their paid bar_rental duty is now its own fix-list
+      item). The three shifts that actually carry `["portable_bar"]` are 368 (kpduffy),
+      347 (loryn), 366 (jaszyjay) — all past events, other staffers. Verify via one of
+      their views, or on dev by setting equipment on a fixture shift.
 - [ ] **Shopping-list guest-count prompt in House Lights.** `ShoppingListButton.jsx`'s modal
       was the panel my `--include=*.js` sweep missed and was patched with `.modal-card`
       AFTER the other eleven were confirmed — it has never been seen. Open a drink plan in
@@ -234,10 +236,10 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       duty attribution hits a closed period. Cannot be forced in prod without doing exactly
       that; verify the next time one happens (or deliberately on dev against a processed
       period). Until seen, treat it as unproven — its first version also "worked".
-- [ ] **Text the 1922 once.** The 1922 voice cutover is proven (live test calls 2026-08-11)
-      but its MESSAGING webhook (`/api/sms/inbound`) has no recorded live test. One text to
-      (224) 222-1922 that lands in the inbound pipeline closes the last unverified half of
-      the phone-1a cutover.
+- [x] **Text the 1922 — PASSED 2026-08-13.** Dallas texted it; the inbound pipeline answered
+      with the freeform staff auto-reply, closing the last unverified half of the phone-1a
+      cutover. Bonus: the reply live-demoed the 312-handout backlog item by telling Dallas
+      to contact Dallas at the 312.
 - [ ] **"See other options" compare strip.** Pushed live 2026-08-11 (41d3206c, read-only
       package compare on the proposal page) the same night as everything else; no record of
       anyone opening it in prod since. One look at a real proposal's compare link. Note the

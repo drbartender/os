@@ -698,10 +698,10 @@ INSERT INTO service_addons (slug, name, description, billing_type, rate, extra_h
   ('full-mixers-only', 'Full Mixers', 'Complete mixer selection. Does not include Foundation items.', 'per_guest', 4.50, NULL, 'byob', 8),
   ('garnish-package-only', 'Garnish Package', 'Premium garnish package (lemons, limes, oranges, cherries, olives).', 'per_100_guests', 50.00, NULL, 'byob', 9),
   ('champagne-toast', 'Champagne Toast', 'Champagne toast for all guests.', 'per_guest', 2.50, NULL, 'all', 10),
-  ('soft-drink-addon', 'Soft Drink Add-On', 'Required if more than 10 guests (or 20% of your headcount) will be drinking soft drinks on their own. Our hosted packages already include Coke, Diet Coke, Sprite, OJ, cranberry, pineapple, soda water, tonic, and grenadine, but those are stocked as mixers (1-3 oz per cocktail), not full pours. Kids, designated drivers, and guests sipping soda or juice straight go through stock fast and can leave your cocktail crowd dry. This add-on bumps up the soft drink supply so everyone stays happy: mixers stay flowing, and the non-drinkers get their own dedicated stash.', 'per_guest', 3.00, NULL, 'all', 20),
+  ('soft-drink-addon', 'Soft Drink Add-On', 'For designated drivers, kids, and anyone skipping the spirits but still sipping. Includes Coke, Diet Coke, Sprite, OJ, cranberry juice, pineapple juice, soda water, tonic water, and grenadine. Required for hosted parties expecting more than 10 non-drinkers.', 'per_guest', 3.00, NULL, 'all', 20),
   ('pre-batched-mocktail', 'Pre-Batched Mocktail', 'A pre-batched non-alcoholic cocktail ready to pour. Great for events where you want a sophisticated NA option without the complexity of a full mocktail bar. Add more for variety.', 'per_guest', 1.50, NULL, 'all', 21),
   ('mocktail-bar', 'Mocktail Bar', 'Full mocktail bar with signature recipes.', 'per_guest_timed', 7.50, 2.00, 'all', 22),
-  ('non-alcoholic-beer', 'Non-Alcoholic Beer', 'Non-alcoholic beer from Athletic Brewing: Upside Dawn (golden ale) and Free Wave Hazy IPA. Two varieties, served chilled at the bar.', 'per_guest', 4.00, NULL, 'hosted', 23),
+  ('non-alcoholic-beer', 'Non-Alcoholic Beer', 'Non-alcoholic beer from Athletic Brewing, served chilled at the bar.', 'per_guest', 4.00, NULL, 'hosted', 23),
   ('zero-proof-spirits', 'Zero-Proof Spirits', 'Premium zero-proof spirits from Lyre''s: non-alcoholic versions of gin, whiskey, rum, and more, used to craft full-flavor NA cocktails.', 'per_guest', 5.00, NULL, 'hosted', 24),
   ('banquet-server', 'Banquet Server', 'Professional banquet server.', 'per_hour', 75.00, NULL, 'all', 41),
   ('flavor-blaster-rental', 'Flavor Blaster Rental', 'Flavor blaster equipment rental.', 'flat', 150.00, NULL, 'all', 35),
@@ -758,14 +758,20 @@ UPDATE service_addons SET rate = 2.00 WHERE slug = 'pre-batched-mocktail';
 -- matches the old seed). Fresh DBs get the new text directly from the INSERT above,
 -- so this becomes a no-op there.
 UPDATE service_addons
-SET description = 'Required if more than 10 guests (or 20% of your headcount) will be drinking soft drinks on their own. Our hosted packages already include Coke, Diet Coke, Sprite, OJ, cranberry, pineapple, soda water, tonic, and grenadine, but those are stocked as mixers (1-3 oz per cocktail), not full pours. Kids, designated drivers, and guests sipping soda or juice straight go through stock fast and can leave your cocktail crowd dry. This add-on bumps up the soft drink supply so everyone stays happy: mixers stay flowing, and the non-drinkers get their own dedicated stash.'
-WHERE slug = 'soft-drink-addon' AND description = 'Soft drinks for all guests.';
+SET description = 'For designated drivers, kids, and anyone skipping the spirits but still sipping. Includes Coke, Diet Coke, Sprite, OJ, cranberry juice, pineapple juice, soda water, tonic water, and grenadine. Required for hosted parties expecting more than 10 non-drinkers.'
+WHERE slug = 'soft-drink-addon'
+  AND description IN ('Soft drinks for all guests.',
+                      'Required if more than 10 guests (or 20% of your headcount) will be drinking soft drinks on their own. Our hosted packages already include Coke, Diet Coke, Sprite, OJ, cranberry, pineapple, soda water, tonic, and grenadine, but those are stocked as mixers (1-3 oz per cocktail), not full pours. Kids, designated drivers, and guests sipping soda or juice straight go through stock fast and can leave your cocktail crowd dry. This add-on bumps up the soft drink supply so everyone stays happy: mixers stay flowing, and the non-drinkers get their own dedicated stash.');
+-- 2026-08-13: the seed now carries the text PROD actually serves (a better third
+-- version appeared in prod outside schema.sql and the old guard could never fire
+-- again — see fix list 2026-08-13, "copy has drifted"). The long paragraph in the
+-- IN() converges any env that took the previous guarded update.
 
 -- Gated description updates for NA beer & zero-proof spirits: endorse Athletic
 -- Brewing (Upside Dawn + Free Wave) and Lyre's respectively. Same pattern as
 -- above — only replaces the original seed text so any admin edit is preserved.
 UPDATE service_addons
-SET description = 'Non-alcoholic beer from Athletic Brewing: Upside Dawn (golden ale) and Free Wave Hazy IPA. Two varieties, served chilled at the bar.'
+SET description = 'Non-alcoholic beer from Athletic Brewing, served chilled at the bar.'
 WHERE slug = 'non-alcoholic-beer' AND description = 'NA beer selection for guests (Athletic Brewing, Heineken 0.0, etc.).';
 
 UPDATE service_addons
@@ -2380,9 +2386,12 @@ UPDATE cocktails SET upgrade_addon_slugs = '{specialty-niche-liqueurs}'         
 -- "Upside Dawn + Free Wave Hazy IPA" wording set by the earlier endorsed-brand
 -- cleanup. Restore the endorsed-brand text only if the generic copy is present.
 UPDATE service_addons
-SET description = 'Non-alcoholic beer from Athletic Brewing: Upside Dawn (golden ale) and Free Wave Hazy IPA. Two varieties, served chilled at the bar.'
+SET description = 'Non-alcoholic beer from Athletic Brewing, served chilled at the bar.'
 WHERE slug = 'non-alcoholic-beer'
-  AND description = 'Non-alcoholic beer from Athletic Brewing — crisp, refreshing, and endorsed by the doctor.';
+  AND description IN ('Non-alcoholic beer from Athletic Brewing — crisp, refreshing, and endorsed by the doctor.',
+                      'Non-alcoholic beer from Athletic Brewing: Upside Dawn (golden ale) and Free Wave Hazy IPA. Two varieties, served chilled at the bar.');
+-- Copy law (Dallas 2026-08-13): name the BRAND only, never the varieties — the
+-- lineup changes with Athletic's catalog and stale variety names read as a menu.
 
 -- ─── Sentry hardening: proposals.sent_at / accepted_at ────────────
 -- The list endpoint selects p.sent_at and p.accepted_at (added in c9feb3f),
