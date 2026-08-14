@@ -308,7 +308,8 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       package compare on the proposal page) the same night as everything else; no record of
       anyone opening it in prod since. One look at a real proposal's compare link. Note the
       compare-and-book spec will eventually replace this surface.
-- [ ] **Marketing redesign, FUNCTIONAL walk — all 3 phases live; gates real sends.** The
+- [ ] **Marketing redesign, FUNCTIONAL walk — all 3 phases live in prod; gates real
+      sends.** The
       campaign create/send flow owes a full walk BEFORE real sends: tags, resolver,
       contacts UI, extract, compliance, send pacing. Include the three gate-fix surfaces,
       all corrected blind and never seen: (1) compose resume — save a draft, send to a
@@ -322,7 +323,9 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       exactly the condition that buries walkthroughs — this one gates real sends.)
 - [ ] **Marketing RESTYLE, visual walk — the whole section moved onto the approved
       claude.ai/design look 2026-08-14** (lane `mkt-restyle`, squash `19a9298e` +
-      follow-ups `be555426`/`3af0edd9`/`15cc4df0`, unpushed). Benchmark is
+      follow-ups `be555426`/`3af0edd9`/`15cc4df0`; **PUSHED and LIVE IN PROD 8/14** — the
+      prod admin CSS bundle carries `mkt-moment-grid`, so walk it at
+      admin.drbartender.com, no dev server needed). Benchmark is
       `docs/design-artifacts/2026-08-11-marketing-redesign.dc.html`; final agent verdict
       ADHERENT, but no human has seen it. Headless coverage so far: 31+ screenshots, both
       skins, 1280/900/375, zero console errors. The walk:
