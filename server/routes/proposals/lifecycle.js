@@ -186,6 +186,47 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
     } catch (crErr) {
       console.error('Change-request reap on archive failed (non-blocking):', crErr);
     }
+    // W1 (fix list, third archive door): this raw-API archive used to reap only
+    // marketing/change-requests, so a shift-bearing booking archived here kept
+    // its shift live on the staff feed — the B1 symptom via a different door.
+    // Route it through the SAME shared reap as the archive endpoint and the
+    // cancel flow. Best-effort like the siblings (a reap failure never rolls
+    // back the status change), but the reap itself is transactional.
+    let reapedShifts = [];
+    try {
+      const { reapShiftsForProposal } = require('../../utils/shiftReap');
+      const reapClient = await pool.connect();
+      try {
+        await reapClient.query('BEGIN');
+        reapedShifts = await reapShiftsForProposal(Number(req.params.id), reapClient, 'proposal archived');
+        await reapClient.query('COMMIT');
+      } catch (txErr) {
+        try { await reapClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+        throw txErr;
+      } finally {
+        reapClient.release();
+      }
+    } catch (reapErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(reapErr, { tags: { route: 'proposals/status', issue: 'shift-reap' } });
+      }
+      console.error('Shift reap on archive failed (non-blocking):', reapErr);
+    }
+    // Email-only staff notify (SMS costs), mirroring the archive endpoint.
+    // Runs after the reap client is released: notifyStaffOfCancellation takes
+    // its own connections (one-connection rule).
+    for (const { shiftId, userIds } of reapedShifts) {
+      if (!userIds.length) continue;
+      try {
+        const { notifyStaffOfCancellation } = require('../../utils/staffShiftHandlers');
+        await notifyStaffOfCancellation({ shiftId, staffUserIds: userIds, kind: 'cancelled', sms: false, email: true });
+      } catch (notifyErr) {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(notifyErr, { tags: { route: 'proposals/status', issue: 'shift-reap-notify' } });
+        }
+        console.error('Staff notify on archive reap failed (non-blocking):', notifyErr);
+      }
+    }
   }
   if (status === 'completed') {
     try {

@@ -313,3 +313,27 @@ test('archived -> draft restore clears cancelled_at/by/note/archive_reason (B5 d
   assert.equal(row.cancellation_note, null, 'cancellation_note cleared');
   assert.equal(row.archive_reason, null, 'archive_reason cleared');
 });
+
+// ── W1: the third archive door (PATCH /:id/status) reaps like the others ──
+test('W1: lifecycle PATCH -> archived soft-cancels shifts, denies requests, suppresses shift comms', async () => {
+  const clientId = await makeClient();
+  const pid = await makeProposal(clientId, { status: 'sent' });
+  const btId = await makeBartender();
+  const shiftId = await makeShift(pid);
+  await makeShiftRequest(shiftId, btId);
+  const smId = await makeScheduledMessage({
+    entityType: 'shift', entityId: shiftId, messageType: 'shift_reminder',
+    recipientType: 'staff', recipientId: btId,
+  });
+
+  const r = await patchBody(`/api/proposals/${pid}/status`, adminToken, JSON.stringify({ status: 'archived' }));
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(await statusOf(pid), 'archived');
+
+  const shift = (await pool.query('SELECT status FROM shifts WHERE id = $1', [shiftId])).rows[0];
+  assert.equal(shift.status, 'cancelled', 'lifecycle archive must soft-cancel the shift (was the W1 gap)');
+  const reqRow = (await pool.query('SELECT status FROM shift_requests WHERE shift_id = $1', [shiftId])).rows[0];
+  assert.equal(reqRow.status, 'denied', 'approved request denied by the reap');
+  const sm = (await pool.query('SELECT status FROM scheduled_messages WHERE id = $1', [smId])).rows[0];
+  assert.equal(sm.status, 'suppressed', 'pending shift_reminder suppressed by the reap');
+});
