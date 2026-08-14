@@ -6,6 +6,8 @@ const { geocodeAddress, buildAddressString, delay } = require('../../utils/geoco
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError } = require('../../utils/errors');
 const { getStripPayload } = require('../../utils/presenceStore');
+// THE shift-visibility predicate, shared with GET /api/shifts/unstaffed-upcoming.
+const { shiftNotFinishedSql } = require('../../utils/shiftEndInstant');
 
 const router = express.Router();
 
@@ -127,12 +129,30 @@ router.get('/badge-counts', auth, requireAdminOrManager, asyncHandler(async (req
   const result = await pool.query(`
     SELECT
       (SELECT COUNT(*) FROM proposals WHERE status IN ('sent', 'viewed', 'modified'))::int AS pending_proposals,
-      (SELECT COUNT(*) FROM shifts
-       WHERE event_date >= CURRENT_DATE AND status = 'open'
-         AND jsonb_typeof(positions_needed::jsonb) = 'array'
-         AND jsonb_array_length(positions_needed::jsonb) > 0
-         AND (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = shifts.id AND sr.status = 'approved' AND sr.dropped_at IS NULL)
-             < jsonb_array_length(positions_needed::jsonb)
+      -- unstaffed_events is the COUNT for the LIST rendered by
+      -- GET /api/shifts/unstaffed-upcoming, and both measure "upcoming" with
+      -- THE shift-visibility predicate: the shift's end instant has not passed
+      -- (server/utils/shiftEndInstant.js). One imported fragment, so the badge
+      -- and the modal cannot disagree. On CURRENT_DATE (the GMT day on this
+      -- session) this badge read zero from 19:00 Chicago while the list it
+      -- counts still showed tonight's short-staffed shift; a later round then
+      -- moved one side to the Chicago day and left the other, which is the same
+      -- divergence wearing a different hat. Change one, change both.
+      -- The LEFT JOIN is what supplies event_timezone (a shift may have no
+      -- proposal; the fragment falls back to America/Chicago).
+      (SELECT COUNT(*) FROM shifts s
+         LEFT JOIN proposals p ON p.id = s.proposal_id
+       WHERE ${shiftNotFinishedSql('s', 'p')} AND s.status = 'open'
+         -- IS JSON ARRAY, byte-for-byte the guard GET /shifts/unstaffed-upcoming
+         -- uses, NOT jsonb_typeof(...::jsonb). positions_needed is TEXT, so the
+         -- CAST raises 22P02 on malformed content BEFORE jsonb_typeof can
+         -- classify it: one bad row 500s this badge while the list it counts
+         -- shrugs and carries on. Same divergence the comment above forbids,
+         -- one layer down from the date predicate.
+         AND s.positions_needed IS JSON ARRAY
+         AND jsonb_array_length(s.positions_needed::jsonb) > 0
+         AND (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL)
+             < jsonb_array_length(s.positions_needed::jsonb)
       )::int AS unstaffed_events,
       (SELECT COUNT(*) FROM applications a
          JOIN users u ON u.id = a.user_id

@@ -491,6 +491,23 @@ async function start() {
         clearHealthRow('autocomplete');
       }
 
+      // Shift-closure sweep — hourly. Closes shifts whose END INSTANT has
+      // passed on a proposal that is already 'completed' (spec 2026-08-14).
+      // Deliberately a SWEEP, not a hook on the completion doors: a proposal can
+      // carry a still-upcoming shift, and the completion doors never fire twice
+      // on the same proposal, so a shift skipped once by a date gate was skipped
+      // forever. Always -> 'completed', never 'cancelled' (that value is an
+      // EVENT-cancelled signal read by the Events dashboard and the iCal feed).
+      // Staggered 75s off boot so it does not join the 30s startup burst.
+      if (enabled('RUN_SHIFT_CLOSURE_SWEEP_SCHEDULER')) {
+        const { processShiftClosures } = require('./utils/shiftClosureSweep');
+        const wrapped = wrapScheduler('shift_closure', 3600, processShiftClosures);
+        setTimeout(wrapped, 75000);
+        setInterval(wrapped, 60 * 60 * 1000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('shift_closure');
+      }
+
       // Auto-assign scheduler — check hourly for shifts needing auto-assignment
       if (enabled('RUN_AUTO_ASSIGN_SCHEDULER')) {
         const wrapped = wrapScheduler('auto_assign', 3600, processScheduledAutoAssigns);

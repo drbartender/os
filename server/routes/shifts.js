@@ -9,6 +9,8 @@ const { findOrCreateClient } = require('../utils/clientDedup');
 const { suppressBeoNudgesForStaffers } = require('../utils/beoHandlers');
 const { logAdminAction } = require('../utils/adminAuditLog');
 const { chicagoTodayYmd } = require('../utils/businessTime');
+// THE shift-visibility predicate. See server/utils/shiftEndInstant.js.
+const { shiftNotFinishedSql } = require('../utils/shiftEndInstant');
 // Out-of-Area Bonus: bands, distances, lock lifecycle, duty re-derivation.
 // The bands are server-only by design (spec §6 published-ambiguity rule), so
 // the payloads below carry derived cents and the client never computes one.
@@ -171,7 +173,20 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
  *  `AND position IS NOT NULL` is a CRASH GUARD, not tidying: jsonb_object_agg
  *  throws on a NULL key, and the surrounding COALESCE cannot catch it because
  *  the aggregate raises before returning. Drop that filter and one NULL-position
- *  approved row 500s this whole endpoint. Same in all copies of this aggregate. */
+ *  approved row 500s this whole endpoint. Same in all copies of this aggregate.
+ *
+ *  "Upcoming" is "has not finished yet" — the shift's END INSTANT
+ *  (server/utils/shiftEndInstant.js), never a calendar day. This list feeds
+ *  AssignToEventModal, so under the old `event_date >= CURRENT_DATE` (the GMT
+ *  day) a short-staffed shift starting at 20:00 was invisible to whoever was
+ *  covering a no-show at 19:01.
+ *
+ *  THE BADGE COUNTS THIS LIST. `unstaffed_events` in
+ *  routes/admin/settings.js badge-counts is the COUNT for exactly these rows
+ *  and uses the SAME imported fragment. A count and the list it counts sharing
+ *  one predicate is not tidiness — the two drifting apart, with comments in
+ *  both claiming they mirrored each other, is what broke the round this
+ *  replaces. Change one, change both, in the same commit. */
 router.get('/unstaffed-upcoming', auth, requireStaffing, asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT s.id, s.event_date, s.start_time, s.end_time, s.location, s.guest_count,
@@ -196,7 +211,7 @@ router.get('/unstaffed-upcoming', auth, requireStaffing, asyncHandler(async (req
             GROUP BY position) g
     ) abr ON true
     WHERE s.status = 'open'
-      AND s.event_date >= CURRENT_DATE
+      AND ${shiftNotFinishedSql('s', 'p')}
       AND s.positions_needed IS JSON ARRAY
       AND rc.approved_count
           < jsonb_array_length(CASE WHEN s.positions_needed IS JSON ARRAY THEN s.positions_needed::jsonb ELSE '[]'::jsonb END)

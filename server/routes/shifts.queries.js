@@ -7,6 +7,8 @@
  * sibling exports to keep the route handler readable.
  */
 
+const { shiftNotFinishedSql } = require('../utils/shiftEndInstant');
+
 // Staff-side GET /api/shifts list. Projects BEO (drink plan + own ack) and
 // cover (any active cover-requesting shift_request on this shift + the
 // requester's first initial). Cover LATERAL returns NULL columns when no
@@ -81,7 +83,17 @@ const STAFF_OPEN_SHIFTS_SQL = `
          GROUP BY position
       ) g
   ) abr ON true
-  WHERE s.status = 'open' AND s.event_date >= CURRENT_DATE
+  -- "Upcoming" is "has not finished yet", measured against the shift's END
+  -- INSTANT (server/utils/shiftEndInstant.js), never a calendar day. The old
+  -- event_date >= CURRENT_DATE resolved CURRENT_DATE in the GMT session zone,
+  -- so tonight's open shift dropped off this tab at 19:00 Chicago; widening it
+  -- to the Chicago day instead kept this MORNING's finished shift listed all
+  -- day. The end instant answers both at once. The proposal alias pp is the
+  -- LEFT JOIN above; it supplies event_timezone.
+  --
+  -- The staff-home teaser and its "All (N)" count (routes/staffPortal.js) are
+  -- documented mirrors of this filter and use the SAME imported fragment.
+  WHERE s.status = 'open' AND ${shiftNotFinishedSql('s', 'pp')}
   ORDER BY s.event_date ASC LIMIT 500
 `;
 

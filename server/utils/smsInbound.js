@@ -7,6 +7,9 @@ const Sentry = require('@sentry/node');
 const { notifyAdminCategory } = require('./adminNotifications');
 const { getEventTypeLabel } = require('./eventTypes');
 const { releaseOutOfAreaLock, reaccrueDutyForProposal } = require('./serviceArea');
+const { chicagoTodayYmd } = require('./businessTime');
+// THE shift-visibility predicate — see server/utils/shiftEndInstant.js.
+const { shiftNotFinishedSql, shiftEndInstantSql } = require('./shiftEndInstant');
 
 const STOP_WORDS = new Set(['stop', 'unsubscribe', 'end', 'cancel', 'quit']);
 const START_WORDS = new Set(['start', 'unstop', 'yes']);
@@ -117,7 +120,10 @@ async function findThumbtackProxyLead(phone) {
 
 // Test seam (mirrors thumbtack.js): lets the suite prove detection failures
 // fail OPEN (message still alerts) without monkeypatching the pool.
-let _deps = { findThumbtackProxyLead };
+// notifyAdminCategory rides the same seam so a suite can read the alert copy an
+// admin would actually receive (lead-time label, SMS-or-email choice) instead
+// of sending one; the default is the real sender.
+let _deps = { findThumbtackProxyLead, notifyAdminCategory };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
 /**
@@ -359,9 +365,34 @@ async function applyOptIn(sender) {
 }
 
 /**
- * Find the texting staff member's nearest upcoming approved shift and return
- * it. `event_date >= CURRENT_DATE` and a non-terminal shift status. start_time
- * is free-text so the same-day tiebreak is best-effort.
+ * Find the texting staff member's nearest UNFINISHED approved shift.
+ *
+ * THE HIGHEST-STAKES CONSUMER OF THE VISIBILITY PREDICATE, because it is a
+ * WRITE path: whatever this returns is what CANT denies and re-opens, and what
+ * CONFIRM acknowledges. Both failure directions are real damage.
+ *
+ *   - Too narrow (the old `event_date >= CURRENT_DATE`, which resolves in the
+ *     GMT session zone): a staffer texting CANT at 19:30 about TONIGHT matched
+ *     nothing, so every caller — handleConfirm, handleCant, and the
+ *     multi-account resolveShiftResponder tiebreak — took the "no upcoming
+ *     shift" branch. The staffer was told there was nothing to release, the
+ *     shift was never re-opened, and nobody was alerted, on the day of the
+ *     event.
+ *   - Too wide (the Chicago calendar day): this MORNING's finished brunch
+ *     outranks tonight's event until midnight, so a bartender texting CANT at
+ *     20:00 about tomorrow has the shift they ALREADY WORKED denied and
+ *     re-opened — removing them from the roster payroll pays from. That is the
+ *     P0 that killed the previous round.
+ *
+ * The end instant (server/utils/shiftEndInstant.js) is what makes both go
+ * away: a finished shift is not a candidate at all, no matter what day it is.
+ * The status guard stays as a second line — it only became meaningful once
+ * something actually closed shifts (the closure sweep, this same spec).
+ *
+ * ORDERING is by the end instant too, not by `s.start_time`: start_time is
+ * free text, so the old ASC sort compared '7:00 PM' against '8:00 AM' as
+ * strings and put the evening shift first on a two-shift day. `s.id` breaks
+ * exact ties so the pick is deterministic.
  *
  * @param {number} staffUserId
  * @returns {Promise<Object|null>} the shift_requests+shifts row, or null
@@ -373,12 +404,13 @@ async function findNearestApprovedShift(staffUserId) {
             s.proposal_id
      FROM shift_requests sr
      JOIN shifts s ON s.id = sr.shift_id
+     LEFT JOIN proposals p ON p.id = s.proposal_id
      WHERE sr.user_id = $1
        AND sr.status = 'approved'
        AND sr.dropped_at IS NULL
-       AND s.event_date >= CURRENT_DATE
+       AND ${shiftNotFinishedSql('s', 'p')}
        AND s.status NOT IN ('completed', 'cancelled')
-     ORDER BY s.event_date ASC, s.start_time ASC
+     ORDER BY ${shiftEndInstantSql('s', 'p')} ASC, s.id ASC
      LIMIT 1`,
     [staffUserId]
   );
@@ -442,12 +474,18 @@ async function handleCant(staffUserId, twilioSid) {
   let bonusReleased = false;
   try {
     await dbClient.query('BEGIN');
+    // $2::date is the CHICAGO business day, not NOW()::date. The DB session
+    // runs at GMT, so NOW()::date is already tomorrow from 19:00 Chicago — and
+    // an evening-of CANT is exactly the case this spec makes reachable, so the
+    // audit note recording the drop was stamped one day in the FUTURE, dated
+    // after the event it dropped. This is a NOTE about when a human acted, not
+    // a shift boundary, so it takes the business DAY and not the end instant.
     await dbClient.query(
       `UPDATE shift_requests
        SET status = 'denied',
-           notes = TRIM(COALESCE(notes, '') || ' [Staff texted CANT ' || NOW()::date || ']')
+           notes = TRIM(COALESCE(notes, '') || ' [Staff texted CANT ' || $2::date || ']')
        WHERE id = $1`,
-      [shift.request_id]
+      [shift.request_id, chicagoTodayYmd()]
     );
     // Out-of-Area lock (spec 2026-08-06 §6): CANT is a drop by text. The
     // staffer is off the roster as of the UPDATE above, so their hold on an
@@ -520,7 +558,7 @@ async function alertInboundClient(client, body) {
     // Twilio's 1600-char limit and fail to send.
     const snippet = (body || '').slice(0, 600);
     const line = `${name} texted Dr. Bartender: "${snippet}". Reply in the admin Messages page.`;
-    await notifyAdminCategory({
+    await _deps.notifyAdminCategory({
       category: 'urgent_client_reply',
       subject: `${name} replied by text`,
       emailHtml: `<p>${escapeHtml(line)}</p>`,
@@ -531,28 +569,67 @@ async function alertInboundClient(client, body) {
 }
 
 /**
+ * The calendar day of a bare SQL DATE column, as YYYY-MM-DD. pg builds a DATE
+ * at LOCAL midnight, so toISOString() recovers the same calendar day on any
+ * machine at or west of UTC (Render is UTC, the dev box is Chicago). Same
+ * reasoning and same limit as paystubData.js ymd(). Never pass a TIMESTAMPTZ
+ * through here — use chicagoYmdOf() for a true instant.
+ */
+function dateColumnYmd(d) {
+  if (!d) return null;
+  if (typeof d === 'string') return d.slice(0, 10);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Whole calendar days from one YYYY-MM-DD to another. Mirrors
+ *  wholeDaysBetween() in routes/proposals/cancel.js. */
+function wholeDaysBetween(fromYmd, toYmd) {
+  if (!fromYmd || !toYmd) return 0;
+  const [fy, fm, fd] = fromYmd.split('-').map(Number);
+  const [ty, tm, td] = toYmd.split('-').map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
+}
+
+/**
  * Alert the admin that a staffer texted CANT. Channel by lead time: event
  * under 7 days out and ADMIN_PHONE configured fires SMS (urgent); otherwise
  * fires email. The alert is dropped only if BOTH ADMIN_PHONE and ADMIN_EMAIL
  * are unset.
  *
+ * LEAD TIME IS COUNTED IN CHICAGO CALENDAR DAYS ON BOTH SIDES. It used to
+ * subtract Date.now() from the pg DATE, which pg materializes at LOCAL
+ * midnight: a drop at 19:30 Chicago on the DAY of the event came out at -0.81
+ * days, floored to -1, and the most urgent drop there is — "they just bailed on
+ * tonight" — was labelled "past due", which reads as an event that already
+ * happened and nothing to scramble for. That case is precisely what this spec
+ * makes reachable (findNearestApprovedShift now matches an evening-of shift up
+ * to its end instant), so it went from unreachable to the flagship path.
+ *
  * @param {Object} cant - a successful handleCant(...) result
  */
 async function alertStaffCant(cant) {
   await safeAlert('staff_cant', async () => {
-    const eventDate = new Date(cant.eventDate);
-    const dayMs = 24 * 60 * 60 * 1000;
-    const daysOut = Math.floor((eventDate.getTime() - Date.now()) / dayMs);
+    const eventYmd = dateColumnYmd(cant.eventDate);
+    const daysOut = wholeDaysBetween(chicagoTodayYmd(), eventYmd);
     const eventLabel = getEventTypeLabel({ event_type: cant.eventType, event_type_custom: cant.eventTypeCustom });
     const who = cant.clientName ? `${eventLabel} for ${cant.clientName}` : `shift #${cant.shiftId}`;
-    const dateStr = eventDate.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric' });
-    const outLabel = daysOut < 0 ? 'past due' : `${daysOut} days out`;
+    // shifts.event_date is NOT NULL and findNearestApprovedShift filters on it,
+    // so eventYmd is always present in practice; the guard just keeps a
+    // can't-happen null out of the admin's alert as "Invalid Date (TODAY)".
+    const dateStr = eventYmd
+      ? new Date(`${eventYmd}T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric' })
+      : 'an unknown date';
+    const outLabel = !eventYmd ? 'date unknown'
+      : daysOut < 0 ? 'past due'
+        : daysOut === 0 ? 'TODAY'
+          : daysOut === 1 ? 'tomorrow'
+            : `${daysOut} days out`;
 
     // Always email subscribed admins. An event under 7 days out is urgent
     // enough to also text them. notifyAdminCategory sends SMS only when
     // smsBody is provided, so the lead-time branch just gates that argument.
     const smsLine = `Staffing alert: a bartender dropped the ${who} on ${dateStr} (${outLabel}). The shift is re-opened and needs restaffing.`;
-    await notifyAdminCategory({
+    await _deps.notifyAdminCategory({
       category: 'urgent_staffing',
       subject: `Bartender dropped the ${dateStr} shift`,
       emailHtml: `<p>A bartender texted CANT for the <strong>${escapeHtml(who)}</strong> on <strong>${escapeHtml(dateStr)}</strong> (${escapeHtml(outLabel)}).</p><p>The shift has been re-opened and needs restaffing. It will show as unstaffed on the Events dashboard.</p>`,
@@ -565,7 +642,7 @@ async function alertStaffCant(cant) {
 /** Notify subscribed admins about an inbound text the system took no action on. */
 async function alertAdminEmail(subject, body) {
   await safeAlert('admin_email', async () => {
-    await notifyAdminCategory({
+    await _deps.notifyAdminCategory({
       category: 'routine_admin',
       subject,
       emailHtml: `<p>${escapeHtml(body)}</p>`,

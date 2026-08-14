@@ -1,4 +1,6 @@
 const { pool } = require('../db');
+// THE shift-visibility predicate — see server/utils/shiftEndInstant.js.
+const { shiftNotFinishedSql } = require('./shiftEndInstant');
 
 // Two questions that sound like one.
 //
@@ -70,6 +72,14 @@ async function outstandingFor(userId) {
 //
 // The lateral join is what separates "eligible but idle" from "about to pour
 // drinks uncertified". Both belong in the list; only the second is urgent.
+//
+// "Upcoming" is the shift's END INSTANT, not a calendar day
+// (server/utils/shiftEndInstant.js). Under the old `event_date >= CURRENT_DATE`
+// (the GMT day on this session) the person pouring uncertified TONIGHT read as
+// "eligible but idle" from 19:00 Chicago — the urgent case silently downgraded
+// to the harmless one. The Chicago calendar day would have fixed that and then
+// kept THIS MORNING's finished shift on the row until midnight, still pointing
+// admin attention at a risk that has already passed.
 async function listUncertifiedStaffable() {
   const result = await pool.query(`
     SELECT u.id AS user_id,
@@ -81,10 +91,11 @@ async function listUncertifiedStaffable() {
       SELECT s.id AS shift_id, s.event_date
       FROM shift_requests r
       JOIN shifts s ON s.id = r.shift_id
+      LEFT JOIN proposals p ON p.id = s.proposal_id
       WHERE r.user_id = u.id
         AND r.status = 'approved'
         AND r.dropped_at IS NULL
-        AND s.event_date >= CURRENT_DATE
+        AND ${shiftNotFinishedSql('s', 'p')}
       ORDER BY s.event_date
       LIMIT 1
     ) ns ON true

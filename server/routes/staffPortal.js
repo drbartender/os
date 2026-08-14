@@ -23,6 +23,8 @@ const { sendEmail } = require('../utils/email');
 const { emailChangeVerification, emailChangeWarning } = require('../utils/lifecycleEmailTemplates');
 const { STAFF_URL } = require('../utils/urls');
 const { emailChangeRequestLimiter } = require('../middleware/rateLimiters');
+// THE shift-visibility predicate — see server/utils/shiftEndInstant.js.
+const { shiftNotFinishedSql, shiftEndInstantSql } = require('../utils/shiftEndInstant');
 const paymentMethods = require('./staffPortal/paymentMethods');
 const payouts = require('./staffPortal/payouts');
 const accountReads = require('./staffPortal/accountReads');
@@ -49,6 +51,22 @@ router.use(auth);
 //      payday + status). Mirrors the payoutAccrual / payouts pattern.
 //   5. Open-shifts teaser (spec §6.2): top 2 soonest open future shifts, plus
 //      open_shifts_count for the "All (N)" link to Shifts -> Available.
+//
+// EVERY shift boundary below asks "has this shift finished yet" — the shift's
+// END INSTANT (server/utils/shiftEndInstant.js) compared to NOW() — never a
+// calendar day. Under the old `event_date >= CURRENT_DATE` (the GMT day on this
+// session) this whole payload went wrong together for the last five hours of
+// every day: the next-shift card said "no upcoming shift" to a staffer opening
+// the portal 30 minutes before call time, tonight's pending request and cover
+// broadcast disappeared, and the teaser and its "All (N)" count silently
+// disagreed with the Available tab. Swapping to the Chicago calendar day fixed
+// the disappearance and introduced the opposite fault — this MORNING's finished
+// shift stayed on the card until midnight. The end instant answers both.
+//
+// The teaser and the count are documented mirrors of STAFF_OPEN_SHIFTS_SQL
+// (routes/shifts.queries.js). All three now import the same fragment, because
+// the count and the list it counts drifting apart is exactly what broke the
+// round this replaces. The pay-period query is the one holdout — see its note.
 router.get('/staff-home', asyncHandler(async (req, res) => {
   const userId = req.user.id;
 
@@ -71,8 +89,14 @@ router.get('/staff-home', asyncHandler(async (req, res) => {
        WHERE sr.user_id = $1
          AND sr.status = 'approved'
          AND sr.dropped_at IS NULL
-         AND s.event_date >= CURRENT_DATE
-       ORDER BY s.event_date ASC, s.start_time ASC
+         AND ${shiftNotFinishedSql('s', 'p')}
+       -- Order by the END INSTANT, never by start_time. start_time is free text,
+       -- so ASC on it compares '7:00 PM' against '8:00 AM' as STRINGS and puts
+       -- the evening shift first: a staffer with an 8am brunch and a 7pm wedding
+       -- on the same day was shown the 7pm call time on the morning they were
+       -- due at 8. Among shifts that have not finished, the earliest end is the
+       -- nearest one. Same ordering as findNearestApprovedShift, deliberately.
+       ORDER BY ${shiftEndInstantSql('s', 'p')} ASC, s.id ASC
        LIMIT 1
     `, [userId]),
 
@@ -87,7 +111,7 @@ router.get('/staff-home', asyncHandler(async (req, res) => {
         LEFT JOIN clients c ON c.id = p.client_id
        WHERE sr.user_id = $1
          AND sr.status = 'pending'
-         AND s.event_date >= CURRENT_DATE
+         AND ${shiftNotFinishedSql('s', 'p')}
        ORDER BY s.event_date ASC
     `, [userId]),
 
@@ -116,7 +140,7 @@ router.get('/staff-home', asyncHandler(async (req, res) => {
          AND sr.user_id <> $1
          AND sr.status = 'approved'
          AND sr.dropped_at IS NULL
-         AND s.event_date >= CURRENT_DATE
+         AND ${shiftNotFinishedSql('s', 'p')}
        ORDER BY s.event_date ASC
        LIMIT 20
     `, [userId]),
@@ -136,14 +160,26 @@ router.get('/staff-home', asyncHandler(async (req, res) => {
              ), 0) AS duty_line_count
         FROM pay_periods pp
         LEFT JOIN payouts po ON po.pay_period_id = pp.id AND po.contractor_id = $1
+       -- KNOWN-OPEN, DELIBERATELY NOT IN THIS LANE (spec 2026-08-14
+       -- "Known-open"). This is the last WHERE CURRENT_DATE BETWEEN ... of
+       -- the payroll "which period is now" family; every sibling passes
+       -- chicagoTodayYmd() (dutyLines.js findOpenPeriodForDate,
+       -- admin/payroll.js). So on a period's last evening this card resolves
+       -- the NEXT period while accrual is still writing the current one and the
+       -- staffer sees $0 for the week they just worked. It is a PAY-PERIOD
+       -- boundary, not a shift boundary — no end instant applies — and it is a
+       -- money path that wants its own lane and its own pay_periods fixture.
        WHERE CURRENT_DATE BETWEEN pp.start_date AND pp.end_date
        ORDER BY pp.start_date DESC
        LIMIT 1
     `, [userId]),
 
-    // Open shifts teaser — top 2 soonest open future shifts (spec §6.2). Mirrors
-    // the Available tab's open-shift filter (status='open', future) so the cards
-    // and the "All (N)" count stay consistent. A lean projection (vs reusing
+    // Open shifts teaser — top 2 soonest open shifts that have not finished
+    // (spec §6.2). Mirrors the Available tab's open-shift filter (status='open'
+    // AND the end instant has not passed — STAFF_OPEN_SHIFTS_SQL in
+    // routes/shifts.queries.js) so the cards, the "All (N)" count below and the
+    // tab they link to stay consistent. That mirror is why all three import the
+    // SAME fragment rather than restating it. A lean projection (vs reusing
     // STAFF_OPEN_SHIFTS_SQL, which is built for the full 500-row Available list
     // with the cover LATERAL) is enough for the 2-row teaser.
     pool.query(`
@@ -153,16 +189,23 @@ router.get('/staff-home', asyncHandler(async (req, res) => {
         FROM shifts s
         LEFT JOIN proposals p ON p.id = s.proposal_id
         LEFT JOIN clients c ON c.id = p.client_id
-       WHERE s.status = 'open' AND s.event_date >= CURRENT_DATE
-       ORDER BY s.event_date ASC, s.start_time ASC
+       WHERE s.status = 'open' AND ${shiftNotFinishedSql('s', 'p')}
+       -- Same reason as the next-shift card above: start_time is free text, so
+       -- ASC on it sorts '7:00 PM' before '8:00 AM'. With LIMIT 2 that does not
+       -- merely reorder the teaser, it can HIDE the soonest open shift entirely.
+       ORDER BY ${shiftEndInstantSql('s', 'p')} ASC, s.id ASC
        LIMIT 2
     `),
 
-    // Total open future shifts for the "All (N)" link to Shifts → Available.
+    // Total unfinished open shifts for the "All (N)" link to Shifts → Available.
+    // THE COUNT FOR THE TEASER AND THE TAB. Same fragment as both, and the
+    // LEFT JOIN exists only to reach event_timezone — this query had no join at
+    // all when it read CURRENT_DATE, which is precisely how it could drift.
     pool.query(`
       SELECT COUNT(*)::int AS n
-        FROM shifts
-       WHERE status = 'open' AND event_date >= CURRENT_DATE
+        FROM shifts s
+        LEFT JOIN proposals p ON p.id = s.proposal_id
+       WHERE s.status = 'open' AND ${shiftNotFinishedSql('s', 'p')}
     `),
   ]);
 

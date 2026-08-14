@@ -7,6 +7,8 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../utils/errors');
 const crypto = require('crypto');
 const { requireUuidToken } = require('../utils/tokens');
+// THE shift-visibility predicate — see server/utils/shiftEndInstant.js.
+const { shiftNotFinishedSql } = require('../utils/shiftEndInstant');
 
 const router = express.Router();
 
@@ -263,11 +265,20 @@ router.get('/user/:userId', auth, adminOnly, asyncHandler(async (req, res) => {
 // ─── Available shifts for invitation picker ──────────────────────
 
 router.get('/shifts', auth, adminOnly, asyncHandler(async (req, res) => {
+  // A shift belongs in the invitation picker until it has FINISHED — the end
+  // instant, never a calendar day (server/utils/shiftEndInstant.js). Under the
+  // old `event_date >= CURRENT_DATE` (the GMT day on this session) tonight's
+  // open shift dropped out of the picker at 19:00 Chicago, exactly when an
+  // admin is scrambling to fill it. The LEFT JOIN supplies event_timezone and
+  // is the only reason this query needs a proposal at all; the projection is
+  // unchanged.
   const result = await pool.query(`
-    SELECT id, event_type, event_type_custom, client_name, event_date, start_time, end_time, location, positions_needed
-    FROM shifts
-    WHERE status = 'open' AND event_date >= CURRENT_DATE
-    ORDER BY event_date ASC
+    SELECT s.id, s.event_type, s.event_type_custom, s.client_name, s.event_date,
+           s.start_time, s.end_time, s.location, s.positions_needed
+    FROM shifts s
+    LEFT JOIN proposals p ON p.id = s.proposal_id
+    WHERE s.status = 'open' AND ${shiftNotFinishedSql('s', 'p')}
+    ORDER BY s.event_date ASC
   `);
   const shifts = result.rows.map(row => ({
     ...row,
