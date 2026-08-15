@@ -2350,9 +2350,14 @@ These are not from the original ledger. They surfaced while verifying its
   `payError`, leaving the proposal signed. The ordering is documented as DELIBERATE
   in-code at :7-9 ("Preserve this exactly"), so this is a known trade-off, not a lost bug.
 
-**File-size ratchet** (`npm run check:filesize`: RED 0, YELLOW 32)
-- `crud.js` is 995 lines and has gone the WRONG way (946 when logged). Closest to the hard
-  cap of anything in the tree.
+**File-size ratchet** (~~RED 0, YELLOW 32~~ **re-run 2026-08-14: RED 0, YELLOW 31**)
+- ~~`crud.js` is 995 lines and has gone the WRONG way (946 when logged). Closest to the hard
+  cap of anything in the tree.~~ **CORRECTED 2026-08-14.** `crud.js` is **976** — the
+  legacy-cc-payments removal took it 995→976 (see the entry near the top of this file).
+  **`server/routes/staffPortal.js` at 995 is now the closest thing to the hard cap in the
+  tree**, and it is the one to watch: the ratchet blocks any commit that makes an over-cap
+  file longer, so the NEXT addition to staffPortal.js is effectively blocked until something
+  is extracted from it. It is still under 1000, so this is a warning, not a block, today.
 - `CocktailMenuDashboard.js` 931, `emailTemplates.js` 853, `QuoteWizard.js` 837 (now at
   `client/src/pages/website/quoteWizard/`), `ProposalCreate.js` 750, `admin/users.js` 713.
 - ~~`safeAddonQty` is triplicated across `crud.js` / `public.js` / `metadata.js`.~~
@@ -3349,12 +3354,21 @@ rollback protects nothing, and you get a permanently absent constraint with zero
 forever.** 37 DO-blocks currently swallow every failure to NULL. `RAISE WARNING` plus a
 notice listener fixes that at zero boot noise.
 
-**LIVE STATE (verified 2026-08-14):**
-- **PROD IS CLEAN.** No repair needed now, but re-check after the deploy that ships any fix.
-- **DEV IS REGRESSED RIGHT NOW**: `users_onboarding_status_check` is missing `'suspended'`.
-- **`shifts_status_check` has been silently ABSENT from dev forever** (`schema.sql:1861-1864`,
-  blocked by three `shifts` rows with `status='confirmed'`) — the DO-form worst case, live,
-  and initDb still prints its success line.
+**LIVE STATE (re-verified against both databases end of day 2026-08-14 — BOTH ARE NOW CLEAN):**
+- **PROD IS CLEAN**, re-checked directly: `users_onboarding_status_check` carries `'suspended'`,
+  `scheduled_messages_status_check` carries `'processing'`, `scheduled_messages_channel_check`
+  carries `'push'`, and `proposals_archive_reason_check` and `shifts_status_check` are both
+  present. Still re-check after the deploy that ships any fix.
+- ~~**DEV IS REGRESSED RIGHT NOW**: `users_onboarding_status_check` is missing `'suspended'`.~~
+  **STALE — corrected 2026-08-14.** Dev's definition carries `'suspended'`; it was healed at
+  some point and the entry was never updated. Note the boot guard could not have told you this:
+  `CONSTRAINT_CONTRACT` deliberately does NOT assert `'suspended'` (no live writer — see the
+  comment at `server/db/index.js:221-228`), so a green contract check says nothing about this
+  value either way. Verified by reading the constraint definition on both branches.
+- ~~**`shifts_status_check` has been silently ABSENT from dev forever**~~ **— FIXED 2026-08-14,
+  see the RESOLVED block immediately below.** It was absent (`schema.sql:1861-1864`, blocked by
+  three `shifts` rows with `status='confirmed'`) — the DO-form worst case, live, with initDb
+  still printing its success line. Dev now carries the constraint and matches prod exactly.
 
   **Re-verified 2026-08-14, and healing the three rows is NOT sufficient — read this before
   touching anything. Dallas's call, nothing has been mutated.** The constraint allows
@@ -3425,8 +3439,9 @@ notice listener fixes that at zero boot noise.
   `backfillShiftClosures.js`. Those branches are worth keeping: dev spent months proving a
   constraint can go silently missing.
 
-  The fourth WRITER of the column, `PUT /shifts/:id` with no allowlist, is the entry below and
-  is what let `confirmed` in originally. Still open.
+  The fourth WRITER of the column, `PUT /shifts/:id` with no allowlist, is what let `confirmed`
+  in originally. Still open — it now has its own entry at the end of this file (it previously
+  existed ONLY in ARCHITECTURE.md, which is not where open work is tracked).
 
 ## STRUCTURAL GAP this exposed: no gate runs non-money suites against a prod-shaped DB
 
@@ -4150,3 +4165,95 @@ match set — they are not carrier-mandated words. The mandated set is STOP, STO
 UNSUBSCRIBE, CANCEL, END, QUIT for opt-out and START, YES, UNSTOP for opt-in, so
 narrowing has a real compliance cost; (a) is the safer shape. Either way an inbound
 message a human would want to see must not be consumed silently.
+
+# Shift-status and payroll-date residuals STILL OPEN (each re-verified against code 2026-08-14)
+
+Gathered while closing the schema-trap and shifts_status_check items. Several of these were
+being carried only in session handoffs or in ARCHITECTURE.md, which is not where open work is
+tracked — this file is. Recorded here so they survive a session boundary.
+
+## 1. `PUT /shifts/:id` writes `status` off `req.body` with NO allowlist (money-adjacent)
+
+`server/routes/shifts.handlers.js:27` destructures `status` straight out of `req.body` and
+`:56` writes `status = COALESCE($9, status)`. Two fields right beside it, `equipment_required`
+and `supply_run`, ARE validated (`:33-41`). This is the fourth, unintended writer of
+`shifts.status`, and it is what put `status='confirmed'` on three dev rows in the first place.
+
+**Why it matters beyond hygiene:** `shifts.status = 'cancelled'` is overloaded to mean the
+EVENT was cancelled. `client/src/components/adminos/shifts.js` renders a Cancelled chip off it,
+and `server/routes/calendar.js:432` and `:539` turn it into `STATUS:CANCELLED` with a bumped
+`SEQUENCE`, which strikes the event off the owner's subscribed Google Calendar. So any
+admin/manager PUT can strike a delivered, paid event off that calendar with no validation.
+
+Mitigating, verified today: **no client caller sends `status`.** The only `PUT /shifts/:id`
+callers in `client/src` are `ShiftDrawer.js:354` (equipment_required) and `:368` (supply_run).
+So the hole is API-only today. Note this also means the `confirmed` rows predate any current
+caller — they came from a seed or an older client.
+
+Fix: an allowlist matching `shifts_status_check` (`open | filled | completed | cancelled`),
+throwing `ValidationError` on anything else, in the same shape as the `equipment_required`
+guard directly above it. Belongs to a lane that owns that route. Documented in ARCHITECTURE.md
+around the `shifts.status` overload note.
+
+## 2. `staffPortal.js` pay-period lookup is the LAST `CURRENT_DATE` in the payroll family (money)
+
+`server/routes/staffPortal.js:172`, `WHERE CURRENT_DATE BETWEEN pp.start_date AND pp.end_date`.
+The Postgres session TimeZone is GMT, so `CURRENT_DATE` is the UTC day. Every sibling in the
+payroll "which period is now" family already passes `chicagoTodayYmd()` (`dutyLines.js`
+`findOpenPeriodForDate`, `admin/payroll.js`).
+
+Consequence, quoted from the in-code note the shift-lifecycle lane left at `:163-172`: on a
+period's last evening this card resolves the NEXT period while accrual is still writing the
+current one, and **the staffer sees $0 for the week they just worked.**
+
+Deliberately deferred by that lane, and correctly: it is a PAY-PERIOD boundary, not a shift
+boundary, so no end instant applies. It is a money path and wants its own lane plus its own
+`pay_periods` fixture. The in-code comment is accurate and should move with the fix.
+
+## 3. `alertStaffCant`'s admin-SMS window narrowed by up to a day, silently
+
+`server/utils/smsInbound.js:635`, `daysOut < 7`. The comparison itself has never changed since
+`99757b61`, and the comment at `:628` ("under 7 days out") still matches it literally — which is
+exactly why this is easy to miss. What changed, in lane `shift-lifecycle` (`22c550ea`), is the
+BASIS:
+
+    before:  Math.floor((eventDate.getTime() - Date.now()) / dayMs)   // clock days, floored
+    after:   wholeDaysBetween(chicagoTodayYmd(), eventYmd)            // whole calendar days
+
+An event ~6.2 clock-days away used to floor to 6 and fire the urgent admin SMS; if it falls on
+the 7th calendar day it now returns 7 and fires nothing. So the urgent-restaffing text is
+suppressed for a band of events roughly one day wide, at the edge of the window that exists
+because someone has to restaff a shift.
+
+Not obviously a bug — calendar days are arguably the more honest unit for "days out" — but it
+is a live behaviour change nobody chose, on an alert whose whole purpose is urgency. Decide the
+unit deliberately, then make the comment say which one it means.
+
+## 4. `GET /shifts/user/:userId/events` buckets by CALENDAR DAY, not by the shift's end instant
+
+`server/routes/shifts.js:242`. The UTC-day bug here was fixed in lane `date-trap-live-fixes`
+(it now uses `chicagoTodayYmd()`), and the remaining behaviour is deliberate and documented
+in-code at `:243-247`. The residual: a shift stays in Upcoming for the whole calendar day even
+after it has ended, because the comparison is date-vs-date. The shift-lifecycle work introduced
+a real end-instant helper (`shiftEndInstant.js`) that the visibility family now uses; this route
+was left on the calendar-day comparison. Low severity — erring toward "still upcoming" is the
+safe direction for a staffer — but the two surfaces now disagree about the same shift.
+
+## 5. `server/routes/staffPortal.js` is 995 lines against the 1000 hard cap
+
+Now the closest file in the tree to the cap (`crud.js` dropped to 976 today). Still under, so
+nothing is blocked yet, but the ratchet means the next addition that pushes it over is blocked
+until something is extracted. Split candidates follow the existing patterns: the payouts/paystub
+concern already lives in `server/routes/staffPortal/`, so more can move there.
+
+## 6. UNVERIFIED, needs the surface named before anyone actions it
+
+The 2026-08-14 session handoff claimed "the admin Overview Staffing tab selects upcoming on the
+BROWSER's day while its badge uses the end instant." **Could not locate it.** There is no
+`Staffing` tab under `client/src/pages/admin/overview/`, and the only browser-day date
+comparison left in `client/src/pages/admin/` or `client/src/components/adminos/` is
+`overview/RevenueChartCard.js:63`, which is already logged in the date-trap entry above.
+
+Either the surface has a different name, or the shift-lifecycle lane already changed it. Do not
+action this as written — find the file first, or drop it. Recorded so it is not silently lost,
+and flagged so nobody wastes a lane chasing it.
