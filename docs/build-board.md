@@ -15,6 +15,7 @@ Note: this board carries titles and paths ONLY. Never paste spec or plan bodies 
 <!-- lane open and building. Stale-lane flags surface here. One line per item. -->
 
 
+- **oo-switch-server** — cut 2026-08-14: server half of the proposal options drawer (quote hidden-addon carry, options_available, /t/:token/switch, sign total assertion). [spec](superpowers/specs/2026-08-14-proposal-options-drawer-design.md) / [plan](superpowers/plans/2026-08-14-proposal-options-drawer.md)
 ## Recently shipped
 
 <!-- merged + shipped lanes, newest first. Ages off over time. One line per item. -->
