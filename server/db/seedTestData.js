@@ -362,7 +362,7 @@ async function seedTestData() {
           positions_needed, status, proposal_id, created_by)
         VALUES ('baby-shower', NULL, 'Priya Sharma', '2026-05-10', '2:00 PM', '5:00 PM',
           '890 Elm St, Winnetka, IL 60093',
-          $1, 'confirmed', $2, $3)
+          $1, 'filled', $2, $3)
         RETURNING id
       `, [JSON.stringify([{ position: 'bartender', count: 1 }]), p4.id, adminId]);
       await client.query(`
@@ -422,7 +422,7 @@ async function seedTestData() {
         positions_needed, status, created_by)
       VALUES ('graduation-party', NULL, 'Johnson', '2026-03-15', '3:00 PM', '7:00 PM',
         '500 S State St, Chicago, IL 60605',
-        $1, 'confirmed', $2)
+        $1, 'filled', $2)
     `, [JSON.stringify([{ position: 'bartender', count: 1 }]), adminId]);
 
     console.log('  ✓ 2 standalone shifts');

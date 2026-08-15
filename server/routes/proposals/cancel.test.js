@@ -183,7 +183,9 @@ async function seedBooked(opts = {}) {
     const bartenderId = u.rows[0].id;
     seededUsers.push(bartenderId);
     const s = await pool.query(
-      `INSERT INTO shifts (proposal_id, event_date, status) VALUES ($1, CURRENT_DATE, 'confirmed') RETURNING id`,
+      // 'filled', not 'confirmed': shifts_status_check permits exactly
+      // open | filled | completed | cancelled, on prod and (since 2026-08-14) on dev.
+      `INSERT INTO shifts (proposal_id, event_date, status) VALUES ($1, CURRENT_DATE, 'filled') RETURNING id`,
       [proposalId]
     );
     const shiftId = s.rows[0].id;
