@@ -222,16 +222,31 @@ so tick items off as you confirm them rather than assuming the list is current.
       it does NOT re-ask — the answer is stamped once per proposal, deliberately.
       To walk it in prod instead, wait for a genuinely far booking and do it on the real
       send rather than manufacturing one.
-- [ ] **Duty-pay policy text: Field Guide §17 + contractor agreement v3.** The staff-facing
-      half of the whole duty-pay project, and the only part staff actually read. Never
-      opened by anyone since shipping 8/07 (v3 also stamps into signature rows, so a bad
-      render is durable).
-      Read §17 in the portal as a bartender: $20 bar rental, $20 parking, $20 supplies with
-      the **flat $50 hosted** carve-out (changed 8/07, announced), $5 menu print, $10 named
-      5-star bounty, $100 quarterly contest, and travel as ONE deliberately vague sentence
-      (no bands, no mileage — the published-ambiguity rule). Confirm no duration estimates
-      survive anywhere near the hosted money after the 2026-08-10 copy change. Then sign the
-      agreement with the dummy staff account and confirm the signature row stamps version 3.
+- [x] **Duty-pay policy text: Field Guide §17 + contractor agreement v3 — PASSED
+      2026-08-14**, both halves, on dev as marcus.j.
+      §17 CONTENT: every published figure reads as specced — $20 bar rental (own bar or
+      Pilsen pickup, same either way), $20 parking (driver only), $20 supplies with the
+      **flat $50 hosted** carve-out, $5 menu print, $10 named 5-star bounty, $100 quarterly
+      contest, and Travel as exactly ONE discretionary sentence with no mileage, no band and
+      no radius. The published-ambiguity rule holds, and no duration language survives near
+      the hosted $50.
+      AGREEMENT v3 STAMPED CLEAN: `agreements.signature_document_version` =
+      `'contractor-agreement-v3'` (the STRING, as designed), signed 2026-08-15T00:00:36Z,
+      PDF present, and the version is baked into the R2 key
+      (`agreements/5/contractor-agreement-v3-1786752037188.pdf`) as a second independent
+      confirmation. Note nothing in the UI ever displays the stamped version — SQL and the
+      PDF header are the only two proofs.
+      SIDE EFFECT, PREDICTED AND OBSERVED: signing ran `refreshDisplayName`, and marcus's
+      `display_name` moved `Marcus` → `Marcus J.` one second after the signature. That is
+      the documented behaviour (the signed full name outranks everything for the last
+      initial) and it incidentally re-verified the display-name single writer under a real
+      write.
+      COPY FINDING: Dallas could not find the quarterly contest. It IS present, but as the
+      second BULLET under the sub-heading "Review Bounty: $10", so the biggest number in the
+      schedule hides under the smallest. Fix list, 2026-08-14, with the note that this may
+      partly explain why §7 has never paid out once.
+      ALSO SEEN, already logged: clause 6 of the agreement renders literal `**` asterisks on
+      the signing screen while the PDF renders them bold correctly.
 
 - [x] **Notify-client confirmation — PASSED 2026-08-12 on dev** (proposal 16301, a booked
       `deposit_paid` fixture). Modal appears on a notifiable change; the notify box is

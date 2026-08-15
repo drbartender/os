@@ -3900,3 +3900,29 @@ stays untouched.
 
 Worth doing before the Field Guide §17 / agreement-v3 walk gets repeated, since
 anyone walking it now will see the asterisks and have to be told they are known.
+
+## The $100 quarterly contest is buried under a heading that says $10 (found 2026-08-14)
+
+Dallas read Field Guide §17 looking for the quarterly contest and concluded it was not
+there. It is there — `client/src/pages/FieldGuide.js:302` — but as the SECOND BULLET
+under the sub-heading `Review Bounty: $10` (`:299`).
+
+So the largest single number in the entire duty-pay schedule sits subordinated to the
+smallest one, with no heading of its own. Every other duty item gets its own
+sub-heading with its own figure: "Bar Rental: $20", "Parking: $20", "Equipment &
+Supplies: $20", "Menu Print: $5", "Travel". The $100 contest gets none.
+
+**Why this is worth fixing rather than shrugging at.** The owner of the business, who
+knew the contest existed and was actively looking for it, scanned the section and did
+not find it. A bartender skimming on their phone has no chance. And an incentive
+nobody can find incentivizes nothing — which connects directly to the §7 finding from
+earlier today: the review bounty and quarterly contest have **executed exactly zero
+times in production** since shipping 2026-08-07. That was logged as "reviewed code
+that has never moved a cent." Part of the reason may simply be that the staff-facing
+document meant to drive the behaviour hides the reward under a smaller number.
+
+Fix: give the contest its own sub-heading in the house style — `Quarterly Contest:
+$100` — and keep the qualifying rule (4 events worked, 2 named 5-star reviews, ties
+split the pot) as its bullets. Copy-only change to `FieldGuide.js`, no schema, no
+money path. Pairs naturally with the Field Guide keyboard-access fix already logged
+today, since both are in the same file.
