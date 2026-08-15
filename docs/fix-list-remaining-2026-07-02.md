@@ -3355,6 +3355,33 @@ notice listener fixes that at zero boot noise.
 - **`shifts_status_check` has been silently ABSENT from dev forever** (`schema.sql:1861-1864`,
   blocked by three `shifts` rows with `status='confirmed'`) — the DO-form worst case, live,
   and initDb still prints its success line.
+
+  **Re-verified 2026-08-14, and healing the three rows is NOT sufficient — read this before
+  touching anything. Dallas's call, nothing has been mutated.** The constraint allows
+  `('open','filled','completed','cancelled')`. The three blockers are shift 16 (proposal 14,
+  `completed`, one `shift_requests` row, "Priya Sharma", and note it was UPDATEd at 16:51 on
+  8/14, so it is not inert), shift 18 (no proposal, no client, created in the same April 7
+  seed instant as 16), and shift 7761 (the `CANCEL-LINE WALK` fixture on a `deposit_paid`
+  proposal, one `shift_requests` row).
+
+  **The second blocker nobody had noticed: three TEST sites write `status='staffed'`, which
+  the constraint also forbids** — `staffShiftActions.test.js:220` and `:515`, and
+  `shifts.withdraw.test.js:270`. Add the constraint to dev and those suites go red, so the
+  repair is a data fix AND a test fix, not a data fix alone.
+
+  **What makes it decidable: production writes neither value.** Every live writer of
+  `shifts.status` emits `open` (`smsInbound.js:498`, `staffShiftActions.js:166`), `cancelled`
+  (`shiftReap.js:59`, `shifts.handlers.js:184`) or `completed` (`shiftClosureSweep`,
+  `backfillShiftClosures.js:197`). `filled` and `staffed` are both dead vocabulary — `staffed`
+  exists only in those tests plus one comment in `coverApprovalCascade.js:19` — and
+  `confirmed` is legacy seed data plus one fixture. So the real question is not what the three
+  rows become, it is whether `shifts.status` should be narrowed to the three values the system
+  actually uses.
+
+  Recommendation on the table, NOT executed: point the three rows at `completed` (16 and 7761
+  have real proposals behind them, 18 has nothing), move the three test sites off `staffed`,
+  and leave the constraint list alone. The fourth writer, `PUT /shifts/:id`, is the entry
+  below and is what let `confirmed` in.
 - Correcting the earlier "prod was unaffected only by luck": for `archive_reason` prod had
   REAL protection (10 rows carry `option_not_chosen`, so a narrow re-add 23514s and rolls
   back). But for the scheduled-message constraints prod has ZERO rows in the new states and
@@ -3368,6 +3395,72 @@ silently absent or narrowed constraint boots clean and nothing notices; and a st
 over `schema.sql`, because without one any collapse decays back into duplicates. The
 verification harness already exists: `testdb-smoke` resets `ci-smoke` from the prod parent
 and runs initDb, so a partial-boot regression can be proven rather than argued.
+
+**BOTH BUILT. Lane `schema-traps` (`e7e12c7a`) then lane `inline-check-guard`
+(`5336dd64`, 2026-08-14) — the inline-CHECK half is CLOSED.**
+
+The static check parsed only `ALTER TABLE ... ADD CONSTRAINT` and said so in its own
+scope comment. Five constraints were defined twice with differing bodies through the
+OTHER form, an unnamed inline `CHECK` inside `CREATE TABLE` that Postgres auto-names
+`<table>_<column>_check` — exactly the string a later `ADD CONSTRAINT` uses. All five
+are now aligned and the collector reads the inline form:
+
+| constraint | what the inline body was missing |
+|---|---|
+| `proposal_payments_payment_type_check` | MONEY: `drink_plan_extras`, `drink_plan_with_balance`, `invoice` |
+| `users_role_check` | AUTH: `manager` |
+| `proposals_status_check` | `archived`; also carried retired `cancelled` |
+| `sms_messages_status_check` | `received` |
+| `service_addons_applies_to_check` | `class` |
+
+Prod and dev were never exposed: `CREATE TABLE IF NOT EXISTS` is a no-op on a populated
+database, so the inline body never re-applied. The cost was that widening a list
+inline-first passed both the suite and the boot.
+
+**A trap this fix nearly introduced, now guarded.** `proposal_payments.payment_type` is
+`VARCHAR(20)` inline while `drink_plan_with_balance` is 23 chars, so widening the CHECK
+alone would have built every fresh database with a column that rejects at INSERT a value
+its own CHECK permits — in the money path, invisible to a text comparator. The column
+moves to `VARCHAR(30)` at the inline site (the guarded `ALTER ... TYPE VARCHAR(30)` below
+stays and is a no-op on a DB born from that line), and a new probe stands each of the six
+paired columns up as a one-column `TEMP TABLE` and inserts every value its CHECK allows.
+
+**A THIRD form exists and is also covered now**, found by the review fleet after the first
+draft claimed there were two: `ALTER TABLE t ADD COLUMN c ... CHECK (...)` is auto-named
+identically. Two live sites, `service_packages.bar_type` (`schema.sql:629`) and
+`payout_events.held_state` (`:3203`). Neither has an `ADD CONSTRAINT` sibling today, so
+nothing diverges — but the repo's own way of widening a list is a guarded DROP + ADD
+CONSTRAINT swap, which would pair with either name.
+
+The auto-name derivation is pinned against a **live server** rather than a reading of the
+Postgres source: a probe hands the same `CREATE TABLE` text to the collector and to
+Postgres and requires the two name sets to match, collision suffix (`_check1`) included.
+
+## STILL OPEN out of the same sweep: seven FKs diverge, and one EXCEPTION handler hides it
+
+The guard covers CHECK constraints only, deliberately. Seven FOREIGN KEYs are divergent
+under one name right now — an inline `REFERENCES users(id)` (NO ACTION) against a later
+`ADD CONSTRAINT ... ON DELETE SET NULL`: `shifts_created_by_fkey`,
+`drink_plans_created_by_fkey`, `proposals_created_by_fkey`, `proposals_package_id_fkey`,
+`proposal_addons_addon_id_fkey`, `email_campaigns_created_by_fkey`,
+`email_conversations_admin_id_fkey` (`schema.sql:1853-1886`).
+
+They are out of the checker on purpose: the inline and ADD spellings of an FK differ
+structurally even when they mean the same thing, so a text comparator emits seven false
+positives on day one, and a checker that cries wolf is one people stop reading.
+
+**The real defect there is not the divergence, it is the error handling.** All eight FK
+statements sit in ONE `DO $$ ... EXCEPTION WHEN OTHERS THEN RAISE NOTICE` block, so a
+single failure rolls back the whole block and leaves a fresh database on NO ACTION — and
+because it is a NOTICE rather than a raise, `initDb`'s `unexpected` array never sees it and
+nothing pages. Deleting a user would then fail on an FK violation instead of nulling the
+`created_by`. Same shape as the 37 `EXCEPTION WHEN OTHERS THEN NULL` blocks already logged
+above. Fix is per-statement blocks or a `RAISE WARNING` plus a notice listener.
+
+Smaller residuals from the same review, all verified absent from `schema.sql` today and
+recorded in the test file's SCOPE comment rather than fixed: quoted identifiers,
+`LIKE ... INCLUDING CONSTRAINTS`, a table created inside a `DO $$` block, and two unnamed
+CHECKs on one column item.
 
 # Push-gate receipt system SHIPPED 2026-08-14 (pushed in 316a43b3) — residuals
 
