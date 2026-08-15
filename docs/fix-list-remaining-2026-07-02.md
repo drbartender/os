@@ -3994,7 +3994,7 @@ stays untouched.
 Worth doing before the Field Guide §17 / agreement-v3 walk gets repeated, since
 anyone walking it now will see the asterisks and have to be told they are known.
 
-## The $100 quarterly contest is buried under a heading that says $10 (found 2026-08-14)
+## The $100 quarterly contest is buried under a heading that says $10 — DECLINED by Dallas 2026-08-14
 
 Dallas read Field Guide §17 looking for the quarterly contest and concluded it was not
 there. It is there — `client/src/pages/FieldGuide.js:302` — but as the SECOND BULLET
@@ -4019,3 +4019,9 @@ $100` — and keep the qualifying rule (4 events worked, 2 named 5-star reviews,
 split the pot) as its bullets. Copy-only change to `FieldGuide.js`, no schema, no
 money path. Pairs naturally with the Field Guide keyboard-access fix already logged
 today, since both are in the same file.
+
+**DALLAS'S CALL, same night: leave the copy alone.** He reviewed it after finding
+it and judged the placement acceptable ("I missed it. No need to change copy."). Do
+NOT re-raise this or "fix" it in a later cleanup pass — the reasoning below is kept
+only so the decision is auditable, not as a pending task. If the §7 contest is still
+at zero payouts in a few months, that is when this becomes a live question again.
