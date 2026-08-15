@@ -602,10 +602,33 @@ is written and built.)
         plus grenadine 0.25 "for the pink pop" (grenadine on top of the strawberries is the
         part worth a second look — it may be sweet twice).
       · **Smokey Pina** — mezcal 2, pineapple 1.5, lime 0.5, agave 0.25.
-- [ ] **Potion Planner v2: both gates before the lineup script's prod run.** (1) Extend
-      `applyPackageLineup2026.js` to also UPDATE the changed packages'
-      `service_packages.includes` prose and refresh the stale seed copy, or four public
-      surfaces keep serving retired-lineup copy. (2) The recipe pass above.
+- [ ] **Potion Planner v2: both gates before the lineup script's prod run. GATE 1
+      RESHAPED 2026-08-14 — it is a 10-minute copy edit, NOT a script extension.**
+      The old wording said "extend `applyPackageLineup2026.js` to also UPDATE the changed
+      packages' `service_packages.includes` prose". **Do not build that.** It contradicts
+      the spec in three places: `includes` is "a separate display field [that] never drives
+      logic" (§ line 25), "`includes` prose stays display-only" (§96), and the spec's own
+      open item assigns it to a human — "Enhanced/Grand `includes` bullets pinned to real
+      bottle lists **during package-editor data entry**" (§10). The script's header also
+      states the admin dashboard is the source of truth for CONTENT after seed and that a
+      re-running UPDATE would clobber admin edits. A script that writes marketing prose
+      would clobber exactly what the spec protects, and it would require inventing
+      client-facing copy, which is Dallas's call and not the script's.
+      CONFIRMED PENDING: the script has never run in prod — `slot_count`/`slot_kind` are
+      NULL on all nine packages and `the-refined-reaction` is still `is_active = true`.
+      **THE ONE PROVEN DRIFT, and it is the whole of gate 1's real content:**
+      `the-midrange-reaction`'s public `includes` lists **"Dewar's Scotch"** as a bullet,
+      and the new midrange lineup has NO scotch category at all — the script's own comment
+      says "scotch OUT". The moment it runs in prod, that package advertises a named
+      product it does not contain. Delete that bullet before the run.
+      TWO POSSIBLE DRIFTS NEEDING DALLAS'S READ, not bugs until he says so: Enhanced says
+      "Six premium spirits" against five spirit categories, and Grand says "Nine spirits"
+      against six (Grand DOES keep scotch — its category is "Irish & Scotch", which a
+      naive spirit-name count misses). Whether those are wrong depends on whether the copy
+      counts CATEGORIES or BOTTLES, and Grand's eligible lists carry several branded
+      bottles per category, so "nine" may well be right at the bottle level.
+      So gate 1 = fix the Midrange scotch bullet, rule on the two counts, in the package
+      editor. (2) The recipe pass above.
 - [ ] **Thumbtack first-reply: the next real lead.** The programmatic draft-clear fix is
       live on the box but has only been proven against captured diagnostics, never a live
       lead. Until one lands, the pipeline is unproven.
