@@ -4257,3 +4257,40 @@ comparison left in `client/src/pages/admin/` or `client/src/components/adminos/`
 Either the surface has a different name, or the shift-lifecycle lane already changed it. Do not
 action this as written — find the file first, or drop it. Recorded so it is not silently lost,
 and flagged so nobody wastes a lane chasing it.
+
+## board-write.sh pushes MAIN, not just the board (found 2026-08-14, ma-d-auth merge)
+
+Real, and it nearly shipped 49 unpushed commits with no push cue. The board
+writer is documented as a "concurrency-safe writer for docs/build-board.md",
+and its retry loop is described in terms of the board line surviving a race.
+What it actually does per attempt is `git pull --rebase`, write, `git commit`,
+then a plain `git push` (scripts/board-write.sh header, "then git commit, then
+a plain git push"). That push is a branch push: it ships **every** unpushed
+commit on main, not the board commit alone.
+
+On 2026-08-14 the board was written right after the ma-d-auth squash merge,
+with main 49 commits ahead of origin (23 from other windows plus the lane).
+The call hung for over two minutes and was killed; `git log origin/main..main`
+confirmed nothing left the machine, and the board's local commit (a8c5047d)
+had already landed, so the board entry survived. The hang itself is the
+documented push-hang trap: board-write's `git push` runs the full ~8-minute
+pre-push hook (money smoke + client build), because the receipt only exists
+when `npm run gate` was run first.
+
+**Why this matters beyond one close call:** every prior board write happened to
+be safe only because main was in sync with origin at the time. The moment a
+window merges a lane and then touches the board, the board writer becomes an
+unreviewed, uncued deploy of everything sitting on main, bypassing the push
+model's confirmation gate, the push-time fleet, and any owed prod DDL. That is
+the exact failure the "push = deploy, explicit-cue only" invariant exists to
+prevent.
+
+**Fix, in preference order:** (1) make the board write push ONLY its own commit
+(push the board commit to a refspec that cannot carry unrelated history, or
+drop the push entirely and let the board ride the next real push, which is what
+the local-commit-plus-next-push model already does for every other doc);
+(2) failing that, have the script refuse to run when `git log origin/main..main`
+is non-empty, with a message saying the board line was written and committed
+locally and will ride the next push. Until it is fixed: **write the board
+BEFORE merging a lane, or accept that the entry rides the next push and skip the
+helper** (a direct edit plus commit is what the removals path already does).
