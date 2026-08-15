@@ -1,8 +1,23 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { purgeMobileAdminState, announceAdminSwUser } from '../utils/adminSw';
+import { clearLastActive, isRevocationCode, phoneUnlockArmed } from '../utils/mobileLock';
 import api from '../utils/api';
 
 const AuthContext = createContext(null);
+
+// How a failed /auth/me maps to state (spec section 8 purge law, four-way):
+//   'purge': revoked (version bump, deleted user), or any dead session on a
+//            surface without phone unlock armed: cache + token die (M2).
+//   'keep': transport failure (the offline cold launch: the SW serves the
+//           cached /auth/me and this path never runs), any non-401 answer,
+//           or a plain 401 on a phone with an enrolled passkey, where the
+//           lock screen owns re-entry and the caches stay, occluded.
+function authFailureAction(err) {
+  if (err?.status !== 401) return 'keep';
+  // ONE revocation list, shared with the lock's 401 claim (utils/mobileLock).
+  if (isRevocationCode(err.code)) return 'purge';
+  return phoneUnlockArmed() ? 'keep' : 'purge';
+}
 
 // Throttle visibilitychange refreshes — admins who tab-flip heavily would
 // otherwise trigger /auth/me on every focus event.
@@ -42,15 +57,14 @@ export function AuthProvider({ children }) {
           announceAdminSwUser(res.data.user.id);
         })
         .catch((err) => {
-          // A dead session must not leave its cached reads on the device
-          // (security review M2), but session death means a REAL 401: a
-          // transport-failed bootstrap is the offline cold launch, and
-          // purging there deletes the exact cache offline mode serves
-          // (caught by the lane's own offline verification). The token
-          // clear below still over-fires on transport failures; that is
-          // the pre-existing defect lane ma-d-auth owns.
-          if (err?.status === 401) purgeMobileAdminState();
-          localStorage.removeItem('token');
+          // The four-way purge law lives in authFailureAction. On 'keep'
+          // with a real 401 (expired token, unlock armed) the artifact and
+          // caches survive, occluded: ProtectedRoute renders the lock gate
+          // and a biometric tap re-mints without losing the offline cache.
+          if (authFailureAction(err) === 'purge') {
+            purgeMobileAdminState();
+            localStorage.removeItem('token');
+          }
         })
         .finally(() => setLoading(false));
     } else {
@@ -62,6 +76,10 @@ export function AuthProvider({ children }) {
     localStorage.setItem('token', token);
     setUser(userData);
     announceAdminSwUser(userData.id);
+    clearLastActive(); // authenticated in the foreground: no background interval to measure
+    // Re-auth in a long-lived PWA document: the expiry handler's once-only
+    // guard resets so a LATER expiry can fire again (spec section 8).
+    window.dispatchEvent(new Event('session-restored'));
   };
 
   const logout = () => {
@@ -86,10 +104,12 @@ export function AuthProvider({ children }) {
       setUser(prev => (isSameUser(prev, next) ? prev : next));
       return next;
     } catch (err) {
-      // Mirror the bootstrap behavior: a dead JWT should sign the user out
-      // instead of lingering as a stale token.
-      if (err?.status === 401) {
-        purgeMobileAdminState(); // security review M2: cache dies with the session
+      // Mirror the bootstrap behavior via the same four-way law. On 'keep'
+      // with a 401 the phone lock overlay claims the surface through the
+      // session-expired event; leaving user state mounted preserves the
+      // exact screen the unlock returns to.
+      if (authFailureAction(err) === 'purge') {
+        purgeMobileAdminState();
         localStorage.removeItem('token');
         setUser(null);
       }

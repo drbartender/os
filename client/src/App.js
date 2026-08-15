@@ -13,6 +13,11 @@ import { UserPrefsProvider } from './context/UserPrefsContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import ScrollToTop from './components/ScrollToTop';
 import SessionExpiryHandler from './components/SessionExpiryHandler';
+// Direct import on purpose: the expired-JWT cold-launch gate must render
+// OFFLINE, and a lazy chunk may not be in the SW cache (same reasoning as
+// the eager installPrompt import).
+import MobileLockScreen from './components/mobile/MobileLockScreen';
+import { phoneUnlockArmed } from './utils/mobileLock';
 import Layout from './components/Layout';
 // HomePage stays eager — LCP-critical for the marketing site root.
 import HomePage from './pages/website/HomePage';
@@ -292,10 +297,20 @@ function getSiteContext() {
 
 /** Requires auth. adminOnly also allows managers (they share the dashboard);
  *  adminStrict is admin-only (rejects managers) for admin-exclusive surfaces. */
-function ProtectedRoute({ children, adminOnly = false, adminStrict = false }) {
+// Exported for the lock-gate wiring test (MobileLockScreen.wiring.test.js).
+export function ProtectedRoute({ children, adminOnly = false, adminStrict = false }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="loading" role="status" aria-live="polite"><div className="spinner" aria-hidden="true" />Loading...</div>;
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) {
+    // Expired-JWT cold launch on a phone with an enrolled passkey (spec
+    // 2026-08-13-mobile-admin section 8): the lock screen owns re-entry;
+    // unlock re-mints via login() and the guarded children render with the
+    // URL untouched. Everyone else goes to password login exactly as today.
+    if (phoneUnlockArmed() && localStorage.getItem('token')) {
+      return <MobileLockScreen gate />;
+    }
+    return <Navigate to="/login" replace />;
+  }
   if (adminStrict && user.role !== 'admin') {
     return <Navigate to={getHomePath(user)} replace />;
   }

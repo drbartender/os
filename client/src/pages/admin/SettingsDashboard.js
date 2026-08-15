@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import NotificationSettings from './NotificationSettings';
+import SecuritySettings from './SecuritySettings';
 import ConfirmModal from '../../components/ConfirmModal';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
@@ -8,6 +9,7 @@ const TABS = [
   { key: 'calendar', label: 'Calendar Sync' },
   { key: 'auto-assign', label: 'Auto-Assign' },
   { key: 'notifications', label: 'Notifications' },
+  { key: 'security', label: 'Security' },
 ];
 
 function CalendarSyncSection() {
@@ -310,6 +312,7 @@ export default function SettingsDashboard() {
       {activeTab === 'calendar' && <CalendarSyncSection />}
       {activeTab === 'auto-assign' && <AutoAssignSettings />}
       {activeTab === 'notifications' && <NotificationSettings />}
+      {activeTab === 'security' && <SecuritySettings />}
     </div>
   );
 }

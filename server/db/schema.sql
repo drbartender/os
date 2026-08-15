@@ -4850,3 +4850,34 @@ CREATE INDEX IF NOT EXISTS idx_clients_marketing_excluded
 -- without this every contact-tab page load sequential-scans the table.
 CREATE INDEX IF NOT EXISTS idx_message_log_client_created
   ON message_log (client_id, created_at DESC) WHERE client_id IS NOT NULL;
+
+-- ─── WebAuthn passkeys (mobile-admin spec 2026-08-13 section 8) ───
+-- The credential IS the device session: assert-verify checks a row here and
+-- mints a fresh 12h JWT. No separate device token exists. Revoke = delete the
+-- row AND bump users.token_version (global logout, deliberate blast radius).
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  credential_id TEXT NOT NULL UNIQUE,        -- base64url, as the authenticator reports it
+  public_key TEXT NOT NULL,                  -- base64url COSE public key bytes
+  counter BIGINT NOT NULL DEFAULT 0,         -- signature counter; regression = cloned-credential signal
+  transports TEXT,                           -- JSON array from registration, feeds excludeCredentials hints
+  label VARCHAR(100),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user ON webauthn_credentials(user_id);
+
+-- Server-issued WebAuthn challenges: single-use (the DELETE on verify is the
+-- claim), 5-minute TTL, swept opportunistically by the options endpoints.
+-- user_id is NULL for assert challenges (the phone is locked, nobody is
+-- authenticated); register challenges bind to the enrolling user.
+CREATE TABLE IF NOT EXISTS webauthn_challenges (
+  id SERIAL PRIMARY KEY,
+  challenge VARCHAR(255) NOT NULL UNIQUE,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  kind VARCHAR(10) NOT NULL CHECK (kind IN ('register', 'assert')),
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_expires ON webauthn_challenges(expires_at);

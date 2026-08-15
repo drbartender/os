@@ -33,6 +33,11 @@ const authLimiter = rateLimit({
   message: { error: 'Too many attempts. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  // The auth suite fires more than 10 requests from one address; the
+  // per-account lockout above still runs in tests (it is account-keyed and
+  // is itself under test). NODE_ENV=test is never set in prod (Render sets
+  // production); same posture as calcomWebhookLimiter and friends.
+  skip: () => process.env.NODE_ENV === 'test',
 });
 
 // Simple email format check — rejects obvious non-emails before hitting the DB

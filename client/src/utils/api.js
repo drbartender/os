@@ -48,8 +48,10 @@ api.interceptors.response.use(
 
     // Session expired (any 401 outside the auth/login endpoints)
     if (status === 401 && !url.startsWith('/auth/') && !url.startsWith('/client-auth/')) {
-      // Tag the URL so SessionExpiryHandler picks the right login redirect
-      window.dispatchEvent(new CustomEvent('session-expired', { detail: { url } }));
+      // Tag the URL so SessionExpiryHandler picks the right login redirect, and
+      // the server's code so it can tell a revocation (which must purge and log
+      // out everywhere) from an ordinary expiry (which the phone lock may claim).
+      window.dispatchEvent(new CustomEvent('session-expired', { detail: { url, code: data.code } }));
     }
 
     const message = data.error || 'Something went wrong. Please try again.';

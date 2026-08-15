@@ -4,6 +4,7 @@
   "start_url": "/events",
   "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#0b0d10",
   "theme_color": "#196ac8",
   "icons": [

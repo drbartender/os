@@ -10485,7 +10485,7 @@ html[data-app="admin-os"] .location-suggest-item.active {
   position: fixed;
   top: 1rem;
   right: 1rem;
-  z-index: 9999;
+  z-index: 10500; /* deliberately above the phone lock (10000): toasts are transient chrome, never occluded content */
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -20643,3 +20643,62 @@ html[data-app="admin-os"][data-skin="light"] .m-return-pill {
 html[data-app="admin-os"][data-skin="light"] .m-seg-btn.active {
   color: var(--bg-0);
 }
+
+/* ---- Mobile admin: lock screen + enrollment (spec 2026-08-13 section 8) ---- */
+html[data-app="admin-os"] .m-lock {
+  position: fixed;
+  inset: 0;
+  z-index: 10000; /* above EVERY admin content overlay, including the five inline zIndex:9999 dialogs (CancelEventDialog, CancelLineDialog, RemoteStaffingFeePrompt, ProposalDetail modals, AttributionModal): the lock must occlude an open money dialog (lane fleet, 2026-08-14). Only toasts (10500) sit above, by design. Pinned by lockZOrder.test.js. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  background: var(--bg-0); /* SOLID: the lock fully occludes content */
+  padding: 2rem 1.5rem;
+  text-align: center;
+}
+html[data-app="admin-os"] .m-lock-brand { font-size: 2.5rem; color: var(--ink-3); }
+html[data-app="admin-os"] .m-lock-title { font-size: 1.25rem; color: var(--ink-1); margin: 0; }
+html[data-app="admin-os"] .m-lock-sub { font-size: 0.9rem; color: var(--ink-3); margin: 0 0 0.75rem; }
+html[data-app="admin-os"] .m-lock-unlock {
+  min-height: 44px;
+  padding: 0.75rem 2.25rem;
+  border: none;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+}
+html[data-app="admin-os"] .m-lock-unlock:disabled { opacity: 0.6; }
+html[data-app="admin-os"] .m-lock-error { color: var(--danger, #c0392b); font-size: 0.85rem; margin: 0; max-width: 32ch; }
+html[data-app="admin-os"] .m-lock-password {
+  min-height: 44px;
+  background: none;
+  border: none;
+  color: var(--ink-3);
+  text-decoration: underline;
+  font-size: 0.9rem;
+}
+html[data-app="admin-os"] .m-enroll-nudge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line-1);
+  font-size: 0.85rem;
+}
+html[data-app="admin-os"] .m-enroll-copy { flex: 1; color: var(--ink-2); text-align: left; }
+html[data-app="admin-os"] .m-enroll-yes,
+html[data-app="admin-os"] .m-enroll-no {
+  min-height: 44px;
+  padding: 0 0.9rem;
+  border-radius: 8px;
+  border: 1px solid var(--line-1);
+  background: none;
+  color: var(--ink-2);
+  font-size: 0.85rem;
+}
+html[data-app="admin-os"] .m-enroll-yes { background: var(--accent); border-color: var(--accent); color: #fff; }

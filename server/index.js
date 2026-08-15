@@ -295,6 +295,11 @@ app.get('/api/files/:filename', auth, async (req, res) => {
 });
 
 // Routes
+// Webauthn passkey routes live under the /api/auth/ prefix ON PURPOSE (the
+// client's 401 interceptor excludes /auth/ URLs from the session-expired
+// dispatch); mounted before the auth router so the more specific prefix is
+// matched first.
+app.use('/api/auth/webauthn', require('./routes/webauthn'));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/progress', require('./routes/progress'));
 app.use('/api/agreement', require('./routes/agreement'));

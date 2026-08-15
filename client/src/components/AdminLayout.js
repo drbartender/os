@@ -14,6 +14,8 @@ import { registerAdminSw, announceAdminSwUser } from '../utils/adminSw';
 import { useAuth } from '../context/AuthContext';
 import MobileHeader from './mobile/MobileHeader';
 import MobileTabBar from './mobile/MobileTabBar';
+import MobileLockScreen from './mobile/MobileLockScreen';
+import PasskeyEnrollNudge from './mobile/PasskeyEnrollNudge';
 
 function AdminLayoutInner() {
   const navigate = useNavigate();
@@ -236,6 +238,7 @@ function AdminLayoutInner() {
             screenKey={screenKey}
             onBack={isDetail ? onBack : null}
           />
+          <PasskeyEnrollNudge />
           <main className="m-main" id="main-content"><Outlet context={{ badges }} /></main>
           <MobileTabBar badges={badges} />
         </div>
@@ -283,6 +286,10 @@ export default function AdminLayout() {
   return (
     <MobileViewProvider>
       <AdminLayoutInner />
+      {/* Overlay mount (spec section 8): arms the 30-minute background lock
+          and claims phone 401s. Renders null unless armed and locked; the
+          expired-cold-launch GATE mount lives in ProtectedRoute instead. */}
+      <MobileLockScreen />
     </MobileViewProvider>
   );
 }

@@ -207,6 +207,22 @@ const serviceExtensionLimiter = rateLimit({
   skip: () => process.env.NODE_ENV === 'test',
 });
 
+// WebAuthn unlock + enrollment (mobile-admin spec 2026-08-13 section 8).
+// Deliberately separate from the login authLimiter in routes/auth.js so
+// biometric unlock retries neither ride nor exhaust the password-login
+// lockout budget. IP-keyed because assert-options/assert-verify run
+// unauthenticated (the phone is locked when they fire). Skipped under
+// NODE_ENV=test (matches calcomWebhookLimiter) so the webauthn suite's many
+// requests from one address do not trip the bucket.
+const webauthnLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: { error: 'Too many unlock attempts. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test',
+});
+
 module.exports = {
   publicLimiter,
   publicReadLimiter,
@@ -224,4 +240,5 @@ module.exports = {
   emailChangeRequestLimiter,
   emailChangeConfirmLimiter,
   serviceExtensionLimiter,
+  webauthnLimiter,
 };

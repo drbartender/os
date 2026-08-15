@@ -8,7 +8,7 @@ const express = require('express');
 // exports: signLimiter for the generic "over-max → 429 + configured envelope"
 // path, and adminWriteLimiter for the per-user bucket-keying guarantee. Both
 // have small maxes so the test hits max+1 with no timer waits.
-const { signLimiter, adminWriteLimiter } = require('./rateLimiters');
+const { signLimiter, adminWriteLimiter, webauthnLimiter } = require('./rateLimiters');
 
 let server, baseUrl;
 
@@ -33,6 +33,7 @@ before(async () => {
   // can be exercised without minting real JWTs / touching the DB.
   app.use((req, res, next) => { const uid = req.headers['x-test-user']; if (uid) req.user = { id: uid }; next(); });
   app.get('/admin', adminWriteLimiter, (req, res) => res.json({ ok: true }));
+  app.get('/webauthn', webauthnLimiter, (req, res) => res.json({ ok: true }));
   server = app.listen(0);
   await new Promise((r) => server.on('listening', r));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -69,4 +70,26 @@ test('adminWriteLimiter keys per user id — one user hitting max does not consu
   // A different user id resolves to a separate bucket and is unaffected.
   const b1 = await hit('/admin', { 'x-test-user': 'B' });
   assert.equal(b1.status, 200, 'user B has its own bucket and is not blocked by user A');
+});
+
+test('webauthnLimiter: 30 per IP with the unlock envelope, and NODE_ENV=test skips at request time', async () => {
+  // The skip callback reads NODE_ENV per request, so one process can prove
+  // both behaviours by flipping the env var between hits.
+  const prev = process.env.NODE_ENV;
+  delete process.env.NODE_ENV;
+  try {
+    for (let i = 0; i < 30; i++) {
+      const r = await hit('/webauthn');
+      assert.equal(r.status, 200, `request ${i + 1} of 30 should pass, got ${r.status}`);
+    }
+    const over = await hit('/webauthn');
+    assert.equal(over.status, 429, 'the 31st request trips the limiter');
+    assert.deepEqual(JSON.parse(over.body), { error: 'Too many unlock attempts. Please try again later.' });
+    process.env.NODE_ENV = 'test';
+    const skipped = await hit('/webauthn');
+    assert.equal(skipped.status, 200, 'NODE_ENV=test skips the limiter at request time');
+  } finally {
+    if (prev === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prev;
+  }
 });

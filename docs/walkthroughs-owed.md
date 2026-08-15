@@ -615,12 +615,26 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
   install from More > Install app (or Chrome's banner), confirm the DrB OS icon +
   standalone launch, tab nav + badges, Desktop-view toggle round trip, airplane-mode
   reopen, sign out wipes it.
-  **DO NOT REPORT THE AIRPLANE-MODE LOGIN AS A BUG.** The app boots from cache but lands
-  on Login, because `AuthContext` clears the token on transport failure — the known spec
-  §8 defect that lane ma-d-auth exists to fix. Confirm it boots from cache at all; the
-  full offline-resume walk waits for ma-d. Everything else on that list is fair game.
-  Dev-verified via the lane browser passes; the phone in the hand is the point of the
-  whole project.
+  ~~**DO NOT REPORT THE AIRPLANE-MODE LOGIN AS A BUG.**~~ SUPERSEDED: Dallas walked the
+  Pixel install 2026-08-14 with zero findings, and lane ma-d-auth has since FIXED the
+  transport-clear defect (AuthContext keeps the token on transport failure and the SW
+  serves the cached /auth/me), so once ma-d ships, an offline cold launch lands on the
+  restored route with staleness lines, behind the lock when more than 30 minutes
+  backgrounded. The full offline-resume proof rides the ma-d walk below.
+
+- [ ] **Mobile admin passkey unlock (lane ma-d-auth) — Pixel walk, after the ma-d push.**
+  On the real Pixel, against dev data:
+  1. Password login on the phone, accept the enrollment nudge, confirm the fingerprint
+     sheet appears and enrolls (More > Security should then read "Fingerprint unlock is on").
+  2. Background the app 30+ minutes (or set adminLockLastActiveAt back in devtools),
+     reopen: lock screen, one tap unlocks, lands on the same screen.
+  3. Airplane mode, cold launch within 30 minutes of last use: restored route with
+     staleness lines, no Login bounce.
+  4. Airplane mode, cold launch with the lock due: lock screen explains offline unlock
+     needs a connection; password path visible.
+  5. From desktop Settings > Security: revoke the phone passkey, confirm the desktop
+     logs out, the phone's next unlock fails to the password path, and re-enrollment
+     works.
 
 (Tier now populated; previously empty as of the 2026-08-13 evening push — both former occupants shipped and moved to
 Tier 3b. Next expected occupant: marketing phase 3 (mkt-h, Overview + Sent) once its plan

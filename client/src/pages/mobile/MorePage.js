@@ -2,6 +2,7 @@ import React from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
 import NAV from '../../components/adminos/nav';
 import Icon from '../../components/adminos/Icon';
+import MoreSecurityRow from '../../components/mobile/MoreSecurityRow';
 import { useAuth } from '../../context/AuthContext';
 import { useUserPrefs } from '../../context/UserPrefsContext';
 import { canInstall, onInstallAvailability, promptInstall } from '../../utils/installPrompt';
@@ -92,6 +93,7 @@ export default function MorePage() {
           </section>
         );
       })}
+      <MoreSecurityRow />
       {/* Benchmark composition: the Lighting section. Without it the phone
           has NO skin control (the desktop toggle lives in the sidebar footer,
           which never renders in phone chrome). Same pref model as desktop. */}

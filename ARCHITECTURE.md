@@ -116,6 +116,19 @@ The scrub fails CLOSED. Walking attributes we did not author means a frozen obje
 | POST | `/login` | No | Validate credentials, return JWT (7-day expiry) |
 | GET | `/me` | Yes | Current user + `has_application` flag |
 
+### WebAuthn phone unlock — `/api/auth/webauthn` (`routes/webauthn.js`, mobile-admin spec 2026-08-13 s8)
+
+Mounted INSIDE the `/api/auth/` prefix on purpose: the client's 401 interceptor excludes `/auth/` URLs from the session-expired dispatch, so a failed unlock can never log the phone out. All six routes ride `webauthnLimiter` (IP-keyed, separate from the login budget). `assert-verify` is the ONLY minting site for the 12-hour phone JWT (`{userId, tokenVersion, credentialId}`; the credential claim is informational, `middleware/auth.js` is unchanged); password login keeps its 7d mints. Challenges are server-issued, DB-stored, single-use (the DELETE is the claim), 5-minute TTL. Pre-signature assert failures share ONE public code (`WEBAUTHN_UNLOCK_FAILED`) so the unauthenticated surface cannot be used to enumerate credentials; the discriminating reason goes to Sentry only.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/register-options` | Yes | Registration options: resident key required (usernameless unlock), excludeCredentials from the caller's rows, challenge stored bound to the caller |
+| POST | `/register-verify` | Yes | Verify attestation, insert `webauthn_credentials` row (label from body, 100 chars) |
+| GET | `/credentials` | Yes | Caller's passkeys: id, label, created_at, last_used_at |
+| DELETE | `/credentials/:id` | Yes | Revoke own passkey AND bump `users.token_version`: a deliberate global logout (lost-phone kill switch) |
+| POST | `/assert-options` | No | Unlock options: empty allowCredentials (authenticator picks the resident passkey), unbound single-use challenge |
+| POST | `/assert-verify` | No | Verify assertion (userHandle cross-check, atomic counter-advance claim, login's account-state gates), then mint the 12h token + login-shaped user payload |
+
 ### Onboarding Progress — `/api/progress`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -859,6 +872,17 @@ DROP-then-CREATE that re-runs every boot, and a CREATE failing on duplicate data
 which `IDEMPOTENT_PG_CODES` swallows — listing them is what makes that absence loud.
 
 ### Core User Tables
+
+**webauthn_credentials** — Phone-unlock passkeys (mobile-admin spec 2026-08-13 s8). The credential IS the device session: `assert-verify` checks a row here and mints a fresh 12h JWT; no separate device token exists.
+- `id` SERIAL PK, `user_id` FK users ON DELETE CASCADE
+- `credential_id` TEXT UNIQUE (base64url), `public_key` TEXT (base64url COSE bytes)
+- `counter` BIGINT (signature counter; a stored counter > 0 that fails to advance is the cloned-credential signal, enforced by an atomic UPDATE-as-claim)
+- `transports` TEXT (JSON array, feeds excludeCredentials hints), `label` VARCHAR(100)
+- `created_at`, `last_used_at`
+- Revoke = DELETE the row AND bump `users.token_version` (global logout by design)
+
+**webauthn_challenges** — Server-issued WebAuthn challenges: single-use (the DELETE on verify is the claim), 5-minute TTL, swept opportunistically by the options endpoints. `user_id` NULL for assert challenges (nobody is authenticated while locked); register challenges bind to the enrolling user.
+- `id` SERIAL PK, `challenge` VARCHAR(255) UNIQUE, `user_id` FK nullable, `kind` CHECK register|assert, `expires_at`, `created_at`
 
 **users** — All accounts (staff, admin, manager)
 - `id` SERIAL PK

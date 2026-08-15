@@ -27,7 +27,7 @@
 //       .map((n) => caches.delete(n)));
 //     await self.registration.unregister();
 //   })()));
-const SW_VERSION = 'admin-sw-2026-08-14-v7';
+const SW_VERSION = 'admin-sw-2026-08-14-v8';
 const SHELL_CACHE = `admin-shell-${SW_VERSION}`;
 const API_CACHE = `admin-api-${SW_VERSION}`;
 
@@ -185,6 +185,11 @@ const API_EXACT = new Set([
   '/api/admin/badge-counts',
   '/api/admin/search',
   '/api/admin/active-staff',
+  // Offline cold-launch hydration (spec section 8): AuthContext boots from
+  // the cached /auth/me when the network is gone. Transport-failure-only
+  // fallback still applies, and a server-answered 401 EVICTS the entry (late
+  // 401 rule below), so a revoked session renders no data.
+  '/api/auth/me',
 ]);
 const isAllowlisted = (pathname) =>
   API_EXACT.has(pathname) ||

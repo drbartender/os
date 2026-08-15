@@ -2,6 +2,7 @@
 // Callers do not await anything useful from failure: an unregistered SW just
 // means no offline shell this session.
 import { isAdminHost } from './installAdminPwaMeta';
+import { ENROLLED_KEY, LAST_ACTIVE_KEY, NUDGE_DISMISSED_KEY } from './mobileLock';
 
 export async function registerAdminSw() {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return null;
@@ -43,7 +44,13 @@ export async function announceAdminSwUser(userId) {
 // Spec section 7 purge rule: logout clears EVERYTHING phone-local: the SW
 // caches AND the localStorage the shell writes (desktop-view overrides,
 // saved route). One call site in AuthContext.logout.
-const PHONE_LOCAL_KEYS = ['adminDesktopViewOverrides', 'adminLastRoute'];
+const PHONE_LOCAL_KEYS = [
+  'adminDesktopViewOverrides',
+  'adminLastRoute',
+  LAST_ACTIVE_KEY,
+  ENROLLED_KEY,
+  NUDGE_DISMISSED_KEY,
+];
 export function purgeMobileAdminState() {
   postToAdminSw({ type: 'admin-logout' });
   try {
