@@ -93,18 +93,26 @@ test('propagates a catalog error (initDb wraps it into an alert, never a boot cr
   await assert.rejects(() => findViolatedConstraintContracts(db), /ECONNREFUSED/);
 });
 
-test('runs against the live dev DB without throwing, and returns an array', async () => {
-  // Deliberately NOT asserting []. As of 2026-08-14 dev genuinely violates the
-  // contract: shifts_status_check is ABSENT there, because its DO-block ADD has
-  // been failing forever against three rows carrying status='confirmed' (a value
-  // no schema definition allows, written by the unvalidated PUT /shifts/:id).
-  // That is a REAL finding this guard surfaced on its first run, not test flake.
-  // Asserting [] here would make the suite permanently red, and a permanently
-  // red guard is one nobody reads — the exact failure mode criticalIndexes.test.js
-  // documents. Restore the assertion once dev is repaired.
+test('the live dev DB satisfies the contract', async () => {
+  // This assertion was withheld when the guard first shipped, because dev
+  // genuinely violated it: shifts_status_check was ABSENT there, its DO-block ADD
+  // having failed forever against three rows carrying status='confirmed' — a
+  // value no schema definition allows and no production code writes. A
+  // permanently red guard is one nobody reads, so the check ran advisory-only
+  // and printed a note instead.
+  //
+  // Dev was repaired 2026-08-14 (owner-approved): shifts 16 and 18 → 'completed'
+  // (both past, 16 on a completed proposal, 18 orphaned), shift 7761 → 'filled'
+  // (the CANCEL-LINE WALK fixture — its event is in the FUTURE on a deposit_paid
+  // proposal, so 'completed' would have contradicted the shift-closure sweep's
+  // own rule that it only closes a shift once the end instant has passed AND the
+  // proposal is completed). The constraint is live on dev again, so the guard
+  // enforces rather than advises.
+  //
+  // If this goes red, dev has drifted — read the violation, do not delete the
+  // assertion.
   const violations = await findViolatedConstraintContracts(pool);
-  assert.ok(Array.isArray(violations));
-  if (violations.length > 0) console.log('  note: live DB violations →', violations);
+  assert.deepEqual(violations, []);
 });
 
 // ── (b) the static check: schema.sql's paired definitions must agree ─────────

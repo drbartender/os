@@ -124,16 +124,26 @@ before(async () => {
   // Already cancelled on a completed proposal: a genuinely reaped shift must
   // never be resurrected or restamped.
   await seedShift('alreadyCancelled', { date: clock.ended_d, endTime: clock.ended_t, status: 'cancelled', proposal: completedProposalId });
-  // A status OUTSIDE the old {open,filled} allowlist. shifts.status has no CHECK
-  // constraint, so this is not hypothetical: dev shift #16 carries 'confirmed'
-  // on a completed proposal and the allowlist skipped it on every hourly tick
-  // forever. It must close.
-  await seedShift('oddStatusCompleted', { date: clock.ended_d, endTime: clock.ended_t, status: 'confirmed', proposal: completedProposalId });
-  // 'closed' is the OTHER value calendar.js reads as an event-level cancellation
-  // (calendar.js:432 tests `status === 'closed' || status === 'cancelled'`), so
-  // sweeping it to 'completed' would UN-cancel that event on the owner's
-  // subscribed Google Calendar. It must be left alone.
-  await seedShift('alreadyClosed', { date: clock.ended_d, endTime: clock.ended_t, status: 'closed', proposal: completedProposalId });
+  // NOTE 2026-08-14: two fixtures were removed here, and the reason matters.
+  // They seeded status='confirmed' and status='closed' — values
+  // `shifts_status_check` REJECTS. This suite only ever passed because that
+  // constraint was silently missing from the DEV database (its ADD had been
+  // failing forever against three legacy rows). PROD has always carried the
+  // constraint, with exactly ('open','filled','completed','cancelled') — so
+  // against a prod-shaped database, including the `ci-smoke` branch the push
+  // gate resets from the prod parent, these two fixtures would have 23514'd.
+  // This file is not on money-smoke-list.txt, which is why nothing caught it.
+  //
+  // Dev was repaired 2026-08-14 and now matches prod, so the two states are
+  // unreachable and cannot be seeded. Their coverage is preserved differently:
+  //   - 'confirmed' (the old comment's "not hypothetical" case) is redundant
+  //     anyway — `finishedCompleted` covers the 'open' non-terminal case and
+  //     `filledCompleted` covers 'filled', which are now the ONLY non-terminal
+  //     values that can exist.
+  //   - 'closed' must still never be swept (calendar.js:432 and :539 read it
+  //     exactly as 'cancelled', so closing it would un-cancel that event on the
+  //     owner's subscribed Google Calendar). Since no row can carry it, that is
+  //     pinned statically against the sweep's SQL in the test below instead.
 
   // A worked roster on the main candidate: closing must not disturb it.
   await pool.query(
@@ -153,7 +163,7 @@ before(async () => {
   const expectFinished = {
     finishedCompleted: true, filledCompleted: true, futureOnCompleted: false,
     runningOnCompleted: false, finishedNotCompleted: true, finishedNoProposal: true,
-    alreadyCancelled: true, oddStatusCompleted: true, alreadyClosed: true,
+    alreadyCancelled: true,
   };
   for (const [key, want] of Object.entries(expectFinished)) {
     assert.equal(finished[F[key]], want,
@@ -193,21 +203,6 @@ test('the sweep closes exactly the finished shifts of completed proposals', asyn
   assert.ok(!closedIds.has(F.finishedNotCompleted), 'the event has not been completed, so nothing closes');
   assert.ok(!closedIds.has(F.finishedNoProposal), 'no proposal means no way to know the event happened');
   assert.ok(!closedIds.has(F.alreadyCancelled), 'a reaped shift must never be resurrected');
-
-  // The behaviour the terminal-EXCLUSION filter exists for. An allowlist of
-  // {open,filled} skipped these forever, and because backfillShiftClosures.js
-  // repeats this filter to build the plan a human reads, that report said
-  // "nothing to do" while the rows sat unclosed.
-  assert.ok(closedIds.has(F.oddStatusCompleted),
-    "a finished shift on a completed proposal closes whatever non-terminal status it carries ('confirmed' exists in real data)");
-  assert.equal(await statusOf(F.oddStatusCompleted), 'completed');
-
-  // ...but 'closed' is a THIRD terminal value: calendar.js reads it exactly as
-  // it reads 'cancelled', so sweeping it would un-cancel that event on the
-  // owner's subscribed Google Calendar.
-  assert.ok(!closedIds.has(F.alreadyClosed),
-    "'closed' is an event-cancelled signal to calendar.js and must never be swept");
-  assert.equal(await statusOf(F.alreadyClosed), 'closed');
 
   assert.equal(await statusOf(F.finishedCompleted), 'completed');
   assert.equal(await statusOf(F.filledCompleted), 'completed');
@@ -274,4 +269,25 @@ test('a closed shift disappears from the visibility family too', async () => {
     [F.finishedCompleted]
   );
   assert.equal(rows[0].n, 0);
+});
+
+// Replaces the deleted `alreadyClosed` fixture. 'closed' is a value calendar.js
+// reads exactly as 'cancelled' (`:432` and `:539`), so sweeping one to
+// 'completed' would UN-cancel that event on the owner's subscribed Google
+// Calendar — a near-miss an earlier round already had. No row can carry 'closed'
+// (shifts_status_check forbids it on prod and, since 2026-08-14, on dev), so it
+// cannot be seeded; the exclusion is pinned against the SQL text instead. Static
+// is weaker than behavioural, and it is the strongest pin available for a branch
+// that guards an unreachable state — the branch is worth keeping because dev
+// spent months proving a constraint can go missing.
+test('the sweep SQL still excludes every terminal status, including unreachable "closed"', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, 'shiftClosureSweep.js'), 'utf8');
+  const notIn = /status\s+NOT\s+IN\s*\(([^)]*)\)/i.exec(src);
+  assert.ok(notIn, 'the sweep no longer has a terminal-status exclusion list at all');
+  for (const value of ['completed', 'cancelled', 'closed']) {
+    assert.match(notIn[1], new RegExp(`'${value}'`),
+      `'${value}' dropped from the sweep's exclusion list`);
+  }
 });

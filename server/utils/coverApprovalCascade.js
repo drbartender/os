@@ -16,8 +16,12 @@
  *      (`scheduleStaffShiftMessages` is idempotent).
  *   4. If the proposal has a finalized drink plan, insert a BEO acknowledge-
  *      nudge for the new staffer at `MAX(eventStartUtc-3d, NOW()+5min)`.
- *   5. Reset shifts.status — the shift remains 'staffed' if no other slot is
- *      open; callers can re-check via the existing assignment count helpers.
+ *   5. Reset shifts.status — flipped back to 'open' only when no approved,
+ *      undropped staffer remains; otherwise the shift keeps its current status.
+ *      Callers can re-check via the existing assignment count helpers.
+ *      (Said 'staffed' until 2026-08-14, a value shifts_status_check does not
+ *      permit and nothing has ever written; the column is open | filled |
+ *      completed | cancelled.)
  *
  * Mid-cascade failure ROLLS BACK: the original stays active, broadcast rows
  * stay pending so another teammate can still claim. Caller decides whether to

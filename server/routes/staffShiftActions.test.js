@@ -216,8 +216,10 @@ test('POST /drop > 14d+1h out succeeds, shift flips back to open', async () => {
   const { requestId, shiftId } = await seedShiftWithRequest({
     daysFromNow: 15, startTimeStr: '18:00', userId: staffUserId,
   });
-  // shifts.status is 'open' from seed; set to 'staffed' to verify it flips back.
-  await pool.query(`UPDATE shifts SET status = 'staffed' WHERE id = $1`, [shiftId]);
+  // shifts.status is 'open' from seed; set to 'filled' to verify it flips back.
+  // 'filled' (not 'staffed') because shifts_status_check allows exactly
+  // open | filled | completed | cancelled — see the block comment at :515.
+  await pool.query(`UPDATE shifts SET status = 'filled' WHERE id = $1`, [shiftId]);
 
   const res = await request('POST', `/api/shifts/requests/${requestId}/drop`, { token: staffToken });
   assert.strictEqual(res.status, 200, JSON.stringify(res.body));
@@ -512,7 +514,14 @@ test('POST /drop > other approved staffer keeps shifts.status as-is', async () =
   const { requestId, shiftId } = await seedShiftWithRequest({
     daysFromNow: 20, startTimeStr: '18:00', userId: staffUserId,
   });
-  await pool.query(`UPDATE shifts SET status = 'staffed' WHERE id = $1`, [shiftId]);
+  // The sentinel is a non-'open' value the handler must NOT touch. It has to be
+  // one shifts_status_check permits — open | filled | completed | cancelled.
+  // These tests used 'staffed', which no schema definition allows and no
+  // production code writes; they only passed because the constraint had been
+  // silently absent from the dev DB since forever (its ADD kept failing against
+  // three legacy rows). Healing those rows re-armed the constraint and would
+  // have turned this suite red.
+  await pool.query(`UPDATE shifts SET status = 'filled' WHERE id = $1`, [shiftId]);
   // Approve the OTHER staffer on this same shift.
   await pool.query(
     `INSERT INTO shift_requests (shift_id, user_id, status, position)
@@ -523,7 +532,7 @@ test('POST /drop > other approved staffer keeps shifts.status as-is', async () =
   const res = await request('POST', `/api/shifts/requests/${requestId}/drop`, { token: staffToken });
   assert.strictEqual(res.status, 200);
   const sh = await pool.query(`SELECT status FROM shifts WHERE id = $1`, [shiftId]);
-  assert.strictEqual(sh.rows[0].status, 'staffed', 'shift remains staffed when other approved staffer present');
+  assert.strictEqual(sh.rows[0].status, 'filled', 'shift keeps its status when another approved staffer is present');
 });
 
 test('POST /drop > suppresses pending scheduled_messages targeting this user+shift', async () => {

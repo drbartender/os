@@ -267,7 +267,7 @@ test('GET /api/shifts/user/:userId/events > projects payout_id when payout_event
   // past event lands in res.body.past.
   const shRow = await pool.query(
     `INSERT INTO shifts (event_date, start_time, end_time, status, proposal_id, location, client_name, positions_needed)
-     VALUES (CURRENT_DATE - 7, '18:00', '22:00', 'staffed', $1, '123 Main', 'Past Test ${NONCE}', '["bartender"]'::jsonb)
+     VALUES (CURRENT_DATE - 7, '18:00', '22:00', 'filled', $1, '123 Main', 'Past Test ${NONCE}', '["bartender"]'::jsonb)
      RETURNING id`,
     [proposalId]
   );
