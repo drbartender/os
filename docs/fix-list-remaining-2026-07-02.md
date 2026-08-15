@@ -4025,3 +4025,66 @@ it and judged the placement acceptable ("I missed it. No need to change copy.").
 NOT re-raise this or "fix" it in a later cleanup pass — the reasoning below is kept
 only so the decision is auditable, not as a pending task. If the §7 contest is still
 at zero payouts in a few months, that is when this becomes a live question again.
+
+## OPERATIONAL, TONIGHT: Jasmine has been SMS-dark for six weeks and works today (found 2026-08-14)
+
+Not a bug. The system is behaving correctly and that is the problem: nothing surfaces
+it.
+
+**Jasmine J.** (`users.id = 22`, jaszyjay2@yahoo.com) texted "Stop" on 2026-07-05
+(`sms_messages` 693). Her `communication_preferences` have read
+`sms_enabled: false` ever since, and nobody has turned it back on — correctly, because
+only she can.
+
+She has an **approved shift TODAY, 2026-08-15, 5:30–10:30 PM** (shift 333, Ariel
+Wróblewska), and another on Aug 24 (shift 369, Brianna Modugno). Her reminder for
+today's shift already fired and was suppressed at 22:30Z tonight:
+
+  2426  shift_reminder      Aug 14 22:30Z  suppressed  "staff.communication_preferences.sms_enabled is false"
+  2654  beo_unack_nudge_sms Aug 12         suppressed  same
+  2355  staff_thank_you     Aug 8          suppressed  same
+  2354  shift_reminder      Aug 7          suppressed  same
+  2420  shift_reminder      Aug 23         pending — will suppress the same way
+
+So a bartender working tonight received no reminder, and has received no shift SMS at
+all for six weeks. Her `email_enabled` is still true, so email reaches her.
+
+**Do NOT flip her `sms_enabled` back to true.** She sent STOP. Re-enabling without her
+asking is exactly the compliance violation the flag exists to prevent, and Twilio holds
+its own account-level opt-out for that number regardless of our DB. If she wants SMS
+back she texts START from her own phone.
+
+**The product gap** is that a suppression this consequential is invisible. The rows
+carry a perfectly clear `error_message`; nothing reads them. Something should surface
+"staffed on an upcoming shift AND sms_enabled false" — the Needs-attention strip is
+the obvious home, or a chip on the staffing card next to the person's name. Right now
+the only way to discover it is to go looking, which is how it survived six weeks.
+
+## "yes" and "cancel" are swallowed as opt keywords before any admin alert fires (found 2026-08-14)
+
+`server/utils/smsInbound.js` accepts as START: `start`, `unstop`, **`yes`**. As STOP:
+`stop`, `unsubscribe`, `end`, `cancel`, **`quit`**. The opt branch returns BEFORE
+`alertInboundClient`, so a matching message produces **no admin alert, no reply, and a
+silent preference flip**.
+
+The collision is not hypothetical, and the trap is one we set ourselves: the proposal
+drip sends *"Want to lock it in before someone else grabs the date?"* — a question that
+invites exactly the word "yes". Prod has four inbound "yes"/"Yes" messages
+(`sms_messages` 707, 1001, 1326, 1330), every one tagged `opt_keyword: start`, every
+one silent.
+
+**Those four are Dallas's own Test Client** (`clients.id 1429`, client@drbartender.com,
+on his own cell), so no real client has been dropped yet. That is luck, not design —
+and it is also proof the path fires exactly as feared. The next real client who answers
+"yes" to a message asking them to confirm will vanish the same way.
+
+"cancel" is the worse half: a client texting *Cancel* almost certainly means "cancel my
+event", and today that silently unsubscribes them from SMS and tells nobody.
+
+Fix: keep the compliance keywords, but stop letting them swallow the message. Either
+(a) fire the admin alert for opt keywords too, so a human sees "client texted Cancel"
+even though the compliance action ran, or (b) narrow `yes` and `cancel` out of the
+match set — they are not carrier-mandated words. The mandated set is STOP, STOPALL,
+UNSUBSCRIBE, CANCEL, END, QUIT for opt-out and START, YES, UNSTOP for opt-in, so
+narrowing has a real compliance cost; (a) is the safer shape. Either way an inbound
+message a human would want to see must not be consumed silently.
