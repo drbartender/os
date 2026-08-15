@@ -17,6 +17,55 @@ so tick items off as you confirm them rather than assuming the list is current.
 
 ---
 
+## Status at the end of the 2026-08-14 session
+
+**Tally: 24 done / 4 partial / 22 open.** But the raw count overstates what is left,
+because this session established that a chunk of the "open" items are not walks at all.
+Read this before picking anything up.
+
+**Closed tonight by Dallas:** voicemail listen link (BOTH halves — the first listen link
+this system has ever sent went out and was tapped), inbound SMS alerts naming the
+staffer, the "See other options" compare strip, duty-pay policy text (Field Guide §17 +
+agreement v3 signed and stamped), and STOP/START on prod.
+**Closed tonight by Claude:** duty-pay out-of-area knobs (both mounts, plus all of spec
+§9), review money §7 manual half, display-name T6, the seniority panel smoke, and the
+duplicate-MessageSid idempotency check (closed structurally on the unique index).
+
+**The three routing rules that came out of the 2026-08-14 lane split:**
+1. **Automation's lane** — contrast/palette measurement and mechanical render checks
+   (`getComputedStyle` on real elements; staff recipes rendering real ingredients;
+   first-name greetings; the proposals pager). Display-name T10-T13 moved here.
+2. **Human-only** — anything about reachability, real devices, or taste. The compare-strip
+   defect proved why: a Playwright click on `getByRole('button')` passes every time,
+   because the button works; only a human reading "Tap to compare" and tapping where it
+   pointed found the dead zone.
+3. **Neither** — trigger-armed or structurally unobservable. Say so in the entry rather
+   than leaving it looking walkable.
+
+**What is genuinely left for a human, in order:**
+- Marketing RESTYLE visual walk (35-45 min, pure judgment, wants daylight)
+- Marketing FUNCTIONAL walk (70-85 min, gates real sends, now more useful since the
+  corporate contacts are tagged)
+- Tip sign wake lock, Leg A (20 min on the Pixel) and Leg B print-and-scan (needs a photo
+  counter)
+- Mobile admin PWA on the Pixel (unblocked, never reported)
+
+**Waiting on a Dallas decision, not on time:** the Potions recipe sourcing call
+(grapefruit soda / Cognac / lavender syrup — see Tier 4), and Potion Planner gate 1's
+Midrange scotch bullet.
+
+**Do not pick up:** the comms SMS smoke beyond STOP/START (exhausted for a human — see
+that entry for the per-check reason), the equipment label (needs a dev write before it is
+lookable in either environment), or anything marked trigger-armed.
+
+Defects this session sent to the fix list, none fixed: the "Tap to compare" dead
+affordance plus 14 more of the same shape found by sweep, the dev box holding a LIVE
+Stripe key with no `NODE_ENV` gate, the September corporate-holiday moment being
+invisible, Jasmine SMS-dark for six weeks while working, `yes`/`cancel` swallowing client
+texts, and the agreement's raw markdown on the signing screen.
+
+---
+
 ## Tier 1 — money moved, and nobody watched it land
 
 - [~] **cancel-line-item — PREVIEW HALF WALKED 2026-08-12** (Dallas, proposal 678, Real
