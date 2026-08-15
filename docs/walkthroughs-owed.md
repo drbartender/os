@@ -420,6 +420,12 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       item). The three shifts that actually carry `["portable_bar"]` are 368 (kpduffy),
       347 (loryn), 366 (jaszyjay) — all past events, other staffers. Verify via one of
       their views, or on dev by setting equipment on a fixture shift.
+      CONFIRMED 2026-08-14, and it means this needs a WRITE before it can be walked at all:
+      prod carries **exactly those three** shifts with non-empty `equipment_required`, all
+      `["portable_bar"]`, all past and all belonging to other staffers — and **dev has no
+      equipment data whatsoever**, every non-cancelled dev shift is `'[]'`. So the token
+      label is unobservable in both environments as they stand. Seeing it requires setting
+      equipment on a dev fixture shift first; there is no "just go look" path.
 - [ ] **Bar-required transport ack + card (built 2026-08-13, unseen).** On dev
       (`staff.localhost:3000`, marcus.j): open shift 14 (Sean Parent) — the Equipment card
       must lead with "Portable bar — DRB bar pickup at the Pilsen storage unit, or bring
@@ -642,8 +648,33 @@ is written and built.)
 ## Tier 5 — never exercised end-to-end
 
 - [~] **Comms SMS smoke, end-to-end — STOP/START PASSED 2026-08-14, the rest still owed.**
-      STILL NEVER RUN: dispatcher heartbeat, sign+pay orientation, .ics open, CONFIRM/CANT,
-      duplicate MessageSid idempotency, prod Twilio signature.
+      **HONEST STATUS OF THE REST, 2026-08-14: this item is EXHAUSTED as far as a human
+      can take it.** Four of the six remaining sub-checks are not walks at all, and saying
+      so is worth more than leaving them on a list to be "looked at".
+      · **duplicate MessageSid idempotency — CLOSED STRUCTURALLY.** You cannot make Twilio
+        resend a SID, so it closes the only honest way: the guarantee is a UNIQUE partial
+        index, verified live on prod — `idx_sms_messages_twilio_sid UNIQUE ON sms_messages
+        (twilio_sid) WHERE twilio_sid IS NOT NULL`. A replayed webhook physically cannot
+        insert twice. Backed operationally by **zero** unprocessed inbound rows, all-time
+        and in the last 7 days, so nothing has ever been stranded mid-handling.
+      · **dispatcher heartbeat — NOT A HUMAN WALK.** No route, no page, no browser surface;
+        it is a SQL query or a Sentry search. Recorded explicitly so nobody "looks at it"
+        and ticks the box, which is the only way this one gets got wrong.
+      · **prod Twilio signature — half unprovable.** The reject-an-unsigned-request half is
+        testable; the accept-a-valid-signature half can only be inferred from real traffic
+        landing, which it does continuously.
+      · **.ics open — BLOCKED.** The orientation email goes to the CLIENT's address only.
+        Dallas cannot receive it, and without Resend dashboard access the delivery half is
+        unobservable.
+      · **sign+pay orientation — TRIGGER-ARMED.** Needs a real client signature plus a real
+        card charge inside a 6-hour window. Dev cannot substitute, and the reason is the
+        2026-08-14 Stripe finding: dev carries an `sk_live_` key, so a dev "test" charge is
+        a real charge.
+      · **CONFIRM/CANT — blocked two ways.** The CANT write path cannot be proven in prod
+        without dropping a real staffer off a real paid event, so it is dev-only until a
+        genuine drop happens. And CONFIRM from Dallas's own phone is blocked in prod because
+        `clients` row 1429 (the Test Client) carries his cell number — the same row that
+        swallowed the four "yes" messages. Freeing it is a one-field prod write.
       **"drink-plan submit" was MISFILED and is now resolved, 2026-08-14.** It sat under an
       SMS smoke item, but drink-plan submit sends **no SMS and never has** — verified:
       `grep -rn "sendAndLogSms\|sendSMS" server/routes/drinkPlans/` returns ZERO hits.
