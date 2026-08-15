@@ -642,8 +642,24 @@ is written and built.)
 ## Tier 5 — never exercised end-to-end
 
 - [~] **Comms SMS smoke, end-to-end — STOP/START PASSED 2026-08-14, the rest still owed.**
-      STILL NEVER RUN: dispatcher heartbeat, sign+pay orientation, .ics open, drink-plan
-      submit, CONFIRM/CANT, duplicate MessageSid idempotency, prod Twilio signature.
+      STILL NEVER RUN: dispatcher heartbeat, sign+pay orientation, .ics open, CONFIRM/CANT,
+      duplicate MessageSid idempotency, prod Twilio signature.
+      **"drink-plan submit" was MISFILED and is now resolved, 2026-08-14.** It sat under an
+      SMS smoke item, but drink-plan submit sends **no SMS and never has** — verified:
+      `grep -rn "sendAndLogSms\|sendSMS" server/routes/drinkPlans/` returns ZERO hits.
+      Submit sends a client EMAIL (`drink_plan_ready`), an admin email only when the balance
+      changed, and schedules a lab-followup email at +36h. Anyone who submits a plan and
+      waits for a text waits forever and files a phantom bug.
+      Where the drink plan DOES touch SMS is the scheduled NUDGE, and that path is already
+      proven in production without a walk: `sms_messages` holds **34** `drink_plan_nudge_sms`
+      rows, latest 2026-08-12. Nothing owed there.
+      All that is genuinely unwalked is the submit-side EMAIL on dev, a 3-minute check:
+      submit at `/plan/600924a5-a608-485e-a530-90546242fdd9` (dev plan 445, proposal 9813)
+      and confirm exactly one `[DEV] Email skipped (notifications gated off)` line and zero
+      SMS lines. SAFETY: dev fixtures carry REAL client addresses, and the only thing
+      stopping a real send is `notificationsEnabled()`. Confirmed 2026-08-14 that `.env` has
+      no `SEND_NOTIFICATIONS` line and `NODE_ENV=development`, so it is gated off — re-check
+      that before submitting, every time.
       **STOP/START — PASSED on prod, both directions.** Dallas texted from the 312 to the
       888. `users.id=1` went `sms_enabled` true → **false** at 00:20:41Z → **true** at
       00:21:05Z, 24 seconds apart, with `sms_opt_out_at` AND `sms_opt_in_at` both stamped
