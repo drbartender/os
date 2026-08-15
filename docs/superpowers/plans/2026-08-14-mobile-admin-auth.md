@@ -2772,3 +2772,90 @@ Run the lane's declared fleet: code-review, consistency-check, security-review, 
 ## Plan-fleet fold (2026-08-14)
 
 /review-plan ran three agents (fidelity, decomposition, feasibility): 0 blockers, 7 warnings, 8 suggestions; Dallas said fold it all. The three spec re-decisions were accepted and the SPEC was amended in the same commit (section 8 lock arming carve-out: enrolled-only, with un-enrolled phones keeping today's re-login; section 8 four-way purge law replacing the clear-on-any-real-401 sentence; section 7 allowlist gaining /auth/me), and the foundation plan's ma-g scope now owns lock-screen + nudge design fit. In-plan folds: z-index 1200 (the kebab menu is 1000, the send-modal overlay 1100; the drafted 90 was wrong), dotenv prepended to the Task 1 dev-DB verify, the Task 9 dev-server wire check, the Task 5 mid-lane security-review checkpoint, the adminSw purge-contract test, MoreSecurityRow extracted and RTL-tested, the jwt/generateAuthenticationOptions imports moved to Task 4, the challenge cleanup scoped, and the cosmetic count/wording fixes (four limiters, "includes the four", v13 exports eight keys).
+
+## As-built deltas (lane ma-d-auth, merged c206118c on 2026-08-14)
+
+Built inline in one session, 16 in-lane checkpoints, squash-merged clean. What
+differed from the plan as written:
+
+**Environment / workflow (will bite the next lane that adds a dependency):**
+- **`npm install` inside a lane CLOBBERS the shared `node_modules` symlink**,
+  replacing it with a real ~1.8GB tree. Consequences, all hit in this lane: the
+  package installs only in the lane, so after the merge the `os` checkout fails
+  every suite with MODULE_NOT_FOUND until `npm install` is run there too; and
+  `npm run worktree:rm` correctly REFUSES to remove the worktree ("node_modules
+  is a real directory, not a symlink"), so the lane's copies must be cleared
+  first. Post-merge order that works: `npm install` at the os root AND in
+  `client/`, re-run the suites, then clear the lane's two `node_modules` dirs,
+  then `worktree:rm`.
+- Task 1 Step 4 says "restart the dev server" to apply the DDL. The managed dev
+  server runs MAIN's checkout, so it cannot apply a lane's DDL pre-merge. The
+  block was applied straight from the lane with a one-off `node -e` runner
+  (dotenv prepended, as the folded plan already required).
+- The lane's browser pass needs its own app instance: a prod `react-scripts
+  build` with `REACT_APP_API_URL=http://localhost:5599`, served by a tiny
+  SPA-fallback static server on :3100, with the lane's API booted on :5599.
+
+**Task-level:**
+- Task 2's test was written in `rateLimiters.test.js`'s real style (drive the
+  limiter to its max, assert the envelope, flip NODE_ENV to prove the skip is
+  request-time) instead of the plan's `typeof === 'function'` existence check.
+- Task 9's gate wiring test required exporting `ProtectedRoute` as a named
+  export from `App.js` (it was module-private).
+- Browser check C3 cannot be simulated with a reload: `pagehide` correctly
+  stamps "now" on the way out, so the check plants a stale stamp and dispatches
+  the `visibilitychange` the OS fires on foregrounding.
+- The CDP virtual authenticator worked headless (`WebAuthn.enable` +
+  `addVirtualAuthenticator`, internal transport, resident key, UV), so the
+  plan's stated fallback was never needed: enrollment and unlock are proven
+  end-to-end against real WebAuthn ceremonies.
+- Final browser pass: **10/10**, one more than planned (C8 added, below).
+
+**Three review rounds, all findings fixed and pinned:**
+1. **Mid-lane security checkpoint** (Task 5, the plan-fleet addition that paid
+   for itself): 1 High, 3 Low. The "uniform" assert failure was not uniform,
+   because the global error middleware emits `err.code` and the four
+   pre-signature failures carried distinct ones (credential enumeration, and
+   userHandle probing maps a credential to its owner). Now one public
+   `WEBAUTHN_UNLOCK_FAILED`, discriminating code to Sentry only. Also: counter
+   check became an atomic UPDATE-as-claim (a read-then-write could store a
+   regressed counter under concurrency), non-string `userHandle` type guard,
+   int4 range guard on the revoke id.
+2. **Lane fleet** (code-review, consistency-check, security-review,
+   database-review): consistency and database PASS; 2 High. (a) `.m-lock` at
+   z 1200 was NOT above everything: five inline `zIndex: 9999` dialogs
+   (CancelEventDialog, CancelLineDialog, RemoteStaffingFeePrompt, two on
+   ProposalDetail, AttributionModal) painted over the lock, leaving an open
+   money dialog visible AND clickable behind it. Lock is now 10000, toasts
+   10500, and `client/src/utils/lockZOrder.test.js` fails if any future
+   z-index tops the lock. (b) Logout purges the device's enrolled flag while
+   the server row and the OS resident passkey survive, so re-enrollment threw
+   `InvalidStateError` forever; already-registered is now treated as success.
+   Plus: `orientation: portrait` in the manifest + resize/orientationchange
+   re-evaluate (landscape disarmed the lock), gate `useLayoutEffect`,
+   expiry-guard reopen on a cancelled timer, `transports` JSON.parse guard.
+3. **Second opinion** (codex gpt-5.5; gemini timed out and was abandoned on
+   Dallas's call): 2 findings, both real, both mine to own. (a) HIGH: the
+   `session-expired` event carried no error code, so a revoke landing on any
+   endpoint other than `/auth/me` (the 60-second badge poll) was claimed by the
+   lock: the phone locked with its token and caches intact, contradicting spec
+   section 8's "revocation purges even when armed". The fleet's security agent
+   verified the AuthContext law and the claim separately and missed the seam.
+   Fixed: the code rides the event, ONE shared `isRevocationCode` list serves
+   both paths, the claim declines revocations. **Browser check C8 reproduces
+   the original failure and now passes.** (b) LOW, introduced by round 2's own
+   resize listener: the background stamp was being read as inactivity, so
+   rotating after 30 minutes of continuous foreground use locked an app that
+   never backgrounded. The stamp now means backgrounded-at and is cleared
+   whenever the app is live in the foreground.
+
+**Verification on merged main:** webauthn 22/22, auth.core 9/9,
+auth.preferredName 2/2, auth.envelope 10/10, rateLimiters 3/3,
+constraintContract 25/25 (the inline-CHECK guard that landed on main mid-lane
+passes with the new `kind` CHECK in place), client 49/49 across the lane's
+suites, CI build exit 0, 0 RED files. The 11 failing CommandPalette tests are
+PRE-EXISTING on main and untouched by this lane (verified by running that suite
+on main before the merge).
+
+**Still owed:** the prod DDL run before the push that deploys this, and Dallas's
+Pixel walk (logged in `docs/walkthroughs-owed.md`).
