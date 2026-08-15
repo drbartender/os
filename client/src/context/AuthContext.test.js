@@ -84,3 +84,51 @@ test('login stores the token, announces, and dispatches session-restored', async
   expect(restored).toHaveBeenCalled();
   window.removeEventListener('session-restored', restored);
 });
+
+// Cross-window push review (2026-08-14): caching /auth/me let an offline
+// launch hydrate a full admin session from a snapshot with no server check.
+// On an unenrolled phone no lock ever arms (shouldLock bails at !armed), so
+// the session rendered indefinitely, long past the token's own expiry, and
+// every allowlisted read served cached client PII.
+function jwtExpiring(secondsFromNow) {
+  const payload = Buffer.from(JSON.stringify({ userId: 12, exp: Math.floor(Date.now() / 1000) + secondsFromNow }))
+    .toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `h.${payload}.s`;
+}
+
+function renderWithCachedMe(token, staleAt) {
+  window.localStorage.setItem('token', token);
+  const res = { data: { user: { id: 12, email: 'a@x.com' } } };
+  if (staleAt) res.staleAt = staleAt;
+  mockGet.mockResolvedValueOnce(res);
+  return render(<AuthProvider><Probe /></AuthProvider>);
+}
+
+test('a cache-served /auth/me with an EXPIRED token refuses to hydrate and wipes the device copy', async () => {
+  mockArmed.mockReturnValue(false); // unenrolled phone: no lock will ever arm
+  renderWithCachedMe(jwtExpiring(-60), '2026-08-14T10:00:00.000Z');
+  await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('no-user'));
+  expect(window.localStorage.getItem('token')).toBeNull();
+  expect(mockPurge).toHaveBeenCalled();
+});
+
+test('a cache-served /auth/me with a LIVE token still hydrates (the offline promise holds)', async () => {
+  mockArmed.mockReturnValue(false);
+  renderWithCachedMe(jwtExpiring(3600), '2026-08-14T10:00:00.000Z');
+  await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('a@x.com'));
+  expect(window.localStorage.getItem('token')).not.toBeNull();
+  expect(mockPurge).not.toHaveBeenCalled();
+});
+
+test('a SERVER-answered /auth/me hydrates even with an expired-looking token (server is authoritative)', async () => {
+  mockArmed.mockReturnValue(false);
+  renderWithCachedMe(jwtExpiring(-60), null); // no staleAt: the server answered
+  await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('a@x.com'));
+  expect(mockPurge).not.toHaveBeenCalled();
+});
+
+test('an unreadable token on a cache-served response hydrates rather than locking the owner out', async () => {
+  mockArmed.mockReturnValue(false);
+  renderWithCachedMe('not-a-jwt', '2026-08-14T10:00:00.000Z');
+  await waitFor(() => expect(screen.getByTestId('state')).toHaveTextContent('a@x.com'));
+});

@@ -49,7 +49,9 @@ export default function SecuritySettings() {
       <h3 style={{ marginBottom: '0.75rem', fontSize: '1rem' }}>Passkeys</h3>
       <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
         Fingerprint unlock credentials for the phone app. Revoking one signs out every
-        session everywhere (this one included), so a lost phone is locked out immediately.
+        session everywhere (this one included), so the phone loses access to live data
+        right away. It is not a remote wipe: a phone that is offline keeps what it already
+        downloaded until its saved session expires, then clears it on the next open.
       </p>
       {creds.length === 0 ? (
         <p style={{ fontSize: '0.85rem' }}>

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { purgeMobileAdminState, announceAdminSwUser } from '../utils/adminSw';
-import { clearLastActive, isRevocationCode, phoneUnlockArmed } from '../utils/mobileLock';
+import { clearLastActive, isRevocationCode, phoneUnlockArmed, tokenExpMs } from '../utils/mobileLock';
 import api from '../utils/api';
 
 const AuthContext = createContext(null);
@@ -17,6 +17,27 @@ function authFailureAction(err) {
   // ONE revocation list, shared with the lock's 401 claim (utils/mobileLock).
   if (isRevocationCode(err.code)) return 'purge';
   return phoneUnlockArmed() ? 'keep' : 'purge';
+}
+
+// A cache-served /auth/me (SW replayed it on transport failure; api.js stamps
+// res.staleAt from x-sw-cached-at) proves NOTHING cryptographically: it is a
+// snapshot, and offline the server is never consulted. So an offline identity
+// is only as good as the token it came with. When that token has died by its
+// own clock, refuse to hydrate and wipe the device's copy: otherwise a phone
+// that never enrolled a passkey (no lock arms for it, shouldLock returns false
+// at !armed) renders a full admin session, and every allowlisted read serves
+// cached client PII, indefinitely, long past any expiry. Found by the
+// cross-window push review 2026-08-14; introduced by this lane, since before
+// it an offline launch simply landed on Login.
+//
+// Online this never fires: a server-answered response carries no staleAt, and
+// a real 401 goes to authFailureAction above.
+function refuseStaleHydration(res) {
+  if (!res || !res.staleAt) return false; // server answered: authoritative
+  let token = null;
+  try { token = window.localStorage.getItem('token'); } catch (e) { return true; }
+  const exp = tokenExpMs(token);
+  return exp !== null && exp <= Date.now();
 }
 
 // Throttle visibilitychange refreshes — admins who tab-flip heavily would
@@ -50,6 +71,12 @@ export function AuthProvider({ children }) {
     if (token) {
       api.get('/auth/me')
         .then(res => {
+          // An offline snapshot never resurrects a session whose token died.
+          if (refuseStaleHydration(res)) {
+            purgeMobileAdminState();
+            localStorage.removeItem('token');
+            return;
+          }
           setUser(res.data.user);
           // Announce the SW cache namespace as soon as the user is KNOWN
           // (security review M1: announcing from AdminLayout misses staff
@@ -100,6 +127,14 @@ export function AuthProvider({ children }) {
     if (!token) return null;
     try {
       const res = await api.get('/auth/me');
+      // Same rule as the bootstrap: an offline snapshot cannot keep a session
+      // alive past its own token's expiry.
+      if (refuseStaleHydration(res)) {
+        purgeMobileAdminState();
+        localStorage.removeItem('token');
+        setUser(null);
+        return null;
+      }
       const next = res.data.user;
       setUser(prev => (isSameUser(prev, next) ? prev : next));
       return next;
