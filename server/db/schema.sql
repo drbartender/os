@@ -13,7 +13,10 @@ CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   email VARCHAR(255) UNIQUE NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
-  role VARCHAR(20) DEFAULT 'staff' CHECK (role IN ('staff', 'admin')),
+  -- Postgres auto-names this unnamed inline CHECK `users_role_check`, the SAME
+  -- name the ALTER below re-adds. Keep the two lists identical: a new role goes
+  -- in BOTH sites, or a fresh database is born with the narrower one.
+  role VARCHAR(20) DEFAULT 'staff' CHECK (role IN ('staff', 'admin', 'manager')),
   onboarding_status VARCHAR(50) DEFAULT 'in_progress',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -678,7 +681,9 @@ CREATE TABLE IF NOT EXISTS service_addons (
   billing_type VARCHAR(20) NOT NULL CHECK (billing_type IN ('per_guest', 'per_hour', 'flat', 'per_guest_timed', 'per_staff', 'per_100_guests')),
   rate NUMERIC(10,2) NOT NULL,
   extra_hour_rate NUMERIC(10,2),
-  applies_to VARCHAR(20) DEFAULT 'all' CHECK (applies_to IN ('byob', 'hosted', 'all')),
+  -- Auto-named `service_addons_applies_to_check`, same name the ALTER below
+  -- re-adds. A new value goes in BOTH sites.
+  applies_to VARCHAR(20) DEFAULT 'all' CHECK (applies_to IN ('byob', 'hosted', 'all', 'class')),
   sort_order INTEGER DEFAULT 0,
   is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -868,8 +873,12 @@ CREATE TABLE IF NOT EXISTS proposals (
   num_bartenders INTEGER,
   pricing_snapshot JSONB NOT NULL DEFAULT '{}',
   total_price NUMERIC(10,2),
+  -- Auto-named `proposals_status_check`, the SAME name the two ALTERs below
+  -- re-add. This list mirrors the FINAL one (the later ALTER): 'archived' in,
+  -- 'cancelled' out — cancellation is now archived + archive_reason. A new
+  -- status goes here AND at both ALTER sites.
   status VARCHAR(30) DEFAULT 'draft'
-    CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed','cancelled')),
+    CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed','archived')),
   last_viewed_at TIMESTAMPTZ,
   view_count INTEGER DEFAULT 0,
   admin_notes TEXT,
@@ -1024,7 +1033,14 @@ CREATE TABLE IF NOT EXISTS proposal_payments (
   id SERIAL PRIMARY KEY,
   proposal_id INTEGER REFERENCES proposals(id) ON DELETE CASCADE,
   stripe_payment_intent_id VARCHAR(255),
-  payment_type VARCHAR(20) NOT NULL CHECK (payment_type IN ('deposit', 'balance', 'full')),
+  -- MONEY. Auto-named `proposal_payments_payment_type_check`, the SAME name the
+  -- two ALTERs below re-add. The width moves WITH the list: the longest value,
+  -- 'drink_plan_with_balance', is 23 chars, so a VARCHAR(20) column would reject
+  -- at INSERT a value this CHECK permits — the exact overflow the guarded
+  -- ALTER COLUMN ... TYPE VARCHAR(30) below was written to heal (it stays, and
+  -- is simply a no-op on a database born from this line). A new payment type
+  -- goes here AND at both ALTER sites, and re-check the width when it does.
+  payment_type VARCHAR(30) NOT NULL CHECK (payment_type IN ('deposit', 'balance', 'full', 'drink_plan_extras', 'drink_plan_with_balance', 'invoice')),
   amount INTEGER NOT NULL,
   status VARCHAR(50) DEFAULT 'pending',
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -1186,8 +1202,10 @@ CREATE TABLE IF NOT EXISTS sms_messages (
     CHECK (message_type IN ('general', 'invitation', 'reminder', 'announcement')),
   shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL,
   twilio_sid VARCHAR(100),
+  -- Auto-named `sms_messages_status_check`, same name the ALTER below re-adds.
+  -- A new status goes in BOTH sites.
   status VARCHAR(20) DEFAULT 'sent'
-    CHECK (status IN ('sent', 'failed', 'queued')),
+    CHECK (status IN ('sent', 'failed', 'queued', 'received')),
   error_message TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );

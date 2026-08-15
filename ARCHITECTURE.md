@@ -793,24 +793,60 @@ THEN NULL` wrapper most of them use then swallows any failure, so before 2026-08
 — or entirely absent — constraint booted green.
 
 **The pairing law: if a constraint is defined more than once, every definition carries the
-same body.** Adding a value means adding it at every site. Two guards enforce this:
+same body.** Adding a value means adding it at every site. Three guards enforce this:
 
 - **`CONSTRAINT_CONTRACT` / `findViolatedConstraintContracts`** (`server/db/index.js`) runs
   after the schema apply and reports any contracted constraint that is absent or has lost a
   required value. Misses route into `initDb`'s `unexpected` array — Sentry alert plus a loud
   log — never a hard boot crash, matching the `CRITICAL_INDEXES` check beside it.
-- **A DB-free static check** (`server/db/constraintContract.test.js`) parses `schema.sql` and
-  fails if any constraint declared via `ALTER TABLE ... ADD CONSTRAINT` has divergent bodies. It
-  compares semantics, not formatting, and carries an `ADJUDICATED_DIVERGENCE` allowlist for the
-  pairs that are provably safe; a stale allowlist entry fails the suite so the list cannot rot.
-  **Known gap, deliberately not closed here:** it does not see an unnamed inline `CHECK` inside
-  `CREATE TABLE`, which Postgres auto-names with the same `<table>_<col>_check` string a later
-  `ADD CONSTRAINT` uses. Five constraints diverge that way today, including a money one
-  (`proposal_payments_payment_type_check`) and an auth one (`users_role_check`); the list is in
-  the test's scope comment. `CREATE TABLE IF NOT EXISTS` is a no-op on a populated database, so
-  the live blast radius is fresh-DB-only and prod is unaffected — but a value list widened
-  inline-first would pass both this check and the boot, which is the failure this guard exists
-  to end. Extending the collector to inline CHECKs wants its own lane.
+- **A static check** (`server/db/constraintContract.test.js`) parses `schema.sql` and fails if
+  any **CHECK** constraint has divergent bodies. It compares semantics, not formatting, and
+  carries an `ADJUDICATED_DIVERGENCE` allowlist for the pairs that are provably safe; a stale
+  allowlist entry fails the suite so the list cannot rot. It reads all **three** forms a CHECK
+  can take and merges them under one name: the explicit `ALTER TABLE ... ADD CONSTRAINT`, the
+  unnamed inline `CHECK` inside `CREATE TABLE`, and an unnamed `CHECK` on
+  `ALTER TABLE ... ADD COLUMN`. Postgres auto-names the latter two with exactly the string an
+  `ADD CONSTRAINT` uses. The derivation (one referenced column → `<table>_<col>_check`, two or
+  more → `<table>_check`, collisions suffix the *label* → `_check1`) is pinned against a **live
+  server**, not against a reading of the Postgres source: a probe hands the same `CREATE TABLE`
+  text to the collector and to Postgres and requires the two name sets to match.
+
+  The inline form was the original blind spot, and it was not theoretical — five constraints
+  were divergent that way, including a money one (`proposal_payments_payment_type_check`,
+  missing three payment types the Stripe webhook writes) and an auth one (`users_role_check`,
+  missing `manager`). All five are aligned as of 2026-08-14. `CREATE TABLE IF NOT EXISTS` is a
+  no-op on a populated database, so that form's blast radius was always fresh-DB-only and prod
+  was never exposed; what it cost was a value list widened inline-first passing both this check
+  and the boot.
+
+  **It covers CHECKs only, deliberately.** Seven FOREIGN KEYs are divergent under one name
+  today — an inline `REFERENCES users(id)` against a later `ADD CONSTRAINT ... ON DELETE SET
+  NULL` (`shifts_created_by_fkey` and six siblings). They are excluded because the inline and
+  ADD spellings of an FK differ structurally even when they mean the same thing, so a text
+  comparator would emit seven false positives on day one, and a checker that cries wolf is one
+  people stop reading. An unconditional DROP+ADD converges them later in the same boot; the
+  sharper issue is that all eight share one `EXCEPTION ... RAISE NOTICE` handler, so one
+  failure silently rolls back the whole block. That, not the divergence, is the thing to fix —
+  it is on the fix list. The test file's scope comment lists the rest of the edge (quoted
+  identifiers, `LIKE INCLUDING CONSTRAINTS`, two CHECKs on one column item), all verified
+  absent from `schema.sql` today.
+
+- **A width probe in the same suite** covers what a text comparison structurally cannot: a
+  column too narrow for the values its own CHECK permits. Each of the six paired constraint
+  columns is stood up verbatim as a one-column `TEMP TABLE` and every permitted value is
+  inserted, each behind a `SAVEPOINT` so the first genuine rejection does not abort the
+  transaction and destroy the report. `proposal_payments.payment_type` is why — it was created
+  `VARCHAR(20)` while `drink_plan_with_balance` is 23 chars, so the CHECK said yes and the
+  column raised 22001. The column is now `VARCHAR(30)` at its inline site; the guarded
+  `ALTER ... TYPE VARCHAR(30)` further down the file stays and is simply a no-op on a database
+  born from that line.
+
+  The collector strips comments by walking string literals rather than by regex (doubled-quote
+  escapes such as `'Bartender''s Picks'` are live in this file), folds constraint names to lower
+  case as Postgres does, and asserts it still sees 60+ tables, 60+ inline CHECKs, no unbalanced
+  `CREATE TABLE`, and the six previously-divergent collision names — because a parser that
+  silently loses input while the suite stays green is the exact failure mode
+  `scripts/check-css-palette-scope.js` shipped with.
 
 Why it matters concretely: `scheduled_messages_status_check` holds the dispatcher's own claim
 state (`processing`). Under a narrowed definition every claim raises 23514, and the
