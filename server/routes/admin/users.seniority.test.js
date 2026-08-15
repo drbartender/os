@@ -13,7 +13,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const PREFIX = 'seniority-route-test-';
-let server, baseUrl, userId, pristineUserId, noProfileUserId, adminId, adminToken;
+let server, baseUrl, userId, pristineUserId, noProfileUserId, touchUserId, adminId, adminToken;
 
 before(async () => {
   const a = await pool.query(
@@ -58,6 +58,22 @@ before(async () => {
   );
   noProfileUserId = n.rows[0].id;
 
+  // Dedicated to the updated_at no-op lock below. That assertion is the most
+  // order-sensitive in the file — ANY write to the row moves the column — so it
+  // gets a profile nothing else touches, same reasoning as pristineUserId.
+  const t = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status)
+     VALUES ($1, 'x', 'staff', 'approved') RETURNING id`,
+    [`${PREFIX}touch@example.com`]
+  );
+  touchUserId = t.rows[0].id;
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, preferred_name, seniority_adjustment,
+       hire_date, historical_events_worked)
+     VALUES ($1, $2, 5, '2025-03-01', 4)`,
+    [touchUserId, `${PREFIX}Touch`]
+  );
+
   const app = express();
   app.use(express.json());
   app.use('/api/admin', usersRouter);
@@ -72,7 +88,7 @@ before(async () => {
 
 after(async () => {
   if (server) await new Promise((r) => server.close(r));
-  const ids = [userId, pristineUserId, noProfileUserId, adminId].filter(Boolean);
+  const ids = [userId, pristineUserId, noProfileUserId, touchUserId, adminId].filter(Boolean);
   await pool.query(`DELETE FROM contractor_profiles WHERE user_id = ANY($1::int[])`, [ids]);
   await pool.query(`DELETE FROM users WHERE id = ANY($1::int[])`, [ids]);
   await pool.end();
@@ -238,4 +254,61 @@ test('PUT on a user with no contractor profile 404s instead of reporting success
     [noProfileUserId]
   );
   assert.equal(check.rowCount, 0, 'the route did not conjure a profile row');
+});
+
+// ─── updated_at is load-bearing, and nothing pinned it ────────────────
+//
+// `contractor_profiles.updated_at` is not cosmetic. smsInbound.js resolves a
+// SHARED inbound phone number with `ORDER BY cp.updated_at DESC`, so whoever
+// was touched last receives the STOP/reply attribution. A BEFORE UPDATE trigger
+// stamps the column on EVERY update, and omitting it from the SET list does not
+// help — the trigger overwrites even an explicit `SET updated_at = <old>`.
+//
+// The only thing standing between an idle admin "Save seniority" and silently
+// re-aiming where a STOP lands is the three `IS DISTINCT FROM` terms in the
+// PUT's WHERE clause. Before these two tests, the whole suite passed without
+// mentioning updated_at once, so that clause could be tidied away by anyone
+// simplifying the query and every gate would still be green. Verified by hand
+// against dev on 2026-08-14; pinned here so it stays true.
+//
+// They come in a PAIR on purpose. The first alone could be satisfied by a route
+// that writes nothing at all; the second proves the write still happens when
+// something genuinely changed.
+
+async function updatedAtOf(id) {
+  const { rows } = await pool.query(
+    'SELECT updated_at FROM contractor_profiles WHERE user_id = $1', [id]
+  );
+  return rows[0].updated_at.getTime();
+}
+
+test('an idle save writes nothing: re-submitting identical values leaves updated_at untouched', async () => {
+  const before = await updatedAtOf(touchUserId);
+
+  // Byte-identical to the seeded row. The route coerces strings, so send them
+  // the way the admin form does rather than as numbers.
+  const r = await req('PUT', `/api/admin/users/${touchUserId}/seniority`, adminToken,
+    { seniority_adjustment: '5', hire_date: '2025-03-01', historical_events_worked: '4' });
+  assert.equal(r.status, 200, 'an idle save still reports success to the admin');
+
+  const after = await updatedAtOf(touchUserId);
+  assert.equal(after, before,
+    'updated_at moved on a no-op save — the IS DISTINCT FROM guard in the PUT is gone, '
+    + 'and every idle click now re-aims SMS STOP attribution on a shared number');
+});
+
+test('a real change still writes: updated_at moves when a value actually differs', async () => {
+  const before = await updatedAtOf(touchUserId);
+
+  const r = await req('PUT', `/api/admin/users/${touchUserId}/seniority`, adminToken,
+    { seniority_adjustment: '6', hire_date: '2025-03-01', historical_events_worked: '4' });
+  assert.equal(r.status, 200);
+
+  const after = await updatedAtOf(touchUserId);
+  assert.ok(after > before,
+    'updated_at did not move on a genuine change — the no-op guard has been widened '
+    + 'into a write that never happens, which is worse than the bug it prevents');
+
+  const check = await req('GET', `/api/admin/users/${touchUserId}/seniority`, adminToken);
+  assert.equal(check.body.seniority_adjustment, 6, 'the changed value actually persisted');
 });
