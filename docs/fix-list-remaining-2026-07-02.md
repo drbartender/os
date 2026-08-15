@@ -3378,10 +3378,72 @@ notice listener fixes that at zero boot noise.
   rows become, it is whether `shifts.status` should be narrowed to the three values the system
   actually uses.
 
-  Recommendation on the table, NOT executed: point the three rows at `completed` (16 and 7761
-  have real proposals behind them, 18 has nothing), move the three test sites off `staffed`,
-  and leave the constraint list alone. The fourth writer, `PUT /shifts/:id`, is the entry
-  below and is what let `confirmed` in.
+  **RESOLVED 2026-08-14, owner-approved, lane `shifts-status-heal` (`610ef433`). Dev now
+  matches prod.**
+
+  The decisive fact, checked before touching anything: **prod has always carried
+  `shifts_status_check`, with exactly `('open','filled','completed','cancelled')`**, and prod's
+  data is only open/completed/cancelled. Dev was the anomaly, not prod, and the repair made dev
+  match rather than inventing a policy.
+
+  Data heal (dev only, before-values recorded):
+
+  | shift | was | now | why |
+  |---|---|---|---|
+  | 16 | confirmed | completed | past event, proposal 14 `completed` |
+  | 18 | confirmed | completed | past event, orphaned, no proposal |
+  | 7761 | confirmed | **filled** | NOT completed: its event is 2026-09-09, in the FUTURE, on a `deposit_paid` proposal |
+
+  Shift 7761 is the one deviation from the approved recommendation, and it is deliberate.
+  Marking a future shift `completed` would contradict the closure sweep's own rule that it
+  closes a shift only once the end instant has passed AND the proposal is completed. It carries
+  an approved, undropped request, so `filled` is the true state.
+
+  **There were FOUR illegal writers, not three.** A grep for `'staffed'` found three; re-arming
+  the constraint found the fourth by turning it red. `shiftClosureSweep.test.js` seeds BOTH
+  `'confirmed'` and `'closed'`.
+
+  **That fourth one is the finding worth keeping.** That suite merged earlier the same day
+  (lane `shift-lifecycle`) and was green ONLY because dev lacked the constraint. Against a
+  prod-shaped database — including the `ci-smoke` branch the push gate resets from the prod
+  parent — both fixtures raise 23514. Its own comment asserted "`'confirmed'` exists in real
+  data", which was true of dev and never of prod. Fixed by removing the two now-unreachable
+  fixtures: the `'confirmed'` case was already redundant (`finishedCompleted` covers `'open'`,
+  `filledCompleted` covers `'filled'`, and those are now the only non-terminal values that can
+  exist), and the `'closed'` case is pinned statically against the sweep's SQL instead, since
+  `calendar.js:432` and `:539` read `'closed'` exactly as `'cancelled'` so sweeping one would
+  un-cancel that event on the owner's subscribed Google Calendar.
+
+  `constraintContract.test.js` now ASSERTS the dev DB satisfies the contract rather than
+  printing an advisory note, and `coverApprovalCascade.js`'s header no longer claims step 5
+  leaves the shift `'staffed'`.
+
+  **Vocabulary, now settled:** production writes only `open`, `cancelled`, `completed`.
+  `'filled'` is legal but has never been written by prod code. `'confirmed'` and `'closed'` are
+  now unreachable everywhere — `'closed'` has no writer anywhere in the repo and survives only
+  as defensive reads in `calendar.js` and exclusions in the sweep and
+  `backfillShiftClosures.js`. Those branches are worth keeping: dev spent months proving a
+  constraint can go silently missing.
+
+  The fourth WRITER of the column, `PUT /shifts/:id` with no allowlist, is the entry below and
+  is what let `confirmed` in originally. Still open.
+
+## STRUCTURAL GAP this exposed: no gate runs non-money suites against a prod-shaped DB
+
+`shiftClosureSweep.test.js` was green locally and would have failed against prod's schema, and
+nothing would have caught it before deploy. The money smoke gate (`scripts/testdb-smoke.js`)
+runs its 95 listed suites against `ci-smoke`, which IS reset from the prod parent and therefore
+carries prod's constraints — but that list is money-scoped and this file is not on it.
+
+So the local dev DB is the only thing most suites ever run against, and any drift between dev's
+schema and prod's turns into a suite that passes locally and is wrong about production. That is
+exactly what happened here, for months, silently.
+
+Two candidate fixes, neither taken: add the shift-lifecycle suites to `money-smoke-list.txt`
+(cheap, narrow), or add a periodic schema-diff between dev and prod (broader, and would have
+caught the missing constraint directly rather than via a red test). The `constraintContract`
+boot guard now covers the specific case of an absent or narrowed CONTRACTED constraint, which
+is a real partial answer.
 - Correcting the earlier "prod was unaffected only by luck": for `archive_reason` prod had
   REAL protection (10 rows carry `option_not_chosen`, so a narrow re-add 23514s and rolls
   back). But for the scheduled-message constraints prod has ZERO rows in the new states and
