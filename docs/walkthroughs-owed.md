@@ -641,9 +641,25 @@ is written and built.)
 
 ## Tier 5 — never exercised end-to-end
 
-- [ ] **Comms SMS smoke, end-to-end.** Never run: dispatcher heartbeat, sign+pay
-      orientation, .ics open, drink-plan submit, STOP/START, CONFIRM/CANT, duplicate
-      MessageSid idempotency, prod Twilio signature.
+- [~] **Comms SMS smoke, end-to-end — STOP/START PASSED 2026-08-14, the rest still owed.**
+      STILL NEVER RUN: dispatcher heartbeat, sign+pay orientation, .ics open, drink-plan
+      submit, CONFIRM/CANT, duplicate MessageSid idempotency, prod Twilio signature.
+      **STOP/START — PASSED on prod, both directions.** Dallas texted from the 312 to the
+      888. `users.id=1` went `sms_enabled` true → **false** at 00:20:41Z → **true** at
+      00:21:05Z, 24 seconds apart, with `sms_opt_out_at` AND `sms_opt_in_at` both stamped
+      and the opt-out timestamp deliberately retained as history. `email_enabled` and
+      `marketing_enabled` survived untouched, confirming the writer uses `jsonb_set` rather
+      than replacing the object. Inbound rows 1521/1522 recorded with `opt_keyword`
+      `stop`/`start`, `processed` true, and `client_id` null — the correct staff-branch
+      resolution. Uppercase matched, so the lowercasing works.
+      WORTH KNOWING: our system deliberately sends NO reply of its own here (the TwiML is
+      `<Response></Response>`); any compliance reply on the phone is Twilio's own. If none
+      arrives that is the number's opt-out-management setting in the console, not a code
+      bug.
+      SIDE VALUE: this proves the recovery path Jasmine J. needs. She has been
+      `sms_enabled: false` since 2026-07-05 (see the fix list, 2026-08-14) and one START
+      from her own phone will restore her the same way — 24 seconds, no admin action, no
+      compliance exposure.
 - [ ] **Onboarding optional-tip-handle checks.** Four specific cases: Check payout with no
       handles finishes; Venmo payout with a blank handle still blocks; direct deposit plus
       an optional Venmo tip handle works; `/my-tip-page` Cash App save works.
