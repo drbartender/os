@@ -4294,3 +4294,142 @@ is non-empty, with a message saying the board line was written and committed
 locally and will ride the next push. Until it is fixed: **write the board
 BEFORE merging a lane, or accept that the entry rides the next push and skip the
 helper** (a direct edit plus commit is what the removals path already does).
+
+# Push 2026-08-16 (52 commits, bab7fba5..981b09ef) — non-blocking findings from the 5-agent fleet
+
+Two blocking findings were fixed pre-push and are NOT repeated here (the `cancel.test.js` /
+`seedTestData.js` illegal shift seeds, `b2b21891`; and the WebAuthn offline-session hole,
+`981b09ef`, fixed by the lane's own window and re-verified). Everything below is what the
+fleet found and deliberately did not hold the push for.
+
+## OWED NOW THAT THE DEPLOY HAS LANDED
+
+- **Clear `paystub_storage_key` on the 9 wrong paystubs.** This was gated on the date fix
+  reaching prod, which it now has. `staffPortal/payouts.js:325` early-returns the cached R2 PDF
+  whenever the key is set, so the nine already-issued stubs still render the wrong paid date
+  until their keys are cleared. Doing it BEFORE the deploy would have re-rendered the same wrong
+  date; that constraint is now lifted. Owner-owned action.
+- **Expect calendar churn on the first boot.** The closure sweep runs at boot+75s and closes
+  **exactly 50** past-dated shifts (measured against prod, not estimated). It writes zero
+  `cancelled` and touches zero `shift_requests`. 23 of the 50 fall inside the iCal feed's
+  30-day window, so the owner's subscribed Google Calendar re-syncs those events once. Nothing
+  is struck off — `cancelled: false` on all of them.
+
+## ROSTER GAP: two paid events with nobody on the roster (capture these, the report self-destructs)
+
+`backfillShiftClosures.js` is the only thing that prints this, and the sweep drains the same
+candidate set 75s after boot, after which the script prints "nothing to do" forever. The two
+real gaps, recorded here so they survive:
+
+| shift | proposal | date | paid | roster |
+|---|---|---|---|---|
+| 19 | 21 | 2026-04-25 | **$400.00** | no approved non-dropped request, 0 payout rows |
+| 31 | 54 | 2026-05-16 | **$450.00** | no approved non-dropped request, 0 payout rows |
+
+The other 6 unworked candidates are all $0 proposals. Someone worked these two events and the
+roster does not say who, so payroll has nothing to pay from.
+
+## MINE, from this session — a comment I made WORSE, not better
+
+`server/utils/coverApprovalCascade.js:19-23`. The header lists a 5-step cascade whose step 5 is
+"Reset shifts.status — flipped back to 'open' only when no approved, undropped staffer
+remains." **There is no `UPDATE shifts SET status` anywhere in that module**, and neither caller
+wraps one around it; `maybeReopenShift` lives in `staffShiftActions.js:155` and is reached only
+from the drop path. The ORIGINAL text ("the shift remains 'staffed'") was wrong about the
+VALUE; my replacement is a stronger and still-false claim about BEHAVIOUR — an asserted
+conditional write that does not exist. Correct fix: say a cover swap leaves the approved count
+unchanged so the status is deliberately untouched, and drop "step 5" from the numbered list.
+
+## Stale comments asserting `shifts.status` has NO CHECK constraint (three sites)
+
+`shiftClosureSweep.js:48-50` and `:101-106`, and `backfillShiftClosures.js:129-131`, all state
+the column "has NO CHECK constraint ... so the value space is open-ended". False on **both**
+databases: prod has carried `shifts_status_check` for a long time (`git log -S` finds it at
+`8afac6df`) and dev now matches. Behaviour is unaffected — `NOT IN ('completed','cancelled',
+'closed')` is a superset of the reachable space — but the exclude-vs-allowlist RATIONALE is
+argued from a premise that is false, and these comments are explicitly written to be copied
+forward. They are now also contradicted by two sibling files in the same batch
+(`db/index.js:234` asserts the constraint, `coverApprovalCascade.js:22` references it).
+
+## `CONSTRAINT_CONTRACT` covers 2 of the 20 constraints that have the shape it exists for
+
+`server/db/index.js:216-235`. The manifest's own rationale is that a BARE (non-`DO`)
+`DROP CONSTRAINT` + `ADD CONSTRAINT` runs as two autocommit statements, so a failed ADD commits
+an ABSENT constraint. `schema.sql` has **20** such pairs; only `users_onboarding_status_check`
+and `proposals_archive_reason_check` are contracted. The notable omission is
+**`users_role_check` (AUTH)** — the very one the new inline comment at `schema.sql:16-18` calls
+out by name. Also uncovered: `service_addons_applies_to_check`, `message_log_status_check`,
+`email_sends_recipient_check`. Latent only (prod data is inside every list today).
+Fix: `{ constraint: 'users_role_check', mustContain: ['staff','admin','manager'] }`.
+
+Two smaller defects in the same guard, neither live today:
+- **The catalog query is not scoped by table** (`:259-267`). `pg_constraint` is unique per
+  `(conrelid, conname)`, so two tables can share a name and `new Map(rows.map(...))` keeps
+  whichever came last — a same-named constraint on an unrelated table could satisfy the contract
+  for a real one. Verified non-issue on prod today (each returns exactly 1 row, on the expected
+  table). One-line fix: select `t.relname` and key the map on `table.constraint`.
+- **`def.includes("'" + v + "'")` is a substring match** (`:276`), so a required value that is a
+  substring of another permitted value would false-PASS. No such pair exists today.
+
+## `smsInbound` CANT: a real residual the header says is closed
+
+`server/utils/smsInbound.js:365-390`. The header claims "a finished shift is not a candidate at
+all, no matter what day it is." Not true when `end_time` is NULL: rule 2 assumes
+`start + booked + 4h grace`. Concrete — a `9:00 PM` start with NULL end and a 4h booking gives
+an assumed end of **05:00 the next morning**, so a bartender who finished at 01:00 and texts
+CANT at 02:00 meaning TOMORROW has last night's already-worked shift denied and re-opened, off
+the roster payroll pays from. Prod carries **11** NULL-`end_time` shifts with an evening start
+(14 NULL of 78), so this is the common shape, not an edge. It is a strict improvement on both
+prior rounds; the window is just not zero. Minimal write-path-only fix, in
+`findNearestApprovedShift`'s ORDER BY — never let a shift dated before today outrank one dated
+today or later:
+
+    ORDER BY (s.event_date < (NOW() AT TIME ZONE 'America/Chicago')::date) ASC,
+             <end instant> ASC, s.id ASC
+
+Changes no candidate set, only the pick.
+
+## Smaller, all verified
+
+- **`shiftEndInstant.js:190` reads `p.event_duration_hours` and ignores `shifts.event_duration_hours`.**
+  The shift carries its own column (49 prod rows populated; 0 currently disagree). A
+  `PUT /shifts/:id` that changes a shift's duration without touching the proposal silently
+  drifts the assumed end. `COALESCE(s.event_duration_hours, p.event_duration_hours, 4)`.
+- **`shiftEndInstant.js:115-116` cites the wrong number** — "571 prod rows" is the DEV count;
+  prod has 327 proposals. The claim it supports (one distinct `event_timezone`) is true on both.
+- **The sweep is one UPDATE, so one poisoned row blocks ALL closures forever.** A bogus IANA
+  name in `event_timezone` (a documented accepted exposure) aborts the whole statement, so zero
+  shifts close on every tick thereafter rather than just the bad one. Sentry sees it via
+  `wrapScheduler`, so it is loud, not silent — but it is all-or-nothing where a per-row loop
+  would degrade gracefully. Worth a sentence in the header at minimum.
+- **`staffShiftActions.js:166` un-closes a swept shift.** Its unconditional
+  `UPDATE shifts SET status = 'open'` on a drop/cover-request flips a shift the sweep already
+  closed back to open; the next tick re-closes it, and each flip restamps `updated_at`, which
+  drives the iCal SEQUENCE. Pre-existing code, newly reachable. Past events only.
+- **`shifts.js:218` kept `ORDER BY s.start_time ASC`** — the free-text sort that sorts
+  `'7:00 PM'` before `'8:00 AM'`, which the sibling files in this same batch switched away from
+  with comments explaining why. Harmless today (LIMIT 200 over 78 rows) but inconsistent with
+  the batch's own stated rule.
+- **`admin/settings.js:150-155`'s "byte-for-byte" parity claim is narrower than it reads.** The
+  list wraps its cast in a `CASE ... IS JSON ARRAY` (order-guaranteed); the badge leaves two
+  bare `jsonb_array_length(...::jsonb)` casts relying on qual ordering. Safe today by planner
+  cost, not by the SQL. The malformed-row test covers the list endpoint only.
+
+## WebAuthn carry-forwards (mobile-admin window's file, not touched here)
+
+- **The "12h" bound in `981b09ef` and the spec section 7 carry is WRONG — it is 7 days.** An
+  unenrolled phone is by definition one that never used passkey unlock, so its token came from
+  password login, which mints **7d** (`auth.js:355-358`). The 12h figure applies only to
+  `webauthn.js:311-315` (assert-verify), which that phone never reaches. Bounded-and-self-
+  clearing at 7d is still categorically different from forever, so the fix stands — but the
+  number should be corrected before it propagates further.
+- **`refuseStaleHydration`'s `exp !== null` is a deliberate, test-pinned fail-open**, not an
+  oversight: an unreadable token hydrates rather than locking the owner out. Reaching it needs
+  devtools on an unlocked device, where the attacker could restore the valid token anyway. The
+  real cost is future-proofing — if the token ever goes opaque or loses `exp`, this silently
+  reverts to the original vulnerability and the pinning test goes green on the regression. The
+  fail-closed form is `exp === null || exp <= Date.now()`, which deliberately breaks that test.
+- Three lower items: `shouldLock` fails open the same way on an unreadable token; an
+  `InvalidStateError` is treated as enrollment success without server confirmation
+  (`webauthnClient.js:24-27`); and `/api/auth/me` transits the `-uanon` cache namespace for a
+  few milliseconds on first load, before `announceAdminSwUser` fires.
