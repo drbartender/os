@@ -4326,8 +4326,34 @@ real gaps, recorded here so they survive:
 | 19 | 21 | 2026-04-25 | **$400.00** | no approved non-dropped request, 0 payout rows |
 | 31 | 54 | 2026-05-16 | **$450.00** | no approved non-dropped request, 0 payout rows |
 
-The other 6 unworked candidates are all $0 proposals. Someone worked these two events and the
-roster does not say who, so payroll has nothing to pay from.
+The other 6 unworked candidates are all $0 proposals.
+
+**CORRECTED 2026-08-16 — I framed this as money owed and it is not.** Dallas identified both:
+**Ariel D. Smith (user 15, now deactivated) worked Stef D.**, and **Dallas himself (user 12)
+worked Ketan Patel, with only ONE bartender on it**. Nobody is owed anything, and the reason is
+structural rather than lucky:
+
+- **Both events predate the payroll system.** The earliest `pay_periods` row starts
+  **2026-06-02**; these are 2026-04-25 and 2026-05-16, five and six weeks earlier. **No pay
+  period covers either date**, so no accrual can attach to them (accrual requires an OPEN
+  period) and `payout_events` on both shifts is **0**.
+- **It is not an anomaly, it is the era.** **12 of the 14** shifts dated before 2026-06-02 have
+  no roster rows at all. These two only surfaced because the backfill report filters on paid
+  proposals; the rest were $0.
+- Dallas takes no draw (all five of user 12's payouts are `no_draw`), and Ariel was paid once
+  through the system, for a June period — not for this.
+
+So the honest description is a **historical-record** gap in the pre-payroll era, not an unpaid
+bartender. The "payroll has nothing to pay from" line above was mine and overstated it.
+
+**Two real items remain, both small:**
+1. `shifts.positions_needed` on shift 31 is `["Bartender","Bartender"]` but only one bartender
+   worked it. Left alone, that shift reads as permanently under-staffed on the staffing card —
+   the same denominator bug logged earlier in this file.
+2. If roster rows are ever backfilled for these, note the latent hazard: should anyone later
+   create a pay period covering April/May and re-run accrual, those rows would generate payouts
+   for work already settled outside the system. Backfilling the record and backfilling a pay
+   period are safe individually and dangerous together.
 
 ## MINE, from this session — a comment I made WORSE, not better
 
