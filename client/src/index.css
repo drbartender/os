@@ -18423,6 +18423,19 @@ html[data-app="admin-os"] .ov-band1 {
 /* min-width:0 kills the grid-item min-content floor, or the nowrap tab chips
    blow the track out past the viewport and drag the whole page wide. */
 html[data-app="admin-os"] .ov-band1 > * { min-width: 0; }
+/* Right rail: the standing cards (Pipeline, Payroll) stacked in the narrow
+   column. A grid, not a flex column, so `gap` matches the band's own gap and
+   each card keeps its natural height under the band's align-items: start. */
+html[data-app="admin-os"] .ov-band1-rail {
+  display: grid;
+  gap: var(--gap);
+}
+/* The unscoped `.card` rule (the public site's folio card) carries
+   margin-bottom: 1.5rem and the admin-os `.card` never resets it. Harmless
+   when cards are direct band children; inside the rail it stacks on top of
+   the grid gap (31.5px between, 21px dangling under the last card), so the
+   gap owns the spacing here and the margin is zeroed. */
+html[data-app="admin-os"] .ov-band1-rail > .card { margin-bottom: 0; }
 /* Tab chip row under the card head. Scrolls inside its own container on
    phones, never the page (LAW). */
 html[data-app="admin-os"] .nat-tabs {
@@ -18482,18 +18495,19 @@ html[data-app="admin-os"][data-skin="light"] .nat-dot.info { background: var(--m
 html[data-app="admin-os"] .nat-panel.is-hidden { display: none; }
 html[data-app="admin-os"] .nat-empty { padding: 0.75rem 1rem; }
 html[data-app="admin-os"] .nat-overflow .queue-title a { color: var(--ink-3); }
-/* Payroll status block: Money tab body content (PayrollStatus.js). */
-html[data-app="admin-os"] .nat-payroll {
+/* Payroll status block: the body of its own Band 1 card (PayrollStatus.js).
+   No border-bottom since 2026-08-17 — it is the last thing in the card now,
+   not a header above queue rows. */
+html[data-app="admin-os"] .ov-payroll-block {
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--line-1);
   transition: background 0.1s;
 }
-html[data-app="admin-os"] .ov-payroll-link:hover .nat-payroll { background: var(--row-hover); }
-html[data-app="admin-os"] .ov-payroll-link:focus-visible .nat-payroll {
+html[data-app="admin-os"] .ov-payroll-link:hover .ov-payroll-block { background: var(--row-hover); }
+html[data-app="admin-os"] .ov-payroll-link:focus-visible .ov-payroll-block {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-html[data-app="admin-os"] .nat-payroll.is-warn {
+html[data-app="admin-os"] .ov-payroll-block.is-warn {
   box-shadow: inset 3px 0 0 hsl(var(--warn-h) var(--warn-s) 50%);
 }
 @media (max-width: 640px) {
@@ -18803,10 +18817,10 @@ html[data-app="admin-os"] .ov-foot-caption { margin-left: auto; }
   html[data-app="admin-os"] .ov-foot-caption { margin-left: 0; }
 }
 /* end */
-/* overview: mb-c payroll (now the Money-tab status block, natabs-a) */
-/* The whole block is one anchor (EntityLink), so kill the entity-link text
-   underline and let the block carry the click affordance. Block chrome
-   (hover, focus, is-warn) lives with the natabs rules above. */
+/* overview: mb-c payroll (its own Band 1 rail card since nat-trim) */
+/* The block below the card head is one anchor (EntityLink), so kill the
+   entity-link text underline and let the block carry the click affordance.
+   Block chrome (hover, focus, is-warn) lives with the natabs rules above. */
 html[data-app="admin-os"] .ov-payroll-link,
 html[data-app="admin-os"] .ov-payroll-link:hover,
 html[data-app="admin-os"] .ov-payroll-link:focus-visible {
@@ -18822,7 +18836,6 @@ html[data-app="admin-os"] .ov-payroll-headline {
   font-weight: 600;
   color: var(--ink-2);
 }
-html[data-app="admin-os"] .ov-payroll-tag { font-size: 10px; }
 html[data-app="admin-os"] .ov-payroll-total { font-size: 22px; margin: 0.15rem 0 0.2rem; }
 html[data-app="admin-os"] .ov-payroll-subs {
   display: flex;

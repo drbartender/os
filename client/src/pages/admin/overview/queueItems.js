@@ -9,12 +9,16 @@ import { parsePositionsCount, approvedCount } from '../../../components/adminos/
 
 const RANK = { danger: 0, warn: 1, info: 2 };
 
+// How far out a dated staffing row is still "needs attention" (2026-08-17).
+// Past this the work is real but not yet actionable-today, and it was burying
+// the rows that are; /events remains the full forward view.
+const STAFFING_HORIZON_DAYS = 14;
+
 // Per-tab overflow row targets (spec §3): each tab's home surface.
 const OVERFLOW_HREF = {
   staffing: '/events',
   prep: '/drink-plans?tab=submitted',
   clients: '/messages',
-  money: '/dashboard?tab=payouts',
   sales: '/proposals?tab=active',
 };
 
@@ -30,7 +34,6 @@ export function queueItemHref(a) {
   if (a.target === 'shift') return `/events/shift/${a.ref}`;
   if (a.target === 'proposal') return `/proposals/${a.ref}`;
   if (a.target === 'client') return `/clients/${a.ref}`;
-  if (a.target === 'payouts') return '/dashboard?tab=payouts&show=unmatched';
   if (a.target === 'drink-plan') return `/drink-plans/${a.ref}`;
   if (a.target === 'sms') return `/messages?client=${a.ref}`;
   if (a.target === 'user') return `/staffing/users/${a.ref}`;
@@ -40,19 +43,23 @@ export function queueItemHref(a) {
 const worstPriority = (items) =>
   items.reduce((w, i) => (w === null || (RANK[i.priority] ?? 3) < RANK[w] ? i.priority : w), null);
 
-// Unstaffed upcoming events (uncapped; the tab caps at render) plus the
-// new-applications rollup. `unstaffed` is OverviewPage's derived list.
+// Unstaffed upcoming events inside the staffing horizon (uncapped within it;
+// the tab caps at render) plus the new-applications rollup. `unstaffed` is
+// OverviewPage's derived list, which still runs to the end of the calendar —
+// the horizon is a display cut here, not a change to that list, so the page
+// header's "N need staff" count still reports the true total.
 export function buildStaffingItems(unstaffed, newApplications, uncertified = [], nameNotices = [], onAck) {
-  const items = (unstaffed || []).map(e => {
-    const open = parsePositionsCount(e) - approvedCount(e);
-    const days = dayDiff(e.event_date.slice(0, 10));
-    return {
-      id: 'unstaffed-' + e.id, type: 'unstaffed', priority: days < 7 ? 'danger' : 'warn',
-      title: `${e.client_name || 'Event'} needs ${open} ${open === 1 ? 'bartender' : 'bartenders'}`,
-      sub: `${getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })} · ${fmtDate(e.event_date.slice(0, 10))} · ${days}d out`,
-      meta: `${open} open`, target: e.proposal_id ? 'event' : 'shift', ref: e.proposal_id || e.id,
-    };
-  });
+  const items = (unstaffed || []).map(e => ({ e, days: dayDiff(e.event_date.slice(0, 10)) }))
+    .filter(({ days }) => days <= STAFFING_HORIZON_DAYS)
+    .map(({ e, days }) => {
+      const open = parsePositionsCount(e) - approvedCount(e);
+      return {
+        id: 'unstaffed-' + e.id, type: 'unstaffed', priority: days < 7 ? 'danger' : 'warn',
+        title: `${e.client_name || 'Event'} needs ${open} ${open === 1 ? 'bartender' : 'bartenders'}`,
+        sub: `${getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })} · ${fmtDate(e.event_date.slice(0, 10))} · ${days}d out`,
+        meta: `${open} open`, target: e.proposal_id ? 'event' : 'shift', ref: e.proposal_id || e.id,
+      };
+    });
   if (newApplications > 0) {
     items.push({
       id: 'apps', type: 'application', priority: 'info',
@@ -67,9 +74,14 @@ export function buildStaffingItems(unstaffed, newApplications, uncertified = [],
   //
   // Scoped to the certification among staffable people only. Including the
   // resume, or every onboarding status, returns ~50 rows into a 6-row strip.
+  // Same horizon as the unstaffed events above, applied as an ESCALATION cut
+  // rather than a filter: a booking further out than STAFFING_HORIZON_DAYS
+  // stops shouting and falls back to the standing "eligible" row, so nobody
+  // uncertified ever disappears from the tab.
   (uncertified || []).forEach(u => {
-    const booked = !!u.next_shift_date;
-    const day = booked ? String(u.next_shift_date).slice(0, 10) : null;
+    const nextDay = u.next_shift_date ? String(u.next_shift_date).slice(0, 10) : null;
+    const booked = !!nextDay && dayDiff(nextDay) <= STAFFING_HORIZON_DAYS;
+    const day = booked ? nextDay : null;
     items.push({
       id: `uncertified-${u.user_id}`, type: 'documents',
       priority: booked ? 'danger' : 'warn',
@@ -180,45 +192,35 @@ export function buildLeadCallItems(rows, nowMs) {
   });
 }
 
-export function buildMoneyItems(payoutBadge) {
-  if (!payoutBadge) return [];
-  return [{
-    id: 'payouts-unmatched', type: 'payouts', priority: 'warn',
-    title: `${payoutBadge} Stripe ${payoutBadge === 1 ? 'payout' : 'payouts'} unmatched`,
-    sub: 'Settlement mirror', meta: String(payoutBadge), target: 'payouts', ref: null,
-  }];
-}
-
-// Tab descriptors for NeedsYouStrip. Sales renders only when non-empty; the
-// payroll status block is Money tab BODY content (admin-only), so it drives
-// hasBody and (when overdue) the danger dot, never an item or the count.
-export function computeTabs({ staffing, prep, clients, money, sales, payrollOverdue, isAdmin }) {
+// Tab descriptors for NeedsYouStrip. Sales renders only when non-empty.
+//
+// The Money tab was REMOVED 2026-08-17. Its only queue item was the unmatched
+// Stripe payout count, which the Band 2 Payouts button already carries with
+// its own badge, and its body was the payroll status block — a standing money
+// surface, not a triage item. Payroll now has its own Band 1 card
+// (PayrollStatus.js, mounted by OverviewPage), so the payroll-overdue signal
+// no longer routes through here to colour a dot.
+export function computeTabs({ staffing, prep, clients, sales }) {
   const defs = [
     { key: 'staffing', label: 'Staffing', items: staffing || [] },
     { key: 'prep', label: 'Prep', items: prep || [] },
     { key: 'clients', label: 'Clients', items: clients || [] },
-    { key: 'money', label: 'Money', items: money || [] },
   ];
   if ((sales || []).length > 0) defs.push({ key: 'sales', label: 'Sales', items: sales });
-  return defs.map(t => {
-    let dot = worstPriority(t.items);
-    if (t.key === 'money' && payrollOverdue) dot = 'danger';
-    return {
-      ...t, count: t.items.length, dot, overflowHref: OVERFLOW_HREF[t.key],
-      hasBody: t.items.length > 0 || (t.key === 'money' && isAdmin),
-    };
-  });
+  return defs.map(t => ({
+    ...t, count: t.items.length, dot: worstPriority(t.items),
+    overflowHref: OVERFLOW_HREF[t.key], hasBody: t.items.length > 0,
+  }));
 }
 
 // Default active tab: worst dot wins, ties break by the fixed tab order
-// already encoded in the array. Nothing anywhere: Money for admins (the
-// payroll block is still worth a glance), null for managers (collapsed card).
-export function defaultTabKey(tabs, isAdmin) {
+// already encoded in the array. Nothing anywhere returns null and the card
+// collapses to its one-line clean state, for admins and managers alike.
+export function defaultTabKey(tabs) {
   let best = null, bestRank = Infinity;
   tabs.forEach(t => {
     if (!t.dot) return;
     if (RANK[t.dot] < bestRank) { bestRank = RANK[t.dot]; best = t.key; }
   });
-  if (best) return best;
-  return isAdmin ? 'money' : null;
+  return best;
 }

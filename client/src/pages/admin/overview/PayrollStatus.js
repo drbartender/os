@@ -1,15 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import api from '../../../utils/api';
+import Icon from '../../../components/adminos/Icon';
 import EntityLink from '../../../components/EntityLink';
 import { fmt$wholeFromCents, fmtDate } from '../../../components/adminos/format';
 import { chicagoYmdParts } from '../../../hooks/useMetricsFilter';
 
-// Money-tab payroll status block (spec 2026-07-14 §2 Money): the retired
-// PayrollCard's logic with the card chrome dropped. Admin-only: NeedsYouStrip
-// mounts this ONLY for admins, so a manager fires zero /admin/payroll/*
-// requests (2026-07-09 spec §1 role gating). Read-only surfacing; no
-// process/mark-paid actions, no accrual code paths. Not a queue item: overdue
-// is reported up as a boolean and feeds the Money tab's danger dot.
+// Standing payroll status card, Band 1 right rail (2026-08-17). Was the Money
+// tab body inside NeedsYouStrip; payroll is a thing you glance at, not a
+// triage item you clear, so it carries its own card chrome again and the
+// overdue state shows on the block itself instead of tinting a tab dot.
+// Admin-only: OverviewPage mounts this ONLY for admins, so a manager fires
+// zero /admin/payroll/* requests (2026-07-09 spec §1 role gating). Read-only
+// surfacing; no process/mark-paid actions, no accrual code paths.
 
 const PAYROLL_HREF = '/financials/payroll';
 
@@ -31,7 +33,7 @@ function chicagoTodayYmd() {
   return `${y}-${String(mo + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
-export default function PayrollStatus({ onOverdue }) {
+export default function PayrollStatus() {
   const [periods, setPeriods] = useState(null);   // array | null
   const [current, setCurrent] = useState(null);   // { period, payouts } | null
   const [periodsErr, setPeriodsErr] = useState(false);
@@ -107,13 +109,6 @@ export default function PayrollStatus({ onOverdue }) {
     return { kind: 'empty', href: PAYROLL_HREF };
   }, [loading, periodsErr, currentErr, periods, current]);
 
-  // Report overdue up so the Money tab's dot (and the default-tab pick) can
-  // fire without this block's tab being active. `view` is memoized on the raw
-  // inputs, so this cannot loop.
-  useEffect(() => {
-    if (onOverdue) onOverdue(view.kind === 'due' && Boolean(view.overdue));
-  }, [onOverdue, view]);
-
   const deferredLine = deferred > 0 && (
     <span className="tiny muted">{deferred} deferred tip{deferred === 1 ? '' : 's'}</span>
   );
@@ -134,10 +129,9 @@ export default function PayrollStatus({ onOverdue }) {
     // due | accruing
     body = (
       <>
-        <div className="ov-payroll-headline">
-          {view.headline}
-          {view.overdue && <span className="chip warn ov-payroll-tag">Overdue</span>}
-        </div>
+        {/* The overdue chip lives in the card head now, where it reads without
+            the eye travelling into the block. */}
+        <div className="ov-payroll-headline">{view.headline}</div>
         <div className="stat-value ov-payroll-total">{fmt$wholeFromCents(view.total)}</div>
         <div className="ov-payroll-subs">
           <span className="tiny muted">{view.staff} staff</span>
@@ -148,9 +142,17 @@ export default function PayrollStatus({ onOverdue }) {
     );
   }
 
+  // Card head stays outside the anchor: it is a label, not a destination, and
+  // nesting it would put the whole card inside one tab stop.
   return (
-    <EntityLink to={view.href} className="ov-payroll-link">
-      <div className={`nat-payroll${view.overdue ? ' is-warn' : ''}`}>{body}</div>
-    </EntityLink>
+    <div className="card">
+      <div className="card-head">
+        <h3><Icon name="dollar" size={12} /> Payroll</h3>
+        {view.overdue && <span className="chip warn">Overdue</span>}
+      </div>
+      <EntityLink to={view.href} className="ov-payroll-link">
+        <div className={`ov-payroll-block${view.overdue ? ' is-warn' : ''}`}>{body}</div>
+      </EntityLink>
+    </div>
   );
 }

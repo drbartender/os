@@ -9,9 +9,10 @@ import useUrlListState from '../../../hooks/useUrlListState';
 import { parsePositionsCount, approvedCount, selectUpcoming } from '../../../components/adminos/shifts';
 import StripePayoutsTab from '../StripePayoutsTab';
 import NeedsYouStrip from './NeedsYouStrip';
+import PayrollStatus from './PayrollStatus';
 import { buildPrepItems } from './PrepQueue';
 import {
-  buildStaffingItems, buildClientItems, buildSalesItems, buildLeadCallItems, buildMoneyItems, computeTabs,
+  buildStaffingItems, buildClientItems, buildSalesItems, buildLeadCallItems, computeTabs,
 } from './queueItems';
 import PipelineCard from './PipelineCard';
 import MoneyTiles from './MoneyTiles';
@@ -64,11 +65,10 @@ export default function OverviewPage() {
   const [listState, setListState] = useUrlListState(FIN_DEFAULTS);
   const tab = FIN_TABS.includes(listState.tab) ? listState.tab : 'overview';
   const split = SPLIT_VALUES.includes(listState.split) ? listState.split : '';
+  // Feeds the Band 2 Payouts button badge only. Since the Money tab came out
+  // of Needs-attention (2026-08-17) this no longer gates the strip's loading
+  // state, so a slow /stripe-payouts never delays the triage card.
   const [payoutBadge, setPayoutBadge] = useState(0);
-  // Payroll-overdue flag reported up by the admin-only PayrollStatus block
-  // (via NeedsYouStrip). A manager never mounts the block, so this stays
-  // false: it feeds the Money tab's danger dot, not an item.
-  const [payrollOverdue, setPayrollOverdue] = useState(false);
 
   // Band 2 (analysis) — obeys the filter bar. The two LAW fetches (dashboard-stats
   // + financials) share ONE zone-level error + retry; a failure in either never
@@ -91,7 +91,6 @@ export default function OverviewPage() {
   const [nameNotices, setNameNotices] = useState([]);
   const [drinkPlans, setDrinkPlans] = useState([]);
   const [drinkPlansLoading, setDrinkPlansLoading] = useState(true);
-  const [payoutsLoading, setPayoutsLoading] = useState(true);
   const [changeRequests, setChangeRequests] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [leadCallAttention, setLeadCallAttention] = useState([]);
@@ -157,8 +156,7 @@ export default function OverviewPage() {
   useEffect(() => {
     api.get('/stripe-payouts')
       .then(r => setPayoutBadge(r.data?.summary?.unmatched_count || 0))
-      .catch(() => {}) // badge is best-effort; the tab itself surfaces errors
-      .finally(() => setPayoutsLoading(false));
+      .catch(() => {}); // badge is best-effort; the tab itself surfaces errors
   }, []);
 
   useEffect(() => {
@@ -269,10 +267,9 @@ export default function OverviewPage() {
   // outranks a stale send (spec 2026-07-18 §5.2).
   const leadCallItems = useMemo(() => buildLeadCallItems(leadCallAttention, Date.now()), [leadCallAttention]);
   const salesTabItems = useMemo(() => [...leadCallItems, ...salesItems], [leadCallItems, salesItems]);
-  const moneyItems = useMemo(() => buildMoneyItems(payoutBadge), [payoutBadge]);
   const tabs = useMemo(
-    () => computeTabs({ staffing: staffingItems, prep: prepItems, clients: clientItems, money: moneyItems, sales: salesTabItems, payrollOverdue, isAdmin }),
-    [staffingItems, prepItems, clientItems, moneyItems, salesTabItems, payrollOverdue, isAdmin]
+    () => computeTabs({ staffing: staffingItems, prep: prepItems, clients: clientItems, sales: salesTabItems }),
+    [staffingItems, prepItems, clientItems, salesTabItems]
   );
 
   const m = stats.money || EMPTY_STATS.money;
@@ -299,16 +296,18 @@ export default function OverviewPage() {
         </div>
       </div>
 
-      {/* Band 1 — live zone (ignores the metrics filter). One row: the tabbed
-          Needs-attention card (payroll status absorbed as the Money tab body,
-          admin-only per spec §1 role gating) beside Pipeline. */}
+      {/* Band 1 — live zone (ignores the metrics filter). The tabbed
+          Needs-attention triage card beside a right rail of standing cards:
+          Pipeline, then Payroll (admin-only per spec §1 role gating). */}
       <div className="ov-band1">
         {/* Every item source gates `loading` so the terminal collapsed state
             can never flash and then expand as a late fetch lands. */}
         <NeedsYouStrip tabs={tabs}
-          loading={shiftsLoading || proposalsLoading || clientsLoading || drinkPlansLoading || payoutsLoading}
-          isAdmin={isAdmin} onPayrollOverdue={setPayrollOverdue} />
-        <PipelineCard pipeline={pipeline} loading={!statsLoaded && statsLoading} error={statsError} />
+          loading={shiftsLoading || proposalsLoading || clientsLoading || drinkPlansLoading} />
+        <div className="ov-band1-rail">
+          <PipelineCard pipeline={pipeline} loading={!statsLoaded && statsLoading} error={statsError} />
+          {isAdmin && <PayrollStatus />}
+        </div>
       </div>
 
       {/* Band 2 — analysis zone (obeys the filter bar) */}

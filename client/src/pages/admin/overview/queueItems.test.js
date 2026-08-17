@@ -1,5 +1,5 @@
 import {
-  buildStaffingItems, buildClientItems, buildSalesItems, buildMoneyItems,
+  buildStaffingItems, buildClientItems, buildSalesItems,
   computeTabs, defaultTabKey, queueItemHref,
 } from './queueItems';
 import { buildPrepItems } from './PrepQueue';
@@ -80,6 +80,23 @@ describe('buildStaffingItems', () => {
     expect(buildStaffingItems([shift(10)], 0)[0].priority).toBe('warn');
   });
 
+  // The 14-day horizon (2026-08-17). /events stays the full forward view; this
+  // card is only the part of it that is actionable now.
+  test('an event exactly 14 days out still surfaces', () => {
+    expect(buildStaffingItems([shift(14)], 0)).toHaveLength(1);
+  });
+
+  test('an event 15 days out is past the horizon and drops out', () => {
+    expect(buildStaffingItems([shift(15)], 0)).toHaveLength(0);
+  });
+
+  test('the horizon keeps near events and drops far ones from the same list', () => {
+    const items = buildStaffingItems(
+      [shift(2, { id: 1 }), shift(20, { id: 2 }), shift(9, { id: 3 }), shift(60, { id: 4 })], 0
+    );
+    expect(items.map(i => i.id)).toEqual(['unstaffed-1', 'unstaffed-3']);
+  });
+
   test('no cap: five unstaffed events yield five items', () => {
     const items = buildStaffingItems([1, 2, 3, 4, 5].map(i => shift(10, { id: i })), 0);
     expect(items).toHaveLength(5);
@@ -97,7 +114,7 @@ describe('buildStaffingItems', () => {
 
   test('emits one named row per uncertified worker', () => {
     const items = buildStaffingItems([], 0, [
-      risk(55, 'Loryn', '2026-08-01'),
+      risk(55, 'Loryn', ymdFromToday(5)),
       risk(241, 'Debbie'),
     ]).filter(i => i.type === 'documents');
 
@@ -107,10 +124,28 @@ describe('buildStaffingItems', () => {
   });
 
   test('escalates someone who is actually booked', () => {
-    const [booked] = buildStaffingItems([], 0, [risk(55, 'Loryn', '2026-08-01', 347)])
+    const [booked] = buildStaffingItems([], 0, [risk(55, 'Loryn', ymdFromToday(5), 347)])
       .filter(i => i.type === 'documents');
     expect(booked.priority).toBe('danger');
     expect(booked.sub).toMatch(/working/i);
+  });
+
+  // The horizon de-escalates rather than filters here: a cert takes lead time
+  // to obtain, so the person must never fall off the tab, they just stop
+  // outranking the events happening this week.
+  test('a booking past the horizon falls back to the standing eligible row', () => {
+    const [far] = buildStaffingItems([], 0, [risk(55, 'Loryn', ymdFromToday(30), 347)])
+      .filter(i => i.type === 'documents');
+    expect(far).toBeTruthy();
+    expect(far.priority).toBe('warn');
+    expect(far.sub).toMatch(/can be assigned/i);
+    expect(far.meta).toBe('eligible');
+  });
+
+  test('a booking exactly 14 days out is still an escalation', () => {
+    const [edge] = buildStaffingItems([], 0, [risk(55, 'Loryn', ymdFromToday(14), 347)])
+      .filter(i => i.type === 'documents');
+    expect(edge.priority).toBe('danger');
   });
 
   test('leaves an eligible but unbooked worker at warn', () => {
@@ -172,7 +207,7 @@ describe('buildStaffingItems', () => {
   test('floats danger rows above warn rows regardless of insertion order', () => {
     const sixWarnEvents = [1, 2, 3, 4, 5, 6].map(i => shift(10, { id: i })); // days=10 => warn
     const items = buildStaffingItems(sixWarnEvents, 0, [
-      risk(55, 'Loryn', '2026-08-01', 347),   // danger: booked
+      risk(55, 'Loryn', ymdFromToday(5), 347),   // danger: booked inside the horizon
     ]);
     expect(items[0].type).toBe('documents');
     expect(items.slice(0, 6).some(i => i.type === 'documents')).toBe(true);
@@ -195,18 +230,6 @@ describe('queueItemHref', () => {
   });
 });
 
-describe('buildMoneyItems', () => {
-  test('zero unmatched payouts yields no items', () => {
-    expect(buildMoneyItems(0)).toHaveLength(0);
-  });
-
-  test('unmatched payouts yield one warn item targeting payouts', () => {
-    const items = buildMoneyItems(3);
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ target: 'payouts', priority: 'warn', meta: '3' });
-  });
-});
-
 describe('buildPrepItems (cap removed)', () => {
   test('returns every qualifying plan with no overflow item', () => {
     const plans = [1, 2, 3, 4, 5, 6, 7].map(i => ({
@@ -221,51 +244,45 @@ describe('buildPrepItems (cap removed)', () => {
 
 describe('computeTabs', () => {
   const item = (priority) => ({ id: 'x', type: 'unstaffed', priority, title: 't', sub: 's', meta: 'm', target: 'shift', ref: 1 });
-  const base = { staffing: [], prep: [], clients: [], money: [], sales: [], payrollOverdue: false, isAdmin: true };
+  const base = { staffing: [], prep: [], clients: [], sales: [] };
 
   test('dot is the worst priority within the tab', () => {
     const tabs = computeTabs({ ...base, staffing: [item('warn'), item('danger'), item('info')] });
     expect(tabs.find(t => t.key === 'staffing').dot).toBe('danger');
   });
 
-  test('payroll overdue forces a danger dot on money even with zero items', () => {
-    const money = computeTabs({ ...base, payrollOverdue: true }).find(t => t.key === 'money');
-    expect(money.count).toBe(0);
-    expect(money.dot).toBe('danger');
-  });
-
   test('sales tab is absent when empty, present when non-empty', () => {
-    expect(computeTabs(base).map(t => t.key)).toEqual(['staffing', 'prep', 'clients', 'money']);
+    expect(computeTabs(base).map(t => t.key)).toEqual(['staffing', 'prep', 'clients']);
     expect(computeTabs({ ...base, sales: [item('info')] }).map(t => t.key)).toContain('sales');
   });
 
-  test('money hasBody follows isAdmin at zero items', () => {
-    expect(computeTabs(base).find(t => t.key === 'money').hasBody).toBe(true);
-    expect(computeTabs({ ...base, isAdmin: false }).find(t => t.key === 'money').hasBody).toBe(false);
+  // Money came out 2026-08-17: unmatched payouts are the Band 2 Payouts
+  // badge's job, and payroll is its own Band 1 card.
+  test('there is no money tab', () => {
+    expect(computeTabs(base).some(t => t.key === 'money')).toBe(false);
+  });
+
+  test('hasBody is purely a question of items now', () => {
+    expect(computeTabs(base).every(t => t.hasBody === false)).toBe(true);
+    expect(computeTabs({ ...base, staffing: [item('info')] }).find(t => t.key === 'staffing').hasBody).toBe(true);
   });
 });
 
 describe('defaultTabKey', () => {
   const item = (priority) => ({ id: 'x', type: 'unstaffed', priority, title: 't', sub: 's', meta: 'm', target: 'shift', ref: 1 });
-  const base = { staffing: [], prep: [], clients: [], money: [], sales: [], payrollOverdue: false, isAdmin: true };
+  const base = { staffing: [], prep: [], clients: [], sales: [] };
 
   test('worst-priority tab wins: danger in clients beats warn in staffing', () => {
     const tabs = computeTabs({ ...base, staffing: [item('warn')], clients: [item('danger')] });
-    expect(defaultTabKey(tabs, true)).toBe('clients');
+    expect(defaultTabKey(tabs)).toBe('clients');
   });
 
   test('ties resolve by fixed order: warn in staffing and prep goes to staffing', () => {
     const tabs = computeTabs({ ...base, staffing: [item('warn')], prep: [item('warn')] });
-    expect(defaultTabKey(tabs, true)).toBe('staffing');
+    expect(defaultTabKey(tabs)).toBe('staffing');
   });
 
-  test('payroll overdue alone lands on money', () => {
-    const tabs = computeTabs({ ...base, payrollOverdue: true });
-    expect(defaultTabKey(tabs, true)).toBe('money');
-  });
-
-  test('all empty: money for admins, null for managers', () => {
-    expect(defaultTabKey(computeTabs(base), true)).toBe('money');
-    expect(defaultTabKey(computeTabs({ ...base, isAdmin: false }), false)).toBeNull();
+  test('all empty is null, which collapses the card for admin and manager alike', () => {
+    expect(defaultTabKey(computeTabs(base))).toBeNull();
   });
 });

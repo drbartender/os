@@ -1906,12 +1906,32 @@ matched, zero unmatched, zero acknowledged-unmatched**. The payout mirror has fu
 so that item never fires any more and the tab collapses to the payroll-overdue entry alone.
 (This also retires the long-standing "119 unmatched pre-cutover expected" note — obsolete.)
 
-~~DECISION NEEDED~~ **DECIDED 2026-08-14 (Dallas): "leave it be for now."** The Money tab
-stays as-is — a quiet money-alarm panel holding payroll-overdue plus the dormant
-unmatched-payout alarm (still the only mounted surface for the day that fires again on a
-restore, historical import, or unattributable payment). No new surface, no Staffing fold,
-no header badge. Historical options considered: own surface / fold into Staffing /
-persistent header badge.
+~~DECIDED 2026-08-14 (Dallas): "leave it be for now."~~ **REVERSED AND FIXED 2026-08-17 (lane
+nat-trim).** Dallas: the Money tab is really just payroll, remove it from Needs-attention and
+give payroll its own treatment elsewhere. Shipped:
+
+- Money tab gone. `computeTabs` is now `{staffing, prep, clients, sales}`; `buildMoneyItems`,
+  the `payouts` branch of `queueItemHref`, `OVERFLOW_HREF.money`, and the payroll-overdue
+  boolean that routed PayrollStatus → NeedsYouStrip → the Money dot are all deleted.
+  `defaultTabKey` lost its `isAdmin` argument: nothing anywhere now collapses the card for
+  admin and manager alike, instead of parking an admin on Money.
+- The dormant unmatched-payout alarm is NOT lost — that was the one real reason to keep the
+  tab. It still has a mounted surface: the Band 2 Payouts button carries the same count as its
+  own badge and deep-links to `?show=unmatched`. Same signal, one band down.
+- Payroll is its own Band 1 card in the right rail under Pipeline (`.ov-band1-rail`), admin-only
+  as before, so a manager still fires zero `/admin/payroll/*` requests. Overdue moved from the
+  tab dot to a chip in the card head. `.nat-payroll` renamed `.ov-payroll-block`.
+- Side benefit: `/stripe-payouts` no longer gates the triage card's loading state, so a slow
+  payouts fetch cannot delay Needs-attention.
+
+**Rode along, same call:** dated Staffing rows are capped at a 14-day horizon
+(`STAFFING_HORIZON_DAYS` in `queueItems.js`) — "I don't want to see staffing on that list that
+is more than two weeks out." Unstaffed events past 14 days are filtered out entirely; `/events`
+is still the full forward view and the page header's "N need staff" still counts all of them.
+For uncertified workers the horizon **de-escalates instead of filtering**: a booking further out
+reverts to the standing "Can be assigned to shifts" / warn row rather than disappearing, because
+a certification takes lead time to obtain. Undated rows (applications, name notices) are
+untouched.
 
 **The rest of the tabs were verified ACCURATE against prod the same day**, after three
 approximations of mine disagreed with them and the tabs turned out right every time:

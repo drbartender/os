@@ -3,27 +3,27 @@ import { useNavigate } from 'react-router-dom';
 import Icon from '../../../components/adminos/Icon';
 import EntityLink from '../../../components/EntityLink';
 import { defaultTabKey, queueItemHref } from './queueItems';
-import PayrollStatus from './PayrollStatus';
 
 // Tabbed Needs-attention triage card (spec 2026-07-14 §3). Tab headers do the
 // summarizing (count + worst-priority dot); the body shows one category at a
-// time. ALL panels stay mounted (inactive hidden by CSS) so the admin-only
-// PayrollStatus block mounts once and background tabs feed their dots.
+// time. ALL panels stay mounted (inactive hidden by CSS) so background tabs
+// feed their dots. Triage only since 2026-08-17: payroll used to ride here as
+// the Money tab body and now has its own Band 1 card.
 
 const QUEUE_ICON = {
   unstaffed: 'userplus', proposal: 'eye', application: 'pen',
-  payouts: 'dollar', prep: 'flask', 'change-request': 'pen', sms: 'chat',
+  prep: 'flask', 'change-request': 'pen', sms: 'chat',
   'lead-call': 'alert', documents: 'alert', 'name-notice': 'userplus',
 };
 
 const TAB_CAP = 6;
 
-export default function NeedsYouStrip({ tabs = [], loading = false, isAdmin = false, onPayrollOverdue }) {
+export default function NeedsYouStrip({ tabs = [], loading = false }) {
   const navigate = useNavigate();
   const [picked, setPicked] = useState(null);
   // Derived default follows the data as fetches resolve; a click sticks. A
   // picked Sales tab that empties away falls back to the computed default.
-  const active = picked && tabs.some(t => t.key === picked) ? picked : defaultTabKey(tabs, isAdmin);
+  const active = picked && tabs.some(t => t.key === picked) ? picked : defaultTabKey(tabs);
 
   const go = (a) => {
     const href = queueItemHref(a);
@@ -103,7 +103,6 @@ export default function NeedsYouStrip({ tabs = [], loading = false, isAdmin = fa
 
           {tabs.map(t => (
             <div key={t.key} className={`nat-panel${active === t.key ? '' : ' is-hidden'}`}>
-              {t.key === 'money' && isAdmin && <PayrollStatus onOverdue={onPayrollOverdue} />}
               {t.items.slice(0, TAB_CAP).map(renderRow)}
               {t.items.length > TAB_CAP && (
                 <div className="queue-item nat-overflow"
@@ -120,7 +119,7 @@ export default function NeedsYouStrip({ tabs = [], loading = false, isAdmin = fa
                   <div className="queue-meta">{t.items.length - TAB_CAP}</div>
                 </div>
               )}
-              {t.items.length === 0 && !(t.key === 'money' && isAdmin) && (
+              {t.items.length === 0 && (
                 <div className="muted tiny nat-empty">Nothing pressing.</div>
               )}
             </div>
