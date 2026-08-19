@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/fonts.css">
+<link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/colors.css">
+<link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/typography.css">
+<link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/tokens/layout.css">
+<link rel="stylesheet" href="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/components-admin.css">
+<script src="_ds/dr-bartender-os-design-system-72035042-c993-47e2-9dc8-c452b7bf5fa4/_ds_bundle.js"></script>
+<style>
+  html, body { margin: 0; background: #0b0d10; }
+  a { color: #8fb0dd; text-decoration: none; }
+  a:hover { color: #b7cfee; }
+  .board { background: #0b0d10; padding: 56px; display: flex; flex-direction: column; gap: 72px; font-family: Inter, system-ui, sans-serif; }
+  .doc-head { max-width: 900px; display: flex; flex-direction: column; gap: 10px; }
+  .doc-head h1 { margin: 0; color: #eef1f4; font-size: 24px; font-weight: 600; letter-spacing: -0.01em; }
+  .doc-head p { margin: 0; font-size: 13px; line-height: 1.65; color: #8b93a1; }
+  .doc-head strong { color: #c9d1dc; font-weight: 600; }
+  .ab-row { display: flex; gap: 48px; align-items: flex-start; flex-wrap: wrap; }
+  .ab { display: flex; flex-direction: column; gap: 10px; }
+  .ab-cap { display: flex; align-items: baseline; gap: 10px; }
+  .ab-id { background: #1f242b; border: 1px solid #313842; color: #b8c0cc; font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 10.5px; padding: 2px 7px; border-radius: 4px; }
+  .ab-name { color: #eef1f4; font-weight: 600; font-size: 13px; }
+  .ab-route { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: #565d69; }
+  .ab-note { max-width: 700px; color: #7c8593; font-size: 11.5px; line-height: 1.6; margin: 0; }
+  .ab-note strong { color: #b8c0cc; font-weight: 600; }
+  .frame { border: 1px solid #313842; border-radius: 8px; overflow: hidden; box-shadow: 0 24px 64px rgba(0,0,0,0.5); }
+
+  /* ==== NEW HUB CHROME - ships verbatim to client/src/index.css ==== */
+  [data-app="admin-os"] .hub-head { border-bottom: 1px solid var(--line-1); margin-bottom: var(--gap); }
+  [data-app="admin-os"] .hub-head .page-header { border-bottom: 0; margin-bottom: 0; padding-bottom: 0.6rem; }
+  [data-app="admin-os"] .hub-tabs { display: flex; gap: 2px; overflow-x: auto; }
+  [data-app="admin-os"] .hub-tab { display: inline-flex; align-items: center; gap: 7px; padding: 0 11px; height: 34px; font-size: 12.5px; font-weight: 500; color: var(--ink-3); border-bottom: 2px solid transparent; border-radius: 5px 5px 0 0; cursor: pointer; white-space: nowrap; user-select: none; transition: color 0.08s, background 0.08s; }
+  [data-app="admin-os"] .hub-tab:hover { color: var(--ink-1); background: var(--row-hover); }
+  [data-app="admin-os"] .hub-tab.active { color: var(--ink-1); font-weight: 600; border-bottom-color: var(--accent); background: none; }
+  [data-app="admin-os"] .hub-tab-count { font-family: var(--font-numeric); font-variant-numeric: tabular-nums; font-size: 11px; font-weight: 500; color: var(--ink-4); }
+  [data-app="admin-os"] .hub-tab.active .hub-tab-count { color: var(--ink-3); }
+  [data-app="admin-os"] .hub-tab-badge { background: var(--accent); color: #fff; font-family: var(--font-numeric); font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 99px; min-width: 17px; text-align: center; line-height: 1.3; }
+  [data-app="admin-os"][data-skin="light"] .hub-tab { border-radius: 0; }
+  [data-app="admin-os"][data-skin="light"] .hub-tab-badge { color: var(--bg-0); }
+  [data-app="admin-os"] .hub-empty { padding: 44px 24px; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+  [data-app="admin-os"] .hub-empty h4 { font-size: 13px; font-weight: 600; color: var(--ink-1); }
+  [data-app="admin-os"] .hub-empty p { margin: 0 0 8px; font-size: 12px; color: var(--ink-3); max-width: 420px; line-height: 1.55; }
+  /* Hiring: imported-history fold */
+  [data-app="admin-os"] .hire-fold { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border: 1px dashed var(--line-2); border-radius: 4px; color: var(--ink-3); font-size: 11.5px; cursor: pointer; user-select: none; transition: background 0.08s; }
+  [data-app="admin-os"] .hire-fold:hover { background: var(--row-hover); color: var(--ink-2); }
+  [data-app="admin-os"] .hire-stub { display: flex; align-items: center; gap: 8px; padding: 5px 11px; border: 1px solid var(--line-1); border-radius: 4px; font-size: 11.5px; color: var(--ink-3); opacity: 0.72; }
+  /* Roster: legacy stub + section rows (recreated from prod index.css usage) */
+  [data-app="admin-os"] .badge-legacy-cc-stub { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; padding: 1px 5px; border-radius: 3px; margin-left: 6px; background: hsl(var(--warn-h) var(--warn-s) 50% / 0.12); color: hsl(var(--warn-h) var(--warn-s) 58%); border: 1px solid hsl(var(--warn-h) var(--warn-s) 50% / 0.3); white-space: nowrap; }
+  [data-app="admin-os"][data-skin="light"] .badge-legacy-cc-stub { color: var(--ms-camel); }
+  [data-app="admin-os"] .roster-sect td { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-4); background: var(--bg-2); padding: 5px var(--cell-pad-x); height: auto; }
+</style>
+</helmet>
+<section class="board" data-screen-label="Staff hub artboards">
+  <div class="doc-head">
+    <h1>The Staff hub · one entry, four children</h1>
+    <p><strong>Two levels, two vocabularies.</strong> Hub sections are underline tabs fused to the page header (new <strong>.hub-tabs</strong>). Views inside a child stay <strong>.seg</strong> pills in the toolbar. The eye reads "part of the title" vs "a control in the content", so the two levels never look like the same strip twice. A third treatment is never needed, which retires legacy .tab-nav/.tab-btn and the hand-rolled underline buttons in Tips and Reviews.</p>
+    <p><strong>Q1, shared chrome:</strong> the hub carries one live subtitle line (roster count, open pay run, decisions waiting) and nothing else. No KPI band; the child page is the page. <strong>Q2, Payroll's four tabs:</strong> they stay a .seg inside Payroll. Promoting them makes seven siblings of wildly unequal weight, and the two-vocabulary rule already makes the nesting legible. <strong>Q3, Reviews at one row:</strong> it earns its tab (cross-staff, writes real payroll lines) but drops internal tabs entirely: pending reviews are workbench cards, resolved ones are table rows, the contest is a side rail. Nothing to relabel when volume arrives.</p>
+    <p><strong>Badge math:</strong> the sidebar Staff badge is the sum of decisions waiting across children (1 new application + 1 pending review = 2). One click in, the hub tabs decompose it per child. Old routes /hiring, /tips, /reviews, /financials/payroll become param-preserving redirects; the Overview deep link ?tab=payrun&amp;period=&lt;id&gt; keeps working.</p>
+  </div>
+
+  <!-- ══════════ ROSTER, both skins, full shell ══════════ -->
+  <div class="ab-row">
+    <div class="ab" id="1a" data-screen-label="1a Roster After Hours">
+      <div class="ab-cap"><span class="ab-id">1a</span><span class="ab-name">Roster · After Hours</span><span class="ab-route">/staffing</span></div>
+      <p class="ab-note"><strong>Roster lands.</strong> Sidebar collapses to one Staff entry, badge 2. The switch names what it shows: Active 18 / Deactivated 14 / All 32, so "All" stops doing two jobs.</p>
+      <div class="frame os-root" data-app="admin-os" data-skin="dark" data-density="comfy" style="width: 1440px; height: 1150px;">
+        <div class="shell">
+          <aside class="sidebar">
+            <div class="sidebar-brand"><div class="sidebar-brand-mark">℞</div><div class="sidebar-brand-text">Dr. Bartender <span class="muted">OS</span></div></div>
+            <nav class="sidebar-nav scroll-thin">
+              <div class="sidebar-section">Workspace</div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="home" hint-size="15px,15px"></x-import><span class="nav-label">Overview</span></div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="calendar" hint-size="15px,15px"></x-import><span class="nav-label">Events</span></div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="clipboard" hint-size="15px,15px"></x-import><span class="nav-label">Proposals</span></div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="users" hint-size="15px,15px"></x-import><span class="nav-label">Clients</span></div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="chat" hint-size="15px,15px"></x-import><span class="nav-label">Messages</span></div>
+              <div class="nav-item active"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="userplus" hint-size="15px,15px"></x-import><span class="nav-label">Staff</span><sc-if value="{{ badgeIsCount }}" hint-placeholder-val="{{ true }}"><span class="nav-badge">2</span></sc-if><sc-if value="{{ badgeIsDot }}" hint-placeholder-val="{{ false }}"><span style="width: 7px; height: 7px; border-radius: 50%; background: var(--accent);"></span></sc-if></div>
+              <div class="sidebar-section">Revenue</div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="mail" hint-size="15px,15px"></x-import><span class="nav-label">Marketing</span></div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="mail" hint-size="15px,15px"></x-import><span class="nav-label">Email leads</span></div>
+              <div class="sidebar-section">Content</div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="flask" hint-size="15px,15px"></x-import><span class="nav-label">Potions</span></div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="pen" hint-size="15px,15px"></x-import><span class="nav-label">Lab Notes</span></div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="gear" hint-size="15px,15px"></x-import><span class="nav-label">Settings</span></div>
+            </nav>
+            <div class="sidebar-footer sidebar-footer-controls">
+              <div class="mode-toggle"><button type="button" class="mode-opt">House Lights</button><button type="button" class="mode-opt active">After Hours</button></div>
+              <div class="mode-toggle"><button type="button" class="mode-opt active">Comfy</button><button type="button" class="mode-opt">Compact</button></div>
+            </div>
+            <div class="sidebar-footer sidebar-footer--user">
+              <div class="avatar">DR</div>
+              <div class="sidebar-footer-main"><div class="sidebar-footer-name">Dallas Raby</div><div class="sidebar-footer-role">Admin · Dr. Bartender</div></div>
+            </div>
+          </aside>
+          <header class="header">
+            <div class="header-title">Staff</div>
+            <div class="header-search"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="search" hint-size="13px,13px"></x-import><span>Search anything…</span><span class="kbd-group"><span class="kbd">⌘</span><span class="kbd">K</span></span></div>
+            <div class="header-actions"><button type="button" class="icon-btn"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="plus" hint-size="14px,14px"></x-import></button></div>
+          </header>
+          <main class="main">
+            <div class="page">
+              <div class="hub-head">
+                <div class="page-header">
+                  <div><div class="page-title">Staff</div><div class="page-subtitle">18 active · pay run Aug 18 to 24 open, payday Tue Aug 25 · 1 review to confirm</div></div>
+                </div>
+                <nav class="hub-tabs">
+                  <span class="hub-tab active">Roster <span class="hub-tab-count">18</span></span>
+                  <span class="hub-tab">Hiring <span class="hub-tab-badge">1</span></span>
+                  <span class="hub-tab">Payroll</span>
+                  <span class="hub-tab">Reviews <span class="hub-tab-badge">1</span></span>
+                </nav>
+              </div>
+              <div class="hstack" style="gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
+                <div class="seg"><button type="button" class="active">Active <span class="muted" style="margin-left: 6px;">18</span></button><button type="button">Deactivated <span class="muted" style="margin-left: 6px;">14</span></button><button type="button">All <span class="muted" style="margin-left: 6px;">32</span></button></div>
+                <div class="spacer"></div>
+                <button type="button" class="btn btn-secondary">Send SMS</button>
+              </div>
+              <div class="card" style="overflow: hidden;">
+                <div class="tbl-wrap">
+                  <table class="tbl">
+                    <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Phone</th><th>City</th><th>Equipment</th><th></th></tr></thead>
+                    <tbody>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">DR</div><div><strong>Dallas Raby</strong><div class="sub">dallas@drbartender.com</div></div></div></td><td class="muted">Admin</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(312) 555-0134</td><td class="muted">Chicago, IL</td><td class="tiny muted">Bar · Cooler · Table</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">AV</div><div><strong>Amara Velez</strong><div class="sub">amara@drbartender.com</div></div></div></td><td class="muted">Admin</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(773) 555-0182</td><td class="muted">Chicago, IL</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">SC</div><div><strong>Shea Corrigan</strong><div class="sub">shea.corrigan@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(773) 555-0219</td><td class="muted">Chicago, IL</td><td class="tiny muted">Bar</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">MW</div><div><strong>Marcus Webb</strong><div class="sub">m.webb.bar@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(312) 555-0477</td><td class="muted">Evanston, IL</td><td class="tiny muted">Bar · Table</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">PN</div><div><strong>Priya Nair</strong><div class="sub">priya.nair.chi@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(847) 555-0311</td><td class="muted">Skokie, IL</td><td class="tiny muted">Cooler</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">JE</div><div><strong>Jordan Ellis</strong><div class="sub">jordan.ellis@outlook.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(773) 555-0645</td><td class="muted">Oak Park, IL</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">KB</div><div><strong>Keisha Bell</strong><div class="sub">keishabell@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(708) 555-0290</td><td class="muted">Berwyn, IL</td><td class="tiny muted">Bar</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">TR</div><div><strong>Tomás Rivera</strong><div class="sub">t.rivera.events@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(312) 555-0866</td><td class="muted">Cicero, IL</td><td class="tiny muted">Table</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">LK</div><div><strong>Lena Kowalski</strong><div class="sub">lenak@proton.me</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(773) 555-0733</td><td class="muted">Chicago, IL</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">DP</div><div><strong>Devon Price</strong><div class="sub">devon.price@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(312) 555-0158</td><td class="muted">Chicago, IL</td><td class="tiny muted">Bar · Cooler</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">MC</div><div><strong>Maya Chen</strong><div class="sub">maya.chen.chi@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(847) 555-0524</td><td class="muted">Evanston, IL</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">NO</div><div><strong>Nate Okafor</strong><div class="sub">n.okafor@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(773) 555-0918</td><td class="muted">Chicago, IL</td><td class="tiny muted">Bar</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">SM</div><div><strong>Sofia Marchetti</strong><div class="sub">sofiam.events@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(708) 555-0362</td><td class="muted">Oak Park, IL</td><td class="tiny muted">Table</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">RF</div><div><strong>Rob Feeney</strong><div class="sub">rfeeney@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(312) 555-0691</td><td class="muted">Chicago, IL</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">TW</div><div><strong>Tess Whitaker</strong><div class="sub">tess.whitaker@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(773) 555-0407</td><td class="muted">Berwyn, IL</td><td class="tiny muted">Cooler</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">AG</div><div><strong>Andre Gibbs</strong><div class="sub">agibbs.bartends@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(312) 555-0273</td><td class="muted">Chicago, IL</td><td class="tiny muted">Bar</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">CB</div><div><strong>Cole Bradley</strong><div class="sub">cole.bradley@outlook.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(847) 555-0839</td><td class="muted">Skokie, IL</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">NT</div><div><strong>Nia Thompson</strong><div class="sub">nia.t.chi@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip ok"><span class="chip-dot"></span>Active</span></td><td class="muted mono">(773) 555-0554</td><td class="muted">Chicago, IL</td><td class="tiny muted">Table</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="tiny muted" style="padding: 8px 2px;">18 team members · 16 staff, 2 admin</div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+
+    <div class="ab" id="1b" data-screen-label="1b Roster House Lights">
+      <div class="ab-cap"><span class="ab-id">1b</span><span class="ab-name">Roster, Deactivated view · House Lights</span><span class="ab-route">/staffing?tab=deactivated</span></div>
+      <p class="ab-note"><strong>Deactivated splits its two jobs</strong> into named groups: former staff, then imported records. Stub emails stay redacted for managers, and the row says so instead of leaking a blank.</p>
+      <div class="frame os-root" data-app="admin-os" data-skin="light" data-density="comfy" style="width: 1440px; height: 1150px;">
+        <div class="shell">
+          <aside class="sidebar">
+            <div class="sidebar-brand"><div class="sidebar-brand-mark">℞</div><div class="sidebar-brand-text">Dr. Bartender <span class="muted">OS</span></div></div>
+            <nav class="sidebar-nav scroll-thin">
+              <div class="sidebar-section">Workspace</div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="home" hint-size="15px,15px"></x-import><span class="nav-label">Overview</span></div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="calendar" hint-size="15px,15px"></x-import><span class="nav-label">Events</span></div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="clipboard" hint-size="15px,15px"></x-import><span class="nav-label">Proposals</span></div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="users" hint-size="15px,15px"></x-import><span class="nav-label">Clients</span></div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="chat" hint-size="15px,15px"></x-import><span class="nav-label">Messages</span></div>
+              <div class="nav-item active"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="userplus" hint-size="15px,15px"></x-import><span class="nav-label">Staff</span><sc-if value="{{ badgeIsCount }}" hint-placeholder-val="{{ true }}"><span class="nav-badge">2</span></sc-if><sc-if value="{{ badgeIsDot }}" hint-placeholder-val="{{ false }}"><span style="width: 7px; height: 7px; border-radius: 50%; background: var(--accent);"></span></sc-if></div>
+              <div class="sidebar-section">Revenue</div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="mail" hint-size="15px,15px"></x-import><span class="nav-label">Marketing</span></div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="mail" hint-size="15px,15px"></x-import><span class="nav-label">Email leads</span></div>
+              <div class="sidebar-section">Content</div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="flask" hint-size="15px,15px"></x-import><span class="nav-label">Potions</span></div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="pen" hint-size="15px,15px"></x-import><span class="nav-label">Lab Notes</span></div>
+              <div class="nav-item"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="gear" hint-size="15px,15px"></x-import><span class="nav-label">Settings</span></div>
+            </nav>
+            <div class="sidebar-footer sidebar-footer-controls">
+              <div class="mode-toggle"><button type="button" class="mode-opt active">House Lights</button><button type="button" class="mode-opt">After Hours</button></div>
+              <div class="mode-toggle"><button type="button" class="mode-opt active">Comfy</button><button type="button" class="mode-opt">Compact</button></div>
+            </div>
+            <div class="sidebar-footer sidebar-footer--user">
+              <div class="avatar">DR</div>
+              <div class="sidebar-footer-main"><div class="sidebar-footer-name">Dallas Raby</div><div class="sidebar-footer-role">Admin · Dr. Bartender</div></div>
+            </div>
+          </aside>
+          <header class="header">
+            <div class="header-title">Staff</div>
+            <div class="header-search"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="search" hint-size="13px,13px"></x-import><span>Search anything…</span><span class="kbd-group"><span class="kbd">⌘</span><span class="kbd">K</span></span></div>
+            <div class="header-actions"><button type="button" class="icon-btn"><x-import component-from-global-scope="DrBartenderOSDesignSystem_720350.Icon" name="plus" hint-size="14px,14px"></x-import></button></div>
+          </header>
+          <main class="main">
+            <div class="page">
+              <div class="hub-head">
+                <div class="page-header">
+                  <div><div class="page-title">Staff</div><div class="page-subtitle">18 active · pay run Aug 18 to 24 open, payday Tue Aug 25 · 1 review to confirm</div></div>
+                </div>
+                <nav class="hub-tabs">
+                  <span class="hub-tab active">Roster <span class="hub-tab-count">18</span></span>
+                  <span class="hub-tab">Hiring <span class="hub-tab-badge">1</span></span>
+                  <span class="hub-tab">Payroll</span>
+                  <span class="hub-tab">Reviews <span class="hub-tab-badge">1</span></span>
+                </nav>
+              </div>
+              <div class="hstack" style="gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
+                <div class="seg"><button type="button">Active <span class="muted" style="margin-left: 6px;">18</span></button><button type="button" class="active">Deactivated <span class="muted" style="margin-left: 6px;">14</span></button><button type="button">All <span class="muted" style="margin-left: 6px;">32</span></button></div>
+                <div class="spacer"></div>
+                <button type="button" class="btn btn-secondary">Send SMS</button>
+              </div>
+              <div class="card" style="overflow: hidden;">
+                <div class="tbl-wrap">
+                  <table class="tbl">
+                    <thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Phone</th><th>City</th><th>Equipment</th><th></th></tr></thead>
+                    <tbody>
+                      <tr class="roster-sect"><td colspan="7">Former staff · 5</td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">EW</div><div><strong>Erin Walsh</strong><div class="sub">erin.walsh@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip neutral"><span class="chip-dot"></span>Deactivated</span></td><td class="muted mono">(773) 555-0348</td><td class="muted">Chicago, IL</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">LH</div><div><strong>Luis Herrera</strong><div class="sub">lherrera.chi@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip neutral"><span class="chip-dot"></span>Deactivated</span></td><td class="muted mono">(312) 555-0729</td><td class="muted">Cicero, IL</td><td class="tiny muted">Bar</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">GS</div><div><strong>Gabby Stone</strong><div class="sub">gabbystone@outlook.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip neutral"><span class="chip-dot"></span>Deactivated</span></td><td class="muted mono">(847) 555-0165</td><td class="muted">Evanston, IL</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">MT</div><div><strong>Miles Turner</strong><div class="sub">miles.turner@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip neutral"><span class="chip-dot"></span>Deactivated</span></td><td class="muted mono">(708) 555-0583</td><td class="muted">Oak Park, IL</td><td class="tiny muted">Table</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">DK</div><div><strong>Dana Kim</strong><div class="sub">dana.kim.bar@gmail.com</div></div></div></td><td class="muted">Staff</td><td><span class="chip neutral"><span class="chip-dot"></span>Deactivated</span></td><td class="muted mono">(773) 555-0812</td><td class="muted">Chicago, IL</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr class="roster-sect"><td colspan="7">Imported records · 9 · CheckCherry, May 2026</td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">RC</div><div><strong>R. Castellanos</strong><span class="badge-legacy-cc-stub">Legacy CC stub</span><div class="sub">email redacted for managers</div></div></div></td><td class="muted">Staff</td><td><span class="chip neutral"><span class="chip-dot"></span>Deactivated</span></td><td class="muted mono">—</td><td class="muted">—</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">JW</div><div><strong>J. Whitfield</strong><span class="badge-legacy-cc-stub">Legacy CC stub</span><div class="sub">email redacted for managers</div></div></div></td><td class="muted">Staff</td><td><span class="chip neutral"><span class="chip-dot"></span>Deactivated</span></td><td class="muted mono">—</td><td class="muted">—</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">MA</div><div><strong>M. Ademola</strong><span class="badge-legacy-cc-stub">Legacy CC stub</span><div class="sub">email redacted for managers</div></div></div></td><td class="muted">Staff</td><td><span class="chip neutral"><span class="chip-dot"></span>Deactivated</span></td><td class="muted mono">—</td><td class="muted">—</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">TB</div><div><strong>T. Brennan</strong><span class="badge-legacy-cc-stub">Legacy CC stub</span><div class="sub">email redacted for managers</div></div></div></td><td class="muted">Staff</td><td><span class="chip neutral"><span class="chip-dot"></span>Deactivated</span></td><td class="muted mono">—</td><td class="muted">—</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">SD</div><div><strong>S. Delgado</strong><span class="badge-legacy-cc-stub">Legacy CC stub</span><div class="sub">email redacted for managers</div></div></div></td><td class="muted">Staff</td><td><span class="chip neutral"><span class="chip-dot"></span>Deactivated</span></td><td class="muted mono">—</td><td class="muted">—</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">KY</div><div><strong>K. Yoon</strong><span class="badge-legacy-cc-stub">Legacy CC stub</span><div class="sub">email redacted for managers</div></div></div></td><td class="muted">Staff</td><td><span class="chip neutral"><span class="chip-dot"></span>Deactivated</span></td><td class="muted mono">—</td><td class="muted">—</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">PN</div><div><strong>P. Novak</strong><span class="badge-legacy-cc-stub">Legacy CC stub</span><div class="sub">email redacted for managers</div></div></div></td><td class="muted">Staff</td><td><span class="chip neutral"><span class="chip-dot"></span>Deactivated</span></td><td class="muted mono">—</td><td class="muted">—</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">AF</div><div><strong>A. Fitzgerald</strong><span class="badge-legacy-cc-stub">Legacy CC stub</span><div class="sub">email redacted for managers</div></div></div></td><td class="muted">Staff</td><td><span class="chip neutral"><span class="chip-dot"></span>Deactivated</span></td><td class="muted mono">—</td><td class="muted">—</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                      <tr><td><div class="hstack"><div class="avatar" style="width: 24px; height: 24px; font-size: 10px;">LM</div><div><strong>L. Moreau</strong><span class="badge-legacy-cc-stub">Legacy CC stub</span><div class="sub">email redacted for managers</div></div></div></td><td class="muted">Staff</td><td><span class="chip neutral"><span class="chip-dot"></span>Deactivated</span></td><td class="muted mono">—</td><td class="muted">—</td><td class="tiny muted">—</td><td class="shrink"><span class="muted">⋮</span></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="tiny muted" style="padding: 8px 2px;">14 deactivated · 5 former staff, 9 imported records</div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ ROSTER EMPTY + HIRING ══════════ -->
+  <div class="ab-row">
+    <div class="ab" id="1c" data-screen-label="1c Roster empty">
+      <div class="ab-cap"><span class="ab-id">1c</span><span class="ab-name">Roster · empty</span><span class="ab-route">/staffing</span></div>
+      <p class="ab-note">The empty roster points at the pipeline, not at a void. Tabs keep their counts so the hub still reads as one system.</p>
+      <div class="frame os-root" data-app="admin-os" data-skin="dark" data-density="comfy" style="width: 940px;">
+        <div class="page">
+          <div class="hub-head">
+            <div class="page-header">
+              <div><div class="page-title">Staff</div><div class="page-subtitle">No active staff yet · pay run quiet · nothing to confirm</div></div>
+            </div>
+            <nav class="hub-tabs">
+              <span class="hub-tab active">Roster <span class="hub-tab-count">0</span></span>
+              <span class="hub-tab">Hiring <span class="hub-tab-badge">1</span></span>
+              <span class="hub-tab">Payroll</span>
+              <span class="hub-tab">Reviews</span>
+            </nav>
+          </div>
+          <div class="hstack" style="gap: 8px; margin-bottom: 12px;">
+            <div class="seg"><button type="button" class="active">Active <span class="muted" style="margin-left: 6px;">0</span></button><button type="button">Deactivated <span class="muted" style="margin-left: 6px;">0</span></button><button type="button">All <span class="muted" style="margin-left: 6px;">0</span></button></div>
+            <div class="spacer"></div>
+            <button type="button" class="btn btn-secondary" disabled="disabled">Send SMS</button>
+          </div>
+          <div class="card">
+            <div class="hub-empty">
+              <h4>No active staff yet</h4>
+              <p>Approved hires land here on their own once onboarding completes. One application is waiting for a first look right now.</p>
+              <button type="button" class="btn btn-primary">Open Hiring</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ab" id="1d" data-screen-label="1d Hiring">
+      <div class="ab-cap"><span class="ab-id">1d</span><span class="ab-name">Hiring · the 40-card problem, solved</span><span class="ab-route">/staffing/hiring</span></div>
+      <p class="ab-note"><strong>Imported history is not pipeline.</strong> The 29 May 2026 CheckCherry rows leave the live column for a collapsed, age-stamped fold beneath it. Onboarding counts 11, the real numbers. A filter would hide the problem; the fold names it. Click the fold (or the Tweaks toggle) to expand.</p>
+      <div class="frame os-root" data-app="admin-os" data-skin="dark" data-density="comfy" style="width: 1160px;">
+        <div class="page">
+          <div class="hub-head">
+            <div class="page-header">
+              <div><div class="page-title">Staff</div><div class="page-subtitle">18 active · pay run Aug 18 to 24 open, payday Tue Aug 25 · 1 review to confirm</div></div>
+            </div>
+            <nav class="hub-tabs">
+              <span class="hub-tab">Roster <span class="hub-tab-count">18</span></span>
+              <span class="hub-tab active">Hiring <span class="hub-tab-badge">1</span></span>
+              <span class="hub-tab">Payroll</span>
+              <span class="hub-tab">Reviews <span class="hub-tab-badge">1</span></span>
+            </nav>
+          </div>
+          <div class="hstack" style="gap: 8px; margin-bottom: 12px;">
+            <div class="stat-row" style="grid-template-columns: repeat(3, 1fr); flex: 1;">
+              <div class="stat"><div class="stat-label">New apps · 7d</div><div class="stat-value" style="color: hsl(var(--ok-h) var(--ok-s) 52%);">+1</div></div>
+              <div class="stat"><div class="stat-label">Need to schedule</div><div class="stat-value" style="color: hsl(var(--warn-h) var(--warn-s) 58%);">1</div></div>
+              <div class="stat"><div class="stat-label">Stalled</div><div class="stat-value">0</div></div>
+            </div>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(3, minmax(260px, 1fr)); gap: 12px; align-items: start;">
+            <div style="background: var(--bg-2); border: 1px solid var(--line-1); border-radius: 4px; display: flex; flex-direction: column; min-height: 380px;">
+              <div style="padding: 11px 12px 10px; border-bottom: 1px solid var(--line-1);">
+                <div class="hstack" style="justify-content: space-between;"><strong style="font-size: 12.5px;">Applied</strong><span class="k">1</span></div>
+                <div class="tiny muted" style="font-size: 10.5px;">Awaiting first review</div>
+              </div>
+              <div class="vstack" style="gap: 8px; padding: 8px; flex: 1;">
+                <div style="padding: 10px 11px; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 4px; display: flex; flex-direction: column; gap: 8px; cursor: pointer;">
+                  <div class="hstack" style="gap: 8px;"><div class="avatar" style="width: 28px; height: 28px; font-size: 10px; flex-shrink: 0;">DO</div><div style="flex: 1; min-width: 0;"><div style="font-size: 12.5px; font-weight: 600; line-height: 1.2;">Danielle Okoye</div><div class="hstack" style="gap: 4px; margin-top: 2px;"><span class="tag" style="font-size: 9.5px; padding: 1px 5px;">Bartender</span></div></div></div>
+                  <div class="hstack" style="justify-content: space-between; border-top: 1px solid var(--line-1); padding-top: 6px; align-items: flex-end;"><span class="muted" style="font-size: 10.5px;">Chicago</span><span class="tiny muted">2d</span></div>
+                </div>
+              </div>
+            </div>
+            <div style="background: var(--bg-2); border: 1px solid var(--line-1); border-radius: 4px; display: flex; flex-direction: column; min-height: 380px;">
+              <div style="padding: 11px 12px 10px; border-bottom: 1px solid var(--line-1);">
+                <div class="hstack" style="justify-content: space-between;"><strong style="font-size: 12.5px;">Interview</strong><span class="k">1</span></div>
+                <div class="tiny muted" style="font-size: 10.5px;">Invited or scheduled</div>
+              </div>
+              <div class="vstack" style="gap: 8px; padding: 8px; flex: 1;">
+                <div class="tiny muted" style="text-transform: uppercase; letter-spacing: 0.06em; font-size: 10px; padding: 4px 4px 2px;">Unscheduled (1)</div>
+                <div style="padding: 10px 11px; background: hsl(var(--warn-h) var(--warn-s) 50% / 0.06); border: 1px solid hsl(var(--warn-h) var(--warn-s) 50% / 0.4); border-radius: 4px; display: flex; flex-direction: column; gap: 8px; cursor: pointer;">
+                  <div class="hstack" style="gap: 8px;"><div class="avatar" style="width: 28px; height: 28px; font-size: 10px; flex-shrink: 0;">MS</div><div style="flex: 1; min-width: 0;"><div style="font-size: 12.5px; font-weight: 600; line-height: 1.2;">Miguel Santana</div><div class="hstack" style="gap: 4px; margin-top: 2px;"><span class="tag" style="font-size: 9.5px; padding: 1px 5px;">Bartender</span><span class="tag" style="font-size: 9.5px; padding: 1px 5px;">Barback</span></div></div></div>
+                  <div class="hstack" style="justify-content: space-between; border-top: 1px solid var(--line-1); padding-top: 6px; align-items: flex-end;"><button type="button" class="btn btn-secondary btn-sm" style="padding: 3px 8px; font-size: 10.5px;">Schedule →</button><span class="tiny muted">6d</span></div>
+                </div>
+              </div>
+            </div>
+            <div style="background: var(--bg-2); border: 1px solid var(--line-1); border-radius: 4px; display: flex; flex-direction: column; min-height: 380px;">
+              <div style="padding: 11px 12px 10px; border-bottom: 1px solid var(--line-1);">
+                <div class="hstack" style="justify-content: space-between;"><strong style="font-size: 12.5px;">Onboarding</strong><span class="k">11</span></div>
+                <div class="tiny muted" style="font-size: 10.5px;">Filling out paperwork · 29 imported below</div>
+              </div>
+              <div class="vstack" style="gap: 8px; padding: 8px; flex: 1;">
+                <div style="padding: 9px 11px; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 4px;"><div class="hstack" style="justify-content: space-between; margin-bottom: 4px;"><span style="font-size: 12px; font-weight: 600;">Jess Paulino</span><span class="tiny muted">12d</span></div><div class="hstack" style="justify-content: space-between; margin-bottom: 3px; font-size: 10.5px;"><span style="color: hsl(var(--ok-h) var(--ok-s) 50%);">Ready (auto-flips)</span></div><div style="height: 3px; background: var(--bg-2); border-radius: 2px; overflow: hidden;"><div style="width: 100%; height: 100%; background: hsl(var(--ok-h) var(--ok-s) 50%);"></div></div></div>
+                <div style="padding: 9px 11px; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 4px;"><div class="hstack" style="justify-content: space-between; margin-bottom: 4px;"><span style="font-size: 12px; font-weight: 600;">Owen Mercer</span><span class="tiny muted">9d</span></div><div class="hstack" style="justify-content: space-between; margin-bottom: 3px; font-size: 10.5px;"><span style="color: var(--ink-2);">92%</span><span class="muted" style="font-size: 9.5px;">W-9 missing</span></div><div style="height: 3px; background: var(--bg-2); border-radius: 2px; overflow: hidden;"><div style="width: 92%; height: 100%; background: var(--accent);"></div></div></div>
+                <div style="padding: 9px 11px; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 4px;"><div class="hstack" style="justify-content: space-between; margin-bottom: 4px;"><span style="font-size: 12px; font-weight: 600;">Talia Brooks</span><span class="tiny muted">15d</span></div><div class="hstack" style="justify-content: space-between; margin-bottom: 3px; font-size: 10.5px;"><span style="color: var(--ink-2);">80%</span><span class="muted" style="font-size: 9.5px;">agreement unsigned</span></div><div style="height: 3px; background: var(--bg-2); border-radius: 2px; overflow: hidden;"><div style="width: 80%; height: 100%; background: var(--accent);"></div></div></div>
+                <div style="padding: 9px 11px; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 4px;"><div class="hstack" style="justify-content: space-between; margin-bottom: 4px;"><span style="font-size: 12px; font-weight: 600;">Chris Yun</span><span class="tiny muted">11d</span></div><div class="hstack" style="justify-content: space-between; margin-bottom: 3px; font-size: 10.5px;"><span style="color: var(--ink-2);">70%</span><span class="muted" style="font-size: 9.5px;">bank details</span></div><div style="height: 3px; background: var(--bg-2); border-radius: 2px; overflow: hidden;"><div style="width: 70%; height: 100%; background: var(--accent);"></div></div></div>
+                <div style="padding: 9px 11px; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 4px;"><div class="hstack" style="justify-content: space-between; margin-bottom: 4px;"><span style="font-size: 12px; font-weight: 600;">Fatima Diallo</span><span class="tiny muted">18d</span></div><div class="hstack" style="justify-content: space-between; margin-bottom: 3px; font-size: 10.5px;"><span style="color: var(--ink-2);">60%</span><span class="muted" style="font-size: 9.5px;">BASSET cert</span></div><div style="height: 3px; background: var(--bg-2); border-radius: 2px; overflow: hidden;"><div style="width: 60%; height: 100%; background: var(--accent);"></div></div></div>
+                <div style="padding: 9px 11px; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 4px;"><div class="hstack" style="justify-content: space-between; margin-bottom: 4px;"><span style="font-size: 12px; font-weight: 600;">Sam Whitehead</span><span class="tiny muted">20d</span></div><div class="hstack" style="justify-content: space-between; margin-bottom: 3px; font-size: 10.5px;"><span style="color: var(--ink-2);">55%</span><span class="muted" style="font-size: 9.5px;">availability</span></div><div style="height: 3px; background: var(--bg-2); border-radius: 2px; overflow: hidden;"><div style="width: 55%; height: 100%; background: var(--accent);"></div></div></div>
+                <div style="padding: 9px 11px; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 4px;"><div class="hstack" style="justify-content: space-between; margin-bottom: 4px;"><span style="font-size: 12px; font-weight: 600;">Renee Alvarez</span><span class="tiny muted">22d</span></div><div class="hstack" style="justify-content: space-between; margin-bottom: 3px; font-size: 10.5px;"><span style="color: var(--ink-2);">45%</span><span class="muted" style="font-size: 9.5px;">agreement unsigned</span></div><div style="height: 3px; background: var(--bg-2); border-radius: 2px; overflow: hidden;"><div style="width: 45%; height: 100%; background: var(--accent);"></div></div></div>
+                <div style="padding: 9px 11px; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 4px;"><div class="hstack" style="justify-content: space-between; margin-bottom: 4px;"><span style="font-size: 12px; font-weight: 600;">Marcus Doyle</span><span class="tiny muted">26d</span></div><div class="hstack" style="justify-content: space-between; margin-bottom: 3px; font-size: 10.5px;"><span style="color: var(--ink-2);">30%</span><span class="muted" style="font-size: 9.5px;">W-9 missing</span></div><div style="height: 3px; background: var(--bg-2); border-radius: 2px; overflow: hidden;"><div style="width: 30%; height: 100%; background: var(--accent);"></div></div></div>
+                <div style="padding: 9px 11px; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 4px;"><div class="hstack" style="justify-content: space-between; margin-bottom: 4px;"><span style="font-size: 12px; font-weight: 600;">Ivy Chen</span><span class="tiny muted">27d</span></div><div class="hstack" style="justify-content: space-between; margin-bottom: 3px; font-size: 10.5px;"><span style="color: var(--ink-2);">25%</span><span class="muted" style="font-size: 9.5px;">profile photo</span></div><div style="height: 3px; background: var(--bg-2); border-radius: 2px; overflow: hidden;"><div style="width: 25%; height: 100%; background: var(--accent);"></div></div></div>
+                <div style="padding: 9px 11px; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 4px;"><div class="hstack" style="justify-content: space-between; margin-bottom: 4px;"><span style="font-size: 12px; font-weight: 600;">Leo Grant</span><span class="tiny muted">30d</span></div><div class="hstack" style="justify-content: space-between; margin-bottom: 3px; font-size: 10.5px;"><span style="color: var(--ink-2);">15%</span><span class="muted" style="font-size: 9.5px;">just started</span></div><div style="height: 3px; background: var(--bg-2); border-radius: 2px; overflow: hidden;"><div style="width: 15%; height: 100%; background: var(--accent);"></div></div></div>
+                <div style="padding: 9px 11px; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 4px;"><div class="hstack" style="justify-content: space-between; margin-bottom: 4px;"><span style="font-size: 12px; font-weight: 600;">Hana Suzuki</span><span class="tiny muted">31d</span></div><div class="hstack" style="justify-content: space-between; margin-bottom: 3px; font-size: 10.5px;"><span style="color: var(--ink-2);">10%</span><span class="muted" style="font-size: 9.5px;">just started</span></div><div style="height: 3px; background: var(--bg-2); border-radius: 2px; overflow: hidden;"><div style="width: 10%; height: 100%; background: var(--accent);"></div></div></div>
+                <div class="hire-fold" onClick="{{ toggleImported }}">
+                  <span style="width: 12px; text-align: center;">{{ foldChevron }}</span>
+                  <div style="flex: 1;"><strong style="color: var(--ink-2); font-weight: 600;">Imported history</strong> · 29 CheckCherry records, May 2026 · untouched 99 days</div>
+                  <span class="tag">not pipeline</span>
+                </div>
+                <sc-if value="{{ importedOpen }}" hint-placeholder-val="{{ false }}">
+                  <div class="vstack" style="gap: 4px;">
+                    <div class="tiny muted" style="padding: 2px 4px;">Link each record to a staffer from its page, or archive it. Retry from Settings re-runs the import matcher.</div>
+                    <div class="hire-stub"><span style="flex: 1;">Aaron Blake</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Bianca Reyes</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Caleb Ford</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Dena Moss</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Eli Vargas</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Faye Holt</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Gina Park</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Hugo Marsh</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Iris Chan</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Jonah Weeks</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Kara Steele</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Liam Doyle</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Mona Farid</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Noel Quinn</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Opal Freeman</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Pete Sandoval</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Quinn Harper</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Rosa Ibarra</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Sean Murphy</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Tia Coleman</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Uma Patel</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Vince Adler</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Wren Foster</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Ximena Cruz</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Yusuf Ali</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Zoe Barker</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Abby Lund</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Ben Ochoa</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                    <div class="hire-stub"><span style="flex: 1;">Cleo Marsh</span><span class="tiny muted">May 12, 2026</span><span class="badge-legacy-cc-stub" style="margin-left: 0;">stub</span></div>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ PAYROLL PAY RUN, both skins ══════════ -->
+  <div class="ab-row">
+    <div class="ab" id="1e" data-screen-label="1e Payroll pay run After Hours">
+      <div class="ab-cap"><span class="ab-id">1e</span><span class="ab-name">Payroll · pay run · After Hours</span><span class="ab-route">/staffing/payroll?tab=payrun</span></div>
+      <p class="ab-note"><strong>Q2 answered in place:</strong> Payroll's four tabs stay a .seg under the hub tabs. Underline above, pills below: two levels, never the same strip twice. The open week with nothing accrued is the honest common case, so it explains itself and points at the one action that would put money in it.</p>
+      <div class="frame os-root" data-app="admin-os" data-skin="dark" data-density="comfy" style="width: 1160px;">
+        <div class="page">
+          <div class="hub-head">
+            <div class="page-header">
+              <div><div class="page-title">Staff</div><div class="page-subtitle">18 active · pay run Aug 18 to 24 open, payday Tue Aug 25 · 1 review to confirm</div></div>
+            </div>
+            <nav class="hub-tabs">
+              <span class="hub-tab">Roster <span class="hub-tab-count">18</span></span>
+              <span class="hub-tab">Hiring <span class="hub-tab-badge">1</span></span>
+              <span class="hub-tab active">Payroll</span>
+              <span class="hub-tab">Reviews <span class="hub-tab-badge">1</span></span>
+            </nav>
+          </div>
+          <div class="hstack" style="gap: 8px; margin-bottom: 12px;">
+            <div class="seg"><button type="button" class="active">Pay run</button><button type="button">History</button><button type="button">Tips</button><button type="button">1099 / tax</button></div>
+          </div>
+          <div class="stat-row" style="grid-template-columns: repeat(4, 1fr); margin-bottom: var(--gap);">
+            <div class="stat"><div class="stat-label">Still owed</div><div class="stat-value">$0.00</div></div>
+            <div class="stat"><div class="stat-label">Unpaid payouts</div><div class="stat-value">0</div></div>
+            <div class="stat"><div class="stat-label">Oldest open</div><div class="stat-value">0 wk</div></div>
+            <div class="stat"><div class="stat-label">Paid this month</div><div class="stat-value">$1,118.42</div></div>
+          </div>
+          <div class="card" style="margin-bottom: 8px;">
+            <div class="card-head">
+              <div class="hstack" style="gap: 12px; flex: 1; flex-wrap: wrap;">
+                <span style="font-weight: 600;">Aug 18 to Aug 24</span>
+                <span class="chip info"><span class="chip-dot"></span>open</span>
+                <span class="tiny muted">paid 0 of 0</span>
+                <span class="tiny muted">payday Tue Aug 25</span>
+              </div>
+              <div class="hstack" style="gap: 12px;">
+                <span class="num"><strong>$0.00</strong> <span class="tiny muted">owed</span></span>
+                <button type="button" class="btn btn-primary btn-sm" disabled="disabled">Process period</button>
+                <span class="tiny muted">▾</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="muted tiny" style="margin-bottom: 10px;">Nothing accrued yet. Shift pay, tips and review bounties land here on their own as events close out.</div>
+              <div class="hstack" style="gap: 10px; padding: 9px 12px; background: var(--accent-soft); border: 1px solid var(--line-1); border-radius: 4px;">
+                <span class="hub-tab-badge">1</span>
+                <span style="font-size: 12px; flex: 1;">A pending five star review would add <strong class="num">$10.00</strong> to this run. Confirm it under <a href="#1h">Reviews</a>.</span>
+              </div>
+            </div>
+          </div>
+          <div class="tiny muted" style="padding: 4px 2px;">Last run: Aug 11 to 17, paid Tue Aug 18 · $402.66 across 3 payouts, including the first $6.00 tip.</div>
+          <div class="tiny muted" style="padding: 0 2px;">All time: $4,485.21 across 27 payouts to 12 contractors · owner accrual $1,130.35 across 5 periods, no draw taken.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ab" id="1f" data-screen-label="1f Payroll pay run House Lights">
+      <div class="ab-cap"><span class="ab-id">1f</span><span class="ab-name">Payroll · pay run · House Lights</span><span class="ab-route">/staffing/payroll?tab=payrun</span></div>
+      <p class="ab-note">Same layout under House Lights: squared hub tabs, jewel-tone chips, Caslon numerals. Both skins hold with zero markup changes.</p>
+      <div class="frame os-root" data-app="admin-os" data-skin="light" data-density="comfy" style="width: 1160px;">
+        <div class="page">
+          <div class="hub-head">
+            <div class="page-header">
+              <div><div class="page-title">Staff</div><div class="page-subtitle">18 active · pay run Aug 18 to 24 open, payday Tue Aug 25 · 1 review to confirm</div></div>
+            </div>
+            <nav class="hub-tabs">
+              <span class="hub-tab">Roster <span class="hub-tab-count">18</span></span>
+              <span class="hub-tab">Hiring <span class="hub-tab-badge">1</span></span>
+              <span class="hub-tab active">Payroll</span>
+              <span class="hub-tab">Reviews <span class="hub-tab-badge">1</span></span>
+            </nav>
+          </div>
+          <div class="hstack" style="gap: 8px; margin-bottom: 12px;">
+            <div class="seg"><button type="button" class="active">Pay run</button><button type="button">History</button><button type="button">Tips</button><button type="button">1099 / tax</button></div>
+          </div>
+          <div class="stat-row" style="grid-template-columns: repeat(4, 1fr); margin-bottom: var(--gap);">
+            <div class="stat"><div class="stat-label">Still owed</div><div class="stat-value">$0.00</div></div>
+            <div class="stat"><div class="stat-label">Unpaid payouts</div><div class="stat-value">0</div></div>
+            <div class="stat"><div class="stat-label">Oldest open</div><div class="stat-value">0 wk</div></div>
+            <div class="stat"><div class="stat-label">Paid this month</div><div class="stat-value">$1,118.42</div></div>
+          </div>
+          <div class="card" style="margin-bottom: 8px;">
+            <div class="card-head">
+              <div class="hstack" style="gap: 12px; flex: 1; flex-wrap: wrap;">
+                <span style="font-weight: 600;">Aug 18 to Aug 24</span>
+                <span class="chip info"><span class="chip-dot"></span>open</span>
+                <span class="tiny muted">paid 0 of 0</span>
+                <span class="tiny muted">payday Tue Aug 25</span>
+              </div>
+              <div class="hstack" style="gap: 12px;">
+                <span class="num"><strong>$0.00</strong> <span class="tiny muted">owed</span></span>
+                <button type="button" class="btn btn-primary btn-sm" disabled="disabled">Process period</button>
+                <span class="tiny muted">▾</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="muted tiny" style="margin-bottom: 10px;">Nothing accrued yet. Shift pay, tips and review bounties land here on their own as events close out.</div>
+              <div class="hstack" style="gap: 10px; padding: 9px 12px; background: var(--accent-soft); border: 1px solid var(--line-1); border-radius: 4px;">
+                <span class="hub-tab-badge">1</span>
+                <span style="font-size: 12px; flex: 1;">A pending five star review would add <strong class="num">$10.00</strong> to this run. Confirm it under <a href="#1h">Reviews</a>.</span>
+              </div>
+            </div>
+          </div>
+          <div class="tiny muted" style="padding: 4px 2px;">Last run: Aug 11 to 17, paid Tue Aug 18 · $402.66 across 3 payouts, including the first $6.00 tip.</div>
+          <div class="tiny muted" style="padding: 0 2px;">All time: $4,485.21 across 27 payouts to 12 contractors · owner accrual $1,130.35 across 5 periods, no draw taken.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ PAYROLL TIPS + REPAIR SPECIMEN ══════════ -->
+  <div class="ab-row">
+    <div class="ab" id="1g" data-screen-label="1g Payroll tips">
+      <div class="ab-cap"><span class="ab-id">1g</span><span class="ab-name">Payroll · Tips</span><span class="ab-route">/staffing/payroll?tab=tips</span></div>
+      <p class="ab-note"><strong>Three things, one order: repair, then ledger, then context.</strong> The two repair queues collapse to a single clear line when empty, so the $6.00 ledger is the page, not an afterthought under two empty panels. Old /tips deep links redirect here with params intact.</p>
+      <div class="frame os-root" data-app="admin-os" data-skin="dark" data-density="comfy" style="width: 1160px;">
+        <div class="page">
+          <div class="hub-head">
+            <div class="page-header">
+              <div><div class="page-title">Staff</div><div class="page-subtitle">18 active · pay run Aug 18 to 24 open, payday Tue Aug 25 · 1 review to confirm</div></div>
+            </div>
+            <nav class="hub-tabs">
+              <span class="hub-tab">Roster <span class="hub-tab-count">18</span></span>
+              <span class="hub-tab">Hiring <span class="hub-tab-badge">1</span></span>
+              <span class="hub-tab active">Payroll</span>
+              <span class="hub-tab">Reviews <span class="hub-tab-badge">1</span></span>
+            </nav>
+          </div>
+          <div class="hstack" style="gap: 8px; margin-bottom: 12px;">
+            <div class="seg"><button type="button">Pay run</button><button type="button">History</button><button type="button" class="active">Tips</button><button type="button">1099 / tax</button></div>
+          </div>
+          <div class="card" style="margin-bottom: var(--gap);">
+            <div class="card-body hstack" style="gap: 10px; padding: 10px 16px;">
+              <span class="chip ok"><span class="chip-dot"></span>clear</span>
+              <span style="font-size: 12.5px;">Repair queues are clear: no unassigned tips, nothing deferred.</span>
+              <div class="spacer"></div>
+              <span class="tiny muted">Unassigned appear when a tip can't find its event · deferred wait for an open period</span>
+            </div>
+          </div>
+          <div class="stat-row" style="grid-template-columns: repeat(3, 1fr); margin-bottom: var(--gap);">
+            <div class="stat"><div class="stat-label">Tips all time</div><div class="stat-value">$6.00</div><div class="stat-sub"><span>1 tip</span></div></div>
+            <div class="stat"><div class="stat-label">Signs live since</div><div class="stat-value">Aug 11</div><div class="stat-sub"><span>8 days</span></div></div>
+            <div class="stat"><div class="stat-label">Shifts since launch</div><div class="stat-value">3</div><div class="stat-sub"><span>one event day</span></div></div>
+          </div>
+          <div class="card" style="overflow: hidden;">
+            <div class="card-head"><h3>Activity</h3><span class="k">1</span></div>
+            <div class="tbl-wrap">
+              <table class="tbl">
+                <thead><tr><th>Bartender</th><th class="num">Amount</th><th>Date</th><th>Customer</th><th>Lands in</th></tr></thead>
+                <tbody>
+                  <tr><td><strong>Shea Corrigan</strong></td><td class="num">$6.00</td><td>Aug 16, 20:41</td><td class="muted">mkelly74@gmail.com</td><td class="muted">Aug 11 to 17 · paid Aug 18</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="card-body tiny muted" style="border-top: 1px solid var(--line-1);">Every tip accrues to the bartender's own payout; this ledger is the cross-staff view. Signs went out Aug 11, three shifts ago. The first one took five days: normal.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ab" id="1g2" data-screen-label="1g2 Tips repair specimen">
+      <div class="ab-cap"><span class="ab-id">1g2</span><span class="ab-name">Tips repair · specimen, non-empty</span><span class="ab-route">component spec</span></div>
+      <p class="ab-note">When the queues are hot they replace the clear line, ordered unassigned first (an action) then deferred (a wait). Not production data: a specimen so the layout is specified at both ends.</p>
+      <div class="frame os-root" data-app="admin-os" data-skin="dark" data-density="comfy" style="width: 640px;">
+        <div style="padding: 16px; display: flex; flex-direction: column; gap: 8px;">
+          <div class="card">
+            <div class="card-body hstack" style="gap: 12px; flex-wrap: wrap;">
+              <span class="chip warn"><span class="chip-dot"></span>unassigned</span>
+              <div style="min-width: 140px;"><div style="font-weight: 600; font-size: 12.5px;">Marcus Webb</div><div class="tiny muted">$12.00 on Sep 3</div></div>
+              <select class="select" style="flex: 1; min-width: 160px;"><option>Sep 2 · Wedding</option></select>
+              <button type="button" class="btn btn-primary btn-sm">Assign</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-body hstack" style="gap: 12px; flex-wrap: wrap;">
+              <span class="chip violet"><span class="chip-dot"></span>deferred</span>
+              <div style="flex: 1; min-width: 180px;"><div style="font-weight: 600; font-size: 12.5px;">Keisha Bell</div><div class="tiny muted">$9.00 tip · deferred Sep 4 · waiting for an open period</div></div>
+              <button type="button" class="btn btn-secondary btn-sm">Retry now</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ REVIEWS, both ends ══════════ -->
+  <div class="ab-row">
+    <div class="ab" id="1h" data-screen-label="1h Reviews one row">
+      <div class="ab-cap"><span class="ab-id">1h</span><span class="ab-name">Reviews · today, one row</span><span class="ab-route">/staffing/reviews</span></div>
+      <p class="ab-note"><strong>Q3: a full tab, no internal tabs.</strong> Pending reviews are workbench cards, resolved ones become table rows, the contest is a rail. One pending row reads as the whole point of the page, not as a nearly empty log.</p>
+      <div class="frame os-root" data-app="admin-os" data-skin="dark" data-density="comfy" style="width: 1160px;">
+        <div class="page">
+          <div class="hub-head">
+            <div class="page-header">
+              <div><div class="page-title">Staff</div><div class="page-subtitle">18 active · pay run Aug 18 to 24 open, payday Tue Aug 25 · 1 review to confirm</div></div>
+            </div>
+            <nav class="hub-tabs">
+              <span class="hub-tab">Roster <span class="hub-tab-count">18</span></span>
+              <span class="hub-tab">Hiring <span class="hub-tab-badge">1</span></span>
+              <span class="hub-tab">Payroll</span>
+              <span class="hub-tab active">Reviews <span class="hub-tab-badge">1</span></span>
+            </nav>
+          </div>
+          <div class="hstack" style="gap: 8px; margin-bottom: 12px;">
+            <span class="tiny muted">Thumbtack reviews arrive on their own · log Google reviews by hand</span>
+            <div class="spacer"></div>
+            <button type="button" class="btn btn-secondary">Log a Google review</button>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 320px; gap: var(--gap); align-items: start;">
+            <div class="vstack" style="gap: var(--gap);">
+              <article class="card">
+                <div class="card-head">
+                  <h3 class="hstack" style="gap: 8px;"><span style="color: hsl(var(--warn-h) var(--warn-s) 60%); letter-spacing: 2px;">★★★★★</span><span class="chip accent"><span class="chip-dot"></span>pending</span><span class="muted tiny">Thumbtack</span></h3>
+                  <span class="muted tiny">Aug 17, 2026</span>
+                </div>
+                <div class="card-body">
+                  <p style="margin: 0; font-size: 13.5px; line-height: 1.6;">"It was a wonderful experience! Shea was so professional and prompt!"</p>
+                  <div class="section-title" style="margin-top: 16px;">Named staff</div>
+                  <div class="hstack" style="gap: 6px; flex-wrap: wrap;">
+                    <span class="chip accent" style="height: 24px; padding: 1px 10px;">Shea Corrigan</span>
+                    <button type="button" class="btn btn-ghost btn-sm">+ Add a name</button>
+                  </div>
+                  <p class="tiny muted" style="margin: 8px 0 0;">Suggested from the excerpt. Confirming pays each named staffer $10.00 into the open pay run, Aug 18 to 24.</p>
+                  <div class="hstack" style="gap: 8px; margin-top: 14px;">
+                    <button type="button" class="btn btn-primary">Confirm and pay $10.00</button>
+                    <button type="button" class="btn btn-ghost">Dismiss</button>
+                  </div>
+                </div>
+              </article>
+              <div class="card">
+                <div class="card-head"><h3>Resolved</h3><span class="k">0</span></div>
+                <div class="card-body muted tiny">Nothing resolved yet. Confirmed and dismissed reviews collect here as rows.</div>
+              </div>
+              <div class="tiny muted">All time: 1 review logged · $0.00 in bounties paid · bounty is $10.00 flat, five stars with a name required.</div>
+            </div>
+            <div class="vstack" style="gap: var(--gap);">
+              <div class="card">
+                <div class="card-head"><h3>Q3 2026 contest</h3><span class="k">$100 pot</span></div>
+                <div class="card-body vstack" style="gap: 8px;">
+                  <div class="tiny muted">Jul 1 to Sep 30 · standings build as five star reviews are confirmed with names.</div>
+                  <div class="tiny" style="color: var(--ink-2);">Floor to qualify: 5 events worked and 2 named five stars in the quarter.</div>
+                  <div class="tiny muted">No qualifiers yet. Confirming the pending review puts Shea 1 of 2 toward the floor.</div>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-head"><h3>How review money works</h3></div>
+                <div class="card-body vstack" style="gap: 10px; font-size: 12px;">
+                  <div class="hstack" style="gap: 10px; align-items: flex-start;"><span class="k" style="flex-shrink: 0;">1</span><span>Thumbtack reviews land here on their own. Log Google reviews by hand.</span></div>
+                  <div class="hstack" style="gap: 10px; align-items: flex-start;"><span class="k" style="flex-shrink: 0;">2</span><span>Name who earned it. Five stars with a name carries the bounty.</span></div>
+                  <div class="hstack" style="gap: 10px; align-items: flex-start;"><span class="k" style="flex-shrink: 0;">3</span><span>Confirm writes a $10.00 line to the open pay run. Each quarter, the most reviewed split $100.</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ab" id="1i" data-screen-label="1i Reviews fall season">
+      <div class="ab-cap"><span class="ab-id">1i</span><span class="ab-name">Reviews · a busy fall, same layout</span><span class="ab-route">/staffing/reviews</span></div>
+      <p class="ab-note">Volume changes nothing structural: pending stays a card, resolved rows stack in the table, standings fill the rail. The one-row page and this one are the same design.</p>
+      <div class="frame os-root" data-app="admin-os" data-skin="dark" data-density="comfy" style="width: 1160px;">
+        <div class="page">
+          <div class="hub-head">
+            <div class="page-header">
+              <div><div class="page-title">Staff</div><div class="page-subtitle">18 active · pay run Oct 19 to 25 open, payday Tue Oct 27 · 2 reviews to confirm</div></div>
+            </div>
+            <nav class="hub-tabs">
+              <span class="hub-tab">Roster <span class="hub-tab-count">18</span></span>
+              <span class="hub-tab">Hiring <span class="hub-tab-badge">3</span></span>
+              <span class="hub-tab">Payroll</span>
+              <span class="hub-tab active">Reviews <span class="hub-tab-badge">2</span></span>
+            </nav>
+          </div>
+          <div class="hstack" style="gap: 8px; margin-bottom: 12px;">
+            <span class="tiny muted">Thumbtack reviews arrive on their own · log Google reviews by hand</span>
+            <div class="spacer"></div>
+            <button type="button" class="btn btn-secondary">Log a Google review</button>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 320px; gap: var(--gap); align-items: start;">
+            <div class="vstack" style="gap: var(--gap);">
+              <article class="card">
+                <div class="card-head">
+                  <h3 class="hstack" style="gap: 8px;"><span style="color: hsl(var(--warn-h) var(--warn-s) 60%); letter-spacing: 2px;">★★★★★</span><span class="chip accent"><span class="chip-dot"></span>pending</span><span class="muted tiny">Thumbtack</span></h3>
+                  <span class="muted tiny">Oct 19, 2026</span>
+                </div>
+                <div class="card-body">
+                  <p style="margin: 0; font-size: 13.5px; line-height: 1.6;">"Priya ran our cocktail hour like clockwork, guests would not stop talking about the paloma."</p>
+                  <div class="section-title" style="margin-top: 16px;">Named staff</div>
+                  <div class="hstack" style="gap: 6px; flex-wrap: wrap;">
+                    <span class="chip accent" style="height: 24px; padding: 1px 10px;">Priya Nair</span>
+                    <button type="button" class="btn btn-ghost btn-sm">+ Add a name</button>
+                  </div>
+                  <div class="hstack" style="gap: 8px; margin-top: 14px;">
+                    <button type="button" class="btn btn-primary">Confirm and pay $10.00</button>
+                    <button type="button" class="btn btn-ghost">Dismiss</button>
+                  </div>
+                </div>
+              </article>
+              <div class="tiny muted" style="padding: 0 2px;">1 more pending: Oct 3, five stars, no staffer named yet.</div>
+              <div class="card" style="overflow: hidden;">
+                <div class="card-head"><h3>Resolved</h3><span class="k">5</span></div>
+                <div class="tbl-wrap">
+                  <table class="tbl">
+                    <thead><tr><th>Date</th><th>Review</th><th>Credited</th><th>Status</th><th class="num">Bounty</th></tr></thead>
+                    <tbody>
+                      <tr><td class="muted">Oct 24</td><td><span style="color: hsl(var(--warn-h) var(--warn-s) 60%);">★5</span> · Google · <span class="muted">"Marcus kept a 150 person line moving…"</span></td><td>Marcus Webb</td><td><span class="chip ok"><span class="chip-dot"></span>confirmed</span></td><td class="num">$10.00</td></tr>
+                      <tr><td class="muted">Oct 22</td><td><span style="color: hsl(var(--warn-h) var(--warn-s) 60%);">★5</span> · Thumbtack · <span class="muted">"Shea built us a custom menu…"</span></td><td>Shea Corrigan</td><td><span class="chip ok"><span class="chip-dot"></span>confirmed</span></td><td class="num">$10.00</td></tr>
+                      <tr><td class="muted">Oct 15</td><td><span style="color: hsl(var(--warn-h) var(--warn-s) 60%);">★4</span> · Google · <span class="muted">"Great service overall…"</span></td><td class="muted">—</td><td><span class="chip ok"><span class="chip-dot"></span>confirmed</span></td><td class="num muted">no bounty</td></tr>
+                      <tr><td class="muted">Oct 12</td><td><span style="color: hsl(var(--warn-h) var(--warn-s) 60%);">★5</span> · Thumbtack · <span class="muted">"Shea and Keisha were the best part…"</span></td><td>Shea Corrigan, Keisha Bell</td><td><span class="chip ok"><span class="chip-dot"></span>confirmed</span></td><td class="num">$20.00</td></tr>
+                      <tr><td class="muted">Oct 8</td><td><span style="color: hsl(var(--warn-h) var(--warn-s) 60%);">★5</span> · Google · <span class="muted">"Fantastic night…"</span></td><td class="muted">no staffer named</td><td><span class="chip warn"><span class="chip-dot"></span>dismissed</span></td><td class="num muted">—</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div class="vstack" style="gap: var(--gap);">
+              <div class="card" style="overflow: hidden;">
+                <div class="card-head"><h3>Q4 2026 contest</h3><span class="k">$100 pot</span></div>
+                <div class="tbl-wrap">
+                  <table class="tbl">
+                    <thead><tr><th>Staffer</th><th class="num">Named</th><th>Qualifies</th></tr></thead>
+                    <tbody>
+                      <tr><td><strong>Shea Corrigan</strong></td><td class="num">4 of 9</td><td><span class="chip ok"><span class="chip-dot"></span>yes</span></td></tr>
+                      <tr><td><strong>Marcus Webb</strong></td><td class="num">3 of 8</td><td><span class="chip ok"><span class="chip-dot"></span>yes</span></td></tr>
+                      <tr><td><strong>Keisha Bell</strong></td><td class="num">2 of 6</td><td><span class="chip ok"><span class="chip-dot"></span>yes</span></td></tr>
+                      <tr><td class="muted">Priya Nair</td><td class="num muted">1 of 7</td><td><span class="tiny muted">below the floor</span></td></tr>
+                      <tr><td class="muted">Devon Price</td><td class="num muted">0 of 5</td><td><span class="tiny muted">below the floor</span></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="card-body vstack" style="gap: 8px; border-top: 1px solid var(--line-1);">
+                  <div class="tiny muted">Quarter still running. If it ended today, Shea, Marcus and Keisha split the pot.</div>
+                  <button type="button" class="btn btn-secondary btn-sm" style="align-self: flex-start;">Award the quarter</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ THE PATTERN SPEC ══════════ -->
+  <div class="ab-row">
+    <div class="ab" id="1j" data-screen-label="1j Hub pattern spec">
+      <div class="ab-cap"><span class="ab-id">1j</span><span class="ab-name">The hub pattern · spec for reuse</span><span class="ab-route">client/src/index.css · Marketing adopts next</span></div>
+      <div class="frame os-root" data-app="admin-os" data-skin="dark" data-density="comfy" style="width: 1160px;">
+        <div class="page">
+          <div class="page-header">
+            <div><div class="page-title">Two levels, two vocabularies</div><div class="page-subtitle">The reusable rule for every hub: Staff now, Marketing next.</div></div>
+          </div>
+          <div class="grid-2" style="margin-bottom: var(--gap);">
+            <div class="card">
+              <div class="card-head"><h3>Level 1 · hub sections</h3><span class="k">.hub-tabs</span></div>
+              <div class="card-body vstack" style="gap: 12px;">
+                <div class="hub-head" style="margin-bottom: 0;">
+                  <nav class="hub-tabs">
+                    <span class="hub-tab active">Roster <span class="hub-tab-count">18</span></span>
+                    <span class="hub-tab">Hiring <span class="hub-tab-badge">1</span></span>
+                    <span class="hub-tab">Payroll</span>
+                    <span class="hub-tab">Reviews <span class="hub-tab-badge">1</span></span>
+                  </nav>
+                </div>
+                <div class="tiny muted">Underline tabs fused to the page header. Routes, not state: each tab is a URL. Counts in mono (.hub-tab-count) are ambient; badges (.hub-tab-badge) mean a decision is waiting. One .hub-tabs per page, ever.</div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>Level 2 · views of one surface</h3><span class="k">.seg (existing)</span></div>
+              <div class="card-body vstack" style="gap: 12px;">
+                <div class="hstack" style="gap: 8px;">
+                  <div class="seg"><button type="button" class="active">Pay run</button><button type="button">History</button><button type="button">Tips</button><button type="button">1099 / tax</button></div>
+                </div>
+                <div class="tiny muted">The Toolbar's segmented pill, unchanged, in the content area. It filters or re-lenses what is already on screen. URL-backed via ?tab= as today. Never render two .segs stacked; the second one is a select or a toolbar filter.</div>
+              </div>
+            </div>
+          </div>
+          <div class="card" style="margin-bottom: var(--gap); overflow: hidden;">
+            <div class="card-head"><h3>The law</h3></div>
+            <div class="tbl-wrap">
+              <table class="tbl">
+                <thead><tr><th>Rule</th><th>Detail</th></tr></thead>
+                <tbody>
+                  <tr><td><strong>Which level am I on</strong></td><td class="muted">Header-fused underline = where you are. Pill in the toolbar = what you are looking at. No third level exists: a child needing one restructures (Reviews became card + table + rail).</td></tr>
+                  <tr><td><strong>Badge math</strong></td><td class="muted">Sidebar badge on Staff = sum of decisions waiting across children. Hub tab badges decompose it per child. Counts are not badges: Roster 18 is ambient, mono, gray.</td></tr>
+                  <tr><td><strong>Hub chrome</strong></td><td class="muted">One shared title + one live subtitle line (roster count, open pay run, decisions). No KPI band above the tabs; the child page owns its stats.</td></tr>
+                  <tr><td><strong>Consolidation</strong></td><td class="muted">Retired: legacy .tab-nav/.tab-btn (amber tokens) and the hand-rolled underline buttons in TipsAdmin and StaffReviews. New surfaces choose .hub-tabs or .seg, nothing else.</td></tr>
+                  <tr><td><strong>Routes</strong></td><td class="muted">/staffing lands on Roster. /hiring, /tips, /reviews, /financials/payroll redirect preserving params. Overview's ?tab=payrun&amp;period=&lt;id&gt; deep link keeps working.</td></tr>
+                  <tr><td><strong>Responsive</strong></td><td class="muted">.hub-tabs scrolls horizontally under 720px, no wrapping. Wide tables scroll in .tbl-wrap, never the page. Both skins flip on [data-app="admin-os"][data-skin].</td></tr>
+                  <tr><td><strong>Marketing adoption</strong></td><td class="muted">.mkt-tabrow's .seg becomes .hub-tabs one for one; the budget meter moves into the live subtitle line. .seg stays for its internal filters.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h3>New classes</h3><span class="k">vanilla CSS · client/src/index.css</span></div>
+            <div class="tbl-wrap">
+              <table class="tbl">
+                <thead><tr><th>Class</th><th>Role</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">.hub-head</td><td class="muted">Wraps .page-header + .hub-tabs; owns the single bottom hairline.</td></tr>
+                  <tr><td class="mono">.hub-tab / .active</td><td class="muted">Section link. 34px, 2px accent underline when active. Squared on House Lights.</td></tr>
+                  <tr><td class="mono">.hub-tab-count / .hub-tab-badge</td><td class="muted">Ambient mono count vs accent decision pill.</td></tr>
+                  <tr><td class="mono">.hub-empty</td><td class="muted">Deliberate empty state: title, one sentence, one action.</td></tr>
+                  <tr><td class="mono">.hire-fold / .hire-stub</td><td class="muted">Collapsed imported-history group in the kanban + its dimmed rows.</td></tr>
+                  <tr><td class="mono">.roster-sect</td><td class="muted">In-table group header row (Former staff / Imported records).</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;importedExpanded&quot;: { &quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: false, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Hiring&quot;, &quot;description&quot;: &quot;Expand the 29-record CheckCherry imported-history fold on the Hiring board&quot; },
+  &quot;sidebarBadge&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;count&quot;, &quot;dot&quot;], &quot;default&quot;: &quot;count&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Sidebar&quot;, &quot;description&quot;: &quot;Staff sidebar badge as a summed count vs a quiet attention dot&quot; }
+}">
+class Component extends DCLogic {
+  state = { importedOpen: null };
+  renderVals() {
+    const open = this.state.importedOpen ?? (this.props.importedExpanded ?? false);
+    const badge = this.props.sidebarBadge ?? 'count';
+    return {
+      importedOpen: open,
+      foldChevron: open ? '▾' : '▸',
+      toggleImported: () => this.setState({ importedOpen: !open }),
+      badgeIsCount: badge === 'count',
+      badgeIsDot: badge === 'dot',
+    };
+  }
+}
+</script>
+</body>
+</html>
