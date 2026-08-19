@@ -3710,7 +3710,47 @@ Fix: one test in the seniority suite — read `updated_at`, PUT the same values,
 assert it did not move — plus a second asserting a real change DOES move it, so
 the guard cannot be "fixed" by disabling the write altogether.
 
-## The dev box is armed against LIVE Stripe, and nothing in the factory stops it (found 2026-08-14)
+## ~~The dev box is armed against LIVE Stripe~~ — DECIDED-KEEP (Dallas, 2026-08-19). DO NOT RE-RAISE.
+
+**This entry was wrong, and it was the top-severity item on this list for five days.** The dev
+box talks to live Stripe **on purpose**. Dallas: *"I need to be able to do stuff from this box.
+We do stuff from this box all the time."* Operator work runs from here against the live account
+— payment links, refunds, customer writes. It is a workflow, not a defect, and the governing
+constraint is his: *"I like secure but I need access to be able to work."*
+
+**A `NODE_ENV` gate was built and then removed** (lane `stripe-fail-closed`). With no keys
+configured `stripeLive` is already null, so the gate's ONLY effect was on the configuration that
+is deliberate — it would have broken the daily workflow to prevent something nobody was doing by
+accident. Its value was negative. `server/utils/stripeClient.test.js` now pins that decision:
+if a NODE_ENV gate ever reappears, that test fails and says it is a product decision, not a
+cleanup.
+
+**Do not propose test keys for this box either.** That was tried the same day and is what
+surfaced the foot-gun below.
+
+**WHAT WAS REAL, and shipped:**
+- `payrollTips.stripeFeeFor` and `stripeRouteHelpers.getOrCreateCustomer` both called
+  `getStripe()` and dereferenced it immediately. `null` IS reachable today (test mode with no
+  test key), so both could throw a bare TypeError on a money path. Both now throw a typed
+  `ExternalServiceError`. This also corrected a false claim in the factory's own header, which
+  said "callers already handle the null case" — two did not.
+- `stripeFeeFor` throws rather than returning null, deliberately: null is already its "not
+  settled yet" answer and both callers treat null as nothing to record, so returning it would
+  silently leave `tips.fee_cents` unset and the gratuity un-netted with no signal.
+- The factory's first-ever test suite (6 cases).
+
+**LIVE FOOT-GUN, found the hard way 2026-08-19 and now guarded.** `.env.example` carried a fixed
+sample cutoff (`2026-04-21…`). It went stale, and was pasted verbatim into a real `.env` as
+`2026-05-03` — three months past. `isTestMode()` checks `Date.now() < cutoff`, so an expired
+cutoff reads as "configured for test" and **silently means LIVE**: real cards, real money, while
+believing otherwise. The sample date is replaced with a warning that the cutoff must be in the
+FUTURE, and a test pins that an expired cutoff resolves to the live client. If anyone ever does
+want test mode here, use a far-future date and verify `isTestMode()` rather than trusting the
+file.
+
+**The original entry is kept below for its factual content** (the `sk_live_` key, the absent
+`NODE_ENV` gate, the noNameWrite incident) — all accurate. Only its conclusion was wrong.
+
 
 Highest-severity thing found in the 8/14 walk batch. Not a hypothetical: it has
 already happened once.
