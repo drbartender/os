@@ -4316,6 +4316,33 @@ and flagged so nobody wastes a lane chasing it.
 
 ## board-write.sh pushes MAIN, not just the board (found 2026-08-14, ma-d-auth merge)
 
+**FIXED 2026-08-19, lane `board-push-guard` (`993d4a25`), merged, not yet pushed.** The push is
+now skipped unless the board commit is the ONLY unpushed commit on `main`
+(`git rev-list --count origin/main..HEAD` equals one, evaluated right after the existing
+`pull --rebase`, and failing CLOSED when the count cannot be determined). Skipping is a
+SUCCESS: the board is written and committed, only the push defers, and stderr names how many
+commits it declined to deploy so a skip is never mistaken for a no-op.
+
+**It nearly bit a second time before the fix landed.** On 2026-08-19 another window went to add
+a missing `nat-trim` board entry and correctly stopped, reporting it would be "a second uncued
+deploy of that one docs commit." It was worse than that: `origin/main..HEAD` held TWO commits
+carrying FIVE code files from the freshly merged `mkt-moment-setup` lane. The hazard grows
+silently between the moment somebody notices it and the moment they act, which is the whole
+argument for fixing the tool rather than remembering not to run it.
+
+**Preference (2) from the list below — drop the push entirely — was considered and NOT taken.**
+A second machine syncs the board over git, so dropping the push costs board visibility there
+for no safety gain. The hazard was never "this script pushes", it was "this script pushes other
+people's work", and the guard targets exactly that.
+
+Tested as a pair that only means something together: one asserts the board still reaches origin
+when nothing else is riding (without it, a guard that disabled pushing outright would look
+green), the other seeds an unrelated unpushed commit and asserts neither the board line nor that
+commit reaches the remote. The pre-existing happy-path test never checked the remote at all,
+which is how a regression here would have gone unnoticed. 9/9; removing the guard turns the
+negative control red.
+
+
 Real, and it nearly shipped 49 unpushed commits with no push cue. The board
 writer is documented as a "concurrency-safe writer for docs/build-board.md",
 and its retry loop is described in terms of the board line surviving a race.
