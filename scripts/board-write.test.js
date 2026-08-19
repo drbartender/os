@@ -166,3 +166,48 @@ test('concurrent writes do not lost-update (second rebases over the first)', () 
     assert.strictEqual(count, 1, `anchor ${anchor} must appear exactly once after concurrent writes`);
   }
 });
+
+// ── The push guard ──────────────────────────────────────────────────────────
+// `git push origin main` is a BRANCH push: it ships every unpushed commit on
+// main, not just the board commit. Twice in 2026-08 that nearly turned a board
+// line into an uncued production deploy of unrelated work. These two tests are a
+// PAIR and only mean something together: the guard must refuse when other work
+// is riding, and must still push when it is not. Dropping either half lets the
+// script regress in one direction while the other test stays green.
+
+function remoteBoard(remote) {
+  return execFileSync('git', ['show', 'main:docs/build-board.md'], { cwd: remote, encoding: 'utf8' });
+}
+
+test('the board IS pushed when its commit is the only thing unpushed', () => {
+  const { remote, work } = makeRepoWithRemote();
+  const line = 'Guard positive control (spec, plan)';
+  const res = run(work, ['Ready to build', line]);
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.ok(remoteBoard(remote).includes(line),
+    'with nothing else riding, the board must still reach origin — otherwise the guard has simply disabled pushing');
+});
+
+test('an unrelated unpushed commit is NEVER deployed by a board write', () => {
+  const { remote, work } = makeRepoWithRemote();
+  // Somebody merged a lane and has not pushed it. This is the real situation:
+  // on 2026-08-19 it was five code files from a merged marketing lane.
+  fs.writeFileSync(path.join(work, 'shipped-code.js'), 'module.exports = 1;\n');
+  git(work, ['add', '--', 'shipped-code.js']);
+  git(work, ['commit', '-q', '-m', 'merge(lane something): unpushed code']);
+
+  const line = 'Guard negative control (spec, plan)';
+  const res = run(work, ['In flight', line]);
+
+  // The board write itself SUCCEEDS — the work is done, only the push defers.
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.ok(boardText(work).includes(line), 'the board is still written locally');
+  assert.match(res.stderr, /not pushed/i, 'it must say plainly that it did not push');
+
+  // The point of the whole exercise:
+  const pushed = remoteBoard(remote);
+  assert.ok(!pushed.includes(line), 'the board line must NOT have reached origin');
+  const remoteFiles = execFileSync('git', ['ls-tree', '--name-only', 'main'], { cwd: remote, encoding: 'utf8' });
+  assert.ok(!remoteFiles.includes('shipped-code.js'),
+    'the unrelated commit must NOT have been deployed — this is the bug the guard exists for');
+});

@@ -5,11 +5,13 @@ set -euo pipefail
 #
 # Many Claude windows touch the board, so a naive write would lost-update.
 # This helper does, per attempt: git pull --rebase, an atomic temp-file +
-# rename write, git commit, then a plain git push (which git rejects unless
-# it is a fast-forward, so it is fast-forward-only without --force). On a
-# rejected push (another window won the race) it retries the whole loop a
-# bounded number of times, rebasing each pass so both lines survive, then
-# escalates. It never force-pushes and never loops forever.
+# rename write, git commit, then a GUARDED git push. The push is fast-forward
+# only (git rejects a non-fast-forward by default and --force is never passed),
+# and it is SKIPPED ENTIRELY unless the board commit is the only unpushed commit
+# on main — see the guard before it, and why. On a rejected push (another window
+# won the race) it retries the whole loop a bounded number of times, rebasing
+# each pass so both lines survive, then escalates. It never force-pushes, never
+# pushes anyone else's work, and never loops forever.
 #
 # Before any write it enforces a DENYLIST: the board carries titles and
 # paths only, so a line that looks like an email, a phone number, a
@@ -146,6 +148,31 @@ main() {
       exit 0
     fi
     git commit --quiet -m "board: update ${section}"
+
+    # REFUSE TO PUSH SOMEBODY ELSE'S WORK. `git push origin main` is a BRANCH
+    # push: it ships EVERY unpushed commit on main, not just the board commit we
+    # made a line ago. That is not theoretical — on 2026-08-14 it came within a
+    # keystroke of deploying 49 uncued commits, and on 2026-08-19 it would have
+    # shipped five code files from a freshly merged lane, in both cases bypassing
+    # the push cue, the gate receipt and the review fleet. A board line is never
+    # worth that.
+    #
+    # The pull --rebase above just refreshed origin/main, so exactly ONE commit
+    # between origin/main and HEAD means ours is the only thing riding. Anything
+    # else and we keep the board commit local: it rides the next real push, which
+    # loses nothing. Fail CLOSED — if the count cannot be determined, do not push.
+    local riding
+    riding=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo "")
+    if [ -z "$riding" ] || [ "$riding" -ne 1 ]; then
+      echo "Board updated under '${section}' and committed LOCALLY, not pushed." >&2
+      if [ -n "$riding" ]; then
+        echo "  ${riding} commits are unpushed here, so pushing would deploy $((riding - 1)) that never got a push cue." >&2
+      else
+        echo "  Could not determine what else is unpushed, so refusing to push." >&2
+      fi
+      echo "  The board rides the next real push. Nothing is lost." >&2
+      exit 0
+    fi
 
     # Push fast-forward only. git rejects a non-fast-forward push by default
     # (no --force is ever passed), so this IS fast-forward-only: if a peer
