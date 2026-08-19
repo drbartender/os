@@ -27,6 +27,13 @@
  */
 
 const { pool } = require('../db');
+const { AUDIENCES } = require('./marketingAudience');
+
+// Moments name an audience by id; the operator needs its NAME and RULE to act on
+// an empty one ("nobody is tagged Corporate yet" is actionable, "past-corporate
+// is empty" is not). Safe to import: marketingAudience requires only
+// emailValidation, so there is no cycle back to this module.
+const AUDIENCE_BY_ID = new Map(AUDIENCES.map(a => [a.id, a]));
 
 /**
  * @typedef {Object} MomentDef
@@ -60,6 +67,9 @@ const MOMENTS = [
   {
     id: 'holiday-corporate',
     audienceId: 'past-corporate',
+    // Its audience is gated on a human classification ('corporate' = ANY(tags)),
+    // so nobody matching is a SETUP GAP somebody can close today.
+    emptyAudience: 'configure',
     // Keyed by YEAR: this is an annual push, so dismissing it clears one year.
     occurrenceKey: (now) => String(localParts(now).year),
     // Open from August through the Sep 5 send date. Corporate holiday work is
@@ -78,6 +88,11 @@ const MOMENTS = [
   {
     id: 'one-year-on',
     audienceId: 'one-year-on',
+    // Purely temporal. Nobody matching means nobody has hit a year YET, and only
+    // time changes that — as of 2026-08 the earliest event in prod is 4 months
+    // old, so this is legitimately empty for another 7 months. Nagging daily
+    // about it would be the cry-wolf failure this codebase keeps re-learning.
+    emptyAudience: 'wait',
     // Keyed by MONTH: it is a rolling monthly prompt over a moving cohort.
     occurrenceKey: (now) => {
       const { year, month } = localParts(now);
@@ -94,6 +109,9 @@ const MOMENTS = [
   {
     id: 'cold-quotes',
     audienceId: 'cold-quotes-spring',
+    // Derived entirely from proposal data (quoted Mar-Jun, never paid). Nobody
+    // matching is a fact about the book, not a thing to go configure.
+    emptyAudience: 'wait',
     occurrenceKey: (now) => {
       const { year, month } = localParts(now);
       return `${year}-${String(month).padStart(2, '0')}`;
@@ -150,6 +168,9 @@ async function resolveMoments(now, countFor) {
     out.push({
       id: def.id,
       audience_id: def.audienceId,
+      audience_name: (AUDIENCE_BY_ID.get(def.audienceId) || {}).name || def.audienceId,
+      audience_rule: (AUDIENCE_BY_ID.get(def.audienceId) || {}).rule || null,
+      empty_audience: def.emptyAudience,
       occurrence_key: key,
       open,
       dismissed: isDismissed,
@@ -169,8 +190,34 @@ async function resolveMoments(now, countFor) {
   return out;
 }
 
-/** A moment worth showing today: open, and not dismissed for this occurrence. */
+/**
+ * SENDABLE today: open, not dismissed for this occurrence, AND with somebody to
+ * reach. The last clause is the one the old comment here omitted, and omitting it
+ * in prose is how it came to be omitted in thought: a moment whose window is open
+ * but whose audience is empty was silently dropped by every consumer of this
+ * predicate, so "no moment this month" and "a moment worth thousands whose
+ * audience nobody has configured" rendered identically. That is what
+ * `needsSetup` below exists to separate.
+ */
 const isLive = (m) => m.open && !m.dismissed && m.emailable > 0;
+
+/**
+ * OPEN BUT UNSENDABLE: its window is open and it has not been dismissed, but the
+ * audience resolves to nobody. This is not "nothing to do" — it is the one state
+ * that needs a human, because the fix is configuration (tag some contacts), not
+ * waiting. Found 2026-08-14: `holiday-corporate` was open, undismissed, and
+ * invisible on every surface because `client_tags` was empty in prod, with three
+ * weeks left on an annual, revenue-bearing window.
+ *
+ * The `empty_audience === 'configure'` clause is load-bearing and was added after
+ * the first cut of this predicate. Two of the three moments are open PERMANENTLY
+ * (`isOpen: () => true`) and their audiences are temporal, so without it a brand
+ * new business nags "needs setup" on every load for months about audiences that
+ * only time can fill. A surface that cries wolf gets ignored, and then it hides
+ * the real one — which is the exact bug this predicate exists to prevent.
+ */
+const needsSetup = (m) => m.open && !m.dismissed && m.emailable === 0
+  && m.empty_audience === 'configure';
 
 /**
  * The automations that reach a contact without anyone pressing anything.
@@ -197,5 +244,6 @@ module.exports = {
   DAILY_SEND_CAP,
   resolveMoments,
   isLive,
+  needsSetup,
   _localParts: localParts,
 };

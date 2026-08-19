@@ -64,6 +64,14 @@ export default function MarketingLayout() {
         weekday: 'long', month: 'long', day: 'numeric',
       }),
       `${overview.open_moment_count} ${overview.open_moment_count === 1 ? 'moment' : 'moments'} open`,
+      // Surfaced separately so the header cannot read "0 moments open" while a
+      // needs-setup card is on screen below it. open_moment_count means SENDABLE;
+      // a moment whose audience is empty is open and waiting on a person, and
+      // saying nothing about it here is what let one sit through most of an
+      // annual revenue window.
+      ...(overview.moments_needing_setup > 0
+        ? [`${overview.moments_needing_setup} needs setup`]
+        : []),
       `${budget.remaining} sends left today`,
     ].join(' · ')
     : null;

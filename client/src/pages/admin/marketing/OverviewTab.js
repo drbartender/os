@@ -26,6 +26,50 @@ import { errorText } from './marketingFormat';
 const MOMENT_HUES = ['violet', 'info', 'warn', 'ok'];
 const BASE_HUES = ['ok', 'danger', 'warn', 'violet', 'info'];
 
+// A moment whose window is OPEN but whose audience resolves to nobody. It used to
+// be filtered out entirely, so it looked identical to "no moment this month" —
+// which is how `holiday-corporate` sat invisible through three weeks of an annual
+// revenue window while `client_tags` was empty in prod. It deliberately keeps the
+// spine, the window and the why, because the operator needs to know what they are
+// about to miss; what it drops is "Review recipients", since there is nobody to
+// review. Its one action is the one that actually unblocks it.
+function MomentNeedsSetupCard({ moment, hue, onDismiss, onSetUp, busy }) {
+  return (
+    <article className="card mkt-moment">
+      <div className="mkt-moment-grid">
+        <div className={`mkt-hue-${hue}`} />
+        <div className="mkt-moment-body">
+          <div className="mkt-moment-eyebrow">{moment.window}</div>
+          <h3 className="mkt-moment-title">{moment.title}</h3>
+          <p className="mkt-moment-why">{moment.why}</p>
+          <p className="mkt-moment-note mkt-warn">
+            Nobody matches <strong>{moment.audience_name}</strong>
+            {moment.audience_rule ? ` (${moment.audience_rule})` : ''} yet, so this
+            has no one to go to. The window is open — this needs you, not time.
+          </p>
+          {moment.edited_fields.length > 0 && (
+            <p className="mkt-moment-note">Wording edited: {moment.edited_fields.join(', ')}.</p>
+          )}
+          <div className="mkt-moment-foot">
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => onSetUp(moment)}>
+              Set up the audience
+            </button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => onDismiss(moment)} disabled={busy}>
+              Not this time
+            </button>
+          </div>
+        </div>
+        <div className="mkt-moment-rail">
+          <div className="mkt-moment-count">
+            <span className="num">0</span>
+            <div className="mkt-moment-count-sub">emailable</div>
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
 function MomentCard({ moment, hue, onEdit, onDismiss, onCompose, busy }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ title: moment.title, window: moment.window, why: moment.why });
@@ -154,7 +198,15 @@ export default function OverviewTab() {
       update(d => ({
         ...d,
         moments: d.moments.map(m => (m.id === moment.id ? { ...m, dismissed: true } : m)),
-        open_moment_count: Math.max(0, d.open_moment_count - 1),
+        // Only sendable moments are counted in open_moment_count, so dismissing
+        // a needs-setup one must NOT decrement it — that would drift the header
+        // below the truth and stay wrong until the next refresh.
+        open_moment_count: moment.emailable > 0
+          ? Math.max(0, d.open_moment_count - 1)
+          : d.open_moment_count,
+        moments_needing_setup: moment.emailable === 0
+          ? Math.max(0, (d.moments_needing_setup || 0) - 1)
+          : d.moments_needing_setup,
       }));
       // Say plainly that it comes back, because "Not this time" reads permanent.
       toast.success(`Cleared for now. It comes back next time (${moment.occurrence_key}).`);
@@ -164,6 +216,9 @@ export default function OverviewTab() {
   };
 
   const compose = (moment) => navigate(`/marketing/compose?audience=${moment.audience_id}`);
+  // Audiences is where tagging happens. It does not read an audience query param
+  // today, so this lands on the tab rather than pretending to deep-link.
+  const setUpAudience = () => navigate('/marketing/audiences');
 
   if (!data && !error) {
     return <div className="mkt-state" role="status" aria-live="polite"><div className="spinner" /> Loading…</div>;
@@ -177,7 +232,22 @@ export default function OverviewTab() {
     );
   }
 
-  const live = data.moments.filter(m => m.open && !m.dismissed && m.emailable > 0);
+  // Two groups, one window. Splitting on `emailable` rather than filtering it away
+  // is the whole point: the second group is the state that used to render as
+  // nothing at all. Mirrors isLive/needsSetup in server/utils/marketingMoments.js.
+  const openNow = data.moments.filter(m => m.open && !m.dismissed);
+  const live = openNow.filter(m => m.emailable > 0);
+  // MUST mirror needsSetup() in server/utils/marketingMoments.js, including the
+  // empty_audience clause. Filtering on `emailable === 0` alone would surface the
+  // permanently-open, time-gated moments (one-year-on, cold-quotes) as "needs
+  // setup" on a young book — a nag nobody can act on, every single load.
+  const needsSetup = openNow.filter(m => m.emailable === 0 && m.empty_audience === 'configure');
+  // A moment that is open but neither sendable nor actionable renders nowhere, so
+  // the empty state keys on what is actually SHOWN, not on what is open.
+  const shownCount = live.length + needsSetup.length;
+  const hueFor = (m) => MOMENT_HUES[
+    Math.max(0, data.moments.findIndex(x => x.id === m.id)) % MOMENT_HUES.length
+  ];
   const n = data.numbers;
   const needsTotal =
     data.needs_you.never_classified + data.needs_you.do_not_contact + data.needs_you.bounced;
@@ -204,17 +274,22 @@ export default function OverviewTab() {
           <h2 className="section-title">Moments open now</h2>
           <span className="muted tiny">Occasions repeat. Get ahead of them.</span>
         </div>
-        {live.length === 0 ? (
+        {shownCount === 0 ? (
           <div className="mkt-state">
-            Nothing open right now. Moments appear when their window opens and there is
-            somebody to reach.
+            {/* The old copy ended "…and there is somebody to reach", which described
+                the BUG: a moment with an empty audience was dropped here and the
+                sentence quietly explained the omission away. Both are gone. */}
+            Nothing open right now. Moments appear when their window opens.
           </div>
         ) : (
           <div className="mkt-moments">
             {live.map(m => (
-              <MomentCard key={m.id} moment={m}
-                hue={MOMENT_HUES[Math.max(0, data.moments.findIndex(x => x.id === m.id)) % MOMENT_HUES.length]}
+              <MomentCard key={m.id} moment={m} hue={hueFor(m)}
                 busy={busy} onEdit={editMoment} onDismiss={dismiss} onCompose={compose} />
+            ))}
+            {needsSetup.map(m => (
+              <MomentNeedsSetupCard key={m.id} moment={m} hue={hueFor(m)}
+                busy={busy} onDismiss={dismiss} onSetUp={setUpAudience} />
             ))}
           </div>
         )}

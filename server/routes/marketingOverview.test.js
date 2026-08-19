@@ -11,7 +11,7 @@ const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 const { AppError } = require('../utils/errors');
 const router = require('./marketingOverview');
-const { resolveMoments, isLive, MOMENT_BY_ID } = require('../utils/marketingMoments');
+const { resolveMoments, isLive, needsSetup, MOMENT_BY_ID } = require('../utils/marketingMoments');
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 let server, base, adminToken, managerToken;
@@ -115,9 +115,70 @@ test('an annual moment is keyed by year; a rolling one by month', async () => {
 });
 
 test('a moment with nobody in its audience is not live', async () => {
-  // Showing "send to 0 people" is worse than showing nothing.
+  // Still true, and still right: a moment with an empty audience is not SENDABLE.
+  // The comment that used to sit here ("showing 'send to 0 people' is worse than
+  // showing nothing") was the reasoning that caused a real miss, so it is recorded
+  // as overturned rather than deleted: not-live was taken to mean not-rendered, and
+  // `holiday-corporate` then sat open, undismissed and invisible on every surface
+  // for most of an annual revenue window because `client_tags` was empty in prod.
+  // Not live is correct. Not visible was the bug — see needsSetup below.
   const ms = await resolveMoments(new Date('2026-08-13T15:00:00Z'), async () => 0);
   assert.equal(ms.filter(isLive).length, 0);
+});
+
+test('an empty audience a HUMAN can fill is surfaced as needing setup', async () => {
+  const ms = await resolveMoments(new Date('2026-08-13T15:00:00Z'), async () => 0);
+  const flagged = ms.filter(needsSetup);
+  assert.equal(flagged.length, 1, 'exactly the tag-gated moment');
+  assert.equal(flagged[0].id, 'holiday-corporate');
+  assert.equal(ms.filter(isLive).length, 0);
+});
+
+test('an empty audience only TIME can fill does NOT nag', async () => {
+  // The anti-cry-wolf pin, and the reason needsSetup carries its last clause.
+  // one-year-on and cold-quotes are open permanently (isOpen: () => true) and
+  // their audiences are derived from event/proposal dates. On a young book both
+  // are legitimately 0 — as of 2026-08 the earliest prod event is four months
+  // old, so one-year-on cannot match anyone for another seven months. If these
+  // ever start reporting "needs setup", the Overview begins nagging every day
+  // about something nobody can act on, and the operator stops reading it.
+  const ms = await resolveMoments(new Date('2026-08-13T15:00:00Z'), async () => 0);
+  for (const id of ['one-year-on', 'cold-quotes']) {
+    const m = ms.find(x => x.id === id);
+    assert.equal(m.open, true, `test premise: ${id} is open`);
+    assert.equal(m.emailable, 0, `test premise: ${id} has an empty audience here`);
+    assert.equal(needsSetup(m), false, `${id} must not nag: only time fills it`);
+  }
+});
+
+test('every open moment lands in exactly one bucket: sendable, needs-a-person, or waiting', async () => {
+  // The original defect was a GAP between predicates that swallowed a moment
+  // silently. Whatever the buckets are, they must account for every open moment,
+  // so a future fourth state cannot vanish the same way.
+  for (const size of [0, 1, 5, 500]) {
+    const ms = await resolveMoments(new Date('2026-08-13T15:00:00Z'), async () => size);
+    const open = ms.filter(m => m.open && !m.dismissed);
+    const live = ms.filter(isLive);
+    const setup = ms.filter(needsSetup);
+    const waiting = open.filter(m => !isLive(m) && !needsSetup(m));
+    assert.equal(live.length + setup.length + waiting.length, open.length,
+      `audience size ${size}: the three buckets must cover the open set`);
+    assert.equal(live.filter(m => setup.includes(m)).length, 0,
+      `audience size ${size}: sendable and needs-setup must not overlap`);
+    assert.ok(waiting.every(m => m.emailable === 0 && m.empty_audience === 'wait'),
+      `audience size ${size}: anything waiting is empty AND time-gated, never a silent drop`);
+  }
+});
+
+test('a moment carries its audience NAME and RULE, so an empty one can say why', async () => {
+  // "past-corporate is empty" is not actionable; "nobody is tagged Corporate" is.
+  const ms = await resolveMoments(new Date('2026-08-13T15:00:00Z'), async () => 0);
+  const holiday = ms.find(m => m.id === 'holiday-corporate');
+  assert.equal(holiday.audience_id, 'past-corporate');
+  assert.equal(holiday.audience_name, 'Past clients · corporate');
+  assert.match(holiday.audience_rule, /Corporate/);
+  assert.ok(ms.every(m => typeof m.audience_name === 'string' && m.audience_name.length > 0),
+    'every moment resolves a human audience name, never a bare id');
 });
 
 test('exceeds_daily_cap is computed for every moment, not just the illustrated one', async () => {

@@ -22,7 +22,7 @@ const {
 // constants, never user input.
 const CORPORATE_IN = CORPORATE_EVENT_TYPES.map(t => `'${t}'`).join(',');
 const {
-  MOMENT_BY_ID, EDITABLE_FIELDS, DAILY_SEND_CAP, AUTOMATIONS, resolveMoments, isLive,
+  MOMENT_BY_ID, EDITABLE_FIELDS, DAILY_SEND_CAP, AUTOMATIONS, resolveMoments, isLive, needsSetup,
 } = require('../utils/marketingMoments');
 const { logAdminAction } = require('../utils/adminAuditLog');
 
@@ -147,6 +147,12 @@ router.get('/overview', auth, adminOnly, asyncHandler(async (_req, res) => {
     today: now.toISOString(),
     moments,
     open_moment_count: moments.filter(isLive).length,
+    // Deliberately a SEPARATE number rather than folded into the one above.
+    // open_moment_count means "sendable now" and the header, the badge and the
+    // optimistic dismiss all lean on that meaning; widening it in place would
+    // have changed all three silently. This one means "open, but its audience is
+    // empty, so it needs a person" — the state that used to render as nothing.
+    moments_needing_setup: moments.filter(needsSetup).length,
     numbers,
     needs_you: needs,
     base,
