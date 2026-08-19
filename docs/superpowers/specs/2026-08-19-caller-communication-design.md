@@ -182,6 +182,37 @@ Two copy decisions locked, both deliberate:
   it reads slightly oddly at 7am. The alternative is a third time band and more
   copy for a thin slice of callers. Owner accepted this explicitly.
 
+### 4b. The press-1 offer moves INTO the greeting (found while planning)
+
+The approved day copy says the press-1 offer itself. `escalationPromptVerb()`
+also appends that offer today, so naively adopting the new copy would speak it
+twice. The existing suppressor, `VM_ESCALATION_PROMPT=none`, is GLOBAL, and the
+two lines have now diverged: Dallas's day greeting will contain the offer while
+Zul's currently-bundled recording (`server/assets/voicemail-greeting.mp3`,
+recorded 2026-07-24) predates escalation and does not.
+
+Rule, replacing the global switch as the primary mechanism:
+
+**A line's `greeting_day` content is expected to contain the offer.** The
+appended prompt exists solely to patch a greeting recorded before the offer
+existed, which is exactly one artifact: the legacy bundled mp3. So the prompt is
+appended only when the zul line's day greeting resolves to that bundled asset
+(`VM_GREETING_URL` unset). Every other source, the new synthetic text on either
+line or any recording made from the scripts above, already contains it.
+
+This is self-correcting: the day Zul's new recording is wired to
+`VM_GREETING_URL`, the append stops on its own with no second variable to
+remember. `VM_ESCALATION_PROMPT=none` survives as a manual override that
+suppresses the append everywhere.
+
+Night never appends it, because night makes no offer.
+
+Consequence for the synthetic texts: `GREETING_TEXT_PRIMARY` is REPLACED by the
+new day copy (which contains the offer) plus a new night text.
+`GREETING_TEXT_ZUL` keeps its existing wording as the day synthetic, because the
+module's standing rule is that a line's synthetic text mirrors what that line's
+recording says, and hers still says the 2026-07-24 script.
+
 ### 5. Recordings are a gradient, never a prerequisite
 
 Eight slots exist across two lines. **All eight ship with working synthetic
