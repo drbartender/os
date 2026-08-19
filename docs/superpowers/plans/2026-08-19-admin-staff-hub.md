@@ -1,0 +1,2903 @@
+---
+lanes:
+  - id: sh-a-server
+    footprint:
+      - server/routes/admin/staffHub.js
+      - server/routes/admin/staffHub.test.js
+      - server/utils/staffHubSummary.js
+      - server/utils/staffHubSummary.test.js
+      - server/routes/admin/index.js
+      - server/routes/admin/settings.js
+      - server/routes/admin/settings.badgeCounts.test.js
+      - server/routes/admin/users.js
+      - server/routes/admin/users.activeStaff.test.js
+      - server/routes/admin/contractorTipPage.js
+      - server/routes/admin/contractorTipPage.test.js
+      - server/routes/admin/staffReviews.js
+      - server/routes/admin/staffReviews.test.js
+      - server/utils/payrollDisputeNotify.js
+      - server/utils/payrollDisputeNotify.test.js
+      - scripts/sensitive-paths.txt
+      - ARCHITECTURE.md
+    depends_on: []
+    review_fleet: full   # payroll.js-adjacent reads, dutyLines money writer joins the sensitive list, tips money reads
+  - id: sh-b-shell
+    footprint:
+      - client/src/pages/admin/staffHub/StaffHubLayout.js
+      - client/src/pages/admin/staffHub/hubSubtitle.js
+      - client/src/pages/admin/staffHub/hubSubtitle.test.js
+      - client/src/pages/admin/staffHub/StaffHubLayout.test.js
+      - client/src/components/adminos/nav.js
+      - client/src/components/adminos/nav.test.js
+      - client/src/components/adminos/Sidebar.js
+      - client/src/components/adminos/CommandPalette.js
+      - client/src/components/mobile/MobileTabBar.js
+      - client/src/components/AdminLayout.js
+      - client/src/pages/mobile/MorePage.js
+      - client/src/App.js
+      - client/src/utils/screenKey.js
+      - client/src/utils/screenKey.test.js
+      - client/src/pages/admin/StaffDashboard.js
+      - client/src/pages/admin/overview/PayrollStatus.js
+      - client/src/pages/admin/overview/NeedsYouStrip.js
+      - client/src/pages/admin/userDetail/tabs/PayoutsTab.js
+      - client/src/pages/admin/applicationDetail/AdminApplicationDetail.js
+      - client/src/index.css
+      - README.md
+    depends_on: []   # builds against the §5 contract; integration verified at merge with sh-a on main
+    review_fleet: [security-review, code-review, consistency-check, ui-ux-review]   # adminStrict guards + designed surface
+  - id: sh-c-hiring
+    footprint:
+      - client/src/pages/admin/HiringDashboard.js
+      - client/src/pages/admin/HiringDashboard.fold.test.js
+    depends_on: [sh-b-shell]
+    review_fleet: [code-review, consistency-check, ui-ux-review]
+  - id: sh-d-payroll
+    footprint:
+      - client/src/pages/admin/payroll/PayrollPage.js
+      - client/src/pages/admin/payroll/PayRunView.js
+      - client/src/pages/admin/payroll/CurrentWeekCard.js
+      - client/src/pages/admin/payroll/CurrentWeekCard.test.js
+      - client/src/pages/admin/payroll/TipsLedger.js
+      - client/src/pages/admin/payroll/tipStatus.js
+      - client/src/pages/admin/payroll/tipStatus.test.js
+      - client/src/pages/admin/payroll/UnassignedTipsPanel.js
+      - client/src/pages/admin/payroll/DeferredTipsPanel.js
+    depends_on: [sh-b-shell, sh-a-server]
+    review_fleet: [code-review, consistency-check, security-review, ui-ux-review]   # money display; no money writes
+  - id: sh-e-reviews
+    footprint:
+      - client/src/pages/admin/staffHub/reviews/ReviewsPage.js
+      - client/src/pages/admin/staffHub/reviews/PendingReviewCard.js
+      - client/src/pages/admin/staffHub/reviews/LogReviewForm.js
+      - client/src/pages/admin/staffHub/reviews/ResolvedTable.js
+      - client/src/pages/admin/staffHub/reviews/ContestRail.js
+      - client/src/pages/admin/staffHub/reviews/AwardDialog.js
+      - client/src/pages/admin/staffHub/reviews/suggestNames.js
+      - client/src/pages/admin/staffHub/reviews/suggestNames.test.js
+      - client/src/pages/admin/StaffReviews.js
+      - client/src/App.js
+    depends_on: [sh-b-shell, sh-a-server]
+    review_fleet: [code-review, consistency-check, security-review, ui-ux-review]   # confirm/dismiss/award drive payout_duty_lines writes
+  - id: sh-f-feedback
+    footprint:
+      - client/src/pages/admin/userDetail/tabs/TipPageTab.js
+      - client/src/pages/admin/userDetail/tabs/FeedbackCard.js
+      - client/src/pages/admin/TipsAdmin.js
+      - client/src/App.js
+      - README.md
+    depends_on: [sh-a-server, sh-d-payroll]   # TipsAdmin.js is deleted only after the ledger (sh-d) and this card are home
+    review_fleet: [code-review, consistency-check, security-review]
+  - id: sh-g-fidelity
+    footprint:
+      - client/src/index.css
+      - docs/design-artifacts/2026-08-19-staff-hub.dc.html
+    depends_on: [sh-c-hiring, sh-d-payroll, sh-e-reviews, sh-f-feedback]
+    review_fleet: [code-review, ui-ux-review]   # ui-ux-review points at the benchmark artifact; off-design is a finding
+---
+
+# Admin Staff Hub Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Collapse Staff, Hiring, Tips & Feedback, Reviews and the unlisted Payroll into one sidebar entry, Staff, that opens a hub where Roster lands and Hiring, Payroll, Reviews are header-fused tabs; tips fold into Payroll, feedback moves to the staffer profile.
+
+**Architecture:** A `StaffHubLayout` route component (the `MarketingLayout` pattern) owns one summary fetch and shares `{summary, refresh, setActions}` through Outlet context to four children. Children are the existing page components stripped of their own headers, plus a restructured Reviews page. Server work is read-only: one new summary endpoint with a date-derived pay-run window, one roster-feed join fix, three projection/param extensions. No schema change, no writes.
+
+**Tech Stack:** Node 26 / Express 4 / `pg` raw SQL / `node:test` on the server; React 18 (CRA) / React Router 6 / jest + RTL on the client; vanilla CSS in `client/src/index.css`.
+
+**Spec:** `docs/superpowers/specs/2026-08-19-admin-staff-hub-design.md` (approved 2026-08-19; `/review-spec` fleet folded in the same day). The design benchmark is `docs/design-artifacts/2026-08-19-staff-hub.dc.html` (design project `96291c7a-3510-4910-9c67-c41d81504920`); its `<style>` block carries the hub CSS marked "ships verbatim to client/src/index.css".
+
+**Lane graph (run order):** `sh-a-server` and `sh-b-shell` in parallel. Then `sh-c-hiring`, `sh-d-payroll`, `sh-e-reviews` in parallel (all need the hub's Outlet context from sh-b; d and e also read sh-a's new fields). `sh-f-feedback` after sh-d (it deletes `TipsAdmin.js`, whose ledger sh-d moved). `sh-g-fidelity` last, across all screens.
+
+**Proven context (verified against the repo 2026-08-19, not from memory):**
+- Server route tests are hand-rolled: a minimal `express()` app with the real router and real `auth` middleware, driven via `node:http` + `node:test`; see `server/routes/admin/settings.badgeCounts.test.js` for the harness every new server test in this plan copies (makeUser / tokenFor / get helpers, `AppError` error middleware, `pool.end()` in `after`). Run one file at a time from the repo root: `node -r dotenv/config --test server/routes/admin/<file>.test.js`.
+- `req.user` carries `role` and `can_staff` (`users.js:464`). `adminOnly` rejects non-admins; `requireAdminOrManager` admits both (`server/middleware/auth.js:79-95`).
+- `payPeriodForDate(ymd)` → `{ startDate, endDate }` and `computePayday(endDate)` are pure (`server/utils/payrollPeriods.js`); `chicagoTodayYmd()` is in `server/utils/businessTime.js:55`. `ensurePayPeriod` (`payrollAccrual.js:117`) is the lazy `pay_periods` writer; `payrollLateTip.js:92-100` and `payrollClawback.js` wrap `findOpenPeriodForDate` in an `INSERT` fallback that the summary endpoint must NOT copy.
+- `GET /admin/active-staff` (`users.js:462-530`): `JOIN onboarding_progress op` + `op.onboarding_completed = true`, `?include_stubs=true` widens the status list to include `deactivated`, default `limit` 50 max 100, managers need `can_staff`, legacy-CC stub emails are redacted for non-admins.
+- `GET /admin/tips` (`contractorTipPage.js:263-304`): cursor-paginated, `limit` default 50; projects `id, amount_cents, tipped_at, customer_email, bartender_name, target_user_id`. `tips` also has `shift_id, deferred_at, rolled_forward_at, refunded_amount_cents, dispute_won_at` (schema ALTERs).
+- `GET /admin/tip-feedback` (`:305-326`) filters `status` only. `POST /tip-feedback/:id/review` (`:327`). Both `adminOnly`.
+- `GET /admin/staff-reviews` (`staffReviews.js:135-152`) returns `{ reviews }` only; `REVIEW_BOUNTY_CENTS` is exported from `server/utils/dutyLines.js` and in no payload. `POST /:id/confirm` returns `{ review, materialized, restored, catch_up_materialized }`. The leaderboard (`staffReviewsContest.js:147-161`) returns `rows, shares, pot_cents, min_events_worked (4), min_named_five_stars (2), in_progress, start_date, end_date`; award 409s with code `QUARTER_IN_PROGRESS` unless `force: true`, and 409s "no open pay period" when none is open.
+- `GET /admin/badge-counts` (`settings.js:128-175`) zeroes `new_applications` for managers at `:167`.
+- `GET /admin/applications?page=1&limit=200` projects `u.id` (the USER id), `u.created_at`, `a.created_at AS applied_at`, and computes `onboarding_progress` (0..1 over `ONBOARDING_STEPS`) and `onboarding_blocker`; the kanban's `stageOf` maps `hired` → `in_progress`.
+- Client: `AdminLayout.js` polls badges every 60s in a `useEffect` (`:110-130`); the phone `<Outlet context={{ badges }} />` (`:242`) and the desktop `<Outlet />` (`:261`) differ. `Sidebar.js:69` reads the singular `badgeKey`; `MorePage.js:64` the same; `MobileTabBar.js:14` sums `MORE_KEYS = ['unread_sms','new_applications','pending_shopping_lists']`. `CommandPalette.js:148` has its own `go('/hiring')`.
+- `App.js`: `ProtectedRoute({ adminOnly, adminStrict })` at `:301`; the admin shell wrapper at `:594`; `/staffing*` routes at `:597-601`; `/financials`, `/financials/payroll`, `/tips`, `/reviews` at `:617-620`; `/marketing` uses `<ProtectedRoute adminStrict>` at `:644`. `FinancialsRedirect` at `:274` uses `useSearchParams`.
+- `useUrlListState(defaults)` → `[state, setState]` (URL-backed); `Toolbar({ tabs, tab, setTab, filters, right })` renders `.seg` with optional `count` per tab.
+- `index.css` is 20,727 lines; admin-os rules are prefixed `html[data-app="admin-os"]` (932 such rules, zero bare `[data-app]` rules). `.seg` lives at `:12758`; the tokens the artifact CSS uses (`--row-hover`, `--font-numeric`, `--cell-pad-x`, `--line-1/2`, `--ink-1..4`, `--bg-0..3`, `--gap`, `--accent`) all exist.
+- There is no `client/src/setupTests.js`: every client test imports `'@testing-library/jest-dom'` itself, first line. Client tests run with `cd client && CI=true npx react-scripts test --watchAll=false <path>`.
+- `StaffReviews.js` (601 lines) holds: `ReviewLogTab` (load + retry, `duplicate_warning`), `LogReviewForm`, `ReviewCard` (credits PATCH with `frozen_credit_removals` copy, confirm, dismiss, per-action `busy`), `LeaderboardTab` (quarter text input + `QUARTER_RE`, `award()` with the `QUARTER_IN_PROGRESS` → `window.confirm` → `force:true` retry), `AwardDialog`. Every one of those behaviors survives the move (§7 of the spec enumerates them).
+
+## Global Constraints
+
+- **No em dashes** in any copy, comment prose, or UI string. Commas, colons, parentheses only.
+- **Frontend API calls** go through `client/src/utils/api.js`; never raw fetch/axios. `api.js` rejects a FLATTENED error envelope: read `err.status`, `err.code`, `err.message` (there is no `err.response`).
+- **CSS:** vanilla CSS appended to `client/src/index.css`, every new rule prefixed `html[data-app="admin-os"]`. The hub rules are the artifact's `<style>` rules with that prefix. No new CSS files.
+- **Server:** raw parameterized SQL; throw `AppError` subclasses; `asyncHandler` on every route; JSON keys snake_case. The summary endpoint and every other read in this plan NEVER write; in particular never INSERT a `pay_periods` row.
+- **Money:** integer cents everywhere; the client renders `fmt$fromCents`. The bounty figure comes from the server envelope (`bounty_cents`), never a literal.
+- **Explicit staging only:** `git add <specific paths>`, never `-A`/`.`. Inside a lane, checkpoint commits are free; the squash merge is the unit.
+- **Client gate before any client commit:** `cd client && CI=true npx react-scripts build` (CI-fatal warnings fail it).
+- **Server tests share the dev DB:** run ONE file at a time from the repo root, `node -r dotenv/config --test <file>`. Fixtures use a unique email prefix and are deleted in `after`.
+- **File size:** new files aim under 300 lines; `StaffDashboard.js` (203) and `HiringDashboard.js` (442) may grow modestly; anything heading past 600 splits.
+- **Design fidelity:** the build benchmark is `docs/design-artifacts/2026-08-19-staff-hub.dc.html`; the spec's §3 override list is the only permitted deviation set. `ui-ux-review` is pointed at the artifact.
+- **Sensitive paths:** `server/routes/admin/payroll.js` is listed today; sh-a adds `server/utils/dutyLines.js` and `server/routes/admin/contractorTipPage.js`. The sh-a lane runs the full fleet regardless.
+
+---
+
+# Lane sh-a-server
+
+### Task A1: `summarizeOpenPeriod` (pure) in `server/utils/staffHubSummary.js`
+
+**Files:**
+- Create: `server/utils/staffHubSummary.js`
+- Test: `server/utils/staffHubSummary.test.js`
+
+**Interfaces:**
+- Consumes: `payPeriodForDate`, `computePayday` from `server/utils/payrollPeriods.js`.
+- Produces: `summarizeOpenPeriod({ todayYmd, row }) -> { start_date, end_date, payday, exists, status, payouts_accrued }`. `row` is the `pay_periods` row for the derived `start_date` joined with a payout count, or `null`. Used by Task A2.
+
+- [ ] **Step 1: Write the failing tests**
+
+```js
+// server/utils/staffHubSummary.test.js
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { summarizeOpenPeriod } = require('./staffHubSummary');
+
+test('a Wednesday with no row derives the Tue..Mon window and exists:false', () => {
+  // 2026-08-19 is a Wednesday; the period is Tue 08-18 .. Mon 08-24, payday Tue 08-25.
+  const out = summarizeOpenPeriod({ todayYmd: '2026-08-19', row: null });
+  assert.deepEqual(out, {
+    start_date: '2026-08-18', end_date: '2026-08-24', payday: '2026-08-25',
+    exists: false, status: null, payouts_accrued: 0,
+  });
+});
+
+test('a Tuesday is the first day of its own period, not the last of the prior one', () => {
+  const out = summarizeOpenPeriod({ todayYmd: '2026-08-18', row: null });
+  assert.equal(out.start_date, '2026-08-18');
+  assert.equal(out.end_date, '2026-08-24');
+});
+
+test('a Monday is the last day of the period that began the prior Tuesday', () => {
+  const out = summarizeOpenPeriod({ todayYmd: '2026-08-24', row: null });
+  assert.equal(out.start_date, '2026-08-18');
+});
+
+test('an existing row fills exists, status and the accrued count', () => {
+  const out = summarizeOpenPeriod({
+    todayYmd: '2026-08-19',
+    row: { status: 'open', payouts_accrued: '3' },
+  });
+  assert.equal(out.exists, true);
+  assert.equal(out.status, 'open');
+  assert.equal(out.payouts_accrued, 3);
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `node -r dotenv/config --test server/utils/staffHubSummary.test.js`
+Expected: FAIL, `Cannot find module './staffHubSummary'`.
+
+- [ ] **Step 3: Implement**
+
+```js
+// server/utils/staffHubSummary.js
+// The Staff hub's "open pay run" line is DERIVED from the date, never read
+// from a pay_periods row: rows are created lazily by ensurePayPeriod when the
+// first shift of the week accrues (usually Saturday), so on a Wednesday the
+// row does not exist yet and a row-based subtitle would go blank or fall back
+// to last week. This helper is pure; the caller does the one LEFT JOIN.
+const { payPeriodForDate, computePayday } = require('./payrollPeriods');
+
+function summarizeOpenPeriod({ todayYmd, row }) {
+  const { startDate, endDate } = payPeriodForDate(todayYmd);
+  const payday = computePayday(endDate);
+  return {
+    start_date: startDate,
+    end_date: endDate,
+    payday,
+    exists: !!row,
+    status: row ? row.status : null,
+    payouts_accrued: row ? Number(row.payouts_accrued || 0) : 0,
+  };
+}
+
+module.exports = { summarizeOpenPeriod };
+```
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `node -r dotenv/config --test server/utils/staffHubSummary.test.js`
+Expected: 4 passing. If `payday` comes back as something other than `2026-08-25`, read `computePayday` before touching the helper: it observes federal holidays, and the test date must not sit on one.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/utils/staffHubSummary.js server/utils/staffHubSummary.test.js
+git commit -m "feat(staff-hub): pure open-period summary derived from the date"
+```
+
+### Task A2: `GET /api/admin/staff-hub/summary`
+
+**Files:**
+- Create: `server/routes/admin/staffHub.js`
+- Modify: `server/routes/admin/index.js` (add one `router.use` line after the `staffReviews` line)
+- Test: `server/routes/admin/staffHub.test.js`
+
+**Interfaces:**
+- Consumes: `summarizeOpenPeriod` (Task A1); `chicagoTodayYmd` from `server/utils/businessTime.js`; `auth`, `requireAdminOrManager` from `server/middleware/auth.js`.
+- Produces, for the client (sh-b `StaffHubLayout`):
+  ```
+  { active_count, deactivated_count, former_staff_count, imported_count,
+    new_applications, pending_reviews,
+    open_period: { start_date, end_date, payday, exists, status, payouts_accrued } | null }
+  ```
+  Managers: `new_applications`, `pending_reviews`, `open_period` are `null`. A manager without `can_staff`: the four counts are `null` too.
+
+- [ ] **Step 1: Write the failing test**
+
+```js
+// server/routes/admin/staffHub.test.js
+require('dotenv').config();
+// Harness mirrors settings.badgeCounts.test.js: real router + real auth middleware
+// on a minimal express app, driven over node:http.
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const crypto = require('node:crypto');
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { pool } = require('../../db');
+const { AppError } = require('../../utils/errors');
+const staffHubRouter = require('./staffHub');
+
+if (process.env.NODE_ENV === 'production') throw new Error('refuses to run against production');
+
+const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+const PREFIX = 'staff-hub-test-';
+let server, baseUrl, adminToken, managerToken, weakManagerToken, staffToken;
+
+function get(path, token) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(baseUrl + path);
+    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: 'GET',
+      headers: token ? { Authorization: `Bearer ${token}` } : {} }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => { let json = null; try { json = data ? JSON.parse(data) : null; } catch {} resolve({ status: res.statusCode, body: json }); });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+async function makeUser(role, { status = 'approved', canStaff = false } = {}) {
+  const hash = await bcrypt.hash('x', 4);
+  const r = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version, can_staff)
+     VALUES ($1, $2, $3, $4, 0, $5) RETURNING id, token_version`,
+    [`${PREFIX}${role}-${canStaff ? 'cs' : 'nocs'}-${NONCE}@example.com`, hash, role, status, canStaff]
+  );
+  return r.rows[0];
+}
+const tokenFor = (u) => jwt.sign({ userId: u.id, tokenVersion: u.token_version }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+before(async () => {
+  await pool.query(`DELETE FROM users WHERE email LIKE '${PREFIX}%'`);
+  adminToken = tokenFor(await makeUser('admin'));
+  managerToken = tokenFor(await makeUser('manager', { canStaff: true }));
+  weakManagerToken = tokenFor(await makeUser('manager', { canStaff: false }));
+  staffToken = tokenFor(await makeUser('staff'));
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin', staffHubRouter);
+  app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    if (err instanceof AppError) return res.status(err.statusCode).json({ error: err.message, code: err.code });
+    return res.status(500).json({ error: 'Internal error' });
+  });
+  await new Promise((resolve) => { server = app.listen(0, () => { baseUrl = `http://127.0.0.1:${server.address().port}`; resolve(); }); });
+});
+
+after(async () => {
+  if (server) await new Promise((r) => server.close(r));
+  await pool.query(`DELETE FROM users WHERE email LIKE '${PREFIX}%'`);
+  await pool.end();
+});
+
+test('anon 401, staff 403', async () => {
+  assert.equal((await get('/api/admin/staff-hub/summary')).status, 401);
+  assert.equal((await get('/api/admin/staff-hub/summary', staffToken)).status, 403);
+});
+
+test('admin gets the full shape with integer counts and a derived open_period', async () => {
+  const { status, body } = await get('/api/admin/staff-hub/summary', adminToken);
+  assert.equal(status, 200);
+  for (const k of ['active_count', 'deactivated_count', 'former_staff_count', 'imported_count', 'new_applications', 'pending_reviews']) {
+    assert.equal(typeof body[k], 'number', `${k} is a number`);
+  }
+  assert.equal(body.former_staff_count + body.imported_count, body.deactivated_count, 'deactivated splits exactly into former + imported');
+  assert.match(body.open_period.start_date, /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(body.open_period.payday, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(typeof body.open_period.exists, 'boolean');
+});
+
+test('the read never creates a pay_periods row', async () => {
+  const before_ = (await pool.query('SELECT COUNT(*)::int AS n FROM pay_periods')).rows[0].n;
+  await get('/api/admin/staff-hub/summary', adminToken);
+  const after_ = (await pool.query('SELECT COUNT(*)::int AS n FROM pay_periods')).rows[0].n;
+  assert.equal(after_, before_);
+});
+
+test('a manager with can_staff gets counts but null admin-only fields', async () => {
+  const { status, body } = await get('/api/admin/staff-hub/summary', managerToken);
+  assert.equal(status, 200);
+  assert.equal(typeof body.active_count, 'number');
+  assert.equal(body.new_applications, null);
+  assert.equal(body.pending_reviews, null);
+  assert.equal(body.open_period, null);
+});
+
+test('a manager without can_staff gets every field null', async () => {
+  const { status, body } = await get('/api/admin/staff-hub/summary', weakManagerToken);
+  assert.equal(status, 200);
+  for (const k of ['active_count', 'deactivated_count', 'former_staff_count', 'imported_count', 'new_applications', 'pending_reviews', 'open_period']) {
+    assert.equal(body[k], null, `${k} is null`);
+  }
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `node -r dotenv/config --test server/routes/admin/staffHub.test.js`
+Expected: FAIL, `Cannot find module './staffHub'`.
+
+- [ ] **Step 3: Implement the route**
+
+```js
+// server/routes/admin/staffHub.js
+// GET /api/admin/staff-hub/summary: the ONE read behind the Staff hub's chrome
+// (tab counts, badges, live subtitle). Read-only by construction: the open pay
+// run is derived from the Chicago date and LEFT JOINed to pay_periods on its
+// UNIQUE start_date; this route must never adopt the INSERT-fallback pattern
+// payrollLateTip.js / payrollClawback.js wrap around findOpenPeriodForDate.
+const express = require('express');
+const { pool } = require('../../db');
+const { auth, requireAdminOrManager } = require('../../middleware/auth');
+const asyncHandler = require('../../middleware/asyncHandler');
+const { chicagoTodayYmd } = require('../../utils/businessTime');
+const { payPeriodForDate } = require('../../utils/payrollPeriods');
+const { summarizeOpenPeriod } = require('../../utils/staffHubSummary');
+
+const router = express.Router();
+
+router.get('/staff-hub/summary', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const isAdmin = req.user.role === 'admin';
+  // Same gate as GET /admin/active-staff: a manager without can_staff cannot
+  // read the roster, so the hub must not hand them a headcount for it either.
+  const canSeeRoster = isAdmin || (req.user.role === 'manager' && !!req.user.can_staff);
+
+  let counts = { active_count: null, deactivated_count: null, former_staff_count: null, imported_count: null };
+  if (canSeeRoster) {
+    // One predicate family, shared with the roster feed: the active set is the
+    // roster's Active tab (approved + onboarding completed); the deactivated
+    // set is status alone (imported placeholders have no progress row).
+    const { rows } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE u.onboarding_status = 'approved' AND op.onboarding_completed = true)::int AS active_count,
+        COUNT(*) FILTER (WHERE u.onboarding_status = 'deactivated')::int AS deactivated_count,
+        COUNT(*) FILTER (WHERE u.onboarding_status = 'deactivated'
+                           AND (u.cc_id LIKE 'legacy_cc:%' OR u.import_source = 'payment_history_import'))::int AS imported_count
+      FROM users u
+      LEFT JOIN onboarding_progress op ON op.user_id = u.id
+      WHERE u.role IN ('staff', 'manager')
+    `);
+    const r = rows[0];
+    counts = {
+      active_count: r.active_count,
+      deactivated_count: r.deactivated_count,
+      imported_count: r.imported_count,
+      former_staff_count: r.deactivated_count - r.imported_count,
+    };
+  }
+
+  let adminFields = { new_applications: null, pending_reviews: null, open_period: null };
+  if (isAdmin) {
+    const todayYmd = chicagoTodayYmd();
+    const { startDate } = payPeriodForDate(todayYmd);
+    const [decisions, period] = await Promise.all([
+      pool.query(`
+        SELECT
+          (SELECT COUNT(*) FROM applications a JOIN users u ON u.id = a.user_id
+            WHERE u.onboarding_status = 'applied')::int AS new_applications,
+          (SELECT COUNT(*) FROM staff_reviews WHERE status = 'pending')::int AS pending_reviews
+      `),
+      pool.query(`
+        SELECT pp.status, COUNT(p.id)::int AS payouts_accrued
+          FROM pay_periods pp
+          LEFT JOIN payouts p ON p.pay_period_id = pp.id
+         WHERE pp.start_date = $1
+         GROUP BY pp.id, pp.status
+      `, [startDate]),
+    ]);
+    adminFields = {
+      new_applications: decisions.rows[0].new_applications,
+      pending_reviews: decisions.rows[0].pending_reviews,
+      open_period: summarizeOpenPeriod({ todayYmd, row: period.rows[0] || null }),
+    };
+  }
+
+  res.json({ ...counts, ...adminFields });
+}));
+
+module.exports = router;
+```
+
+Then in `server/routes/admin/index.js`, directly after `router.use('/', require('./staffReviews'));` add:
+
+```js
+router.use('/', require('./staffHub'));
+```
+
+Before running, confirm the payouts FK name: `grep -n "pay_period_id" server/db/schema.sql | head -3`. If the column is named differently, use that name in the LEFT JOIN; do not guess.
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `node -r dotenv/config --test server/routes/admin/staffHub.test.js`
+Expected: 5 passing.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/routes/admin/staffHub.js server/routes/admin/staffHub.test.js server/routes/admin/index.js
+git commit -m "feat(staff-hub): summary endpoint, read-only, pay run derived from the date"
+```
+
+### Task A3: `badge-counts` gains `pending_reviews`
+
+**Files:**
+- Modify: `server/routes/admin/settings.js:128-175`
+- Test: `server/routes/admin/settings.badgeCounts.test.js`
+
+**Interfaces:**
+- Produces: `pending_reviews` integer on the badge-counts payload, 0 for managers. Consumed by sh-b `nav.js` (`badgeKeys`).
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `server/routes/admin/settings.badgeCounts.test.js`, after the existing `COUNT_KEYS` tests:
+
+```js
+test('pending_reviews rides the payload and is zeroed for managers', async () => {
+  const admin = await get('/api/admin/badge-counts', adminToken);
+  assert.equal(admin.status, 200);
+  assert.equal(typeof admin.body.pending_reviews, 'number');
+  const mgr = await get('/api/admin/badge-counts', managerToken);
+  assert.equal(mgr.status, 200);
+  assert.equal(mgr.body.pending_reviews, 0);
+});
+```
+
+Also add `'pending_reviews'` to the `COUNT_KEYS` array so the existing shape assertions cover it.
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `node -r dotenv/config --test server/routes/admin/settings.badgeCounts.test.js`
+Expected: the new test fails on `typeof undefined !== 'number'`.
+
+- [ ] **Step 3: Implement**
+
+In the SELECT in `settings.js`, after the `unread_sms` subselect (the last one, `:162`), add a comma and:
+
+```sql
+      (SELECT COUNT(*) FROM staff_reviews WHERE status = 'pending')::int AS pending_reviews
+```
+
+And directly under the existing manager zeroing (`if (req.user.role !== 'admin') counts.new_applications = 0;`) add:
+
+```js
+  // Reviews is admin-only too; a manager must not see a decision they cannot open.
+  if (req.user.role !== 'admin') counts.pending_reviews = 0;
+```
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `node -r dotenv/config --test server/routes/admin/settings.badgeCounts.test.js`
+Expected: all passing.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/routes/admin/settings.js server/routes/admin/settings.badgeCounts.test.js
+git commit -m "feat(badge-counts): pending_reviews, zeroed for managers"
+```
+
+### Task A4: roster feed LEFT JOIN for deactivated rows
+
+**Files:**
+- Modify: `server/routes/admin/users.js:481-508`
+- Test: `server/routes/admin/users.activeStaff.test.js`
+
+**Interfaces:**
+- Produces: `GET /admin/active-staff?include_stubs=true` now returns deactivated users that have NO `onboarding_progress` row (the payment-history placeholders). The active set is byte-identical. Consumed by sh-b Roster.
+
+- [ ] **Step 1: Write the failing test**
+
+In `users.activeStaff.test.js`, the `before` block seeds users each with a completed `onboarding_progress` row. Add one more fixture there: a deactivated payment-history placeholder with NO progress row.
+
+```js
+// after the existing fixtures in before():
+const ph = await pool.query(
+  `INSERT INTO users (email, password_hash, role, onboarding_status, token_version, import_source)
+   VALUES ($1, $2, 'staff', 'deactivated', 0, 'payment_history_import') RETURNING id`,
+  [`${PREFIX}placeholder-${Date.now()}@imported.invalid`, passwordHash]
+);
+placeholderId = ph.rows[0].id;   // declare `let placeholderId;` beside the other ids
+```
+
+And a test:
+
+```js
+test('include_stubs surfaces a deactivated placeholder that has no onboarding_progress row', async () => {
+  const { status, body } = await get('/api/admin/active-staff?include_stubs=true&limit=100', adminToken);
+  assert.equal(status, 200);
+  assert.ok(body.staff.some(s => s.id === placeholderId), 'placeholder row present');
+});
+
+test('the default (active) set still requires a completed onboarding row', async () => {
+  const { body } = await get('/api/admin/active-staff?limit=100', adminToken);
+  assert.ok(!body.staff.some(s => s.id === placeholderId), 'placeholder absent from the active set');
+});
+```
+
+Adapt the helper names (`get`, `adminToken`, `passwordHash`, `PREFIX`) to the ones already in that file; read its `before` block first. Make sure the `after` cleanup's `DELETE FROM users WHERE email LIKE '${PREFIX}%'` covers the new email.
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `node -r dotenv/config --test server/routes/admin/users.activeStaff.test.js`
+Expected: the first new test fails (placeholder absent).
+
+- [ ] **Step 3: Implement**
+
+In both queries of the route (the SELECT and the COUNT), change
+
+```sql
+      JOIN onboarding_progress op ON op.user_id = u.id
+      ...
+        AND op.onboarding_completed = true
+```
+
+to
+
+```sql
+      LEFT JOIN onboarding_progress op ON op.user_id = u.id
+      ...
+        AND (u.onboarding_status = 'deactivated' OR op.onboarding_completed = true)
+```
+
+Update the comment above `statusList` to say why: deactivated imported placeholders were deliberately left without a progress row, and the Roster's Deactivated view must be able to show them.
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `node -r dotenv/config --test server/routes/admin/users.activeStaff.test.js`
+Expected: all passing, including every pre-existing test (the active set is unchanged).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/routes/admin/users.js server/routes/admin/users.activeStaff.test.js
+git commit -m "fix(active-staff): deactivated rows no longer require an onboarding_progress row"
+```
+
+### Task A5: tips projection columns + tip-feedback `target_user_id`
+
+**Files:**
+- Modify: `server/routes/admin/contractorTipPage.js:263-326`
+- Create: `server/routes/admin/contractorTipPage.test.js`
+
+**Interfaces:**
+- Produces: `GET /admin/tips` rows also carry `shift_id, deferred_at, rolled_forward_at, refunded_amount_cents, dispute_won_at` (consumed by sh-d `tipStatus.js`). `GET /admin/tip-feedback?target_user_id=<int>` filters to one bartender (consumed by sh-f `FeedbackCard`); a non-integer value is a 400.
+
+- [ ] **Step 1: Write the failing test**
+
+```js
+// server/routes/admin/contractorTipPage.test.js
+require('dotenv').config();
+// Harness mirrors settings.badgeCounts.test.js. Covers the two read extensions
+// the Staff hub added: the tips Status projection and the per-bartender
+// feedback filter. Both routes are adminOnly; that is asserted too.
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const crypto = require('node:crypto');
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { pool } = require('../../db');
+const { AppError } = require('../../utils/errors');
+const router = require('./contractorTipPage');
+
+if (process.env.NODE_ENV === 'production') throw new Error('refuses to run against production');
+const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+const PREFIX = 'ctp-test-';
+let server, baseUrl, adminToken, managerToken, bartenderId, otherId;
+
+function get(path, token) { /* identical to staffHub.test.js get() */ 
+  return new Promise((resolve, reject) => {
+    const u = new URL(baseUrl + path);
+    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: 'GET',
+      headers: token ? { Authorization: `Bearer ${token}` } : {} }, (res) => {
+      let data = ''; res.on('data', (c) => { data += c; });
+      res.on('end', () => { let json = null; try { json = data ? JSON.parse(data) : null; } catch {} resolve({ status: res.statusCode, body: json }); });
+    });
+    req.on('error', reject); req.end();
+  });
+}
+async function makeUser(role, tag) {
+  const hash = await bcrypt.hash('x', 4);
+  const r = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version) VALUES ($1,$2,$3,'approved',0) RETURNING id, token_version`,
+    [`${PREFIX}${tag}-${NONCE}@example.com`, hash, role]);
+  return r.rows[0];
+}
+const tokenFor = (u) => jwt.sign({ userId: u.id, tokenVersion: u.token_version }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+before(async () => {
+  await pool.query(`DELETE FROM users WHERE email LIKE '${PREFIX}%'`);
+  adminToken = tokenFor(await makeUser('admin', 'admin'));
+  managerToken = tokenFor(await makeUser('manager', 'manager'));
+  const b = await makeUser('staff', 'bartender'); bartenderId = b.id;
+  const o = await makeUser('staff', 'other'); otherId = o.id;
+  await pool.query(
+    `INSERT INTO tip_page_feedback (target_user_id, rating, comment, submitter_email) VALUES ($1, 5, $2, 'guest@example.com'), ($3, 3, $4, 'guest2@example.com')`,
+    [bartenderId, `feedback for bartender ${NONCE}`, otherId, `feedback for other ${NONCE}`]);
+  const app = express(); app.use(express.json()); app.use('/api/admin', router);
+  app.use((err, req, res, next) => { if (res.headersSent) return next(err);
+    if (err instanceof AppError) return res.status(err.statusCode).json({ error: err.message, code: err.code });
+    return res.status(500).json({ error: 'Internal error' }); });
+  await new Promise((resolve) => { server = app.listen(0, () => { baseUrl = `http://127.0.0.1:${server.address().port}`; resolve(); }); });
+});
+after(async () => {
+  if (server) await new Promise((r) => server.close(r));
+  await pool.query(`DELETE FROM tip_page_feedback WHERE target_user_id IN (SELECT id FROM users WHERE email LIKE '${PREFIX}%')`);
+  await pool.query(`DELETE FROM users WHERE email LIKE '${PREFIX}%'`);
+  await pool.end();
+});
+
+test('tips and tip-feedback are adminOnly', async () => {
+  assert.equal((await get('/api/admin/tips', managerToken)).status, 403);
+  assert.equal((await get('/api/admin/tip-feedback', managerToken)).status, 403);
+});
+
+test('tips rows carry the Status projection columns', async () => {
+  const { status, body } = await get('/api/admin/tips?limit=1', adminToken);
+  assert.equal(status, 200);
+  if (body.tips.length) {
+    for (const k of ['shift_id', 'deferred_at', 'rolled_forward_at', 'refunded_amount_cents', 'dispute_won_at']) {
+      assert.ok(k in body.tips[0], `${k} projected`);
+    }
+  }
+});
+
+test('tip-feedback filters by target_user_id and rejects garbage', async () => {
+  const mine = await get(`/api/admin/tip-feedback?status=all&target_user_id=${bartenderId}`, adminToken);
+  assert.equal(mine.status, 200);
+  assert.ok(mine.body.feedback.length >= 1);
+  assert.ok(mine.body.feedback.every(f => f.target_user_id === bartenderId));
+  const bad = await get('/api/admin/tip-feedback?target_user_id=abc', adminToken);
+  assert.equal(bad.status, 400);
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `node -r dotenv/config --test server/routes/admin/contractorTipPage.test.js`
+Expected: the projection test fails only if a tip exists; the filter test fails (`every` false, and `abc` returns 200 not 400).
+
+- [ ] **Step 3: Implement**
+
+In the `/tips` SELECT, replace the projection line with:
+
+```sql
+    SELECT t.id, t.amount_cents, t.tipped_at, t.customer_email,
+           t.shift_id, t.deferred_at, t.rolled_forward_at,
+           COALESCE(t.refunded_amount_cents, 0) AS refunded_amount_cents, t.dispute_won_at,
+           COALESCE(cp.display_name, cp.preferred_name) AS bartender_name, t.target_user_id
+```
+
+In `/tip-feedback`, replace the `where` block with parameterized filters:
+
+```js
+  const filters = [];
+  const params = [];
+  if (status === 'unreviewed') filters.push('f.reviewed_at IS NULL');
+  if (status === 'reviewed') filters.push('f.reviewed_at IS NOT NULL');
+  if (req.query.target_user_id !== undefined) {
+    const uid = Number(req.query.target_user_id);
+    if (!Number.isInteger(uid) || uid <= 0) throw new ValidationError('target_user_id must be a positive integer');
+    filters.push(`f.target_user_id = $${params.length + 1}`);
+    params.push(uid);
+  }
+  const where = filters.length ? filters.join(' AND ') : '1=1';
+```
+
+and pass `params` to `pool.query(..., params)`. `ValidationError` is already imported in this file (the `/tip-feedback/:id/review` route uses it); confirm with `grep -n "ValidationError" server/routes/admin/contractorTipPage.js | head -2`.
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `node -r dotenv/config --test server/routes/admin/contractorTipPage.test.js`
+Expected: 3 passing. Then the existing neighbor: `node -r dotenv/config --test server/routes/admin/users.tipsGate.test.js` still passes.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/routes/admin/contractorTipPage.js server/routes/admin/contractorTipPage.test.js
+git commit -m "feat(tips): Status projection columns; tip-feedback filters by target_user_id"
+```
+
+### Task A6: staff-reviews envelope: `bounty_cents`, `bounties_paid_cents`, `total_logged`
+
+**Files:**
+- Modify: `server/routes/admin/staffReviews.js:135-152`
+- Test: `server/routes/admin/staffReviews.test.js` (append one test; read its harness first, it already has admin auth helpers)
+
+**Interfaces:**
+- Produces: `GET /admin/staff-reviews` → `{ reviews, bounty_cents, bounties_paid_cents, total_logged }`. Consumed by sh-e and sh-d (the pay-run pointer).
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `server/routes/admin/staffReviews.test.js` using that file's existing `get`/admin-token helpers (names may differ; read the top of the file):
+
+```js
+test('the list envelope carries the bounty figure and all-time totals', async () => {
+  const { status, body } = await get('/api/admin/staff-reviews', adminToken);
+  assert.equal(status, 200);
+  assert.equal(body.bounty_cents, 1000);
+  assert.equal(typeof body.bounties_paid_cents, 'number');
+  assert.equal(typeof body.total_logged, 'number');
+  assert.ok(body.total_logged >= body.reviews.length);
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `node -r dotenv/config --test server/routes/admin/staffReviews.test.js`
+Expected: the new test fails on `bounty_cents` undefined.
+
+- [ ] **Step 3: Implement**
+
+Change the import on `:20` to also pull the constant:
+
+```js
+const { materializeReviewLine, materializePendingReviewLines, REVIEW_BOUNTY_CENTS } = require('../../utils/dutyLines');
+```
+
+Replace the route body's `res.json({ reviews: rows });` with:
+
+```js
+  const totals = await pool.query(`
+    SELECT
+      (SELECT COUNT(*) FROM staff_reviews)::int AS total_logged,
+      (SELECT COALESCE(SUM(amount_cents), 0) FROM payout_duty_lines WHERE kind = 'review_bounty')::int AS bounties_paid_cents
+  `);
+  res.json({
+    reviews: rows,
+    bounty_cents: REVIEW_BOUNTY_CENTS,
+    bounties_paid_cents: totals.rows[0].bounties_paid_cents,
+    total_logged: totals.rows[0].total_logged,
+  });
+```
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `node -r dotenv/config --test server/routes/admin/staffReviews.test.js`
+Expected: all passing (the file is long; every pre-existing test still green).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/routes/admin/staffReviews.js server/routes/admin/staffReviews.test.js
+git commit -m "feat(staff-reviews): envelope carries bounty_cents and all-time totals"
+```
+
+### Task A7: dispute email link, sensitive-paths, ARCHITECTURE
+
+**Files:**
+- Modify: `server/utils/payrollDisputeNotify.js:126`, `server/utils/payrollDisputeNotify.test.js:421`
+- Modify: `scripts/sensitive-paths.txt`
+- Modify: `ARCHITECTURE.md` (API route table)
+
+- [ ] **Step 1: Update the test first**
+
+At `payrollDisputeNotify.test.js:421` change the regex to the new path:
+
+```js
+      assert.match(blob, /https:\/\/admin\.drbartender\.com\/staffing\/payroll/, 'absolute admin URL, not a relative path');
+```
+
+and update the comment two lines above it (`:401-402`) to name `/staffing/payroll`.
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `node -r dotenv/config --test server/utils/payrollDisputeNotify.test.js`
+Expected: that assertion fails.
+
+- [ ] **Step 3: Implement**
+
+`payrollDisputeNotify.js:126`: `payrollUrl: \`${ADMIN_URL}/staffing/payroll\`,`
+
+Append to `scripts/sensitive-paths.txt` (after the `server/routes/admin/payrollDuty.js` line):
+
+```
+# The review-bounty and contest money writer (2026-08-19, staff-hub spec
+# review). Comments above say dutyLines.js "is covered" by the payroll glob;
+# it is not (utils globs do not match dutyLines). It writes payout_duty_lines
+# and recomputes payout totals. Listed by name.
+server/utils/dutyLines.js
+# Tip money reads (the cross-staff ledger) and the contractor tip-page
+# mutations (token rotation, Stripe link regeneration). Same 2026-08-19 finding.
+server/routes/admin/contractorTipPage.js
+```
+
+Verify: `node scripts/sensitive-match.js server/utils/dutyLines.js server/routes/admin/contractorTipPage.js` prints both paths.
+
+`ARCHITECTURE.md`: in the admin API route table add a row for `GET /api/admin/staff-hub/summary` (`staffHub.js`, auth + requireAdminOrManager, read-only hub chrome: counts, decisions, derived open pay run); note on the `/admin/tips` row the five new projection columns; on `/admin/tip-feedback` the `target_user_id` param; on `/admin/staff-reviews` the envelope fields; on `/admin/active-staff` the LEFT JOIN rule for deactivated rows. Also add `server/utils/staffHubSummary.js` to the utils list.
+
+- [ ] **Step 4: Run to verify**
+
+Run: `node -r dotenv/config --test server/utils/payrollDisputeNotify.test.js`
+Expected: passing.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/utils/payrollDisputeNotify.js server/utils/payrollDisputeNotify.test.js scripts/sensitive-paths.txt ARCHITECTURE.md
+git commit -m "chore(staff-hub): dispute email points at /staffing/payroll; dutyLines + contractorTipPage join sensitive paths; ARCHITECTURE"
+```
+
+**Lane sh-a done when:** all seven tasks committed; the full fleet has run on the lane (sensitive paths); every touched suite passes one at a time.
+
+# Lane sh-b-shell
+
+### Task B1: `nav.js`: Staff absorbs Hiring/Tips/Reviews; `navBadgeCount` helper
+
+**Files:**
+- Modify: `client/src/components/adminos/nav.js`
+- Create: `client/src/components/adminos/nav.test.js`
+- Modify: `client/src/components/adminos/Sidebar.js:69`
+- Modify: `client/src/pages/mobile/MorePage.js:64`
+- Modify: `client/src/components/mobile/MobileTabBar.js:14`
+- Modify: `client/src/components/adminos/CommandPalette.js:148`
+
+**Interfaces:**
+- Produces: `navBadgeCount(item, badges) -> number` (named export from `nav.js`); the Staff item carries `badgeKeys: ['new_applications', 'pending_reviews']`.
+
+- [ ] **Step 1: Write the failing test**
+
+```js
+// client/src/components/adminos/nav.test.js
+import NAV, { navBadgeCount } from './nav';
+
+const find = (id) => NAV.flatMap(s => s.items).find(i => i.id === id);
+
+test('Staff is the one people entry; Hiring, Tips and Reviews are gone from the sidebar', () => {
+  expect(find('staff')).toBeTruthy();
+  expect(find('hiring')).toBeUndefined();
+  expect(find('tips')).toBeUndefined();
+  expect(find('reviews')).toBeUndefined();
+});
+
+test('navBadgeCount sums badgeKeys, falls back to badgeKey, and tolerates missing keys', () => {
+  expect(navBadgeCount({ badgeKeys: ['a', 'b'] }, { a: 2, b: 3 })).toBe(5);
+  expect(navBadgeCount({ badgeKeys: ['a', 'b'] }, { a: 2 })).toBe(2);
+  expect(navBadgeCount({ badgeKey: 'a' }, { a: 4 })).toBe(4);
+  expect(navBadgeCount({ label: 'x' }, { a: 4 })).toBe(0);
+  expect(navBadgeCount({ badgeKey: 'a' }, undefined)).toBe(0);
+});
+
+test('the Staff entry sums new applications and pending reviews', () => {
+  expect(navBadgeCount(find('staff'), { new_applications: 1, pending_reviews: 1 })).toBe(2);
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/adminos/nav.test.js`
+Expected: FAIL (`navBadgeCount` is not a function; `hiring` found).
+
+- [ ] **Step 3: Implement**
+
+Replace `client/src/components/adminos/nav.js` with:
+
+```js
+// Nav groups for the Admin OS sidebar.
+// `badgeKey` / `badgeKeys` map to the /api/admin/badge-counts response shape;
+// read them ONLY through navBadgeCount so every consumer (Sidebar, the phone
+// More list, the phone tab bar) sums the same way.
+// `adminOnly` hides the item from managers. Set it whenever the destination's
+// API is the server's adminOnly (which rejects managers), so the sidebar never
+// offers a manager a link that bounces them straight back out.
+const NAV = [
+  { section: 'Workspace', items: [
+    { id: 'dashboard',   label: 'Overview',  icon: 'home',      path: '/dashboard' },
+    { id: 'events',      label: 'Events',    icon: 'calendar',  path: '/events',    badgeKey: 'unstaffed_events' },
+    { id: 'proposals',   label: 'Proposals', icon: 'clipboard', path: '/proposals', badgeKey: 'pending_proposals' },
+    { id: 'clients',     label: 'Clients',   icon: 'users',     path: '/clients' },
+    { id: 'messages',    label: 'Messages',  icon: 'chat',      path: '/messages',  badgeKey: 'unread_sms' },
+    // The Staff hub: Roster lands; Hiring, Payroll and Reviews are its tabs.
+    // The badge is the sum of decisions waiting across the admin-only children
+    // (both keys are zeroed server-side for managers).
+    { id: 'staff',       label: 'Staff',     icon: 'userplus',  path: '/staffing',  badgeKeys: ['new_applications', 'pending_reviews'] },
+  ]},
+  { section: 'Revenue', items: [
+    { id: 'marketing',   label: 'Marketing',       icon: 'mail',     path: '/marketing', adminOnly: true },
+    // The legacy email surface. Still the only way into Leads, which the
+    // marketing phase 2 extraction reads, so it keeps its own entry rather
+    // than being swallowed by the redesign above.
+    { id: 'emailleads',  label: 'Email leads',     icon: 'mail',     path: '/email-marketing' },
+  ]},
+  { section: 'Content', items: [
+    { id: 'potions',     label: 'Potions',       icon: 'flask',     path: '/potions', badgeKey: 'pending_shopping_lists' },
+    { id: 'blog',        label: 'Lab Notes',     icon: 'pen',       path: '/blog' },
+    { id: 'settings',    label: 'Settings',      icon: 'gear',      path: '/settings' },
+  ]},
+];
+
+/** One badge number per nav item. Sums `badgeKeys`, else reads `badgeKey`. */
+export function navBadgeCount(item, badges) {
+  const b = badges || {};
+  if (Array.isArray(item?.badgeKeys)) return item.badgeKeys.reduce((n, k) => n + (Number(b[k]) || 0), 0);
+  if (item?.badgeKey) return Number(b[item.badgeKey]) || 0;
+  return 0;
+}
+
+export default NAV;
+```
+
+Then the three consumers:
+
+`Sidebar.js:69`: `const count = item.badgeKey ? badges[item.badgeKey] || 0 : 0;` → `const count = navBadgeCount(item, badges);` and change the import on `:6` to `import NAV, { navBadgeCount } from './nav';`.
+
+`MorePage.js:64`: same substitution, and import `navBadgeCount` beside `NAV` there.
+
+`MobileTabBar.js:14`: `const MORE_KEYS = ['unread_sms', 'new_applications', 'pending_shopping_lists'];` → `const MORE_KEYS = ['unread_sms', 'new_applications', 'pending_reviews', 'pending_shopping_lists'];` (the More aggregate keeps counting every non-tab badge key; Reviews is a new one).
+
+`CommandPalette.js:148`: delete the `{ label: 'Hiring', icon: 'pen', onClick: go('/hiring') },` line. The `Staff` entry above it already reaches the hub; Hiring is a tab inside it and `CommandPalette.test.js` asserts nothing about Hiring (verified).
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/adminos/nav.test.js src/components/adminos/CommandPalette.test.js`
+Expected: passing.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add client/src/components/adminos/nav.js client/src/components/adminos/nav.test.js client/src/components/adminos/Sidebar.js client/src/pages/mobile/MorePage.js client/src/components/mobile/MobileTabBar.js client/src/components/adminos/CommandPalette.js
+git commit -m "feat(nav): Staff absorbs Hiring/Tips/Reviews; navBadgeCount sums badgeKeys for every consumer"
+```
+
+### Task B2: `AdminLayout` exposes `refreshBadges` through Outlet context
+
+**Files:**
+- Modify: `client/src/components/AdminLayout.js:110-130, 242, 261`
+
+**Interfaces:**
+- Produces: `useOutletContext()` inside any admin page returns `{ badges, refreshBadges }` on BOTH the phone and desktop branches. `MorePage` already reads `outlet.badges` and keeps working.
+
+- [ ] **Step 1: Lift `fetchBadges` out of the effect**
+
+Replace the `useEffect` at `:110-130` with a `useCallback` plus an effect that uses it:
+
+```js
+  const fetchBadges = useCallback(() => {
+    if (document.visibilityState !== 'visible') return;
+    const startedAt = Date.now();
+    api.get('/admin/badge-counts').then(r => {
+      const { presence: p, ...counts } = r.data || {};
+      setBadges(counts);
+      if (p && startedAt > lastPresenceMutationRef.current) setPresence(p);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetchBadges();
+    const interval = setInterval(fetchBadges, 60000);
+    // Refresh immediately when the tab becomes visible again after being hidden,
+    // so the admin doesn't see stale counts the moment they return.
+    const onVisibility = () => { if (document.visibilityState === 'visible') fetchBadges(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [fetchBadges]);
+
+  const outletCtx = useMemo(() => ({ badges, refreshBadges: fetchBadges }), [badges, fetchBadges]);
+```
+
+`useCallback` and `useMemo` are already imported on `:1`.
+
+- [ ] **Step 2: Pass the context on both Outlets**
+
+`:242`: `<Outlet context={{ badges }} />` → `<Outlet context={outletCtx} />`.
+`:261`: `<Outlet />` → `<Outlet context={outletCtx} />`.
+
+- [ ] **Step 3: Verify**
+
+Run: `cd client && CI=true npx react-scripts build` (no test covers the layout's poll; the build is the gate). Then in the dev app, load `/dashboard` and watch the Network tab: one badge-counts call on load, another each 60s. Unchanged behavior.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add client/src/components/AdminLayout.js
+git commit -m "feat(admin-layout): refreshBadges on the Outlet context for both branches"
+```
+
+### Task B3: `hubSubtitle` (pure) + `StaffHubLayout` + hub CSS
+
+**Files:**
+- Create: `client/src/pages/admin/staffHub/hubSubtitle.js`
+- Create: `client/src/pages/admin/staffHub/hubSubtitle.test.js`
+- Create: `client/src/pages/admin/staffHub/StaffHubLayout.js`
+- Create: `client/src/pages/admin/staffHub/StaffHubLayout.test.js`
+- Modify: `client/src/index.css` (append the hub block)
+
+**Interfaces:**
+- Consumes: `GET /api/admin/staff-hub/summary` (Task A2 shape); `useOutletContext().refreshBadges` (Task B2); `useAuth().user.role`.
+- Produces: Outlet context `{ summary, summaryError, refresh, setActions }` for children. `summary` is the A2 payload or `null` while loading; `refresh()` refetches the summary and calls `refreshBadges()`; `setActions(node|null)` registers header actions. `hubSubtitle(summary, { isAdmin }) -> string`.
+
+- [ ] **Step 1: Write the failing subtitle tests**
+
+```js
+// client/src/pages/admin/staffHub/hubSubtitle.test.js
+import { hubSubtitle, ymdLabel } from './hubSubtitle';
+
+const S = {
+  active_count: 16,
+  pending_reviews: 1,
+  open_period: { start_date: '2026-08-18', end_date: '2026-08-24', payday: '2026-08-25', exists: false, status: null, payouts_accrued: 0 },
+};
+
+test('ymdLabel formats a YMD (or a pg ISO date) in UTC, no off-by-one', () => {
+  expect(ymdLabel('2026-08-18')).toBe('Aug 18');
+  expect(ymdLabel('2026-08-25T00:00:00.000Z', { weekday: true })).toBe('Tue Aug 25');
+});
+
+test('admin, quiet week: names the derived window, says open, counts the review', () => {
+  expect(hubSubtitle(S, { isAdmin: true }))
+    .toBe('16 active · pay run Aug 18 to 24 open, payday Tue Aug 25 · 1 review to confirm');
+});
+
+test('cross-month window repeats the month; processing status replaces "open"; plural reviews', () => {
+  const s = { ...S, pending_reviews: 2,
+    open_period: { ...S.open_period, start_date: '2026-09-29', end_date: '2026-10-05', payday: '2026-10-06', exists: true, status: 'processing' } };
+  expect(hubSubtitle(s, { isAdmin: true }))
+    .toBe('16 active · pay run Sep 29 to Oct 5 processing, payday Tue Oct 6 · 2 reviews to confirm');
+});
+
+test('zero reviews says nothing to confirm; zero active says no active staff yet', () => {
+  expect(hubSubtitle({ ...S, pending_reviews: 0 }, { isAdmin: true }))
+    .toBe('16 active · pay run Aug 18 to 24 open, payday Tue Aug 25 · nothing to confirm');
+  expect(hubSubtitle({ ...S, active_count: 0, pending_reviews: 0 }, { isAdmin: true }))
+    .toMatch(/^No active staff yet · /);
+});
+
+test('manager: the roster count only; null counts render nothing', () => {
+  expect(hubSubtitle({ active_count: 16, pending_reviews: null, open_period: null }, { isAdmin: false })).toBe('16 active');
+  expect(hubSubtitle({ active_count: null, pending_reviews: null, open_period: null }, { isAdmin: false })).toBe('');
+  expect(hubSubtitle(null, { isAdmin: true })).toBe('');
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/staffHub/hubSubtitle.test.js`
+Expected: FAIL, module not found.
+
+- [ ] **Step 3: Implement `hubSubtitle.js`**
+
+```js
+// client/src/pages/admin/staffHub/hubSubtitle.js
+// The hub's one live subtitle line. Pure: given the summary payload, return
+// the string. pg DATE values arrive as ISO midnight-UTC strings, so every
+// date is formatted in UTC to avoid the off-by-one a local-zone format would
+// introduce for US evenings.
+
+const ymd = (v) => String(v || '').slice(0, 10);
+const asUtcDate = (v) => new Date(`${ymd(v)}T00:00:00Z`);
+
+export function ymdLabel(v, { weekday = false } = {}) {
+  const d = asUtcDate(v);
+  const opts = { month: 'short', day: 'numeric', timeZone: 'UTC' };
+  if (weekday) opts.weekday = 'short';
+  // en-US yields "Tue, Aug 25"; the design drops the comma.
+  return d.toLocaleDateString('en-US', opts).replace(',', '');
+}
+
+export function windowLabel(start, end) {
+  const s = asUtcDate(start);
+  const e = asUtcDate(end);
+  const sameMonth = s.getUTCMonth() === e.getUTCMonth() && s.getUTCFullYear() === e.getUTCFullYear();
+  return sameMonth ? `${ymdLabel(start)} to ${e.getUTCDate()}` : `${ymdLabel(start)} to ${ymdLabel(end)}`;
+}
+
+export function hubSubtitle(summary, { isAdmin }) {
+  if (!summary) return '';
+  const parts = [];
+  if (summary.active_count !== null && summary.active_count !== undefined) {
+    parts.push(summary.active_count === 0 ? 'No active staff yet' : `${summary.active_count} active`);
+  }
+  if (!isAdmin) return parts.join(' · ');
+
+  const p = summary.open_period;
+  if (p) {
+    // "open" when there is no row yet or the row is open; otherwise the row's
+    // own status, so the line never calls a mid-process week open.
+    const word = !p.exists || p.status === 'open' ? 'open' : p.status;
+    parts.push(`pay run ${windowLabel(p.start_date, p.end_date)} ${word}, payday ${ymdLabel(p.payday, { weekday: true })}`);
+  }
+  const n = summary.pending_reviews;
+  if (n !== null && n !== undefined) {
+    parts.push(n === 0 ? 'nothing to confirm' : `${n} ${n === 1 ? 'review' : 'reviews'} to confirm`);
+  }
+  return parts.join(' · ');
+}
+```
+
+Run the subtitle test: passing.
+
+- [ ] **Step 4: Write the failing layout test**
+
+```js
+// client/src/pages/admin/staffHub/StaffHubLayout.test.js
+import '@testing-library/jest-dom';
+import React from 'react';
+import { render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter, Routes, Route, useOutletContext } from 'react-router-dom';
+
+jest.mock('../../../utils/api', () => ({ __esModule: true, default: { get: jest.fn() } }));
+jest.mock('../../../context/AuthContext', () => ({ useAuth: jest.fn() }));
+import api from '../../../utils/api';
+import { useAuth } from '../../../context/AuthContext';
+import StaffHubLayout from './StaffHubLayout';
+
+const SUMMARY = {
+  active_count: 16, deactivated_count: 14, former_staff_count: 5, imported_count: 9,
+  new_applications: 1, pending_reviews: 1,
+  open_period: { start_date: '2026-08-18', end_date: '2026-08-24', payday: '2026-08-25', exists: false, status: null, payouts_accrued: 0 },
+};
+
+function Child() {
+  const { summary, setActions } = useOutletContext();
+  React.useEffect(() => { setActions(<button type="button">Child action</button>); return () => setActions(null); }, [setActions]);
+  return <div data-testid="child">{summary ? `active=${summary.active_count}` : 'no summary'}</div>;
+}
+
+function mount(path, role = 'admin') {
+  useAuth.mockReturnValue({ user: { role } });
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <Routes>
+        <Route path="/staffing" element={<StaffHubLayout />}>
+          <Route index element={<Child />} />
+          <Route path="hiring" element={<Child />} />
+          <Route path="payroll" element={<Child />} />
+          <Route path="reviews" element={<Child />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
+beforeEach(() => { api.get.mockReset(); });
+
+test('admin: four tabs, count on Roster, badges on Hiring and Reviews, live subtitle, child action in the header', async () => {
+  api.get.mockResolvedValue({ data: SUMMARY });
+  mount('/staffing');
+  expect(screen.getByRole('link', { name: /Roster/ })).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText('16 active · pay run Aug 18 to 24 open, payday Tue Aug 25 · 1 review to confirm')).toBeInTheDocument());
+  expect(screen.getByRole('link', { name: /Roster/ })).toHaveTextContent('16');
+  expect(screen.getByRole('link', { name: /Hiring/ })).toHaveTextContent('1');
+  expect(screen.getByRole('link', { name: /Reviews/ })).toHaveTextContent('1');
+  expect(screen.getByRole('link', { name: /Payroll/ })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Child action' })).toBeInTheDocument();
+  expect(screen.getByTestId('child')).toHaveTextContent('active=16');
+});
+
+test('manager: no tab strip, roster-only subtitle', async () => {
+  api.get.mockResolvedValue({ data: { ...SUMMARY, new_applications: null, pending_reviews: null, open_period: null } });
+  mount('/staffing', 'manager');
+  await waitFor(() => expect(screen.getByText('16 active')).toBeInTheDocument());
+  expect(screen.queryByRole('link', { name: /Hiring/ })).toBeNull();
+  expect(screen.queryByRole('navigation', { name: /Staff sections/ })).toBeNull();
+});
+
+test('summary failure: tabs still render, a retry is offered, the child is unaffected', async () => {
+  api.get.mockRejectedValue(new Error('boom'));
+  mount('/staffing/hiring');
+  await waitFor(() => expect(screen.getByRole('button', { name: /Retry/ })).toBeInTheDocument());
+  expect(screen.getByRole('link', { name: /Hiring/ })).toBeInTheDocument();
+  expect(screen.getByTestId('child')).toHaveTextContent('no summary');
+});
+```
+
+- [ ] **Step 5: Run to verify it fails**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/staffHub/StaffHubLayout.test.js`
+Expected: FAIL, module not found.
+
+- [ ] **Step 6: Implement `StaffHubLayout.js`**
+
+```js
+// client/src/pages/admin/staffHub/StaffHubLayout.js
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { NavLink, Outlet, useOutletContext } from 'react-router-dom';
+import api from '../../../utils/api';
+import { useAuth } from '../../../context/AuthContext';
+import { hubSubtitle } from './hubSubtitle';
+
+/**
+ * The Staff hub (spec 2026-08-19-admin-staff-hub-design.md §4). One sidebar
+ * entry, four children, Roster lands. Follows MarketingLayout: the layout owns
+ * ONE fetch (GET /admin/staff-hub/summary) and shares it through Outlet
+ * context. Rendering is never gated on the fetch: children mount at once and
+ * the chrome fills in when the data arrives.
+ *
+ * Two-vocabulary rule (§3): hub sections are header-fused underline tabs
+ * (.hub-tabs, routes not state); views inside a child stay .seg pills in the
+ * toolbar. Never two .segs stacked; never a third level.
+ */
+const TABS = [
+  { id: 'roster',  label: 'Roster',  path: '/staffing',         end: true,  countKey: 'active_count' },
+  { id: 'hiring',  label: 'Hiring',  path: '/staffing/hiring',  adminOnly: true, badgeKey: 'new_applications' },
+  { id: 'payroll', label: 'Payroll', path: '/staffing/payroll', adminOnly: true },
+  { id: 'reviews', label: 'Reviews', path: '/staffing/reviews', adminOnly: true, badgeKey: 'pending_reviews' },
+];
+
+export default function StaffHubLayout() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const shell = useOutletContext() || {};
+  const refreshBadges = shell.refreshBadges;
+
+  const [summary, setSummary] = useState(null);
+  const [summaryError, setSummaryError] = useState(null);
+  const [actions, setActions] = useState(null);
+
+  const loadSummary = useCallback(async () => {
+    setSummaryError(null);
+    try {
+      const res = await api.get('/admin/staff-hub/summary');
+      setSummary(res.data || null);
+    } catch (err) {
+      setSummaryError(err);
+    }
+  }, []);
+  useEffect(() => { loadSummary(); }, [loadSummary]);
+
+  /** Children call this after a mutation that moves a count or a badge. */
+  const refresh = useCallback(() => {
+    loadSummary();
+    if (typeof refreshBadges === 'function') refreshBadges();
+  }, [loadSummary, refreshBadges]);
+
+  const ctx = useMemo(
+    () => ({ summary, summaryError, refresh, setActions }),
+    [summary, summaryError, refresh]
+  );
+
+  const visibleTabs = TABS.filter(t => !t.adminOnly || isAdmin);
+  const subtitle = hubSubtitle(summary, { isAdmin });
+
+  return (
+    <div className="page" data-app="admin-os">
+      <div className="hub-head">
+        <div className="page-header">
+          <div>
+            <div className="page-title">Staff</div>
+            {subtitle && <div className="page-subtitle">{subtitle}</div>}
+            {summaryError && (
+              <div className="page-subtitle">
+                <span className="muted">Counts unavailable.</span>{' '}
+                <button type="button" className="btn btn-ghost btn-sm" onClick={loadSummary}>Retry</button>
+              </div>
+            )}
+          </div>
+          {actions && <div className="page-actions">{actions}</div>}
+        </div>
+        {visibleTabs.length > 1 && (
+          <nav className="hub-tabs" aria-label="Staff sections">
+            {visibleTabs.map(t => {
+              const count = t.countKey && summary ? summary[t.countKey] : null;
+              const badge = t.badgeKey && summary ? summary[t.badgeKey] : null;
+              return (
+                <NavLink
+                  key={t.id}
+                  to={t.path}
+                  end={!!t.end}
+                  className={({ isActive }) => `hub-tab${isActive ? ' active' : ''}`}
+                >
+                  {t.label}
+                  {count !== null && count !== undefined && <span className="hub-tab-count">{count}</span>}
+                  {badge > 0 && <span className="hub-tab-badge">{badge}</span>}
+                </NavLink>
+              );
+            })}
+          </nav>
+        )}
+      </div>
+      <Outlet context={ctx} />
+    </div>
+  );
+}
+```
+
+- [ ] **Step 7: Append the hub CSS to `client/src/index.css`**
+
+Append at the end of the file (these are the benchmark artifact's rules marked "ships verbatim", with the repo's `html` prefix):
+
+```css
+/* ==========================================================================
+   Staff hub chrome (spec 2026-08-19-admin-staff-hub-design.md §3).
+   Benchmark: docs/design-artifacts/2026-08-19-staff-hub.dc.html. Two
+   vocabularies: .hub-tabs = header-fused underline sections (routes);
+   .seg in the toolbar = views inside a child. One .hub-tabs per page.
+   ========================================================================== */
+html[data-app="admin-os"] .hub-head { border-bottom: 1px solid var(--line-1); margin-bottom: var(--gap); }
+html[data-app="admin-os"] .hub-head .page-header { border-bottom: 0; margin-bottom: 0; padding-bottom: 0.6rem; }
+html[data-app="admin-os"] .hub-tabs { display: flex; gap: 2px; overflow-x: auto; }
+html[data-app="admin-os"] .hub-tab {
+  display: inline-flex; align-items: center; gap: 7px; padding: 0 11px; height: 34px;
+  font-size: 12.5px; font-weight: 500; color: var(--ink-3);
+  border-bottom: 2px solid transparent; border-radius: 5px 5px 0 0;
+  cursor: pointer; white-space: nowrap; user-select: none; text-decoration: none;
+  transition: color 0.08s, background 0.08s;
+}
+html[data-app="admin-os"] .hub-tab:hover { color: var(--ink-1); background: var(--row-hover); }
+html[data-app="admin-os"] .hub-tab.active { color: var(--ink-1); font-weight: 600; border-bottom-color: var(--accent); background: none; }
+html[data-app="admin-os"] .hub-tab-count { font-family: var(--font-numeric); font-variant-numeric: tabular-nums; font-size: 11px; font-weight: 500; color: var(--ink-4); }
+html[data-app="admin-os"] .hub-tab.active .hub-tab-count { color: var(--ink-3); }
+html[data-app="admin-os"] .hub-tab-badge { background: var(--accent); color: #fff; font-family: var(--font-numeric); font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 99px; min-width: 17px; text-align: center; line-height: 1.3; }
+html[data-app="admin-os"][data-skin="light"] .hub-tab { border-radius: 0; }
+html[data-app="admin-os"][data-skin="light"] .hub-tab-badge { color: var(--bg-0); }
+html[data-app="admin-os"] .hub-empty { padding: 44px 24px; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+html[data-app="admin-os"] .hub-empty h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink-1); }
+html[data-app="admin-os"] .hub-empty p { margin: 0 0 8px; font-size: 12px; color: var(--ink-3); max-width: 420px; line-height: 1.55; }
+/* Hiring: the stale-record fold */
+html[data-app="admin-os"] .hire-fold { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border: 1px dashed var(--line-2); border-radius: 4px; color: var(--ink-3); font-size: 11.5px; cursor: pointer; user-select: none; transition: background 0.08s; background: none; width: 100%; text-align: left; font: inherit; }
+html[data-app="admin-os"] .hire-fold:hover { background: var(--row-hover); color: var(--ink-2); }
+html[data-app="admin-os"] .hire-stub { display: flex; align-items: center; gap: 8px; padding: 5px 11px; border: 1px solid var(--line-1); border-radius: 4px; font-size: 11.5px; color: var(--ink-3); opacity: 0.72; text-decoration: none; }
+/* Roster: in-table group header rows */
+html[data-app="admin-os"] .roster-sect td { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-4); background: var(--bg-2); padding: 5px var(--cell-pad-x); height: auto; }
+@media (max-width: 720px) {
+  html[data-app="admin-os"] .hub-tabs { overflow-x: auto; flex-wrap: nowrap; }
+}
+```
+
+(The artifact's `.hire-fold` is a `<div>`; the build renders it as a `<button>` for keyboard access, which is why `background:none; width:100%; text-align:left; font:inherit` are added. Everything else is verbatim.)
+
+- [ ] **Step 8: Run to verify it passes**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/staffHub`
+Expected: both files passing.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add client/src/pages/admin/staffHub/hubSubtitle.js client/src/pages/admin/staffHub/hubSubtitle.test.js client/src/pages/admin/staffHub/StaffHubLayout.js client/src/pages/admin/staffHub/StaffHubLayout.test.js client/src/index.css
+git commit -m "feat(staff-hub): layout with header-fused tabs, live subtitle, actions slot; hub CSS from the benchmark"
+```
+
+### Task B4: routes, `adminStrict` guards, param-preserving redirects, `screenKey`
+
+**Files:**
+- Modify: `client/src/App.js` (lazy imports `:143-177`, routes `:597-620`, add `LegacyRedirect` beside `FinancialsRedirect` at `:274`)
+- Modify: `client/src/utils/screenKey.js:24-32`, `client/src/utils/screenKey.test.js`
+
+**Interfaces:**
+- Produces: `/staffing` (layout) with index Roster, `hiring`, `payroll`, `reviews` children; `/hiring`, `/tips`, `/reviews`, `/financials/payroll` redirect with params.
+
+- [ ] **Step 1: Update the screenKey test first**
+
+In `screenKey.test.js` delete the `['/financials/payroll', 'financials'],` row and the `expect(screenTitle('financials')).toBe('Payroll');` line, and add:
+
+```js
+  ['/staffing/payroll', 'staffing'],
+```
+
+to the `test.each` table (every hub child shares the `staffing` key; the per-child key is the mobile phase's call, spec §8).
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/screenKey.test.js`
+Expected: passes already for the new row; the point is the file compiles without `financials`. Proceed.
+
+- [ ] **Step 3: Implement `screenKey.js`**
+
+Replace the `SEGMENT_LABELS` block's first line `const map = { financials: 'Payroll' };` with `const map = {};` and the comment above it with:
+
+```js
+// First-URL-segment -> nav label ("staffing" -> "Staff"). Every Staff hub child
+// shares the "staffing" key (one Desktop-view override for the hub).
+```
+
+- [ ] **Step 4: Implement the routes in `App.js`**
+
+Add a lazy import beside the others (`:143`):
+
+```js
+const StaffHubLayout = lazy(() => import('./pages/admin/staffHub/StaffHubLayout'));
+```
+
+Add next to `FinancialsRedirect` (`:274`):
+
+```js
+/** Param-preserving redirect for retired admin URLs. Builds the target with
+ *  URLSearchParams over `defaults` so a path that already carries ?tab= never
+ *  gets a second '?' concatenated onto it. Targets are hardcoded internal paths. */
+function LegacyRedirect({ to, defaults }) {
+  const [params] = useSearchParams();
+  const merged = new URLSearchParams(defaults || {});
+  params.forEach((v, k) => merged.set(k, v));
+  const qs = merged.toString();
+  return <Navigate replace to={qs ? `${to}?${qs}` : to} />;
+}
+```
+
+Replace the routes at `:597-601` (`/staffing`, `/staffing/legacy`, `/staffing/users/:id`, `/staffing/applications/:id`, `/hiring`) with:
+
+```jsx
+        {/* The Staff hub (spec 2026-08-19). Roster lands; Hiring, Payroll and
+            Reviews are admin-only children guarded with adminStrict at the
+            route, because their APIs are the server's adminOnly and hiding a
+            tab is not a guard (a manager can still type the URL). The three
+            detail routes stay siblings so the hub chrome never wraps a
+            profile page. */}
+        <Route path="/staffing" element={<StaffHubLayout />}>
+          <Route index element={<AdminStaffDashboard />} />
+          <Route path="hiring" element={<ProtectedRoute adminStrict><HiringDashboard /></ProtectedRoute>} />
+          <Route path="payroll" element={<ProtectedRoute adminStrict><PayrollPage /></ProtectedRoute>} />
+          <Route path="reviews" element={<ProtectedRoute adminStrict><StaffReviews /></ProtectedRoute>} />
+        </Route>
+        <Route path="/staffing/legacy" element={<AdminDashboard />} />
+        <Route path="/staffing/users/:id" element={<AdminUserDetail />} />
+        <Route path="/staffing/applications/:id" element={<AdminApplicationDetail />} />
+        <Route path="/hiring" element={<LegacyRedirect to="/staffing/hiring" />} />
+```
+
+(sh-e swaps `StaffReviews` for `ReviewsPage` in this block and deletes the old import; until then the old page renders inside the hub, which is the correct intermediate state.)
+
+Replace `:618-620` (`/financials/payroll`, `/tips`, `/reviews`) with:
+
+```jsx
+        <Route path="/financials/payroll" element={<LegacyRedirect to="/staffing/payroll" />} />
+        <Route path="/tips" element={<LegacyRedirect to="/staffing/payroll" defaults={{ tab: 'tips' }} />} />
+        <Route path="/reviews" element={<LegacyRedirect to="/staffing/reviews" />} />
+```
+
+Remove the now-unused `TipsAdmin` lazy import (`:176`) only in sh-f when the file is deleted; for now it is still imported by nothing, so delete the import line here to keep the CI build warning-free. (`react-scripts` flags unused vars as warnings and `CI=true` fails on them.)
+
+- [ ] **Step 5: Verify**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/screenKey.test.js` then `cd client && CI=true npx react-scripts build`.
+Expected: both green. Then in the dev app as admin: `/hiring?schedule=5` lands on `/staffing/hiring?schedule=5`; `/tips` lands on `/staffing/payroll?tab=tips`; `/financials/payroll?tab=payrun&period=109` lands on `/staffing/payroll?tab=payrun&period=109`; `/reviews` lands on `/staffing/reviews`. As a manager (dev JWT for a manager user): `/staffing/payroll` bounces to the manager home; `/staffing` renders the roster with no tab strip.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add client/src/App.js client/src/utils/screenKey.js client/src/utils/screenKey.test.js
+git commit -m "feat(staff-hub): routes with adminStrict children, param-preserving redirects for the retired URLs"
+```
+
+### Task B5: retarget in-app links
+
+**Files:**
+- Modify: `client/src/pages/admin/overview/PayrollStatus.js:16, 89`
+- Modify: `client/src/pages/admin/overview/NeedsYouStrip.js:31`
+- Modify: `client/src/pages/admin/userDetail/tabs/PayoutsTab.js:82, 149`
+- Modify: `client/src/pages/admin/applicationDetail/AdminApplicationDetail.js:108, 177`
+- Modify: `client/src/pages/mobile/MorePage.js:76-91`
+
+- [ ] **Step 1: Make the edits**
+
+- `PayrollStatus.js:16`: `const PAYROLL_HREF = '/staffing/payroll';` and `:89`: `` href: `/staffing/payroll?tab=payrun&period=${due.id}`, ``
+- `NeedsYouStrip.js:31`: `navigate('/hiring')` → `navigate('/staffing/hiring')`
+- `PayoutsTab.js:82`: `` `/staffing/payroll?tab=${...}&period=${po.period.id}` `` ; `:149`: `to="/staffing/payroll?tab=tax"`
+- `AdminApplicationDetail.js:108`: `<BackButton fallback="/staffing/hiring" />`; `:177`: `` navigate(`/staffing/hiring?schedule=${id}`) ``
+- `MorePage.js:76-91`: change the Link `to="/staffing/payroll"` and rewrite the comment: "Deliberate phone-only row: Payroll is a tab inside the Staff hub and has no nav.js item of its own, so the phone offers it explicitly. Admin-gated: the payroll API is admin-only server-side."
+
+- [ ] **Step 2: Verify nothing else points at the old URLs**
+
+Run: `grep -rn "financials/payroll\|'/hiring'\|\"/hiring\|/hiring?\|'/tips'\|\"/tips\"\|'/reviews'\|\"/reviews\"" client/src --include=*.js | grep -v "App.js\|test.js"`
+Expected: no output. (Server API routes named `/tips`, `/reviews`, `/hiring/*` are endpoints, not admin links, and are untouched.)
+
+- [ ] **Step 3: Build gate and commit**
+
+Run: `cd client && CI=true npx react-scripts build`
+
+```bash
+git add client/src/pages/admin/overview/PayrollStatus.js client/src/pages/admin/overview/NeedsYouStrip.js client/src/pages/admin/userDetail/tabs/PayoutsTab.js client/src/pages/admin/applicationDetail/AdminApplicationDetail.js client/src/pages/mobile/MorePage.js
+git commit -m "chore(staff-hub): retarget every in-app link at the hub routes"
+```
+
+### Task B6: Roster inside the hub
+
+**Files:**
+- Modify: `client/src/pages/admin/StaffDashboard.js`
+
+**Interfaces:**
+- Consumes: `useOutletContext()` → `{ summary, setActions }` (Task B3). `GET /admin/active-staff?include_stubs=true&limit=100&page=N` (Task A4 shape: `{ staff, total, page, pages }`).
+
+- [ ] **Step 1: Rewrite the component body**
+
+Keep the imports, `isLegacyCcStub`, `initialsOf`, and the kebab menu exactly as they are. Make these changes:
+
+(a) Replace the URL-state constants:
+
+```js
+// URL-backed view state (admin cross-nav). Module scope = stable identity.
+const STAFF_DEFAULTS = { tab: 'active', page: '1' };
+const STAFF_TABS = ['active', 'deactivated', 'all'];
+const PAGE_SIZE = 100; // the endpoint's max; groups and footer count from the same universe as the hub counts
+
+// Imported placeholder identities: legacy CC stubs and the payment-history
+// import's @imported.invalid accounts. Status-scoped to match the server's
+// imported_count predicate (spec §5).
+function isImportedRecord(s) {
+  return isLegacyCcStub(s)
+    || (s?.onboarding_status === 'deactivated' && s?.import_source === 'payment_history_import');
+}
+```
+
+(b) In the component, pull the hub context and register the header action:
+
+```js
+  const { summary, setActions } = useOutletContext() || {};
+  useEffect(() => {
+    if (!setActions) return undefined;
+    setActions(
+      <button type="button" className="btn btn-primary" onClick={() => navigate('/staffing/legacy')}>
+        <Icon name="send" />Send SMS
+      </button>
+    );
+    return () => setActions(null);
+  }, [setActions, navigate]);
+```
+
+Add `useOutletContext` to the `react-router-dom` import.
+
+(c) Fetch with paging:
+
+```js
+  const page = Math.max(1, parseInt(listState.page, 10) || 1);
+  const [meta, setMeta] = useState({ total: 0, pages: 1 });
+  const [loadError, setLoadError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => {
+    setLoading(true); setLoadError(false);
+    api.get(`/admin/active-staff?include_stubs=true&limit=${PAGE_SIZE}&page=${page}`)
+      .then(r => {
+        setStaff(r.data?.staff || []);
+        setMeta({ total: Number(r.data?.total || 0), pages: Number(r.data?.pages || 1) });
+      })
+      .catch(() => { setLoadError(true); toast.error('Failed to load staff. Try refreshing.'); })
+      .finally(() => setLoading(false));
+  }, [toast, page, reloadKey]);
+```
+
+(d) Filtering and groups:
+
+```js
+  const active = useMemo(() => staff.filter(s => s.onboarding_status === 'approved'), [staff]);
+  const deactivated = useMemo(() => staff.filter(s => s.onboarding_status === 'deactivated'), [staff]);
+  const former = useMemo(() => deactivated.filter(s => !isImportedRecord(s)), [deactivated]);
+  const imported = useMemo(() => deactivated.filter(isImportedRecord), [deactivated]);
+
+  // Rows in render order, with group header markers where the view has groups.
+  const rows = useMemo(() => {
+    if (tab === 'active') return active.map(s => ({ kind: 'row', s }));
+    const groups = [
+      { label: 'Former staff', items: former },
+      { label: 'Imported records', items: imported },
+    ];
+    if (tab === 'all') groups.unshift({ label: 'Active', items: active });
+    return groups.flatMap(g => ([{ kind: 'sect', label: g.label, count: g.items.length }, ...g.items.map(s => ({ kind: 'row', s }))]));
+  }, [tab, active, former, imported]);
+
+  const tabs = useMemo(() => ([
+    { id: 'active', label: 'Active', count: summary?.active_count ?? active.length },
+    { id: 'deactivated', label: 'Deactivated', count: summary?.deactivated_count ?? deactivated.length },
+    { id: 'all', label: 'All', count: (summary?.active_count ?? active.length) + (summary?.deactivated_count ?? deactivated.length) },
+  ]), [summary, active.length, deactivated.length]);
+```
+
+Tab counts prefer the server's whole-table numbers and fall back to the loaded slice.
+
+(e) Replace the JSX: delete the `.page` wrapper and `.page-header` (the hub owns both; return a fragment). Keep `<Toolbar tabs={tabs} tab={tab} setTab={(t) => setListState({ tab: t, page: '1' })} />`. Keep the existing `Loading…` row and add an inline retry row directly under it:
+
+```jsx
+              {!loading && loadError && (
+                <tr><td colSpan={7}><span className="muted">Could not load staff.</span>{' '}
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setReloadKey(k => k + 1)}>Retry</button></td></tr>
+              )}
+```
+
+The table body then maps `rows`:
+
+```jsx
+              {!loading && rows.map((r, i) => r.kind === 'sect' ? (
+                <tr key={`sect-${r.label}`} className="roster-sect">
+                  <td colSpan={7}>{r.label} · {r.count}</td>
+                </tr>
+              ) : (
+                /* The existing <ClickableRow key={s.id} …> block (StaffDashboard.js:113-179 as of today),
+                   with `const s = r.s;` hoisted above it and only the email sub line changed as shown below. */
+              ))}
+```
+
+In the existing row, the email sub line becomes:
+
+```jsx
+                          {isImportedRecord(s)
+                            ? <div className="sub">{isStub && !isAdmin ? 'email redacted for managers' : 'no email on file'}</div>
+                            : ((s.display_name || s.preferred_name) && s.email && <div className="sub">{displayEmail}</div>)}
+```
+
+(f) Empty state (Active tab, nothing loaded, not loading) replaces the table entirely:
+
+```jsx
+      {!loading && tab === 'active' && active.length === 0 ? (
+        <div className="card">
+          <div className="hub-empty">
+            <h4>No active staff yet</h4>
+            <p>Approved hires land here on their own once onboarding completes.{summary?.new_applications > 0 ? ` ${summary.new_applications === 1 ? 'One application is' : `${summary.new_applications} applications are`} waiting for a first look right now.` : ''}</p>
+            <button type="button" className="btn btn-secondary" onClick={() => navigate('/staffing/hiring')}>Open Hiring</button>
+          </div>
+        </div>
+      ) : ( /* the card + table */ )}
+```
+
+(g) Footer line under the table:
+
+```jsx
+      {!loading && (
+        <div className="tiny muted hstack" style={{ padding: '8px 2px', gap: 12 }}>
+          <span>
+            {tab === 'active' && `${active.length} active`}
+            {tab === 'deactivated' && `${deactivated.length} deactivated · ${former.length} former staff, ${imported.length} imported records`}
+            {tab === 'all' && `${staff.length} ${staff.length === 1 ? 'team member' : 'team members'}`}
+          </span>
+          {meta.pages > 1 && (
+            <>
+              <span>Showing page {page} of {meta.pages} ({meta.total} total)</span>
+              <button type="button" className="btn btn-ghost btn-sm" disabled={page <= 1} onClick={() => setListState({ page: String(page - 1) })}>Prev</button>
+              <button type="button" className="btn btn-ghost btn-sm" disabled={page >= meta.pages} onClick={() => setListState({ page: String(page + 1) })}>Next</button>
+            </>
+          )}
+        </div>
+      )}
+```
+
+The "Open hiring" header button is gone. The `Toolbar` colSpan stays 7.
+
+- [ ] **Step 2: Verify in the dev app**
+
+`/staffing`: Active shows 16 with no group rows; Deactivated shows "Former staff · 5" then "Imported records · 9" (the nine now render, Task A4); All shows "Active · 16" first. Imported rows read "no email on file". Send SMS sits in the hub header. `/staffing?tab=all` (old links) still works.
+
+- [ ] **Step 3: Build gate, docs, commit**
+
+Run: `cd client && CI=true npx react-scripts build`. Update `README.md`'s folder tree: add `client/src/pages/admin/staffHub/` (StaffHubLayout.js, hubSubtitle.js) with one line each.
+
+```bash
+git add client/src/pages/admin/StaffDashboard.js README.md
+git commit -m "feat(roster): Active/Deactivated/All with group rows, paging, hub header actions, empty state"
+```
+
+**Lane sh-b done when:** B1–B6 committed; `cd client && CI=true npx react-scripts test --watchAll=false` green for the touched tests; the build gate green; `ui-ux-review` run against artboards 1a/1b/1c.
+
+# Lane sh-c-hiring
+
+### Task C1: Hiring inside the hub: header gone, search in a toolbar row, the stale-record fold
+
+**Files:**
+- Modify: `client/src/pages/admin/HiringDashboard.js`
+- Create: `client/src/pages/admin/HiringDashboard.fold.test.js`
+
+**Interfaces:**
+- Consumes: the kanban's `apps` rows (`id` = user id, `created_at`, `onboarding_progress` 0..1, `onboarding_status`).
+- Produces: `splitOnboarding(rows, nowMs) -> { live, folded }` (named export, pure) and `FOLD_DAYS = 60`.
+
+- [ ] **Step 1: Write the failing test**
+
+```js
+// client/src/pages/admin/HiringDashboard.fold.test.js
+import { splitOnboarding, FOLD_DAYS } from './HiringDashboard';
+
+const DAY = 86400000;
+const now = Date.parse('2026-08-19T12:00:00Z');
+const row = (over) => ({ id: 1, onboarding_status: 'in_progress', onboarding_progress: 0, created_at: new Date(now - 10 * DAY).toISOString(), ...over });
+
+test('a fresh 0% signup is live; an old 0% account folds; an old account with progress stays live', () => {
+  const fresh = row({ id: 1 });
+  const oldZero = row({ id: 2, created_at: new Date(now - (FOLD_DAYS + 1) * DAY).toISOString() });
+  const oldStarted = row({ id: 3, created_at: new Date(now - 200 * DAY).toISOString(), onboarding_progress: 1 / 6 });
+  const { live, folded } = splitOnboarding([fresh, oldZero, oldStarted], now);
+  expect(live.map(r => r.id)).toEqual([1, 3]);
+  expect(folded.map(r => r.id)).toEqual([2]);
+});
+
+test('the fold never keys on status: a day-one pre-hired recruit (hired, 0%) is live', () => {
+  const { live, folded } = splitOnboarding([row({ id: 9, onboarding_status: 'hired', created_at: new Date(now - 1 * DAY).toISOString() })], now);
+  expect(live).toHaveLength(1);
+  expect(folded).toHaveLength(0);
+});
+
+test('exactly FOLD_DAYS old is still live; one day more folds', () => {
+  const edge = row({ id: 4, created_at: new Date(now - FOLD_DAYS * DAY).toISOString() });
+  const past = row({ id: 5, created_at: new Date(now - (FOLD_DAYS + 1) * DAY).toISOString() });
+  const { live, folded } = splitOnboarding([edge, past], now);
+  expect(live.map(r => r.id)).toEqual([4]);
+  expect(folded.map(r => r.id)).toEqual([5]);
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/HiringDashboard.fold.test.js`
+Expected: FAIL, `splitOnboarding` is not exported.
+
+- [ ] **Step 3: Implement**
+
+(a) Module-level, after `stageOf`:
+
+```js
+// The stale-record fold (spec §6). Predicate is generic, never a status or a
+// cutover date: an Onboarding card whose account is older than FOLD_DAYS and
+// has completed no onboarding step. Today that is the 29 accounts bulk-
+// registered on the 2026-05-27 cutover plus 3 stale signups; a day-one
+// pre-hired recruit is also `hired` at 0% and must render live.
+export const FOLD_DAYS = 60;
+export function splitOnboarding(rows, nowMs = Date.now()) {
+  const live = [];
+  const folded = [];
+  for (const a of rows) {
+    const ageDays = a.created_at ? (nowMs - new Date(a.created_at).getTime()) / 86400000 : 0;
+    const zero = !(Number(a.onboarding_progress) > 0);
+    if (zero && ageDays > FOLD_DAYS) folded.push(a); else live.push(a);
+  }
+  folded.sort((x, y) => new Date(x.created_at) - new Date(y.created_at)); // oldest first
+  return { live, folded };
+}
+const STATUS_WORD = { hired: 'pre-hired', in_progress: 'signed up' };
+const ymdLabel = (v) => new Date(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+```
+
+(b) In the `cols` memo, after the loop: `const split = splitOnboarding(out.in_progress); out.in_progress = split.live; out.in_progress_folded = split.folded;`. Add `const [foldOpen, setFoldOpen] = useState(false);` beside the other state.
+
+(c) Replace the `.page` / `.page-header` JSX: the component returns a fragment; the old header's search `<div className="page-actions" ...>` block becomes the right side of a toolbar row placed where the header was:
+
+```jsx
+    <>
+      <div className="hstack" style={{ gap: 8, marginBottom: 12 }}>
+        <div className="muted tiny">{summary.in_pipeline} in pipeline · {summary.new_apps_7d} new this week</div>
+        <div className="spacer" />
+        <div style={{ position: 'relative', minWidth: 280 }}>
+          {/* Move the search <input className="input" …> and the {searchOpen && (<div className="card" …>…</div>)} dropdown
+              from the old page-actions block (HiringDashboard.js:155-200 as of today) here, byte for byte. */}
+        </div>
+      </div>
+      {/* existing stat row, kanban, modal follow */}
+    </>
+```
+
+(d) In the Onboarding column body (the `else` branch at `:273-283`), after the live cards and before `EmptyTile`:
+
+```jsx
+                    {col.key === 'in_progress' && cols.in_progress_folded.length > 0 && (
+                      <>
+                        <button type="button" className="hire-fold" aria-expanded={foldOpen} onClick={() => setFoldOpen(o => !o)}>
+                          <span aria-hidden="true">{foldOpen ? '▾' : '▸'}</span>
+                          <span>
+                            Not started · {cols.in_progress_folded.length} · oldest {ymdLabel(cols.in_progress_folded[0].created_at)} · not pipeline
+                          </span>
+                        </button>
+                        {foldOpen && (
+                          <>
+                            <div className="tiny muted" style={{ padding: '0 2px' }}>
+                              Accounts older than {FOLD_DAYS} days that never began onboarding. Open one to deactivate it from the staffer page; nothing here counts toward the board.
+                            </div>
+                            {cols.in_progress_folded.map(a => (
+                              <EntityLink key={a.id} to={`/staffing/users/${a.id}`} className="hire-stub">
+                                <span className="avatar" style={{ width: 18, height: 18, fontSize: 9 }}>{initialsOf(a.full_name || a.email)}</span>
+                                <span style={{ flex: 1 }}>{a.full_name || a.email}</span>
+                                <span className="muted">{ymdLabel(a.created_at)}</span>
+                                <span className="tag">{STATUS_WORD[a.onboarding_status] || a.onboarding_status}</span>
+                              </EntityLink>
+                            ))}
+                          </>
+                        )}
+                      </>
+                    )}
+```
+
+`EntityLink` is already imported. The column's count badge already reads `cols[col.key].length`, which is now the live count. The `EmptyTile` condition becomes `cols[col.key].length === 0 && !(col.key === 'in_progress' && cols.in_progress_folded.length > 0)`.
+
+The list projects `a.full_name` (`applications.js:76`) and `u.created_at` unaliased as `created_at`, so `a.full_name` and `a.created_at` are the right fields.
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/HiringDashboard.fold.test.js`
+Expected: 3 passing. Dev app: `/staffing/hiring` shows Onboarding 8 with a "Not started · 32 · oldest May 27, 2026 · not pipeline" fold; expanding lists dimmed rows linking to staffer pages; the `?schedule=` deep link and search still work.
+
+- [ ] **Step 5: Build gate and commit**
+
+Run: `cd client && CI=true npx react-scripts build`
+
+```bash
+git add client/src/pages/admin/HiringDashboard.js client/src/pages/admin/HiringDashboard.fold.test.js
+git commit -m "feat(hiring): header into the hub; stale-record fold keyed on zero progress + 60 days"
+```
+
+**Lane sh-c done when:** C1 committed, build green, `ui-ux-review` against artboard 1d (with the §3 overrides: generic fold label, no matcher copy, rows link to the staffer page).
+
+# Lane sh-d-payroll
+
+### Task D1: `PayrollPage`: header gone, tabs become a real `.seg`, "Tips"
+
+**Files:**
+- Modify: `client/src/pages/admin/payroll/PayrollPage.js`
+
+**Interfaces:**
+- Consumes: `Toolbar` (`client/src/components/adminos/Toolbar.js`), `useOutletContext()` → `{ summary, refresh }`.
+- Produces: tab ids unchanged (`payrun`, `history`, `tips`, `tax`); `PayRunView` receives `openPeriod={summary?.open_period}` and `pendingReviews={summary?.pending_reviews}` (Task D2); `TipsLedger` renders in the tips tab (Task D3).
+
+- [ ] **Step 1: Rewrite `PayrollPage.js`**
+
+```js
+import React from 'react';
+import { useOutletContext } from 'react-router-dom';
+import useUrlListState from '../../../hooks/useUrlListState';
+import Toolbar from '../../../components/adminos/Toolbar';
+import StatusChip from '../../../components/adminos/StatusChip';
+import PayRunView from './PayRunView';
+import HistoryView from './HistoryView';
+import UnassignedTipsPanel from './UnassignedTipsPanel';
+import DeferredTipsPanel from './DeferredTipsPanel';
+import TipsLedger from './TipsLedger';
+import TaxTotalsTab from './TaxTotalsTab';
+
+// Payroll is a child of the Staff hub (spec 2026-08-19 §7). The hub owns the
+// page header; this page owns its views as .seg pills in the toolbar (two
+// vocabularies: underline above, pills below, never the same strip twice).
+const TABS = [
+  { id: 'payrun', label: 'Pay run' },
+  { id: 'history', label: 'History' },
+  { id: 'tips', label: 'Tips' },
+  { id: 'tax', label: '1099 / tax' },
+];
+const TAB_IDS = TABS.map(t => t.id);
+// Pre-redesign tab ids remap on read so old bookmarks and deep links keep
+// working (the payroll redesign renamed the tabs); writes use the new ids.
+const LEGACY_TAB_REMAP = { current: 'payrun', unassigned: 'tips' };
+const PAYROLL_DEFAULTS = { tab: 'payrun', period: '' };
+
+export default function PayrollPage() {
+  const [listState, setListState] = useUrlListState(PAYROLL_DEFAULTS);
+  const mappedTab = LEGACY_TAB_REMAP[listState.tab] || listState.tab;
+  const tab = TAB_IDS.includes(mappedTab) ? mappedTab : 'payrun';
+  const { summary, refresh } = useOutletContext() || {};
+
+  return (
+    <>
+      <Toolbar
+        tabs={TABS}
+        tab={tab}
+        // Clear the period param on tab clicks: both Pay run and History
+        // consume it, and a stale non-paid id would bounce History right
+        // back to Pay run. Deep links set the param directly in the URL.
+        setTab={(t) => setListState({ tab: t, period: '' })}
+      />
+
+      {tab === 'payrun' && (
+        <PayRunView
+          periodParam={listState.period}
+          openPeriod={summary?.open_period || null}
+          pendingReviews={summary?.pending_reviews ?? 0}
+          onChanged={refresh}
+        />
+      )}
+      {tab === 'history' && <HistoryView periodParam={listState.period} />}
+      {tab === 'tips' && <TipsTab />}
+      {tab === 'tax' && <TaxTotalsTab />}
+    </>
+  );
+}
+
+// Repair, then ledger, then context. Both repair panels report their count so
+// an empty pair collapses to one clear line and the ledger is the page.
+function TipsTab() {
+  const [counts, setCounts] = React.useState({ unassigned: null, deferred: null });
+  const bothClear = counts.unassigned === 0 && counts.deferred === 0;
+  return (
+    <div className="vstack" style={{ gap: 16 }}>
+      {bothClear && (
+        <div className="card">
+          <div className="card-body hstack" style={{ gap: 10 }}>
+            <StatusChip kind="ok">clear</StatusChip>
+            <span>Repair queues are clear: no unassigned tips, nothing deferred.</span>
+            <span className="muted tiny">Unassigned appear when a tip can't find its event · deferred wait for an open period</span>
+          </div>
+        </div>
+      )}
+      <UnassignedTipsPanel hideWhenEmpty onCount={(n) => setCounts(c => (c.unassigned === n ? c : { ...c, unassigned: n }))} />
+      <DeferredTipsPanel hideWhenEmpty onCount={(n) => setCounts(c => (c.deferred === n ? c : { ...c, deferred: n }))} />
+      <TipsLedger />
+      <p className="tiny muted" style={{ margin: 0 }}>
+        Tips are collected on each bartender's own sign and paid through the event's payout, pooled across the bartenders who worked it; this ledger is the cross-staff view. A staffer's Payouts tab shows where each one landed.
+      </p>
+    </div>
+  );
+}
+```
+
+(The `"← Overview"` button is gone with the header.)
+
+- [ ] **Step 2: Add `onCount` / `hideWhenEmpty` to the two repair panels**
+
+In `UnassignedTipsPanel.js`: signature `export default function UnassignedTipsPanel({ onCount, hideWhenEmpty = false })`; after the fetch resolves (where `setTips(...)` is called) add `if (onCount) onCount((r.data?.tips || []).length);` using whatever variable the file already holds the list in; and change the empty return (`if (tips.length === 0) { return (<div className="card">…No unassigned tips…</div>); }`) to `if (tips.length === 0) return hideWhenEmpty ? null : (<existing empty card>);`. Also call `onCount` after a successful assign re-fetch so the clear line can appear once the last one is fixed.
+
+In `DeferredTipsPanel.js`: the same two edits around its fetch (`:30`) and its empty return (`:65-66`).
+
+- [ ] **Step 3: Verify and commit**
+
+Run: `cd client && CI=true npx react-scripts build`. Dev app: `/staffing/payroll` shows the `.seg` under the hub tabs, `?tab=unassigned` still lands on Tips. (TipsLedger and the PayRunView props land in D2/D3; until then import errors: do D1 through D3 before the first dev check, committing after each.)
+
+```bash
+git add client/src/pages/admin/payroll/PayrollPage.js client/src/pages/admin/payroll/UnassignedTipsPanel.js client/src/pages/admin/payroll/DeferredTipsPanel.js
+git commit -m "feat(payroll): hub child; tabs become a .seg; repair queues collapse to one clear line when empty"
+```
+
+### Task D2: the current-week card in `PayRunView`
+
+**Files:**
+- Create: `client/src/pages/admin/payroll/CurrentWeekCard.js`
+- Create: `client/src/pages/admin/payroll/CurrentWeekCard.test.js`
+- Modify: `client/src/pages/admin/payroll/PayRunView.js` (props, render above the queue)
+
+**Interfaces:**
+- Consumes: `openPeriod` (A2 `open_period` shape), `pendingReviews` (int), `bountyCents` (int, from `GET /admin/staff-reviews` envelope, Task A6).
+- Produces: `CurrentWeekCard({ openPeriod, pendingReviews, bountyCents })` renders ONLY when the derived window has no row yet, or has a row that is `open` with zero payouts accrued; otherwise returns null (the queue already shows that period).
+
+- [ ] **Step 1: Write the failing test**
+
+```js
+// client/src/pages/admin/payroll/CurrentWeekCard.test.js
+import '@testing-library/jest-dom';
+import React from 'react';
+import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import CurrentWeekCard from './CurrentWeekCard';
+
+const P = { start_date: '2026-08-18', end_date: '2026-08-24', payday: '2026-08-25', exists: false, status: null, payouts_accrued: 0 };
+const r = (ui) => render(<MemoryRouter>{ui}</MemoryRouter>);
+
+test('no row yet: names the derived window, $0.00 owed, nothing accrued yet', () => {
+  r(<CurrentWeekCard openPeriod={P} pendingReviews={0} bountyCents={1000} />);
+  expect(screen.getByText(/Aug 18 to 24/)).toBeInTheDocument();
+  expect(screen.getByText(/payday Tue Aug 25/)).toBeInTheDocument();
+  expect(screen.getByText(/\$0\.00 owed/)).toBeInTheDocument();
+  expect(screen.getByText(/Nothing accrued yet/)).toBeInTheDocument();
+  expect(screen.queryByText(/pending review/)).toBeNull();
+});
+
+test('a pending review adds the pointer with the bounty from the envelope', () => {
+  r(<CurrentWeekCard openPeriod={P} pendingReviews={1} bountyCents={1000} />);
+  expect(screen.getByText(/1 pending review\. A confirmed five-star review with a name adds \$10\.00 to the next open run\./)).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: /Confirm under Reviews/ })).toHaveAttribute('href', '/staffing/reviews');
+});
+
+test('renders nothing when the week already has payouts, or is not open, or there is no window', () => {
+  const { container: a } = r(<CurrentWeekCard openPeriod={{ ...P, exists: true, status: 'open', payouts_accrued: 3 }} pendingReviews={0} bountyCents={1000} />);
+  expect(a).toBeEmptyDOMElement();
+  const { container: b } = r(<CurrentWeekCard openPeriod={{ ...P, exists: true, status: 'processing', payouts_accrued: 0 }} pendingReviews={0} bountyCents={1000} />);
+  expect(b).toBeEmptyDOMElement();
+  const { container: c } = r(<CurrentWeekCard openPeriod={null} pendingReviews={0} bountyCents={1000} />);
+  expect(c).toBeEmptyDOMElement();
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/payroll/CurrentWeekCard.test.js`
+Expected: FAIL, module not found.
+
+- [ ] **Step 3: Implement**
+
+```js
+// client/src/pages/admin/payroll/CurrentWeekCard.js
+import React from 'react';
+import { Link } from 'react-router-dom';
+import StatusChip from '../../../components/adminos/StatusChip';
+import { fmt$fromCents } from '../../../components/adminos/format';
+import { ymdLabel, windowLabel } from '../staffHub/hubSubtitle';
+
+/**
+ * The open week with nothing accrued is the honest common case Tue..Fri
+ * (pay_periods rows are created lazily on the first accrual, usually
+ * Saturday). PayRunView renders only rows, so this card is keyed on the
+ * DERIVED window from the hub summary and sits above the queue. It hides as
+ * soon as the period has payouts (the queue shows it) or is no longer open.
+ */
+export default function CurrentWeekCard({ openPeriod, pendingReviews = 0, bountyCents = 0 }) {
+  const p = openPeriod;
+  if (!p) return null;
+  const showable = !p.exists || (p.status === 'open' && Number(p.payouts_accrued) === 0);
+  if (!showable) return null;
+  const n = Number(pendingReviews) || 0;
+  return (
+    <div className="card" style={{ marginBottom: 'var(--gap)' }}>
+      <div className="card-head">
+        <h3 className="hstack" style={{ gap: 8 }}>
+          <span>{windowLabel(p.start_date, p.end_date)}</span>
+          <StatusChip kind="info">open</StatusChip>
+          <span className="muted tiny">payday {ymdLabel(p.payday, { weekday: true })}</span>
+        </h3>
+        <span className="mono">{fmt$fromCents(0)} owed</span>
+      </div>
+      <div className="card-body vstack" style={{ gap: 8 }}>
+        <div className="muted">Nothing accrued yet. Shift pay, tips and review bounties land here on their own as events close out.</div>
+        {n > 0 && (
+          <div className="hstack" style={{ gap: 8 }}>
+            <span className="hub-tab-badge">{n}</span>
+            <span>
+              {n} pending {n === 1 ? 'review' : 'reviews'}. A confirmed five-star review with a name adds {fmt$fromCents(bountyCents)} to the next open run.{' '}
+              <Link to="/staffing/reviews">Confirm under Reviews</Link>.
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 4: Wire it into `PayRunView`**
+
+Signature: `export default function PayRunView({ periodParam, openPeriod = null, pendingReviews = 0, onChanged })`. Add state `const [bountyCents, setBountyCents] = useState(0);` and, in the existing `load()` (or a sibling effect), fetch the bounty once: `api.get('/admin/staff-reviews').then(r => setBountyCents(Number(r.data?.bounty_cents) || 0)).catch(() => {});` (admin-only page; a failure just hides the dollar figure). Render `<CurrentWeekCard openPeriod={openPeriod} pendingReviews={pendingReviews} bountyCents={bountyCents} />` directly above `{derived.queue.length === 0 && (...)}`. Where the view already calls `load()` after a successful process / mark-paid, also call `onChanged?.()` so the hub subtitle's accrued count and status follow.
+
+- [ ] **Step 5: Run to verify it passes**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/payroll/CurrentWeekCard.test.js`
+Expected: 3 passing. Dev app on a weekday before any accrual: the card shows the current week above the queue; after a shift accrues (or on a week whose row exists with payouts) it disappears and the queue carries the period.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add client/src/pages/admin/payroll/CurrentWeekCard.js client/src/pages/admin/payroll/CurrentWeekCard.test.js client/src/pages/admin/payroll/PayRunView.js
+git commit -m "feat(payroll): current-week card keyed on the derived window, with the pending-review pointer"
+```
+
+### Task D3: `tipStatus` (pure) + `TipsLedger`
+
+**Files:**
+- Create: `client/src/pages/admin/payroll/tipStatus.js`
+- Create: `client/src/pages/admin/payroll/tipStatus.test.js`
+- Create: `client/src/pages/admin/payroll/TipsLedger.js`
+
+**Interfaces:**
+- Consumes: `GET /admin/tips?from&to&cursor&limit` rows with the A5 columns.
+- Produces: `tipStatus(tip) -> { label, kind, hint? }` (pure); `TipsLedger` (default export), URL-backed `from`/`to` via `useUrlListState`.
+
+- [ ] **Step 1: Write the failing test**
+
+```js
+// client/src/pages/admin/payroll/tipStatus.test.js
+import { tipStatus, netCents } from './tipStatus';
+
+const base = { amount_cents: 600, refunded_amount_cents: 0, shift_id: 377, deferred_at: null, rolled_forward_at: null, dispute_won_at: null, tipped_at: '2026-08-16T20:41:00Z' };
+
+test('first match wins, in the spec order', () => {
+  expect(tipStatus({ ...base, dispute_won_at: '2026-08-20T00:00:00Z' }).label).toBe('dispute won');
+  expect(tipStatus({ ...base, refunded_amount_cents: 600 }).label).toBe('refunded $6.00');
+  expect(tipStatus({ ...base, deferred_at: '2026-08-17T00:00:00Z' }).label).toBe('deferred, waiting for an open period');
+  expect(tipStatus({ ...base, shift_id: null }).label).toBe('unassigned');
+  expect(tipStatus({ ...base, rolled_forward_at: '2026-08-19T12:00:00Z' }).label).toBe('rolled forward Aug 19');
+  expect(tipStatus(base).label).toBe('on the Aug 16 event');
+});
+
+test('net strips refunds and never goes negative', () => {
+  expect(netCents({ amount_cents: 600, refunded_amount_cents: 250 })).toBe(350);
+  expect(netCents({ amount_cents: 600, refunded_amount_cents: 900 })).toBe(0);
+  expect(netCents({ amount_cents: 600 })).toBe(600);
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/payroll/tipStatus.test.js`
+Expected: FAIL, module not found.
+
+- [ ] **Step 3: Implement `tipStatus.js`**
+
+```js
+// client/src/pages/admin/payroll/tipStatus.js
+// A tip's Status on the cross-staff ledger, derived from the row ALONE. There
+// is no tip -> payout key: a shift's tips pool across the event's bartenders,
+// and a late tip lands in today's period while keeping the original shift, so
+// a per-tip "lands in" period cannot be made truthful from event_date (spec
+// §3 override). First match wins, in this order.
+import { fmt$fromCents } from '../../../components/adminos/format';
+
+const mmmd = (v) => new Date(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Chicago' });
+
+export function netCents(t) {
+  return Math.max(0, Number(t.amount_cents || 0) - Number(t.refunded_amount_cents || 0));
+}
+
+export function tipStatus(t) {
+  if (t.dispute_won_at) return { label: 'dispute won', kind: 'warn' };
+  if (Number(t.refunded_amount_cents) > 0) return { label: `refunded ${fmt$fromCents(Number(t.refunded_amount_cents))}`, kind: 'warn' };
+  if (t.deferred_at) return { label: 'deferred, waiting for an open period', kind: 'violet' };
+  if (!t.shift_id) return { label: 'unassigned', kind: 'danger', hint: 'see the repair queue above' };
+  if (t.rolled_forward_at) return { label: `rolled forward ${mmmd(t.rolled_forward_at)}`, kind: 'info' };
+  return { label: `on the ${mmmd(t.tipped_at)} event`, kind: 'ok' };
+}
+```
+
+- [ ] **Step 4: Implement `TipsLedger.js`** (the donor is `TipsTab` in `TipsAdmin.js:69-177`; this is that code with URL-backed filters, net amounts, the Status column, and Load more)
+
+```js
+// client/src/pages/admin/payroll/TipsLedger.js
+import React, { useEffect, useMemo, useState } from 'react';
+import api from '../../../utils/api';
+import { useToast } from '../../../context/ToastContext';
+import useUrlListState from '../../../hooks/useUrlListState';
+import EntityLink from '../../../components/EntityLink';
+import StatusChip from '../../../components/adminos/StatusChip';
+import { fmt$fromCents } from '../../../components/adminos/format';
+import { tipStatus, netCents } from './tipStatus';
+
+const LEDGER_DEFAULTS = { from: '', to: '' };
+const PAGE = 50;
+
+// The cross-staff tip ledger, moved from the retired /tips page into Payroll
+// (spec §7). Money columns are NET of refunds; the stat is labelled "in view"
+// because it sums what is loaded (the read is cursor-paginated).
+export default function TipsLedger() {
+  const toast = useToast();
+  const [filters, setFilters] = useUrlListState(LEDGER_DEFAULTS);
+  const [tips, setTips] = useState([]);
+  const [cursor, setCursor] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  const fetchPage = (after) => {
+    const params = new URLSearchParams({ limit: String(PAGE) });
+    if (filters.from) params.set('from', filters.from);
+    if (filters.to) params.set('to', filters.to);
+    if (after) params.set('cursor', String(after));
+    return api.get(`/admin/tips?${params.toString()}`);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setError(false);
+    fetchPage(null)
+      .then(r => { if (cancelled) return; setTips(r.data?.tips || []); setCursor(r.data?.next_cursor || null); })
+      .catch(() => { if (!cancelled) setError(true); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.from, filters.to]);
+
+  const loadMore = () => {
+    if (!cursor) return;
+    fetchPage(cursor)
+      .then(r => { setTips(t => [...t, ...(r.data?.tips || [])]); setCursor(r.data?.next_cursor || null); })
+      .catch(() => toast.error('Could not load more tips.'));
+  };
+
+  const total = useMemo(() => tips.reduce((s, t) => s + netCents(t), 0), [tips]);
+
+  return (
+    <>
+      <div className="stat-row">
+        <div className="stat">
+          <div className="stat-label">Net in view</div>
+          <div className="stat-value">{fmt$fromCents(total)}</div>
+          <div className="stat-sub"><span>{tips.length} {tips.length === 1 ? 'tip' : 'tips'}</span></div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-body" style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
+            <span className="muted">From</span>
+            <input type="date" value={filters.from} onChange={e => setFilters({ from: e.target.value })} />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
+            <span className="muted">To</span>
+            <input type="date" value={filters.to} onChange={e => setFilters({ to: e.target.value })} />
+          </label>
+          {(filters.from || filters.to) && (
+            <button type="button" className="btn btn-ghost" onClick={() => setFilters({ from: '', to: '' })}>Clear</button>
+          )}
+        </div>
+      </div>
+
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div className="card-head"><h3>Activity</h3><span className="k">{tips.length}</span></div>
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead>
+              <tr><th>Bartender</th><th className="num">Amount</th><th>Date</th><th>Customer</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              {loading && <tr><td colSpan={5} className="muted">Loading…</td></tr>}
+              {!loading && error && (
+                <tr><td colSpan={5}><span className="muted">Could not load tips.</span>{' '}
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setFilters({ ...filters })}>Retry</button></td></tr>
+              )}
+              {!loading && !error && tips.length === 0 && <tr><td colSpan={5} className="muted">No tips in view.</td></tr>}
+              {!loading && tips.map(t => {
+                const st = tipStatus(t);
+                const refunded = Number(t.refunded_amount_cents) > 0;
+                return (
+                  <tr key={t.id}>
+                    <td>
+                      <EntityLink to={t.target_user_id ? `/staffing/users/${t.target_user_id}?tab=payouts` : null}>
+                        <strong>{t.bartender_name || `user ${t.target_user_id}`}</strong>
+                      </EntityLink>
+                    </td>
+                    <td className="num">
+                      {fmt$fromCents(netCents(t))}
+                      {refunded && <span className="muted tiny" style={{ marginLeft: 6, textDecoration: 'line-through' }}>{fmt$fromCents(t.amount_cents)}</span>}
+                    </td>
+                    <td>{t.tipped_at ? new Date(t.tipped_at).toLocaleString('en-US', { hour12: false }) : '—'}</td>
+                    <td className="muted">{t.customer_email || '—'}</td>
+                    <td><StatusChip kind={st.kind}>{st.label}</StatusChip>{st.hint && <span className="muted tiny" style={{ marginLeft: 6 }}>{st.hint}</span>}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {cursor && (
+          <div className="card-body" style={{ paddingTop: 0 }}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={loadMore}>Load more</button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+```
+
+The profile's tabs are URL-driven (`AdminUserDetail.js:49` uses `useUrlListState`), so `?tab=payouts` lands on the Payouts tab.
+
+- [ ] **Step 5: Run to verify it passes**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/payroll/tipStatus.test.js`, then the build gate. Dev app: `/staffing/payroll?tab=tips` shows the clear line, then the $6.00 ledger with Status "on the Aug 16 event"; `/tips?from=2026-08-01` redirects and the From filter is applied.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add client/src/pages/admin/payroll/tipStatus.js client/src/pages/admin/payroll/tipStatus.test.js client/src/pages/admin/payroll/TipsLedger.js
+git commit -m "feat(payroll): cross-staff tips ledger in the Tips tab with a row-derived Status column"
+```
+
+**Lane sh-d done when:** D1–D3 committed; build green; `ui-ux-review` against artboards 1e/1f/1g/1g2 (override: no "Lands in" column, one stat, the true footer sentence).
+
+# Lane sh-e-reviews
+
+The method here is **move, then restructure**: every function in `StaffReviews.js` moves into a file under `staffHub/reviews/` first (byte-for-byte logic), the page is re-composed as pending cards + resolved table + contest rail, and only then is the old file deleted. The behaviors §7 enumerates (quarter selector + `QUARTER_RE`, the `QUARTER_IN_PROGRESS` → confirm → `force:true` retry, the "no open pay period" 409, dismiss refused while a bounty is paid or frozen, `duplicate_warning`, frozen-credit copy, list error + retry, per-action `busy`) survive by construction because the code moves.
+
+### Task E1: `suggestNames` (pure)
+
+**Files:**
+- Create: `client/src/pages/admin/staffHub/reviews/suggestNames.js`
+- Create: `client/src/pages/admin/staffHub/reviews/suggestNames.test.js`
+
+**Interfaces:**
+- Produces: `suggestNames(excerpt, staff) -> string[]` of user ids (as strings, matching the credit select's value type) whose preferred/display FIRST name appears as a whole word in the excerpt, case-insensitive. Names are regex-escaped.
+
+- [ ] **Step 1: Write the failing test**
+
+```js
+// client/src/pages/admin/staffHub/reviews/suggestNames.test.js
+import { suggestNames } from './suggestNames';
+
+const staff = [
+  { id: 7, display_name: 'Shea Corrigan' },
+  { id: 8, preferred_name: 'Marcus Webb' },
+  { id: 9, display_name: 'Al (Bar) Smith' },      // regex metacharacters in a user-editable name
+  { id: 10, email: 'nobody@example.com' },         // no name at all
+];
+
+test('whole-word, case-insensitive first-name match', () => {
+  expect(suggestNames('It was wonderful! shea was so prompt.', staff)).toEqual(['7']);
+  expect(suggestNames('Marcus kept the line moving and Shea built the menu', staff)).toEqual(['7', '8']);
+});
+
+test('no partial-word matches; empty excerpt suggests nobody; names with metacharacters never throw', () => {
+  expect(suggestNames('Sheamus was great', staff)).toEqual([]);
+  expect(suggestNames('', staff)).toEqual([]);
+  expect(() => suggestNames('Al was here', staff)).not.toThrow();
+  expect(suggestNames('Al was here', staff)).toEqual(['9']);
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/staffHub/reviews/suggestNames.test.js`
+Expected: FAIL, module not found.
+
+- [ ] **Step 3: Implement**
+
+```js
+// client/src/pages/admin/staffHub/reviews/suggestNames.js
+// Client-side only. A suggestion is a pre-filled, removable chip; it is never
+// PATCHed on render and becomes a credit only when the admin confirms (spec
+// §7). The server keeps validating credit user ids against active staff.
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+export function suggestNames(excerpt, staff) {
+  const text = String(excerpt || '');
+  if (!text) return [];
+  const out = [];
+  for (const s of staff || []) {
+    const full = (s.display_name || s.preferred_name || '').trim();
+    if (!full) continue;
+    const first = full.split(/\s+/)[0];
+    if (!first) continue;
+    const re = new RegExp(`(^|[^A-Za-z])${escapeRe(first)}(?=$|[^A-Za-z])`, 'i');
+    if (re.test(text)) out.push(String(s.id));
+  }
+  return out;
+}
+```
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: the same command. Expected: 2 passing.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add client/src/pages/admin/staffHub/reviews/suggestNames.js client/src/pages/admin/staffHub/reviews/suggestNames.test.js
+git commit -m "feat(reviews): client-side name suggestions from the excerpt, regex-escaped"
+```
+
+### Task E2: move the pieces out of `StaffReviews.js`
+
+**Files:**
+- Create: `client/src/pages/admin/staffHub/reviews/LogReviewForm.js` (from `StaffReviews.js:158-226`, `LogReviewForm`)
+- Create: `client/src/pages/admin/staffHub/reviews/PendingReviewCard.js` (from `ReviewCard`, `:228-345`)
+- Create: `client/src/pages/admin/staffHub/reviews/AwardDialog.js` (from `AwardDialog`, `:531-601`)
+- Create: `client/src/pages/admin/staffHub/reviews/ContestRail.js` (from `LeaderboardTab`, `:350-529`)
+- Create: `client/src/pages/admin/staffHub/reviews/ResolvedTable.js` (new)
+
+**Interfaces:**
+- `LogReviewForm({ open, onClose, onCreated(dupWarning), onError })`: the existing form, rendered inside a modal shell identical to `AwardDialog`'s (fixed scrim, Escape closes) so the hub header's "Log a Google review" action can open it.
+- `PendingReviewCard({ review, staff, bountyCents, openPeriod, onChanged, onError })`: the existing `ReviewCard` with (a) the `<select multiple>` replaced by a chip row + "+ Add a name" `<select>` that appends, (b) initial `selected` = saved credits if any, else `suggestNames(review.excerpt, staff)` with the caption "Suggested from the excerpt" shown while any selected id is a suggestion and not yet saved, (c) the conditional Confirm label below. Credits still save through PATCH exactly as today (the "Save names" button stays, enabled when dirty); Confirm is disabled while dirty, with the hint "Save names first", so a suggested chip can never be confirmed without an explicit save.
+- `ContestRail({ onAwarded, openPeriod })`: `LeaderboardTab` unchanged in logic, restyled as a rail. `openPeriod` is the hub summary's `open_period`; when it is not `exists && status === 'open'`, the "Award the quarter" button is disabled with the inline reason "No open pay period. Open one before awarding." (the server's own 409 for that case stays as the backstop and still surfaces through the existing toast). The rail shows: the quarter input, floor sentence, standings as a compact list (name, "{named} of {events}", eligible chip), the "if it ended today" sentence built from `shares` (server truth), "Award the quarter" + `AwardDialog`, and a three-step "How review money works" explainer at the bottom. Calls `onAwarded()` after a successful award.
+- `ResolvedTable({ reviews, bountyCents })`: table of `status !== 'pending'` rows, columns Date / Review / Credited / Status / Bounty, where Bounty is `fmt$fromCents(bountyCents * credits.length)` for confirmed five-star rows with credits, "no bounty" for confirmed rows without, and "—" for dismissed; plus a `waiting` marker (see E3) rendered as "{amount} · waiting for an open period".
+
+- [ ] **Step 1: Move `LogReviewForm`**
+
+Create the file with the `LogReviewForm` function copied verbatim from `StaffReviews.js`, then wrap its `<form>` in the modal shell. The modal shell (copy the outer two `<div>`s from `AwardDialog` including the Escape-key effect) takes `open` and `onClose`; when `!open` return `null`. Keep the submit logic identical (date required, stars 1..5, excerpt ≤ 2000, POST `/admin/staff-reviews`, `onCreated(!!res.data?.duplicate_warning)`). Imports: `React, { useEffect, useState }`, `api`.
+
+- [ ] **Step 2: Move `AwardDialog`**
+
+Copy verbatim into `AwardDialog.js` with `export default`. Imports: `React, { useEffect }`, `fmt$fromCents`.
+
+- [ ] **Step 3: Move `LeaderboardTab` → `ContestRail`**
+
+Copy `QUARTER_RE`, `currentQuarter`, and the `LeaderboardTab` body verbatim into `ContestRail.js` as `export default function ContestRail({ onAwarded, openPeriod })`. Add `const openNow = !!(openPeriod && openPeriod.exists && openPeriod.status === 'open');` and change the Award button to `disabled={!validQuarter || loading || shares.length === 0 || !openNow}`, rendering `{!openNow && <span className="muted tiny">No open pay period. Open one before awarding.</span>}` beside it. Keep `award()` exactly (the 409 → `window.confirm` → `force:true` retry; `awarded_already` toast). After `load(quarter)` in the success path add `if (onAwarded) onAwarded();`. Restyle the render only: the outer `.card` with the quarter input and floor sentence stays; the standings table becomes:
+
+```jsx
+      {validQuarter && !loading && !error && rows.length > 0 && (
+        <div className="card">
+          <div className="card-head"><h3>{quarter} contest</h3><span className="k">{fmt$fromCents(data.pot_cents)} pot</span></div>
+          <div className="card-body vstack" style={{ gap: 6 }}>
+            {rows.map(r => (
+              <div key={r.user_id} className="hstack" style={{ gap: 8, fontWeight: r.eligible ? 500 : 400 }}>
+                <EntityLink to={`/staffing/users/${r.user_id}`}>{r.name}</EntityLink>
+                <span className="muted tiny">{r.named_five_stars} of {r.events_worked}</span>
+                <span className="spacer" />
+                {r.eligible ? <StatusChip kind="ok">qualifies</StatusChip> : <span className="muted tiny">below the floor</span>}
+              </div>
+            ))}
+            {shares.length > 0 && (
+              <p className="tiny muted" style={{ margin: '6px 0 0' }}>
+                {data.in_progress ? 'Quarter still running. If it ended today, ' : 'Quarter closed: '}
+                {shares.map(s => s.name).join(shares.length === 2 ? ' and ' : ', ')} {shares.length === 1 ? 'takes' : 'split'} the pot.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+```
+
+Keep the "Award the quarter" button and `AwardDialog` wiring; keep the empty copy as "No qualifiers yet." and the error + Retry card. Append the explainer card:
+
+```jsx
+      <div className="card">
+        <div className="card-head"><h3>How review money works</h3></div>
+        <div className="card-body">
+          <ol style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 6 }}>
+            <li>Thumbtack reviews land here on their own. Log Google reviews by hand.</li>
+            <li>Name who earned it. Five stars with a name carries the bounty.</li>
+            <li>Confirm writes the bounty line to the open pay run. Each quarter, the most reviewed split the pot.</li>
+          </ol>
+        </div>
+      </div>
+```
+
+Imports: `React, { useCallback, useEffect, useMemo, useState }`, `api`, `useToast`, `EntityLink`, `StatusChip`, `fmt$fromCents`, `AwardDialog`.
+
+- [ ] **Step 4: Move `ReviewCard` → `PendingReviewCard`**
+
+Copy `ReviewCard` and `statusKind` verbatim, then apply the three changes named in Interfaces:
+
+(a) Initial selection:
+
+```js
+  const saved = useMemo(() => (review.credits || []).map(c => String(c.user_id)), [review.credits]);
+  const suggested = useMemo(() => (saved.length ? [] : suggestNames(review.excerpt, staff)), [saved, review.excerpt, staff]);
+  const initial = saved.length ? saved : suggested;
+  const [selected, setSelected] = useState(initial);
+  useEffect(() => { setSelected(initial); }, [initial]);
+  const dirty = useMemo(() => selected.length !== saved.length || selected.some(id => !saved.includes(id)), [selected, saved]);
+  const showSuggestionCaption = !saved.length && suggested.length > 0 && selected.some(id => suggested.includes(id));
+```
+
+(b) Chip row replacing the `<select multiple>`:
+
+```jsx
+          <div style={{ flex: '1 1 280px' }}>
+            <div className="muted tiny" style={{ marginBottom: 4 }}>Named staff</div>
+            <div className="hstack" style={{ gap: 6, flexWrap: 'wrap' }}>
+              {selected.map(id => {
+                const s = staff.find(x => String(x.id) === id);
+                return (
+                  <span key={id} className="chip">
+                    {s ? (s.display_name || s.preferred_name || s.email) : `user ${id}`}
+                    <button type="button" className="btn btn-ghost btn-sm" aria-label={`Remove ${s ? (s.display_name || s.preferred_name) : id}`}
+                      onClick={() => setSelected(sel => sel.filter(x => x !== id))}>×</button>
+                  </span>
+                );
+              })}
+              <select value="" onChange={e => { const v = e.target.value; if (v && !selected.includes(v)) setSelected(sel => [...sel, v]); }}>
+                <option value="">+ Add a name</option>
+                {staff.filter(s => !selected.includes(String(s.id))).map(s => (
+                  <option key={s.id} value={String(s.id)}>{s.display_name || s.preferred_name || s.email}</option>
+                ))}
+              </select>
+            </div>
+            {showSuggestionCaption && <div className="tiny muted" style={{ marginTop: 4 }}>Suggested from the excerpt. Save names to keep them.</div>}
+          </div>
+```
+
+(c) Conditional Confirm copy and the dirty guard:
+
+```js
+  const stars5 = Number(review.stars) === 5;
+  const bountyTotal = stars5 ? bountyCents * saved.length : 0;
+  const openNow = !!(openPeriod && openPeriod.exists && openPeriod.status === 'open');
+  const confirmLabel = busy === 'confirm' ? 'Confirming…'
+    : !stars5 || saved.length === 0 ? 'Confirm, no bounty'
+    : openNow ? `Confirm and pay ${fmt$fromCents(bountyTotal)}`
+    : `Confirm, ${fmt$fromCents(bountyTotal)} waits for the next open run`;
+```
+
+Confirm button: `disabled={busy !== null || dirty}` with `title={dirty ? 'Save names first' : undefined}` and label `{confirmLabel}`. Keep Dismiss as is. Replace the two footer hint `<p>`s with one: `stars5 ? 'Confirming pays each named staffer the bounty into the open pay run, or the next one to open.' : 'Only five-star reviews carry a bounty.'`
+
+Imports add `suggestNames` and `fmt$fromCents`; the `select` attribute `multiple` and `size` are gone. Export default.
+
+- [ ] **Step 5: Write `ResolvedTable.js`**
+
+```js
+// client/src/pages/admin/staffHub/reviews/ResolvedTable.js
+import React from 'react';
+import EntityLink from '../../../../components/EntityLink';
+import StatusChip from '../../../../components/adminos/StatusChip';
+import { fmt$fromCents, fmtDate } from '../../../../components/adminos/format';
+
+const statusKind = (s) => (s === 'confirmed' ? 'ok' : s === 'dismissed' ? 'warn' : 'accent');
+
+export default function ResolvedTable({ reviews, bountyCents, waitingIds }) {
+  const rows = (reviews || []).filter(r => r.status !== 'pending');
+  return (
+    <div className="card" style={{ overflow: 'hidden' }}>
+      <div className="card-head"><h3>Resolved</h3><span className="k">{rows.length}</span></div>
+      {rows.length === 0 ? (
+        <div className="card-body muted">Nothing resolved yet. Confirmed and dismissed reviews collect here as rows.</div>
+      ) : (
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead><tr><th>Date</th><th>Review</th><th>Credited</th><th>Status</th><th className="num">Bounty</th></tr></thead>
+            <tbody>
+              {rows.map(r => {
+                const credits = r.credits || [];
+                const paysBounty = r.status === 'confirmed' && Number(r.stars) === 5 && credits.length > 0;
+                const waiting = waitingIds && waitingIds.has(r.id);
+                return (
+                  <tr key={r.id}>
+                    <td className="muted">{fmtDate(String(r.review_date || '').slice(0, 10))}</td>
+                    <td>
+                      <span>{'★'.repeat(Number(r.stars) || 0)}</span>{' '}
+                      <span className="muted tiny">{r.source}</span>{' '}
+                      <span title={r.excerpt || ''}>{r.excerpt ? `"${r.excerpt.length > 60 ? `${r.excerpt.slice(0, 60)}…` : r.excerpt}"` : <span className="muted">no excerpt</span>}</span>
+                    </td>
+                    <td>{credits.length ? credits.map((c, i) => (
+                      <React.Fragment key={c.user_id}>{i > 0 && ', '}<EntityLink to={`/staffing/users/${c.user_id}`}>{c.name}</EntityLink></React.Fragment>
+                    )) : <span className="muted">no staffer named</span>}</td>
+                    <td><StatusChip kind={statusKind(r.status)}>{r.status}</StatusChip></td>
+                    <td className="num">
+                      {r.status === 'dismissed' ? '—' : paysBounty
+                        ? <>{fmt$fromCents(bountyCents * credits.length)}{waiting && <span className="muted tiny"> · waiting for an open period</span>}</>
+                        : <span className="muted">no bounty</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+- [ ] **Step 6: Build gate and checkpoint**
+
+Run: `cd client && CI=true npx react-scripts build` (the new files are not imported yet; CRA does not fail on unimported files, but each must compile). Commit:
+
+```bash
+git add client/src/pages/admin/staffHub/reviews/
+git commit -m "refactor(reviews): move the review log and leaderboard pieces into staffHub/reviews"
+```
+
+### Task E3: `ReviewsPage` composes them; swap the route; delete `StaffReviews.js`
+
+**Files:**
+- Create: `client/src/pages/admin/staffHub/reviews/ReviewsPage.js`
+- Modify: `client/src/App.js` (lazy import + the `/staffing/reviews` route element)
+- Delete: `client/src/pages/admin/StaffReviews.js`
+
+**Interfaces:**
+- Consumes: `useOutletContext()` → `{ summary, refresh, setActions }`; `GET /admin/staff-reviews` envelope (A6); `GET /admin/active-staff?limit=100`.
+
+- [ ] **Step 1: Write `ReviewsPage.js`**
+
+```js
+// client/src/pages/admin/staffHub/reviews/ReviewsPage.js
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useOutletContext } from 'react-router-dom';
+import api from '../../../../utils/api';
+import { useToast } from '../../../../context/ToastContext';
+import { fmt$fromCents } from '../../../../components/adminos/format';
+import LogReviewForm from './LogReviewForm';
+import PendingReviewCard from './PendingReviewCard';
+import ResolvedTable from './ResolvedTable';
+import ContestRail from './ContestRail';
+
+/**
+ * Reviews, a Staff hub child (spec §7): no internal tabs. Pending reviews are
+ * workbench cards, resolved ones are table rows, the contest is a rail. The
+ * bounty figure and the all-time totals come from the list envelope; the page
+ * embeds no dollar literal.
+ */
+export default function ReviewsPage() {
+  const toast = useToast();
+  const { summary, refresh, setActions } = useOutletContext() || {};
+  const [reviews, setReviews] = useState([]);
+  const [staff, setStaff] = useState([]);
+  const [meta, setMeta] = useState({ bounty_cents: 0, bounties_paid_cents: 0, total_logged: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [duplicateWarning, setDuplicateWarning] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
+  // Review ids whose confirm returned materialized:0 this session (bounty
+  // waiting for an open period). The server has no such flag on the row; the
+  // resolved table shows the marker until the next reload proves otherwise.
+  const [waitingIds, setWaitingIds] = useState(() => new Set());
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const [list, roster] = await Promise.all([
+        api.get('/admin/staff-reviews'),
+        api.get('/admin/active-staff?limit=100'),
+      ]);
+      setReviews(list.data?.reviews || []);
+      setMeta({
+        bounty_cents: Number(list.data?.bounty_cents) || 0,
+        bounties_paid_cents: Number(list.data?.bounties_paid_cents) || 0,
+        total_logged: Number(list.data?.total_logged) || 0,
+      });
+      setStaff(roster.data?.staff || []);
+    } catch (err) {
+      setError(err?.message || 'Failed to load reviews.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!setActions) return undefined;
+    setActions(<button type="button" className="btn btn-primary" onClick={() => setLogOpen(true)}>Log a Google review</button>);
+    return () => setActions(null);
+  }, [setActions]);
+
+  const changed = useCallback((result) => {
+    if (result && result.reviewId && result.materialized === 0 && result.bountyEligible) {
+      setWaitingIds(s => new Set([...s, result.reviewId]));
+      toast.success('Confirmed. The bounty waits for the next open pay run.');
+    }
+    load();
+    if (refresh) refresh();
+  }, [load, refresh, toast]);
+
+  const pending = useMemo(() => reviews.filter(r => r.status === 'pending'), [reviews]);
+
+  if (loading && reviews.length === 0) return <div className="muted">Loading…</div>;
+  if (error) {
+    return (
+      <div className="card"><div className="card-body">
+        <p style={{ marginTop: 0 }}>{error}</p>
+        <button type="button" className="btn" onClick={load}>Retry</button>
+      </div></div>
+    );
+  }
+
+  return (
+    <>
+      <LogReviewForm open={logOpen} onClose={() => setLogOpen(false)}
+        onCreated={(dup) => { setDuplicateWarning(dup); setLogOpen(false); changed(); }}
+        onError={(msg) => toast.error(msg)} />
+
+      <div className="muted tiny" style={{ marginBottom: 12 }}>Thumbtack reviews arrive on their own · log Google reviews by hand</div>
+
+      {duplicateWarning && (
+        <div className="card" style={{ marginBottom: 'var(--gap)', borderColor: 'var(--warn, var(--line))' }}>
+          <div className="card-body"><strong>Possible duplicate.</strong>{' '}A Thumbtack review is already logged for that date. Check the list below before confirming both.</div>
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 'var(--gap)', alignItems: 'start' }}>
+        <div className="vstack" style={{ gap: 'var(--gap)' }}>
+          {pending.map(r => (
+            <PendingReviewCard key={r.id} review={r} staff={staff}
+              bountyCents={meta.bounty_cents} openPeriod={summary?.open_period || null}
+              onChanged={changed} onError={(msg) => toast.error(msg)} />
+          ))}
+          <ResolvedTable reviews={reviews} bountyCents={meta.bounty_cents} waitingIds={waitingIds} />
+          <p className="tiny muted" style={{ margin: 0 }}>
+            All time: {meta.total_logged} logged · {fmt$fromCents(meta.bounties_paid_cents)} in bounties paid · bounty is {fmt$fromCents(meta.bounty_cents)} flat, five stars with a name required.
+          </p>
+        </div>
+        <div className="vstack" style={{ gap: 'var(--gap)' }}>
+          <ContestRail openPeriod={summary?.open_period || null} onAwarded={() => { if (refresh) refresh(); }} />
+        </div>
+      </div>
+    </>
+  );
+}
+```
+
+`PendingReviewCard.onChanged` must pass `{ reviewId, materialized, bountyEligible }` after a confirm: in its `run('confirm', ...)`, capture the POST response and call `onChanged({ reviewId: review.id, materialized: Number(res.data?.materialized), bountyEligible: stars5 && saved.length > 0 })`; the other actions call `onChanged()` with no argument. Update the `run` helper so the wrapped fn's return value is forwarded.
+
+Add the narrow-screen stack: append to `index.css` (sh-g may restyle, but the rule is needed now):
+
+```css
+@media (max-width: 900px) {
+  html[data-app="admin-os"] .reviews-grid { grid-template-columns: minmax(0, 1fr); }
+}
+```
+
+and give the grid `div` above `className="reviews-grid"`.
+
+- [ ] **Step 2: Swap the route and delete the old page**
+
+`App.js`: replace `const StaffReviews = lazy(() => import('./pages/admin/StaffReviews'));` with `const ReviewsPage = lazy(() => import('./pages/admin/staffHub/reviews/ReviewsPage'));` and the route element `<StaffReviews />` → `<ReviewsPage />`. Then `git rm client/src/pages/admin/StaffReviews.js`. Grep: `grep -rn "StaffReviews" client/src` returns nothing.
+
+- [ ] **Step 3: Verify**
+
+Run: `cd client && CI=true npx react-scripts build`. Dev app `/staffing/reviews`: the one pending Thumbtack review renders as a card with "Shea Corrigan" pre-filled and the suggestion caption; Save names enables Confirm; on a weekday with no open period the label reads "Confirm, $10.00 waits for the next open run"; the rail shows Q3 2026 with "No qualifiers yet."; "Log a Google review" in the hub header opens the modal; the hub badge and sidebar badge drop after a confirm. Do NOT confirm the real review on dev unless Dallas says so (dev talks to the shared dev DB; the prod review is untouched either way).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add client/src/pages/admin/staffHub/reviews/ReviewsPage.js client/src/pages/admin/staffHub/reviews/PendingReviewCard.js client/src/App.js client/src/index.css
+git rm -q client/src/pages/admin/StaffReviews.js
+git commit -m "feat(reviews): hub child with pending cards, resolved table, contest rail; StaffReviews.js retired"
+```
+
+**Lane sh-e done when:** E1–E3 committed; build green; `ui-ux-review` against artboards 1h/1i (override: the third "waiting" state, and the floor reads from the payload, 4 events not 5).
+
+# Lane sh-f-feedback
+
+### Task F1: `FeedbackCard` on the profile's Tip Page tab; retire `TipsAdmin.js`
+
+**Files:**
+- Create: `client/src/pages/admin/userDetail/tabs/FeedbackCard.js` (donor: `FeedbackTab` + `ratingKind` in `TipsAdmin.js:179-288`)
+- Modify: `client/src/pages/admin/userDetail/tabs/TipPageTab.js` (render the card at the bottom of the main column, admins only)
+- Delete: `client/src/pages/admin/TipsAdmin.js`
+- Modify: `client/src/App.js` (remove the `TipsAdmin` lazy import if still present), `README.md` (folder tree + the prose mentions at `:591`, `:815`, `:818`)
+
+**Interfaces:**
+- Consumes: `GET /admin/tip-feedback?target_user_id=<id>&status=all` (A5), `POST /admin/tip-feedback/:id/review`.
+- Produces: `FeedbackCard({ userId })`, rendered only when `useAuth().user.role === 'admin'`.
+
+- [ ] **Step 1: Write `FeedbackCard.js`**
+
+```js
+// client/src/pages/admin/userDetail/tabs/FeedbackCard.js
+import React, { useCallback, useEffect, useState } from 'react';
+import api from '../../../../utils/api';
+import { useToast } from '../../../../context/ToastContext';
+import StatusChip from '../../../../components/adminos/StatusChip';
+
+// Guest feedback left on this bartender's tip thank-you page (spec §9). Per-
+// person, so it lives on the profile; the server also emails the inbox on
+// every submission. Endpoints are adminOnly: the parent renders this card for
+// admins only, so a manager never sees a 403 card.
+function ratingKind(rating) {
+  const r = Number(rating);
+  if (r >= 4) return 'ok';
+  if (r >= 3) return 'accent';
+  if (r >= 2) return 'warn';
+  return 'danger';
+}
+
+export default function FeedbackCard({ userId }) {
+  const toast = useToast();
+  const [feedback, setFeedback] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true); setError(false);
+    api.get(`/admin/tip-feedback?status=all&target_user_id=${encodeURIComponent(userId)}`)
+      .then(r => setFeedback(r.data?.feedback || []))
+      .catch(() => setError(true))
+      .finally(() => setLoading(false));
+  }, [userId]);
+  useEffect(() => { load(); }, [load]);
+
+  async function markReviewed(id) {
+    setBusyId(id);
+    try { await api.post(`/admin/tip-feedback/${id}/review`); load(); }
+    catch (err) { toast.error(err?.message || 'Failed to mark reviewed.'); }
+    finally { setBusyId(null); }
+  }
+
+  return (
+    <div className="card">
+      <div className="card-head"><h3>Feedback</h3><span className="k">{feedback.length}</span></div>
+      <div className="card-body vstack" style={{ gap: 12 }}>
+        {loading && <div className="muted">Loading…</div>}
+        {!loading && error && (
+          <div className="hstack" style={{ gap: 8 }}><span className="muted">Could not load feedback.</span>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={load}>Retry</button></div>
+        )}
+        {!loading && !error && feedback.length === 0 && (
+          <p className="muted" style={{ margin: 0 }}>No feedback yet. Guests can leave a rating and a note from this bartender's thank-you page; each one also emails the inbox.</p>
+        )}
+        {!loading && feedback.map(f => (
+          <article key={f.id} style={{ borderTop: '1px solid var(--line-1)', paddingTop: 10 }}>
+            <div className="hstack" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <StatusChip kind={ratingKind(f.rating)}>{f.rating}/5</StatusChip>
+              {f.reviewed_at && <span className="muted tiny">reviewed</span>}
+              <span className="spacer" />
+              <span className="muted tiny">{f.created_at ? new Date(f.created_at).toLocaleString('en-US', { hour12: false }) : '—'}</span>
+            </div>
+            {f.comment ? <p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>"{f.comment}"</p> : <p className="muted" style={{ margin: '6px 0 0' }}>No comment.</p>}
+            {f.submitter_email && <p className="muted tiny" style={{ margin: '6px 0 0' }}>Customer: {f.submitter_email}</p>}
+            {!f.reviewed_at && (
+              <div style={{ marginTop: 8 }}>
+                <button type="button" className="btn btn-sm" disabled={busyId === f.id} onClick={() => markReviewed(f.id)}>
+                  {busyId === f.id ? 'Marking…' : 'Mark reviewed'}
+                </button>
+              </div>
+            )}
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 2: Render it in `TipPageTab.js`**
+
+Import `FeedbackCard` and `useAuth` (`../../../../context/AuthContext`). Inside the component: `const { user: viewer } = useAuth();`. In the main column `vstack` (the first child of the grid, `TipPageTab.js:92`), after the last existing card in that column, add `{viewer?.role === 'admin' && <FeedbackCard userId={userId} />}`.
+
+- [ ] **Step 3: Retire `TipsAdmin.js`**
+
+`git rm client/src/pages/admin/TipsAdmin.js`. `grep -rn "TipsAdmin" client/src` → nothing (B4 already removed the lazy import and route). `README.md`: remove `TipsAdmin.js` and `StaffReviews.js` from the folder tree, add `userDetail/tabs/FeedbackCard.js`, `payroll/TipsLedger.js`, `payroll/tipStatus.js`, `payroll/CurrentWeekCard.js`, `staffHub/reviews/*`; rewrite the prose lines at `:591`, `:815`, `:818` to name the new homes (Tips ledger under Payroll › Tips; Reviews at `/staffing/reviews`; feedback on the profile's Tip Page tab).
+
+- [ ] **Step 4: Verify and commit**
+
+Run: `cd client && CI=true npx react-scripts build`. Dev app as admin: a staffer profile › Tip Page shows the Feedback card with the empty copy; as a manager the card is absent.
+
+```bash
+git add client/src/pages/admin/userDetail/tabs/FeedbackCard.js client/src/pages/admin/userDetail/tabs/TipPageTab.js README.md
+git rm -q client/src/pages/admin/TipsAdmin.js
+git commit -m "feat(profile): guest feedback card on the Tip Page tab (admins); TipsAdmin.js retired"
+```
+
+**Lane sh-f done when:** F1 committed; build green; `grep -rn "TipsAdmin\|StaffReviews" client/src README.md` is empty.
+
+# Lane sh-g-fidelity
+
+### Task G1: pull the live artifact, fold CSS, review every screen against it
+
+**Files:**
+- Modify: `client/src/index.css` (only the hub/roster/hiring/payroll/reviews rules this project added)
+- Modify: `docs/design-artifacts/2026-08-19-staff-hub.dc.html` (refresh the snapshot if the design session moved)
+
+- [ ] **Step 1: Refresh the benchmark**
+
+`DesignSync list_files` on project `96291c7a-3510-4910-9c67-c41d81504920`, `get_file` `Staff Hub.dc.html`; if its content differs from the vendored snapshot, overwrite the snapshot and commit it (`docs: refresh staff-hub artifact`). The `<style>` block's rules marked "ships verbatim" are the CSS truth.
+
+- [ ] **Step 2: Diff the shipped CSS against the artifact**
+
+For every rule in the artifact's hub/hire/roster-sect block, confirm the same declarations exist under the `html[data-app="admin-os"]` prefix in `index.css` (B3 appended them; sh-c/d/e may have added local inline styles that should be promoted to classes where the artifact names one). Promote, do not duplicate.
+
+- [ ] **Step 3: Run `ui-ux-review` against the artifact, per screen**
+
+Screens and their artboards: Roster 1a (After Hours) / 1b (House Lights, `?tab=deactivated`) / 1c (empty: point the review at a dev account with zero approved staff, or at the JSX if none exists); Hiring 1d; Payroll pay run 1e/1f (both skins); Payroll tips 1g/1g2; Reviews 1h/1i; the sidebar in 1a. The §3 override list is the reviewer's exception list: a deviation on that list is not a finding; any other deviation is.
+
+- [ ] **Step 4: Fix findings, build gate, commit**
+
+```bash
+git add client/src/index.css docs/design-artifacts/2026-08-19-staff-hub.dc.html
+git commit -m "style(staff-hub): fidelity pass against the 2026-08-19 artifact"
+```
+
+**Lane sh-g done when:** every screen has a `ui-ux-review` verdict on file, both skins on Roster and Payroll, `.hub-tabs` scrolls at 720px with no page-level horizontal scroll.
+
+---
+
+## Merge order and the integration check
+
+1. Merge `sh-a-server` and `sh-b-shell` (either order; each is clean alone). After both are on main: load `/staffing` as admin on dev and confirm the subtitle fills from the real endpoint (`16 active · pay run … · 1 review to confirm` or the day's equivalent).
+2. Merge `sh-c-hiring`, `sh-d-payroll`, `sh-e-reviews` (any order).
+3. Merge `sh-f-feedback`.
+4. Merge `sh-g-fidelity`.
+5. Push is a separate, cued step per CLAUDE.md; the push-time sweep re-runs the fleet on the sensitive commits (sh-a).
+
+## Manual walk before the push cue
+
+- Both skins, desktop, and a 720px-wide window (tabs scroll, page does not).
+- Manager login: `/staffing` shows Roster with no tab strip; `/staffing/payroll`, `/staffing/hiring`, `/staffing/reviews` bounce; a manager without `can_staff` sees an empty subtitle and the roster's 403 state.
+- Overview payroll card → `/staffing/payroll?tab=payrun&period=<id>` lands on that period. A staffer's Payouts tab links → payroll history with the period. Application detail "Schedule interview" → `/staffing/hiring?schedule=<id>` opens the modal.
+- On a weekday before any accrual: the pay-run card names the current week; the subtitle says "open"; no `pay_periods` row appears in the DB after the visits.
+- Confirm flow (dev only, a dev review row): label reads "waits for the next open run" when no period is open; after confirm the resolved row shows the waiting marker and the hub + sidebar badges drop without waiting 60s.
