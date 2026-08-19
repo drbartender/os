@@ -4479,3 +4479,56 @@ Changes no candidate set, only the pick.
   `InvalidStateError` is treated as enrollment success without server confirmation
   (`webauthnClient.js:24-27`); and `/api/auth/me` transits the `-uanon` cache namespace for a
   few milliseconds on first load, before `announceAdminSwUser` fires.
+
+# Push 2026-08-19 (nat-trim) — pre-existing defects surfaced by the review fleet
+
+The 3-agent fleet on the nat-trim batch (Needs-attention trim + payroll card) returned
+code-review PASS, accessibility PASS, consistency FAIL on 2 minor mismatches. Everything the
+diff itself introduced was fixed before the push and is not repeated here. What follows is
+what the fleet found in code the diff did NOT touch, recorded so it does not evaporate.
+
+## Light skin: the warn chip fails WCAG AA app-wide
+
+Measured 3.84:1 — rgb(182,91,12) at 9.5px/500 uppercase on rgb(247,231,201). Small text needs
+4.5:1. Dark skin passes at 7.87:1, and the 1px border passes non-text contrast at 4.25:1.
+
+Two compounding causes, both in skin plumbing: the light `.chip` rule intends
+`background: transparent`, but the fixed-hue `.chip.warn` background at index.css:13417 wins
+the specificity tie on source order; and the `--ms-camel`-derived text colour is light to begin
+with. This is EVERY light-skin `.chip.warn` in the app, not a payroll-card problem — but the
+nat-trim change promoted that chip to the sole at-a-glance overdue marker in the Payroll card
+head, which raises the stakes on fixing it.
+
+## Light skin: muted sub-lines fail AA by a hair, app-wide
+
+`--ink-3` derived text measures 4.22:1 (rgb(122,116,104) on rgb(247,244,236)) at 11.5px, needs
+4.5. Dark passes at 4.95:1. Hit on the payroll card's "N staff" / "pays …" / "N deferred tips"
+sub-lines and, identically, on an empty tab chip ("Clients 0") — so it is the token, not the
+surface. A small darkening of light `--ink-3` fixes both and everything else using it.
+
+## Dark skin: the is-warn accent bar renders CYAN, not warn
+
+`.ov-payroll-block.is-warn` uses `hsl(var(--warn-h) var(--warn-s) 50%)`, which under the dark
+rainbow palette resolves to rgb(36,183,219). The Overdue chip beside it is fixed amber. So an
+overdue payroll card shows a cyan left bar and an amber chip, and the bar reads as info/accent
+rather than warning. Light skin is consistent (amber/amber). Pre-existing hue plumbing; nat-trim
+is what put the two markers side by side in one card, which is how it got noticed.
+
+## Light skin renders the payroll total at 42px, dark at 22px
+
+`html[data-app="admin-os"][data-skin="light"] .stat-value` (index.css:11545) out-specifies
+`.ov-payroll-total { font-size: 22px }`. It renders cleanly and matches the light skin's display
+idiom, and it behaved this way before nat-trim too, so nothing regressed. But a 22 vs 42
+divergence on the same number across skins is a large intent gap that deserves a deliberate
+call rather than being specificity fallout.
+
+## Smaller, verified
+
+- `buildLeadCallItems` (client/src/pages/admin/overview/queueItems.js) has zero unit tests, and
+  had zero before this change. Every other export in that file is covered.
+- Needs-attention queue rows are `div role="button"` wrapping a `tabIndex={-1}` anchor. A link
+  inside a button role is technically invalid ARIA containment. Pre-existing since natabs-a; the
+  keyboard behaviour is correct in practice (one tab stop per row, Enter and Space both fire).
+- Sales-tab behaviour could not be observed live: no proposal currently qualifies as
+  sent-unviewed past 72h, so the conditional 4th chip and the chip row's own horizontal scroll
+  are verified in code only, never on screen.

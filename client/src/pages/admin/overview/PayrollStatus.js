@@ -144,13 +144,22 @@ export default function PayrollStatus() {
 
   // Card head stays outside the anchor: it is a label, not a destination, and
   // nesting it would put the whole card inside one tab stop.
+  //
+  // That placement costs the link its overdue state, though: the chip used to
+  // sit inside the anchor, so a screen reader announced it on focus. Now the
+  // focused link would read "Due Friday $4,690 5 staff", where "Due Friday"
+  // sounds like the future for a check that is already late. An explicit
+  // aria-label carries the state back into the accessible name. Overdue only
+  // ever accompanies the 'due' branch, whose headline is the "Due <weekday>"
+  // string, so the label reads whole.
   return (
     <div className="card">
       <div className="card-head">
         <h3><Icon name="dollar" size={12} /> Payroll</h3>
         {view.overdue && <span className="chip warn">Overdue</span>}
       </div>
-      <EntityLink to={view.href} className="ov-payroll-link">
+      <EntityLink to={view.href} className="ov-payroll-link"
+        aria-label={view.overdue ? `Payroll overdue. ${view.headline}. ${fmt$wholeFromCents(view.total)}, ${view.staff} staff.` : undefined}>
         <div className={`ov-payroll-block${view.overdue ? ' is-warn' : ''}`}>{body}</div>
       </EntityLink>
     </div>

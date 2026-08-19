@@ -148,6 +148,17 @@ describe('buildStaffingItems', () => {
     expect(edge.priority).toBe('danger');
   });
 
+  // The de-escalation compares against STAFFING_HORIZON_DAYS INDEPENDENTLY of
+  // the event filter, so the boundary needs pinning on both sides here too.
+  // With only 14 and 30 covered, an off-by-one on this comparison alone (<= 15)
+  // passed the whole suite.
+  test('a booking 15 days out is past the horizon and de-escalates', () => {
+    const [past] = buildStaffingItems([], 0, [risk(55, 'Loryn', ymdFromToday(15), 347)])
+      .filter(i => i.type === 'documents');
+    expect(past.priority).toBe('warn');
+    expect(past.meta).toBe('eligible');
+  });
+
   test('leaves an eligible but unbooked worker at warn', () => {
     const [idle] = buildStaffingItems([], 0, [risk(241, 'Debbie')])
       .filter(i => i.type === 'documents');

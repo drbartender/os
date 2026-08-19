@@ -91,6 +91,19 @@ export default function OverviewPage() {
   const [nameNotices, setNameNotices] = useState([]);
   const [drinkPlans, setDrinkPlans] = useState([]);
   const [drinkPlansLoading, setDrinkPlansLoading] = useState(true);
+  // The four item sources that used to bypass the loading gate (2026-08-17).
+  // Harmless while the Money tab kept `hasBody` unconditionally true for
+  // admins, because the terminal collapsed state was then unreachable and a
+  // late fetch had nothing to flash FROM. Removing that tab makes it
+  // reachable, and the 14-day staffing horizon makes an empty board common,
+  // so an ungated /admin/applications landing with rows would flip the card
+  // from "Nothing pressing right now." to the full tabbed layout.
+  //
+  // adminExtrasLoading is only ever set false, never toggled back: it is
+  // consumed as `isAdmin && adminExtrasLoading`, so a manager (who fires none
+  // of these) is unaffected without an else-branch that could itself flash.
+  const [adminExtrasLoading, setAdminExtrasLoading] = useState(true);
+  const [leadCallLoading, setLeadCallLoading] = useState(true);
   const [changeRequests, setChangeRequests] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [leadCallAttention, setLeadCallAttention] = useState([]);
@@ -160,16 +173,19 @@ export default function OverviewPage() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     api.get('/admin/lead-call-attention')
-      .then(r => setLeadCallAttention(r.data || []))
-      .catch(() => {}); // best-effort: missed-call items simply stay absent
+      .then(r => { if (!cancelled) setLeadCallAttention(r.data || []); })
+      .catch(() => {}) // best-effort: missed-call items simply stay absent
+      .finally(() => { if (!cancelled) setLeadCallLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   // adminOnly route, same as /admin/applications and /admin/hiring/uncertified below: a manager's 403 would trip
   // the role_denial audit, so this is only ever called from inside the isAdmin
   // block. The .catch keeps a failed request from breaking the whole strip.
   const loadNameNotices = useCallback(() => {
-    api.get('/admin/name-notices')
+    return api.get('/admin/name-notices')
       .then(r => setNameNotices(r.data.rows || []))
       .catch(() => setNameNotices([]));
   }, []);
@@ -226,19 +242,25 @@ export default function OverviewPage() {
     // security audit (Sentry DRBARTENDER-SERVER-R), so only admins fetch it;
     // managers simply show no applications card.
     if (isAdmin) {
-      api.get('/admin/applications')
-        .then(r => { if (!cancelled) setApplications(r.data?.applications || r.data || []); })
-        .catch(() => {}); // applications queue items simply stay absent
+      // One shared flag over all three, same shape as clientsLoading above:
+      // each still degrades on its own (the .catch keeps a failure from
+      // breaking the strip), but the card stays in its loading state until
+      // every Staffing source has landed.
+      Promise.allSettled([
+        api.get('/admin/applications')
+          .then(r => { if (!cancelled) setApplications(r.data?.applications || r.data || []); })
+          .catch(() => {}), // applications queue items simply stay absent
 
-      // Workers who can be assigned to a shift but have no alcohol certification
-      // on file. adminOnly for the same reason as the line above; a manager 403
-      // here would trip the role_denial audit, so they simply see no rows.
-      api.get('/admin/hiring/uncertified')
-        .then(r => { if (!cancelled) setUncertified(r.data?.users || []); })
-        .catch(() => {}); // rows simply stay absent
+        // Workers who can be assigned to a shift but have no alcohol certification
+        // on file. adminOnly for the same reason as the line above; a manager 403
+        // here would trip the role_denial audit, so they simply see no rows.
+        api.get('/admin/hiring/uncertified')
+          .then(r => { if (!cancelled) setUncertified(r.data?.users || []); })
+          .catch(() => {}), // rows simply stay absent
 
-      // Informational name notices. adminOnly for the same reason again.
-      loadNameNotices();
+        // Informational name notices. adminOnly for the same reason again.
+        loadNameNotices(),
+      ]).then(() => { if (!cancelled) setAdminExtrasLoading(false); });
     }
     return () => { cancelled = true; };
   }, [isAdmin, loadNameNotices]);
@@ -301,9 +323,12 @@ export default function OverviewPage() {
           Pipeline, then Payroll (admin-only per spec §1 role gating). */}
       <div className="ov-band1">
         {/* Every item source gates `loading` so the terminal collapsed state
-            can never flash and then expand as a late fetch lands. */}
+            can never flash and then expand as a late fetch lands. This is now
+            literally true: the admin-only Staffing sources and the lead-call
+            Sales source were outside the gate until 2026-08-17. */}
         <NeedsYouStrip tabs={tabs}
-          loading={shiftsLoading || proposalsLoading || clientsLoading || drinkPlansLoading} />
+          loading={shiftsLoading || proposalsLoading || clientsLoading || drinkPlansLoading
+            || leadCallLoading || (isAdmin && adminExtrasLoading)} />
         <div className="ov-band1-rail">
           <PipelineCard pipeline={pipeline} loading={!statsLoaded && statsLoading} error={statsError} />
           {isAdmin && <PayrollStatus />}

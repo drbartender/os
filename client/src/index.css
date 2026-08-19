@@ -18430,6 +18430,13 @@ html[data-app="admin-os"] .ov-band1-rail {
   display: grid;
   gap: var(--gap);
 }
+/* The band's min-width:0 reaches the RAIL, not the cards inside it, so the
+   rail's own grid children revert to min-width:auto and refuse to shrink
+   below min-content. Measured in the light skin: cards render 311px inside a
+   306px track at 390, and at 320 the Pipeline card's money column runs past
+   the viewport and is CLIPPED with no scroll path. Same guarantee, one level
+   down. */
+html[data-app="admin-os"] .ov-band1-rail > * { min-width: 0; }
 /* The unscoped `.card` rule (the public site's folio card) carries
    margin-bottom: 1.5rem and the admin-os `.card` never resets it. Harmless
    when cards are direct band children; inside the rail it stacks on top of
@@ -18470,11 +18477,14 @@ html[data-app="admin-os"] .nat-tab.is-active {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
-/* Greyed at zero ONLY when no dot: a payroll-overdue Money tab has count 0
-   but a danger dot and must not be dimmed. ink-3 (not ink-4) keeps the
-   still-clickable chip above the 3:1 UI-contrast bar in both skins. */
+/* Greyed at zero ONLY when no dot, so a tab that is empty but still carries
+   a priority dot is never dimmed. (Until 2026-08-17 the live case was the
+   payroll-overdue Money tab, count 0 with a danger dot; that tab is gone and
+   the dot now derives purely from items, so the guard is forward-looking.)
+   ink-3 (not ink-4) keeps the still-clickable chip above the 3:1
+   UI-contrast bar in both skins. */
 html[data-app="admin-os"] .nat-tab.is-empty { color: var(--ink-3); }
-/* An empty tab can also be the ACTIVE one (admin, quiet board, Money default):
+/* An empty tab can also be the ACTIVE one (the user clicked a quiet tab):
    active wins the paint or the selected chip reads dimmed. */
 html[data-app="admin-os"] .nat-tab.is-active.is-empty { color: var(--ink-1); }
 /* Dot colors mirror the queue-icon priority tokens so tab and row agree. */
