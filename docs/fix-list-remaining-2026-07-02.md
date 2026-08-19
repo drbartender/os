@@ -36,11 +36,13 @@ open in code, so an unmarked entry is a verified-open entry as of that date.
 - **Compare-page reskin** — `docs/compare-page-design-prompt.md`, sitting since 7/2; can ride either session above.
 - **Potion Planner rework (client wizard)** — prompt doc committed 2026-07-15: `docs/potion-planner-design-prompt.md` (current-state map, file refs, ranked confusion inventory incl. Dallas's balance-questions ask, money-path law). Flow/comprehension redesign in the existing skin, claude.ai/design session next. Absorbs the deferred 7/13 items #1 (custom drinks/mocktails on shopping list) and #2 (better balance questions). **BUILT & SHIPPED 2026-07-18 as Planner v2** (pp2 lanes: `client/src/pages/plan/v2/PlannerV2.js` via PlannerRouter, `planner_version >= 2` branch at `drinkPlans/submit.js:92` — 2026-08-14 audit). Residuals live in the Planner v2 sections below; this design session is done.
 - **Client-detail messaging (QUEUED 2026-07-14, from Needs-Attention-tabs spec §7)** — full SMS history + reply on the client details page; Messages nav demotes to an "All messages" link; the overview's unread-SMS queue items retarget to the client page (one-line change). Driver: finding a thread in the Messages tab is too tedious. Endpoints already exist (`/sms/conversations/:clientId` + reply route). **CORE SHIPPED** (lane sms-client-panel 9020c68a: `ClientDetail.js:271` renders the Messages card + ClientConversation reply — 2026-08-14 audit; the Messages-nav demotion and overview-retarget halves of this entry were not separately verified).
-- **Admin Staff hub** — prompt doc committed 2026-08-19: `docs/staff-hub-design-prompt.md`
-  (`8ff9c9d2`). Consolidates Roster / Hiring / Payroll / Reviews under one hub, with
-  prod-grounded figures for the mocks and four named content problems, one of them the 29 dead
-  import rows on the Hiring board recorded at the end of this file. claude.ai/design session
-  next; nothing built.
+- **Admin Staff hub** — SPEC APPROVED 2026-08-19: `docs/superpowers/specs/2026-08-19-admin-staff-hub-design.md`,
+  benchmark artifact `docs/design-artifacts/2026-08-19-staff-hub.dc.html` (design project
+  96291c7a). Consolidates Roster / Hiring / Payroll / Reviews under one hub; tips fold into
+  Payroll, tip-page feedback moves to the staffer profile. The design prompt was chat output
+  (the `docs/staff-hub-design-prompt.md` file at 8ff9c9d2 was a slip, dropped in c5aefe30).
+  The 29 dead Hiring rows recorded at the end of this file are handled by the spec's fold rule
+  (§6). Plan next; nothing built.
 - **Menu design page (QUEUED 2026-07-14, from Needs-Attention-tabs spec §7)** — real workflow over the planner-captured menu prefs (`menuStyle`/`menuTheme`/`drinkNaming`/`menuDesignNotes`); produces a real artifact and the done-state that then powers "menu to design" Prep queue items (deliberately NOT hand-flagged in the tabs build). Dallas has page ideas to brainstorm.
 
 ## Scope calls needed before scoping
@@ -4708,3 +4710,11 @@ Not a data bug: the rows are correct, the board's reading of them is what mislea
 a board-level distinction, either filtering imported rows out of the pipeline view, collapsing
 them behind a count, or giving them a terminal status that the Hiring board does not render.
 Decide it in the Staff hub design session, which this finding came out of.
+
+**DECIDED 2026-08-19 (staff-hub spec §6):** a collapsed, age-stamped fold beneath the live
+Onboarding cards. Predicate is generic, zero onboarding progress AND account older than 60 days,
+never status or a cutover date (a day-one pre-hired recruit is also `hired` and must render live).
+Re-verified the same day: all 40 Onboarding cards are at 0%, so the fold takes 32 today (the 29
+cutover rows plus 3 stale `in_progress` signups) and leaves 8 live. Origin correction: the 29 are
+`hired` with no `cc_id` and no `import_source`; they are the existing roster bulk-registered through
+the pre-hire flow on cutover day, not rows the payment-history import wrote.
