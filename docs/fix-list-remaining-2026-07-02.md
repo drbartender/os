@@ -4837,3 +4837,33 @@ the data is not.
 Fix: render `formatStaleAt(res.staleAt)` in a `.m-stale` element on the phone screen lanes
 that serve cached reads, and add a test that fails when the call site disappears. Ties to the
 mobile-admin spec section 7.
+
+## The press-1 kill switch is now a TRAP: turning it off makes the main line lie (found 2026-08-19, cross-LLM push review)
+
+Not a live defect — Dallas confirmed `VM_ESCALATION_ENABLED=true` in Render, so the `<Gather>`
+is emitted and the feature works. Recorded because the SAFETY of the switch changed and nobody
+noticed.
+
+`GREETING_TEXT_PRIMARY` (`voicemailTwiml.js:32`) now ends *"If you need to talk to somebody now,
+press one and I'll see if someone's available."* That sentence is inside the greeting itself and
+inside the bundled recording — which is exactly why `needsAppendedOffer('primary')` is false.
+But `voice.js:496` emits the `<Gather>` only when `escalationEnabled() && !night`, and
+`VM_ESCALATION_ENABLED` defaults OFF (it requires the literal string `'true'`).
+
+**So the kill switch can no longer be used as a kill switch.** Flip it to false — the exact move
+an operator makes during an incident — and every caller to the 1922 is invited to press one,
+presses it, and nothing happens: no `<Gather>` exists to catch the digit, and they drop to the
+beep. The code comment at `voice.js:493` still claims "Escalation off emits the exact production
+document (golden-pinned)", which was true when the greeting did not mention press-1.
+
+Options, none taken yet:
+1. Make the greeting slot selection depend on `escalationEnabled()` — serve a no-press-1 variant
+   when it is off. Cleanest, and restores the switch.
+2. Accept it and rename the expectation: document that the real revert is
+   `VM_ESCALATION_ENABLED=false` **plus** `VM_GREETING_URL_PRIMARY=say`, which is already half
+   recorded in `.env.example` from the same review.
+
+Found by gemini in the cross-LLM second opinion. Worth noting for the process: the three-agent
+Claude fleet passed the code and flagged only the adjacent DOC problem (the switch is no longer
+a full revert). The decorrelated reviewer named the caller-facing consequence. This is the
+second time the cross-LLM pass has caught something the fleet did not.
