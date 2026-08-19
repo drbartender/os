@@ -24,6 +24,15 @@ server/utils/payroll*.js
 # (push-fleet 2026-08-07).
 server/routes/admin/payroll.js
 server/routes/staffPortal/payouts.js
+# The staff-home route itself (2026-08-19). Its sibling above was listed and it
+# was not, yet it is what tells a contractor WHICH pay period is current and what
+# they are owed in it — the payroll "which period is now" family, whose other
+# members (admin/payroll.js, dutyLines.js) are all covered. It shipped a money
+# defect for exactly that reason: on the last evening of every period it resolved
+# the NEXT one and showed $0 for a worked week, and being unlisted meant the
+# change that introduced it never pulled a money review. Same shape as the
+# payrollDuty and drinkPlans split notes elsewhere in this file.
+server/routes/staffPortal.js
 # Sensitivity follows the code (2026-08-13): the duty routes were split OUT of
 # payroll.js, taking the attribution write, the duty-line add/remove, and the
 # accrual re-derivation with them — so the file that actually moves duty money

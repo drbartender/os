@@ -16,6 +16,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, PayloadTooLargeError } = require('../utils/errors');
 const { validatePhone } = require('../utils/phone');
 const { refreshDisplayName } = require('../utils/refreshDisplayName');
+const { chicagoTodayYmd } = require('../utils/businessTime');
 const { validatePreferredNameChange } = require('../utils/staffDisplayName.validate');
 const { isValidUpload } = require('../utils/fileValidation');
 const storage = require('../utils/storage');
@@ -32,7 +33,11 @@ const crypto = require('crypto');
 
 // Stub seam — tests swap uploadFile + sendEmail to avoid hitting real R2 /
 // Resend. Defaults to the real impls in prod / dev.
-let _deps = { uploadFile: storage.uploadFile, sendEmail };
+// `today` is injectable for the same reason uploadFile and sendEmail are: the
+// pay-period lookup below is a DATE decision, and the only interesting dates are
+// the ones a test cannot wait for. Pinning global Date instead would expire the
+// suite's own JWT, so the clock is a dependency rather than a mock.
+let _deps = { uploadFile: storage.uploadFile, sendEmail, today: chicagoTodayYmd };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
 const router = express.Router();
@@ -160,19 +165,16 @@ router.get('/staff-home', asyncHandler(async (req, res) => {
              ), 0) AS duty_line_count
         FROM pay_periods pp
         LEFT JOIN payouts po ON po.pay_period_id = pp.id AND po.contractor_id = $1
-       -- KNOWN-OPEN, DELIBERATELY NOT IN THIS LANE (spec 2026-08-14
-       -- "Known-open"). This is the last WHERE CURRENT_DATE BETWEEN ... of
-       -- the payroll "which period is now" family; every sibling passes
-       -- chicagoTodayYmd() (dutyLines.js findOpenPeriodForDate,
-       -- admin/payroll.js). So on a period's last evening this card resolves
-       -- the NEXT period while accrual is still writing the current one and the
-       -- staffer sees $0 for the week they just worked. It is a PAY-PERIOD
-       -- boundary, not a shift boundary — no end instant applies — and it is a
-       -- money path that wants its own lane and its own pay_periods fixture.
-       WHERE CURRENT_DATE BETWEEN pp.start_date AND pp.end_date
+       -- The Chicago business day, passed in, NOT CURRENT_DATE: the session runs
+       -- at GMT, so CURRENT_DATE rolls over at 19:00 Chicago and on a period's
+       -- last evening this asked for a period whose row accrual has not minted
+       -- yet, matching nothing and emptying the card. Full account in
+       -- ARCHITECTURE.md > Database Schema and in the boundary suite's header.
+       -- A pay-period boundary is a DATE boundary; no shift end-instant applies.
+       WHERE $2::date BETWEEN pp.start_date AND pp.end_date
        ORDER BY pp.start_date DESC
        LIMIT 1
-    `, [userId]),
+    `, [userId, _deps.today()]),
 
     // Open shifts teaser — top 2 soonest open shifts that have not finished
     // (spec §6.2). Mirrors the Available tab's open-shift filter (status='open'

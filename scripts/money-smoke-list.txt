@@ -27,6 +27,10 @@ server/routes/admin/payrollDuty.test.js
 # staff blended-total/paystub boundary live at the ROUTE layer, not the engine.
 server/routes/admin/payroll.test.js
 server/routes/staffPortal/payouts.test.js
+# The staff-home pay-period boundary (2026-08-19). Same reason as the line above:
+# it decides WHICH period a contractor is shown and what they are owed in it, and
+# it shipped a defect that emptied that card on the last evening of every period.
+server/routes/staffPortal.payPeriod.boundary.test.js
 
 # Autopay durable-charge trio
 server/utils/autopayDurableCharge.test.js
