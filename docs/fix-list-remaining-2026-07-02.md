@@ -3748,6 +3748,16 @@ FUTURE, and a test pins that an expired cutoff resolves to the live client. If a
 want test mode here, use a far-future date and verify `isTestMode()` rather than trusting the
 file.
 
+**STILL OPEN out of the same review: `stripePayoutSync.js` has three unguarded `getStripe()`
+dereferences.** `client(opts)` (`:22`) returns `(opts && opts.stripe) || testStripe ||
+getStripe()`, and three callers dereference the result with no null check: `syncPayout`,
+`syncPendingTransactions`, and `sweep`. Two are shielded by accident — the webhook path injects
+`stripeForEvent`, and `syncPendingTransactions` has an `isTestMode()` early return — but the
+**nightly `sweep()` resolves through `getStripe()` and would throw a bare TypeError** in the one
+state where null is reachable (test mode active with no test key). Pre-existing, deliberately
+NOT fixed in the lane above, which had already been reversed once and did not need widening.
+Same shape as the two that were fixed there.
+
 **The original entry is kept below for its factual content** (the `sk_live_` key, the absent
 `NODE_ENV` gate, the noNameWrite incident) — all accurate. Only its conclusion was wrong.
 
