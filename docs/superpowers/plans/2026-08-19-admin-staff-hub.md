@@ -918,7 +918,19 @@ The tip-page feedback email currently links `${ADMIN_URL}/tips#feedback`. `/tips
 
 - [ ] **Step 1: Update the test first**
 
-Find the feedback-notification assertion in `server/routes/publicTip.test.js` (grep `tips#feedback` or `adminUrl`); change the expected URL to the profile deep link. If no test asserts the URL today, add one line to the existing feedback-submission test asserting the sent HTML contains `/staffing/users/${bartenderId}?tab=tip-page` (the harness already captures the sendEmail payload or mocks it; match its pattern).
+VERIFIED 2026-08-19: `publicTip.test.js` (356 lines) covers the tip GET/checkout paths only; it has NO feedback-route test and never touches `sendEmail`, and the route calls the real `sendEmail` (which log-and-skips outside prod via the SEND_NOTIFICATIONS gate). So there is nothing to update; the honest test here is on the TEMPLATE, not the route: assert `emailTemplates.tipFeedbackAdminNotification({ ..., adminUrl }).html` contains the adminUrl it was given (it already takes the URL as an argument, so the route-side change is the only behavior). Add to the test file, matching its harness style:
+
+```js
+test('feedback admin email links the adminUrl it is given', () => {
+  const tpl = require('../utils/emailTemplates').tipFeedbackAdminNotification({
+    displayName: 'Shea Corrigan', rating: 3, comment: 'great', submitterEmail: 'g@example.com',
+    adminUrl: 'https://admin.example.test/staffing/users/12?tab=tip-page',
+  });
+  assert.ok(tpl.html.includes('https://admin.example.test/staffing/users/12?tab=tip-page'));
+});
+```
+
+plus a plain-code assertion that the route file no longer contains the retired path: after Step 3, `grep -n "tips#feedback" server/routes/publicTip.js` returns nothing (state this in the commit body rather than as a brittle source-grep test).
 
 - [ ] **Step 2: Run to verify it fails**
 
