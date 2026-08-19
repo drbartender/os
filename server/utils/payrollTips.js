@@ -8,6 +8,7 @@
 const { pool } = require('../db');
 const Sentry = require('@sentry/node');
 const { getStripe } = require('./stripeClient');
+const { ExternalServiceError } = require('./errors');
 const { matchTipToShift } = require('./payrollMath');
 
 const POST_GRACE = "INTERVAL '3 hours'";
@@ -18,6 +19,15 @@ const POST_GRACE = "INTERVAL '3 hours'";
  */
 async function stripeFeeFor(paymentIntentId) {
   const stripe = getStripe();
+  // THROW, never return null, when there is no client. null is already this
+  // function's "the charge has not settled yet" answer, and both callers treat
+  // null as "nothing to record" — so returning it here would silently leave
+  // tips.fee_cents unset and the gratuity un-netted, with no signal anywhere.
+  // Throwing is caught by both callers, reaches Sentry, and leaves the row
+  // eligible for the next pass because they re-query on fee_cents IS NULL.
+  if (!stripe) {
+    throw new ExternalServiceError('stripe', null, 'Stripe client unavailable — cannot read the processing fee.');
+  }
   const pi = await stripe.paymentIntents.retrieve(paymentIntentId, {
     expand: ['latest_charge.balance_transaction'],
   });

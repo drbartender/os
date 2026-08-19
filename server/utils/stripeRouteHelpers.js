@@ -6,6 +6,7 @@
  */
 const { pool } = require('../db');
 const { getStripe } = require('./stripeClient');
+const { ExternalServiceError } = require('./errors');
 const { getEventTypeLabel } = require('./eventTypes');
 
 const DEPOSIT_AMOUNT = parseInt(process.env.STRIPE_DEPOSIT_AMOUNT, 10) || 10000; // $100.00
@@ -17,6 +18,12 @@ function eventLabelFor(row) {
 // ─── Helper: get or create Stripe Customer for a proposal ────────
 async function getOrCreateCustomer(proposal) {
   const stripe = getStripe();
+  // getStripe() genuinely returns null (test mode without a test key, or the
+  // off-prod live refusal). Dereferencing it gave a bare TypeError on a payment
+  // path; a typed error reaches the AppError middleware as a clean 502.
+  if (!stripe) {
+    throw new ExternalServiceError('stripe', null, 'Payments are not configured.');
+  }
   // Validate the cached id against the active Stripe mode (live vs test).
   // STRIPE_TEST_MODE_UNTIL toggles modes; a customer from one mode is not
   // retrievable from the other. Verify before reuse.
