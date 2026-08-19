@@ -17,8 +17,11 @@ lanes:
       - server/routes/admin/staffReviews.test.js
       - server/utils/payrollDisputeNotify.js
       - server/utils/payrollDisputeNotify.test.js
+      - server/routes/publicTip.js
+      - server/routes/publicTip.test.js
       - scripts/sensitive-paths.txt
       - ARCHITECTURE.md
+      - README.md
     depends_on: []
     review_fleet: full   # payroll.js-adjacent reads, dutyLines money writer joins the sensitive list, tips money reads
   - id: sh-b-shell
@@ -77,6 +80,7 @@ lanes:
       - client/src/pages/admin/staffHub/reviews/suggestNames.test.js
       - client/src/pages/admin/StaffReviews.js
       - client/src/App.js
+      - client/src/index.css
     depends_on: [sh-b-shell, sh-a-server]
     review_fleet: [code-review, consistency-check, security-review, ui-ux-review]   # confirm/dismiss/award drive payout_duty_lines writes
   - id: sh-f-feedback
@@ -84,14 +88,18 @@ lanes:
       - client/src/pages/admin/userDetail/tabs/TipPageTab.js
       - client/src/pages/admin/userDetail/tabs/FeedbackCard.js
       - client/src/pages/admin/TipsAdmin.js
-      - client/src/App.js
       - README.md
-    depends_on: [sh-a-server, sh-d-payroll]   # TipsAdmin.js is deleted only after the ledger (sh-d) and this card are home
+    depends_on: [sh-a-server, sh-d-payroll, sh-e-reviews]   # ledger (sh-d) and reviews (sh-e) must land first: F1 deletes TipsAdmin.js and its done-gate greps for StaffReviews, which sh-e removes
     review_fleet: [code-review, consistency-check, security-review]
   - id: sh-g-fidelity
     footprint:
       - client/src/index.css
       - docs/design-artifacts/2026-08-19-staff-hub.dc.html
+      - client/src/pages/admin/StaffDashboard.js
+      - client/src/pages/admin/HiringDashboard.js
+      - client/src/pages/admin/payroll/**
+      - client/src/pages/admin/staffHub/**
+      - client/src/pages/admin/userDetail/tabs/FeedbackCard.js
     depends_on: [sh-c-hiring, sh-d-payroll, sh-e-reviews, sh-f-feedback]
     review_fleet: [code-review, ui-ux-review]   # ui-ux-review points at the benchmark artifact; off-design is a finding
 ---
@@ -107,6 +115,8 @@ lanes:
 **Tech Stack:** Node 26 / Express 4 / `pg` raw SQL / `node:test` on the server; React 18 (CRA) / React Router 6 / jest + RTL on the client; vanilla CSS in `client/src/index.css`.
 
 **Spec:** `docs/superpowers/specs/2026-08-19-admin-staff-hub-design.md` (approved 2026-08-19; `/review-spec` fleet folded in the same day). The design benchmark is `docs/design-artifacts/2026-08-19-staff-hub.dc.html` (design project `96291c7a-3510-4910-9c67-c41d81504920`); its `<style>` block carries the hub CSS marked "ships verbatim to client/src/index.css".
+
+**Verified-harmless notes (from the plan fleet, so nobody re-litigates):** `overview/queueItems.js:67` carries only `target: 'hiring'`; the URL it feeds is `NeedsYouStrip.js:31`, which B5 retargets, so `queueItems.js` needs no edit. The Reviews page lives at `staffHub/reviews/ReviewsPage.js` (one directory deeper than the spec's `staffHub/ReviewsPage.js`) to hold the six-file split; deliberate.
 
 **Lane graph (run order):** `sh-a-server` and `sh-b-shell` in parallel. Then `sh-c-hiring`, `sh-d-payroll`, `sh-e-reviews` in parallel (all need the hub's Outlet context from sh-b; d and e also read sh-a's new fields). `sh-f-feedback` after sh-d (it deletes `TipsAdmin.js`, whose ledger sh-d moved). `sh-g-fidelity` last, across all screens.
 
@@ -540,38 +550,52 @@ git commit -m "feat(badge-counts): pending_reviews, zeroed for managers"
 - Test: `server/routes/admin/users.activeStaff.test.js`
 
 **Interfaces:**
-- Produces: `GET /admin/active-staff?include_stubs=true` now returns deactivated users that have NO `onboarding_progress` row (the payment-history placeholders). The active set is byte-identical. Consumed by sh-b Roster.
+- Produces: `GET /admin/active-staff?include_stubs=true` now returns EVERY deactivated staff/manager row regardless of onboarding progress: no progress row at all (the payment-history placeholders) or an incomplete one. This is deliberately the same predicate as the summary's `deactivated_count` (A2), so the count and the list agree. The active set is byte-identical. Consumed by sh-b Roster.
 
 - [ ] **Step 1: Write the failing test**
 
 In `users.activeStaff.test.js`, the `before` block seeds users each with a completed `onboarding_progress` row. Add one more fixture there: a deactivated payment-history placeholder with NO progress row.
 
+HARNESS REALITY (read the file first; do not paste blind): its helper is `req(...)` returning a RAW STRING body that every test `JSON.parse`s; there is no `passwordHash` variable (inserts use the literal `'x'`); and `after()` deletes users by an EXPLICIT ID ARRAY, not an email LIKE. A fixture not added to that array leaks into the shared dev DB forever and permanently inflates the summary's deactivated/imported counts. Two fixtures:
+
 ```js
-// after the existing fixtures in before():
+// after the existing fixtures in before(), matching the file's own insert style:
 const ph = await pool.query(
   `INSERT INTO users (email, password_hash, role, onboarding_status, token_version, import_source)
-   VALUES ($1, $2, 'staff', 'deactivated', 0, 'payment_history_import') RETURNING id`,
-  [`${PREFIX}placeholder-${Date.now()}@imported.invalid`, passwordHash]
+   VALUES ($1, 'x', 'staff', 'deactivated', 0, 'payment_history_import') RETURNING id`,
+  [`${PREFIX}placeholder-${Date.now()}@imported.invalid`]
 );
 placeholderId = ph.rows[0].id;   // declare `let placeholderId;` beside the other ids
+const inc = await pool.query(
+  `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+   VALUES ($1, 'x', 'staff', 'deactivated', 0) RETURNING id`,
+  [`${PREFIX}incomplete-${Date.now()}@example.com`]
+);
+incompleteId = inc.rows[0].id;   // has a progress row, but incomplete:
+await pool.query('INSERT INTO onboarding_progress (user_id) VALUES ($1)', [incompleteId]);
+// ADD placeholderId AND incompleteId to the after() cleanup id array.
 ```
 
-And a test:
+And the tests (parse the raw body like the file's existing tests do):
 
 ```js
-test('include_stubs surfaces a deactivated placeholder that has no onboarding_progress row', async () => {
-  const { status, body } = await get('/api/admin/active-staff?include_stubs=true&limit=100', adminToken);
-  assert.equal(status, 200);
-  assert.ok(body.staff.some(s => s.id === placeholderId), 'placeholder row present');
+test('include_stubs surfaces deactivated rows with no progress row AND with an incomplete one', async () => {
+  const r = await req('GET', '/api/admin/active-staff?include_stubs=true&limit=100', adminToken);
+  assert.equal(r.status, 200);
+  const body = JSON.parse(r.body);
+  assert.ok(body.staff.some(s => s.id === placeholderId), 'no-progress placeholder present');
+  assert.ok(body.staff.some(s => s.id === incompleteId), 'incomplete-progress deactivated row present');
 });
 
 test('the default (active) set still requires a completed onboarding row', async () => {
-  const { body } = await get('/api/admin/active-staff?limit=100', adminToken);
+  const r = await req('GET', '/api/admin/active-staff?limit=100', adminToken);
+  const body = JSON.parse(r.body);
   assert.ok(!body.staff.some(s => s.id === placeholderId), 'placeholder absent from the active set');
+  assert.ok(!body.staff.some(s => s.id === incompleteId), 'incomplete row absent from the active set');
 });
 ```
 
-Adapt the helper names (`get`, `adminToken`, `passwordHash`, `PREFIX`) to the ones already in that file; read its `before` block first. Make sure the `after` cleanup's `DELETE FROM users WHERE email LIKE '${PREFIX}%'` covers the new email.
+Adapt the exact helper signature to the file's own (`req(method, path, token)` or similar).
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -670,7 +694,9 @@ before(async () => {
   const b = await makeUser('staff', 'bartender'); bartenderId = b.id;
   const o = await makeUser('staff', 'other'); otherId = o.id;
   await pool.query(
-    `INSERT INTO tip_page_feedback (target_user_id, rating, comment, submitter_email) VALUES ($1, 5, $2, 'guest@example.com'), ($3, 3, $4, 'guest2@example.com')`,
+    -- tip_page_feedback.rating is CHECK (rating BETWEEN 1 AND 3) in prod schema.sql:2659;
+    -- the dev DB may lack the CHECK, so seed inside 1..3 anyway or prod and dev diverge.
+    `INSERT INTO tip_page_feedback (target_user_id, rating, comment, submitter_email) VALUES ($1, 3, $2, 'guest@example.com'), ($3, 1, $4, 'guest2@example.com')`,
     [bartenderId, `feedback for bartender ${NONCE}`, otherId, `feedback for other ${NONCE}`]);
   const app = express(); app.use(express.json()); app.use('/api/admin', router);
   app.use((err, req, res, next) => { if (res.headersSent) return next(err);
@@ -735,7 +761,9 @@ In `/tip-feedback`, replace the `where` block with parameterized filters:
   if (status === 'reviewed') filters.push('f.reviewed_at IS NOT NULL');
   if (req.query.target_user_id !== undefined) {
     const uid = Number(req.query.target_user_id);
-    if (!Number.isInteger(uid) || uid <= 0) throw new ValidationError('target_user_id must be a positive integer');
+    // ValidationError's FIRST param is fieldErrors; the message goes second
+    // (the staffReviewsContest.js:149 form), else the client sees the generic copy.
+    if (!Number.isInteger(uid) || uid <= 0) throw new ValidationError(null, 'target_user_id must be a positive integer');
     filters.push(`f.target_user_id = $${params.length + 1}`);
     params.push(uid);
   }
@@ -767,16 +795,16 @@ git commit -m "feat(tips): Status projection columns; tip-feedback filters by ta
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `server/routes/admin/staffReviews.test.js` using that file's existing `get`/admin-token helpers (names may differ; read the top of the file):
+Append to `server/routes/admin/staffReviews.test.js`. HARNESS REALITY: its helper is `req(method, path, token, body)` returning parsed JSON, and there is no `get()`; read the file's existing tests and match them. Shape:
 
 ```js
 test('the list envelope carries the bounty figure and all-time totals', async () => {
-  const { status, body } = await get('/api/admin/staff-reviews', adminToken);
-  assert.equal(status, 200);
-  assert.equal(body.bounty_cents, 1000);
-  assert.equal(typeof body.bounties_paid_cents, 'number');
-  assert.equal(typeof body.total_logged, 'number');
-  assert.ok(body.total_logged >= body.reviews.length);
+  const r = await req('GET', '/api/admin/staff-reviews', adminToken);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.bounty_cents, 1000);
+  assert.equal(typeof r.body.bounties_paid_cents, 'number');
+  assert.equal(typeof r.body.total_logged, 'number');
+  assert.ok(r.body.total_logged >= r.body.reviews.length);
 });
 ```
 
@@ -821,7 +849,9 @@ git add server/routes/admin/staffReviews.js server/routes/admin/staffReviews.tes
 git commit -m "feat(staff-reviews): envelope carries bounty_cents and all-time totals"
 ```
 
-### Task A7: dispute email link, sensitive-paths, ARCHITECTURE
+### Task A7: dispute email link, sensitive-paths, docs
+
+Note on lane independence: this task points two server-sent emails at `/staffing/...` routes that only exist after sh-b's B4 merges. That is fine: push to prod is a separate gated step after ALL lanes merge, and even a stray click before then lands on the SPA's catch-all. Stated so nobody "fixes" it into a dependency.
 
 **Files:**
 - Modify: `server/utils/payrollDisputeNotify.js:126`, `server/utils/payrollDisputeNotify.test.js:421`
@@ -862,6 +892,8 @@ server/routes/admin/contractorTipPage.js
 
 Verify: `node scripts/sensitive-match.js server/utils/dutyLines.js server/routes/admin/contractorTipPage.js` prints both paths.
 
+`README.md`: add `server/routes/admin/staffHub.js` and `server/utils/staffHubSummary.js` to the folder tree (one line each), per CLAUDE.md's mandatory-docs table.
+
 `ARCHITECTURE.md`: in the admin API route table add a row for `GET /api/admin/staff-hub/summary` (`staffHub.js`, auth + requireAdminOrManager, read-only hub chrome: counts, decisions, derived open pay run); note on the `/admin/tips` row the five new projection columns; on `/admin/tip-feedback` the `target_user_id` param; on `/admin/staff-reviews` the envelope fields; on `/admin/active-staff` the LEFT JOIN rule for deactivated rows. Also add `server/utils/staffHubSummary.js` to the utils list.
 
 - [ ] **Step 4: Run to verify**
@@ -872,11 +904,50 @@ Expected: passing.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/utils/payrollDisputeNotify.js server/utils/payrollDisputeNotify.test.js scripts/sensitive-paths.txt ARCHITECTURE.md
+git add server/utils/payrollDisputeNotify.js server/utils/payrollDisputeNotify.test.js scripts/sensitive-paths.txt ARCHITECTURE.md README.md
 git commit -m "chore(staff-hub): dispute email points at /staffing/payroll; dutyLines + contractorTipPage join sensitive paths; ARCHITECTURE"
 ```
 
-**Lane sh-a done when:** all seven tasks committed; the full fleet has run on the lane (sensitive paths); every touched suite passes one at a time.
+### Task A8: the feedback notification email points at the staffer profile
+
+**Files:**
+- Modify: `server/routes/publicTip.js:227`
+- Test: `server/routes/publicTip.test.js` (extend the existing feedback-submission test)
+
+The tip-page feedback email currently links `${ADMIN_URL}/tips#feedback`. `/tips` is retired (B4 redirects it to the Payroll tips ledger) and the `#feedback` view is deleted with `TipsAdmin.js` (F1), so the live notification would land the operator on a tips table instead of the feedback that triggered it. Spec §9 moves feedback to the staffer profile; the email follows.
+
+- [ ] **Step 1: Update the test first**
+
+Find the feedback-notification assertion in `server/routes/publicTip.test.js` (grep `tips#feedback` or `adminUrl`); change the expected URL to the profile deep link. If no test asserts the URL today, add one line to the existing feedback-submission test asserting the sent HTML contains `/staffing/users/${bartenderId}?tab=tip-page` (the harness already captures the sendEmail payload or mocks it; match its pattern).
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `node -r dotenv/config --test server/routes/publicTip.test.js`
+Expected: the URL assertion fails against the old `/tips#feedback`.
+
+- [ ] **Step 3: Implement**
+
+`publicTip.js:227`:
+
+```js
+      adminUrl: `${ADMIN_URL}/staffing/users/${row.user_id}?tab=tip-page`,
+```
+
+(`row.user_id` is the bartender the feedback targets; it is already in scope, the INSERT above uses it. `tip-page` is a real profile tab id, `AdminUserDetail.js:36-39`.)
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `node -r dotenv/config --test server/routes/publicTip.test.js`
+Expected: passing.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/routes/publicTip.js server/routes/publicTip.test.js
+git commit -m "fix(tip-feedback): notification email deep-links the staffer profile, not the retired /tips view"
+```
+
+**Lane sh-a done when:** all eight tasks committed; the full fleet has run on the lane (sensitive paths); every touched suite passes one at a time.
 
 # Lane sh-b-shell
 
@@ -920,6 +991,18 @@ test('the Staff entry sums new applications and pending reviews', () => {
   expect(navBadgeCount(find('staff'), { new_applications: 1, pending_reviews: 1 })).toBe(2);
 });
 ```
+
+And a Sidebar render test (spec §11) in the same file or a sibling `Sidebar.test.js`, mocking the contexts the component needs (read `Sidebar.js` imports: `useAuth`, `useUserPrefs`, router):
+
+```js
+test('Sidebar renders no Hiring/Tips/Reviews items and badges Staff with the summed count', () => {
+  // mock useAuth -> { user: { role: 'admin' } }, useUserPrefs -> { prefs: {}, setPref: jest.fn() }
+  // render <Sidebar badges={{ new_applications: 1, pending_reviews: 1 }} /> in a MemoryRouter
+  // expect: no 'Hiring' / 'Tips & Feedback' / 'Reviews' nav items; the Staff item shows '2'
+});
+```
+
+(Write the real mocks; the comment block is the shape, not the deliverable.)
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -981,14 +1064,22 @@ Then the three consumers:
 
 `MorePage.js:64`: same substitution, and import `navBadgeCount` beside `NAV` there.
 
-`MobileTabBar.js:14`: `const MORE_KEYS = ['unread_sms', 'new_applications', 'pending_shopping_lists'];` → `const MORE_KEYS = ['unread_sms', 'new_applications', 'pending_reviews', 'pending_shopping_lists'];` (the More aggregate keeps counting every non-tab badge key; Reviews is a new one).
+`MobileTabBar.js`: the spec's rule is that all three nav consumers read through `navBadgeCount`, so the literal `MORE_KEYS` array is retired rather than extended. Replace it with a derivation from NAV (the More tab aggregates every non-tab nav item's badge):
+
+```js
+import NAV, { navBadgeCount } from '../adminos/nav';
+// ...
+const MORE_ITEMS = NAV.flatMap(s => s.items).filter(i => !TAB_IDS.has(i.id));
+```
+
+and in the count expression: `const count = t.neutral ? MORE_ITEMS.reduce((a, i) => a + navBadgeCount(i, badges), 0) : badges[t.badgeKey] || 0;` where `TAB_IDS = new Set(['events', 'proposals'])` (declare it above TABS if the file does not already have one). `MobileTabBar.test.js` passes badges summing to 4 today; with Staff's `badgeKeys` the same fixture still sums 4 unless it carries `pending_reviews`, so update the fixture and expected sum deliberately, not incidentally.
 
 `CommandPalette.js:148`: delete the `{ label: 'Hiring', icon: 'pen', onClick: go('/hiring') },` line. The `Staff` entry above it already reaches the hub; Hiring is a tab inside it and `CommandPalette.test.js` asserts nothing about Hiring (verified).
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/adminos/nav.test.js src/components/adminos/CommandPalette.test.js`
-Expected: passing.
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/components/adminos/nav.test.js src/components/adminos/CommandPalette.test.js src/components/mobile/MobileTabBar.test.js`
+Expected: passing (MobileTabBar's fixture updated per Step 3).
 
 - [ ] **Step 5: Commit**
 
@@ -1311,7 +1402,7 @@ export default function StaffHubLayout() {
   const subtitle = hubSubtitle(summary, { isAdmin });
 
   return (
-    <div className="page" data-app="admin-os">
+    <div className="page">{/* data-app lives on <html>, set by AdminLayout; repeating it here is inert */}
       <div className="hub-head">
         <div className="page-header">
           <div>
@@ -1486,7 +1577,7 @@ Replace the routes at `:597-601` (`/staffing`, `/staffing/legacy`, `/staffing/us
         <Route path="/hiring" element={<LegacyRedirect to="/staffing/hiring" />} />
 ```
 
-(sh-e swaps `StaffReviews` for `ReviewsPage` in this block and deletes the old import; until then the old page renders inside the hub, which is the correct intermediate state.)
+(Intermediate state after sh-b alone, stated so the dev check is not misread as a regression: all three children still render their OWN `.page-header` inside the hub until their lanes land, so Hiring, Payroll and Reviews show a doubled title. sh-c/sh-d/sh-e each remove their child's header; sh-e also swaps `StaffReviews` for `ReviewsPage` in this block and deletes the old import.)
 
 Replace `:618-620` (`/financials/payroll`, `/tips`, `/reviews`) with:
 
@@ -1496,7 +1587,7 @@ Replace `:618-620` (`/financials/payroll`, `/tips`, `/reviews`) with:
         <Route path="/reviews" element={<LegacyRedirect to="/staffing/reviews" />} />
 ```
 
-Remove the now-unused `TipsAdmin` lazy import (`:176`) only in sh-f when the file is deleted; for now it is still imported by nothing, so delete the import line here to keep the CI build warning-free. (`react-scripts` flags unused vars as warnings and `CI=true` fails on them.)
+Delete the `TipsAdmin` lazy import line in THIS task: B4 removes its only route, so leaving it is an unused-var warning and `CI=true` fails the build on warnings. (The file itself is deleted later, in sh-f.)
 
 - [ ] **Step 5: Verify**
 
@@ -1701,16 +1792,33 @@ In the existing row, the email sub line becomes:
 
 The "Open hiring" header button is gone. The `Toolbar` colSpan stays 7.
 
-- [ ] **Step 2: Verify in the dev app**
+- [ ] **Step 2: Unit-test the pure pieces**
+
+Export `isImportedRecord` from `StaffDashboard.js` and add `client/src/pages/admin/StaffDashboard.grouping.test.js`:
+
+```js
+import { isImportedRecord } from './StaffDashboard';
+
+test('legacy CC stubs and deactivated payment-history imports are imported records; active imports are not', () => {
+  expect(isImportedRecord({ cc_id: 'legacy_cc:9', onboarding_status: 'deactivated' })).toBe(true);
+  expect(isImportedRecord({ import_source: 'payment_history_import', onboarding_status: 'deactivated' })).toBe(true);
+  expect(isImportedRecord({ import_source: 'payment_history_import', onboarding_status: 'approved' })).toBe(false);
+  expect(isImportedRecord({ onboarding_status: 'deactivated' })).toBe(false);
+});
+```
+
+Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/StaffDashboard.grouping.test.js`.
+
+- [ ] **Step 3: Verify in the dev app**
 
 `/staffing`: Active shows 16 with no group rows; Deactivated shows "Former staff · 5" then "Imported records · 9" (the nine now render, Task A4); All shows "Active · 16" first. Imported rows read "no email on file". Send SMS sits in the hub header. `/staffing?tab=all` (old links) still works.
 
-- [ ] **Step 3: Build gate, docs, commit**
+- [ ] **Step 4: Build gate, docs, commit**
 
 Run: `cd client && CI=true npx react-scripts build`. Update `README.md`'s folder tree: add `client/src/pages/admin/staffHub/` (StaffHubLayout.js, hubSubtitle.js) with one line each.
 
 ```bash
-git add client/src/pages/admin/StaffDashboard.js README.md
+git add client/src/pages/admin/StaffDashboard.js client/src/pages/admin/StaffDashboard.grouping.test.js README.md
 git commit -m "feat(roster): Active/Deactivated/All with group rows, paging, hub header actions, empty state"
 ```
 
@@ -1804,7 +1912,8 @@ const ymdLabel = (v) => new Date(v).toLocaleDateString('en-US', { month: 'short'
         <div className="spacer" />
         <div style={{ position: 'relative', minWidth: 280 }}>
           {/* Move the search <input className="input" …> and the {searchOpen && (<div className="card" …>…</div>)} dropdown
-              from the old page-actions block (HiringDashboard.js:155-200 as of today) here, byte for byte. */}
+              from the old page-actions block (HiringDashboard.js:156-207 as of today; take the WHOLE
+              searchOpen block through its closing tags) here, byte for byte. */}
         </div>
       </div>
       {/* existing stat row, kanban, modal follow */}
@@ -1863,7 +1972,9 @@ git commit -m "feat(hiring): header into the hub; stale-record fold keyed on zer
 
 # Lane sh-d-payroll
 
-### Task D1: `PayrollPage`: header gone, tabs become a real `.seg`, "Tips"
+**Execution order in this lane: D3 (tipStatus + TipsLedger) → D2 (CurrentWeekCard) → D1 (PayrollPage rewrite).** D1's rewritten page imports `./TipsLedger` and `./CurrentWeekCard`-wired `PayRunView` props; building it last means every checkpoint compiles and the per-commit `CI=true` build gate holds. The tasks are written D1-first because the page is the integration point that explains the other two; execute bottom-up.
+
+### Task D1: `PayrollPage`: header gone, tabs become a real `.seg`, "Tips" (EXECUTE LAST in sh-d)
 
 **Files:**
 - Modify: `client/src/pages/admin/payroll/PayrollPage.js`
@@ -1971,14 +2082,14 @@ In `DeferredTipsPanel.js`: the same two edits around its fetch (`:30`) and its e
 
 - [ ] **Step 3: Verify and commit**
 
-Run: `cd client && CI=true npx react-scripts build`. Dev app: `/staffing/payroll` shows the `.seg` under the hub tabs, `?tab=unassigned` still lands on Tips. (TipsLedger and the PayRunView props land in D2/D3; until then import errors: do D1 through D3 before the first dev check, committing after each.)
+Run: `cd client && CI=true npx react-scripts build` (green: D3 and D2 already landed their files). Dev app: `/staffing/payroll` shows the `.seg` under the hub tabs; `?tab=unassigned` still lands on Tips; the clear line appears when both queues are empty.
 
 ```bash
 git add client/src/pages/admin/payroll/PayrollPage.js client/src/pages/admin/payroll/UnassignedTipsPanel.js client/src/pages/admin/payroll/DeferredTipsPanel.js
 git commit -m "feat(payroll): hub child; tabs become a .seg; repair queues collapse to one clear line when empty"
 ```
 
-### Task D2: the current-week card in `PayRunView`
+### Task D2: the current-week card in `PayRunView` (EXECUTE SECOND in sh-d)
 
 **Files:**
 - Create: `client/src/pages/admin/payroll/CurrentWeekCard.js`
@@ -2098,7 +2209,7 @@ git add client/src/pages/admin/payroll/CurrentWeekCard.js client/src/pages/admin
 git commit -m "feat(payroll): current-week card keyed on the derived window, with the pending-review pointer"
 ```
 
-### Task D3: `tipStatus` (pure) + `TipsLedger`
+### Task D3: `tipStatus` (pure) + `TipsLedger` (EXECUTE FIRST in sh-d)
 
 **Files:**
 - Create: `client/src/pages/admin/payroll/tipStatus.js`
@@ -2191,6 +2302,10 @@ export default function TipsLedger() {
   const [cursor, setCursor] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  // Retry cannot go through setFilters: useUrlListState DELETES keys equal to
+  // their defaults, so re-setting empty filters changes nothing and the effect
+  // never refires. A plain counter is the refetch signal.
+  const [reloadKey, setReloadKey] = useState(0);
 
   const fetchPage = (after) => {
     const params = new URLSearchParams({ limit: String(PAGE) });
@@ -2209,7 +2324,7 @@ export default function TipsLedger() {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.from, filters.to]);
+  }, [filters.from, filters.to, reloadKey]);
 
   const loadMore = () => {
     if (!cursor) return;
@@ -2257,7 +2372,7 @@ export default function TipsLedger() {
               {loading && <tr><td colSpan={5} className="muted">Loading…</td></tr>}
               {!loading && error && (
                 <tr><td colSpan={5}><span className="muted">Could not load tips.</span>{' '}
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setFilters({ ...filters })}>Retry</button></td></tr>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setReloadKey(k => k + 1)}>Retry</button></td></tr>
               )}
               {!loading && !error && tips.length === 0 && <tr><td colSpan={5} className="muted">No tips in view.</td></tr>}
               {!loading && tips.map(t => {
@@ -2392,16 +2507,16 @@ git commit -m "feat(reviews): client-side name suggestions from the excerpt, reg
 ### Task E2: move the pieces out of `StaffReviews.js`
 
 **Files:**
-- Create: `client/src/pages/admin/staffHub/reviews/LogReviewForm.js` (from `StaffReviews.js:158-226`, `LogReviewForm`)
-- Create: `client/src/pages/admin/staffHub/reviews/PendingReviewCard.js` (from `ReviewCard`, `:228-345`)
-- Create: `client/src/pages/admin/staffHub/reviews/AwardDialog.js` (from `AwardDialog`, `:531-601`)
-- Create: `client/src/pages/admin/staffHub/reviews/ContestRail.js` (from `LeaderboardTab`, `:350-529`)
+- Create: `client/src/pages/admin/staffHub/reviews/LogReviewForm.js` (from `LogReviewForm`, `StaffReviews.js:164`)
+- Create: `client/src/pages/admin/staffHub/reviews/PendingReviewCard.js` (from `ReviewCard`, `:229`)
+- Create: `client/src/pages/admin/staffHub/reviews/AwardDialog.js` (from `AwardDialog`, `:534`)
+- Create: `client/src/pages/admin/staffHub/reviews/ContestRail.js` (from `LeaderboardTab`, `:351`, with `QUARTER_RE` at `:349`)
 - Create: `client/src/pages/admin/staffHub/reviews/ResolvedTable.js` (new)
 
 **Interfaces:**
 - `LogReviewForm({ open, onClose, onCreated(dupWarning), onError })`: the existing form, rendered inside a modal shell identical to `AwardDialog`'s (fixed scrim, Escape closes) so the hub header's "Log a Google review" action can open it.
 - `PendingReviewCard({ review, staff, bountyCents, openPeriod, onChanged, onError })`: the existing `ReviewCard` with (a) the `<select multiple>` replaced by a chip row + "+ Add a name" `<select>` that appends, (b) initial `selected` = saved credits if any, else `suggestNames(review.excerpt, staff)` with the caption "Suggested from the excerpt" shown while any selected id is a suggestion and not yet saved, (c) the conditional Confirm label below. Credits still save through PATCH exactly as today (the "Save names" button stays, enabled when dirty); Confirm is disabled while dirty, with the hint "Save names first", so a suggested chip can never be confirmed without an explicit save.
-- `ContestRail({ onAwarded, openPeriod })`: `LeaderboardTab` unchanged in logic, restyled as a rail. `openPeriod` is the hub summary's `open_period`; when it is not `exists && status === 'open'`, the "Award the quarter" button is disabled with the inline reason "No open pay period. Open one before awarding." (the server's own 409 for that case stays as the backstop and still surfaces through the existing toast). The rail shows: the quarter input, floor sentence, standings as a compact list (name, "{named} of {events}", eligible chip), the "if it ended today" sentence built from `shares` (server truth), "Award the quarter" + `AwardDialog`, and a three-step "How review money works" explainer at the bottom. Calls `onAwarded()` after a successful award.
+- `ContestRail({ onAwarded, openPeriod, pendingNames })`: `LeaderboardTab` unchanged in logic, restyled as a rail. `openPeriod` is the hub summary's `open_period`; when it is not `exists && status === 'open'`, the "Award the quarter" button is disabled with the inline reason "No open pay period. Open one before awarding." (the server's own 409 for that case stays as the backstop and still surfaces through the existing toast). The rail shows: the quarter input, floor sentence, standings as a compact list (name, "{named} of {events}", eligible chip), the "if it ended today" sentence built from `shares` (server truth), "Award the quarter" + `AwardDialog`, and a three-step "How review money works" explainer at the bottom. Calls `onAwarded()` after a successful award.
 - `ResolvedTable({ reviews, bountyCents })`: table of `status !== 'pending'` rows, columns Date / Review / Credited / Status / Bounty, where Bounty is `fmt$fromCents(bountyCents * credits.length)` for confirmed five-star rows with credits, "no bounty" for confirmed rows without, and "—" for dismissed; plus a `waiting` marker (see E3) rendered as "{amount} · waiting for an open period".
 
 - [ ] **Step 1: Move `LogReviewForm`**
@@ -2414,7 +2529,7 @@ Copy verbatim into `AwardDialog.js` with `export default`. Imports: `React, { us
 
 - [ ] **Step 3: Move `LeaderboardTab` → `ContestRail`**
 
-Copy `QUARTER_RE`, `currentQuarter`, and the `LeaderboardTab` body verbatim into `ContestRail.js` as `export default function ContestRail({ onAwarded, openPeriod })`. Add `const openNow = !!(openPeriod && openPeriod.exists && openPeriod.status === 'open');` and change the Award button to `disabled={!validQuarter || loading || shares.length === 0 || !openNow}`, rendering `{!openNow && <span className="muted tiny">No open pay period. Open one before awarding.</span>}` beside it. Keep `award()` exactly (the 409 → `window.confirm` → `force:true` retry; `awarded_already` toast). After `load(quarter)` in the success path add `if (onAwarded) onAwarded();`. Restyle the render only: the outer `.card` with the quarter input and floor sentence stays; the standings table becomes:
+Copy `QUARTER_RE`, `currentQuarter`, and the `LeaderboardTab` body verbatim into `ContestRail.js` as `export default function ContestRail({ onAwarded, openPeriod, pendingNames = [] })`. Add `const openNow = !!(openPeriod && openPeriod.exists && openPeriod.status === 'open');` and change the Award button to `disabled={!validQuarter || loading || shares.length === 0 || !openNow}`, rendering `{!openNow && <span className="muted tiny">No open pay period. Open one before awarding.</span>}` beside it. Keep `award()` exactly (the 409 → `window.confirm` → `force:true` retry; `awarded_already` toast). After `load(quarter)` in the success path add `if (onAwarded) onAwarded();`. Restyle the render only: the outer `.card` with the quarter input and floor sentence stays; the standings table becomes:
 
 ```jsx
       {validQuarter && !loading && !error && rows.length > 0 && (
@@ -2440,7 +2555,22 @@ Copy `QUARTER_RE`, `currentQuarter`, and the `LeaderboardTab` body verbatim into
       )}
 ```
 
-Keep the "Award the quarter" button and `AwardDialog` wiring; keep the empty copy as "No qualifiers yet." and the error + Retry card. Append the explainer card:
+Keep the "Award the quarter" button and `AwardDialog` wiring; keep the error + Retry card. The empty copy (`rows.length === 0`) is "No qualifiers yet." plus the spec's floor pointer when a pending review already names someone. The k-of-min numbers live in the rail's own leaderboard payload, so the rail derives the sentence itself from a `pendingNames` prop (string array: the first pending review's SAVED credit names, `[]` when none):
+
+```jsx
+      {validQuarter && !loading && !error && rows.length === 0 && (
+        <div className="card"><div className="card-body muted">
+          No qualifiers yet.
+          {pendingNames.length > 0 && data && (() => {
+            const row = (data.rows || []).find(r => r.name === pendingNames[0]);
+            const k = (row ? Number(row.named_five_stars) : 0) + 1;
+            return <> Confirming the pending review puts {pendingNames[0]} {k} of {data.min_named_five_stars} toward the floor.</>;
+          })()}
+        </div></div>
+      )}
+```
+
+(The leaderboard endpoint returns every staffer with activity, eligible or not, so the name lookup works even at zero qualifiers; a name with no row starts at 1.) Append the explainer card:
 
 ```jsx
       <div className="card">
@@ -2490,7 +2620,7 @@ Copy `ReviewCard` and `statusKind` verbatim, then apply the three changes named 
                 );
               })}
               <select value="" onChange={e => { const v = e.target.value; if (v && !selected.includes(v)) setSelected(sel => [...sel, v]); }}>
-                <option value="">+ Add a name</option>
+                <option value="">{staff.length >= 100 ? '+ Add a name (first 100 staff shown)' : '+ Add a name'}</option>
                 {staff.filter(s => !selected.includes(String(s.id))).map(s => (
                   <option key={s.id} value={String(s.id)}>{s.display_name || s.preferred_name || s.email}</option>
                 ))}
@@ -2572,13 +2702,33 @@ export default function ResolvedTable({ reviews, bountyCents, waitingIds }) {
 }
 ```
 
-- [ ] **Step 6: Build gate and checkpoint**
+- [ ] **Step 6: RTL tests for the two changed money-path behaviors**
+
+The move preserves logic by construction, but E2 CHANGES two things on the confirm path (the writer of `payout_duty_lines`), so each gets a test in `client/src/pages/admin/staffHub/reviews/PendingReviewCard.test.js` (mock `api` as in `StaffHubLayout.test.js`):
+
+```js
+test('Confirm is disabled while names are dirty, with the save-first hint', async () => {
+  // render with review {status:'pending', stars:5, credits:[]} and staff [{id:7, display_name:'Shea Corrigan'}]
+  // excerpt naming Shea -> suggestion pre-fills, dirty=true
+  // expect the Confirm button disabled with title 'Save names first'
+  // click Save names (mock PATCH resolves), then expect Confirm enabled
+});
+
+test('confirm resolving materialized:0 reports it through onChanged', async () => {
+  // saved credit present (credits:[{user_id:7,name:'Shea'}]), api.post resolves { data: { materialized: 0 } }
+  // click Confirm; expect onChanged called with { reviewId, materialized: 0, bountyEligible: true }
+});
+```
+
+(Write the real renders and mocks; the comments are the shape.) Run: `cd client && CI=true npx react-scripts test --watchAll=false src/pages/admin/staffHub/reviews/PendingReviewCard.test.js`.
+
+- [ ] **Step 7: Build gate and checkpoint**
 
 Run: `cd client && CI=true npx react-scripts build` (the new files are not imported yet; CRA does not fail on unimported files, but each must compile). Commit:
 
 ```bash
 git add client/src/pages/admin/staffHub/reviews/
-git commit -m "refactor(reviews): move the review log and leaderboard pieces into staffHub/reviews"
+git commit -m "refactor(reviews): move the review log and leaderboard pieces into staffHub/reviews; confirm-path tests"
 ```
 
 ### Task E3: `ReviewsPage` composes them; swap the route; delete `StaffReviews.js`
@@ -2684,7 +2834,7 @@ export default function ReviewsPage() {
       <div className="muted tiny" style={{ marginBottom: 12 }}>Thumbtack reviews arrive on their own · log Google reviews by hand</div>
 
       {duplicateWarning && (
-        <div className="card" style={{ marginBottom: 'var(--gap)', borderColor: 'var(--warn, var(--line))' }}>
+        <div className="card" style={{ marginBottom: 'var(--gap)', borderColor: 'hsl(var(--warn-h) var(--warn-s) 50%)' }}>
           <div className="card-body"><strong>Possible duplicate.</strong>{' '}A Thumbtack review is already logged for that date. Check the list below before confirming both.</div>
         </div>
       )}
@@ -2702,7 +2852,9 @@ export default function ReviewsPage() {
           </p>
         </div>
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
-          <ContestRail openPeriod={summary?.open_period || null} onAwarded={() => { if (refresh) refresh(); }} />
+          <ContestRail openPeriod={summary?.open_period || null}
+            pendingNames={pending.length ? (pending[0].credits || []).map(c => c.name) : []}
+            onAwarded={() => { if (refresh) refresh(); }} />
         </div>
       </div>
     </>
@@ -2728,7 +2880,7 @@ and give the grid `div` above `className="reviews-grid"`.
 
 - [ ] **Step 3: Verify**
 
-Run: `cd client && CI=true npx react-scripts build`. Dev app `/staffing/reviews`: the one pending Thumbtack review renders as a card with "Shea Corrigan" pre-filled and the suggestion caption; Save names enables Confirm; on a weekday with no open period the label reads "Confirm, $10.00 waits for the next open run"; the rail shows Q3 2026 with "No qualifiers yet."; "Log a Google review" in the hub header opens the modal; the hub badge and sidebar badge drop after a confirm. Do NOT confirm the real review on dev unless Dallas says so (dev talks to the shared dev DB; the prod review is untouched either way).
+Run: `cd client && CI=true npx react-scripts build`. Dev app `/staffing/reviews`, walking the moved behaviors BY NAME (they moved, so each gets one look): (1) the one pending Thumbtack review renders as a card with "Shea Corrigan" pre-filled and the suggestion caption; Save names enables Confirm; (2) on a weekday with no open period the Confirm label reads "Confirm, $10.00 waits for the next open run" and the rail's Award button is disabled with the no-open-period reason; (3) log a manual review dated the same day as the Thumbtack one and see the duplicate warning card; (4) the quarter input rejects a half-typed value (type `2026-Q` and see the hint, no fetch); (5) with a dev-DB review whose bounty is paid, Dismiss is refused with the server's message; (6) every button disables while its action is in flight (throttle the network to see it); (7) "Log a Google review" opens from the hub header; the hub badge and sidebar badge drop after a confirm without waiting for the poll. The `QUARTER_IN_PROGRESS` force-retry is covered by reading `ContestRail`'s `award()` diff against the old `StaffReviews.js:403-408` (byte-identical logic) rather than by firing a real award on dev. Do NOT confirm the real prod review; dev rows only (dev shares the dev DB, not prod).
 
 - [ ] **Step 4: Commit**
 
@@ -2748,7 +2900,7 @@ git commit -m "feat(reviews): hub child with pending cards, resolved table, cont
 - Create: `client/src/pages/admin/userDetail/tabs/FeedbackCard.js` (donor: `FeedbackTab` + `ratingKind` in `TipsAdmin.js:179-288`)
 - Modify: `client/src/pages/admin/userDetail/tabs/TipPageTab.js` (render the card at the bottom of the main column, admins only)
 - Delete: `client/src/pages/admin/TipsAdmin.js`
-- Modify: `client/src/App.js` (remove the `TipsAdmin` lazy import if still present), `README.md` (folder tree + the prose mentions at `:591`, `:815`, `:818`)
+- Modify: `README.md` (folder tree + prose mentions; B4 already removed the `TipsAdmin` lazy import from `App.js`, so this lane does not touch it)
 
 **Interfaces:**
 - Consumes: `GET /admin/tip-feedback?target_user_id=<id>&status=all` (A5), `POST /admin/tip-feedback/:id/review`.
@@ -2767,10 +2919,10 @@ import StatusChip from '../../../../components/adminos/StatusChip';
 // person, so it lives on the profile; the server also emails the inbox on
 // every submission. Endpoints are adminOnly: the parent renders this card for
 // admins only, so a manager never sees a 403 card.
+// tip_page_feedback.rating is 1..3 by DB CHECK (schema.sql:2659): 3 = good.
 function ratingKind(rating) {
   const r = Number(rating);
-  if (r >= 4) return 'ok';
-  if (r >= 3) return 'accent';
+  if (r >= 3) return 'ok';
   if (r >= 2) return 'warn';
   return 'danger';
 }
@@ -2813,7 +2965,7 @@ export default function FeedbackCard({ userId }) {
         {!loading && feedback.map(f => (
           <article key={f.id} style={{ borderTop: '1px solid var(--line-1)', paddingTop: 10 }}>
             <div className="hstack" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <StatusChip kind={ratingKind(f.rating)}>{f.rating}/5</StatusChip>
+              <StatusChip kind={ratingKind(f.rating)}>{f.rating}/3</StatusChip>
               {f.reviewed_at && <span className="muted tiny">reviewed</span>}
               <span className="spacer" />
               <span className="muted tiny">{f.created_at ? new Date(f.created_at).toLocaleString('en-US', { hour12: false }) : '—'}</span>
@@ -2841,7 +2993,7 @@ Import `FeedbackCard` and `useAuth` (`../../../../context/AuthContext`). Inside 
 
 - [ ] **Step 3: Retire `TipsAdmin.js`**
 
-`git rm client/src/pages/admin/TipsAdmin.js`. `grep -rn "TipsAdmin" client/src` → nothing (B4 already removed the lazy import and route). `README.md`: remove `TipsAdmin.js` and `StaffReviews.js` from the folder tree, add `userDetail/tabs/FeedbackCard.js`, `payroll/TipsLedger.js`, `payroll/tipStatus.js`, `payroll/CurrentWeekCard.js`, `staffHub/reviews/*`; rewrite the prose lines at `:591`, `:815`, `:818` to name the new homes (Tips ledger under Payroll › Tips; Reviews at `/staffing/reviews`; feedback on the profile's Tip Page tab).
+`git rm client/src/pages/admin/TipsAdmin.js`. `grep -rn "TipsAdmin" client/src` → nothing (B4 already removed the lazy import and route). `README.md`: remove `TipsAdmin.js` and `StaffReviews.js` from the folder tree, add `userDetail/tabs/FeedbackCard.js`, `payroll/TipsLedger.js`, `payroll/tipStatus.js`, `payroll/CurrentWeekCard.js`, `staffHub/reviews/*`; rewrite the prose lines mentioning them (at `:597`, `:821`, `:824` as of today; re-grep, the file moves) to name the new homes (Tips ledger under Payroll › Tips; Reviews at `/staffing/reviews`; feedback on the profile's Tip Page tab).
 
 - [ ] **Step 4: Verify and commit**
 
@@ -2873,7 +3025,7 @@ For every rule in the artifact's hub/hire/roster-sect block, confirm the same de
 
 - [ ] **Step 3: Run `ui-ux-review` against the artifact, per screen**
 
-Screens and their artboards: Roster 1a (After Hours) / 1b (House Lights, `?tab=deactivated`) / 1c (empty: point the review at a dev account with zero approved staff, or at the JSX if none exists); Hiring 1d; Payroll pay run 1e/1f (both skins); Payroll tips 1g/1g2; Reviews 1h/1i; the sidebar in 1a. The §3 override list is the reviewer's exception list: a deviation on that list is not a finding; any other deviation is.
+Screens and their artboards: Roster 1a (After Hours) / 1b (House Lights, `?tab=deactivated`) / 1c (empty: point the review at a dev account with zero approved staff, or at the JSX if none exists); Hiring 1d; Payroll pay run 1e/1f (both skins); Payroll tips 1g/1g2; Reviews 1h/1i; the sidebar in 1a; and the profile Tip Page tab's `FeedbackCard` (no artboard exists: judge it against the design system's card vocabulary, not a screen). Token law rider for the reviewer: per spec §3, fidelity compares structure and token usage, never resolved hue values; the vendored system is `docs/design-artifacts/_ds/` (project 72035042). The §3 override list is the reviewer's exception list: a deviation on that list is not a finding; any other deviation is.
 
 - [ ] **Step 4: Fix findings, build gate, commit**
 
@@ -2882,7 +3034,7 @@ git add client/src/index.css docs/design-artifacts/2026-08-19-staff-hub.dc.html
 git commit -m "style(staff-hub): fidelity pass against the 2026-08-19 artifact"
 ```
 
-**Lane sh-g done when:** every screen has a `ui-ux-review` verdict on file, both skins on Roster and Payroll, `.hub-tabs` scrolls at 720px with no page-level horizontal scroll.
+**Lane sh-g done when:** every screen has a `ui-ux-review` verdict on file, both skins on Roster and Payroll, `.hub-tabs` scrolls at 720px with no page-level horizontal scroll. The lane's footprint now includes the component files, so promote-to-class and small structural fixes land here directly; a finding that requires changing BEHAVIOR (not presentation) goes back to the owning lane's scope as a follow-up, never fixed silently inside the fidelity pass.
 
 ---
 
