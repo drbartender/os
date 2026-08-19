@@ -4893,3 +4893,76 @@ Found by gemini in the cross-LLM second opinion. Worth noting for the process: t
 Claude fleet passed the code and flagged only the adjacent DOC problem (the switch is no longer
 a full revert). The decorrelated reviewer named the caller-facing consequence. This is the
 second time the cross-LLM pass has caught something the fleet did not.
+
+# SESSION WRAP 2026-08-19 — read this first if you are picking the work back up
+
+**STATE.** `origin/main` is at `23e8c1fa` (31 commits pushed today, `d61c62b7..23e8c1fa`). **3
+commits unpushed**: the `shift-status-allowlist` merge + its fix-list note, and another window's
+`sh-a-server` merge. **Five lanes open, NONE of them mine** — `cc-verify`, `mobile-asbuilt`,
+`oo-switch-server`, `sh-a-server`, `sh-b-shell`. Do not touch them.
+
+**PUSHED TODAY (31 commits, five lanes):** `mkt-moment-setup`, `board-push-guard`,
+`pay-period-boundary`, `stripe-fail-closed`, and another window's `caller-comms`.
+
+## Closed today — DECISIONS, do not re-open these
+
+Three entries on this list were closed as **not defects**. Each has its own struck-through
+heading above with the reasoning; the short version, because all three keep getting re-raised:
+
+1. **The dev box talks to LIVE Stripe on purpose.** It was the top-severity item here for five
+   days and the conclusion was wrong. Dallas: *"I need to be able to do stuff from this box. We
+   do stuff from this box all the time."* A `NODE_ENV` gate was built and REMOVED; a test pins
+   the decision so re-adding it reads as a product change. Do not propose test keys for this box
+   either — that was tried and produced a live-money foot-gun.
+2. **An empty pay card is fine.** When no `pay_periods` row covers today there is genuinely no
+   payout yet. Do not build the `admin/payroll.js`-style fallback.
+3. **An honored SMS opt-out is not an operational problem.** *"She shows up for her shifts. The
+   whole point of being able to opt out is opting out."* Do NOT build a Needs-attention surface
+   flagging staffed-but-`sms_enabled=false` — a dashboard that flags people for opting out is a
+   worked-around opt-out.
+
+Also fixed and closed: the September corporate-holiday moment (both halves), the staff pay-card
+period boundary, `board-write.sh` deploying all of main, and `PUT /shifts/:id` writing `status`.
+
+## BLOCKS A MONEY SUITE LOCALLY — clean this first
+
+`server/routes/admin/payroll.test.js` is **0 pass / 31 fail on the shared dev DB**, and it is NOT
+this batch. Orphan `tips` rows **3474, 3475** point at fixture contractor **16815**, so the
+suite's `DELETE FROM users` hits `tips_target_user_id_fkey` and its `after()` throws before
+restoring anything — which then strands `pay_periods` rows and breaks `staffPortal.test.js:274`
+as collateral. Verified still present at end of session. Cleanup:
+
+    DELETE FROM tips WHERE id IN (3474,3475);
+    DELETE FROM pay_periods WHERE id IN (7438);
+    DELETE FROM users WHERE id IN (16814,16815);
+
+Not a gate risk — `payroll.test.js` runs on `ci-smoke`, reset from prod, where these do not
+exist. Purely a local-verification blocker.
+
+## Highest-value still open
+
+1. **Seven FKs diverge under one name, and one shared EXCEPTION handler hides it.** The real
+   defect is the error handling, not the divergence: all eight FK statements sit in one
+   `DO $$ ... EXCEPTION WHEN OTHERS THEN RAISE NOTICE`, so a single failure rolls back the whole
+   block, leaves a fresh DB on NO ACTION, and never reaches `initDb`'s `unexpected` array.
+2. **`stripePayoutSync.js` has three unguarded `getStripe()` dereferences.** Two are shielded by
+   accident; the nightly `sweep()` is not and would throw a bare TypeError.
+3. **The press-1 kill switch is now a trap.** `VM_ESCALATION_ENABLED=false` leaves the primary
+   greeting saying "press one" with no `<Gather>` listening. Confirmed set to `true` in Render, so
+   not live — but the switch can no longer be used as a switch.
+4. **`staffPortal.js` is 997 lines**, three under the hard cap, and the ratchet already blocked a
+   commit there once this session.
+5. Smaller: delete the now-unreachable cancel branch in `shifts.handlers.js:120`; four BEO spec
+   docs still describe `PUT /shifts/:id` cancellation as live.
+
+## Lessons worth carrying
+
+- **A source-text assertion that prose can satisfy is not a pin.** Two suites this session had a
+  regex over the whole file that a CODE COMMENT satisfied, so the exact bug could be reintroduced
+  green. Anchor to the call site.
+- **Verify a fix-list prescription, not just the entry.** Entry 1's prescribed fix (allowlist the
+  four statuses) would have closed zero of the real hazard. The list is not always right.
+- **The cross-LLM pass earns its slot.** gemini caught a caller-facing defect all three Claude
+  fleet agents missed. Second time it has done that. Both external reviewers cost real money now.
+- **`git diff main <branch>` is the wrong merge check** when main is ahead on shared files; grep
+  the distinctive phrase on main instead. It threw a false alarm twice today.
