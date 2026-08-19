@@ -4335,7 +4335,33 @@ Gathered while closing the schema-trap and shifts_status_check items. Several of
 being carried only in session handoffs or in ARCHITECTURE.md, which is not where open work is
 tracked — this file is. Recorded here so they survive a session boundary.
 
-## 1. `PUT /shifts/:id` writes `status` off `req.body` with NO allowlist (money-adjacent)
+## ~~1. `PUT /shifts/:id` writes `status` off `req.body` with NO allowlist~~ — FIXED 2026-08-19, lane `shift-status-allowlist` (`7965aeb1`), merged, not yet pushed
+
+**The prescription below was WRONG and is kept only to show why.** It said: *"an allowlist matching
+`shifts_status_check` (`open | filled | completed | cancelled`), throwing ValidationError on
+anything else."* That would have closed **zero** of the real hazard. `shifts_status_check` already
+enforces exactly that set at the database, so an out-of-list value raises 23514 and 500s — an
+allowlist guard just converts a 500 into a 400. The danger was never an *illegal* value: it was
+that a generic detail editor could stamp a **legal** `'cancelled'` onto a delivered event, and
+that value strikes the event off the owner's subscribed Google Calendar.
+
+**Shipped instead: reject `status` outright.** Nothing sends it — the only two client callers of
+this route send `equipment_required` and `supply_run` — and every legitimate transition already
+has an owner (`shiftReap.js` and cancel-or-unassign for `cancelled`, `staffShiftActions.js` /
+`smsInbound.js` for `open`, the closure sweep for `completed`). Pinned by
+`shifts.statusGuard.test.js`, whose fourth test asserts cancel-or-unassign still works, because a
+guard that also disarmed the real cancel path would be worse than the bug. The review verified all
+21 positional parameters empirically rather than by reading, since the `$9` placeholder was kept
+and bound to null instead of renumbering twelve positions on a live UPDATE.
+
+**Two follow-ups it left, both small:**
+- `shifts.handlers.js:120`'s `if (status === 'cancelled')` block is now unreachable (~25 lines
+  including the BEO-suppression transaction). Annotated as such rather than deleted, to keep the
+  change reversible. Deleting it and collapsing to the single-statement path is the cleanup.
+- Four spec docs still describe the removed path as live: `2026-05-25-beo-design.md` (lines 290,
+  355, 508, 637-638) and `staff-portal-beo-project.md:259`, including two acceptance-criteria
+  bullets that are now unsatisfiable. No test pins them, so nothing breaks.
+
 
 `server/routes/shifts.handlers.js:27` destructures `status` straight out of `req.body` and
 `:56` writes `status = COALESCE($9, status)`. Two fields right beside it, `equipment_required`
