@@ -81,6 +81,20 @@ beforeEach(() => {
   // sets VM_ESCALATION_PROMPT=none.
   delete process.env.VM_ESCALATION_ENABLED;
   delete process.env.VM_ESCALATION_PROMPT;
+  delete process.env.VM_NIGHT_GREETING_URL;
+  delete process.env.VM_NIGHT_GREETING_URL_PRIMARY;
+  // PIN THE CLOCK TO DAY. Night legitimately changes the missed-call document
+  // (spec 2026-08-19), so without this the suite's outcome depends on what time
+  // the developer happens to run it: six tests here go red between 21:00 and
+  // 09:00 Chicago on a machine where nothing is wrong. Night is covered by its
+  // own tests below, which set this explicitly.
+  // Pin day by INJECTION, not by an env window. No window string can pin either
+  // side: half-open membership covers at most 1439 of 1440 minutes, so
+  // '00:00-00:00' is never-night but '00:00-23:59' is day at 23:59, which left
+  // three night tests red for one minute a day. isNight itself is unit-tested
+  // against injected clocks in voicemailLine.test.js.
+  router.__setVoiceDeps({ isNight: () => false });
+  delete process.env.VM_NIGHT_TZ;
   router.__setVoiceDeps({
     isValidTwilioRequest: () => true,
     // Voicemail baseline (spec 2026-07-22): claim wins, cap clear, delivery
@@ -544,9 +558,12 @@ test('/inbound/missed?line=primary claims primary and plays the Dallas greeting'
   });
   await settle();
   assert.equal(calls.claims[0].line, 'primary');
-  assert.match(res.text, /Dallas/);
+  // Since 2026-08-19 his greeting is a RECORDING, so the words live in the mp3
+  // rather than the document. The load-bearing assertion is unchanged: Zul's
+  // recording must never play on his line.
+  assert.match(res.text, /<Play>.*primary-greeting-day\.mp3<\/Play>/);
   assert.doesNotMatch(res.text, /This is Zul/);
-  assert.doesNotMatch(res.text, /greeting\.mp3/, 'Zul\'s recording must never play on Dallas\'s line');
+  assert.doesNotMatch(res.text, /\/api\/voice\/greeting\.mp3/, 'Zul\'s recording must never play on Dallas\'s line');
   // The GV dial target already shows Dallas the miss natively; pinging Zul
   // about his line would invite a callback from the wrong person.
   assert.equal(calls.telegram.length, 0, 'a primary miss never pings Zul');
@@ -592,12 +609,10 @@ test('/inbound/missed returns the greeting and Record, and pings twice', async (
   assert.doesNotMatch(calls.telegram[0].text, /\+13125550147/, 'stray digits would break toUsE164 on copy-paste');
 });
 
-test('GET /greeting.mp3 serves the recorded greeting as audio, unauthenticated', async () => {
-  const res = await get('/api/voice/greeting.mp3');
-  assert.strictEqual(res.status, 200);
-  assert.match(res.contentType || '', /audio\/mpeg/);
-  assert.ok(res.bytes > 1000, `expected real audio bytes, got ${res.bytes}`);
-});
+// The GET /greeting.mp3 route moved to server/routes/voiceAssets.js on
+// 2026-08-19 (voice.js was at its 700-line soft cap). Its coverage moved too,
+// and got stronger: voiceAssets.test.js asserts the served bytes EQUAL the
+// bundled file, not merely that some audio came back.
 
 test('/inbound/missed <Play>s VM_GREETING_URL when set to an override URL', async () => {
   process.env.VM_GREETING_URL = 'https://cdn.example.com/greet.mp3';
@@ -1036,4 +1051,141 @@ test('/inbound/voicemail passes the row listen token into the delivery job', asy
   });
   await settle();
   assert.equal(jobs[0].listenToken, '11111111-2222-4333-8444-555555555555');
+});
+
+// --- night mode (spec 2026-08-19) --------------------------------------------
+
+test('NIGHT: no Gather, and the NIGHT recording rather than the day one', async () => {
+  process.env.VM_ESCALATION_ENABLED = 'true';
+  router.__setVoiceDeps({ isNight: () => true });
+  const res = await post('/api/voice/inbound/missed?line=primary', {
+    DialCallStatus: 'no-answer', CallSid: cs('CAnight1'), From: '+13125550147',
+  });
+  await settle();
+  assert.doesNotMatch(res.text, /<Gather/, 'night must not offer a human');
+  assert.match(res.text, /primary-greeting-night\.mp3/);
+  assert.doesNotMatch(res.text, /primary-greeting-day\.mp3/, 'the day greeting offers press 1');
+  assert.match(res.text, /<Record/, 'a message can still be left');
+});
+
+test('NIGHT copy promises the morning and never offers a human', async () => {
+  // The words live in the mp3 by default, so force synthetic to assert on them.
+  // The synthetic text is also what callers hear if the recording is killed.
+  process.env.VM_ESCALATION_ENABLED = 'true';
+  router.__setVoiceDeps({ isNight: () => true });
+  process.env.VM_NIGHT_GREETING_URL_PRIMARY = 'say';
+  const res = await post('/api/voice/inbound/missed?line=primary', {
+    DialCallStatus: 'no-answer', CallSid: cs('CAnight2'), From: '+13125550147',
+  });
+  await settle();
+  assert.match(res.text, /in the morning/i);
+  assert.doesNotMatch(res.text, /press one/i, 'night must never offer a human');
+});
+
+test('DAY: the Gather is back and the day recording plays', async () => {
+  process.env.VM_ESCALATION_ENABLED = 'true';
+  const res = await post('/api/voice/inbound/missed?line=primary', {
+    DialCallStatus: 'no-answer', CallSid: cs('CAday1'), From: '+13125550147',
+  });
+  await settle();
+  assert.match(res.text, /<Gather/);
+  assert.match(res.text, /primary-greeting-day\.mp3/);
+});
+
+test('the press-1 offer reaches the caller once, and never twice', async () => {
+  // The regression this guards: the day copy says the offer itself, and the old
+  // code appended it unconditionally, so the primary line said it twice.
+  process.env.VM_ESCALATION_ENABLED = 'true';
+
+  // Recording default: the offer is INSIDE the mp3, so the document must carry
+  // no spoken offer at all. An appended one here would be the double.
+  const recorded = await post('/api/voice/inbound/missed?line=primary', {
+    DialCallStatus: 'no-answer', CallSid: cs('CAonce1'), From: '+13125550147',
+  });
+  await settle();
+  assert.doesNotMatch(recorded.text, /press one/i, 'his recording already says it');
+  assert.doesNotMatch(recorded.text, /get someone else on the line/i, 'no appended offer');
+
+  // Synthetic fallback: the offer is in the text, still exactly once.
+  process.env.VM_GREETING_URL_PRIMARY = 'say';
+  const synthetic = await post('/api/voice/inbound/missed?line=primary', {
+    DialCallStatus: 'no-answer', CallSid: cs('CAonce2'), From: '+13125550147',
+  });
+  await settle();
+  // Count BOTH spellings: the greeting says "press one", the appended prompt
+  // says "press 1", so counting only one spelling makes a doubled offer read as
+  // a single one and the assertion passes on the bug it exists to catch.
+  assert.equal((synthetic.text.match(/press one|press 1\b/gi) || []).length, 1,
+    'exactly once, never twice');
+  delete process.env.VM_GREETING_URL_PRIMARY;
+
+  // Zul's day greeting is still her pre-escalation <Play>, so her ONLY spoken
+  // offer is the appended one. If that became zero her callers would never
+  // learn the option exists.
+  const zul = await post('/api/voice/inbound/missed?line=zul', {
+    DialCallStatus: 'no-answer', CallSid: cs('CAonce3'), From: '+13125550147',
+  });
+  await settle();
+  assert.equal((zul.text.match(/press 1|press one/gi) || []).length, 1, 'zul hears it once');
+});
+
+test('escalation OFF emits no Gather, day AND night', async () => {
+  process.env.VM_ESCALATION_ENABLED = 'false';
+  for (const night of [true, false]) {
+    router.__setVoiceDeps({ isNight: () => night });
+    const res = await post('/api/voice/inbound/missed?line=primary', {
+      DialCallStatus: 'no-answer', CallSid: cs(`CAoff${night}`), From: '+13125550147',
+    });
+    await settle();
+    assert.doesNotMatch(res.text, /<Gather/, `no Gather with escalation off (night=${night})`);
+  }
+});
+
+test('/inbound/missed NIGHT document is pinned byte-for-byte', async () => {
+  // The day document has its own golden pin above. Night is a SECOND live
+  // document now, and it deserves the same alarm: a substring match would not
+  // catch the greeting landing after the beep, or a dropped <Hangup/> billing
+  // us for dead air.
+  process.env.VM_ESCALATION_ENABLED = 'false';
+  router.__setVoiceDeps({ isNight: () => true });
+  const { API_URL } = require('../utils/urls');
+  const { GREETING_TEXT_ZUL_NIGHT } = require('../utils/voicemailTwiml');
+  const res = await post('/api/voice/inbound/missed', {
+    DialCallStatus: 'no-answer', CallSid: cs('CAgoldN'), From: '+13125550147',
+  });
+  await settle();
+  assert.strictEqual(
+    res.text,
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    + `<Response><Say voice="Polly.Joanna-Neural">${GREETING_TEXT_ZUL_NIGHT}</Say>`
+    + '<Record maxLength="120" playBeep="true" trim="trim-silence" finishOnKey="#"'
+    + ` recordingStatusCallback="${API_URL}/api/voice/inbound/voicemail"`
+    + ' recordingStatusCallbackMethod="POST" recordingStatusCallbackEvent="completed"/>'
+    + '<Hangup/></Response>'
+  );
+});
+
+test('/inbound/missed PRIMARY day document is pinned byte-for-byte', async () => {
+  // Both other golden pins are the ZUL document with escalation off. This is the
+  // one Dallas's real callers hear: escalation on, day, his recording inside a
+  // Gather. A substring assertion cannot catch the greeting landing outside the
+  // Gather (the caller could not press 1 during it) or a doubled offer.
+  process.env.VM_ESCALATION_ENABLED = 'true';
+  const { API_URL } = require('../utils/urls');
+  const res = await post('/api/voice/inbound/missed?line=primary', {
+    DialCallStatus: 'no-answer', CallSid: cs('CAgoldP'), From: '+13125550147',
+  });
+  await settle();
+  assert.strictEqual(
+    res.text,
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    + '<Response>'
+    + `<Gather numDigits="1" timeout="4" action="${API_URL}/api/voice/escalate?line=primary" method="POST">`
+    + `<Play>${API_URL}/api/voice/audio/primary-greeting-day.mp3</Play>`
+    + '</Gather>'
+    + '<Record maxLength="120" playBeep="true" trim="trim-silence" finishOnKey="#"'
+    + ` recordingStatusCallback="${API_URL}/api/voice/inbound/voicemail"`
+    + ' recordingStatusCallbackMethod="POST" recordingStatusCallbackEvent="completed"/>'
+    + '<Hangup/></Response>'
+  );
 });

@@ -66,6 +66,34 @@ function parseHhMm(s) {
 }
 
 /**
+ * Parse a strict `HH:MM-HH:MM` window. Returns null on anything else, which
+ * every caller treats as "no window" and warns about.
+ *
+ * ONE parser and ONE comparison for every window in this file (quiet hours and
+ * the caller-facing night window). The spec asked for this explicitly, and the
+ * reason is that a wrap-around bug fixed in one copy and not the other is
+ * invisible until 3am.
+ */
+function parseWindow(raw) {
+  const parts = String(raw || '').trim().split('-');
+  if (parts.length !== 2) return null;
+  const start = parseHhMm(parts[0]);
+  const end = parseHhMm(parts[1]);
+  return (start === null || end === null) ? null : { start, end };
+}
+
+/**
+ * Half-open membership: start inclusive, end exclusive. A window whose end is
+ * before its start WRAPS midnight (21:00-09:00 and 22:00-08:00 are both normal).
+ *
+ * start === end is therefore the EMPTY window, never the full day. Callers that
+ * want "always" must say so another way.
+ */
+function inWindow({ start, end }, mins) {
+  return start <= end ? (mins >= start && mins < end) : (mins >= start || mins < end);
+}
+
+/**
  * The quiet window for the person `line` escalates TO, in that person's local
  * time. Format `HH:MM-HH:MM`; unset, empty, or unparseable means no window.
  * @returns {{start:number,end:number,tz:string}|null} minutes past midnight
@@ -77,9 +105,9 @@ function quietWindowFor(line) {
     : process.env.VM_ESCALATION_QUIET_PRIMARY;
   const trimmed = String(raw || '').trim();
   if (!trimmed) return null;
-  const parts = trimmed.split('-');
-  const start = parts.length === 2 ? parseHhMm(parts[0]) : null;
-  const end = parts.length === 2 ? parseHhMm(parts[1]) : null;
+  const parsed = parseWindow(trimmed);
+  const start = parsed ? parsed.start : null;
+  const end = parsed ? parsed.end : null;
   if (start === null || end === null) {
     // Fail-open is deliberate (a config typo must not break a live call), but
     // never SILENT: an unparseable window is otherwise indistinguishable from
@@ -120,9 +148,7 @@ function inQuietWindow(line, now = new Date()) {
     console.warn(`[voicemailLine] bad quiet-window timezone "${w.tz}": ${err.message}`);
     return false;
   }
-  return w.start <= w.end
-    ? (mins >= w.start && mins < w.end)
-    : (mins >= w.start || mins < w.end);
+  return inWindow(w, mins);
 }
 
 /**
@@ -170,7 +196,46 @@ function interceptionSuspicion({ line, status, dialCallDuration } = {}) {
   return { suspect, dialSec };
 }
 
+/**
+ * True when a caller reaching voicemail right now should be told "in the
+ * morning" instead of being offered a human.
+ *
+ * NOT the same concept as quietWindowFor. That protects the person being dialed
+ * TO, in THEIR timezone, and suppresses only the dial. This is about the
+ * CALLER's experience, is Chicago-based for both lines, and changes the greeting
+ * itself. Both may be active; they never interact, because at night no dial is
+ * attempted at all.
+ *
+ * The reason night is special is specific to this business, not a generic
+ * business-hours rule: Zul keeps Chicago-aligned hours so she can be available
+ * to US clients, so Chicago night is her off time too. A night press-1 rings a
+ * sleeping phone in the Philippines for a predictable failure.
+ *
+ * Fails OPEN to day on any bad config: the failure mode is a phone that rings,
+ * never a caller silently denied the offer of a human.
+ */
+function isNight(now = new Date()) {
+  const raw = String(process.env.VM_NIGHT_WINDOW || '21:00-09:00').trim();
+  // An explicit off switch, so night mode can be disabled without inventing an
+  // intentionally-invalid value that then warns on every single call.
+  if (raw.toLowerCase() === 'none') return false;
+  const w = parseWindow(raw);
+  if (!w) {
+    console.warn(`[voicemailLine] bad VM_NIGHT_WINDOW "${raw}", treating as day`);
+    return false;
+  }
+  const tz = String(process.env.VM_NIGHT_TZ || '').trim() || 'America/Chicago';
+  let mins;
+  try {
+    mins = minutesInZone(now, tz);
+  } catch (err) {
+    console.warn(`[voicemailLine] bad VM_NIGHT_TZ "${tz}": ${err.message}, treating as day`);
+    return false;
+  }
+  return inWindow(w, mins);
+}
+
 module.exports = {
   LINES, E164_RE, resolveLine, otherLine, escalationTargetFor, quietWindowFor,
-  inQuietWindow, primaryRingSec, interceptionSuspicion, PRIMARY_INSTANT_ANSWER_SEC,
+  inQuietWindow, isNight, primaryRingSec, interceptionSuspicion, PRIMARY_INSTANT_ANSWER_SEC,
 };

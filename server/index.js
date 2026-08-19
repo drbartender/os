@@ -388,6 +388,7 @@ app.use('/api/telegram', require('./routes/telegram'));
 app.use('/api/voice/lead', require('./routes/voiceLeadCall')); // more specific mount first
 app.use('/api/voice/escalate', require('./routes/voiceEscalate')); // ditto, before /api/voice
 app.use('/api/voice/vm', require('./routes/voicemailListen')); // ditto
+app.use('/api/voice', require('./routes/voiceAssets').router); // static audio, before the catch-all
 app.use('/api/voice', require('./routes/voice'));
 app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/service-extensions', require('./routes/serviceExtensions'));

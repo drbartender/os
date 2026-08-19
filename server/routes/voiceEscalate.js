@@ -23,7 +23,7 @@ const { xmlEscape } = require('../utils/xmlEscape');
 const { isValidTwilioRequest } = require('../utils/twilioSignature');
 const { API_URL } = require('../utils/urls');
 const { resolveLine, escalationTargetFor, inQuietWindow } = require('../utils/voicemailLine');
-const { recordVerb, escalationEnabled } = require('../utils/voicemailTwiml');
+const { recordVerb, escalationEnabled, messageVerb } = require('../utils/voicemailTwiml');
 const escalation = require('../utils/voicemailEscalation');
 
 const router = express.Router();
@@ -87,7 +87,11 @@ const escalateLimiter = rateLimit({
     if (req.path === '/whisper' || req.path === '/accept') {
       return sendTwiml(res, '<Response><Hangup/></Response>');
     }
-    sendTwiml(res, `<Response>${recordVerb()}<Hangup/></Response>`);
+    // The EIGHTH path back to voicemail, and the one recordTwiml cannot serve
+    // (no `line` binding exists this early). It still owes the caller the same
+    // sentence: a rate-limited caller hearing a bare tone is exactly the defect
+    // this lane removed from the other seven.
+    sendTwiml(res, `<Response>${messageVerb('escalate_failed', resolveLine(req.query.line))}${recordVerb()}<Hangup/></Response>`);
   },
 });
 
@@ -116,9 +120,20 @@ function timeLimitSec() {
   return parseInt(process.env.VA_CALL_TIME_LIMIT_SEC, 10) || 1800;
 }
 
-/** The fallback every declined or blocked escalation takes: leave a message. */
-function recordTwiml(res) {
-  sendTwiml(res, `<Response>${recordVerb()}<Hangup/></Response>`);
+/**
+ * Back to voicemail, WITH a sentence explaining why.
+ *
+ * Reached from seven non-bridge outcomes: no answer, quiet window, daily cap,
+ * escalation disabled, no target configured, claim failed, already escalated.
+ * The EIGHTH, the rate-limiter handler above, cannot use this helper (no `line`
+ * binding exists that early) and carries the same message inline.
+ * Before 2026-08-19 this was a bare <Record playBeep>, so after 20 seconds of
+ * ringing the caller got an unexplained tone, which reads as a dropped call
+ * rather than an invitation. The message belongs HERE, not at the branches,
+ * because one edit then covers all seven of them.
+ */
+function recordTwiml(res, line) {
+  sendTwiml(res, `<Response>${messageVerb('escalate_failed', line)}${recordVerb()}<Hangup/></Response>`);
 }
 
 /**
@@ -136,7 +151,7 @@ router.post('/', escalateLimiter, async (req, res) => {
   // Anything but 1 is "just let me leave a message". No claim, so no spend. The
   // sid shape is checked here because it is about to be echoed into two URLs.
   if (req.body.Digits !== '1' || !escalationEnabled() || !escalation.isCallSid(callSid)) {
-    return recordTwiml(res);
+    return recordTwiml(res, line);
   }
 
   // Outcome writes on the skip paths run AFTER the response is sent: they are
@@ -150,13 +165,13 @@ router.post('/', escalateLimiter, async (req, res) => {
   const target = escalationTargetFor(line);
   if (!target) {
     console.error(`[vm-escalate] no valid target for line=${line} ${tail}`);
-    recordTwiml(res);
+    recordTwiml(res, line);
     return recordOutcome('skipped_no_target');
   }
 
   if (inQuietWindow(line)) {
     console.log(`[vm-escalate] quiet window, not dialing line=${line} ${tail}`);
-    recordTwiml(res);
+    recordTwiml(res, line);
     return recordOutcome('skipped_quiet');
   }
 
@@ -171,15 +186,15 @@ router.post('/', escalateLimiter, async (req, res) => {
   } catch (err) {
     console.error(`[vm-escalate] cap/claim failed ${tail}: ${err.message}`);
   }
-  if (!result) return recordTwiml(res);
+  if (!result) return recordTwiml(res, line);
   if (result.capped) {
     console.warn(`[vm-escalate] VM_ESCALATION_DAILY_CAP tripped ${tail}`);
-    recordTwiml(res);
+    recordTwiml(res, line);
     return recordOutcome('skipped_cap');
   }
   if (!result.claim) {
     console.log(`[vm-escalate] claim lost or unknown call ${tail}`);
-    return recordTwiml(res);
+    return recordTwiml(res, line);
   }
   if (result.claim.line !== line) {
     // The row's line is the trusted value; the query's is HMAC-covered but
@@ -203,6 +218,10 @@ router.post('/', escalateLimiter, async (req, res) => {
   console.log(`[vm-escalate] dialing line=${line} target=...${target.slice(-4)} ${tail}`);
   sendTwiml(res,
     '<Response>'
+    // Acknowledge the keypress BEFORE the <Dial>. Without this the caller heard
+    // dead air for up to 20 seconds, and many press 1 again into a document that
+    // has already left the <Gather>, so the second press does nothing.
+    + messageVerb('escalate_ack', line)
     + `<Dial timeout="20" action="${xmlEscape(doneUrl)}" method="POST" callerId="${xmlEscape(callerId)}" timeLimit="${timeLimitSec()}">`
     + `<Number url="${xmlEscape(whisperUrl)}" method="POST">${xmlEscape(target)}</Number>`
     + '</Dial>'
@@ -312,7 +331,7 @@ router.post('/done', escalateLimiter, async (req, res) => {
     sendTwiml(res, '<Response><Hangup/></Response>');
   } else {
     console.log(`[vm-escalate] not accepted (status=${status}) line=${line}, back to voicemail sid=...${String(parentSid || '').slice(-4)}`);
-    recordTwiml(res);
+    recordTwiml(res, line);
   }
 
   if (parentSid) {

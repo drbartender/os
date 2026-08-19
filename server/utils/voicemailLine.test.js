@@ -10,6 +10,8 @@ beforeEach(() => {
   delete process.env.VM_ESCALATION_QUIET_ZUL;
   delete process.env.VM_ESCALATION_QUIET_PRIMARY;
   delete process.env.VM_ESCALATION_TZ_ZUL;
+  delete process.env.VM_NIGHT_WINDOW;
+  delete process.env.VM_NIGHT_TZ;
   delete process.env.VM_ESCALATION_TZ_PRIMARY;
   delete process.env.VM_PRIMARY_RING_SEC;
   process.env.VA_CELL = '+639171234567';
@@ -103,4 +105,52 @@ test('interceptionSuspicion fires only on an instant answer on the primary line'
   assert.equal(line.interceptionSuspicion({
     line: 'primary', status: 'completed', dialCallDuration: '7',
   }).dialSec, 7, 'the parsed duration comes back for the log line');
+});
+
+// --- isNight (spec 2026-08-19) -----------------------------------------------
+
+// A fixed Chicago instant. August is CDT (UTC-5).
+const chicagoAug = (hh, mm = 0) => new Date(Date.UTC(2026, 7, 19, hh + 5, mm));
+
+test('isNight: the 9pm and 9am boundaries are exact and half-open', () => {
+  delete process.env.VM_NIGHT_WINDOW;
+  delete process.env.VM_NIGHT_TZ;
+  assert.equal(line.isNight(chicagoAug(20, 59)), false, '20:59 is still day');
+  assert.equal(line.isNight(chicagoAug(21, 0)), true, '21:00 begins night');
+  assert.equal(line.isNight(chicagoAug(8, 59)), true, '08:59 is still night');
+  assert.equal(line.isNight(chicagoAug(9, 0)), false, '09:00 begins day');
+});
+
+test('isNight: the window wraps midnight', () => {
+  assert.equal(line.isNight(chicagoAug(23, 30)), true);
+  assert.equal(line.isNight(chicagoAug(2, 0)), true);
+  assert.equal(line.isNight(chicagoAug(13, 0)), false);
+});
+
+test('isNight: holds across a DST change, because the zone does the work', () => {
+  // January is CST (UTC-6). 10pm Chicago must still be night, and the same
+  // wall-clock hour must mean the same thing in both halves of the year.
+  assert.equal(line.isNight(new Date(Date.UTC(2027, 0, 15, 22 + 6, 0))), true);
+  assert.equal(line.isNight(new Date(Date.UTC(2027, 0, 15, 13 + 6, 0))), false);
+});
+
+test('isNight: an unparseable window or bad zone FAILS OPEN to day', () => {
+  // Fail-open direction is load-bearing: the failure mode must be a rung phone,
+  // never a caller silently denied the offer of a human.
+  process.env.VM_NIGHT_WINDOW = '9pm-9am';
+  assert.equal(line.isNight(chicagoAug(23, 0)), false);
+  process.env.VM_NIGHT_WINDOW = '21:00–09:00'; // en dash, a real config typo
+  assert.equal(line.isNight(chicagoAug(23, 0)), false);
+  process.env.VM_NIGHT_WINDOW = '21:00-09:00';
+  process.env.VM_NIGHT_TZ = 'Mars/Olympus';
+  assert.equal(line.isNight(chicagoAug(23, 0)), false);
+  delete process.env.VM_NIGHT_WINDOW;
+  delete process.env.VM_NIGHT_TZ;
+});
+
+test('isNight: a custom window is honored', () => {
+  process.env.VM_NIGHT_WINDOW = '22:00-07:00';
+  assert.equal(line.isNight(chicagoAug(21, 30)), false);
+  assert.equal(line.isNight(chicagoAug(22, 30)), true);
+  delete process.env.VM_NIGHT_WINDOW;
 });

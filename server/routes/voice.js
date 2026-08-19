@@ -1,5 +1,4 @@
 const express = require('express');
-const path = require('path');
 const Sentry = require('@sentry/node');
 const { xmlEscape } = require('../utils/xmlEscape');
 const { isValidTwilioRequest } = require('../utils/twilioSignature');
@@ -8,9 +7,10 @@ const { sendTelegramMessage } = require('../utils/telegram');
 const { API_URL } = require('../utils/urls');
 const { isUsE164 } = require('../utils/usPhone');
 const voicemail = require('../utils/voicemail');
-const { resolveLine, primaryRingSec, interceptionSuspicion, E164_RE } = require('../utils/voicemailLine');
+const { resolveLine, primaryRingSec, interceptionSuspicion, E164_RE, isNight } = require('../utils/voicemailLine');
 const {
-  greetingVerbForLine, recordVerb, escalationEnabled, escalationPromptVerb,
+  recordVerb, escalationEnabled, escalationPromptVerb,
+  messageVerb, needsAppendedOffer,
 } = require('../utils/voicemailTwiml');
 
 const router = express.Router();
@@ -74,6 +74,10 @@ let _deps = {
   isRecordingSid: voicemail.isRecordingSid,
   captureMessage: (...a) => Sentry.captureMessage(...a),
   captureException: (...a) => Sentry.captureException(...a),
+  // Injectable so tests can pin day/night deterministically. No env value can:
+  // a half-open window covers at most 1439 of 1440 minutes, so any 'force night'
+  // string is day for one minute a day.
+  isNight: (...a) => isNight(...a),
 };
 function __setVoiceDeps(d) { _deps = { ..._deps, ...d }; }
 router.__setVoiceDeps = __setVoiceDeps;
@@ -298,21 +302,6 @@ router.post('/inbound/primary', (req, res, next) => {
 });
 
 /**
- * GET /api/voice/greeting.mp3 — the recorded voicemail greeting, served to Twilio
- * as the <Play> source for the missed-call handler. PUBLIC and unauthenticated by
- * necessity: Twilio fetches it with no credentials and no signature. It is a
- * static bundled asset (server/assets/voicemail-greeting.mp3) with no DB, no
- * caller input, and no side effects, so there is nothing to gate.
- */
-router.get('/greeting.mp3', (req, res) => {
-  res.set('Cache-Control', 'public, max-age=86400');
-  res.type('audio/mpeg');
-  res.sendFile(path.join(__dirname, '..', 'assets', 'voicemail-greeting.mp3'), (err) => {
-    if (err && !res.headersSent) res.status(500).end();
-  });
-});
-
-/**
  * POST /api/voice/bridge — fetched after Zul answers her outbound leg. The dial
  * target is looked up FROM pending_call BY CallSid (never a request param, so a
  * forged param cannot redirect the second leg). Unknown/expired CallSid → a
@@ -497,14 +486,16 @@ router.post('/inbound/missed', voicemailWebhookLimiter, async (req, res) => {
     return;
   }
 
-  // Greeting goes INSIDE a <Gather> only when escalation is on: a timeout with
-  // no digit falls through to the <Record> after </Gather>, so "just leave a
-  // message" needs no extra route. Escalation off emits the exact production
-  // document (golden-pinned). `line` is a fixed enum: attribute-safe.
-  const greeting = greetingVerbForLine(line);
-  const body = escalationEnabled()
+  // Greeting goes INSIDE a <Gather> only when escalation is on AND it is day: a
+  // timeout with no digit falls through to the <Record> after </Gather>, so
+  // "just leave a message" needs no extra route. Night emits no <Gather> at all,
+  // because nobody is awake to escalate to (spec 2026-08-19). Escalation off
+  // emits the exact production document (golden-pinned). `line` is a fixed enum.
+  const night = _deps.isNight();
+  const greeting = messageVerb(night ? 'greeting_night' : 'greeting_day', line);
+  const body = (escalationEnabled() && !night)
     ? `<Gather numDigits="1" timeout="4" action="${xmlEscape(API_URL)}/api/voice/escalate?line=${line}" method="POST">`
-      + greeting + escalationPromptVerb()
+      + greeting + (needsAppendedOffer(line) ? escalationPromptVerb() : '')
       + '</Gather>'
     : greeting;
 

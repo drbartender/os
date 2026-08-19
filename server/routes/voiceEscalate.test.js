@@ -47,6 +47,15 @@ const cs = (label) => 'CA' + crypto.createHash('md5').update(String(label)).dige
 let calls;
 beforeEach(() => {
   calls = { claims: [], outcomes: [], accepted: [], wasAccepted: false };
+  // The new slot envs must be cleared like their siblings: this file calls
+  // dotenv.config(), so a value set on the dev box would otherwise decide what
+  // these tests assert and go red on a machine where nothing is wrong.
+  delete process.env.VM_ESCALATE_ACK_URL;
+  delete process.env.VM_ESCALATE_ACK_URL_PRIMARY;
+  delete process.env.VM_ESCALATE_FAILED_URL;
+  delete process.env.VM_ESCALATE_FAILED_URL_PRIMARY;
+  delete process.env.VM_NIGHT_WINDOW;
+  delete process.env.VM_NIGHT_TZ;
   process.env.VM_ESCALATION_ENABLED = 'true';
   process.env.VM_MAX_LENGTH_SEC = '120';
   process.env.VA_CELL = '+639171234567';
@@ -290,4 +299,53 @@ test('signature-failure Sentry reporting is throttled (fresh sids never trip the
   } finally {
     delete process.env.SENTRY_DSN_SERVER;
   }
+});
+
+// --- caller communication (spec 2026-08-19) ----------------------------------
+
+test('pressing 1 is acknowledged BEFORE any ringing starts', async () => {
+  // The defect this fixes: <Response><Dial> with no <Say> meant the caller
+  // tapped a key and got dead air for up to 20 seconds, and many press again
+  // into a document that has already left the <Gather>.
+  // The acknowledgment is a RECORDING by default, so its words live in the mp3.
+  // Document order is what matters here, so match the Play; the copy itself is
+  // pinned in voicemailTwiml.test.js.
+  const res = await post('/api/voice/escalate?line=primary', { CallSid: cs('CAack1'), Digits: '1' });
+  const ackAt = res.text.indexOf('primary-escalate-ack.mp3');
+  const dialAt = res.text.indexOf('<Dial');
+  assert.ok(ackAt > -1, 'the acknowledgment must be present');
+  assert.ok(dialAt > -1, 'and the dial must still happen');
+  assert.ok(ackAt < dialAt, 'acknowledgment must come BEFORE the Dial in document order');
+});
+
+test('a fallback into voicemail says WHY, before the beep', async () => {
+  process.env.VM_ESCALATION_ENABLED = 'false';
+  const res = await post('/api/voice/escalate?line=primary', { CallSid: cs('CAfail1'), Digits: '1' });
+  assert.match(res.text, /primary-escalate-failed\.mp3/);
+  assert.ok(res.text.indexOf('primary-escalate-failed.mp3') < res.text.indexOf('<Record'),
+    'the message must precede the beep, not follow it');
+
+  // And with the recording killed, the synthetic text says the same thing.
+  process.env.VM_ESCALATE_FAILED_URL_PRIMARY = 'say';
+  const synth = await post('/api/voice/escalate?line=primary', { CallSid: cs('CAfail1b'), Digits: '1' });
+  assert.match(synth.text, /Sorry, nobody's available right now/);
+  assert.ok(synth.text.indexOf('Sorry') < synth.text.indexOf('<Record'));
+  delete process.env.VM_ESCALATE_FAILED_URL_PRIMARY;
+  process.env.VM_ESCALATION_ENABLED = 'true';
+});
+
+test('the fallback message is per line', async () => {
+  process.env.VM_ESCALATION_ENABLED = 'false';
+  const res = await post('/api/voice/escalate?line=zul', { CallSid: cs('CAfail2'), Digits: '1' });
+  assert.match(res.text, /we'll get back to you/, "zul's line speaks for the team");
+  process.env.VM_ESCALATION_ENABLED = 'true';
+});
+
+test('a press that arrives AFTER the night boundary flips is still honored', async () => {
+  // We made the offer; withdrawing it silently is worse than a two-minute edge
+  // in which one phone rings. /escalate deliberately does not check isNight.
+  process.env.VM_NIGHT_WINDOW = '00:00-23:59'; // force "night" all day
+  const res = await post('/api/voice/escalate?line=primary', { CallSid: cs('CAedge1'), Digits: '1' });
+  assert.match(res.text, /<Dial/, 'the dial still happens after the boundary flips');
+  delete process.env.VM_NIGHT_WINDOW;
 });
