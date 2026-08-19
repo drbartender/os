@@ -205,6 +205,29 @@ This is self-correcting: the day Zul's new recording is wired to
 remember. `VM_ESCALATION_PROMPT=none` survives as a manual override that
 suppresses the append everywhere.
 
+**AMENDED DURING IMPLEMENTATION (2026-08-19): the self-correcting property is
+GONE, deliberately, and it costs an operator step.** Code review pointed out
+that the rule above trusts an override URL it has never heard. Setting
+`VM_GREETING_URL_PRIMARY` to a recording that does not say the offer would have
+dropped it silently from the MAIN business line, leaving callers a four-second
+silent `<Gather>` and no idea the option existed, and that is exactly the
+redeploy-free path someone reaches for in a hurry.
+
+So `needsAppendedOffer` now trusts only the KNOWN defaults, and an override URL
+on EITHER line gets the offer appended. The failure modes are not symmetric: a
+doubled offer is an obvious stutter someone reports in a day, while a missing
+one is invisible until you notice nobody presses 1 any more.
+
+The cost is real and lands on the next scheduled action. **When Zul's new
+recording is wired to `VM_GREETING_URL`, `VM_ESCALATION_PROMPT=none` must be set
+in the same change, or her callers hear the offer twice, once in her voice and
+once from Polly.** That instruction now sits on the `VM_GREETING_URL` row in
+`.claude/CLAUDE.md`, `README.md`, and `.env.example`.
+
+If that trade is not wanted, the one-line reversion is
+`usingDefault ? !cfg.defaultSaysOffer : false`, which restores exactly the rule
+above and accepts the primary-line hole.
+
 Night never appends it, because night makes no offer.
 
 Consequence for the synthetic texts: `GREETING_TEXT_PRIMARY` is REPLACED by the
