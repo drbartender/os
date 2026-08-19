@@ -4247,7 +4247,25 @@ NOT re-raise this or "fix" it in a later cleanup pass — the reasoning below is
 only so the decision is auditable, not as a pending task. If the §7 contest is still
 at zero payouts in a few months, that is when this becomes a live question again.
 
-## OPERATIONAL: Jasmine has been SMS-dark since 2026-07-05 and works again 2026-08-24 (found 2026-08-14, re-dated 2026-08-19)
+## ~~OPERATIONAL: Jasmine has been SMS-dark since 2026-07-05~~ — CLOSED, NOT A PROBLEM (Dallas, 2026-08-19)
+
+**Dallas: "She shows up for her shifts. The whole fucking point of being able to opt out is
+opting out."**
+
+Closed on both halves, and the second is the one to remember:
+
+1. **Nothing is wrong operationally.** She texted STOP, the system honored it, and she works her
+   shifts. The suppressed reminders were never load-bearing for her. Do not contact her about
+   it, and never flip `sms_enabled` back — only she can, by texting START.
+2. **Do NOT build the "staffed on an upcoming shift AND `sms_enabled` false" surface** this
+   entry proposed for Needs-attention. A dashboard that flags people for having opted out is a
+   worked-around opt-out. The flag exists so the choice sticks; surfacing it as an exception to
+   chase defeats the thing it protects.
+
+The trace below is kept — confirming the suppression machinery works is worth having. What is
+wrong is the framing: *"the system is behaving correctly and that is the problem"*. Correct
+behaviour is not a defect just because it is invisible. That is the part not to repeat.
+
 
 Not a bug. The system is behaving correctly and that is the problem: nothing surfaces
 it.
