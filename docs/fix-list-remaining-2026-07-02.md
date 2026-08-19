@@ -4253,6 +4253,53 @@ around the `shifts.status` overload note.
 
 ## 2. `staffPortal.js` pay-period lookup is the LAST `CURRENT_DATE` in the payroll family (money)
 
+**FIXED 2026-08-19, lane `pay-period-boundary` (`ec6d6028`), merged, not yet pushed.** The lookup
+now takes the Chicago business day as a bound parameter. `server/routes/staffPortal.js` is also
+now on `sensitive-paths.txt` (its sibling `staffPortal/payouts.js` already was, and being
+unlisted is why the change that introduced this never pulled a money review), and the new suite
+is on `money-smoke-list.txt`.
+
+**The symptom on this entry was WRONG and the truth is worse.** It was not "$0 for the week they
+just worked". `pay_periods` rows are minted lazily by accrual **0 to 4 days INTO their own
+week** (verified on prod: the 08-11 period was created 8/15, 08-04 created 8/05), so the row the
+old predicate asked for — tomorrow's — did not exist yet. It matched **zero rows**,
+`current_period` came back null, and `HomePage.js` rendered the NEW-HIRE empty state: *"No
+payouts yet. Your first payout will appear here after your first shift."* A months-tenured
+contractor, on the evening their week closed, was told they had never been paid.
+
+**Two reviewers failed my first cut and both were right; the lesson generalises.** The suite ran
+a COPY of the SQL and tied it to the route with a source regex — and that regex,
+`/chicagoTodayYmd\(\)/` over the whole file, was satisfied by the **SQL comment the same commit
+wrote**. Reintroducing the exact defect left it 4/4 green. Four other regressions also walked
+past it (dropping the bind so every request 500s, adding a `status='open'` filter, flipping the
+ORDER BY, letting a query param pick the period). **A source-text assertion that can be
+satisfied by prose is not a pin.** The suite now mounts the router and calls the endpoint, with
+the day injected through the `_deps` seam the file already had — the UTC and Chicago days agree
+~19 hours a day, so a clock-derived fixture proves nothing most of the time, and pinning global
+`Date` would expire the suite's own JWT.
+
+## LIVE RIGHT NOW, found while fixing the above: every staffer's pay card is empty
+
+Independent of the fix. **No `pay_periods` row covers today** — verified on prod 2026-08-19, the
+latest row is `2026-08-11 → 2026-08-17` (`paid`). Because rows are minted lazily by accrual, a
+week with no completed proposal yet gets no row at all, and `GET /api/me/staff-home` has **no
+fallback**: zero rows means `current_period: null` means the new-hire empty state, for everyone.
+
+Its sibling already solves this: `admin/payroll.js:119-126` falls back to the most recent open
+period when today is inside none. Staff-home should either take the same fallback, or the period
+row should be seeded at week start rather than on first accrual. Worth doing — the current
+behaviour tells every tenured contractor they have never been paid, on any day before that
+week's first event completes.
+
+## `staffPortal.js` is at 997 lines and the ratchet is now live on it
+
+The lane above hit it: the file-size hook BLOCKED a commit at 1006 lines. That was resolved by
+removing duplicated prose rather than `--no-verify` (the same explanation had been written into
+four places), and the file ended at 997 — but it is two lines under a hard cap that now bites in
+practice. The natural extraction is the pay-period/earnings read into
+`server/routes/staffPortal/`, where `payouts.js` already lives.
+
+
 `server/routes/staffPortal.js:172`, `WHERE CURRENT_DATE BETWEEN pp.start_date AND pp.end_date`.
 The Postgres session TimeZone is GMT, so `CURRENT_DATE` is the UTC day. Every sibling in the
 payroll "which period is now" family already passes `chicagoTodayYmd()` (`dutyLines.js`
