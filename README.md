@@ -121,7 +121,7 @@ Copy `.env.example` and fill in values. This table is the fullest list, but it i
 | `VAPID_CONTACT_EMAIL` | For staff push | Contact email in the VAPID JWT (`mailto:`). Defaults to `contact@drbartender.com`. |
 | `ADMIN_EMAIL` | For seed | Admin account email. Used for the seed account and as the default Reply-To on client-facing emails. |
 | `ADMIN_PASSWORD` | For seed | Admin account password |
-| `ADMIN_PHONE` | Optional | E.164 number for last-minute (<72h) booking SMS alerts. Unset → the admin SMS is skipped; the broad staff blast still fires. |
+| `ADMIN_PHONE` | Optional | E.164 admin hotline. Used by the lead-call bridge ring order (`ADMIN_PHONE` → `VA_CELL`), inside-T14 change-request SMS, dispatcher dead-letter alerts, and urgent inbound-SMS alerts. Unset → those SMS legs are skipped. NOTE it does **not** drive the ≤72h last-minute booking alert, which fans out via `notifyAdminCategory('urgent_booking')` to subscribed admins/managers and never reads this var. |
 | `TELEGRAM_BOT_TOKEN` | For VA calling | Telegram Bot API token (@BotFather). Unset → Telegram helpers no-op and outbound calling is dead. |
 | `TELEGRAM_WEBHOOK_SECRET` | For VA calling | Secret URL path segment (`/api/telegram/<secret>`) AND the `X-Telegram-Bot-Api-Secret-Token` header value (constant-time compared). Set the same value at `setWebhook`. |
 | `TELEGRAM_ALLOWED_USER_ID` | Bootstrap | Numeric Telegram user id of Zul. Leave UNSET on first deploy for bootstrap mode (webhook echoes the sender's id, dials nothing); then set + redeploy. |

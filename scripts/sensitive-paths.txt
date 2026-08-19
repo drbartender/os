@@ -78,6 +78,12 @@ server/routes/smsOptIn.js
 # placeBridgedCall) alongside the new lead-call bridge.
 server/routes/voiceLeadCall.js
 server/routes/voice.js
+# Static-audio serving was split OUT of voice.js on 2026-08-19 (lane caller-comms)
+# into an UNAUTHENTICATED, signature-free GET mounted app-wide at /api/voice.
+# Sensitivity follows the code: the parent stayed listed and the split file was
+# not, the same gap this file already documents for payrollDuty, drinkPlans,
+# stripeWebhook and smsOptIn.
+server/routes/voiceAssets.js
 server/routes/telegram.js
 server/utils/leadCallTrigger.js
 server/utils/twilioSignature.js

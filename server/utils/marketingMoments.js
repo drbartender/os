@@ -89,9 +89,13 @@ const MOMENTS = [
     id: 'one-year-on',
     audienceId: 'one-year-on',
     // Purely temporal. Nobody matching means nobody has hit a year YET, and only
-    // time changes that — as of 2026-08 the earliest event in prod is 4 months
-    // old, so this is legitimately empty for another 7 months. Nagging daily
-    // about it would be the cry-wolf failure this codebase keeps re-learning.
+    // time changes that, so nagging daily about it would be the cry-wolf failure
+    // this codebase keeps re-learning. (An earlier version of this comment said
+    // the audience was empty for another 7 months because the earliest prod event
+    // was 4 months old. WRONG — that counted native proposals only; the audience
+    // reads GREATEST(agg.last_finished, cc.last_event) and legacy_cc_proposals
+    // goes back to 2024-12-05, so this resolves to ~27 today. The reasoning holds
+    // regardless of whether it happens to be empty right now.)
     emptyAudience: 'wait',
     // Keyed by MONTH: it is a rolling monthly prompt over a moving cohort.
     occurrenceKey: (now) => {

@@ -31,6 +31,9 @@ server/routes/staffPortal/payouts.test.js
 # it decides WHICH period a contractor is shown and what they are owed in it, and
 # it shipped a defect that emptied that card on the last evening of every period.
 server/routes/staffPortal.payPeriod.boundary.test.js
+# The live-vs-test Stripe decision point. stripeClient.js is sensitive-listed and
+# fails closed; this is its first and only suite (added 2026-08-19).
+server/utils/stripeClient.test.js
 
 # Autopay durable-charge trio
 server/utils/autopayDurableCharge.test.js

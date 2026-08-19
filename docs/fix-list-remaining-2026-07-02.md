@@ -3956,7 +3956,7 @@ and the `MarketingLayout` header, which read "0 moments open" while an open mome
 **The part worth carrying forward is what the first cut of that fix got WRONG.** Surfacing every
 open-but-empty moment is itself a bug. Two of the three moments (`one-year-on`, `cold-quotes`)
 are open PERMANENTLY (`isOpen: () => true`) and their audiences are purely temporal. The
-earliest event in prod is **2026-04-25**, so `one-year-on` cannot match anybody for another
+earliest NATIVE proposal in prod is **2026-04-25** — but that was the wrong number to reason from, see the correction below, and `one-year-on` does NOT lack matches for another
 seven months. The naive fix would have parked a permanent "needs setup" card and a permanent
 "1 needs setup" header on a young book — nagging daily about something nobody can act on, which
 is exactly how the CSS palette checker taught everyone to ignore a green tick.

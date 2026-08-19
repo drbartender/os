@@ -190,6 +190,12 @@ test('the shipped route takes its day from the injected clock, not a UTC express
     'the second bind must be the injected day, not any other date expression');
   assert.doesNotMatch(src.slice(from, limitIdx), /CURRENT_DATE\s+BETWEEN/,
     'CURRENT_DATE is the UTC day here and must not select the pay period');
-  assert.match(src, /today:\s*chicagoTodayYmd/,
-    'and in production that injected day must default to the Chicago business day');
+  // Anchored to the _deps declaration, NOT the whole file. Searching the file was
+  // the exact hole this suite's header describes closing elsewhere — a comment
+  // mentioning chicagoTodayYmd satisfied it, so the production default could be
+  // swapped to a UTC day with the suite still green. Caught by the push fleet.
+  const depsIdx = src.indexOf('let _deps =');
+  assert.ok(depsIdx > -1, 'the _deps seam must still exist');
+  assert.match(src.slice(depsIdx, depsIdx + 200), /today:\s*chicagoTodayYmd/,
+    'in production the injected day must DEFAULT to the Chicago business day');
 });
