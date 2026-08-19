@@ -10,6 +10,10 @@ lanes:
       - server/routes/voice.test.js
       - server/routes/voiceEscalate.js
       - server/routes/voiceEscalate.test.js
+      - server/routes/voiceAssets.js
+      - server/routes/voiceAssets.test.js
+      - server/assets/primary-*.mp3
+      - server/index.js
       - .env.example
       - .claude/CLAUDE.md
       - README.md

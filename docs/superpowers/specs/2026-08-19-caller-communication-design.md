@@ -228,6 +228,37 @@ one-take file must be exported as **WAV**, which Python's stdlib `wave` module c
 split with no new dependency and which Twilio `<Play>` accepts. An mp3 one-take
 would require installing ffmpeg first, which needs the owner's approval.
 
+### 5b. AMENDED DURING IMPLEMENTATION (2026-08-19): recordings became the DEFAULT
+
+Section 5 above says all eight slots ship with synthetic defaults and recordings
+swap in later via env var, and section 3 says "unset means a synthetic `<Say>`".
+Both are now FALSE of the shipped code, deliberately.
+
+Dallas recorded his four clips the same day this was written, so rather than
+wire them as env overrides they were bundled into the repo (`server/assets/`,
+8kHz mono mp3) and made the DEFAULT for every primary-line slot. Zul's
+`greeting_day` keeps its existing bundled mp3; her other three remain synthetic
+until she records. The reasoning: an env override is a variable someone can
+forget to set or lose during an environment migration, while a bundled default
+is versioned, reviewed, and backed up with the code.
+
+The contract per slot is therefore: **unset takes the slot's DEFAULT, which is a
+bundled recording where one exists and the synthetic text otherwise; `say`
+forces synthetic; an http(s) URL is `<Play>`ed.** The synthetic text is no
+longer the normal path, it is the kill switch, which is why the four approved
+primary strings are pinned byte-for-byte in a test: they must say the same words
+as the mp3 or throwing the kill switch silently changes what callers hear.
+
+A consequence worth stating, because it is not obvious: the offer-append rule
+now trusts only the KNOWN defaults. An override URL has unknown content, so the
+press-1 offer is appended after it. A doubled offer is an obvious stutter; a
+missing one loses the feature invisibly behind a silent four-second `<Gather>`.
+
+Static audio is served by `server/routes/voiceAssets.js`, split from `voice.js`
+for the reason `voicemailListen.js` was (the 700-line soft cap), with
+`GET /greeting.mp3` keeping its exact path because `VM_GREETING_URL` defaults to
+that URL.
+
 ### 6. What changes at each call site
 
 **`voice.js` missed handler.** Picks `greeting_day` or `greeting_night`, and
