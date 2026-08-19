@@ -287,6 +287,8 @@ router.get('/tips', auth, adminOnly, asyncHandler(async (req, res) => {
   params.push(limit);
   const { rows } = await pool.query(`
     SELECT t.id, t.amount_cents, t.tipped_at, t.customer_email,
+           t.shift_id, t.deferred_at, t.rolled_forward_at,
+           COALESCE(t.refunded_amount_cents, 0) AS refunded_amount_cents, t.dispute_won_at,
            COALESCE(cp.display_name, cp.preferred_name) AS bartender_name, t.target_user_id
     FROM tips t
     LEFT JOIN contractor_profiles cp ON cp.user_id = t.target_user_id
@@ -306,9 +308,23 @@ router.get('/tip-feedback', auth, adminOnly, asyncHandler(async (req, res) => {
   const status = req.query.status === 'reviewed' ? 'reviewed'
               : req.query.status === 'all' ? 'all' : 'unreviewed';
 
-  let where = 'reviewed_at IS NULL';
-  if (status === 'reviewed') where = 'reviewed_at IS NOT NULL';
-  if (status === 'all') where = '1=1';
+  // Parameterized filters: the hub's profile card reads one bartender's
+  // feedback, so target_user_id is an optional narrowing on top of status.
+  const filters = [];
+  const params = [];
+  if (status === 'unreviewed') filters.push('f.reviewed_at IS NULL');
+  if (status === 'reviewed') filters.push('f.reviewed_at IS NOT NULL');
+  if (req.query.target_user_id !== undefined) {
+    const uid = Number(req.query.target_user_id);
+    // ValidationError takes fieldErrors first and the message second; passing
+    // the message first would surface the generic "fix the errors below" copy.
+    if (!Number.isInteger(uid) || uid <= 0) {
+      throw new ValidationError(null, 'target_user_id must be a positive integer');
+    }
+    filters.push(`f.target_user_id = $${params.length + 1}`);
+    params.push(uid);
+  }
+  const where = filters.length ? filters.join(' AND ') : '1=1';
 
   const { rows } = await pool.query(`
     SELECT f.id, f.target_user_id, f.rating, f.comment, f.submitter_email,
@@ -319,7 +335,7 @@ router.get('/tip-feedback', auth, adminOnly, asyncHandler(async (req, res) => {
     WHERE ${where}
     ORDER BY f.created_at DESC
     LIMIT 200
-  `);
+  `, params);
   res.json({ feedback: rows });
 }));
 

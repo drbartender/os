@@ -121,10 +121,10 @@ router.post('/backfill-geocodes', auth, adminOnly, asyncHandler(async (req, res)
 
 // ─── Badge Counts ───────────────────────────────────────────────
 
-/** GET /api/admin/badge-counts — sidebar notification counts.
- *  Managers share the admin dashboard, so they may read these counts. The one
- *  exception is new_applications: the Hiring surface is adminOnly, so that count
- *  is zeroed for managers below. */
+/** GET /api/admin/badge-counts - sidebar notification counts.
+ *  Managers share the admin dashboard, so they may read these counts. The two
+ *  exceptions are new_applications and pending_reviews: the Hiring and Reviews
+ *  surfaces are adminOnly, so both counts are zeroed for managers below. */
 router.get('/badge-counts', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT
@@ -160,11 +160,14 @@ router.get('/badge-counts', auth, requireAdminOrManager, asyncHandler(async (req
       (SELECT COUNT(*) FROM drink_plans
          WHERE shopping_list_status = 'pending_review')::int AS pending_shopping_lists,
       (SELECT COUNT(*) FROM sms_messages
-         WHERE direction = 'inbound' AND read_at IS NULL AND client_id IS NOT NULL)::int AS unread_sms
+         WHERE direction = 'inbound' AND read_at IS NULL AND client_id IS NOT NULL)::int AS unread_sms,
+      (SELECT COUNT(*) FROM staff_reviews WHERE status = 'pending')::int AS pending_reviews
   `);
   const counts = result.rows[0];
   // Hiring is admin-only; don't surface the applicant count to managers.
   if (req.user.role !== 'admin') counts.new_applications = 0;
+  // Reviews is admin-only too; a manager must not see a decision they cannot open.
+  if (req.user.role !== 'admin') counts.pending_reviews = 0;
   // Presence strip block rides the existing 60s poll (spec: Fetch and display).
   // Non-fatal by design: a presence failure must never break badge counts.
   try {

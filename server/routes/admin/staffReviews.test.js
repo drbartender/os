@@ -751,3 +751,29 @@ test('contest award: tie splits the pot, a second click is idempotent, empty qua
   assert.ok(audit.rowCount >= 2, 'both the award and the repeat click audit-log');
   assert.equal(audit.rows[audit.rowCount - 1].metadata.awarded_already, true);
 });
+
+// ─── Staff hub: the list envelope ────────────────────────────────
+
+test('the list envelope carries the bounty figure and the all-time totals', async () => {
+  const r = await req('GET', '/api/admin/staff-reviews', adminToken);
+  assert.equal(r.status, 200);
+  // The hub renders the bounty from the envelope, never from a client literal.
+  assert.equal(r.body.bounty_cents, 1000);
+  assert.equal(typeof r.body.bounties_paid_cents, 'number');
+  assert.equal(typeof r.body.total_logged, 'number');
+  // The list is capped at LIST_LIMIT, so the all-time count can only be larger.
+  assert.ok(r.body.total_logged >= r.body.reviews.length);
+  // This suite has paid and un-credited bounties by now, so the sum is a real
+  // read: it must count payable lines only (removed_at IS NULL), the same
+  // filter the payout total uses. The two sums differ here, which is the point.
+  const payable = await pool.query(
+    `SELECT COALESCE(SUM(amount_cents), 0)::int AS s FROM payout_duty_lines
+      WHERE kind = 'review_bounty' AND removed_at IS NULL`
+  );
+  const everything = await pool.query(
+    "SELECT COALESCE(SUM(amount_cents), 0)::int AS s FROM payout_duty_lines WHERE kind = 'review_bounty'"
+  );
+  assert.equal(r.body.bounties_paid_cents, payable.rows[0].s);
+  assert.ok(everything.rows[0].s > payable.rows[0].s,
+    'this suite removed at least one bounty line, so the filter is load-bearing');
+});

@@ -20,6 +20,7 @@ router.use('/', require('./payrollTax'));
 // can never be shadowed by a future /staff-reviews/:id in the sibling.
 router.use('/', require('./staffReviewsContest'));
 router.use('/', require('./staffReviews'));
+router.use('/', require('./staffHub'));
 router.use('/', require('./presence'));
 router.use('/', require('./leadCalls'));
 router.use('/', require('./nameNotices'));

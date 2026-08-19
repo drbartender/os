@@ -123,7 +123,9 @@ async function notifyDisputeWon(tipId, { reinstatedAmountCents, disputeOpenedAt,
         clientName: tip.client_name || null,
         disputeOpenedLabel: fmtDate(disputeOpenedAt),
         disputeWonLabel: fmtDate(disputeWonAt),
-        payrollUrl: `${ADMIN_URL}/financials/payroll`,
+        // The Payroll surface lives inside the Staff hub (spec 2026-08-19);
+        // /financials/payroll is a legacy redirect, so link the real route.
+        payrollUrl: `${ADMIN_URL}/staffing/payroll`,
       });
       const sendPromise = _deps.sendEmail({
         to: process.env.ADMIN_EMAIL,

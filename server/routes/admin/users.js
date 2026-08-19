@@ -474,6 +474,15 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
   // staff roster. The opt-in `?include_stubs=true` widens the filter so the
   // StaffDashboard can render them with a visual badge. Default behavior
   // is preserved for every other caller.
+  //
+  // onboarding_progress is a LEFT JOIN and the completed check is skipped for
+  // deactivated rows on purpose (2026-08-19, staff-hub spec). The imported
+  // placeholders were seeded with NO progress row at all, so an inner JOIN
+  // dropped them, and a deactivated staffer who quit mid-onboarding was
+  // filtered out by onboarding_completed. Either way the Roster's Deactivated
+  // view could not show a row the hub's deactivated_count had already counted.
+  // The active set is unchanged: approved/reviewed/submitted still require a
+  // completed progress row.
   const includeStubs = req.query.include_stubs === 'true';
   const statusList = includeStubs
     ? `'approved', 'reviewed', 'submitted', 'deactivated'`
@@ -489,22 +498,22 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
         a.positions_interested,
         op.onboarding_completed, ag.signed_at
       FROM users u
-      JOIN onboarding_progress op ON op.user_id = u.id
+      LEFT JOIN onboarding_progress op ON op.user_id = u.id
       LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
       LEFT JOIN applications a ON a.user_id = u.id
       LEFT JOIN agreements ag ON ag.user_id = u.id
       WHERE u.role IN ('staff', 'manager')
         AND u.onboarding_status IN (${statusList})
-        AND op.onboarding_completed = true
+        AND (u.onboarding_status = 'deactivated' OR op.onboarding_completed = true)
       ORDER BY COALESCE(cp.display_name, cp.preferred_name, u.email) ASC
       LIMIT $1 OFFSET $2
     `, [limit, offset]),
     pool.query(`
       SELECT COUNT(*) FROM users u
-      JOIN onboarding_progress op ON op.user_id = u.id
+      LEFT JOIN onboarding_progress op ON op.user_id = u.id
       WHERE u.role IN ('staff', 'manager')
         AND u.onboarding_status IN (${statusList})
-        AND op.onboarding_completed = true
+        AND (u.onboarding_status = 'deactivated' OR op.onboarding_completed = true)
     `)
   ]);
 

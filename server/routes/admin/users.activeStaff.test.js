@@ -26,6 +26,8 @@ let managerId, managerToken;
 let realStaffId;
 let stubUserId;
 let stubCcId;
+let placeholderId;
+let incompleteId;
 
 before(async () => {
   const c = await pool.connect();
@@ -75,6 +77,27 @@ before(async () => {
       );
     }
 
+    // Payment-history placeholder: deactivated with NO onboarding_progress row
+    // at all. These were imported deliberately without progress, so the roster
+    // feed's old inner JOIN dropped them from the Deactivated view entirely.
+    const ph = await c.query(
+      `INSERT INTO users (email, password_hash, role, onboarding_status, import_source)
+       VALUES ($1, 'x', 'staff', 'deactivated', 'payment_history_import') RETURNING id`,
+      [`${PREFIX}placeholder-${Date.now()}@imported.invalid`]
+    );
+    placeholderId = ph.rows[0].id;
+
+    // Deactivated with a progress row that never completed: the other half of
+    // the same hole (an inner JOIN kept the row but onboarding_completed
+    // filtered it out).
+    const inc = await c.query(
+      `INSERT INTO users (email, password_hash, role, onboarding_status)
+       VALUES ($1, 'x', 'staff', 'deactivated') RETURNING id`,
+      [`${PREFIX}incomplete-${Date.now()}@example.com`]
+    );
+    incompleteId = inc.rows[0].id;
+    await c.query(`INSERT INTO onboarding_progress (user_id) VALUES ($1)`, [incompleteId]);
+
     await c.query('COMMIT');
   } catch (err) {
     await c.query('ROLLBACK');
@@ -100,7 +123,7 @@ before(async () => {
 after(async () => {
   if (server) await new Promise((r) => server.close(r));
 
-  const userIds = [adminId, managerId, realStaffId, stubUserId].filter(Boolean);
+  const userIds = [adminId, managerId, realStaffId, stubUserId, placeholderId, incompleteId].filter(Boolean);
   if (userIds.length) {
     await pool.query(`DELETE FROM onboarding_progress WHERE user_id = ANY($1::int[])`, [userIds]);
     await pool.query(`DELETE FROM users WHERE id = ANY($1::int[])`, [userIds]);
@@ -171,4 +194,23 @@ test('GET /active-staff?include_stubs=true as admin does NOT redact stub email',
   assert.ok(stub.email && stub.email.includes('@drbartender.local'),
     'admin must see the real stub email, not the redaction placeholder');
   assert.notEqual(stub.email, '(redacted)');
+});
+
+// ── deactivated rows no longer require an onboarding_progress row ────
+
+test('include_stubs surfaces deactivated rows with no progress row AND with an incomplete one', async () => {
+  const r = await req('GET', '/api/admin/active-staff?include_stubs=true&limit=100', adminToken);
+  assert.equal(r.status, 200);
+  const body = JSON.parse(r.body);
+  assert.ok(body.staff.some(s => s.id === placeholderId), 'no-progress placeholder present');
+  assert.ok(body.staff.some(s => s.id === incompleteId), 'incomplete-progress deactivated row present');
+});
+
+test('the default (active) set still requires a completed onboarding row', async () => {
+  const r = await req('GET', '/api/admin/active-staff?limit=100', adminToken);
+  assert.equal(r.status, 200);
+  const body = JSON.parse(r.body);
+  assert.ok(!body.staff.some(s => s.id === placeholderId), 'placeholder absent from the active set');
+  assert.ok(!body.staff.some(s => s.id === incompleteId), 'incomplete row absent from the active set');
+  assert.ok(body.staff.some(s => s.id === realStaffId), 'real approved staff still present');
 });

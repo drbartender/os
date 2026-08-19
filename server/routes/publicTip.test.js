@@ -21,7 +21,19 @@ const express = require('express');
 
 const { pool } = require('../db');
 const { AppError } = require('../utils/errors');
+
+// The feedback POST fires a best-effort admin notification. publicTip.js
+// DESTRUCTURES sendEmail at module load, so the stub has to be installed
+// BEFORE that require (patching afterwards never reaches the captured
+// reference). Capturing the message also frees the assertion from the
+// SEND_NOTIFICATIONS gate, and guarantees the suite can never fire a real
+// send at the admin inbox from a dev box.
+const emailModule = require('../utils/email');
+const realSendEmail = emailModule.sendEmail;
+const sentEmails = [];
+emailModule.sendEmail = async (msg) => { sentEmails.push(msg); return { id: 'stub-tip-feedback' }; };
 const publicTipRouter = require('./publicTip');
+emailModule.sendEmail = realSendEmail;
 
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
@@ -36,16 +48,19 @@ let server;
 let baseUrl;
 
 // ─── HTTP helper ────────────────────────────────────────────────────────────
-function request(method, path) {
+function request(method, path, body) {
   return new Promise((resolve, reject) => {
     const u = new URL(baseUrl + path);
+    const payload = body === undefined ? null : JSON.stringify(body);
     const req = http.request(
       {
         hostname: u.hostname,
         port: u.port,
         path: u.pathname + u.search,
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: payload
+          ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+          : { 'Content-Type': 'application/json' },
       },
       (res) => {
         let data = '';
@@ -63,6 +78,7 @@ function request(method, path) {
       }
     );
     req.on('error', reject);
+    if (payload) req.write(payload);
     req.end();
   });
 }
@@ -70,6 +86,10 @@ function request(method, path) {
 // ─── Setup: seed users + payment_profiles + ui_preferences ─────────────────
 before(async () => {
   const fixtureFilter = `email LIKE 'ptip-%@example.com'`;
+  // tip_page_feedback.target_user_id is ON DELETE RESTRICT, so the feedback the
+  // POST test writes has to go first or the users DELETE below fails and every
+  // fixture leaks into the shared dev DB.
+  await pool.query(`DELETE FROM tip_page_feedback WHERE target_user_id IN (SELECT id FROM users WHERE ${fixtureFilter})`);
   await pool.query(`DELETE FROM payment_profiles WHERE user_id IN (SELECT id FROM users WHERE ${fixtureFilter})`);
   await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN (SELECT id FROM users WHERE ${fixtureFilter})`);
   await pool.query(`DELETE FROM users WHERE ${fixtureFilter}`);
@@ -197,6 +217,10 @@ before(async () => {
 // ─── Teardown ───────────────────────────────────────────────────────────────
 after(async () => {
   const fixtureFilter = `email LIKE 'ptip-%@example.com'`;
+  // tip_page_feedback.target_user_id is ON DELETE RESTRICT, so the feedback the
+  // POST test writes has to go first or the users DELETE below fails and every
+  // fixture leaks into the shared dev DB.
+  await pool.query(`DELETE FROM tip_page_feedback WHERE target_user_id IN (SELECT id FROM users WHERE ${fixtureFilter})`);
   await pool.query(`DELETE FROM payment_profiles WHERE user_id IN (SELECT id FROM users WHERE ${fixtureFilter})`);
   await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN (SELECT id FROM users WHERE ${fixtureFilter})`);
   await pool.query(`DELETE FROM users WHERE ${fixtureFilter}`);
@@ -353,4 +377,38 @@ test('GET /api/public/tip/:token > methods absent from profile are skipped even 
   const res = await request('GET', `/api/public/tip/${tipTokenC}`);
   assert.strictEqual(res.status, 200);
   assert.deepStrictEqual(res.body.methods, ['venmo']);
+});
+
+// ─── Feedback POST: where the admin notification points ─────────────────────
+// The link used to be ADMIN_URL/tips#feedback. /tips is retired and the
+// #feedback view is deleted with TipsAdmin.js (staff-hub spec 2026-08-19), so
+// the operator would have landed on a tips table instead of the feedback that
+// paged them. Feedback now lives on the staffer profile and the email follows.
+test('POST /api/public/tip/:token/feedback > the admin email deep-links the staffer profile', async () => {
+  sentEmails.length = 0;
+  const res = await request('POST', `/api/public/tip/${tipTokenA}/feedback`, {
+    rating: 2,
+    comment: 'took a while to get served',
+    email: 'guest@example.com',
+  });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.ok, true);
+  assert.strictEqual(sentEmails.length, 1, 'exactly one admin notification');
+
+  const { ADMIN_URL } = require('../utils/urls');
+  const blob = `${sentEmails[0].html || ''} ${sentEmails[0].text || ''}`;
+  const expected = `${ADMIN_URL}/staffing/users/${userIdA}?tab=tip-page`;
+  assert.ok(
+    blob.includes(expected),
+    `links the tip-page tab on the bartender the feedback targets (${expected})`
+  );
+  assert.ok(!blob.includes('/tips#feedback'), 'the retired /tips#feedback view is gone');
+
+  // The row itself still lands (the email is best-effort, the write is not).
+  const { rows } = await pool.query(
+    'SELECT rating, submitter_email FROM tip_page_feedback WHERE target_user_id = $1',
+    [userIdA]
+  );
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].rating, 2);
 });

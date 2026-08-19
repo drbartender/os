@@ -17,7 +17,7 @@ const { auth, adminOnly } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { NotFoundError, ValidationError, ConflictError } = require('../../utils/errors');
 const { recomputePayoutTotal } = require('../../utils/payrollProcessing');
-const { materializeReviewLine, materializePendingReviewLines } = require('../../utils/dutyLines');
+const { materializeReviewLine, materializePendingReviewLines, REVIEW_BOUNTY_CENTS } = require('../../utils/dutyLines');
 const { logAdminAction } = require('../../utils/adminAuditLog');
 
 const router = express.Router();
@@ -149,7 +149,25 @@ router.get('/staff-reviews', auth, adminOnly, asyncHandler(async (req, res) => {
       LIMIT $1`,
     [LIST_LIMIT]
   );
-  res.json({ reviews: rows });
+  // The hub's footer reads the bounty and the all-time totals off this
+  // envelope, so no client carries a money literal. All-time by design: the
+  // list itself is capped at LIST_LIMIT.
+  //
+  // removed_at IS NULL is the payable filter (payrollProcessing.js:29-38): a
+  // bounty line un-credited or dismissed is soft-removed and pays nothing, so
+  // counting it here would overstate the money that actually went out.
+  const totals = await pool.query(`
+    SELECT
+      (SELECT COUNT(*) FROM staff_reviews)::int AS total_logged,
+      (SELECT COALESCE(SUM(amount_cents), 0) FROM payout_duty_lines
+        WHERE kind = 'review_bounty' AND removed_at IS NULL)::int AS bounties_paid_cents
+  `);
+  res.json({
+    reviews: rows,
+    bounty_cents: REVIEW_BOUNTY_CENTS,
+    bounties_paid_cents: totals.rows[0].bounties_paid_cents,
+    total_logged: totals.rows[0].total_logged,
+  });
 }));
 
 // POST /staff-reviews — manual Google row. Google reviews carry no external

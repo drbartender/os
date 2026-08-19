@@ -117,9 +117,9 @@ after(async () => {
 });
 
 const COUNT_KEYS = ['pending_proposals', 'unstaffed_events', 'new_applications',
-  'pending_shopping_lists', 'unread_sms'];
+  'pending_shopping_lists', 'unread_sms', 'pending_reviews'];
 
-test('admin reads badge-counts: all five integer counts, seeded applicant visible', async () => {
+test('admin reads badge-counts: all six integer counts, seeded applicant visible', async () => {
   const res = await get('/api/admin/badge-counts', adminToken);
   assert.equal(res.status, 200);
   for (const k of COUNT_KEYS) assert.equal(typeof res.body[k], 'number', `${k} should be a number`);
@@ -141,4 +141,13 @@ test('staff is denied badge-counts (403)', async () => {
 test('unauthenticated is denied badge-counts (401)', async () => {
   const res = await get('/api/admin/badge-counts', null);
   assert.equal(res.status, 401);
+});
+
+test('pending_reviews rides the payload and is zeroed for managers', async () => {
+  const admin = await get('/api/admin/badge-counts', adminToken);
+  assert.equal(admin.status, 200);
+  assert.equal(typeof admin.body.pending_reviews, 'number');
+  const mgr = await get('/api/admin/badge-counts', managerToken);
+  assert.equal(mgr.status, 200);
+  assert.equal(mgr.body.pending_reviews, 0);
 });

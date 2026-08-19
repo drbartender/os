@@ -399,7 +399,8 @@ describe('notifyDisputeWon', () => {
     // urls.js and payrollDisputeNotify.js both capture ADMIN_URL at module load,
     // so re-require them fresh with CLIENT_URL unset to exercise the fallback.
     // The old inline `${process.env.CLIENT_URL || ''}/financials/payroll` yielded
-    // a RELATIVE '/financials/payroll' here; the fix yields the absolute admin URL.
+    // a RELATIVE path here; the fix yields the absolute admin URL. The link now
+    // points at /staffing/payroll (the Staff hub's Payroll tab, 2026-08-19).
     const savedClientUrl = process.env.CLIENT_URL;
     delete process.env.CLIENT_URL;
     delete require.cache[require.resolve('./urls')];
@@ -418,7 +419,7 @@ describe('notifyDisputeWon', () => {
       assert.strictEqual(result.abandoned, false);
       assert.strictEqual(captured.length, 1);
       const blob = `${captured[0].html || ''} ${captured[0].text || ''}`;
-      assert.match(blob, /https:\/\/admin\.drbartender\.com\/financials\/payroll/, 'absolute admin URL, not a relative /financials/payroll');
+      assert.match(blob, /https:\/\/admin\.drbartender\.com\/staffing\/payroll/, 'absolute admin URL, not a relative path');
     } finally {
       delete require.cache[require.resolve('./urls')];
       delete require.cache[require.resolve('./payrollDisputeNotify')];

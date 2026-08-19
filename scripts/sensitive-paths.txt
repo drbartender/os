@@ -39,6 +39,14 @@ server/routes/staffPortal.js
 # was invisible to review-scaling while its emptied-out parent stayed listed.
 # Same gap shape as the drinkPlans and stripeWebhook splits documented below.
 server/routes/admin/payrollDuty.js
+# The review-bounty and contest money writer (2026-08-19, staff-hub spec
+# review). Comments above say dutyLines.js "is covered" by the payroll glob;
+# it is not (utils globs do not match dutyLines). It writes payout_duty_lines
+# and recomputes payout totals. Listed by name.
+server/utils/dutyLines.js
+# Tip money reads (the cross-staff ledger) and the contractor tip-page
+# mutations (token rotation, Stripe link regeneration). Same 2026-08-19 finding.
+server/routes/admin/contractorTipPage.js
 
 # Staffing money seam: shift_requests.position resolution feeds the payroll tip
 # split (LOWER(position)='bartender'). shifts.approval.js resolves + writes it;

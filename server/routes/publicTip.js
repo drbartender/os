@@ -224,7 +224,11 @@ router.post('/:token/feedback', publicLimiter, feedbackLimiter, asyncHandler(asy
       rating,
       comment,
       submitterEmail: email,
-      adminUrl: `${ADMIN_URL}/tips#feedback`,
+      // The staffer profile's tip-page tab (staff-hub spec 2026-08-19). The
+      // old link went to the retired admin tips view's feedback anchor, which
+      // is deleted with TipsAdmin.js, so the operator would have landed on a
+      // tips table instead of the feedback that paged them.
+      adminUrl: `${ADMIN_URL}/staffing/users/${row.user_id}?tab=tip-page`,
     });
     await sendEmail({
       to: process.env.ADMIN_FEEDBACK_NOTIFICATION_EMAIL || 'contact@drbartender.com',

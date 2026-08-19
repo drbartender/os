@@ -203,6 +203,7 @@ dr-bartender/
 │   │   │   ├── payrollDuty.js  # Duty-line admin API (spec 2026-08-06): manual create / edit / remove / restore, attribution set/move, unattributed-duties list backing the Process gate
 │   │   │   ├── staffReviews.js # Staff review money (spec 2026-08-06 §7): review log CRUD + confirm/dismiss; settleBounty is the ONE door for the $10 bounty (revive system tombstone or materialize, gated confirmed+5-star)
 │   │   │   ├── staffReviewsContest.js # Quarterly review contest: leaderboard (events clamped at today, server-computed winners/shares) + $100 award (in-progress quarter needs force). Mounted BEFORE staffReviews.js
+│   │   │   ├── staffHub.js     # /staff-hub/summary (spec 2026-08-19): the ONE read behind the Staff hub chrome (roster counts, admin decision counts, derived open pay run). Read-only, admin or staffing manager
 │   │   │   ├── payrollTax.js   # /payroll/contractors/:id/payment-history + /payroll/tax-totals + /payroll/tax-totals/:id/exclude — imported-ledger blends + 1099 year totals (read-only + one boolean PATCH)
 │   │   │   ├── presence.js     # /presence + /presence/state + /presence/leads + /presence/log — time-clock strip + history
 │   │   │   ├── leadCalls.js    # /lead-call-attention — lead-call bridge FAULT rows only (failed / misconfigured chains on still-new TT leads, 7-day window) for the overview Sales tab; missed + after-hours are deliberate non-items (2026-07-20)
@@ -346,6 +347,7 @@ dr-bartender/
 │   │   ├── serviceArea.js      # Out-of-Area service-area geometry (spec 2026-08-06 §6): HOME_BASE (Pilsen), the suggestion bands (SERVER-ONLY per the published-ambiguity rule), distance helpers, the bonus lock stamp/release pair shared by every approval + roster-removal path, its own 1 req/sec Nominatim queue, and the post-commit duty re-accrue hook
 │   │   ├── payrollGuards.js    # isLegacyCcParticipant (per-proposal stub check, used by payrollAccrual); isLegacyCcStubUser kept for parity
 │   │   ├── payrollDeferredRetry.js # Re-runs placement for tips that deferred while the open pay period was frozen (single-flight, attempt-capped); fired off the response path after a successful accrual and from the admin Retry button
+│   │   ├── staffHubSummary.js  # Pure summarizeOpenPeriod for the Staff hub subtitle: derives the open pay run from the Chicago date (pay_periods rows are minted lazily, so a row lookup alone goes blank mid-week) and folds in the row when one exists
 │   │   ├── changeRequests.js   # Client-portal change-request helpers: edit-window classifier, field allowlist, proposed-state preview + diff + price preview, and the reaper that auto-cancels pending requests on archive/complete
 │   │   ├── changeRequestNotifications.js # Admin alert (new request) + client decision (approved/declined) email + SMS sends
 │   │   ├── channelFallback.js  # Channel-substitution decision for single-channel operational touches (picks the live channel when the registered one's status is 'bad')
