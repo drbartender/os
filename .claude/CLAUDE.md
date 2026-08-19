@@ -133,7 +133,7 @@ When a surface goes through claude.ai/design, the returned design is TWO deliver
 ## Lane lifecycle and stale lanes
 
 - Claude auto-handles the safe moves: create the lane, merge it when clean, clean it up after merge. No asking. ("Manage it for me.")
-- **Stale detection.** A lane is flagged stale when it is older than 48h with no new commit, OR `main` has advanced 15+ commits since it was cut, OR any sensitive path has landed on `main` since it was cut. The check runs at session start (`npm run lane:status`) and again at each push-time sweep.
+- **Stale detection.** A lane is flagged stale when it is older than 48h with no new commit, OR `main` has advanced 15+ commits since it was cut, OR any sensitive path has landed on `main` since it was cut. The check is `npm run lane:status`, and it is **manual**: nothing runs it automatically. The only `SessionStart` hook is `scripts/show-location.js`, which prints the worktree banner and nothing else. Run `lane:status` deliberately when opening a session that may have lanes outstanding, and again at each push-time sweep.
 - **Default for a dead lane:** scrap and re-cut fresh from the plan (safe on `main`), salvaging half-written code only if it is substantial and clean.
 - **Never scrap unmerged work.** Before any scrap, `git log main..<lane-branch>` must be empty. If it is non-empty, do NOT scrap without the user's okay. Auto-scrap always uses `git branch -d` (which refuses unmerged), never `-D`. ("Never lose my code.")
 
@@ -216,7 +216,9 @@ Run `npm run check:filesize` any time for a full-tree RED / YELLOW report.
 
 ## Mandatory documentation updates
 
-**This is not optional.** When you add, rename, or remove anything that touches the codebase shape, update the relevant docs in the same change. The pre-commit hook will warn if you don't. Most structural updates land in `README.md` (folder tree, npm scripts, key features) and `ARCHITECTURE.md` (route table, schema, third-party integrations). Only env vars and integrations also touch this doc.
+**This is not optional.** When you add, rename, or remove anything that touches the codebase shape, update the relevant docs in the same change. Most structural updates land in `README.md` (folder tree, npm scripts, key features) and `ARCHITECTURE.md` (route table, schema, third-party integrations). Only env vars and integrations also touch this doc.
+
+**Do not rely on the hook to catch you.** `scripts/check-docs-drift.sh` warns (never blocks) only when an add/delete/rename lands under `server/routes/`, `server/utils/`, `client/src/components/`, `client/src/pages/`, `client/src/context/`, or when `schema.sql` changes at all. A new `client/src/utils/` module, a new `client/src/hooks/` file, new `server/middleware/`, and anything under `scripts/` are outside its watched paths and drift silently. The 2026-08-19 self-audit found exactly that gap: two new client utils shipped undocumented while the heavy rows (routes, schema, components) were all compliant.
 
 | What changed | CLAUDE.md | README.md | ARCHITECTURE.md |
 |---|---|---|---|
@@ -245,6 +247,7 @@ Explicit-only Claude agents for reviewing specs and plans BEFORE any code is wri
 - **Frontend**: React 18 (Create React App) / React Router 6
 - **Database**: Neon PostgreSQL (via `pg` driver, raw SQL — no ORM)
 - **Auth**: JWT (jsonwebtoken) + bcryptjs
+- **Passkeys (phone-admin unlock)**: `@simplewebauthn/server` (server) + `@simplewebauthn/browser` (client, via `client/src/utils/webauthnClient.js`). `server/routes/webauthn.js` is the ONLY site that mints the 12h device JWT (`assert-verify`); password login keeps its 7d mints. Revoking a passkey bumps `users.token_version`, i.e. a deliberate global logout.
 - **File Storage**: Cloudflare R2 (AWS SDK v3)
 - **Payments**: Stripe (server SDK + React Elements)
 - **Email**: Resend

@@ -17,11 +17,22 @@ so tick items off as you confirm them rather than assuming the list is current.
 
 ---
 
-## Status at the end of the 2026-08-14 session
+## Status: the 2026-08-14 session, refreshed 2026-08-19
 
-**Tally: 24 done / 4 partial / 22 open.** But the raw count overstates what is left,
-because this session established that a chunk of the "open" items are not walks at all.
-Read this before picking anything up.
+**WHAT MOVED SINCE 2026-08-14**, because this block sat here as the file's headline for
+five days while production changed underneath it. Two pushes landed: 2026-08-16 (the
+52-commit `bab7fba5..981b09ef` batch, which carried the phone passkey unlock) and
+2026-08-19 (lane `nat-trim`, which reshaped the admin Overview). Four lanes merged.
+`origin/main` is `d61c62b7`. Out of that: one new Tier 3b entry (`nat-trim`), three more
+moved into Tier 3b from Tier 6, which had been filing shipped work under "queued", and one
+checked Tier 2 box that now certifies a surface which no longer exists.
+
+**Count the boxes yourself rather than trusting a number written here.** `grep -c '^- \[x\]'`,
+`'^- \[~\]'` and `'^- \[ \]'` against this file give done / partial / open in one command.
+The hard tally that used to sit on this line was wrong from the commit that wrote it and
+was never re-derived across four merges, which is what a hard-coded count in a living file
+always does. What any raw count overstates: a chunk of the "open" items are not walks at
+all. Read this before picking anything up.
 
 **Closed tonight by Dallas:** voicemail listen link (BOTH halves — the first listen link
 this system has ever sent went out and was tapped), inbound SMS alerts naming the
@@ -47,8 +58,14 @@ duplicate-MessageSid idempotency check (closed structurally on the unique index)
 - Marketing FUNCTIONAL walk (70-85 min, gates real sends, now more useful since the
   corporate contacts are tagged)
 - Tip sign wake lock, Leg A (20 min on the Pixel) and Leg B print-and-scan (needs a photo
-  counter)
-- Mobile admin PWA on the Pixel (unblocked, never reported)
+  counter). Now carries its own Tier 3 checkbox, so a tier refresh cannot lose it
+- Phone admin passkey unlock on the Pixel, against PROD (Tier 3b). The highest-value walk
+  open: the only unverified auth path in production
+- Mobile admin PWA on the Pixel. The INSTALL half is DONE (Dallas, 2026-08-14, zero
+  findings). What is still owed is the offline-resume leg and the Desktop-view toggle
+  round trip, and both ride the passkey walk above rather than standing alone
+- Admin Overview / Needs-attention after `nat-trim` (Tier 3b): the landing page changed
+  shape on 2026-08-19 and nobody has opened it since
 
 **Waiting on a Dallas decision, not on time:** the Potions recipe sourcing call
 (grapefruit soda / Cognac / lavender syrup — see Tier 4), and Potion Planner gate 1's
@@ -58,11 +75,17 @@ Midrange scotch bullet.
 that entry for the per-check reason), the equipment label (needs a dev write before it is
 lookable in either environment), or anything marked trigger-armed.
 
-Defects this session sent to the fix list, none fixed: the "Tap to compare" dead
-affordance plus 14 more of the same shape found by sweep, the dev box holding a LIVE
+Defects this session sent to the fix list, one of them since closed: the "Tap to compare"
+dead affordance plus 14 more of the same shape found by sweep, the dev box holding a LIVE
 Stripe key with no `NODE_ENV` gate, the September corporate-holiday moment being
 invisible, Jasmine SMS-dark for six weeks while working, `yes`/`cancel` swallowing client
 texts, and the agreement's raw markdown on the signing screen.
+CLOSED 2026-08-19, the September corporate-holiday moment, on both halves. The audience
+half is live in prod: `client_tags` holds exactly 9 `corporate` rows, so the moment has
+somebody to go to. The product half is lane `mkt-moment-setup` (`7b099746`), **merged but
+NOT pushed**, so the needs-setup card and the header's "N needs setup" segment do not
+render in prod yet even though the audience they are about is populated. Its walk sits in
+Tier 6 until that ships.
 
 ---
 
@@ -75,12 +98,20 @@ texts, and the agreement's raw markdown on the signing screen.
       ghost in House Lights — see the 2026-08-12 section of the fix list.
       **The Stripe refund half is still owed, and still cannot be walked on demand — but the
       REASON changed on 2026-08-14 and the old reason is now wrong.**
-      SUPERSEDED: the 8/12 note said no live booking could produce it. Re-checked prod 8/14
-      and there are now **six** fully-paid FUTURE bookings carrying real `proposal_payments`
-      rows: 728 ($1700, Aug 15), 540 ($350, Aug 15), 436 ($585, Aug 15), 713 ($350, Aug 21),
-      602 ($450, Aug 22), 652 ($760, Aug 24). (604 is still the CC-transfer shape with zero
-      payment rows.) Note three of those events are Aug 15, so they age out of the eligible
-      set the moment they complete. The structural precondition is therefore MET.
+      SUPERSEDED: the 8/12 note said no live booking could produce it. That is wrong. The
+      eligible set is non-empty and stays non-empty, so **the structural precondition is
+      MET.** Do not write the members down; the set ages out as events complete (the 8/14
+      snapshot named six, three of which were Aug 15 events that have since finished).
+      REGENERATE it instead, against prod:
+      ```sql
+      SELECT p.id, p.total_price, p.event_date, p.status,
+             (SELECT count(*) FROM proposal_payments pp WHERE pp.proposal_id = p.id) AS pay_rows
+      FROM proposals p
+      WHERE p.event_date >= CURRENT_DATE AND p.amount_paid >= p.total_price AND p.total_price > 0
+      ORDER BY p.event_date;
+      ```
+      Anything with `pay_rows` of 0 is the CC-transfer shape and cannot produce a refund;
+      604 has always been that. On 2026-08-19 it returned four usable rows plus 604.
       WHAT ACTUALLY BLOCKS IT NOW is that walking it means issuing a real refund against a
       real client's real money, which is only legitimate when that client genuinely drops a
       line. That has not changed: when it next happens, do it deliberately and watch.
@@ -331,14 +362,22 @@ texts, and the agreement's raw markdown on the signing screen.
       SIGNING SURFACE: clean. Signature pad, terms and payment fields all work on a phone.
       FOUND: the quote wizard's TimePicker crowds three sub-minimum tap targets into 48px
       with no responsive rules at all — fix list, 2026-08-13. Public lead-capture surface.
-- [x] **Needs-attention tabs — PASSED 2026-08-13.** All four data tabs verified accurate
-      against prod after three of my own approximations disagreed with them and the tabs won
-      every time: Staffing 14 = 10 short-staffed + 1 applications + 3 uncertified; Clients 0
-      is right (92 of 116 unread inbound are Thumbtack relay, the other 24 have no
-      client_id); Sales = sent-unviewed-past-72h by design. PRODUCT CALL LOGGED: the Money
-      tab is payroll-only now that all 213 payout lines are matched, and Dallas wants payroll
-      rehomed — fix list 2026-08-13, including the warning that the unmatched-payout alarm
-      needs a new surface if the tab goes away.
+- [x] **Needs-attention tabs: PASSED 2026-08-13, SUPERSEDED 2026-08-19 by `9d7d4c86`.**
+      **Do not read this box as certifying the surface you will find today.** Lane `nat-trim`
+      deleted the Money tab, so the four-tab set this passed no longer exists; the Staffing
+      count of 14 is not reproducible now that dated rows filter to a 14-day horizon; and the
+      product call below is SHIPPED, not logged. Kept because the accuracy method still
+      stands and the residual tabs still resolve the same way. The live surface is unwalked:
+      see Tier 3b, below.
+      What it verified on 8/13, against prod, after three of my own approximations disagreed
+      with the tabs and the tabs won every time: Staffing 14 = 10 short-staffed + 1
+      applications + 3 uncertified; Clients 0 is right (92 of 116 unread inbound are
+      Thumbtack relay, the other 24 have no client_id); Sales = sent-unviewed-past-72h by
+      design. PRODUCT CALL, now SHIPPED: the Money tab was payroll-only once all 213 payout
+      lines were matched and Dallas wanted payroll rehomed. Done 8/19: payroll is an
+      admin-only right-rail card. This entry's own warning, that the unmatched-payout alarm
+      would need a new surface if the tab went away, was answered in the same lane: the alarm
+      rides a badge on the Band 2 Payouts button.
 - [x] **Global search palette — PASSED 2026-08-13.** Staff search groups correctly (`Teah`
       under Staff), client search resolves the record plus its proposal (`Lauren Karcz` ->
       proposal 719), and the empty-state Jump to list is complete. Note the shortcut is
@@ -432,11 +471,22 @@ texts, and the agreement's raw markdown on the signing screen.
       row's shortcut token dies 2026-09-10.
 - [ ] **Tip sign download.** Download a sign as jpg, png, and pdf, and the two-sided card as
       pdf. Confirm a bartender with no Stripe link is not offered Card.
-- [ ] **Staff recipes.** Open a spec at the bar and confirm real ingredients render, not
-      `[object Object]`.
-- [ ] **First-name greetings.** Confirm a normal client gets "Hi Monica," and a couple gets
-      "Hi Aubrey & Dominic,". The couples case was fixed at the push gate and has unit
-      coverage, but no rendered email has been read by a human.
+- [ ] **Staff recipes: REASSIGNED to the automated lane 2026-08-14 (routing rule 1),
+      mechanical render check, not a human walk.** Open a spec at the bar and confirm real
+      ingredients render, not `[object Object]`.
+- [ ] **First-name greetings: REASSIGNED to the automated lane 2026-08-14 (routing rule 1),
+      mechanical render check, not a human walk.** Confirm a normal client gets "Hi Monica,"
+      and a couple gets "Hi Aubrey & Dominic,". The couples case was fixed at the push gate
+      and has unit coverage, but no rendered email has been read by a human.
+- [ ] **Tip sign wake lock: Leg A and Leg B, both still owed.** Named in the ordered list
+      above since 2026-08-14 with no checkbox anywhere in the tiers, so it was invisible to
+      every count and a tier refresh would have dropped it. It is a real human walk under
+      routing rule 2: real device, real paper.
+      LEG A (about 20 min, on the Pixel): open a bartender's tip page, confirm the screen
+      does not sleep while it is showing, and confirm it releases when you leave.
+      LEG B (print-and-scan): print a sign and scan the QR off the paper with a phone
+      camera, not off the screen. Needs a photo counter or an equivalent flat surface. This
+      is the leg that catches a code that renders but does not scan at real ink density.
 - [x] **Guest count in the event header — PASSED 2026-08-13** ("yes").
 - [x] **Inbound SMS alerts naming the staffer — PASSED 2026-08-14.** Dallas found the alert
       email from the 2026-08-13 21:13 CT inbound and confirmed the body reads
@@ -455,11 +505,101 @@ texts, and the agreement's raw markdown on the signing screen.
       Text from the 312 rather than the personal cell: user 1 has zero approved unfinished
       shifts, so nothing can be dropped by accident.
 
-## Tier 3b — shipped 2026-08-13, live in prod, never eyeballed
+## Tier 3b: shipped since 2026-08-13, live in prod, never eyeballed
 
-The walkthrough fixes themselves now need the same medicine. Both of the first two shipped
-BROKEN on the first attempt and were corrected blind by a later session (`54fb77cb`,
-`fc5e6ca2`) — nobody has seen any of these render.
+Two cohorts. The 2026-08-13 walkthrough fixes needed the same medicine they were
+prescribing: the TimePicker and equipment-label fixes both shipped BROKEN on the first
+attempt and were corrected blind by a later session (`54fb77cb`, `fc5e6ca2`). The 8/14
+through 8/19 arrivals are listed FIRST, because they are what is live in prod today that
+nobody has opened at all.
+
+- [ ] **Phone admin passkey unlock (lane `ma-d-auth`): NOW UNBLOCKED, PUSHED 2026-08-16**
+      in the 52-commit `bab7fba5..981b09ef` batch (merge `c206118c` + fix `981b09ef`). Prod
+      DDL needs no action and never did: `webauthn_credentials` and `webauthn_challenges` are
+      `CREATE TABLE IF NOT EXISTS` in `server/db/schema.sql`, which `server/db/index.js`
+      re-executes on every boot, so the deploy applied them itself. Both tables are confirmed
+      present in prod.
+      **THIS IS A PRODUCTION WALK. Read the next paragraph before step 5.** The old text
+      here said "on the real Pixel, against dev data" and that is now dangerous advice.
+      There is no dev stand-in: `WEBAUTHN_RP_ID` resolves to `localhost` in dev and
+      `admin.drbartender.com` in prod (`webauthn.js:26-28`), so a passkey never crosses
+      environments, and the phone cannot reach the dev server anyway (`client/.env` points
+      the client at `localhost:5000`, which on a phone means the phone). The only enrolled
+      passkeys that exist anywhere are PRODUCTION credentials.
+      **STEPS 1 AND 2 ARE ALREADY PROVEN BY REAL USE.** Do not re-run them, and do not treat
+      them as unwalked. Prod holds two credentials in daily service: user 2
+      (zul@drbartender.com) enrolled 2026-08-16 and last asserted 2026-08-18, and user 1
+      (admin@drbartender.com, Dallas) enrolled 2026-08-17 and asserted 2026-08-19. Enrollment
+      and unlock work in production against real accounts.
+      **WHAT STEP 5 ACTUALLY COSTS.** Revoke deletes the credential AND bumps
+      `users.token_version` (`webauthn.js:194`), which is a global logout of every session
+      that user holds, everywhere, by design. Run against prod on Dallas's own account, it
+      signs him out of desktop and phone at once and destroys a credential he asserted today;
+      the only way back is a password login plus a fresh enrollment. That is a deliberate
+      act with a cost, not a step to walk through casually. Do it when Dallas is at a
+      keyboard and expecting it, or run it against the OTHER admin account.
+      GENUINELY UNPROVEN, and the whole reason this box is open:
+      3. Airplane mode, cold launch within 30 minutes of last use: restored route with
+         staleness lines, no Login bounce.
+      4. Airplane mode, cold launch with the lock due (background 30+ min, or set
+         `adminLockLastActiveAt` back in devtools, since `LOCK_AFTER_MS` is 30 min): lock screen
+         explains offline unlock needs a connection; password path visible.
+      5. From desktop Settings > Security: revoke the phone passkey, confirm the desktop
+         logs out, the phone's next unlock fails to the password path, and re-enrollment
+         works. No automated test covers this leg.
+      FOLDED IN FROM THE ma-a/ma-b ITEM, because these legs are only walkable in the same
+      offline session: the Desktop-view toggle round trip, and the offline-resume proof that
+      an offline cold launch lands on the restored route behind the lock rather than
+      bouncing to Login.
+      **RE-READ THE SCRIPT BEFORE RUNNING IT.** It was written against the lane and predates
+      `981b09ef`, which rewrote the revoke copy the walk checks (SecuritySettings no longer
+      promises "a lost phone is locked out immediately"; it names the offline carve-out) and
+      added a bound so a cache-served `/auth/me` is honored only while the stored token is
+      unexpired. Check the steps against the copy that is actually on screen.
+
+- [ ] **Admin Overview / Needs-attention after `nat-trim`: LIVE IN PROD 2026-08-19**
+      (merge `9d7d4c86` + review fixes `d61c62b7`; `origin/main` points at the latter). The
+      admin landing page changed shape and nobody has opened it since. This is a
+      look-at-it, not a hunt: the one defect the review fleet caught, light-skin rail cards
+      refusing to shrink and clipping the Pipeline card's money column at 320-390px, was
+      fixed in `d61c62b7` and shipped in the same push.
+      WHAT MOVED, so you can tell a change from a bug:
+      (1) **The Money tab is GONE from Needs-attention.** The tab row is shorter. That is
+      the change, not a failed render.
+      (2) **Payroll is now a Band 1 card in the right rail, admin-only.**
+      `OverviewPage.js:334` renders `{isAdmin && <PayrollStatus />}`. A manager sees no
+      payroll card at all, which is the point. Read the Overdue state if one is available:
+      the chip moved into the card head and carries an `aria-label` so the accessible name
+      still says the check is late.
+      (3) **The unmatched-payout alarm rides a badge on the Band 2 Payouts button.** Same
+      page, not a new surface: clicking it deep-links to `{ tab: 'payouts', show:
+      'unmatched' }` (`OverviewPage.js:343`). It is dormant while every payout line is
+      matched, so expect no badge; confirm the button itself still lands on Payouts.
+      (4) **Dated Staffing rows cap at a 14-day horizon** (`STAFFING_HORIZON_DAYS = 14` in
+      `queueItems.js`). Unstaffed events further out are cut from the tab, and an
+      uncertified staffer whose next shift is PAST fourteen days de-escalates to the
+      standing "eligible" row rather than disappearing. The page header's "N need staff"
+      count still reports the true total, so header and tab disagreeing is CORRECT.
+      Judge whether the emptier board reads as calm or as broken. That is the actual
+      question this walk answers.
+
+- [x] **Mobile admin shell + PWA (lanes `ma-a`/`ma-b`): INSTALL HALF PASSED 2026-08-14**
+      (Dallas, on the Pixel, zero findings). Both merges (`0bf3eb30` ma-a-shell, `30405f97`
+      ma-b-pwa) shipped in the 8/14 evening push. Install from More > Install app, the DrB
+      OS icon, standalone launch, tab nav and badges all confirmed.
+      Closed here rather than left half-open: the two legs that remain, offline resume and
+      the Desktop-view toggle round trip, are only walkable inside the offline session the
+      passkey walk above sets up, and they now live in that entry. Nothing is dropped.
+      The old "DO NOT REPORT THE AIRPLANE-MODE LOGIN AS A BUG" caveat is retired:
+      `ma-d-auth` fixed the transport-clear defect, so AuthContext keeps the token on
+      transport failure and the SW serves the cached `/auth/me`.
+
+- [ ] **Admin palette baseline eyeball sweep (palette lanes, merged 2026-08-14).** The
+      text-colour baseline moved for every admin surface in both skins with **zero browser
+      verification**, since every contrast number was token arithmetic. Live for five days now,
+      which is why it moved out of the queued tier: it is not waiting on a ship, it is
+      waiting on a human. Walk the screen list in the fix list; `/change-requests` is the
+      cleanest single proof case; check House Lights specifically.
 
 - [x] **TimePicker on a real phone — PASSED 2026-08-13** ("good"). Steppers gone, chevron
       tappable. The fix that shipped inert once is now proven on the device it targets.
@@ -571,8 +711,16 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       during the functional walk above. What is deliberately NOT there: block canvas /
       Look panel / Send test / Desktop-Mobile toggles — deferred lane `mkt-compose-canvas`,
       unscheduled, awaiting Dallas's go.
+      POINTER: the Overview tab gains a needs-setup card and a header segment from lane
+      `mkt-moment-setup` (`7b099746`, merged and NOT pushed). Until that ships you will not
+      see them in prod, so their absence is not a restyle finding. Once it does ship, walk
+      them in the same session as this one; the Tier 6 entry has the steps.
 - [ ] **Proposals list pagination — LIVE as of the 2026-08-13 evening push (`1dc72df6` +
-      stale-response guard `92efc663`).** **Never opened in a browser**, deliberately:
+      stale-response guard `92efc663`). SPLIT 2026-08-14 (routing rule 1): the pager
+      MECHANICS below are the automated lane's, every one of them a deterministic state
+      check a headless run makes better than a person. What stays HUMAN is the one design
+      judgement at the bottom of this entry, an option group straddling a page boundary.**
+      **Never opened in a browser**, deliberately:
       the build-time walk needed a second dev server and a local admin token, both denied
       by the permission classifier, and nothing was routed around. Static gates that DID
       pass: ESLint, the Vercel-exact build, the `useUrlListState` suite (5/5), the round-3
@@ -586,59 +734,61 @@ BROKEN on the first attempt and were corrected blind by a later session (`54fb77
       controls must always match the controls (the `92efc663` guard; a mismatch means a
       stale response won). Full steps in
       `docs/superpowers/plans/2026-08-12-proposals-pagination.md`, Task 2 Step 6.
-      **A THIRD commit is committed but NOT in that push: `9dc29682`** (failed fetch no
-      longer captions stale rows). It adds two walk steps that the plan predates, so do
-      them only after it ships: with devtools set to offline, click Next and confirm the
+      **A THIRD commit, `9dc29682`, HAS SHIPPED** (failed fetch no longer captions stale
+      rows; confirmed an ancestor of `origin/main` on 2026-08-19). It adds two walk steps
+      the plan predates, and they are no longer gated on anything, so do them with the rest:
+      with devtools set to offline, click Next and confirm the
       table reads "Could not load proposals · Try again" with the pager GONE, rather than
       the previous page's rows sitting under a "Page 2 of N" label; then go back online and
       click Try again and confirm the list restores. Second, confirm a filter that genuinely
       matches nothing still reads "No proposals match these filters" with Clear filters, NOT
       the error row — before this commit those two states rendered identically, and that
       distinction is the point of the change.
-      One known cosmetic edge, plan-accepted but now logged on the fix list (2026-08-13,
-      round-3 section) for a design call: an option group whose members straddle a page
-      boundary renders on both pages with a split "N options" badge. Worth trying to catch
-      one live during the walk; report what it looks like, not as a bug.
+      **THE HUMAN HALF, and the only part of this entry a person owns.** One known cosmetic
+      edge, plan-accepted but now logged on the fix list (2026-08-13, round-3 section) for a
+      design call: an option group whose members straddle a page boundary renders on both
+      pages with a split "N options" badge. Automation can prove the badge splits; it cannot
+      say whether a client reading half a group across two pages is acceptable, and that is
+      the open question. Worth trying to catch one live; report what it looks like, not as a
+      bug.
 
 ## Tier 6 — queued: will owe a walkthrough the moment it ships
 
-- [ ] **Admin palette baseline eyeball sweep (palette lanes, merged 2026-08-14).** The
-  text-colour baseline moved for every admin surface in both skins with zero browser
-  verification (all contrast numbers were token arithmetic). Walk the screen list in the
-  fix list; /change-requests is the cleanest single proof case; check House Lights
-  specifically.
+The heading is a promise, so keep it true: an item belongs here ONLY while it is genuinely
+unshipped. All three former occupants had in fact shipped and were sitting under a "queued"
+banner reading as pending work, the palette sweep for five days across every admin
+surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
+do not leave it here because it is still unwalked.
 
-- [ ] **Mobile admin shell + PWA (lanes ma-a/ma-b) — NOW UNBLOCKED, PUSHED 2026-08-14.**
-  Both merges (`0bf3eb30` ma-a-shell, `30405f97` ma-b-pwa) are on `origin/main` as of the
-  8/14 evening push, so this is live and the walk no longer waits on anything. Give the
-  deploy a few minutes, then do it on the Pixel:
-  install from More > Install app (or Chrome's banner), confirm the DrB OS icon +
-  standalone launch, tab nav + badges, Desktop-view toggle round trip, airplane-mode
-  reopen, sign out wipes it.
-  ~~**DO NOT REPORT THE AIRPLANE-MODE LOGIN AS A BUG.**~~ SUPERSEDED: Dallas walked the
-  Pixel install 2026-08-14 with zero findings, and lane ma-d-auth has since FIXED the
-  transport-clear defect (AuthContext keeps the token on transport failure and the SW
-  serves the cached /auth/me), so once ma-d ships, an offline cold launch lands on the
-  restored route with staleness lines, behind the lock when more than 30 minutes
-  backgrounded. The full offline-resume proof rides the ma-d walk below.
-
-- [ ] **Mobile admin passkey unlock (lane ma-d-auth) — Pixel walk, after the ma-d push.**
-  On the real Pixel, against dev data:
-  1. Password login on the phone, accept the enrollment nudge, confirm the fingerprint
-     sheet appears and enrolls (More > Security should then read "Fingerprint unlock is on").
-  2. Background the app 30+ minutes (or set adminLockLastActiveAt back in devtools),
-     reopen: lock screen, one tap unlocks, lands on the same screen.
-  3. Airplane mode, cold launch within 30 minutes of last use: restored route with
-     staleness lines, no Login bounce.
-  4. Airplane mode, cold launch with the lock due: lock screen explains offline unlock
-     needs a connection; password path visible.
-  5. From desktop Settings > Security: revoke the phone passkey, confirm the desktop
-     logs out, the phone's next unlock fails to the password path, and re-enrollment
-     works.
-
-(Tier now populated; previously empty as of the 2026-08-13 evening push — both former occupants shipped and moved to
-Tier 3b. Next expected occupant: marketing phase 3 (mkt-h, Overview + Sent) once its plan
-is written and built.)
+- [ ] **Marketing moment needs-setup card + header segment (lane `mkt-moment-setup`):
+  MERGED 2026-08-19 (`7b099746`), NOT PUSHED.** Nothing to see in prod until it deploys;
+  the walk arms the moment it does. It closed the product half of the September
+  corporate-holiday miss, where an open moment with an empty audience was hidden in three
+  places at once (the card list, the `open_moment_count` badge, and the header reading
+  "0 moments open" while a moment was open).
+  The reusable law it introduced, which is what the walk is really checking: an open moment
+  now DECLARES which kind of empty it is. `emptyAudience: 'configure'` means a human can
+  close the gap today (`holiday-corporate`, whose audience is gated on the `corporate` tag),
+  so it renders a card. `emptyAudience: 'wait'` means only time changes it (`one-year-on`,
+  `cold-quotes`), so it stays quiet. Nagging daily about something nobody can act on is
+  itself the bug.
+  ON THE MARKETING OVERVIEW, once pushed:
+  1. A `configure` moment with an empty audience renders a needs-setup card that keeps the
+     spine, the window and the why, drops "Review recipients" (there is nobody to review),
+     shows `0 emailable` in the rail, and offers exactly two actions: "Set up the audience"
+     and "Not this time".
+  2. The header subtitle carries a separate "N needs setup" segment alongside "N moments
+     open", so it can never read "0 moments open" while a needs-setup card sits below it.
+  3. A `wait` moment with an empty audience renders NOTHING. Confirm `one-year-on` and
+     `cold-quotes` stay silent; prod's earliest event is 2026-04-25, so `one-year-on`
+     legitimately cannot match anyone for months and must not shout about it.
+  4. "Set up the audience" lands somewhere you can actually add the tag.
+  NOTE prod's `corporate` tag is now populated (9 clients), so `holiday-corporate` will
+  render as a normal sendable moment rather than a needs-setup card. To see the card at all
+  you need a `configure` moment whose audience is genuinely empty. Do NOT add a check that
+  dismissing a needs-setup card decrements the open-moments badge: it cannot fail, because
+  `open_moment_count` counts `moment.emailable > 0` and `moments_needing_setup` counts
+  `moment.emailable === 0`, so a needs-setup moment was never in the open count.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
@@ -726,6 +876,27 @@ is written and built.)
       T10-T13 (client helper port + onboarding copy/live preview, staff portal copy, client
       read-site swaps + admin legal-name row, the admin visibility notice) are copy and
       render checks, so by the 2026-08-14 split they belong in the automated lane, not here.
+- [ ] **PORTED FROM THE `oo-switch-server` LANE 2026-08-19: the proposal options
+      drawer + switch endpoint owes two launch checks, and they existed only on the lane.**
+      `docs/superpowers/plans/2026-08-14-proposal-options-drawer.md` Task 7 says these belong
+      in "the one owed-items file, which push time re-reads" and they were never appended
+      here. The lane is unmerged and stale (8 commits, branch `oo-switch-server`), so had it
+      been scrapped both checks would have gone with it. They live here now, and they gate
+      the SHIP, not the build.
+      **(1) "Walk Test Package" must not be `is_active` in the PROD catalog.** The switch's
+      option list selects `WHERE (is_active = true AND bar_type IS DISTINCT FROM 'class') OR
+      id = $1`, so any active fixture package appears on a live client-facing options list
+      under its own name. CHECKED CLEAN 2026-08-19: prod `service_packages` holds no row
+      whose name or slug matches walk or test at all, active or not. It is a DEV-catalog
+      fixture (the plan counts 11 active comparable packages in dev, "Walk Test Package"
+      among them). Re-run before the ship, because the dev catalog is where it lives and a
+      seed run is what would put it in prod:
+      `SELECT id, name, slug, is_active FROM service_packages WHERE name ILIKE '%walk%' OR name ILIKE '%test%' OR slug ILIKE '%test%';`
+      **(2) Walk a drink-plan preview across a hosted-to-BYOB switch and back.** The planner
+      derives from the proposal row, and the flip case has never existed in production, so
+      nothing about it is proven. Switch a proposal hosted → BYOB, open the drink-plan
+      preview, switch back, open it again. Both directions must read correctly; a stale or
+      half-derived plan is the failure this is looking for.
 - [x] **Stripe test Payment Links — ALREADY DEACTIVATED (verified 2026-08-14).** Both
       (`plink_1U0nVQ…`, `plink_1U0nVP…` — test tips for a test user) read `active: false`
       via the live API; the TODO had gone stale, same as the Ruta/Anna archive. Every other

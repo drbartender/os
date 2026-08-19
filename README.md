@@ -55,7 +55,7 @@ The React dev server proxies `/api` requests to `localhost:5000` automatically.
 
 ## Environment Variables
 
-Copy `.env.example` and fill in values. All variables:
+Copy `.env.example` and fill in values. This table is the fullest list, but it is one of three copies (`.env.example` and `CLAUDE.md` > Environment Variables are the others), so when you add a variable, add it to all three and grep the code before trusting any of them:
 
 | Variable | Required | Description |
 |---|---|---|
@@ -106,6 +106,8 @@ Copy `.env.example` and fill in values. All variables:
 | `THUMBTACK_WEBHOOK_SECRET` | For Thumbtack | Shared secret for Thumbtack webhook auth |
 | `THUMBTACK_AGENT_SECRET` | For harvester | Shared secret for the email-harvester agent + admin-paste routes; fails closed when unset |
 | `HARVESTER_ENABLED` | Optional | `false` idles the harvester (server returns `[]`, agent idles). Default on |
+| `MAX_HARVEST_ATTEMPTS` | Optional | Transient-failure retry cap before a harvest lead is marked `failed`. Default 3. |
+| `HARVEST_COOLDOWN_INTERVAL` | Optional | Postgres interval before a leased-but-unresolved harvest lead is re-offered by `pending-harvest`. Default `'6 hours'`. |
 | `CAL_WEBHOOK_SECRET` | For Cal.com | HMAC-SHA256 signing secret for the Cal.com webhook. Required in prod; webhook returns 503 if unset. |
 | `CAL_BOOKING_URL` | For Cal.com | Public Cal.com booking page URL. Surfaced in three client comms touches (drink-plan nudge email + SMS, six-months-out marketing). Optional; templates omit the consult line when unset. |
 | `GOOGLE_PLACES_API_KEY` | For venue search | Google Places API (New) key for venue-name search. Server-only. When unset, venue search degrades to a plain text input. |
@@ -119,6 +121,7 @@ Copy `.env.example` and fill in values. All variables:
 | `VAPID_CONTACT_EMAIL` | For staff push | Contact email in the VAPID JWT (`mailto:`). Defaults to `contact@drbartender.com`. |
 | `ADMIN_EMAIL` | For seed | Admin account email. Used for the seed account and as the default Reply-To on client-facing emails. |
 | `ADMIN_PASSWORD` | For seed | Admin account password |
+| `ADMIN_PHONE` | Optional | E.164 number for last-minute (<72h) booking SMS alerts. Unset → the admin SMS is skipped; the broad staff blast still fires. |
 | `TELEGRAM_BOT_TOKEN` | For VA calling | Telegram Bot API token (@BotFather). Unset → Telegram helpers no-op and outbound calling is dead. |
 | `TELEGRAM_WEBHOOK_SECRET` | For VA calling | Secret URL path segment (`/api/telegram/<secret>`) AND the `X-Telegram-Bot-Api-Secret-Token` header value (constant-time compared). Set the same value at `setWebhook`. |
 | `TELEGRAM_ALLOWED_USER_ID` | Bootstrap | Numeric Telegram user id of Zul. Leave UNSET on first deploy for bootstrap mode (webhook echoes the sender's id, dials nothing); then set + redeploy. |
@@ -135,6 +138,7 @@ Copy `.env.example` and fill in values. All variables:
 | `VOICEMAIL_ENABLED` | No | 224-inbound voicemail master switch. **Default OFF**; only `'true'` enables. Off restores pre-feature behavior exactly (no ping, no recording). |
 | `VM_MAX_LENGTH_SEC` | No | Max voicemail recording length in seconds (default 120, clamped 30..300). |
 | `VM_DAILY_CAP` | No | Max voicemail-path calls per rolling 24h (default 50, counted from `voicemail_delivery`). Inbound analog of `VA_CALL_DAILY_CAP`. |
+| `VM_GREETING_URL` | No | Source of the 224 voicemail greeting. Unset → Zul's recorded mp3, served by the public `GET /api/voice/greeting.mp3`. A full https URL `<Play>`s a different recording with no redeploy; the literal `say` falls back to the synthetic voice (known-good kill switch). |
 | `VM_PRIMARY_DIAL_TARGET` | Yes* | What the primary line (+12242221922) dials to reach Dallas, strict E.164 (the 312 GV number). Unset → primary calls are apologized away (Sentry-paged, throttled). *Required once the 1922's voice webhook points at us. |
 | `VM_PRIMARY_RING_SEC` | No | Primary-line ring seconds before a miss (default 18, clamped 5..30; deliberately under a carrier voicemail pickup). |
 | `VM_TEXT_DESTINATION` | Yes* | Where a primary-line voicemail is texted (the 312), strict E.164. Unset/malformed silently disables primary delivery (rows stay retryable; startup warning + per-call log only). |
@@ -153,7 +157,7 @@ Copy `.env.example` and fill in values. All variables:
 | `MAX_FIRST_REPLY_ATTEMPTS` | No | Offer-side attempts cap before a reply flips to `failed` (default 3). |
 | `FIRST_REPLY_COOLDOWN_INTERVAL` | No | Reply lease re-offer interval (default `'10 minutes'`). |
 | `FIRST_REPLY_CALL_DELAY_SECONDS` | No | Delay between the first-reply outcome and the promised lead call (default 60; 0 = immediate; clamped 0-600; sweep backstops restarts without preempting the room). |
-| `FIRST_REPLY_NIGHT_JITTER_START_HOUR` / `_END_HOUR` | No | Chicago dead-hours window `[start, end)` where night replies get the 2-14 min jitter (defaults 2, 8; may wrap midnight); outside it night replies are immediate. |
+| `FIRST_REPLY_NIGHT_JITTER_START_HOUR` / `FIRST_REPLY_NIGHT_JITTER_END_HOUR` | No | Chicago dead-hours window `[start, end)` where night replies get the 2-14 min jitter (defaults 2, 8; may wrap midnight; start == end disables); outside it night replies are immediate. |
 
 The frontend uses one build-time variable set in `client/.env.production`:
 - `REACT_APP_API_URL` — absolute URL to the backend (e.g., `https://os-g7oa.onrender.com`)
@@ -620,10 +624,16 @@ dr-bartender/
 │   │                           #   cc-transfer-events.js           : future CC events -> native proposals (manifest-driven, born-confirmed, comms-guarded, --resume)
 │   │                           # other one-off operator scripts (dry-run default, --apply to write):
 │   │                           #   reset-unpaid-gratuity.js (+ .test.js) : strip pre-election self-elected gratuity from UNPAID proposals (column- OR snapshot-carried); refuses any paid row
-├── docs/                       # Project docs: build-board.md (Claude-maintained ready/in-flight/shipped index), ops-runbook.md, tech-debt.md,
-│                               # client-portal-v2-project.md, staff-portal-beo-project.md, open-threads.md, superpowers/{specs,plans}/
-├── .claude/agents/             # Claude Code review agents (7 agents)
-├── .husky/pre-commit           # Pre-commit hook, four steps: docs-drift check + file-size ratchet + lint-staged + os-stays-on-main guard (scripts/guard-os-main.sh)
+├── docs/                       # Project docs. The three the workflow actually runs on:
+│                               #   fix-list-remaining-2026-07-02.md : THE rolling backlog, the one list (tech-debt.md, open-threads.md
+│                               #                                     and the staff-ops backlog were folded in and DELETED 2026-08-13)
+│                               #   walkthroughs-owed.md             : the one file tracking owed walkthroughs; never scatter "owed X" fragments
+│                               #   build-board.md                   : Claude-maintained ready/in-flight/shipped lane index (write via scripts/board-write.sh)
+│                               # plus runbooks (ops-runbook.md, va-calling-runbook.md), project docs (client-portal-v2-project.md,
+│                               # staff-portal-beo-project.md, client-portal-design-reference.md), the per-surface *-design-prompt.md set,
+│                               # design-artifacts/, audit-2026-07-13/, and superpowers/{specs,plans}/
+├── .claude/agents/             # Claude Code agents (12): six code-review (code-review, consistency-check, database-review, performance-review, security-review, ui-ux-review) + six design-stage (spec-grounding/gaps/risk for /review-spec, plan-fidelity/decomposition/feasibility for /review-plan)
+├── .husky/pre-commit           # Pre-commit hook, five steps: docs-drift check + file-size ratchet + CSS palette-scope check (warn-only, `|| true`) + lint-staged + os-stays-on-main guard (scripts/guard-os-main.sh)
 ├── .env.example                # Environment variable template
 ├── eslint.config.mjs           # ESLint flat config + security plugin
 ├── package.json                # Server deps + npm scripts
@@ -642,6 +652,8 @@ dr-bartender/
 | `npm run admin:create` | Promote an existing user to admin (or create one) from `ADMIN_EMAIL`/`ADMIN_PASSWORD` |
 | `npm run lint` | Run ESLint on all server code |
 | `npm run lint:fix` | Run ESLint with auto-fix on server code |
+| `npm test` | Run the server suite: `node --test "server/**/*.test.js"`. **These tests share the dev database**, so run them ONE AT A TIME from the repo root, never in parallel and never from a lane worktree while another run is live. Two concurrent runs stomp each other's rows and produce failures that have nothing to do with your change. |
+| `npm run where` | Print the worktree/branch location banner (`scripts/show-location.js`): which checkout you are in and which branch it is on. Also the one `SessionStart` hook. |
 | `npm run test:smoke` | Run the pre-push money-path smoke gate manually (`scripts/testdb-smoke.js`): reset the isolated Neon `ci-smoke` branch, apply the schema, and run the money suites serially. No `NEON_API_KEY` → prints a loud SKIP banner and exits 0. See [Test gate](#test-gate). |
 | `npm run gate` | Run BOTH pre-push gates now (money smoke + Vercel client build, whichever the diff needs) and write a receipt, so the push itself is instant. Strongly recommended before any push: `git push` opens its connection before running the hook, so an 8-minute hook makes GitHub close that connection and the push fails *after* passing everything. The hook re-runs the full gate whenever the receipt is missing, expired (>12h), for a different HEAD, for changed file contents, or for a pushed sha that is not HEAD, so this never weakens the gate. See [Test gate](#test-gate). |
 | `npm run audit:check` | Check for known dependency vulnerabilities |
@@ -652,9 +664,15 @@ dr-bartender/
 | `npm run optimize:assets` | One-shot asset optimization (PNG→WebP at tile size, TTF→WOFF2). Idempotent — skips already-converted outputs. |
 | `npm run worktree:new -- <name>` | Create a parallel-dev worktree at `../worktrees/<name>` on a new branch off `main`, with `node_modules`, husky, and BOTH env files (`.env` + `client/.env`) symlinked in. `client/.env` matters for running, not just committing: it carries `REACT_APP_API_URL`, and without it CRA bakes an empty API base into the bundle and every call 500s against the dev server |
 | `npm run worktree:rm -- <name>` | Tear down a worktree: remove its symlinks, the worktree, then the branch (`--force` to discard an unmerged branch) |
-| `npm run lane:status` | List open lanes (worktrees) and flag stale ones (48h no-commit, 15+ main commits since cut, or a sensitive path landed on main since cut); run at session start and in the push sweep |
+| `npm run lane:status` | List open lanes (worktrees) and flag stale ones (48h no-commit, 15+ main commits since cut, or a sensitive path landed on main since cut). **Manual**: nothing runs it automatically, and the only `SessionStart` hook is `scripts/show-location.js`. Run it deliberately when opening a session with lanes outstanding, and in the push sweep |
 
 ## Key Features
+
+### Phone Admin PWA (spec 2026-08-13, passkey unlock live 2026-08-16)
+- The admin host is installable: `client/public/admin-manifest.json` ("DrB OS", `start_url` `/events`, standalone, portrait) plus metas injected at runtime behind the admin host gate by `client/src/utils/installAdminPwaMeta.js`. More renders an explicit "Install app" row when the browser offers one and the app is not already standalone. The staff PWA is an untouched sibling with its own manifest, injector, and service worker
+- **Offline is a read-only courtesy, not a mode.** `client/public/admin-sw.js` precaches only the entry bundles, serves navigations network-first with a cached `index.html` fallback, and serves content-hashed `/static/` assets cache-first. Allowlisted phone-surface GET `/api/` reads are cached per user and served ONLY on transport failure or a 4s timeout, stamped with an age the UI renders as "as of ...". Non-GET is never intercepted and **writes never queue**: nothing you type offline is held and replayed later. A server-answered non-2xx is never answered from cache
+- Phone-first surfaces rather than a shrunken desktop: a three-tab bottom bar (Events and Proposals carry needs-you counts, More carries a neutral badge), a brand-chip/back-arrow header with search, More as the tap-row index of every non-tab surface, resume-last-route on cold standalone launch (route level only, half-finished edit sheets are deliberately not restored), and a "Desktop view" escape hatch in the header for anything the phone layout cannot do
+- **Passkey lock.** After login, a one-time nudge offers to enroll this phone's biometrics. Once enrolled, a cold launch on an expired token and any return after 30 minutes in the background both land on a full-screen lock instead of the login form, so the URL you were on survives. Unlock mints a 12h device session; password login is untouched and still mints 7d. Revoking a passkey from Settings > Security is a **global logout by design** (it bumps `users.token_version`), which is what makes it the lost-phone kill switch. Desktop admin and the staff portal are unaffected: everything gates on a passkey enrolled on THIS device at phone width
 
 ### Shift lifecycle: "has it finished", not "what day is it" (2026-08-14)
 - Every shift-visibility surface asks whether the shift's **end instant** has passed, not whether its date is today or later. One definition, `server/utils/shiftEndInstant.js`, imported by all eleven consumers — a COUNT and the LIST it counts share the expression, because two copies is exactly how they silently diverged before
@@ -763,7 +781,7 @@ dr-bartender/
 - **Drink Menu**: Manage 25 cocktails + 16 mocktails across categories
 - **Events**: Paid proposals become events; list view shows scannable cards, detail view is a full dashboard with staffing management, equipment config, auto-assign, payment, and drink plan
 - **Messages log**: Every client-facing email and SMS is recorded at the `sendEmail`/`sendSMS` choke points and shown newest-first on the event detail page, with sent/failed status so a silent send failure is visible
-- **Overview money board**: Dashboard + Financials merged into one surface at `/dashboard` (nav label "Overview"); `/financials` redirects here. Band 1 live triage (Needs-you, upcoming events, pipeline) plus Band 2 filtered analysis (stat tiles, revenue chart, funnel, lead spend, proposals/payments in range) where every number links out with pre-applied filters or expands in place. **Settings**: Placeholder tab ready for expansion
+- **Overview money board**: Dashboard + Financials merged into one surface at `/dashboard` (nav label "Overview"); `/financials` redirects here. Band 1 is live triage: the tabbed Needs-attention card (Staffing / Prep / Clients, plus a Sales tab that appears only when there is sales work) beside a right rail of standing cards, PipelineCard then PayrollStatus (admin-only). Band 2 is filtered analysis (stat tiles, revenue chart, funnel, lead spend, proposals/payments in range) where every number links out with pre-applied filters or expands in place
 - **Stripe payout tracking**: bank-level reconciliation tab on the Overview Payouts tab (read-side mirror of Stripe payouts + balance-transaction lines, in-transit bucket, fee rollups, failed-payout email alert)
 - **Payroll pay run**: the Payroll page leads with a queue of every unpaid period (process/reopen lifecycle per card) and a per-payout, generate-gated pay panel: QR codes for Venmo/Cash App, a prefilled PayPal link, chase.com plus copy affordances for Zelle/bank/check, with the amount locked at generate (server drift guard) and an optional payment reference recorded at mark-paid
 

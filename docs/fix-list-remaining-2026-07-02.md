@@ -36,6 +36,11 @@ open in code, so an unmarked entry is a verified-open entry as of that date.
 - **Compare-page reskin** — `docs/compare-page-design-prompt.md`, sitting since 7/2; can ride either session above.
 - **Potion Planner rework (client wizard)** — prompt doc committed 2026-07-15: `docs/potion-planner-design-prompt.md` (current-state map, file refs, ranked confusion inventory incl. Dallas's balance-questions ask, money-path law). Flow/comprehension redesign in the existing skin, claude.ai/design session next. Absorbs the deferred 7/13 items #1 (custom drinks/mocktails on shopping list) and #2 (better balance questions). **BUILT & SHIPPED 2026-07-18 as Planner v2** (pp2 lanes: `client/src/pages/plan/v2/PlannerV2.js` via PlannerRouter, `planner_version >= 2` branch at `drinkPlans/submit.js:92` — 2026-08-14 audit). Residuals live in the Planner v2 sections below; this design session is done.
 - **Client-detail messaging (QUEUED 2026-07-14, from Needs-Attention-tabs spec §7)** — full SMS history + reply on the client details page; Messages nav demotes to an "All messages" link; the overview's unread-SMS queue items retarget to the client page (one-line change). Driver: finding a thread in the Messages tab is too tedious. Endpoints already exist (`/sms/conversations/:clientId` + reply route). **CORE SHIPPED** (lane sms-client-panel 9020c68a: `ClientDetail.js:271` renders the Messages card + ClientConversation reply — 2026-08-14 audit; the Messages-nav demotion and overview-retarget halves of this entry were not separately verified).
+- **Admin Staff hub** — prompt doc committed 2026-08-19: `docs/staff-hub-design-prompt.md`
+  (`8ff9c9d2`). Consolidates Roster / Hiring / Payroll / Reviews under one hub, with
+  prod-grounded figures for the mocks and four named content problems, one of them the 29 dead
+  import rows on the Hiring board recorded at the end of this file. claude.ai/design session
+  next; nothing built.
 - **Menu design page (QUEUED 2026-07-14, from Needs-Attention-tabs spec §7)** — real workflow over the planner-captured menu prefs (`menuStyle`/`menuTheme`/`drinkNaming`/`menuDesignNotes`); produces a real artifact and the done-state that then powers "menu to design" Prep queue items (deliberately NOT hand-flagged in the tabs build). Dallas has page ideas to brainstorm.
 
 ## Scope calls needed before scoping
@@ -1219,7 +1224,12 @@ sweep would have dropped the partner for the 9 couple-named clients, closed in `
 did not survive scrutiny, see below. Item 7 is blocked on Dallas naming the new cap.
 Items 8-11 are unstarted.
 
-### P0 — live regression, costing leads right now
+### P0 (2026-08-10) — live regression, costing leads; FIX SHIPPED, still owes its proof
+
+> Re-titled 2026-08-19. The "right now" was true on 2026-08-10 and is not now: the fix went
+> live on the box (agent-only change, no push) per the batch summary above. What it still owes
+> is the next-real-lead proof. A section header is what a skimming operator reads, so it should
+> not keep declaring an emergency that ended.
 
 1. **TT first reply is broken again, and it IS a Thumbtack change (CONFIRMED).**
    Dallas: "Thumbtack may have changed. first reply didn't seem to fire." He is right.
@@ -1609,7 +1619,7 @@ tier disagreeing.
 
 ### Added 2026-08-12 (found by Dallas during the walkthroughs)
 
-**FIXED 2026-08-12 (both instances, one change, on main — not yet pushed).** CSS-only plus a
+**FIXED 2026-08-12 (both instances, one change), PUSHED in the 2026-08-13 batch.** CSS-only plus a
 marker class; behavior-inert, admin-only, no money path. CI client build exit 0 and both
 rules verified in the built `main.*.css`, including that the sidebar override lands AFTER the
 transparent rule in source order. **Dallas confirmed both surfaces fixed in the app
@@ -2885,8 +2895,14 @@ The stale-response race in ProposalsDashboard (codex) was fixed at the gate. The
 
 # SESSION WRAP 2026-08-14 — read this first if you are picking the work back up
 
-**NOTHING IS PUSHED.** Everything below is on LOCAL main or in a lane. `origin/main` is
-untouched, so a push carries all of it at once and needs the full gate.
+**ALL OF THIS SHIPPED** in the 2026-08-16 push (`bab7fba5..981b09ef`). Every commit named in
+this block is an ancestor of `origin/main`, verified 2026-08-19. Read what follows as a
+historical record of that session, not as pending work.
+
+> The block below is preserved as written on 2026-08-14, when none of it had shipped. Its
+> "unpushed" framing was true for two days and is now false. Kept because the per-lane review
+> notes and the verification lesson at the end are still worth having; corrected in place so
+> nobody reads it as a live deploy gate.
 
 **Merged to local main, reviewed clean:**
 - `3155625c` lane `drop-email-enabled` — `communication_preferences.email_enabled` removed
@@ -2900,7 +2916,7 @@ untouched, so a push carries all of it at once and needs the full gate.
 user 61 preferred_name/display_name -> "Taylor Hogan" / "Taylor H."; user 31 deactivated
 (fired, notice deliberately suppressed, audit rows written with `via=manual_sql_offboarding`).
 
-**Three more lanes merged to local main (still unpushed):**
+**Three more lanes merged to local main:**
 - `5d078096` `misquote-qualifier` — the client-facing `per_guest_timed` misquote. Owed suite run
   green (`publicOptions.test.js` 14/14). Found a FIFTH bare-rate site the brief missed, and
   caught that the admin quote builder was already rounding a $0.50 rate to "$1".
@@ -2930,8 +2946,22 @@ not apply — but it is non-empty ONLY because main is now AHEAD on `ARCHITECTUR
 carrying all three lanes' doc edits plus a conflict resolution while each branch has only its own.
 Each lane's own content was verified present on main by hand. Kept: `schema-traps`,
 `shift-lifecycle`, `mkt-perf`, `admin-os-legacy-palette`, plus the two superseded ones
-(`shift-closure`, `current-date-shift-visibility`) whose work was salvaged into `shift-lifecycle`
-and which still need Dallas's okay before any scrap.
+(`shift-closure`, `current-date-shift-visibility`) whose work was **PARTIALLY** salvaged into
+`shift-lifecycle` and which still need Dallas's okay before any scrap.
+
+> **CORRECTED 2026-08-19: "salvaged" overstated it, and acting on the old wording would have
+> destroyed real work.** `current-date-shift-visibility` still holds 2 unmerged commits
+> (`18768c72`, `bd99638d`) touching 13 files, four of them new test files worth ~820 lines
+> (`clientPortal.chicagoDay.test.js`, `shifts.currentDateVisibility.test.js`,
+> `autoAssign.chicagoDay.test.js`, `smsInbound.nearestShift.test.js`). None of it is on main.
+> Verified the same day: main still carries bare `CURRENT_DATE` in `server/utils/autoAssign.js`,
+> `server/utils/retentionEligibility.js`, `server/routes/clientPortal.js`,
+> `server/routes/calcom.js` and `server/routes/admin/users.js`, which is exactly the family
+> those commits fix. So this is live unmerged correctness work, not redundant leftovers.
+> `shift-closure` likewise has 3 unmerged commits and no merge commit.
+> **Do not scrap either branch.** Note also that any salvage now touches
+> `server/routes/staffPortal.js`, which became sensitive-listed on 2026-08-19 (`ec6d6028`), so
+> the merge is a mandatory stop-and-ask rather than an ordinary textual resolution.
 
 **Verification lesson worth keeping:** the line-match check reported "missing" doc lines on two
 lanes and both were false alarms. It compared against each lane's FIRST commit, whose text the
@@ -3647,7 +3677,12 @@ period to change it." Note the sibling message on the credit-removal path
 (`staffReviews.js`, `frozen_credit_removals`) carries the same "already paid"
 wording and should move with it.
 
-## The seniority PUT's no-op guard is unpinned by tests (found 2026-08-14, Tier 4 smoke)
+## ~~The seniority PUT's no-op guard is unpinned by tests~~ CLOSED (found 2026-08-14, Tier 4 smoke)
+
+**FIXED 2026-08-14 by lane `seniority-noop-test` (`863c8fc0`), shipped in the 2026-08-16 push.**
+Re-verified 2026-08-19: `server/routes/admin/users.seniority.test.js` now references
+`updated_at` 12 times across 9 tests (it had 7 tests and zero mentions when this was written),
+so the invariant below is pinned at the route. The diagnosis is kept for the record.
 
 Test coverage, not a live bug. The guard itself works — verified by hand on dev:
 an idle Save (identical values re-submitted to
@@ -3656,10 +3691,11 @@ an idle Save (identical values re-submitted to
 
 The problem is what protects it. That behavior lives entirely in one WHERE clause
 (`server/routes/admin/users.js:683-697`, the three `IS DISTINCT FROM` terms), and
-`server/routes/admin/users.seniority.test.js` — 7 tests, all green — does not
+`server/routes/admin/users.seniority.test.js` — 7 tests, all green — did not
 contain the string `updated_at` anywhere. The only test in the repo pinning this
-invariant is `staffPaymentImport/seniorityBackfill.test.js`, which covers the
-BACKFILL SCRIPT, not the route.
+invariant was `staffPaymentImport/seniorityBackfill.test.js`, which covers the
+BACKFILL SCRIPT, not the route. (Both sentences were true when written; the route
+test now carries the coverage.)
 
 So the WHERE clause can be simplified away by anyone tidying that query and the
 entire suite still passes. What breaks is not seniority: `updated_at` orders
@@ -4159,7 +4195,7 @@ NOT re-raise this or "fix" it in a later cleanup pass — the reasoning below is
 only so the decision is auditable, not as a pending task. If the §7 contest is still
 at zero payouts in a few months, that is when this becomes a live question again.
 
-## OPERATIONAL, TONIGHT: Jasmine has been SMS-dark for six weeks and works today (found 2026-08-14)
+## OPERATIONAL: Jasmine has been SMS-dark since 2026-07-05 and works again 2026-08-24 (found 2026-08-14, re-dated 2026-08-19)
 
 Not a bug. The system is behaving correctly and that is the problem: nothing surfaces
 it.
@@ -4169,9 +4205,10 @@ it.
 `sms_enabled: false` ever since, and nobody has turned it back on — correctly, because
 only she can.
 
-She has an **approved shift TODAY, 2026-08-15, 5:30–10:30 PM** (shift 333, Ariel
-Wróblewska), and another on Aug 24 (shift 369, Brianna Modugno). Her reminder for
-today's shift already fired and was suppressed at 22:30Z tonight:
+She had an **approved shift on 2026-08-15, 5:30–10:30 PM** (shift 333, Ariel
+Wróblewska), which has since passed dark, and another on **Aug 24** (shift 369, Brianna
+Modugno) which is the next live one. Her reminder for the 8/15 shift fired and was
+suppressed at 22:30Z the night before:
 
   2426  shift_reminder      Aug 14 22:30Z  suppressed  "staff.communication_preferences.sms_enabled is false"
   2654  beo_unack_nudge_sms Aug 12         suppressed  same
@@ -4342,9 +4379,12 @@ a real end-instant helper (`shiftEndInstant.js`) that the visibility family now 
 was left on the calendar-day comparison. Low severity — erring toward "still upcoming" is the
 safe direction for a staffer — but the two surfaces now disagree about the same shift.
 
-## 5. `server/routes/staffPortal.js` is 995 lines against the 1000 hard cap
+## 5. `server/routes/staffPortal.js` is 997 lines against the 1000 hard cap
 
-Now the closest file in the tree to the cap (`crud.js` dropped to 976 today). Still under, so
+**Re-measured 2026-08-19: 997, not 995** (the pay-period-boundary fix `ec6d6028` added to it),
+and it is the SECOND-closest file to the cap, not the closest.
+`client/src/pages/plan/PotionPlanningLab.js` is **998** and is the real ratchet risk; see the
+state-controller split entry earlier in this file. `crud.js` is 976. Still under, so
 nothing is blocked yet, but the ratchet means the next addition that pushes it over is blocked
 until something is extracted. Split candidates follow the existing patterns: the payouts/paystub
 concern already lives in `server/routes/staffPortal/`, so more can move there.
@@ -4434,16 +4474,18 @@ fleet found and deliberately did not hold the push for.
 
 ## OWED NOW THAT THE DEPLOY HAS LANDED
 
-- **Clear `paystub_storage_key` on the 9 wrong paystubs.** This was gated on the date fix
-  reaching prod, which it now has. `staffPortal/payouts.js:325` early-returns the cached R2 PDF
-  whenever the key is set, so the nine already-issued stubs still render the wrong paid date
-  until their keys are cleared. Doing it BEFORE the deploy would have re-rendered the same wrong
-  date; that constraint is now lifted. Owner-owned action.
-- **Expect calendar churn on the first boot.** The closure sweep runs at boot+75s and closes
-  **exactly 50** past-dated shifts (measured against prod, not estimated). It writes zero
-  `cancelled` and touches zero `shift_requests`. 23 of the 50 fall inside the iCal feed's
-  30-day window, so the owner's subscribed Google Calendar re-syncs those events once. Nothing
-  is struck off — `cancelled: false` on all of them.
+- ~~**Clear `paystub_storage_key` on the 9 wrong paystubs.**~~ **MOOT, verified against prod
+  2026-08-19: no owner action.** `payouts` holds **0 rows with a non-null `paystub_storage_key`**
+  (0 of 32 total, 0 of the 27 paid). Nothing is cached in R2, so the
+  `staffPortal/payouts.js` early-return never fires and every paystub regenerates through
+  `assemblePaystubData` with the corrected `chicagoYmdOf` date on first request. The action was
+  written on the assumption that keys were set; they never were. Note this also retires the
+  stronger claim made elsewhere in this file that "the PDFs are cached" — they are not.
+- ~~**Expect calendar churn on the first boot.**~~ **HAPPENED, verified against prod
+  2026-08-19.** All **53** shifts on completed proposals are now `status='completed'`; zero
+  sweep candidates remain and zero `cancelled` were written, as predicted. The one-time iCal
+  re-sync is behind us. Consequence for the section below: `backfillShiftClosures.js` now prints
+  "nothing to do", so the ROSTER GAP table there is the only surviving record of those two gaps.
 
 ## ROSTER GAP: two paid events with nobody on the roster (capture these, the report self-destructs)
 
@@ -4642,3 +4684,25 @@ call rather than being specificity fallout.
 - Sales-tab behaviour could not be observed live: no proposal currently qualifies as
   sent-unviewed past 72h, so the conditional 4th chip and the chip row's own horizontal scroll
   are verified in code only, never on screen.
+
+## The Hiring board shows 29 dead CheckCherry import rows as live pipeline (found 2026-08-19, staff-hub design grounding)
+
+Verified against prod 2026-08-19. The Onboarding column renders **40 cards**, and only **11**
+are real work:
+
+| onboarding_status | rows | created 2026-05-27 (the CC import) |
+|---|---|---|
+| `hired` | 29 | **29 (all of them)** |
+| `in_progress` | 11 | 0 |
+| `applied` | 1 | 0 |
+| `interviewing` | 1 | 0 |
+
+Every one of the 29 `hired` rows was created on 2026-05-27, the CheckCherry import date. They
+are historical staff records that the import parked in a pipeline state, not people moving
+through hiring. Applied and Interviewing hold one card each, so the board's real throughput is
+tiny and is buried under a wall of dead cards nobody can dismiss.
+
+Not a data bug: the rows are correct, the board's reading of them is what misleads. The fix is
+a board-level distinction, either filtering imported rows out of the pipeline view, collapsing
+them behind a count, or giving them a terminal status that the Hiring board does not render.
+Decide it in the Staff hub design session, which this finding came out of.
