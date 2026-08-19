@@ -39,6 +39,29 @@ async function updateShiftHandler(req, res) {
   if (supply_run !== undefined && typeof supply_run !== 'boolean') {
     throw new ValidationError({ supply_run: 'supply_run must be a boolean.' });
   }
+  // shifts.status is NOT editable here. Every legitimate transition already has
+  // an owner: 'cancelled' from the event-cancel paths (shiftReap.js, and
+  // cancel-or-unassign below), 'open' from a drop or a CANT text
+  // (staffShiftActions.js, smsInbound.js), 'completed' from the closure sweep.
+  // This generic editor accepted it off req.body with no validation at all,
+  // which is how three dev shifts ended up carrying 'confirmed' — a value no
+  // schema definition allows.
+  //
+  // The live hazard is narrower than "an arbitrary status" but worse: the DB
+  // CHECK now rejects anything outside open|filled|completed|cancelled, so the
+  // real exposure is that any admin or manager PUT could stamp a LEGAL
+  // 'cancelled' on a delivered event. That value is overloaded — the Events
+  // dashboard renders a Cancelled chip from it, and calendar.js turns it into
+  // STATUS:CANCELLED with a bumped SEQUENCE, which strikes the event off the
+  // owner's subscribed Google Calendar. Rejecting outright rather than
+  // allowlisting the four values, because no caller sends it: the only two
+  // client callers of PUT /shifts/:id send equipment_required and supply_run.
+  if (status !== undefined) {
+    throw new ValidationError({
+      status: 'Shift status is not editable here. Use cancel-or-unassign to cancel, '
+        + 'or let the drop and closure paths set it.',
+    });
+  }
   // PATCH semantics: missing fields preserve existing values via COALESCE.
   // The previous version sent '[]' for omitted positions_needed /
   // equipment_required, silently wiping staffing + gear when the admin only
@@ -73,7 +96,12 @@ async function updateShiftHandler(req, res) {
     start_time || null, end_time || null,
     location || null,
     positions_needed !== undefined ? JSON.stringify(positions_needed) : null,
-    notes || null, status || null,
+    // Always null: the guard above rejects any status in the body, so this
+    // COALESCE is provably a no-op. The placeholder stays rather than being
+    // removed because dropping $9 would renumber twelve positional parameters
+    // on a live UPDATE — including $14 (the WHERE id) and the doubled $21 —
+    // and a mis-shift there writes one column's value into another.
+    notes || null, null,
     equipment_required !== undefined ? JSON.stringify(equipment_required) : null,
     auto_assign_days_before !== null && auto_assign_days_before !== undefined ? auto_assign_days_before : null,
     lat || null, lng || null,
@@ -89,6 +117,13 @@ async function updateShiftHandler(req, res) {
   // that a downstream suppression failure rolls back the cancel. Non-cancel
   // edits stay on the pre-existing single-statement path.
   let result;
+  // UNREACHABLE since 2026-08-19: the guard at the top of this handler throws
+  // whenever `status` is present at all, so `status` is always undefined here.
+  // Kept rather than deleted so the change stays trivially reversible and so the
+  // BEO-suppression pairing below is not lost — but do NOT read this branch as a
+  // live path: a generic PUT can no longer cancel a shift. Cancellation lives in
+  // cancelOrUnassignShiftHandler (mode='cancel') and shiftReap.js. Deleting this
+  // block and collapsing to the single-statement path is on the fix list.
   if (status === 'cancelled') {
     const dbClient = await pool.connect();
     try {
