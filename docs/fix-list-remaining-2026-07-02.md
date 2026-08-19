@@ -3851,6 +3851,42 @@ Client-facing copy plus interaction on a money surface: worth the full fleet.
 
 ## The September corporate-holiday moment is invisible in prod, and the window closes Sep 5 (found 2026-08-14)
 
+**BOTH HALVES NOW CLOSED (2026-08-19).**
+
+**1. OPERATIONAL — DONE, verified in prod.** `client_tags` now holds exactly 9 rows, all
+`corporate`, and they are precisely the nine this entry's addendum named: Allyson Gietl,
+Brianna Modugno, Cathy Murphy, Dora Travaglio, Drew Mathew, Jesse Burns, Joanne Korzynski,
+Patricia Johnson, Tyler Anderson. The `past-corporate` audience is no longer empty, so the
+moment is SENDABLE and its card is on screen with 17 days left on the window. Whoever sends it
+should still check the audience against `RESEND_DAILY_CAP` first, per the ordering note below.
+
+**2. PRODUCT — BUILT, lane `mkt-moment-setup` (`7b099746`), merged, NOT yet pushed.** A moment
+whose window is open but whose audience is empty no longer renders as nothing. It was hidden in
+THREE places, not the one this entry identified: the card list, the `open_moment_count` badge,
+and the `MarketingLayout` header, which read "0 moments open" while an open moment existed.
+
+**The part worth carrying forward is what the first cut of that fix got WRONG.** Surfacing every
+open-but-empty moment is itself a bug. Two of the three moments (`one-year-on`, `cold-quotes`)
+are open PERMANENTLY (`isOpen: () => true`) and their audiences are purely temporal. The
+earliest event in prod is **2026-04-25**, so `one-year-on` cannot match anybody for another
+seven months. The naive fix would have parked a permanent "needs setup" card and a permanent
+"1 needs setup" header on a young book — nagging daily about something nobody can act on, which
+is exactly how the CSS palette checker taught everyone to ignore a green tick.
+
+So an open moment now has THREE states, and each moment declares which kind of empty it is
+(`emptyAudience: 'configure' | 'wait'`) rather than the code inferring it from SQL text:
+- **sendable** — `isLive`, unchanged.
+- **needs a person** — open, empty, and gated on a human classification (a tag). Renders a card
+  naming the audience and its rule, with one action.
+- **waiting** — open, empty, and only time will fill it. Renders nowhere, exactly as before.
+
+Related fixes that rode along: the client filter mirrors the server predicate INCLUDING the new
+clause (mirroring `emailable === 0` alone would have shipped the nag); the optimistic dismiss
+decremented `open_moment_count` for moments that were never in it; and the empty-state copy
+used to end "…and there is somebody to reach", which described the bug and explained the
+omission away.
+
+
 Time-boxed revenue, not a UI nitpick. Found while scripting the marketing restyle
 walk; verified against prod (`br-noisy-frog-ad99sa6l`, SELECT only).
 
