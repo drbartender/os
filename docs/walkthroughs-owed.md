@@ -539,8 +539,15 @@ nobody has opened at all.
       act with a cost, not a step to walk through casually. Do it when Dallas is at a
       keyboard and expecting it, or run it against the OTHER admin account.
       GENUINELY UNPROVEN, and the whole reason this box is open:
-      3. Airplane mode, cold launch within 30 minutes of last use: restored route with
-         staleness lines, no Login bounce.
+      3. ~~Airplane mode, cold launch within 30 minutes of last use: restored route with
+         staleness lines, no Login bounce.~~ **WALKED 2026-08-19 (Dallas). SPLIT VERDICT.**
+         Route restore PASSES: offline cold launch landed on the same page, no Login bounce,
+         so the `981b09ef` identity bound behaves. Staleness lines FAIL, and not on this
+         screen only: they do not exist anywhere in the product. `formatStaleAt` is exported
+         and imported by NOBODY, and `.m-stale` appears only inside a code comment. The SW
+         stamps the header and `api.js` surfaces `staleAt`, both with passing tests, but no
+         screen was ever wired to render it. Recorded in the fix list as its own entry. Do
+         not re-walk this leg for the staleness half until that ships.
       4. Airplane mode, cold launch with the lock due (background 30+ min, or set
          `adminLockLastActiveAt` back in devtools, since `LOCK_AFTER_MS` is 30 min): lock screen
          explains offline unlock needs a connection; password path visible.

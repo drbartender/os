@@ -4801,3 +4801,39 @@ Re-verified the same day: all 40 Onboarding cards are at 0%, so the fold takes 3
 cutover rows plus 3 stale `in_progress` signups) and leaves 8 live. Origin correction: the 29 are
 `hired` with no `cc_id` and no `import_source`; they are the existing roster bulk-registered through
 the pre-hire flow on cutover day, not rows the payment-history import wrote.
+
+## The offline staleness line was built, tested at both ends, and never wired to a screen (found 2026-08-19, passkey walk step 3)
+
+Dallas ran the offline cold-launch leg on the Pixel: the app restored the right route with no
+Login bounce (that half PASSES), but there is no "as of" line anywhere on the screen. There
+never has been. Spec section 7's staleness line does not exist in the product.
+
+The chain is built and green at both ends and disconnected in the middle:
+
+| link | state |
+|---|---|
+| `client/public/admin-sw.js:86` stamps `x-sw-cached-at` on every cache-served response | built, works |
+| `client/src/utils/api.js` `markStaleFromHeaders` surfaces it as `response.staleAt` | built, TESTED (`api.stale.test.js`) |
+| `client/src/utils/staleTime.js` `formatStaleAt` renders "as of 1:47 PM" | built, TESTED (`staleTime.test.js`) |
+| any screen calling `formatStaleAt` | **NEVER BUILT** |
+
+`grep -rn staleTime client/src --include=*.js` outside the util and its own test returns
+NOTHING: `formatStaleAt` is exported and imported by nobody. The `.m-stale` element the
+util's own header comment says "screen lanes render" appears nowhere in the codebase except
+that comment. The only live consumer of `staleAt` is `AuthContext.js:36`, which uses it to
+bound the offline IDENTITY, a different concern.
+
+**Why the tests gave no warning, which is the part worth carrying:** both suites test an END
+of the chain, never the join. A unit test on a formatter proves the formatter; it cannot
+prove anyone calls it. Two green files bought the appearance of coverage for a feature that
+does not exist on screen. Any future "utility plus tests, wiring later" split needs a test
+that asserts the CALL SITE, or it ships the same way.
+
+**Impact.** Offline the admin PWA renders cached events, proposals and money data styled
+identically to live data, with nothing indicating age. A phone in airplane mode at a venue
+shows a stale guest count or a stale balance as current. The identity is honestly bounded;
+the data is not.
+
+Fix: render `formatStaleAt(res.staleAt)` in a `.m-stale` element on the phone screen lanes
+that serve cached reads, and add a test that fails when the call site disappears. Ties to the
+mobile-admin spec section 7.
