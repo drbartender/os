@@ -4315,7 +4315,9 @@ the day injected through the `_deps` seam the file already had — the UTC and C
 ~19 hours a day, so a clock-derived fixture proves nothing most of the time, and pinning global
 `Date` would expire the suite's own JWT.
 
-## LIVE RIGHT NOW, found while fixing the above: every staffer's pay card is empty
+## ~~LIVE RIGHT NOW: every staffer's pay card is empty~~ — DECIDED FINE (Dallas, 2026-08-19)
+
+**Dallas: "the thing you just found is fine."** Not a defect: when no `pay_periods` row covers today there genuinely is no payout for that week yet, and an empty card is the honest answer. **Do not build the fallback, and do not re-raise this.** Recorded below as found, for context only.
 
 Independent of the fix. **No `pay_periods` row covers today** — verified on prod 2026-08-19, the
 latest row is `2026-08-11 → 2026-08-17` (`paid`). Because rows are minted lazily by accrual, a
