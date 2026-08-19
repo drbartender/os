@@ -4689,6 +4689,21 @@ call rather than being specificity fallout.
   sent-unviewed past 72h, so the conditional 4th chip and the chip row's own horizontal scroll
   are verified in code only, never on screen.
 
+## Review bounties confirmed with no open pay period wait for the NEXT confirm, not the next period (found 2026-08-19, staff-hub spec review)
+
+`POST /admin/staff-reviews/:id/confirm` materializes the $10 `review_bounty` line only when a
+`pay_periods` row with `status='open'` contains today (`dutyLines.js` → `findOpenPeriodForDate`).
+Rows are created lazily by `ensurePayPeriod` on the first accrual of the week (usually Saturday),
+so a review confirmed Tuesday to Friday returns `materialized: 0` and the row waits. The duty-pay
+spec (2026-08-06 §3.2, line 69) says "the next derivation after a period opens materializes it,"
+but `payrollAccrual.js` never calls `materializePendingReviewLines`; the only caller is the NEXT
+confirm (`staffReviews.js:428`). With one review a quarter, a bounty can sit unpaid indefinitely.
+Zero bounties have ever been paid, so nothing is owed today. Fix is one call to
+`materializePendingReviewLines(client)` inside the accrual transaction right after
+`ensurePayPeriod` returns a newly-open period (or at period-open generally); money path, so it
+gets its own decision and the full fleet, not a ride-along on the hub build. The hub spec (§7)
+renders the waiting state honestly in the meantime.
+
 ## The Hiring board shows 29 dead CheckCherry import rows as live pipeline (found 2026-08-19, staff-hub design grounding)
 
 Verified against prod 2026-08-19. The Onboarding column renders **40 cards**, and only **11**
