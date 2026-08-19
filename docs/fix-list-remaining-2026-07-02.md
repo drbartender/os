@@ -1482,7 +1482,7 @@ Items 8-11 are unstarted.
     following Jan 15 always CST), so it cannot age out again. 2/2 green, verified by
     running it. Balance reminders were never firing at the wrong hour.
 
-15. **Two suites need an opt-in env var and silently "fail" without it.**
+15. ~~**Two suites need an opt-in env var and silently "fail" without it.**~~ **CLOSED 2026-08-19.** Fixed by making the guard SKIP rather than throw, not by giving `npm test` the env var: handing the suite a blanket opt-in would have defeated the guard, which exists because these tests DELETE rows from a shared database. Verified both ways — `npm test` now reports 2 skipped / 0 failed with the reason inline, and with `ALLOW_TEST_DB_WRITES=1` all 38 tests still run and pass. Original report follows.
     `server/routes/calcom.test.js` and `server/routes/drinkPlanConsult.test.js` throw at
     import unless `NODE_ENV=test` or `ALLOW_TEST_DB_WRITES=1` (they DELETE from
     `webhook_events`). The guard is right, but `npm test` does not set either, so the
