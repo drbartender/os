@@ -987,7 +987,30 @@ lists every code commit live in prod that this file may not know about.
       `ma-d-auth` fixed the transport-clear defect, so AuthContext keeps the token on
       transport failure and the SW serves the cached `/auth/me`.
 
-- [ ] **Admin palette baseline eyeball sweep (palette lanes, merged 2026-08-14).** The
+- [x] **Admin palette baseline eyeball sweep: WALKED 2026-08-19 (Zul). BOTH HALVES DONE.**
+      **VERDICT: the design reads COHERENT**, and After Hours reads better than House Lights
+      with sizing "just right". That is the judgment this sweep existed to get.
+      SPLIT INTO ITS TWO HALVES, per routing rule 1, and both are now done:
+      **Automated half** — `npm run palette:contrast` (new, `scripts/palette-contrast.js`)
+      measures 13 admin surfaces in both skins with `getComputedStyle` on real painted text.
+      **267 AA failures collapsing to ~20 root colour pairs, seven of which hit all thirteen
+      surfaces**, so they are token-level and a handful of fixes closes most of it. It
+      confirmed the arithmetic era's one good figure (House Lights muted at exactly 4.22, on
+      136 instances) and found several worse pairs nobody had thought to compute. Detail in
+      the fix list.
+      **Human half** — Zul, both skins. Settled three things the numbers had wrong or could
+      not see: my `div.avatar` 1.05 finding was a FALSE POSITIVE (a linear-gradient the tool
+      could not measure; she saw legible dark-blue-on-light-blue and was right); admin modals
+      are NO LONGER boxless ghosts in House Lights, so that older finding is stale and should
+      be closed; and dollar figures read comfortably because the failing amber is a STATE, not
+      the default.
+      LEFT HONESTLY UNVERIFIED: the cyan `is-warn` question. No live warn state was findable
+      on any admin surface. `PALETTES.dark.warn` is `{h:192}` at source so the defect is real
+      in code; how it READS is still unknown and needs a surface with a genuine warning.
+      METHOD NOTE worth keeping: the tool shipped its own blind spot on day one and a human
+      found it the same evening. A numbers pass cannot audit itself. Do not let a future
+      "the checker is green" stand in for this walk.
+      Original entry follows. **(palette lanes, merged 2026-08-14).** The
       text-colour baseline moved for every admin surface in both skins with **zero browser
       verification**, since every contrast number was token arithmetic. Live for five days now,
       which is why it moved out of the queued tier: it is not waiting on a ship, it is
