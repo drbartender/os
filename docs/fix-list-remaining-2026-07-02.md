@@ -2372,10 +2372,22 @@ These are not from the original ledger. They surfaced while verifying its
   which env vars are actually SET on Render and Vercel, presence only, no values, no health
   checks. That is the one fact neither Dallas nor Claude can see today, and it is a standing
   debug tax (see the Env-var debug discipline section of CLAUDE.md, which exists because of it).
-- **Deposit invoice gap.** First-post-cutover bookings skipped `createInvoiceOnSend`; that
-  was Ketan's symptom. Whether other early bookings share the shape was never checked.
-  Proposal 54 itself is now clean (`completed`, 450/450), so the original repair is
-  reconciled; the open part is only "did others have this shape".
+- ~~**Deposit invoice gap.**~~ **ANSWERED 2026-08-19 against prod. No money is missing.**
+  The open part was only "did other early bookings share Ketan's shape". Queried every proposal
+  past `sent`/`viewed` with zero `invoices` rows: 14 total, in three groups.
+  - **3 genuinely share the shape and all are fully paid**: 21 (Stef D., 400/400, 1 payment row),
+    59 (Michael Sawula, 420/420, 3 payment rows), 595 (Suhith Pasham, 350/350, 1 payment row).
+    Money came in through payment rows with no invoice ever created. This is a RECORDS gap, not a
+    money gap, and it is closed as an answer rather than a repair.
+  - **4 are invoice-free by design**: 597, 598, 604, 629, all created 2026-07-07 with
+    `external_paid` equal to `amount_paid`. That is the cc-import phase-3 transfer shape.
+  - **7 are clientless test rows sitting in PROD**: 322, 329, 334, 400, 411, 412, 420, every one
+    created 2026-05-28 with `client_id` NULL, `guest_count` 50, most with an `event_date` of
+    2026-05-15 that was already in the past when the row was written. They carry **$12,400 of
+    `total_price` at status `completed` with zero payments and zero invoices.** Not part of this
+    entry and not a defect, but worth its own check: any completed-revenue metric that reads
+    `total_price` rather than collected money counts phantom dollars from these. NOT actioned
+    here, because deleting prod rows is Dallas's call and nobody has confirmed they are junk.
 
 ### Unbuilt projects with thinking already done
 
