@@ -148,11 +148,6 @@ const EventsDashboard = lazy(() => import('./pages/admin/EventsDashboard'));
 const EventDetailPage = lazy(() => import('./pages/admin/EventDetailPage'));
 const ClientsDashboard = lazy(() => import('./pages/admin/ClientsDashboard'));
 const PayrollPage = lazy(() => import('./pages/admin/payroll/PayrollPage'));
-// Kept reachable until the staff-hub lanes that replace it land (sh-d-payroll,
-// sh-f-feedback). It is the ONLY client consumer of GET /admin/tip-feedback and
-// POST /admin/tip-feedback/:id/review, so redirecting /tips away with nothing
-// built stranded the tip-page complaint queue with no way to read or clear it.
-const TipsAdmin = lazy(() => import('./pages/admin/TipsAdmin'));
 const HiringDashboard = lazy(() => import('./pages/admin/HiringDashboard'));
 const SettingsDashboard = lazy(() => import('./pages/admin/SettingsDashboard'));
 const PotionsPage = lazy(() => import('./pages/admin/PotionsPage'));
@@ -643,10 +638,7 @@ function AppRoutes() {
         <Route path="/messages" element={<Messages />} />
         <Route path="/financials" element={<FinancialsRedirect />} />
         <Route path="/financials/payroll" element={<LegacyRedirect to="/staffing/payroll" />} />
-        {/* adminStrict like its Staff hub siblings: every /admin/tip-feedback
-            route is the server's adminOnly, so a manager reaching this by
-            bookmark would render a page where each fetch 403s. */}
-        <Route path="/tips" element={<ProtectedRoute adminStrict><TipsAdmin /></ProtectedRoute>} />
+        <Route path="/tips" element={<LegacyRedirect to="/staffing/payroll" defaults={{ tab: 'tips' }} />} />
         <Route path="/reviews" element={<LegacyRedirect to="/staffing/reviews" />} />
         <Route path="/settings" element={<SettingsDashboard />} />
         <Route path="/blog" element={<BlogDashboard />} />

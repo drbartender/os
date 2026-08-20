@@ -224,13 +224,8 @@ router.post('/:token/feedback', publicLimiter, feedbackLimiter, asyncHandler(asy
       rating,
       comment,
       submitterEmail: email,
-      // Points at the feedback itself. The staff-hub spec plans to move this to
-      // the staffer's tip-page tab, but the FeedbackCard that would render it
-      // there (sh-f-feedback) is not built: that tab makes no /admin/tip-feedback
-      // call at all, so the link landed the operator on token and Stripe
-      // settings with the complaint that paged them nowhere in sight. Move it
-      // when the card exists, not before.
-      adminUrl: `${ADMIN_URL}/tips#feedback`,
+      // The FeedbackCard on the staffer profile's Tip Page tab renders this feedback (F1).
+      adminUrl: `${ADMIN_URL}/staffing/users/${row.user_id}?tab=tip-page`,
     });
     await sendEmail({
       to: process.env.ADMIN_FEEDBACK_NOTIFICATION_EMAIL || 'contact@drbartender.com',

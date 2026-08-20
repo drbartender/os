@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../../../utils/api';
 import { PUBLIC_SITE_URL } from '../../../../utils/constants';
+import { useAuth } from '../../../../context/AuthContext';
 import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
+import FeedbackCard from './FeedbackCard';
 
 // Admin per-contractor Tip Page management.
 //
@@ -21,6 +23,9 @@ const PAY_METHODS = [
 ];
 
 export default function TipPageTab({ userId, payment, profile, onChanged }) {
+  // Guest feedback is admin-only PII on adminOnly endpoints, and this profile
+  // is manager-reachable, so a manager gets no card rather than a 403 (spec 9).
+  const { user: viewer } = useAuth();
   const [edit, setEdit] = useState({});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -175,6 +180,8 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
             </div>
           </div>
         </div>
+
+        {viewer?.role === 'admin' && <FeedbackCard userId={userId} />}
       </div>
 
       {/* Sidebar — actions */}

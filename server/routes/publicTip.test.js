@@ -380,12 +380,11 @@ test('GET /api/public/tip/:token > methods absent from profile are skipped even 
 });
 
 // ─── Feedback POST: where the admin notification points ─────────────────────
-// This link must land on something that SHOWS the feedback. The staff-hub spec
-// plans to move it to the staffer's tip-page tab, but the card that would render
-// it there (sh-f-feedback) is unbuilt: that tab makes no /admin/tip-feedback call
-// at all. Pointing at it shipped an operator a one-star complaint alert whose
-// link opened token and Stripe settings. Reverted until the card exists, and
-// pinned here so the move cannot happen again ahead of its surface.
+// This link must land on something that SHOWS the feedback. It now does: lane
+// sh-f-feedback built FeedbackCard on the staffer profile's Tip Page tab, so
+// the alert points at the person the complaint is about. The old destination,
+// /tips#feedback, is deleted with TipsAdmin.js, so it is pinned as forbidden
+// here: a link to a retired page is the same failure in the other direction.
 test('POST /api/public/tip/:token/feedback > the admin email links a page that shows the feedback', async () => {
   sentEmails.length = 0;
   const res = await request('POST', `/api/public/tip/${tipTokenA}/feedback`, {
@@ -399,14 +398,14 @@ test('POST /api/public/tip/:token/feedback > the admin email links a page that s
 
   const { ADMIN_URL } = require('../utils/urls');
   const blob = `${sentEmails[0].html || ''} ${sentEmails[0].text || ''}`;
-  const expected = `${ADMIN_URL}/tips#feedback`;
+  const expected = `${ADMIN_URL}/staffing/users/${userIdA}?tab=tip-page`;
   assert.ok(
     blob.includes(expected),
-    `links the feedback queue itself (${expected})`
+    `links the profile tab whose FeedbackCard shows this feedback (${expected})`
   );
   assert.ok(
-    !blob.includes(`/staffing/users/${userIdA}?tab=tip-page`),
-    'the tip-page tab renders no feedback, so it must not be the destination'
+    !blob.includes('/tips#feedback'),
+    'the /tips feedback queue is retired, so it must not be the destination'
   );
 
   // The row itself still lands (the email is best-effort, the write is not).
