@@ -307,11 +307,17 @@ export default function HiringDashboard() {
                     ))}
                     {col.key === 'in_progress' && cols.in_progress_folded.length > 0 && (
                       <>
+                        {/* Artboard 1d's shape: chevron, a bold lead-in over the
+                            count and the oldest date, and "not pipeline" as a
+                            .tag pinned right rather than trailing prose. Same
+                            words as section 6. */}
                         <button type="button" className="hire-fold" aria-expanded={foldOpen} onClick={() => setFoldOpen(o => !o)}>
-                          <span aria-hidden="true">{foldOpen ? '▾' : '▸'}</span>
-                          <span>
-                            Not started · {cols.in_progress_folded.length} · oldest {ymdLabel(cols.in_progress_folded[0].created_at)} · not pipeline
+                          <span aria-hidden="true" style={{ width: 12, textAlign: 'center' }}>{foldOpen ? '▾' : '▸'}</span>
+                          <span style={{ flex: 1 }}>
+                            <strong style={{ color: 'var(--ink-2)', fontWeight: 600 }}>Not started</strong>
+                            {' · '}{cols.in_progress_folded.length}{' · oldest '}{ymdLabel(cols.in_progress_folded[0].created_at)}
                           </span>
+                          <span className="tag">not pipeline</span>
                         </button>
                         {foldOpen && (
                           <>

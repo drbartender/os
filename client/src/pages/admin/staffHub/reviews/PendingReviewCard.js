@@ -4,6 +4,7 @@ import EntityLink from '../../../../components/EntityLink';
 import StatusChip from '../../../../components/adminos/StatusChip';
 import { fmt$fromCents, fmtDate } from '../../../../components/adminos/format';
 import { suggestNames } from './suggestNames';
+import { sourceLabel } from './reviewSource';
 
 // One pending review as a workbench card (spec §7). Moved from
 // the retired Reviews page's ReviewCard; the credits PATCH, the frozen-credit alert,
@@ -99,7 +100,7 @@ export default function PendingReviewCard({ review, staff, bountyCents, openPeri
             {'★'.repeat(Number(review.stars) || 0)}
           </span>
           <StatusChip kind={statusKind(review.status)}>{review.status}</StatusChip>
-          <span className="muted tiny">{review.source}</span>
+          <span className="muted tiny">{sourceLabel(review.source)}</span>
         </h3>
         <span className="muted tiny">{fmtDate(String(review.review_date || '').slice(0, 10), { year: 'numeric' })}</span>
       </div>
@@ -135,6 +136,7 @@ export default function PendingReviewCard({ review, staff, bountyCents, openPeri
                 );
               })}
               <select
+                className="select"
                 value=""
                 aria-label="Add a name"
                 onChange={e => {

@@ -5,9 +5,16 @@ import { useToast } from '../../../context/ToastContext';
 import StatusChip from '../../../components/adminos/StatusChip';
 import { fmt$fromCents, fmtDate } from '../../../components/adminos/format';
 import PayoutRow from './PayoutRow';
+import { windowLabel } from '../staffHub/hubSubtitle';
 
 // pg DATE columns arrive as full ISO strings; keep the calendar date.
 const ymd10 = (v) => (v ? String(v).slice(0, 10) : null);
+
+// The hub speaks one period window: "{Mon D} to {D}" (hubSubtitle.windowLabel),
+// never an en dash. The archive is multi-year by definition (the 1099 tab reads
+// the same rows by calendar year), so the year rides along or a January list of
+// two Decembers reads as unsorted.
+const periodWindow = (p) => `${windowLabel(p.start_date, p.end_date)}, ${String(ymd10(p.start_date)).slice(0, 4)}`;
 
 // Paid-periods archive: the full periods list filtered to paid, with a
 // read-only drill-in (no line edits, no pay panel, payment references shown).
@@ -97,14 +104,14 @@ export default function HistoryView({ periodParam }) {
         </div>
         <div className="card" style={{ marginBottom: 'var(--gap)' }}>
           <div className="card-head">
-            <h3>{fmtDate(ymd10(selected.period.start_date))} – {fmtDate(ymd10(selected.period.end_date))}</h3>
+            <h3>{periodWindow(selected.period)}</h3>
             <StatusChip kind="ok">{selected.period.status}</StatusChip>
           </div>
           <div className="card-body">
             <div className="stat-row">
               <div className="stat">
                 <div className="stat-label">Payday</div>
-                <div className="stat-value">{fmtDate(ymd10(selected.period.payday))}</div>
+                <div className="stat-value">{fmtDate(ymd10(selected.period.payday), { year: 'numeric' })}</div>
               </div>
               <div className="stat">
                 <div className="stat-label">Total paid</div>
@@ -153,10 +160,8 @@ export default function HistoryView({ periodParam }) {
             onKeyDown={(e) => { if (e.key === 'Enter') open(p.id); }}
           >
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 600 }}>
-                {fmtDate(ymd10(p.start_date))} – {fmtDate(ymd10(p.end_date))}
-              </div>
-              <div className="tiny muted">Payday {fmtDate(ymd10(p.payday))}</div>
+              <div style={{ fontWeight: 600 }}>{periodWindow(p)}</div>
+              <div className="tiny muted">Payday {fmtDate(ymd10(p.payday), { year: 'numeric' })}</div>
             </div>
             <div className="num"><strong>{fmt$fromCents(p.paid_cents)}</strong></div>
             <StatusChip kind="ok">{p.status}</StatusChip>

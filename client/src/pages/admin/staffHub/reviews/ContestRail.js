@@ -108,13 +108,25 @@ export default function ContestRail({ onAwarded, openPeriod, pendingNames = [] }
     }
   }
 
+  // Artboard 1i draws ONE contest card: head = quarter + pot, a .tbl of
+  // standings, then a bordered body carrying the "if it ended today" sentence
+  // and the award. The quarter selector (which no artboard draws, spec section 7)
+  // sits in the same card's first body, and the empty state keeps the head, so
+  // "No qualifiers yet" still reads under its quarter and its pot.
+  const showStandings = validQuarter && !loading && !error;
+
   return (
     <>
-      <div className="card">
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div className="card-head">
+          <h3>{quarter} contest</h3>
+          {validQuarter && data && <span className="k">{fmt$fromCents(data.pot_cents)} pot</span>}
+        </div>
         <div className="card-body vstack" style={{ gap: 8 }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
             <span className="muted">Quarter</span>
             <input
+              className="input"
               type="text"
               value={quarter}
               placeholder="2026-Q3"
@@ -132,6 +144,59 @@ export default function ContestRail({ onAwarded, openPeriod, pendingNames = [] }
               {data.in_progress ? ' This quarter is still running.' : ''}
             </span>
           )}
+          {loading && !data && <span className="muted tiny">Loading…</span>}
+          {!loading && error && (
+            <>
+              <span className="tiny">{error}</span>
+              <div><button type="button" className="btn btn-sm" onClick={() => load(quarter)}>Retry</button></div>
+            </>
+          )}
+          {showStandings && rows.length === 0 && (
+            <span className="muted tiny">
+              No qualifiers yet.
+              {pendingNames.length > 0 && data && (() => {
+                const row = (data.rows || []).find(r => r.name === pendingNames[0]);
+                const k = (row ? Number(row.named_five_stars) : 0) + 1;
+                return <> Confirming the pending review puts {pendingNames[0]} {k} of {data.min_named_five_stars} toward the floor.</>;
+              })()}
+            </span>
+          )}
+        </div>
+
+        {showStandings && rows.length > 0 && (
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <thead>
+                <tr><th>Staffer</th><th className="num">Named</th><th>Qualifies</th></tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.user_id}>
+                    <td className={r.eligible ? undefined : 'muted'}>
+                      <EntityLink to={`/staffing/users/${r.user_id}`}>
+                        {r.eligible ? <strong>{r.name}</strong> : r.name}
+                      </EntityLink>
+                    </td>
+                    <td className={r.eligible ? 'num' : 'num muted'}>{r.named_five_stars} of {r.events_worked}</td>
+                    <td>
+                      {r.eligible
+                        ? <StatusChip kind="ok">yes</StatusChip>
+                        : <span className="muted tiny">below the floor</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="card-body vstack" style={{ gap: 8, borderTop: '1px solid var(--line-1)' }}>
+          {showStandings && shares.length > 0 && (
+            <span className="tiny muted">
+              {data.in_progress ? 'Quarter still running. If it ended today, ' : 'Quarter closed: '}
+              {shares.map(sh => sh.name).join(shares.length === 2 ? ' and ' : ', ')} {shares.length === 1 ? 'takes' : 'split'} the pot.
+            </span>
+          )}
           <div className="hstack" style={{ gap: 8, flexWrap: 'wrap' }}>
             <button
               type="button"
@@ -145,50 +210,6 @@ export default function ContestRail({ onAwarded, openPeriod, pendingNames = [] }
           </div>
         </div>
       </div>
-
-      {loading && !data && <div className="muted">Loading…</div>}
-
-      {!loading && error && (
-        <div className="card">
-          <div className="card-body">
-            <p style={{ marginTop: 0 }}>{error}</p>
-            <button type="button" className="btn" onClick={() => load(quarter)}>Retry</button>
-          </div>
-        </div>
-      )}
-
-      {validQuarter && !loading && !error && rows.length === 0 && (
-        <div className="card"><div className="card-body muted">
-          No qualifiers yet.
-          {pendingNames.length > 0 && data && (() => {
-            const row = (data.rows || []).find(r => r.name === pendingNames[0]);
-            const k = (row ? Number(row.named_five_stars) : 0) + 1;
-            return <> Confirming the pending review puts {pendingNames[0]} {k} of {data.min_named_five_stars} toward the floor.</>;
-          })()}
-        </div></div>
-      )}
-
-      {validQuarter && !loading && !error && rows.length > 0 && (
-        <div className="card">
-          <div className="card-head"><h3>{quarter} contest</h3><span className="k">{fmt$fromCents(data.pot_cents)} pot</span></div>
-          <div className="card-body vstack" style={{ gap: 6 }}>
-            {rows.map(r => (
-              <div key={r.user_id} className="hstack" style={{ gap: 8, fontWeight: r.eligible ? 500 : 400 }}>
-                <EntityLink to={`/staffing/users/${r.user_id}`}>{r.name}</EntityLink>
-                <span className="muted tiny">{r.named_five_stars} of {r.events_worked}</span>
-                <span className="spacer" />
-                {r.eligible ? <StatusChip kind="ok">qualifies</StatusChip> : <span className="muted tiny">below the floor</span>}
-              </div>
-            ))}
-            {shares.length > 0 && (
-              <p className="tiny muted" style={{ margin: '6px 0 0' }}>
-                {data.in_progress ? 'Quarter still running. If it ended today, ' : 'Quarter closed: '}
-                {shares.map(s => s.name).join(shares.length === 2 ? ' and ' : ', ')} {shares.length === 1 ? 'takes' : 'split'} the pot.
-              </p>
-            )}
-          </div>
-        </div>
-      )}
 
       <div className="card">
         <div className="card-head"><h3>How review money works</h3></div>

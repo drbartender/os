@@ -4,7 +4,7 @@ import { useToast } from '../../../context/ToastContext';
 import useUrlListState from '../../../hooks/useUrlListState';
 import EntityLink from '../../../components/EntityLink';
 import StatusChip from '../../../components/adminos/StatusChip';
-import { fmt$fromCents } from '../../../components/adminos/format';
+import { fmt$fromCents, fmtDateTime } from '../../../components/adminos/format';
 import { tipStatus, netCents } from './tipStatus';
 
 const LEDGER_DEFAULTS = { from: '', to: '' };
@@ -84,7 +84,10 @@ export default function TipsLedger() {
 
   return (
     <>
-      <div className="stat-row">
+      {/* .stat-row is a five-track grid; this band holds ONE stat, so the track
+          count is set here or the other four render as empty bordered cells.
+          Artboard 1g sets it inline the same way (it draws three stats). */}
+      <div className="stat-row" style={{ gridTemplateColumns: 'minmax(200px, 320px)' }}>
         <div className="stat">
           <div className="stat-label">Net in view</div>
           <div className="stat-value">{fmt$fromCents(total)}</div>
@@ -96,11 +99,11 @@ export default function TipsLedger() {
         <div className="card-body" style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
             <span className="muted">From</span>
-            <input type="date" value={filters.from} onChange={e => setFilters({ from: e.target.value })} />
+            <input className="input" type="date" value={filters.from} onChange={e => setFilters({ from: e.target.value })} />
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
             <span className="muted">To</span>
-            <input type="date" value={filters.to} onChange={e => setFilters({ to: e.target.value })} />
+            <input className="input" type="date" value={filters.to} onChange={e => setFilters({ to: e.target.value })} />
           </label>
           {(filters.from || filters.to) && (
             <button type="button" className="btn btn-ghost" onClick={() => setFilters({ from: '', to: '' })}>Clear</button>
@@ -136,7 +139,7 @@ export default function TipsLedger() {
                       {fmt$fromCents(netCents(t))}
                       {refunded && <span className="muted tiny" style={{ marginLeft: 6, textDecoration: 'line-through' }}>{fmt$fromCents(t.amount_cents)}</span>}
                     </td>
-                    <td>{t.tipped_at ? new Date(t.tipped_at).toLocaleString('en-US', { hour12: false }) : '—'}</td>
+                    <td>{fmtDateTime(t.tipped_at)}</td>
                     <td className="muted">{t.customer_email || '—'}</td>
                     <td><StatusChip kind={st.kind}>{st.label}</StatusChip>{st.hint && <span className="muted tiny" style={{ marginLeft: 6 }}>{st.hint}</span>}</td>
                   </tr>
@@ -150,6 +153,12 @@ export default function TipsLedger() {
             <button type="button" className="btn btn-ghost btn-sm" onClick={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more'}</button>
           </div>
         )}
+        {/* Artboard 1g puts this sentence inside the Activity card as a bordered
+            card-body, not loose on the page ground: it describes the table above
+            it. Copy is section 7's, unchanged. */}
+        <div className="card-body tiny muted" style={{ borderTop: '1px solid var(--line-1)' }}>
+          Tips are collected on each bartender's own sign and paid through the event's payout, pooled across the bartenders who worked it; this ledger is the cross-staff view. A staffer's Payouts tab shows where each one landed.
+        </div>
       </div>
     </>
   );

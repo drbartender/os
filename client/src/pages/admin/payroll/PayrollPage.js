@@ -69,20 +69,20 @@ function TipsTab() {
   return (
     <div className="vstack" style={{ gap: 16 }}>
       {bothClear && (
-        <div className="card">
-          <div className="card-body hstack" style={{ gap: 10 }}>
+        <div className="card card-flush">
+          <div className="card-body hstack" style={{ gap: 10, padding: '10px 16px' }}>
             <StatusChip kind="ok">clear</StatusChip>
-            <span>Repair queues are clear: no unassigned tips, nothing deferred.</span>
+            <span style={{ fontSize: 12.5 }}>Repair queues are clear: no unassigned tips, nothing deferred.</span>
+            <div className="spacer" />
             <span className="muted tiny">Unassigned appear when a tip can't find its event · deferred wait for an open period</span>
           </div>
         </div>
       )}
       <UnassignedTipsPanel hideWhenEmpty onCount={(n) => setCounts(c => (c.unassigned === n ? c : { ...c, unassigned: n }))} />
       <DeferredTipsPanel hideWhenEmpty onCount={(n) => setCounts(c => (c.deferred === n ? c : { ...c, deferred: n }))} />
+      {/* The footer sentence lives inside the ledger's Activity card (artboard
+          1g), so it is TipsLedger's to render, not this tab's. */}
       <TipsLedger />
-      <p className="tiny muted" style={{ margin: 0 }}>
-        Tips are collected on each bartender's own sign and paid through the event's payout, pooled across the bartenders who worked it; this ledger is the cross-staff view. A staffer's Payouts tab shows where each one landed.
-      </p>
     </div>
   );
 }

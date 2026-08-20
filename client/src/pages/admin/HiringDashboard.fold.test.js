@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom'; // per-file import: this repo has no setupTests.js
 import React, { useState } from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import HiringDashboard, { splitOnboarding, FOLD_DAYS } from './HiringDashboard';
 import api from '../../utils/api';
@@ -99,7 +99,10 @@ test('stale records leave the column for a collapsed fold; the count reads the l
   expect(screen.queryByText('Aaron Blake')).not.toBeInTheDocument();
   const fold = screen.getByRole('button', { name: /Not started/ });
   expect(fold).toHaveAttribute('aria-expanded', 'false');
-  expect(fold).toHaveTextContent('Not started · 2 · oldest May 27, 2026 · not pipeline');
+  // Artboard 1d's composition: the lead-in, count and oldest date read as one
+  // line, and "not pipeline" is a .tag rather than the tail of the sentence.
+  expect(fold).toHaveTextContent('Not started · 2 · oldest May 27, 2026');
+  expect(within(fold).getByText('not pipeline')).toHaveClass('tag');
 
   fireEvent.click(fold);
   expect(fold).toHaveAttribute('aria-expanded', 'true');

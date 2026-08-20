@@ -173,6 +173,44 @@ test('a confirm that materializes nothing marks the row waiting and refreshes th
   await settled();
 });
 
+// Artboard 1i draws the rail as ONE contest card whose standings are a .tbl,
+// not three stacked cards of hstack rows. Spec section 3 names that composition
+// as the fidelity lane's to fix, so it is pinned here.
+test('the contest rail is one card with a standings table under its quarter and pot', async () => {
+  mockGets({ reviews: () => [CONFIRMED], leaderboard: AWARDABLE });
+  renderReviews();
+
+  await settled();
+  const head = [...document.querySelectorAll('.card-head h3')].find(h => /contest$/.test(h.textContent));
+  const card = head.closest('.card');
+  expect(within(card).getByText('$50.00 pot')).toBeInTheDocument();
+  // The quarter selector, the floor sentence, the standings and the award all
+  // live in that one card.
+  expect(within(card).getByLabelText('Quarter')).toBeInTheDocument();
+  expect(within(card).getByText(/Qualifying takes at least 4 events worked/)).toBeInTheDocument();
+  expect(within(card).getByRole('button', { name: 'Award the quarter' })).toBeInTheDocument();
+
+  const table = within(card).getByRole('table');
+  expect([...table.querySelectorAll('thead th')].map(th => th.textContent))
+    .toEqual(['Staffer', 'Named', 'Qualifies']);
+  expect([...table.querySelectorAll('tbody tr td')].map(td => td.textContent))
+    .toEqual(['Shea Corrigan', '3 of 6', 'yes']);
+});
+
+// An empty quarter keeps its head: the artboard's empty state still reads under
+// its quarter label and its pot figure.
+test('the empty contest keeps the quarter label and the pot', async () => {
+  mockGets({ reviews: () => [CONFIRMED] });
+  renderReviews();
+
+  await settled();
+  const head = [...document.querySelectorAll('.card-head h3')].find(h => /contest$/.test(h.textContent));
+  const card = head.closest('.card');
+  expect(within(card).getByText('$0.00 pot')).toBeInTheDocument();
+  expect(within(card).getByText(/No qualifiers yet\./)).toBeInTheDocument();
+  expect(within(card).queryByRole('table')).toBeNull();
+});
+
 test('the award button is disabled with the no-open-period reason', async () => {
   mockGets({ reviews: () => [CONFIRMED], leaderboard: AWARDABLE });
   renderReviews({ summary: { open_period: { exists: true, status: 'processing' } } });

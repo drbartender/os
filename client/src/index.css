@@ -20756,6 +20756,34 @@ html[data-app="admin-os"] .hub-empty p { margin: 0 0 8px; font-size: 12px; color
 html[data-app="admin-os"] .hire-fold { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border: 1px dashed var(--line-2); border-radius: 4px; color: var(--ink-3); font: inherit; font-size: 11.5px; cursor: pointer; user-select: none; transition: background 0.08s; background: none; width: 100%; text-align: left; }
 html[data-app="admin-os"] .hire-fold:hover { background: var(--row-hover); color: var(--ink-2); }
 html[data-app="admin-os"] .hire-stub { display: flex; align-items: center; gap: 8px; padding: 5px 11px; border: 1px solid var(--line-1); border-radius: 4px; font-size: 11.5px; color: var(--ink-3); opacity: 0.72; text-decoration: none; }
+/* Roster: the legacy-CC stub badge. The pre-admin-os rule above (.badge-legacy-cc-stub,
+   solid #888 on white) predates the design system and carries no token and no skin
+   variant; the benchmark artifact draws it as a warn-toned tag. Structure and tokens
+   are the artifact's, verbatim. */
+html[data-app="admin-os"] .badge-legacy-cc-stub {
+  display: inline-block;
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 6px;
+  background: hsl(var(--warn-h) var(--warn-s) 50% / 0.12);
+  color: hsl(var(--warn-h) var(--warn-s) 58%);
+  border: 1px solid hsl(var(--warn-h) var(--warn-s) 50% / 0.3);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+html[data-app="admin-os"][data-skin="light"] .badge-legacy-cc-stub { color: var(--ms-camel); }
+/* A .card the design system's way: a frame with no padding of its own, so
+   .card-head and .card-body own the inset. The admin-os .card rule sets
+   background, border, radius and shadow but never resets the legacy
+   public-site .card padding, so every admin card is inset twice. Fixing that
+   globally needs its own regression pass over every admin surface; this is the
+   scoped opt-out for the compact strips the staff-hub artboards draw (1g's
+   repair line, 1g2's repair rows). */
+html[data-app="admin-os"] .card.card-flush { padding: 0; }
 /* Roster: in-table group header rows */
 html[data-app="admin-os"] .roster-sect td { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-4); background: var(--bg-2); padding: 5px var(--cell-pad-x); height: auto; }
 @media (max-width: 720px) {

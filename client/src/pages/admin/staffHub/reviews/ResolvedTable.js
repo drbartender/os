@@ -3,6 +3,7 @@ import api from '../../../../utils/api';
 import EntityLink from '../../../../components/EntityLink';
 import StatusChip from '../../../../components/adminos/StatusChip';
 import { fmt$fromCents, fmtDate } from '../../../../components/adminos/format';
+import { sourceLabel } from './reviewSource';
 
 // Confirmed and dismissed reviews collect here as rows (spec §7). Bounty is
 // derived from the row plus the envelope's bounty_cents, never a literal:
@@ -65,7 +66,7 @@ export default function ResolvedTable({ reviews, bountyCents, waitingIds, onChan
                     <td className="muted">{fmtDate(String(r.review_date || '').slice(0, 10))}</td>
                     <td>
                       <span style={{ color: 'hsl(var(--warn-h) var(--warn-s) 60%)' }}>★{Number(r.stars) || 0}</span>
-                      {' · '}<span className="muted tiny">{r.source}</span>{' · '}
+                      {' · '}<span className="muted tiny">{sourceLabel(r.source)}</span>{' · '}
                       {r.excerpt
                         ? <span className="muted" title={r.excerpt}>"{excerptOf(r.excerpt)}"</span>
                         : <span className="muted">no excerpt</span>}

@@ -144,7 +144,11 @@ export default function StaffDashboard() {
       ) : (
         <div className="card" style={{ overflow: 'hidden' }}>
           <div className="tbl-wrap">
-            <table className="tbl">
+            {/* .tbl is width:100% with no floor, so under ~760px the columns
+                squeeze (phone numbers break across three lines) instead of the
+                wrapper scrolling. Artboard 1j's law: wide tables scroll in
+                .tbl-wrap, never the page. */}
+            <table className="tbl" style={{ minWidth: 760 }}>
               <thead>
                 <tr>
                   <th>Name</th>
@@ -189,7 +193,7 @@ export default function StaffDashboard() {
                           <div>
                             <strong>{s.display_name || s.preferred_name || displayEmail}</strong>
                             {isStub && (
-                              <span className="badge badge-legacy-cc-stub">Legacy CC stub (deactivated)</span>
+                              <span className="badge badge-legacy-cc-stub">Legacy CC stub</span>
                             )}
                             {s.import_source === 'payment_history_import' && (
                               <span className="imported-chip">imported</span>

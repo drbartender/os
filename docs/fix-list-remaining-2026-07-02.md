@@ -5587,3 +5587,27 @@ frozen test `isFrozen` applies, then disable Dismiss on it with the reason in th
 copy fix at the same time: the 409 sentence says "already paid" for all three frozen states, which
 has its own entry above ("Review-bounty dismiss refusal says 'already paid' when the period is only
 processing"). One lane should take both, since they are the same sentence.
+
+## Every admin-os card is inset twice, because the admin `.card` rule never resets the legacy public-site padding (found 2026-08-20, staff-hub fidelity lane)
+
+The vendored design system defines the admin card as a FRAME with no padding of its own:
+`docs/design-artifacts/_ds/.../components-admin.css:253` sets background, border, radius and
+shadow on `[data-app="admin-os"] .card`, and the inset lives on `.card-head` (0.7rem 1rem) and
+`.card-body` (0.9rem 1rem). The product's copy of that rule (`client/src/index.css:12795`) sets the
+same four properties and stops there, so the legacy Apothecary `.card` at `index.css:279` keeps
+supplying `padding: clamp(20px, 2vw, 28px)` (25.6px at 1280) and `margin-bottom: 1.5rem` to every
+admin card as well. Measured live on the staff hub: the tips repair "clear" strip renders 1025x99
+around a 45px body holding one line of text, where the artboard draws a ~40px row; the roster's
+NAME header sits 39px from its card edge where artboard 1a puts it at 18px. Marketing already hit
+this and worked around it locally (`.mkt-card-flush`, `.mkt-moment`, both `padding: 0`).
+
+NOT fixed globally in the fidelity lane, deliberately: every admin surface has been built and eyed
+against the inherited inset, so removing it moves the layout of every card in the admin app at
+once and needs its own regression pass across both skins. The lane added the scoped opt-out
+`html[data-app="admin-os"] .card.card-flush { padding: 0; }` and used it on the two staff-hub
+strips the artboards draw compact (1g's repair line, 1g2's repair rows).
+
+Fix shape when someone takes it: add `padding: 0` (and decide about `margin-bottom`) to
+`index.css:12795`, then walk every admin surface in both skins for cards whose only inset was the
+leaked one, i.e. any `.card` whose children are not `.card-head` / `.card-body`. Retire
+`.card-flush`, `.mkt-card-flush` and `.mkt-moment`'s padding reset in the same pass.

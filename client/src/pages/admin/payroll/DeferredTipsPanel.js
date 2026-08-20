@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
 import EntityLink from '../../../components/EntityLink';
+import StatusChip from '../../../components/adminos/StatusChip';
 import { fmt$fromCents, fmtDate } from '../../../components/adminos/format';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 
@@ -88,8 +89,10 @@ export default function DeferredTipsPanel({ onCount, hideWhenEmpty = false }) {
         const lbl = t.event_date ? getEventTypeLabel({ event_type: t.event_type, event_type_custom: t.event_type_custom }) : '—';
         const amt = t.defer_kind === 'clawback' ? `−${fmt$fromCents(t.defer_target_cents || 0)} clawback` : `${fmt$fromCents(t.amount_cents)} tip`;
         return (
-          <div key={t.id} className="card">
+          <div key={t.id} className="card card-flush">
             <div className="card-body hstack" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              {/* The queue chip leads the row (artboard 1g2). */}
+              <StatusChip kind="violet">deferred</StatusChip>
               <div style={{ minWidth: 200 }}>
                 <div style={{ fontWeight: 600 }}>
                   {(t.staff && t.staff.length)

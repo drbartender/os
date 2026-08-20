@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
 import EntityLink from '../../../components/EntityLink';
+import StatusChip from '../../../components/adminos/StatusChip';
 import { fmt$fromCents, fmtDate } from '../../../components/adminos/format';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 
@@ -86,8 +87,11 @@ export default function UnassignedTipsPanel({ onCount, hideWhenEmpty = false }) 
   return (
     <div className="vstack" style={{ gap: 8 }}>
       {tips.map(tip => (
-        <div key={tip.id} className="card">
+        <div key={tip.id} className="card card-flush">
           <div className="card-body hstack" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* The queue chip leads the row (artboard 1g2): it is what makes a
+                repair row legible as a queue item rather than a loose card. */}
+            <StatusChip kind="warn">unassigned</StatusChip>
             <div style={{ minWidth: 160 }}>
               <EntityLink to={tip.target_user_id ? `/staffing/users/${tip.target_user_id}` : null}>
                 <div style={{ fontWeight: 600 }}>{tip.contractor_name}</div>
