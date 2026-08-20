@@ -10,6 +10,34 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-20-stale-proposal-sweep-design.md`
 
+**Status: EXECUTED 2026-08-20** in lane `stale-proposal-sweep`, 8 commits
+(`3af98dcb`..`2256630b`). The pre-merge fleet (database / security / code /
+consistency / performance) ran against the finished lane and returned one
+critical finding, folded in as the 8th commit: `cancelOpenInvoiceIntents`
+reported `failed: 0` on its two non-attempt paths, so the heal pass deleted its
+own retry queue whenever Stripe was unreachable. Also fixed there: dry run is now
+inert when the runaway bound trips, the tail is interleaved rather than batched,
+`archiveOne` re-checks `amount_paid` under the lock and refuses legal-hold ids
+itself, and three vacuous tests were replaced with mutation-verified ones. Read
+the spec's Stripe heal path section for the corrected design.
+
+**Lane:** `stale-proposal-sweep` (worktree at `../worktrees/stale-proposal-sweep`).
+Every task commits INSIDE the lane. The seven commits are checkpoints, not
+finished work, so Task 3's intentionally-partial module is fine here and would
+not be on `main`. The merge back to `main` is the reviewable unit.
+
+**Footprint:** `server/utils/staleProposalSweep*.js`, `server/utils/invoiceVoid.js`
+(additive only), `server/index.js` (scheduler block), `server/db/schema.sql`
+(archive_reason CHECK, both sites), `server/db/index.js` (CONSTRAINT_CONTRACT),
+`client/src/pages/admin/ProposalsDashboard.js` (one label line), plus docs.
+Nothing else. If a task wants to touch a file outside this list, stop and ask.
+
+**Review cadence** (run in the lane, before the merge):
+- after Task 1: `database-review` (CHECK widening on a constraint with a known partial-boot failure mode, plus the boot guard)
+- after Task 3: `database-review` (lock order, per-proposal transaction, release-before-tail)
+- after Task 6: `security-review` + `code-review` (live Stripe cancel and heal, keyed on a details JSON read back out of the DB)
+- before the merge: `consistency-check` + `performance-review` (archive-door parity with `actions.js`; the hourly unindexed `CANDIDATE_SQL` scan)
+
 ## Global Constraints
 
 - Money columns `proposals.total_price` / `amount_paid` are **NUMERIC dollars**, not integer cents. Never do cents math on them.
@@ -21,6 +49,12 @@
 - `accepted` is NEVER added to the swept status list. The demote ladder parks refunded-to-zero bookings there (`server/utils/proposalStatus.js:26-28`); sweeping it would mislabel a refunded booking as a lead that never booked.
 - Tests run against the shared dev DB, one suite at a time, from the repo root. No test may assert a global COUNT; assert on your own fixture rows.
 - Test command form: `node -r dotenv/config --test server/utils/<file>.test.js`
+- **Never commit to `main` from this lane, and never push.** A push is in flight in
+  another window; `main` is frozen until it lands.
+- Tests run against the SHARED dev DB. A test must never leave a row behind on
+  data it did not create. In particular, `notifySkipped` writes markers onto every
+  matching real row, so any test that reaches it MUST stub the notifier and MUST
+  clean up markers by id.
 
 ---
 
@@ -81,6 +115,11 @@ In `client/src/pages/admin/ProposalsDashboard.js`, the reason label map starting
 
 Do NOT add it to the manual picker in `client/src/pages/admin/ProposalDetail.js:889`, and do NOT add it to `ARCHIVE_REASONS` in `server/routes/proposals/actions.js:434`. It is an auto-path-only marker, exactly like `event_completed` and `option_not_chosen`.
 
+> **Revert window:** this task is cleanly revertable only while the scheduler is
+> still dark. Once the sweep writes `event_passed` (rollout step 3), re-applying
+> the narrowed CHECK fails against the existing rows. Revert before flipping the
+> flag, or not at all.
+
 - [ ] **Step 4: Verify the constraint applies and accepts the new value**
 
 Run:
@@ -89,12 +128,16 @@ Run:
 node -r dotenv/config -e "
 const { pool } = require('./server/db');
 (async () => {
-  const { rows } = await pool.query(\"SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'proposals_archive_reason_check'\");
+  const { rows } = await pool.query(\"SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE c.conname = 'proposals_archive_reason_check' AND n.nspname = 'public'\");
   console.log(rows[0] ? rows[0].def : 'MISSING');
   await pool.end();
 })();
 "
 ```
+
+The `public` schema filter is deliberate: `findViolatedConstraintContracts` scopes
+the same way, because a backup or restore schema can hold a same-named constraint
+that would mask a real absence.
 
 Expected: the printed definition contains `event_passed`. If it prints `MISSING`, the boot-time apply has not run; start the server once to apply `schema.sql`, then re-check.
 
@@ -284,16 +327,26 @@ Expected: PASS, 2 tests.
 
 - [ ] **Step 5: Run the suites this reaches**
 
-`cancelOpenInvoiceIntents` is called by the archive endpoint and the cancel flow.
+`cancelOpenInvoiceIntents` has six production call sites: `actions.js:535`,
+`cancel.js:414`, `invoices.js:477` and `:520`, `serviceExtensionSweep.js:105` and
+`:190`, and `serviceExtensions/admin.js:34`. All six ignore the return value, and
+the direct suite asserts field by field rather than on the object shape, which is
+what makes the added field safe. Run the changed function's OWN suite first.
 
 Run, one at a time:
 
 ```bash
+node -r dotenv/config --test server/utils/invoiceHelpers.link.test.js
 node -r dotenv/config --test server/routes/proposals/archive.test.js
+node -r dotenv/config --test server/routes/proposals/cancel.test.js
 node -r dotenv/config --test server/routes/stripeWebhook.archivedSettle.test.js
+node -r dotenv/config --test server/routes/stripe.invoiceIntentArchived.test.js
+node -r dotenv/config --test server/utils/serviceExtensionSweep.test.js
 ```
 
-Expected: both PASS. If a file name differs, locate it with `ls server/routes/proposals/ | grep -i archive`.
+Expected: all PASS. If a path differs, locate it with
+`ls server/utils/*.test.js server/routes/**/*.test.js | grep -iE 'invoice|extension|cancel'`
+and run the real one rather than skipping it.
 
 - [ ] **Step 6: Commit**
 
@@ -332,8 +385,13 @@ Selection query and the per-proposal transaction. No scheduler registration yet,
   - `SWEEP_STATUSES: string[]`
   - `LEGAL_HOLD_PROPOSAL_IDS: number[]`
   - `selectCandidates(db = pool): Promise<Array<{id, client_id, status, event_date, total_price}>>`
-  - `archiveOne(proposalId): Promise<{proposalId, invoiceIds: number[], reaped: Array<{shiftId, userIds}>} | null>` — resolves `null` when the row vanished or left a swept status under the lock
-  - `processStaleProposals(): Promise<{archived: number[], skippedIds: number[], failed: number, dryRun: boolean}>`
+  - `archiveOne(proposalId): Promise<{proposalId, invoiceIds: number[], reaped: Array<{shiftId, userIds, bartenderUserIds}>, deletedMessages: number} | null>` — resolves `null` when the row vanished or left a swept status under the lock
+
+**This task deliberately does NOT define `processStaleProposals`.** An earlier
+draft had Task 3 ship a placeholder entry point that Task 4 then replaced
+wholesale: untested code, dead the moment the next task lands, and a commit
+message describing a dry-run mode that never survived. Task 4 introduces the
+entry point once, complete.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -367,6 +425,8 @@ function daysAgo(n) {
   return d.toISOString().slice(0, 10);
 }
 
+// NOTE: pendingMessage requires a client (recipient_id is NOT NULL), so never
+// combine `clientless: true` with `pendingMessage: true`.
 async function fixture({
   status = 'viewed', eventDate, amountPaid = 0, timezone = 'America/Chicago',
   clientless = false, invoice = null, pendingMessage = false,
@@ -398,10 +458,16 @@ async function fixture({
     invoiceId = r.rows[0].id;
   }
   if (pendingMessage) {
+    // Column shape matters: there is NO send_at column (it is scheduled_for), and
+    // recipient_type + recipient_id are both NOT NULL. recipient_type is CHECK-ed
+    // to ('client','staff','admin'). Mirrors archive.test.js's makeScheduledMessage.
     await pool.query(
-      `INSERT INTO scheduled_messages (entity_type, entity_id, status, channel, send_at, message_type)
-       VALUES ('proposal', $1, 'pending', 'email', NOW() + INTERVAL '1 day', 'test_fixture')`,
-      [proposalId]
+      `INSERT INTO scheduled_messages
+         (entity_id, entity_type, message_type, recipient_type, recipient_id,
+          channel, scheduled_for, status)
+       VALUES ($1, 'proposal', 'test_fixture', 'client', $2, 'email',
+               NOW() + INTERVAL '5 days', 'pending')`,
+      [proposalId, clientId]
     );
   }
   made.push({ proposalId, clientId });
@@ -497,6 +563,30 @@ test('archives a client-less proposal (the conditional client-lock branch)', asy
   const f = await fixture({ status: 'viewed', eventDate: daysAgo(5), clientless: true });
   await archiveOne(f.proposalId);
   assert.equal((await statusOf(f.proposalId)).status, 'archived');
+});
+
+test('the date expression is evaluated in the EVENT timezone, not the session', async () => {
+  // The correctness core. The prod session is GMT, which rolls the date at 19:00
+  // Chicago, so a naive CURRENT_DATE comparison archives a Saturday-night event's
+  // quote while the party is still running.
+  //
+  // Proven without a clock stub by contrasting two rows on the SAME event_date,
+  // one in Chicago and one in Pacific/Kiritimati (UTC+14, the earliest zone on
+  // earth). Kiritimati crosses the +2 day line 19 hours before Chicago does, so at
+  // any instant where exactly one has crossed, only Kiritimati is a candidate. If
+  // the expression ignored event_timezone, both would sort identically.
+  const chi = await fixture({ status: 'viewed', eventDate: daysAgo(2), timezone: 'America/Chicago' });
+  const kir = await fixture({ status: 'viewed', eventDate: daysAgo(2), timezone: 'Pacific/Kiritimati' });
+  const ids = (await selectCandidates()).map((r) => r.id);
+  assert.ok(!(ids.includes(chi.proposalId) && !ids.includes(kir.proposalId)),
+    'Chicago must never cross the line before Kiritimati; the zone is being ignored');
+  // And the raw expression must differ between the two rows at the same date.
+  const { rows } = await pool.query(
+    `SELECT id, ((event_date + INTERVAL '2 days') AT TIME ZONE event_timezone) AS threshold
+       FROM proposals WHERE id = ANY($1) ORDER BY id`,
+    [[chi.proposalId, kir.proposalId]]);
+  assert.notDeepEqual(rows[0].threshold, rows[1].threshold,
+    'same event_date in two zones must yield different UTC thresholds');
 });
 
 test('an option-group member sweeps like any other row', async () => {
@@ -664,7 +754,12 @@ async function archiveOne(proposalId) {
       })]);
 
     await db.query('COMMIT');
-    return { proposalId, invoiceIds: voidRes.invoiceIds, reaped };
+    return {
+      proposalId,
+      invoiceIds: voidRes.invoiceIds,
+      reaped,
+      deletedMessages: delRes.rowCount,
+    };
   } catch (err) {
     try { await db.query('ROLLBACK'); } catch (rbErr) {
       console.error(`[stale_proposal_sweep] ROLLBACK failed for #${proposalId}:`, rbErr.message);
@@ -678,36 +773,8 @@ async function archiveOne(proposalId) {
   }
 }
 
-/** Scheduler entry point. Expanded in later tasks. */
-async function processStaleProposals() {
-  const dryRun = process.env.STALE_PROPOSAL_SWEEP_DRY_RUN === 'true';
-  const candidates = await selectCandidates();
-
-  if (dryRun) {
-    console.log(`[stale_proposal_sweep] DRY RUN: ${candidates.length} candidate(s)`);
-    for (const c of candidates) {
-      console.log(`  #${c.id} ${c.status} event_date=${c.event_date && c.event_date.toISOString().slice(0, 10)} total=$${c.total_price}`);
-    }
-    return { archived: [], skippedIds: [], failed: 0, dryRun: true };
-  }
-
-  const archived = [];
-  let failed = 0;
-  for (const c of candidates) {
-    try {
-      const res = await archiveOne(c.id);
-      if (res) archived.push(res.proposalId);
-    } catch (err) {
-      failed += 1;
-      console.error(`[stale_proposal_sweep] archive failed for #${c.id}:`, err.message);
-      Sentry.captureException(err, {
-        tags: { scheduler: 'stale_proposal_sweep', step: 'archive' },
-        extra: { proposalId: c.id },
-      });
-    }
-  }
-  return { archived, skippedIds: [], failed, dryRun: false };
-}
+// The scheduler entry point lands in Task 4, complete. Nothing here calls
+// archiveOne in a loop yet: this task's deliverable is the transaction itself.
 
 module.exports = {
   SWEEP_STATUSES,
@@ -715,14 +782,13 @@ module.exports = {
   ARCHIVE_REASON,
   selectCandidates,
   archiveOne,
-  processStaleProposals,
 };
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `node -r dotenv/config --test server/utils/staleProposalSweep.test.js`
-Expected: PASS, 11 tests.
+Expected: PASS, 12 tests.
 
 If the `voids the unpaid invoice` test fails on the `invoices` insert, check the real column set with `grep -n "CREATE TABLE invoices" -A 25 server/db/schema.sql` and adjust the fixture insert. Do not change the assertion.
 
@@ -735,13 +801,14 @@ feat(proposals): stale-proposal sweep core
 
 Selection query and the per-proposal archive transaction, mirroring
 POST /proposals/:id/archive step for step so the two archive doors
-cannot drift. Includes dry-run mode.
+cannot drift.
 
 The date expression uses AT TIME ZONE event_timezone rather than
 CURRENT_DATE (the prod session is GMT and rolls at 19:00 Chicago) and
 deliberately does not read the free-text event_start_time column.
 
-Not registered as a scheduler yet.
+No scheduler entry point yet; that lands complete in the next task
+rather than as a placeholder this one would have to replace.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
@@ -770,23 +837,47 @@ const {
   processStaleProposals,
   MAX_ARCHIVES_PER_RUN,
   _setSelectCandidatesForTests,
+  _setNotifierForTests,
 } = require('./staleProposalSweep');
 
-test('rethrows when any row failed, so wrapScheduler can record failed', async () => {
+test('one poisoned row does not stop the batch, and the run still rethrows', async () => {
   // wrapScheduler (schedulerHealth.js) records 'failed' ONLY when the fn throws.
   // Without this rethrow, a systemic break (e.g. a narrowed CHECK raising 23514
   // on every row) fails every row every hour while scheduler_health reads green.
-  _setSelectCandidatesForTests(async () => ([{ id: -1, status: 'viewed' }]));
+  //
+  // The poison must genuinely THROW. An id of -1 would not: archiveOne's peek
+  // returns no row, so it ROLLBACKs and resolves null — a clean skip, not a
+  // failure. A non-integer id forces 22P02 on the peek query instead.
+  const healthy = await fixture({ status: 'viewed', eventDate: daysAgo(5) });
+  _setSelectCandidatesForTests(async () => ([
+    { id: 'poison', status: 'viewed' },
+    { id: healthy.proposalId, status: 'viewed' },
+  ]));
   await assert.rejects(() => processStaleProposals(), /1 row\(s\) failed/);
+  // The healthy row AFTER the poisoned one must still have been archived.
+  assert.equal((await statusOf(healthy.proposalId)).status, 'archived',
+    'a poisoned row must not abort the rest of the batch');
   _setSelectCandidatesForTests(null);
 });
 
-test('runaway bound archives nothing when the candidate count is implausible', async () => {
+test('runaway bound archives nothing AND emails the admin the count', async () => {
   const fake = Array.from({ length: MAX_ARCHIVES_PER_RUN + 1 }, (_, i) => ({ id: -(i + 1), status: 'viewed' }));
   _setSelectCandidatesForTests(async () => fake);
+  let alert = null;
+  _setNotifierForTests(async (args) => { alert = args; return { emailed: 1, texted: 0 }; });
+
   const res = await processStaleProposals();
   assert.equal(res.abortedRunaway, true);
   assert.equal(res.archived.length, 0, 'must archive NOTHING when the bound trips');
+  // A guard that fires only into a log nobody reads is not a guard.
+  assert.ok(alert, 'the runaway path must send an admin alert');
+  assert.equal(alert.category, 'routine_admin');
+  assert.ok(alert.subject.includes(String(MAX_ARCHIVES_PER_RUN + 1)),
+    'the alert must name the candidate count');
+  assert.ok(!alert.subject.includes('—'), 'no em dash in subject');
+  assert.equal(alert.smsBody, undefined, 'email only');
+
+  _setNotifierForTests(null);
   _setSelectCandidatesForTests(null);
 });
 
@@ -823,9 +914,13 @@ const MAX_ARCHIVES_PER_RUN = 200;
 Add the test seam and the re-entrancy flag above `processStaleProposals`:
 
 ```js
-// Test seam, mirroring stripePayoutSync's _setStripeClientForTests pattern.
+// Test seams, mirroring stripePayoutSync's _setStripeClientForTests pattern.
+// _notifier is introduced here for the runaway alert and reused by the skip
+// notice in the next task.
 let _selectCandidates = null;
 function _setSelectCandidatesForTests(fn) { _selectCandidates = fn; }
+let _notifier = null;
+function _setNotifierForTests(fn) { _notifier = fn; }
 
 // wrapScheduler does not serialize ticks, and the first run makes roughly 220
 // live Stripe calls, which can plausibly outlast an hourly interval. Two
@@ -856,25 +951,66 @@ async function processStaleProposals() {
         tags: { scheduler: 'stale_proposal_sweep' },
         extra: { candidateCount: candidates.length, bound: MAX_ARCHIVES_PER_RUN },
       });
+      // A guard that fires only into a log nobody reads is not a guard. Email,
+      // never SMS. No em dashes, per the notifyAdminCategory contract.
+      const subject = `Stale-proposal sweep halted: ${candidates.length} candidates`;
+      const body = `The stale-proposal sweep found ${candidates.length} proposals to archive in one run, `
+        + `which is above its safety bound of ${MAX_ARCHIVES_PER_RUN}. It archived NOTHING and stopped. `
+        + `Steady state is 0 to 3 a day, so this almost certainly means the sweep's date rule or status `
+        + `list changed and is now selecting live pipeline. Do not re-enable it until that is understood.`;
+      try {
+        const send = _notifier || notifyAdminCategory;
+        await send({
+          category: 'routine_admin',
+          subject,
+          emailHtml: `<p>${body}</p>`,
+          emailText: body,
+        });
+      } catch (alertErr) {
+        console.error('[stale_proposal_sweep] runaway alert failed:', alertErr.message);
+      }
       return { archived: [], skippedIds: [], failed: 0, dryRun, abortedRunaway: true };
     }
 
     if (dryRun) {
-      console.log(`[stale_proposal_sweep] DRY RUN: ${candidates.length} candidate(s)`);
+      console.log(`[stale_proposal_sweep] DRY RUN: ${candidates.length} candidate(s) to archive`);
       for (const c of candidates) {
         const d = c.event_date && new Date(c.event_date).toISOString().slice(0, 10);
         console.log(`  #${c.id} ${c.status} event_date=${d} total=$${c.total_price}`);
       }
-      return { archived: [], skippedIds: [], failed: 0, dryRun: true, abortedRunaway: false };
+      // The skip query runs in dry run too. It is a pure read, and the rollout
+      // leans on this list to show BOTH what would be archived and what would be
+      // left for a human. Marking and sending stay off: selectSkipCandidates
+      // never writes, and notifySkipped is not called.
+      const wouldSkip = await selectSkipCandidates();
+      console.log(`[stale_proposal_sweep] DRY RUN: ${wouldSkip.length} accepted proposal(s) would be left for admin`);
+      for (const r of wouldSkip) {
+        const d = r.event_date && new Date(r.event_date).toISOString().slice(0, 10);
+        console.log(`  #${r.id} accepted event_date=${d} total=$${r.total_price}`);
+      }
+      return {
+        archived: [], skippedIds: [], failed: 0, dryRun: true,
+        abortedRunaway: false,
+        wouldArchive: candidates.map((c) => c.id),
+        wouldSkip: wouldSkip.map((r) => r.id),
+      };
     }
 
     const archived = [];
     let voidedInvoices = 0;
+    let deletedMessages = 0;
     let failed = 0;
+    // Filled by the accepted-skip notice in the next task; declared here so the
+    // summary line below is complete from the start.
+    let skippedIds = [];
     for (const c of candidates) {
       try {
         const res = await archiveOne(c.id);
-        if (res) { archived.push(res.proposalId); voidedInvoices += res.invoiceIds.length; }
+        if (res) {
+          archived.push(res.proposalId);
+          voidedInvoices += res.invoiceIds.length;
+          deletedMessages += res.deletedMessages;
+        }
       } catch (err) {
         failed += 1;
         console.error(`[stale_proposal_sweep] archive failed for #${c.id}:`, err.message);
@@ -888,7 +1024,8 @@ async function processStaleProposals() {
     if (archived.length > 0 || failed > 0) {
       console.log(
         `[stale_proposal_sweep] archived ${archived.length} (${archived.map((i) => `#${i}`).join(', ')}), ` +
-        `voided ${voidedInvoices} invoice(s), ${failed} failed`
+        `voided ${voidedInvoices} invoice(s), deleted ${deletedMessages} pending message(s), ` +
+        `${skippedIds.length} accepted skipped, ${failed} failed`
       );
     }
 
@@ -907,12 +1044,19 @@ async function processStaleProposals() {
 }
 ```
 
-Add `MAX_ARCHIVES_PER_RUN` and `_setSelectCandidatesForTests` to `module.exports`.
+Add the require at the top of the file:
+
+```js
+const { notifyAdminCategory } = require('./adminNotifications');
+```
+
+Add `MAX_ARCHIVES_PER_RUN`, `_setSelectCandidatesForTests`, and
+`_setNotifierForTests` to `module.exports`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `node -r dotenv/config --test server/utils/staleProposalSweep.test.js`
-Expected: PASS, 14 tests.
+Expected: PASS, 15 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -957,7 +1101,7 @@ Emails the admin when the sweep refuses a past-dated `accepted` proposal. Send B
 Append to `server/utils/staleProposalSweep.test.js`:
 
 ```js
-const { notifySkipped, SKIP_ACTION, _setNotifierForTests } = require('./staleProposalSweep');
+const { notifySkipped, selectSkipCandidates, SKIP_ACTION } = require('./staleProposalSweep');
 
 async function skipMarkersFor(proposalId) {
   const { rows } = await pool.query(
@@ -965,6 +1109,13 @@ async function skipMarkersFor(proposalId) {
     [proposalId, SKIP_ACTION]);
   return rows.length;
 }
+
+// SHARED DEV DB GUARD. notifySkipped marks EVERY matching real row, not just
+// fixtures, and from this task on the run-level tests in Task 4 reach it too.
+// Default every test to a notifier that reports zero delivered, which makes
+// notifySkipped mark nothing. Tests that care set their own stub inside the test.
+test.beforeEach(() => { _setNotifierForTests(async () => ({ emailed: 0, texted: 0 })); });
+test.afterEach(() => { _setNotifierForTests(null); });
 
 test('emails once for a past-dated accepted proposal, and not again', async () => {
   const f = await fixture({ status: 'accepted', eventDate: daysAgo(6) });
@@ -1001,6 +1152,43 @@ test('a failed send writes NO marker, so the next run retries', async () => {
   _setNotifierForTests(null);
 });
 
+test('the legal-hold id is excluded from the SKIP query too, not just the sweep', async () => {
+  const { LEGAL_HOLD_PROPOSAL_IDS } = require('./staleProposalSweep');
+  const { rows } = await pool.query(
+    `SELECT id FROM proposals WHERE id = ANY($1)`, [LEGAL_HOLD_PROPOSAL_IDS]);
+  if (rows.length === 0) return; // held id not present on this DB; nothing to prove
+  const skipIds = (await selectSkipCandidates()).map((r) => r.id);
+  for (const held of LEGAL_HOLD_PROPOSAL_IDS) {
+    assert.ok(!skipIds.includes(held), `legal-hold #${held} must never appear in the skip query`);
+  }
+});
+
+test('dry run writes nothing, sends nothing, and reports both lists', async () => {
+  // The mode the entire rollout leans on. It must be proven inert.
+  const sweepable = await fixture({ status: 'viewed', eventDate: daysAgo(5), invoice: 'sent' });
+  const skippable = await fixture({ status: 'accepted', eventDate: daysAgo(5) });
+  let sent = 0;
+  _setNotifierForTests(async () => { sent += 1; return { emailed: 1, texted: 0 }; });
+  process.env.STALE_PROPOSAL_SWEEP_DRY_RUN = 'true';
+  try {
+    const res = await processStaleProposals();
+    assert.equal(res.dryRun, true);
+    assert.deepEqual(res.archived, [], 'dry run archives nothing');
+    assert.ok(res.wouldArchive.includes(sweepable.proposalId));
+    assert.ok(res.wouldSkip.includes(skippable.proposalId));
+    assert.equal(sent, 0, 'dry run sends nothing');
+  } finally {
+    delete process.env.STALE_PROPOSAL_SWEEP_DRY_RUN;
+    _setNotifierForTests(null);
+  }
+  // Nothing moved.
+  assert.equal((await statusOf(sweepable.proposalId)).status, 'viewed');
+  assert.equal((await statusOf(skippable.proposalId)).status, 'accepted');
+  const inv = await pool.query('SELECT status FROM invoices WHERE id = $1', [sweepable.invoiceId]);
+  assert.equal(inv.rows[0].status, 'sent', 'dry run voids no invoice');
+  assert.equal(await skipMarkersFor(skippable.proposalId), 0, 'dry run writes no marker');
+});
+
 test('the skip email carries no em dashes', async () => {
   const f = await fixture({ status: 'accepted', eventDate: daysAgo(6) });
   let captured = null;
@@ -1023,13 +1211,8 @@ Expected: FAIL — `notifySkipped is not a function`.
 
 - [ ] **Step 3: Implement the notice**
 
-Add to the requires in `server/utils/staleProposalSweep.js`:
-
-```js
-const { notifyAdminCategory } = require('./adminNotifications');
-```
-
-Add the constants and the query:
+`notifyAdminCategory` is already required (Task 4). Add the constants and the
+query:
 
 ```js
 const SKIP_ACTION = 'auto_archive_skipped';
@@ -1048,8 +1231,8 @@ const SKIP_CANDIDATE_SQL = `
         WHERE l.proposal_id = p.id AND l.action = $2)
    ORDER BY p.id`;
 
-let _notifier = null;
-function _setNotifierForTests(fn) { _notifier = fn; }
+// NOTE: `_notifier` / `_setNotifierForTests` already exist (Task 4 introduced
+// them for the runaway alert). Do NOT redeclare them here.
 
 async function selectSkipCandidates(db = pool) {
   const { rows } = await db.query(SKIP_CANDIDATE_SQL, [LEGAL_HOLD_PROPOSAL_IDS, SKIP_ACTION]);
@@ -1132,12 +1315,12 @@ Call it from `processStaleProposals`, after the archive loop and before the fail
 
 Return `skippedIds` instead of the `[]` placeholder, and skip the whole block when `dryRun` is true (the dry-run branch returns early already, so no change is needed there beyond leaving it alone).
 
-Export `SKIP_ACTION`, `selectSkipCandidates`, `notifySkipped`, and `_setNotifierForTests`.
+Export `SKIP_ACTION`, `selectSkipCandidates`, and `notifySkipped`. (`_setNotifierForTests` is already exported from Task 4.)
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `node -r dotenv/config --test server/utils/staleProposalSweep.test.js`
-Expected: PASS, 17 tests.
+Expected: PASS, 20 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1182,6 +1365,32 @@ Append to `server/utils/staleProposalSweep.test.js`:
 ```js
 const { runPostCommitTail, healStrandedIntents, HEAL_ACTION } = require('./staleProposalSweep');
 const invoiceVoid = require('./invoiceVoid');
+
+test('a legitimate skip leaves no heal marker (a processing PI is left alone)', async () => {
+  const f = await fixture({ status: 'viewed', eventDate: daysAgo(5), invoice: 'sent' });
+  const res = await archiveOne(f.proposalId);
+  let cancelCalls = 0;
+  invoiceVoid._setStripeForTests({
+    paymentIntents: {
+      // 'processing' is not cancelable; the correct behavior is to leave it and
+      // let the archivedSettle guard handle it if it settles.
+      retrieve: async (id) => ({ id, status: 'processing', metadata: { invoice_id: String(res.invoiceIds[0]) } }),
+      cancel: async () => { cancelCalls += 1; return {}; },
+    },
+  });
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, status, stripe_payment_intent_id)
+     VALUES ($1, 'pending', $2)`, [f.proposalId, `pi_proc_${process.pid}`]);
+
+  await runPostCommitTail(res);
+  assert.equal(cancelCalls, 0, 'a processing intent must never be cancelled');
+  const { rows } = await pool.query(
+    'SELECT id FROM proposal_activity_log WHERE proposal_id = $1 AND action = $2',
+    [f.proposalId, HEAL_ACTION]);
+  assert.equal(rows.length, 0, 'a legitimate skip is not a failure and leaves no marker');
+  invoiceVoid._setStripeForTests(null);
+  await pool.query('DELETE FROM stripe_sessions WHERE proposal_id = $1', [f.proposalId]);
+});
 
 test('a failed intent cancellation is recorded so the heal pass can retry it', async () => {
   const f = await fixture({ status: 'viewed', eventDate: daysAgo(5), invoice: 'sent' });
@@ -1290,8 +1499,25 @@ async function runPostCommitTail(result) {
   } catch (err) {
     console.error(`[stale_proposal_sweep] change-request reap failed for #${proposalId}:`, err.message);
   }
-  if (reaped && reaped.length) {
-    console.log(`[stale_proposal_sweep] #${proposalId} reaped ${reaped.length} shift(s)`);
+  // Notify approved staff of the reaped shifts. EMAIL ONLY (sms: false) because
+  // SMS costs money. This mirrors the archive endpoint's tail exactly
+  // (actions.js:539-551); dropping it would break the "two archive doors cannot
+  // drift" guarantee this whole module is built on. Prod has 0 live shifts on
+  // the current backlog, so this is a no-op today and load-bearing later.
+  for (const { shiftId, userIds } of (reaped || [])) {
+    if (!userIds || userIds.length === 0) continue;
+    try {
+      const { notifyStaffOfCancellation } = require('./staffShiftHandlers');
+      await notifyStaffOfCancellation({
+        shiftId, staffUserIds: userIds, kind: 'cancelled', sms: false, email: true,
+      });
+    } catch (notifyErr) {
+      console.error(`[stale_proposal_sweep] staff notify failed for shift ${shiftId}:`, notifyErr.message);
+      Sentry.captureException(notifyErr, {
+        tags: { scheduler: 'stale_proposal_sweep', step: 'staff-notify' },
+        extra: { proposalId, shiftId },
+      });
+    }
   }
 }
 
@@ -1332,16 +1558,53 @@ async function healStrandedIntents() {
 }
 ```
 
-Wire both into `processStaleProposals`: collect each successful `archiveOne` result into a `tails` array during the loop, then after the loop (and before the skip notice) run:
+Wire both into `processStaleProposals`.
+
+**The heal runs FIRST, at the top of the tick**, immediately after the
+re-entrancy guard and before `selectCandidates`. Running it at the END would
+retry an intent that failed seconds earlier in the same tick, doubling the call
+volume against a Stripe that is already failing. Skip it in dry run.
+
+```js
+    // Heal BEFORE this tick's work, never after: a just-failed intent must get a
+    // full interval to recover, not an immediate second attempt during an outage.
+    if (!dryRun) {
+      try {
+        await healStrandedIntents();
+      } catch (err) {
+        console.error('[stale_proposal_sweep] heal pass failed:', err.message);
+        Sentry.captureException(err, { tags: { scheduler: 'stale_proposal_sweep', step: 'heal' } });
+      }
+    }
+```
+
+For the tail, collect each successful `archiveOne` result. In the archive loop
+added in Task 4, this block:
+
+```js
+        if (res) {
+          archived.push(res.proposalId);
+          voidedInvoices += res.invoiceIds.length;
+          deletedMessages += res.deletedMessages;
+        }
+```
+
+becomes:
+
+```js
+        if (res) {
+          archived.push(res.proposalId);
+          voidedInvoices += res.invoiceIds.length;
+          deletedMessages += res.deletedMessages;
+          tails.push(res);
+        }
+```
+
+with `const tails = [];` declared alongside `const archived = [];`. Then, after
+the loop and before the skip notice:
 
 ```js
     for (const t of tails) await runPostCommitTail(t);
-    try {
-      await healStrandedIntents();
-    } catch (err) {
-      console.error('[stale_proposal_sweep] heal pass failed:', err.message);
-      Sentry.captureException(err, { tags: { scheduler: 'stale_proposal_sweep', step: 'heal' } });
-    }
 ```
 
 Export `HEAL_ACTION`, `runPostCommitTail`, and `healStrandedIntents`.
@@ -1349,7 +1612,7 @@ Export `HEAL_ACTION`, `runPostCommitTail`, and `healStrandedIntents`.
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `node -r dotenv/config --test server/utils/staleProposalSweep.test.js`
-Expected: PASS, 18 tests.
+Expected: PASS, 22 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1357,6 +1620,10 @@ Expected: PASS, 18 tests.
 git add server/utils/staleProposalSweep.js server/utils/staleProposalSweep.test.js
 git commit -F - <<'MSG'
 feat(proposals): post-commit tail and bounded Stripe heal for the sweep
+
+NOTE: this task and the invoiceVoid `failed` count revert TOGETHER. Reverting
+that change alone leaves `r.failed` undefined, the `|| 0` swallows it, and the
+heal pass then clears markers while cancels are still failing.
 
 Runs the intent cancellation, marketing reap, and change-request reap
 after the pooled connection is released, matching the archive endpoint.
@@ -1418,6 +1685,11 @@ In `server/index.js`, after the shift-closure sweep block, add:
 
 150000ms is an unused boot offset (existing offsets include 15, 25, 30, 45, 60, 75, 90, 120, 180, 200, 210, 240, 270 and 300 seconds).
 
+`server/index.js` is already 806 lines, over the 700-line soft cap. This block
+adds about 20 more, so the pre-commit hook WILL print a size warning. That is
+expected and allowed: the ratchet only blocks growth past the 1000-line hard cap.
+Do not restructure the file to silence it.
+
 - [ ] **Step 2: Add both env vars to `.env.example`**
 
 Add near the other `RUN_*_SCHEDULER` entries:
@@ -1447,6 +1719,10 @@ In the schedulers section, add a line describing the hourly `stale_proposal_swee
 
 - [ ] **Step 5: Log the accepted-as-is items to the backlog**
 
+This is a second logical change riding the scheduler commit. It is bundled
+deliberately: the three entries only make sense once the sweep exists, and they
+would otherwise be forgotten. Commit them together (Step 9) rather than splitting.
+
 Append to `docs/fix-list-remaining-2026-07-02.md`, in the open-items section:
 
 ```markdown
@@ -1466,24 +1742,35 @@ Append to `docs/fix-list-remaining-2026-07-02.md`, in the open-items section:
 
 - [ ] **Step 6: Verify the scheduler stays dark by default**
 
-Run:
+Do NOT re-implement the `=== 'true'` check in a one-liner. That tests nothing:
+it would pass even if Step 1 wrongly used the default-on `enabled()` helper. Boot
+the real server and read the real registration.
 
-```bash
-RUN_SCHEDULERS=true node -r dotenv/config -e "
-const has = process.env.RUN_STALE_PROPOSAL_SWEEP_SCHEDULER === 'true';
-console.log('would register:', has);
-"
+Add a one-line log inside the registration block, immediately after the
+`setInterval` call:
+
+```js
+        console.log('✓ stale_proposal_sweep scheduler registered');
 ```
 
-Expected: `would register: false` with the var unset. Then confirm the opposite:
+Then, with `RUN_STALE_PROPOSAL_SWEEP_SCHEDULER` unset:
 
 ```bash
-RUN_STALE_PROPOSAL_SWEEP_SCHEDULER=true node -r dotenv/config -e "
-console.log('would register:', process.env.RUN_STALE_PROPOSAL_SWEEP_SCHEDULER === 'true');
-"
+RUN_SCHEDULERS=true NODE_ENV=development timeout 25 node -r dotenv/config server/index.js 2>&1 | grep -c 'stale_proposal_sweep scheduler registered'
 ```
 
-Expected: `would register: true`.
+Expected: `0`. This is the load-bearing check: `RUN_SCHEDULERS=true` is the
+documented local pattern for exercising other handlers, and this box talks to
+live Stripe, so a default-on sweep would ride along.
+
+Then confirm it does register when asked:
+
+```bash
+RUN_SCHEDULERS=true RUN_STALE_PROPOSAL_SWEEP_SCHEDULER=true NODE_ENV=development timeout 25 node -r dotenv/config server/index.js 2>&1 | grep -c 'stale_proposal_sweep scheduler registered'
+```
+
+Expected: `1`. The 25s timeout is under the 150s boot stagger, so the sweep
+registers but never actually fires during either check.
 
 - [ ] **Step 7: Run the full reached-suite set**
 

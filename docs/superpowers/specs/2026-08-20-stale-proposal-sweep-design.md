@@ -190,6 +190,12 @@ batch: `cancelOpenInvoiceIntents` for the voided invoice ids,
 `cancelMarketingForProposal`, `cancelPendingChangeRequestsForProposal`, and the
 email-only staff notify for any reaped shift.
 
+The tail runs **per row, interleaved with the archive loop**, not batched after
+it. Batched, all ~115 archives commit before any Stripe call runs, so a process
+death mid-tail strands every un-tailed row with NO heal marker, because the
+marker is written by the tail itself. Interleaved, that window is one row. This
+is safe because `archiveOne` has already released its pooled connection.
+
 ### Per-row failure policy
 
 Each row's failure is caught so the batch continues, captured to Sentry with the
@@ -212,10 +218,41 @@ count, deleted message count, skipped count, failed count), matching
 about 108 live PaymentIntents on the first run, and if Stripe 5xx's midway the
 remainder is stranded forever, because an archived proposal is never re-selected.
 
-Each tick therefore begins with a heal pass: re-run the intent cancellation for
-`stripe_sessions` rows still `pending` whose proposal is `archived`. It is cheap
-in steady state (the set is empty), and it converts a permanent stranding into a
-self-correcting one.
+**Corrected 2026-08-20 after the plan-review fleet.** An earlier draft of this
+section healed "`stripe_sessions` rows still `pending` whose proposal is
+`archived`" and claimed that set is empty in steady state. **That is false.** The
+only writers of `stripe_sessions.status` are the succeeded and failed webhook
+handlers plus `stripeCreateIntent.js:163`; nothing flips a row off `pending` after
+a successful cancel. A heal keyed on pending sessions would therefore re-retrieve
+every intent from Stripe on every tick, forever, and would never converge.
+
+The heal is keyed on a recorded FAILURE instead:
+
+- `cancelOpenInvoiceIntents` gains a `failed` count, incremented only when a
+  retrieve or cancel throws. A non-cancelable state or a metadata mismatch stays
+  a legitimate skip and is not counted, which is the distinction that makes the
+  heal bounded.
+- It also gains an `aborted` flag for its two NON-ATTEMPT returns: no Stripe
+  client, and a thrown `stripe_sessions` lookup. **This is not the same as
+  `failed: 0`, and conflating them inverts the whole design.** The pre-merge
+  fleet caught exactly that: the heal read `failed === 0` as a clean pass and
+  deleted the marker, so a tick that made zero Stripe calls permanently abandoned
+  the stranded intents, in precisely the windows the heal exists for. One shared
+  `cancelFailureCount()` now counts an abort as a failure at both call sites. It
+  is deliberately NOT keyed on `checked === 0`, which is legitimately reached when
+  a PI failed on its own and the webhook flipped its session off `pending` — there,
+  clearing the marker IS correct convergence. This is an additive change to a shared helper; all six production
+  callers ignore the return value and the existing suite asserts field by field
+  rather than on the shape.
+- When the post-commit tail sees `failed > 0` it writes a `pi_cancel_incomplete`
+  row to `proposal_activity_log` carrying the invoice ids.
+- **Each tick BEGINS with the heal pass**, retrying only proposals carrying that
+  marker and deleting the marker on a clean pass. Running it at the START of the
+  tick matters: at the end, a just-failed intent from the same tick would be
+  retried immediately, which during a Stripe outage doubles the call volume
+  against a service that is already failing.
+
+In steady state the marker set is empty and the pass costs one indexed query.
 
 Harm if the heal never ran is bounded and already handled, which is why this is a
 heal and not a blocker: a voided invoice 404s at `create-intent-for-invoice`
@@ -322,6 +359,10 @@ status and clears `archive_reason`. **That is all it restores.**
   link 404s forever.
 - Deleted `scheduled_messages` rows are gone.
 - There is no bulk un-archive. Recovery is one-by-one admin PATCH.
+- **A recovered proposal is re-archived within the hour** unless its `event_date`
+  or status also moves: still past-dated with `amount_paid = 0` puts it straight
+  back in the candidate set. Turn the scheduler off first, or fix the date in the
+  same breath. (Logged to the backlog 2026-08-20.)
 
 The first run is therefore effectively one-way across 116 rows. The dry-run mode
 above exists so that it is inspected before it happens, and the default-off flag
@@ -409,6 +450,8 @@ Dev DB, one suite at a time, from the repo root.
 |---|---|
 | `server/utils/staleProposalSweep.js` | new |
 | `server/utils/staleProposalSweep.test.js` | new |
+| `server/utils/invoiceVoid.js` | `cancelOpenInvoiceIntents` returns a `failed` count (additive; enables the bounded heal) |
+| `server/utils/invoiceVoid.failed.test.js` | new |
 | `server/index.js` | register scheduler (opt-in) |
 | `server/db/schema.sql` | CHECK value, both sites |
 | `server/db/index.js` | CONSTRAINT_CONTRACT entry |
