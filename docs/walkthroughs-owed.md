@@ -586,10 +586,22 @@ nobody has opened at all.
       is not due. So: background it, then do not open it again, or the wait restarts. Related:
       force-closing an app you just looked at writes a FRESH stamp, so the next launch is
       seconds old and will not lock. Force-close only from an already-backgrounded state.
-      FOLDED IN FROM THE ma-a/ma-b ITEM, because these legs are only walkable in the same
+      ~~FOLDED IN FROM THE ma-a/ma-b ITEM, because these legs are only walkable in the same
       offline session: the Desktop-view toggle round trip, and the offline-resume proof that
       an offline cold launch lands on the restored route behind the lock rather than
-      bouncing to Login.
+      bouncing to Login.~~ **BOTH FOLDED-IN LEGS PASSED 2026-08-19 (Dallas).**
+      Offline-resume: proven on the step 3 re-run above.
+      Desktop-view toggle round trip: full round trip on Events, BOTH directions persisted
+      across a reload, which is the half a tap-and-tap-back would never catch. Into desktop
+      view via the header's "Switch to desktop view" control (`MobileHeader.js:43`,
+      `setDesktopView(screenKey, true)`); the "Phone view" return pill appeared
+      (`AdminLayout.js:279-287`); reload held it in desktop view; the pill returned it to
+      phone view; a second reload held THAT. So both the write path and the
+      `delete next[screenKey]` path persist correctly, and the escape hatch is genuinely
+      two-way rather than one-way.
+      NOTE the overrides are localStorage-only with no server copy, so the step 4 purge wiped
+      every previously pinned screen. Anything Dallas had in desktop view had to be re-pinned
+      by hand; nothing restores them.
       **RE-READ THE SCRIPT BEFORE RUNNING IT.** It was written against the lane and predates
       `981b09ef`, which rewrote the revoke copy the walk checks (SecuritySettings no longer
       promises "a lost phone is locked out immediately"; it names the offline carve-out) and
