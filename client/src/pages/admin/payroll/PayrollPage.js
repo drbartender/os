@@ -1,16 +1,22 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useOutletContext } from 'react-router-dom';
 import useUrlListState from '../../../hooks/useUrlListState';
+import Toolbar from '../../../components/adminos/Toolbar';
+import StatusChip from '../../../components/adminos/StatusChip';
 import PayRunView from './PayRunView';
 import HistoryView from './HistoryView';
 import UnassignedTipsPanel from './UnassignedTipsPanel';
 import DeferredTipsPanel from './DeferredTipsPanel';
+import TipsLedger from './TipsLedger';
 import TaxTotalsTab from './TaxTotalsTab';
 
+// Payroll is a child of the Staff hub (spec 2026-08-19 §7). The hub owns the
+// page header; this page owns its views as .seg pills in the toolbar (two
+// vocabularies: underline above, pills below, never the same strip twice).
 const TABS = [
   { id: 'payrun', label: 'Pay run' },
   { id: 'history', label: 'History' },
-  { id: 'tips', label: 'Tips repair' },
+  { id: 'tips', label: 'Tips' },
   { id: 'tax', label: '1099 / tax' },
 ];
 const TAB_IDS = TABS.map(t => t.id);
@@ -23,47 +29,60 @@ export default function PayrollPage() {
   const [listState, setListState] = useUrlListState(PAYROLL_DEFAULTS);
   const mappedTab = LEGACY_TAB_REMAP[listState.tab] || listState.tab;
   const tab = TAB_IDS.includes(mappedTab) ? mappedTab : 'payrun';
-  const navigate = useNavigate();
+  // The hub shares its summary through Outlet context; a bare render outside
+  // the hub (a test) has none, so tolerate null.
+  const { summary, refresh } = useOutletContext() || {};
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <div>
-          <div className="page-title">Payroll</div>
-          <div className="page-subtitle">Weekly pay run, history, and tip repair.</div>
-        </div>
-        <div>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/dashboard')}>
-            ← Overview
-          </button>
-        </div>
-      </div>
+    <>
+      <Toolbar
+        tabs={TABS}
+        tab={tab}
+        // Clear the period param on tab clicks: both Pay run and History
+        // consume it, and a stale non-paid id would bounce History right
+        // back to Pay run. Deep links set the param directly in the URL.
+        setTab={(t) => setListState({ tab: t, period: '' })}
+      />
 
-      <div className="hstack" style={{ gap: 4, marginBottom: 'var(--gap)' }}>
-        {TABS.map(t => (
-          <button
-            key={t.id}
-            type="button"
-            className={`btn btn-sm ${tab === t.id ? 'btn-primary' : 'btn-ghost'}`}
-            // Clear the period param on tab clicks: both Pay run and History
-            // consume it, and a stale non-paid id would bounce History right
-            // back to Pay run. Deep links set the param directly in the URL.
-            onClick={() => setListState({ tab: t.id, period: '' })}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'payrun' && <PayRunView periodParam={listState.period} />}
+      {tab === 'payrun' && (
+        <PayRunView
+          periodParam={listState.period}
+          openPeriod={summary?.open_period || null}
+          pendingReviews={summary?.pending_reviews ?? 0}
+          onChanged={refresh}
+        />
+      )}
       {tab === 'history' && <HistoryView periodParam={listState.period} />}
-      {tab === 'tips' && (
-        <div className="vstack" style={{ gap: 16 }}>
-          <UnassignedTipsPanel />
-          <DeferredTipsPanel />
+      {tab === 'tips' && <TipsTab />}
+      {tab === 'tax' && <TaxTotalsTab />}
+    </>
+  );
+}
+
+// Repair, then ledger, then context. Both repair panels report their count so
+// an empty pair collapses to one clear line and the ledger is the page. A
+// panel that failed to load reports nothing, so a broken read never reads as
+// "clear".
+function TipsTab() {
+  const [counts, setCounts] = React.useState({ unassigned: null, deferred: null });
+  const bothClear = counts.unassigned === 0 && counts.deferred === 0;
+  return (
+    <div className="vstack" style={{ gap: 16 }}>
+      {bothClear && (
+        <div className="card">
+          <div className="card-body hstack" style={{ gap: 10 }}>
+            <StatusChip kind="ok">clear</StatusChip>
+            <span>Repair queues are clear: no unassigned tips, nothing deferred.</span>
+            <span className="muted tiny">Unassigned appear when a tip can't find its event · deferred wait for an open period</span>
+          </div>
         </div>
       )}
-      {tab === 'tax' && <TaxTotalsTab />}
+      <UnassignedTipsPanel hideWhenEmpty onCount={(n) => setCounts(c => (c.unassigned === n ? c : { ...c, unassigned: n }))} />
+      <DeferredTipsPanel hideWhenEmpty onCount={(n) => setCounts(c => (c.deferred === n ? c : { ...c, deferred: n }))} />
+      <TipsLedger />
+      <p className="tiny muted" style={{ margin: 0 }}>
+        Tips are collected on each bartender's own sign and paid through the event's payout, pooled across the bartenders who worked it; this ledger is the cross-staff view. A staffer's Payouts tab shows where each one landed.
+      </p>
     </div>
   );
 }

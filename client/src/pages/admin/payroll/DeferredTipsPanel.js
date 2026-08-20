@@ -18,7 +18,7 @@ const fmtDeferredAt = (ts) => {
 // slice to the date part before fmtDate (same idiom as the other payroll files).
 const ymd10 = (v) => (v ? String(v).slice(0, 10) : null);
 
-export default function DeferredTipsPanel() {
+export default function DeferredTipsPanel({ onCount, hideWhenEmpty = false }) {
   const toast = useToast();
   const [tips, setTips] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -33,6 +33,14 @@ export default function DeferredTipsPanel() {
       .finally(() => setLoading(false));
   };
   useEffect(refresh, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Report the queue depth to the Tips tab, which collapses an empty pair of
+  // repair queues into one clear line. Only after a load that succeeded: a
+  // failed read stays unreported (null upstream) so nothing claims it is clear.
+  useEffect(() => {
+    if (loading || error || !onCount) return;
+    onCount(tips.length);
+  }, [loading, error, tips, onCount]);
 
   const retry = async () => {
     if (retrying) return;
@@ -63,7 +71,9 @@ export default function DeferredTipsPanel() {
     );
   }
   if (tips.length === 0) {
-    return <div className="card"><div className="card-body muted">No deferred tips. Nothing is stuck.</div></div>;
+    return hideWhenEmpty ? null : (
+      <div className="card"><div className="card-body muted">No deferred tips. Nothing is stuck.</div></div>
+    );
   }
 
   return (

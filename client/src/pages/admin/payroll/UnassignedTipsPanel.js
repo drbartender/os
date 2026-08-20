@@ -16,21 +16,31 @@ const fmtTippedAt = (ts) => {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
-export default function UnassignedTipsPanel() {
+export default function UnassignedTipsPanel({ onCount, hideWhenEmpty = false }) {
   const toast = useToast();
   const [tips, setTips] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [drafts, setDrafts] = useState({}); // tipId -> shiftId
   const [busy, setBusy] = useState({});
 
   const refresh = () => {
-    setLoading(true);
+    setLoading(true); setError(false);
     api.get('/admin/payroll/unassigned-tips')
       .then(r => setTips(r.data.tips || []))
-      .catch(err => toast.error(err.message || 'Failed to load unassigned tips'))
+      .catch(err => { setError(true); toast.error(err.message || 'Failed to load unassigned tips'); })
       .finally(() => setLoading(false));
   };
   useEffect(refresh, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Report the queue depth to the Tips tab, which collapses an empty pair of
+  // repair queues into one clear line. Only after a load that succeeded: a
+  // failed read stays unreported (null upstream) so nothing claims it is clear.
+  // Keyed on the list, so assigning the last tip reports zero too.
+  useEffect(() => {
+    if (loading || error || !onCount) return;
+    onCount(tips.length);
+  }, [loading, error, tips, onCount]);
 
   const assign = async (tipId) => {
     const shiftId = Number(drafts[tipId]);
@@ -55,8 +65,18 @@ export default function UnassignedTipsPanel() {
   };
 
   if (loading) return <div className="muted">Loading…</div>;
-  if (tips.length === 0) {
+  // An error card, never a silent hide: hideWhenEmpty must not turn a failed
+  // read into a blank space next to a line saying the queues are clear.
+  if (error) {
     return (
+      <div className="card"><div className="card-body">
+        <span className="muted">Failed to load unassigned tips. </span>
+        <button type="button" className="btn btn-sm" onClick={refresh}>Retry</button>
+      </div></div>
+    );
+  }
+  if (tips.length === 0) {
+    return hideWhenEmpty ? null : (
       <div className="card"><div className="card-body muted">
         No unassigned tips. The matching ran on every tip; anything that didn't land an event shows up here.
       </div></div>

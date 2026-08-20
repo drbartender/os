@@ -5,6 +5,7 @@ import StatusChip from '../../../components/adminos/StatusChip';
 import { fmt$fromCents, fmtDate } from '../../../components/adminos/format';
 import PayoutRow from './PayoutRow';
 import AttributionModal from './AttributionModal';
+import CurrentWeekCard, { currentWeekCardVisible } from './CurrentWeekCard';
 
 // pg DATE columns arrive as full ISO strings (Date -> toISOString via
 // res.json); slice the calendar date back out before formatting or comparing.
@@ -19,13 +20,15 @@ const CHIP_KIND = { open: 'info', processing: 'warn', reopened: 'violet' };
 // The pay-run queue: every non-paid period, newest payday first. Each card
 // lazy-loads its payouts on expansion and hosts the line editor + pay panel
 // per payout.
-export default function PayRunView({ periodParam }) {
+export default function PayRunView({ periodParam, openPeriod = null, pendingReviews = 0, onChanged }) {
   const toast = useToast();
   const [periods, setPeriods] = useState(null); // all periods (rollups) | null while loading
   const [error, setError] = useState(false);
   const [expanded, setExpanded] = useState(null); // Set(period ids) | null until first load
+  const [bountyCents, setBountyCents] = useState(0);
   const loadedRef = useRef(false);
   const focusedRef = useRef(false);
+  const bountyRef = useRef(false);
 
   const load = useCallback(() => {
     api.get('/admin/payroll/periods')
@@ -48,6 +51,26 @@ export default function PayRunView({ periodParam }) {
     } : p)) : prev));
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Anything that moves the queue also moves the hub's subtitle (status word,
+  // accrued count) and its tab chrome, so tell the layout to refetch too.
+  const handleQueueChanged = useCallback(() => {
+    load();
+    if (onChanged) onChanged();
+  }, [load, onChanged]);
+
+  // The review bounty is only ever spoken by the current-week card's pointer,
+  // so read it once, and only when there is a pending review to point at (the
+  // summary leaves pendingReviews null for managers, so they never call it).
+  // A failure leaves it at 0 and the sentence drops the figure rather than
+  // promising $0.00.
+  useEffect(() => {
+    if (bountyRef.current || !(Number(pendingReviews) > 0)) return;
+    bountyRef.current = true;
+    api.get('/admin/staff-reviews')
+      .then(r => setBountyCents(Number(r.data?.bounty_cents) || 0))
+      .catch(() => {});
+  }, [pendingReviews]);
 
   const derived = useMemo(() => {
     const all = periods || [];
@@ -134,7 +157,9 @@ export default function PayRunView({ periodParam }) {
         </div>
       </div>
 
-      {derived.queue.length === 0 && (
+      <CurrentWeekCard openPeriod={openPeriod} pendingReviews={pendingReviews} bountyCents={bountyCents} />
+
+      {derived.queue.length === 0 && !currentWeekCardVisible(openPeriod) && (
         <div className="card"><div className="card-body muted">Nothing owed. Every period is paid.</div></div>
       )}
       {derived.queue.map(p => (
@@ -143,7 +168,7 @@ export default function PayRunView({ periodParam }) {
           period={p}
           expanded={!!(expanded && expanded.has(p.id))}
           onToggle={() => toggle(p.id)}
-          onQueueChanged={load}
+          onQueueChanged={handleQueueChanged}
           onOwedDelta={patchPeriodOwed}
         />
       ))}
