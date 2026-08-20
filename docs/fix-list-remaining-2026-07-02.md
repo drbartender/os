@@ -5811,7 +5811,16 @@ the Hiring "40 dead cards" entry above. Everything below was checked against cod
 against the spec. Nothing here is owned by sh-f-feedback or sh-g-fidelity, so nothing here is
 already being fixed.
 
-## Two cross-staff tip ledgers are live on main at once and they disagree about money (found 2026-08-19, drift audit)
+## ~~Two cross-staff tip ledgers are live on main at once and they disagree about money~~ CLOSED 2026-08-20, re-verified against main (found 2026-08-19, drift audit)
+
+**The divergence is gone, and it closed the way this entry predicted: sh-f retired the old page.**
+`client/src/pages/admin/TipsAdmin.js` was DELETED in `4aedc0d5` (merge of lane `sh-f-feedback`)
+and `/tips` is now `<LegacyRedirect to="/staffing/payroll" defaults={{ tab: 'tips' }} />`
+(`client/src/App.js:641`). Grepping the client for the gross renderer this entry named
+(`fmt$fromCents(t.amount_cents)` as the row's own figure) returns zero files. `TipsLedger.js`
+is the only cross-staff tip ledger left and it still renders net with the gross struck beside
+it (`:136`, `:140`). The push-sequencing decision this entry forced is therefore moot: there is
+no gross-versus-net divergence left to ship or to name in the push inventory.
 
 The highest-severity item in this batch, because it is a money display, not a cosmetic one. Main
 currently carries **both** tip ledgers: the old `/tips` page and the new Payroll then Tips tab.
@@ -5833,7 +5842,14 @@ forces is a push-sequencing one:** sh-c/d/e are unpushed, so pushing them before
 gross-versus-net divergence to prod. Either sequence sh-f before the next push, or name the
 divergence out loud in the push inventory so it is a choice rather than an accident.
 
-## A restored review bounty is labelled "waiting for an open period" while the money is already in the open run (found 2026-08-19, drift audit)
+## ~~A restored review bounty is labelled "waiting for an open period" while the money is already in the open run~~ FIXED 2026-08-20, re-verified against main (found 2026-08-19, drift audit)
+
+**Both halves of the prescribed fix are on main, in `4dbe9c5b` ("staff hub: three defects the
+post-merge audit found").** `PendingReviewCard.js:90` now returns
+`restored: Number(res.data?.restored) || 0` alongside `materialized` and `catchUp`, and the
+waiting guard at `ReviewsPage.js:76-77` reads
+`result.bountyEligible && result.materialized === 0 && result.restored === 0`. The comment at
+`:80-83` states the reason in the code, so the next reader does not have to find this entry.
 
 `POST /admin/staff-reviews/:id/confirm` returns three counters (`staffReviews.js:452-454`):
 `materialized`, `restored`, `catch_up_materialized`. `settleBounty` returns `'restored'`, not
@@ -5855,7 +5871,14 @@ Fix is two lines plus the spec sentence: add `restored: Number(res.data?.restore
 `result.materialized === 0 && result.restored === 0 && result.bountyEligible`. Spec §7 carries the
 same hole (it names only `materialized` and `catch_up_materialized`), so amend it in the same pass.
 
-## The restored `/tips` route is the one Staff surface with no `adminStrict`, so a manager lands on a 403 wall (found 2026-08-19, drift audit)
+## ~~The restored `/tips` route is the one Staff surface with no `adminStrict`, so a manager lands on a 403 wall~~ MOOT 2026-08-20, re-verified against main (found 2026-08-19, drift audit)
+
+**Closed by the exact condition the entry set: "it disappears entirely when sh-f replaces the
+route with a redirect, so this is only worth building if sh-f is more than a session away."**
+sh-f was not. `App.js:641` is now a `LegacyRedirect` to `/staffing/payroll?tab=tips`, which sits
+under the guarded hub, and `TipsAdmin.js` no longer exists. No manager can land on a page whose
+every fetch 403s, because there is no page. The one-line `adminStrict` wrap was never built and
+should not be: it would now guard a redirect.
 
 `App.js:646` mounts `<Route path="/tips" element={<TipsAdmin />} />` under the admin shell at
 `App.js:610`, which is `<ProtectedRoute adminOnly>` and, by its own JSDoc at `App.js:314-315`,
@@ -5876,7 +5899,14 @@ One line if it is worth doing:
 behavior change for admins. It disappears entirely when sh-f replaces the route with a redirect, so
 this is only worth building if sh-f is more than a session away.
 
-## `contractorTipPage.js` is sensitive-listed and its only suite is not on the money smoke gate (found 2026-08-19, drift audit)
+## ~~`contractorTipPage.js` is sensitive-listed and its only suite is not on the money smoke gate~~ FIXED 2026-08-20, re-verified against main (found 2026-08-19, drift audit)
+
+**Done in `4dbe9c5b`, and with the one-line rationale comment this entry asked for.**
+`scripts/money-smoke-list.txt:104-111` now carries
+`server/routes/admin/contractorTipPage.test.js` under a "Tip money reads (staff hub,
+2026-08-19)" heading that names the listed-but-ungated shape it closes. The same commit added
+`stripePayoutSync`'s suites directly beneath it (`:113-115`) citing this entry as the precedent,
+so the convention call recorded here has now been made twice in the same direction.
 
 sh-a added `server/routes/admin/contractorTipPage.js` to `scripts/sensitive-paths.txt` (`:49`, "tip
 money reads (the cross-staff ledger) and the contractor tip-page mutations") and created that
