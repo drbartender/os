@@ -44,3 +44,31 @@ test.each([
 ])('rejects %s', (name) => {
   expect(validatePreferredName(name).valid).toBe(false);
 });
+
+// PARITY with server/utils/staffDisplayName.test.js's astral test. This port
+// used charAt(0) for the last initial until 2026-08-20, so the live preview
+// could show half a surrogate pair for a name the server stored correctly.
+test('an astral-plane initial is a whole character, never half a surrogate pair', () => {
+  const out = computeDisplayName({ preferredName: 'Amy', legalFullName: 'Amy \u{1D4AE}mith' });
+  expect(out).toBe('Amy \u{1D4AE}.');
+  expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(out)).toBe(false);
+  expect(computeDisplayName({ preferredName: '\u{1D49C}my', legalFullName: '\u{1D49C}my Smith' }))
+    .toBe('\u{1D49C}my S.');
+});
+
+// PARITY with the server validator's unicode-form tests. The preview and the
+// server must agree about what is acceptable, or the field rejects a name the
+// server would have taken (or the reverse, which is worse).
+test('a decomposed accent and a curly apostrophe both pass, folded to one form', () => {
+  // Escapes, not literals: the whole point is WHICH form the bytes are in, and a
+  // literal is invisible in review and re-normalizable by an editor on save.
+  const composed = 'Jos\u00e9';
+  const decomposed = 'Jose\u0301';
+  expect(decomposed).not.toBe(composed);
+  expect(validatePreferredName(decomposed).valid).toBe(true);
+  expect(validatePreferredName(decomposed).value).toBe(composed);
+  expect(validatePreferredName('O\u2019Brien').valid).toBe(true);
+  expect(validatePreferredName('O\u2019Brien').value).toBe("O'Brien");
+  // U+02BB is a LETTER and always passed; folding it would corrupt the name.
+  expect(validatePreferredName('Ke\u02bbala').value).toBe('Ke\u02bbala');
+});

@@ -3485,12 +3485,22 @@ Until then treat a green tick as "the known re-arming shapes are absent", not "t
 - **`proposals/lifecycle.js` added to sensitive-paths.txt** — it gates status
   transitions including force-archive and was invisible to review scaling.
 
-**Non-blocking, recorded for later:**
-- marketingSend's run claim (`status <> 'sending' OR ...`) accepts an ARCHIVED campaign
+**Non-blocking, recorded for later. SWEPT 2026-08-20 against code: three of the eight are now
+FIXED (lane `pushgate-814-residuals`), one re-verified as still true, four left alone as notes.**
+- ~~marketingSend's run claim (`status <> 'sending' OR ...`) accepts an ARCHIVED campaign
   (codex HIGH; PRE-EXISTING, ms race window, DELETE has no UI caller). Harden someday:
-  `AND status <> 'archived'` on the claim WHERE.
+  `AND status <> 'archived'` on the claim WHERE.~~ **FIXED 2026-08-20.** The clause is on the
+  claim WHERE, and the 409 branch now re-reads status so the operator is told the true thing:
+  the old message would have said "already sending" about a campaign they had just archived,
+  sending them looking for a run that does not exist. Pinned by a test that simulates the race
+  for real rather than asserting the SQL text: a `pool.query` mock archives the row the instant
+  the route's own SELECT resolves, which is exactly the interval another admin's archive click
+  occupies. Reverting the clause fails it.
 - `DELETE /campaigns/:id` has NO client caller at all — the new 409 guard is API-only
   and the marketing UI offers no archive control (coverage gap, pre-existing).
+  **Re-verified still true 2026-08-20**: the only `api.delete` against that family in
+  `client/src` is `EmailCampaignDetail.js:61`, the per-STEP delete. Left as a note, since a
+  coverage gap on an endpoint nothing calls is not a defect.
 - A campaign stranded `sending` by a process death is un-archivable until a re-send
   recovers the stale claim (recoverable by design; note only).
 - SMS cost line: one non-GSM-7 letter in a bartender's preferred name (Zoë, Núñez,
@@ -3498,8 +3508,14 @@ Until then treat a green tick as "the known re-arming shapes are absent", not "t
 - Paystub PDF renders CJK preferred names as mojibake on the fallback path only (no
   crash; agreement/application full_name wins when present). Tip-sign display fonts
   lack Han/Cyrillic (browser per-glyph fallback at 300 DPI). Latin accents fine in both.
-- Client `computeDisplayName` port lacks the server's surrogate hardening
-  (preview-only surface; `charAt(0)` last-initial).
+- ~~Client `computeDisplayName` port lacks the server's surrogate hardening
+  (preview-only surface; `charAt(0)` last-initial).~~ **FIXED 2026-08-20**, and the entry
+  under-stated it in one direction and over-stated it in another. Under: the SERVER's own
+  hardening had no test at all, so the thing this entry compared against was itself unpinned;
+  both suites now carry the astral case. Over: `fixCase`'s `charAt(0)` was only ACCIDENTALLY
+  safe, not broken, because `toUpperCase` leaves a lone high surrogate alone and `slice(1)`
+  put the pair back together. The real break was the LAST INITIAL, which emitted a lone
+  surrogate into a name people read. Both are written the same way now so neither can drift.
 - ~~The `.staffing-stat strong` ink fix is DEAD CSS — zero consumers in client/src;
   delete the rule (or the block) whenever that area is next touched.~~
   **DONE 2026-08-14 (2233a1b6)**: the whole `.staffing-stats` / `.staffing-stat` block was
@@ -3515,9 +3531,17 @@ Until then treat a green tick as "the known re-arming shapes are absent", not "t
   README and Task 8 name DIFFERENT design-project ids). Accepted for this push
   (per-lane reviewed, nothing sensitive-listed); reconcile the ids and tighten the
   footprint discipline on the next tip lane.
-- NFD-normalized input (decomposed é) and iOS curly-apostrophe names still reject
+- ~~NFD-normalized input (decomposed é) and iOS curly-apostrophe names still reject
   with the generic letters-only error (pre-existing; the widening is strictly
-  additive). Candidate fix: `.normalize('NFC')` + a U+2019→' fold in `norm()`.
+  additive). Candidate fix: `.normalize('NFC')` + a U+2019→' fold in `norm()`.~~
+  **FIXED 2026-08-20, the prescribed way, in BOTH ports** (`staffDisplayName.validate.js` and
+  `client/src/utils/preferredName.js`, which are required to stay in sync). U+2018 is folded
+  alongside U+2019. Deliberately NOT folded: U+02BB and U+02BC, which are Unicode LETTERS and
+  already passed, so rewriting them would corrupt an orthography (the Hawaiian okina) to fix a
+  problem it does not have; a test pins that they are left alone. One consequence worth naming
+  because it is a silent data change: `validatePreferredNameChange` normalizes both sides, so an
+  unchanged legacy curly or decomposed name repairs itself the next time that row is saved. It
+  cannot lock anyone out, since the grandfathering compare normalizes both sides too.
 
 # Added 2026-08-14 (small-fix wave 2 findings)
 

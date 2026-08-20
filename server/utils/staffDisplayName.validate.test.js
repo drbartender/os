@@ -51,6 +51,46 @@ test('normalizes surrounding and internal whitespace on the accepted value', () 
   assert.equal(validatePreferredName('Elisa ').value, 'Elisa');
 });
 
+// UNICODE FORM (2026-08-14 push-gate residual, fixed 2026-08-20). Both of these
+// arrive from ordinary keyboards: iOS and macOS substitute a curly apostrophe
+// for a typed one, and a decomposed accent is what a paste out of some editors
+// carries. Both used to hit the generic letters-only refusal, which named
+// apostrophes as allowed while rejecting the apostrophe the phone had inserted.
+test('a DECOMPOSED accent is the same name as a composed one', () => {
+  const composed = 'Jos\u00e9';
+  const decomposed = 'Jose\u0301';
+  assert.notEqual(composed, decomposed, 'the two forms really are different strings');
+  const r = validatePreferredName(decomposed);
+  // \p{L} does not match a combining mark, so the NFD form failed a test the
+  // NFC form passes, for the same name.
+  assert.equal(r.valid, true);
+  assert.equal(r.value, composed, 'and it is stored in one canonical form');
+});
+
+test('an iOS curly apostrophe is accepted, folded to the plain one', () => {
+  const r = validatePreferredName('O\u2019Brien');
+  assert.equal(r.valid, true);
+  assert.equal(r.value, "O'Brien");
+});
+
+test('a LETTER apostrophe is left alone, because it is already a letter', () => {
+  // U+02BB (the Hawaiian okina) is \p{Lm} and always passed. Folding it to an
+  // ASCII quote would corrupt an orthography to fix a problem it does not have.
+  const r = validatePreferredName('Ke\u02bbala');
+  assert.equal(r.valid, true);
+  assert.equal(r.value, 'Ke\u02bbala');
+});
+
+test('grandfathering still recognizes an unchanged name across both folds', () => {
+  const stored = 'O\u2019Brien';
+  const r = validatePreferredNameChange(stored, stored);
+  assert.equal(r.valid, true);
+  // Deliberate: an unchanged submission normalizes on its way through, so a
+  // legacy curly or decomposed name repairs itself the next time that row is
+  // saved. It cannot lock anyone out, because the compare normalizes both sides.
+  assert.equal(r.value, "O'Brien");
+});
+
 test('error copy contains no em dashes', () => {
   for (const [name] of REJECTED) {
     assert.ok(!validatePreferredName(name).error.includes('—'));

@@ -663,3 +663,51 @@ test('a run that completes WITH FAILURES keeps the campaign retryable', async ()
     await pool.query('DELETE FROM email_campaigns WHERE id=$1', [cf]);
   }
 });
+
+// ─── 2026-08-14 push-gate residual, fixed 2026-08-20 ───────────────────────
+
+test('a campaign ARCHIVED between the read and the claim is never mailed', async () => {
+  // The route reads the campaign, checks status, then claims it with a
+  // conditional UPDATE. The archive writer (emailMarketing/campaigns.js) guards
+  // on `status <> 'sending'`, so it happily archives a draft in that gap -- and
+  // the claim's WHERE only asked about 'sending', which an archived row also
+  // satisfies. The read-side check passed on the stale value, the claim flipped
+  // the row back to 'sending', and an archived campaign mailed.
+  //
+  // Simulated rather than argued about: the mock archives the row the instant
+  // the route's own SELECT resolves, which is exactly the interval another
+  // admin's archive click occupies.
+  const cid = (await pool.query(
+    `INSERT INTO email_campaigns (name,type,status,subject,html_body)
+     VALUES ($1,'blast','draft','Race','<p>hi</p>') RETURNING id`, [`SNDARCH ${NONCE}`])).rows[0].id;
+  const who = await mkClient('Race', `snd-race-${NONCE}@mkt-test.example`);
+  const realQuery = pool.query.bind(pool);
+  let armed = true;
+  const patched = mock.method(pool, 'query', async (...args) => {
+    const out = await realQuery(...args);
+    if (armed && typeof args[0] === 'string' && args[0].startsWith('SELECT id, name, type, subject')) {
+      armed = false;
+      await realQuery("UPDATE email_campaigns SET status='archived' WHERE id=$1", [cid]);
+    }
+    return out;
+  });
+  try {
+    const r = await req('POST', `/api/marketing/campaigns/${cid}/send`, adminToken, { client_ids: [who] });
+    assert.equal(r.status, 409);
+    // And it says the true thing. "Already sending" would send an operator
+    // looking for a run that does not exist.
+    assert.match(r.body.error, /archived/i);
+  } finally {
+    // Restore ONLY this mock: mock.restoreAll() would also drop the sendEmail
+    // interception every other test in this file depends on.
+    patched.mock.restore();
+  }
+  assert.equal(armed, false, 'the race actually fired, or this test proves nothing');
+  const row = (await pool.query('SELECT status FROM email_campaigns WHERE id=$1', [cid])).rows[0];
+  assert.equal(row.status, 'archived', 'the claim must not resurrect it to sending');
+  const sends = await pool.query('SELECT COUNT(*)::int AS n FROM email_sends WHERE campaign_id=$1', [cid]);
+  assert.equal(sends.rows[0].n, 0, 'nothing went out');
+  await pool.query('DELETE FROM email_sends WHERE campaign_id=$1', [cid]);
+  await pool.query('DELETE FROM clients WHERE id=$1', [who]);
+  await pool.query('DELETE FROM email_campaigns WHERE id=$1', [cid]);
+});

@@ -18,8 +18,23 @@ const MAX_LEN = 20;
 // 2026-08-14, Dallas call; keep in sync with client/src/utils/preferredName.js).
 const NAME_CHARS = /^[\p{L}][\p{L} .'-]*$/u;
 
+// Curly apostrophes only. U+2018/U+2019 are what an iPhone, macOS and Word all
+// substitute for a typed ', so "O'Brien" arrives as punctuation the letter class
+// rejects, and the rejection says apostrophes are allowed. Deliberately NOT
+// folded: U+02BC and U+02BB (the Hawaiian okina), which are Unicode LETTERS,
+// already pass, and rewriting them would corrupt an orthography to fix nothing.
+const CURLY_APOSTROPHE = /[\u2018\u2019]/g;
+
 function norm(v) {
-  return String(v === null || v === undefined ? '' : v).trim().replace(/\s+/g, ' ');
+  return String(v === null || v === undefined ? '' : v)
+    // NFC first. A decomposed "e" + U+0301 is a letter followed by a COMBINING
+    // MARK, and \p{L} does not match marks, so NFD "Jose" with an accent failed
+    // the same letters-only test that NFC "Jose" with an accent passes. Which
+    // form arrives depends on the keyboard and the paste source, not the name.
+    .normalize('NFC')
+    .replace(CURLY_APOSTROPHE, "'")
+    .trim()
+    .replace(/\s+/g, ' ');
 }
 
 function validatePreferredName(raw) {

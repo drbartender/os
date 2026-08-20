@@ -70,3 +70,17 @@ test('malformed stored values render predictably rather than being rescued', () 
   assert.equal(computeDisplayName({ preferredName: 'TwistidTreets', legalFullName: 'Nevver Sayles' }), 'TwistidTreets S.');
   assert.equal(computeDisplayName({ preferredName: 'Miss Taylor', legalFullName: null }), 'Miss T.');
 });
+
+// The astral-plane hardening (2026-08-14) had no test until 2026-08-20. Its two
+// call sites both take the FIRST character of a token, and charAt(0) on a
+// character outside the BMP returns half a surrogate pair. fixCase survived that
+// by accident (toUpperCase leaves a lone surrogate alone, so slice(1) put the
+// pair back together); the LAST INITIAL did not, and shipped a broken glyph into
+// a name people read. Pinned here so the spread cannot be "simplified" back.
+test('an astral-plane initial is a whole character, never half a surrogate pair', () => {
+  const out = computeDisplayName({ preferredName: 'Amy', legalFullName: 'Amy \u{1D4AE}mith' });
+  assert.equal(out, 'Amy \u{1D4AE}.');
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(out), 'no lone high surrogate');
+  // And the same rule on the leading token the case repair touches.
+  assert.equal(computeDisplayName({ preferredName: '\u{1D49C}my', legalFullName: '\u{1D49C}my Smith' }), '\u{1D49C}my S.');
+});

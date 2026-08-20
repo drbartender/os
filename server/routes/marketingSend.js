@@ -193,10 +193,18 @@ router.post('/campaigns/:id/send', auth, adminOnly, asyncHandler(async (req, res
   // The staleness escape matters as much as the claim. Without it a process
   // death mid-send would leave the row 'sending' forever and lock the campaign
   // out with no way back except hand-editing the database.
+  //
+  // ARCHIVED is re-checked HERE, not only at the read above. The archive writer
+  // (emailMarketing/campaigns.js) guards on `status <> 'sending'`, so between
+  // this request's SELECT and this UPDATE a campaign can be archived and still
+  // satisfy a WHERE that only asks about 'sending' -- archived is <> 'sending'.
+  // The read-side check would pass, the claim would flip it back to 'sending',
+  // and an archived campaign would mail. Small window, real send.
   const claimRun = await pool.query(
     `UPDATE email_campaigns
         SET status = 'sending', sent_at = NOW(), updated_at = NOW()
       WHERE id = $1
+        AND status <> 'archived'
         AND (status <> 'sending' OR sent_at IS NULL
              OR sent_at < NOW() - make_interval(mins => $2::int))
       -- Return the stamp we just wrote. The release matches on it, so a run
@@ -214,6 +222,14 @@ router.post('/campaigns/:id/send', auth, adminOnly, asyncHandler(async (req, res
     [campaignId, RUN_STALE_MINUTES]
   );
   if (claimRun.rowCount === 0) {
+    // Two ways to lose the claim now, and they are different facts to an
+    // operator. Re-read rather than guess: telling someone to "wait for it to
+    // finish" about a campaign they just archived sends them looking for a run
+    // that does not exist.
+    const lost = await pool.query('SELECT status FROM email_campaigns WHERE id = $1', [campaignId]);
+    if (lost.rows[0] && lost.rows[0].status === 'archived') {
+      throw new ConflictError('That campaign is archived.');
+    }
     throw new ConflictError('That campaign is already sending. Wait for it to finish.');
   }
   const claimStamp = claimRun.rows[0].claim_stamp;

@@ -34,7 +34,20 @@ function isMiddleInitial(tok) {
 function fixCase(tok) {
   if (tok.length < 3) return tok;
   if (tok !== tok.toLowerCase()) return tok;
-  return tok.charAt(0).toUpperCase() + tok.slice(1);
+  // Spread, not charAt/slice, mirroring the server's 2026-08-14 hardening this
+  // port never followed. Here the old shape was only ACCIDENTALLY safe:
+  // charAt(0) on an astral character yields a lone high surrogate, and
+  // toUpperCase leaves it alone, so concatenating slice(1) happened to
+  // reassemble the pair. firstChar below is where it actually broke, and both
+  // are written the same way so neither can drift back.
+  const [first, ...rest] = [...tok];
+  return first.toUpperCase() + rest.join('');
+}
+
+// One display-safe initial from a token. Same surrogate rule as fixCase. Ported
+// from server/utils/staffDisplayName.js firstChar.
+function firstChar(tok) {
+  return [...String(tok)][0] || '';
 }
 
 export function computeDisplayName({ preferredName, legalFullName } = {}) {
@@ -49,10 +62,10 @@ export function computeDisplayName({ preferredName, legalFullName } = {}) {
   let lastInitial = '';
   if (legal.length >= 2) {
     initialSource = 'legal';
-    lastInitial = legal[legal.length - 1].charAt(0).toUpperCase();
+    lastInitial = firstChar(legal[legal.length - 1]).toUpperCase();
   } else if (pref.length >= 2) {
     initialSource = 'preferred';
-    lastInitial = pref[pref.length - 1].charAt(0).toUpperCase();
+    lastInitial = firstChar(pref[pref.length - 1]).toUpperCase();
   }
 
   let short;
@@ -94,8 +107,17 @@ export const MAX_LEN = 20;
 // 2026-08-14; keep in sync with server/utils/staffDisplayName.validate.js).
 const NAME_CHARS = /^[\p{L}][\p{L} .'-]*$/u;
 
+// Keep in sync with server/utils/staffDisplayName.validate.js norm(). See that
+// file for why NFC and the curly-apostrophe fold are both needed and why the
+// okina is deliberately left alone.
+const CURLY_APOSTROPHE = /[\u2018\u2019]/g;
+
 function norm(v) {
-  return String(v === null || v === undefined ? '' : v).trim().replace(/\s+/g, ' ');
+  return String(v === null || v === undefined ? '' : v)
+    .normalize('NFC')
+    .replace(CURLY_APOSTROPHE, "'")
+    .trim()
+    .replace(/\s+/g, ' ');
 }
 
 export function validatePreferredName(raw) {
