@@ -2673,6 +2673,36 @@ thread into this ledger in one keystroke.
 
 ## From `tech-debt.md` — deliberate deferrals from the 2026-04-24 full audit
 
+**SECTION RE-SWEPT 2026-08-19 against code and prod. ZERO dead entries — every open item here
+is still genuinely open.** This is the healthiest block in the file, because it was already
+audited 2026-08-14 and its stale entries were struck THEN (`is_default` DROPPED, the ccImport
+TOCTOU MOOT, the webhook-catch FIXED, `notifications_opt_in` DONE). Verified this round:
+
+- **The three perf deferrals are not merely still deferred, their trigger conditions are
+  nowhere close.** `proposal_payments` holds **79 rows** against a ~100k trigger; `email_sends`
+  holds **1 row** against a "100 campaigns x 10k sends" trigger; `applications` holds **14 rows**
+  against a 10k trigger. `idx_proposals_id_cc_id` and the partial `email_sends` indexes do not
+  exist, correctly. Recorded because these entries read alarming out of context and someone
+  could otherwise go index a one-row table.
+- **Dead columns all still present** in prod: `users.calendar_token_created_at`,
+  `shifts.client_email`, `shifts.client_phone`, `applications.favorite_color`.
+  `service_addons.is_default` is confirmed GONE, so that struck line is honest.
+- **`shifts.positions_needed` and `equipment_required` are still `text`** in prod, and the
+  JSON.parse boilerplate the entry describes is still live (`autoAssign.js:143`). The entry's own
+  "drifted to :141" note is EXACT.
+- **`failed_logins`, `server/worker.js`, `server/utils/drinkPlanPricing.js`,
+  `normalizeAdjustments`/`normalizeClassOptions` all do not exist** — each entry proposes creating
+  them, so absence confirms open rather than stale.
+- **The App.js route-manifest entry is UNDERSTATED.** `client/src/App.js` carries **193 `<Route>`
+  elements of which 56 distinct paths are registered more than once**, several exactly four times
+  (`/`, `/plan/:token`, `/proposal/:token`, `/compare/:token`, `/invoice/:token`,
+  `/shopping-list/:token`, `/tip/:token`). The file is also **701 lines, one over the 700 soft
+  cap**, so the ratchet is about to start warning on it.
+- **Citation drift only, substance intact:** the applications parameterized `CASE` is at
+  `applications.js:67` (entry says `:22-50`); the three correlated campaign COUNTs are at
+  `emailMarketing/campaigns.js:30-32` (entry's post-split note says `:116`); `ClientAuthContext.js:15`
+  still calls raw `fetch` while importing `API_BASE_URL` from `utils/api`, exactly as described.
+
 Provenance: the standalone `tech-debt.md` (sourced from the 2026-04-24 `/full-audit`,
 paths refreshed 2026-04-27). All deliberate deferrals; each is eligible to be re-opened as
 its own spec. Line numbers are old — re-grep before surgery.
