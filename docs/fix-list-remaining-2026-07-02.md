@@ -2749,11 +2749,16 @@ TOCTOU MOOT, the webhook-catch FIXED, `notifications_opt_in` DONE). Verified thi
 - **`failed_logins`, `server/worker.js`, `server/utils/drinkPlanPricing.js`,
   `normalizeAdjustments`/`normalizeClassOptions` all do not exist** — each entry proposes creating
   them, so absence confirms open rather than stale.
-- **The App.js route-manifest entry is UNDERSTATED.** `client/src/App.js` carries **193 `<Route>`
-  elements of which 56 distinct paths are registered more than once**, several exactly four times
-  (`/`, `/plan/:token`, `/proposal/:token`, `/compare/:token`, `/invoice/:token`,
-  `/shopping-list/:token`, `/tip/:token`). The file is also **701 lines, one over the 700 soft
-  cap**, so the ratchet is about to start warning on it.
+- ~~**The App.js route-manifest entry is UNDERSTATED.**~~ **MY CHARACTERIZATION WAS WRONG,
+  corrected 2026-08-20.** The counts are real — 193 `<Route>` elements, 56 distinct paths
+  registered more than once, several exactly four times — but that repetition is **deliberate
+  host-gating, not accidental duplication**. `App.js` defines four host-scoped trees
+  (`PublicWebsiteRoutes`, `HiringRoutes`, `StaffSiteRoutes`, `AppRoutes`) and a resolver at
+  `:296-303` picks one by hostname, so each tree must register the shared public token routes for
+  a client link to work on whichever host they land on. The tech-debt entry's own framing
+  ("extract shared route groups and compose them from a single source") was accurate all along;
+  it is a dedup REFACTOR, not a defect, and a routing refactor on working code is poor value
+  against a file one line over a warn-only cap. The 701-line count is correct.
 - **Citation drift only, substance intact:** the applications parameterized `CASE` is at
   `applications.js:67` (entry says `:22-50`); the three correlated campaign COUNTs are at
   `emailMarketing/campaigns.js:30-32` (entry's post-split note says `:116`); `ClientAuthContext.js:15`
@@ -5095,8 +5100,9 @@ Changes no candidate set, only the pick.
   drifts the assumed end. `COALESCE(s.event_duration_hours, p.event_duration_hours, 4)`.
 - **`shiftEndInstant.js:115-116` cites the wrong number** — "571 prod rows" is the DEV count;
   prod has 327 proposals. The claim it supports (one distinct `event_timezone`) is true on both.
-- **`shiftClosureSweep.js:9-11` states three prod facts in the PRESENT TENSE that are now all
-  false (found 2026-08-19 sweep).** The comment reads "Only 5 shifts in prod have ever reached
+- ~~**`shiftClosureSweep.js:9-11` states three prod facts in the PRESENT TENSE that are now all
+  false.**~~ **FIXED 2026-08-20**: past-tensed and dated, with current counts alongside and an
+  instruction to re-query rather than re-derive from the BEFORE picture. Original: The comment reads "Only 5 shifts in prod have ever reached
   'completed'; 'filled' has never been used at all. 50 sit 'open' on completed proposals, 31 of
   them with payout_events attached." Prod today: **58 completed (34 with payout_events), 19
   open (0 with payout_events), 2 cancelled, zero 'filled', and ZERO open shifts on completed
