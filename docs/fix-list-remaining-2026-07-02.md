@@ -769,6 +769,24 @@ tracked and went away with its worktree.
       )
       SELECT count(*) FROM x WHERE ab_rows = 1 AND extra > 0;   -- 0 = hazard absent
 
+  **AND THE PRECONDITION IS NOT PRODUCIBLE BY THE APPLICATION (traced 2026-08-20).** The hazard
+  needs a snapshot that went stale against `num_bartenders`. Every writer of that column persists
+  a fresh `pricing_snapshot` in the same statement or the same transaction:
+  - `proposalInsert.js:26` — INSERT names both columns.
+  - `routes/proposals/public.js:459` — same, on the public quote insert.
+  - `routes/proposals/crud.js:554-555` — ONE UPDATE sets `num_bartenders = $8, pricing_snapshot
+    = $9`. This is also where an APPROVED client change request lands; `utils/changeRequests.js`
+    only builds and validates and never touches `proposals` itself.
+  - `utils/lineItemCancel.js:563` — the one that writes the column alone, and it is still safe:
+    `foldExtrasIntoProposal` at `:605` persists a fresh snapshot (`proposalExtrasFold.js:197`)
+    on the same `client`, same transaction. The only `throw`s between the two live in sibling
+    branches of the same if/else chain, and a throw rolls the column write back anyway.
+  Re-pricing writers that never touch the column (safe direction): `serviceExtensionSettle`, the
+  gratuity apply at `paymentIntentSucceeded.js:253`, and the manual-event insert at
+  `shifts.js:647`. `seedTestData.js` is not a prod path.
+  **So the remaining way in is MANUAL SQL** — and that is not hypothetical, since this file
+  documents hand-written `UPDATE`s for external payments. That is the residual risk the guard
+  would cover, not an application bug.
   Prod today: 6 proposals carry the add-on. One (472) has an override and correctly holds BOTH
   rows, so the take-the-last path handles it. The other five have `staffing.extra = 0`, so their
   lone row IS the add-on row and `matches[0]` picks correctly. Non-zero from that query is the
