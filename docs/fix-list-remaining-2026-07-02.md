@@ -5287,18 +5287,28 @@ exist. Purely a local-verification blocker.
    defect is the error handling, not the divergence: all eight FK statements sit in one
    `DO $$ ... EXCEPTION WHEN OTHERS THEN RAISE NOTICE`, so a single failure rolls back the whole
    block, leaves a fresh DB on NO ACTION, and never reaches `initDb`'s `unexpected` array.
-2. **`stripePayoutSync.js` null-Stripe deref in the nightly `sweep()`. STILL REAL, but this
-   entry's description rotted — re-verified 2026-08-19.** There are no longer "three unguarded
-   `getStripe()` dereferences": a single accessor `client(opts)` at `:22`
-   (`(opts && opts.stripe) || testStripe || getStripe()`) now fronts THREE call sites, `:103`,
-   `:123` and `:220`. The refactor moved the shape and did NOT add a guard.
-   The hazard is unchanged and confirmed at the source: `getStripe()` **returns `null`** rather
-   than throwing when credentials are missing (`stripeClient.js:47-52` — it logs "refusing to
-   fall through to live credentials" and returns null). So `sweep()`'s `const stripe =
-   client(opts)` at `:220` still yields null and the next property access is a bare TypeError.
-   Fix at the accessor, not the three call sites: `client()` should throw a named error when it
-   would return null. One guard now covers all three, which the old three-site prescription
-   would not have.
+2. ~~**`stripePayoutSync.js` null-Stripe deref in the nightly `sweep()`.**~~ **FIXED 2026-08-19,
+   lane `payout-stripe-guard` (`81ba245d`), merged to main, NOT yet pushed as of this line —
+   verify with `git merge-base --is-ancestor 81ba245d origin/main` rather than trusting it.**
+   Guarded at the `client()` accessor (`stripePayoutSync.js`), not at the three call sites, so
+   the one guard covers `syncPayout`, `syncPendingTransactions` and `sweep`, and a fourth caller
+   inherits it. Throws a typed `ExternalServiceError`, matching what `payrollTips.stripeFeeFor`
+   and `stripeRouteHelpers.getOrCreateCustomer` already do for the identical null.
+   **This entry's own prescription was wrong and is the reason to re-verify prescriptions:** it
+   said "three unguarded `getStripe()` dereferences", which stopped describing the code once a
+   refactor put a single `client()` accessor in front of them. Patching three call sites would
+   have left the accessor unguarded.
+   **Found while building the test, not in the entry:** `client()` only ASSIGNED the null, so
+   `syncPayout` went on to WRITE a payout row and crashed on the deref after it, stranding a row
+   with no lines. Throwing at the accessor means that write never happens.
+   5-agent fleet run before merge (Dallas's call). Two agents found real defects, both in the
+   TESTS rather than the fix: an in-flight assertion that passed in a wedged world because the
+   cached rejected promise rejects identically, and a write-ordering assertion pinned only by an
+   incomplete fixture tripping a NOT NULL. Both fixed and mutation-verified. `consistency-check`
+   also audited EVERY other `getStripe()` caller repo-wide and found zero unguarded dereferences
+   remaining, so `stripeClient.js`'s header comment is now accurate and under-claims.
+   Suites green on merged main: new 5/5, `stripePayoutSync` 21/21, `stripePayouts` route 7/7,
+   `stripeWebhook.payout` 5/5.
 3. **The press-1 kill switch is now a trap.** `VM_ESCALATION_ENABLED=false` leaves the primary
    greeting saying "press one" with no `<Gather>` listening. Confirmed set to `true` in Render, so
    not live — but the switch can no longer be used as a switch.
