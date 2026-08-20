@@ -5,6 +5,7 @@ const {
   drinkPlanBalanceUpdate,
   shoppingListReady,
   postConsultClient,
+  tipFeedbackAdminNotification,
 } = require('./emailTemplates');
 
 // ─── signedAndPaidClient (orientation) ───────────────────────────
@@ -267,4 +268,29 @@ test('postConsultClient: empty drinkRecapLines still renders gracefully', () => 
   });
   assert.ok(t.html);
   assert.match(t.html, /recap/i);
+});
+
+// ─── tipFeedbackAdminNotification (1-3 scale) ────────────────────
+
+// tip_page_feedback.rating is CHECK (rating BETWEEN 1 AND 3) and publicTip.js
+// rejects anything outside it, so 3 is the BEST a guest can leave. The email
+// rendered it on a five-star ladder, which made praise read as a complaint and
+// contradicted the profile FeedbackCard that shows N/3.
+test('tipFeedbackAdminNotification: the star ladder is out of 3, not 5', () => {
+  const best = tipFeedbackAdminNotification({
+    displayName: 'Shea Corrigan', rating: 3, comment: 'great night',
+    submitterEmail: 'guest@example.com', adminUrl: 'https://admin.example.test/staffing/users/12?tab=tip-page',
+  });
+  assert.ok(best.html.includes('3 / 3'), 'rating printed out of 3');
+  assert.ok(!best.html.includes('3 / 5'), 'never out of 5');
+  assert.ok(best.html.includes('★★★'), 'three filled stars');
+  assert.ok(!best.html.includes('☆'), 'a best rating leaves no empty star');
+
+  const worst = tipFeedbackAdminNotification({
+    displayName: 'Shea Corrigan', rating: 1, comment: 'rude',
+    submitterEmail: 'guest@example.com', adminUrl: 'https://admin.example.test/staffing/users/12?tab=tip-page',
+  });
+  assert.ok(worst.html.includes('1 / 3'));
+  assert.ok(worst.html.includes('★☆☆'), 'one filled, two empty');
+  assert.ok(worst.html.includes('staffing/users/12?tab=tip-page'), 'links the card that shows it');
 });

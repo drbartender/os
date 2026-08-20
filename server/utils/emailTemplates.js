@@ -554,7 +554,11 @@ function newThumbtackReviewAdmin({ reviewerName, rating, reviewText }) {
 
 function tipFeedbackAdminNotification({ displayName, rating, comment, submitterEmail, adminUrl }) {
   const name = displayName || 'a bartender';
-  const stars = '★'.repeat(rating) + '☆'.repeat(5 - rating);
+  // 1-3, not 1-5: tip_page_feedback.rating is CHECK (rating BETWEEN 1 AND 3)
+  // and publicTip.js rejects anything outside it. Rendering a 3 as three of
+  // FIVE stars made the best possible rating read as a complaint, and it
+  // contradicted the profile FeedbackCard, which shows N/3.
+  const stars = '★'.repeat(rating) + '☆'.repeat(Math.max(0, 3 - rating));
   const commentHtml = comment ? esc(comment).replace(/\n/g, '<br/>') : '<em>(no comment)</em>';
   return {
     subject: `${rating}-star tip-page feedback for ${esc(name)}`,
@@ -562,7 +566,7 @@ function tipFeedbackAdminNotification({ displayName, rating, comment, submitterE
       <h2 style="color:${BRAND.primary};margin-top:0;">Tip-page feedback</h2>
       <p style="font-size:24px;margin:0.5rem 0;">${stars}</p>
       <p><strong>Bartender:</strong> ${esc(name)}</p>
-      <p><strong>Rating:</strong> ${rating} / 5</p>
+      <p><strong>Rating:</strong> ${rating} / 3</p>
       <div style="background:${BRAND.bg};padding:16px;border-radius:6px;margin:1rem 0;border-left:4px solid ${BRAND.secondary};">
         <strong>Comment:</strong><br/>${commentHtml}
       </div>
