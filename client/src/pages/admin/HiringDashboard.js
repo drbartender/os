@@ -34,6 +34,26 @@ const daysSince = (d) => d ? Math.round((Date.now() - new Date(d).getTime()) / 8
 const daysUntil = (d) => d ? Math.round((new Date(d).getTime() - Date.now()) / 86400000) : null;
 const stageOf = (s) => s === 'hired' ? 'in_progress' : s;
 
+// The stale-record fold (spec section 6). Predicate is generic, never a status
+// or a cutover date: an Onboarding card whose account is older than FOLD_DAYS
+// and has completed no onboarding step. Today that is the 29 accounts bulk-
+// registered on the 2026-05-27 cutover plus 3 stale signups; a day-one
+// pre-hired recruit is also 'hired' at 0% and must render live.
+export const FOLD_DAYS = 60;
+export function splitOnboarding(rows, nowMs = Date.now()) {
+  const live = [];
+  const folded = [];
+  for (const a of rows) {
+    const ageDays = a.created_at ? (nowMs - new Date(a.created_at).getTime()) / 86400000 : 0;
+    const zero = !(Number(a.onboarding_progress) > 0);
+    if (zero && ageDays > FOLD_DAYS) folded.push(a); else live.push(a);
+  }
+  folded.sort((x, y) => new Date(x.created_at) - new Date(y.created_at)); // oldest first
+  return { live, folded };
+}
+const STATUS_WORD = { hired: 'pre-hired', in_progress: 'signed up' };
+const ymdLabel = (v) => new Date(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
 export default function HiringDashboard() {
   const navigate = useNavigate();
   const toast = useToast();
@@ -51,6 +71,7 @@ export default function HiringDashboard() {
   const [searchLoading, setSearchLoading] = useState(false);
 
   const [scheduleFor, setScheduleFor] = useState(null);
+  const [foldOpen, setFoldOpen] = useState(false);
 
   const fetchAll = useCallback(async () => {
     setAppsLoading(true);
@@ -116,6 +137,11 @@ export default function HiringDashboard() {
     }
     out.applied.sort((a, b) => new Date(b.applied_at) - new Date(a.applied_at));
     out.interviewing_sched.sort((a, b) => new Date(a.interview_at) - new Date(b.interview_at));
+    // Stale records leave the live column for the collapsed fold beneath it;
+    // the column's count badge reads the live list, so it stays honest.
+    const split = splitOnboarding(out.in_progress);
+    out.in_progress = split.live;
+    out.in_progress_folded = split.folded;
     return out;
   }, [apps]);
 
@@ -144,16 +170,16 @@ export default function HiringDashboard() {
     }
   };
 
+  // The hub owns the page header (spec section 4), so the page opens on its own
+  // toolbar row: the pipeline line the old subtitle carried, then the search.
   return (
-    <div className="page" data-app="admin-os">
-      <div className="page-header">
-        <div>
-          <div className="page-title">Hiring</div>
-          <div className="page-subtitle">
-            {summary.in_pipeline} in pipeline · {summary.new_apps_7d} new this week
-          </div>
+    <>
+      <div className="hstack" style={{ gap: 8, marginBottom: 12 }}>
+        <div className="muted tiny">
+          {summary.in_pipeline} in pipeline · {summary.new_apps_7d} new this week
         </div>
-        <div className="page-actions" style={{ position: 'relative', minWidth: 280 }}>
+        <div className="spacer" />
+        <div style={{ position: 'relative', minWidth: 280 }}>
           <input
             className="input"
             placeholder="Search all applicants…"
@@ -279,7 +305,34 @@ export default function HiringDashboard() {
                         onSchedule={() => setScheduleFor(a)}
                       />
                     ))}
-                    {cols[col.key].length === 0 && <EmptyTile />}
+                    {col.key === 'in_progress' && cols.in_progress_folded.length > 0 && (
+                      <>
+                        <button type="button" className="hire-fold" aria-expanded={foldOpen} onClick={() => setFoldOpen(o => !o)}>
+                          <span aria-hidden="true">{foldOpen ? '▾' : '▸'}</span>
+                          <span>
+                            Not started · {cols.in_progress_folded.length} · oldest {ymdLabel(cols.in_progress_folded[0].created_at)} · not pipeline
+                          </span>
+                        </button>
+                        {foldOpen && (
+                          <>
+                            <div className="tiny muted" style={{ padding: '0 2px' }}>
+                              Accounts older than {FOLD_DAYS} days that never began onboarding. Open one to deactivate it from the staffer page; nothing here counts toward the board.
+                            </div>
+                            {cols.in_progress_folded.map(a => (
+                              <EntityLink key={a.id} to={`/staffing/users/${a.id}`} className="hire-stub">
+                                <span className="avatar" style={{ width: 18, height: 18, fontSize: 9 }}>{initialsOf(a.full_name || a.email)}</span>
+                                <span style={{ flex: 1 }}>{a.full_name || a.email}</span>
+                                <span className="muted">{ymdLabel(a.created_at)}</span>
+                                <span className="tag">{STATUS_WORD[a.onboarding_status] || a.onboarding_status}</span>
+                              </EntityLink>
+                            ))}
+                          </>
+                        )}
+                      </>
+                    )}
+                    {cols[col.key].length === 0
+                      && !(col.key === 'in_progress' && cols.in_progress_folded.length > 0)
+                      && <EmptyTile />}
                   </>
                 )}
               </div>
@@ -294,7 +347,7 @@ export default function HiringDashboard() {
         onClose={closeSchedule}
         onSaved={fetchAll}
       />
-    </div>
+    </>
   );
 }
 
