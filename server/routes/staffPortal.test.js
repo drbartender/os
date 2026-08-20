@@ -30,6 +30,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const { pool } = require('../db');
+const { payPeriodForDate, computePayday } = require('../utils/payrollPeriods');
+const { chicagoTodayYmd } = require('../utils/businessTime');
 const { AppError } = require('../utils/errors');
 const { encrypt, decrypt } = require('../utils/encryption');
 const staffPortalRouter = require('./staffPortal');
@@ -187,11 +189,28 @@ before(async () => {
 
   // Pay period spanning today, plus an empty payout row so /staff-home returns
   // a meaningful current_period block.
+  //
+  // Seeds the CANONICAL period, not an arbitrary span. /staff-home resolves
+  // `WHERE today BETWEEN start_date AND end_date ORDER BY start_date DESC LIMIT 1`,
+  // and real pay periods are Tuesday-to-Monday (payPeriodForDate). The old fixture
+  // was `CURRENT_DATE - 3` to `+10` — a 14-day window with an arbitrary start — so
+  // on any day the real canonical period existed, that period started LATER and won
+  // the ORDER BY. The lookup then returned a period this suite had attached no
+  // payout to, the LEFT JOIN produced nothing, and `total_cents` read 0 instead of
+  // 12345. The suite passed only while dev happened to hold no canonical period
+  // covering today, which is a coin flip, not a fixture. (Diagnosed 2026-08-20 after
+  // it failed exactly that way.)
+  //
+  // Status is preserved on conflict rather than forced to 'open': a canonical period
+  // may legitimately be processing or paid, /staff-home does not filter on status,
+  // and stomping it would corrupt the row for any suite running alongside.
+  const { startDate, endDate } = payPeriodForDate(chicagoTodayYmd());
   const pp = await pool.query(
     `INSERT INTO pay_periods (start_date, end_date, payday, status)
-     VALUES (CURRENT_DATE - 3, CURRENT_DATE + 10, CURRENT_DATE + 14, 'open')
-     ON CONFLICT (start_date) DO UPDATE SET status = EXCLUDED.status
-     RETURNING id`
+     VALUES ($1, $2, $3, 'open')
+     ON CONFLICT (start_date) DO UPDATE SET end_date = EXCLUDED.end_date
+     RETURNING id`,
+    [startDate, endDate, computePayday(endDate)]
   );
   payPeriodId = pp.rows[0].id;
   const po = await pool.query(

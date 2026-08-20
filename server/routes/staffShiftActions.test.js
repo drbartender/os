@@ -191,6 +191,18 @@ after(async () => {
     `DELETE FROM payouts WHERE pay_period_id = $1 AND contractor_id IN ($2, $3)`,
     [payPeriodId, staffUserId, otherStaffUserId]
   );
+  // Drop the fixture period too. It is NOT canonical — `CURRENT_DATE + 14` with a
+  // 15-day span, deliberately a future window this suite can flip to 'processing'
+  // — so leaving it behind litters the table with a row no real code would mint.
+  // Guarded on having no payouts left, the same shape admin/payroll.test.js uses:
+  // payouts_pay_period_id_fkey is NO ACTION, so an unguarded delete would throw
+  // 23503 if any other suite attached a payout to the same start_date, and would
+  // also be the wrong call — that row would then belong to someone else.
+  await pool.query(
+    `DELETE FROM pay_periods pp WHERE pp.id = $1
+       AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`,
+    [payPeriodId]
+  );
   await pool.query(
     `DELETE FROM shift_requests WHERE shift_id IN (SELECT id FROM shifts WHERE proposal_id = $1)`,
     [proposalId]
