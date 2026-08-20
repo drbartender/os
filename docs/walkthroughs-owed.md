@@ -478,15 +478,21 @@ Tier 6 until that ships.
       mechanical render check, not a human walk.** Confirm a normal client gets "Hi Monica,"
       and a couple gets "Hi Aubrey & Dominic,". The couples case was fixed at the push gate
       and has unit coverage, but no rendered email has been read by a human.
-- [ ] **Tip sign wake lock: Leg A and Leg B, both still owed.** Named in the ordered list
+- [~] **Tip sign wake lock: LEG A PASSED, LEG B STILL OWED.** Named in the ordered list
       above since 2026-08-14 with no checkbox anywhere in the tiers, so it was invisible to
       every count and a tier refresh would have dropped it. It is a real human walk under
       routing rule 2: real device, real paper.
-      LEG A (about 20 min, on the Pixel): open a bartender's tip page, confirm the screen
-      does not sleep while it is showing, and confirm it releases when you leave.
-      LEG B (print-and-scan): print a sign and scan the QR off the paper with a phone
-      camera, not off the screen. Needs a photo counter or an equivalent flat surface. This
-      is the leg that catches a code that renders but does not scan at real ink density.
+      ~~LEG A (about 20 min, on the Pixel): open a bartender's tip page, confirm the screen
+      does not sleep while it is showing, and confirm it releases when you leave.~~
+      **LEG A PASSED — reported by Zul 2026-08-19** (walk itself may predate that date; she
+      reported it as already done, and no earlier record of it exists). The wake lock holds
+      while the tip page is showing and releases on leave.
+      **LEG B (print-and-scan) IS STILL OWED and does NOT ride on Leg A.** Print a sign and
+      scan the QR off the PAPER with a phone camera, never off a screen. Needs a photo
+      counter or an equivalent flat surface. This is the leg that catches a code that renders
+      and scans perfectly on a display but fails at real ink density on real paper, which is
+      a different failure entirely from anything Leg A touches. Do not let "the tip sign is
+      done" stand in for this one.
 - [x] **Guest count in the event header — PASSED 2026-08-13** ("yes").
 - [x] **Inbound SMS alerts naming the staffer — PASSED 2026-08-14.** Dallas found the alert
       email from the 2026-08-13 21:13 CT inbound and confirmed the body reads
