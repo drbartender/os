@@ -427,9 +427,10 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
 const ARCHIVABLE_STATUSES = ['draft', 'sent', 'viewed', 'modified', 'accepted'];
 
 // Reasons an admin may pick for a MANUAL archive — a semantic subset of the
-// archive_reason DB CHECK. 'event_completed' and 'option_not_chosen' are
-// deliberately excluded (they are auto/derived-path-only markers), so this route
-// can never mislabel an abandoned or cancelled lead; the DB CHECK is the backstop.
+// archive_reason DB CHECK. 'event_completed', 'option_not_chosen' and
+// 'event_passed' are deliberately excluded (they are auto/derived-path-only
+// markers; 'event_passed' belongs to staleProposalSweep.js), so this route can
+// never mislabel an abandoned or cancelled lead; the DB CHECK is the backstop.
 const ARCHIVE_REASONS = ['no_hire', 'client_cancelled', 'we_cancelled', 'other'];
 
 /** POST /api/proposals/:id/archive — archive this proposal, or (scope 'set') this

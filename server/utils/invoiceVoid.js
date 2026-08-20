@@ -58,7 +58,11 @@ function _setStripeForTests(stripe) { testStripe = stripe; }
  */
 async function cancelOpenInvoiceIntents(proposalId, invoiceId) {
   const stripe = testStripe || getStripe();
-  if (!stripe) return { canceled: 0, checked: 0 };
+  // `aborted` means NOTHING WAS TRIED — no Stripe client, or the session lookup
+  // died. It is NOT `failed: 0`. Callers that retry (staleProposalSweep's heal)
+  // must treat an aborted call as a failure, or they delete their own retry queue
+  // in exactly the windows the retry exists for.
+  if (!stripe) return { canceled: 0, checked: 0, failed: 0, aborted: true };
   let rows = [];
   try {
     ({ rows } = await pool.query(
@@ -69,9 +73,14 @@ async function cancelOpenInvoiceIntents(proposalId, invoiceId) {
     ));
   } catch (err) {
     console.warn('cancelOpenInvoiceIntents: session lookup failed:', err.message);
-    return { canceled: 0, checked: 0 };
+    return { canceled: 0, checked: 0, failed: 0, aborted: true };
   }
   let canceled = 0;
+  // `failed` counts intents whose retrieve or cancel THREW. A non-cancelable
+  // state or a metadata mismatch is a legitimate skip and is deliberately not
+  // counted: staleProposalSweep's heal pass keys on this field, and counting
+  // skips would make it retry the same intents on every tick forever.
+  let failed = 0;
   for (const row of rows) {
     const piId = row.stripe_payment_intent_id;
     try {
@@ -82,6 +91,7 @@ async function cancelOpenInvoiceIntents(proposalId, invoiceId) {
         canceled += 1;
       }
     } catch (err) {
+      failed += 1;
       console.warn(`cancelOpenInvoiceIntents: best-effort failure for ${piId}:`, err.message);
       if (process.env.SENTRY_DSN_SERVER) {
         Sentry.captureMessage('invoice_void_pi_cancel_failed', {
@@ -92,7 +102,7 @@ async function cancelOpenInvoiceIntents(proposalId, invoiceId) {
       }
     }
   }
-  return { canceled, checked: rows.length };
+  return { canceled, checked: rows.length, failed, aborted: false };
 }
 
 module.exports = { voidUnpaidProposalInvoice, cancelOpenInvoiceIntents, _setStripeForTests };

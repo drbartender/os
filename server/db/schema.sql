@@ -2858,7 +2858,7 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_archive_reason_check;
   ALTER TABLE proposals ADD CONSTRAINT proposals_archive_reason_check
-    CHECK (archive_reason IS NULL OR archive_reason IN ('no_hire','client_cancelled','we_cancelled','event_completed','other','option_not_chosen'));
+    CHECK (archive_reason IS NULL OR archive_reason IN ('no_hire','client_cancelled','we_cancelled','event_completed','other','option_not_chosen','event_passed'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 -- ─── Automated Communication: migrate cancelled → archived ───────
@@ -4145,7 +4145,7 @@ CREATE INDEX IF NOT EXISTS idx_proposals_group_id ON proposals(group_id);
 ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_archive_reason_check;
 ALTER TABLE proposals ADD CONSTRAINT proposals_archive_reason_check
   CHECK (archive_reason IS NULL OR archive_reason IN
-    ('no_hire','client_cancelled','we_cancelled','event_completed','other','option_not_chosen'));
+    ('no_hire','client_cancelled','we_cancelled','event_completed','other','option_not_chosen','event_passed'));
 
 -- ─── P6 (cancel booked events, fix #7) ───────────────────────────
 -- A booked event that gets cancelled is archived (archive_reason =

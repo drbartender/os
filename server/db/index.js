@@ -217,7 +217,13 @@ const CONSTRAINT_CONTRACT = [
   { constraint: 'scheduled_messages_status_check',
     mustContain: ['processing', 'dead_letter', 'suppressed_by_sibling'] },
   { constraint: 'scheduled_messages_channel_check', mustContain: ['push'] },
-  { constraint: 'proposals_archive_reason_check', mustContain: ['option_not_chosen'] },
+  // 'event_passed' has a live writer (staleProposalSweep.js). A narrowed
+  // constraint would raise 23514 on every swept row, so it must be flagged.
+  // NOTE this manifest is alert-don't-wedge (Sentry + console, the boot
+  // continues); the sweep's own rethrow is what turns the 23514 into a 'failed'
+  // scheduler heartbeat rather than a silent green.
+  { constraint: 'proposals_archive_reason_check',
+    mustContain: ['option_not_chosen', 'event_passed'] },
   // Same BARE DROP-then-ADD shape as archive_reason, and schema.sql calls it the
   // worst shape in the file for good reason: the two statements are separate
   // autocommit transactions, so an ADD that fails leaves users.onboarding_status

@@ -46,6 +46,7 @@ const ARCHIVE_REASON_LABELS = {
   we_cancelled: 'We cancelled',
   event_completed: 'Event completed',
   option_not_chosen: 'Option not chosen',
+  event_passed: 'Event passed',
   other: 'Other',
 };
 // Server page size, sent explicitly as `limit` rather than leaning on the

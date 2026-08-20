@@ -2731,8 +2731,45 @@ These are not from the original ledger. They surfaced while verifying its
   shifted-value situation right above the token (760c8be3; 2026-08-14 audit).
 - No admin UI exists to edit `service_addons` descriptions; live client-facing copy is
   still changed only by ungated `schema.sql` UPDATEs.
-- `qLostValue` will start counting `archive_reason='event_completed'` as lost revenue the
-  moment auto-archival ships. Needs the filter at that time, not before.
+- ~~`qLostValue` will start counting `archive_reason='event_completed'` as lost revenue the
+  moment auto-archival ships. Needs the filter at that time, not before.~~ **RESOLVED
+  2026-08-20 by the stale-proposal-sweep design: no filter, and none needed.** The sweep
+  writes a NEW reason, `event_passed`, not `event_completed`, precisely so the two stay
+  distinguishable (`event_completed` still has zero writers). And `event_passed` SHOULD
+  count as lost: those quotes went out and nobody booked, so the funnel has been
+  undercounting Lost all along because nothing ever archived them. Dallas's call, 8/20.
+  Expect the first real run to move the admin funnel by roughly: Lost +$58,190 backdated
+  by `sent_at`, `qPipelineOutstanding` down ~115 rows and ~$58k, `qWinRate` pending down
+  ~115, `archivedCount` +115. Win-rate numerator/denominator are unaffected (the sent
+  cohort keys on `sent_at`, the accepted cohort needs `accepted_at`, which these rows lack).
+
+- **Stale proposal-token links render live CTAs after an archive.**
+  `server/routes/proposals/publicToken.js:59` has no status filter and the client proposal
+  view has no `archived` branch, so a client holding an emailed link to an archived proposal
+  still sees a full page with working CTAs; signing returns a misleading "This proposal has
+  already been accepted" 409. Pre-existing and identical for a manual archive, but the
+  stale-proposal sweep makes it reachable for ~103 clients at once. Voided INVOICE links
+  already fail gracefully (404 with "may have been voided" copy). Fix direction: an
+  `archived` branch in the proposal view, and reason-aware copy on the sign 409.
+  (Accepted as-is for the sweep lane, 2026-08-20.)
+
+- **Un-archiving a swept proposal re-archives it within the hour.** `archived -> draft`
+  clears `archive_reason`, but a proposal still past-dated with `amount_paid = 0` re-enters
+  the stale-proposal sweep's candidate set on the next tick. Recovering one means changing
+  its `event_date` or moving it out of a swept status in the same breath, or turning the
+  scheduler off first. Related cosmetic: `healStrandedIntents` joins `p.status = 'archived'`,
+  so un-archiving hides any heal marker on that proposal forever (arguably correct, since its
+  PaymentIntents may be live again, but the marker never clears). Found by the pre-merge
+  fleet 2026-08-20; not fixed in the sweep lane.
+
+- **`GET /api/client-portal/proposals/:token` has no status filter**, so archived proposals
+  are unlisted rather than unreachable in the client portal. Pre-existing; noted during the
+  stale-proposal-sweep design 2026-08-20.
+
+- **`payment_on_archived` alert copy asserts a cancellation refund already ran**
+  (`stripeWebhookHandlers/paymentIntentSucceeded.js:26`), which is false for an
+  `event_passed` archive where nothing was ever paid. The refund instruction stays correct.
+  Wants reason-aware copy. Noted 2026-08-20.
 - ~~`crud.test.js` is not parallel-safe (global COUNT); needs `--test-concurrency=1`.~~
   **DONE** — replaced by an email-scoped `proposalCountForEmail()` (`crud.test.js:110-120`,
   comment names the exact flake); no concurrency flag needed (2026-08-14 audit).

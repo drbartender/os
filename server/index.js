@@ -514,6 +514,30 @@ async function start() {
         clearHealthRow('shift_closure');
       }
 
+      // Stale-proposal sweep — hourly. Archives past-dated proposals that were
+      // never booked (spec 2026-08-20).
+      //
+      // OPT-IN, unlike its default-on siblings: it deliberately does NOT use
+      // enabled(), which returns true unless the var is literally 'false'.
+      // Deploying default-on would make deploy time execution time — about 115
+      // archives, 104 invoice voids and 220 live Stripe calls, unattended, 150
+      // seconds after the deploy lands. It also closes the dev path:
+      // RUN_SCHEDULERS=true is a documented local pattern for exercising other
+      // handlers, and this box talks to LIVE Stripe, so a default-on sweep would
+      // ride along and cancel real live-mode PaymentIntents.
+      //
+      // Rollout: deploy dark, set STALE_PROPOSAL_SWEEP_DRY_RUN=true and read the
+      // candidate list, then clear the dry-run flag and watch the backlog tick.
+      if (process.env.RUN_STALE_PROPOSAL_SWEEP_SCHEDULER === 'true' && !globalScheduleDisabled) {
+        const { processStaleProposals } = require('./utils/staleProposalSweep');
+        const wrapped = wrapScheduler('stale_proposal_sweep', 3600, processStaleProposals);
+        setTimeout(wrapped, 150000);
+        setInterval(wrapped, 60 * 60 * 1000);
+        console.log('✓ stale_proposal_sweep scheduler registered');
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('stale_proposal_sweep');
+      }
+
       // Auto-assign scheduler — check hourly for shifts needing auto-assignment
       if (enabled('RUN_AUTO_ASSIGN_SCHEDULER')) {
         const wrapped = wrapScheduler('auto_assign', 3600, processScheduledAutoAssigns);
