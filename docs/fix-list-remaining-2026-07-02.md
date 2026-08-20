@@ -125,7 +125,10 @@ The 27-commit batch (031fb6d..77005c5) got its push-time fleet + /second-opinion
 
 ## Dallas-owned / skipped by his call
 - ~~**Intro message: remove phone, add cal.com link**~~ **CLOSED 2026-08-14** — the 8/14 decision (bottom of this file) keeps the 312 in staff auto-replies, and the client `COMPANY_PHONE` already moved to the 1922 with phone 1a (`constants.js:5`). `CAL_BOOKING_URL` already wired.
-- **Syrup picker** — ~~suspected bug: generators never cross-check `syrupSelfProvided` vs comped/paid
+- **Syrup picker** — **PARKED 2026-08-20 by Dallas: "gonna take a lot of brainstorming and
+  rethinking from me... lets keep putting that one off."** The re-diagnosis below stands and is
+  verified; it is the FIX that needs his design input, not the analysis. Do not open a lane for
+  this without him. ~~suspected bug: generators never cross-check `syrupSelfProvided` vs comped/paid
   `proposalSyrups`.~~ **RE-DIAGNOSED 2026-08-19 as asked. It is NOT a money bug, and the original
   framing pointed at the wrong half of the system.**
   - The MONEY path already cross-checks, in both places: `invoiceExtras.js:96-99` and
