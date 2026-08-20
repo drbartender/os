@@ -66,6 +66,13 @@ export default function ReviewsPage() {
   }, [setActions]);
 
   const changed = useCallback((result) => {
+    // materializePendingReviewLines runs on every confirm and pays the whole
+    // waiting backlog, so a catch_up_materialized above zero is the server
+    // telling us the previously-waiting bounties just left. Clear the markers
+    // on that signal rather than letting them outlive the money: the list
+    // payload carries no per-review paid flag, so this response is the only
+    // evidence we get.
+    if (result && Number(result.catchUp) > 0) setWaitingIds(new Set());
     if (result && result.reviewId && result.bountyEligible
         && result.materialized === 0 && result.restored === 0) {
       setWaitingIds(s => new Set([...s, result.reviewId]));

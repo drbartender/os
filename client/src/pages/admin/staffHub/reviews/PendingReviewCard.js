@@ -88,6 +88,9 @@ export default function PendingReviewCard({ review, staff, bountyCents, openPeri
       reviewId: review.id,
       materialized: Number(res.data?.materialized) || 0,
       restored: Number(res.data?.restored) || 0,
+      // The confirm that pays THIS review also runs the catch-up over the
+      // whole waiting backlog; the page clears its waiting markers on it.
+      catchUp: Number(res.data?.catch_up_materialized) || 0,
       bountyEligible: stars5 && saved.length > 0,
     })));
   const dismiss = () => run('dismiss', () => api.post(`/admin/staff-reviews/${review.id}/dismiss`));

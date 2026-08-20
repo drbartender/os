@@ -153,6 +153,32 @@ test('tips rows carry the Status projection columns', async () => {
   }
 });
 
+// The 'to' filter is INCLUSIVE of its own day. A date-only value casts to that
+// day's midnight, so the old `<= to` dropped every tip after 00:00 on the day
+// the operator picked and silently understated the ledger's money total.
+//
+// This honours the file's no-seeding rule above: it reads whatever tip the dev
+// ledger already holds and asks for that tip's OWN day as the upper bound. Under
+// the old predicate the tip is excluded from its own date; under the new one it
+// is included. Skips cleanly on an empty ledger rather than seeding money.
+test('the to date includes its own day', async () => {
+  const any = await pool.query('SELECT id, tipped_at FROM tips ORDER BY id DESC LIMIT 1');
+  if (!any.rows.length) return; // nothing to assert against, and we will not create one
+
+  const { id, tipped_at: tippedAt } = any.rows[0];
+  const day = new Date(tippedAt).toISOString().slice(0, 10);
+  const hour = new Date(tippedAt).getUTCHours();
+
+  const { status, body } = await get(`/api/admin/tips?to=${day}&limit=200`, adminToken);
+  assert.equal(status, 200);
+  if (hour === 0 && new Date(tippedAt).getUTCMinutes() === 0) return; // exactly midnight proves nothing
+
+  assert.ok(
+    body.tips.some((t) => t.id === id),
+    `a tip at ${tippedAt} must be included when its own day ${day} is the upper bound`
+  );
+});
+
 test('tip-feedback filters by target_user_id and rejects a garbage value', async () => {
   const mine = await get(`/api/admin/tip-feedback?status=all&target_user_id=${bartenderId}`, adminToken);
   assert.equal(mine.status, 200);

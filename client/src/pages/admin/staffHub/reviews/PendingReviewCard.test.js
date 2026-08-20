@@ -103,6 +103,7 @@ test('confirm resolving materialized:0 reports it through onChanged', async () =
     reviewId: 11,
     materialized: 0,
     restored: 0,
+    catchUp: 0,
     bountyEligible: true,
   }));
 });

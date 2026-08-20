@@ -109,3 +109,14 @@ server/routes/admin/payrollTax.legalName.test.js
 # money and guest PII), the Status projection the cross-staff ledger derives
 # every row from, and the target_user_id filter the staffer profile reads.
 server/routes/admin/contractorTipPage.test.js
+
+# Stripe payout mirror (2026-08-20). server/utils/stripePayoutSync.js is on
+# sensitive-paths.txt but neither of its suites was on this gate: listed but
+# ungated, the same shape the contractorTipPage entry above was added to close.
+# Lane payout-stripe-guard made the Stripe client fail CLOSED here (a typed
+# ExternalServiceError instead of a silent undefined deref), and the
+# unconfigured suite is what pins that guard. The mirror is read-side and never
+# moves money, but a regression here strands payout rows and blinds the
+# reconciliation the payout tracking depends on.
+server/utils/stripePayoutSync.unconfigured.test.js
+server/utils/stripePayoutSync.test.js

@@ -276,7 +276,11 @@ router.get('/tips', auth, adminOnly, asyncHandler(async (req, res) => {
     params.push(from);
   }
   if (to) {
-    filters.push(`t.tipped_at <= $${params.length + 1}`);
+    // INCLUSIVE of the whole day. A date-only 'to' casts to that day's
+    // midnight, so `<= to` dropped every tip after 00:00 on the day the
+    // operator selected and silently understated the ledger's money total.
+    // Half-open against the next day keeps a timestamped 'to' working too.
+    filters.push(`t.tipped_at < ($${params.length + 1}::date + INTERVAL '1 day')`);
     params.push(to);
   }
   if (cursor) {

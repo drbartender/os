@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../../../utils/api';
 import { useToast } from '../../../../context/ToastContext';
 import EntityLink from '../../../../components/EntityLink';
@@ -28,6 +28,13 @@ export default function ContestRail({ onAwarded, openPeriod, pendingNames = [] }
   const [error, setError] = useState(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [awarding, setAwarding] = useState(false);
+  // A leaderboard read is stamped with the quarter generation live when it was
+  // ISSUED, and every settle path drops the response if the generation moved
+  // on. Without it a slow read for one quarter lands after the admin has typed
+  // another, and its standings render under the new quarter's label: the award
+  // dialog would list one set of winners while the server, which recomputes
+  // from the quarter POSTed, pays a different set out of the same pot.
+  const loadGen = useRef(0);
 
   const validQuarter = QUARTER_RE.test(quarter);
   // The award writes a payout line, so the button states the reason it cannot
@@ -45,21 +52,25 @@ export default function ContestRail({ onAwarded, openPeriod, pendingNames = [] }
   const load = useCallback(async (q) => {
     // Mirrors the server rule: a half-typed quarter is not a request.
     if (!QUARTER_RE.test(q)) {
+      loadGen.current += 1; // retire any read still in flight for the old quarter
       setData(null);
       setError(null);
       setLoading(false);
       return;
     }
+    const gen = ++loadGen.current;
     setLoading(true);
     setError(null);
     setData(null); // never render one quarter's standings under another's label
     try {
       const res = await api.get(`/admin/staff-reviews/leaderboard?quarter=${encodeURIComponent(q)}`);
+      if (gen !== loadGen.current) return;
       setData(res.data);
     } catch (err) {
+      if (gen !== loadGen.current) return;
       setError(err?.message || 'Failed to load the leaderboard.');
     } finally {
-      setLoading(false);
+      if (gen === loadGen.current) setLoading(false);
     }
   }, []);
 
