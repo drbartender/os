@@ -307,7 +307,8 @@ dr-bartender/
 │   │   ├── staffPortal/        # Per-concern subrouters mounted by staffPortal.js
 │   │   │   ├── paymentMethods.js   # GET/PATCH /payment-methods + PUT /preferred-payment-method (bank PII via encryption.js)
 │   │   │   ├── payouts.js          # GET /payouts (history) + /payouts/:periodId (detail) + /payouts/:periodId/paystub (lazy-gen PDF download) + /payment-history (imported pre-OS ledger + blended all-time total, platform-only)
-│   │   │   └── accountReads.js     # GET /profile, /calendar-settings, /documents — AccountPage hydration reads
+│   │   │   ├── accountReads.js     # GET /profile, /calendar-settings, /documents — AccountPage hydration reads
+│   │   │   └── notifications.js    # GET/PATCH /staff-notifications + POST/DELETE /push-subscriptions (prefs + Web Push)
 │   │   ├── publicReviews.js    # Public cached endpoint for Thumbtack reviews on homepage
 │   │   ├── publicTip.js        # Public tip-page lookup + post-tip feedback (token-gated)
 │   │   ├── publicFeedback.js   # Post-event feedback router (5-star sentiment routing)
