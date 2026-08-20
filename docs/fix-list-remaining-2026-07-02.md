@@ -5291,11 +5291,40 @@ so a review confirmed Tuesday to Friday returns `materialized: 0` and the row wa
 spec (2026-08-06 §3.2, line 69) says "the next derivation after a period opens materializes it,"
 but `payrollAccrual.js` never calls `materializePendingReviewLines`; the only caller is the NEXT
 confirm (`staffReviews.js:428`). With one review a quarter, a bounty can sit unpaid indefinitely.
-Zero bounties have ever been paid, so nothing is owed today. Fix is one call to
-`materializePendingReviewLines(client)` inside the accrual transaction right after
-`ensurePayPeriod` returns a newly-open period (or at period-open generally); money path, so it
-gets its own decision and the full fleet, not a ride-along on the hub build. The hub spec (§7)
-renders the waiting state honestly in the meantime.
+
+**NO LONGER HYPOTHETICAL — $20.00 IS OWED RIGHT NOW. Escalated 2026-08-20, verified directly
+against prod (`round-tooth-34649976`), not taken on report.** The line that used to sit here,
+"Zero bounties have ever been paid, so nothing is owed today," was true when written and is now
+false. Current prod state:
+
+| review | source | stars | status | credited to | confirmed |
+|---|---|---|---|---|---|
+| 1 | thumbtack | 5 | confirmed | user 212, Tashea C. | row created 2026-08-17 17:06 CT |
+| 2 | google | 5 | confirmed | user 206, Mariah H. | row created 2026-08-20 11:17 CT by user 1 |
+
+`SELECT count(*) FROM payout_duty_lines WHERE kind='review_bounty'` returns **0** — no line, not
+even a tombstone. `review_contest` is 0 too. The latest `pay_periods` row ends 2026-08-17 and is
+`paid`, so no row exists for the current week (Aug 18-24) and `materializeReviewLine` returned
+null on both confirms. **Two real staffers are each owed $10 that no screen displays and no payout
+carries.** It will self-heal the next time any review is confirmed while a period row is open, so
+it is parked rather than lost, but nothing guarantees that happens before the next payday.
+
+Fix is unchanged and now more urgent: one call to `materializePendingReviewLines(client)` inside
+the accrual transaction right after `ensurePayPeriod` returns a newly-open period (or at
+period-open generally); money path, so it gets its own decision and the full fleet, not a
+ride-along on the hub build.
+
+**SECOND, SMALLER GAP FOUND WHILE VERIFYING THE ABOVE:** `staff_reviews` has no `confirmed_at`
+column (`id, review_date, stars, source, tt_review_id, excerpt, proposal_id, status, created_by,
+created_at`). Confirm is the state change that triggers a money write, and it leaves no timestamp,
+so the moment a bounty became owed is unreconstructable from the table. `created_at` is the row's
+birth, not the confirm. Worth a column on the next touch of this path.
+
+**AND A COSMETIC CONSEQUENCE THAT IS NOT A UI BUG:** on `/staffing/reviews` the Resolved table
+prints `$10.00` per row (it derives `paysBounty` from the REVIEW, `ResolvedTable.js:62`) while the
+footer prints `$0.00 in bounties paid` (a real SUM over `payout_duty_lines`,
+`staffReviews.js:158-163`). Both are honest answers to different questions. Recorded here and in
+`docs/walkthroughs-owed.md` so the hub walk does not file it as a rendering defect.
 
 ## ~~The Hiring board shows 29 dead CheckCherry import rows as live pipeline~~ FALSE PREMISE, CORRECTED 2026-08-19 against prod (original found 2026-08-19, staff-hub design grounding)
 
