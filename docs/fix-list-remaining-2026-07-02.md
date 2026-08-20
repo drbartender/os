@@ -114,11 +114,29 @@ The 27-commit batch (031fb6d..77005c5) got its push-time fleet + /second-opinion
 - **`checkoutSessionCompleted.lastMinute.test.js` never calls `registerAll()` — FIXED** (= B8: `before()` calls `preEventHandlers.registerAll()` at `:127`). Original — the deposit-paid reminder scheduling errors (swallowed, non-blocking) in every smoke run, so the suite isn't asserting reminders get scheduled. Prod is safe (`server/index.js:518` registers before any webhook can dispatch). One-line `before()` fix mirroring `preEventScheduling.test.js:23`.
 
 ## Specced, deliberately parked
-- **Drink-plan edit lock (Option A)** — decouple the lock from submit (currently `status IN ('submitted','reviewed')` in `drinkPlans/submit.js`), tie to `shopping_list_status`, add an admin "reopen for client" control. Option B (autosave tracking) already exists. Medium; event-side-canonical drink-plan territory.
+- **Drink-plan edit lock (Option A)** — decouple the lock from submit (currently `status IN ('submitted','reviewed')` in `drinkPlans/submit.js`), tie to `shopping_list_status`, add an admin "reopen for client" control. Option B (autosave tracking) already exists. Medium; event-side-canonical drink-plan territory. **RE-VERIFIED OPEN 2026-08-19**: the lock is still status-driven at `drinkPlans/submit.js:58` (`status === 'submitted' || status === 'reviewed'`) and `:678` (`WHERE token = $6 AND status NOT IN ('submitted','reviewed')`), and `shopping_list_status` appears nowhere in that file. Line numbers current as of this date.
 
 ## Dallas-owned / skipped by his call
 - ~~**Intro message: remove phone, add cal.com link**~~ **CLOSED 2026-08-14** — the 8/14 decision (bottom of this file) keeps the 312 in staff auto-replies, and the client `COMPANY_PHONE` already moved to the 1922 with phone 1a (`constants.js:5`). `CAL_BOOKING_URL` already wired.
-- **Syrup picker** — suspected bug: generators never cross-check `syrupSelfProvided` vs comped/paid `proposalSyrups` (`addSelfProvidedSyrups`, both mirrored generators). Re-diagnose fresh; pay-now-extras comp-fold touched this territory.
+- **Syrup picker** — ~~suspected bug: generators never cross-check `syrupSelfProvided` vs comped/paid
+  `proposalSyrups`.~~ **RE-DIAGNOSED 2026-08-19 as asked. It is NOT a money bug, and the original
+  framing pointed at the wrong half of the system.**
+  - The MONEY path already cross-checks, in both places: `invoiceExtras.js:96-99` and
+    `drinkPlanExtras.js:81-84` each read `proposalSyrups = pricingSnapshot?.syrups?.selections || []`
+    and `.filter((id) => !proposalSyrups.includes(id))`. A syrup already comped or paid on the
+    proposal is excluded from extras billing. Nobody is double-charged. This is presumably what the
+    pay-now-extras comp-fold landed.
+  - The SHOPPING LIST does not. `addSelfProvidedSyrups` (`shoppingList.js:344`, called at `:487`)
+    pushes every self-provided syrup onto `everythingElse` unconditionally, with no reference to
+    `proposalSyrups` anywhere in the file. So a client who marks a syrup self-provided that DRB is
+    ALSO comping or supplying is told on their own shopping list to go buy it. Procurement defect,
+    client-facing, zero money exposure.
+  - Second, narrower defect inside the same function: it lacks the duplicate-name guard its
+    immediate sibling has at `:339` (`if (everythingElse.some(i => i.item.toLowerCase() === ...)) continue;`),
+    so a syrup already on the list from another path gets pushed a second time.
+  - Note on the old wording "both mirrored generators": only `shoppingList.js` defines this helper.
+    `shoppingListGen.js` handles the same input separately at `:390-401`. Check both when fixing,
+    but they are not copies of one function.
 
 ---
 
@@ -135,7 +153,17 @@ ALL RESOLVED 2026-07-16 (commits 5c5a769 + f3fa6f7): PaydayProtocols zelle re-ad
 - ~~**crud.js `/:id/legacy-cc-payments`** — now clientless (CC demolition deleted its only consumer); dead endpoint in sensitive `proposals/`, remove in a later proposals-touching lane.~~ **REMOVED 2026-08-14 (Dallas-approved)**: route + test deleted; verified dead three ways first (no caller since f39de178, prod has ZERO legacy_charge_id payment rows, and the refund machinery structurally can't select PI-less rows anyway). ARCHITECTURE row dropped; crud.js 995→976. Provenance note: the route/doc edits are fbed9e0a, but the three FILE deletions rode another window's commit be555426 (marketing css) via the shared os index — content correct, attribution off.
 - ~~Refunds-on-invoice: a payment split across multiple invoices shows the FULL refund on each (rare, informational). Apportion if it bites.~~ **DONE** (lane refund-attribution c89fe834: `invoices.js:105-119` two-regime LATERAL, `invoices.refunds.test.js` — 2026-08-14 audit).
 - Payment accounting: non-flat add-on comp residual (brief owed).
-- **Admin OS baseline omits text color, so legacy cream can leak in (root cause, admin-wide).** The 2026-08-14 marketing adherence review found two surfaces (ContactDrawer + ShiftDrawer heroes, the Compose resume banner) rendering `--cream-text` at ~1:1 on House Lights because the unscoped legacy globals `h1..h4 { color: var(--cream-text) }` (`index.css:148`) and `p { … color: var(--cream-text) }` (`:165`) win wherever an admin-os rule omits `color`. Both call sites are patched (3af0edd9), but the systematic fix is one declaration: add `color: var(--ink-1)` to the existing admin-os `h1..h4` baseline (`index.css:11844`) and add an admin-os `p` baseline beside it. Admin-WIDE blast radius (every admin-os surface, both skins), so it wants its own small lane with a visual sweep, not a ride-along. Until then, any new bare `<p>`/`<hN>` on an admin-os screen must declare its color.
+- ~~**Admin OS baseline omits text color, so legacy cream can leak in (root cause, admin-wide).**~~
+  **FIXED 2026-08-14, lane `admin-os-legacy-palette` (`3ed7db5f`, Dallas: "that old old css needs to
+  go"), live in the 2026-08-16 push. Entry verified stale 2026-08-19.** The fix went the OPPOSITE way
+  from this entry's prescription: rather than adding `color` to the admin-os baseline, the legacy
+  palette globals were scoped OUT of admin-os. `index.css:207-212` now reads
+  `:where(html:not([data-app="admin-os"])) h1..h4 { color: var(--cream-text) }`, with the same
+  treatment on `.page-container h1..h4` (`:225-228`) and `p` (`:230`), each carrying a comment naming
+  the trap. The admin-os `h1..h4` baseline (now `:11949`, not `:11844`) still omits `color` and that
+  is now correct, because nothing unscoped can paint over it. Every line number in the original entry
+  had rotted: `:148` is a comment and `:165` is an unrelated rule. Third entry today whose prescribed
+  fix was not the fix taken — see also the `PUT /shifts/:id` note from 2026-08-19.
 - ~~Audit leftover: manager iCal in `calendar.js` (last open audit item).~~ **CLOSED** — confirmed intended 2026-07-13 (`docs/audit-2026-07-13/tech-debt-register.md` F-ICAL); manager treated as admin at `calendar.js:348,488` (2026-08-14 audit).
 - Tech debt: ~~`notifications_opt_in` dead column DROP (4 test fixtures still INSERT it)~~ **DONE** (aebd5562, `schema.sql:4341`; zero fixture INSERTs remain — 2026-08-14 audit); ~~`.form-select` focus padding-right; no-tip-jar badge redness vs last-minute badge; `.staffing-stat strong` ink emphasis~~ **all three FIXED 2026-08-14 (8045743e)**: focus rule re-asserts chevron clearance, no-jar badge joins the red family (`.nojar-badge`), stat strong uses `--ink`.
 - Empty v1 tables (`legacy_cc_raw_imports`, `cc_import_runs`, `cc_import_phase0_failures`) stay as harmless scaffolding. Dev v1 junk SCRUBBED 2026-07-14: 176 v1 proposals (+ shifts/refunds/scheduled messages) and 1,199 v1 clients deleted transactionally with verification; 16 CC-marked clients with real proposals kept; ~1,207 dev `legacy_cc_proposals.client_id` links nulled (no live consumer); 22 `users.cc_id` rows deliberately untouched.
