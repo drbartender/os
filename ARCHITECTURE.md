@@ -841,10 +841,14 @@ same body.** Adding a value means adding it at every site. Three guards enforce 
   NULL` (`shifts_created_by_fkey` and six siblings). They are excluded because the inline and
   ADD spellings of an FK differ structurally even when they mean the same thing, so a text
   comparator would emit seven false positives on day one, and a checker that cries wolf is one
-  people stop reading. An unconditional DROP+ADD converges them later in the same boot; the
-  sharper issue is that all eight share one `EXCEPTION ... RAISE NOTICE` handler, so one
-  failure silently rolls back the whole block. That, not the divergence, is the thing to fix —
-  it is on the fix list. The test file's scope comment lists the rest of the edge (quoted
+  people stop reading. A later `ADD CONSTRAINT` converges them in the same boot. The sharper
+  issue used to be that all eight shared one `EXCEPTION ... RAISE NOTICE` handler, so one
+  failure silently rolled back the whole block and reported success — **fixed 2026-08-20**:
+  the section is now one `conrelid`-pinned guarded `DO` block per FK with no handler at all,
+  so a failure is isolated to its own FK and reaches `initDb`'s `unexpected` array (Sentry +
+  loud log) instead of a NOTICE nobody reads. Steady state is a no-op, so the drop-and-re-add
+  no longer runs on every boot. The inline-vs-ADD divergence itself is unchanged and is still
+  why this checker excludes FKs. The test file's scope comment lists the rest of the edge (quoted
   identifiers, `LIKE INCLUDING CONSTRAINTS`, two CHECKs on one column item), all verified
   absent from `schema.sql` today.
 

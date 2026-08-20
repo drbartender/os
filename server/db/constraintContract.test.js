@@ -151,10 +151,13 @@ test('the live dev DB satisfies the contract', async () => {
 //     NULL`, e.g. shifts_created_by_fkey). They are deliberately left out: the
 //     inline and ADD spellings of an FK differ structurally even when they mean
 //     the same thing, so a text comparator would emit seven immediate false
-//     positives, and a checker that cries wolf is one people stop reading. An
-//     unconditional DROP+ADD converges them later in the same boot; the sharper
-//     issue there is that all eight share one EXCEPTION handler, so one failure
-//     silently rolls back the lot. Recorded on the fix list, not fixed here.
+//     positives, and a checker that cries wolf is one people stop reading. A
+//     later ADD CONSTRAINT converges them in the same boot. The sharper issue
+//     there -- all eight sharing one EXCEPTION handler, so one failure silently
+//     rolled back the lot -- was FIXED 2026-08-20: that section is now one
+//     conrelid-pinned guarded DO block per FK with no handler, so failures are
+//     isolated and loud. The exclusion above still stands on its own reasoning;
+//     only the "recorded on the fix list" part is obsolete.
 //   - Quoted identifiers (`CREATE TABLE "t"`, `ADD CONSTRAINT "x"`). Postgres
 //     preserves their case; nothing in this file uses them.
 //   - `LIKE other_table INCLUDING CONSTRAINTS`, and a table created inside a

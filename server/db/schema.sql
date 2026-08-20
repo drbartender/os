@@ -1851,39 +1851,147 @@ ALTER TABLE shifts ADD COLUMN IF NOT EXISTS guest_count INTEGER;
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS event_duration_hours NUMERIC(4,1);
 
 -- ─── FK ON DELETE Behavior Fixes ─────────────────────────────────
+--
+-- SEVEN of these eight are created by CREATE TABLE as a bare
+-- `REFERENCES <table>(id)` with Postgres's default ON DELETE NO ACTION, and are
+-- migrated here to the behavior the app needs. That inline-vs-ADD split is the
+-- "divergent under one name" the constraint-contract checker documents as its
+-- reason for excluding FKs (ARCHITECTURE.md, constraintContract.test.js) -- it
+-- is a spelling difference, not a prod divergence.
+-- The eighth, drink_plans_proposal_id_fkey, is NOT born NO ACTION: it has no
+-- inline REFERENCES at all and is created with the correct ON DELETE CASCADE by
+-- the guarded block near line 904. Its block below is therefore a no-op from
+-- birth and exists only to repair a hand-broken database.
+--
+-- SHAPE, and why it changed (2026-08-20). This was ONE DO block holding all
+-- seventeen statements -- eight FK drops, eight FK adds, and an unrelated
+-- ADD COLUMN that had drifted in -- under a single
+-- `EXCEPTION WHEN OTHERS THEN RAISE NOTICE`.
+-- Three things were wrong with that, in increasing order of severity:
+--   1. One failure rolled back all eight, not just the one that failed.
+--   2. RAISE NOTICE is not an error, so the statement SUCCEEDS as far as the
+--      driver is concerned. initDb's per-statement catch (server/db/index.js)
+--      never fired and nothing landed in its `unexpected` array, so no Sentry
+--      event and no loud log. The block converted a failure into a success.
+--   3. Combined: a fresh database whose block failed would come up with all
+--      eight on NO ACTION -- deleting a user, package or add-on then throws a
+--      FK violation instead of nulling the reference, and deleting a proposal
+--      orphans its drink plans instead of cascading -- and nothing would say so.
+--
+-- Now: one guarded DO block per FK. Each checks pg_constraint for the DESIRED
+-- confdeltype and only drops-and-re-adds when it is absent or wrong, which is
+-- the IF-NOT-EXISTS-guard shape the 2026-08-14 constraint sweep endorsed ("the
+-- guards are what make it safe"). Steady state is a pure no-op: eight
+-- drop-and-re-add pairs per boot become zero. There is deliberately NO
+-- exception handler, so a genuine failure reaches initDb and gets Sentry plus
+-- a loud log instead of a NOTICE nobody reads. Each block stays a single
+-- implicit transaction, so the constraint is never observably absent -- this is
+-- NOT one of the 20 bare DROP-then-ADD pairs the sweep tracks.
+--
+-- confdeltype: 'n' = SET NULL, 'c' = CASCADE, 'a' = NO ACTION (the default we
+-- are migrating away from).
+
+
 DO $$ BEGIN
-  -- created_by columns → SET NULL (user deletion shouldn't fail)
-  ALTER TABLE shifts DROP CONSTRAINT IF EXISTS shifts_created_by_fkey;
-  ALTER TABLE shifts ADD CONSTRAINT shifts_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
-
-  ALTER TABLE drink_plans DROP CONSTRAINT IF EXISTS drink_plans_created_by_fkey;
-  ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
-
-  ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_created_by_fkey;
-  ALTER TABLE proposals ADD CONSTRAINT proposals_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
-
-  -- package_id and addon_id → SET NULL (pricing_snapshot has the data)
-  ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_package_id_fkey;
-  ALTER TABLE proposals ADD CONSTRAINT proposals_package_id_fkey FOREIGN KEY (package_id) REFERENCES service_packages(id) ON DELETE SET NULL;
-
-  ALTER TABLE proposal_addons DROP CONSTRAINT IF EXISTS proposal_addons_addon_id_fkey;
-  ALTER TABLE proposal_addons ADD CONSTRAINT proposal_addons_addon_id_fkey FOREIGN KEY (addon_id) REFERENCES service_addons(id) ON DELETE SET NULL;
-
-ALTER TABLE proposal_addons ADD COLUMN IF NOT EXISTS variant VARCHAR(50) DEFAULT NULL;
-
-  -- drink_plans.proposal_id → CASCADE (deleting proposal cleans up drink plans)
-  ALTER TABLE drink_plans DROP CONSTRAINT IF EXISTS drink_plans_proposal_id_fkey;
-  ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_proposal_id_fkey FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE;
-
-  -- email marketing FKs → SET NULL
-  ALTER TABLE email_campaigns DROP CONSTRAINT IF EXISTS email_campaigns_created_by_fkey;
-  ALTER TABLE email_campaigns ADD CONSTRAINT email_campaigns_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
-
-  ALTER TABLE email_conversations DROP CONSTRAINT IF EXISTS email_conversations_admin_id_fkey;
-  ALTER TABLE email_conversations ADD CONSTRAINT email_conversations_admin_id_fkey FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE SET NULL;
-EXCEPTION WHEN OTHERS THEN
-  RAISE NOTICE 'FK migration: %', SQLERRM;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'shifts_created_by_fkey' AND conrelid = 'shifts'::regclass
+      AND contype = 'f' AND confdeltype = 'n'
+  ) THEN
+    ALTER TABLE shifts DROP CONSTRAINT IF EXISTS shifts_created_by_fkey;
+    ALTER TABLE shifts ADD CONSTRAINT shifts_created_by_fkey
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
 END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'drink_plans_created_by_fkey' AND conrelid = 'drink_plans'::regclass
+      AND contype = 'f' AND confdeltype = 'n'
+  ) THEN
+    ALTER TABLE drink_plans DROP CONSTRAINT IF EXISTS drink_plans_created_by_fkey;
+    ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_created_by_fkey
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'proposals_created_by_fkey' AND conrelid = 'proposals'::regclass
+      AND contype = 'f' AND confdeltype = 'n'
+  ) THEN
+    ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_created_by_fkey;
+    ALTER TABLE proposals ADD CONSTRAINT proposals_created_by_fkey
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'proposals_package_id_fkey' AND conrelid = 'proposals'::regclass
+      AND contype = 'f' AND confdeltype = 'n'
+  ) THEN
+    ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_package_id_fkey;
+    ALTER TABLE proposals ADD CONSTRAINT proposals_package_id_fkey
+      FOREIGN KEY (package_id) REFERENCES service_packages(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'proposal_addons_addon_id_fkey' AND conrelid = 'proposal_addons'::regclass
+      AND contype = 'f' AND confdeltype = 'n'
+  ) THEN
+    ALTER TABLE proposal_addons DROP CONSTRAINT IF EXISTS proposal_addons_addon_id_fkey;
+    ALTER TABLE proposal_addons ADD CONSTRAINT proposal_addons_addon_id_fkey
+      FOREIGN KEY (addon_id) REFERENCES service_addons(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'drink_plans_proposal_id_fkey' AND conrelid = 'drink_plans'::regclass
+      AND contype = 'f' AND confdeltype = 'c'
+  ) THEN
+    ALTER TABLE drink_plans DROP CONSTRAINT IF EXISTS drink_plans_proposal_id_fkey;
+    ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_proposal_id_fkey
+      FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'email_campaigns_created_by_fkey' AND conrelid = 'email_campaigns'::regclass
+      AND contype = 'f' AND confdeltype = 'n'
+  ) THEN
+    ALTER TABLE email_campaigns DROP CONSTRAINT IF EXISTS email_campaigns_created_by_fkey;
+    ALTER TABLE email_campaigns ADD CONSTRAINT email_campaigns_created_by_fkey
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'email_conversations_admin_id_fkey' AND conrelid = 'email_conversations'::regclass
+      AND contype = 'f' AND confdeltype = 'n'
+  ) THEN
+    ALTER TABLE email_conversations DROP CONSTRAINT IF EXISTS email_conversations_admin_id_fkey;
+    ALTER TABLE email_conversations ADD CONSTRAINT email_conversations_admin_id_fkey
+      FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+
+-- Was buried inside the FK block above (un-indented), so it shared that block's
+-- all-or-nothing rollback despite having nothing to do with foreign keys.
+ALTER TABLE proposal_addons ADD COLUMN IF NOT EXISTS variant VARCHAR(50) DEFAULT NULL;
 
 -- ─── CHECK Constraints on Status Columns ─────────────────────────
 DO $$ BEGIN
