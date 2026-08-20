@@ -750,6 +750,29 @@ tracked and went away with its worktree.
   value. Closed by the same shared `countToStored` inverse. (Task 4 review.)
 - **The `additional-bartender` cancel target can bind to the `num_bartenders`
   OVERRIDE row's amount, but only against a STALE snapshot.**
+  **HOW TO CHECK IT, and the answer as of 2026-08-20: ZERO instances in prod.** The hazard needs
+  a snapshot carrying the OVERRIDE row but NOT the add-on row, which is what makes `matches[0]`
+  bind to the wrong one. The two labels are identical in shape — `pricingEngine.js:480/489` emits
+  the override rows off `staffing.extra`, `:508/516` emits the add-on rows off `qty`, both reading
+  `Additional Bartender(s) (N)` — so they cannot be told apart by text, only by ORDER. That makes
+  the signature queryable: has the add-on, exactly ONE breakdown row, AND `staffing.extra > 0`.
+
+      WITH x AS (
+        SELECT p.id,
+               COALESCE((p.pricing_snapshot->'staffing'->>'extra')::numeric, 0) AS extra,
+               (SELECT count(*) FROM jsonb_array_elements(
+                  COALESCE(p.pricing_snapshot->'breakdown','[]'::jsonb)) b
+                 WHERE b->>'label' LIKE 'Additional Bartender%') AS ab_rows
+          FROM proposals p
+         WHERE EXISTS (SELECT 1 FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id
+                        WHERE pa.proposal_id = p.id AND sa.slug = 'additional-bartender')
+      )
+      SELECT count(*) FROM x WHERE ab_rows = 1 AND extra > 0;   -- 0 = hazard absent
+
+  Prod today: 6 proposals carry the add-on. One (472) has an override and correctly holds BOTH
+  rows, so the take-the-last path handles it. The other five have `staffing.extra = 0`, so their
+  lone row IS the add-on row and `matches[0]` picks correctly. Non-zero from that query is the
+  signal to build the guard; until then it is defending a state nothing produces.
   `computeCancelTargets` (`lineItemCancel.js:177-182`, citation re-verified exact 2026-08-19;
   the `matches.length > 1 ? matches[matches.length-1] : matches[0]` lone-match branch is still
   there and the suggested `snap.staffing.extra > 0` guard is still NOT applied) scans
