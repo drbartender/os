@@ -50,3 +50,4 @@ client/src/.claude/
 
 # One-time lineup script rollback snapshots (runtime rollback artifacts, not source)
 server/scripts/lineup-snapshot-*.json
+palette-contrast-report.json

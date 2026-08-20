@@ -6067,3 +6067,103 @@ Fix shape when someone takes it: add `padding: 0` (and decide about `margin-bott
 `index.css:12795`, then walk every admin surface in both skins for cards whose only inset was the
 leaked one, i.e. any `.card` whose children are not `.card-head` / `.card-body`. Retire
 `.card-flush`, `.mkt-card-flush` and `.mkt-moment`'s padding reset in the same pass.
+
+## Admin two-skin contrast, MEASURED IN A BROWSER at last: 267 AA failures, ~20 root causes (2026-08-19)
+
+The admin palette sweep has been owed a human since 2026-08-14 with the standing note that
+**no browser had ever been run in any of that work** and every contrast figure was arithmetic
+on token values. `scripts/palette-contrast.js` (new, `npm run palette:contrast`) now measures
+it: 13 admin surfaces x both skins, `getComputedStyle` on real painted text, effective
+background resolved by walking ancestors, text alpha composited, real WCAG large-text rule.
+
+**267 AA failures across 26 surface/skin combinations, collapsing to about 20 root colour
+pairs** (plus 80 nodes the tool cannot measure, see the retraction below). Seven of those hit ALL THIRTEEN surfaces, so they are token-level, not screen-level.
+Fixing the top few closes most of the 269.
+
+**App-wide, every surface (fix these first):**
+
+| skin | ratio | need | colour pair | where |
+|---|---|---|---|---|
+| light | **2.05** | 4.5 | `rgb(180,172,155)` on cream | `.sidebar-section`, disabled seg buttons |
+| dark | **2.78** | 4.5 | `rgb(86,93,105)` on near-black | `.sidebar-section`, `.k`, disabled seg |
+| dark | **3.59** | 4.5 | white on teal `rgb(29,140,137)` | `a.skip-nav` |
+| light | **4.28** | 4.5 | near-black on teal | `a.skip-nav` |
+| dark | **3.65** | 4.5 | `rgb(11,13,16)` on blue | `span.nav-badge` |
+| dark | **4.19** | 4.5 | `rgb(124,133,147)` on `rgb(31,36,43)` | muted, 24 instances |
+| light | **4.22** | 4.5 | `rgb(122,116,104)` on cream | muted, **136 instances** |
+
+**RETRACTED, and worth reading before trusting any number above.** The first run of this
+harness reported `div.avatar` in After Hours at **1.05** and called the initials invisible.
+**That was a false positive and the harness was wrong.** Zul looked at the actual screen the
+same evening and saw exactly what is there: a lighter blue circle with dark blue letters,
+perfectly legible. `.avatar` is `background: linear-gradient(135deg, var(--accent), ...)`
+(`index.css:12264`), which is a background-IMAGE. `getComputedStyle` reports
+`backgroundColor: transparent` for it, so the ancestor walk sailed straight past the blue
+circle and measured the near-black page behind it.
+
+Fixed: `effectiveBg` now returns `unmeasurable` the moment any node in the chain paints a
+`background-image`, and those nodes are EXCLUDED from the failure count and reported
+separately. Post-fix numbers: **267 AA failures, plus 80 nodes skipped as unmeasurable.**
+Those 80 are NOT passes; they are places this tool cannot see, and only eyes can judge them.
+
+**The lesson, which is the same one this file already records about the CSS palette checker:
+a measuring tool's confident output is not evidence about the things it structurally cannot
+measure.** The palette checker's blind spots are documented above; this harness shipped its
+own on day one. A numbers pass cannot audit itself, which is precisely why the human half of
+this walk is not ceremony.
+
+**Money figures fail worst in House Lights:** amber `rgb(214,161,81)` on cream measures
+**2.11** on `td.num` (4 surfaces) and **2.22** on `div.mtile-value` (3 surfaces). Numbers are
+the whole point of those surfaces.
+
+**The skip link fails its own accessibility purpose in BOTH skins** (3.59 dark, 4.28 light).
+It exists for keyboard and screen-reader users and is the one element that should never fail.
+
+**What this CONFIRMS from the arithmetic era:** House Lights muted reproduces at exactly
+**4.22**, matching the figure already recorded in this file. That estimate was right, and the
+"fails by a hair, app-wide" entry is now browser-proven, with the added fact that it is 136
+instances on 13 surfaces rather than a handful.
+
+**What the arithmetic MISSED:** everything above 4.22. The `1.05` avatar, the `2.05`/`2.78`
+sidebar-section pair, the `2.11` money figures, and the skip-link failures are all worse than
+the known finding and none were recorded. Measuring the tokens a surface consumes cannot find
+a colour pair nobody thought to compute.
+
+**Not contrast, so not measured here and still open:** the dark `is-warn` bar rendering CYAN
+(`PALETTES.dark.warn` is `{h:192}`, which IS cyan at source, `UserPrefsContext.js`), and the
+light-vs-dark 42px/22px payroll total. Both are identity and sizing, not ratio.
+
+Full per-surface detail lands in `palette-contrast-report.json` (gitignored) on each run.
+
+### The HUMAN half of the palette sweep, walked 2026-08-19 (Zul) — and it moved three things
+
+Run against the measured list above, in both skins.
+
+**VERDICT: the design reads COHERENT, and After Hours reads better than House Lights.** Font
+sizing "just right" in dark. That is the judgment the sweep existed to get and no tool
+produces it. The admin does not read as unfinished.
+
+**Three things the human pass SETTLED that the numbers had wrong or could not see:**
+
+1. **The `div.avatar` 1.05 finding was a false positive** and she caught it by looking. Detail
+   in the retraction above. The harness now reports 80 unmeasurable nodes rather than
+   pretending to measure them.
+2. **Admin modals are NO LONGER boxless ghosts in House Lights.** The long-standing finding
+   ("you can't see the dialog box in the House Lights skin", recorded from Dallas's earlier
+   walk) does NOT reproduce: the dialog is visible and no surface reads as transparent.
+   Something in the intervening skin work fixed it. **That older entry should be marked
+   closed** rather than left to send the next walker hunting a ghost that is gone.
+3. **Dollar figures read comfortably**, despite `td.num` amber measuring 2.11. Both can be
+   true: amber is a STATE, not the default, so the figures she read were ordinary dark-on-cream
+   ones. The 2.11 stands as a real failure of the amber state; it just is not what a normal
+   money screen looks like. Anyone actioning it should reproduce the amber state first rather
+   than restyling every number.
+
+**Left unverified, and honestly so:** the cyan `is-warn` question. She could not find a live
+warn state to look at on any admin surface. `PALETTES.dark.warn` is `{h:192}` in
+`UserPrefsContext.js`, which IS cyan at source, so the defect is real in code; what remains
+unknown is how it reads in situ. Needs a surface with a genuine warning showing.
+
+**Also worth carrying:** `/change-requests`, which this entry names as "the cleanest single
+proof case", currently has NO pending change requests. It renders empty, so it proves very
+little. The next walk should pick a populated surface for that role, or seed one.

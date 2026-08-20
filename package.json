@@ -19,6 +19,7 @@
     "check:css-scope": "node scripts/check-css-palette-scope.js",
     "test:css-scope": "node --test scripts/check-css-palette-scope.test.js",
     "mobile:check": "node scripts/mobile-capture.js",
+    "palette:contrast": "node scripts/palette-contrast.js",
     "optimize:assets": "node scripts/optimize-assets.js",
     "worktree:new": "node scripts/worktree-new.js",
     "worktree:rm": "node scripts/worktree-rm.js",
