@@ -1404,6 +1404,22 @@ Items 8-11 are unstarted.
    Ask him: did he click the option with the mouse or commit it with the keyboard, and
    did the form disappear at the moment of the click or on submit?
 
+   **2026-08-20: DALLAS TRIED IT AND IT WORKED. Does not reproduce on demand.**
+   He added a client picking "Other" for Source, and it completed normally — no navigation, no
+   lost form. The row landed as `test@client.com`, `source='other'` (deleted afterward at his
+   request). That is the FIRST client ever created in prod carrying `source='other'`.
+   Two consequences, and the second corrects earlier reasoning in this entry:
+   - The `'other'` code path is proven end-to-end. Value accepted by `VALID_SOURCES`, accepted by
+     the live CHECK, written, and read back. Nothing about the VALUE is broken.
+   - The "zero clients with `source='other'` in prod" evidence recorded below was treated as a
+     SYMPTOM ("nobody has ever completed an 'other' client"). It is now equally explained by
+     nobody having picked it. Do not lean on that count as corroboration again.
+   **Status: still open, but demoted from reproducible to intermittent-or-conditional.** One
+   successful attempt does not disprove a report; it does mean nobody should hunt this by trying
+   the happy path again. The next useful evidence is a FAILING repro with the devtools snippet
+   below already running, not another success. If it never recurs, close it as unreproducible
+   rather than fixed.
+
    **2026-08-19 systematic-debugging pass. FIVE hypotheses eliminated, ONE mechanism found.**
    Nothing was fixed; the hypothesis space is now small enough to close with one repro.
    Eliminated, each against current code:
