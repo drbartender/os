@@ -44,7 +44,12 @@ test('renders nothing when the week already has payouts, or is not open, or ther
   expect(c).toBeEmptyDOMElement();
 });
 
-test('an existing open row with nothing accrued still shows the card', () => {
-  const { container } = r(<CurrentWeekCard openPeriod={{ ...P, exists: true, status: 'open', payouts_accrued: 0 }} pendingReviews={0} bountyCents={1000} />);
-  expect(container.textContent).toContain('Nothing accrued yet');
+test('an existing open row is the QUEUE\'s to draw: the card stands down', () => {
+  // Corrected 2026-08-20. This test used to assert the opposite. A browser pass
+  // against the live hub found that when the row exists, GET /admin/payroll/periods
+  // returns it and PayRunView renders it right below this card, so the same week
+  // appeared twice in two date formats, and this copy had no Process action. The
+  // card is for the gap BEFORE accrual mints the row, nothing else.
+  const { container } = r(<CurrentWeekCard openPeriod={{ ...P, exists: true, status: 'open', payouts_accrued: 0 }} pendingReviews={1} bountyCents={1000} />);
+  expect(container).toBeEmptyDOMElement();
 });

@@ -17,10 +17,16 @@ import { ymdLabel, windowLabel } from '../staffHub/hubSubtitle';
  * 1e/1f): same window, chip, payday and owed slots, minus the actions a period
  * with no row cannot offer.
  */
+// ONLY when no pay_periods row exists yet. Corrected 2026-08-20 after a browser
+// pass against the live hub: the earlier rule also fired when a row existed,
+// was open and had accrued nothing, but GET /admin/payroll/periods returns that
+// row too, so PayRunView drew the SAME week directly beneath this card, in a
+// different date format, with the Process action this card cannot offer. One
+// week, two cards, one of them crippled. Once a row exists the queue owns the
+// week; this card exists for the Tuesday-to-Friday gap before accrual mints it.
 export function currentWeekCardVisible(openPeriod) {
   if (!openPeriod) return false;
-  return !openPeriod.exists
-    || (openPeriod.status === 'open' && Number(openPeriod.payouts_accrued) === 0);
+  return !openPeriod.exists;
 }
 
 export default function CurrentWeekCard({ openPeriod, pendingReviews = 0, bountyCents = 0 }) {
