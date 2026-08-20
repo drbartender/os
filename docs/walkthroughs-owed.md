@@ -513,7 +513,15 @@ attempt and were corrected blind by a later session (`54fb77cb`, `fc5e6ca2`). Th
 through 8/19 arrivals are listed FIRST, because they are what is live in prod today that
 nobody has opened at all.
 
-- [ ] **Phone admin passkey unlock (lane `ma-d-auth`): NOW UNBLOCKED, PUSHED 2026-08-16**
+- [x] **Phone admin passkey unlock (lane `ma-d-auth`): FULLY WALKED 2026-08-19 (Zul).**
+      Every leg is proven: 1 and 2 by real production use, 3, 4 and 5 walked on a real Pixel
+      against prod, plus both legs folded in from ma-a/ma-b. Two defects came out of step 4
+      and live in the fix list, not here, per this file's own rule.
+      KEPT rather than deleted, against the "tick it and delete it" convention, for one
+      reason: the PROTOCOL TRAP below is walk methodology, not a result. It cost an hour and
+      it will cost the next person the same hour on any future offline walk. Delete the rest
+      of this entry freely; keep that.
+      Original entry follows. **PUSHED 2026-08-16**
       in the 52-commit `bab7fba5..981b09ef` batch (merge `c206118c` + fix `981b09ef`). Prod
       DDL needs no action and never did: `webauthn_credentials` and `webauthn_challenges` are
       `CREATE TABLE IF NOT EXISTS` in `server/db/schema.sql`, which `server/db/index.js`
