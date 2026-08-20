@@ -4931,6 +4931,15 @@ Changes no candidate set, only the pick.
   drifts the assumed end. `COALESCE(s.event_duration_hours, p.event_duration_hours, 4)`.
 - **`shiftEndInstant.js:115-116` cites the wrong number** — "571 prod rows" is the DEV count;
   prod has 327 proposals. The claim it supports (one distinct `event_timezone`) is true on both.
+- **`shiftClosureSweep.js:9-11` states three prod facts in the PRESENT TENSE that are now all
+  false (found 2026-08-19 sweep).** The comment reads "Only 5 shifts in prod have ever reached
+  'completed'; 'filled' has never been used at all. 50 sit 'open' on completed proposals, 31 of
+  them with payout_events attached." Prod today: **58 completed (34 with payout_events), 19
+  open (0 with payout_events), 2 cancelled, zero 'filled', and ZERO open shifts on completed
+  proposals.** It is the sweep's own justification comment describing the world before it ran,
+  which is legitimate history written in a tense that reads as current state. Same family as
+  the "stale comments asserting `shifts.status` has NO CHECK constraint" entry below. Cheap fix:
+  past-tense it and date it. Only `'filled' has never been used` is still true.
 - **The sweep is one UPDATE, so one poisoned row blocks ALL closures forever.** A bogus IANA
   name in `event_timezone` (a documented accepted exposure) aborts the whole statement, so zero
   shifts close on every tick thereafter rather than just the bad one. Sentry sees it via
