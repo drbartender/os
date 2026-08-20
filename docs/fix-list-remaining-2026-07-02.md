@@ -5409,13 +5409,34 @@ this file and this is a clean second instance:
    later — won the ordering, the `LEFT JOIN payouts` found nothing for the test user, and
    `total_cents` read 0 instead of 12345. Deleting 7521 alone took the suite to 65/65.
 
-**The systemic cause, which is still open and will do this again.** `staffPortal.test.js`'s
-teardown deletes its payout (`:238`) but never its `pay_periods` row, so every run leaks one.
-Other suites do the same — dev currently holds fixture periods dated 2026-08-16, 08-17, 08-29,
-09-11, 09-12 and one at **2099-06-01**. Any leaked period whose `start_date` is later than the
-seeding suite's own will shadow it under that `ORDER BY ... DESC LIMIT 1` and reproduce this
-exact failure. The durable fix is teardown deleting the period it created (or seeding a period
-guaranteed to win the ordering), not another manual sweep.
+**CORRECTED AND FIXED 2026-08-20 — and my "pure orphan" call above was WRONG.** Pay period
+7521 was **canonical**: 2026-08-18 is a Tuesday and 08-24 a Monday, a 7-day Tue-to-Mon span,
+exactly what `payPeriodForDate` mints. It was the real current pay period, not litter. It had no
+payouts so nothing was lost, and accrual re-mints canonical periods — but deleting it made the
+suite pass by removing a legitimate row, and would have regressed the moment that period came
+back. Leaving the wrong reasoning above struck rather than deleted, because the *shape* of the
+error is the reusable part: I inferred "orphan" from "no payouts attached" without checking
+whether the row matched the canonical Tue-Mon shape the system actually mints.
+
+**The real defect was the FIXTURE, and it is now fixed** (`39b300f6`).
+`staffPortal.test.js` seeded `CURRENT_DATE - 3` to `+10` — a 14-day window with an arbitrary
+start. `/staff-home` resolves `WHERE today BETWEEN start_date AND end_date ORDER BY start_date
+DESC LIMIT 1`, so on any day the canonical period exists it starts LATER and wins; the lookup
+returned a period the suite had attached no payout to and `total_cents` read 0. **The suite
+passed only while dev happened to hold no canonical period covering today** — a coin flip, not a
+fixture. It now seeds the canonical period itself, so it asserts against the row the app really
+resolves, and preserves status on conflict rather than stomping a period another suite may be
+using. Verified in BOTH states: no canonical period present (creates one) and present (adopts
+one), 65/65 each.
+
+**One genuine leak also fixed:** `staffShiftActions.test.js` seeds `CURRENT_DATE + 14`, a
+non-canonical future window it flips to `processing`, and never deleted it. Now guarded-deleted
+in `after()` with the `NOT EXISTS (payouts)` shape `admin/payroll.test.js` already uses.
+
+**Scope, checked rather than assumed:** 27 suites seed `pay_periods`; only those two needed
+changing. `payrollDisputeRewind.test.js` also never deletes one, but it seeds the CANONICAL
+period — that row SHOULD exist, so it is correct as written and was deliberately left alone.
+"Every suite must delete its period" would have been the wrong rule.
 
 Not a gate risk either way — `ci-smoke` resets from prod and never had these rows.
 
