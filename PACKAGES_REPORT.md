@@ -296,7 +296,7 @@ These three bundles are cumulative -- each tier includes everything in the tier 
 
 | Tier | Add-On | Rate | Extra Hr Rate | What It Adds |
 |------|--------|------|---------------|--------------|
-| 1 | **The Foundation** | $3.00/guest | +$0.75/guest/hr | Ice, bottled water, premium cups, napkins, stir sticks |
+| 1 | **The Foundation** | $3.00/guest | +$0.75/guest/hr | Ice, bottled water, premium cups, cocktail napkins (straws on request) |
 | 2 | **The Formula** | $5.50/guest | +$1.25/guest/hr | + Mixers for signature cocktails, basic garnishes, simple syrup, bitters |
 | 3 | **The Full Compound** | $8.00/guest | +$2.00/guest/hr | + Complete mixer selection, premium garnish package |
 
@@ -307,7 +307,7 @@ For clients who only need specific items:
 | Add-On | Rate | Description |
 |--------|------|-------------|
 | **Ice Delivery Only** | $2.00/guest | Ice delivery |
-| **Cups & Disposables Only** | $1.50/guest | Premium cups, napkins, stir sticks, straws |
+| **Cups & Disposables Only** | $1.50/guest | Premium cups, cocktail napkins (straws on request) |
 | **Bottled Water Only** | $0.50/guest | Bottled water |
 | **Signature Mixers Only** | $2.00/guest | Mixers for signature cocktails (no Foundation items) |
 | **Full Mixers Only** | $4.50/guest | Complete mixer selection (no Foundation items) |

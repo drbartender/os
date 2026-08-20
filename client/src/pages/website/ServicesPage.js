@@ -33,7 +33,7 @@ const FORMULAS = [
     includes: [
       ['Spirits & mixers', 'a set selection · swaps by request'],
       ['Bartenders', 'BASSET-certified'],
-      ['Cups & Disposables', 'premium cups, napkins, stir sticks, straws'],
+      ['Cups & Disposables', 'premium cups and cocktail napkins · straws on request'],
       ['Ice Delivery', 'day-of'],
       ['Garnish prep', 'fresh, day-of'],
       ['Bespoke menu', 'two signature drinks · included'],
@@ -63,7 +63,7 @@ const FORMULAS = [
 const ADDONS = [
   ['Smoke Bubble', '+$8/drink', 'Smoke globe over the cocktail. Pop-and-pour theater.'],
   ['Pop-up Bar Rental', 'from $50', 'Portable bar delivered, set up, and broken down. Several styles available.'],
-  ['The Foundation', 'from $3/guest', 'BYOB supply bundle: ice delivery, bottled water, premium cups, napkins, and stir sticks. No mixers or garnishes.'],
+  ['The Foundation', 'from $3/guest', 'BYOB supply bundle: ice delivery, bottled water, premium cups, and cocktail napkins. No mixers or garnishes. Straws on request.'],
   ['The Full Compound', 'from $8/guest', 'The Foundation plus a complete mixer selection, premium garnish package, simple syrup, and bitters.'],
 ];
 

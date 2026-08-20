@@ -699,11 +699,11 @@ CREATE TRIGGER update_service_addons_updated_at BEFORE UPDATE ON service_addons
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 INSERT INTO service_addons (slug, name, description, billing_type, rate, extra_hour_rate, applies_to, sort_order) VALUES
-  ('the-foundation', 'The Foundation', 'Ice delivery, bottled water service, premium cups, napkins, stir sticks. No mixers, no garnishes.', 'per_guest_timed', 3.00, 0.75, 'byob', 1),
+  ('the-foundation', 'The Foundation', 'Ice delivery, bottled water service, and premium cups and napkins. The essential bar setup for BYOB events. No mixers or garnishes included. Straws available upon request.', 'per_guest_timed', 3.00, 0.75, 'byob', 1),
   ('the-formula', 'The Formula', 'Everything in The Foundation plus mixers for signature cocktails, basic garnishes, simple syrup, bitters.', 'per_guest_timed', 5.50, 1.25, 'byob', 2),
   ('the-full-compound', 'The Full Compound', 'Everything in The Foundation plus complete mixer selection, premium garnish package, simple syrup, bitters.', 'per_guest_timed', 8.00, 2.00, 'byob', 3),
   ('ice-delivery-only', 'Ice Delivery', 'Ice delivery for the event.', 'per_guest', 2.00, NULL, 'byob', 4),
-  ('cups-disposables-only', 'Cups & Disposables', 'Premium cups, napkins, stir sticks, straws.', 'per_guest', 1.50, NULL, 'byob', 5),
+  ('cups-disposables-only', 'Cups & Disposables', 'Premium clear plastic cups, cocktail napkins. Everything your guests need for a polished bar experience without the hassle of glassware. Straws available upon request.', 'per_guest', 1.50, NULL, 'byob', 5),
   ('bottled-water-only', 'Bottled Water', 'Bottled water service.', 'per_guest', 0.50, NULL, 'byob', 6),
   ('signature-mixers-only', 'Signature Mixers', 'Mixers for signature cocktails only. Does not include Foundation items.', 'per_guest', 2.00, NULL, 'byob', 7),
   ('full-mixers-only', 'Full Mixers', 'Complete mixer selection. Does not include Foundation items.', 'per_guest', 4.50, NULL, 'byob', 8),

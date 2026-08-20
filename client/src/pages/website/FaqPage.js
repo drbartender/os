@@ -109,7 +109,7 @@ const FAQ_CATEGORIES = [
       },
       {
         q: 'What do bartenders bring with them?',
-        a: "Essential bar tools (shakers, jiggers, strainers, etc.) come with every package. Cups, napkins, straws, and ice are brought only if you've added them to your package as add-ons. For BYOB events, you provide the alcohol and we bring the tools plus any add-ons you've selected.",
+        a: "Essential bar tools (shakers, jiggers, strainers, etc.) come with every package. Cups, napkins, and ice are brought only if you've added them to your package as add-ons. Straws are available on request, not by default. For BYOB events, you provide the alcohol and we bring the tools plus any add-ons you've selected.",
       },
       {
         q: 'Do you handle setup and cleanup?',
