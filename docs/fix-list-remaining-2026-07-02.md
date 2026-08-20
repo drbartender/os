@@ -777,10 +777,14 @@ tracked and went away with its worktree.
   `drink_plan_extras` row would pin it. (Task 6 review.) (2026-08-14: partially
   closed — `refundHelpers.extensionScope.test.js` now exercises the real query on
   the default panel rails four times plus the wide-rails seam; the specific
-  `drink_plan_extras` exclusion assert is still missing.) **RE-VERIFIED 2026-08-19 and still
-  open: `refundHelpers.extensionScope.test.js` contains ZERO mentions of `drink_plan`, and NO
-  test file anywhere exercises `loadPaymentsWithRemaining` together with `drink_plan_extras`.
-  The `routes/stripe.js:463` citation is still EXACT** (`paymentsWithRemaining: await
+  `drink_plan_extras` exclusion assert is still missing.) ~~RE-VERIFIED 2026-08-19 and still
+  open.~~ **CLOSED 2026-08-20**: `refundHelpers.extensionScope.test.js` test 6 now seeds a
+  `drink_plan_extras` charge alongside a balance charge and asserts the DEFAULT call returns only
+  the balance one. Two-sided on purpose — it also calls the same helper on
+  `CANCEL_LINE_REFUND_RAILS` and asserts the drink-plan row IS a candidate there for its full
+  7500 cents, because asserting the exclusion alone would pass identically if the seed had
+  silently failed. Mutation-tested: adding `drink_plan_extras` to `PANEL_REFUND_RAILS` fails that
+  test and only that test. **The `routes/stripe.js:463` citation is still EXACT** (`paymentsWithRemaining: await
   loadPaymentsWithRemaining(proposalId)`, default rails, no suite).
 - **`lab.js`'s pre-fold upsert and post-fold re-sync are pinned only by prose.**
   Both (`lab.js:303-314` and `:379-386`) are near-duplicate hand-copied logic of
