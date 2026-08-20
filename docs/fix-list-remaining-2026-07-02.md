@@ -3484,6 +3484,45 @@ Until then treat a green tick as "the known re-arming shapes are absent", not "t
 
 # Added 2026-08-14 (small-fix wave 2 findings)
 
+**SECTION SWEPT 2026-08-20 against code. Six of the eleven checkable entries are FIXED — the two
+that this section flagged as "LIVE ON PROD" among them.** The 8/16 push (52 commits) is where
+most of it landed. Read the per-entry notes below before actioning anything here; the section
+header's urgency no longer describes its contents.
+
+**FIXED (do not re-action):**
+- **Paystub paid date** — `paystubData.js` imports `chicagoYmdOf` (`:14`) and uses it for the paid
+  date (`:160`). The entry's `:147` citation has drifted. The bare `toISOString().slice(0,10)`
+  left at `:28` is a different helper and carries a comment at `:24` telling callers to use
+  `chicagoYmdOf` for exactly this case.
+- **Staff shifts bucketing "past" 30 minutes early** — `shifts.js:242` is `chicagoTodayYmd()`.
+  `:240` is now a COMMENT describing the old broken shape. Entry cites `:223`, drifted.
+- **`STAFF_OPEN_SHIFTS_SQL`** — `shifts.queries.js:96` gates on `shiftNotFinishedSql('s','pp')`;
+  `:88` is a comment describing the retired `event_date >= CURRENT_DATE`.
+- **`PayPage.js:581` / `PayoutDetail.js:422`** — ZERO occurrences of the date shape in either file.
+- **`paystubData.paidDate.test.js` pay-period hygiene** — fixed, and better than the entry asked:
+  it now uses far-future period dates so `UNIQUE(start_date)` cannot collide (`:32`) AND deletes
+  its rows in teardown (`:77`).
+- **`communication_preferences.email_enabled` has no product writer** — resolved by REMOVAL. The
+  key was dropped 2026-08-14; five modules now carry comments saying so
+  (`messageSuppression.js:64`, `notificationChannelResolver.js:22`, `channelFallback.js:9`,
+  `scheduledMessageDispatcher.js:163`, `consultRecap.js:80`).
+
+**STILL OPEN, verified:**
+- **The `toYmd` spread is real and slightly worse than recorded**: 34 occurrences across 28
+  non-test files (entry says 32 across 28), plus 13 across 13 test files. The FILE count is exact.
+- **The sensitivity gap is real**: `paystubData.js`, `paystubPdf.js` and `businessTime.js` are all
+  still absent from `scripts/sensitive-paths.txt`.
+- **`PUT /contacts/:id/email-status` still has no client UI** — zero references to `email-status`
+  anywhere in `client/src`.
+
+**NEEDS RE-DERIVATION before anyone actions it:**
+- **`createAdditionalInvoiceIfNeeded` minting the full delta** — the function is not where the
+  entry points; re-locate it before trusting the claim.
+- **`repriceSummary`'s overpaid branches untested** — five suites now reference
+  `repriceSummary`/`overpaid` (`proposalStatus`, `refundHelpers.scope`, `balanceInvoiceMonitor`,
+  `crud`, `cancelLineItem`). Coverage exists; whether it reaches the specific overpaid branches
+  was NOT verified here.
+
 Surfaced while shipping the four wave-2 commits (ed08114f, 9b695af0, 2233a1b6, 46d2974c).
 None of these were in scope for that wave; each is logged here rather than fixed in passing.
 
