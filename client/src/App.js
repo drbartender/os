@@ -643,7 +643,10 @@ function AppRoutes() {
         <Route path="/messages" element={<Messages />} />
         <Route path="/financials" element={<FinancialsRedirect />} />
         <Route path="/financials/payroll" element={<LegacyRedirect to="/staffing/payroll" />} />
-        <Route path="/tips" element={<TipsAdmin />} />
+        {/* adminStrict like its Staff hub siblings: every /admin/tip-feedback
+            route is the server's adminOnly, so a manager reaching this by
+            bookmark would render a page where each fetch 403s. */}
+        <Route path="/tips" element={<ProtectedRoute adminStrict><TipsAdmin /></ProtectedRoute>} />
         <Route path="/reviews" element={<LegacyRedirect to="/staffing/reviews" />} />
         <Route path="/settings" element={<SettingsDashboard />} />
         <Route path="/blog" element={<BlogDashboard />} />

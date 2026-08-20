@@ -100,3 +100,12 @@ server/utils/eventEndInstant.curfew.test.js
 # (spec 2026-08-07) at the TAX surface, which payroll.test.js/payouts.test.js
 # cover only at the payout surface. A wrong 1099 is a filed government document.
 server/routes/admin/payrollTax.legalName.test.js
+
+# Tip money reads (staff hub, 2026-08-19). sh-a-server put
+# server/routes/admin/contractorTipPage.js on sensitive-paths.txt and created
+# its first-ever suite, but left the suite off this gate: the same
+# listed-but-ungated shape this file documents elsewhere. The suite pins the
+# adminOnly guard on /tips and /tip-feedback (they expose per-bartender tip
+# money and guest PII), the Status projection the cross-staff ledger derives
+# every row from, and the target_user_id filter the staffer profile reads.
+server/routes/admin/contractorTipPage.test.js

@@ -82,6 +82,8 @@ test('Confirm is disabled while names are dirty, with the save-first hint', asyn
 
 // The third state (spec §7): the confirm succeeded but no open pay period
 // existed, so nothing materialized. The page needs that fact to mark the row.
+// restored rides alongside materialized: a revived tombstone pays into the
+// current run while reporting materialized 0, so the page needs both numbers.
 test('confirm resolving materialized:0 reports it through onChanged', async () => {
   api.post.mockResolvedValue({ data: { materialized: 0, restored: 0 } });
   const onChanged = jest.fn();
@@ -100,6 +102,7 @@ test('confirm resolving materialized:0 reports it through onChanged', async () =
   await waitFor(() => expect(onChanged).toHaveBeenCalledWith({
     reviewId: 11,
     materialized: 0,
+    restored: 0,
     bountyEligible: true,
   }));
 });

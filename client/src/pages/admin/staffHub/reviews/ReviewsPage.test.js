@@ -125,6 +125,29 @@ test('resolved rows and the all-time footer render from the envelope', async () 
   expect(screen.queryByRole('button', { name: /^Confirm/ })).toBeNull();
 });
 
+// settleBounty revives a tombstoned line for a dismissed-then-re-confirmed
+// review. That path pays into the CURRENT run but reports materialized 0, so a
+// guard reading materialized alone would tell the operator that live money is
+// still waiting for a period to open.
+test('a restored bounty is NOT reported as waiting: the money is already in the run', async () => {
+  let rows = [PENDING];
+  mockGets({ reviews: () => rows });
+  api.post.mockImplementation(() => {
+    rows = [CONFIRMED];
+    return Promise.resolve({ data: { materialized: 0, restored: 1 } });
+  });
+  renderReviews({ summary: { open_period: { exists: true, status: 'open' } } });
+
+  await settled();
+  fireEvent.click(screen.getByRole('button', { name: /^Confirm/ }));
+  await settled();
+
+  expect(screen.queryByText(/waiting for an open period/)).toBeNull();
+  expect(mockToast.success).not.toHaveBeenCalledWith(
+    expect.stringMatching(/waits for the next open pay run/)
+  );
+});
+
 test('a confirm that materializes nothing marks the row waiting and refreshes the hub', async () => {
   let rows = [PENDING];
   mockGets({ reviews: () => rows });

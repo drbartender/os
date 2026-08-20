@@ -66,7 +66,8 @@ export default function ReviewsPage() {
   }, [setActions]);
 
   const changed = useCallback((result) => {
-    if (result && result.reviewId && result.materialized === 0 && result.bountyEligible) {
+    if (result && result.reviewId && result.bountyEligible
+        && result.materialized === 0 && result.restored === 0) {
       setWaitingIds(s => new Set([...s, result.reviewId]));
       toast.success('Confirmed. The bounty waits for the next open pay run.');
     }

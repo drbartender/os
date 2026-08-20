@@ -75,13 +75,18 @@ export default function PendingReviewCard({ review, staff, bountyCents, openPeri
       : openNow ? `Confirm and pay ${fmt$fromCents(bountyTotal)}`
         : `Confirm, ${fmt$fromCents(bountyTotal)} waits for the next open run`;
 
-  // The confirm result carries the third state (spec §7): materialized 0 on a
-  // bounty-eligible confirm means the money is waiting for a period to open.
+  // The confirm result carries the third state (spec §7): a bounty-eligible
+  // confirm that neither materialized NOR restored a line means the money is
+  // waiting for a period to open. `restored` matters: settleBounty revives a
+  // tombstoned line for a dismissed-then-re-confirmed review, which pays into
+  // the CURRENT run while reporting materialized 0, so reading materialized
+  // alone would tell the operator that live money is still waiting.
   const confirm = () => run('confirm', () => api
     .post(`/admin/staff-reviews/${review.id}/confirm`)
     .then((res) => ({
       reviewId: review.id,
-      materialized: Number(res.data?.materialized),
+      materialized: Number(res.data?.materialized) || 0,
+      restored: Number(res.data?.restored) || 0,
       bountyEligible: stars5 && saved.length > 0,
     })));
   const dismiss = () => run('dismiss', () => api.post(`/admin/staff-reviews/${review.id}/dismiss`));
