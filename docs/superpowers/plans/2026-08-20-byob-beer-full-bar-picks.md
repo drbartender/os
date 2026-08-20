@@ -1,28 +1,36 @@
 ---
 spec: docs/superpowers/specs/2026-08-20-byob-beer-catalog-and-full-bar-picks-design.md
-rev: 1
+rev: 2  # plan-fleet findings folded in: BeerWineV2 is the live picker; style_key UPDATE not INSERT-only; NA-variant legacy label; resolver shared across 3 surfaces; fixtures move with behavior steps; potions.test.js + lineup script join the footprint
 lanes:
   - id: beer-picks
     footprint:
-      - server/utils/potionCatalog.js              # + pars100Spirits slice (additive; pars100 untouched)
-      - server/utils/potionCatalog.test.js         # new-label fixtures + pars100Spirits assertions; pars100 parity UNCHANGED
-      - server/utils/shoppingList.js               # full_bar branch honors picks; 3-rule selection handling; legacy label map; BEER_STYLE_MAP + defaults to new labels
-      - server/utils/shoppingList.generator.test.js # full-bar-honors-picks / None / empty-default / legacy-label coverage
-      - server/scripts/applyBeerCatalog2026.js     # NEW one-time content script (lineup-script pattern: dry-run default, snapshot, idempotent)
-      - client/src/pages/plan/steps/BeerWineStep.js        # BEER_STYLES -> 5 new labels
-      - client/src/pages/plan/steps/FullBarBeerWineStep.js # BEER_STYLES -> 5 new labels
+      - server/utils/potionCatalog.js              # + pars100Spirits slice (additive)
+      - server/utils/potionCatalog.test.js         # fixtures/SEED_ROWS counts/SNAPSHOT regen in lockstep; + pars100Spirits assertion
+      - server/utils/shoppingList.js               # resolveBeerWinePicks resolver; full_bar branch; legacy map; BEER_STYLE_MAP + PARS_100 lockstep renames
+      - server/utils/shoppingList.generator.test.js
+      - server/utils/shoppingListGen.js            # buildPlannerGeneratorInput + deriveCategoryCounts read the resolver
+      - server/utils/lifecycleEmailTemplates.js    # recap email beer/wine lines read the resolver
+      - server/scripts/applyBeerCatalog2026.js     # NEW one-time content script (--dry-run flag opt-in, real run default, snapshot, idempotent — lineup convention)
+      - server/scripts/applyPackageLineup2026.js   # cross-reference comment ONLY (miller/stella coupling); no behavior change
+      - server/routes/potions.test.js              # full-bar preview count assertion (was >= 13; post-change 12)
+      - client/src/pages/plan/v2/steps/BeerWineV2.js       # THE LIVE PICKER — BEER_STYLES -> 5 new labels
+      - client/src/pages/plan/steps/BeerWineStep.js        # v1 labels follow (vocabulary only)
+      - client/src/pages/plan/steps/FullBarBeerWineStep.js # v1 labels follow (vocabulary only)
       - client/src/pages/plan/v2/PlannerV2.js      # DEFAULT_SELECTIONS pre-picks beer/wine
       - README.md                                  # scripts table: applyBeerCatalog2026
-      - ARCHITECTURE.md                            # note pars100Spirits slice
+      - ARCHITECTURE.md                            # note pars100Spirits slice + resolver
     blockedBy: []
-    review: full-fleet   # touches the shopping-list generator seam that produced the Sidney incident; client-facing artifact correctness
+    review: full-fleet   # fires PRE-MERGE per house model, re-confirmed against main's new HEAD at merge; generator seam from the Sidney incident
 ---
 
-# BYOB beer catalog + full-bar picks — implementation plan
+# BYOB beer catalog + full-bar picks — implementation plan (rev 2)
 
-One lane, deliberately. The spec's four-location label agreement (DB `style_key`,
-two client `BEER_STYLES` arrays, server `BEER_STYLE_MAP`) fails silently on any
-mismatch, so the pieces cannot ship separately.
+One lane, deliberately. The spec's FIVE-location label agreement (DB `style_key`, the
+live v2 picker, two v1 picker arrays, server `BEER_STYLE_MAP`) fails silently on any
+mismatch, so the pieces cannot ship separately. Rev 1 of this plan targeted the two v1
+picker files and missed the live one — caught by the plan fleet; treat that as the
+cautionary tale for every step below: verify which component is MOUNTED, not which
+file matches the name.
 
 ## The deploy-coupling rule (read first)
 
@@ -30,99 +38,137 @@ mismatch, so the pieces cannot ship separately.
 OLD labels until this deploys; rewriting `style_key` early breaks every in-flight
 planner session silently. All catalog writes ride
 `server/scripts/applyBeerCatalog2026.js`, run against prod AT deploy, immediately
-after the push lands. Dev DB may run it earlier for verification (dev is where the
-suites point). The legacy label map makes the ordering forgiving in one direction
-only: new code + old rows still resolves (legacy map covers old labels; new labels
-absent from the map just means picker-vs-rows agree once the script runs). Old code +
-new rows does NOT. Script before push = broken; push before script = fine (legacy
-map covers the gap window).
+after the push lands. The legacy label map makes the ordering forgiving in one
+direction only: push-before-script is safe (old labels keep resolving), script-before-
+push is broken (new rows, old code). The DEV DB is the exception and is sequenced
+explicitly in Step 5.
 
 ## Step 1 — content script `applyBeerCatalog2026.js`
 
-Pattern-copy `applyPackageLineup2026.js`: `--dry-run` default off (match its flag
-convention: dry-run flag prints + rolls back in-tx), snapshot prior rows to
-`scripts/beer-snapshot-<ts>.json` before writes, idempotent (`ON CONFLICT (id) DO
-NOTHING` for creates, absolute UPDATEs for renames/keys so re-runs converge).
+Pattern-copy `applyPackageLineup2026.js`: `--dry-run` FLAG (opt-in; real run is the
+default — that is the lineup script's convention), snapshot prior rows to
+`scripts/beer-snapshot-<ts>.json` before writes, idempotent, all in one transaction.
 
 Writes (spec §Buckets):
 - UPDATE michelob-ultra   style_key='Light & Easy'
 - UPDATE yuengling        style_key='Light & Easy'
 - UPDATE corona-light     item='Corona Extra', style_key='Imports', aliases +['corona','corona extra']
-- UPDATE ipa-lagunitas-voodoo item='Goose Island IPA', aliases +['goose island','goose island ipa']  (style_key stays 'IPA')
+- UPDATE ipa-lagunitas-voodoo item='Goose Island IPA', aliases +['goose island','goose island ipa']
 - UPDATE athletic-na      style_key='Zero Proof'
-- UPDATE white-claw-variety (no-op guard; asserts style_key='Seltzer')
+- ASSERT white-claw-variety style_key='Seltzer' (no-op guard)
 - UPDATE local-craft-beer style_key=NULL
-- INSERT miller-lite      ('Miller Lite','24pk',3,'Light & Easy',in_full_bar=false)
-- INSERT stella-artois    ('Stella Artois','24pk',3,'Imports',in_full_bar=false)
+- INSERT miller-lite      ('Miller Lite','24pk',3,'Light & Easy',in_full_bar=false) ON CONFLICT DO NOTHING
+- INSERT stella-artois    ('Stella Artois','24pk',3,'Imports',in_full_bar=false) ON CONFLICT DO NOTHING
+- **then absolute UPDATE style_key on miller-lite ('Light & Easy') and stella-artois
+  ('Imports') — unconditionally, AFTER the inserts.** This is the order-independence
+  fix: `applyPackageLineup2026.js` BRANDED_PARS creates the same two ids with
+  `style_key=NULL` by design (its :357 insert), so lineup-first + INSERT-only here
+  would leave both rows keyless and silently absent from their buckets. With the
+  UPDATE, either run order converges. Item/size/qty stay matched to BRANDED_PARS
+  (verified: Miller Lite / Stella Artois, 24pk, qty 3).
 
-miller-lite / stella-artois definitions MUST stay byte-identical to
-`applyPackageLineup2026.js` BRANDED_PARS (both use ON CONFLICT DO NOTHING; whichever
-runs second is a no-op). Add a comment in BOTH scripts pointing at each other.
+Add the cross-reference comment in BOTH scripts (applyPackageLineup2026.js is in the
+footprint for this comment ONLY).
 
-Beer rows keep `in_full_bar` exactly as they are today (spec: consult path + parity
-untouched). New rows are created `in_full_bar=false`.
+Checkpoint: `--dry-run` against the DEV DB prints exactly the writes above (9 + 2
+style_key updates); diff the miller/stella literals against BRANDED_PARS.
 
 ## Step 2 — catalog slice
 
 `buildCatalogSlices`: add `pars100Spirits = bySection.liquorBeerWine.filter(r =>
-r.in_full_bar && r.role === 'spirit').map(toSliceRow)`. Export in the returned
-object; mirror in `_legacySlices` (spirit rows of PARS_100.liquorBeerWine). Parity
-test gains an assertion that `pars100Spirits` equals the spirit subset; existing
-`pars100` assertions UNCHANGED.
+r.in_full_bar && r.role === 'spirit').map(toSliceRow)`; mirror in `_legacySlices`.
+`seedRecipeDrafts.js`'s closed 8-slice parity list tolerates unknown keys (verified) —
+leave it; note in the script comment that `pars100Spirits` is deliberately outside its
+guard.
 
-## Step 3 — generator
+Tests IN THIS STEP: `pars100Spirits` assertion (spirit subset of
+`pars100.liquorBeerWine`). Existing `pars100` assertions untouched HERE (renames land
+in Step 3's lockstep).
+
+Checkpoint: `node --test server/utils/potionCatalog.test.js` green.
+
+## Step 3 — generator + lockstep renames
 
 `shoppingList.js`:
-- `BEER_STYLE_MAP` keys -> new labels; rows -> new items (Light & Easy: Michelob +
-  Miller Lite + Yuengling; Imports: Corona Extra + Stella; IPA: Goose Island;
-  Seltzer: White Claw; Zero Proof: Athletic). This is the DB-read-failure fallback;
-  it must mirror the script's end state.
-- `LEGACY_BEER_LABELS = { 'Light / Easy Drinking': 'Light & Easy', 'Non-Alcoholic':
-  'Zero Proof', 'Craft / Local': <local-craft-beer row> }`. Craft maps to the row
-  directly (its bucket no longer exists); implement as a pre-resolution label rewrite
-  plus one special-case row push.
-- `buildBeerItems` / `buildWineItems` 3-rule contract: `['None']` -> nothing; `[]` ->
-  DEFAULT_BEER_PICKS / DEFAULT_WINE_PICKS (module consts: `['Light & Easy']`,
-  `['Red','White']`); else honor. Rewrite through the legacy map before lookup.
-- `buildPlannerLists` `full_bar` branch: `liquorBeerWine =
-  scaleItems(slices.pars100Spirits, ...)` then push `buildBeerItems` +
-  `buildWineItems` results. `everythingElse` unchanged (mixers/garnish/supplies keep
-  the pars100 baseline). Branch structure NOT collapsed (spec non-goal: full-bar
-  redesign seams stay).
+- `resolveBeerWinePicks(selections, servingType)` — exported, pure. Returns
+  `{ beer, wine }` per the 3-rule contract (`['None']`→[], `[]`→DEFAULT_BEER_PICKS
+  `['Light & Easy']` / DEFAULT_WINE_PICKS `['Red','White']`, else literal). Module
+  consts exported for tests.
+- `LEGACY_BEER_LABELS`: `'Light / Easy Drinking'`→'Light & Easy', `'Non-Alcoholic'`→
+  'Zero Proof', `'Non-Alcoholic (Athletic Brewing)'`→'Zero Proof' (the string the LIVE
+  v2 picker stores verbatim — it already misses BEER_STYLE_MAP today), `'Craft /
+  Local'`→ the `local-craft-beer` row directly (bucket retired; implement as label
+  rewrite + one special-case row push).
+- `buildBeerItems`/`buildWineItems`: legacy-map rewrite then group lookup only; they
+  receive resolved arrays. 'Other' keeps its skip. Wine style keys unchanged.
+- `buildPlannerLists` full_bar branch: `pars100Spirits` + buildBeerItems +
+  buildWineItems. `everythingElse` unchanged. Branch structure NOT collapsed.
+- LOCKSTEP renames in the same commit: `BEER_STYLE_MAP` → new labels/new rows
+  (L&E: Michelob+Miller+Yuengling; Imports: Corona Extra+Stella; IPA: Goose Island;
+  Seltzer: White Claw; Zero Proof: Athletic); `PARS_100` constant :91 'Corona / Light'
+  → 'Corona Extra'.
 
-Wine: `wineStyleMap` keys (Red/White/Sparkling) are unchanged; only the empty-array
-default is new. 'Other' keeps its current skip behavior.
+`shoppingListGen.js`: `buildPlannerGeneratorInput` (:393) and `deriveCategoryCounts`
+(:261) read `resolveBeerWinePicks`. `lifecycleEmailTemplates.js` (:691) beer/wine
+lines read it too (fixes the `[]`-is-truthy fallthrough).
+
+Tests IN THIS STEP: fixture label/item flips in `potionCatalog.test.js` (old labels at
+~:680/:1749/:2024/:2186, `beerSelections` case :2248), `SEED_ROWS` count assertions
+(48/23 shift with Miller+Stella), SNAPSHOT regeneration (regenerate, review the diff —
+expected motion: full_bar fixtures gain default beer/wine + lose forced beer; renames
+throughout), new generator cases (picks honored; None; []→defaults; both legacy labels
+resolve; deriveCategoryCounts on a defaulted plan reports default counts not zero).
+`potions.test.js:184` `>= 13` → the new exact count (preview passes no selections →
+defaults now apply; expected 12: 5 spirits + 3 beer + 4 wine — assert the REAL number
+observed, don't trust this arithmetic).
+
+Checkpoint: `node --test` on potionCatalog, shoppingList.generator, potions.test —
+green. (These are fixture-pure / route-test suites; the dev-DB-backed suite runs in
+Step 5 AFTER the dev catalog run.)
 
 ## Step 4 — client
 
-- Both `BEER_STYLES` arrays -> `['Light & Easy','Imports','IPA','Seltzer','Zero Proof']`.
-- `PlannerV2.js` `DEFAULT_SELECTIONS`: `beerFromFullBar/beerFromBeerWine:
-  ['Light & Easy']`, `wineFromFullBar/wineFromBeerWine: ['Red','White']`.
-- Check hydration: PlannerV2 merges saved drafts over defaults — a draft saved with
-  `[]` must NOT be resurrected into the default (server treats `[]` as
-  fall-back-to-default anyway, so both roads lead to the same list; just verify the
-  merge doesn't crash on the new shape).
+- **`v2/steps/BeerWineV2.js` `BEER_STYLES` → `['Light & Easy','Imports','IPA',
+  'Seltzer','Zero Proof']`.** This is the live picker (PlannerV2.js:336).
+- Same array in the two v1 files (vocabulary only; no v1 behavior change).
+- `PlannerV2.js` `DEFAULT_SELECTIONS`: beer arrays `['Light & Easy']`, wine arrays
+  `['Red','White']` — strings must equal BeerWineV2 chips exactly or the pre-pick
+  renders unchecked.
+- Verify draft hydration: a saved `[]` merging over the new defaults must not crash;
+  either resulting shape converges server-side via the resolver.
 
-## Step 5 — tests + verification
+Checkpoint: CI client build (`CI=true react-scripts build`) compiles; manual: v2
+planner beer step renders 5 chips with Light & Easy pre-checked.
 
-- Suites: `potionCatalog.test.js`, `shoppingList.generator.test.js`,
-  `submitPlannerV2.test.js` (grep for other generator callers per house rule), CI
-  client build.
-- New generator cases (spec §Testing): picks honored on full_bar; None; empty ->
-  defaults; legacy 'Craft / Local' resolves to Local Craft Beer; legacy
-  'Light / Easy Drinking' resolves to the Light & Easy group.
-- Post-script (dev DB): re-run the all-recipe-ingredients-resolve check (beer renames
-  touch the alias index).
-- DoD walk: v2 planner full-bar flow on dev — defaults pre-picked on the beer/wine
-  step, switch to None, submit, generated list carries no beer.
+## Step 5 — dev catalog run, DB-backed suite, DoD walk
 
-## Deploy runbook
+ORDERED:
+1. `applyBeerCatalog2026.js --dry-run` on DEV, review output; then the real run on
+   DEV. (Until the lane's code reaches the dev server, dev picks resolve oddly — the
+   legacy map isn't deployed there yet; expected, don't chase it from another window.)
+2. `seedRecipeDrafts.js --dry-run` Gate D (`[resolve] hard check`) — every recipe
+   ingredient still resolves post-rename.
+3. `node --test server/routes/drinkPlans/submitPlannerV2.test.js` from repo root, one
+   suite at a time (shared dev DB).
+4. Prod-shaped regenerates (spec §Verification): one stored legacy-label plan shape,
+   one v2 `'Non-Alcoholic (Athletic Brewing)'` shape — diff the beer lines.
+5. DoD walk, BOTH directions: defaults-kept submit → Michelob + Miller Lite +
+   Yuengling ON the generated list (the None-only walk false-passes a broken seam);
+   switch-to-None submit → no beer.
 
-1. Merge lane, suites green on merged main.
+## Merge + deploy runbook
+
+1. Full fleet PRE-MERGE on the lane; merge via `scripts/merge-lane.sh`; suites green
+   on merged main; fleet re-confirmed against main's HEAD.
 2. Push (Dallas's cue; normal gates).
-3. Run `applyBeerCatalog2026.js` on PROD (dry-run, then real) immediately after.
-4. Spot-check: one legacy plan regenerate (beer unchanged via legacy map), one new
-   full-bar dev... prod token walk if available.
+3. `applyBeerCatalog2026.js` on PROD: `--dry-run`, review, real run — immediately
+   after the push lands.
+4. Spot-check: regenerate one legacy plan (beer unchanged via legacy map); one live v2
+   full-bar walk if a token is available.
+5. **Rollback pairing:** `git revert` alone does NOT undo prod rows — pair it with a
+   row-restore from `scripts/beer-snapshot-<ts>.json` (lineup-script pattern). Old
+   code + new rows does not resolve; the pairing is mandatory, not advisory.
 
 Independent of the deferred full-bar redesign and of `applyPackageLineup2026` gates
-1/3 (this script does not write package_items).
+1/3 (this script does not write package_items; the miller/stella coupling is handled
+by Step 1's absolute UPDATE).
