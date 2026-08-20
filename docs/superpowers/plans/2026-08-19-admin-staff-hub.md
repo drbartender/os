@@ -88,8 +88,16 @@ lanes:
       - client/src/pages/admin/userDetail/tabs/TipPageTab.js
       - client/src/pages/admin/userDetail/tabs/FeedbackCard.js
       - client/src/pages/admin/TipsAdmin.js
+      - client/src/App.js                # added 2026-08-19: F1 deletes TipsAdmin.js and App.js is its only remaining caller
+      - server/routes/publicTip.js       # added 2026-08-19: Task A8 (the alert-email re-point) moved into this lane
+      - server/routes/publicTip.test.js  # b114e9f0 aimed this test at the OLD url; F1 inverts it in the same commit
       - README.md
-    depends_on: [sh-a-server, sh-d-payroll, sh-e-reviews]   # ledger (sh-d) and reviews (sh-e) must land first: F1 deletes TipsAdmin.js and its done-gate greps for StaffReviews, which sh-e removes
+    # depends_on gained sh-b-shell on 2026-08-19. F1 deletes TipsAdmin.js, whose only remaining
+    # caller is the App.js lazy import and /tips route that B4 (a sh-b task) removed and commit
+    # b114e9f0 restored, so this lane owns client/src/App.js. That coupling was never declared,
+    # so nothing forced a re-check of App.js before scheduling sh-f, and that undeclared coupling
+    # is what produced the b114e9f0 revert.
+    depends_on: [sh-a-server, sh-b-shell, sh-d-payroll, sh-e-reviews]   # ledger (sh-d) and reviews (sh-e) must land first: F1 deletes TipsAdmin.js and its done-gate greps for StaffReviews, which sh-e removes
     review_fleet: [code-review, consistency-check, security-review]
   - id: sh-g-fidelity
     footprint:
@@ -108,6 +116,8 @@ lanes:
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Footprint convention (recorded 2026-08-19, after both merged phases drifted):** a lane's declared footprint must list the TEST files its tasks create, not only the source files they change. Phase 1 landed `StaffDashboard.grouping.test.js` (sh-b) and phase 2 landed `PayRunView.currentWeek.test.js`, `TipsLedger.test.js`, `PayrollPage.tips.test.js` (sh-d), `ReviewsPage.test.js` and `PendingReviewCard.test.js` (sh-e). None of the six was declared, so both merges raised footprint-drift warnings for files this plan's own task bodies mandate.
+
 **Goal:** Collapse Staff, Hiring, Tips & Feedback, Reviews and the unlisted Payroll into one sidebar entry, Staff, that opens a hub where Roster lands and Hiring, Payroll, Reviews are header-fused tabs; tips fold into Payroll, feedback moves to the staffer profile.
 
 **Architecture:** A `StaffHubLayout` route component (the `MarketingLayout` pattern) owns one summary fetch and shares `{summary, refresh, setActions}` through Outlet context to four children. Children are the existing page components stripped of their own headers, plus a restructured Reviews page. Server work is read-only: one new summary endpoint with a date-derived pay-run window, one roster-feed join fix, three projection/param extensions. No schema change, no writes.
@@ -118,7 +128,7 @@ lanes:
 
 **Verified-harmless notes (from the plan fleet, so nobody re-litigates):** `overview/queueItems.js:67` carries only `target: 'hiring'`; the URL it feeds is `NeedsYouStrip.js:31`, which B5 retargets, so `queueItems.js` needs no edit. The Reviews page lives at `staffHub/reviews/ReviewsPage.js` (one directory deeper than the spec's `staffHub/ReviewsPage.js`) to hold the six-file split; deliberate.
 
-**Lane graph (run order):** `sh-a-server` and `sh-b-shell` in parallel. Then `sh-c-hiring`, `sh-d-payroll`, `sh-e-reviews` in parallel (all need the hub's Outlet context from sh-b; d and e also read sh-a's new fields). `sh-f-feedback` after sh-d (it deletes `TipsAdmin.js`, whose ledger sh-d moved). `sh-g-fidelity` last, across all screens.
+**Lane graph (run order):** `sh-a-server` and `sh-b-shell` in parallel. Then `sh-c-hiring`, `sh-d-payroll`, `sh-e-reviews` in parallel (all need the hub's Outlet context from sh-b; d and e also read sh-a's new fields). `sh-f-feedback` after sh-b, sh-d and sh-e (it deletes `TipsAdmin.js`, whose ledger sh-d moved, whose only caller is the `App.js` route sh-b owns, and whose done-gate greps for the `StaffReviews.js` sh-e deleted). `sh-g-fidelity` last, across all screens.
 
 **Proven context (verified against the repo 2026-08-19, not from memory):**
 - Server route tests are hand-rolled: a minimal `express()` app with the real router and real `auth` middleware, driven via `node:http` + `node:test`; see `server/routes/admin/settings.badgeCounts.test.js` for the harness every new server test in this plan copies (makeUser / tokenFor / get helpers, `AppError` error middleware, `pool.end()` in `after`). Run one file at a time from the repo root: `node -r dotenv/config --test server/routes/admin/<file>.test.js`.
@@ -908,7 +918,9 @@ git add server/utils/payrollDisputeNotify.js server/utils/payrollDisputeNotify.t
 git commit -m "chore(staff-hub): dispute email points at /staffing/payroll; dutyLines + contractorTipPage join sensitive paths; ARCHITECTURE"
 ```
 
-### Task A8: the feedback notification email points at the staffer profile
+### Task A8: the feedback notification email points at the staffer profile (SHIPPED, THEN REVERTED, NOW OWNED BY sh-f)
+
+> **Status 2026-08-19:** A8 shipped with the sh-a-server merge (`c4bb2d1f`) and was reverted on main by commit `b114e9f0`, which put `adminUrl: ${ADMIN_URL}/tips#feedback` back and re-aimed `publicTip.test.js` to PIN the old url and to assert the profile url is ABSENT. The revert was correct: the profile's Tip Page tab renders no feedback until sh-f builds `FeedbackCard`, so the alert email was landing an operator paged by a one-star complaint on token and Stripe settings. sh-a is merged and closed, so this task no longer has an owner here. It is now **sh-f-feedback Task F1 Step 4**, and it lands in the same commit as `FeedbackCard.js`, never ahead of it. The body below is kept as the record of what was tried and why it came back; do not execute it from this lane.
 
 **Files:**
 - Modify: `server/routes/publicTip.js:227`
@@ -1601,6 +1613,8 @@ Replace `:618-620` (`/financials/payroll`, `/tips`, `/reviews`) with:
 
 Delete the `TipsAdmin` lazy import line in THIS task: B4 removes its only route, so leaving it is an unused-var warning and `CI=true` fails the build on warnings. (The file itself is deleted later, in sh-f.)
 
+> **Status 2026-08-19:** this half of B4 was REVERTED on main by commit `b114e9f0`, which restored the `TipsAdmin` lazy import at `App.js:151-155` (behind a four-line rationale comment) and the `<Route path="/tips" element={<TipsAdmin />} />` at `App.js:646`. The revert was correct: the hub retired `/tips` before its replacements existed, and `TipsAdmin.js` is the only client caller of `GET /admin/tip-feedback` and `POST /admin/tip-feedback/:id/review`, so the complaint queue had no reader. The other B4 redirects (`/hiring`, `/reviews`, `/financials/payroll`) are untouched and live. sh-f Task F1 Step 3 re-applies this one, after the FeedbackCard exists.
+
 - [ ] **Step 5: Verify**
 
 Run: `cd client && CI=true npx react-scripts test --watchAll=false src/utils/screenKey.test.js` then `cd client && CI=true npx react-scripts build`.
@@ -1839,6 +1853,8 @@ git commit -m "feat(roster): Active/Deactivated/All with group rows, paging, hub
 # Lane sh-c-hiring
 
 ### Task C1: Hiring inside the hub: header gone, search in a toolbar row, the stale-record fold
+
+> **Correction 2026-08-19 (verified against production, after this lane merged at `4c279764`):** the "40-card problem" this task was written to solve does not exist as described. What was believed: the Onboarding column renders 40 zero-progress cards (29 accounts bulk-registered on the 2026-05-27 CheckCherry cutover plus 11 unfinished signups), and the fold collapses them. What is true: `GET /admin/applications` INNER JOINs the `applications` table (`server/routes/admin/applications.js:85`), and all 40 of those accounts have no `applications` row, so none of them ever reaches the kanban. The Onboarding column renders ZERO cards, `splitOnboarding` receives an empty array, and `.hire-fold` can never render today. How it was verified: queried prod Neon (`round-tooth-34649976` / `br-noisy-frog-ad99sa6l`, and the default branch, same result) for the 29 `hired` and 11 `in_progress` accounts and for their `applications` rows; the feed returns 2 board rows, both in pre-Onboarding stages, and `/admin/hiring/summary`'s `in_pipeline` INNER JOINs the same way and agrees at 2. What shipped is therefore harmless defensive code, correct for the day a zero-progress account does carry an application row. The real finding is separate and belongs to Dallas, not to this plan: those 40 accounts are invisible in Hiring AND in the Roster (the active-staff feed returns only `approved`, `reviewed`, `submitted` and `deactivated`), so they are visible nowhere in the admin UI except search and `/staffing/users/:id`. The shipped code comment on main still carries the old "29 accounts plus 3 stale signups" reading; it is left as-is so the plan and the code do not disagree about text, and this note is the correction of record.
 
 **Files:**
 - Modify: `client/src/pages/admin/HiringDashboard.js`
@@ -2906,19 +2922,28 @@ git commit -m "feat(reviews): hub child with pending cards, resolved table, cont
 
 # Lane sh-f-feedback
 
+**Before cutting this lane (read this first, 2026-08-19):**
+- Cut the sh-f worktree from **main**, and only after `sh-e-reviews` has merged, which it now has (`157becf2`). sh-e edits `client/src/App.js` too (it swapped the `StaffReviews` lazy import for `ReviewsPage` and the `reviews` child route), and this lane now owns two other hunks of the same file. Do not branch sh-f from `a5db2548`.
+- Main deliberately ships a live `/tips` route to `TipsAdmin.js` right now. Commit `b114e9f0` restored the lazy import at `App.js:151-155` and the route at `App.js:646`, and reverted Task A8's alert-email re-point in `server/routes/publicTip.js`, because the hub retired those surfaces before their replacements existed. This lane is what finishes them. The plan text below was corrected on 2026-08-19 to match main; the older "B4 already did it" claims were false and are gone.
+- This lane is no longer client-only: it owns `server/routes/publicTip.js` and `server/routes/publicTip.test.js` (front-matter). `publicTip.js` is not on `scripts/sensitive-paths.txt`, so the declared `review_fleet` stands.
+
 ### Task F1: `FeedbackCard` on the profile's Tip Page tab; retire `TipsAdmin.js`
 
 **Files:**
 - Create: `client/src/pages/admin/userDetail/tabs/FeedbackCard.js` (donor: `FeedbackTab` + `ratingKind` in `TipsAdmin.js:179-288`)
 - Modify: `client/src/pages/admin/userDetail/tabs/TipPageTab.js` (render the card at the bottom of the main column, admins only)
 - Delete: `client/src/pages/admin/TipsAdmin.js`
-- Modify: `README.md` (folder tree + prose mentions; B4 already removed the `TipsAdmin` lazy import from `App.js`, so this lane does not touch it)
+- Modify: `client/src/App.js` (`:151-155` the b114e9f0 comment block plus the `TipsAdmin` lazy import, and `:646` the `/tips` route). CORRECTED 2026-08-19: this file was previously described as already clean because of B4. It is not; `b114e9f0` restored both, so this lane owns them.
+- Modify: `server/routes/publicTip.js` and `server/routes/publicTip.test.js` (Task A8, moved into this lane because its result was reverted on main and sh-a-server is closed)
+- Modify: `README.md` (folder tree + prose mentions)
 
 **Interfaces:**
 - Consumes: `GET /admin/tip-feedback?target_user_id=<id>&status=all` (A5), `POST /admin/tip-feedback/:id/review`.
 - Produces: `FeedbackCard({ userId })`, rendered only when `useAuth().user.role === 'admin'`.
 
 - [ ] **Step 1: Write `FeedbackCard.js`**
+
+The snippet's 1-3 rating scale is a deliberate CORRECTION of the donor, not a copy: `TipsAdmin.js:245` renders `{f.rating}/5` and `:282-288` branches on a four-step 1-5 ladder, but `schema.sql:2659` is `rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 3)` and `publicTip.js:193` rejects anything outside 1-3, so on the live page a best-possible 3 renders as "3/5" with an `accent` chip. Do not restore fidelity to the donor here, and reviewers should not flag the divergence.
 
 ```js
 // client/src/pages/admin/userDetail/tabs/FeedbackCard.js
@@ -3003,29 +3028,61 @@ export default function FeedbackCard({ userId }) {
 
 Import `FeedbackCard` and `useAuth` (`../../../../context/AuthContext`). Inside the component: `const { user: viewer } = useAuth();`. In the main column `vstack` (the first child of the grid, `TipPageTab.js:92`), after the last existing card in that column, add `{viewer?.role === 'admin' && <FeedbackCard userId={userId} />}`.
 
-- [ ] **Step 3: Retire `TipsAdmin.js`**
+- [ ] **Step 3: Retire `TipsAdmin.js` (App.js first, then the delete)**
 
-`git rm client/src/pages/admin/TipsAdmin.js`. `grep -rn "TipsAdmin" client/src` → nothing (B4 already removed the lazy import and route). `README.md`: remove `TipsAdmin.js` and `StaffReviews.js` from the folder tree, add `userDetail/tabs/FeedbackCard.js`, `payroll/TipsLedger.js`, `payroll/tipStatus.js`, `payroll/CurrentWeekCard.js`, `staffHub/reviews/*`; rewrite the prose lines mentioning them (at `:597`, `:821`, `:824` as of today; re-grep, the file moves) to name the new homes (Tips ledger under Payroll › Tips; Reviews at `/staffing/reviews`; feedback on the profile's Tip Page tab).
+CORRECTED 2026-08-19: this step used to say "`grep -rn \"TipsAdmin\" client/src` → nothing (B4 already removed the lazy import and route)". That was true only between the `sh-b-shell` merge (`2d925e15`, 19:06 on 2026-08-19) and commit `b114e9f0` (20:27 the same evening). Commit `b114e9f0` restored both, so today `git grep -n -e TipsAdmin -e StaffReviews -- client/src README.md` returns `App.js:155`, `App.js:646`, `TipsAdmin.js:18`, `README.md:599`, `:825`, `:828`. The App.js edits come FIRST: deleting the file with the import still standing is a module-resolution failure under `CI=true react-scripts build`, which is this task's own gate.
 
-- [ ] **Step 4: Verify and commit**
+(a) `client/src/App.js:151-155`: delete the four-line `b114e9f0` rationale comment ("Kept reachable until the staff-hub lanes that replace it land...") together with `const TipsAdmin = lazy(() => import('./pages/admin/TipsAdmin'));`. Leaving the import with no route is an unused-var warning, which `CI=true` also fails.
 
-Run: `cd client && CI=true npx react-scripts build`. Dev app as admin: a staffer profile › Tip Page shows the Feedback card with the empty copy; as a manager the card is absent.
+(b) `client/src/App.js:646`: replace `<Route path="/tips" element={<TipsAdmin />} />` with the param-preserving redirect B4 specified. `LegacyRedirect` is still defined at `App.js:288` and still merges `URLSearchParams` over `defaults`, and sh-d's `PayrollPage` TABS carries `{ id: 'tips' }`, so the target tab is real:
 
-```bash
-git add client/src/pages/admin/userDetail/tabs/FeedbackCard.js client/src/pages/admin/userDetail/tabs/TipPageTab.js README.md
-git rm -q client/src/pages/admin/TipsAdmin.js
-git commit -m "feat(profile): guest feedback card on the Tip Page tab (admins); TipsAdmin.js retired"
+```jsx
+        <Route path="/tips" element={<LegacyRedirect to="/staffing/payroll" defaults={{ tab: 'tips' }} />} />
 ```
 
-**Lane sh-f done when:** F1 committed; build green; `grep -rn "TipsAdmin\|StaffReviews" client/src README.md` is empty.
+(c) Only now `git rm client/src/pages/admin/TipsAdmin.js`.
+
+(d) `README.md` (line numbers verified on main 2026-08-19; the old `:597`/`:821`/`:824` citations had drifted, and the file moves, so re-check with `git grep`): the client folder tree is ONE long line at `:599`, so strike the phrases `TipsAdmin tip overview` and `StaffReviews review log + quarterly contest at /reviews` from it and append `payroll/TipsLedger.js`, `payroll/tipStatus.js`, `payroll/CurrentWeekCard.js` to that line's payroll cluster plus `userDetail/tabs/FeedbackCard.js`. Extend the `staffHub/` tree entry at `:602-603` with the `reviews/` children (`ReviewsPage`, `PendingReviewCard`, `LogReviewForm`, `ResolvedTable`, `ContestRail`, `AwardDialog`, `suggestNames`): sh-c, sh-d and sh-e touched no doc files, so this lane documents theirs. Rewrite the prose at `:825` (guest feedback is reviewed on the staffer profile's Tip Page tab) and at `:828` (name the Tip Page tab with its Feedback card, and the Payroll › Tips ledger). Leave `README.md:194` alone: that is the SERVER route line for `contractorTipPage.js`'s `/tip-feedback` and it stays true.
+
+- [ ] **Step 4: Re-point the feedback alert email (this is Task A8, moved here)**
+
+A8 shipped with sh-a-server (`c4bb2d1f`) and `b114e9f0` reverted it. sh-a is merged and closed, so no open lane owned it; it is this lane's now. It lands in the SAME commit as `FeedbackCard.js`, never before it: moving the email ahead of the surface that shows the feedback is precisely the mistake `b114e9f0` was written to undo. Do this after Steps 1 and 2, not first.
+
+(a) `server/routes/publicTip.js:227-233`: replace the six-line "move it when the card exists, not before" comment and the `adminUrl: ${ADMIN_URL}/tips#feedback` line with
+
+```js
+      // The FeedbackCard on the staffer profile's Tip Page tab renders this feedback (F1).
+      adminUrl: `${ADMIN_URL}/staffing/users/${row.user_id}?tab=tip-page`,
+```
+
+(`row.user_id` is the bartender the feedback targets and is already in scope at `:211`/`:218`; `tip-page` is a real profile tab id, `AdminUserDetail.js:36-39`, read from the query string by `useUrlListState.js:20-28`.)
+
+(b) `server/routes/publicTip.test.js:382-410` must be INVERTED, not merely extended. The test `POST /api/public/tip/:token/feedback > the admin email links a page that shows the feedback` currently asserts the email blob CONTAINS `${ADMIN_URL}/tips#feedback` (`:400-406`) and asserts it does NOT contain `/staffing/users/${userIdA}?tab=tip-page` (`:407-410`): the negative assertion forbids exactly the destination this step wants. Drop the `b114e9f0` comment block at `:382-388`, set `expected` to the profile url, and turn the negative assertion around so `/tips#feedback` is the forbidden string.
+
+Run: `node -r dotenv/config --test server/routes/publicTip.test.js` from the repo root, alone (server tests share the dev DB, one at a time). Expected: 17 tests green.
+
+- [ ] **Step 5: Verify and commit**
+
+Run: `cd client && CI=true npx react-scripts build`. Run the publicTip suite from Step 4 again if anything moved. Dev app as admin: a staffer profile › Tip Page shows the Feedback card with the empty copy; as a manager the card is absent; `/tips` lands on `/staffing/payroll?tab=tips`.
+
+```bash
+git add client/src/pages/admin/userDetail/tabs/FeedbackCard.js client/src/pages/admin/userDetail/tabs/TipPageTab.js client/src/App.js server/routes/publicTip.js server/routes/publicTip.test.js README.md
+git rm -q client/src/pages/admin/TipsAdmin.js
+git commit -m "feat(profile): guest feedback card on the Tip Page tab (admins); TipsAdmin.js retired and the alert email follows it"
+```
+
+**Lane sh-f done when:** F1 committed; client build green; the publicTip suite green; `git grep -n -e TipsAdmin -e StaffReviews -- client/src README.md` is empty (plain `grep` and `find` exit with "claude native binary not installed" in this shell, `git grep` works).
 
 # Lane sh-g-fidelity
+
+**Before cutting this lane (2026-08-19):** the spec §3 override lines this lane is judged against are added to `docs/superpowers/specs/2026-08-19-admin-staff-hub-design.md` ON MAIN, in os, as one commit, BEFORE the sh-g worktree is cut. Never from inside the lane: `scripts/guard-os-main.sh:12-14` blocks any commit that stages a path under `docs/superpowers/(specs|plans)/` from a non-main branch, and `docs/superpowers/**` is deliberately absent from sh-g's footprint because the guard would reject it anyway. Cut sh-g against that HEAD, so the override list the reviewer uses as its exception list is the current one. The same guard means this plan file cannot be edited from the lane either.
 
 ### Task G1: pull the live artifact, fold CSS, review every screen against it
 
 **Files:**
 - Modify: `client/src/index.css` (only the hub/roster/hiring/payroll/reviews rules this project added)
 - Modify: `docs/design-artifacts/2026-08-19-staff-hub.dc.html` (refresh the snapshot if the design session moved)
+- Modify: the component files this lane fixes in place, which the footprint already covers and this block used to omit: `StaffDashboard.js`, `HiringDashboard.js`, `payroll/PayrollPage.js`, `payroll/TipsLedger.js`, `payroll/UnassignedTipsPanel.js`, `payroll/DeferredTipsPanel.js`, `payroll/HistoryView.js`, `staffHub/reviews/ContestRail.js`, `staffHub/reviews/PendingReviewCard.js` (full paths in the Step 4 pathspec)
 
 - [ ] **Step 1: Refresh the benchmark**
 
@@ -3037,14 +3094,46 @@ For every rule in the artifact's hub/hire/roster-sect block, confirm the same de
 
 - [ ] **Step 3: Run `ui-ux-review` against the artifact, per screen**
 
-Screens and their artboards: Roster 1a (After Hours) / 1b (House Lights, `?tab=deactivated`) / 1c (empty: point the review at a dev account with zero approved staff, or at the JSX if none exists); Hiring 1d; Payroll pay run 1e/1f (both skins); Payroll tips 1g/1g2; Reviews 1h/1i; the sidebar in 1a; and the profile Tip Page tab's `FeedbackCard` (no artboard exists: judge it against the design system's card vocabulary, not a screen). Token law rider for the reviewer: per spec §3, fidelity compares structure and token usage, never resolved hue values; the vendored system is `docs/design-artifacts/_ds/` (project 72035042). The §3 override list is the reviewer's exception list: a deviation on that list is not a finding; any other deviation is.
+Two verdict kinds, and every screen below carries the one it gets:
+- **Artboard fidelity:** an artboard draws this screen, so structure, class vocabulary and token names are compared against it directly.
+- **Design-system vocabulary:** no artboard draws this screen, so it is judged against the design system's card / table / chip / toolbar vocabulary and the hub chrome around it, never against an artboard invented for the occasion.
+
+Artboard-fidelity screens: Roster 1a (After Hours) / 1b (House Lights, `?tab=deactivated`) / 1c (empty: point the review at a dev account with zero approved staff, or at the JSX if none exists); Hiring 1d; Payroll pay run 1e/1f (both skins); Payroll tips 1g/1g2; Reviews 1h/1i; the sidebar in 1a.
+
+Design-system-vocabulary screens (items 1 to 5 were added 2026-08-19; with the `/tips` precondition below, they are the six live surfaces the old list omitted, all of them rendering inside hub chrome with no artboard):
+1. `/staffing/payroll?tab=history`, `payroll/HistoryView.js` (169 lines), which now renders under `.hub-head` and has never been reviewed inside the hub. Fix while you are in there: `HistoryView.js:100` writes the period window with an en dash where the hub's vocabulary is "{Mon D} to {D}" (`hubSubtitle.js:17-22`).
+2. `/staffing/payroll?tab=tax`, `payroll/TaxTotalsTab.js` (208 lines), never drawn and never reviewed.
+3. The manager hub: `StaffHubLayout.js:79` hides the entire `.hub-tabs` strip when only one child is visible, and `hubSubtitle.js:30` collapses the subtitle to "{n} active". No artboard shows a hub with no tab strip.
+4. The summary-failure state: `StaffHubLayout.js:70-75` renders a SECOND `.page-subtitle` carrying "Counts unavailable." plus a ghost Retry, which spec §10 requires and no artboard draws.
+5. The four modals that children now open over hub chrome: `staffHub/reviews/LogReviewForm.js`, `staffHub/reviews/AwardDialog.js`, `components/adminos/InterviewScheduleModal.js` (opened by Hiring) and `userDetail/components/AssignToEventModal.js` (opened by the Roster). The last two are OUTSIDE this lane's footprint: they get a verdict, and any fix is a follow-up, never a silent edit.
+6. The profile Tip Page tab's `FeedbackCard` (built in sh-f), same treatment.
+
+Precondition, not a finding: `/tips` renders `TipsAdmin.js` with the hand-rolled inline-styled TabButtons that spec §3 declares retired. sh-f deletes that file, and this lane `depends_on: sh-f-feedback`, so by the time sh-g runs `/tips` is a redirect. If sh-f has somehow not landed, do NOT flag `/tips`: it is a deliberate interim state (commit `b114e9f0`), not off-design work.
+
+Reading the benchmark: the vendored `.dc.html` does not render standalone. It loads `./support.js` and `_ds/.../_ds_bundle.js`, neither of which is vendored under `docs/design-artifacts/`, so the custom elements are inert and the artboards come up as unstyled markup (every vendored artifact in the repo has this shape). Read the artboard MARKUP and compare structure, class vocabulary and token names, per §3. For a rendered view, open the canvas in design project `96291c7a-3510-4910-9c67-c41d81504920`.
+
+Token law rider for the reviewer: per spec §3, fidelity compares structure and token usage, never resolved hue values; the vendored system is `docs/design-artifacts/_ds/` (project 72035042). The §3 override list is the reviewer's exception list: a deviation on that list is not a finding; any other deviation is.
 
 - [ ] **Step 4: Fix findings, build gate, commit**
 
+Run: `cd client && CI=true npx react-scripts build` (every other client lane in this plan carries this gate; this step used to omit it).
+
 ```bash
-git add client/src/index.css docs/design-artifacts/2026-08-19-staff-hub.dc.html
+git add client/src/index.css \
+  client/src/pages/admin/StaffDashboard.js \
+  client/src/pages/admin/HiringDashboard.js \
+  client/src/pages/admin/payroll/PayrollPage.js \
+  client/src/pages/admin/payroll/TipsLedger.js \
+  client/src/pages/admin/payroll/UnassignedTipsPanel.js \
+  client/src/pages/admin/payroll/DeferredTipsPanel.js \
+  client/src/pages/admin/payroll/HistoryView.js \
+  client/src/pages/admin/staffHub/reviews/ContestRail.js \
+  client/src/pages/admin/staffHub/reviews/PendingReviewCard.js \
+  docs/design-artifacts/2026-08-19-staff-hub.dc.html
 git commit -m "style(staff-hub): fidelity pass against the 2026-08-19 artifact"
 ```
+
+CORRECTED 2026-08-19: the old pathspec staged only `index.css` and the `.dc.html`, which contradicted this task's own "the lane's footprint now includes the component files" sentence. Every presentation fix a fidelity pass produces (a date format, a missing chip, a spacer, a promote-to-class) lands in a component file the old pathspec would never have staged, and CLAUDE.md forbids a `git add .` recovery, so the lane would have committed half its work. Stage from this list, and only the files you actually changed.
 
 **Lane sh-g done when:** every screen has a `ui-ux-review` verdict on file, both skins on Roster and Payroll, `.hub-tabs` scrolls at 720px with no page-level horizontal scroll. The lane's footprint now includes the component files, so promote-to-class and small structural fixes land here directly; a finding that requires changing BEHAVIOR (not presentation) goes back to the owning lane's scope as a follow-up, never fixed silently inside the fidelity pass.
 
@@ -3052,11 +3141,13 @@ git commit -m "style(staff-hub): fidelity pass against the 2026-08-19 artifact"
 
 ## Merge order and the integration check
 
-1. Merge `sh-a-server` and `sh-b-shell` (either order; each is clean alone). After both are on main: load `/staffing` as admin on dev and confirm the subtitle fills from the real endpoint (`16 active · pay run … · 1 review to confirm` or the day's equivalent).
-2. Merge `sh-c-hiring`, `sh-d-payroll`, `sh-e-reviews` (any order).
-3. Merge `sh-f-feedback`.
-4. Merge `sh-g-fidelity`.
+1. **DONE.** `sh-a-server` merged at `c4bb2d1f`, `sh-b-shell` at `2d925e15`, and both are already on `origin/main`, so the server endpoint, the hub shell, the sidebar and the redirects are in production. Integration check that belonged to this step: load `/staffing` as admin on dev and confirm the subtitle fills from the real endpoint (`16 active · pay run … · 1 review to confirm` or the day's equivalent).
+2. **DONE 2026-08-19.** `sh-c-hiring` merged at `4c279764`, `sh-d-payroll` at `f963b81a`, `sh-e-reviews` at `157becf2`. Each merge is complete, not partial: `git diff main..<branch>` lists none of the lane's own footprint files, only the other lanes' work that branch never had. All three are UNPUSHED as of this edit. The three worktrees under `../worktrees/` are now redundant: retire them with `npm run worktree:rm` (clear each lane's real `node_modules` tree first, per the npm-install-clobbers-symlink rule) and then delete the branches.
+3. Merge `sh-f-feedback`. Read its lane preamble first: it now also owns `client/src/App.js`, `server/routes/publicTip.js` and `server/routes/publicTip.test.js`, and its worktree is cut from main after step 2 (done), never from `a5db2548`.
+4. Merge `sh-g-fidelity`. The spec §3 override lines go onto main BEFORE that worktree is cut; see the sh-g preamble.
 5. Push is a separate, cued step per CLAUDE.md; the push-time sweep re-runs the fleet on the sensitive commits (sh-a).
+
+**Interim state on main until sh-f lands (expected, not a defect):** commit `b114e9f0` deliberately kept `/tips` pointing at `TipsAdmin.js` and kept the tip-feedback alert email on `${ADMIN_URL}/tips#feedback`, because the hub retired both surfaces before their replacements existed. Spec §8 says `/tips` should be a param-preserving redirect; until sh-f lands, that deviation is expected and is NOT a sh-g fidelity finding. One consequence to weigh before the next push: now that sh-d has merged, two cross-staff tip surfaces are live at once and they show different money for the same tips (`TipsAdmin.js:166` renders gross `amount_cents`; `payroll/TipsLedger.js` renders net of refunds and strikes the gross beside it). Landing sh-f before the next push retires the old surface in the same deploy. Pushing sh-c/sh-d/sh-e without it ships that divergence, in which case it has to be named out loud in the push inventory rather than riding along quietly.
 
 ## Manual walk before the push cue
 

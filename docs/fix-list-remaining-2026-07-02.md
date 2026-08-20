@@ -49,8 +49,15 @@ open in code, so an unmarked entry is a verified-open entry as of that date.
   96291c7a). Consolidates Roster / Hiring / Payroll / Reviews under one hub; tips fold into
   Payroll, tip-page feedback moves to the staffer profile. The design prompt was chat output
   (the `docs/staff-hub-design-prompt.md` file at 8ff9c9d2 was a slip, dropped in c5aefe30).
-  The 29 dead Hiring rows recorded at the end of this file are handled by the spec's fold rule
-  (§6). Plan next; nothing built.
+  **STATUS CORRECTED 2026-08-19: five of the seven lanes are MERGED and two are in prod.**
+  sh-a-server (c4bb2d1f) and sh-b-shell (2d925e15) are pushed and live; sh-c-hiring (4c279764),
+  sh-d-payroll (f963b81a) and sh-e-reviews (157becf2) are merged to main and unpushed. Only
+  sh-f-feedback (the tip-page feedback move, which must also redo the `/tips` retirement that
+  b114e9f0 deliberately reverted) and sh-g-fidelity remain. "Plan next; nothing built" was true
+  for about a day. The other claim in this bullet, that "the 29 dead Hiring rows are handled by
+  the spec's fold rule (§6)", is FALSE: see the corrected Hiring entry near the bottom of this
+  file. The Onboarding column renders zero cards, the shipped fold can never fire today, and the
+  40 stale accounts are invisible in both Hiring and the Roster.
 - **Menu design page (QUEUED 2026-07-14, from Needs-Attention-tabs spec §7)** — real workflow over the planner-captured menu prefs (`menuStyle`/`menuTheme`/`drinkNaming`/`menuDesignNotes`); produces a real artifact and the done-state that then powers "menu to design" Prep queue items (deliberately NOT hand-flagged in the tabs build). Dallas has page ideas to brainstorm.
 
 ## Scope calls needed before scoping
@@ -5097,35 +5104,65 @@ Zero bounties have ever been paid, so nothing is owed today. Fix is one call to
 gets its own decision and the full fleet, not a ride-along on the hub build. The hub spec (§7)
 renders the waiting state honestly in the meantime.
 
-## The Hiring board shows 29 dead CheckCherry import rows as live pipeline (found 2026-08-19, staff-hub design grounding)
+## ~~The Hiring board shows 29 dead CheckCherry import rows as live pipeline~~ FALSE PREMISE, CORRECTED 2026-08-19 against prod (original found 2026-08-19, staff-hub design grounding)
 
-Verified against prod 2026-08-19. The Onboarding column renders **40 cards**, and only **11**
-are real work:
+Read this before quoting anything about the Hiring board's Onboarding column. The central claim
+of the original entry is wrong, and it is wrong in the direction that costs the most: a spec
+section, a decision, and a shipped lane were all built on top of it.
 
-| onboarding_status | rows | created 2026-05-27 (the CC import) |
-|---|---|---|
-| `hired` | 29 | **29 (all of them)** |
-| `in_progress` | 11 | 0 |
-| `applied` | 1 | 0 |
-| `interviewing` | 1 | 0 |
+**What was believed.** That the Onboarding column renders 40 cards, that 29 of them are `hired`
+accounts created 2026-05-27 on the CheckCherry cutover and 11 are `in_progress` signups, all of
+them at 0% onboarding progress, and that the board's real throughput (one `applied`, one
+`interviewing`) is buried under a wall of dead cards nobody can dismiss. Staff-hub spec §6 (the
+stale-record fold) and §12 decision 5 exist to answer exactly that. The `users` row counts the
+original entry tabulated are real (29 `hired`, every one created 2026-05-27; 11 `in_progress`;
+1 `applied`; 1 `interviewing`). What is false is the inference that those accounts reach the board.
 
-Every one of the 29 `hired` rows was created on 2026-05-27, the CheckCherry import date. They
-are historical staff records that the import parked in a pipeline state, not people moving
-through hiring. Applied and Interviewing hold one card each, so the board's real throughput is
-tiny and is buried under a wall of dead cards nobody can dismiss.
+**What is actually true.** The Onboarding column renders **zero cards**, not forty.
+`GET /admin/applications` INNER JOINs `applications` (`server/routes/admin/applications.js:85`,
+and the same INNER JOIN again in each of its three count queries at `:92`, `:98`, `:104`), and
+not one of the 40 accounts in `hired`/`in_progress` has an `applications` row, so the kanban feed
+never returns them. That feed returns two rows today, one `applied` and one `interviewing`.
+`GET /admin/hiring/summary`'s `in_pipeline` INNER JOINs the same way
+(`server/routes/admin/hiring.js:48-53`), so the stat strip agrees at 2. There is no wall of dead
+cards on that screen and there never was one.
 
-Not a data bug: the rows are correct, the board's reading of them is what misleads. The fix is
-a board-level distinction, either filtering imported rows out of the pipeline view, collapsing
-them behind a count, or giving them a terminal status that the Hiring board does not render.
-Decide it in the Staff hub design session, which this finding came out of.
+**How it was verified.** A live query against the prod Neon branch (round-tooth-34649976 /
+br-noisy-frog-ad99sa6l, and the default branch, same result) joining `users` to `applications`
+across the accounts in Onboarding statuses: 29 `hired` plus 11 `in_progress`, zero of them with a
+matching `applications` row. The original entry counted `users` by `onboarding_status` and assumed
+the board rendered what it counted. It never ran the board's own join.
 
-**DECIDED 2026-08-19 (staff-hub spec §6):** a collapsed, age-stamped fold beneath the live
-Onboarding cards. Predicate is generic, zero onboarding progress AND account older than 60 days,
-never status or a cutover date (a day-one pre-hired recruit is also `hired` and must render live).
-Re-verified the same day: all 40 Onboarding cards are at 0%, so the fold takes 32 today (the 29
-cutover rows plus 3 stale `in_progress` signups) and leaves 8 live. Origin correction: the 29 are
-`hired` with no `cc_id` and no `import_source`; they are the existing roster bulk-registered through
-the pre-hire flow on cutover day, not rows the payment-history import wrote.
+**The real remaining problem, which is a different problem.** Those 40 staff accounts sit in
+`hired`/`in_progress` and are visible **nowhere in the admin UI**. Hiring cannot show them (the
+INNER JOIN above). The Roster cannot show them either: `GET /admin/active-staff` selects only
+`approved`/`reviewed`/`submitted`/`deactivated` (`server/routes/admin/users.js:487-489` and
+`:506-507`), and neither `hired` nor `in_progress` is in that list, with or without
+`?include_stubs=true`. So no list screen in the product can see them, and nobody can clear or
+deactivate them from one. They are reachable only through `GET /admin/hiring/search`, which
+deliberately covers "unfinished signups (users without an applications row)" (`hiring.js:64-67`),
+or through `/staffing/users/:id` if you already know the id. Open question for Dallas, unscoped:
+should Hiring grow a feed that reads users in `hired`/`in_progress` with no application row,
+should the Roster widen its status list to include them, or is search plus the direct link the
+intended reach? All three are cheap; they are not the same product decision. Pick one before
+anyone builds.
+
+**The fold that shipped, reframed.** ~~DECIDED 2026-08-19 (staff-hub spec §6)~~ stands as written
+but is **defensive code that cannot fire today**, not the answer to the 40 accounts.
+`splitOnboarding` (`client/src/pages/admin/HiringDashboard.js:42-53`, rendered at `:306-330`,
+`FOLD_DAYS = 60`) collapses an Onboarding card whose account shows zero onboarding progress and is
+older than 60 days. The predicate is generic, never a status and never a cutover date, which is
+correct: a day-one pre-hired recruit is also `hired` at 0% and must render live. It shipped in
+lane sh-c and it is harmless. It simply receives an empty array, so
+`cols.in_progress_folded.length` is always 0 and `.hire-fold` never renders. Keep it as the
+column's guard for the day a zero-progress account does carry an application row. Do NOT delete
+it, and do NOT cite it as covering the 40 invisible accounts, because it does not touch them. The
+old arithmetic in this entry ("the fold takes 32 today and leaves 8 live") is void.
+
+**Origin correction worth keeping from the original entry:** the 29 are `hired` with no `cc_id`
+and no `import_source`. They are the existing roster bulk-registered through the pre-hire flow on
+cutover day, not rows the payment-history import wrote, so the original heading is wrong about
+"CheckCherry import rows" too.
 
 ## The offline staleness line was built, tested at both ends, and never wired to a screen (found 2026-08-19, passkey walk step 3)
 
@@ -5328,6 +5365,15 @@ exist. Purely a local-verification blocker.
   fleet agents missed. Second time it has done that. Both external reviewers cost real money now.
 - **`git diff main <branch>` is the wrong merge check** when main is ahead on shared files; grep
   the distinctive phrase on main instead. It threw a false alarm twice today.
+- **Every gate we ran validated internal consistency; none validated the founding empirical
+  claim.** The staff hub's spec fleet, its plan fleet and two lane reviews all checked the spec
+  against the plan, the plan against the code, and the code against the spec. Not one of them ran
+  the query that would have shown the premise was false: the Hiring board's Onboarding column has
+  been empty all along, so the "40 dead cards" the fold was designed to hide do not exist. A false
+  fact about production survived all four gates and shipped as code that can never fire. The catch
+  came from a drift audit whose question was different in kind, not "is this consistent" but "is
+  the shipped code's premise still true against prod." When a design rests on a claim about live
+  data, one gate has to go read the live data.
 
 ## The offline lock screen has no working exit, and the visible one silently disarms the phone (walked on PROD 2026-08-19, Dallas + 4-agent verification)
 
@@ -5398,3 +5444,146 @@ Dallas re-enrolled successfully on 2026-08-19, which proves this path in prod.
 
 Severity, honestly ranked by the panel: LOW to MEDIUM. The posture downgrade is the part that
 deserves a fix; the rest is friction.
+
+# Added 2026-08-19 (staff-hub drift audit, six lenses against merged main)
+
+Run after five of the seven staff-hub lanes merged (sh-a c4bb2d1f and sh-b 2d925e15 pushed and
+live; sh-c 4c279764, sh-d f963b81a, sh-e 157becf2 merged and unpushed), asking one question the
+design and plan gates never asked: is the shipped code's premise still true. It is what overturned
+the Hiring "40 dead cards" entry above. Everything below was checked against code on main, not
+against the spec. Nothing here is owned by sh-f-feedback or sh-g-fidelity, so nothing here is
+already being fixed.
+
+## Two cross-staff tip ledgers are live on main at once and they disagree about money (found 2026-08-19, drift audit)
+
+The highest-severity item in this batch, because it is a money display, not a cosmetic one. Main
+currently carries **both** tip ledgers: the old `/tips` page and the new Payroll then Tips tab.
+They show different dollars for the same tip. `TipsAdmin.js:166` renders
+`fmt$fromCents(t.amount_cents)`, the **gross**, with no refund netting. `TipsLedger.js:136` renders
+`fmt$fromCents(netCents(t))`, the **net** (`amount_cents - refunded_amount_cents`), strikes the
+gross beside it, and titles its stat "Net in view". A refunded tip therefore reads as two different
+figures on two admin screens one click apart, and staff-hub spec §2's stated reason for folding
+tips into Payroll ("one tips surface, not two a click apart") is false on main right now.
+
+How it happened, because the shape will recur: b114e9f0 deliberately kept `/tips` alive on the
+premise, stated in its own commit body, that "sh-d-payroll and sh-f-feedback, which build the
+replacements, never landed." b114e9f0 is timestamped 20:27 and the sh-d merge f963b81a is
+timestamped 21:21, both on 2026-08-19, so the revert was correct when written and stale
+fifty-four minutes later.
+
+It is transitional and it resolves the moment sh-f-feedback retires `/tips`. **The decision it
+forces is a push-sequencing one:** sh-c/d/e are unpushed, so pushing them before sh-f ships the
+gross-versus-net divergence to prod. Either sequence sh-f before the next push, or name the
+divergence out loud in the push inventory so it is a choice rather than an accident.
+
+## A restored review bounty is labelled "waiting for an open period" while the money is already in the open run (found 2026-08-19, drift audit)
+
+`POST /admin/staff-reviews/:id/confirm` returns three counters (`staffReviews.js:452-454`):
+`materialized`, `restored`, `catch_up_materialized`. `settleBounty` returns `'restored'`, not
+`'materialized'`, whenever it revives the system tombstone a prior dismiss left behind
+(`staffReviews.js:78-87`). The client reads only one of the three: `PendingReviewCard.js:82-86`
+forwards `materialized` and never `restored`, and `ReviewsPage.js:69` treats
+`materialized === 0 && bountyEligible` as the waiting state.
+
+Concrete failure: admin confirms a five-star review with one name (line materialized), dismisses it
+(line soft-removed, `removed_by IS NULL`), then re-confirms. `settleBounty` revives the line into
+the open period and returns `'restored'`, so `materialized` is 0 and `restored` is 1. The toast
+says "Confirmed. The bounty waits for the next open pay run" and the resolved table renders
+"$10.00 · waiting for an open period" for a bounty that is sitting in this week's payout. The money
+is correct; the label lies about it, which is the kind of thing that gets a staffer told the wrong
+thing about their pay.
+
+Fix is two lines plus the spec sentence: add `restored: Number(res.data?.restored)` to the object
+`PendingReviewCard.js:82-86` returns, and change the `ReviewsPage.js:69` guard to
+`result.materialized === 0 && result.restored === 0 && result.bountyEligible`. Spec §7 carries the
+same hole (it names only `materialized` and `catch_up_materialized`), so amend it in the same pass.
+
+## The restored `/tips` route is the one Staff surface with no `adminStrict`, so a manager lands on a 403 wall (found 2026-08-19, drift audit)
+
+`App.js:646` mounts `<Route path="/tips" element={<TipsAdmin />} />` under the admin shell at
+`App.js:610`, which is `<ProtectedRoute adminOnly>` and, by its own JSDoc at `App.js:314-315`,
+"also allows managers." All three endpoints behind that page are server-side `adminOnly` and reject
+managers: `contractorTipPage.js:263` (`GET /tips`), `:307` (`GET /tip-feedback`), `:343`
+(`POST /tip-feedback/:id/review`). So a manager who reaches `/tips` gets the page and then watches
+every fetch 403.
+
+This is exactly the case spec §4 wrote `adminStrict` onto `/staffing/hiring`, `/staffing/payroll`
+and `/staffing/reviews` to prevent ("hiding a tab is not a guard: a manager reaching it by URL,
+bookmark or redirect must bounce at the route, not land on a page where every fetch 403s"), and
+`/tips` was a manager-visible nav item until sh-b removed it, so the bookmark the rule anticipates
+plausibly exists. b114e9f0 restored the route verbatim from before the hub and did not carry the
+guard forward. It is a gap in the revert, not a design choice.
+
+One line if it is worth doing:
+`<Route path="/tips" element={<ProtectedRoute adminStrict><TipsAdmin /></ProtectedRoute>} />`. No
+behavior change for admins. It disappears entirely when sh-f replaces the route with a redirect, so
+this is only worth building if sh-f is more than a session away.
+
+## `contractorTipPage.js` is sensitive-listed and its only suite is not on the money smoke gate (found 2026-08-19, drift audit)
+
+sh-a added `server/routes/admin/contractorTipPage.js` to `scripts/sensitive-paths.txt` (`:49`, "tip
+money reads (the cross-staff ledger) and the contractor tip-page mutations") and created that
+file's first-ever suite, `server/routes/admin/contractorTipPage.test.js` (176 lines). The suite is
+not among the entries in `scripts/money-smoke-list.txt`, so the gate that would enforce the
+sensitive listing never runs it.
+
+This is the same shape another window had fixed on main four commits earlier: 8cd44e4c added
+`server/utils/stripeClient.test.js` to the money smoke list with the reasoning written into the
+file, "stripeClient.js is sensitive-listed and fails closed; this is its first and only suite."
+Flagging the judgement honestly: the money-smoke list header says it is "assembled from EXISTING
+money-path suites only" and warns about keeping the run under about 2.5 minutes, so this is a
+convention call, not a mechanical rule. But the file it covers is now sensitive-listed for money
+reads. Either add the suite with a one-line comment mirroring the stripeClient entry, or record
+here why tip reads are not money-gate material. The gate hard-fails on a missing listed file, so
+confirm the path exists in the same breath. Do it before the next push, since the sensitive-path
+re-review will look at `contractorTipPage.js` anyway.
+
+## The hub summary and the roster feed hand-write the same status predicate twice, with nothing pinning them together (found 2026-08-19, drift audit)
+
+`GET /admin/staff-hub/summary` computes `active_count` as
+`onboarding_status = 'approved' AND op.onboarding_completed = true`, and `deactivated_count` /
+`imported_count` off status plus the import markers, all in one hand-written SQL block
+(`server/routes/admin/staffHub.js:39-48`). `GET /admin/active-staff` hand-writes its own copy of
+the same idea in a different shape: a status list built by string interpolation
+(`server/routes/admin/users.js:487-489`) plus
+`AND (u.onboarding_status = 'deactivated' OR op.onboarding_completed = true)` on both the page
+query and its count (`:506-507` and `:515-516`). The client then re-filters `approved` a third time
+(`StaffDashboard.js:86`) because the feed hands it four statuses in one page.
+
+The two agree today (prod at audit time: 16 active, 14 deactivated, 9 imported, 5 former) and the
+summary's own
+comment claims "one predicate family, shared with the roster feed." That is true as prose and false
+as code: the sharing is textual, there is no shared helper and no test asserting the two queries
+select the same set. Change one of them, and the hub tab count and the roster it labels start
+disagreeing **on the same screen**, silently, with no test failing. The Roster's Awaiting-approval
+group already exposes the seam: `reviewed` and `submitted` rows are in the feed and in none of the
+four counts, so the numbers do not sum to the table (zero such rows exist today, so nothing shows).
+
+Fix shape, small: one exported predicate builder both routes call, or, cheaper, a test that runs
+both queries against the same fixture set and asserts the counts equal the grouped feed rows. This
+is drift prevention, not a live defect. Worth doing on the next lane that touches either file.
+
+## Dismiss cannot be disabled with a reason, because the review list carries no per-review paid flag (found 2026-08-19, drift audit)
+
+Staff-hub spec §7 promises "dismiss refused (and the button disabled with a reason) while a bounty
+is paid or frozen." Only the first half exists, and only after the click. The server refusal is
+real: `staffReviews.js:490-493` pins the bounty lines with their payout and period
+(`pinBountyLines`, `:95-113`) and throws a `ConflictError` when any active line is frozen, where
+frozen means `payout_status = 'paid'` or `period_status IN ('processing','paid')` (`:37-42`). That
+409 does reach the operator verbatim (`api.js:57-59` flattens `data.error` into the rejection's
+`message`, `ResolvedTable.js:34` passes it to `onError`, `ReviewsPage.js:130` toasts it).
+
+What cannot happen is the disable. `GET /admin/staff-reviews` selects `r.*` plus the credits
+aggregate and two all-time totals (`staffReviews.js:135-166`); it returns nothing at all from
+`payout_duty_lines` per review, so the client has no way to know a row is frozen before it calls.
+Worth stating plainly: the deleted `StaffReviews.js` page never had this either (its Dismiss was
+disabled only on `busy !== null || review.status === 'dismissed'`), so this is a spec promise that
+was never built, not a regression the hub introduced. `ResolvedTable.js:14-18` already documents
+the limitation in a code comment.
+
+Fix has two halves and needs the server one first: add a per-review flag to the list payload, an
+EXISTS over `payout_duty_lines` joined to its `payouts` and `pay_periods` rows using the same
+frozen test `isFrozen` applies, then disable Dismiss on it with the reason in the title. Do the
+copy fix at the same time: the 409 sentence says "already paid" for all three frozen states, which
+has its own entry above ("Review-bounty dismiss refusal says 'already paid' when the period is only
+processing"). One lane should take both, since they are the same sentence.
