@@ -179,7 +179,7 @@ const EmailCampaignDetail = lazy(() => import('./pages/admin/EmailCampaignDetail
 const EmailAnalyticsDashboard = lazy(() => import('./pages/admin/EmailAnalyticsDashboard'));
 const EmailConversations = lazy(() => import('./pages/admin/EmailConversations'));
 const Messages = lazy(() => import('./pages/admin/Messages'));
-const StaffReviews = lazy(() => import('./pages/admin/StaffReviews'));
+const ReviewsPage = lazy(() => import('./pages/admin/staffHub/reviews/ReviewsPage'));
 const ClassWizard = lazy(() => import('./pages/website/ClassWizard'));
 
 const SuspenseFallback = (
@@ -620,7 +620,7 @@ function AppRoutes() {
           <Route index element={<AdminStaffDashboard />} />
           <Route path="hiring" element={<ProtectedRoute adminStrict><HiringDashboard /></ProtectedRoute>} />
           <Route path="payroll" element={<ProtectedRoute adminStrict><PayrollPage /></ProtectedRoute>} />
-          <Route path="reviews" element={<ProtectedRoute adminStrict><StaffReviews /></ProtectedRoute>} />
+          <Route path="reviews" element={<ProtectedRoute adminStrict><ReviewsPage /></ProtectedRoute>} />
         </Route>
         <Route path="/staffing/legacy" element={<AdminDashboard />} />
         <Route path="/staffing/users/:id" element={<AdminUserDetail />} />

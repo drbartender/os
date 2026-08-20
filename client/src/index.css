@@ -20761,3 +20761,13 @@ html[data-app="admin-os"] .roster-sect td { font-size: 10.5px; font-weight: 600;
 @media (max-width: 720px) {
   html[data-app="admin-os"] .hub-tabs { overflow-x: auto; flex-wrap: nowrap; }
 }
+/* Reviews: the workbench column plus the contest rail (spec §7). The rule
+   lives here rather than as an inline style because the narrow-screen stack
+   below has to be able to win, and an inline style beats a media query. */
+html[data-app="admin-os"] .reviews-grid {
+  display: grid; grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--gap); align-items: start;
+}
+@media (max-width: 900px) {
+  html[data-app="admin-os"] .reviews-grid { grid-template-columns: minmax(0, 1fr); }
+}
