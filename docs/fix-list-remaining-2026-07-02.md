@@ -1370,6 +1370,63 @@ Items 8-11 are unstarted.
    Ask him: did he click the option with the mouse or commit it with the keyboard, and
    did the form disappear at the moment of the click or on submit?
 
+   **2026-08-19 systematic-debugging pass. FIVE hypotheses eliminated, ONE mechanism found.**
+   Nothing was fixed; the hypothesis space is now small enough to close with one repro.
+   Eliminated, each against current code:
+   1. *ClickableRow mouseUp passthrough* — re-verified, the entry's original finding still
+      holds: `onMouseDown` (`:32`) stashes `pressRef` per row and `onMouseUp` (`:40`) returns
+      when it is null, so a stray mouseUp cannot activate a row.
+   2. *The `<select>` inside the `<form>` submitting on a keyboard commit* — dead.
+      `handleCreate` calls `e.preventDefault()` (`ClientsDashboard.js:77`). A submit cannot
+      navigate. Its success path only does `setShowCreate(false)` + form reset + toast, and its
+      failure path keeps the panel open with an error banner.
+   3. *An outside-click handler dismissing the panel* (the classic native-select-popup trap,
+      since the popup is out-of-DOM and reads as a click outside) — dead. `ClientsDashboard.js`
+      registers NO document listeners at all; the panel is a plain `{showCreate && <div>}`.
+   4. *RowLink / EntityLink anchors as a second activation path* — unreachable from an
+      out-of-DOM popup for the same reason 1 fails.
+   5. *`'other'` being rejected server-side* — dead, and worth recording because it looked
+      likely: prod has ZERO clients with `source='other'` (537 clients across 7 values, both
+      `other` and `instagram` absent). But `other` IS valid in `VALID_SOURCES`
+      (`clients.js:9`) AND in the live `clients_source_check` (`schema.sql:3277`). The value is
+      accepted. The zero count means nobody has ever COMPLETED an 'other' client, which is
+      what this bug would produce.
+
+   **The one code path in reach of this page that can actually navigate:** `api.js:50-55`
+   dispatches a `session-expired` event on ANY 401 outside `/auth/`, and
+   `SessionExpiryHandler` answers it with, per its own test name, "toast, logout, navigate to
+   /login" — `navigate('/login', { replace: true })`
+   (`SessionExpiryHandler.test.js:38,44`). That discards all React state and `replace: true`
+   denies the back button, which is both halves of the reported symptom exactly.
+
+   **Consequence for the report's framing:** that fires on SUBMIT, not on picking a value. So
+   the leading hypothesis is now that the sequence is off by one action — Other was picked,
+   then "Add client" was clicked, and an expired session redirected. On this reading the
+   `<select>` is a red herring and the real defect is that a 401 on a filled-in form throws the
+   work away instead of preserving it behind the re-auth.
+
+   **One question decides it, and it is cheap:** the 401 path shows a TOAST before redirecting.
+   If Dallas saw a session/login toast, this is confirmed. If the form vanished silently with no
+   toast, this mechanism is dead too and the next step is instrumentation.
+
+   Sentry has nothing: zero error events on `/api/clients` in 90 days. Not exculpatory, since a
+   401 is an ordinary auth response and is not captured as an error.
+
+   **Zero-code diagnostic** for the repro, no lane and no deploy needed. Paste in devtools on
+   the Clients page before reproducing, then read the log:
+
+       ['mousedown','mouseup','click','submit','change'].forEach(t =>
+         document.addEventListener(t, e => console.log(t, e.target.tagName,
+           e.target.className, '|', (e.target.closest('tr,form,button,a')||{}).tagName), true));
+       window.addEventListener('session-expired', e => console.log('SESSION-EXPIRED', e.detail));
+       const _p = history.pushState, _r = history.replaceState;
+       history.pushState = function(){ console.log('pushState', arguments[2]); return _p.apply(this, arguments); };
+       history.replaceState = function(){ console.log('replaceState', arguments[2]); return _r.apply(this, arguments); };
+
+   If `SESSION-EXPIRED` appears, it is the 401 path and the fix is preserving the form across
+   re-auth. If a `tr` shows up as a click target, the row path is live after all and hypothesis
+   1 needs reopening with the popup's real event sequence.
+
 3. **Staff-portal recipes render `· [object Object]` (ROOT CAUSE CONFIRMED).**
    `cocktails.ingredients` / `mocktails.ingredients` are JSONB arrays of OBJECTS
    (`{ingredient, amount, ...}`), which the server generator handles explicitly
