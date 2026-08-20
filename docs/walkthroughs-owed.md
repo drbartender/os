@@ -1146,7 +1146,26 @@ lists every code commit live in prod that this file may not know about.
       real message, not "Please fix the errors below". Doubles as the data-needing half
       of the restyle walk below — same session covers both. (Sep 5 deadline pressure is
       exactly the condition that buries walkthroughs — this one gates real sends.)
-- [ ] **Marketing RESTYLE, visual walk — the whole section moved onto the approved
+- [x] **Marketing RESTYLE visual walk: PASSED 2026-08-20 (Zul), in prod, daylight.**
+      **VERDICT: everything looks good.** The section reads as the approved design.
+      **THIS IS THE ENTRY THAT CLOSES THE 2026-08-14 DESIGN-FIDELITY INCIDENT.** That incident
+      was a section shipping to prod with zero visual fidelity to an approved design, because
+      every gate validated against its immediate upstream artifact and no human ever looked.
+      Lane `mkt-restyle` fixed the code; this walk is the first time a person confirmed it.
+      The loop is closed: design approved, built, and now SEEN.
+      Walked against benchmark `docs/design-artifacts/2026-08-11-marketing-redesign.dc.html`
+      at admin.drbartender.com, both skins, across the width breakpoints, including the two
+      drawers, Compose's two steps, and the items the adherence review flagged.
+      SCOPE NOTE, honestly stated: the verdict is a GLOBAL visual judgment, which is what this
+      walk exists for and what no agent could produce. The individual sub-checks below were
+      not itemised back one by one. The one that is an ACTION rather than an observation is
+      the keyboard-Tab focus ring on the tabs (`15cc4df0` scoped the clipping scroll container
+      to phones); if a future reader wants certainty specifically there, it is one Tab press.
+      CORRECTED WHILE SETTING THIS UP: the entry's pointer said lane `mkt-moment-setup`
+      (`7b099746`) was merged and NOT pushed, so the needs-setup card's absence was not a
+      restyle finding. **That is stale, it shipped.** The card and the header's "N needs
+      setup" segment are live in prod as of this walk.
+      Original entry follows. **the whole section moved onto the approved
       claude.ai/design look 2026-08-14** (lane `mkt-restyle`, squash `19a9298e` +
       follow-ups `be555426`/`3af0edd9`/`15cc4df0`; **PUSHED and LIVE IN PROD 8/14** — the
       prod admin CSS bundle carries `mkt-moment-grid`, so walk it at
