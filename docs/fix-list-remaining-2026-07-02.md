@@ -4970,9 +4970,52 @@ identically to live data, with nothing indicating age. A phone in airplane mode 
 shows a stale guest count or a stale balance as current. The identity is honestly bounded;
 the data is not.
 
-Fix: render `formatStaleAt(res.staleAt)` in a `.m-stale` element on the phone screen lanes
-that serve cached reads, and add a test that fails when the call site disappears. Ties to the
-mobile-admin spec section 7.
+**PRESCRIPTION CORRECTED 2026-08-19, same day, before anyone built to it.** The first version
+of this entry said "render `formatStaleAt(res.staleAt)` in a `.m-stale` element on the phone
+screen lanes." That fix cannot be written, because **there are no phone screen lanes.** See the
+as-built inventory below. The staleness line is not an unwired utility on a finished screen; it
+is a utility waiting for a screen that was never built. Wiring it onto the desktop Events and
+Proposals pages would violate the spec's own decision (`Surfaces | Phone-first components,
+route-level fork at 700px; not CSS retrofits`).
+
+Correct fix: this is **not a standalone repair.** It belongs to whichever lane builds the phone
+Events / Proposals screens, as part of that lane's scope, with a test asserting the CALL SITE
+and not just the formatter. Until then the honest state is "specified, formatter built and
+tested, no consumer." Do not open a lane for the staleness line alone.
+
+## Mobile admin, as-built vs as-specified (established 2026-08-19)
+
+Written because both memory and the build board now say "Mobile Admin PWA, LIVE IN PROD," which
+is TRUE and reads as far more finished than it is. The shell shipped. The app did not.
+
+**Built and live in prod:**
+
+| area | artifacts |
+|---|---|
+| chrome | `components/mobile/MobileHeader.js`, `MobileTabBar.js` (3 tabs: Events, Proposals, More) |
+| auth | `MobileLockScreen.js`, `MoreSecurityRow.js`, `PasskeyEnrollNudge.js`, `utils/mobileLock.js`, `utils/webauthnClient.js`, `server/routes/webauthn.js` |
+| PWA + offline plumbing | `public/admin-sw.js`, `public/admin-manifest.json`, `utils/adminSw.js` |
+| navigation | `pages/mobile/MorePage.js` (126 lines), `context/MobileViewContext.js`, `hooks/useIsPhone.js`, `utils/routeRestore.js` |
+| unwired | `utils/staleTime.js` (see the entry above) |
+
+**Specified and NOT built:** every phone-first DATA screen. There is no phone Events list or
+detail, no phone Proposals list or detail, no assignment sheet, and no sheet component at all
+(so the decision-log line "mobile sheets push history so Android Back closes the sheet" has
+nothing implementing it). `client/src/pages/mobile/` holds exactly ONE file, `MorePage.js`.
+
+**What that means in practice.** `AdminLayout` swaps in the mobile header and tab bar, and the
+Events and Proposals tabs route to `/events` and `/proposals`, which are the ORDINARY DESKTOP
+ADMIN PAGES. Neither has any phone branch: `grep isPhone` over both returns nothing, and
+`App.js` has no route-level fork for them. So the phone today is desktop pages inside a phone
+chrome, which is precisely the "CSS retrofit" shape the spec's decision log rejects.
+
+The offline law (§7) is therefore half-real: the SW genuinely caches those API reads and serves
+them on transport failure, so a phone offline shows cached desktop pages with no staleness
+marker. The caching is doing its job; there is no phone screen to display the result honestly.
+
+**No action implied by this entry.** It exists so nobody reads "mobile admin is live" and
+concludes the phone app is done, and so the staleness line above is not mistaken for a loose
+wire. Whether to build the phone screens at all is Dallas's call.
 
 ## The press-1 kill switch is now a TRAP: turning it off makes the main line lie (found 2026-08-19, cross-LLM push review)
 
