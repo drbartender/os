@@ -17,15 +17,52 @@ so tick items off as you confirm them rather than assuming the list is current.
 
 ---
 
-## Status: the 2026-08-14 session, refreshed 2026-08-19
+## Status: refreshed 2026-08-20
 
-**WHAT MOVED SINCE 2026-08-14**, because this block sat here as the file's headline for
-five days while production changed underneath it. Two pushes landed: 2026-08-16 (the
-52-commit `bab7fba5..981b09ef` batch, which carried the phone passkey unlock) and
-2026-08-19 (lane `nat-trim`, which reshaped the admin Overview). Four lanes merged.
-`origin/main` is `d61c62b7`. Out of that: one new Tier 3b entry (`nat-trim`), three more
-moved into Tier 3b from Tier 6, which had been filing shipped work under "queued", and one
-checked Tier 2 box that now certifies a surface which no longer exists.
+**`origin/main` is `c0dcd5b7`, pushed 2026-08-20 at 10:47.** Whenever you edit this block,
+re-state that sha, because the next session's staleness check is a diff against it.
+
+**WHAT MOVED SINCE THE 2026-08-19 REFRESH, and it is a lot.** 2026-08-19 was the single
+best night this list has had: four of the six walks then named as "genuinely left for a
+human" closed, almost all of them by **Zul** rather than Dallas. Then the 2026-08-20 push
+landed the largest drop of unwalked surface this file has ever taken, so the net owed went
+UP, not down.
+
+**CLOSED 2026-08-19 (Zul unless noted):**
+- **Phone admin passkey unlock — FULLY WALKED**, every leg, on a real Pixel against prod.
+  This had been the highest-value item on the list, the only unverified auth path in
+  production. It is now proven end to end including revoke and re-enrollment.
+- **Mobile admin PWA** — both folded-in legs: offline resume, and the Desktop-view toggle
+  round trip persisted in BOTH directions across reloads.
+- **Admin Overview after `nat-trim`** — verdict CALM, not broken, which was the entire
+  question that walk existed to answer and one no test could have settled.
+- **Tip sign wake lock, Leg A.**
+
+Those walks paid for themselves, which is the argument for the whole file: passkey step 4
+found that the offline lock screen's "Use password instead" dead-ends AND silently unarms
+the phone, and step 3 found that the staleness lines **do not exist anywhere in the
+product** (`formatStaleAt` is exported and imported by nobody). Both went to the fix list.
+
+**ARRIVED 2026-08-20, and none of it was in this file until now:**
+- **The Admin Staff hub**, all 7 lanes (`sh-a-server` through `sh-g-fidelity`) merged and
+  pushed, plus four rounds of post-merge and push-gate defect fixes. An entire new
+  top-level admin section covering Roster, Hiring, Payroll, Reviews and Tips. Now the
+  highest-value unwalked surface on the list — and **the first thing it did in production
+  was park $20 of real money somewhere nothing displays it**, see the entry.
+  (Precisely: not "never opened". Dallas logged a Google review through the hub about 30
+  minutes after the push, so Reviews has been USED. Nothing has been judged.)
+- **Caller communication** (`caller-comms` + `cc-verify`): new day and night greetings on
+  both voice lines, press-1 escalation, quiet-hours windows. Real voice behavior a paying
+  customer hits. Note that several legs are env-gated with OFF defaults, so read that entry
+  before dialing anything.
+- **`mkt-moment-setup` shipped**, so its Tier 6 entry claiming "MERGED, NOT PUSHED" was
+  wrong and its walk was armed while reading as blocked. Moved to Tier 3b and corrected.
+
+Also shipped 2026-08-20 and deliberately given NO entry, so nobody re-opens them: lanes
+`pay-period-boundary`, `stripe-fail-closed`, `shift-status-allowlist`, `payout-stripe-guard`
+and `mobile-asbuilt` are server-side guards and corrections, each landing with its own test
+file. They change behavior but expose no new surface, and the fix list already carries
+them. This file should shrink; adding test-covered server fixes to it is how it stops.
 
 **Count the boxes yourself rather than trusting a number written here.** `grep -c '^- \[x\]'`,
 `'^- \[~\]'` and `'^- \[ \]'` against this file give done / partial / open in one command.
@@ -34,13 +71,15 @@ was never re-derived across four merges, which is what a hard-coded count in a l
 always does. What any raw count overstates: a chunk of the "open" items are not walks at
 all. Read this before picking anything up.
 
-**Closed tonight by Dallas:** voicemail listen link (BOTH halves — the first listen link
+**Closed 2026-08-14 by Dallas:** voicemail listen link (BOTH halves — the first listen link
 this system has ever sent went out and was tapped), inbound SMS alerts naming the
 staffer, the "See other options" compare strip, duty-pay policy text (Field Guide §17 +
 agreement v3 signed and stamped), and STOP/START on prod.
-**Closed tonight by Claude:** duty-pay out-of-area knobs (both mounts, plus all of spec
+**Closed 2026-08-14 by Claude:** duty-pay out-of-area knobs (both mounts, plus all of spec
 §9), review money §7 manual half, display-name T6, the seniority panel smoke, and the
 duplicate-MessageSid idempotency check (closed structurally on the unique index).
+("Tonight" appeared four times in this block and rotted the moment the session ended.
+Date-stamp closures; never write a relative time into a file that outlives the session.)
 
 **The three routing rules that came out of the 2026-08-14 lane split:**
 1. **Automation's lane** — contrast/palette measurement and mechanical render checks
@@ -53,19 +92,23 @@ duplicate-MessageSid idempotency check (closed structurally on the unique index)
 3. **Neither** — trigger-armed or structurally unobservable. Say so in the entry rather
    than leaving it looking walkable.
 
-**What is genuinely left for a human, in order:**
-- Marketing RESTYLE visual walk (35-45 min, pure judgment, wants daylight)
-- Marketing FUNCTIONAL walk (70-85 min, gates real sends, now more useful since the
-  corporate contacts are tagged)
-- Tip sign wake lock, Leg A (20 min on the Pixel) and Leg B print-and-scan (needs a photo
-  counter). Now carries its own Tier 3 checkbox, so a tier refresh cannot lose it
-- Phone admin passkey unlock on the Pixel, against PROD (Tier 3b). The highest-value walk
-  open: the only unverified auth path in production
-- Mobile admin PWA on the Pixel. The INSTALL half is DONE (Dallas, 2026-08-14, zero
-  findings). What is still owed is the offline-resume leg and the Desktop-view toggle
-  round trip, and both ride the passkey walk above rather than standing alone
-- Admin Overview / Needs-attention after `nat-trim` (Tier 3b): the landing page changed
-  shape on 2026-08-19 and nobody has opened it since
+**What is genuinely left for a human, in order (rewritten 2026-08-20):**
+1. **The Admin Staff hub** (Tier 3b). A brand-new admin section went live today and nobody
+   has looked at it. It carries money surfaces (payroll tabs, tips, review bounty lines),
+   so being wrong here costs more than being wrong anywhere else currently open.
+2. **Marketing: the RESTYLE visual walk and the FUNCTIONAL walk, in one session.** They
+   share a screen, and the now-shipped `mkt-moment-setup` card lives on it too, so doing
+   all three together is strictly cheaper than three visits. The FUNCTIONAL half gates real
+   sends. Budget 35-45 min for the visual half (pure judgment, wants daylight) and 70-85
+   for the functional.
+3. **Caller communication** (Tier 3b). Read the entry first: some legs need a Render env
+   flip, and a flip costs a redeploy that drops Twilio and Stripe webhooks during restart.
+4. **Tip sign wake lock, Leg B** (print-and-scan off real paper, needs a photo counter).
+   Leg A passing does NOT cover this; different failure entirely.
+5. **Admin palette baseline eyeball sweep** (Tier 3b). Every admin surface moved its text
+   baseline in both skins with zero browser verification, and has now been live six days.
+6. The small dev-side ones, cheap to batch: Remote Staffing Fee prompt, bar-required
+   transport ack, shopping-list guest-count prompt in House Lights.
 
 **Waiting on a Dallas decision, not on time:** the Potions recipe sourcing call
 (grapefruit soda / Cognac / lavender syrup — see Tier 4), and Potion Planner gate 1's
@@ -80,12 +123,17 @@ dead affordance plus 14 more of the same shape found by sweep, the dev box holdi
 Stripe key with no `NODE_ENV` gate, the September corporate-holiday moment being
 invisible, Jasmine SMS-dark for six weeks while working, `yes`/`cancel` swallowing client
 texts, and the agreement's raw markdown on the signing screen.
-CLOSED 2026-08-19, the September corporate-holiday moment, on both halves. The audience
-half is live in prod: `client_tags` holds exactly 9 `corporate` rows, so the moment has
-somebody to go to. The product half is lane `mkt-moment-setup` (`7b099746`), **merged but
-NOT pushed**, so the needs-setup card and the header's "N needs setup" segment do not
-render in prod yet even though the audience they are about is populated. Its walk sits in
-Tier 6 until that ships.
+CLOSED 2026-08-19, the September corporate-holiday moment, on both halves, and **fully
+shipped as of 2026-08-20**. The audience half is live in prod: `client_tags` holds exactly
+9 `corporate` rows, so the moment has somebody to go to. The product half is lane
+`mkt-moment-setup` (`7b099746`), which is now an ancestor of `origin/main`, so the
+needs-setup card and the header's "N needs setup" segment DO render in prod. Its walk moved
+from Tier 6 to Tier 3b and is armed.
+This entry is the worked example of how this file goes wrong: the sentence above read
+"merged but NOT pushed" for a full day after the push, which is a walk sitting available
+while its own entry tells you not to bother. **A push-state claim written into this file is
+false the moment the next push lands.** If you must write one, write the check instead of
+the verdict: `git merge-base --is-ancestor <sha> origin/main`.
 
 ---
 
@@ -513,11 +561,262 @@ Tier 6 until that ships.
 
 ## Tier 3b: shipped since 2026-08-13, live in prod, never eyeballed
 
-Two cohorts. The 2026-08-13 walkthrough fixes needed the same medicine they were
+Three cohorts now. The 2026-08-13 walkthrough fixes needed the same medicine they were
 prescribing: the TimePicker and equipment-label fixes both shipped BROKEN on the first
 attempt and were corrected blind by a later session (`54fb77cb`, `fc5e6ca2`). The 8/14
-through 8/19 arrivals are listed FIRST, because they are what is live in prod today that
-nobody has opened at all.
+through 8/19 arrivals come next. **The 2026-08-20 cohort is listed FIRST and is the
+largest single drop this file has ever taken**: a whole new admin section plus live voice
+behavior, none of which existed here until 2026-08-20.
+
+**HOW THE 8/20 COHORT GOT MISSED, because the mechanism will repeat.** This file is
+written by hand at the end of a session, and the 2026-08-20 push (`origin/main` at
+`c0dcd5b7`, pushed 10:47) landed while the file's own status block still named
+`d61c62b7` as the tip. Nothing in the pipeline appends to this file when a lane ships, so
+a push that lands after the last edit is invisible here by default. Until that is
+automated, **re-derive the cohort at the top of any walk session** rather than trusting
+the tiers: `git log --format='%h %ad %s' --date=short <the sha this file names>..origin/main -- server client/src`
+lists every code commit live in prod that this file may not know about.
+
+- [ ] **THE ADMIN STAFF HUB — 7 lanes, shipped and pushed 2026-08-20.** Roster, Hiring,
+      Payroll, Reviews and Tips consolidated under one sidebar entry. Lanes `sh-a-server`
+      (`c4bb2d1f`) through `sh-g-fidelity` (`c2b05d8d`), plus `4dbe9c5b`, `ba9ea23b`,
+      `b97c7490` and `c0dcd5b7`. Benchmark artifact
+      `docs/design-artifacts/2026-08-19-staff-hub.dc.html`, design project
+      `96291c7a-3510-4910-9c67-c41d81504920`.
+      **NOT "never opened" — correct that before you start.** `staff_reviews` holds TWO
+      rows, and row 2 is `source='google'`, `created_by=1` (Dallas), stamped 2026-08-20
+      16:17Z, about thirty minutes after the push. A `google` row can only be written by
+      `POST /admin/staff-reviews`, whose only remaining client caller is the hub's own
+      "Log a Google review" action, so the Reviews child has already been driven log →
+      credit → confirm in production. That is USE, not a walk. Nothing has been judged.
+
+      **READ THIS BEFORE OPENING /staffing/reviews, because the screen contradicts itself
+      and it is NOT a render bug.** There is **$20.00 of review bounty owed to two real
+      staffers and parked where nothing displays it.** Both reviews are 5-star and credited
+      (review 1 → user 212 Tashea, review 2 → user 206 Mariah), but
+      `SELECT COUNT(*) FROM payout_duty_lines WHERE kind='review_bounty'` returns **0** — no
+      line, no tombstone. Cause: no `pay_periods` row exists for the current week, so
+      `materializeReviewLine` returned null on both confirms (`dutyLines.js:506`). So the
+      Resolved table prints `$10.00` twice (it derives `paysBounty` from the REVIEW, at
+      `ResolvedTable.js:62`) while the footer prints `$0.00 in bounties paid` (a real SUM
+      over `payout_duty_lines`, `staffReviews.js:158-163`). Both numbers are honest; they
+      are answering different questions. This is the known `materializePendingReviewLines`
+      gap producing its first real money, and it self-heals on the next confirm that lands
+      while a period row is open. **Do not file the mismatch as a UI defect.** The money
+      side is now on the fix list; the stale claim there that "zero bounties have ever been
+      paid, so nothing is owed today" was corrected in the same session that found this.
+
+      **WHERE IT LIVES.** `/staffing` (Roster, index), `/staffing/hiring`,
+      `/staffing/payroll`, `/staffing/reviews`. The last three are `adminStrict` at the
+      ROUTE (`App.js:325-327`), so a manager typing the URL bounces before any fetch. The
+      sidebar collapsed four entries into one: `Staff → /staffing` carrying
+      `['new_applications','pending_reviews']`. Hiring, Tips & Feedback and Reviews are
+      gone from `nav.js` and from the command palette. Four legacy redirects preserve query
+      params: `/hiring`, `/tips` → `?tab=tips`, `/reviews`, `/financials/payroll`.
+      Payroll's own `.seg` pills are `Pay run · History · Tips · 1099 / tax`.
+
+      **WHAT YOU WILL SEE TODAY, so you can tell empty-by-design from broken.** Prod is
+      nearly dataless here and almost every panel legitimately renders empty:
+      · Subtitle should read exactly
+        `16 active · pay run Aug 18 to 24 open, payday Tue Aug 25 · nothing to confirm`.
+      · **Roster says 16, not 18.** The feed binds `role IN ('staff','manager')`, so the two
+        admin rows (users 1 and 2) are excluded from every figure. 16 + 2 = the 18 people.
+      · **Hiring's Onboarding column is EMPTY and the whole kanban holds 2 cards.** The
+        "29 cards at 0%" premise this file carried was WRONG: `/admin/applications` INNER
+        JOINs `applications`, and the 40 hired/in-progress accounts have no application row.
+        The 60-day stale-record fold shipped as defensive code and **can never fire today**,
+        so `.hire-fold` never renders. Do not go hunting for it.
+      · **The pay run in the subtitle has no database row behind it.** `open_period` is
+        DERIVED (`chicagoTodayYmd` → `payPeriodForDate` → `computePayday`) and the endpoint
+        never writes: three queries, all SELECT, pinned by `staffHub.test.js:120`. Rows are
+        minted lazily on first accrual, usually Saturday. Periods are Tuesday-to-Monday.
+      · Consequently the **CurrentWeekCard renders** (`$0.00 owed`, "Nothing accrued yet…")
+        and the queue below is empty with its zero state **deliberately suppressed**
+        (`PayRunView.js:162`). You will NOT see "Nothing owed. Every period is paid."
+      · **Reviews: zero pending**, so there are no workbench cards at all, only the Resolved
+        table and the rail. The `.reviews-grid` left column will look sparse.
+      · **Contest rail:** expect `No qualifiers yet.` and a **disabled** Award button,
+        disabled twice over (no qualifying shares, and `No open pay period. Open one before
+        awarding.`). Both staffers have 1 named five-star against a floor of 2.
+      · **Tips ledger: exactly one tip ever** — $6.00, 2026-08-15, user 12, status chip
+        `on the Aug 15 event`. Both repair queues clear, collapsed to one strip.
+      · **FeedbackCard** (staffer profile → Tip Page tab) has **zero rows ever**, on every
+        staffer. Ratings there are out of **3**, not 5.
+      · "Net in view" on the ledger means the loaded page (cursor-paginated at 50), not all
+        time. Deliberate, and the copy says so.
+      · **Two tab vocabularies on one screen is the design, not drift:** `.hub-tabs`
+        underline for sections, `.seg` pills for views inside a child. `/marketing` still
+        uses `.seg` for its sections and is explicitly grandfathered; do not flag it.
+      · **"Send SMS" lands on a page that looks nothing like the hub** (`/staffing/legacy`,
+        with its own `<h1>` and legacy pill tabs). Declared out of scope, not a regression.
+      · Every admin card is inset ~26px more than the artboards draw. Known, deliberate,
+        already on the fix list; the global fix would move every card in the admin app.
+
+      **THE MONEY SEAMS, and these are what a walk is actually for.** Two controls write:
+      1. **Reviews → Confirm.** The button label is a three-way ladder and getting the wrong
+         one is the bug class here: `Confirm and pay $X` (open period), `Confirm, $X waits
+         for the next open run` (what it should say TODAY), `Confirm, no bounty` (under 5
+         stars or no name). Confirm is **disabled while the name chips are dirty** with
+         `title="Save names first"`, because a money write must not depend on unsaved client
+         state. Verify that guard by eye.
+      2. **Reviews → Award the quarter.** $100 pot. A mid-quarter award 409s
+         `QUARTER_IN_PROGRESS` and then asks `window.confirm("…Awarding now is permanent and
+         cannot be revised later. Award anyway?")` before retrying with `force: true`.
+         **`force` must never be sent unprompted** — it locks a winner in permanently.
+         Winners and the split are server truth; the client renders `data.shares` and never
+         recomputes.
+      Display-only but worth understanding before you read the ledger: **a tip on your own
+      sign is not your money.** The pool sums every tip on any shift of the proposal,
+      deliberately ignoring `target_user_id`, and splits it evenly across approved
+      non-dropped staff whose position lowercases to exactly `bartender`. Barbacks and
+      servers get $0. That is why there is a derived Status column and no "Lands in" column:
+      there is no tip → payout key.
+
+      **DO NOT RE-PROVE THESE BY HAND.** 15 client suites (81 tests) and the server suites
+      already pin: the hub chrome and the manager's no-tab-strip view, every subtitle string
+      including the cross-month window, the pay-run card and its `b97c7490` fix, the whole
+      tips Status precedence ladder and its stale-response guards, roster grouping and
+      order, the Hiring fold's 60-day boundary, the reviews envelope arithmetic, and that
+      the hub read never creates a `pay_periods` row.
+
+      **WHAT NOTHING COVERS — this is the walk's real job:**
+      · **The ContestRail generation guard has ZERO tests**, and it is the `c0dcd5b7` HIGH
+        finding: a slow read landing late could render one quarter's standings under another
+        quarter's label while Award pays a different set of people out of the same pot.
+      · **The entire award flow client-side.** No test ever clicks Award; `AwardDialog.js` is
+        never rendered by any test.
+      · **`FeedbackCard` / `TipPageTab` have no test file at all** — and the alert email is
+        proven to link at a card nothing verifies renders, which is exactly the failure that
+        forced the `b114e9f0` revert once already.
+      · **All four `LegacyRedirect` mounts.** There is no `App.test.js`; the query-param
+        merge, their whole reason for existing, is untested.
+      · **`adminStrict` at the route.** Nothing proves a manager typing `/staffing/reviews`
+        bounces. Worth doing for real with the manager account.
+      · **Roster pagination** (`PAGE_SIZE=100`, the `Showing page N of M` footer, Prev/Next)
+        is entirely untested.
+      · **All CSS.** jsdom applies no stylesheet and evaluates no media query, so the
+        `.hub-tabs` scroll at 720px, the 2px accent underline, the light-skin square corners
+        and the `.reviews-grid` collapse at 900px are Dallas's eyes only.
+
+      **JUDGE IT AGAINST THE ARTIFACT, NOT TASTE**, with three riders: spec §3 carries a
+      19-item override list that supersedes the artboards (a deviation on that list is not a
+      finding); fidelity means structure, class vocabulary and token names, never resolved
+      hue values; and **the vendored `.dc.html` does not render standalone** (it loads a
+      `support.js` and a DS bundle that are not vendored), so open the canvas in the design
+      project for a rendered view.
+      Still owed from the plan's own manual list, none of it automatable: both skins, a
+      720px window, a real manager login AND a manager without `can_staff`, the Overview
+      payroll card deep link landing on the right period, and one confirm driven end to end
+      on a real screen.
+
+- [ ] **CALLER COMMUNICATION — new greetings and press-1 escalation, live on both voice
+      lines, never heard by a single real caller.** Lanes `caller-comms` (`328ba2f4`) +
+      `cc-verify` (`ee1262f6`). Eight new recordings replaced the synthetic Polly voice:
+      day and night greetings, an escalate-ack and an escalate-failed clip, per line.
+      **PROVEN NOBODY HAS HEARD THEM:** prod `voicemail_delivery` holds 11 rows, newest
+      2026-08-18, which predates the push. `escalated_at`, `escalation_accepted_at` and
+      `escalation_outcome` are NULL on all 11, so no press-1 has ever been claimed or even
+      skipped in production.
+      **THE FIRST THING TO CHECK, and it may be a real defect.** Both lines' default day
+      recordings SAY "press one and I'll see if someone's available." But the `<Gather>`
+      that makes the key work is emitted only when `VM_ESCALATION_ENABLED` is the literal
+      string `'true'`, and the code default is OFF (`voicemailTwiml.js:83-85`). With the
+      flag off the caller is invited to press a key that does nothing: `<Record
+      finishOnKey="#">` ignores a `1`. **Confirm `VM_ESCALATION_ENABLED` in Render before
+      anything else.** If it is off, that is a live client-facing defect and it goes to the
+      fix list. Note the documented "revert" in `.env.example:324-329` does not escape it
+      either: the `say` fallback text also contains the offer.
+      **WALK IT ON THE 1922, NOT THE 0082.** The 1922 rings Dallas's own 312 and texts the
+      312. Every call to the 0082 rings **Zul's actual phone in the Philippines** and sends
+      her two Telegram messages. And a press-1 on the 1922 dials her PH cell, an
+      international billed leg, so warn her before you dial.
+      **THE TIMING TRAP, which will otherwise read as broken.** Two different windows that
+      sound alike and are not:
+      · `VM_NIGHT_WINDOW` (default `21:00-09:00`, America/Chicago) is about the **caller**.
+        It swaps the greeting and suppresses the press-1 offer entirely.
+      · `VM_ESCALATION_QUIET_*` is about the person being **dialed**, in **their own**
+        timezone, and suppresses only the dial, never the greeting.
+      Worked: Manila runs Chicago **+13h** under CDT, so a quiet window of `22:00-08:00`
+      Manila maps to **09:00-19:00 Chicago** exactly. Combined with the 21:00-09:00 Chicago
+      night window, that leaves **only 19:00-21:00 Chicago** where a press-1 on the primary
+      line is both offered AND actually rings Zul. Outside it you get the failed clip
+      instantly with no ringback, which is correct behavior and looks like a bug.
+      **SO: do the press-1 legs between 7pm and 9pm Chicago.** Day greeting any afternoon,
+      night greeting after 9pm. That is a zero-or-one-flip walk; forcing the windows costs
+      two more Render redeploys and each redeploy drops every Twilio and Stripe webhook
+      while it restarts, plus a cold start returns 502/Cloudflare rather than real
+      behavior, so a call inside the deploy window is a false result either way.
+      **FREE HALF, no phone call at all, and it is most of the walk.** Every clip is
+      publicly fetchable with no auth. **Verified directly against prod 2026-08-20: all
+      eight return 200 `audio/mpeg`**, sizes 114829 / 68173 / 27277 / 48589 (primary
+      day/night/ack/failed) and 119945 / 79707 / 35931 / 63003 (zul). Listen to all eight
+      in a browser before spending a single call, and check the sizes above if one sounds
+      truncated:
+      `https://api.drbartender.com/api/voice/audio/{primary,zul}-{greeting-day,greeting-night,escalate-ack,escalate-failed}.mp3`
+      That covers "does it sound right", which is the only thing tests cannot reach. The
+      phone calls then only need to prove SEQUENCING: right clip on the right line at the
+      right hour, and the beep landing where it should.
+      **WHAT THE WALK IS ACTUALLY FOR.** The TwiML documents are golden-pinned byte-for-byte
+      by tests (`voice.test.js:527-549`, `:1154-1175`, `:1177-1200`), the copy strings are
+      pinned (`voicemailTwiml.test.js:100-110`), the night boundaries and a DST transition
+      are pinned (`voicemailLine.test.js:115-155`), and every bundled asset is proven to
+      exist (`voiceAssets.test.js:35-72`). **Do not re-prove any of that by phone.** What no
+      test can reach is whether the recordings SOUND right: audible, the correct voice on
+      the correct line, the right words, no clipping, and a sensible gap before the beep.
+      MORE TRAPS: whoever holds the receiving phone must **press a key** to accept the
+      whisper screen ("Press any key to take the call"), and saying hello does nothing but
+      hang the leg up and send the caller to voicemail, correctly. A recording under 2
+      seconds is silently destroyed, so speak 5+ seconds. The alert never appears in the
+      admin Messages page (`skipLog: true`, by design). If you hear the *Google Voice*
+      greeting instead of Dallas's, GV intercepted the forwarded leg and you get no
+      recording at all, which is what `VM_PRIMARY_RING_SEC=18` exists to outrun. Twilio
+      caches `<Play>` sources for an hour, so a re-recorded clip keeps serving the old take.
+      **A QUESTION FOR DALLAS, not a finding, because Render is unreadable from here:** the
+      2026-08-19 spec's night-mode rationale is that Zul keeps Chicago-aligned hours to be
+      available to US clients. A Manila-local quiet window of `22:00-08:00` would silence
+      her escalation across the entire Chicago business day. If `VM_ESCALATION_QUIET_ZUL`
+      is set to that example value, press-1 on the primary line is effectively dead when it
+      matters most. Worth answering before the walk, since it decides whether 19:00-21:00
+      is a quirk or the whole story.
+      There is NO admin UI for any of this: zero hits for `voicemail` or `escalation_outcome`
+      anywhere in `client/src/`. It is observable by ear, in Twilio, in Telegram, or by
+      querying `voicemail_delivery`. Nothing branches on `escalation_outcome`; it is
+      write-only observability.
+
+- [ ] **Marketing moment needs-setup card + header segment (lane `mkt-moment-setup`):
+      PUSHED AND LIVE IN PROD.** Corrected 2026-08-20: this entry sat in Tier 6 reading
+      "MERGED, NOT PUSHED" long after the commit had shipped, so a walk that was armed
+      read as blocked. `7b099746` is an ancestor of `origin/main`. It is walkable now.
+      It closed the product half of the September corporate-holiday miss, where an open
+      moment with an empty audience was hidden in three places at once (the card list, the
+      `open_moment_count` badge, and the header reading "0 moments open" while a moment was
+      open).
+      The reusable law it introduced, which is what the walk is really checking: an open
+      moment now DECLARES which kind of empty it is. `emptyAudience: 'configure'` means a
+      human can close the gap today (`holiday-corporate`, whose audience is gated on the
+      `corporate` tag), so it renders a card. `emptyAudience: 'wait'` means only time
+      changes it (`one-year-on`, `cold-quotes`), so it stays quiet. Nagging daily about
+      something nobody can act on is itself the bug.
+      ON THE MARKETING OVERVIEW:
+      1. A `configure` moment with an empty audience renders a needs-setup card that keeps
+         the spine, the window and the why, drops "Review recipients" (there is nobody to
+         review), shows `0 emailable` in the rail, and offers exactly two actions: "Set up
+         the audience" and "Not this time".
+      2. The header subtitle carries a separate "N needs setup" segment alongside "N moments
+         open", so it can never read "0 moments open" while a needs-setup card sits below it.
+      3. A `wait` moment with an empty audience renders NOTHING. Confirm `one-year-on` and
+         `cold-quotes` stay silent; prod's earliest event is 2026-04-25, so `one-year-on`
+         legitimately cannot match anyone for months and must not shout about it.
+      4. "Set up the audience" lands somewhere you can actually add the tag.
+      NOTE prod's `corporate` tag is populated (9 clients), so `holiday-corporate` will
+      render as a normal sendable moment rather than a needs-setup card. To see the card at
+      all you need a `configure` moment whose audience is genuinely empty. Do NOT add a
+      check that dismissing a needs-setup card decrements the open-moments badge: it cannot
+      fail, because `open_moment_count` counts `moment.emailable > 0` and
+      `moments_needing_setup` counts `moment.emailable === 0`, so a needs-setup moment was
+      never in the open count.
+      Walk it in the same session as the Marketing RESTYLE and FUNCTIONAL walks below;
+      it is the same screen.
 
 - [x] **Phone admin passkey unlock (lane `ma-d-auth`): FULLY WALKED 2026-08-19 (Zul).**
       Every leg is proven: 1 and 2 by real production use, 3, 4 and 5 walked on a real Pixel
@@ -854,35 +1153,10 @@ banner reading as pending work, the palette sweep for five days across every adm
 surface. They moved to Tier 3b on 2026-08-19. If you ship something in this tier, move it;
 do not leave it here because it is still unwalked.
 
-- [ ] **Marketing moment needs-setup card + header segment (lane `mkt-moment-setup`):
-  MERGED 2026-08-19 (`7b099746`), NOT PUSHED.** Nothing to see in prod until it deploys;
-  the walk arms the moment it does. It closed the product half of the September
-  corporate-holiday miss, where an open moment with an empty audience was hidden in three
-  places at once (the card list, the `open_moment_count` badge, and the header reading
-  "0 moments open" while a moment was open).
-  The reusable law it introduced, which is what the walk is really checking: an open moment
-  now DECLARES which kind of empty it is. `emptyAudience: 'configure'` means a human can
-  close the gap today (`holiday-corporate`, whose audience is gated on the `corporate` tag),
-  so it renders a card. `emptyAudience: 'wait'` means only time changes it (`one-year-on`,
-  `cold-quotes`), so it stays quiet. Nagging daily about something nobody can act on is
-  itself the bug.
-  ON THE MARKETING OVERVIEW, once pushed:
-  1. A `configure` moment with an empty audience renders a needs-setup card that keeps the
-     spine, the window and the why, drops "Review recipients" (there is nobody to review),
-     shows `0 emailable` in the rail, and offers exactly two actions: "Set up the audience"
-     and "Not this time".
-  2. The header subtitle carries a separate "N needs setup" segment alongside "N moments
-     open", so it can never read "0 moments open" while a needs-setup card sits below it.
-  3. A `wait` moment with an empty audience renders NOTHING. Confirm `one-year-on` and
-     `cold-quotes` stay silent; prod's earliest event is 2026-04-25, so `one-year-on`
-     legitimately cannot match anyone for months and must not shout about it.
-  4. "Set up the audience" lands somewhere you can actually add the tag.
-  NOTE prod's `corporate` tag is now populated (9 clients), so `holiday-corporate` will
-  render as a normal sendable moment rather than a needs-setup card. To see the card at all
-  you need a `configure` moment whose audience is genuinely empty. Do NOT add a check that
-  dismissing a needs-setup card decrements the open-moments badge: it cannot fail, because
-  `open_moment_count` counts `moment.emailable > 0` and `moments_needing_setup` counts
-  `moment.emailable === 0`, so a needs-setup moment was never in the open count.
+**EMPTY as of 2026-08-20, and that is the correct state.** The last occupant
+(`mkt-moment-setup`) shipped and moved to Tier 3b. An empty Tier 6 means nothing is
+queued-but-unshipped, not that nothing is owed: the owed work is up in Tier 3b where it
+belongs.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
@@ -1092,8 +1366,29 @@ spends rediscovering that nobody knows it.
 
 ## How to use this
 
-Work top-down. Tier 1 is where being wrong costs money, and Tier 4 items are gates — doing
-the gated thing first is how the fence charges derive from unreviewed recipes.
+**Start by checking this file against production, before reading a single entry.** The
+status block names the sha it was written against. Anything shipped since then is live,
+unwalked, and invisible here:
+
+```
+git log --format='%h %ad %s' --date=short <sha from the status block>..origin/main -- server client/src
+```
+
+If that returns anything, the tiers below are incomplete and the first job of the session
+is to add the missing entries, not to walk something. This is not hypothetical: it is
+exactly how a 7-lane admin section and a set of live voice changes reached production on
+2026-08-20 with no entry in the one file that is supposed to track them. Nothing in the
+pipeline writes here automatically, so the gap opens silently every time.
+
+Then work top-down. Tier 1 is where being wrong costs money, and Tier 4 items are gates —
+doing the gated thing first is how the fence charges derive from unreviewed recipes.
 
 When you finish one, tick it and delete it. When a walk finds a defect, the defect goes to
 the fix list, not here. This file should shrink.
+
+**Two rules this file keeps re-learning the hard way:**
+- **Never write a relative time** ("tonight", "today", "five days now"). It is wrong the
+  next morning. Date-stamp everything.
+- **Never write a push-state verdict** ("merged but NOT pushed"). It is wrong at the next
+  push and it makes an available walk read as blocked. Write the check instead:
+  `git merge-base --is-ancestor <sha> origin/main`.
