@@ -1,4 +1,9 @@
 'use strict';
+// dotenv BEFORE anything that reaches ../db. Without it DATABASE_URL is unset,
+// pg falls back to a local socket, and every DB-touching test in this file dies
+// on ECONNREFUSED 127.0.0.1:5432 -- which is how this whole suite sat silently
+// red since it was written (found 2026-08-20).
+require('dotenv').config();
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const { pool } = require('../db');

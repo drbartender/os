@@ -5646,6 +5646,68 @@ Claude fleet passed the code and flagged only the adjacent DOC problem (the swit
 a full revert). The decorrelated reviewer named the caller-facing consequence. This is the
 second time the cross-LLM pass has caught something the fleet did not.
 
+# NINE TEST SUITES HAVE NEVER RUN, AND SIX OF THEM COVER A MONEY FEATURE (found 2026-08-20, FIXED same day, lane `dead-suites-dotenv`)
+
+Found by accident, which is the part worth keeping: the rule is "run the suites a change
+reaches", so after the CANT ordering fix I ran the adjacent SMS suites, and
+`smsConsent.test.js` came back **13 pass / 12 fail**. Every failure was
+`ECONNREFUSED 127.0.0.1:5432`. The file never calls `require('dotenv').config()`, so
+`DATABASE_URL` is unset, `pg` falls back to a local socket, and every DB-touching test in it
+dies before it asserts anything. It is the exact failure `scripts/worktree-new.js` documents in
+its own header, discovered on a lane 2026-07-26 and never swept for.
+
+**Sweeping for it found eight more, and the shape is worse than one stray file:**
+
+| suite | added | assertions revived |
+|---|---|---|
+| `server/utils/serviceExtensionPricing.test.js` | 2026-08-03 | 15 |
+| `server/utils/serviceExtensionSweep.test.js` | 2026-08-03 | 12 |
+| `server/utils/serviceExtensionSettle.test.js` | 2026-08-03 | 11 |
+| `server/utils/serviceCurfew.test.js` | 2026-08-06 | 16 |
+| `server/utils/eventEndInstant.curfew.test.js` | 2026-08-06 | 13 |
+| `server/utils/eventEndInstant.test.js` | 2026-08-06 | 5 |
+| `server/routes/serviceExtensions/create.test.js` | 2026-08-03 | 8 |
+| `server/routes/serviceExtensions/admin.test.js` | 2026-08-03 | 8 |
+| `server/utils/smsConsent.test.js` | 2026-07-22 | 25 |
+
+**Eight of the nine are the SERVICE EXTENSION feature and its curfew engine** — a money
+feature that shipped 2026-08-04 across five lanes, with per-lane fleets that caught two money
+blockers. Its own test suite has produced zero signal since the day it was written. The ninth
+is the SMS consent log, the compliance evidence we would hand a carrier in a dispute.
+
+**Stated precisely, because it would be easy to overstate: no bug was found.** All 113
+assertions pass the moment the suites can connect. The defect is not in the code they cover, it
+is that they were covering nothing. A green suite that cannot reach a database is
+indistinguishable from a green suite that ran, unless someone reads the pass count — 13 of 25
+looks like a suite, not like a corpse.
+
+**Fix: one line per file**, `require('dotenv').config()` ahead of anything that reaches
+`../db`, matching what every other DB-touching suite in the tree already carries.
+
+**The sweep was closed, not sampled.** All 359 server test files were partitioned: 279 already
+call dotenv; the other 80 were each RUN, and every one reported zero `ECONNREFUSED` and zero
+failures. Three of them (`presenceActivity`, `presenceScheduler`, `presenceNotify`) mention
+`pool` but inject a fake one, so they are correct as written. The nine above were the complete
+dead set.
+
+**Why nothing caught this, which is the reusable part:**
+
+1. **`npm test` is not a gate.** `.husky/pre-push` runs `scripts/push-gate.js`, which runs the
+   MONEY smoke list plus the client build. None of these nine is on the money smoke list, so
+   the only thing that would have executed them is someone running the full suite by hand.
+2. **The failure mode is a pass count, not a red X.** Nobody diffs pass counts between runs, and
+   a suite that has been dead since birth has no earlier count to be compared against.
+3. **This file already has a sibling entry for the adjacent gap** ("STRUCTURAL GAP this exposed:
+   no gate runs non-money suites against a prod-shaped DB"). That one asks whether the non-money
+   suites run against the right DATABASE. This one is one level below it: whether they run at all.
+
+**Follow-up worth considering, NOT built here** (it is a gate change, and gate changes are their
+own risk): a cheap CI check that fails when a `*.test.js` reaching `../db` does not load dotenv.
+It is a two-line grep and it is exactly the shape of thing that would have caught all nine on
+the day each was written. Recorded rather than shipped because `scripts/push-gate.js` is
+sensitive-listed and a new hard-failing check belongs in a deliberate lane, not a drive-by.
+
+
 # SESSION WRAP 2026-08-19 — read this first if you are picking the work back up
 
 **STATE.** `origin/main` is at `23e8c1fa` (31 commits pushed today, `d61c62b7..23e8c1fa`). **3
