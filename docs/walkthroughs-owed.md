@@ -577,7 +577,29 @@ automated, **re-derive the cohort at the top of any walk session** rather than t
 the tiers: `git log --format='%h %ad %s' --date=short <the sha this file names>..origin/main -- server client/src`
 lists every code commit live in prod that this file may not know about.
 
-- [ ] **THE ADMIN STAFF HUB — 7 lanes, shipped and pushed 2026-08-20.** Roster, Hiring,
+- [~] **THE ADMIN STAFF HUB: LOOK-AT-IT HALF PASSED 2026-08-20 (Zul). MONEY SEAMS STILL OWED.**
+      **VERDICT on the consolidation: it reads as ONE HUB**, not four old pages stapled under
+      a shared header. That is what a consolidation walk is for and no test produces it.
+      **Every factual prediction in this entry held**, checked screen by screen: the subtitle
+      string matched exactly, Roster read 16 (not 18, admins excluded by the `role IN
+      ('staff','manager')` bind), Hiring showed two cards with an EMPTY Onboarding column,
+      Payroll rendered the `$0.00` CurrentWeekCard with its zero state suppressed, the Tips
+      ledger held exactly the one $6.00 tip, and both `staff_reviews` rows appeared under
+      RESOLVED.
+      She flagged "2 reviews logged" against this entry's "zero pending", which is exactly the
+      shape a real defect would take and was worth raising. Verified against prod: both rows
+      are `status='confirmed'` (id 1 thumbtack 8/17 auto-ingested, id 2 google 8/6 logged by
+      Dallas 8/20), so zero PENDING and two RESOLVED are the same fact stated two ways. Had
+      they rendered as pending workbench cards offering Confirm again, that WOULD have been a
+      bug. They did not.
+      **STILL OWED, and blocked on data rather than on a human: BOTH MONEY SEAMS.** With zero
+      pending reviews there is no workbench card, so the Confirm button is unreachable and its
+      three-way label ladder (`Confirm and pay $X` / `Confirm, $X waits for the next open run`
+      / `Confirm, no bounty`) and its "Save names first" dirty-state guard were NOT exercised.
+      Award the quarter was correctly disabled twice over and deliberately not clicked, since
+      `force: true` locks a winner permanently. Re-walk both the moment a real pending review
+      lands while a pay period is open, which is the same condition that heals the $20 gap.
+      Original entry follows. **7 lanes, shipped and pushed 2026-08-20.** Roster, Hiring,
       Payroll, Reviews and Tips consolidated under one sidebar entry. Lanes `sh-a-server`
       (`c4bb2d1f`) through `sh-g-fidelity` (`c2b05d8d`), plus `4dbe9c5b`, `ba9ea23b`,
       `b97c7490` and `c0dcd5b7`. Benchmark artifact
