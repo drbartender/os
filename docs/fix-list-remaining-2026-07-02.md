@@ -2504,13 +2504,21 @@ These are not from the original ledger. They surfaced while verifying its
     money gap, and it is closed as an answer rather than a repair.
   - **4 are invoice-free by design**: 597, 598, 604, 629, all created 2026-07-07 with
     `external_paid` equal to `amount_paid`. That is the cc-import phase-3 transfer shape.
-  - **7 are clientless test rows sitting in PROD**: 322, 329, 334, 400, 411, 412, 420, every one
-    created 2026-05-28 with `client_id` NULL, `guest_count` 50, most with an `event_date` of
-    2026-05-15 that was already in the past when the row was written. They carry **$12,400 of
-    `total_price` at status `completed` with zero payments and zero invoices.** Not part of this
-    entry and not a defect, but worth its own check: any completed-revenue metric that reads
-    `total_price` rather than collected money counts phantom dollars from these. NOT actioned
-    here, because deleting prod rows is Dallas's call and nobody has confirmed they are junk.
+  - ~~**7 are clientless test rows sitting in PROD**~~ **DELETED 2026-08-20 on Dallas's call.**
+    322, 329, 334, 400, 411, 412, 420 — all `client_id` NULL, `guest_count` 50, most with an
+    `event_date` already in the past when written, carrying **$12,400 of `total_price` at status
+    `completed` with zero payments and zero invoices**.
+    **A blind `DELETE FROM proposals` would have gone wrong two ways, so this is worth reading
+    before anyone deletes a proposal again.** `proposals` has 18 inbound FKs: ten CASCADE, two
+    RESTRICT, and six **SET NULL — including `shifts`**. So deleting these would have left seven
+    shifts alive with `proposal_id` NULL, orphaned rather than removed, and silently cascaded
+    away a drink plan. Done in one transaction instead: shift_requests, then shifts, then
+    proposals, each guarded on having no `payout_events`, `tips`, payments, invoices or refunds.
+    Verified after: 0 of the 7 proposals remain, 0 of their 7 shifts remain, **0 orphaned shifts**,
+    and the cascade took drink plan 81 plus two activity-log rows as expected.
+    Noted for the record rather than buried: proposal 412 carried shift request 355, APPROVED for
+    user 12 (Dallas), plus a draft drink plan, both from 2026-06-22. No payout events, tips,
+    payments or invoices anywhere in the set, so nothing of monetary value was removed.
 
 ### Unbuilt projects with thinking already done
 
