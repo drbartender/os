@@ -3016,7 +3016,26 @@ Do NOT resolve `DRBARTENDER-SERVER-21` as noise (see the 2026-08-12 duty-accrual
   - `Limoncello` — Limoncello Lemon Drop (no limoncello row exists)
   - `Red Wine` — Red Sangria (only `cabernet-sauvignon` exists, aliased "cabernet sauvignon")
 
-## NEW, found by the same pass: `Smoked Salt` silently resolves to Smoked Chips (2026-08-19)
+## ~~NEW, found by the same pass: `Smoked Salt` silently resolves to Smoked Chips~~ — TRIGGER REMOVED 2026-08-20 (Dallas: "smoked salt can die. We don't have it and don't use it.")
+
+**Do NOT add a `smoked-salt` par_items row.** That was the cheap fix proposed below and Dallas
+killed it at the source: DRB does not stock smoked salt and does not use it. The resolver defect
+is real but goes back to DORMANT once no recipe asks for the ingredient.
+
+**Still owed, and it belongs to the recipe session, not to code:** `smoky-pineapple-sour` still
+carries `{ ingredient: 'Smoked Salt', note: 'smoked-salt rim', amount: 1, unit: 'each' }` as its
+fourth row in prod. The drink is `recipe_review = 'draft'` and `is_active = false`, so nothing
+client-facing reads it today, and it is one of the three mocktail drafts awaiting Dallas's
+yes/no. That row needs removing (or replacing with a rim DRB actually stocks) in the same sitting
+— deliberately NOT edited from the fix-list side, because recipes and ingredients are being
+worked in another window.
+
+**The underlying resolver hazard is unchanged and stays recorded**, because the next ingredient
+whose name contains a shorter alias will hit it the same way: the substring fallback matched
+`smoked` (the wood-chips row) inside `smoked salt`, and the head-noun preference could not save
+it because the last token `salt` appears in no alias. Original write-up follows.
+
+### Original (2026-08-19)
 
 `resolveRecipeRow({ingredient: 'Smoked Salt'})` returns **Smoked Chips (`smoked-chips`)**. The
 exact-alias pass misses, then the substring fallback matches the alias `smoked` on the wood-chips
@@ -5433,8 +5452,18 @@ Not a gate risk either way — `ci-smoke` resets from prod and never had these r
    not live — but the switch can no longer be used as a switch.
 4. **`staffPortal.js` is 997 lines**, three under the hard cap, and the ratchet already blocked a
    commit there once this session.
-5. Smaller: delete the now-unreachable cancel branch in `shifts.handlers.js:120`; four BEO spec
-   docs still describe `PUT /shifts/:id` cancellation as live.
+5. Smaller: delete the now-unreachable cancel branch in `shifts.handlers.js` (now `:127`, not
+   `:120` — the code there carries its own comment saying deletion is on this list).
+   ~~four BEO spec docs still describe `PUT /shifts/:id` cancellation as live.~~
+   **DROPPED 2026-08-20 — CONVENTION DECISION (Dallas): "not worried about the spec once the item
+   has been built and off living its best life."** Specs are POINT-IN-TIME records of what was
+   decided and when; they are not retro-edited to track code that moved afterward. This was
+   already the demonstrated behavior (the earlier staffPortal sibling extraction never updated its
+   spec either) and is now explicit. Applies to every spec in the tree, not just the BEO one.
+   For the record, since the entry's count was imprecise: it is four LOCATIONS in ONE spec
+   (`docs/superpowers/specs/2026-05-25-beo-design.md` at `:290`, `:355`, `:508`, `:637-638`) plus a
+   line in the frozen `docs/staff-portal-beo-project.md` tracker — not four separate spec docs.
+   None of them need touching.
 
 ## `staffPortal/paymentMethods.js` writes bank PII and is NOT sensitive-listed (found 2026-08-20)
 
