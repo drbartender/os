@@ -540,7 +540,7 @@ nobody has opened at all.
       keyboard and expecting it, or run it against the OTHER admin account.
       GENUINELY UNPROVEN, and the whole reason this box is open:
       3. ~~Airplane mode, cold launch within 30 minutes of last use: restored route with
-         staleness lines, no Login bounce.~~ **WALKED 2026-08-19 (Dallas). SPLIT VERDICT.**
+         staleness lines, no Login bounce.~~ **WALKED 2026-08-19 (ZUL, on her own phone and account). SPLIT VERDICT.**
          Route restore PASSES: offline cold launch landed on the same page, no Login bounce,
          so the `981b09ef` identity bound behaves. Staleness lines FAIL, and not on this
          screen only: they do not exist anywhere in the product. `formatStaleAt` is exported
@@ -554,7 +554,7 @@ nobody has opened at all.
          same route WITH data, no lock, no Login bounce. Route restore is now genuinely proven
          offline.
       4. ~~Airplane mode, cold launch with the lock due: lock screen explains offline unlock
-         needs a connection; password path visible.~~ **WALKED 2026-08-19 (Dallas). PASSES on
+         needs a connection; password path visible.~~ **WALKED 2026-08-19 (ZUL, on her own phone and account). PASSES on
          the lock itself, and surfaced a real defect on the way out.** Lock fired after a
          30-minute background. It FULLY OCCLUDED, no data behind it, so the spec section 8
          requirement holds. Unlock offline gave "You are offline. Unlocking needs a
@@ -567,14 +567,28 @@ nobody has opened at all.
          30-minute lock at all) until the user re-enrolls. Verified by a 3-lens adversarial
          panel; my first write-up of it was wrong three ways and the corrections are in that
          entry. Do not re-walk this leg; walk the FIX when it ships.
-      5. From desktop Settings > Security: revoke the phone passkey, confirm the desktop
+      5. ~~From desktop Settings > Security: revoke the phone passkey, confirm the desktop
          logs out, the phone's next unlock fails to the password path, and re-enrollment
-         works. No automated test covers this leg. **STILL OWED — this is now the ONLY
-         unproven leg.** Note the re-enrollment half was proven incidentally on 2026-08-19
-         (Dallas re-enrolled after the step-4 purge and it succeeded via the
-         `InvalidStateError` -> `{alreadyEnrolled:true}` path, no duplicate credential row),
-         so what remains is specifically the REVOKE: does the desktop log itself out, and does
-         the phone's next unlock fall to the password path.
+         works.~~ **WALKED 2026-08-19 (ZUL, on her own account). PASSES.** No automated test
+         covers this leg, so this is the only proof it has. Revoke deleted the credential row
+         and logged the session out on the spot, which is the designed global-logout blast
+         radius (`webauthn.js:184` delete, `:194` `token_version` bump). Re-enrollment then
+         succeeded. Verified against prod rather than taken on report: her original credential
+         (id 1, enrolled 2026-08-16) is GONE and a fresh row (id 3) was written at
+         2026-08-20 01:31Z.
+         **WHOSE ACCOUNT MATTERS HERE, and the record was wrong for an hour.** Every leg of
+         this walk on 2026-08-19 was run by ZUL on HER phone and HER account, not by Dallas.
+         Prod settles it: Dallas's credential (id 2) still shows `last_used` 2026-08-19
+         14:50Z, untouched all evening, so no leg tonight asserted his passkey. The mechanism
+         is account-agnostic, so proving it on her account proves the code and Dallas does NOT
+         need to re-walk it. What is NOT proven is anything specific to his device.
+         The revoke is correctly scoped and cannot reach another user's credential: the list
+         is `WHERE user_id = $1` (`webauthn.js:164-171`) and the delete is
+         `WHERE id = $1 AND user_id = $2` (`:183-186`). An orchestrator alarm that the wrong
+         account had been revoked was WRONG and is recorded here so nobody re-raises it.
+         One sub-check went unobserved: whether the phone's next unlock falls cleanly to the
+         password path was skipped, because re-enrollment happened first. Low value, and the
+         offline path already exercised the failure branch.
       **PROTOCOL TRAP, cost an hour on 2026-08-19, not in the original script:**
       (a) **Android airplane mode does NOT reliably kill WiFi.** It remembers the radio state
       and will leave WiFi on or auto-reconnect, so the device stays online and every "offline"
@@ -589,7 +603,7 @@ nobody has opened at all.
       ~~FOLDED IN FROM THE ma-a/ma-b ITEM, because these legs are only walkable in the same
       offline session: the Desktop-view toggle round trip, and the offline-resume proof that
       an offline cold launch lands on the restored route behind the lock rather than
-      bouncing to Login.~~ **BOTH FOLDED-IN LEGS PASSED 2026-08-19 (Dallas).**
+      bouncing to Login.~~ **BOTH FOLDED-IN LEGS PASSED 2026-08-19 (ZUL, on her own phone and account).**
       Offline-resume: proven on the step 3 re-run above.
       Desktop-view toggle round trip: full round trip on Events, BOTH directions persisted
       across a reload, which is the half a tap-and-tap-back would never catch. Into desktop
