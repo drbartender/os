@@ -5452,8 +5452,27 @@ Not a gate risk either way — `ci-smoke` resets from prod and never had these r
    not live — but the switch can no longer be used as a switch.
 4. **`staffPortal.js` is 997 lines**, three under the hard cap, and the ratchet already blocked a
    commit there once this session.
-5. Smaller: delete the now-unreachable cancel branch in `shifts.handlers.js` (now `:127`, not
-   `:120` — the code there carries its own comment saying deletion is on this list).
+5. ~~Smaller: delete the now-unreachable cancel branch in `shifts.handlers.js`.~~ **DONE
+   2026-08-20, lane `shift-branch-and-paths`** (merged; not pushed as of this line — verify with
+   `git merge-base --is-ancestor <sha> origin/main`). `shifts.handlers.js` 300 -> 276. The fork
+   on `status === 'cancelled'` is gone and the file header, which still described it as current
+   behavior, is corrected. Nothing was lost with it: cancellation is owned by
+   `cancelOrUnassignShiftHandler` (mode='cancel') and `shiftReap.js`, and both carry their own
+   BEO suppression, which is why `suppressBeoNudgesForStaffers` and `pool.connect` both stay live
+   in that file.
+   **FLEET DELIBERATELY WAIVED (Dallas, 2026-08-20), and here is the reasoning so it does not
+   read as an oversight later.** `shifts.handlers.js` IS sensitive-listed, so the convention
+   wanted the fleet. It was waived on proportionality because the change's safety reduces to one
+   mechanically checkable fact rather than any judgment call: `status` is a `const` destructured
+   once at `:28` and never rebound (the only two apparent reassignments are SQL inside a template
+   literal and a comment), and the guard at `:60` throws unconditionally on any `status` in the
+   body — so the deleted fork could not execute. `shifts.statusGuard.test.js` (4/4) pins that
+   exact guard, so if it ever weakens the premise fails loudly instead of silently. 137 tests
+   across all 10 suites reaching `PUT /shifts/:id` are green.
+   Contrast worth keeping: the two fleets run earlier the same day both found real defects, and
+   every one of them was in an artifact Claude had AUTHORED — tests that could not fail for their
+   stated reason, a missing guard predicate, an overclaiming comment. A deletion of provably dead
+   code has almost none of that surface. Waive on that distinction, not on confidence.
    ~~four BEO spec docs still describe `PUT /shifts/:id` cancellation as live.~~
    **DROPPED 2026-08-20 — CONVENTION DECISION (Dallas): "not worried about the spec once the item
    has been built and off living its best life."** Specs are POINT-IN-TIME records of what was
