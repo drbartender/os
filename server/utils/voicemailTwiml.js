@@ -20,9 +20,11 @@ const { xmlEscape } = require('./xmlEscape');
 const { API_URL } = require('./urls');
 const { resolveLine, LINES } = require('./voicemailLine');
 
-// Zul's greeting copy, unchanged from what shipped 2026-07-24. Fixed text: it is
-// what her recorded mp3 says, and the synthetic fallback must match the voice
-// clients already hear.
+// Zul's DAY copy, re-recorded 2026-08-19 to include the press-1 offer. Fixed
+// text: it is what her mp3 says, and the synthetic fallback must match the voice
+// clients already hear, because the fallback is what plays if that recording is
+// ever killed. The 2026-07-24 script it replaced is still served at
+// /api/voice/greeting.mp3 but is no longer any slot's default.
 const GREETING_TEXT_ZUL = "Thanks for calling Dr. Bartender, this is Zul. Sorry I missed your call. Leave me a message and we'll get back to you as soon as we can. If you need to talk to somebody now, press one and I'll see if someone's available.";
 
 // Dallas's line, DAY. Approved verbatim in brainstorm 2026-08-19. This text
@@ -38,10 +40,9 @@ const GREETING_TEXT_PRIMARY = "Thanks for calling Dr. Bartender, this is Dallas.
 // client-facing hours.
 const GREETING_TEXT_PRIMARY_NIGHT = "Thanks for calling Dr. Bartender, this is Dallas. Sorry I missed your call. Leave me a message and I'll get back to you in the morning.";
 
-// Zul's line, NIGHT. Her DAY synthetic (GREETING_TEXT_ZUL, above) deliberately
-// keeps its 2026-07-24 wording, because this module's standing rule is that a
-// line's synthetic text mirrors what that line's recording says, and her bundled
-// mp3 still says the old script.
+// Zul's line, NIGHT. Same standing rule as every other slot here: a line's
+// synthetic text mirrors what that line's recording says, so this matches her
+// 2026-08-19 night take.
 const GREETING_TEXT_ZUL_NIGHT = "Thanks for calling Dr. Bartender, this is Zul. Sorry I missed your call. Leave me a message and we'll get back to you in the morning.";
 
 // Played the instant a caller presses 1, BEFORE any ringing. Its absence was a
