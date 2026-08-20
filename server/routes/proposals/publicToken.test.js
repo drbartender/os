@@ -215,6 +215,63 @@ test('Case F: an empty-string document_version is rejected and records no signat
   assert.equal(row.rows[0].client_signature_document_version, null);
 });
 
+// ─── options_available (spec 2026-08-14, proposal options drawer) ────────────
+// The entry link renders only when this flag is true, so the flag must be
+// false for every state the switch endpoint would refuse: draft/modified
+// status, a negotiated price, a signature, a grouped-and-undecided proposal.
+// The internal gate columns (total_price_override, group_id) must NOT leak.
+
+async function getPayload(token) {
+  const res = await request('GET', `/api/proposals/t/${token}`);
+  assert.equal(res.status, 200, `GET payload: expected 200, got ${res.status}: ${res.raw}`);
+  return res.body;
+}
+
+test('options_available: true for a plain switchable proposal, and gates never leak', async () => {
+  const p = await insertSignableProposal(); // status 'viewed', no override, unsigned
+  const body = await getPayload(p.token);
+  assert.equal(body.options_available, true);
+  assert.ok(!('total_price_override' in body), 'override gate column must not leak');
+  assert.ok(!('group_id' in body), 'group gate column must not leak');
+});
+
+test('options_available: false for draft and modified statuses', async () => {
+  const p = await insertSignableProposal();
+  await pool.query(`UPDATE proposals SET status = 'draft' WHERE id = $1`, [p.id]);
+  assert.equal((await getPayload(p.token)).options_available, false, 'draft');
+  await pool.query(`UPDATE proposals SET status = 'modified' WHERE id = $1`, [p.id]);
+  assert.equal((await getPayload(p.token)).options_available, false, 'modified');
+});
+
+test('options_available: false once custom-priced or signed', async () => {
+  const p = await insertSignableProposal();
+  await pool.query(`UPDATE proposals SET total_price_override = 4321 WHERE id = $1`, [p.id]);
+  assert.equal((await getPayload(p.token)).options_available, false, 'custom-priced');
+  await pool.query(
+    `UPDATE proposals SET total_price_override = NULL, client_signed_at = NOW() WHERE id = $1`,
+    [p.id]);
+  assert.equal((await getPayload(p.token)).options_available, false, 'signed');
+});
+
+test('options_available: grouped-undecided is false, grouped-decided is true', async () => {
+  const p = await insertSignableProposal();
+  const g = await pool.query(
+    `INSERT INTO proposal_groups (token) VALUES ($1) RETURNING id`,
+    [crypto.randomUUID()]);
+  const groupId = g.rows[0].id;
+  try {
+    await pool.query(`UPDATE proposals SET group_id = $1 WHERE id = $2`, [groupId, p.id]);
+    assert.equal((await getPayload(p.token)).options_available, false,
+      'undecided group: the compare page owns this client, a switch would corrupt the set');
+    await pool.query(`UPDATE proposal_groups SET chosen_proposal_id = $1 WHERE id = $2`, [p.id, groupId]);
+    assert.equal((await getPayload(p.token)).options_available, true,
+      'decided group behaves like a normal proposal');
+  } finally {
+    await pool.query(`UPDATE proposals SET group_id = NULL WHERE id = $1`, [p.id]);
+    await pool.query(`DELETE FROM proposal_groups WHERE id = $1`, [groupId]);
+  }
+});
+
 // Case G (audit BLOCKER #2) — a public sign must stamp accepted_at, or the
 // financial dashboard (metricsQueries filters accepted_at IS NOT NULL) is blind
 // to every public booking. lifecycle.js (admin path) already stamps it; the

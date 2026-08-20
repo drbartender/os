@@ -34,20 +34,15 @@ const { NotFoundError, ValidationError } = require('../../utils/errors');
 const { requireUuidToken } = require('../../utils/tokens');
 const { priceProposedState } = require('../../utils/changeRequests');
 const { BYOB_BUNDLE_SLUGS, BUNDLE_INCLUDED, visibleAddonsFor } = require('../../utils/proposalRules');
-const { storedToInputCount } = require('../../utils/addonQuantity');
+// The pricing identity shared with the switch endpoint: PROPOSAL_SELECT,
+// safeIds, and the quantity-inversion wrapper live there now so quote and
+// commit read the same columns and recover the same inputs by construction.
+const {
+  PROPOSAL_SELECT, fitsPackage, computeOwnHidden, overrideOnlyBartenders,
+  safeIds, recoverAddonInputs,
+} = require('./optionsPricingShared');
 
 const router = express.Router();
-
-// Everything priceProposedState reads off the proposal. A column missed here
-// prices as undefined and silently drops a discount, the syrups, or the
-// gratuity mandate floor, so this list is load-bearing rather than convenient.
-const PROPOSAL_SELECT = `
-  p.id, p.token, p.status, p.package_id, p.total_price, p.total_price_override,
-  p.guest_count, p.event_duration_hours, p.num_bars, p.num_bartenders,
-  p.event_date, p.event_start_time, p.event_location, p.event_type,
-  p.event_type_custom, p.event_type_category,
-  p.adjustments, p.pricing_snapshot, p.client_provides_glassware,
-  p.gratuity_rate, p.tip_jar, p.gratuity_floor_rate, p.client_signed_at`;
 
 // Mirrors the sign endpoint's own guard. The comparison is offered only while
 // the proposal could still actually be signed; once signed, the configuration
@@ -58,25 +53,14 @@ function notComparable(reason) {
   return { comparable: false, reason, options: [], tiers: [], extras: [] };
 }
 
-/** Integer ids only — the body is public input that selects priced rows. */
-function safeIds(raw) {
-  if (!Array.isArray(raw)) return [];
-  const out = [];
-  for (const v of raw.slice(0, 40)) {
-    const n = Number(v);
-    if (Number.isInteger(n) && n > 0) out.push(n);
-  }
-  return [...new Set(out)];
-}
-
-router.post(
-  '/t/:token/options',
-  requireUuidToken('token', 'This proposal is no longer available'),
-  optionsQuoteLimiter,
-  asyncHandler(async (req, res) => {
+/** The whole quote as a callable: the route below serves it, and the switch
+ *  endpoint's TOTAL_CHANGED 409 carries it as the fresh quote (publicSwitch.js)
+ *  so a price conflict re-shows real numbers instead of a shrug. Throws
+ *  NotFoundError on an unknown token; returns the response body otherwise. */
+async function buildOptionsQuote(token, body = {}) {
     const { rows: [proposal] } = await pool.query(
       `SELECT ${PROPOSAL_SELECT} FROM proposals p WHERE p.token = $1`,
-      [req.params.token]
+      [token]
     );
     if (!proposal) throw new NotFoundError('This proposal is no longer available');
 
@@ -85,10 +69,10 @@ router.post(
     // proposals are not offered the comparison at all rather than being offered
     // it and rejected at the end.
     if (proposal.total_price_override !== null && proposal.total_price_override !== undefined) {
-      return res.json(notComparable('custom_pricing'));
+      return notComparable('custom_pricing');
     }
     if (proposal.client_signed_at || UNSIGNABLE.includes(proposal.status)) {
-      return res.json(notComparable('already_signed'));
+      return notComparable('already_signed');
     }
 
     // One fetch each, then priced in memory. The proposal's OWN package is
@@ -129,17 +113,8 @@ router.post(
       'SELECT id, slug, billing_type, minimum_hours FROM service_addons WHERE id = ANY($1::int[])',
       [currentAddonRes.rows.map(r => r.addon_id)]
     )).rows;
-    const currentQuantities = {};
-    const currentVariants = {};
-    for (const r of currentAddonRes.rows) {
-      if (r.variant !== null && r.variant !== undefined) currentVariants[String(r.addon_id)] = r.variant;
-      const addon = allAddonRows.find(a => a.id === r.addon_id);
-      if (!addon) continue;
-      const count = storedToInputCount(addon, r.quantity, durationHours, {
-        lineTotal: r.line_total, rate: r.rate,
-      });
-      if (count !== null && count > 1) currentQuantities[String(r.addon_id)] = count;
-    }
+    const { quantities: currentQuantities, variants: currentVariants }
+      = recoverAddonInputs(currentAddonRes.rows, allAddonRows, durationHours);
 
     const tierAddons = catalog.addons.filter(a => BYOB_BUNDLE_SLUGS.includes(a.slug));
     const tierIds = new Set(tierAddons.map(a => a.id));
@@ -147,13 +122,29 @@ router.post(
     // Selection. First load carries no body, so the proposal's own add-ons are
     // the starting state: whatever Dallas already put on the quote stays on it
     // rather than being silently dropped the moment the client looks around.
-    const bodyGiven = req.body && (req.body.extra_addon_ids !== undefined || req.body.tier_addon_id !== undefined);
+    const bodyGiven = body && (body.extra_addon_ids !== undefined || body.tier_addon_id !== undefined);
     const selectedExtras = bodyGiven
-      ? safeIds(req.body.extra_addon_ids).filter(id => !tierIds.has(id))
+      ? safeIds(body.extra_addon_ids).filter(id => !tierIds.has(id))
       : currentAddonIds.filter(id => !tierIds.has(id));
     const requestedTier = bodyGiven
-      ? (tierIds.has(Number(req.body.tier_addon_id)) ? Number(req.body.tier_addon_id) : null)
+      ? (tierIds.has(Number(body.tier_addon_id)) ? Number(body.tier_addon_id) : null)
       : (currentAddonIds.find(id => tierIds.has(id)) ?? null);
+
+    // The proposal's own hidden add-ons (parking fee; over-100-guest glassware
+    // Dallas added by hand), as catalog objects. Event facts, not package
+    // features: they ride EVERY option where applies_to fits, so the drawer's
+    // deltas compare fee against fee (spec 2026-08-14, decision 10). Computed
+    // once against the CURRENT package: "hidden" means the client could not
+    // have picked it on the bar they are standing on.
+    const currentPkgForHidden = catalog.packages.find((pk) => pk.id === proposal.package_id);
+    const ownHiddenObjs = currentPkgForHidden
+      ? computeOwnHidden({
+        catalog, currentPkg: currentPkgForHidden, guestCount: proposal.guest_count,
+        currentAddonIds,
+        selectionIds: requestedTier ? [...selectedExtras, requestedTier] : selectedExtras,
+        tierIds,
+      })
+      : [];
 
     // Price one candidate package. Rule violations are a per-option verdict, not
     // a failed request: a hosted package under the 25-guest floor should render
@@ -162,6 +153,11 @@ router.post(
       const isByob = pkg.category === 'byob';
       const tierForPkg = isByob && requestedTier ? requestedTier : null;
       let addonIds;
+      // What fell off THIS option and why the client should hear about it:
+      // their own hidden add-ons that cannot apply here, plus any selected
+      // extra the visibility gate strips. Today that stripping is silent and
+      // correct; the drawer needs the reason on the wire.
+      let dropped = [];
 
       if (pkg.id === proposal.package_id) {
         // The option the client is STANDING ON must reproduce the total printed
@@ -200,7 +196,18 @@ router.post(
             addons: catalog.addons, pkg, guestCount: Number(proposal.guest_count), addonIds: gateIds,
           }).map(a => a.id)
         );
-        addonIds = selectedExtras.filter(id => visibleIds.has(id));
+        const ridingHidden = ownHiddenObjs.filter(a => fitsPackage(a, pkg));
+        const droppedHidden = ownHiddenObjs.filter(a => !fitsPackage(a, pkg));
+        const invisibleExtras = selectedExtras
+          .filter(id => !visibleIds.has(id))
+          .map(id => catalog.addons.find(a => a.id === id))
+          .filter(Boolean);
+        dropped = [...droppedHidden, ...invisibleExtras]
+          .map(a => ({ addon_id: a.id, name: a.name }));
+        addonIds = [...new Set([
+          ...selectedExtras.filter(id => visibleIds.has(id)),
+          ...ridingHidden.map(a => a.id),
+        ])];
         if (tierForPkg) addonIds.push(tierForPkg);
       }
 
@@ -214,10 +221,13 @@ router.post(
           // one field (unlike guests/hours/bars), so an admin staffing override
           // would be silently re-derived from the 1:100 ratio and the quote
           // would drop the extra-bartender charge AND the gratuity that rides
-          // on the crew size. Pass it explicitly.
-          num_bartenders: proposal.num_bartenders ?? null,
+          // on the crew size. Pass it explicitly, but only when it is a real
+          // override: a provable derivation must re-derive per package or a
+          // stale crew count prices phantom over-ratio bartenders that the
+          // switch's acknowledged-total gate would AGREE with.
+          num_bartenders: overrideOnlyBartenders(proposal),
         }, pool, catalog);
-        return { total: Number(snapshot.total), available: true, reason: null };
+        return { total: Number(snapshot.total), available: true, reason: null, dropped };
       } catch (err) {
         // A rule violation is a verdict about ONE option; anything else is a
         // real fault and must not be swallowed into a cheerful badge.
@@ -225,7 +235,7 @@ router.post(
         // `err.status !== 400` never matched and one unpriceable option failed
         // the whole request.)
         if (!(err instanceof ValidationError)) throw err;
-        return { total: null, available: false, reason: err.message || 'Not available for this event' };
+        return { total: null, available: false, reason: err.message || 'Not available for this event', dropped };
       }
     };
 
@@ -258,6 +268,7 @@ router.post(
         total: echoContract ? contractTotal : (priced.available ? priced.total : null),
         available: echoContract ? true : priced.available,
         reason: priced.reason,
+        dropped: priced.dropped,
       });
     }
 
@@ -267,6 +278,11 @@ router.post(
     const byobPkg = catalog.packages.find(p => p.category === 'byob');
     const tiers = [];
     if (byobPkg) {
+      // Loop-invariant: which of the proposal's own hidden add-ons fit BYOB
+      // does not change per tier, so compute it once rather than per iteration.
+      const ridingHiddenByob = ownHiddenObjs
+        .filter(a => fitsPackage(a, byobPkg))
+        .map(a => a.id);
       for (const t of [null, ...tierAddons]) {
         const gateIds = t ? [...selectedExtras, t.id] : selectedExtras;
         const visibleIds = new Set(
@@ -274,7 +290,14 @@ router.post(
             addons: catalog.addons, pkg: byobPkg, guestCount: Number(proposal.guest_count), addonIds: gateIds,
           }).map(a => a.id)
         );
-        const ids = selectedExtras.filter(id => visibleIds.has(id));
+        // Same configuration as the BYOB option card: the client's visible
+        // selection PLUS their own riding hidden add-ons, priced under the
+        // same override-only staffing rule. Without both, the tier strip and
+        // the option card disagree about the same bar.
+        const ids = [...new Set([
+          ...selectedExtras.filter(id => visibleIds.has(id)),
+          ...ridingHiddenByob,
+        ])];
         if (t) ids.push(t.id);
         let total = null;
         try {
@@ -283,7 +306,7 @@ router.post(
             addon_ids: ids,
             addon_quantities: currentQuantities,
             addon_variants: currentVariants,
-            num_bartenders: proposal.num_bartenders ?? null,
+            num_bartenders: overrideOnlyBartenders(proposal),
           }, pool, catalog)).total);
         } catch (err) {
           if (!(err instanceof ValidationError)) throw err;
@@ -341,7 +364,7 @@ router.post(
         selected: selectedExtras.includes(a.id),
       }));
 
-    res.json({
+    return {
       comparable: true,
       reason: null,
       event: {
@@ -359,8 +382,19 @@ router.post(
       options,
       tiers,
       extras,
-    });
+    };
+}
+
+router.post(
+  '/t/:token/options',
+  requireUuidToken('token', 'This proposal is no longer available'),
+  optionsQuoteLimiter,
+  asyncHandler(async (req, res) => {
+    res.json(await buildOptionsQuote(req.params.token, req.body || {}));
   })
 );
 
 module.exports = router;
+// The switch endpoint's TOTAL_CHANGED 409 carries a fresh quote built by the
+// exact function that serves the quote route, never a reimplementation.
+module.exports.buildOptionsQuote = buildOptionsQuote;

@@ -316,6 +316,16 @@ server/index.js
 server/routes/proposals/publicOptions.js
 server/utils/changeRequests.js
 
+# The switch seam (2026-08-14 proposal options drawer). publicSwitch.js is an
+# unauthenticated token-gated WRITE to package/total/snapshot (the drawer's
+# "Switch to this package"); optionsPricingShared.js is the pricing identity
+# quote and switch both trust; publicToken.js now carries the sign-time total
+# assertion AND builds the public payload the switch returns. Sensitivity
+# follows the code.
+server/routes/proposals/publicSwitch.js
+server/routes/proposals/optionsPricingShared.js
+server/routes/proposals/publicToken.js
+
 # The GATE MACHINERY itself (2026-08-14). These decide WHETHER the money suites
 # run, so a bug here does not weaken one money path, it silently removes the
 # check on ALL of them, and the failure is invisible: a push that skips the gate

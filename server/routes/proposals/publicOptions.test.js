@@ -368,3 +368,130 @@ test('an unknown token 404s rather than leaking', async () => {
   const res = await request('POST', `/api/proposals/t/${crypto.randomUUID()}/options`, { body: {} });
   assert.equal(res.status, 404);
 });
+
+// ─── Hidden add-ons ride every option (spec 2026-08-14, decision 10) ─────────
+
+test('own hidden add-ons ride EVERY option, not just the current card', async () => {
+  // A parking fee is an event fact, not a package feature: the venue charges
+  // for parking no matter which bar we run. It must be inside every option's
+  // price, or the drawer's deltas compare a fee-carrying contract against
+  // fee-free alternatives and every "less than yours" line overstates itself.
+  const hidden = await addonIdBySlug('parking-fee');
+  assert.ok(hidden, 'seeded parking-fee exists');
+  const { rows: [pf] } = await pool.query(
+    'SELECT rate, applies_to, billing_type FROM service_addons WHERE id = $1', [hidden]);
+  assert.equal(pf.applies_to, 'all', 'parking-fee applies to every package (catalog fact this test leans on)');
+  const fee = Number(pf.rate);
+  assert.ok(fee > 0, 'parking-fee carries a rate');
+
+  const sel = { extra_addon_ids: [], tier_addon_id: null };
+  const control = await request('POST', `/api/proposals/t/${token}/options`, { body: sel });
+
+  await pool.query(
+    `INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
+     VALUES ($1, $2, 'Parking Fee', $3, $4, 1, $4)
+     ON CONFLICT (proposal_id, addon_id) DO NOTHING`,
+    [proposalId, hidden, pf.billing_type, fee]);
+  const withFee = await request('POST', `/api/proposals/t/${token}/options`, { body: sel });
+
+  // The fee is per_staff in the seeded catalog, so its dollar amount is the
+  // ENGINE's business (staff count x rate), not this test's. What the test
+  // pins: the fee lands on every option, and by the same amount it lands on
+  // the current card, which has always carried it. At 120 guests every package
+  // derives the same crew, so the deltas must agree exactly.
+  const currentDelta = +(withFee.body.options.find((o) => o.is_current).total
+    - control.body.options.find((o) => o.is_current).total).toFixed(2);
+  assert.ok(currentDelta >= fee,
+    `the fee visibly lands on the current card (delta ${currentDelta}, rate ${fee})`);
+  for (const opt of withFee.body.options.filter((o) => o.available)) {
+    const before = control.body.options.find((o) => o.package_id === opt.package_id);
+    if (!before || !before.available) continue;
+    const delta = +(opt.total - before.total).toFixed(2);
+    assert.equal(delta, currentDelta,
+      `${opt.name}: the hidden fee must be inside this option's price (delta ${delta}, expected ${currentDelta})`);
+    assert.deepEqual(opt.dropped, [],
+      `${opt.name}: a fee that rides is not dropped`);
+  }
+
+  // Both pricing call sites agree: with no tier selected, the BYOB option and
+  // the "Bar service only" tier are the same configuration and must be the
+  // same number, fee included.
+  const byobOpt = withFee.body.options.find((o) => o.category === 'byob');
+  const bareTier = withFee.body.tiers.find((t) => t.addon_id === null);
+  assert.equal(bareTier.total, byobOpt.total,
+    'tiers loop and options loop price the same configuration identically');
+
+  await pool.query('DELETE FROM proposal_addons WHERE proposal_id = $1 AND addon_id = $2',
+    [proposalId, hidden]);
+});
+
+test('an extra that cannot apply to an option is NAMED in its dropped list', async () => {
+  // Today the visibility gate silently drops a byob-only extra from hosted
+  // options (the price is right, the client just never learns why). The drawer
+  // needs the reason on the wire: per-option `dropped` names what fell off.
+  const garnishId = await addonIdBySlug('garnish-package-only');
+  assert.ok(garnishId, 'seeded garnish add-on exists');
+
+  const res = await request('POST', `/api/proposals/t/${token}/options`, {
+    body: { extra_addon_ids: [garnishId], tier_addon_id: null },
+  });
+  const hosted = res.body.options.filter((o) => o.category !== 'byob');
+  assert.ok(hosted.length > 0, 'there are hosted options to check');
+  for (const opt of hosted) {
+    assert.ok(Array.isArray(opt.dropped)
+      && opt.dropped.some((d) => d.addon_id === garnishId && typeof d.name === 'string' && d.name.length > 0),
+      `${opt.name}: the byob-only extra must be named in dropped`);
+  }
+  const byob = res.body.options.find((o) => o.category === 'byob');
+  assert.ok(!byob.dropped.some((d) => d.addon_id === garnishId),
+    'the extra rides the byob option, so it is not dropped there');
+});
+
+test('a PROVABLE staffing derivation is re-derived per package; an override still carries', async () => {
+  // num_bartenders holds persisted derivations as well as true overrides (crud
+  // writes staffing.actual back into the column). Carrying a derivation onto a
+  // package with a different ratio prices phantom over-ratio bartenders, and
+  // quote and commit would AGREE on the phantom, so no 409 can catch it. The
+  // rule: strip the column ONLY when the stored snapshot proves it is a
+  // derivation (staffing.actual === staffing.required === the column); anything
+  // unprovable keeps carrying (the pre-existing behavior, and what the
+  // "admin bartender override is carried" test above pins for a bare column).
+  const sel = { extra_addon_ids: [], tier_addon_id: null };
+  const control = await request('POST', `/api/proposals/t/${token}/options`, { body: sel });
+  const controlTotals = control.body.options.filter((o) => o.available)
+    .map((o) => [o.package_id, o.total]);
+
+  // Provable STALE derivation: the snapshot was written when this event
+  // derived 3 bartenders (say, before a guest-count edit); at 120 guests every
+  // package derives 2 today. Carrying the stored 3 as an override prices a
+  // phantom over-ratio bartender on every option; the provable-derivation rule
+  // strips it and lets each package re-derive.
+  await pool.query(
+    `UPDATE proposals SET num_bartenders = 3,
+       pricing_snapshot = '{"staffing":{"required":3,"actual":3}}'::jsonb
+     WHERE id = $1`, [proposalId]);
+  const derived = await request('POST', `/api/proposals/t/${token}/options`, { body: sel });
+  for (const [pkgId, controlTotal] of controlTotals) {
+    const opt = derived.body.options.find((o) => o.package_id === pkgId);
+    if (!opt || !opt.available) continue;
+    assert.equal(opt.total, controlTotal,
+      `${opt.name}: a provable derivation must re-derive per package, not ride as an override`);
+  }
+
+  // True override: snapshot proves actual != required.
+  await pool.query(
+    `UPDATE proposals SET num_bartenders = 4,
+       pricing_snapshot = '{"staffing":{"required":2,"actual":4}}'::jsonb
+     WHERE id = $1`, [proposalId]);
+  const overridden = await request('POST', `/api/proposals/t/${token}/options`, { body: sel });
+  const controlCurrent = control.body.options.find((o) => o.is_current).total;
+  const overriddenCurrent = overridden.body.options.find((o) => o.is_current).total;
+  assert.ok(overriddenCurrent > controlCurrent,
+    `a true override must still raise the price (got ${overriddenCurrent} vs ${controlCurrent})`);
+
+  // pricing_snapshot is NOT NULL with a default in this schema; restore the
+  // empty object, not NULL.
+  await pool.query(
+    `UPDATE proposals SET num_bartenders = NULL, pricing_snapshot = '{}'::jsonb WHERE id = $1`,
+    [proposalId]);
+});

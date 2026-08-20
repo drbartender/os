@@ -244,7 +244,9 @@ dr-bartender/
 │   │   ├── packages.js         # Admin package-model API (planner v2): package_items contents CRUD, slots, makeability preview, directional margin
 │   │   ├── potions.js          # Potions bar-program API: par-catalog CRUD/reorder/preview + shared recipe-row + dossier-field validators
 │   │   ├── progress.js         # Onboarding step tracking
-│   │   ├── proposals/          # Service proposals (publicToken/publicOptions/compareGroup/public/metadata/lifecycle/crud/getOne/actions/changeRequests/groups/metricsSplit sub-routers)
+│   │   ├── proposals/          # Service proposals (publicToken/publicOptions/publicSwitch/optionsPricingShared/compareGroup/public/metadata/lifecycle/crud/getOne/actions/changeRequests/groups/metricsSplit sub-routers)
+│   │   │   ├── publicSwitch.js # POST /t/:token/switch — the drawer's pre-signature package switch (guarded write)
+│   │   │   ├── optionsPricingShared.js # Pricing identity shared by the options quote and the switch commit
 │   │   │   ├── index.js        # Composition router
 │   │   │   ├── publicToken.js  # /t/:token view + sign
 │   │   │   ├── public.js       # /public/* — packages, addons, calculate, capture-lead, quote-draft, submit

@@ -1160,6 +1160,17 @@ belongs.
 
 ## Tier 4 — gated: do these BEFORE the thing they gate
 
+- [ ] **Walk Test Package: verify it is NOT `is_active` in the PROD catalog. Gates the
+      options-drawer ship (2026-08-14).** It is active in the dev DB, and the drawer (plus
+      the already-live options panel) renders every active non-class package as a real card
+      a client can read and now SWITCH to. One prod SQL check; deactivate if present.
+- [ ] **Drink-plan preview across a hosted/BYOB switch. Gates the options-drawer ship
+      (2026-08-14).** The switch endpoint writes nothing planner-side and the planner
+      derives from the proposal row on load, but a proposal changing CATEGORY under an
+      existing drink plan has never existed before. Walk: proposal with a drink plan,
+      switch hosted-to-BYOB and back, open `/plan/:token` after each, confirm the preview
+      re-derives sanely (submit.parking.test.js shows the fold preserving addon lines, but
+      the flip case is unexercised).
 - [ ] **Potions recipe review pass — READY FOR DALLAS, 2026-08-14.** **This gates the prod
       `seedRecipeDrafts` run** (dry-run first), because `package_items` existence flips
       hosted coverage live and `coverageContext` has no recipe-review filter, so fence

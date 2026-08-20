@@ -55,6 +55,36 @@ const optionsQuoteLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// The switch WRITES the proposal (package, total, snapshot). Same token key as
+// optionsQuoteLimiter so browsing can never spend this budget, but a write
+// endpoint gets a tight cap: a real client switches a handful of times in a
+// sitting, not 120.
+const switchLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req) => req.params?.token || req.ip,
+  message: { error: 'Too many changes at once. Please try again in a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// IP ceiling for the token-keyed public money routes. The token keying above
+// is deliberate and stays (browsing must never spend the budget paying depends
+// on), but it means the KEY is client-supplied: a valid-format random UUID
+// passes the requireUuidToken gate, mints its own fresh bucket, and costs a
+// pool connection plus a FOR UPDATE round trip before it 404s. Token-keying
+// alone therefore gives the public WRITE route a weaker per-IP ceiling than the
+// public READ route beside it. This is a SECOND limiter chained in front, not a
+// replacement, and it is deliberately generous: no real client, however many
+// devices are on the proposal, comes near it, so a 429 here means spray.
+const publicTokenIpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  message: { error: 'Too many requests. Please try again in a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Logo upload/proxy is keyed by token AND much tighter than the autosave
 // limiter — each POST writes up to 5 MB to R2 (paid storage), each GET
 // proxies bytes through Node from R2 (paid egress). The previous shared
@@ -229,6 +259,8 @@ module.exports = {
   signLimiter,
   drinkPlanWriteLimiter,
   optionsQuoteLimiter,
+  switchLimiter,
+  publicTokenIpLimiter,
   logoUploadLimiter,
   clientPortalWriteLimiter,
   adminWriteLimiter,

@@ -56,14 +56,20 @@ router.get('/t/:token/resolve', publicLimiter, requireUuidToken, asyncHandler(as
 }));
 
 /** GET /api/proposals/t/:token — fetch proposal by token (public) */
-router.get('/t/:token', publicLimiter, requireUuidToken, asyncHandler(async (req, res) => {
+/** The COMPLETE public payload for one proposal, shared by the GET below and
+ *  the switch endpoint's 200 response (publicSwitch.js) so the two can never
+ *  drift: everything ProposalView renders from is built here, and ONLY the
+ *  public-safe shape ever leaves this function. Side effects (the view-count
+ *  bump, activity logging) deliberately live with the GET, not here.
+ *  Returns null when the token matches nothing. */
+async function buildPublicProposalPayload(token, db = pool) {
   // Public-safe column allowlist — do NOT expose admin_notes, stripe_customer_id,
   // stripe_payment_method_id, client_signature_ip, client_signature_user_agent,
   // created_by, setup_minutes_before, or other internal fields. setup_minutes_before
   // (and any derived setup_time_display) is back-of-house only — clients/leads
   // must never see crew arrival/setup timing. Intentionally absent from both the
-  // SELECT list and the res.json() payload below.
-  const result = await pool.query(`
+  // SELECT list and the returned payload below.
+  const result = await db.query(`
     SELECT
       p.id, p.token, p.client_id,
       p.event_date, p.event_start_time, p.event_duration_hours,
@@ -71,6 +77,7 @@ router.get('/t/:token', publicLimiter, requireUuidToken, asyncHandler(async (req
       p.venue_name, p.venue_street, p.venue_city, p.venue_state, p.venue_zip,
       p.guest_count, p.package_id, p.num_bars, p.num_bartenders,
       p.pricing_snapshot, p.total_price, p.status,
+      p.total_price_override, p.group_id,
       p.amount_paid, p.deposit_amount, p.payment_type, p.autopay_enrolled,
       p.balance_due_date,
       p.client_signed_name, p.client_signed_at, p.client_signature_method,
@@ -80,10 +87,18 @@ router.get('/t/:token', publicLimiter, requireUuidToken, asyncHandler(async (req
       sp.includes AS package_includes,
       c.name AS client_name, c.email AS client_email,
       c.phone AS client_phone_raw, c.source AS client_source,
-      oi.open_invoice_token
+      oi.open_invoice_token,
+      -- options_available inputs, folded in rather than fetched separately:
+      -- this is the public page's critical path, and these were two extra
+      -- serial round trips on every load. Both are strip-before-return.
+      pg.chosen_proposal_id AS group_chosen_proposal_id,
+      (SELECT COUNT(*) FROM service_packages
+        WHERE (is_active = true AND bar_type IS DISTINCT FROM 'class') OR id = p.package_id
+      ) AS comparable_pkg_count
     FROM proposals p
     LEFT JOIN service_packages sp ON sp.id = p.package_id
     LEFT JOIN clients c ON c.id = p.client_id
+    LEFT JOIN proposal_groups pg ON pg.id = p.group_id
     -- Oldest still-payable invoice for THIS proposal (client-owned token for the
     -- client's own invoice; no PII widening). Lets ProposalView's paid-state card
     -- link "Pay balance" straight to /invoice/:token.
@@ -93,41 +108,23 @@ router.get('/t/:token', publicLimiter, requireUuidToken, asyncHandler(async (req
       ORDER BY created_at ASC LIMIT 1
     ) oi ON true
     WHERE p.token = $1
-  `, [req.params.token]);
+  `, [token]);
 
-  if (!result.rows[0]) throw new NotFoundError('This proposal is no longer available');
+  if (!result.rows[0]) return null;
 
   const proposal = result.rows[0];
 
-  // Capture IP for view logging (no third-party geo lookup for privacy)
-  const rawIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || '';
-  const ip = rawIp.replace(/^::ffff:/, ''); // strip IPv4-mapped prefix
-
-  // Parallelize non-dependent queries: bump view counters + fetch addons + fetch drink plan
-  const [, addonsRes, dpRes] = await Promise.all([
-    pool.query(
-      `UPDATE proposals
-         SET view_count = COALESCE(view_count, 0) + 1,
-             last_viewed_at = NOW(),
-             status = CASE WHEN status = 'sent' THEN 'viewed' ELSE status END
-       WHERE id = $1`,
-      [proposal.id]
-    ),
-    pool.query(
+  // Parallelize the non-dependent fetches: addons + drink plan
+  const [addonsRes, dpRes] = await Promise.all([
+    db.query(
       'SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity::float8 AS quantity, line_total, variant FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
       [proposal.id]
     ),
-    pool.query(
+    db.query(
       'SELECT token AS drink_plan_token FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
       [proposal.id]
     ),
   ]);
-
-  // Fire-and-forget activity log so a logging failure doesn't block the response
-  pool.query(
-    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'viewed', 'client', $2)`,
-    [proposal.id, JSON.stringify({ ip: ip || null })]
-  ).catch(err => console.error('Proposal view activity log failed:', err));
 
   const drinkPlanToken = dpRes.rows[0]?.drink_plan_token || null;
 
@@ -156,25 +153,84 @@ router.get('/t/:token', publicLimiter, requireUuidToken, asyncHandler(async (req
       clientPhonePrefill = '';
     }
   }
+  // Whether the "See other packages" entry link has anywhere to go (spec
+  // 2026-08-14). A cheap predicate, NOT an engine run: the same states the
+  // switch endpoint refuses, plus a catalog count proving a comparison exists.
+  // False for draft/modified (the quote's blacklist admits them, but the
+  // switch's whitelist does not, and a link into a refusal is the apology
+  // state this flag exists to prevent) and for grouped-undecided proposals
+  // (the compare page owns that client; a switch would corrupt the set).
+  const optionsAvailable = ['sent', 'viewed'].includes(proposal.status)
+    && proposal.total_price_override === null
+    && !proposal.client_signed_at
+    // Grouped-and-undecided belongs to the compare page; a decided group
+    // behaves like any other proposal. A group_id pointing at nothing fails
+    // closed (the LEFT JOIN yields NULL).
+    && (proposal.group_id === null || proposal.group_chosen_proposal_id !== null)
+    && Number(proposal.comparable_pkg_count) >= 2;
+
   // Strip the internal lookup fields (delete-on-copy, not rest-destructure,
-  // so eslint's no-unused-vars stays quiet).
+  // so eslint's no-unused-vars stays quiet). The two gate columns selected for
+  // the flag above must never leak to a token holder.
   const publicProposal = { ...proposal };
   delete publicProposal.client_phone_raw;
   delete publicProposal.client_source;
+  delete publicProposal.total_price_override;
+  delete publicProposal.group_id;
+  delete publicProposal.group_chosen_proposal_id;
+  delete publicProposal.comparable_pkg_count;
 
-  res.json({
+  return {
+    options_available: optionsAvailable,
     ...publicProposal,
     addons: addonsRes.rows,
     drink_plan_token: drinkPlanToken,
     venue_complete: isVenueComplete(proposal),
     client_phone_prefill: clientPhonePrefill,
+    // Display flip. The GET's own side effect flips the row sent->viewed, so
+    // for that caller this matches the row. The switch endpoint reuses this
+    // builder WITHOUT bumping, so a switch on a still-'sent' row reports
+    // 'viewed' before the row says so. Harmless (the drawer is only reachable
+    // after a GET, which already flipped it, and both values are switchable),
+    // but the flip is a display convention here, not a row guarantee.
     status: proposal.status === 'sent' ? 'viewed' : proposal.status,
     payment_policy: {
       full_payment_required: win.fullPaymentRequired,
       last_minute_hold: win.lastMinuteHold,
       hours_until_event: win.hoursUntilEvent,
     },
-  });
+  };
+}
+
+router.get('/t/:token', publicLimiter, requireUuidToken, asyncHandler(async (req, res) => {
+  // Capture IP for view logging (no third-party geo lookup for privacy)
+  const rawIp = req.ip || (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || '';
+  const ip = rawIp.replace(/^::ffff:/, ''); // strip IPv4-mapped prefix
+
+  // Side effects live HERE, not in the builder. The bump is keyed on TOKEN
+  // rather than id so it does not depend on the builder's SELECT and can run
+  // in the same wave, which is how it behaved before the extraction. A race
+  // where the builder reads the already-bumped row is immaterial: the payload
+  // coerces 'sent' to 'viewed' anyway and both are switchable. An unknown
+  // token makes the UPDATE a harmless no-op and the builder returns null.
+  const [payload] = await Promise.all([
+    buildPublicProposalPayload(req.params.token),
+    pool.query(
+      `UPDATE proposals
+         SET view_count = COALESCE(view_count, 0) + 1,
+             last_viewed_at = NOW(),
+             status = CASE WHEN status = 'sent' THEN 'viewed' ELSE status END
+       WHERE token = $1`,
+      [req.params.token]
+    ),
+  ]);
+  if (!payload) throw new NotFoundError('This proposal is no longer available');
+  pool.query(
+    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'viewed', 'client', $2)`,
+    [payload.id, JSON.stringify({ ip: ip || null })]
+  ).catch(err => console.error('Proposal view activity log failed:', err));
+
+  res.json(payload);
 }));
 
 /** POST /api/proposals/t/:token/sign — client signs and accepts proposal */
@@ -243,8 +299,28 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     venueToPersist = submitted;
   }
 
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
+  // req.ip FIRST: express runs behind `trust proxy`, so req.ip is the
+  // proxy-validated address while the first x-forwarded-for entry is
+  // attacker-supplied. A signature IP is the strongest artifact in a payment
+  // dispute, so it must not be the forgeable one. Matches publicSwitch.js.
+  const ip = (req.ip || req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+    || req.socket?.remoteAddress || null);
   const userAgent = req.headers['user-agent'] || null;
+
+  // Sign-time total assertion (spec 2026-08-14, proposal options drawer). The
+  // switch endpoint made pre-signature rewrites a routine event, and this
+  // endpoint binds NO configuration: without the assertion, a switch landing
+  // between render and sign-click (the client's own second tab, or a leaked
+  // token stuffing add-ons onto a total someone else pays) would commit a
+  // signature to a configuration the signer never saw. The client echoes the
+  // total rendered above the signature; the UPDATE's WHERE re-asserts it
+  // (same TOCTOU-collapse as the status guard). Absent field = legacy client
+  // mid-flight = no assertion, today's behavior byte for byte.
+  const ackGiven = req.body.acknowledged_total !== undefined && req.body.acknowledged_total !== null;
+  const ackTotal = ackGiven ? Number(req.body.acknowledged_total) : null;
+  if (ackGiven && !Number.isFinite(ackTotal)) {
+    throw new ValidationError({ acknowledged_total: 'Please refresh the page and try again.' });
+  }
 
   // Make the UPDATE itself the gate: WHERE clause re-asserts both that no
   // signature has been recorded yet AND that the status is still in a signable
@@ -279,6 +355,7 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     WHERE id = $7
       AND client_signed_at IS NULL
       AND status NOT IN ('accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived')
+      AND ($14::numeric IS NULL OR ABS(total_price - $14::numeric) < 0.005)
     RETURNING id
   `, [
     client_signed_name, client_signature_data, client_signature_method, ip, userAgent,
@@ -289,8 +366,27 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
     venueToPersist ? normalizeVenueState(vStr(venue_state)) : null,
     venueToPersist ? (vStr(venue_zip) || null) : null,
     venueToPersist ? composedLocation : null,
+    ackGiven ? ackTotal : null,
   ]);
   if (!upd.rows[0]) {
+    // Disambiguate: a still-signable row can only have failed the total
+    // assertion, so tell the client to re-review rather than lying that it
+    // was already accepted.
+    if (ackGiven) {
+      const re = await pool.query(
+        'SELECT client_signed_at, status FROM proposals WHERE id = $1',
+        [lookup.rows[0].id]
+      );
+      const r = re.rows[0];
+      const stillSignable = r && !r.client_signed_at
+        && !['accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived'].includes(r.status);
+      if (stillSignable) {
+        throw new ConflictError(
+          'The total for this proposal has changed. Please review the updated price and sign again.',
+          'TOTAL_CHANGED'
+        );
+      }
+    }
     throw new ConflictError('This proposal has already been accepted', 'ALREADY_ACCEPTED');
   }
   const proposal = { id: lookup.rows[0].id };
@@ -372,3 +468,6 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
 }));
 
 module.exports = router;
+// The switch endpoint reuses the builder so its 200 response is shape-identical
+// to the GET by construction, never a hand-rebuilt (or raw-row) payload.
+module.exports.buildPublicProposalPayload = buildPublicProposalPayload;
