@@ -6,9 +6,16 @@
 //
 // ─── WHY A SWEEP AND NOT A COMPLETION HOOK ──────────────────────────────────
 //
-// Nothing in this system has ever closed a shift. Only 5 shifts in prod have
-// ever reached 'completed'; 'filled' has never been used at all. 50 sit 'open'
-// on completed proposals, 31 of them with payout_events attached.
+// Nothing in this system had ever closed a shift when this was written: only 5
+// shifts in prod had reached 'completed', 'filled' had never been used at all,
+// and 50 sat 'open' on completed proposals, 31 of them with payout_events.
+//
+// Past tense on purpose, and dated, because those were point-in-time counts that
+// this very sweep then changed. As of 2026-08-20 prod reads 51 completed (34 with
+// payout_events), 19 open, 2 cancelled, zero 'filled', and ZERO open shifts on
+// completed proposals. Do not re-derive the argument from the numbers above; they
+// are the BEFORE picture and are kept only to show what the sweep was built for.
+// Re-query if you need current state.
 //
 // The obvious fix — close a proposal's shifts when the proposal flips to
 // 'completed' — was built and failed. A proposal can carry a shift dated LATER
