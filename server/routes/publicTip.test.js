@@ -380,11 +380,13 @@ test('GET /api/public/tip/:token > methods absent from profile are skipped even 
 });
 
 // ─── Feedback POST: where the admin notification points ─────────────────────
-// The link used to be ADMIN_URL/tips#feedback. /tips is retired and the
-// #feedback view is deleted with TipsAdmin.js (staff-hub spec 2026-08-19), so
-// the operator would have landed on a tips table instead of the feedback that
-// paged them. Feedback now lives on the staffer profile and the email follows.
-test('POST /api/public/tip/:token/feedback > the admin email deep-links the staffer profile', async () => {
+// This link must land on something that SHOWS the feedback. The staff-hub spec
+// plans to move it to the staffer's tip-page tab, but the card that would render
+// it there (sh-f-feedback) is unbuilt: that tab makes no /admin/tip-feedback call
+// at all. Pointing at it shipped an operator a one-star complaint alert whose
+// link opened token and Stripe settings. Reverted until the card exists, and
+// pinned here so the move cannot happen again ahead of its surface.
+test('POST /api/public/tip/:token/feedback > the admin email links a page that shows the feedback', async () => {
   sentEmails.length = 0;
   const res = await request('POST', `/api/public/tip/${tipTokenA}/feedback`, {
     rating: 2,
@@ -397,12 +399,15 @@ test('POST /api/public/tip/:token/feedback > the admin email deep-links the staf
 
   const { ADMIN_URL } = require('../utils/urls');
   const blob = `${sentEmails[0].html || ''} ${sentEmails[0].text || ''}`;
-  const expected = `${ADMIN_URL}/staffing/users/${userIdA}?tab=tip-page`;
+  const expected = `${ADMIN_URL}/tips#feedback`;
   assert.ok(
     blob.includes(expected),
-    `links the tip-page tab on the bartender the feedback targets (${expected})`
+    `links the feedback queue itself (${expected})`
   );
-  assert.ok(!blob.includes('/tips#feedback'), 'the retired /tips#feedback view is gone');
+  assert.ok(
+    !blob.includes(`/staffing/users/${userIdA}?tab=tip-page`),
+    'the tip-page tab renders no feedback, so it must not be the destination'
+  );
 
   // The row itself still lands (the email is best-effort, the write is not).
   const { rows } = await pool.query(

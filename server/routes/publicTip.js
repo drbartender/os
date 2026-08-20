@@ -224,11 +224,13 @@ router.post('/:token/feedback', publicLimiter, feedbackLimiter, asyncHandler(asy
       rating,
       comment,
       submitterEmail: email,
-      // The staffer profile's tip-page tab (staff-hub spec 2026-08-19). The
-      // old link went to the retired admin tips view's feedback anchor, which
-      // is deleted with TipsAdmin.js, so the operator would have landed on a
-      // tips table instead of the feedback that paged them.
-      adminUrl: `${ADMIN_URL}/staffing/users/${row.user_id}?tab=tip-page`,
+      // Points at the feedback itself. The staff-hub spec plans to move this to
+      // the staffer's tip-page tab, but the FeedbackCard that would render it
+      // there (sh-f-feedback) is not built: that tab makes no /admin/tip-feedback
+      // call at all, so the link landed the operator on token and Stripe
+      // settings with the complaint that paged them nowhere in sight. Move it
+      // when the card exists, not before.
+      adminUrl: `${ADMIN_URL}/tips#feedback`,
     });
     await sendEmail({
       to: process.env.ADMIN_FEEDBACK_NOTIFICATION_EMAIL || 'contact@drbartender.com',
