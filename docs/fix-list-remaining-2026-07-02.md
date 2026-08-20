@@ -1427,6 +1427,31 @@ Items 8-11 are unstarted.
    re-auth. If a `tr` shows up as a click target, the row path is live after all and hypothesis
    1 needs reopening with the popup's real event sequence.
 
+   **UPDATE, same session — hypothesis 6 is dead too. Dallas: "no toast, it just went away."**
+   The 401 path toasts before redirecting, so it is not this. SIX eliminated now.
+
+   Enumerated every remaining way `showCreate` can go false. There are exactly two, and both
+   are silent:
+   - `ClientsDashboard.js:115` — the HEADER button, which renders as "Cancel" with an x icon
+     while the panel is open. `onClick={() => setShowCreate(v => !v)}`. Closes the panel and
+     does NOT touch `form`, so the typed data survives in React state.
+   - `ClientsDashboard.js:175` — the IN-FORM Cancel button. Closes the panel AND resets `form`
+     to defaults. This is the only path that destroys typed data.
+
+   `handleCreate`'s success path also closes the panel but fires a `toast.success('Client
+   added.')`, so the no-toast report rules it out.
+
+   **NEXT OBSERVATION, and it is five seconds, not a lane:** when the panel vanishes, click
+   "New client" again and look at the fields.
+   - Data STILL THERE -> `:115` was activated. The work was never destroyed, only hidden, which
+     also means the "drops the in-progress client" half of the symptom is a UI illusion.
+   - Data GONE -> `:175` was activated, the only resetting path.
+
+   **Still unexplained, and deliberately not guessed at:** what connects a click on an
+   out-of-DOM native select option to either button. Six mechanisms have been eliminated; do
+   NOT add a seventh speculatively. The two-way observation above narrows the target before
+   anyone theorizes again, and the devtools snippet above captures the real event sequence.
+
 3. **Staff-portal recipes render `· [object Object]` (ROOT CAUSE CONFIRMED).**
    `cocktails.ingredients` / `mocktails.ingredients` are JSONB arrays of OBJECTS
    (`{ingredient, amount, ...}`), which the server generator handles explicitly
