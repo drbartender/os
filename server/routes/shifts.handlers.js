@@ -21,8 +21,9 @@ const { EQUIPMENT_TOKENS } = require('./shifts.approval');
 // ─── PUT /shifts/:id ──────────────────────────────────────────────
 //
 // Update a shift. PATCH semantics: missing JSONB fields preserve prior values
-// via COALESCE. A status='cancelled' edit wraps the UPDATE + BEO suppression in
-// a transaction; non-cancel edits stay on the single-statement path.
+// via COALESCE. `status` is rejected outright (see the guard below), so this is
+// a single-statement UPDATE with no cancel fork — cancellation is owned by
+// cancel-or-unassign and shiftReap.js.
 async function updateShiftHandler(req, res) {
   const { event_type, event_type_custom, event_date, start_time, end_time, location, positions_needed, notes, status,
           equipment_required, auto_assign_days_before, setup_minutes_before, lat, lng,
@@ -113,43 +114,19 @@ async function updateShiftHandler(req, res) {
     supply_run === undefined ? null : supply_run,
   ];
 
-  // BEO: shift-cancel path wraps UPDATE + suppression in a transaction so
-  // that a downstream suppression failure rolls back the cancel. Non-cancel
-  // edits stay on the pre-existing single-statement path.
-  let result;
-  // UNREACHABLE since 2026-08-19: the guard at the top of this handler throws
-  // whenever `status` is present at all, so `status` is always undefined here.
-  // Kept rather than deleted so the change stays trivially reversible and so the
-  // BEO-suppression pairing below is not lost — but do NOT read this branch as a
-  // live path: a generic PUT can no longer cancel a shift. Cancellation lives in
-  // cancelOrUnassignShiftHandler (mode='cancel') and shiftReap.js. Deleting this
-  // block and collapsing to the single-statement path is on the fix list.
-  if (status === 'cancelled') {
-    const dbClient = await pool.connect();
-    try {
-      await dbClient.query('BEGIN');
-      result = await dbClient.query(updateSql, updateParams);
-      if (!result.rows[0]) throw new NotFoundError('Shift not found.');
-      const approvedRes = await dbClient.query(
-        `SELECT user_id FROM shift_requests WHERE shift_id = $1 AND status = 'approved'`,
-        [req.params.id]
-      );
-      const userIds = approvedRes.rows.map((r) => r.user_id);
-      const proposalIdForBeo = result.rows[0].proposal_id;
-      if (proposalIdForBeo && userIds.length > 0) {
-        await suppressBeoNudgesForStaffers(proposalIdForBeo, userIds, dbClient, 'staffer_unassigned: generic PUT shift cancelled');
-      }
-      await dbClient.query('COMMIT');
-    } catch (err) {
-      try { await dbClient.query('ROLLBACK'); } catch (_e) { /* already rolled back */ }
-      throw err;
-    } finally {
-      dbClient.release();
-    }
-  } else {
-    result = await pool.query(updateSql, updateParams);
-    if (!result.rows[0]) throw new NotFoundError('Shift not found.');
-  }
+  // Plain single-statement UPDATE: `status` cannot reach here (the guard above
+  // rejects any `status` in the body), so there is nothing to fork on.
+  //
+  // This used to branch. A `status='cancelled'` body took a transactional path
+  // that also suppressed BEO nudges, so a suppression failure rolled the cancel
+  // back. That fork became unreachable on 2026-08-19 when the guard started
+  // throwing on any `status`, and it is deleted here rather than left as a
+  // comment claiming to be live code. Nothing was lost with it: cancellation is
+  // owned by cancelOrUnassignShiftHandler (mode='cancel') and shiftReap.js, and
+  // BOTH carry their own BEO suppression — the cancel-or-unassign one is the
+  // suppressBeoNudgesForStaffers call further down this same file.
+  const result = await pool.query(updateSql, updateParams);
+  if (!result.rows[0]) throw new NotFoundError('Shift not found.');
 
   // Re-geocode if location changed and no explicit lat/lng
   const shift = result.rows[0];

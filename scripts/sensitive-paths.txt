@@ -33,6 +33,28 @@ server/routes/staffPortal/payouts.js
 # change that introduced it never pulled a money review. Same shape as the
 # payrollDuty and drinkPlans split notes elsewhere in this file.
 server/routes/staffPortal.js
+# Bank PII, and it has NEVER been covered (2026-08-20). This file owns
+# GET/PATCH /payment-methods + PUT /preferred-payment-method: it writes bank
+# ROUTING and ACCOUNT numbers through encryption.js (listed above), decides what
+# gets encrypted and what gets projected back, and holds the field whitelist. It
+# was split out of staffPortal.js BEFORE that parent was ever listed, so unlike
+# the payrollDuty and drinkPlans notes this is not sensitivity-followed-the-code-
+# out — it is a path that was simply never caught, and a change that accidentally
+# projects a decrypted account number would have scaled to a light look. Found by
+# two review agents independently during the staffportal-split fleet; checked
+# against this file's own comments first, and there was no deliberate-absence
+# note (every intentional omission here carries one).
+server/routes/staffPortal/paymentMethods.js
+# DELIBERATELY NOT LISTED, decided 2026-08-20 with the same fleet:
+# server/routes/staffPortal/notifications.js. It came out of staffPortal.js in the
+# same extraction, but the parent's listing reason above is scoped entirely to the
+# staff-home pay-period money read, which did NOT move. Those handlers were
+# unlisted their whole life; their one day of coverage was a file-granularity side
+# effect, not a decision. A Web Push subscription cannot send anything on its own
+# (every send is VAPID-signed with an env-only private key), and the critical-
+# category floor only stops a staffer muting their OWN payday notice. Trigger that
+# flips this: if those prefs become admin-writable, or feed any decision beyond the
+# owning user's own sends, list it then.
 # Sensitivity follows the code (2026-08-13): the duty routes were split OUT of
 # payroll.js, taking the attribution write, the duty-line add/remove, and the
 # accrual re-derivation with them — so the file that actually moves duty money
