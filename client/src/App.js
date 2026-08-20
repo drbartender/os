@@ -141,6 +141,7 @@ const AdminLayout = lazy(() => import('./components/AdminLayout'));
 const MorePage = lazy(() => import('./pages/mobile/MorePage'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminStaffDashboard = lazy(() => import('./pages/admin/StaffDashboard'));
+const StaffHubLayout = lazy(() => import('./pages/admin/staffHub/StaffHubLayout'));
 const AdminUserDetail = lazy(() => import('./pages/admin/userDetail/AdminUserDetail'));
 const AdminApplicationDetail = lazy(() => import('./pages/admin/applicationDetail/AdminApplicationDetail'));
 const EventsDashboard = lazy(() => import('./pages/admin/EventsDashboard'));
@@ -173,7 +174,6 @@ const EmailCampaignDetail = lazy(() => import('./pages/admin/EmailCampaignDetail
 const EmailAnalyticsDashboard = lazy(() => import('./pages/admin/EmailAnalyticsDashboard'));
 const EmailConversations = lazy(() => import('./pages/admin/EmailConversations'));
 const Messages = lazy(() => import('./pages/admin/Messages'));
-const TipsAdmin = lazy(() => import('./pages/admin/TipsAdmin'));
 const StaffReviews = lazy(() => import('./pages/admin/StaffReviews'));
 const ClassWizard = lazy(() => import('./pages/website/ClassWizard'));
 
@@ -275,6 +275,17 @@ function FinancialsRedirect() {
   const [params] = useSearchParams();
   const tab = params.get('tab');
   return <Navigate replace to={tab === 'payouts' ? '/dashboard?tab=payouts' : '/dashboard'} />;
+}
+
+/** Param-preserving redirect for retired admin URLs. Builds the target with
+ *  URLSearchParams over `defaults` so a path that already carries ?tab= never
+ *  gets a second '?' concatenated onto it. Targets are hardcoded internal paths. */
+function LegacyRedirect({ to, defaults }) {
+  const [params] = useSearchParams();
+  const merged = new URLSearchParams(defaults || {});
+  params.forEach((v, k) => merged.set(k, v));
+  const qs = merged.toString();
+  return <Navigate replace to={qs ? `${to}?${qs}` : to} />;
 }
 
 /**
@@ -594,11 +605,22 @@ function AppRoutes() {
       <Route element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}>
         <Route path="/dashboard" element={<OverviewPage />} />
         <Route path="/more" element={<MorePage />} />
-        <Route path="/staffing" element={<AdminStaffDashboard />} />
+        {/* The Staff hub (spec 2026-08-19). Roster lands; Hiring, Payroll and
+            Reviews are admin-only children guarded with adminStrict at the
+            route, because their APIs are the server's adminOnly and hiding a
+            tab is not a guard (a manager can still type the URL). The three
+            detail routes stay siblings so the hub chrome never wraps a
+            profile page. */}
+        <Route path="/staffing" element={<StaffHubLayout />}>
+          <Route index element={<AdminStaffDashboard />} />
+          <Route path="hiring" element={<ProtectedRoute adminStrict><HiringDashboard /></ProtectedRoute>} />
+          <Route path="payroll" element={<ProtectedRoute adminStrict><PayrollPage /></ProtectedRoute>} />
+          <Route path="reviews" element={<ProtectedRoute adminStrict><StaffReviews /></ProtectedRoute>} />
+        </Route>
         <Route path="/staffing/legacy" element={<AdminDashboard />} />
         <Route path="/staffing/users/:id" element={<AdminUserDetail />} />
         <Route path="/staffing/applications/:id" element={<AdminApplicationDetail />} />
-        <Route path="/hiring" element={<HiringDashboard />} />
+        <Route path="/hiring" element={<LegacyRedirect to="/staffing/hiring" />} />
         <Route path="/potions" element={<PotionsPage />} />
         <Route path="/drink-plans" element={<DrinkPlansDashboard />} />
         <Route path="/drink-plans/:id" element={<DrinkPlanDetail />} />
@@ -615,9 +637,9 @@ function AppRoutes() {
         <Route path="/clients/:id" element={<ClientDetail />} />
         <Route path="/messages" element={<Messages />} />
         <Route path="/financials" element={<FinancialsRedirect />} />
-        <Route path="/financials/payroll" element={<PayrollPage />} />
-        <Route path="/tips" element={<TipsAdmin />} />
-        <Route path="/reviews" element={<StaffReviews />} />
+        <Route path="/financials/payroll" element={<LegacyRedirect to="/staffing/payroll" />} />
+        <Route path="/tips" element={<LegacyRedirect to="/staffing/payroll" defaults={{ tab: 'tips' }} />} />
+        <Route path="/reviews" element={<LegacyRedirect to="/staffing/reviews" />} />
         <Route path="/settings" element={<SettingsDashboard />} />
         <Route path="/blog" element={<BlogDashboard />} />
         <Route path="/email-marketing" element={<EmailMarketingDashboard />}>

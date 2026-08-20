@@ -21,10 +21,10 @@ const TITLES = {
   dashboard: 'Overview',
 };
 
-// First-URL-segment -> nav label ("staffing" -> "Staff"). financials is the
-// one live route with no nav entry (the deliberate phone-only Payroll row).
+// First-URL-segment -> nav label ("staffing" -> "Staff"). Every Staff hub child
+// shares the "staffing" key (one Desktop-view override for the hub).
 const SEGMENT_LABELS = (() => {
-  const map = { financials: 'Payroll' };
+  const map = {};
   NAV.forEach((section) => section.items.forEach((item) => {
     const seg = (item.path || '').split('/')[1];
     if (seg) map[seg] = item.label;

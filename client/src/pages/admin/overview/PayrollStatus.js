@@ -13,7 +13,7 @@ import { chicagoYmdParts } from '../../../hooks/useMetricsFilter';
 // zero /admin/payroll/* requests (2026-07-09 spec §1 role gating). Read-only
 // surfacing; no process/mark-paid actions, no accrual code paths.
 
-const PAYROLL_HREF = '/financials/payroll';
+const PAYROLL_HREF = '/staffing/payroll';
 
 // pg DATE columns arrive as full ISO strings (Date -> toISOString via res.json); ymd10 slices the calendar date back out; keep
 // only the calendar date so the weekday math and string compares stay stable.
@@ -86,7 +86,7 @@ export default function PayrollStatus() {
         kind: 'due',
         headline: `Due ${weekday(due.payday) || 'soon'}`,
         total, staff, overdue,
-        href: `/financials/payroll?tab=payrun&period=${due.id}`,
+        href: `/staffing/payroll?tab=payrun&period=${due.id}`,
       };
     }
 

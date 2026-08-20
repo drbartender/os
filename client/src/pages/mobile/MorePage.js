@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
-import NAV from '../../components/adminos/nav';
+import NAV, { navBadgeCount } from '../../components/adminos/nav';
 import Icon from '../../components/adminos/Icon';
 import MoreSecurityRow from '../../components/mobile/MoreSecurityRow';
 import { useAuth } from '../../context/AuthContext';
@@ -61,7 +61,7 @@ export default function MorePage() {
             <h2 className="m-more-heading">{section.section}</h2>
             <ul className="m-more-list">
               {items.map((i) => {
-                const count = i.badgeKey ? badges[i.badgeKey] || 0 : 0;
+                const count = navBadgeCount(i, badges);
                 return (
                   <li key={i.id}>
                     <Link className="m-more-row" to={i.path}>
@@ -76,13 +76,12 @@ export default function MorePage() {
               {section.section === 'Workspace' && user?.role === 'admin' && (
                 <li>
                   {/* Deliberate phone-only row (spec section 1 no-dead-ends):
-                      /financials/payroll is a live route Dallas named in the
-                      project's original scope, but it appears in neither
-                      nav.js nor the sidebar, so the phone must offer it
-                      explicitly or payroll is unreachable on the go.
-                      Admin-gated: the payroll API is admin-only server-side,
-                      so a manager tapping this would render a page of 403s. */}
-                  <Link className="m-more-row" to="/financials/payroll">
+                      Payroll is a tab inside the Staff hub and has no nav.js
+                      item of its own, so the phone offers it explicitly or
+                      payroll is unreachable on the go. Admin-gated: the
+                      payroll API is admin-only server-side, so a manager
+                      tapping this would render a page of 403s. */}
+                  <Link className="m-more-row" to="/staffing/payroll">
                     <Icon name="dollar" size={20} />
                     <span>Payroll</span>
                     <Icon name="right" size={16} />

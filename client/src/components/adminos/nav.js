@@ -1,5 +1,7 @@
 // Nav groups for the Admin OS sidebar.
-// `badgeKey` maps to the /api/admin/badge-counts response shape.
+// `badgeKey` / `badgeKeys` map to the /api/admin/badge-counts response shape;
+// read them ONLY through navBadgeCount so every consumer (Sidebar, the phone
+// More list, the phone tab bar) sums the same way.
 // `adminOnly` hides the item from managers. Set it whenever the destination's
 // API is the server's adminOnly (which rejects managers), so the sidebar never
 // offers a manager a link that bounces them straight back out.
@@ -10,12 +12,12 @@ const NAV = [
     { id: 'proposals',   label: 'Proposals', icon: 'clipboard', path: '/proposals', badgeKey: 'pending_proposals' },
     { id: 'clients',     label: 'Clients',   icon: 'users',     path: '/clients' },
     { id: 'messages',    label: 'Messages',  icon: 'chat',      path: '/messages',  badgeKey: 'unread_sms' },
-    { id: 'staff',       label: 'Staff',     icon: 'userplus',  path: '/staffing' },
-    { id: 'hiring',      label: 'Hiring',    icon: 'pen',       path: '/hiring',    badgeKey: 'new_applications' },
+    // The Staff hub: Roster lands; Hiring, Payroll and Reviews are its tabs.
+    // The badge is the sum of decisions waiting across the admin-only children
+    // (both keys are zeroed server-side for managers).
+    { id: 'staff',       label: 'Staff',     icon: 'userplus',  path: '/staffing',  badgeKeys: ['new_applications', 'pending_reviews'] },
   ]},
   { section: 'Revenue', items: [
-    { id: 'tips',        label: 'Tips & Feedback', icon: 'dollar',   path: '/tips' },
-    { id: 'reviews',     label: 'Reviews',         icon: 'dollar',   path: '/reviews' },
     { id: 'marketing',   label: 'Marketing',       icon: 'mail',     path: '/marketing', adminOnly: true },
     // The legacy email surface. Still the only way into Leads, which the
     // marketing phase 2 extraction reads, so it keeps its own entry rather
@@ -28,5 +30,13 @@ const NAV = [
     { id: 'settings',    label: 'Settings',      icon: 'gear',      path: '/settings' },
   ]},
 ];
+
+/** One badge number per nav item. Sums `badgeKeys`, else reads `badgeKey`. */
+export function navBadgeCount(item, badges) {
+  const b = badges || {};
+  if (Array.isArray(item?.badgeKeys)) return item.badgeKeys.reduce((n, k) => n + (Number(b[k]) || 0), 0);
+  if (item?.badgeKey) return Number(b[item.badgeKey]) || 0;
+  return 0;
+}
 
 export default NAV;

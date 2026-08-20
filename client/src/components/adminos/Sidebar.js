@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useUserPrefs } from '../../context/UserPrefsContext';
 import Icon from './Icon';
-import NAV from './nav';
+import NAV, { navBadgeCount } from './nav';
 import PresenceStrip from './PresenceStrip';
 
 function isActive(pathname, itemPath) {
@@ -66,7 +66,7 @@ export default function Sidebar({ badges = {}, presence, onPresenceChange, onClo
             <div className="sidebar-section">{group.section}</div>
             {group.items.filter(item => !item.adminOnly || user?.role === 'admin').map(item => {
               const active = isActive(pathname, item.path);
-              const count = item.badgeKey ? badges[item.badgeKey] || 0 : 0;
+              const count = navBadgeCount(item, badges);
               return (
                 <div
                   key={item.id}

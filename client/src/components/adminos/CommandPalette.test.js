@@ -6,6 +6,10 @@ import CommandPalette from './CommandPalette';
 import api from '../../utils/api';
 
 jest.mock('../../utils/api', () => ({ __esModule: true, default: { get: jest.fn() } }));
+// The palette reads useAuth() for its adminOnly gate (added by the palette-roles
+// fix). These renders carry no AuthProvider, so without this stub the
+// destructure of a null context throws before a single assertion runs.
+jest.mock('../../context/AuthContext', () => ({ useAuth: () => ({ user: { role: 'admin' } }) }));
 
 // Two record groups so ordering (clients before events) and wrap-around are real.
 const RESULTS = {

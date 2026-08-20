@@ -28,7 +28,7 @@ export default function NeedsYouStrip({ tabs = [], loading = false }) {
   const go = (a) => {
     const href = queueItemHref(a);
     if (href) navigate(href);
-    else if (a.target === 'hiring') navigate('/hiring');
+    else if (a.target === 'hiring') navigate('/staffing/hiring');
   };
 
   // Terminal collapsed state (manager with a clean board): no tab row, one

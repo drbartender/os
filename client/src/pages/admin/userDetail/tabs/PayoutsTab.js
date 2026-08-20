@@ -79,7 +79,7 @@ export default function PayoutsTab(props) {
                 // payout can sit inside a reopened/processing period, and
                 // History only lists paid periods.
                 to={po.period?.id
-                  ? `/financials/payroll?tab=${po.period.status === 'paid' ? 'history' : 'payrun'}&period=${po.period.id}`
+                  ? `/staffing/payroll?tab=${po.period.status === 'paid' ? 'history' : 'payrun'}&period=${po.period.id}`
                   : null}
                 className="hstack"
                 style={{ padding: '8px 0', borderTop: '1px solid var(--line-1)', gap: 8, cursor: 'pointer', color: 'inherit' }}
@@ -146,7 +146,7 @@ export default function PayoutsTab(props) {
               <dt>W-9 on file</dt>
               <dd>{w9 ? <StatusChip kind="ok">Submitted</StatusChip> : <StatusChip kind="danger">Missing</StatusChip>}</dd>
             </dl>
-            <EntityLink to="/financials/payroll?tab=tax" className="btn btn-ghost btn-sm" style={{ marginTop: 4 }}>
+            <EntityLink to="/staffing/payroll?tab=tax" className="btn btn-ghost btn-sm" style={{ marginTop: 4 }}>
               View 1099 tax totals
             </EntityLink>
           </div>

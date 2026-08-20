@@ -145,7 +145,6 @@ export default function CommandPalette({ open, onClose }) {
       { label: 'Proposals',   icon: 'clipboard', onClick: go('/proposals') },
       { label: 'Clients',     icon: 'users',     onClick: go('/clients') },
       { label: 'Staff',       icon: 'userplus',  onClick: go('/staffing') },
-      { label: 'Hiring',      icon: 'pen',       onClick: go('/hiring') },
       { label: 'Payouts',     icon: 'dollar',    onClick: go('/dashboard?tab=payouts') },
       { label: 'Marketing',   icon: 'mail',      onClick: go('/marketing'), adminOnly: true },
       { label: 'Email leads', icon: 'mail',      onClick: go('/email-marketing') },

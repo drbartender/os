@@ -105,7 +105,7 @@ export default function AdminApplicationDetail() {
   return (
     <div className="page" data-app="admin-os" style={{ maxWidth: 1280 }}>
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <BackButton fallback="/hiring" />
+        <BackButton fallback="/staffing/hiring" />
       </div>
 
       {/* Identity bar */}
@@ -174,7 +174,7 @@ export default function AdminApplicationDetail() {
             a={a}
             acting={acting}
             onMove={(to) => handle(() => api.post(`/admin/applications/${id}/move`, { to }), 'Moved.')}
-            onSchedule={() => navigate(`/hiring?schedule=${id}`)}
+            onSchedule={() => navigate(`/staffing/hiring?schedule=${id}`)}
             onReject={() => setRejectOpen(true)}
             onRestore={() => handle(() => api.post(`/admin/applications/${id}/restore`), 'Restored to Applied.')}
             onReminder={handleReminder}

@@ -107,16 +107,20 @@ function AdminLayoutInner() {
     };
   }, []);
 
+  // Lifted out of the effect so pages reached through the Outlet can ask for a
+  // fresh count the moment they change one (confirming a review, hiring a
+  // recruit) instead of waiting out the 60s poll.
+  const fetchBadges = useCallback(() => {
+    if (document.visibilityState !== 'visible') return;
+    const startedAt = Date.now();
+    api.get('/admin/badge-counts').then(r => {
+      const { presence: p, ...counts } = r.data || {};
+      setBadges(counts);
+      if (p && startedAt > lastPresenceMutationRef.current) setPresence(p);
+    }).catch(() => {});
+  }, []);
+
   useEffect(() => {
-    const fetchBadges = () => {
-      if (document.visibilityState !== 'visible') return;
-      const startedAt = Date.now();
-      api.get('/admin/badge-counts').then(r => {
-        const { presence: p, ...counts } = r.data || {};
-        setBadges(counts);
-        if (p && startedAt > lastPresenceMutationRef.current) setPresence(p);
-      }).catch(() => {});
-    };
     fetchBadges();
     const interval = setInterval(fetchBadges, 60000);
     // Refresh immediately when the tab becomes visible again after being hidden,
@@ -127,7 +131,12 @@ function AdminLayoutInner() {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, []);
+  }, [fetchBadges]);
+
+  // One context object for BOTH shells: the phone branch already fed badges
+  // through it, the desktop branch fed nothing, and the hub needs refreshBadges
+  // on either one.
+  const outletCtx = useMemo(() => ({ badges, refreshBadges: fetchBadges }), [badges, fetchBadges]);
 
   const onKey = useCallback((e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -239,7 +248,7 @@ function AdminLayoutInner() {
             onBack={isDetail ? onBack : null}
           />
           <PasskeyEnrollNudge />
-          <main className="m-main" id="main-content"><Outlet context={{ badges }} /></main>
+          <main className="m-main" id="main-content"><Outlet context={outletCtx} /></main>
           <MobileTabBar badges={badges} />
         </div>
         <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
@@ -258,7 +267,7 @@ function AdminLayoutInner() {
           mobileNavOpen={mobileNavOpen}
         />
         <main className="main scroll-thin" id="main-content">
-          <Outlet />
+          <Outlet context={outletCtx} />
         </main>
         <div
           className={`shell-scrim${mobileNavOpen ? ' open' : ''}`}
