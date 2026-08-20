@@ -15,6 +15,12 @@
 // through messageVerb() to a bundled recording, a synthetic <Say>, or an env
 // override URL. The press-1 offer now lives INSIDE the day greeting, so
 // needsAppendedOffer() decides whether the separate prompt is still owed.
+//
+// Two questions come off that table and they are NOT the same question:
+// needsAppendedOffer asks "must we SAY the offer", dayGreetingOffersPress1 asks
+// "may a digit arrive". The second is what voice.js uses to decide whether to
+// emit the <Gather>, and it stays true when VM_ESCALATION_ENABLED is off,
+// because a master switch cannot edit an mp3 (fix 2026-08-20).
 
 const { xmlEscape } = require('./xmlEscape');
 const { API_URL } = require('./urls');
@@ -222,6 +228,37 @@ function needsAppendedOffer(rawLine) {
   return usingDefault ? !cfg.defaultSaysOffer : true;
 }
 
+/**
+ * Whether the DAY greeting a caller is about to hear already offers press 1.
+ *
+ * Not the inverse of needsAppendedOffer, and the difference is the point.
+ * needsAppendedOffer answers "must we SAY the offer" and is only ever consulted
+ * while escalation is on. This answers "may a digit arrive", which is true even
+ * when escalation is OFF, because since 2026-08-19 the offer lives inside both
+ * lines' recordings and a master switch cannot edit audio. voice.js emits the
+ * <Gather> on either reason, so no caller is ever invited to press a key nobody
+ * is listening for.
+ *
+ * Deliberately does NOT read VM_ESCALATION_PROMPT: that override suppresses the
+ * APPENDED prompt, and it cannot unsay a sentence already in the recording.
+ *
+ * On doubt returns TRUE, the same fail-safe direction needsAppendedOffer takes
+ * and for the same asymmetry: listening for a digit that never comes costs a
+ * 4-second timeout the caller already sits through today, while not listening
+ * for one that does costs the caller a key press into silence.
+ */
+function dayGreetingOffersPress1(rawLine) {
+  const cfg = SLOTS.greeting_day?.[resolveLine(rawLine)];
+  // Total for the same reason messageVerb and needsAppendedOffer are: this runs
+  // inside /inbound/missed, a bare async handler with no asyncHandler wrapper.
+  if (!cfg) return true;
+  const override = String(process.env[cfg.env] || '').trim();
+  // A PLAYABLE url is a recording whose script we do not know. Anything else
+  // (unset, 'say', or a malformed value) resolves to a default the table knows.
+  if (override && isPlayableUrl(override)) return true;
+  return cfg.defaultSaysOffer === true;
+}
+
 /** The appended press-1 offer verb. WHETHER to append is needsAppendedOffer's
  *  job; this only honors the VM_ESCALATION_PROMPT=none manual override. */
 function escalationPromptVerb() {
@@ -252,5 +289,5 @@ module.exports = {
   ESCALATE_ACK_TEXT_PRIMARY, ESCALATE_ACK_TEXT_ZUL,
   ESCALATE_FAILED_TEXT_PRIMARY, ESCALATE_FAILED_TEXT_ZUL,
   vmMaxLengthSec, escalationEnabled, escalationPromptVerb, recordVerb,
-  messageVerb, needsAppendedOffer,
+  messageVerb, needsAppendedOffer, dayGreetingOffersPress1,
 };

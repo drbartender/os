@@ -10,7 +10,7 @@ const voicemail = require('../utils/voicemail');
 const { resolveLine, primaryRingSec, interceptionSuspicion, E164_RE, isNight } = require('../utils/voicemailLine');
 const {
   recordVerb, escalationEnabled, escalationPromptVerb,
-  messageVerb, needsAppendedOffer,
+  messageVerb, needsAppendedOffer, dayGreetingOffersPress1,
 } = require('../utils/voicemailTwiml');
 
 const router = express.Router();
@@ -486,16 +486,25 @@ router.post('/inbound/missed', voicemailWebhookLimiter, async (req, res) => {
     return;
   }
 
-  // Greeting goes INSIDE a <Gather> only when escalation is on AND it is day: a
-  // timeout with no digit falls through to the <Record> after </Gather>, so
-  // "just leave a message" needs no extra route. Night emits no <Gather> at all,
-  // because nobody is awake to escalate to (spec 2026-08-19). Escalation off
-  // emits the exact production document (golden-pinned). `line` is a fixed enum.
+  // Listen whenever a digit could ARRIVE, which is not the same test as "is
+  // escalation on": since 2026-08-19 the offer lives inside both lines'
+  // recordings, and VM_ESCALATION_ENABLED cannot edit an mp3. Dropping the
+  // <Gather> with the switch was the 2026-08-20 trap fix -- callers were invited
+  // to press 1 into a document that was not listening. The switch keeps its real
+  // job: voiceEscalate.js tests it itself, so off is still zero claims and zero
+  // billed legs, and a pressed 1 lands on escalate_failed then records, exactly
+  // as the quiet window and the daily cap already do. Never ADD an offer for a
+  // feature that is off, hence the switch still gating the APPENDED prompt.
+  // Night emits no <Gather> at all: those greetings never mention press 1
+  // (spec 2026-08-19). A timeout falls through to the <Record> after </Gather>,
+  // so "just leave a message" needs no extra route. `line` is a fixed enum.
   const night = _deps.isNight();
   const greeting = messageVerb(night ? 'greeting_night' : 'greeting_day', line);
-  const body = (escalationEnabled() && !night)
+  const escalating = escalationEnabled();
+  const listening = !night && (escalating || dayGreetingOffersPress1(line));
+  const body = listening
     ? `<Gather numDigits="1" timeout="4" action="${xmlEscape(API_URL)}/api/voice/escalate?line=${line}" method="POST">`
-      + greeting + (needsAppendedOffer(line) ? escalationPromptVerb() : '')
+      + greeting + (escalating && needsAppendedOffer(line) ? escalationPromptVerb() : '')
       + '</Gather>'
     : greeting;
 

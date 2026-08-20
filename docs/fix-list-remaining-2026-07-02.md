@@ -5502,7 +5502,47 @@ marker. The caching is doing its job; there is no phone screen to display the re
 concludes the phone app is done, and so the staleness line above is not mistaken for a loose
 wire. Whether to build the phone screens at all is Dallas's call.
 
-## The press-1 kill switch is now a TRAP: turning it off makes the main line lie (found 2026-08-19, cross-LLM push review)
+## ~~The press-1 kill switch is now a TRAP: turning it off makes the main line lie~~ FIXED 2026-08-20, lane `vm-press1-honesty` (found 2026-08-19, cross-LLM push review)
+
+**Fixed by moving the `<Gather>` off the switch and onto the GREETING.** `voice.js` now emits it
+when `!night && (escalationEnabled() || dayGreetingOffersPress1(line))`, where the new helper in
+`voicemailTwiml.js` reads the SLOTS table's `defaultSaysOffer` flag. The invariant it encodes:
+never invite a digit nobody is listening for. The switch keeps its actual job untouched, because
+`voiceEscalate.js` tests `escalationEnabled()` itself before it claims or dials, so escalation off
+still means zero claims and zero billed legs. With it off a pressed 1 now plays the
+`escalate_failed` recording ("sorry, nobody's available right now") and records, which is the
+identical experience the quiet window, the daily cap and a missing target already produce. The
+APPENDED prompt stays gated on the switch: never ADD an offer for a feature that is off.
+
+**TWO CORRECTIONS to this entry, both found by verifying it rather than building from it.**
+
+1. **The trap was on BOTH lines, not just the primary.** This entry names only
+   `GREETING_TEXT_PRIMARY`, but `greeting_day.zul` carries `defaultSaysOffer: true` as well, her
+   2026-08-19 re-recording says "press one", and the `<Gather>` in `voice.js` is line-generic. So
+   flipping the switch made the 0082 lie exactly as loudly as the 1922.
+2. **Recorded option 2 does not work.** It said the real revert is
+   `VM_ESCALATION_ENABLED=false` plus `VM_GREETING_URL_PRIMARY=say`, "already half recorded in
+   `.env.example`". Traced through `messageVerb`: a `'say'` override skips the bundled branch and
+   returns the SYNTHETIC text, and `GREETING_TEXT_PRIMARY` contains the press-1 sentence verbatim
+   (it is pinned byte-for-byte by its own test, and the same is true of Zul's). That revert only
+   changes whose voice makes the offer. There is no env-only way to remove the offer today.
+   `.env.example`'s three-variable note is corrected in this lane rather than left standing.
+
+**Option 1 is now a config change, not a build.** Record a day greeting without the sentence,
+point `VM_GREETING_URL_PRIMARY` / `VM_GREETING_URL` at it, flip that slot's `defaultSaysOffer` to
+false, and the `<Gather>` disappears on its own with no code edit. A unit test pins that path by
+mutating the flag. **Owed if Dallas wants the offer gone from the copy when the switch is off:
+one no-press-1 day recording per line.** Nothing today needs it, since the switch is `true` in
+Render and the fix makes the off state honest.
+
+Tests: 188 green across the four suites this reaches (`voicemailTwiml` 30, `voice` 75,
+`voiceEscalate` 27, `voicemailLine` 14, `voicemail` 42). Three existing tests encoded the OLD
+contract and were rewritten to encode the new one, including the escalation-off golden pin, whose
+comment used to promise byte-identity with pre-feature production; that promise had already died
+on 2026-08-19 when the re-recorded mp3 replaced the 2026-07-24 one. Both new guards are
+mutation-verified: reverting the Gather condition fails 4 tests, dropping the `escalating &&` on
+the appended prompt fails 1. `voice.js` and `voicemailTwiml.js` are both sensitive-listed, so this
+lane owes the full fleet plus `/second-opinion` at push time.
 
 Not a live defect — Dallas confirmed `VM_ESCALATION_ENABLED=true` in Render, so the `<Gather>`
 is emitted and the feature works. Recorded because the SAFETY of the switch changed and nobody
@@ -5648,9 +5688,14 @@ Not a gate risk either way — `ci-smoke` resets from prod and never had these r
    remaining, so `stripeClient.js`'s header comment is now accurate and under-claims.
    Suites green on merged main: new 5/5, `stripePayoutSync` 21/21, `stripePayouts` route 7/7,
    `stripeWebhook.payout` 5/5.
-3. **The press-1 kill switch is now a trap.** `VM_ESCALATION_ENABLED=false` leaves the primary
-   greeting saying "press one" with no `<Gather>` listening. Confirmed set to `true` in Render, so
-   not live — but the switch can no longer be used as a switch.
+3. ~~**The press-1 kill switch is now a trap.**~~ **FIXED 2026-08-20, lane `vm-press1-honesty`**
+   (merged; not pushed as of this line — verify with
+   `git merge-base --is-ancestor <sha> origin/main`). The `<Gather>` now follows the GREETING
+   instead of the switch, so no caller is invited to press a key nobody catches, and the switch
+   keeps its real guarantee: zero claims, zero billed legs. Two corrections to the entry came out
+   of verifying it — the trap was on BOTH lines, and its recorded option 2
+   (`VM_GREETING_URL_PRIMARY=say`) does not work, because the synthetic text says the offer too.
+   Full write-up at the struck section above.
 4. **`staffPortal.js` is 997 lines**, three under the hard cap, and the ratchet already blocked a
    commit there once this session.
 5. ~~Smaller: delete the now-unreachable cancel branch in `shifts.handlers.js`.~~ **DONE

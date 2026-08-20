@@ -444,18 +444,42 @@ test('/inbound/missed wraps the greeting in a Gather when escalation is enabled'
   assert.match(res.text, /<\/Gather><Record/);
 });
 
-test('/inbound/missed with escalation OFF emits exactly today\'s document', async () => {
+test('/inbound/missed with escalation OFF still LISTENS, because the greeting still offers press 1', async () => {
   process.env.VM_ESCALATION_ENABLED = 'false';
   const res = await post('/api/voice/inbound/missed?line=zul', {
     DialCallStatus: 'no-answer', CallSid: cs('CAg2'), From: '+13125550147',
   });
   await settle();
-  // Byte-for-byte the shipped behavior: greeting, Record, Hangup. No Gather.
-  // (The golden-pin test BELOW asserts the exact document; this one pins the
-  // explicit-false spelling of the flag.)
-  assert.doesNotMatch(res.text, /<Gather/);
-  assert.doesNotMatch(res.text, /press 1/);
-  assert.match(res.text, /<Play>[^<]*zul-greeting-day\.mp3<\/Play><Record/);
+  // THE TRAP THIS CLOSES (found 2026-08-19, cross-LLM review; fixed 2026-08-20):
+  // the switch used to drop the <Gather> while the offer stayed inside the
+  // recording, so an operator flipping it during an incident made every caller
+  // press 1 into a document that was not listening, and drop to the beep. No env
+  // var can edit an mp3, so the Gather now follows the GREETING, not the switch.
+  assert.match(res.text, /<Gather[^>]*action="[^"]*\/api\/voice\/escalate\?line=zul"/);
+  assert.match(res.text, /<Gather[^>]*>\s*<Play>[^<]*zul-greeting-day\.mp3<\/Play>\s*<\/Gather>/);
+  // Never ADD an offer for a feature that is off: the APPENDED prompt is still
+  // gated on the switch even though the Gather no longer is.
+  assert.doesNotMatch(res.text, /get someone else on the line/i);
+  assert.match(res.text, /<\/Gather><Record/, 'silence still falls through to the beep');
+  // And the spend guarantee is untouched: voiceEscalate.js tests the switch
+  // itself, so a digit arriving here claims nothing and dials nobody. Pinned in
+  // voiceEscalate.test.js ("VM_ESCALATION_ENABLED=false makes the digit handler
+  // a plain recording").
+});
+
+test('escalation OFF appends no prompt even behind an UNKNOWN override recording', async () => {
+  // The riskiest combination: the override's script is unknown, so the Gather is
+  // emitted on doubt. The prompt must still stay silent, or flipping the switch
+  // off would have Polly announce a feature that cannot run.
+  process.env.VM_ESCALATION_ENABLED = 'false';
+  process.env.VM_GREETING_URL = 'https://cdn.example.com/z.mp3';
+  const res = await post('/api/voice/inbound/missed?line=zul', {
+    DialCallStatus: 'no-answer', CallSid: cs('CAg2b'), From: '+13125550147',
+  });
+  await settle();
+  assert.match(res.text, /<Gather/, 'unknown recording may say press one, so listen');
+  assert.doesNotMatch(res.text, /get someone else on the line/i);
+  assert.doesNotMatch(res.text, /press 1/i);
 });
 
 test('/inbound/missed Gather targets the right line', async () => {
@@ -525,13 +549,20 @@ test('an instant answer on the zul line raises no canary', async () => {
 });
 
 test('/inbound/missed default document is pinned byte-for-byte (the escalation-off contract)', async () => {
-  // THE golden string for the live 0082 path. The <Play> target changed on
-  // 2026-08-19 when Zul's re-recorded greeting replaced the 2026-07-24 mp3 as
-  // her default; the byte-for-byte contract is unchanged. Substring matches cannot catch a
-  // reordered document (greeting after the beep) or a dropped <Hangup/> (billed
-  // dead air); this strictEqual is the alarm for every later change to the
-  // emission, including the Task 5 <Gather> wrapper, which must leave this
-  // exact document in place whenever VM_ESCALATION_ENABLED is off.
+  // THE golden string for the live 0082 path, with the flag unset (default OFF).
+  // Substring matches cannot catch a reordered document (greeting after the
+  // beep) or a dropped <Hangup/> (billed dead air); this strictEqual is the
+  // alarm for every later change to the emission.
+  //
+  // The document CHANGED on 2026-08-20 and the change is the point. It has moved
+  // twice now: on 2026-08-19 the <Play> target became Zul's re-recorded mp3, and
+  // on 2026-08-20 the <Gather> arrived, because that recording says "press one"
+  // and a document that speaks an offer must listen for it. What this pin no
+  // longer asserts is any equivalence to PRE-FEATURE production: the old comment
+  // here promised the escalation-off document was byte-identical to it, and that
+  // promise died with the re-recording. The contract now is honesty, not
+  // reversion, and the switch's real guarantee lives one file over --
+  // voiceEscalate.js refuses to claim or dial while it is off.
   const { API_URL } = require('../utils/urls');
   const res = await post('/api/voice/inbound/missed', {
     DialCallStatus: 'no-answer', CallSid: cs('CAgold1'), From: '+13125550147',
@@ -540,7 +571,10 @@ test('/inbound/missed default document is pinned byte-for-byte (the escalation-o
   assert.strictEqual(
     res.text,
     '<?xml version="1.0" encoding="UTF-8"?>'
-    + `<Response><Play>${API_URL}/api/voice/audio/zul-greeting-day.mp3</Play>`
+    + '<Response>'
+    + `<Gather numDigits="1" timeout="4" action="${API_URL}/api/voice/escalate?line=zul" method="POST">`
+    + `<Play>${API_URL}/api/voice/audio/zul-greeting-day.mp3</Play>`
+    + '</Gather>'
     + '<Record maxLength="120" playBeep="true" trim="trim-silence" finishOnKey="#"'
     + ` recordingStatusCallback="${API_URL}/api/voice/inbound/voicemail"`
     + ' recordingStatusCallbackMethod="POST" recordingStatusCallbackEvent="completed"/>'
@@ -1139,15 +1173,26 @@ test('the press-1 offer reaches the caller once, and never twice', async () => {
   assert.doesNotMatch(zul.text, /get someone else on the line/i, 'no appended offer');
 });
 
-test('escalation OFF emits no Gather, day AND night', async () => {
+test('escalation OFF: NIGHT emits no Gather, DAY still listens', async () => {
+  // The asymmetry is the fix. Night greetings never mention press 1 (nobody is
+  // awake to escalate to), so with the switch off there is nothing to listen for
+  // and the Gather is genuinely absent. Day greetings DO mention it, so the
+  // Gather stays and a pressed digit reaches the escalate_failed recording
+  // instead of silence. Before 2026-08-20 both were Gather-less and the day case
+  // was a lie told to every caller.
   process.env.VM_ESCALATION_ENABLED = 'false';
+  const expected = { true: false, false: true };
   for (const night of [true, false]) {
     router.__setVoiceDeps({ isNight: () => night });
     const res = await post('/api/voice/inbound/missed?line=primary', {
       DialCallStatus: 'no-answer', CallSid: cs(`CAoff${night}`), From: '+13125550147',
     });
     await settle();
-    assert.doesNotMatch(res.text, /<Gather/, `no Gather with escalation off (night=${night})`);
+    const hasGather = /<Gather/.test(res.text);
+    assert.equal(hasGather, expected[String(night)],
+      `night=${night} should ${expected[String(night)] ? '' : 'not '}emit a Gather`);
+    // Either way the switch adds nothing spoken.
+    assert.doesNotMatch(res.text, /get someone else on the line/i);
   }
 });
 

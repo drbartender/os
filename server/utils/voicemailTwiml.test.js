@@ -89,9 +89,67 @@ test('escalationEnabled defaults OFF and only true enables it', () => {
   assert.equal(twiml.escalationEnabled(), true);
 });
 
+test('dayGreetingOffersPress1 is true for both lines on their 2026-08-19 defaults', () => {
+  assert.equal(twiml.dayGreetingOffersPress1('zul'), true);
+  assert.equal(twiml.dayGreetingOffersPress1('primary'), true);
+  // NOT the inverse of needsAppendedOffer, which is the whole reason it exists:
+  // both greetings already say the offer, so nothing is appended AND a digit is
+  // still expected. voice.js needs the second fact to know whether to listen.
+  assert.equal(twiml.needsAppendedOffer('zul'), false);
+  assert.equal(twiml.needsAppendedOffer('primary'), false);
+});
+
+test("dayGreetingOffersPress1 follows the default through the 'say' kill switch", () => {
+  // The case .env.example's three-variable "revert" got wrong: it prescribed
+  // VM_GREETING_URL_PRIMARY=say to undo the offer, and the synthetic text says
+  // the offer too, so that revert only changed whose voice said it.
+  process.env.VM_GREETING_URL_PRIMARY = 'say';
+  assert.match(twiml.messageVerb('greeting_day', 'primary'), /press one/i);
+  assert.equal(twiml.dayGreetingOffersPress1('primary'), true);
+  // A malformed value degrades to that same synthetic text, so same answer.
+  process.env.VM_GREETING_URL_PRIMARY = 'yes';
+  assert.equal(twiml.dayGreetingOffersPress1('primary'), true);
+});
+
+test('dayGreetingOffersPress1 assumes an unknown override recording DOES offer', () => {
+  // Fail-safe direction: listening for a digit that never comes costs a
+  // 4-second timeout, not listening for one that does costs the caller a key
+  // press into silence.
+  process.env.VM_GREETING_URL = 'https://cdn.example.com/z.mp3';
+  assert.equal(twiml.dayGreetingOffersPress1('zul'), true);
+});
+
+test('dayGreetingOffersPress1 ignores VM_ESCALATION_PROMPT, which cannot edit an mp3', () => {
+  // That override suppresses the APPENDED prompt only. If it silenced this too,
+  // it would re-create the exact trap this helper exists to close: a recording
+  // that says "press one" with no Gather behind it.
+  process.env.VM_ESCALATION_PROMPT = 'none';
+  assert.equal(twiml.needsAppendedOffer('zul'), false);
+  assert.equal(twiml.dayGreetingOffersPress1('zul'), true);
+});
+
+test('dayGreetingOffersPress1 reads the SLOTS flag, so a no-offer recording turns the Gather off', () => {
+  // Without this the function could be a constant true and every test above
+  // would still pass. It also pins the migration path: record a greeting
+  // without the sentence, flip defaultSaysOffer, and voice.js stops emitting
+  // the Gather with no code change at all.
+  const slot = twiml.SLOTS.greeting_day.zul;
+  const saved = slot.defaultSaysOffer;
+  try {
+    slot.defaultSaysOffer = false;
+    assert.equal(twiml.dayGreetingOffersPress1('zul'), false);
+    assert.equal(twiml.needsAppendedOffer('zul'), true, 'and the prompt would be owed again');
+  } finally {
+    slot.defaultSaysOffer = saved;
+  }
+});
+
 test('escalationPromptVerb speaks the option by default and is suppressible', () => {
-  // The greetings currently in production do NOT mention press 1, so the option
-  // has to be announced or no caller will ever know it exists.
+  // The verb itself is unconditional; WHETHER it is emitted is decided by
+  // needsAppendedOffer. Since 2026-08-19 both day recordings say the offer, so
+  // in practice nothing is appended and this exists for an override URL whose
+  // script we do not know. (The comment here used to say the production
+  // greetings do not mention press 1; that stopped being true on 2026-08-19.)
   assert.match(twiml.escalationPromptVerb(), /<Say[^>]*>[^<]*press 1[^<]*<\/Say>/);
   process.env.VM_ESCALATION_PROMPT = 'none';
   assert.equal(twiml.escalationPromptVerb(), '', 'none means the recording already says it');
