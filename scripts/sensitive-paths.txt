@@ -101,6 +101,18 @@ server/routes/thumbtack.js
 # below. Its own review found a portal-takeover primitive here, so a light look
 # on the next edit is not acceptable.
 server/routes/smsOptIn.js
+# The inbound-SMS BRAIN, and the highest-stakes WRITE path in the family
+# (2026-08-20). routes/sms.js is listed above, but it is a thin webhook: the
+# decisions live here. findNearestApprovedShift picks which shift a CANT denies
+# and RE-OPENS, i.e. which staffer comes off the roster payroll accrues from,
+# and applyOptOut/applyOptIn write communication_preferences.sms_enabled, the
+# same compliance field smsOptIn.js is listed for. Getting the shift pick wrong
+# has now been a P0 twice (the GMT-rollover round and the calendar-day round)
+# and a residual a third time (the NULL end_time overnight window, fixed in the
+# same lane as this line). Same "sensitivity follows the code" rule the entries
+# above and below record: the logic moved out of the listed route and the
+# listing did not follow.
+server/utils/smsInbound.js
 
 # Billed-voice surfaces (2026-07-18 push review): outbound Twilio calls cost
 # real money and the webhook routes take attacker-reachable input. Includes

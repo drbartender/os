@@ -46,7 +46,7 @@ const EMAIL_PREFIX = `cant-endinstant-${NONCE}-`;
 
 const F = {};
 let clock;
-let brunchStaffId, tiebreakStaffId, cantStaffId, noneStaffId;
+let brunchStaffId, tiebreakStaffId, cantStaffId, noneStaffId, overnightStaffId;
 
 async function makeStaff(label) {
   const r = await pool.query(
@@ -93,6 +93,7 @@ before(async () => {
     SELECT to_char(n, 'YYYY-MM-DD') AS chi_today,
            to_char(n, 'HH24:MI')    AS chi_now,
            to_char(n + INTERVAL '1 day', 'YYYY-MM-DD') AS chi_tomorrow,
+           to_char(n + INTERVAL '2 days', 'YYYY-MM-DD') AS chi_dayafter,
            to_char(GREATEST(n - INTERVAL '30 minutes',
                             date_trunc('day', n) + INTERVAL '1 minute'), 'YYYY-MM-DD') AS ended_d,
            to_char(GREATEST(n - INTERVAL '30 minutes',
@@ -106,6 +107,7 @@ before(async () => {
   `)).rows[0];
 
   brunchStaffId = await makeStaff('brunch');
+  overnightStaffId = await makeStaff('overnight');
   tiebreakStaffId = await makeStaff('tiebreak');
   cantStaffId = await makeStaff('cant');
   noneStaffId = await makeStaff('none');
@@ -135,6 +137,16 @@ before(async () => {
   await seedShift('cantTarget', { date: clock.soon_d, startTime: '18:00', endTime: clock.soon_t });
   await approve(F.cantTarget, cantStaffId);
 
+  // THE OVERNIGHT PAIR (2026-08-20). A late start with a NULL end_time takes
+  // rule 2, so its end instant is start + booked + grace = about 05:00 the NEXT
+  // morning. Both of these are genuinely in the future by the real clock, which
+  // is what makes them candidates; what the test moves is the DATE the ordering
+  // measures "before today" against, since the DB clock cannot be moved.
+  await seedShift('overnightTail', { date: clock.chi_tomorrow, startTime: '9:00 PM', endTime: null });
+  await seedShift('dayAfter', { date: clock.chi_dayafter, startTime: '6:00 PM', endTime: '11:00 PM' });
+  await approve(F.overnightTail, overnightStaffId);
+  await approve(F.dayAfter, overnightStaffId);
+
   // Premises, re-derived from the database.
   assert.equal(await notFinished(F.brunch), false,
     `test premise: the brunch fixture must already be finished at Chicago ${clock.chi_now}`);
@@ -142,6 +154,9 @@ before(async () => {
     `test premise: tonight's fixture must not be finished at Chicago ${clock.chi_now}`);
   assert.equal(await notFinished(F.onlyFinished), false, 'test premise: onlyFinished must be finished');
   assert.equal(await notFinished(F.cantTarget), true, 'test premise: the CANT target must still be live');
+  assert.equal(await notFinished(F.overnightTail), true,
+    'test premise: the overnight fixture must still be a candidate, or the ordering is never reached');
+  assert.equal(await notFinished(F.dayAfter), true, 'test premise: the day-after fixture must be live');
 
   // Fails-before proof: the old predicate keeps the finished brunch, and
   // because it is dated today it sorts ahead of tonight's shift.
@@ -224,4 +239,43 @@ test('CANT stamps the audit note with the CHICAGO business day, not the GMT day'
   assert.match(sent[0].emailText, /\(TODAY\)/,
     'a drop on the day of the event must read TODAY, never "past due"');
   assert.ok(sent[0].smsBody, 'an event today is inside the 7-day window, so it also texts');
+});
+
+test('a shift dated BEFORE today never outranks one dated today or later', async () => {
+  // The residual the 2026-08-16 fleet found and the header used to deny. The
+  // brunch P0 above is the same damage one calendar day earlier: a NULL
+  // end_time takes rule 2, so a 9:00 PM start is "not finished" until about
+  // 05:00 the next morning, and it sorted FIRST. A bartender who finished at
+  // 01:00 and texted CANT at 02:00 meaning a later date had LAST NIGHT's shift
+  // denied and re-opened, off the roster payroll pays from.
+  //
+  // Asserted by moving the DATE rather than the clock, because the DB clock
+  // cannot be moved and the window is only reachable between midnight and about
+  // 08:00 Chicago. Both fixtures are genuinely unfinished by the real clock
+  // (pinned in before()), and the injected day is the one input the new
+  // ordering term reads.
+  const asIfDayAfter = await findNearestApprovedShift(overnightStaffId, clock.chi_dayafter);
+  assert.ok(asIfDayAfter, 'both fixtures are live, so something must be found');
+  assert.equal(asIfDayAfter.shift_id, F.dayAfter,
+    'the shift dated yesterday-relative-to-the-injected-day must not win, however its assumed end sorts');
+
+  // And the ordinary case is UNDISTURBED: with the real Chicago today, neither
+  // is dated before today, so the end instant decides and the nearer shift wins.
+  // This is the half that makes the new term a tiebreak rather than a filter.
+  const today = await findNearestApprovedShift(overnightStaffId);
+  assert.equal(today.shift_id, F.overnightTail,
+    'the genuinely nearer shift must still win when neither is in the past');
+});
+
+test('an overnight shift is still returned when it is the ONLY candidate', async () => {
+  // The tiebreak must never hide a shift. A staffer whose single approved shift
+  // is the overnight one still gets it back, even measured from a later day.
+  const soloStaffId = await makeStaff('overnight-solo');
+  const shiftId = await seedShift('overnightSolo', {
+    date: clock.chi_tomorrow, startTime: '9:00 PM', endTime: null,
+  });
+  await approve(shiftId, soloStaffId);
+  const found = await findNearestApprovedShift(soloStaffId, clock.chi_dayafter);
+  assert.ok(found, 'ordering is a tiebreak; with one candidate there is nothing to break');
+  assert.equal(found.shift_id, shiftId);
 });

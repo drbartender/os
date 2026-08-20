@@ -5215,7 +5215,57 @@ Two smaller defects in the same guard, neither live today:
 - **`def.includes("'" + v + "'")` is a substring match** (`:276`), so a required value that is a
   substring of another permitted value would false-PASS. No such pair exists today.
 
-## `smsInbound` CANT: a real residual the header says is closed
+## ~~`smsInbound` CANT: a real residual the header says is closed~~ FIXED 2026-08-20, lane `cant-overnight-ordering`
+
+**Built exactly as prescribed, after checking the prescription rather than trusting it** (two
+prescriptions in this file were wrong this week). It holds up: the leading ORDER BY term is a
+TIEBREAK, not a filter, so the candidate SET is still decided entirely by the end instant and
+nothing becomes invisible. A test pins that an overnight shift is still returned when it is the
+only candidate, and a second assertion pins that the ordinary case is undisturbed.
+
+**Two things the entry did not say, both worth carrying:**
+
+1. **The exposure window is 00:00 to about 08:00 Chicago, and nothing wider.** Rule 2 caps the
+   assumed end at start + booked + grace, so the latest a yesterday-dated shift can still be
+   "not finished" is roughly 08:00 the next morning (23:59 + 4 + 4). Outside that window no
+   past-dated shift is a candidate at all and the new term can never change a pick. That is
+   also why the test injects the DAY rather than mocking the clock: the DB clock cannot be
+   moved, so a wall-clock test would only run for eight hours out of twenty-four.
+2. **`chicagoTodayYmd()` is BOUND, not computed in SQL.** The prescription wrote
+   `(NOW() AT TIME ZONE 'America/Chicago')::date` inline, which is correct arithmetic, but this
+   file already imports `chicagoTodayYmd` and the payroll family's standing rule is to bind it.
+   Binding is also what made the test possible: it is the one input the ordering rule reads, so
+   it is the seam.
+
+Mutation-verified: making the term inert (`FALSE AND ...`, keeping the bind so the query still
+parses) fails exactly the new test and nothing else. Suites green: nearestShift.endInstant 6/6
+under BOTH `TZ=UTC` and `TZ=America/Chicago`, smsInbound 42/42, routes/sms 7/7, shiftEndInstant
+15/15, shifts.visibility.endInstant 6/6.
+
+**`server/utils/smsInbound.js` is now sensitive-listed, in the same lane.** It was not, while
+its thin webhook `routes/sms.js` was. That is the "sensitivity follows the code" gap this list
+already documents five times: the decisions moved out of the listed route and the listing did
+not follow. This file picks which shift a CANT re-opens (which staffer comes off the roster
+payroll accrues from) and writes `communication_preferences.sms_enabled`, the same compliance
+field `smsOptIn.js` is listed for. Consequence: this lane, and every future edit here, pulls the
+full fleet plus `/second-opinion` at push.
+
+**OPEN, deliberately not done in this lane: listed-but-ungated, for the third time.** By the
+precedent this file already set twice (`contractorTipPage.test.js` and `stripePayoutSync`'s
+suites), `smsInbound.nearestShift.endInstant.test.js` now belongs on
+`scripts/money-smoke-list.txt`: it pins which staffer comes off a roster payroll accrues from.
+It is NOT added here because that gate runs against the `ci-smoke` Neon branch and this suite
+asserts a DB-session premise and seeds `shifts`/`shift_requests`/`users` fixtures, none of which
+has ever been exercised there. The gate HARD-FAILS on a listed file that misbehaves, so adding
+it blind trades a review gap for a push blocker. Run it against ci-smoke once, then add it.
+
+**Also owed, noted rather than acted on: `smsInbound.js` is 877 lines**, 177 over the soft cap
+and 123 from the hard one, so the ratchet will eventually refuse a growing commit here. The
+natural seam is the same one the sensitive listing describes: keyword/opt-out handling versus
+the shift responder.
+
+### The original entry, kept for the reasoning
+
 
 `server/utils/smsInbound.js:365-390`. The header claims "a finished shift is not a candidate at
 all, no matter what day it is." Not true when `end_time` is NULL: rule 2 assumes

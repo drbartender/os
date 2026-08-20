@@ -385,19 +385,37 @@ async function applyOptIn(sender) {
  *     P0 that killed the previous round.
  *
  * The end instant (server/utils/shiftEndInstant.js) is what makes both go
- * away: a finished shift is not a candidate at all, no matter what day it is.
- * The status guard stays as a second line — it only became meaningful once
- * something actually closed shifts (the closure sweep, this same spec).
+ * away, but only as far as the DATA allows, and the original wording here
+ * ("a finished shift is not a candidate at all, no matter what day it is")
+ * overclaimed. It is true when the end is KNOWN. When `end_time` is NULL the
+ * end instant is ASSUMED (rule 2: start + booked length + overrun grace), so a
+ * 9:00 PM start with a 4h booking is "not finished" until 05:00 the NEXT
+ * morning. 11 of the 78 prod shifts have exactly that shape.
  *
- * ORDERING is by the end instant too, not by `s.start_time`: start_time is
- * free text, so the old ASC sort compared '7:00 PM' against '8:00 AM' as
- * strings and put the evening shift first on a two-shift day. `s.id` breaks
- * exact ties so the pick is deterministic.
+ * That leaves a real window, 00:00 to about 08:00 Chicago: a bartender who
+ * finished at 01:00 and texts CANT at 02:00 meaning TOMORROW had LAST NIGHT's
+ * shift denied and re-opened, off the roster payroll pays from. Same damage as
+ * the brunch P0, one calendar day over.
+ *
+ * ORDERING therefore has two terms, and the first one closes that window: a
+ * shift dated before today NEVER outranks one dated today or later. It is a
+ * tiebreak, not a filter — the candidate SET is still decided entirely by the
+ * end instant, so nothing becomes invisible and a genuinely-overnight shift is
+ * still returned when it is the only one. Then the end instant, not
+ * `s.start_time`: start_time is free text, so the old ASC sort compared
+ * '7:00 PM' against '8:00 AM' as strings and put the evening shift first on a
+ * two-shift day. `s.id` breaks exact ties so the pick is deterministic.
  *
  * @param {number} staffUserId
+ * @param {string} [todayYmd] the business day to measure "before today"
+ *   against, as YYYY-MM-DD. Defaults to Chicago today, bound as a parameter
+ *   rather than computed in SQL because this session runs at GMT and rolls over
+ *   at 19:00 Chicago. It is a parameter at all because the DATABASE clock
+ *   cannot be moved in a test, and this is the one input the ordering rule
+ *   reads, so injecting it is what makes the rule testable at any hour.
  * @returns {Promise<Object|null>} the shift_requests+shifts row, or null
  */
-async function findNearestApprovedShift(staffUserId) {
+async function findNearestApprovedShift(staffUserId, todayYmd = chicagoTodayYmd()) {
   const r = await pool.query(
     `SELECT sr.id AS request_id, s.id AS shift_id, s.event_date, s.start_time,
             s.status AS shift_status, s.client_name, s.event_type, s.event_type_custom,
@@ -410,9 +428,10 @@ async function findNearestApprovedShift(staffUserId) {
        AND sr.dropped_at IS NULL
        AND ${shiftNotFinishedSql('s', 'p')}
        AND s.status NOT IN ('completed', 'cancelled')
-     ORDER BY ${shiftEndInstantSql('s', 'p')} ASC, s.id ASC
+     ORDER BY (s.event_date < $2::date) ASC,
+              ${shiftEndInstantSql('s', 'p')} ASC, s.id ASC
      LIMIT 1`,
-    [staffUserId]
+    [staffUserId, todayYmd]
   );
   return r.rows[0] || null;
 }
