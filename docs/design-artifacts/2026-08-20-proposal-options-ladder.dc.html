@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/dr-bartender-apothecary-design-system-e8719940-ff6f-4eb0-a39d-473d9a0591a8/tokens/fonts.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-apothecary-design-system-e8719940-ff6f-4eb0-a39d-473d9a0591a8/tokens/colors.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-apothecary-design-system-e8719940-ff6f-4eb0-a39d-473d9a0591a8/tokens/typography.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-apothecary-design-system-e8719940-ff6f-4eb0-a39d-473d9a0591a8/tokens/spacing.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-apothecary-design-system-e8719940-ff6f-4eb0-a39d-473d9a0591a8/tokens/status-pills.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-apothecary-design-system-e8719940-ff6f-4eb0-a39d-473d9a0591a8/tokens/base.css">
+  <link rel="stylesheet" href="_ds/dr-bartender-apothecary-design-system-e8719940-ff6f-4eb0-a39d-473d9a0591a8/styles.css">
+  <script src="_ds/dr-bartender-apothecary-design-system-e8719940-ff6f-4eb0-a39d-473d9a0591a8/_ds_bundle.js"></script>
+  <style>
+    html { font-size: 17px; }
+    body { margin: 0; background: #12161C; }
+    a { color: var(--amber-light); text-decoration: none; }
+    a:hover { color: var(--cream-text); text-decoration: underline; }
+    ::-webkit-scrollbar { height: 10px; width: 10px; }
+    ::-webkit-scrollbar-thumb { background: rgba(184,146,74,0.45); border-radius: 6px; }
+    @keyframes rxflashA { 0% { background: rgba(184,146,74,0.5); box-shadow: 0 0 0 6px rgba(184,146,74,0.22); } 100% { background: transparent; box-shadow: none; } }
+    @keyframes rxflashB { 0% { background: rgba(184,146,74,0.5); box-shadow: 0 0 0 6px rgba(184,146,74,0.22); } 100% { background: transparent; box-shadow: none; } }
+    @keyframes rxshimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+    @keyframes rxspin { to { transform: rotate(360deg); } }
+    @keyframes rxslidein { from { transform: translateX(102%); } to { transform: translateX(0); } }
+  </style>
+</helmet>
+
+<div data-screen-label="Proposal" style="min-height:100dvh;background-color:var(--chalkboard);background-image:url('client/src/images/chalkboard_background.png');background-size:1200px auto;background-repeat:repeat;font-family:var(--font-body);line-height:1.65;color:var(--cream-text);padding-bottom:60px">
+  <div style="{{ pagePadStyle }}">
+
+    <div style="position:sticky;top:0;z-index:40;background:rgba(12,15,20,0.94);border-bottom:1px solid rgba(184,146,74,0.35);backdrop-filter:blur(6px)">
+      <div style="max-width:1240px;margin:0 auto;padding:0 clamp(12px,3vw,24px);display:flex;align-items:center;justify-content:space-between;gap:clamp(14px,3vw,28px)">
+        <span style="font-family:var(--font-display);font-size:0.9rem;letter-spacing:0.04em;color:var(--cream-text);padding:14px 0;white-space:nowrap">Dr. Bartender</span>
+        <span style="font-family:var(--font-display);font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:var(--brass);white-space:nowrap">Proposal · For {{ clientName }}</span>
+      </div>
+    </div>
+
+    <div style="max-width:1240px;margin:0 auto;padding:0 clamp(12px,3vw,24px)">
+
+      <div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:24px 0 26px;gap:12px">
+        <div style="width:110px;height:110px;border-radius:50%;background:radial-gradient(circle at 35% 30%, #2FA7A0 0%, #1D8C89 45%, #0E4F4D 100%);position:relative;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(0,0,0,0.5), inset 0 -4px 10px rgba(0,0,0,0.35);flex-shrink:0">
+          <div style="position:absolute;inset:6px;border:1px dashed rgba(240,232,214,0.55);border-radius:50%;pointer-events:none"></div>
+          <span style="font-family:var(--font-display);font-style:italic;font-size:38px;color:var(--cream-text);line-height:1;text-shadow:0 1px 2px rgba(0,0,0,0.35);position:relative;z-index:1">Rx</span>
+        </div>
+        <span style="font-family:var(--font-display);font-size:0.78rem;letter-spacing:0.22em;text-transform:uppercase;color:var(--brass)">The Prescription · For {{ clientName }}</span>
+        <h1 style="font-family:var(--font-display);font-weight:400;font-size:clamp(2rem,6vw,2.6rem);line-height:1.05;color:var(--cream-text);margin:0">Your event bar, <em style="font-style:italic;color:var(--brass-bright)">engineered</em>.</h1>
+        <p style="max-width:560px;margin:0;font-size:0.95rem;color:rgba(240,232,214,0.78);line-height:1.55">A reading of the night, costed out and held for your signature.</p>
+      </div>
+
+      <sc-if value="{{ swapped }}" hint-placeholder-val="{{ false }}">
+        <div style="border:1px solid var(--amber);border-radius:10px;background:rgba(29,140,137,0.14);padding:16px 20px;margin-bottom:22px;display:flex;flex-wrap:wrap;align-items:center;gap:14px">
+          <div style="flex:1;min-width:280px">
+            <div style="font-family:var(--font-display);font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:var(--brass-bright);margin-bottom:5px">Rewritten just now</div>
+            <p style="margin:0;font-size:0.95rem;line-height:1.5;color:var(--cream-text)">Your proposal now reads <em style="color:var(--brass-bright);font-style:normal">{{ packageName }}</em>. {{ bannerNote }}</p>
+          </div>
+          <button type="button" onClick="{{ undoSwap }}" style="background:transparent;border:1px solid var(--brass);color:var(--brass);font-family:var(--font-display);font-size:0.72rem;letter-spacing:0.14em;text-transform:uppercase;padding:10px 16px;border-radius:6px;cursor:pointer" style-hover="background:rgba(184,146,74,0.12)">Undo · back to {{ originalName }}</button>
+        </div>
+      </sc-if>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:26px;align-items:start">
+        <div style="position:relative;background:linear-gradient(180deg, var(--paper) 0%, var(--card-bg) 100%);border:2px solid var(--brass);border-radius:10px;box-shadow:0 4px 24px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(184,146,74,0.22);color:var(--deep-brown);overflow:hidden">
+          <div style="position:absolute;inset:0;pointer-events:none;mix-blend-mode:multiply;opacity:0.55;background-image:url(&quot;data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.45  0 0 0 0 0.32  0 0 0 0 0.18  0 0 0 0.06 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>&quot;)"></div>
+          <div style="position:relative;z-index:1">
+            <div style="text-align:center;padding:0 0 18px;border-bottom:1px solid rgba(184,146,74,0.4);margin-bottom:22px">
+              <h2 style="font-family:var(--font-display);font-size:1.1rem;color:var(--deep-brown);letter-spacing:0.04em;margin:14px 0 0;font-weight:400">Dr. Bartender</h2>
+              <p style="color:#785D26;margin:4px 0 0;font-size:10px;letter-spacing:0.32em;text-transform:uppercase;font-family:var(--font-display)">Your Event Proposal</p>
+            </div>
+
+            <div style="padding:22px 26px;border-bottom:1px solid rgba(184,146,74,0.32)">
+              <h3 style="font-family:var(--font-display);font-size:1.4rem;color:var(--deep-brown);margin:0 0 14px;font-weight:400">Your Wedding Reception proposal</h3>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem 1.5rem">
+                <div style="display:flex;flex-direction:column;gap:2px;padding:8px 0;border-bottom:1px dotted rgba(28,22,16,0.22);grid-column:1 / -1">
+                  <span style="font-size:10.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.18em;font-family:var(--font-display)">Date</span>
+                  <span style="font-size:14.5px">Saturday, October 3, 2026</span>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:2px;padding:8px 0;border-bottom:1px dotted rgba(28,22,16,0.22);grid-column:1 / -1">
+                  <span style="font-size:10.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.18em;font-family:var(--font-display)">Service Time</span>
+                  <span style="font-size:14.5px">5:00 PM – {{ endTime }}</span>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:2px;padding:8px 0;border-bottom:1px dotted rgba(28,22,16,0.22)">
+                  <span style="font-size:10.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.18em;font-family:var(--font-display)">Guests</span>
+                  <span style="font-size:14.5px">{{ guests }}</span>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:2px;padding:8px 0;border-bottom:1px dotted rgba(28,22,16,0.22)">
+                  <span style="font-size:10.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.18em;font-family:var(--font-display)">Bartenders</span>
+                  <span style="font-size:14.5px">{{ bartenders }}</span>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:2px;padding:8px 0;border-bottom:1px dotted rgba(28,22,16,0.22);grid-column:1 / -1">
+                  <span style="font-size:10.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.18em;font-family:var(--font-display)">Location</span>
+                  <span style="font-size:14.5px">Cheney Mansion · Oak Park, IL</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="padding:22px 26px;border-bottom:1px solid rgba(184,146,74,0.32)">
+              <h3 style="font-family:var(--font-display);font-size:1.4rem;color:var(--deep-brown);margin:0 0 10px;font-weight:400">{{ packageName }}</h3>
+              <p style="color:var(--text-muted);font-size:0.95rem;margin:0 0 14px;font-style:italic">{{ packageTagline }}</p>
+              <sc-for list="{{ packageGroups }}" as="g" hint-placeholder-count="3">
+                <div style="margin-bottom:0.75rem">
+                  <div style="font-family:var(--font-display);font-size:0.78rem;color:#785D26;margin:0 0 0.4rem;text-transform:uppercase;letter-spacing:0.18em">{{ g.heading }}</div>
+                  <ul style="margin:0;padding:0;list-style:none;color:var(--deep-brown)">
+                    <sc-for list="{{ g.items }}" as="item" hint-placeholder-count="3">
+                      <li style="display:flex;gap:7px;align-items:baseline;font-size:14px;margin-bottom:5px;line-height:1.5"><span style="color:var(--brass);font-weight:700">·</span><span>{{ item }}</span></li>
+                    </sc-for>
+                  </ul>
+                </div>
+              </sc-for>
+              <p style="color:var(--text-muted);font-size:0.85rem;margin-top:0.5rem;font-style:italic">{{ serviceLine }}</p>
+            </div>
+
+            <div style="padding:22px 26px">
+              <h3 style="font-family:var(--font-display);font-size:1.4rem;color:var(--deep-brown);margin:0 0 14px;font-weight:400">Pricing</h3>
+              <table style="width:100%;border-collapse:collapse">
+                <tbody>
+                  <tr style="border-bottom:1px dotted rgba(28,22,16,0.22)">
+                    <td style="padding:0.6rem 0;color:var(--deep-brown);font-size:0.95rem">{{ pkgLineLabel }}</td>
+                    <td style="padding:0.6rem 0;text-align:right;color:var(--deep-brown);font-size:0.95rem;font-weight:500;white-space:nowrap;font-variant-numeric:tabular-nums;vertical-align:top">{{ pkgLineAmount }}</td>
+                  </tr>
+                  <sc-for list="{{ restLineItems }}" as="row" hint-placeholder-count="2">
+                    <tr style="border-bottom:1px dotted rgba(28,22,16,0.22)">
+                      <td style="padding:0.6rem 0;color:var(--deep-brown);font-size:0.95rem">{{ row.label }}</td>
+                      <td style="padding:0.6rem 0;text-align:right;color:var(--deep-brown);font-size:0.95rem;font-weight:500;white-space:nowrap;font-variant-numeric:tabular-nums">{{ row.amount }}</td>
+                    </tr>
+                  </sc-for>
+                </tbody>
+                <tfoot>
+                  <tr style="border-top:2px solid var(--deep-brown)">
+                    <td style="padding:0.85rem 0 0;font-size:1.1rem;color:var(--deep-brown);font-family:var(--font-display);letter-spacing:0.015em">Total</td>
+                    <td style="padding:0.85rem 0 0;text-align:right;font-size:1.35rem;color:var(--deep-brown);font-family:var(--font-display);font-variant-numeric:tabular-nums"><span style="{{ totalAnimStyle }}">{{ proposalTotal }}</span></td>
+                  </tr>
+                </tfoot>
+              </table>
+              <p style="margin:14px 0 0;font-size:0.85rem;color:var(--text-muted);font-style:italic">$100.00 deposit today · balance of {{ proposalBalance }} due Sep 19, 2026.</p>
+              <button type="button" onClick="{{ openDrawer }}" style="display:block;width:100%;margin-top:16px;padding:13px 16px;background:rgba(29,140,137,0.08);border:1.5px solid var(--amber);border-radius:8px;cursor:pointer;text-align:left" style-hover="background:rgba(29,140,137,0.16)">
+                <span style="display:block;font-family:var(--font-display);font-size:0.92rem;color:var(--deep-brown);letter-spacing:0.02em">Want us to handle more of this? See every option, priced for your night →</span>
+                <span style="display:block;font-family:var(--font-body);font-style:italic;font-size:0.8rem;color:var(--text-muted);margin-top:2px">From bar service only up to a fully stocked bar — switch any time before you sign.</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <aside style="position:sticky;top:70px;align-self:start">
+          <div style="background:#0e1218;border:1.5px solid rgba(184,146,74,0.4);border-radius:10px;padding:24px 20px;color:var(--cream-text);display:flex;flex-direction:column;gap:18px">
+            <div>
+              <span style="display:block;font-family:var(--font-display);font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:var(--brass);margin:0 0 4px">Step Two · Sign &amp; Secure</span>
+              <h2 style="font-family:var(--font-display);font-size:1.5rem;color:var(--cream-text);font-weight:400;margin:0">Set your seal.</h2>
+            </div>
+            <div>
+              <label style="display:block;font-family:var(--font-display);font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:var(--brass);margin:0 0 6px">Full Legal Name</label>
+              <input type="text" placeholder="Your full name" style="width:100%;padding:12px 14px;border:1px solid rgba(28,22,16,0.22);border-radius:6px;background:var(--paper);color:var(--deep-brown);font-family:var(--font-body);font-size:0.95rem">
+            </div>
+            <div>
+              <label style="display:block;font-family:var(--font-display);font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:var(--brass);margin:0 0 6px">Signature</label>
+              <div style="background:var(--paper);border:1px solid rgba(28,22,16,0.22);border-radius:6px;height:110px"></div>
+              <p style="font-family:var(--font-display);font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:var(--text-muted);margin:6px 0 0;text-align:center">x · sign above</p>
+            </div>
+            <div>
+              <label style="display:block;font-family:var(--font-display);font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:var(--brass);margin:0 0 6px">How would you like to pay?</label>
+              <label style="display:block;border:2px solid var(--amber);border-radius:8px;padding:14px 16px;cursor:pointer;background:var(--paper);color:var(--deep-brown)">
+                <div style="display:flex;align-items:flex-start;gap:12px">
+                  <input type="radio" name="pay" checked style="margin-top:4px;accent-color:var(--amber)">
+                  <div style="flex:1">
+                    <div style="font-family:var(--font-display);font-size:0.95rem">Pay $100.00 Deposit</div>
+                    <div style="font-size:0.82rem;color:var(--text-muted);line-height:1.45">Remaining {{ proposalBalance }} due before your event</div>
+                  </div>
+                  <span style="font-family:var(--font-display);font-size:1.05rem;align-self:flex-end;font-variant-numeric:tabular-nums">$100.00</span>
+                </div>
+              </label>
+              <label style="display:block;border:2px solid rgba(184,146,74,0.45);border-radius:8px;padding:14px 16px;cursor:pointer;margin-top:10px">
+                <div style="display:flex;align-items:flex-start;gap:12px">
+                  <input type="radio" name="pay" style="margin-top:4px;accent-color:var(--amber)">
+                  <div style="flex:1">
+                    <div style="font-family:var(--font-display);font-size:0.95rem">Pay in Full</div>
+                    <div style="font-size:0.82rem;color:rgba(240,232,214,0.7);line-height:1.45">No remaining balance</div>
+                  </div>
+                  <span style="font-family:var(--font-display);font-size:1.05rem;align-self:flex-end;font-variant-numeric:tabular-nums">{{ proposalTotal }}</span>
+                </div>
+              </label>
+            </div>
+            <button type="button" style="width:100%;padding:14px 20px;background:var(--amber);color:var(--cream-text);border:none;border-radius:8px;font-size:0.95rem;font-weight:500;letter-spacing:0.06em;font-family:var(--font-display);cursor:pointer;box-shadow:0 2px 10px rgba(29,140,137,0.32)" style-hover="background:var(--warm-brown)">Sign &amp; Pay $100.00 Deposit</button>
+            <p style="font-family:var(--font-display);font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:var(--brass);text-align:center;margin:0">Secured by Stripe · Your card is charged once you sign.</p>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <div style="text-align:center;padding:24px 16px;color:var(--brass);font-family:var(--font-display);font-size:11px;letter-spacing:0.18em;text-transform:uppercase">
+      <span>contact@drbartender.com · (312) 555-0182</span>
+    </div>
+  </div>
+
+  <sc-if value="{{ showBackdrop }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeDrawer }}" style="position:fixed;inset:0;background:rgba(6,8,11,0.62);z-index:60"></div>
+  </sc-if>
+
+  <sc-if value="{{ drawerOpen }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="How-much-should-we-handle drawer" role="dialog" aria-label="How much should we handle?" style="{{ drawerStyle }}">
+      <sc-if value="{{ isMobileView }}" hint-placeholder-val="{{ false }}">
+        <div onPointerDown="{{ handleDown }}" onPointerMove="{{ handleMove }}" onPointerUp="{{ handleUp }}" style="touch-action:none;cursor:grab;padding:11px 0 7px;display:flex;justify-content:center;flex-shrink:0">
+          <span style="width:44px;height:5px;border-radius:999px;background:rgba(184,146,74,0.55)"></span>
+        </div>
+      </sc-if>
+
+      <div style="padding:12px 18px 12px;border-bottom:1px solid rgba(184,146,74,0.3);flex-shrink:0">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+          <div>
+            <div style="font-family:var(--font-display);font-size:10px;letter-spacing:0.24em;text-transform:uppercase;color:var(--brass);margin-bottom:3px">Your proposal · a second look</div>
+            <h2 style="font-family:var(--font-display);font-weight:400;font-size:1.32rem;line-height:1.15;color:var(--cream-text);margin:0">How much should <em style="color:var(--brass-bright)">we</em> handle?</h2>
+          </div>
+          <button type="button" onClick="{{ closeDrawer }}" aria-label="Close" style="background:transparent;border:1px solid rgba(184,146,74,0.5);color:var(--brass);border-radius:6px;width:32px;height:32px;font-size:1rem;line-height:1;cursor:pointer;flex-shrink:0" style-hover="background:rgba(184,146,74,0.14)">×</button>
+        </div>
+        <div style="font-size:0.8rem;color:rgba(240,232,214,0.6);margin-top:6px">{{ eventLine }} — none of this changes.</div>
+        <div style="font-size:0.76rem;font-style:italic;color:rgba(240,232,214,0.5);margin-top:3px">Every option includes our $2 million liquor liability insurance.</div>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;min-height:0">
+        <div style="position:sticky;top:0;z-index:2;background:#10151c;border-bottom:1px solid rgba(184,146,74,0.4);border-left:3px solid var(--amber);padding:9px 18px 10px">
+          <div style="display:flex;align-items:baseline;gap:9px">
+            <span style="font-family:var(--font-display);font-size:0.56rem;letter-spacing:0.18em;text-transform:uppercase;color:var(--cream-text);background:var(--amber);border-radius:999px;padding:2px 9px;align-self:center;flex-shrink:0">Yours</span>
+            <div style="flex:1;min-width:0;font-family:var(--font-display);font-size:1rem;color:var(--cream-text);line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ anchorName }}</div>
+            <div style="font-family:var(--font-display);font-size:1.1rem;color:var(--cream-text);font-variant-numeric:tabular-nums;white-space:nowrap">{{ anchorTotal }}</div>
+          </div>
+          <sc-if value="{{ showAnchorPuts }}" hint-placeholder-val="{{ true }}">
+            <div style="font-size:0.78rem;line-height:1.45;color:rgba(240,232,214,0.6);margin-top:3px">{{ anchorPuts }}</div>
+          </sc-if>
+          <sc-if value="{{ anchorDirty }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin-top:7px">
+              <span style="font-size:0.72rem;font-style:italic;color:var(--amber-light)">quoted with your extras — not on your proposal yet</span>
+              <sc-if value="{{ anchorIdle }}" hint-placeholder-val="{{ true }}">
+                <button type="button" onClick="{{ onAnchorCommit }}" style="background:var(--amber);border:none;color:var(--cream-text);font-family:var(--font-display);font-size:0.66rem;letter-spacing:0.14em;text-transform:uppercase;padding:8px 13px;border-radius:6px;cursor:pointer;white-space:nowrap" style-hover="background:var(--warm-brown)">Add these to my proposal</button>
+              </sc-if>
+              <sc-if value="{{ anchorInflight }}" hint-placeholder-val="{{ false }}">
+                <span style="display:inline-flex;align-items:center;gap:9px;border:1px solid rgba(184,146,74,0.4);border-radius:6px;padding:8px 13px;font-family:var(--font-display);font-size:0.66rem;letter-spacing:0.14em;text-transform:uppercase;color:rgba(240,232,214,0.75);white-space:nowrap">
+                  <span style="width:11px;height:11px;border:2px solid rgba(184,146,74,0.35);border-top-color:var(--brass-bright);border-radius:50%;animation:rxspin 0.7s linear infinite;display:inline-block"></span>
+                  Rewriting…
+                </span>
+              </sc-if>
+            </div>
+            <sc-if value="{{ anchorRepriced }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top:9px;border:1px solid var(--amber);border-radius:8px;background:rgba(29,140,137,0.12);padding:11px 13px">
+                <div style="font-family:var(--font-display);font-size:0.6rem;letter-spacing:0.2em;text-transform:uppercase;color:var(--amber-light);margin-bottom:4px">Prices moved</div>
+                <p style="margin:0 0 9px;font-size:0.82rem;line-height:1.5;color:var(--cream-text)">This now totals <strong style="font-variant-numeric:tabular-nums">{{ anchorTotal }}</strong> — it was {{ anchorOldTotal }} when you opened this. Nothing has been committed yet.</p>
+                <button type="button" onClick="{{ onAnchorConfirm }}" style="background:var(--amber);border:none;color:var(--cream-text);font-family:var(--font-display);font-size:0.68rem;letter-spacing:0.14em;text-transform:uppercase;padding:9px 14px;border-radius:6px;cursor:pointer" style-hover="background:var(--warm-brown)">Confirm at {{ anchorTotal }}</button>
+              </div>
+            </sc-if>
+          </sc-if>
+        </div>
+
+        <sc-if value="{{ showSkeleton }}" hint-placeholder-val="{{ false }}">
+          <sc-for list="{{ skeletonRows }}" as="sk" hint-placeholder-count="4">
+            <div style="padding:15px 18px;border-bottom:1px solid rgba(184,146,74,0.14)">
+              <div style="height:13px;width:46%;border-radius:4px;background:linear-gradient(90deg,rgba(240,232,214,0.07) 25%,rgba(240,232,214,0.17) 50%,rgba(240,232,214,0.07) 75%);background-size:200% 100%;animation:rxshimmer 1.2s linear infinite"></div>
+              <div style="height:10px;width:72%;margin-top:9px;border-radius:4px;background:linear-gradient(90deg,rgba(240,232,214,0.07) 25%,rgba(240,232,214,0.17) 50%,rgba(240,232,214,0.07) 75%);background-size:200% 100%;animation:rxshimmer 1.2s linear infinite"></div>
+              <div style="height:15px;width:27%;margin-top:10px;border-radius:4px;background:linear-gradient(90deg,rgba(240,232,214,0.07) 25%,rgba(240,232,214,0.17) 50%,rgba(240,232,214,0.07) 75%);background-size:200% 100%;animation:rxshimmer 1.2s linear infinite"></div>
+            </div>
+          </sc-for>
+          <div style="padding:14px 18px;font-size:0.8rem;font-style:italic;color:rgba(240,232,214,0.45)">Pricing every option for your night…</div>
+        </sc-if>
+
+        <sc-if value="{{ showRows }}" hint-placeholder-val="{{ false }}">
+          <sc-for list="{{ rows }}" as="row" hint-placeholder-count="4">
+            <sc-if value="{{ row.isLane }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ row.onToggle }}" style="display:flex;width:100%;align-items:center;gap:12px;padding:14px 18px 8px;background:none;border:none;cursor:pointer;text-align:left" style-hover="background:rgba(184,146,74,0.05)">
+                <span style="font-family:var(--font-display);font-size:10px;letter-spacing:0.24em;text-transform:uppercase;color:var(--brass)">{{ row.text }}</span>
+                <span style="flex:1;height:1px;background:rgba(184,146,74,0.28)"></span>
+                <span style="font-size:0.72rem;font-style:italic;color:rgba(240,232,214,0.55);white-space:nowrap">{{ row.laneNote }}</span>
+              </button>
+            </sc-if>
+            <sc-if value="{{ row.isBreak }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;align-items:center;gap:10px;padding:18px 18px 4px">
+                <span style="flex:1;height:1px;background:rgba(184,146,74,0.4)"></span>
+                <span style="font-family:var(--font-display);font-size:0.7rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--brass-bright);white-space:nowrap;text-align:center">From here, we bring the alcohol too</span>
+                <span style="flex:1;height:1px;background:rgba(184,146,74,0.4)"></span>
+              </div>
+            </sc-if>
+            <sc-if value="{{ row.isExpand }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ row.onExpand }}" style="display:block;width:calc(100% - 36px);text-align:left;background:rgba(29,140,137,0.08);border:1px dashed rgba(47,167,160,0.55);border-radius:8px;margin:14px 18px 10px;padding:13px 15px;cursor:pointer;color:var(--amber-light);font-family:var(--font-body);font-style:italic;font-size:0.95rem;line-height:1.4" style-hover="background:rgba(29,140,137,0.16)">Let us stock the whole bar →</button>
+            </sc-if>
+            <sc-if value="{{ row.isRung }}" hint-placeholder-val="{{ false }}">
+              <div style="{{ row.wrapStyle }}">
+                <sc-if value="{{ row.kicker }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-family:var(--font-display);font-size:0.6rem;letter-spacing:0.2em;text-transform:uppercase;color:var(--brass);margin-bottom:5px">{{ row.kicker }}</div>
+                </sc-if>
+                <div style="display:flex;justify-content:space-between;gap:14px;align-items:baseline">
+                  <div style="font-family:var(--font-display);font-size:1.02rem;color:var(--cream-text);line-height:1.25">{{ row.name }}</div>
+                  <div style="font-family:var(--font-display);font-size:1.12rem;color:var(--cream-text);font-variant-numeric:tabular-nums;white-space:nowrap">{{ row.total }}</div>
+                </div>
+                <div style="display:flex;justify-content:space-between;gap:14px;align-items:baseline;margin-top:2px">
+                  <div style="flex:1;font-size:0.8rem;line-height:1.45;color:rgba(240,232,214,0.64)">{{ row.puts }}</div>
+                  <sc-if value="{{ row.delta }}" hint-placeholder-val="{{ false }}">
+                    <div style="font-size:0.78rem;color:rgba(240,232,214,0.78);white-space:nowrap;font-variant-numeric:tabular-nums">{{ row.delta }}</div>
+                  </sc-if>
+                </div>
+                <div style="display:flex;justify-content:space-between;gap:14px;align-items:center;margin-top:8px">
+                  <div style="font-size:0.72rem;font-style:italic;color:rgba(240,232,214,0.45)">{{ row.per }} · <button type="button" onClick="{{ row.onToggleContents }}" style="display:inline;background:none;border:none;padding:0;font-family:var(--font-body);font-style:italic;font-size:0.72rem;color:var(--amber-light);text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;cursor:pointer" style-hover="color:var(--cream-text)">{{ row.contentsLabel }}</button></div>
+                  <sc-if value="{{ row.showIdle }}" hint-placeholder-val="{{ true }}">
+                    <button type="button" onClick="{{ row.onCommit }}" style="background:transparent;border:1px solid rgba(184,146,74,0.65);color:var(--brass-bright);font-family:var(--font-display);font-size:0.66rem;letter-spacing:0.14em;text-transform:uppercase;padding:8px 13px;border-radius:6px;cursor:pointer;white-space:nowrap;flex-shrink:0" style-hover="background:var(--amber);border-color:var(--amber);color:var(--cream-text)">Make this my proposal</button>
+                  </sc-if>
+                  <sc-if value="{{ row.showInflight }}" hint-placeholder-val="{{ false }}">
+                    <span style="display:inline-flex;align-items:center;gap:9px;border:1px solid rgba(184,146,74,0.4);border-radius:6px;padding:8px 13px;font-family:var(--font-display);font-size:0.66rem;letter-spacing:0.14em;text-transform:uppercase;color:rgba(240,232,214,0.75);white-space:nowrap;flex-shrink:0">
+                      <span style="width:11px;height:11px;border:2px solid rgba(184,146,74,0.35);border-top-color:var(--brass-bright);border-radius:50%;animation:rxspin 0.7s linear infinite;display:inline-block"></span>
+                      Rewriting…
+                    </span>
+                  </sc-if>
+                </div>
+                <sc-if value="{{ row.showContents }}" hint-placeholder-val="{{ false }}">
+                  <div style="margin-top:10px;border-top:1px dotted rgba(184,146,74,0.3);padding-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 18px">
+                    <sc-for list="{{ row.contents }}" as="g" hint-placeholder-count="2">
+                      <div>
+                        <div style="font-family:var(--font-display);font-size:0.58rem;letter-spacing:0.18em;text-transform:uppercase;color:var(--brass);margin-bottom:5px">{{ g.heading }}</div>
+                        <ul style="margin:0;padding:0;list-style:none">
+                          <sc-for list="{{ g.items }}" as="it" hint-placeholder-count="3">
+                            <li style="display:flex;gap:6px;align-items:baseline;font-size:0.76rem;line-height:1.45;color:rgba(240,232,214,0.78);margin-bottom:3px"><span style="color:var(--brass);font-weight:700">·</span><span>{{ it }}</span></li>
+                          </sc-for>
+                        </ul>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ row.showRepriced }}" hint-placeholder-val="{{ false }}">
+                  <div style="margin-top:10px;border:1px solid var(--amber);border-radius:8px;background:rgba(29,140,137,0.12);padding:11px 13px">
+                    <div style="font-family:var(--font-display);font-size:0.6rem;letter-spacing:0.2em;text-transform:uppercase;color:var(--amber-light);margin-bottom:4px">Prices moved</div>
+                    <p style="margin:0 0 9px;font-size:0.82rem;line-height:1.5;color:var(--cream-text)">This now totals <strong style="font-variant-numeric:tabular-nums">{{ row.total }}</strong> — it was {{ row.oldTotal }} when you opened this. Nothing has been committed yet.</p>
+                    <button type="button" onClick="{{ row.onConfirm }}" style="background:var(--amber);border:none;color:var(--cream-text);font-family:var(--font-display);font-size:0.68rem;letter-spacing:0.14em;text-transform:uppercase;padding:9px 14px;border-radius:6px;cursor:pointer" style-hover="background:var(--warm-brown)">Confirm at {{ row.total }}</button>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ row.showDrop }}" hint-placeholder-val="{{ false }}">
+                  <div style="margin-top:10px;border:1px solid rgba(184,146,74,0.75);border-radius:8px;background:rgba(184,146,74,0.1);padding:11px 13px">
+                    <div style="font-family:var(--font-display);font-size:0.6rem;letter-spacing:0.2em;text-transform:uppercase;color:var(--brass-bright);margin-bottom:4px">Before we switch</div>
+                    <p style="margin:0 0 9px;font-size:0.82rem;line-height:1.5;color:var(--cream-text)">{{ row.dropText }}</p>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                      <button type="button" onClick="{{ row.onProceed }}" style="background:var(--amber);border:none;color:var(--cream-text);font-family:var(--font-display);font-size:0.68rem;letter-spacing:0.14em;text-transform:uppercase;padding:9px 14px;border-radius:6px;cursor:pointer" style-hover="background:var(--warm-brown)">Switch &amp; drop it</button>
+                      <button type="button" onClick="{{ row.onCancel }}" style="background:transparent;border:1px solid rgba(184,146,74,0.55);color:var(--brass);font-family:var(--font-display);font-size:0.68rem;letter-spacing:0.14em;text-transform:uppercase;padding:9px 14px;border-radius:6px;cursor:pointer" style-hover="background:rgba(184,146,74,0.12)">Keep what I have</button>
+                    </div>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-if>
+          </sc-for>
+        </sc-if>
+      </div>
+
+      <div style="border-top:1px solid rgba(184,146,74,0.3);padding:9px 18px 10px;background:#0b0f14;flex-shrink:0">
+        <sc-if value="{{ showSlimBar }}" hint-placeholder-val="{{ false }}">
+          <button type="button" onClick="{{ openAlacarte }}" style="display:flex;width:100%;align-items:baseline;justify-content:space-between;gap:10px;background:none;border:none;padding:4px 0;cursor:pointer;text-align:left" style-hover="background:rgba(184,146,74,0.06)">
+            <span style="font-family:var(--font-display);font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:var(--brass)">＋ Extras · add to any option above</span>
+            <span style="font-size:0.74rem;font-style:italic;color:rgba(240,232,214,0.5);white-space:nowrap">{{ extrasSummary }}</span>
+          </button>
+        </sc-if>
+        <sc-if value="{{ showChipsBar }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px;margin:4px 0 9px;padding:4px 0 0">
+            <span style="font-family:var(--font-display);font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:var(--brass)">Add to any option above</span>
+            <span style="font-size:0.74rem;font-style:italic;color:rgba(240,232,214,0.5)">your total updates when you do</span>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;padding-bottom:4px">
+            <sc-for list="{{ extraChips }}" as="x" hint-placeholder-count="4">
+              <button type="button" onClick="{{ x.onToggle }}" style="{{ x.style }}"><span style="display:block">{{ x.label }} <span style="opacity:0.8">{{ x.price }}</span></span><span style="display:block;font-family:var(--font-body);font-style:italic;font-size:0.7rem;opacity:0.72;letter-spacing:0;text-transform:none">{{ x.per }}</span></button>
+            </sc-for>
+            <button type="button" onClick="{{ openAlacarte }}" style="font-family:var(--font-display);font-size:0.78rem;letter-spacing:0.04em;padding:8px 13px;border-radius:999px;cursor:pointer;white-space:nowrap;border:1px dashed rgba(47,167,160,0.6);background:rgba(29,140,137,0.08);color:var(--amber-light)" style-hover="background:rgba(29,140,137,0.16)"><span style="display:block">{{ alacarteMoreLabel }}</span><span style="display:block;font-family:var(--font-body);font-style:italic;font-size:0.7rem;opacity:0.72;letter-spacing:0">the full à la carte</span></button>
+          </div>
+        </sc-if>
+        <sc-if value="{{ alacarteOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px;padding:4px 0 0">
+            <span style="font-family:var(--font-display);font-size:10px;letter-spacing:0.22em;text-transform:uppercase;color:var(--brass)">Add to any option above</span>
+            <button type="button" onClick="{{ closeAlacarte }}" style="background:none;border:none;padding:0;font-family:var(--font-body);font-style:italic;font-size:0.78rem;color:var(--amber-light);text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;cursor:pointer" style-hover="color:var(--cream-text)">done ↑</button>
+          </div>
+          <div style="font-size:0.72rem;font-style:italic;color:rgba(240,232,214,0.45);margin-bottom:2px">your total updates when you do</div>
+          <div style="max-height:min(330px,42vh);overflow-y:auto;margin:0 -6px;padding:0 6px">
+            <sc-for list="{{ extraCats }}" as="c" hint-placeholder-count="4">
+              <div style="font-family:var(--font-display);font-size:0.58rem;letter-spacing:0.2em;text-transform:uppercase;color:var(--brass);margin:11px 0 2px">{{ c.label }}</div>
+              <sc-for list="{{ c.items }}" as="x" hint-placeholder-count="4">
+                <button type="button" onClick="{{ x.onToggle }}" style="display:flex;width:100%;align-items:center;gap:11px;background:none;border:none;border-bottom:1px dotted rgba(184,146,74,0.2);padding:8px 2px;cursor:pointer;text-align:left" style-hover="background:rgba(184,146,74,0.07)">
+                  <span style="{{ x.boxStyle }}">{{ x.mark }}</span>
+                  <span style="flex:1;min-width:0">
+                    <span style="display:block;font-size:0.84rem;color:var(--cream-text);line-height:1.35">{{ x.label }}</span>
+                    <span style="display:block;font-size:0.7rem;font-style:italic;color:rgba(240,232,214,0.5)">{{ x.per }}</span>
+                  </span>
+                  <span style="font-family:var(--font-display);font-size:0.9rem;color:var(--cream-text);font-variant-numeric:tabular-nums;white-space:nowrap">{{ x.price }}</span>
+                </button>
+              </sc-for>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;guests&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:90,&quot;tsType&quot;:&quot;number&quot;,&quot;min&quot;:10,&quot;max&quot;:400,&quot;section&quot;:&quot;Their event&quot;},&quot;hours&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:5,&quot;tsType&quot;:&quot;number&quot;,&quot;min&quot;:3,&quot;max&quot;:10,&quot;unit&quot;:&quot;hrs&quot;,&quot;section&quot;:&quot;Their event&quot;},&quot;bars&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:2,&quot;tsType&quot;:&quot;number&quot;,&quot;min&quot;:0,&quot;max&quot;:4,&quot;section&quot;:&quot;Their event&quot;},&quot;clientName&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Marisa Vance&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Their event&quot;},&quot;quotedRung&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;core&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;options&quot;:[&quot;core&quot;,&quot;foundation&quot;,&quot;formula&quot;,&quot;full-compound&quot;,&quot;primary-culture&quot;,&quot;refined-reaction&quot;,&quot;carbon-suspension&quot;,&quot;cultivated-complex&quot;,&quot;base-compound&quot;,&quot;midrange-reaction&quot;,&quot;enhanced-solution&quot;,&quot;formula-no-5&quot;,&quot;grand-experiment&quot;,&quot;clear-reaction&quot;],&quot;section&quot;:&quot;Their event&quot;},&quot;simulatePriceMove&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Demo states&quot;}}">
+const G = (heading, items) => ({ heading, items });
+const DEPOSIT = 100, BAR_ADD = 100, XBT = 40;
+
+const RUNGS = [
+  { id: 'core', lane: 'byob', name: 'Bar service only', puts: 'The Core Reaction — bartenders, setup and breakdown, bar tools, insurance. You buy the alcohol and supplies from our shopping list.' },
+  { id: 'foundation', lane: 'byob', name: 'The Foundation', tier: { rate4: 3, extra: 0.75 }, puts: 'Adds ice delivery, premium cups and disposables, and bottled water service.', brings: ['Ice delivery', 'Bottled water service', 'Premium cups', 'Napkins & stir sticks'] },
+  { id: 'formula', lane: 'byob', name: 'The Formula', tier: { rate4: 5.5, extra: 1.25 }, puts: 'That plus mixers for your signature cocktails, basic garnishes, simple syrup and bitters.', brings: ['Mixers for your signature cocktails', 'Basic garnishes', 'Simple syrup & bitters', 'Ice delivery & bottled water service', 'Premium cups, napkins, stir sticks'] },
+  { id: 'full-compound', lane: 'byob', name: 'The Full Compound', tier: { rate4: 8, extra: 2 }, puts: 'That plus the complete mixer selection and the premium garnish package.', brings: ['Complete mixer selection', 'Premium garnish package', 'Simple syrup & bitters', 'Ice delivery & bottled water service', 'Premium cups, napkins, stir sticks'] },
+  { id: 'primary-culture', lane: 'beer_wine', name: 'The Primary Culture', rate4: 12, extra: 4, puts: 'Miller Lite, Michelob Ultra, a red and a white — and we buy it all.' },
+  { id: 'refined-reaction', lane: 'beer_wine', name: 'The Refined Reaction', rate4: 14, extra: 5, puts: 'Stella Artois, Corona, a red and a white, sparkling wine.' },
+  { id: 'carbon-suspension', lane: 'beer_wine', name: 'The Carbon Suspension', rate4: 15, extra: 5.75, puts: 'Three lagers, rotating seltzer, a red and a white.' },
+  { id: 'cultivated-complex', lane: 'beer_wine', name: 'The Cultivated Complex', rate4: 17, extra: 6.25, puts: 'Craft and local beers, seltzer, premium wines, sparkling.' },
+  { id: 'base-compound', lane: 'full_bar', name: 'The Base Compound', rate4: 18, extra: 5, puts: 'Two signature cocktails plus beer and wine.' },
+  { id: 'midrange-reaction', lane: 'full_bar', name: 'The Midrange Reaction', rate4: 22, extra: 6, puts: 'Five spirits, full mixers, beer and wine.' },
+  { id: 'enhanced-solution', lane: 'full_bar', name: 'The Enhanced Solution', rate4: 28, extra: 8, puts: 'Premium spirits, expanded mixers, sparkling wine.' },
+  { id: 'formula-no-5', lane: 'full_bar', name: 'Formula No. 5', rate4: 33, extra: 9, puts: 'Five premium spirits, fully dialed. Zero clutter.' },
+  { id: 'grand-experiment', lane: 'full_bar', name: 'The Grand Experiment', rate4: 40, extra: 11.25, puts: 'Nine spirits, craft beer, premium wines — the works.' },
+  { id: 'clear-reaction', lane: 'mocktail', name: 'The Clear Reaction', rate4: 14, extra: 4, puts: 'Full mocktail craft — mixers, garnishes, syrups, premium presentation. No alcohol anywhere on the bar.' },
+];
+
+const HOSTED_GROUPS = {
+  'primary-culture': [G('Beer & Wine', ['Miller Lite', 'Michelob Ultra', 'One Red Wine & One White Wine']), G('Non-Alcoholic', ['Infused Water Station'])],
+  'refined-reaction': [G('Beer & Wine', ['Stella Artois', 'Corona Extra', 'One Red & One White Wine', 'Sparkling Wine']), G('Non-Alcoholic', ['Bottled Water'])],
+  'carbon-suspension': [G('Beer & Wine', ['Miller Lite', 'Michelob Ultra', 'Yuengling Lager', 'Seltzer', 'One Red Wine & One White Wine']), G('Non-Alcoholic', ['Bottled Water'])],
+  'cultivated-complex': [G('Beer & Wine', ['Miller Lite', 'Michelob Ultra', 'Yuengling Lager', 'Two Rotating Craft or Local Beers', 'Seltzer', 'Two Premium Red & Two Premium White Wines', 'Sparkling Wine']), G('Non-Alcoholic', ['Bottled Water'])],
+  'base-compound': [G('Spirits', ['Two Signature Cocktails']), G('Beer & Wine', ['Miller Lite', 'Michelob Ultra', 'One Red Wine', 'One White Wine']), G('Non-Alcoholic', ['Bottled Water'])],
+  'midrange-reaction': [G('Spirits', ['Svedka Vodka', 'New Amsterdam Gin', 'Bacardi Superior Rum', 'Jim Beam Bourbon', 'Margaritaville Tequila']), G('Beer & Wine', ['Miller Lite', 'Michelob Ultra', 'One Red Wine', 'One White Wine']), G('Mixers & Extras', ['Coke, Diet Coke, and Sprite', 'Soda Water & Tonic', 'Cranberry, Orange & Pineapple Juices', 'Simple Syrup & Bitters']), G('Non-Alcoholic', ['Bottled Water'])],
+  'enhanced-solution': [G('Spirits', ["Tito's Vodka", 'Bombay Sapphire Gin', 'Bacardi Superior Rum', 'Jim Beam Bourbon', '1800 Blanco Tequila']), G('Beer & Wine', ['Yuengling Lager', 'Miller Lite & Michelob Ultra', 'One Red Wine & One White Wine', 'Sparkling Wine']), G('Mixers & Extras', ['Coke, Diet Coke, and Sprite', 'Club Soda & Tonic', 'Orange, Cranberry, Pineapple Juice', 'Simple Syrup, Lemon, Lime, Bitters']), G('Non-Alcoholic', ['Bottled Water'])],
+  'formula-no-5': [G('Spirits', ['Grey Goose Vodka', "Hendrick's Gin", 'Appleton Estate Rum', 'Casamigos Tequila', 'Bulleit Bourbon']), G('Beer & Wine', ['Stella Artois', 'One Red Wine & One White Wine']), G('Mixers & Extras', ['Coke, Diet Coke, Sprite', 'Soda & Tonic', 'Orange, Cranberry & Pineapple Juices', 'Lemon Juice & Lime Juice', 'Simple Syrup & Bitters']), G('Non-Alcoholic', ['Bottled Water'])],
+  'grand-experiment': [G('Spirits', ["Tito's Vodka", 'Grey Goose Vodka', "Hendrick's Gin", 'Appleton Estate Rum', 'Casamigos Tequila', 'Milagro Reposado Tequila', "Maker's Mark Bourbon", 'Jameson Irish Whiskey', 'Monkey Shoulder Scotch']), G('Beer & Wine', ['Michelob Ultra', 'Stella Artois', 'Craft Beer Selection', 'Two Premium Red Wines & Two Premium White Wines', 'Sparkling Wine']), G('Mixers & Extras', ['Coke, Diet Coke, Sprite', 'Club Soda, Tonic Water, Ginger Beer', 'Orange, Cranberry & Pineapple Juices', 'Lemon Juice & Lime Juice', 'Simple Syrup & Bitters']), G('Non-Alcoholic', ['Bottled Water'])],
+  'clear-reaction': [G('Mocktails', ['3–4 signature mocktail recipes', 'Premium presentation']), G('Mixers & Extras', ['All mixers, garnishes & syrups']), G('Non-Alcoholic', ['Full bar setup, zero proof'])],
+};
+
+const EXTRAS = [
+  { id: 'champagne-toast', label: 'Champagne toast', cat: 'Drinks & toasts', kind: 'per_guest', rate: 2.5, popular: true },
+  { id: 'soft-drinks', label: 'Soft drink add-on', cat: 'Drinks & toasts', kind: 'per_guest', rate: 3 },
+  { id: 'pre-batched-mocktail', label: 'Pre-batched mocktail', cat: 'Drinks & toasts', kind: 'per_guest', rate: 1.5 },
+  { id: 'na-beer', label: 'Non-alcoholic beer', cat: 'Drinks & toasts', kind: 'per_guest', rate: 4, hostedOnly: true },
+  { id: 'zero-proof-spirits', label: 'Zero-proof spirits', cat: 'Drinks & toasts', kind: 'per_guest', rate: 5, hostedOnly: true },
+  { id: 'ginger-beer', label: 'House-made ginger beer', cat: 'Craft touches', kind: 'per_guest', rate: 2.5, popular: true },
+  { id: 'carbonated-cocktails', label: 'Carbonated cocktails', cat: 'Craft touches', kind: 'per_guest', rate: 2 },
+  { id: 'smoked-cocktail-kit', label: 'Smoked cocktail kit', cat: 'Craft touches', kind: 'flat', rate: 75 },
+  { id: 'handcrafted-syrup', label: 'Handcrafted syrup · 750ml', cat: 'Craft touches', kind: 'flat', rate: 30 },
+  { id: 'flavor-blaster', label: 'Flavor blaster rental', cat: 'Craft touches', kind: 'flat', rate: 150 },
+  { id: 'real-glassware', label: 'Real glassware', cat: 'Glassware & garnish', kind: 'per_guest', rate: 5, maxGuests: 100, popular: true },
+  { id: 'garnish-package', label: 'Garnish package', cat: 'Glassware & garnish', kind: 'per_100', rate: 50, byobOnly: true, popular: true },
+  { id: 'barback', label: 'Barback', cat: 'Staffing', kind: 'per_hour', rate: 75 },
+  { id: 'banquet-server', label: 'Banquet server', cat: 'Staffing', kind: 'per_hour', rate: 75 },
+  { id: 'extra-bartender', label: 'An extra bartender', cat: 'Staffing', kind: 'per_hour', rate: 40 },
+];
+const EXTRA_CATS = ['Drinks & toasts', 'Craft touches', 'Glassware & garnish', 'Staffing'];
+const appliesTo = (x, lane) => !(x.byobOnly && lane !== 'byob') && !(x.hostedOnly && lane === 'byob');
+const noteFor = (x) => x.byobOnly ? ' · BYOB rungs only' : (x.hostedOnly ? ' · hosted rungs only' : '');
+
+const fmt = (n) => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtShort = (n) => '$' + Math.round(Math.abs(n)).toLocaleString('en-US');
+
+class Component extends DCLogic {
+  state = { open: false, expanded: false, quoting: false, contentsFor: null, alacarte: false, lanesOpen: { full_bar: true, beer_wine: false }, draft: null, undoTo: null, extrasOnly: false, commit: null, drifted: false, currentOverride: null, swapped: false, droppedExtras: [], extras: ['garnish-package'], vw: typeof window !== 'undefined' ? window.innerWidth : 1280, sheetH: 480, dragging: false, flash: 0 };
+
+  componentDidMount() {
+    this._rs = () => this.setState({ vw: window.innerWidth });
+    window.addEventListener('resize', this._rs);
+    this._kd = (e) => { if (e.key === 'Escape' && this.state.open) this.close(); };
+    window.addEventListener('keydown', this._kd);
+  }
+  componentWillUnmount() {
+    window.removeEventListener('resize', this._rs);
+    window.removeEventListener('keydown', this._kd);
+    clearTimeout(this._t); clearTimeout(this._q);
+    document.body.style.overflow = '';
+  }
+
+  get guests() { return Number(this.props.guests ?? 90); }
+  get hours() { return Number(this.props.hours ?? 5); }
+  get bars() { return Number(this.props.bars ?? 2); }
+  get over() { return Math.max(0, this.hours - 4); }
+  get bartenders() { return Math.max(Math.ceil(this.guests / 100), this.bars, 1); }
+  get barFirst() { return this.state.drifted ? 75 : 50; }
+  get barRental() { return this.bars > 0 ? this.barFirst + BAR_ADD * (this.bars - 1) : 0; }
+  get original() { return this.props.quotedRung ?? 'core'; }
+  get current() { return this.state.currentOverride ?? this.original; }
+  get isMobile() { return this.state.vw < 1024; }
+
+  rungOf(id) { return RUNGS.find((r) => r.id === id) || RUNGS[0]; }
+  perGuest(r4, ex) { return (r4 + ex * this.over) * this.guests; }
+  byobBase() { return 350 + 100 * this.over + (this.bartenders - 1) * XBT * this.hours; }
+  peekH() { return Math.min(Math.round(window.innerHeight * 0.66), 600); }
+  fullH() { return Math.round(window.innerHeight * 0.96); }
+
+  effExtras() { return this.state.draft ?? this.state.extras; }
+  extrasDirty() {
+    const d = this.state.draft;
+    if (!d) return false;
+    return [...d].sort().join(',') !== [...this.state.extras].sort().join(',');
+  }
+  toggleExtra(id) {
+    this.setState((st) => {
+      const base = st.draft ?? st.extras;
+      return { draft: base.includes(id) ? base.filter((e) => e !== id) : [...base, id] };
+    });
+  }
+  droppedFor(lane) { return this.effExtras().map((id) => EXTRAS.find((e) => e.id === id)).filter((x) => x && !appliesTo(x, lane)); }
+
+  priceFor(x) {
+    if (x.kind === 'per_guest') return x.rate * this.guests;
+    if (x.kind === 'per_100') return x.rate * Math.ceil(this.guests / 100);
+    if (x.kind === 'per_hour') return x.rate * this.hours;
+    return x.rate;
+  }
+  perLabel(x) {
+    if (x.kind === 'per_guest') return fmt(x.rate) + ' per guest';
+    if (x.kind === 'per_100') return fmt(x.rate) + ' per 100 guests';
+    if (x.kind === 'per_hour') return fmt(x.rate) + ' an hour × ' + this.hours + ' hours';
+    return 'flat, once';
+  }
+
+  extrasCost(lane, set) {
+    return (set || this.state.extras).reduce((sum, id) => {
+      const x = EXTRAS.find((e) => e.id === id);
+      if (!x || !appliesTo(x, lane)) return sum;
+      return sum + this.priceFor(x);
+    }, 0);
+  }
+
+  totalFor(id, set) {
+    const r = this.rungOf(id);
+    const base = r.lane === 'byob'
+      ? this.byobBase() + (r.tier ? this.perGuest(r.tier.rate4, r.tier.extra) : 0) + this.barRental
+      : this.perGuest(r.rate4, r.extra) + this.barRental;
+    return base + this.extrasCost(r.lane, set);
+  }
+
+  nameFor(id) {
+    const r = this.rungOf(id);
+    if (r.lane !== 'byob') return r.name;
+    return r.tier ? 'The Core Reaction with ' + r.name : 'The Core Reaction';
+  }
+
+  groupsFor(id) {
+    const r = this.rungOf(id);
+    if (r.lane !== 'byob') return HOSTED_GROUPS[id] || [];
+    return [
+      G('Spirits', ['Your bottles, poured by us', 'Shopping list built for ' + this.guests + ' guests']),
+      G('Beer & Wine', ['Your beer and wine, chilled and served']),
+      G('Mixers & Extras', r.brings || []),
+    ].filter((g) => g.items.length);
+  }
+
+  open() {
+    const lane = this.rungOf(this.current).lane;
+    this.setState((s) => ({ open: true, expanded: lane !== 'byob', quoting: true, commit: null, draft: s.draft ?? [...s.extras], sheetH: this.fullH(), dragging: false }));
+    if (this.isMobile) document.body.style.overflow = 'hidden';
+    clearTimeout(this._q);
+    this._q = setTimeout(() => this.setState({ quoting: false }), 700);
+  }
+  close() {
+    document.body.style.overflow = '';
+    clearTimeout(this._t);
+    this.setState({ open: false, commit: null, dragging: false });
+  }
+
+  commitTo(id) {
+    const r = this.rungOf(id);
+    if (this.droppedFor(r.lane).length > 0) {
+      this.setState({ commit: { id, phase: 'drop' } });
+      return;
+    }
+    this.fly(id);
+  }
+  fly(id) {
+    const oldTotal = this.totalFor(id, this.effExtras());
+    this.setState({ commit: { id, phase: 'inflight', oldTotal } });
+    clearTimeout(this._t);
+    this._t = setTimeout(() => {
+      if ((this.props.simulatePriceMove ?? false) && !this.state.drifted) {
+        this.setState({ drifted: true, commit: { id, phase: 'repriced', oldTotal } });
+      } else {
+        this.land(id);
+      }
+    }, 900);
+  }
+  confirmReprice(id) {
+    this.setState((s) => ({ commit: { id, phase: 'inflight', oldTotal: s.commit && s.commit.oldTotal } }));
+    clearTimeout(this._t);
+    this._t = setTimeout(() => this.land(id), 600);
+  }
+  land(id) {
+    const r = this.rungOf(id);
+    document.body.style.overflow = '';
+    this.setState((s) => {
+      const base = s.draft ?? s.extras;
+      const dropped = base.filter((x) => { const e = EXTRAS.find((ee) => ee.id === x); return e && !appliesTo(e, r.lane); });
+      const sameRung = id === (s.currentOverride ?? this.original);
+      return { undoTo: { rung: s.currentOverride, extras: s.extras }, currentOverride: id, swapped: true, extrasOnly: sameRung, extras: base.filter((x) => !dropped.includes(x)), draft: null, droppedExtras: dropped, commit: null, open: false, flash: s.flash + 1 };
+    });
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  handleDown = (e) => {
+    this._drag = { y0: e.clientY, h0: this.state.sheetH, moved: false };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+    this.setState({ dragging: true });
+  };
+  handleMove = (e) => {
+    const d = this._drag;
+    if (!d) return;
+    const dh = d.y0 - e.clientY;
+    if (Math.abs(dh) > 6) d.moved = true;
+    this.setState({ sheetH: Math.max(120, Math.min(this.fullH(), d.h0 + dh)) });
+  };
+  handleUp = () => {
+    const d = this._drag;
+    if (!d) return;
+    this._drag = null;
+    const peek = this.peekH(), full = this.fullH(), h = this.state.sheetH;
+    if (!d.moved) { this.setState({ sheetH: Math.abs(h - peek) < Math.abs(h - full) ? full : peek, dragging: false }); return; }
+    if (h < peek * 0.55) { this.setState({ dragging: false }); this.close(); return; }
+    this.setState({ sheetH: Math.abs(h - peek) <= Math.abs(h - full) ? peek : full, dragging: false });
+  };
+
+  rungRow(r, curTotal, sideways) {
+    const total = this.totalFor(r.id, this.effExtras());
+    const c = this.state.commit;
+    const mine = !!(c && c.id === r.id);
+    const diff = total - curTotal;
+    const per = r.lane === 'byob'
+      ? (r.tier ? fmt(r.tier.rate4 + r.tier.extra * this.over) + ' per guest, on top of bar service' : 'flat service rate — you supply the alcohol')
+      : fmt(r.rate4 + r.extra * this.over) + ' per guest, everything included';
+    const dropNames = this.droppedFor(r.lane).map((x) => x.label);
+    const contentsOpen = this.state.contentsFor === r.id;
+    return {
+      isRung: true,
+      showContents: contentsOpen,
+      contents: this.groupsFor(r.id),
+      contentsLabel: contentsOpen ? 'hide what\u2019s included ↑' : 'what\u2019s included? ↓',
+      onToggleContents: () => this.setState((s) => ({ contentsFor: s.contentsFor === r.id ? null : r.id })),
+      name: r.name, puts: r.puts, per,
+      total: fmt(total),
+      delta: sideways ? '' : (diff === 0 ? 'same as yours' : (diff > 0 ? '+ ' : '− ') + fmtShort(diff) + ' vs yours'),
+      kicker: sideways ? 'Sideways, not up · zero proof' : '',
+      wrapStyle: sideways
+        ? 'margin:16px 18px 8px;border:1px dashed rgba(184,146,74,0.6);border-radius:10px;padding:12px 14px'
+        : 'padding:13px 18px;border-bottom:1px solid rgba(184,146,74,0.14)',
+      showIdle: !mine,
+      showInflight: mine && c.phase === 'inflight',
+      showRepriced: mine && c.phase === 'repriced',
+      showDrop: mine && c.phase === 'drop',
+      oldTotal: mine && c.oldTotal != null ? fmt(c.oldTotal) : '',
+      dropText: dropNames.length > 1
+        ? 'Your ' + dropNames.join(' and ') + ' are not offered on this rung, so they come off with this switch. Everything else comes along.'
+        : 'Your ' + (dropNames[0] || '') + ' is not offered on this rung, so it comes off with this switch. Everything else comes along.',
+      onCommit: () => this.commitTo(r.id),
+      onConfirm: () => this.confirmReprice(r.id),
+      onProceed: () => this.fly(r.id),
+      onCancel: () => this.setState({ commit: null }),
+    };
+  }
+
+  rows() {
+    const cur = this.current;
+    const curTotal = this.totalFor(cur, this.effExtras());
+    const out = [];
+    RUNGS.filter((r) => r.lane === 'byob' && r.id !== cur).forEach((r) => out.push(this.rungRow(r, curTotal)));
+    if (!this.state.expanded) {
+      out.push({ isExpand: true, onExpand: () => this.setState((s) => ({ expanded: true, sheetH: this.isMobile ? this.fullH() : s.sheetH })) });
+    } else {
+      out.push({ isBreak: true });
+      [['full_bar', 'Full bar'], ['beer_wine', 'Beer & wine']].forEach(([lane, label]) => {
+        const inLane = RUNGS.filter((r) => r.lane === lane && r.id !== cur);
+        const openLane = !!this.state.lanesOpen[lane];
+        out.push({
+          isLane: true, text: label,
+          laneNote: openLane ? 'hide ↑' : inLane.length + ' options ↓',
+          onToggle: () => this.setState((s) => ({ lanesOpen: { ...s.lanesOpen, [lane]: !s.lanesOpen[lane] } })),
+        });
+        if (openLane) inLane.forEach((r) => out.push(this.rungRow(r, curTotal)));
+      });
+      if (cur !== 'clear-reaction') out.push(this.rungRow(this.rungOf('clear-reaction'), curTotal, true));
+    }
+    return out;
+  }
+
+  renderVals() {
+    const s = this.state;
+    const cur = this.current;
+    const r = this.rungOf(cur);
+    const total = this.totalFor(cur);
+    const endHour = 5 + this.hours;
+    const endTime = (endHour > 12 ? endHour - 12 : endHour) + ':00 ' + (endHour >= 12 && endHour < 24 ? 'PM' : 'AM');
+    const eventLine = this.guests + ' guests · ' + this.hours + ' hours · ' + this.bars + ' bar' + (this.bars === 1 ? '' : 's') + ' · Sat, Oct 3';
+
+    const items = [];
+    if (r.lane === 'byob') {
+      items.push({ label: 'The Core Reaction · ' + this.hours + ' hours', amount: fmt(350 + 100 * this.over) });
+      if (this.bartenders > 1) items.push({ label: 'Second bartender · ' + this.hours + ' hours', amount: fmt((this.bartenders - 1) * XBT * this.hours) });
+      if (r.tier) items.push({ label: r.name + ' · ' + fmt(r.tier.rate4 + r.tier.extra * this.over) + ' per guest × ' + this.guests + ' guests', amount: fmt(this.perGuest(r.tier.rate4, r.tier.extra)) });
+    } else {
+      items.push({ label: r.name + ' · ' + fmt(r.rate4 + r.extra * this.over) + ' per guest × ' + this.guests + ' guests', amount: fmt(this.perGuest(r.rate4, r.extra)) });
+    }
+    if (this.barRental) items.push({ label: 'Bar rental · ' + this.bars + ' bar' + (this.bars === 1 ? '' : 's'), amount: fmt(this.barRental) });
+    s.extras.forEach((id) => {
+      const x = EXTRAS.find((e) => e.id === id);
+      if (!x || !appliesTo(x, r.lane)) return;
+      items.push({ label: x.label + ' · ' + this.perLabel(x), amount: fmt(this.priceFor(x)) });
+    });
+    const pkgLine = items[0] || { label: '', amount: '' };
+
+    const droppedNames = s.droppedExtras.map((id) => (EXTRAS.find((e) => e.id === id) || {}).label).filter(Boolean);
+    const droppedSentence = droppedNames.length ? ' Your ' + droppedNames.join(' and ').toLowerCase() + ' came off — not offered on the new package.' : '';
+    const bannerNote = (s.extrasOnly
+      ? 'Same package, same ' + eventLine.replace(' · Sat, Oct 3', '') + ' — only your extras changed.'
+      : 'Same ' + eventLine.replace(' · Sat, Oct 3', '') + ' — nothing else about the night moved.') + droppedSentence;
+    const eff = this.effExtras();
+    const dirty = this.extrasDirty();
+    const anchorC = s.commit && s.commit.id === cur ? s.commit : null;
+
+    const sheetStyle = 'position:fixed;left:0;right:0;bottom:0;z-index:61;height:' + s.sheetH + 'px;background:#0e1218;border-top:1.5px solid var(--brass);border-radius:16px 16px 0 0;box-shadow:0 -14px 44px rgba(0,0,0,0.6);display:flex;flex-direction:column;overflow:hidden;' + (s.dragging ? '' : 'transition:height 0.26s ease;');
+    const panelStyle = 'position:fixed;top:0;right:0;bottom:0;z-index:61;width:min(432px,94vw);background:#0e1218;border-left:1.5px solid var(--brass);box-shadow:-14px 0 44px rgba(0,0,0,0.5);display:flex;flex-direction:column;overflow:hidden;animation:rxslidein 0.28s ease';
+
+    return {
+      clientName: this.props.clientName ?? 'Marisa Vance',
+      guests: this.guests,
+      bartenders: this.bartenders,
+      endTime, eventLine,
+
+      packageName: this.nameFor(cur),
+      packageTagline: r.lane === 'byob'
+        ? 'Service-only. Built to flex. We show up with the know-how, the setup, and the steady hands.'
+        : (cur === 'clear-reaction' ? 'The zero-proof bar — full cocktail craft, no alcohol anywhere.' : r.puts),
+      packageGroups: this.groupsFor(cur),
+      serviceLine: r.lane === 'byob'
+        ? 'You buy the alcohol from a shopping list we build for your guest count. Setup, breakdown, a cooler, a bespoke menu, and $2 million liquor liability insurance included.'
+        : 'Setup, service and breakdown, one professional bartender per 100 guests, a cooler, a bespoke menu designed for your night, and $2 million liquor liability insurance included.',
+      pkgLineLabel: pkgLine.label,
+      pkgLineAmount: pkgLine.amount,
+      restLineItems: items.slice(1),
+      proposalTotal: fmt(total),
+      proposalBalance: fmt(total - DEPOSIT),
+      totalAnimStyle: s.flash > 0 ? 'display:inline-block;border-radius:4px;padding:0 4px;margin-right:-4px;animation:' + (s.flash % 2 ? 'rxflashA' : 'rxflashB') + ' 1.5s ease' : '',
+
+      swapped: s.swapped,
+      bannerNote,
+      originalName: this.nameFor((s.undoTo && s.undoTo.rung) || this.original),
+      undoSwap: () => this.setState((x) => ({ currentOverride: x.undoTo ? x.undoTo.rung : null, extras: x.undoTo ? x.undoTo.extras : x.extras, swapped: false, extrasOnly: false, droppedExtras: [], draft: null, undoTo: null, flash: x.flash + 1 })),
+
+      openDrawer: () => this.open(),
+      closeDrawer: () => this.close(),
+      drawerOpen: s.open,
+      showBackdrop: s.open && this.isMobile,
+      isMobileView: this.isMobile,
+      drawerStyle: this.isMobile ? sheetStyle : panelStyle,
+      pagePadStyle: 'transition:padding-right 0.28s ease;padding-right:' + (s.open && !this.isMobile ? 'min(448px, 38vw)' : '0px'),
+      handleDown: this.handleDown, handleMove: this.handleMove, handleUp: this.handleUp,
+
+      anchorName: this.nameFor(cur),
+      anchorTotal: fmt(this.totalFor(cur, eff)),
+      anchorPuts: r.puts,
+      showAnchorPuts: !this.isMobile,
+      anchorDirty: dirty,
+      anchorIdle: dirty && !anchorC,
+      anchorInflight: !!(anchorC && anchorC.phase === 'inflight'),
+      anchorRepriced: !!(anchorC && anchorC.phase === 'repriced'),
+      anchorOldTotal: anchorC && anchorC.oldTotal != null ? fmt(anchorC.oldTotal) : '',
+      onAnchorCommit: () => this.fly(cur),
+      onAnchorConfirm: () => this.confirmReprice(cur),
+
+      showSkeleton: s.quoting,
+      showRows: !s.quoting,
+      skeletonRows: [1, 2, 3, 4],
+      rows: this.rows(),
+
+      alacarteOpen: s.alacarte,
+      alacarteClosed: !s.alacarte,
+      showSlimBar: !s.alacarte && this.isMobile,
+      showChipsBar: !s.alacarte && !this.isMobile,
+      closeAlacarte: () => this.setState({ alacarte: false }),
+      openAlacarte: () => this.setState({ alacarte: true }),
+      alacarteMoreLabel: 'All extras · ' + EXTRAS.filter((x) => !x.popular && !s.extras.includes(x.id) && (!x.maxGuests || this.guests <= x.maxGuests)).length + ' more ↓',
+      extraChips: EXTRAS.filter((x) => (x.popular || eff.includes(x.id)) && (!x.maxGuests || this.guests <= x.maxGuests)).map((x) => {
+        const on = eff.includes(x.id);
+        return {
+          label: x.label,
+          price: fmtShort(this.priceFor(x)),
+          per: this.perLabel(x) + noteFor(x),
+          onToggle: () => this.toggleExtra(x.id),
+          style: 'font-family:var(--font-display);font-size:0.78rem;letter-spacing:0.04em;padding:8px 13px;border-radius:999px;cursor:pointer;white-space:nowrap;text-align:left;' + (on
+            ? 'border:1px solid var(--amber);background:var(--amber);color:var(--cream-text)'
+            : 'border:1px solid rgba(184,146,74,0.5);background:transparent;color:rgba(240,232,214,0.85)'),
+        };
+      }),
+      extrasSummary: (() => {
+        const sel = eff.map((id) => EXTRAS.find((e) => e.id === id)).filter(Boolean);
+        if (!sel.length) return 'champagne toast, glassware, staffing… ↓';
+        const applicable = sel.filter((x) => appliesTo(x, r.lane));
+        const amt = applicable.reduce((sum, x) => sum + this.priceFor(x), 0);
+        return sel.length + ' added · ' + fmtShort(amt) + ' ↓';
+      })(),
+      extraCats: EXTRA_CATS.map((cat) => ({
+        label: cat,
+        items: EXTRAS.filter((x) => x.cat === cat && (!x.maxGuests || this.guests <= x.maxGuests)).map((x) => {
+          const on = eff.includes(x.id);
+          return {
+            label: x.label,
+            mark: on ? '✓' : '',
+            price: fmtShort(this.priceFor(x)),
+            per: this.perLabel(x) + noteFor(x),
+            onToggle: () => this.toggleExtra(x.id),
+            boxStyle: 'width:16px;height:16px;border-radius:4px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;font-size:11px;line-height:1;' + (on
+              ? 'background:var(--amber);color:var(--cream-text);border:1px solid var(--amber)'
+              : 'border:1px solid rgba(184,146,74,0.55);color:transparent'),
+          };
+        }),
+      })),
+    };
+  }
+}
+</script>
+</body>
+</html>
