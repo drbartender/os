@@ -200,3 +200,36 @@ test('5: cancel-line overpayment split never draws on an extension payment', asy
   assert.equal(split.stripeRefundableCents, 100000);
   assert.equal(split.manualReturnCents, 10000);
 });
+
+test('6: default panel rails EXCLUDE a drink_plan_extras charge; the wide rails include it', async () => {
+  // The gap this closes: every DB exercise of loadPaymentsWithRemaining ran on
+  // either the wide CANCEL_LINE rails or an ordinary payment, so nothing pinned
+  // the DEFAULT call actually filtering a drink-plan charge OUT. The 2026-07-26
+  // refactor from a hardcoded IN (...) list to `= ANY($2::text[])` was verified
+  // by reading the schema rather than by a test.
+  const proposalId = await seedProposal({ totalPrice: 1000, amountPaid: 1000 });
+  const bal = await addPayment(proposalId, { type: 'balance', amountCents: 50000 });
+  const dpe = await addPayment(proposalId, { type: 'drink_plan_extras', amountCents: 7500 });
+
+  // Default rails = PANEL_REFUND_RAILS: the drink-plan charge is off-rail.
+  const panel = await loadPaymentsWithRemaining(proposalId);
+  assert.deepEqual(
+    panel.map((r) => r.id), [bal.paymentId],
+    'panel rails must see only the balance charge'
+  );
+
+  // Both halves matter. Asserting the exclusion alone would pass just as happily
+  // if the drink_plan_extras INSERT had silently failed, so this second call
+  // proves the row exists and is refundable — it is the RAILS that gate it, not
+  // the row's absence.
+  const wide = await loadPaymentsWithRemaining(proposalId, pool, { rails: CANCEL_LINE_REFUND_RAILS });
+  assert.deepEqual(
+    wide.map((r) => r.id).sort((a, b) => a - b),
+    [bal.paymentId, dpe.paymentId].sort((a, b) => a - b),
+    'wide rails must see both charges'
+  );
+  assert.equal(
+    wide.find((r) => r.id === dpe.paymentId).remainingCents, 7500,
+    'the drink-plan charge is fully refundable on the wide rails'
+  );
+});
