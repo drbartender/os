@@ -38,6 +38,13 @@ const ASSETS = Object.freeze({
   'primary-greeting-night.mp3': 'primary-greeting-night.mp3',
   'primary-escalate-ack.mp3': 'primary-escalate-ack.mp3',
   'primary-escalate-failed.mp3': 'primary-escalate-failed.mp3',
+  // Zul's line, recorded 2026-08-19. Her day greeting SAYS the press-1 offer,
+  // unlike the 2026-07-24 mp3 above, which is why the slot table can stop
+  // appending the synthetic prompt on her line.
+  'zul-greeting-day.mp3': 'zul-greeting-day.mp3',
+  'zul-greeting-night.mp3': 'zul-greeting-night.mp3',
+  'zul-escalate-ack.mp3': 'zul-escalate-ack.mp3',
+  'zul-escalate-failed.mp3': 'zul-escalate-failed.mp3',
 });
 
 function serveAsset(req, res, key) {

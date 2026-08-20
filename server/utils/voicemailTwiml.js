@@ -23,7 +23,7 @@ const { resolveLine, LINES } = require('./voicemailLine');
 // Zul's greeting copy, unchanged from what shipped 2026-07-24. Fixed text: it is
 // what her recorded mp3 says, and the synthetic fallback must match the voice
 // clients already hear.
-const GREETING_TEXT_ZUL = "Thanks for calling Dr. Bartender. This is Zul. I'm not available right now. Please leave your name, your number, and the date of your event, and I'll call you right back.";
+const GREETING_TEXT_ZUL = "Thanks for calling Dr. Bartender, this is Zul. Sorry I missed your call. Leave me a message and we'll get back to you as soon as we can. If you need to talk to somebody now, press one and I'll see if someone's available.";
 
 // Dallas's line, DAY. Approved verbatim in brainstorm 2026-08-19. This text
 // CONTAINS the press-1 offer, which is why needsAppendedOffer('primary') is
@@ -65,6 +65,12 @@ const ESCALATION_PROMPT_TEXT = 'Or, press 1 and I will try to get someone else o
 // Deliberately says almost nothing: see the fallback branch in messageVerb.
 const FALLBACK_TEXT = 'Thanks for calling Dr. Bartender.';
 
+/** What counts as a playable override. Shared so messageVerb and
+ *  needsAppendedOffer cannot disagree about whether a value is a recording:
+ *  when they did, `VM_GREETING_URL_PRIMARY=yes` fell back to the synthetic text
+ *  (which SAYS the offer) while the append fired anyway, doubling it. */
+const isPlayableUrl = (v) => /^https?:\/\//i.test(v);
+
 const SAY_OPEN = '<Say voice="Polly.Joanna-Neural">';
 
 function vmMaxLengthSec() {
@@ -83,7 +89,8 @@ function escalationEnabled() {
 // so nothing here can resolve to an empty verb, and an empty verb in TwiML is a
 // document that silently says nothing. Note the boot check can only validate
 // slots that are PRESENT; an entirely missing slot NAME is caught at request
-// time by messageVerb's fallback, which speaks rather than throwing.
+// time by messageVerb's fallback, which speaks rather than throwing, and
+// needsAppendedOffer returns true on doubt rather than dereferencing null.
 const SLOTS = {
   greeting_day: {
     primary: {
@@ -91,28 +98,36 @@ const SLOTS = {
       bundled: 'audio/primary-greeting-day.mp3', defaultSaysOffer: true,
     },
     zul: {
-      // Her bundled mp3 and her synthetic text both predate escalation.
+      // Re-recorded 2026-08-19 and it SAYS the press-1 offer, so the appended
+      // synthetic prompt stops here with no env var to remember. The
+      // 2026-07-24 mp3 is still served at /api/voice/greeting.mp3 for anything
+      // that references that URL directly.
       env: 'VM_GREETING_URL', text: GREETING_TEXT_ZUL,
-      bundled: 'greeting.mp3', defaultSaysOffer: false,
+      bundled: 'audio/zul-greeting-day.mp3', defaultSaysOffer: true,
     },
   },
   greeting_night: {
     primary: { env: 'VM_NIGHT_GREETING_URL_PRIMARY', text: GREETING_TEXT_PRIMARY_NIGHT, bundled: 'audio/primary-greeting-night.mp3' },
-    zul: { env: 'VM_NIGHT_GREETING_URL', text: GREETING_TEXT_ZUL_NIGHT },
+    zul: { env: 'VM_NIGHT_GREETING_URL', text: GREETING_TEXT_ZUL_NIGHT, bundled: 'audio/zul-greeting-night.mp3' },
   },
   escalate_ack: {
     primary: { env: 'VM_ESCALATE_ACK_URL_PRIMARY', text: ESCALATE_ACK_TEXT_PRIMARY, bundled: 'audio/primary-escalate-ack.mp3' },
-    zul: { env: 'VM_ESCALATE_ACK_URL', text: ESCALATE_ACK_TEXT_ZUL },
+    zul: { env: 'VM_ESCALATE_ACK_URL', text: ESCALATE_ACK_TEXT_ZUL, bundled: 'audio/zul-escalate-ack.mp3' },
   },
   escalate_failed: {
     primary: { env: 'VM_ESCALATE_FAILED_URL_PRIMARY', text: ESCALATE_FAILED_TEXT_PRIMARY, bundled: 'audio/primary-escalate-failed.mp3' },
-    zul: { env: 'VM_ESCALATE_FAILED_URL', text: ESCALATE_FAILED_TEXT_ZUL },
+    zul: { env: 'VM_ESCALATE_FAILED_URL', text: ESCALATE_FAILED_TEXT_ZUL, bundled: 'audio/zul-escalate-failed.mp3' },
   },
 };
 
 // Fail at BOOT, not on a live call: a half-added slot must not first surface
 // as a caller hearing an application error. messageVerb below is total at
 // request time precisely because this check already ran.
+// Every slot messageVerb is asked for by name, so a rename or deletion is
+// caught here rather than at 3am on a live call.
+for (const required of ['greeting_day', 'greeting_night', 'escalate_ack', 'escalate_failed']) {
+  if (!SLOTS[required]) throw new Error(`voicemailTwiml: required slot "${required}" is missing`);
+}
 for (const [slot, byLine] of Object.entries(SLOTS)) {
   for (const ln of LINES) {
     const cfg = byLine[ln];
@@ -167,7 +182,7 @@ function messageVerb(slot, rawLine) {
     // A typo must degrade to the synthetic voice, not to silence. Twilio skips a
     // <Play> whose fetch fails, so "VM_ESCALATE_ACK_URL_PRIMARY=yes" would make
     // the caller hear nothing at all with no server-side trace.
-    if (/^https?:\/\//i.test(override)) return `<Play>${xmlEscape(override)}</Play>`;
+    if (isPlayableUrl(override)) return `<Play>${xmlEscape(override)}</Play>`;
     console.warn(`[voicemailTwiml] ${cfg.env} is not an http(s) URL ("${override}"), speaking instead`);
   } else if (!override && cfg.bundled) {
     // A bundled recording beats the synthetic text, so the real voice is the
@@ -193,9 +208,16 @@ function messageVerb(slot, rawLine) {
  */
 function needsAppendedOffer(rawLine) {
   if (String(process.env.VM_ESCALATION_PROMPT || '').trim().toLowerCase() === 'none') return false;
-  const cfg = SLOTS.greeting_day[resolveLine(rawLine)];
+  const cfg = SLOTS.greeting_day?.[resolveLine(rawLine)];
+  // Total for the same reason messageVerb is: this runs inside /inbound/missed,
+  // a bare async handler with no asyncHandler wrapper, so a TypeError here
+  // writes NO response and the caller waits ~15s for a Twilio application
+  // error, after the ledger row is already claimed. Append on doubt.
+  if (!cfg) return true;
   const override = String(process.env[cfg.env] || '').trim();
-  const usingDefault = !override || override.toLowerCase() === 'say';
+  // Only a PLAYABLE url is an unknown recording. A malformed value falls back
+  // to the synthetic text, whose offer content the table already knows.
+  const usingDefault = !override || !isPlayableUrl(override);
   return usingDefault ? !cfg.defaultSaysOffer : true;
 }
 
@@ -223,7 +245,7 @@ function recordVerb() {
 }
 
 module.exports = {
-  SLOTS, FALLBACK_TEXT,
+  SLOTS, FALLBACK_TEXT, isPlayableUrl,
   GREETING_TEXT_ZUL, GREETING_TEXT_PRIMARY, ESCALATION_PROMPT_TEXT,
   GREETING_TEXT_PRIMARY_NIGHT, GREETING_TEXT_ZUL_NIGHT,
   ESCALATE_ACK_TEXT_PRIMARY, ESCALATE_ACK_TEXT_ZUL,

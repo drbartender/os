@@ -14,9 +14,9 @@ beforeEach(() => {
 });
 after(() => { process.env = { ...SAVED }; });
 
-test('zul greeting default is the bundled recording, unchanged from production', () => {
+test('zul greeting default is her 2026-08-19 bundled recording', () => {
   const out = twiml.messageVerb('greeting_day', 'zul');
-  assert.match(out, /^<Play>[^<]*\/api\/voice\/greeting\.mp3<\/Play>$/);
+  assert.match(out, /^<Play>[^<]*\/api\/voice\/audio\/zul-greeting-day\.mp3<\/Play>$/);
   assert.doesNotMatch(out, /<Say/);
 });
 
@@ -26,7 +26,8 @@ test('zul greeting honors the existing VM_GREETING_URL override and say kill swi
   process.env.VM_GREETING_URL = 'say';
   const said = twiml.messageVerb('greeting_day', 'zul');
   assert.match(said, /<Say voice="Polly\.Joanna-Neural">/);
-  assert.match(said, /This is Zul/);
+  assert.match(said, /this is Zul/i);
+  assert.match(said, /press one/i, 'her synthetic text mirrors her new recording');
 });
 
 test('primary greeting defaults to DALLAS\'S RECORDING, never to Zul\'s', () => {
@@ -96,14 +97,16 @@ test('escalationPromptVerb speaks the option by default and is suppressible', ()
   assert.equal(twiml.escalationPromptVerb(), '', 'none means the recording already says it');
 });
 
-test('the zul greeting copy is pinned byte-for-byte to what shipped 2026-07-24', () => {
-  // This string's whole contract is byte-identity: the synthetic fallback must
-  // match Zul's recorded mp3 word for word. A substring match would let the
-  // copy drift while the suite stays green.
+test('the zul greeting copy is pinned byte-for-byte to what she recorded 2026-08-19', () => {
+  // Unchanged contract, new recording: the synthetic fallback must match her mp3
+  // word for word, because it is what callers hear if the recording is killed.
+  // Re-recorded 2026-08-19 to include the press-1 offer, which is what lets
+  // defaultSaysOffer be true on her line and stops the appended prompt.
   assert.strictEqual(
     twiml.GREETING_TEXT_ZUL,
-    "Thanks for calling Dr. Bartender. This is Zul. I'm not available right now. Please leave your name, your number, and the date of your event, and I'll call you right back."
+    "Thanks for calling Dr. Bartender, this is Zul. Sorry I missed your call. Leave me a message and we'll get back to you as soon as we can. If you need to talk to somebody now, press one and I'll see if someone's available."
   );
+  assert.match(twiml.GREETING_TEXT_ZUL, /press one/i, 'and it must still contain the offer');
 });
 
 test('no greeting or prompt copy contains an em dash', () => {
@@ -130,15 +133,14 @@ const clearSlots = () => SLOT_ENV.forEach((k) => delete process.env[k]);
 test('every slot resolves to something playable with nothing configured', () => {
   // Nothing may resolve to an empty verb: an empty verb is a TwiML document that
   // silently says nothing, which is the failure this feature exists to remove.
-  // Primary is all bundled recordings; zul is her one bundled greeting plus
-  // synthetic for the slots she has not recorded.
+  // Since 2026-08-19 BOTH lines are all bundled recordings; the synthetic texts
+  // are the kill switch, not the normal path.
   clearSlots();
   for (const slot of ['greeting_day', 'greeting_night', 'escalate_ack', 'escalate_failed']) {
     const prim = twiml.messageVerb(slot, 'primary');
     assert.match(prim, /^<Play>.*\.mp3<\/Play>$/, `primary/${slot} should be a bundled recording`);
     const zul = twiml.messageVerb(slot, 'zul');
-    if (slot === 'greeting_day') assert.match(zul, /^<Play>/, 'zul day keeps her bundled recording');
-    else assert.match(zul, /^<Say voice="Polly\.Joanna-Neural">/, `zul/${slot} is still synthetic`);
+    assert.match(zul, /^<Play>.*\.mp3<\/Play>$/, `zul/${slot} should be a bundled recording`);
     assert.ok(zul.length > 0 && prim.length > 0);
   }
 });
@@ -164,10 +166,10 @@ test('the primary DAY greeting contains the press-1 offer; NIGHT must not', () =
 test('needsAppendedOffer trusts only the KNOWN defaults, never an override', () => {
   clearSlots();
   // Known defaults: the table says whether each one already contains the offer.
-  assert.equal(twiml.needsAppendedOffer('zul'), true, 'her bundled mp3 predates the offer');
+  assert.equal(twiml.needsAppendedOffer('zul'), false, 'her 2026-08-19 recording says the offer itself');
   assert.equal(twiml.needsAppendedOffer('primary'), false, 'his recording says the offer itself');
   process.env.VM_GREETING_URL = 'say';
-  assert.equal(twiml.needsAppendedOffer('zul'), true, 'her synthetic text mirrors the old script');
+  assert.equal(twiml.needsAppendedOffer('zul'), false, 'her synthetic text mirrors that recording');
   process.env.VM_GREETING_URL_PRIMARY = 'say';
   assert.equal(twiml.needsAppendedOffer('primary'), false, 'his synthetic text carries the offer');
 
@@ -265,4 +267,39 @@ test('the unknown-slot fallback is honest in EVERY position it can fire from', (
       'invites nothing: it may play before a <Dial>, not a <Record>');
   }
   assert.equal(twiml.messageVerb('no_such_slot', 'primary'), twiml.messageVerb('no_such_slot', 'zul'));
+});
+
+test('a malformed override cannot produce a DOUBLED offer', () => {
+  // messageVerb and needsAppendedOffer both have to agree on what counts as a
+  // recording. When they disagreed, VM_GREETING_URL_PRIMARY=yes fell back to the
+  // synthetic text (which SAYS the offer) while the append fired anyway.
+  clearSlots();
+  for (const bad of ['yes', 'ftp://x/a.mp3', 'primary-greeting-day.mp3']) {
+    process.env.VM_GREETING_URL_PRIMARY = bad;
+    assert.match(twiml.messageVerb('greeting_day', 'primary'), /^<Say /, `${bad} should speak`);
+    assert.equal(twiml.needsAppendedOffer('primary'), false,
+      `${bad} falls back to text that already says the offer, so do NOT append`);
+  }
+  // Whitespace-only trims to empty, so it is effectively UNSET: the bundled
+  // recording plays, and it says the offer too.
+  process.env.VM_GREETING_URL_PRIMARY = '   ';
+  assert.match(twiml.messageVerb('greeting_day', 'primary'), /^<Play>/);
+  assert.equal(twiml.needsAppendedOffer('primary'), false);
+  clearSlots();
+});
+
+test('the fallback copy is pinned, so a reword cannot slip past the property test', () => {
+  // The property assertions are phrase-specific ("morning", "leave a message"),
+  // so a reword like "I'll ring you back tomorrow" would pass them all.
+  assert.strictEqual(twiml.FALLBACK_TEXT, 'Thanks for calling Dr. Bartender.');
+});
+
+test('a renamed or deleted required slot cannot get past boot', () => {
+  // The boot loop used to validate only slots that were PRESENT, so deleting
+  // greeting_day passed boot and then threw inside /inbound/missed, which has no
+  // asyncHandler: no response written, ~15s of dead air, ledger row already burned.
+  assert.ok(twiml.SLOTS.greeting_day && twiml.SLOTS.greeting_night);
+  assert.ok(twiml.SLOTS.escalate_ack && twiml.SLOTS.escalate_failed);
+  // And the runtime guard holds even if one vanished at runtime.
+  assert.equal(typeof twiml.needsAppendedOffer('primary'), 'boolean');
 });

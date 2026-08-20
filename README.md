@@ -148,7 +148,7 @@ Copy `.env.example` and fill in values. This table is the fullest list, but it i
 | `VM_ESCALATION_DAILY_CAP` | No | Max escalation legs per rolling 24h (default 25), a HARD serialized bound. Billed leg; international on the primary line. |
 | `VM_ESCALATION_QUIET_ZUL` / `VM_ESCALATION_QUIET_PRIMARY` | No | Quiet hours for the escalation TARGET, strict `HH:MM-HH:MM` (`24:00`/en-dash invalid → warned, no window). May wrap midnight. |
 | `VM_ESCALATION_TZ_ZUL` / `VM_ESCALATION_TZ_PRIMARY` | No | IANA zone overrides for the quiet windows (defaults Asia/Manila, America/Chicago). A bad zone silently disables the window. |
-| `VM_ESCALATION_PROMPT` | No | Manual override suppressing the APPENDED press-1 offer. Since 2026-08-19 the day greetings say it themselves. Appends for Zul's pre-escalation mp3, not for Dallas's recording, and for ANY override URL (unknown content). |
+| `VM_ESCALATION_PROMPT` | No | Manual override suppressing the APPENDED press-1 offer. Since 2026-08-19 both lines' bundled greetings say it themselves, so nothing is appended by default. Appended for ANY override URL (unknown content). |
 | `VM_NIGHT_WINDOW` | No | Caller-facing night window, `HH:MM-HH:MM`, default `21:00-09:00`, or `none` to disable. Inside it the greeting drops press-1 and promises the morning. Fails open to day. |
 | `VM_NIGHT_TZ` | No | IANA zone for the above, default `America/Chicago`. |
 | `VM_NIGHT_GREETING_URL_PRIMARY` / `VM_NIGHT_GREETING_URL` | No | Night greeting per line; primary defaults to a bundled recording. |

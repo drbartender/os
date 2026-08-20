@@ -337,15 +337,22 @@ test('a fallback into voicemail says WHY, before the beep', async () => {
 test('the fallback message is per line', async () => {
   process.env.VM_ESCALATION_ENABLED = 'false';
   const res = await post('/api/voice/escalate?line=zul', { CallSid: cs('CAfail2'), Digits: '1' });
-  assert.match(res.text, /we'll get back to you/, "zul's line speaks for the team");
+  assert.match(res.text, /zul-escalate-failed\.mp3/, "her line plays HER clip");
+  assert.doesNotMatch(res.text, /primary-escalate/, "never his");
   process.env.VM_ESCALATION_ENABLED = 'true';
 });
 
 test('a press that arrives AFTER the night boundary flips is still honored', async () => {
   // We made the offer; withdrawing it silently is worse than a two-minute edge
   // in which one phone rings. /escalate deliberately does not check isNight.
-  process.env.VM_NIGHT_WINDOW = '00:00-23:59'; // force "night" all day
+  // No env var is set here on purpose. This route CANNOT see the night window:
+  // voiceEscalate.js never imports isNight, which is the actual guarantee that a
+  // press-1 offered before the boundary is honored after it. The previous
+  // version set VM_NIGHT_WINDOW here, which was inert (nothing reads it on this
+  // path) AND wrong (00:00-23:59 is day at 23:59), so it proved nothing twice.
   const res = await post('/api/voice/escalate?line=primary', { CallSid: cs('CAedge1'), Digits: '1' });
   assert.match(res.text, /<Dial/, 'the dial still happens after the boundary flips');
-  delete process.env.VM_NIGHT_WINDOW;
+  // The guarantee is structural, so assert the structure: no night dependency.
+  const src = require('node:fs').readFileSync(require.resolve('./voiceEscalate'), 'utf8');
+  assert.doesNotMatch(src, /isNight/, 'escalate must never consult the night window');
 });

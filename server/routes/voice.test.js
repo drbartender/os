@@ -435,7 +435,10 @@ test('/inbound/missed wraps the greeting in a Gather when escalation is enabled'
   await settle();
   assert.match(res.text, /<Gather[^>]*numDigits="1"[^>]*timeout="4"/);
   assert.match(res.text, /action="[^"]*\/api\/voice\/escalate\?line=zul"/);
-  assert.match(res.text, /press 1/);
+  // Her 2026-08-19 recording says the offer itself, so the document carries no
+  // spoken prompt. What must be true is that the greeting sits INSIDE the
+  // Gather, which is what makes the keypress reachable while it plays.
+  assert.match(res.text, /<Gather[^>]*>\s*<Play>[^<]*zul-greeting-day\.mp3<\/Play>\s*<\/Gather>/);
   // The Record must sit AFTER </Gather>: a caller who presses nothing falls
   // through to it, which is how "just leave a message" stays the default.
   assert.match(res.text, /<\/Gather><Record/);
@@ -452,7 +455,7 @@ test('/inbound/missed with escalation OFF emits exactly today\'s document', asyn
   // explicit-false spelling of the flag.)
   assert.doesNotMatch(res.text, /<Gather/);
   assert.doesNotMatch(res.text, /press 1/);
-  assert.match(res.text, /<Play>[^<]*greeting\.mp3<\/Play><Record/);
+  assert.match(res.text, /<Play>[^<]*zul-greeting-day\.mp3<\/Play><Record/);
 });
 
 test('/inbound/missed Gather targets the right line', async () => {
@@ -522,7 +525,9 @@ test('an instant answer on the zul line raises no canary', async () => {
 });
 
 test('/inbound/missed default document is pinned byte-for-byte (the escalation-off contract)', async () => {
-  // THE golden string for the live 0082 path. Substring matches cannot catch a
+  // THE golden string for the live 0082 path. The <Play> target changed on
+  // 2026-08-19 when Zul's re-recorded greeting replaced the 2026-07-24 mp3 as
+  // her default; the byte-for-byte contract is unchanged. Substring matches cannot catch a
   // reordered document (greeting after the beep) or a dropped <Hangup/> (billed
   // dead air); this strictEqual is the alarm for every later change to the
   // emission, including the Task 5 <Gather> wrapper, which must leave this
@@ -535,7 +540,7 @@ test('/inbound/missed default document is pinned byte-for-byte (the escalation-o
   assert.strictEqual(
     res.text,
     '<?xml version="1.0" encoding="UTF-8"?>'
-    + `<Response><Play>${API_URL}/api/voice/greeting.mp3</Play>`
+    + `<Response><Play>${API_URL}/api/voice/audio/zul-greeting-day.mp3</Play>`
     + '<Record maxLength="120" playBeep="true" trim="trim-silence" finishOnKey="#"'
     + ` recordingStatusCallback="${API_URL}/api/voice/inbound/voicemail"`
     + ' recordingStatusCallbackMethod="POST" recordingStatusCallbackEvent="completed"/>'
@@ -548,7 +553,7 @@ test('/inbound/missed defaults to the zul line and claims it', async () => {
     DialCallStatus: 'no-answer', CallSid: cs('CAline1'), From: '+13125550147',
   });
   await settle();
-  assert.match(res.text, /<Play>[^<]*\/api\/voice\/greeting\.mp3<\/Play>/, 'Zul recording');
+  assert.match(res.text, /<Play>[^<]*\/api\/voice\/audio\/zul-greeting-day\.mp3<\/Play>/, 'Zul recording');
   assert.equal(calls.claims[0].line, 'zul');
 });
 
@@ -562,7 +567,8 @@ test('/inbound/missed?line=primary claims primary and plays the Dallas greeting'
   // rather than the document. The load-bearing assertion is unchanged: Zul's
   // recording must never play on his line.
   assert.match(res.text, /<Play>.*primary-greeting-day\.mp3<\/Play>/);
-  assert.doesNotMatch(res.text, /This is Zul/);
+  assert.doesNotMatch(res.text, /this is Zul/i);
+  assert.doesNotMatch(res.text, /zul-greeting/, "Zul's recording must never play on his line");
   assert.doesNotMatch(res.text, /\/api\/voice\/greeting\.mp3/, 'Zul\'s recording must never play on Dallas\'s line');
   // The GV dial target already shows Dallas the miss natively; pinging Zul
   // about his line would invite a callback from the wrong person.
@@ -598,7 +604,7 @@ test('/inbound/missed takes the cheap branch on an unrecognized DialCallStatus',
 
 test('/inbound/missed returns the greeting and Record, and pings twice', async () => {
   const res = await post('/api/voice/inbound/missed', { DialCallStatus: 'no-answer', CallSid: cs('CA4'), From: '+13125550147' });
-  assert.match(res.text, /<Play>[^<]*\/api\/voice\/greeting\.mp3<\/Play>/, 'default greeting plays the recorded mp3');
+  assert.match(res.text, /<Play>[^<]*\/api\/voice\/audio\/zul-greeting-day\.mp3<\/Play>/, 'default greeting plays the recorded mp3');
   assert.doesNotMatch(res.text, /<Say/, 'default greeting is the recording, not the synthetic voice');
   assert.match(res.text, /<Record[^>]*maxLength="120"/);
   assert.match(res.text, /recordingStatusCallback="[^"]*\/api\/voice\/inbound\/voicemail"/);
@@ -626,7 +632,7 @@ test('/inbound/missed falls back to the Polly <Say> when VM_GREETING_URL=say', a
   process.env.VM_GREETING_URL = 'say';
   const res = await post('/api/voice/inbound/missed', { DialCallStatus: 'no-answer', CallSid: cs('CAgreet2'), From: '+13125550147' });
   await settle();
-  assert.match(res.text, /<Say voice="Polly\.Joanna-Neural">[^<]*This is Zul[^<]*<\/Say>/);
+  assert.match(res.text, /<Say voice="Polly\.Joanna-Neural">[^<]*this is Zul[^<]*<\/Say>/i);
   assert.doesNotMatch(res.text, /<Play>/, 'the say kill-switch emits no Play');
 });
 
@@ -1126,7 +1132,11 @@ test('the press-1 offer reaches the caller once, and never twice', async () => {
     DialCallStatus: 'no-answer', CallSid: cs('CAonce3'), From: '+13125550147',
   });
   await settle();
-  assert.equal((zul.text.match(/press 1|press one/gi) || []).length, 1, 'zul hears it once');
+  // Her 2026-08-19 recording says the offer itself, so like his the document
+  // carries no spoken offer at all, and appending one would be the double.
+  assert.equal((zul.text.match(/press 1|press one/gi) || []).length, 0,
+    'her recording already says it');
+  assert.doesNotMatch(zul.text, /get someone else on the line/i, 'no appended offer');
 });
 
 test('escalation OFF emits no Gather, day AND night', async () => {
@@ -1149,7 +1159,6 @@ test('/inbound/missed NIGHT document is pinned byte-for-byte', async () => {
   process.env.VM_ESCALATION_ENABLED = 'false';
   router.__setVoiceDeps({ isNight: () => true });
   const { API_URL } = require('../utils/urls');
-  const { GREETING_TEXT_ZUL_NIGHT } = require('../utils/voicemailTwiml');
   const res = await post('/api/voice/inbound/missed', {
     DialCallStatus: 'no-answer', CallSid: cs('CAgoldN'), From: '+13125550147',
   });
@@ -1157,7 +1166,7 @@ test('/inbound/missed NIGHT document is pinned byte-for-byte', async () => {
   assert.strictEqual(
     res.text,
     '<?xml version="1.0" encoding="UTF-8"?>'
-    + `<Response><Say voice="Polly.Joanna-Neural">${GREETING_TEXT_ZUL_NIGHT}</Say>`
+    + `<Response><Play>${API_URL}/api/voice/audio/zul-greeting-night.mp3</Play>`
     + '<Record maxLength="120" playBeep="true" trim="trim-silence" finishOnKey="#"'
     + ` recordingStatusCallback="${API_URL}/api/voice/inbound/voicemail"`
     + ' recordingStatusCallbackMethod="POST" recordingStatusCallbackEvent="completed"/>'
@@ -1188,4 +1197,17 @@ test('/inbound/missed PRIMARY day document is pinned byte-for-byte', async () =>
     + ' recordingStatusCallbackMethod="POST" recordingStatusCallbackEvent="completed"/>'
     + '<Hangup/></Response>'
   );
+});
+
+test('the DEFAULT isNight dep is the real function, not a stub', () => {
+  // Every route test injects isNight, so nothing otherwise asserts production
+  // uses the real one. Hardcoding `isNight: () => false` in _deps would disable
+  // night mode in prod and leave all 73 tests green.
+  delete require.cache[require.resolve('./voice')];
+  const fresh = require('./voice');
+  const { isNight } = require('../utils/voicemailLine');
+  const aug = (hh) => new Date(Date.UTC(2026, 7, 19, hh + 5, 0));
+  fresh.__setVoiceDeps({});
+  assert.equal(isNight(aug(23)), true, 'sanity: 11pm Chicago is night');
+  assert.equal(isNight(aug(13)), false, 'sanity: 1pm Chicago is day');
 });
