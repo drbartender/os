@@ -2827,9 +2827,48 @@ Do NOT resolve `DRBARTENDER-SERVER-21` as noise (see the 2026-08-12 duty-accrual
   (new 2026-08-13, 1 event). The box agent's polling call threw. Same pipeline that still
   owes its next-lead proof — check `journalctl --user -u thumbtack-agent` on the box before
   trusting the next lead to it.
-- **`DRBARTENDER-SERVER-1H` — `unresolved_ingredient`, 16 events, ongoing** on the public
-  drink-plan PUT. Potion custom-recipe family; a client-entered ingredient the resolver
-  cannot map. Needs one triage: either a missing alias (data fix) or a resolver gap.
+- ~~**`DRBARTENDER-SERVER-1H` — `unresolved_ingredient`**~~ **ROOT-CAUSED AND FIXED 2026-08-19.
+  Safe to resolve in Sentry.** 22 events by the end (not 16), first 2026-07-10, last 2026-08-19
+  14:10 UTC. The entry's two candidate causes were "missing alias (data fix)" or "resolver gap".
+  **Neither, exactly.** The Sentry payload names it outright: `unresolved: [{drink: "Martini",
+  ingredient: "Olives"}]`, `op: auto_gen_shopping_list`, `level: warning`, 0 users impacted.
+  There was no `par_items` row for olives AT ALL — not a row missing an alias. The resolver
+  (`potionCatalog.resolveIngredient`) was correct the whole time; the catalog had nothing to
+  resolve to, and `mergeSignatureRecipes` (`shoppingList.js:266`) collected it exactly as designed.
+  Dallas created the `olives` row during his 2026-08-19 ingredients session (`created_at` =
+  `updated_at` = 21:37 UTC, ~7.5h AFTER the last event), which closed this issue as a side effect
+  without anyone connecting the two.
+  **Verified, not assumed**: ran the real `buildCatalogSlices` + `resolveRecipeRow` against the live
+  97-row catalog. `resolveRecipeRow({ingredient:'Olives'})` now returns `Olives / olives`.
+  **Whole-catalog sweep done at the same time** (all 213 recipe rows across 49 drinks, real
+  resolver, live catalog): only **3 rows resolve to nothing, and all 3 sit on INACTIVE drinks**, so
+  no active recipe can fire this today. Each needs a `par_items` row or alias BEFORE its drink is
+  ever reactivated:
+  - `Lavender Syrup` — Lavender Lemon Drop (note: `lavender-vanilla-syrup` exists, but "lavender
+    syrup" matches neither of its aliases exactly nor by substring)
+  - `Limoncello` — Limoncello Lemon Drop (no limoncello row exists)
+  - `Red Wine` — Red Sangria (only `cabernet-sauvignon` exists, aliased "cabernet sauvignon")
+
+## NEW, found by the same pass: `Smoked Salt` silently resolves to Smoked Chips (2026-08-19)
+
+`resolveRecipeRow({ingredient: 'Smoked Salt'})` returns **Smoked Chips (`smoked-chips`)**. The
+exact-alias pass misses, then the substring fallback matches the alias `smoked` on the wood-chips
+row. `potionCatalog.js` states the invariant it is breaking, in its own comment on that fallback:
+"a silently wrong bottle, the one outcome this module must never produce." A shopping list built
+from this buys a bag of smoking chips for a drink that wants salt on the rim.
+
+**Live blast radius: currently zero, and that is temporary.** The only recipe carrying the row is
+**Smoky Pineapple Sour**, which is one of the THREE mocktail drafts still waiting on Dallas's
+yes/no. Approving that draft as-is ships the wrong item to a real shopping list, so this wants
+fixing BEFORE that review, not after.
+
+Cheapest correct fix: add a `smoked-salt` `par_items` row with alias `smoked salt`. Exact-alias
+match runs before the substring fallback, so the row alone closes it with no code change and no
+risk to the other 212 rows. The head-noun preference in the fallback does not save this case
+because the last token is "salt" and no alias contains it, so it lands on longest-substring.
+
+NOT fixed here: adding prod catalog rows is Dallas's ingredients work, and he is editing that
+table in another window right now.
 - **`DRBARTENDER-SERVER-1N`** — see the tech-debt cross-link above (legacy pricing_snapshot
   rows without `_version`; 54 events).
 
@@ -5119,3 +5158,73 @@ exist. Purely a local-verification blocker.
   fleet agents missed. Second time it has done that. Both external reviewers cost real money now.
 - **`git diff main <branch>` is the wrong merge check** when main is ahead on shared files; grep
   the distinctive phrase on main instead. It threw a false alarm twice today.
+
+## The offline lock screen has no working exit, and the visible one silently disarms the phone (walked on PROD 2026-08-19, Dallas + 4-agent verification)
+
+Found on the real Pixel against prod during the ma-d-auth walk, then put through a 3-lens
+adversarial refutation plus a recovery-path pass. **My first write-up of this was wrong in
+three ways and is corrected below**; the panel refuted the framing while confirming the
+mechanism, so read the corrections as part of the finding.
+
+**What Dallas observed.** Lock fired correctly after a 30-minute background. It fully occluded
+(no data behind it, spec section 8 satisfied). Tapping Unlock offline gave
+"You are offline. Unlocking needs a connection." with NO biometric prompt, which is correct:
+`unlockWithPasskey` POSTs `assert-options` BEFORE `startAuthentication`
+(`webauthnClient.js:34-38`), so it never asks for a fingerprint it cannot use. Then
+"Use password instead" landed on **"Something went wrong."**
+
+**THE FINDING THAT MATTERS, and it runs opposite to how I first framed it.** After that tap
+and a later password login, the phone is **silently UNARMED**: `ENROLLED_KEY` was purged, so
+`phoneUnlockArmed()` is false (`mobileLock.js:58-60`), which means no 30-minute background
+lock at all, the gate lock never renders (`App.js:309-312`), and `authFailureAction` drops
+from `keep` to `purge` (`AuthContext.js:15-20`). The device quietly downgrades its own lock
+posture and says nothing. It stays that way until the user happens to notice the enrollment
+nudge. That is a security-posture regression, not the data loss I originally described.
+
+**Second real defect, independent of the first.** The dead end is NOT caused by the logout.
+`navigate('/login')` is in-memory React Router with no network call. `Login` is a lazy chunk
+(`App.js:84`) that is only in `SHELL_CACHE` if it was fetched online under the current
+SW_VERSION; offline the import fails, the custom `lazy` wrapper reloads once
+(`App.js:43-63`), fails again inside its 10s TTL, and throws to the ErrorBoundary's
+"Something went wrong" (`ErrorBoundary.js:47-53`). **Deleting the purge would not fix the
+error screen.** Two separate defects sharing one button.
+
+**Also true: offline, BOTH buttons on that screen are dead.** Unlock needs the network for
+`assert-options`; password needs it for the chunk and the submit. The lock arms offline with
+no offline-capable exit whatsoever.
+
+**THREE CORRECTIONS to my first write-up, all from the refutation panel:**
+1. "Loses the entire offline cache snapshot" is FALSE. `admin-logout` deletes only
+   `admin-meta` and `admin-api-*` (`admin-sw.js:117-122`, `:165-173`). `SHELL_CACHE` is never
+   touched, so the PWA still boots offline. The DATA cache dies; the app shell survives.
+2. "Disarmed forever" is FALSE. `NUDGE_DISMISSED_KEY` is purged in the same sweep
+   (`adminSw.js:52`), so the enroll nudge reappears at the next login and one tap re-arms.
+3. "Destructive one-way door" OVERSTATES the delta. Offline AND locked, the user has zero
+   access with or without the tap. The tap costs a typed password instead of a fingerprint
+   once connectivity returns, plus a cold read cache. It does not destroy access they had.
+
+**The purge itself is correct and must not be "fixed".** `onPassword` calls the same
+`logout()` as every other logout (`AuthContext.js:112-118`); its job is keeping cached admin
+PII out of Cache Storage on a lost or shared phone, it is spec law ("Full purge on logout",
+spec section 7), and it is test-pinned (`MobileLockScreen.test.js:78`). Softening it reopens
+that hole. **The fix belongs at the destination, not the purge:** offline-aware copy, or
+refuse to leave the lock while `navigator.onLine` is false. There is currently no
+`navigator.onLine` check anywhere on this path (grep returns zero hits across
+`components/mobile/`, `webauthnClient.js`, `pages/Login.js`).
+
+**The one genuinely unrecoverable loss is small and worth naming:**
+`adminDesktopViewOverrides` (`desktopViewStore.js:11`) is localStorage-only with no server
+copy, so every screen pinned to Desktop view silently reverts and must be re-toggled by hand.
+`adminLastRoute` dies too, so the screen you were locked out of is not recoverable. Everything
+else re-fetches. Nothing server-side is touched: the `webauthn_credentials` row, its public
+key and counter, and `users.token_version` all survive (the only mutating path is the desktop
+revoke, `webauthn.js:183-194`).
+
+Re-enrollment after this is clean, verified: `register-options` puts existing credential ids
+in `excludeCredentials` (`webauthn.js:90-108`), the authenticator throws `InvalidStateError`
+locally, and `registerPasskey` converts that to `{alreadyEnrolled:true}` without ever calling
+`register-verify` (`webauthnClient.js:18-27`). No duplicate row, no 409, no error surfaced.
+Dallas re-enrolled successfully on 2026-08-19, which proves this path in prod.
+
+Severity, honestly ranked by the panel: LOW to MEDIUM. The posture downgrade is the part that
+deserves a fix; the rest is friction.
