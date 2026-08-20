@@ -3860,7 +3860,46 @@ The auto-name derivation is pinned against a **live server** rather than a readi
 Postgres source: a probe hands the same `CREATE TABLE` text to the collector and to
 Postgres and requires the two name sets to match, collision suffix (`_check1`) included.
 
-## STILL OPEN out of the same sweep: seven FKs diverge, and one EXCEPTION handler hides it
+## ~~STILL OPEN out of the same sweep: seven FKs diverge, and one EXCEPTION handler hides it~~
+## FIXED 2026-08-20 — lane `schema-loud-do`, merged to main (NOT pushed as of this line; verify with `git merge-base --is-ancestor <sha> origin/main`)
+
+**The error-handling half is closed. The divergence half was never the defect and is UNCHANGED by design.**
+
+What shipped: the one `DO $$` block became **eight guarded blocks, one per FK**, each gated on
+`conname + conrelid = '<table>'::regclass + contype + confdeltype` and carrying **no exception
+handler at all**. A genuine failure now reaches `initDb`'s `unexpected` array — Sentry plus a
+loud `Schema statement FAILED [code]` log — instead of a `RAISE NOTICE` that made the statement
+SUCCEED at the driver level and so bypassed `initDb`'s catch entirely. Steady state is a pure
+no-op: eight drop-and-re-add pairs per boot became zero. Each block is still one implicit
+transaction, so the constraint is never observably absent and this is NOT a new instance of the
+20 bare DROP-then-ADD pairs. A stray `ALTER TABLE proposal_addons ADD COLUMN ... variant` that
+had drifted inside the FK block, sharing its all-or-nothing rollback, was moved out.
+
+**Corrections this work forced, both worth carrying:**
+- The `schema.sql:1853-1886` citation below is now stale; the section starts ~`:1851` and the
+  blocks run to ~`:1990`. Cite the section by name.
+- Claude initially reported "no divergence anywhere" after checking prod, dev, and the schema
+  text, and that was WRONG — it searched only for duplicate `ADD CONSTRAINT` statements and so
+  could never have found the actual divergence, which is inline `REFERENCES` in `CREATE TABLE`
+  versus the later `ADD`. This entry's headline was right. Prod and dev were both verified
+  correct on the resulting ON DELETE actions, so the defect was always latent (it bites a FRESH
+  database), never live.
+- The header comment first written for the fix claimed all eight FKs are born NO ACTION. Seven
+  are. `drink_plans_proposal_id_fkey` has no inline REFERENCES and is born CASCADE at ~`:904`.
+
+Five-agent fleet before merge: 4 PASS, 1 FAIL (docs-only, three sites still describing the
+removed shape — `ARCHITECTURE.md`, the `constraintContract.test.js` SCOPE comment, and this
+entry). All three fixed. Three agents independently flagged the missing `conrelid` pin, which
+is why the guards carry it. Verified against the dev DB, all three behaviors: no-op on a correct
+DB (0/8 rebuilt, compared constraint OIDs), repair of a deliberately corrupted FK, and a real
+failure surfacing as `FAILED [23503]` + `1 UNEXPECTED failure(s)`.
+
+Still true and deliberately untouched: the four status-CHECK blocks below this section use the
+worse `EXCEPTION WHEN OTHERS THEN NULL`. Covered by the 2026-08-14 ranked sweep and
+`CONSTRAINT_CONTRACT`; folding them in would have widened a sensitive schema change.
+
+Original entry follows, kept as provenance.
+
 
 The guard covers CHECK constraints only, deliberately. Seven FOREIGN KEYs are divergent
 under one name right now — an inline `REFERENCES users(id)` (NO ACTION) against a later
