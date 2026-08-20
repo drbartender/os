@@ -2615,10 +2615,28 @@ These are not from the original ledger. They surfaced while verifying its
 - ~~`crud.js` is 995 lines and has gone the WRONG way (946 when logged). Closest to the hard
   cap of anything in the tree.~~ **CORRECTED 2026-08-14.** `crud.js` is **976** — the
   legacy-cc-payments removal took it 995→976 (see the entry near the top of this file).
-  **`server/routes/staffPortal.js` at 995 is now the closest thing to the hard cap in the
-  tree**, and it is the one to watch: the ratchet blocks any commit that makes an over-cap
-  file longer, so the NEXT addition to staffPortal.js is effectively blocked until something
-  is extracted from it. It is still under 1000, so this is a warning, not a block, today.
+  ~~**`server/routes/staffPortal.js` at 995 is now the closest thing to the hard cap in the
+  tree**, and it is the one to watch: the NEXT addition to staffPortal.js is effectively
+  blocked until something is extracted from it.~~ **RESOLVED 2026-08-20, lane
+  `staffportal-split`** (merged to main; not pushed as of this line, verify with
+  `git merge-base --is-ancestor <sha> origin/main`). The "Task 15: staff-notifications +
+  push-subscriptions" section moved verbatim to `server/routes/staffPortal/notifications.js`
+  behind the same `register(router)` shape the three existing siblings use. **wc-style:
+  997 -> 785**, with 215 lines of headroom. Note the 995 above was itself a stale count; it
+  was 997 at extraction time, so do not propagate either number.
+  That section was chosen because it is the only large one touching neither the `_deps` stub
+  seam nor any money path — the staff-home pay-period read, which is why the parent is
+  sensitive-listed, stayed in the parent. Zero behavior change, and that was verified rather
+  than asserted: three review agents independently reconstructed the pre-move block and diffed
+  it byte-identical modulo one indent level, and the mounted router's route table is 22 routes
+  in identical order before and after. `staffPortal.test.js` 65/65.
+  **Deliberate, per the review fleet: `notifications.js` is NOT added to
+  `scripts/sensitive-paths.txt`.** The parent's listing rationale scopes entirely to the
+  staff-home money read, which did not move; these handlers lived unlisted their whole life and
+  their one day of fleet coverage was a file-granularity side effect, not a decision. The
+  trigger that would flip it: if these preferences ever become admin-writable, or feed any
+  decision beyond the owning user's own sends, sensitivity follows that change and it gets
+  listed then.
 - `CocktailMenuDashboard.js` 931, `emailTemplates.js` 853, `QuoteWizard.js` 837 (now at
   `client/src/pages/website/quoteWizard/`), `ProposalCreate.js` 750, `admin/users.js` 713.
 - ~~`safeAddonQty` is triplicated across `crud.js` / `public.js` / `metadata.js`.~~
@@ -5417,6 +5435,32 @@ Not a gate risk either way — `ci-smoke` resets from prod and never had these r
    commit there once this session.
 5. Smaller: delete the now-unreachable cancel branch in `shifts.handlers.js:120`; four BEO spec
    docs still describe `PUT /shifts/:id` cancellation as live.
+
+## `staffPortal/paymentMethods.js` writes bank PII and is NOT sensitive-listed (found 2026-08-20)
+
+Surfaced independently by two agents during the `staffportal-split` fleet, then checked against
+the list's own comments rather than inferred: **there is no deliberate-absence note.** Grepping
+`scripts/sensitive-paths.txt` for paymentMethods / bank / routing / account / deliberate /
+excluded finds nothing (the one "routing" hit is the unrelated voice-line policy comment). Every
+absence this list treats as intentional carries an explanatory comment; this one does not.
+
+`server/routes/staffPortal/paymentMethods.js` owns `GET/PATCH /payment-methods` +
+`PUT /preferred-payment-method` and writes **bank routing and account numbers** through
+`server/utils/encryption.js` — and `encryption.js` IS listed, under "Pricing / payments / PII".
+The route decides what gets encrypted, what gets projected back, and holds the field whitelist.
+A change that accidentally projects a decrypted account number scales to a light look today.
+
+**It has never been covered, at any point.** It was split out of `staffPortal.js` before the
+parent was ever listed (parent listed 2026-08-19; the split predates 2026-06-04), so this is not
+a "sensitivity followed the code out" regression — it is a path that was never caught. That is
+the same mistake shape the list documents five separate times.
+
+Recommend: add it by name with a rationale comment, matching the file's convention. Small.
+
+Adjacent, lower confidence, Dallas's call and explicitly NOT a gate on the above:
+`staffPortal/accountReads.js` is also unlisted, and its whole design is not projecting raw R2
+storage keys for W9s and signed agreements — a regression there is an auth bypass on stored
+documents. Worth a look in the same breath; worth nothing if it delays the paymentMethods entry.
 
 ## Lessons worth carrying
 
