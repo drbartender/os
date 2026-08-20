@@ -5345,20 +5345,42 @@ heading above with the reasoning; the short version, because all three keep gett
 Also fixed and closed: the September corporate-holiday moment (both halves), the staff pay-card
 period boundary, `board-write.sh` deploying all of main, and `PUT /shifts/:id` writing `status`.
 
-## BLOCKS A MONEY SUITE LOCALLY — clean this first
+## ~~BLOCKS A MONEY SUITE LOCALLY — clean this first~~ CLEARED 2026-08-20 — and the recorded prescription was WRONG
 
-`server/routes/admin/payroll.test.js` is **0 pass / 31 fail on the shared dev DB**, and it is NOT
-this batch. Orphan `tips` rows **3474, 3475** point at fixture contractor **16815**, so the
-suite's `DELETE FROM users` hits `tips_target_user_id_fkey` and its `after()` throws before
-restoring anything — which then strands `pay_periods` rows and breaks `staffPortal.test.js:274`
-as collateral. Verified still present at end of session. Cleanup:
+**Done. `payroll.test.js` is 30/30 and `staffPortal.test.js` is 65/65 on the shared dev DB.**
+Both had been failing; the entry recorded `payroll.test.js` as 0 pass / 31 fail.
 
-    DELETE FROM tips WHERE id IN (3474,3475);
-    DELETE FROM pay_periods WHERE id IN (7438);
-    DELETE FROM users WHERE id IN (16814,16815);
+**The root cause was right: two orphan `tips` rows.** 3474 and 3475 both pointed at fixture
+contractor 16815 (`payroll-contractor@example.com`), so `payroll.test.js`'s `after()` hit
+`tips_target_user_id_fkey` on its `DELETE FROM users`, threw, and abandoned every other fixture
+it had made. Deleting just those two rows fixed that suite outright AND let its teardown finally
+run — users 16814/16815 cleaned themselves up on the next run. Fix the blocker, let the suite do
+its own cleanup; no manual sweep of its fixtures was needed.
 
-Not a gate risk — `payroll.test.js` runs on `ci-smoke`, reset from prod, where these do not
-exist. Purely a local-verification blocker.
+**The prescribed SQL would have FAILED, and its diagnosis of the collateral was incomplete.**
+Recorded here because "verify a fix-list prescription, not just the entry" is already a lesson in
+this file and this is a clean second instance:
+
+1. `DELETE FROM pay_periods WHERE id IN (7438)` **throws 23503.** Payout 8567 (contractor 16964,
+   `pr-redesign-a@example.com`, 3872 cents) references it, and `payouts_pay_period_id_fkey` is
+   `NO ACTION`. The prescription never mentions that payout. Deleting 7438 was also unnecessary.
+2. **7438 was not what broke `staffPortal.test.js:274`.** The real shadow was pay_period **7521**
+   (2026-08-18 → 08-24, open, zero payouts, zero payout_events — pure orphan). The `/staff-home`
+   lookup is `WHERE $2::date BETWEEN pp.start_date AND pp.end_date ORDER BY pp.start_date DESC
+   LIMIT 1`. The test seeds its own period at `CURRENT_DATE - 3` (08-17) via
+   `ON CONFLICT (start_date) DO UPDATE`, so a leaked fixture period starting 08-18 — one day
+   later — won the ordering, the `LEFT JOIN payouts` found nothing for the test user, and
+   `total_cents` read 0 instead of 12345. Deleting 7521 alone took the suite to 65/65.
+
+**The systemic cause, which is still open and will do this again.** `staffPortal.test.js`'s
+teardown deletes its payout (`:238`) but never its `pay_periods` row, so every run leaks one.
+Other suites do the same — dev currently holds fixture periods dated 2026-08-16, 08-17, 08-29,
+09-11, 09-12 and one at **2099-06-01**. Any leaked period whose `start_date` is later than the
+seeding suite's own will shadow it under that `ORDER BY ... DESC LIMIT 1` and reproduce this
+exact failure. The durable fix is teardown deleting the period it created (or seeding a period
+guaranteed to win the ordering), not another manual sweep.
+
+Not a gate risk either way — `ci-smoke` resets from prod and never had these rows.
 
 ## Highest-value still open
 
