@@ -253,6 +253,20 @@ test('options_available: false once custom-priced or signed', async () => {
   assert.equal((await getPayload(p.token)).options_available, false, 'signed');
 });
 
+test('options_available: false once money is on the row, matching the switch guard', async () => {
+  // The switch refuses with SWITCH_NOT_AVAILABLE when amount_paid > 0, so a
+  // flag that stayed true here would render the entry card into a guaranteed
+  // apology. "Paid is unreachable on sent/viewed" is not airtight: a forced
+  // status rewind and an external_paid import both leave money on a sent row.
+  const p = await insertSignableProposal();
+  assert.equal((await getPayload(p.token)).options_available, true, 'baseline: unpaid');
+  await pool.query(`UPDATE proposals SET amount_paid = 100 WHERE id = $1`, [p.id]);
+  assert.equal((await getPayload(p.token)).options_available, false,
+    'money on the row closes the entry point');
+  await pool.query(`UPDATE proposals SET amount_paid = 0 WHERE id = $1`, [p.id]);
+  assert.equal((await getPayload(p.token)).options_available, true, 'and reopens when cleared');
+});
+
 test('options_available: grouped-undecided is false, grouped-decided is true', async () => {
   const p = await insertSignableProposal();
   const g = await pool.query(

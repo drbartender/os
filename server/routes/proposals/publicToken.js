@@ -167,6 +167,12 @@ async function buildPublicProposalPayload(token, db = pool) {
     // behaves like any other proposal. A group_id pointing at nothing fails
     // closed (the LEFT JOIN yields NULL).
     && (proposal.group_id === null || proposal.group_chosen_proposal_id !== null)
+    // Money already on the row refuses at the switch (SWITCH_NOT_AVAILABLE),
+    // so without this the flag renders the entry card into a guaranteed
+    // apology. "Paid is unreachable on sent/viewed" is NOT airtight: a forced
+    // status rewind and an external_paid import both leave money on a sent row,
+    // which is the same class publicSwitch's own reconcile guard exists for.
+    && Number(proposal.amount_paid || 0) === 0
     && Number(proposal.comparable_pkg_count) >= 2;
 
   // Strip the internal lookup fields (delete-on-copy, not rest-destructure,

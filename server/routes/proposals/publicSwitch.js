@@ -61,6 +61,22 @@ const UNAVAILABLE_MSG =
 // total behind a live intent.
 const STRIPE_CALL_TIMEOUT_MS = 10000;
 
+// Landed-switch grinding breadcrumb. The 409-storm log below catches a token
+// that keeps FAILING; this catches one that keeps SUCCEEDING. Multi-commit
+// sessions are the designed norm now (a client steps a tier, adds an extra,
+// changes their mind), so a leaked token grinding valid switches with correct
+// acknowledged totals would otherwise be completely silent while it churns
+// invoices, Stripe intents and audit rows. Counted from the audit table rather
+// than memory, so it survives a restart and cannot be reset by spreading the
+// grind across instances.
+const GRIND_COUNT = 5;
+const GRIND_WINDOW_MIN = 30;
+// Latched like noteConflict below: without this the capture fires on EVERY
+// landed switch from the 5th onward, so one grinding token spends up to a
+// switchLimiter-bounded 20 Sentry events per window saying the same thing.
+// One page per proposal per window is the signal; the rest is quota.
+const grindFlagged = new Map();
+
 // 409-storm breadcrumb: repeated TOTAL_CHANGED conflicts on one token mean
 // either quote/commit drift (a bug we want paged for) or a grinding token.
 // In-memory is fine: this is a breadcrumb, not a ledger.
@@ -535,6 +551,41 @@ router.post(
           tags: { route: 'proposals/switch', issue: 'stale_intent_sweep_failed' },
           extra: { proposalId: switchedProposalId },
         });
+      }
+    }
+
+    // Landed-switch frequency. Deliberately AFTER the stale-intent sweep: the
+    // sweep closes a live create-intent race and every millisecond before it
+    // widens that window, while this is pure observability that can wait.
+    // Best-effort and post-commit, so a failure here must not affect a switch
+    // that already committed.
+    if (switchedProposalId) {
+      try {
+        const grind = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM proposal_activity_log
+            WHERE proposal_id = $1 AND action = 'package_switched'
+              AND created_at > NOW() - ($2 || ' minutes')::interval`,
+          [switchedProposalId, String(GRIND_WINDOW_MIN)]
+        );
+        const landed = grind.rows[0] ? grind.rows[0].n : 0;
+        const flaggedAt = grindFlagged.get(switchedProposalId) || 0;
+        const windowMs = GRIND_WINDOW_MIN * 60 * 1000;
+        const stale = Date.now() - flaggedAt > windowMs;
+        if (landed < GRIND_COUNT) grindFlagged.delete(switchedProposalId);
+        if (landed >= GRIND_COUNT && stale && process.env.SENTRY_DSN_SERVER) {
+          grindFlagged.set(switchedProposalId, Date.now());
+          Sentry.captureMessage('switch: high landed-switch frequency for one token', {
+            level: 'warning',
+            tags: { route: 'proposals/switch', issue: 'switch_grind' },
+            extra: {
+              proposalId: switchedProposalId,
+              landed,
+              windowMinutes: GRIND_WINDOW_MIN,
+            },
+          });
+        }
+      } catch (e) {
+        console.error(`[switch] landed-switch frequency check failed for proposal ${switchedProposalId}: ${e && e.message}`);
       }
     }
 

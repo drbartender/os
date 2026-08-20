@@ -158,6 +158,14 @@ async function buildOptionsQuote(token, body = {}) {
       // extra the visibility gate strips. Today that stripping is silent and
       // correct; the drawer needs the reason on the wire.
       let dropped = [];
+      // Which extras this option would actually offer, so the drawer can scope
+      // its strip to the rung the client is standing on instead of listing
+      // extras that silently vanish on commit. Recomputed every request against
+      // the SUBMITTED selection, never cached: visibility is selection
+      // dependent (mocktail-bar needs a Formula-or-higher tier in the set,
+      // requires_addon_slug needs its parent), so a per-proposal cache would
+      // show stale rows the moment a tier toggles.
+      let visibleExtraIds = [];
 
       if (pkg.id === proposal.package_id) {
         // The option the client is STANDING ON must reproduce the total printed
@@ -178,6 +186,7 @@ async function buildOptionsQuote(token, body = {}) {
             addonIds: tierForPkg ? [...selectedExtras, tierForPkg] : selectedExtras,
           }).map(a => a.id)
         );
+        visibleExtraIds = [...clientVisible].filter(id => !tierIds.has(id));
         const ownHidden = currentAddonIds.filter(id => !clientVisible.has(id) && !tierIds.has(id));
         addonIds = [...new Set([...selectedExtras.filter(id => clientVisible.has(id)), ...ownHidden])];
         if (tierForPkg) addonIds.push(tierForPkg);
@@ -196,6 +205,7 @@ async function buildOptionsQuote(token, body = {}) {
             addons: catalog.addons, pkg, guestCount: Number(proposal.guest_count), addonIds: gateIds,
           }).map(a => a.id)
         );
+        visibleExtraIds = [...visibleIds].filter(id => !tierIds.has(id));
         const ridingHidden = ownHiddenObjs.filter(a => fitsPackage(a, pkg));
         const droppedHidden = ownHiddenObjs.filter(a => !fitsPackage(a, pkg));
         const invisibleExtras = selectedExtras
@@ -227,7 +237,15 @@ async function buildOptionsQuote(token, body = {}) {
           // switch's acknowledged-total gate would AGREE with.
           num_bartenders: overrideOnlyBartenders(proposal),
         }, pool, catalog);
-        return { total: Number(snapshot.total), available: true, reason: null, dropped };
+        return {
+          total: Number(snapshot.total), available: true, reason: null, dropped,
+          // The engine already decided WHICH minimum bound this event's price
+          // (floor_reason, pricingEngine.js); the wrapper used to drop it, so
+          // the drawer would have had to re-derive per-guest arithmetic that
+          // cannot be right on a floored event. Pass the verdict through.
+          floor_reason: snapshot.floor_reason ?? null,
+          visible_extra_ids: visibleExtraIds,
+        };
       } catch (err) {
         // A rule violation is a verdict about ONE option; anything else is a
         // real fault and must not be swallowed into a cheerful badge.
@@ -235,8 +253,28 @@ async function buildOptionsQuote(token, body = {}) {
         // `err.status !== 400` never matched and one unpriceable option failed
         // the whole request.)
         if (!(err instanceof ValidationError)) throw err;
-        return { total: null, available: false, reason: err.message || 'Not available for this event', dropped };
+        return {
+          total: null, available: false, reason: err.message || 'Not available for this event', dropped,
+          floor_reason: null, visible_extra_ids: visibleExtraIds,
+        };
       }
+    };
+
+    // DISPLAY ONLY. The per-guest rate the engine actually charges THIS event,
+    // small-tier aware, so the drawer never prints the 50-plus rate to a
+    // 30-guest client. Mirrors hostedBaseComponents (pricingEngine.js), which
+    // is deliberately unexported; nothing here prices anything, every total on
+    // the wire still comes from the engine.
+    const perGuestRateFor = (pkg) => {
+      if (pkg.pricing_type !== 'per_guest') return null;
+      const guests = Number(proposal.guest_count) || 0;
+      const hours = Number(proposal.event_duration_hours) || 0;
+      const isSmall = pkg.min_guests && guests < pkg.min_guests;
+      const rate3 = isSmall ? (pkg.base_rate_3hr_small || pkg.base_rate_3hr) : pkg.base_rate_3hr;
+      if (rate3 && hours <= 3) return Number(rate3);
+      const rate4 = Number(isSmall ? pkg.base_rate_4hr_small : pkg.base_rate_4hr);
+      const extra = Number(isSmall ? (pkg.extra_hour_rate_small || pkg.extra_hour_rate) : pkg.extra_hour_rate);
+      return hours <= 4 ? rate4 : rate4 + extra * (hours - 4);
     };
 
     const options = [];
@@ -269,6 +307,35 @@ async function buildOptionsQuote(token, body = {}) {
         available: echoContract ? true : priced.available,
         reason: priced.reason,
         dropped: priced.dropped,
+        // Lane identity for the ladder. bar_type, NOT category or pricing_type:
+        // every hosted package is category 'hosted' + pricing_type 'per_guest',
+        // so those two cannot tell a full bar from beer-and-wine from the
+        // zero-proof package, and the drawer would have to hard-code slugs.
+        bar_type: pkg.bar_type,
+        description: pkg.description ?? null,
+        // Which minimum, if any, set this price. 'rate' = the per-guest rate
+        // did; 'guest_min' = the billed-guest floor did; 'dollar_min' = the
+        // package's dollar floor did. Null on BYOB (flat, no minimums) and on
+        // the contract echo, which was never engine-priced this request.
+        // Null on BYOB (flat, no minimums), on the contract echo (never
+        // engine-priced this request), AND on an unavailable option: the catch
+        // path returns floor_reason null, and `?? 'rate'` would otherwise stamp
+        // a pricing verdict onto an option that was never priced at all, so a
+        // 20-guest event would carry "priced by rate" under a card whose total
+        // is null and whose reason says hosted needs 25 guests.
+        priced_by: echoContract || pkg.pricing_type !== 'per_guest' || !priced.available
+          ? null
+          : (priced.floor_reason ?? 'rate'),
+        // Null on the echo for the same reason priced_by is: the echoed total is
+        // the CONTRACT total, so pairing it with today's catalog rate would
+        // publish a rate that does not multiply out to the number beside it
+        // after any admin rate change.
+        per_guest_rate: echoContract ? null : perGuestRateFor(pkg),
+        min_billed_guests: pkg.min_billed_guests === null || pkg.min_billed_guests === undefined
+          ? null : Number(pkg.min_billed_guests),
+        min_total: pkg.min_total === null || pkg.min_total === undefined
+          ? null : Number(pkg.min_total),
+        visible_extra_ids: priced.visible_extra_ids,
       });
     }
 
@@ -327,6 +394,18 @@ async function buildOptionsQuote(token, body = {}) {
           total,
           covers,
           selected: (t ? t.id : null) === requestedTier,
+          description: t ? (t.description ?? null) : null,
+          // The tier's own per-guest rate for THIS event: the listed rate is a
+          // four-hour rate and hours past four bill extra_hour_rate per guest
+          // on top (pricingEngine.calculateAddonCost), so printing the bare
+          // listed number would be a quote the client can hold us to. Null on
+          // the bar-service-only row, which has no per-guest component.
+          // Deliberately no priced_by/min_* here: BYOB is flat-priced with no
+          // billing minimums, so those fields would always be null.
+          per_guest_rate: t
+            ? Number(t.rate || 0)
+              + Number(t.extra_hour_rate || 0) * Math.max(0, Number(proposal.event_duration_hours) - 4)
+            : null,
         });
       }
     }

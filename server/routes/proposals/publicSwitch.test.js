@@ -29,6 +29,16 @@ const fakeStripe = {
 };
 require('../../utils/stripeClient').getStripe = () => fakeStripe;
 
+// Sentry stub, same require-cache pattern as getStripe above and landing before
+// publicSwitch.js requires it. The captures are DSN-gated, so the test env must
+// also set a DSN or every capture silently no-ops and the assertion passes for
+// the wrong reason.
+process.env.SENTRY_DSN_SERVER = process.env.SENTRY_DSN_SERVER || 'https://test@example.invalid/1';
+const sentryMessages = [];
+const sentryModule = require('@sentry/node');
+sentryModule.captureMessage = (msg, ctx) => { sentryMessages.push({ msg, ctx }); };
+sentryModule.captureException = (err, ctx) => { sentryMessages.push({ msg: String(err && err.message), ctx }); };
+
 // Pass-through wrapper so the atomicity test can make the in-tx invoice
 // refresh throw. Must land before publicSwitch.js destructures it.
 const invoiceLifecycle = require('../../utils/invoiceLifecycle');
@@ -362,6 +372,30 @@ test('an explicit null acknowledged_total is a 400, never a priced-as-zero 409',
     body: { package_id: hostedPkgId, tier_addon_id: null, extra_addon_ids: [], acknowledged_total: null },
   });
   assert.equal(res.status, 400, `expected a validation 400: ${res.raw}`);
+});
+
+test('grinding: five landed switches on one token page a breadcrumb', async () => {
+  // The 409-storm log catches a token that keeps FAILING. This catches one that
+  // keeps SUCCEEDING: multi-commit sessions are the designed norm now, so a
+  // leaked token grinding valid switches with correct acknowledged totals would
+  // otherwise churn invoices, intents and audit rows in total silence.
+  const p = await insertProposal();
+  sentryMessages.length = 0;
+  const quote = await quoteFor(p.token);
+  const targets = [hostedPkgId, byobPkgId];
+  for (let i = 0; i < 5; i += 1) {
+    const to = targets[i % 2];
+    const q = i === 0 ? quote : await quoteFor(p.token);
+    const ack = optionTotal(q, to);
+    const res = await request('POST', `/api/proposals/t/${p.token}/switch`, {
+      body: { package_id: to, tier_addon_id: null, extra_addon_ids: [], acknowledged_total: ack },
+    });
+    assert.equal(res.status, 200, `switch ${i + 1}: ${res.raw}`);
+  }
+  const grind = sentryMessages.filter((m) => m.ctx?.tags?.issue === 'switch_grind');
+  assert.ok(grind.length >= 1, 'a landed-switch grinding breadcrumb fired');
+  assert.ok(grind[0].ctx.extra.landed >= 5, `landed count reported: ${grind[0].ctx.extra.landed}`);
+  assert.equal(grind[0].ctx.extra.proposalId, p.id);
 });
 
 test('a refusal cancels NOTHING: the decision precedes every cancel', async () => {
